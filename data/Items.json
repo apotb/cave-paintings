@@ -1,0 +1,186 @@
+[
+    null,
+    {
+        "id": "stick",
+        "name": "Stick",
+        "key": "sticks",
+        "maxStack": 99,
+        "weight": 0.2,
+        "fuel": {
+            "kj": 5,
+            "moisture": 0.15
+        }
+    },
+    {
+        "id": "blueberry",
+        "name": "Blueberries",
+        "key": "blueberries",
+        "maxStack": 99,
+        "weight": 0.02,
+        "food": {
+            "kc": 10,
+            "spoil": 24
+        }
+    },
+    {
+        "id": "apple",
+        "name": "Apple",
+        "key": "apple",
+        "maxStack": 99,
+        "weight": 0.18,
+        "food": {
+            "kc": 80,
+            "spoil": 120
+        }
+    },
+    {
+        "id": "coconut",
+        "name": "Coconut",
+        "key": "coconut",
+        "maxStack": 99,
+        "weight": 1.5,
+        "food": {
+            "kc": 200,
+            "spoil": 720
+        }
+    },
+    {
+        "id": "cracked_coconut",
+        "name": "Cracked Coconut",
+        "key": "cracked_coconut",
+        "maxStack": 99,
+        "weight": 1.2,
+        "food": {
+            "kc": 1000,
+            "spoil": 48
+        },
+        "recipe": {
+            "REQUIRE_THING": "rock",
+            "coconut": 1
+        }
+    },
+    {
+        "id": "cactus_flower",
+        "name": "Cactus Flower",
+        "key": "cactus_flower",
+        "maxStack": 99,
+        "weight": 0.05
+    },
+    {
+        "id": "leaf",
+        "name": "Leaf",
+        "key": "leaves",
+        "maxStack": 99,
+        "weight": 0.01
+    },
+    {
+        "id": "leaf_cord",
+        "name": "Leaf Cord",
+        "key": "leaf_cord",
+        "maxStack": 99,
+        "weight": 0.05,
+        "recipe": {
+            "leaf": 5
+        }
+    },
+    {
+        "id": "sharp_stick",
+        "name": "Sharp Stick",
+        "key": "sharp_stick",
+        "maxStack": 99,
+        "weight": 0.2,
+        "recipe": {
+            "REQUIRE_THING": "rock",
+            "stick": 1
+        }
+    },
+    {
+        "id": "wood_spear",
+        "name": "Wood Spear",
+        "key": "wood_spear",
+        "maxStack": 1,
+        "weight": 0.9,
+        "recipe": {
+            "sharp_stick": 1,
+            "stick": 2,
+            "leaf_cord": 6
+        }
+    },
+    {
+        "id": "stick_frame",
+        "name": "Stick Frame",
+        "key": "stick_frame",
+        "maxStack": 99,
+        "weight": 1.0,
+        "recipe": {
+            "stick": 4,
+            "leaf_cord": 4
+        }
+    },
+        {
+        "id": "leaf_wrap",
+        "name": "Leaf Wrap",
+        "key": "leaf_wrap",
+        "maxStack": 1,
+        "weight": 0.5,
+        "equip": {
+            "slot": "torso"
+        },
+        "recipe": {
+            "leaf_cord": 6,
+            "leaf": 20
+        }
+    },
+    {
+        "id": "leaf_loincloth",
+        "name": "Leaf Loincloth",
+        "key": "leaf_loincloth",
+        "maxStack": 1,
+        "weight": 0.4,
+        "equip": {
+            "slot": "legs",
+            "effects": {
+                "addSlot": [
+                    "waist",
+                    "waist"
+                ]
+            }
+        },
+        "recipe": {
+            "leaf_cord": 5,
+            "leaf": 15
+        }
+    },
+    {
+        "id": "leaf_sandals",
+        "name": "Leaf Sandals",
+        "key": "leaf_sandals",
+        "maxStack": 1,
+        "weight": 0.65,
+        "equip": {
+            "slot": "feet"
+        },
+        "recipe": {
+            "leaf_cord": 3,
+            "leaf": 10,
+            "stick": 2
+        }
+    },
+    {
+        "id": "leaf_pouch",
+        "name": "Leaf Pouch",
+        "key": "leaf_pouch",
+        "maxStack": 1,
+        "weight": 0.3,
+        "equip": {
+            "slot": "waist",
+            "effects": {
+                "strength": 2
+            }
+        },
+        "recipe": {
+            "leaf_cord": 3,
+            "leaf": 12
+        }
+    }
+]
