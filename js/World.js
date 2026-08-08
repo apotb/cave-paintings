@@ -71,6 +71,7 @@ class Chunk {
             this.rt = null;
         }
         this.things.children.each(thing => thing.destroy());
+        this.scene.markLightDirty?.();
     }
 
     async load() {
@@ -261,13 +262,19 @@ class Chunk {
 
     async makeThings() {
         for (const meta of this.meta.things) {
-            const thing = new Thing(this.scene, meta.x, meta.y, meta.id);
+            let thing;
+            if (meta.id === 'campfire' || meta.id === 'unlit_campfire') {
+                thing = new Campfire(this.scene, meta);
+            } else {
+                thing = new Thing(this.scene, meta.x, meta.y, meta.id);
+            }
             this.things.add(thing);
         }
         for (const meta of this.meta.lootableThings) {
             const thing = new LootableThing(this.scene, meta.x, meta.y, meta.id);
             this.things.add(thing);
         }
+        this.scene.markLightDirty?.();
         return Promise.resolve();
     }
 }

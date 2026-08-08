@@ -5,9 +5,44 @@ class Hotbar {
     }
 
     changeSlot(index) {
-        this.slots[this.activeIndex].setTexture('slot');
+        if (index < 0 || index >= this.size) return;
+        if (this.slots[this.activeIndex]) this.slots[this.activeIndex].setTexture('slot');
         this.slots[index].setTexture('active_slot');
         this.activeIndex = index;
+    }
+
+    /** Grow/shrink visible hotbar to match player.inventorySize. */
+    setSize(n) {
+        const size = Math.max(1, Math.floor(n));
+        if (size === this.size) {
+            this.layout();
+            return;
+        }
+
+        while (this.slots.length < size) {
+            this._buildSlot(this.slots.length);
+        }
+        while (this.slots.length > size) {
+            const i = this.slots.length - 1;
+            this.slots[i].destroy();
+            this.icons[i].destroy();
+            this.fillIcons[i].destroy();
+            this.quantity[i].destroy();
+            destroyIngredientBadges(this.ingredientBadges[i]);
+            this.slots.pop();
+            this.icons.pop();
+            this.fillIcons.pop();
+            this.quantity.pop();
+            this.ingredientBadges.pop();
+        }
+
+        this.size = size;
+        if (this.activeIndex >= this.size) this.activeIndex = this.size - 1;
+        for (let i = 0; i < this.size; i++) {
+            this.slots[i].setTexture(i === this.activeIndex ? 'active_slot' : 'slot');
+        }
+        this.layout();
+        this.dirty = true;
     }
 
     nextSlot() {
@@ -32,77 +67,182 @@ class Hotbar {
         return -1;
     }
 
-    create() {
-        this.size = 5;
-        const padding = 4;
-
+    layout() {
+        const s = this.scene.uiScale || 1;
+        const padding = Math.round(4 * s);
         const slotImg = this.scene.textures.get("slot").getSourceImage();
-        const slotW = slotImg ? slotImg.width : 32;
+        const baseW = slotImg ? slotImg.width : 32;
+        const slotW = baseW * s;
         const spacing = slotW + padding;
 
         const totalW = spacing * this.size - padding;
         const startX = Math.floor((this.scene.scale.width - totalW) / 2) + padding + slotW / 4;
-        const y = this.scene.scale.height - 16;
+        const y = this.scene.scale.height - Math.round(16 * s);
+
+        this.slotW = slotW;
+        this.spacing = spacing;
+        this.padding = padding;
+
+        this.slots.forEach((slot, i) => {
+            slot.setScale(s).setPosition(startX + i * spacing, y);
+
+            const icon = this.icons[i];
+            const fill = this.fillIcons[i];
+            const cx = slot.x + slotW / 2;
+            const cy = slot.y - slotW / 2;
+            icon.setScale(3.0 * s).setPosition(cx, cy);
+            fill.setScale(3.0 * s).setPosition(cx, cy);
+
+            const quantity = this.quantity[i];
+            quantity.setFontSize(`${Math.round(14 * s)}px`);
+            quantity.setStroke('#000', Math.max(2, Math.round(2 * s)));
+            quantity.setPosition(slot.x + slotW - 4 * s, slot.y - 4 * s);
+
+            const stack = this.scene.player.inventory[i] || null;
+            const meta = stack ? this.scene.getItem(stack.id) : null;
+            syncStackIcon(icon, fill, stack, meta, id => this.scene.getItem(id),
+                this.scene.textures, 3.0 * s);
+            syncIngredientBadges(
+                this.ingredientBadges[i],
+                quantity.x, quantity.y, s,
+                stack,
+                id => this.scene.getItem(id),
+                this.scene.textures
+            );
+        });
+
+        this.dragDistanceThreshold = Math.round(6 * s);
+    }
+
+    _buildSlot(i) {
+        const slot = this.scene.add.image(0, 0, "slot")
+            .setOrigin(0, 1)
+            .setInteractive({ cursor: 'pointer' });
+        slot.index = i;
+
+        slot.on('pointerover', (pointer) => {
+            const getText = () => {
+                const stacks = this.scene.player.inventory;
+                if (i >= stacks.length) return "";
+                const stack = stacks[i];
+                if (!stack) return "";
+                const meta = this.scene.getItem(stack.id);
+                return this.scene.formatItemTooltip(meta, stack.quantity, stack.spoilMinutes, stack);
+            };
+            const text = getText();
+            if (text) this.scene.showTooltip(getText, pointer.x, pointer.y, slot);
+        });
+        slot.on('pointerout', () => this.scene.hideTooltip());
+        slot.on("pointerup", (pointer) => {
+            if (pointer.rightButtonReleased() || pointer.button === 2) return;
+            if (!this._dragging && this._pointerDownPos) {
+                const distance = Phaser.Math.Distance.Between(
+                    this._pointerDownPos.x, this._pointerDownPos.y,
+                    pointer.x, pointer.y
+                );
+                if (distance < this.dragDistanceThreshold) {
+                    this.changeSlot(i);
+                }
+            }
+        });
+
+        slot.on('pointerdown', (pointer) => {
+            if (pointer.rightButtonDown()) {
+                if (this.scene.campfirePanel?.visible) {
+                    if (this.scene.campfirePanel.tryQuickAddFuel(slot.index)) {
+                        this.dirty = true;
+                        this.scene.refreshTooltip();
+                    }
+                    return;
+                }
+                if (this.scene.equipmentPanel?.visible) {
+                    const result = this.scene.player.equipFromHotbarAuto(slot.index);
+                    if (result.ok) {
+                        this.dirty = true;
+                        this.scene.equipmentPanel.refresh();
+                        this.scene.equipmentPanel.layout();
+                        this.scene.refreshTooltip();
+                    }
+                }
+                return;
+            }
+            this._pointerDownPos = { x: pointer.x, y: pointer.y };
+            this._pointerIsDown = true;
+            this._dragging = false;
+        });
+
+        slot.on('pointermove', (pointer) => {
+            if (!this._pointerIsDown || this._dragging) return;
+
+            const distance = Phaser.Math.Distance.Between(
+                this._pointerDownPos.x, this._pointerDownPos.y,
+                pointer.x, pointer.y
+            );
+
+            if (distance >= this.dragDistanceThreshold) {
+                const from = slot.index;
+                const inv = this.scene.player.inventory;
+                if (from < inv.length && inv[from]) {
+                    const stack = inv[from];
+                    const meta = this.scene.getItem(stack.id);
+                    const s = this.scene.uiScale || 1;
+                    const drag = createStackDragIcon(this.scene, pointer.x, pointer.y, stack, meta, 3.0 * s);
+                    if (drag) {
+                        this._dragging = true;
+                        this._dragFrom = from;
+                        this.scene.hideTooltip();
+                        this._dragIcon = drag;
+                    }
+                }
+            }
+        });
+
+        this.scene.uiLayer.add(slot);
+        this.slots.push(slot);
+
+        const icon = this.scene.add.image(0, 0, "")
+            .setOrigin(0.5, 0.5)
+            .setVisible(false)
+            .setScale(3.0);
+        this.scene.uiLayer.add(icon);
+        this.icons.push(icon);
+
+        const fill = this.scene.add.image(0, 0, "")
+            .setOrigin(0.5, 0.5)
+            .setVisible(false)
+            .setScale(3.0);
+        this.scene.uiLayer.add(fill);
+        this.fillIcons.push(fill);
+
+        const quantity = this.scene.add.text(0, 0, "", {
+            fontSize: "14px",
+            fontFamily: "monospace",
+            align: "right",
+            stroke: "#000",
+            strokeThickness: 2
+        }).setOrigin(1, 1).setVisible(false);
+        this.scene.uiLayer.add(quantity);
+        this.quantity.push(quantity);
+
+        const badges = createIngredientBadges(this.scene, (img) => {
+            this.scene.uiLayer.add(img);
+        });
+        this.ingredientBadges.push(badges);
+    }
+
+    create() {
+        this.size = this.scene.player?.inventorySize || 5;
 
         this.activeIndex = 0;
         this.slots = [];
         this.icons = [];
+        this.fillIcons = [];
         this.quantity = [];
+        this.ingredientBadges = [];
 
         for (let i = 0; i < this.size; i++) {
-            const slot = this.scene.add.image(startX + i * spacing, y, "slot")
-                .setOrigin(0, 1)
-                .setInteractive({ cursor: 'pointer' });
-            slot.index = i;
-
-            slot.on('pointerover', (pointer) => {
-                const getText = () => {
-                    const stacks = this.scene.player.inventory;
-                    if (i >= stacks.length) return "";
-                    const stack = stacks[i];
-                    if (!stack) return "";
-                    const meta = this.scene.getItem(stack.id);
-                    return this.scene.formatItemTooltip(meta, stack.quantity);
-                };
-                const text = getText();
-                if (text) this.scene.showTooltip(getText, pointer.x, pointer.y);
-            });
-            slot.on('pointerout', () => this.scene.hideTooltip());
-            slot.on("pointerup", (pointer) => {
-                // Only change slot if we haven't started dragging and the pointer didn't move much
-                if (!this._dragging && this._pointerDownPos) {
-                    const distance = Phaser.Math.Distance.Between(
-                        this._pointerDownPos.x, this._pointerDownPos.y,
-                        pointer.x, pointer.y
-                    );
-                    if (distance < this.dragDistanceThreshold) {
-                        this.changeSlot(i);
-                    }
-                }
-            });
-
-            this.scene.uiLayer.add(slot);
-            this.slots.push(slot);
-
-            const icon = this.scene.add.image(slot.x + slotW / 2, slot.y - slotW / 2, "")
-                .setOrigin(0.5, 0.5)
-                .setVisible(false)
-                .setScale(3.0);
-            this.scene.uiLayer.add(icon);
-            this.icons.push(icon);
-
-            const quantity = this.scene.add.text(slot.x + slotW - 4, slot.y - 4, "", {
-                fontSize: "14px",
-                fontFamily: "monospace",
-                align: "right",
-                stroke: "#000",
-                strokeThickness: 2
-            }).setOrigin(1, 1).setVisible(false);
-            this.scene.uiLayer.add(quantity);
-            this.quantity.push(quantity);
+            this._buildSlot(i);
         }
-
-        // Dragging
 
         this._dragging = false;
         this._dragFrom = null;
@@ -111,49 +251,6 @@ class Hotbar {
         this._pointerIsDown = false;
 
         this.dragDistanceThreshold = 6;
-
-        // Handle pointer down to track start position and time
-        for (let i = 0; i < this.size; i++) {
-            const slot = this.slots[i];
-            
-            slot.on('pointerdown', (pointer) => {
-                this._pointerDownPos = { x: pointer.x, y: pointer.y };
-                this._pointerIsDown = true;
-                this._dragging = false;
-            });
-
-            slot.on('pointermove', (pointer) => {
-                if (!this._pointerIsDown || this._dragging) return;
-
-                const distance = Phaser.Math.Distance.Between(
-                    this._pointerDownPos.x, this._pointerDownPos.y,
-                    pointer.x, pointer.y
-                );
-
-                // Start dragging if moved far enough
-                if (distance >= this.dragDistanceThreshold) {
-                    const from = slot.index;
-                    const inv = this.scene.player.inventory;
-                    if (from < inv.length && inv[from]) {
-                        const stack = inv[from];
-                        const meta = this.scene.getItem(stack.id);
-                        const texKey = (meta && (meta.key || meta.id)) || stack.id;
-                        if (this.scene.textures.exists(texKey)) {
-                            this._dragging = true;
-                            this._dragFrom = from;
-                            this.scene.hideTooltip();
-
-                            this._dragIcon = this.scene.add.image(pointer.x, pointer.y, texKey)
-                                .setOrigin(0.5, 0.5)
-                                .setScale(3.0)
-                                .setDepth(1000)
-                                .setAlpha(0.9);
-                            this.scene.uiLayer.add(this._dragIcon);
-                        }
-                    }
-                }
-            });
-        }
 
         // Global pointer move to handle drag icon positioning (only when dragging)
         this.scene.input.on('pointermove', (pointer) => {
@@ -165,44 +262,59 @@ class Hotbar {
         // Global pointer up to handle drag end
         this.scene.input.on('pointerup', (pointer) => {
             if (this._dragging) {
-                // Handle drag end
-                const to = this.getIndexAt(pointer.x, pointer.y);
                 const from = this._dragFrom;
+                let handled = false;
 
-                if (to !== -1 && from !== null && to !== from) {
-                    const inv = this.scene.player.inventory;
-                    while (inv.length < this.size) inv.push(null);
+                // Prefer dropping onto equipment panel
+                if (this.scene.equipmentPanel?.visible && from !== null) {
+                    handled = this.scene.equipmentPanel.tryEquipFromHotbar(from, pointer);
+                }
 
-                    const a = inv[from] ?? null; // dragged stack
-                    const b = inv[to]   ?? null; // target stack
+                if (!handled && this.scene.campfirePanel?.visible && from !== null) {
+                    handled = this.scene.campfirePanel.tryAddFuelFromHotbar(from, pointer);
+                }
 
-                    if (a) {
-                        if (b && a.id === b.id) {
-                            // Same item -> stack into target up to maxStack
-                            const meta = this.scene.getItem(a.id);
-                            const maxStack = Math.max(1, meta?.maxStack || 1);
-                            const space = Math.max(0, maxStack - b.quantity);
+                if (!handled) {
+                    const to = this.getIndexAt(pointer.x, pointer.y);
 
-                            if (space > 0) {
-                                const moved = Math.min(space, a.quantity);
-                                b.quantity += moved;
-                                a.quantity -= moved;
-                                if (a.quantity <= 0) inv[from] = null; // emptied source
+                    if (to !== -1 && from !== null && to !== from) {
+                        const inv = this.scene.player.inventory;
+                        while (inv.length < this.size) inv.push(null);
+
+                        const a = inv[from] ?? null;
+                        const b = inv[to]   ?? null;
+
+                        if (a) {
+                            if (b && a.id === b.id) {
+                                const meta = this.scene.getItem(a.id);
+                                const maxStack = Math.max(1, meta?.maxStack || 1);
+                                const space = Math.max(0, maxStack - b.quantity);
+
+                                if (space > 0) {
+                                    const moved = Math.min(space, a.quantity);
+                                    b.spoilMinutes = mergeSpoilMinutes(
+                                        b.quantity, b.spoilMinutes,
+                                        moved, a.spoilMinutes
+                                    );
+                                    b.quantity += moved;
+                                    a.quantity -= moved;
+                                    if (a.quantity <= 0) inv[from] = null;
+                                } else {
+                                    inv[from] = b;
+                                    inv[to]   = a;
+                                }
                             } else {
-                                // Target full — fall back to swap
-                                inv[from] = b;
                                 inv[to]   = a;
+                                inv[from] = b || null;
                             }
-                        } else {
-                            // Empty target -> move, or different item -> swap
-                            inv[to]   = a;
-                            inv[from] = b || null;
-                        }
 
-                        this.changeSlot(to);
-                        this.dirty = true;
-                        this.scene.refreshTooltip();
+                            this.changeSlot(to);
+                            this.dirty = true;
+                            this.scene.refreshTooltip();
+                        }
                     }
+                } else {
+                    this.dirty = true;
                 }
 
                 if (this._dragIcon) this._dragIcon.destroy();
@@ -216,59 +328,48 @@ class Hotbar {
             this._pointerDownPos = null;
         });
 
-        // Keep layout correct on window resize
-        this.scene.scale.on("resize", (size) => {
-            this.scene._uiCam.setSize(size.width, size.height);
-            const newStartX = Math.floor((size.width - totalW) / 2) + padding + slotW / 4;
-            const newY = size.height - 16;
-            this.slots.forEach((slot, i) => {
-                slot.setPosition(newStartX + i * spacing, newY);
-
-                const icon = this.icons[i];
-                icon.setPosition(slot.x + slotW / 2, slot.y - slotW / 2);
-
-                const quantity = this.quantity[i];
-                quantity.setPosition(slot.x + slotW - 4, slot.y - 4);
-            });
-        });
-
+        this.layout();
         this.changeSlot(0);
         this.dirty = true;
+
+        this.scene.input.on('wheel', (_pointer, _over, _deltaX, deltaY) => {
+            if (deltaY < 0) this.prevSlot();
+            else if (deltaY > 0) this.nextSlot();
+        });
     }
 
     update() {
         const stacks = this.scene.player.inventory;
         const slotCount = this.slots.length;
+        const s = this.scene.uiScale || 1;
 
         for (let i = 0; i < slotCount; i++) {
             const icon = this.icons[i];
+            const fill = this.fillIcons[i];
             const qty = this.quantity[i];
+            const badges = this.ingredientBadges[i];
+            const stack = (i < stacks.length) ? stacks[i] : null;
+            const meta = stack ? this.scene.getItem(stack.id) : null;
+            const scale = 3.0 * s;
 
-            if (i < stacks.length) {
-                const stack = stacks[i];
-                if (!stack) {
-                    icon.setVisible(false);
-                    qty.setVisible(false);
-                    continue;
-                }
-                const meta = this.scene.getItem(stack.id);
-                const texKey = (meta && (meta.key || meta.id)) || stack.id;
+            syncStackIcon(icon, fill, stack, meta, id => this.scene.getItem(id),
+                this.scene.textures, scale);
 
-                if (this.scene.textures.exists(texKey)) {
-                    icon.setTexture(texKey).setVisible(true);
-                } else {
-                    icon.setVisible(false);
-                }
+            if (!stack) {
+                qty.setVisible(false);
+                syncIngredientBadges(badges, qty.x, qty.y, s, null,
+                    id => this.scene.getItem(id), this.scene.textures);
+                continue;
+            }
 
-                if (stack.quantity > 1) {
-                    qty.setText(String(stack.quantity)).setVisible(true);
-                } else {
-                    qty.setVisible(false);
-                }
+            if (stack.quantity > 1) {
+                qty.setText(String(stack.quantity)).setVisible(true);
             } else {
-                icon.setVisible(false);
                 qty.setVisible(false);
             }
+
+            syncIngredientBadges(badges, qty.x, qty.y, s, stack,
+                id => this.scene.getItem(id), this.scene.textures);
         }
     }
 }

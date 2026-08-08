@@ -32,6 +32,83 @@ function superChunkLoadingMachine() {
 }
 
 /**
+ * Debug: set the in-game clock (keeps the current day).
+ * @param {Number} hour    0–23
+ * @param {Number} [minute=0]  0–59
+ */
+function setHour(hour, minute = 0) {
+    const scene = getScene();
+    const h = ((Math.floor(hour) % 24) + 24) % 24;
+    const m = Phaser.Math.Clamp(Math.floor(minute), 0, 59);
+    scene.gameMinutes = h * 60 + m;
+    scene._lightSig = null; // force veil redraw
+    scene.updateClockText();
+    scene.updateTimeTint();
+    return scene.clockText?.text ?? `${h}:${m}`;
+}
+
+/**
+ * Debug: add an item to the player inventory.
+ * @param {String} [id]       Item id from Items.json (omit to list ids)
+ * @param {Number} [amount=1]
+ * @returns {String}
+ * @example giveItem("apple", 5)
+ * @example giveItem("sharp_stick")
+ */
+function giveItem(id, amount = 1) {
+    const scene = getScene();
+    const all = (scene.items() || []).filter(i => i?.id);
+    if (id == null || id === "") {
+        return all.map(i => i.id).join(", ");
+    }
+    const item = scene.getItem(id);
+    if (!item) {
+        return `Unknown item "${id}". Try giveItem() for a list.`;
+    }
+    const n = Math.max(1, Math.floor(Number(amount) || 1));
+    // Bypass encumbrance for debug: temporarily raise strength
+    const player = scene.player;
+    const prev = player.strength;
+    player.strength = Math.max(prev, 9999);
+    const left = player.gainItem(item, n);
+    player.strength = prev;
+    scene.hotbar.dirty = true;
+    const got = n - left;
+    if (got <= 0) return `Could not add ${item.name} (inventory full?)`;
+    if (left > 0) return `Gave ${got}× ${item.name} (${left} left over)`;
+    return `Gave ${got}× ${item.name}`;
+}
+
+/**
+ * Debug: spawn a damageable dummy in front of the player (for weapon tests).
+ * @example spawnDummy()
+ */
+function spawnDummy() {
+    const scene = getScene();
+    const player = scene.player;
+    const c = player.bodyCenter();
+    const face = player.facing;
+    let dx = 0, dy = 24;
+    if (face === "right") { dx = 24; dy = 0; }
+    else if (face === "left") { dx = -24; dy = 0; }
+    else if (face === "up") { dx = 0; dy = -24; }
+
+    const dummy = new Mob(scene, c.x + dx, c.y + dy, "rock");
+    dummy.hp = 40;
+    dummy.mhp = 40;
+    dummy.setOrigin(0.5, 0.5);
+    dummy.setDepth(dummy.y);
+    scene.add.existing(dummy);
+    scene.physics.add.existing(dummy);
+    scene.mainLayer.add(dummy);
+    scene.damageables.add(dummy);
+    dummy.onDeath = () => {
+        scene.damageables.remove(dummy, true, true);
+    };
+    return `Dummy ${dummy.hp} HP at (${Math.round(dummy.x)}, ${Math.round(dummy.y)})`;
+}
+
+/**
  * Round up to the nearest even number.
  * @param   {Number} num    Number to round up.
  * @return  {Number}        The rounded number.
@@ -95,8 +172,360 @@ function hash2D(x, y, seed) {
  */
 function formatHours(hours) {
     const h = Math.max(0, Math.floor(hours));
+    if (h === 0) return "<1h";
     const d = Math.floor(h / 24);
     const remH = h % 24;
     if (d > 0) return `${d}d${remH ? ` ${remH}h` : ""}`;
     return `${remH}h`;
+}
+
+/**
+ * Default remaining spoil time in game minutes for a fresh item.
+ * @param   {Object} item   Item definition from Items.json.
+ * @return  {Number|null}   Minutes, or null if not spoilable.
+ */
+function defaultSpoilMinutes(item) {
+    const hours = item?.food?.spoil;
+    if (!hours || hours <= 0) return null;
+    return Math.round(hours * 60);
+}
+
+/**
+ * Quantity-weighted average of two spoil timers (game minutes).
+ */
+function mergeSpoilMinutes(countA, minutesA, countB, minutesB) {
+    if (minutesA == null && minutesB == null) return null;
+    if (minutesA == null) return minutesB;
+    if (minutesB == null) return minutesA;
+    const total = countA + countB;
+    if (total <= 0) return Math.round(minutesA);
+    return Math.round((countA * minutesA + countB * minutesB) / total);
+}
+
+/**
+ * Build an inventory/equipment stack object, attaching spoilMinutes when applicable.
+ */
+function makeItemStack(item, quantity, spoilMinutes = undefined) {
+    const stack = { id: item.id, quantity };
+    const spoil = spoilMinutes !== undefined ? spoilMinutes : defaultSpoilMinutes(item);
+    if (spoil != null) stack.spoilMinutes = spoil;
+    return stack;
+}
+
+/**
+ * Day/night keyframes (minutes from midnight).
+ * - darkness: black veil (night / low sun). Keep day near 0.
+ * - wash: warm/cool tint strength. Colors should be fairly deep — pale washes bleach the scene.
+ */
+const TIME_TINT_KEYS = [
+    { t: 0,    color: 0x0a1020, darkness: 0.94, wash: 0.00 }, // night
+    { t: 300,  color: 0x0a1020, darkness: 0.94, wash: 0.00 }, // 05:00
+    { t: 360,  color: 0xa85830, darkness: 0.28, wash: 0.22 }, // 06:00 dawn
+    { t: 420,  color: 0xb87048, darkness: 0.10, wash: 0.14 }, // 07:00
+    { t: 540,  color: 0x8898a8, darkness: 0.02, wash: 0.05 }, // 09:00 morning
+    { t: 660,  color: 0xc8c0b0, darkness: 0.00, wash: 0.02 }, // 11:00
+    { t: 840,  color: 0xc8c0b0, darkness: 0.00, wash: 0.02 }, // 14:00 day
+    { t: 1020, color: 0xb87838, darkness: 0.06, wash: 0.12 }, // 17:00
+    { t: 1050, color: 0xc86820, darkness: 0.10, wash: 0.20 }, // 17:30 golden
+    { t: 1080, color: 0xb05018, darkness: 0.16, wash: 0.18 }, // 18:00
+    { t: 1140, color: 0x804028, darkness: 0.34, wash: 0.12 }, // 19:00 evening
+    { t: 1200, color: 0x483868, darkness: 0.58, wash: 0.08 }, // 20:00
+    { t: 1230, color: 0x1a2038, darkness: 0.80, wash: 0.03 }, // 20:30
+    { t: 1260, color: 0x0a1020, darkness: 0.94, wash: 0.00 }, // 21:00 night
+    { t: 1440, color: 0x0a1020, darkness: 0.94, wash: 0.00 }
+];
+
+/**
+ * Stick-roast (or other method) recipe for an input item id.
+ * @param {Function} getItem
+ * @param {String} inputId
+ * @param {String} method  e.g. "stick_roast"
+ * @returns {{ result: string, minutes: number }|null}
+ */
+function getCookRecipe(getItem, inputId, method) {
+    if (!inputId || !method) return null;
+    const recipe = getItem(inputId)?.cook?.[method];
+    if (!recipe?.result || !(recipe.minutes > 0)) return null;
+    return recipe;
+}
+
+const SIMMER_INGREDIENTS = new Set(["apple", "blueberry"]);
+const SIMMER_MINUTES_PER_SLOT = 5;
+
+function isSimmerIngredient(itemId) {
+    return SIMMER_INGREDIENTS.has(itemId);
+}
+
+/**
+ * Name/stats for a coconut shell simmer dish from ingredient item ids.
+ * @param {Function} getItem
+ * @param {String[]} ingredientIds
+ * @param {Object} coconutMeta  cracked coconut item def
+ * @returns {{ name: string, kind: string, kc: number, spoilHours: number, weight: number, fillTint: number }}
+ */
+function getSimmerDishInfo(getItem, ingredientIds, coconutMeta) {
+    const ids = (ingredientIds || []).filter(Boolean);
+    const unique = [...new Set(ids)];
+
+    let kind = "mash";
+    let name = "Simmered Meal";
+    let spoilHours = 24;
+
+    if (unique.length === 1 && unique[0] === "blueberry") {
+        kind = "mash";
+        name = "Blueberry Mash";
+        spoilHours = 12;
+    } else if (unique.length === 1 && unique[0] === "apple") {
+        kind = "simmered";
+        name = "Simmered Apples";
+        spoilHours = 48;
+    } else if (unique.includes("blueberry") && unique.includes("apple")) {
+        kind = "tart";
+        name = "Blueberry-Apple Tart";
+        spoilHours = 24;
+    }
+
+    let kc = 0;
+    let weight = Number(coconutMeta?.weight ?? 0);
+    for (const id of ids) {
+        // Cooking concentrates ingredients: +50% kcal vs raw
+        kc += Number(getItem(id)?.food?.kc ?? 0) * 1.5;
+        // Water cooks off: ingredient weight counts at half
+        weight += Number(getItem(id)?.weight ?? 0) * 0.5;
+    }
+    // Full coconut is part of the meal (vessel flesh / milk)
+    kc += Number(coconutMeta?.food?.kc ?? 0);
+    kc = Math.round(kc);
+    weight = Math.round(weight * 100) / 100;
+
+    const fillTint = mixIngredientFillTint(getItem, ids);
+    return { name, kind, kc, spoilHours, weight, fillTint };
+}
+
+const COCONUT_SHELL_KEY = "cracked_coconut";
+const COCONUT_FILL_KEY = "cracked_coconut_overlay";
+
+function parseFillColor(c) {
+    if (c == null) return null;
+    if (typeof c === "number" && Number.isFinite(c)) return c >>> 0;
+    if (typeof c === "string") {
+        const hex = c.trim().replace(/^#/, "");
+        if (/^[0-9a-fA-F]{6}$/.test(hex)) return parseInt(hex, 16);
+    }
+    return null;
+}
+
+/** Average ingredient fillColor values into one Phaser tint. */
+function mixIngredientFillTint(getItem, ingredientIds) {
+    let r = 0, g = 0, b = 0, n = 0;
+    for (const id of ingredientIds || []) {
+        const v = parseFillColor(getItem(id)?.fillColor);
+        if (v == null) continue;
+        r += (v >> 16) & 255;
+        g += (v >> 8) & 255;
+        b += v & 255;
+        n += 1;
+    }
+    if (!n) return 0xffffff;
+    return ((Math.round(r / n) << 16) | (Math.round(g / n) << 8) | Math.round(b / n)) >>> 0;
+}
+
+function mealFillTint(stack, getItem) {
+    if (stack?.fillTint != null) return stack.fillTint >>> 0;
+    if (stack?.ingredients?.length) return mixIngredientFillTint(getItem, stack.ingredients);
+    return null;
+}
+
+/**
+ * Draw stack icon; meals use shell + tinted fill overlay.
+ * @param {Phaser.GameObjects.Image} base
+ * @param {Phaser.GameObjects.Image|null} overlay
+ */
+function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
+    if (!stack) {
+        base.setVisible(false);
+        if (overlay) overlay.setVisible(false);
+        return;
+    }
+    const tint = mealFillTint(stack, getItem);
+    if (tint != null && overlay && textures.exists(COCONUT_FILL_KEY) && textures.exists(COCONUT_SHELL_KEY)) {
+        base.setTexture(COCONUT_SHELL_KEY).setScale(scale).clearTint().setVisible(true);
+        overlay.setTexture(COCONUT_FILL_KEY)
+            .setScale(scale)
+            .setPosition(base.x, base.y)
+            .setTint(tint)
+            .setVisible(true);
+        return;
+    }
+    const key = meta?.key || stack.id;
+    if (textures.exists(key)) {
+        base.setTexture(key).setScale(scale).clearTint().setVisible(true);
+    } else {
+        base.setVisible(false);
+    }
+    if (overlay) overlay.setVisible(false).clearTint();
+}
+
+/** Drag ghost: shell + optional tinted fill (Container). */
+function createStackDragIcon(scene, x, y, stack, meta, scale) {
+    const tint = mealFillTint(stack, id => scene.getItem(id));
+    if (tint != null && scene.textures.exists(COCONUT_FILL_KEY)) {
+        const shell = scene.add.image(0, 0, COCONUT_SHELL_KEY).setOrigin(0.5, 0.5).setScale(scale);
+        const fill = scene.add.image(0, 0, COCONUT_FILL_KEY).setOrigin(0.5, 0.5).setScale(scale).setTint(tint);
+        const cont = scene.add.container(x, y, [shell, fill]).setDepth(1000).setAlpha(0.9);
+        scene.uiLayer.add(cont);
+        return cont;
+    }
+    const key = meta?.key || stack.id;
+    if (!scene.textures.exists(key)) return null;
+    const img = scene.add.image(x, y, key)
+        .setOrigin(0.5, 0.5)
+        .setScale(scale)
+        .setDepth(1000)
+        .setAlpha(0.9);
+    scene.uiLayer.add(img);
+    return img;
+}
+
+/** Max simmer ingredients shown as corner badges on a cooked meal. */
+const INGREDIENT_BADGE_MAX = 4;
+
+/**
+ * Create pooled images for ingredient corner badges (parent via addFn).
+ * @param {Phaser.Scene} scene
+ * @param {(img: Phaser.GameObjects.Image) => void} addFn
+ * @param {Number} [max]
+ * @returns {Phaser.GameObjects.Image[]}
+ */
+function createIngredientBadges(scene, addFn, max = INGREDIENT_BADGE_MAX) {
+    const badges = [];
+    for (let i = 0; i < max; i++) {
+        const img = scene.add.image(0, 0, "")
+            .setOrigin(1, 1)
+            .setVisible(false);
+        addFn(img);
+        badges.push(img);
+    }
+    return badges;
+}
+
+/**
+ * Show meal ingredient icons along the bottom of a slot, right → left.
+ * @param {Phaser.GameObjects.Image[]} badges
+ * @param {Number} rightX   bottom-right anchor (same corner as stack qty)
+ * @param {Number} bottomY
+ * @param {Number} uiScale
+ * @param {Object|null} stack
+ * @param {(id: string) => Object|undefined} getItem
+ * @param {Phaser.Textures.TextureManager} textures
+ */
+function syncIngredientBadges(badges, rightX, bottomY, uiScale, stack, getItem, textures) {
+    const ids = stack?.ingredients;
+    if (!Array.isArray(ids) || !ids.length) {
+        for (const b of badges) b.setVisible(false);
+        return;
+    }
+    const s = uiScale || 1;
+    const badgeScale = 1 * s;
+    const step = 5 * s;
+    for (let i = 0; i < badges.length; i++) {
+        const badge = badges[i];
+        const id = ids[i];
+        if (!id) {
+            badge.setVisible(false);
+            continue;
+        }
+        const meta = getItem(id);
+        const texKey = meta?.key || id;
+        if (!textures.exists(texKey)) {
+            badge.setVisible(false);
+            continue;
+        }
+        badge.setTexture(texKey)
+            .setScale(badgeScale)
+            .setPosition(rightX - i * step, bottomY)
+            .setVisible(true);
+    }
+}
+
+function destroyIngredientBadges(badges) {
+    if (!badges) return;
+    for (const b of badges) b.destroy();
+}
+
+/**
+ * Build a coconut_meal inventory stack from simmer ingredients.
+ */
+function makeCoconutMealStack(getItem, ingredientIds, coconutMeta) {
+    const mealMeta = getItem("coconut_meal");
+    const info = getSimmerDishInfo(getItem, ingredientIds, coconutMeta);
+    return {
+        id: mealMeta?.id || "coconut_meal",
+        quantity: 1,
+        customName: info.name,
+        food: { kc: info.kc, kcFull: info.kc, spoil: info.spoilHours },
+        weight: info.weight,
+        kind: info.kind,
+        fillTint: info.fillTint,
+        ingredients: ingredientIds.filter(Boolean).slice(),
+        spoilMinutes: Math.round(info.spoilHours * 60)
+    };
+}
+
+/** Clone dynamic meal fields for drop/transfer. */
+function mealStackExtras(stack) {
+    if (!stack || !(stack.customName || stack.food)) return null;
+    return {
+        customName: stack.customName,
+        food: stack.food ? { ...stack.food } : undefined,
+        ingredients: stack.ingredients ? stack.ingredients.slice() : undefined,
+        weight: stack.weight,
+        kind: stack.kind,
+        fillTint: stack.fillTint
+    };
+}
+
+/**
+ * Remaining campfire burn time in game minutes (1 kj ≈ 1 minute).
+ * Includes the unit already pulled into the fire plus fuel still in slots.
+ * @param {Function} getItem  scene.getItem bound or equivalent
+ * @param {Array} fuelSlots   [stack|null, stack|null]
+ * @param {Number} burnRemaining  minutes left on the currently burning unit
+ */
+function campfireBurnMinutes(getItem, fuelSlots, burnRemaining = 0) {
+    let kj = Math.max(0, burnRemaining || 0);
+    for (const stack of fuelSlots || []) {
+        if (!stack) continue;
+        const item = getItem(stack.id);
+        const per = Number(item?.fuel?.kj ?? 0);
+        if (per > 0) kj += per * stack.quantity;
+    }
+    return kj;
+}
+
+/**
+ * World tint for a given game clock (minutes since midnight).
+ * @returns {{ color: number, darkness: number, wash: number }}
+ */
+function getTimeOfDayTint(minutes) {
+    const t = ((minutes % 1440) + 1440) % 1440;
+    const keys = TIME_TINT_KEYS;
+    let i = 0;
+    while (i < keys.length - 1 && keys[i + 1].t <= t) i++;
+    const a = keys[i];
+    const b = keys[Math.min(i + 1, keys.length - 1)];
+    const span = b.t - a.t;
+    const u = span <= 0 ? 0 : (t - a.t) / span;
+    const lerp = (x, y) => x + (y - x) * u;
+
+    const ar = (a.color >> 16) & 255, ag = (a.color >> 8) & 255, ab = a.color & 255;
+    const br = (b.color >> 16) & 255, bg = (b.color >> 8) & 255, bb = b.color & 255;
+
+    return {
+        color: (Math.round(lerp(ar, br)) << 16)
+            | (Math.round(lerp(ag, bg)) << 8)
+            | Math.round(lerp(ab, bb)),
+        darkness: lerp(a.darkness ?? 0, b.darkness ?? 0),
+        wash: lerp(a.wash ?? 0, b.wash ?? 0)
+    };
 }

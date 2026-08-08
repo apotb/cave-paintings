@@ -107,5 +107,29 @@
             "yield": 3,
             "transform": null
         }
+    },
+    {
+        "id": "campfire",
+        "name": "Campfire",
+        "key": "campfire",
+        "hitboxSize": 5,
+        "campfire": true,
+        "lit": true,
+        "lightLevel": 12,
+        "anim": {
+            "frameWidth": 16,
+            "frameHeight": 16,
+            "frameRate": 8,
+            "repeat": -1
+        }
+    },
+    {
+        "id": "unlit_campfire",
+        "name": "Unlit Campfire",
+        "key": "unlit_campfire",
+        "hitboxSize": 5,
+        "campfire": true,
+        "lit": false,
+        "lightLevel": 0
     }
 ]

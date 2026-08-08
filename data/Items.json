@@ -17,6 +17,7 @@
         "key": "blueberries",
         "maxStack": 99,
         "weight": 0.02,
+        "fillColor": "#3B6FE0",
         "food": {
             "kc": 10,
             "spoil": 24
@@ -28,9 +29,27 @@
         "key": "apple",
         "maxStack": 99,
         "weight": 0.18,
+        "fillColor": "#C43C32",
         "food": {
             "kc": 80,
             "spoil": 120
+        },
+        "cook": {
+            "stick_roast": {
+                "result": "roasted_apple",
+                "minutes": 10
+            }
+        }
+    },
+    {
+        "id": "roasted_apple",
+        "name": "Roasted Apple",
+        "key": "roasted_apple",
+        "maxStack": 99,
+        "weight": 0.18,
+        "food": {
+            "kc": 150,
+            "spoil": 48
         }
     },
     {
@@ -40,23 +59,41 @@
         "maxStack": 99,
         "weight": 1.5,
         "food": {
-            "kc": 200,
+            "kc": 0,
             "spoil": 720
         }
     },
     {
         "id": "cracked_coconut",
-        "name": "Cracked Coconut",
+        "name": "Coconut Shell",
         "key": "cracked_coconut",
         "maxStack": 99,
-        "weight": 1.2,
+        "weight": 0.75,
         "food": {
-            "kc": 1000,
+            "kc": 400,
             "spoil": 48
         },
+        "cook": {
+            "method": "shell_simmer"
+        },
+        "tooltip": [
+            "Use as a bowl on a campfire to simmer meals"
+        ],
         "recipe": {
             "REQUIRE_THING": "rock",
-            "coconut": 1
+            "coconut": 1,
+            "QUANTITY": 2
+        }
+    },
+    {
+        "id": "coconut_meal",
+        "name": "Coconut Meal",
+        "key": "cracked_coconut",
+        "maxStack": 1,
+        "weight": 0.75,
+        "food": {
+            "kc": 0,
+            "spoil": 24
         }
     },
     {
@@ -64,14 +101,21 @@
         "name": "Cactus Flower",
         "key": "cactus_flower",
         "maxStack": 99,
-        "weight": 0.05
+        "weight": 0.05,
+        "equip": {
+            "slot": "head"
+        }
     },
     {
         "id": "leaf",
         "name": "Leaf",
         "key": "leaves",
         "maxStack": 99,
-        "weight": 0.01
+        "weight": 0.01,
+        "fuel": {
+            "kj": 1,
+            "moisture": 0.4
+        }
     },
     {
         "id": "leaf_cord",
@@ -79,6 +123,10 @@
         "key": "leaf_cord",
         "maxStack": 99,
         "weight": 0.05,
+        "fuel": {
+            "kj": 5,
+            "moisture": 0.4
+        },
         "recipe": {
             "leaf": 5
         }
@@ -89,6 +137,18 @@
         "key": "sharp_stick",
         "maxStack": 99,
         "weight": 0.2,
+        "use": "light_fire",
+        "cook": {
+            "method": "stick_roast"
+        },
+        "fuel": {
+            "kj": 5,
+            "moisture": 0.15
+        },
+        "tooltip": [
+            "Use on 15 sticks and 10 leaves to start a fire",
+            "Hold over a campfire to roast raw food"
+        ],
         "recipe": {
             "REQUIRE_THING": "rock",
             "stick": 1
@@ -100,6 +160,21 @@
         "key": "wood_spear",
         "maxStack": 1,
         "weight": 0.9,
+        "weapon": {
+            "type": "melee",
+            "damage": 12,
+            "useTime": 60,
+            "range": 10,
+            "hitStart": 0.35,
+            "hitEnd": 0.75
+        },
+        "fuel": {
+            "kj": 45,
+            "moisture": 0.32
+        },
+        "tooltip": [
+            "Thrust at foes with Space"
+        ],
         "recipe": {
             "sharp_stick": 1,
             "stick": 2,
@@ -112,6 +187,10 @@
         "key": "stick_frame",
         "maxStack": 99,
         "weight": 1.0,
+        "fuel": {
+            "kj": 40,
+            "moisture": 0.28
+        },
         "recipe": {
             "stick": 4,
             "leaf_cord": 4
@@ -123,6 +202,10 @@
         "key": "leaf_wrap",
         "maxStack": 1,
         "weight": 0.5,
+        "fuel": {
+            "kj": 50,
+            "moisture": 0.4
+        },
         "equip": {
             "slot": "torso"
         },
@@ -137,6 +220,10 @@
         "key": "leaf_loincloth",
         "maxStack": 1,
         "weight": 0.4,
+        "fuel": {
+            "kj": 40,
+            "moisture": 0.4
+        },
         "equip": {
             "slot": "legs",
             "effects": {
@@ -157,8 +244,15 @@
         "key": "leaf_sandals",
         "maxStack": 1,
         "weight": 0.65,
+        "fuel": {
+            "kj": 35,
+            "moisture": 0.33
+        },
         "equip": {
-            "slot": "feet"
+            "slot": "feet",
+            "effects": {
+                "speed": 0.05
+            }
         },
         "recipe": {
             "leaf_cord": 3,
@@ -172,15 +266,29 @@
         "key": "leaf_pouch",
         "maxStack": 1,
         "weight": 0.3,
+        "fuel": {
+            "kj": 27,
+            "moisture": 0.4
+        },
         "equip": {
             "slot": "waist",
             "effects": {
-                "strength": 2
+                "strength": 2.5,
+                "addSlot": [
+                    "hotbar"
+                ]
             }
         },
         "recipe": {
             "leaf_cord": 3,
             "leaf": 12
         }
+    },
+    {
+        "id": "rot",
+        "name": "Rot",
+        "key": "rot",
+        "maxStack": 99,
+        "weight": 0.1
     }
 ]

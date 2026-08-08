@@ -2,9 +2,13 @@ localStorage.clear();
 
 var config = {
     type: Phaser.WEBGL,
-    width: 1024,
-    height: 768,
+    width: window.innerWidth,
+    height: window.innerHeight,
     backgroundColor: "black",
+    scale: {
+        mode: Phaser.Scale.RESIZE,
+        autoCenter: Phaser.Scale.CENTER_BOTH
+    },
     physics: {
         default: "arcade",
         arcade: {

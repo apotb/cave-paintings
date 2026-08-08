@@ -12,6 +12,21 @@ class SceneBase extends Phaser.Scene {
         // Data
         this.load.json("items", "data/Items.json");
         this.load.json("things", "data/Things.json");
+        // Queue thing textures once JSON arrives (spritesheet if `anim`, else image)
+        this.load.once("filecomplete-json-things", (_key, _type, data) => {
+            for (const t of data) {
+                if (!t?.key) continue;
+                const path = `assets/things/${t.key}.png`;
+                if (t.anim) {
+                    this.load.spritesheet(t.key, path, {
+                        frameWidth: t.anim.frameWidth ?? 16,
+                        frameHeight: t.anim.frameHeight ?? 16
+                    });
+                } else {
+                    this.load.image(t.key, path);
+                }
+            }
+        });
 
         // Player
         this.load.spritesheet("player", "assets/player/player.png", {
@@ -28,6 +43,9 @@ class SceneBase extends Phaser.Scene {
             "craft",
             "craft_hover",
             "craft_open",
+            "equipment",
+            "equipment_hover",
+            "equipment_open",
             "save",
             "save_hover",
             "save_open",
@@ -64,30 +82,11 @@ class SceneBase extends Phaser.Scene {
             this.loadImage(tile, 'tiles');
         }
 
-        // Things
-        const things = [
-            "tree",
-            "cactus",
-            "rock",
-            "snow_tree",
-            "palm_tree",
-            "sticks",
-            "apple_tree",
-            "coconut_tree",
-            "flowering_cactus",
-            "bush",
-            "blueberry_bush",
-            "snow_bush",
-            "leaves"
-        ];
-        for (const thing of things) {
-            this.loadImage(thing, 'things');
-        }
-
         // Items
         const items = [
             "blueberry",
             "apple",
+            "roasted_apple",
             "coconut",
             "cactus_flower",
             "blueberries",
@@ -99,7 +98,9 @@ class SceneBase extends Phaser.Scene {
             "leaf_loincloth",
             "leaf_sandals",
             "leaf_pouch",
-            "cracked_coconut"
+            "cracked_coconut",
+            "cracked_coconut_overlay",
+            "rot"
         ];
         for (const item of items) {
             this.loadImage(item, 'items');

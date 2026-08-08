@@ -14,22 +14,26 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.hp = 100;
         this.mhp = 100;
 
-        // Hunger
+        // Hunger: 2000 kcal per game day while standing still (ticked once per game minute)
         this.kc = 1200;
         this.stomach = 1600;
         this.hunger = 2000;
         this.saturation = 0;
-        this.scene.time.addEvent({
-            delay: 1000 * 60 * 24 / this.hunger,
-            callback: this.hungerTick,
-            callbackScope: this,
-            loop: true 
-        });
 
-        // Inventory
+        // Inventory / hotbar
         this.inventory = [];
+        this.baseInventorySize = 5;
         this.inventorySize = 5;
+        this.baseStrength = 15;
         this.strength = 15;
+        this.equipSpeedMultiplier = 1;
+        this.equipment = {
+            head: null,
+            torso: null,
+            legs: null,
+            feet: null,
+            waist: []
+        };
 
         // Movement
         this.speed = 3.5;
@@ -43,7 +47,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             A: Phaser.Input.Keyboard.KeyCodes.A,
             S: Phaser.Input.Keyboard.KeyCodes.S,
             D: Phaser.Input.Keyboard.KeyCodes.D,
-            T: Phaser.Input.Keyboard.KeyCodes.T,
+            Q: Phaser.Input.Keyboard.KeyCodes.Q,
             SPACE: Phaser.Input.Keyboard.KeyCodes.SPACE,
             SHIFT: Phaser.Input.Keyboard.KeyCodes.SHIFT,
             CTRL: Phaser.Input.Keyboard.KeyCodes.CTRL
@@ -53,6 +57,14 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.createAnimations();
         this.facing = "down";
         this.play("idle-down");
+
+        // Melee attack
+        this.attackTimer = 0;
+        this.attackMax = 0;
+        this.attackWeapon = null;
+        this.attackAngle = 0;
+        this.attackHitSet = null;
+        this.weaponSprite = null;
     }
 
     toJSON() {
@@ -64,7 +76,314 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             kc: this.kc,
             saturation: this.saturation,
             inventory: this.inventory,
+            equipment: this.equipment,
         }
+    }
+
+    getWaistGrant(itemId) {
+        if (!itemId) return 0;
+        const meta = this.scene.getItem(itemId);
+        const add = meta?.equip?.effects?.addSlot;
+        if (!add) return 0;
+        let n = 0;
+        for (const s of add) if (s === 'waist') n++;
+        return n;
+    }
+
+    getWaistCapacity() {
+        let n = 0;
+        for (const key of ['head', 'torso', 'legs', 'feet']) {
+            const stack = this.equipment[key];
+            if (stack) n += this.getWaistGrant(stack.id);
+        }
+        return n;
+    }
+
+    countWaistOccupied() {
+        let n = 0;
+        for (const stack of this.equipment.waist) if (stack) n++;
+        return n;
+    }
+
+    syncWaistSlots() {
+        const cap = this.getWaistCapacity();
+        while (this.equipment.waist.length < cap) this.equipment.waist.push(null);
+        if (this.equipment.waist.length > cap) {
+            this.equipment.waist.length = cap;
+        }
+    }
+
+    getHotbarBonus() {
+        let n = 0;
+        const pieces = [
+            this.equipment.head,
+            this.equipment.torso,
+            this.equipment.legs,
+            this.equipment.feet,
+            ...this.equipment.waist
+        ];
+        for (const stack of pieces) {
+            if (!stack) continue;
+            const add = this.scene.getItem(stack.id)?.equip?.effects?.addSlot;
+            if (!add) continue;
+            for (const s of add) if (s === 'hotbar') n++;
+        }
+        return n;
+    }
+
+    recomputeEquipmentEffects() {
+        let str = this.baseStrength;
+        let speedMul = 1;
+        const pieces = [
+            this.equipment.head,
+            this.equipment.torso,
+            this.equipment.legs,
+            this.equipment.feet,
+            ...this.equipment.waist
+        ];
+        for (const stack of pieces) {
+            if (!stack) continue;
+            const meta = this.scene.getItem(stack.id);
+            const effects = meta?.equip?.effects;
+            str += Number(effects?.strength || 0);
+            speedMul += Number(effects?.speed || 0);
+        }
+        this.strength = str;
+        this.equipSpeedMultiplier = speedMul;
+        this.syncInventorySize();
+    }
+
+    /** Resize hotbar inventory to base + equipment hotbar grants; overflow drops at feet. */
+    syncInventorySize() {
+        const size = Math.max(1, this.baseInventorySize + this.getHotbarBonus());
+        this.inventorySize = size;
+
+        while (this.inventory.length < size) this.inventory.push(null);
+
+        if (this.inventory.length > size) {
+            for (let i = size; i < this.inventory.length; i++) {
+                const stack = this.inventory[i];
+                if (!stack) continue;
+                const meta = this.scene.getItem(stack.id);
+                if (!meta) continue;
+                const extras = mealStackExtras(stack);
+                DroppedItem.spawn(
+                    this.scene, this.x, this.y,
+                    meta, stack.quantity, stack.spoilMinutes, extras
+                );
+            }
+            this.inventory.length = size;
+        }
+
+        if (this.scene.hotbar) {
+            this.scene.hotbar.setSize(size);
+            this.scene.hotbar.dirty = true;
+        }
+    }
+
+    /** @param {string} slotKey e.g. 'head' or 'waist:0' */
+    getEquipmentStack(slotKey) {
+        if (slotKey.startsWith('waist:')) {
+            const i = parseInt(slotKey.slice(6), 10);
+            return this.equipment.waist[i] || null;
+        }
+        return this.equipment[slotKey] || null;
+    }
+
+    setEquipmentStack(slotKey, stack) {
+        if (slotKey.startsWith('waist:')) {
+            const i = parseInt(slotKey.slice(6), 10);
+            while (this.equipment.waist.length <= i) this.equipment.waist.push(null);
+            this.equipment.waist[i] = stack;
+        } else {
+            this.equipment[slotKey] = stack;
+        }
+    }
+
+    /** Target equip slot name for an item ('head'|'torso'|...|'waist') */
+    getEquipSlotName(itemMeta) {
+        return itemMeta?.equip?.slot || null;
+    }
+
+    canChangeBodySlot(slotName, incomingMeta) {
+        // Waist slots don't grant further waists in current data
+        if (slotName === 'waist' || String(slotName).startsWith('waist:')) return true;
+
+        const current = this.equipment[slotName];
+        const oldGrant = current ? this.getWaistGrant(current.id) : 0;
+        const newGrant = incomingMeta ? this.getWaistGrant(incomingMeta.id) : 0;
+        const newCap = this.getWaistCapacity() - oldGrant + newGrant;
+        return this.countWaistOccupied() <= newCap;
+    }
+
+    /**
+     * Equip from hotbar into the natural slot for that item (hotswaps if occupied).
+     */
+    equipFromHotbarAuto(hotbarIndex) {
+        const stack = this.inventory[hotbarIndex];
+        if (!stack) return { ok: false, reason: 'empty' };
+
+        const meta = this.scene.getItem(stack.id);
+        const want = this.getEquipSlotName(meta);
+        if (!want) return { ok: false, reason: 'not_equip' };
+
+        let slotKey;
+        if (want === 'waist') {
+            const cap = this.getWaistCapacity();
+            if (cap <= 0) return { ok: false, reason: 'no_waist' };
+            let empty = -1;
+            for (let i = 0; i < cap; i++) {
+                if (!this.equipment.waist[i]) {
+                    empty = i;
+                    break;
+                }
+            }
+            slotKey = `waist:${empty !== -1 ? empty : 0}`;
+        } else {
+            slotKey = want;
+        }
+
+        return this.equipFromHotbar(hotbarIndex, slotKey);
+    }
+
+    /**
+     * Unequip into the first empty hotbar slot.
+     */
+    unequipToFirstHotbarSlot(slotKey) {
+        const inv = this.inventory;
+        let idx = inv.findIndex(s => !s);
+        if (idx === -1) {
+            if (inv.length < this.inventorySize) idx = inv.length;
+            else return { ok: false, reason: 'no_space' };
+        }
+        return this.unequipToHotbar(slotKey, idx);
+    }
+
+    /**
+     * Equip one item from hotbar index into equip slot key.
+     * @returns {{ok:boolean, reason?:string}}
+     */
+    equipFromHotbar(hotbarIndex, slotKey) {
+        const inv = this.inventory;
+        const stack = inv[hotbarIndex];
+        if (!stack) return { ok: false, reason: 'empty' };
+
+        const meta = this.scene.getItem(stack.id);
+        const wantSlot = this.getEquipSlotName(meta);
+        if (!wantSlot) return { ok: false, reason: 'not_equip' };
+
+        const isWaist = slotKey.startsWith('waist:');
+        const bodySlot = isWaist ? 'waist' : slotKey;
+        if (wantSlot !== bodySlot) return { ok: false, reason: 'wrong_slot' };
+
+        if (isWaist) {
+            const idx = parseInt(slotKey.slice(6), 10);
+            if (idx < 0 || idx >= this.getWaistCapacity()) return { ok: false, reason: 'no_waist' };
+        } else if (!this.canChangeBodySlot(slotKey, meta)) {
+            return { ok: false, reason: 'waist_blocked' };
+        }
+
+        const existing = this.getEquipmentStack(slotKey);
+
+        // Equipables are typically maxStack 1; move whole stack / swap with existing
+        if (stack.quantity !== 1 && existing) {
+            return { ok: false, reason: 'complex_stack' };
+        }
+
+        if (stack.quantity > 1) {
+            stack.quantity -= 1;
+            this.setEquipmentStack(slotKey, makeItemStack(meta, 1, stack.spoilMinutes));
+            if (existing) {
+                // Try to return existing to an empty inventory slot
+                const empty = inv.findIndex(s => !s);
+                if (empty !== -1) inv[empty] = existing;
+                else if (inv.length < this.inventorySize) inv.push(existing);
+                else {
+                    stack.quantity += 1;
+                    this.setEquipmentStack(slotKey, existing);
+                    return { ok: false, reason: 'no_space' };
+                }
+            }
+        } else {
+            inv[hotbarIndex] = existing;
+            this.setEquipmentStack(slotKey, makeItemStack(meta, 1, stack.spoilMinutes));
+        }
+
+        this.syncWaistSlots();
+        this.recomputeEquipmentEffects();
+        this.scene.hotbar.dirty = true;
+        return { ok: true };
+    }
+
+    /**
+     * Move equipped item to a hotbar index (swap if occupied with compatible gear).
+     */
+    unequipToHotbar(slotKey, hotbarIndex) {
+        const equipped = this.getEquipmentStack(slotKey);
+        if (!equipped) return { ok: false, reason: 'empty' };
+
+        const isWaist = slotKey.startsWith('waist:');
+        if (!isWaist && !this.canChangeBodySlot(slotKey, null)) {
+            return { ok: false, reason: 'waist_blocked' };
+        }
+
+        const inv = this.inventory;
+        while (inv.length <= hotbarIndex) inv.push(null);
+        const dest = inv[hotbarIndex];
+
+        if (!dest) {
+            inv[hotbarIndex] = equipped;
+            this.setEquipmentStack(slotKey, null);
+        } else if (dest.id === equipped.id) {
+            const meta = this.scene.getItem(dest.id);
+            const maxStack = Math.max(1, meta?.maxStack || 1);
+            if (dest.quantity + equipped.quantity > maxStack) return { ok: false, reason: 'full' };
+            dest.spoilMinutes = mergeSpoilMinutes(
+                dest.quantity, dest.spoilMinutes,
+                equipped.quantity, equipped.spoilMinutes
+            );
+            dest.quantity += equipped.quantity;
+            this.setEquipmentStack(slotKey, null);
+        } else {
+            const destMeta = this.scene.getItem(dest.id);
+            const want = this.getEquipSlotName(destMeta);
+            const bodySlot = isWaist ? 'waist' : slotKey;
+            if (!want || want !== bodySlot) return { ok: false, reason: 'wrong_slot' };
+            if (!isWaist && !this.canChangeBodySlot(slotKey, destMeta)) {
+                return { ok: false, reason: 'waist_blocked' };
+            }
+            inv[hotbarIndex] = equipped;
+            this.setEquipmentStack(slotKey, makeItemStack(destMeta, 1, dest.spoilMinutes));
+            if (dest.quantity > 1) {
+                dest.quantity -= 1;
+                const empty = inv.findIndex(s => !s);
+                if (empty !== -1) inv[empty] = dest;
+                else if (inv.length < this.inventorySize) inv.push(dest);
+                else {
+                    // rollback
+                    inv[hotbarIndex] = dest;
+                    this.setEquipmentStack(slotKey, equipped);
+                    return { ok: false, reason: 'no_space' };
+                }
+            }
+        }
+
+        this.syncWaistSlots();
+        this.recomputeEquipmentEffects();
+        this.scene.hotbar.dirty = true;
+        return { ok: true };
+    }
+
+    loadEquipment(data) {
+        this.equipment = {
+            head: data?.head ?? null,
+            torso: data?.torso ?? null,
+            legs: data?.legs ?? null,
+            feet: data?.feet ?? null,
+            waist: Array.isArray(data?.waist) ? data.waist.slice() : []
+        };
+        this.syncWaistSlots();
+        this.recomputeEquipmentEffects();
     }
 
     posX() {
@@ -83,15 +402,188 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.hp = Phaser.Math.Clamp(this.hp - amount, 0, this.mhp);
     }
 
+    /**
+     * @param {Number} amount
+     * @param {Object} [source]
+     * @param {{ type?: string }} [opts]
+     */
+    takeDamage(amount, source = null, opts = null) {
+        const dmg = Number(amount) || 0;
+        if (!(dmg > 0)) return 0;
+        const before = this.hp;
+        this.damage(dmg);
+        return before - this.hp;
+    }
+
     heal(amount) {
         this.damage(-amount);
     }
 
-    eat(food) {
-        if (this.kc === this.stomach) return false;
-        this.kc = Math.min(this.kc + food.kc, this.stomach);
-        this.saturation += food.kc * 0.1;
+    isAttacking() {
+        return this.attackTimer > 0;
+    }
+
+    /** Player body center in world space (origin is bottom-left). */
+    bodyCenter() {
+        return {
+            x: this.x + this.width * 0.5,
+            y: this.y - this.height * 0.5
+        };
+    }
+
+    facingFromAngle(angle) {
+        const a = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+        if (a >= Math.PI * 0.25 && a < Math.PI * 0.75) return "down";
+        if (a >= Math.PI * 0.75 && a < Math.PI * 1.25) return "left";
+        if (a >= Math.PI * 1.25 && a < Math.PI * 1.75) return "up";
+        return "right";
+    }
+
+    startMeleeAttack(meta) {
+        if (this.isAttacking()) return false;
+        const w = meta?.weapon;
+        if (!w || w.type !== "melee") return false;
+
+        const pointer = this.scene.input.activePointer;
+        const world = this.scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const c = this.bodyCenter();
+        let angle = Math.atan2(world.y - c.y, world.x - c.x);
+        if (!Number.isFinite(angle)) angle = 0;
+
+        this.attackWeapon = w;
+        this.attackMax = Math.max(1, Math.floor(Number(w.useTime) || 20));
+        this.attackTimer = this.attackMax;
+        this.attackAngle = angle;
+        this.attackHitSet = new Set();
+        this.facing = this.facingFromAngle(angle);
+
+        const key = meta.key || meta.id;
+        if (!this.weaponSprite) {
+            // Grip at bottom-left of diagonal art; tip at top-right
+            this.weaponSprite = this.scene.add.image(c.x, c.y, key)
+                .setOrigin(0.2, 0.8)
+                .setVisible(false);
+            this.scene.mainLayer.add(this.weaponSprite);
+        } else if (this.scene.textures.exists(key)) {
+            this.weaponSprite.setTexture(key);
+        }
+        this.weaponSprite
+            .setOrigin(0.2, 0.8)
+            .setVisible(true)
+            .setDepth(this.y + 1);
+        this._updateWeaponSprite(0);
         return true;
+    }
+
+    _attackProgress() {
+        if (this.attackMax <= 0) return 1;
+        return 1 - (this.attackTimer / this.attackMax);
+    }
+
+    /** Art tip points up-right (-45°) at rotation 0 → add +45° so tip follows aim. */
+    _spearRotation(aimAngle) {
+        return aimAngle + Math.PI / 4;
+    }
+
+    /**
+     * Jab: 0→1 extends out, 1→0 pulls back to the player.
+     * @returns {Number} thrust 0..1
+     */
+    _spearThrust(progress) {
+        // ~40% of the anim extend, ~60% retract (snappy jab)
+        const peak = 0.4;
+        if (progress <= peak) {
+            const t = progress / peak;
+            // ease-out
+            return 1 - (1 - t) * (1 - t);
+        }
+        const t = (progress - peak) / (1 - peak);
+        // ease-in back to body
+        return (1 - t) * (1 - t);
+    }
+
+    _updateWeaponSprite(progress) {
+        if (!this.weaponSprite || !this.attackWeapon) return;
+        const range = Number(this.attackWeapon.range) || 28;
+        const thrust = this._spearThrust(progress);
+        // Hold near hands, then jab out by roughly weapon range
+        const hold = 4;
+        const dist = hold + range * thrust;
+        const c = this.bodyCenter();
+        const ang = this.attackAngle;
+        this.weaponSprite.setPosition(
+            c.x + Math.cos(ang) * dist,
+            c.y + Math.sin(ang) * dist
+        );
+        this.weaponSprite.setRotation(this._spearRotation(ang));
+        this.weaponSprite.setDepth(this.y + 1);
+    }
+
+    _meleeHitCheck(progress) {
+        const w = this.attackWeapon;
+        if (!w) return;
+        const start = Number(w.hitStart ?? 0.35);
+        const end = Number(w.hitEnd ?? 0.75);
+        if (progress < start || progress > end) return;
+
+        const range = Number(w.range) || 28;
+        const thrust = this._spearThrust(progress);
+        const tipDist = 4 + range * thrust + 10;
+        const c = this.bodyCenter();
+        const tipX = c.x + Math.cos(this.attackAngle) * tipDist;
+        const tipY = c.y + Math.sin(this.attackAngle) * tipDist;
+        const hitR = 8;
+        const hitR2 = hitR * hitR;
+        const dmg = Number(w.damage) || 0;
+        if (!(dmg > 0)) return;
+
+        const group = this.scene.damageables;
+        if (!group) return;
+        for (const target of group.getChildren()) {
+            if (!target || !target.active || target === this) continue;
+            if (this.attackHitSet.has(target)) continue;
+            if (typeof target.takeDamage !== "function") continue;
+
+            let tx, ty;
+            if (typeof target.bodyCenter === "function") {
+                const bc = target.bodyCenter();
+                tx = bc.x; ty = bc.y;
+            } else if (target.body) {
+                tx = target.body.center.x;
+                ty = target.body.center.y;
+            } else {
+                tx = target.x;
+                ty = target.y;
+            }
+            const dx = tx - tipX;
+            const dy = ty - tipY;
+            if (dx * dx + dy * dy > hitR2) continue;
+
+            this.attackHitSet.add(target);
+            target.takeDamage(dmg, this, { type: "melee" });
+        }
+    }
+
+    _endAttack() {
+        this.attackTimer = 0;
+        this.attackMax = 0;
+        this.attackWeapon = null;
+        this.attackHitSet = null;
+        if (this.weaponSprite) this.weaponSprite.setVisible(false);
+    }
+
+    /**
+     * Eat up to stomach capacity.
+     * @returns {number} kcal actually consumed (0 if none)
+     */
+    eat(food) {
+        const kc = Number(food?.kc ?? 0);
+        if (!(kc > 0)) return 0;
+        if (this.kc >= this.stomach) return 0;
+        const consumed = Math.min(kc, this.stomach - this.kc);
+        this.kc += consumed;
+        this.saturation += consumed * 0.1;
+        return consumed;
     }
 
     starve(kc) {
@@ -103,23 +595,31 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     hungerTick() {
-        let tick = 1;
-        if (this.isSprinting) tick += 0.5;
+        // 2000 kcal over 1440 game minutes (one day) while idle
+        let tick = this.hunger / (24 * 60);
+        if (this.isSprinting) tick *= 1.5;
         tick *= this.getEncumbrance().hungerRate;
         this.starve(tick);
         if (this.kc === 0) this.damage(0.25);
     }
 
-    gainItem(item, amount=1) {
+    gainItem(item, amount = 1, spoilMinutes = undefined) {
         let remaining = amount;
         const weightLeft = Math.max(0, this.strength * 2 - this.getInventoryWeight());
         let allowedByWeight = Math.floor((weightLeft + Math.pow(10, -8)) / item.weight);
+        const incomingSpoil = spoilMinutes !== undefined
+            ? spoilMinutes
+            : defaultSpoilMinutes(item);
 
         // Fill existing stacks first
         for (const slot of this.inventory) {
             if (!slot || slot.id !== item.id || slot.quantity >= item.maxStack) continue;
             const space = item.maxStack - slot.quantity;
             const toAdd = Math.min(space, remaining, allowedByWeight);
+            slot.spoilMinutes = mergeSpoilMinutes(
+                slot.quantity, slot.spoilMinutes,
+                toAdd, incomingSpoil
+            );
             slot.quantity += toAdd;
             remaining -= toAdd;
             allowedByWeight -= toAdd;
@@ -132,15 +632,16 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         // Create new stacks as needed
         while (remaining > 0 && allowedByWeight > 0) {
             const toAdd = Math.min(item.maxStack, remaining, allowedByWeight);
+            const stack = makeItemStack(item, toAdd, incomingSpoil);
             const nullIndex = this.inventory.findIndex(s => !s);
             if (nullIndex !== -1) {
-                this.inventory[nullIndex] = { id: item.id, quantity: toAdd };
+                this.inventory[nullIndex] = stack;
                 remaining -= toAdd;
                 allowedByWeight -= toAdd;
                 continue;
             }
             if (this.inventory.length >= this.inventorySize) break;
-            this.inventory.push({ id: item.id, quantity: toAdd });
+            this.inventory.push(stack);
             remaining -= toAdd;
             allowedByWeight -= toAdd;
         }
@@ -195,11 +696,57 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (item) this.useItem(item);
     }
 
+    /** Hold Space to keep attacking with a weapon. */
+    tryWeaponAutofire() {
+        if (this.isAttacking()) return;
+        const item = this.getHeldItem();
+        if (!item) return;
+        const meta = this.scene.getItem(item.id);
+        if (meta?.weapon?.type === "melee") {
+            this.startMeleeAttack(meta);
+        }
+        // ranged autofire when projectiles exist
+    }
+
     useItem(item) {
         const meta = this.scene.getItem(item.id);
-        if (meta.food) {
-            const canEat = this.eat(meta.food);
-            if (canEat) this.loseItem(item);
+        // Stack-level food (dynamic meals) overrides item def
+        const food = item.food || meta?.food;
+        // 0 kcal foods still spoil but are not edible
+        if (food && Number(food.kc ?? 0) > 0) {
+            const total = Number(food.kc);
+            const room = this.stomach - this.kc;
+            if (room <= 0) return;
+            // Stacked food: only eat a whole unit (no partial across a stack)
+            if ((item.quantity || 1) > 1 && room < total) return;
+
+            const consumed = this.eat(food);
+            if (!(consumed > 0)) return;
+
+            if (consumed >= total) {
+                this.loseItem(item);
+            } else {
+                // Leftover kcal stays on this item (meals / single stacks)
+                if (!item.food) item.food = { ...meta.food };
+                if (item.food.kcFull == null) item.food.kcFull = Math.round(total);
+                item.food.kc = Math.max(0, Math.round(total - consumed));
+                if (item.food.kc <= 0) {
+                    this.loseItem(item);
+                }
+            }
+            this.scene.hotbar.dirty = true;
+            return;
+        }
+        if (meta?.weapon?.type === "melee") {
+            this.startMeleeAttack(meta);
+            return;
+        }
+        if (meta?.weapon?.type === "ranged") {
+            // Projectiles not implemented yet
+            return;
+        }
+        if (meta.use === 'light_fire') {
+            this.scene.tryUseFirestarter();
         }
     }
 
@@ -208,7 +755,21 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         for (const stack of this.inventory) {
             if (!stack) continue;
             const meta = this.scene.getItem(stack.id);
-            total += meta.weight * stack.quantity;
+            const w = stack.weight != null ? stack.weight : meta.weight;
+            total += w * stack.quantity;
+        }
+        const worn = [
+            this.equipment.head,
+            this.equipment.torso,
+            this.equipment.legs,
+            this.equipment.feet,
+            ...this.equipment.waist
+        ];
+        for (const stack of worn) {
+            if (!stack) continue;
+            const meta = this.scene.getItem(stack.id);
+            const w = stack.weight != null ? stack.weight : meta.weight;
+            total += w * stack.quantity;
         }
         return Math.round(total * 100) / 100;
     }
@@ -238,15 +799,27 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
 
         const encumbrance = this.getEncumbrance();
-        this.isSprinting = this.keys.SHIFT.isDown && !encumbrance.cannotSprint && this.kc > 0;
-        const speed = this.speed * this.scene.tileSize * (this.isSprinting ? this.sprintFactor : 1) * encumbrance.speedMultiplier;
+        const moving = x !== 0 || y !== 0;
+        const attacking = this.isAttacking();
+        this.isSprinting = !attacking
+            && moving
+            && this.keys.SHIFT.isDown
+            && !encumbrance.cannotSprint
+            && this.kc > 0;
+        const speed = this.speed * this.scene.tileSize
+            * (this.isSprinting ? this.sprintFactor : 1)
+            * encumbrance.speedMultiplier
+            * this.equipSpeedMultiplier;
         this.anims.timeScale = this.isSprinting ? 1.5 : 1.0;
 
         this.setVelocity(x * speed, y * speed);
         this.setDepth(this.y);
 
-        // Animation
-        if (x !== 0 || y !== 0) {
+        // Animation (attack locks facing toward aim)
+        if (attacking) {
+            this.facing = this.facingFromAngle(this.attackAngle);
+            this.play(moving ? `walk-${this.facing}` : `idle-${this.facing}`, true);
+        } else if (moving) {
             if (Math.abs(x) > Math.abs(y)) {
                 this.facing = x > 0 ? "right" : "left";
             } else {
@@ -257,20 +830,38 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this.play(`idle-${this.facing}`, true);
         }
 
+        // Melee attack tick
+        if (attacking) {
+            const progress = this._attackProgress();
+            this._updateWeaponSprite(progress);
+            this._meleeHitCheck(progress);
+            this.attackTimer -= 1;
+            if (this.attackTimer <= 0) this._endAttack();
+        }
+
         // Drop item
-        if (Phaser.Input.Keyboard.JustDown(this.keys.T)) {
+        if (Phaser.Input.Keyboard.JustDown(this.keys.Q)) {
             let heldItem = this.getHeldItem();
             if (!heldItem) return;
             let amount = 1;
             if (this.keys.SHIFT.isDown) amount = heldItem.quantity;
             else if (this.keys.CTRL.isDown) amount = 10;
+            const spoilMinutes = heldItem.spoilMinutes;
+            const extras = mealStackExtras(heldItem);
             const numDropped = this.loseItemAt(this.scene.hotbar.activeIndex, amount);
-            new DroppedItem(this.scene, this.x, this.y, this.scene.getItem(heldItem.id), numDropped);
+            DroppedItem.spawn(
+                this.scene, this.x, this.y,
+                this.scene.getItem(heldItem.id), numDropped, spoilMinutes, extras
+            );
             this.scene.hotbar.dirty = true;
         }
 
-        // Use held item
-        if (Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) this.useHeldItem();
+        // Use held item (tap); weapons also autofire while Space is held
+        if (Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) {
+            this.useHeldItem();
+        } else if (this.keys.SPACE.isDown) {
+            this.tryWeaponAutofire();
+        }
     }
 
     createAnimations() {
