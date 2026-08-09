@@ -40,8 +40,9 @@ class SceneMain extends SceneBase {
         });
         this.groundLayer.add(this._waterSprite);
 
-        // Combat targets (player, future animals/monsters)
+        // Combat targets (player, animals/monsters)
         this.damageables = this.add.group();
+        this.mobs = this.physics.add.group();
 
         // Player
         this.player = new Player(this, 0, 0);
@@ -52,7 +53,8 @@ class SceneMain extends SceneBase {
         // In-game clock: 1 game minute per real second, starts Day 1 08:00
         this.gameDay = 1;
         this.gameMinutes = 8 * 60;
-        this.time.addEvent({
+        this.tickSpeed = 1;
+        this._worldMinuteEvent = this.time.addEvent({
             delay: 1000,
             callback: this.worldMinuteTick,
             callbackScope: this,
@@ -62,6 +64,8 @@ class SceneMain extends SceneBase {
         // Collisions
         this._things = this.physics.add.staticGroup();
         this.physics.add.collider(this.player, this._things);
+        this.physics.add.collider(this.player, this.mobs);
+        this.physics.add.collider(this.mobs, this._things);
         this.droppedItems = this.add.group();
 
         // UI
@@ -94,6 +98,7 @@ class SceneMain extends SceneBase {
         this.key0 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ZERO);
         this.keyC = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.C);
         this.keyE = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+        this.keyG = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.G);
     }
 
     createBars() {
@@ -271,6 +276,7 @@ class SceneMain extends SceneBase {
         };
 
         this.showTooltip = (textOrFn, x, y, target=null) => {
+            if (this.player?.blocksTooltips?.()) return;
             this._tooltipSource = (typeof textOrFn === "function") ? textOrFn : () => textOrFn;
             this._tooltipTarget = target;
             const t = this._tooltipSource() || "";
@@ -350,6 +356,24 @@ class SceneMain extends SceneBase {
         // Reconcile hover after camera/player movement (Phaser only updates on mouse move)
         this.syncPointerHover = () => {
             const pointer = this.input.activePointer;
+
+            if (this.player?.blocksTooltips?.()) {
+                if (this._hoverTarget) {
+                    const prev = this._hoverTarget;
+                    this._hoverTarget = null;
+                    if (prev.active && prev.input?.enabled) prev.emit("pointerout", pointer);
+                }
+                this.hideTooltip();
+                this._wasTooltipBlocked = true;
+                this.input.setDefaultCursor("default");
+                return;
+            }
+
+            if (this._wasTooltipBlocked) {
+                this._wasTooltipBlocked = false;
+                this._hoverTarget = null; // re-fire pointerover after attack
+            }
+
             const top = this._pickHoverTarget(pointer);
 
             if (top !== this._hoverTarget) {
@@ -613,6 +637,7 @@ class SceneMain extends SceneBase {
                 d.quantity -= take;
                 left -= take;
                 if (d.quantity <= 0) d.destroy();
+                else d.syncToEntry?.();
             }
         }
         return true;
@@ -684,6 +709,81 @@ class SceneMain extends SceneBase {
         this.clockText.setText(`Day ${this.gameDay}  ${hh}:${mm}`);
     }
 
+    /**
+     * Debug: change how fast the world clock ticks.
+     * @param {Number} mult  1 = normal (1 game min / real sec), 60 ≈ 1 game hour/sec, 0 = pause
+     */
+    setTickSpeed(mult) {
+        const m = Number(mult);
+        if (!Number.isFinite(m) || m < 0) return this.tickSpeed;
+        this.tickSpeed = m;
+        if (this._worldMinuteEvent) {
+            this._worldMinuteEvent.remove(false);
+            this._worldMinuteEvent = null;
+        }
+        if (m > 0) {
+            this._worldMinuteEvent = this.time.addEvent({
+                delay: Math.max(1, 1000 / m),
+                callback: this.worldMinuteTick,
+                callbackScope: this,
+                loop: true
+            });
+        }
+        return this.tickSpeed;
+    }
+
+    /** Absolute in-game minute index (for regrow timers). */
+    worldMinuteIndex() {
+        return (Number(this.gameDay) || 1) * 1440 + (Number(this.gameMinutes) || 0);
+    }
+
+    /** Roll regrowAt = now + base * (0.85..1.15). */
+    jitteredRegrowAt(baseMinutes) {
+        const base = Math.max(1, Math.floor(Number(baseMinutes) || 0));
+        const factor = 0.85 + Math.random() * 0.30;
+        return this.worldMinuteIndex() + Math.max(1, Math.floor(base * factor));
+    }
+
+    /**
+     * If entry.regrowAt is due, restore id / clear gone flags (no sprites).
+     * @returns {boolean} true if entry was updated
+     */
+    applyDueLootableRegrow(entry) {
+        if (!entry || entry.regrowAt == null) return false;
+        if (this.worldMinuteIndex() < entry.regrowAt) return false;
+        const id = entry.regrowId || entry.id;
+        if (!id) return false;
+        entry.id = id;
+        delete entry.gone;
+        delete entry.regrowAt;
+        delete entry.regrowId;
+        return true;
+    }
+
+    /** Finish a due regrow on a loaded chunk (morph or respawn sprite). */
+    finishLootableRegrow(chunk, entry) {
+        if (!this.applyDueLootableRegrow(entry)) return;
+        const live = chunk.things?.getChildren?.().find(t => t.entry === entry);
+        if (live && typeof live.morph === "function") {
+            live.morph(entry.id);
+        } else if (chunk.isLoaded) {
+            chunk.things.add(new LootableThing(this, entry, chunk));
+        }
+        this.markLightDirty?.();
+    }
+
+    /** Scan loaded chunks only — unloaded catch up in makeThings. */
+    tickLootableRegrows() {
+        const now = this.worldMinuteIndex();
+        for (const chunk of Object.values(this.chunks || {})) {
+            if (!chunk?.isLoaded || !chunk.meta?.lootableThings) continue;
+            for (const entry of chunk.meta.lootableThings) {
+                if (entry.regrowAt == null || now < entry.regrowAt) continue;
+                this.finishLootableRegrow(chunk, entry);
+            }
+        }
+    }
+
     worldMinuteTick() {
         if (this.isPaused) return;
 
@@ -698,6 +798,7 @@ class SceneMain extends SceneBase {
         this.player.hungerTick();
         this.tickSpoilage();
         this.tickCampfires();
+        this.tickLootableRegrows();
     }
 
     tickSpoilage() {
@@ -732,15 +833,21 @@ class SceneMain extends SceneBase {
         for (const drop of this.droppedItems.getChildren()) {
             if (!drop.active || drop.spoilMinutes == null) continue;
             drop.spoilMinutes -= 1;
-            if (drop.spoilMinutes > 0) continue;
+            if (drop.spoilMinutes > 0) {
+                drop.syncToEntry?.();
+                continue;
+            }
             dirty = true;
             if (!rot) {
                 delete drop.spoilMinutes;
+                drop.syncToEntry?.();
                 continue;
             }
             drop.item = rot;
+            if (drop.entry) drop.entry.id = rot.id;
             delete drop.spoilMinutes;
             drop.setTexture(rot.key);
+            drop.syncToEntry?.();
         }
 
         let cookDirty = false;
@@ -835,8 +942,12 @@ class SceneMain extends SceneBase {
 
         if (item.weapon) {
             const dmg = Number(item.weapon.damage ?? 0);
-            if (dmg > 0) lines.push(`Damage: ${dmg}`);
-            if (item.weapon.type) lines.push(`Type: ${item.weapon.type}`);
+            if (dmg > 0) {
+                const type = item.weapon.type ? ` ${item.weapon.type}` : "";
+                lines.push(`Damage: ${dmg}${type}`);
+            } else if (item.weapon.type) {
+                lines.push(`Type: ${item.weapon.type}`);
+            }
         }
 
         if (item.fuel) {
@@ -1082,41 +1193,100 @@ class SceneMain extends SceneBase {
         this.equipmentBtn.setOrigin(0.5, 0.5).setScale(6 * s);
         this.uiLayer.add(this.equipmentBtn);
 
+        this._savePressed = false;
         this.save = this.add.image(this.scale.width - 80 * s, 32 * s, 'save');
         this.save.setInteractive({ useHandCursor: true, pixelPerfect: true });
-        this.save.on('pointerdown', async () => {
+        this.save.on('pointerdown', () => {
+            this._savePressed = true;
             this.save.setTexture('save_open');
-            await this.saveFile();
-            this.save.setTexture('save');
+            this.saveFile();
+            // Download can swallow Phaser pointerup; keep open briefly for press feedback
+            this.time.delayedCall(150, () => {
+                this._releasePressButton('_savePressed', this.save, 'save');
+            });
         });
         this.save.on('pointerover', (p) => {
-            this.save.setTexture('save_hover');
+            if (!this._savePressed) this.save.setTexture('save_hover');
             this.showTooltip('Save', p.x, p.y, this.save);
         });
         this.save.on('pointerout', () => {
-            this.save.setTexture('save');
-            this.hideTooltip();
+            if (!this._savePressed) this.save.setTexture('save');
+            if (this._tooltipTarget === this.save) this.hideTooltip();
         });
         this.save.setOrigin(0.5, 0.5).setScale(3 * s);
         this.uiLayer.add(this.save);
 
+        this._loadPressed = false;
         this.load = this.add.image(this.scale.width - 32 * s, 32 * s, 'load');
         this.load.setInteractive({ useHandCursor: true, pixelPerfect: true });
-        this.load.on('pointerdown', async () => {
+        this.load.on('pointerdown', () => {
+            this._loadPressed = true;
             this.load.setTexture('load_open');
-            await this.loadFile();
-            this.load.setTexture('load');
+            // File dialog can swallow Phaser pointerup; release when dialog settles
+            this.loadFile().finally(() => this._releasePressButton('_loadPressed', this.load, 'load'));
         });
         this.load.on('pointerover', (p) => {
-            this.load.setTexture('load_hover');
+            if (!this._loadPressed) this.load.setTexture('load_hover');
             this.showTooltip('Load', p.x, p.y, this.load);
         });
         this.load.on('pointerout', () => {
-            this.load.setTexture('load');
-            this.hideTooltip();
+            if (!this._loadPressed) this.load.setTexture('load');
+            if (this._tooltipTarget === this.load) this.hideTooltip();
         });
         this.load.setOrigin(0.5, 0.5).setScale(3 * s);
         this.uiLayer.add(this.load);
+
+        // Help (hover for controls; hold-click shows pressed art only)
+        this._helpPressed = false;
+        this.help = this.add.image(this.scale.width - 32 * s, this.scale.height - 32 * s, 'help');
+        this.help.setInteractive({ useHandCursor: true, pixelPerfect: true });
+        this.help.on('pointerover', (p) => {
+            if (!this._helpPressed) this.help.setTexture('help_hover');
+            this.showTooltip(() => this._helpTooltipText(), p.x, p.y, this.help);
+        });
+        this.help.on('pointerout', () => {
+            if (!this._helpPressed) this.help.setTexture('help');
+            if (this._tooltipTarget === this.help) this.hideTooltip();
+        });
+        this.help.on('pointerdown', () => {
+            this._helpPressed = true;
+            this.help.setTexture('help_click');
+        });
+        this.help.setOrigin(0.5, 0.5).setScale(3 * s);
+        this.uiLayer.add(this.help);
+
+        this.input.on('pointerup', () => {
+            this._releasePressButton('_savePressed', this.save, 'save');
+            this._releasePressButton('_loadPressed', this.load, 'load');
+            this._releasePressButton('_helpPressed', this.help, 'help');
+        });
+    }
+
+    /** Clear a momentary press texture (browser dialogs often skip Phaser pointerup). */
+    _releasePressButton(flagName, image, key) {
+        if (!this[flagName] || !image) return;
+        this[flagName] = false;
+        const p = this.input.activePointer;
+        const over = Phaser.Geom.Rectangle.Contains(image.getBounds(), p.x, p.y);
+        const hoverKey = key === 'help' ? 'help_hover' : `${key}_hover`;
+        image.setTexture(over ? hoverKey : key);
+    }
+
+    _helpTooltipText() {
+        return [
+            "WASD / Arrows — Move",
+            "Shift — Sprint",
+            "Space — Use item / Attack",
+            "Mouse — Aim attacks",
+            "Click — Pick up / interact",
+            "Z — Pick up nearby items",
+            "Q — Drop item",
+            "Shift+Q — Drop stack",
+            "Ctrl+Q — Drop 10",
+            "1-0 — Hotbar slots",
+            "C — Crafting",
+            "E — Equipment"
+        ].join("\n");
     }
 
     closeCraftMenu() {
@@ -1206,6 +1376,12 @@ class SceneMain extends SceneBase {
             }
             this.save.setScale(3 * s).setPosition(this.scale.width - 80 * s, 32 * s);
             this.load.setScale(3 * s).setPosition(this.scale.width - 32 * s, 32 * s);
+            if (this.help) {
+                this.help.setScale(3 * s).setPosition(
+                    this.scale.width - 32 * s,
+                    this.scale.height - 32 * s
+                );
+            }
         }
 
         if (this.craftMenuVisible) this.refreshCraftMenu();
@@ -1261,11 +1437,35 @@ class SceneMain extends SceneBase {
             this.isPaused = true;
             const fileInput = document.getElementById("fileLoader");
             fileInput.value = "";
+            let settled = false;
+            const settle = (fn, value) => {
+                if (settled) return;
+                settled = true;
+                window.removeEventListener('focus', onWindowFocus);
+                fileInput.removeEventListener('cancel', onFileCancel);
+                fn(value);
+            };
+            // Cancel often skips onchange; when focus returns, treat as dismiss
+            const onWindowFocus = () => {
+                window.setTimeout(() => {
+                    if (settled) return;
+                    this.isPaused = false;
+                    settle(resolve, null);
+                }, 250);
+            };
+            const onFileCancel = () => {
+                this.isPaused = false;
+                settle(resolve, null);
+            };
+            fileInput.addEventListener('cancel', onFileCancel, { once: true });
             fileInput.onchange = (e) => {
+                // Selection started — don't treat focus return as cancel mid-read
+                window.removeEventListener('focus', onWindowFocus);
+                fileInput.removeEventListener('cancel', onFileCancel);
                 const file = e.target.files[0];
                 if (!file) {
                     this.isPaused = false;
-                    reject(new Error("No file selected"));
+                    settle(reject, new Error("No file selected"));
                     return;
                 }
                 const reader = new FileReader();
@@ -1276,6 +1476,15 @@ class SceneMain extends SceneBase {
                         for (const chunk of Object.values(this.chunks)) chunk.unload();
                         this.chunks = {};
                         this._things.clear(true, true);
+                        if (this.mobs) {
+                            for (const mob of this.mobs.getChildren().slice()) {
+                                this.damageables.remove(mob);
+                            }
+                            this.mobs.clear(true, true);
+                        }
+                        if (this.droppedItems) {
+                            this.droppedItems.clear(true, true);
+                        }
 
                         // Seed
                         worldSeed = data.seed;
@@ -1286,7 +1495,9 @@ class SceneMain extends SceneBase {
                             const chunk = new Chunk(this, meta.x, meta.y, {
                                 tiles: meta.tiles,
                                 things: meta.things,
-                                lootableThings: meta.lootableThings
+                                lootableThings: meta.lootableThings,
+                                mobs: meta.mobs || [],
+                                drops: meta.drops || []
                             });
                             chunk.isGenerated = !chunk.meta.tiles.every(t => !t);
                             this.chunks[key] = chunk;
@@ -1324,16 +1535,21 @@ class SceneMain extends SceneBase {
                             this.equipmentPanel.layout();
                         }
 
-                        resolve(data);
+                        settle(resolve, data);
                     } catch (err) {
                         console.error("Failed to parse save file:", err);
-                        reject(err);
+                        settle(reject, err);
                     } finally {
                         this.isPaused = false;
                     }
                 };
+                reader.onerror = () => {
+                    this.isPaused = false;
+                    settle(reject, reader.error || new Error("Failed to read file"));
+                };
                 reader.readAsText(file);
             };
+            window.addEventListener('focus', onWindowFocus);
             fileInput.click();
         });
     }
@@ -1383,9 +1599,24 @@ class SceneMain extends SceneBase {
         if (this.key0.isDown && this.hotbar.size >= 10) this.hotbar.changeSlot(9);
         if (Phaser.Input.Keyboard.JustDown(this.keyC)) this.toggleCraftMenu();
         if (Phaser.Input.Keyboard.JustDown(this.keyE)) this.toggleEquipmentMenu();
+        if (Phaser.Input.Keyboard.JustDown(this.keyG)) {
+            LivingMob.spawn(this, "human", this.player.x, this.player.y);
+        }
 
         // Update player
         this.player.update();
+
+        // Update living mobs (slice: AI may destroy self on chunk boundary)
+        for (const mob of this.mobs.getChildren().slice()) {
+            if (mob?.active && typeof mob.update === "function") {
+                mob.update(time, delta);
+            }
+        }
+        for (const drop of this.droppedItems.getChildren().slice()) {
+            if (drop?.active && typeof drop.update === "function") {
+                drop.update(time, delta);
+            }
+        }
         if (
             this.player.hp !== this._lastHp ||
             this.player.mhp !== this._lastMhp ||

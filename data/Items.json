@@ -53,6 +53,35 @@
         }
     },
     {
+        "id": "raw_beef",
+        "name": "Raw Beef",
+        "key": "raw_beef",
+        "maxStack": 99,
+        "weight": 0.12,
+        "fillColor": "#A63D3D",
+        "food": {
+            "kc": 100,
+            "spoil": 12
+        },
+        "cook": {
+            "stick_roast": {
+                "result": "roast_beef",
+                "minutes": 15
+            }
+        }
+    },
+    {
+        "id": "roast_beef",
+        "name": "Roast Beef",
+        "key": "roast_beef",
+        "maxStack": 99,
+        "weight": 0.1,
+        "food": {
+            "kc": 180,
+            "spoil": 36
+        }
+    },
+    {
         "id": "coconut",
         "name": "Coconut",
         "key": "coconut",
@@ -162,10 +191,10 @@
         "weight": 0.9,
         "weapon": {
             "type": "melee",
-            "damage": 12,
+            "damage": 5,
             "useTime": 60,
-            "range": 10,
-            "hitStart": 0.35,
+            "range": 8,
+            "hitStart": 0.25,
             "hitEnd": 0.75
         },
         "fuel": {

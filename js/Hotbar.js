@@ -285,7 +285,9 @@ class Hotbar {
                         const b = inv[to]   ?? null;
 
                         if (a) {
-                            if (b && a.id === b.id) {
+                            const aSpecial = !!(a.customName || a.food || a.ingredients);
+                            const bSpecial = !!(b && (b.customName || b.food || b.ingredients));
+                            if (b && a.id === b.id && !aSpecial && !bSpecial) {
                                 const meta = this.scene.getItem(a.id);
                                 const maxStack = Math.max(1, meta?.maxStack || 1);
                                 const space = Math.max(0, maxStack - b.quantity);

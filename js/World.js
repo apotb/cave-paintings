@@ -36,23 +36,33 @@ class Chunk {
         this.x = x;
         this.y = y;
         this.things = this.scene.add.group();
+        this.mobs = this.scene.add.group();
+        this.drops = this.scene.add.group();
         this.isLoaded = false;
         this.isGenerated = false;
         this.meta = meta || {
             tiles: new Array(scene.chunkSize * scene.chunkSize),
             things: [],
-            lootableThings: []
-        }
+            lootableThings: [],
+            mobs: [],
+            drops: []
+        };
+        if (!this.meta.mobs) this.meta.mobs = [];
+        if (!this.meta.drops) this.meta.drops = [];
     }
 
     toJSON() {
+        this.flushMobs();
+        this.flushDrops();
         return {
             x: this.x,
             y: this.y,
             tiles: this.meta.tiles,
             things: this.meta.things,
-            lootableThings: this.meta.lootableThings
-        }
+            lootableThings: this.meta.lootableThings,
+            mobs: this.meta.mobs,
+            drops: this.meta.drops
+        };
     }
 
     seed() {
@@ -71,6 +81,19 @@ class Chunk {
             this.rt = null;
         }
         this.things.children.each(thing => thing.destroy());
+        this.flushMobs();
+        this.flushDrops();
+        for (const mob of this.mobs.getChildren().slice()) {
+            this.scene.damageables?.remove(mob);
+            this.scene.mobs?.remove(mob);
+            mob.destroy();
+        }
+        this.mobs.clear(false, false);
+        for (const drop of this.drops.getChildren().slice()) {
+            if (typeof drop.persistDestroy === "function") drop.persistDestroy();
+            else drop.destroy();
+        }
+        this.drops.clear(false, false);
         this.scene.markLightDirty?.();
     }
 
@@ -80,6 +103,20 @@ class Chunk {
         await this.generate();
         await this.render();
         await this.makeThings();
+        await this.makeMobs();
+        await this.makeDrops();
+    }
+
+    flushMobs() {
+        this.mobs?.children?.each(mob => {
+            if (typeof mob.syncToEntry === "function") mob.syncToEntry();
+        });
+    }
+
+    flushDrops() {
+        this.drops?.children?.each(drop => {
+            if (typeof drop.syncToEntry === "function") drop.syncToEntry();
+        });
     }
 
     generate() {
@@ -270,11 +307,37 @@ class Chunk {
             }
             this.things.add(thing);
         }
-        for (const meta of this.meta.lootableThings) {
-            const thing = new LootableThing(this.scene, meta.x, meta.y, meta.id);
-            this.things.add(thing);
+        if (!this.meta.lootableThings) this.meta.lootableThings = [];
+        for (const entry of this.meta.lootableThings) {
+            // Catch up regrows that came due while this chunk was unloaded
+            this.scene.applyDueLootableRegrow?.(entry);
+            if (entry.gone) continue;
+            if (!entry?.id) continue;
+            this.things.add(new LootableThing(this.scene, entry, this));
         }
         this.scene.markLightDirty?.();
+        return Promise.resolve();
+    }
+
+    async makeMobs() {
+        if (!this.meta.mobs) this.meta.mobs = [];
+        const live = this.scene.mobs?.getChildren() || [];
+        for (const entry of this.meta.mobs) {
+            if (!entry?.id) continue;
+            if (live.some(m => m.entry === entry)) continue;
+            new LivingMob(this.scene, entry, this);
+        }
+        return Promise.resolve();
+    }
+
+    async makeDrops() {
+        if (!this.meta.drops) this.meta.drops = [];
+        const live = this.scene.droppedItems?.getChildren() || [];
+        for (const entry of this.meta.drops) {
+            if (!entry?.id || !(entry.quantity > 0)) continue;
+            if (live.some(d => d.entry === entry)) continue;
+            new DroppedItem(this.scene, entry, this);
+        }
         return Promise.resolve();
     }
 }

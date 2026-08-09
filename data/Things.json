@@ -8,7 +8,8 @@
         "lootable": {
             "item": "stick",
             "yield": 3,
-            "transform": null
+            "transform": null,
+            "regrowMinutes": 7200
         }
     },
     {
@@ -25,7 +26,8 @@
         "lootable": {
             "item": "apple",
             "yield": 3,
-            "transform": "tree"
+            "transform": "tree",
+            "regrowMinutes": 2160
         }
     },
     {
@@ -48,7 +50,8 @@
         "lootable": {
             "item": "cactus_flower",
             "yield": 1,
-            "transform": "cactus"
+            "transform": "cactus",
+            "regrowMinutes": 2160
         }
     },
     {
@@ -65,7 +68,8 @@
         "lootable": {
             "item": "coconut",
             "yield": 2,
-            "transform": "palm_tree"
+            "transform": "palm_tree",
+            "regrowMinutes": 2880
         }
     },
     {
@@ -82,7 +86,8 @@
         "lootable": {
             "item": "blueberry",
             "yield": 5,
-            "transform": "bush"
+            "transform": "bush",
+            "regrowMinutes": 1440
         }
     },
     {
@@ -105,7 +110,8 @@
         "lootable": {
             "item": "leaf",
             "yield": 3,
-            "transform": null
+            "transform": null,
+            "regrowMinutes": 7200
         }
     },
     {

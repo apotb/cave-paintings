@@ -48,10 +48,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             S: Phaser.Input.Keyboard.KeyCodes.S,
             D: Phaser.Input.Keyboard.KeyCodes.D,
             Q: Phaser.Input.Keyboard.KeyCodes.Q,
+            Z: Phaser.Input.Keyboard.KeyCodes.Z,
             SPACE: Phaser.Input.Keyboard.KeyCodes.SPACE,
             SHIFT: Phaser.Input.Keyboard.KeyCodes.SHIFT,
             CTRL: Phaser.Input.Keyboard.KeyCodes.CTRL
         });
+        /** Hold Z pickup radius in tiles (standing on / very near the drop). */
+        this.pickupRange = 0.55;
 
         // Animations
         this.createAnimations();
@@ -65,6 +68,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.attackAngle = 0;
         this.attackHitSet = null;
         this.weaponSprite = null;
+        this.tooltipBlockUntil = 0;
     }
 
     toJSON() {
@@ -423,11 +427,32 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return this.attackTimer > 0;
     }
 
+    /** Hide tooltips during an attack and briefly after it ends. */
+    blocksTooltips() {
+        return this.isAttacking() || (this.scene.time?.now ?? 0) < this.tooltipBlockUntil;
+    }
+
     /** Player body center in world space (origin is bottom-left). */
     bodyCenter() {
         return {
             x: this.x + this.width * 0.5,
             y: this.y - this.height * 0.5
+        };
+    }
+
+    /**
+     * Solid body bounds for melee (origin bottom-left).
+     * Insets empty frame edges so the box matches the drawn character.
+     */
+    hurtbox(pad = 0) {
+        const insetX = Math.max(2, Math.floor(this.width * 0.2));
+        const insetTop = Math.max(1, Math.floor(this.height * 0.12));
+        const insetBottom = Math.max(1, Math.floor(this.height * 0.06));
+        return {
+            left: this.x + insetX - pad,
+            top: this.y - this.height + insetTop - pad,
+            right: this.x + this.width - insetX + pad,
+            bottom: this.y - insetBottom + pad
         };
     }
 
@@ -456,6 +481,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.attackAngle = angle;
         this.attackHitSet = new Set();
         this.facing = this.facingFromAngle(angle);
+        this.scene.hideTooltip?.();
 
         const key = meta.key || meta.id;
         if (!this.weaponSprite) {
@@ -504,38 +530,93 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     _updateWeaponSprite(progress) {
         if (!this.weaponSprite || !this.attackWeapon) return;
-        const range = Number(this.attackWeapon.range) || 28;
+        const range = Number(this.attackWeapon.range) || 12;
         const thrust = this._spearThrust(progress);
-        // Hold near hands, then jab out by roughly weapon range
-        const hold = 4;
-        const dist = hold + range * thrust;
+        // Anchor the mid-shaft at hold + range * thrust (between grip-forward and tip-forward).
+        const hold = 6;
+        const anchorDist = hold + range * thrust;
         const c = this.bodyCenter();
         const ang = this.attackAngle;
-        this.weaponSprite.setPosition(
-            c.x + Math.cos(ang) * dist,
-            c.y + Math.sin(ang) * dist
-        );
-        this.weaponSprite.setRotation(this._spearRotation(ang));
+        const rot = this._spearRotation(ang);
+        this.weaponSprite.setRotation(rot);
+
+        const ax = c.x + Math.cos(ang) * anchorDist;
+        const ay = c.y + Math.sin(ang) * anchorDist;
+        const fw = this.weaponSprite.frame?.width || this.weaponSprite.width || 16;
+        const fh = this.weaponSprite.frame?.height || this.weaponSprite.height || 16;
+        // Midpoint along the diagonal shaft (butt → tip)
+        const mid = this._weaponFrameLocalOffset((fw - 1) * 0.5, (fh - 1) * 0.5);
+        this.weaponSprite.setPosition(ax - mid.x, ay - mid.y);
         this.weaponSprite.setDepth(this.y + 1);
+    }
+
+    /** World-space offset from sprite origin to a frame-space pixel (uses current rotation). */
+    _weaponFrameLocalOffset(frameX, frameY) {
+        const spr = this.weaponSprite;
+        const w = spr.frame?.width || spr.width || 16;
+        const h = spr.frame?.height || spr.height || 16;
+        const localX = frameX - spr.originX * w;
+        const localY = frameY - spr.originY * h;
+        const cos = Math.cos(spr.rotation);
+        const sin = Math.sin(spr.rotation);
+        return {
+            x: localX * cos - localY * sin,
+            y: localX * sin + localY * cos
+        };
+    }
+
+    /**
+     * Transform a frame-space pixel on the weapon sprite into world coords.
+     */
+    _weaponFrameToWorld(frameX, frameY) {
+        const spr = this.weaponSprite;
+        if (!spr || !spr.visible) return null;
+        const w = spr.frame?.width || spr.width || 16;
+        const h = spr.frame?.height || spr.height || 16;
+        const localX = frameX - spr.originX * w;
+        const localY = frameY - spr.originY * h;
+        const cos = Math.cos(spr.rotation);
+        const sin = Math.sin(spr.rotation);
+        return {
+            x: spr.x + localX * cos - localY * sin,
+            y: spr.y + localX * sin + localY * cos
+        };
+    }
+
+    /**
+     * Distal (tip) half of the spear in world space.
+     * Art is a 16×16 diagonal: grip ~bottom-left, tip ~top-right.
+     */
+    _getSpearHitSegment() {
+        const spr = this.weaponSprite;
+        if (!spr || !spr.visible) return null;
+        const w = spr.frame?.width || spr.width || 16;
+        const h = spr.frame?.height || spr.height || 16;
+        const tip = this._weaponFrameToWorld(w - 1, 0);
+        const butt = this._weaponFrameToWorld(0, h - 1);
+        if (!tip || !butt) return null;
+        // Midpoint → tip = top / sharp half of the spear
+        const mid = {
+            x: butt.x + (tip.x - butt.x) * 0.5,
+            y: butt.y + (tip.y - butt.y) * 0.5
+        };
+        return { a: mid, b: tip };
     }
 
     _meleeHitCheck(progress) {
         const w = this.attackWeapon;
         if (!w) return;
-        const start = Number(w.hitStart ?? 0.35);
+        const start = Number(w.hitStart ?? 0.25);
         const end = Number(w.hitEnd ?? 0.75);
         if (progress < start || progress > end) return;
 
-        const range = Number(w.range) || 28;
-        const thrust = this._spearThrust(progress);
-        const tipDist = 4 + range * thrust + 10;
-        const c = this.bodyCenter();
-        const tipX = c.x + Math.cos(this.attackAngle) * tipDist;
-        const tipY = c.y + Math.sin(this.attackAngle) * tipDist;
-        const hitR = 8;
-        const hitR2 = hitR * hitR;
+        const seg = this._getSpearHitSegment();
+        if (!seg) return;
         const dmg = Number(w.damage) || 0;
         if (!(dmg > 0)) return;
+
+        // Thickness of the spear hit capsule (half-width in px)
+        const radius = 3;
 
         const group = this.scene.damageables;
         if (!group) return;
@@ -544,24 +625,83 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (this.attackHitSet.has(target)) continue;
             if (typeof target.takeDamage !== "function") continue;
 
-            let tx, ty;
-            if (typeof target.bodyCenter === "function") {
-                const bc = target.bodyCenter();
-                tx = bc.x; ty = bc.y;
-            } else if (target.body) {
-                tx = target.body.center.x;
-                ty = target.body.center.y;
-            } else {
-                tx = target.x;
-                ty = target.y;
-            }
-            const dx = tx - tipX;
-            const dy = ty - tipY;
-            if (dx * dx + dy * dy > hitR2) continue;
+            if (!this._meleeSegmentHitsTarget(seg.a, seg.b, radius, target)) continue;
 
             this.attackHitSet.add(target);
             target.takeDamage(dmg, this, { type: "melee" });
         }
+    }
+
+    /** Thick spear segment vs target hurtbox / body. */
+    _meleeSegmentHitsTarget(a, b, radius, target) {
+        if (typeof target.hurtbox === "function") {
+            return this._segmentHitsRect(a.x, a.y, b.x, b.y, target.hurtbox(0), radius);
+        }
+
+        let tx, ty, rad;
+        if (typeof target.bodyCenter === "function") {
+            const bc = target.bodyCenter();
+            tx = bc.x; ty = bc.y;
+            rad = Math.max(target.width, target.height) * 0.5;
+        } else if (target.body) {
+            tx = target.body.center.x;
+            ty = target.body.center.y;
+            rad = Math.max(target.body.width, target.body.height) * 0.55;
+        } else {
+            tx = target.x;
+            ty = target.y;
+            rad = 10;
+        }
+        const dist = this._distPointToSegment(tx, ty, a.x, a.y, b.x, b.y);
+        return dist <= rad + radius;
+    }
+
+    /** Capsule (segment + radius) vs AABB — expand the box, then test the segment. */
+    _segmentHitsRect(ax, ay, bx, by, box, radius = 0) {
+        const left = box.left - radius;
+        const right = box.right + radius;
+        const top = box.top - radius;
+        const bottom = box.bottom + radius;
+
+        if (ax >= left && ax <= right && ay >= top && ay <= bottom) return true;
+        if (bx >= left && bx <= right && by >= top && by <= bottom) return true;
+
+        const edges = [
+            [left, top, right, top],
+            [right, top, right, bottom],
+            [right, bottom, left, bottom],
+            [left, bottom, left, top]
+        ];
+        for (const [ex1, ey1, ex2, ey2] of edges) {
+            if (this._segmentsIntersect(ax, ay, bx, by, ex1, ey1, ex2, ey2)) return true;
+        }
+        return false;
+    }
+
+    _closestPointOnSegment(px, py, ax, ay, bx, by) {
+        const abx = bx - ax;
+        const aby = by - ay;
+        const len2 = abx * abx + aby * aby;
+        if (len2 <= 1e-8) return { x: ax, y: ay };
+        let t = ((px - ax) * abx + (py - ay) * aby) / len2;
+        t = Phaser.Math.Clamp(t, 0, 1);
+        return { x: ax + abx * t, y: ay + aby * t };
+    }
+
+    _distPointToSegment(px, py, ax, ay, bx, by) {
+        const c = this._closestPointOnSegment(px, py, ax, ay, bx, by);
+        return Math.hypot(px - c.x, py - c.y);
+    }
+
+    _segmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
+        const abx = bx - ax, aby = by - ay;
+        const cdx = dx - cx, cdy = dy - cy;
+        const den = abx * cdy - aby * cdx;
+        if (Math.abs(den) < 1e-8) return false;
+        const acx = cx - ax, acy = cy - ay;
+        const t = (acx * cdy - acy * cdx) / den;
+        const u = (acx * aby - acy * abx) / den;
+        return t >= 0 && t <= 1 && u >= 0 && u <= 1;
     }
 
     _endAttack() {
@@ -570,6 +710,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.attackWeapon = null;
         this.attackHitSet = null;
         if (this.weaponSprite) this.weaponSprite.setVisible(false);
+        this.tooltipBlockUntil = (this.scene.time?.now ?? 0) + 250;
     }
 
     /**
@@ -611,9 +752,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             ? spoilMinutes
             : defaultSpoilMinutes(item);
 
-        // Fill existing stacks first
+        // Fill existing stacks first (never merge into meals / food-overridden stacks)
         for (const slot of this.inventory) {
             if (!slot || slot.id !== item.id || slot.quantity >= item.maxStack) continue;
+            if (slot.customName || slot.food || slot.ingredients) continue;
             const space = item.maxStack - slot.quantity;
             const toAdd = Math.min(space, remaining, allowedByWeight);
             slot.spoilMinutes = mergeSpoilMinutes(
@@ -708,6 +850,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         // ranged autofire when projectiles exist
     }
 
+    /** Dynamic coconut meals can be partially eaten; normal food is all-or-nothing. */
+    _isPartialFood(item) {
+        return !!(item?.customName || item?.ingredients?.length);
+    }
+
     useItem(item) {
         const meta = this.scene.getItem(item.id);
         // Stack-level food (dynamic meals) overrides item def
@@ -719,15 +866,18 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (room <= 0) return;
             // Stacked food: only eat a whole unit (no partial across a stack)
             if ((item.quantity || 1) > 1 && room < total) return;
+            // Non-meals (apple, roast beef, …): must fit the whole item
+            const isMeal = this._isPartialFood(item);
+            if (!isMeal && room < total) return;
 
             const consumed = this.eat(food);
             if (!(consumed > 0)) return;
 
-            if (consumed >= total) {
+            if (!isMeal || consumed >= total) {
                 this.loseItem(item);
             } else {
-                // Leftover kcal stays on this item (meals / single stacks)
-                if (!item.food) item.food = { ...meta.food };
+                // Leftover kcal stays on this meal only
+                if (!item.food) item.food = { ...(meta?.food || {}) };
                 if (item.food.kcFull == null) item.food.kcFull = Math.round(total);
                 item.food.kc = Math.max(0, Math.round(total - consumed));
                 if (item.food.kc <= 0) {
@@ -839,21 +989,27 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (this.attackTimer <= 0) this._endAttack();
         }
 
+        // Hold Z to pick up nearby ground items
+        if (this.keys.Z.isDown) {
+            this.tryPickupNearby();
+        }
+
         // Drop item
         if (Phaser.Input.Keyboard.JustDown(this.keys.Q)) {
-            let heldItem = this.getHeldItem();
-            if (!heldItem) return;
-            let amount = 1;
-            if (this.keys.SHIFT.isDown) amount = heldItem.quantity;
-            else if (this.keys.CTRL.isDown) amount = 10;
-            const spoilMinutes = heldItem.spoilMinutes;
-            const extras = mealStackExtras(heldItem);
-            const numDropped = this.loseItemAt(this.scene.hotbar.activeIndex, amount);
-            DroppedItem.spawn(
-                this.scene, this.x, this.y,
-                this.scene.getItem(heldItem.id), numDropped, spoilMinutes, extras
-            );
-            this.scene.hotbar.dirty = true;
+            const heldItem = this.getHeldItem();
+            if (heldItem) {
+                let amount = 1;
+                if (this.keys.SHIFT.isDown) amount = heldItem.quantity;
+                else if (this.keys.CTRL.isDown) amount = 10;
+                const spoilMinutes = heldItem.spoilMinutes;
+                const extras = mealStackExtras(heldItem);
+                const numDropped = this.loseItemAt(this.scene.hotbar.activeIndex, amount);
+                DroppedItem.spawn(
+                    this.scene, this.x, this.y,
+                    this.scene.getItem(heldItem.id), numDropped, spoilMinutes, extras
+                );
+                this.scene.hotbar.dirty = true;
+            }
         }
 
         // Use held item (tap); weapons also autofire while Space is held
@@ -864,39 +1020,61 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
+    /** Pick up dropped items within pickupRange (nearest first). */
+    tryPickupNearby() {
+        const group = this.scene.droppedItems;
+        if (!group) return;
+        const r = this.scene.tileSize * this.pickupRange;
+        const r2 = r * r;
+        const drops = group.getChildren()
+            .filter(d => d?.active && typeof d.tryPickup === "function")
+            .map(d => ({
+                drop: d,
+                d2: Phaser.Math.Distance.Squared(this.x, this.y, d.x, d.y)
+            }))
+            .filter(e => e.d2 <= r2)
+            .sort((a, b) => a.d2 - b.d2);
+
+        for (const { drop } of drops) {
+            drop.tryPickup();
+        }
+    }
+
     createAnimations() {
-        if (this.anims.exists("walk-down")) return;
-        this.anims.create({
+        // Global manager so LivingMobs (and anything else) can reuse these keys
+        const anims = this.scene.anims;
+        if (anims.exists("walk-down")) return;
+        anims.create({
             key: "walk-down",
-            frames: this.anims.generateFrameNumbers("player", { start: 0, end: 2 }),
+            frames: anims.generateFrameNumbers("player", { start: 0, end: 2 }),
             frameRate: 5,
             repeat: -1,
             yoyo: true
         });
-        this.anims.create({
+        anims.create({
             key: "walk-left",
-            frames: this.anims.generateFrameNumbers("player", { start: 3, end: 5 }),
+            frames: anims.generateFrameNumbers("player", { start: 3, end: 5 }),
             frameRate: 5,
             repeat: -1,
             yoyo: true
         });
-        this.anims.create({
+        anims.create({
             key: "walk-right",
-            frames: this.anims.generateFrameNumbers("player", { start: 6, end: 8 }),
+            frames: anims.generateFrameNumbers("player", { start: 6, end: 8 }),
             frameRate: 5,
             repeat: -1,
             yoyo: true
         });
-        this.anims.create({
+        anims.create({
             key: "walk-up",
-            frames: this.anims.generateFrameNumbers("player", { start: 9, end: 11 }),
+            frames: anims.generateFrameNumbers("player", { start: 9, end: 11 }),
             frameRate: 5,
             repeat: -1,
             yoyo: true
         });
-        this.anims.create({ key: "idle-down", frames: [ { key: "player", frame: 1 } ], frameRate: 10 });
-        this.anims.create({ key: "idle-left", frames: [ { key: "player", frame: 4 } ], frameRate: 10 });
-        this.anims.create({ key: "idle-right", frames: [ { key: "player", frame: 7 } ], frameRate: 10 });
-        this.anims.create({ key: "idle-up", frames: [ { key: "player", frame: 10 } ], frameRate: 10 });
+        anims.create({ key: "idle-down", frames: [ { key: "player", frame: 1 } ], frameRate: 10 });
+        anims.create({ key: "idle-left", frames: [ { key: "player", frame: 4 } ], frameRate: 10 });
+        anims.create({ key: "idle-right", frames: [ { key: "player", frame: 7 } ], frameRate: 10 });
+        anims.create({ key: "idle-up", frames: [ { key: "player", frame: 10 } ], frameRate: 10 });
     }
 }

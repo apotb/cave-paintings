@@ -1,0 +1,71 @@
+/**
+ * Harmless wander AI: idle pauses alternating with short random walks.
+ * No reaction to damage or the player.
+ */
+class DoofusAI {
+    constructor(mob) {
+        this.mob = mob;
+        this.state = "idle";
+        this.timer = 0;
+        this.dirX = 0;
+        this.dirY = 0;
+        this._beginIdle();
+    }
+
+    update(delta) {
+        const mob = this.mob;
+        if (!mob?.active || mob.hp <= 0) return;
+
+        this.timer -= delta;
+        if (this.timer <= 0) {
+            if (this.state === "idle") this._beginWalk();
+            else this._beginIdle();
+        }
+
+        if (this.state === "walk") {
+            this._applyWalk(1);
+        } else {
+            mob.setVelocity(0, 0);
+            mob.anims.timeScale = 1;
+            mob.playAnim(`idle-${mob.facing}`);
+        }
+    }
+
+    _applyWalk(speedMult) {
+        const mob = this.mob;
+        const speed = (Number(mob.def?.speed) || 1) * mob.scene.tileSize * speedMult;
+        let x = this.dirX;
+        let y = this.dirY;
+        const len = Math.hypot(x, y) || 1;
+        x /= len;
+        y /= len;
+        mob.setVelocity(x * speed, y * speed);
+
+        if (Math.abs(x) > Math.abs(y)) {
+            mob.facing = x > 0 ? "right" : "left";
+        } else if (y !== 0) {
+            mob.facing = y > 0 ? "down" : "up";
+        }
+        mob.anims.timeScale = speedMult > 1.2 ? 1.5 : 1;
+        mob.playAnim(`walk-${mob.facing}`);
+    }
+
+    _beginIdle() {
+        this.state = "idle";
+        this.dirX = 0;
+        this.dirY = 0;
+        this.timer = Phaser.Math.Between(1000, 3000);
+    }
+
+    _beginWalk() {
+        this.state = "walk";
+        const dirs = [
+            [1, 0], [-1, 0], [0, 1], [0, -1],
+            [1, 1], [1, -1], [-1, 1], [-1, -1]
+        ];
+        const [dx, dy] = Phaser.Utils.Array.GetRandom(dirs);
+        this.dirX = dx;
+        this.dirY = dy;
+        this.timer = Phaser.Math.Between(1000, 2000);
+    }
+}

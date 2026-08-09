@@ -94,13 +94,25 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
     }
 }
 
+/**
+ * World lootable. `entry` is the object in chunk.meta.lootableThings (mutated for save).
+ */
 class LootableThing extends Thing {
-    constructor(scene, x, y, id) {
-        super(scene, x, y, id);
-        this.on('pointerdown', () => {
+    /**
+     * @param {Phaser.Scene} scene
+     * @param {{ x: number, y: number, id: string, gone?: boolean, regrowAt?: number, regrowId?: string }} entry
+     * @param {Chunk} [chunk]
+     */
+    constructor(scene, entry, chunk = null) {
+        super(scene, entry.x, entry.y, entry.id);
+        this.entry = entry;
+        this.chunk = chunk;
+
+        this.on("pointerdown", () => {
             if (this.canPickup()) this.pickUp();
         });
-        this.on('pointerover', (pointer) => {
+        this.on("pointerover", (pointer) => {
+            if (!this.meta.lootable) return;
             const itemMeta = this.scene.getItem(this.meta.lootable.item);
             const stack = { id: itemMeta?.id, quantity: this.meta.lootable.yield ?? 1 };
             this.scene.showTooltip(
@@ -110,43 +122,83 @@ class LootableThing extends Thing {
                 this
             );
         });
-        this.on('pointerout', () => {
+        this.on("pointerout", () => {
             if (this.scene._hoverTarget === this) this.scene._hoverTarget = null;
             if (this.scene._tooltipTarget === this) this.scene.hideTooltip();
         });
+
+        if (!this.meta.lootable) this.disableInteractive();
     }
 
-    setup(hitboxSize=0) {
+    setup(hitboxSize = 0) {
         super.setup(hitboxSize);
-        this.setInteractive({ cursor: 'pointer' });
+        if (this.meta?.lootable) this.setInteractive({ cursor: "pointer" });
     }
 
     morph(id) {
         super.morph(id);
         if (this.meta.lootable) {
-            this.setInteractive({ cursor: 'pointer' });
+            this.setInteractive({ cursor: "pointer" });
         } else {
             this.disableInteractive();
         }
     }
 
     canPickup() {
+        if (!this.meta?.lootable || this.entry?.gone) return false;
         const dx = this.x - this.scene.player.x;
         const dy = this.y - this.scene.player.y;
-        const d2 = dx*dx + dy*dy;
+        const d2 = dx * dx + dy * dy;
         const r = this.scene.tileSize * this.scene.player.interactionRange;
-        return d2 <= r*r;
+        return d2 <= r * r;
+    }
+
+    _removeEntry() {
+        const list = this.chunk?.meta?.lootableThings;
+        if (!list || !this.entry) return;
+        const i = list.indexOf(this.entry);
+        if (i >= 0) list.splice(i, 1);
     }
 
     pickUp() {
-        const item = this.scene.getItem(this.meta.lootable.item);
-        const remaining = this.scene.player.gainItem(item, this.meta.lootable.yield);
+        const loot = this.meta?.lootable;
+        if (!loot || !this.entry) return;
+
+        const harvestedId = this.meta.id;
+        const item = this.scene.getItem(loot.item);
+        const remaining = this.scene.player.gainItem(item, loot.yield);
         if (remaining > 0) DroppedItem.spawn(this.scene, this.x, this.y, item, remaining);
         this.scene.hideTooltip();
-        const transform = this.meta.lootable.transform;
+
+        const transform = loot.transform;
+        const regrowMinutes = Number(loot.regrowMinutes);
+        const canRegrow = regrowMinutes > 0 && typeof this.scene.jitteredRegrowAt === "function";
+
         if (transform) {
+            this.entry.id = transform;
+            if (canRegrow) {
+                this.entry.regrowId = harvestedId;
+                this.entry.regrowAt = this.scene.jitteredRegrowAt(regrowMinutes);
+            } else {
+                delete this.entry.regrowId;
+                delete this.entry.regrowAt;
+                delete this.entry.gone;
+            }
             this.morph(transform);
-        } else this.destroy();
+            return;
+        }
+
+        // Debris: vanish; optionally leave a gone stub for later respawn
+        if (canRegrow) {
+            this.entry.gone = true;
+            this.entry.regrowId = harvestedId;
+            this.entry.regrowAt = this.scene.jitteredRegrowAt(regrowMinutes);
+            this.destroy();
+            return;
+        }
+
+        this._removeEntry();
+        this.destroy();
     }
 }
 

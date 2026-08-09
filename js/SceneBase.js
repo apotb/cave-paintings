@@ -28,10 +28,29 @@ class SceneBase extends Phaser.Scene {
             }
         });
 
-        // Player
+        // Player (before mobs so shared keys like "player" are already queued)
         this.load.spritesheet("player", "assets/player/player.png", {
             frameWidth: 16,
             frameHeight: 16
+        });
+
+        this.load.json("mobs", "data/Mobs.json");
+        // Queue mob textures (skip keys already queued/loaded, e.g. player)
+        this.load.once("filecomplete-json-mobs", (_key, _type, data) => {
+            for (const m of data) {
+                if (!m?.key) continue;
+                if (m.key === "player") continue;
+                if (this.textures.exists(m.key)) continue;
+                const path = `assets/mobs/${m.key}.png`;
+                if (m.anim) {
+                    this.load.spritesheet(m.key, path, {
+                        frameWidth: m.anim.frameWidth ?? 16,
+                        frameHeight: m.anim.frameHeight ?? 16
+                    });
+                } else {
+                    this.load.image(m.key, path);
+                }
+            }
         });
 
         // UI
@@ -51,7 +70,10 @@ class SceneBase extends Phaser.Scene {
             "save_open",
             "load",
             "load_hover",
-            "load_open"
+            "load_open",
+            "help",
+            "help_hover",
+            "help_click"
         ];
         for (const ui of uis) {
             this.loadImage(ui, 'ui');
@@ -87,6 +109,8 @@ class SceneBase extends Phaser.Scene {
             "blueberry",
             "apple",
             "roasted_apple",
+            "raw_beef",
+            "roast_beef",
             "coconut",
             "cactus_flower",
             "blueberries",
@@ -127,5 +151,13 @@ class SceneBase extends Phaser.Scene {
 
     getThing(id) {
         return this.things().find(i => i?.id === id);
+    }
+
+    mobsData() {
+        return this.cache.json.get("mobs");
+    }
+
+    getMob(id) {
+        return this.mobsData()?.find(m => m?.id === id);
     }
 }

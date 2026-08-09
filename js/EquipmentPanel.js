@@ -76,6 +76,12 @@ class EquipmentPanel {
         return null;
     }
 
+    _slotLabel(key) {
+        if (key.startsWith('waist:')) return 'Waist';
+        const labels = { head: 'Head', torso: 'Torso', legs: 'Legs', feet: 'Feet' };
+        return labels[key] || key;
+    }
+
     layout() {
         const s = this.scene.uiScale || 1;
         const btn = this.scene.equipmentBtn;
@@ -198,7 +204,10 @@ class EquipmentPanel {
 
         slot.on('pointerover', (p) => {
             const stack = this.scene.player.getEquipmentStack(key);
-            if (!stack) return;
+            if (!stack) {
+                this.scene.showTooltip(this._slotLabel(key), p.x, p.y, slot);
+                return;
+            }
             const meta = this.scene.getItem(stack.id);
             this.scene.showTooltip(
                 () => this.scene.formatItemTooltip(meta, stack.quantity, stack.spoilMinutes, stack),

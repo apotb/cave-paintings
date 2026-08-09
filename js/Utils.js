@@ -48,6 +48,28 @@ function setHour(hour, minute = 0) {
 }
 
 /**
+ * Debug: set world clock tick speed (spoilage, campfires, plant regrow, etc.).
+ * @param {Number} [mult]  Omit to read current. 1 = normal, 60 ≈ 1 game hour/sec, 0 = pause.
+ * @returns {Number|String}
+ * @example setTickSpeed(60)
+ * @example setTickSpeed(1)
+ */
+function setTickSpeed(mult) {
+    const scene = getScene();
+    if (mult == null || mult === "") {
+        return scene.tickSpeed ?? 1;
+    }
+    const m = Number(mult);
+    if (!Number.isFinite(m) || m < 0) {
+        return `Invalid speed "${mult}". Use setTickSpeed(1) for normal, 0 to pause.`;
+    }
+    const speed = scene.setTickSpeed(m);
+    if (speed === 0) return "Tick speed: paused (0)";
+    const delay = Math.max(1, 1000 / speed);
+    return `Tick speed: ${speed}× (${delay.toFixed(0)} ms / game minute)`;
+}
+
+/**
  * Debug: add an item to the player inventory.
  * @param {String} [id]       Item id from Items.json (omit to list ids)
  * @param {Number} [amount=1]
@@ -249,7 +271,7 @@ function getCookRecipe(getItem, inputId, method) {
     return recipe;
 }
 
-const SIMMER_INGREDIENTS = new Set(["apple", "blueberry"]);
+const SIMMER_INGREDIENTS = new Set(["apple", "blueberry", "raw_beef"]);
 const SIMMER_MINUTES_PER_SLOT = 5;
 
 function isSimmerIngredient(itemId) {
@@ -271,7 +293,20 @@ function getSimmerDishInfo(getItem, ingredientIds, coconutMeta) {
     let name = "Simmered Meal";
     let spoilHours = 24;
 
-    if (unique.length === 1 && unique[0] === "blueberry") {
+    const hasBeef = unique.includes("raw_beef");
+    const hasApple = unique.includes("apple");
+    const hasBlue = unique.includes("blueberry");
+
+    if (hasBeef) {
+        kind = "stew";
+        spoilHours = 36;
+        if (hasApple && hasBlue) name = "Hunter's Stew";
+        else if (hasApple) name = "Apple Beef Stew";
+        else if (hasBlue) {
+            name = "Blueberry Beef Stew";
+            spoilHours = 24;
+        } else name = "Beef Stew";
+    } else if (unique.length === 1 && unique[0] === "blueberry") {
         kind = "mash";
         name = "Blueberry Mash";
         spoilHours = 12;
@@ -279,7 +314,7 @@ function getSimmerDishInfo(getItem, ingredientIds, coconutMeta) {
         kind = "simmered";
         name = "Simmered Apples";
         spoilHours = 48;
-    } else if (unique.includes("blueberry") && unique.includes("apple")) {
+    } else if (hasBlue && hasApple) {
         kind = "tart";
         name = "Blueberry-Apple Tart";
         spoilHours = 24;
@@ -472,9 +507,18 @@ function makeCoconutMealStack(getItem, ingredientIds, coconutMeta) {
     };
 }
 
-/** Clone dynamic meal fields for drop/transfer. */
+/** Clone stack-level meal/food fields for drop/transfer. */
 function mealStackExtras(stack) {
-    if (!stack || !(stack.customName || stack.food)) return null;
+    if (!stack) return null;
+    const hasExtras = !!(
+        stack.customName
+        || stack.food
+        || stack.ingredients?.length
+        || stack.weight != null
+        || stack.kind
+        || stack.fillTint != null
+    );
+    if (!hasExtras) return null;
     return {
         customName: stack.customName,
         food: stack.food ? { ...stack.food } : undefined,
@@ -483,6 +527,18 @@ function mealStackExtras(stack) {
         kind: stack.kind,
         fillTint: stack.fillTint
     };
+}
+
+/** True if a ground drop / stack carries meal or food-override data. */
+function hasStackExtras(dropOrStack) {
+    return !!(
+        dropOrStack?.customName
+        || dropOrStack?.food
+        || dropOrStack?.ingredients?.length
+        || dropOrStack?.stackWeight != null
+        || dropOrStack?.kind
+        || dropOrStack?.fillTint != null
+    );
 }
 
 /**
