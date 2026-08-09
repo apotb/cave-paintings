@@ -15,12 +15,18 @@ class BodyPart {
         this.baseId = baseId;
         this.side = side || "";
         this.def = def;
-        this.mhp = Number(def.mhp) || 10;
+        const scale = Number(body?.plan?.healthScale);
+        const baseMhp = Number(def.mhp) || 10;
+        this.mhp = Number.isFinite(scale) && scale > 0
+            ? Math.round(baseMhp * scale * 10) / 10
+            : baseMhp;
         this.coverage = Number(def.coverage) || 0;
         this.internal = !!def.internal;
         this.dead = false;
         this.injuries = [];
         this.limbs = {};
+        /** @type {BodyPart|null} */
+        this.parent = null;
         this._initChildren();
     }
 
@@ -30,14 +36,18 @@ class BodyPart {
             const cdef = plan.parts[childId];
             if (!cdef) continue;
             const childName = this.side + childId;
-            this.limbs[childName] = new BodyPart(this.body, childName, cdef, this.side, childId);
+            const child = new BodyPart(this.body, childName, cdef, this.side, childId);
+            child.parent = this;
+            this.limbs[childName] = child;
         }
         for (const childId of this.def.pairChildren || []) {
             const cdef = plan.parts[childId];
             if (!cdef) continue;
             for (const side of ["Left ", "Right "]) {
                 const childName = side + childId;
-                this.limbs[childName] = new BodyPart(this.body, childName, cdef, side, childId);
+                const child = new BodyPart(this.body, childName, cdef, side, childId);
+                child.parent = this;
+                this.limbs[childName] = child;
             }
         }
     }
@@ -49,9 +59,33 @@ class BodyPart {
         return Math.max(0, this.mhp - dmg);
     }
 
-    efficiency() {
+    /**
+     * True if this part is destroyed, or cut off by a destroyed parent.
+     * Core (Torso) destruction is fatal but does not amputate the rest of the
+     * tree — limbs/organs keep their own HP for UI and capacity factors.
+     * Neck/Head/limb destruction still zeros children (brain, toes, etc.).
+     */
+    isCutOff() {
+        if (this.dead) return true;
+        const coreId = this.body?.plan?.core;
+        for (let p = this.parent; p; p = p.parent) {
+            if (!p.dead) continue;
+            if (coreId && (p.baseId === coreId || p.name === coreId)) continue;
+            return true;
+        }
+        return false;
+    }
+
+    /** HP remaining on this part alone (ignores destroyed parents). For UI overlays. */
+    hpFraction() {
         if (this.dead) return 0;
         return this.mhp > 0 ? this.hp() / this.mhp : 0;
+    }
+
+    /** Functional efficiency for capacities — 0 if cut off from the body. */
+    efficiency() {
+        if (this.isCutOff()) return 0;
+        return this.hpFraction();
     }
 
     /** Total non-scar damage severity (for overlay colors). */
@@ -70,6 +104,9 @@ class BodyPart {
     destroy() {
         if (this.dead) return;
         this.dead = true;
+        // Remember killing blow source for UI (injury list is cleared below)
+        const last = this.injuries[this.injuries.length - 1];
+        if (last?.sourceLabel) this.destroySource = last.sourceLabel;
         // Wounds on this part are replaced by stump bleed; keep child limbs
         // in the tree so the rest of the body picture still makes sense.
         this.injuries = [];
@@ -111,6 +148,7 @@ class BodyPart {
     toJSON() {
         return {
             dead: this.dead,
+            destroySource: this.destroySource || null,
             injuries: this.injuries.map(i => ({
                 id: i.id,
                 name: i.name,
@@ -134,6 +172,7 @@ class BodyPart {
     loadJSON(data) {
         if (!data) return;
         this.dead = !!data.dead;
+        this.destroySource = data.destroySource || null;
         this.injuries = (data.injuries || []).map(i => ({ ...i }));
         for (const [k, v] of Object.entries(data.limbs || {})) {
             if (this.limbs[k]) this.limbs[k].loadJSON(v);
@@ -195,10 +234,10 @@ class Body {
     _onPartDestroyed(part) {
         this.rebuildIndex();
         this.markDirty();
-        const fatals = this.plan.fatalParts || ["Brain", "Heart", "Torso"];
+        const fatals = this.plan.fatalParts || ["Brain", "Heart", "Torso", "Head", "Neck"];
         const isFatal = fatals.includes(part.baseId) || fatals.includes(part.name);
         // Destroyed parts keep bleeding until tended (RW-style), except the
-        // killing blow on a fatal part (torso/heart/brain) — you're already dead.
+        // killing blow on a fatal part — you're already dead.
         if (!isFatal) {
             const mult = Number(part.def?.bleedMult) || 1;
             this.destroyedBleed.push({

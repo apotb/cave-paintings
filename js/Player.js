@@ -328,7 +328,6 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.scene.hotbar.dirty = true;
         this.scene.equipmentPanel?.refresh?.();
 
-        if (!loot.length) return null;
         // bodyCenter() respects standing (origin 0,1) and prone (origin 0.5,0.5)
         const c = this.bodyCenter();
         return Corpse.spawn(this.scene, {
@@ -794,6 +793,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this._tendChannel) return false;
 
         this.capacities = new Capacities(this.anatomy);
+        if (!this.capacities.canManipulate()) return false;
         const attack = BodyCombat.pickAttack(this);
         if (!attack) return false;
 
@@ -1137,7 +1137,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     beginTend() {
         if (this._tendChannel || this._bodyDead || this.isAttacking()) return false;
         this.capacities = new Capacities(this.anatomy);
-        if (this.capacities.manipulation() < 0.15) return false;
+        if (!this.capacities.canManipulate()) return false;
         if (this.isIncapacitated()) return false;
         const item = this.getHeldItem();
         if (!item) return false;
@@ -1197,13 +1197,19 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         BodyHealing.applyTend(this.anatomy, target, quality);
         this.loseAnyItem(this._tendChannel.itemId, 1);
         const qPct = Math.round(quality * 100);
-        this.scene.combatLog?.push(
-            target?.part
-                ? `You bandaged your ${target.part.name} (${qPct}%).`
-                : target?.destroyed
-                    ? `You bandaged a stump (${qPct}%).`
-                    : `You finished bandaging (${qPct}%).`
-        );
+        let tendMsg = `You finished bandaging (${qPct}%).`;
+        if (target?.part) {
+            tendMsg = `You bandaged your ${target.part.name} (${qPct}%).`;
+        } else if (target?.destroyed) {
+            const name = target.destroyed.partName;
+            const part = name ? this.anatomy?.part?.(name) : null;
+            tendMsg = (typeof BodyHealing !== "undefined" && BodyHealing.isStumpPart(part))
+                ? `You bandaged a stump (${qPct}%).`
+                : name
+                    ? `You packed the wound (${qPct}%).`
+                    : `You finished bandaging (${qPct}%).`;
+        }
+        this.scene.combatLog?.push(tendMsg);
         this._tendChannel = null;
         this.scene.hideChannelBar?.();
         this.scene.healthPanel?.refresh?.();

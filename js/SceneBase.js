@@ -139,6 +139,8 @@ class SceneBase extends Phaser.Scene {
             "roasted_apple",
             "raw_beef",
             "roast_beef",
+            "raw_venison",
+            "roasted_venison",
             "coconut",
             "cactus_flower",
             "blueberries",

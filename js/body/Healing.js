@@ -35,6 +35,26 @@ const BodyHealing = {
         return this.stumpBleedPerDay(d) / this.MINUTES_PER_DAY;
     },
 
+    /**
+     * True for amputated limbs/digits (stump); false for organs, bones, face, etc.
+     * @param {BodyPart|null|undefined} part
+     */
+    isStumpPart(part) {
+        if (!part || part.internal) return false;
+        const id = part.baseId || part.name || "";
+        return /Arm|Leg|Hand|Foot|Shoulder|Finger|Toe|Hoof|Thumb/i.test(id);
+    },
+
+    /**
+     * Injury-list subline under "Part: Destroyed".
+     * @param {Body|null|undefined} body
+     * @param {string} partName
+     */
+    destroyedBleedLabel(body, partName) {
+        const part = body?.part?.(partName);
+        return this.isStumpPart(part) ? "stump (bleeding)" : "missing (bleeding)";
+    },
+
     /** Bleed contribution per game-minute tick → bloodLoss delta. */
     bleedRateTotal(body) {
         let rate = 0;

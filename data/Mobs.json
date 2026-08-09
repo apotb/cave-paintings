@@ -17,5 +17,34 @@
                 "max": 3
             }
         ]
+    },
+    {
+        "id": "deer",
+        "name": "Deer",
+        "key": "deer",
+        "bodyPlan": "deer",
+        "speed": 4.0,
+        "wanderSpeed": 1.4,
+        "hitboxSize": 8,
+        "ai": "scaredAnimal",
+        "anim": {
+            "frameWidth": 16,
+            "frameHeight": 16
+        },
+        "spawn": {
+            "tiles": ["grass", "grass_hill"],
+            "chunkChance": 0.08,
+            "packMin": 1,
+            "packMax": 2,
+            "minCandidates": 4
+        },
+        "attacks": [],
+        "drops": [
+            {
+                "item": "raw_venison",
+                "min": 1,
+                "max": 2
+            }
+        ]
     }
 ]

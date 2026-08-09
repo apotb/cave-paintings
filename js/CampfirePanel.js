@@ -355,20 +355,19 @@ class CampfirePanel {
         const fireH = this.campfire.displayHeight;
         const clear = 2;
         const catalystY = -(fireH + clear + slotW / 2);
-        const row1Y = catalystY - (slotW + padding);
-        const row0Y = row1Y - (slotW + padding);
+        const aboveY = catalystY - (slotW + padding);
         const fuelY = clear + slotW / 2;
 
         const positions = {
-            cook: { x: 0, y: row1Y },
+            cook: { x: 0, y: aboveY },
             catalyst: { x: 0, y: catalystY },
             'fuel:0': { x: -spacing / 2, y: fuelY },
             'fuel:1': { x: spacing / 2, y: fuelY },
-            // 2x2 grid above the coconut
-            'simmer:0': { x: -spacing / 2, y: row0Y },
-            'simmer:1': { x: spacing / 2, y: row0Y },
-            'simmer:2': { x: -spacing / 2, y: row1Y },
-            'simmer:3': { x: spacing / 2, y: row1Y }
+            // Four ingredients in one row above the coconut
+            'simmer:0': { x: -1.5 * spacing, y: aboveY },
+            'simmer:1': { x: -0.5 * spacing, y: aboveY },
+            'simmer:2': { x: 0.5 * spacing, y: aboveY },
+            'simmer:3': { x: 1.5 * spacing, y: aboveY }
         };
 
         const zoom = this.scene.worldZoom || 1;

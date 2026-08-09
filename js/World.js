@@ -195,12 +195,85 @@ class Chunk {
                 }
                 if (i >= 0) this.scene.time.delayedCall(0, slice);
                 else {
+                    // Same RNG stream as tiles — one-time natural mobs for this chunk
+                    this.populateNaturalMobs(rand);
                     this.isGenerated = true;
                     resolve();
                 }
             };
             slice();
         });
+    }
+
+    /**
+     * Seed-deterministic passive spawns (Minecraft-style). Writes meta.mobs only;
+     * sprites are created later in makeMobs(). Never runs again for this chunk.
+     */
+    populateNaturalMobs(rand) {
+        if (!this.meta.mobs) this.meta.mobs = [];
+        const rules = (this.scene.mobsData?.() || []).filter(m => m?.id && m.spawn);
+        if (!rules.length) return;
+
+        const cs = this.scene.chunkSize;
+        const ts = this.scene.tileSize;
+        const chunkOx = this.x * this.px();
+        const chunkOy = this.y * this.px();
+
+        // Tile keys occupied by trees/rocks/bushes/etc.
+        const blocked = new Set();
+        const markBlocked = (entry) => {
+            if (!entry) return;
+            const lx = Math.round((entry.x - ts / 2 - chunkOx) / ts);
+            const ly = Math.round((entry.y - ts - chunkOy) / ts);
+            if (lx >= 0 && ly >= 0 && lx < cs && ly < cs) blocked.add(`${lx},${ly}`);
+        };
+        for (const t of this.meta.things || []) markBlocked(t);
+        for (const t of this.meta.lootableThings || []) markBlocked(t);
+
+        for (const def of rules) {
+            const sp = def.spawn;
+            const allow = new Set(sp.tiles || []);
+            const minCand = Math.max(1, Math.floor(Number(sp.minCandidates) || 4));
+            const chance = Number(sp.chunkChance);
+            if (!(chance > 0) || !allow.size) continue;
+
+            const candidates = [];
+            for (let cy = 0; cy < cs; cy++) {
+                for (let cx = 0; cx < cs; cx++) {
+                    const key = this.meta.tiles[cx + cy * cs];
+                    if (!allow.has(key)) continue;
+                    if (blocked.has(`${cx},${cy}`)) continue;
+                    candidates.push({ cx, cy });
+                }
+            }
+            if (candidates.length < minCand) continue;
+            if (rand() >= chance) continue;
+
+            let packMin = Math.max(1, Math.floor(Number(sp.packMin) || 1));
+            let packMax = Math.max(packMin, Math.floor(Number(sp.packMax) || packMin));
+            packMax = Math.min(packMax, candidates.length);
+            packMin = Math.min(packMin, packMax);
+            const pack = packMin + Math.floor(rand() * (packMax - packMin + 1));
+
+            // Fisher–Yates shuffle using chunk RNG, then take `pack` tiles
+            for (let i = candidates.length - 1; i > 0; i--) {
+                const j = Math.floor(rand() * (i + 1));
+                const tmp = candidates[i];
+                candidates[i] = candidates[j];
+                candidates[j] = tmp;
+            }
+            for (let n = 0; n < pack; n++) {
+                const { cx, cy } = candidates[n];
+                const tx = chunkOx + cx * ts;
+                const ty = chunkOy + cy * ts;
+                this.meta.mobs.push({
+                    id: def.id,
+                    x: tx,
+                    y: ty + ts
+                });
+                blocked.add(`${cx},${cy}`);
+            }
+        }
     }
 
     generateTile(cx, cy, tx, ty, rand) {
@@ -397,11 +470,10 @@ class Chunk {
 
     async makeCorpses() {
         if (!this.meta.corpses) this.meta.corpses = [];
-        // Drop empty corpse entries
-        this.meta.corpses = this.meta.corpses.filter(e => e?.loot?.length);
+        // Empty corpses stay until the loot UI is closed (CorpsePanel → removeForever)
         const live = this.corpses?.getChildren() || [];
         for (const entry of this.meta.corpses) {
-            if (!entry?.loot?.length) continue;
+            if (!entry) continue;
             if (live.some(c => c.entry === entry)) continue;
             new Corpse(this.scene, entry, this);
         }

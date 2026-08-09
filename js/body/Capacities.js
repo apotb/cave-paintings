@@ -9,9 +9,24 @@ class Capacities {
         this.body = body;
     }
 
+    /**
+     * Part efficiency. Missing from this body plan → 1 (not a factor).
+     * Present but destroyed → 0.
+     */
     eff(name) {
         const p = this.body.part(name);
-        return p ? p.efficiency() : 0;
+        if (!p) return 1;
+        return p.efficiency();
+    }
+
+    /** True if this anatomy has a part (regardless of HP). */
+    hasPart(name) {
+        return !!this.body.part(name);
+    }
+
+    /** Quadruped hoofed bodies (deer, etc.). */
+    isQuadrupedHoofed() {
+        return this.hasPart("Left Front Leg") || this.hasPart("Left Rear Leg");
     }
 
     /** Sum efficiency of paired parts (Left/Right X). */
@@ -24,7 +39,10 @@ class Capacities {
         const names = ["Big Toe", "Second Toe", "Middle Toe", "Fourth Toe", "Little Toe"];
         let s = 0;
         for (const side of ["Left ", "Right "]) {
-            for (const n of names) s += this.eff(side + n);
+            for (const n of names) {
+                const p = this.body.part(side + n);
+                if (p) s += p.efficiency();
+            }
         }
         return s;
     }
@@ -33,7 +51,10 @@ class Capacities {
         const names = ["Thumb", "Index Finger", "Middle Finger", "Ring Finger", "Pinky Finger"];
         let s = 0;
         for (const side of ["Left ", "Right "]) {
-            for (const n of names) s += this.eff(side + n);
+            for (const n of names) {
+                const p = this.body.part(side + n);
+                if (p) s += p.efficiency();
+            }
         }
         return s;
     }
@@ -119,6 +140,20 @@ class Capacities {
     }
 
     legEfficiency() {
+        if (this.isQuadrupedHoofed()) {
+            // Average of four (leg × hoof), times spine — RW hoofed moving
+            const limbs = [
+                ["Left Front Leg", "Left Front Hoof"],
+                ["Right Front Leg", "Right Front Hoof"],
+                ["Left Rear Leg", "Left Rear Hoof"],
+                ["Right Rear Leg", "Right Rear Hoof"]
+            ];
+            let sum = 0;
+            for (const [leg, hoof] of limbs) {
+                sum += this.eff(leg) * this.eff(hoof);
+            }
+            return (sum / limbs.length) * this.eff("Spine");
+        }
         const legs = this.pairAvg("Leg");
         const tibias = this.pairAvg("Tibia");
         const femurs = this.pairAvg("Femur");
@@ -128,6 +163,10 @@ class Capacities {
     }
 
     armEfficiency() {
+        // No arms → jaw-based manipulation (RW AnimalJaw)
+        if (!this.hasPart("Left Arm") && !this.hasPart("Right Arm")) {
+            return this.eff("Jaw");
+        }
         const arms = this.pairAvg("Arm");
         const shoulders = this.pairAvg("Shoulder");
         const clav = this.pairAvg("Clavicle");
@@ -200,21 +239,70 @@ class Capacities {
         };
     }
 
-    /** Part line for tooltips if damaged; null if full HP / missing. */
-    _partFactor(name) {
-        const p = this.body.part(name);
-        if (!p) return null;
-        if (p.isDead()) return `${name} destroyed`;
-        const frac = p.mhp > 0 ? p.hp() / p.mhp : 0;
-        if (frac >= 0.999) return null;
-        return `${name} ${Math.round(frac * 100)}%`;
+    /**
+     * Nearest destroyed ancestor that actually cuts this part off (skips core).
+     * @returns {BodyPart|null}
+     */
+    _destroyedAncestor(part) {
+        const coreId = this.body?.plan?.core;
+        for (let q = part?.parent; q; q = q.parent) {
+            if (!q.dead) continue;
+            if (coreId && (q.baseId === coreId || q.name === coreId)) continue;
+            return q;
+        }
+        return null;
     }
 
+    /**
+     * Part lines for capacity tooltips. Collapses whole subtrees: if Left Leg is
+     * destroyed, list that once — not every tibia/foot/toe as missing.
+     */
     _collectPartFactors(names) {
+        const nameSet = new Set(names);
         const out = [];
+        const emitted = new Set();
+
         for (const n of names) {
-            const line = this._partFactor(n);
-            if (line) out.push(line);
+            const p = this.body.part(n);
+            if (!p) continue;
+
+            if (p.isDead()) {
+                if (!emitted.has(n)) {
+                    emitted.add(n);
+                    out.push(`${n} destroyed`);
+                }
+                continue;
+            }
+
+            const anc = this._destroyedAncestor(p);
+            if (anc) {
+                // Prefer a destroyed ancestor already in this capacity's part list
+                let report = null;
+                for (let q = p.parent; q; q = q.parent) {
+                    if (q.dead && nameSet.has(q.name)) {
+                        report = q;
+                        break;
+                    }
+                }
+                if (report) {
+                    if (!emitted.has(report.name)) {
+                        emitted.add(report.name);
+                        out.push(`${report.name} destroyed`);
+                    }
+                    continue;
+                }
+                // e.g. Brain under destroyed Head (Head not in Consciousness list)
+                const line = `${n} missing (${anc.name} destroyed)`;
+                if (!emitted.has(line)) {
+                    emitted.add(line);
+                    out.push(line);
+                }
+                continue;
+            }
+
+            const frac = p.mhp > 0 ? p.hp() / p.mhp : 0;
+            if (frac >= 0.999) continue;
+            out.push(`${n} ${Math.round(frac * 100)}%`);
         }
         return out;
     }
@@ -264,7 +352,7 @@ class Capacities {
             case "breathing":
                 parts.push(...this._collectPartFactors([
                     "Left Lung", "Right Lung", "Neck", "Ribcage", "Sternum"
-                ]));
+                ].filter((n) => this.hasPart(n))));
                 break;
             case "bloodFiltration":
                 parts.push(...this._collectPartFactors([
@@ -285,28 +373,42 @@ class Capacities {
                 }
                 break;
             case "moving":
-                parts.push(...this._collectPartFactors([
-                    "Left Leg", "Right Leg",
-                    "Left Tibia", "Right Tibia",
-                    "Left Femur", "Right Femur",
-                    "Left Foot", "Right Foot",
-                    ...this._toeNames(),
-                    "Pelvis", "Spine"
-                ]));
+                if (this.isQuadrupedHoofed()) {
+                    parts.push(...this._collectPartFactors([
+                        "Left Front Leg", "Right Front Leg",
+                        "Left Rear Leg", "Right Rear Leg",
+                        "Left Front Hoof", "Right Front Hoof",
+                        "Left Rear Hoof", "Right Rear Hoof",
+                        "Spine"
+                    ]));
+                } else {
+                    parts.push(...this._collectPartFactors([
+                        "Left Leg", "Right Leg",
+                        "Left Tibia", "Right Tibia",
+                        "Left Femur", "Right Femur",
+                        "Left Foot", "Right Foot",
+                        ...this._toeNames(),
+                        "Pelvis", "Spine"
+                    ]));
+                }
                 pushUp("Consciousness", this.consciousness());
                 pushUp("Blood Pumping", this.bloodPumping());
                 pushUp("Breathing", this.breathing());
                 break;
             case "manipulation":
-                parts.push(...this._collectPartFactors([
-                    "Left Arm", "Right Arm",
-                    "Left Shoulder", "Right Shoulder",
-                    "Left Clavicle", "Right Clavicle",
-                    "Left Humerus", "Right Humerus",
-                    "Left Radius", "Right Radius",
-                    "Left Hand", "Right Hand",
-                    ...this._fingerNames()
-                ]));
+                if (!this.hasPart("Left Arm") && !this.hasPart("Right Arm")) {
+                    parts.push(...this._collectPartFactors(["Jaw"]));
+                } else {
+                    parts.push(...this._collectPartFactors([
+                        "Left Arm", "Right Arm",
+                        "Left Shoulder", "Right Shoulder",
+                        "Left Clavicle", "Right Clavicle",
+                        "Left Humerus", "Right Humerus",
+                        "Left Radius", "Right Radius",
+                        "Left Hand", "Right Hand",
+                        ...this._fingerNames()
+                    ]));
+                }
                 pushUp("Consciousness", this.consciousness());
                 break;
             case "sight":
@@ -318,7 +420,9 @@ class Capacities {
                 pushUp("Consciousness", this.consciousness());
                 break;
             case "talking":
-                parts.push(...this._collectPartFactors(["Jaw", "Tongue"]));
+                parts.push(...this._collectPartFactors(
+                    ["Jaw", "Tongue"].filter((n) => this.hasPart(n))
+                ));
                 pushUp("Consciousness", this.consciousness());
                 break;
             case "eating":
@@ -396,6 +500,11 @@ class Capacities {
     /** Too little Moving to walk — go prone (no crawling). */
     isImmobile() {
         return this.moving() <= 0.15;
+    }
+
+    /** Too little Manipulation to swing / tend / use hands (or jaw for animals). */
+    canManipulate() {
+        return this.manipulation() >= 0.15;
     }
 
     isDeadFromCapacities() {

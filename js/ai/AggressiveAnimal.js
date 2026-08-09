@@ -195,11 +195,13 @@ class AggressiveAnimalAI extends DoofusAI {
             !swinging &&
             this.attackCooldown <= 0 &&
             atk &&
-            inReach
+            inReach &&
+            mob.capacities.canManipulate?.()
         ) {
-            mob.tryMeleeAttack?.(player, atk);
-            const scale = mob.capacities.actionDurationScale();
-            this.attackCooldown = (atk.cooldown || 2) * 1000 * scale;
+            if (mob.tryMeleeAttack?.(player, atk)) {
+                const scale = mob.capacities.actionDurationScale();
+                this.attackCooldown = (atk.cooldown || 2) * 1000 * scale;
+            }
         }
 
         const base = Number(mob.def?.speed) || Number(player.speed) || 3.5;
@@ -269,7 +271,10 @@ class AggressiveAnimalAI extends DoofusAI {
         mob.isSprinting = canSprint;
         const speed = walk * (canSprint ? sprintFactor : 1);
         mob.setVelocity(nx * speed, ny * speed);
-        mob.anims.timeScale = canSprint ? 1.5 : 1;
+        // Same rule as player/Doofus: walk anim authored for ~human walk speed
+        const ref = Number(this.mob.scene.getMob?.("human")?.speed) || 3.5;
+        const tilesPerSec = speed / ts;
+        mob.anims.timeScale = Phaser.Math.Clamp(tilesPerSec / ref, 0.2, 2.5);
         if (!swinging) mob.playAnim?.(`walk-${mob.facing}`);
     }
 

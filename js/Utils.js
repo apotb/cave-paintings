@@ -100,7 +100,7 @@ function injureMe(severity = 8, partName = null, type = "cut") {
     });
     player.onBodyDamaged?.(null, { damage: dmg, part });
     scene.combatLog?.push(`Debug: ${dmg} ${idef?.name || type} on ${part.name}`);
-    return `${part.name}: ${part.hp().toFixed(1)}/${part.mhp}`;
+    return `${part.name}: ${part.hp().toFixed(1)}/${Number(part.mhp).toFixed(1)}`;
 }
 
 /**
@@ -305,7 +305,7 @@ function getCookRecipe(getItem, inputId, method) {
     return recipe;
 }
 
-const SIMMER_INGREDIENTS = new Set(["apple", "blueberry", "raw_beef"]);
+const SIMMER_INGREDIENTS = new Set(["apple", "blueberry", "raw_beef", "raw_venison"]);
 const SIMMER_MINUTES_PER_SLOT = 5;
 
 function isSimmerIngredient(itemId) {
@@ -328,18 +328,26 @@ function getSimmerDishInfo(getItem, ingredientIds, coconutMeta) {
     let spoilHours = 24;
 
     const hasBeef = unique.includes("raw_beef");
+    const hasVenison = unique.includes("raw_venison");
+    const hasMeat = hasBeef || hasVenison;
     const hasApple = unique.includes("apple");
     const hasBlue = unique.includes("blueberry");
 
-    if (hasBeef) {
+    if (hasMeat) {
         kind = "stew";
         spoilHours = 36;
+        // Label by meat type; mixed meats → generic "Meat"
+        const meatLabel = hasBeef && hasVenison
+            ? "Meat"
+            : hasVenison
+                ? "Venison"
+                : "Beef";
         if (hasApple && hasBlue) name = "Hunter's Stew";
-        else if (hasApple) name = "Apple Beef Stew";
+        else if (hasApple) name = `Apple and ${meatLabel} Stew`;
         else if (hasBlue) {
-            name = "Blueberry Beef Stew";
+            name = `Blueberry and ${meatLabel} Stew`;
             spoilHours = 24;
-        } else name = "Beef Stew";
+        } else name = `${meatLabel} Stew`;
     } else if (unique.length === 1 && unique[0] === "blueberry") {
         kind = "mash";
         name = "Blueberry Mash";

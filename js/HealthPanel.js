@@ -140,6 +140,13 @@ class HealthPanel {
             if (!this._pointerInInjView(ptr.x, ptr.y)) return;
             this._setInjScroll(this._injScroll + dy * 0.35);
         });
+
+        // Bake Text/interactive rows at boot so the first open isn't a hitch
+        this._ensureCapRows(13);
+        this._setInjLines(Array.from({ length: 32 }, () => ({ text: "." })));
+        this._setInjLines([{ text: "None" }]);
+        this._lastDollScale = null;
+        this._overlayRefreshQueued = false;
     }
 
     _initPartOverlays() {
@@ -163,7 +170,6 @@ class HealthPanel {
         this._injScroll = 0;
         this.visible = true;
         this.root.setVisible(true);
-        this.layout();
         this.refresh();
         this.scene.healthBtn?.setTexture("health_open");
     }
@@ -180,7 +186,6 @@ class HealthPanel {
         this._injScroll = 0;
         this.visible = true;
         this.root.setVisible(true);
-        this.layout();
         this.refresh();
         this.scene.healthBtn?.setTexture("health_open");
     }
@@ -242,9 +247,18 @@ class HealthPanel {
         }
     }
 
+    /** Human schematic doll; animal plans set showDoll: false. */
+    _showsDoll(body) {
+        if (!body?.plan) return true;
+        return body.plan.showDoll !== false;
+    }
+
     layout() {
         const s = this.scene.uiScale || 1;
-        const panelW = 370 * s;
+        const body = this._inspectBody || this.scene.player?.anatomy;
+        const showDoll = this._showsDoll(body);
+        // No diagram → drop the doll column; keep roughly the old stats-column width
+        const panelW = (showDoll ? 370 : 200) * s;
         const panelH = 380 * s;
         const pad = 12 * s;
         const gap = 8 * s;
@@ -267,26 +281,38 @@ class HealthPanel {
 
         this.title.setFontSize(Math.round(16 * s)).setPosition(0, -panelH / 2 + 18 * s);
 
-        // Fit doll in panel height with a little margin; sit left, vertically centered under title
+        this.doll.setVisible(showDoll);
+        this.overlayLayer.setVisible(showDoll);
+
         const titleBottom = -panelH / 2 + 34 * s;
         const contentBottom = panelH / 2 - pad;
-        const maxDollH = contentBottom - titleBottom - 4 * s;
-        const srcH = this.doll.height || 178;
-        const dollScale = Math.min(2.0 * s, maxDollH / srcH);
-        this.doll.setScale(dollScale);
-        const dollW = this.doll.displayWidth;
-        const dollX = -panelW / 2 + pad + dollW / 2;
-        const dollY = (titleBottom + contentBottom) / 2;
-        this.doll.setPosition(dollX, dollY);
-        this.overlayLayer.setPosition(dollX, dollY);
-        for (const img of Object.values(this._partOverlays)) {
-            img.setScale(dollScale).setPosition(0, 0);
-        }
-
-        const listX = dollX + dollW / 2 + gap;
-        const listTop = titleBottom + 2 * s;
         const scrollBarW = 7 * s;
-        const wrapW = Math.max(80 * s, panelW / 2 - pad - listX - scrollBarW);
+        let listX;
+        let wrapW;
+        if (showDoll) {
+            // Fit doll in panel height with a little margin; sit left, vertically centered under title
+            const maxDollH = contentBottom - titleBottom - 4 * s;
+            const srcH = this.doll.height || 178;
+            const dollScale = Math.min(2.0 * s, maxDollH / srcH);
+            this.doll.setScale(dollScale);
+            const dollW = this.doll.displayWidth;
+            const dollX = -panelW / 2 + pad + dollW / 2;
+            const dollY = (titleBottom + contentBottom) / 2;
+            this.doll.setPosition(dollX, dollY);
+            this.overlayLayer.setPosition(dollX, dollY);
+            if (this._lastDollScale !== dollScale) {
+                this._lastDollScale = dollScale;
+                for (const img of Object.values(this._partOverlays)) {
+                    img.setScale(dollScale).setPosition(0, 0);
+                }
+            }
+            listX = dollX + dollW / 2 + gap;
+            wrapW = Math.max(80 * s, panelW / 2 - pad - listX - scrollBarW);
+        } else {
+            listX = -panelW / 2 + pad;
+            wrapW = Math.max(80 * s, panelW - pad * 2 - scrollBarW);
+        }
+        const listTop = titleBottom + 2 * s;
         const fontSize = Math.round(10 * s);
         const lineH = Math.round(13 * s);
 
@@ -321,8 +347,10 @@ class HealthPanel {
             const padY = Math.max(0, Math.round((lineH - fontSize) * 0.5));
             line.text.setPosition(1 * s, y + padY);
             line.bg.setPosition(0, y).setSize(wrapW, h);
-            line.bg.setVisible(!!line.bleeding);
+            const showBg = !!(line.bleeding || line.destroyed);
+            line.bg.setVisible(showBg);
             if (line.bleeding) line.bg.setFillStyle(0x3a0808, 1);
+            else if (line.destroyed) line.bg.setFillStyle(0x0e0d0c, 1);
             if (line.text.input?.hitArea?.setSize) {
                 line.text.input.hitArea.setSize(Math.max(wrapW, 1), Math.max(h, 1));
             }
@@ -348,7 +376,8 @@ class HealthPanel {
     /** Color from damage: green@0 → yellow@1 sev → orange@50%hp → red@≤25%hp */
     _partColor(part) {
         if (!part || part.isDead()) return 0x331111;
-        const frac = part.efficiency();
+        // Use local HP — not efficiency() (that is 0 when a parent like Torso is destroyed)
+        const frac = typeof part.hpFraction === "function" ? part.hpFraction() : part.efficiency();
         const sev = part.damageSeverity();
         if (sev <= 0 && frac >= 0.999) return 0x3CB043;
         let c;
@@ -389,7 +418,7 @@ class HealthPanel {
                 color: "#ddd0c0"
             }).setOrigin(0, 0);
             text.setInteractive({ useHandCursor: false });
-            const row = { bg, text, bleeding: false, tip: null };
+            const row = { bg, text, bleeding: false, destroyed: false, tip: null };
             text.on("pointerover", (p) => {
                 if (!row.tip) return;
                 this.scene.showTooltip(row.tip, p.x, p.y, text);
@@ -406,11 +435,13 @@ class HealthPanel {
             if (i < lines.length) {
                 row.text.setText(lines[i].text).setVisible(true);
                 row.bleeding = !!lines[i].bleeding;
+                row.destroyed = !!lines[i].destroyed;
                 row.tip = lines[i].tip || null;
-                row.bg.setVisible(row.bleeding);
+                row.bg.setVisible(row.bleeding || row.destroyed);
             } else {
                 row.text.setText("").setVisible(false);
                 row.bleeding = false;
+                row.destroyed = false;
                 row.tip = null;
                 row.bg.setVisible(false);
                 if (this.scene._tooltipTarget === row.text) this.scene.hideTooltip?.();
@@ -465,6 +496,7 @@ class HealthPanel {
         this.title.setText(title);
 
         // Hoverable capacities (Pain is display-only; Blood Loss always tips)
+        const talkLabel = this._showsDoll(body) ? "Talking" : "Vocalization";
         const rows = [
             { key: "consciousness", label: "Consciousness", value: c.consciousness },
             { key: "moving", label: "Moving", value: c.moving },
@@ -476,7 +508,7 @@ class HealthPanel {
             { key: "digestion", label: "Digestion", value: c.digestion },
             { key: "sight", label: "Sight", value: c.sight },
             { key: "hearing", label: "Hearing", value: c.hearing },
-            { key: "talking", label: "Talking", value: c.talking },
+            { key: "talking", label: talkLabel, value: c.talking },
             { key: "eating", label: "Eating", value: c.eating },
             { key: "bloodLoss", label: "Blood Loss", value: c.bloodLoss }
         ];
@@ -519,8 +551,11 @@ class HealthPanel {
                 const line = fmtBleedDay(BodyHealing.stumpBleedPerDay(stump));
                 if (line) tipLines.push(line);
             }
+            const label = typeof BodyHealing !== "undefined"
+                ? BodyHealing.destroyedBleedLabel(body, partName)
+                : "missing (bleeding)";
             lines.push({
-                text: "  stump (bleeding)",
+                text: `  ${label}`,
                 bleeding: true,
                 tip: tipLines.length ? tipLines.join("\n") : null
             });
@@ -549,18 +584,20 @@ class HealthPanel {
         for (const part of Object.values(body.parts())) {
             if (part.isDead()) {
                 // Destroyed parts: header + stump only (no old cut list)
-                lines.push({ text: `${part.name}: Destroyed` });
+                const tip = part.destroySource ? `From ${part.destroySource}` : null;
+                lines.push({ text: `${part.name}: Destroyed`, destroyed: true, tip });
                 pushStumpBleed(part.name);
                 any = true;
                 continue;
             }
+            // Keep injury history even when a parent limb is destroyed (toes, etc.).
             if (!part.injuries.length) continue;
             any = true;
-            lines.push({ text: `${part.name}: ${part.hp().toFixed(1)}/${part.mhp}` });
+            lines.push({ text: `${part.name}: ${part.hp().toFixed(1)}/${Number(part.mhp).toFixed(1)}` });
             pushInjuries(part);
         }
         for (const stump of Object.values(stumpByPart)) {
-            lines.push({ text: `${stump.partName}: Destroyed` });
+            lines.push({ text: `${stump.partName}: Destroyed`, destroyed: true });
             pushStumpBleed(stump.partName);
             any = true;
         }
@@ -569,25 +606,51 @@ class HealthPanel {
         // Keep scroll position across refreshes (tickBodySystems); clamp in layout()
 
         this.layout();
-        this._refreshPartOverlays(body);
+        // Doll tints are the heavy bit — do them next frame so the panel opens immediately
+        this._queueOverlayRefresh();
+    }
+
+    _queueOverlayRefresh() {
+        if (this._overlayRefreshQueued) return;
+        this._overlayRefreshQueued = true;
+        this.scene.time.delayedCall(0, () => {
+            this._overlayRefreshQueued = false;
+            if (!this.visible) return;
+            const body = this._inspectBody || this.scene.player?.anatomy;
+            if (body) this._refreshPartOverlays(body);
+        });
     }
 
     _refreshPartOverlays(body) {
+        if (!this._showsDoll(body)) {
+            for (const img of Object.values(this._partOverlays)) {
+                if (img.visible) img.setVisible(false);
+                img._lastTint = null;
+            }
+            return;
+        }
         for (const name of HealthPanel.PART_OVERLAY_ORDER) {
             const img = this._partOverlays[name];
             if (!img) continue;
             const part = body.part(name);
             if (!part) {
-                img.setVisible(false);
+                if (img.visible) img.setVisible(false);
+                img._lastTint = null;
                 continue;
             }
-            const damaged = part.isDead() || part.damageSeverity() > 0 || part.efficiency() < 0.999;
+            const frac = typeof part.hpFraction === "function" ? part.hpFraction() : part.efficiency();
+            const damaged = part.isDead() || part.damageSeverity() > 0 || frac < 0.999;
             if (!damaged) {
-                img.setVisible(false);
+                if (img.visible) img.setVisible(false);
+                img._lastTint = null;
                 continue;
             }
-            img.setVisible(true);
-            img.setTintFill(this._partColor(part));
+            const color = this._partColor(part);
+            if (!img.visible || img._lastTint !== color) {
+                img.setVisible(true);
+                img.setTintFill(color);
+                img._lastTint = color;
+            }
         }
     }
 }

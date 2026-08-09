@@ -135,14 +135,51 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             if (scene._tooltipTarget === this) scene.hideTooltip();
         });
 
-        this.scene.player?.createAnimations?.();
+        this.createAnimations();
         this.playAnim(`idle-${this.facing}`);
         this.setDepth(this.y);
     }
 
+    /**
+     * Walk/idle anims for this mob's texture. Keys are `{tex}-walk-down` etc.
+     * so they never collide with the player's shared `walk-down` anims.
+     * `def.anim.rowOrder` lists sheet rows top→bottom (default: down,left,right,up).
+     */
+    createAnimations() {
+        const tex = this.def?.key || this.texture?.key;
+        if (!tex || !this.scene?.textures?.exists(tex)) return;
+        const anims = this.scene.anims;
+        if (anims.exists(`${tex}-walk-down`)) return;
+
+        const order = this.def?.anim?.rowOrder;
+        const dirs = Array.isArray(order) && order.length === 4
+            ? order
+            : ["down", "left", "right", "up"];
+        for (let row = 0; row < 4; row++) {
+            const dir = dirs[row];
+            const start = row * 3;
+            const mid = start + 1;
+            anims.create({
+                key: `${tex}-walk-${dir}`,
+                frames: anims.generateFrameNumbers(tex, { start, end: start + 2 }),
+                // Match player walk cadence (Player.createAnimations uses 5)
+                frameRate: 5,
+                repeat: -1
+            });
+            anims.create({
+                key: `${tex}-idle-${dir}`,
+                frames: [{ key: tex, frame: mid }],
+                frameRate: 10
+            });
+        }
+    }
+
     playAnim(key) {
-        if (!key || !this.scene?.anims?.exists(key)) return;
-        this.play(key, true);
+        if (!key) return;
+        const tex = this.def?.key || this.texture?.key;
+        const full = tex ? `${tex}-${key}` : key;
+        if (!this.scene?.anims?.exists(full)) return;
+        this.play(full, true);
     }
 
     isBodyDead() {
@@ -180,8 +217,14 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
 
     onBodyDamaged(source, _result) {
         this.capacities = new Capacities(this.anatomy);
-        this.syncToEntry();
-        if (!this._dead) this.ai?.onDamaged?.(source);
+        // anatomy.markDirty() already set; LivingMob.update syncs body JSON once/frame
+        if (this._dead) return;
+        // Same as player: capacity collapse (e.g. brain useless after head loss) kills now
+        if (this.capacities.isDeadFromCapacities()) {
+            this.onBodyFatal();
+            return;
+        }
+        this.ai?.onDamaged?.(source);
     }
 
     isAttacking() {
@@ -197,6 +240,8 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         if (this.isAttacking()) return false;
 
         this.capacities = new Capacities(this.anatomy);
+        // Same floor as player tend / melee — jaw or arms too wrecked = no swing
+        if (!this.capacities.canManipulate()) return false;
         const c = this.bodyCenter();
         const tc = typeof target.bodyCenter === "function"
             ? target.bodyCenter()
@@ -420,18 +465,16 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         // bodyCenter() respects standing (origin 0,1) and prone (origin 0.5,0.5)
         const c = this.bodyCenter();
         const key = this.def?.key || this.texture?.key || "player";
-        if (loot.length) {
-            Corpse.spawn(scene, {
-                x: c.x,
-                y: c.y,
-                key,
-                frame: 7,
-                name: this.def?.name || "Corpse",
-                loot,
-                body: this.anatomy?.toJSON?.(),
-                bodyPlan: this.def?.bodyPlan || this.anatomy?.planId || "human"
-            });
-        }
+        Corpse.spawn(scene, {
+            x: c.x,
+            y: c.y,
+            key,
+            frame: 7,
+            name: this.def?.name || "Corpse",
+            loot,
+            body: this.anatomy?.toJSON?.(),
+            bodyPlan: this.def?.bodyPlan || this.anatomy?.planId || "human"
+        });
 
         if (this.chunk?.meta?.mobs) {
             const i = this.chunk.meta.mobs.indexOf(this.entry);

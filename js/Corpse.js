@@ -9,8 +9,6 @@ class Corpse extends Phaser.GameObjects.Sprite {
      */
     static spawn(scene, opts) {
         const loot = (opts.loot || []).map(s => cloneItemStack(s)).filter(Boolean);
-        // Skip empty mob-style corpses; player death only spawns when loot exists
-        if (!loot.length) return null;
 
         const chunk = LivingMob.ensureChunkAt(scene, opts.x, opts.y);
         if (!chunk) return null;
@@ -30,6 +28,53 @@ class Corpse extends Phaser.GameObjects.Sprite {
         chunk.meta.corpses.push(entry);
         if (!chunk.isLoaded) return null;
         return new Corpse(scene, entry, chunk);
+    }
+
+    /** Soft gray/white sparkle puff when a corpse vanishes. */
+    static puffAway(scene, x, y) {
+        if (!scene?.add) return;
+        const n = Phaser.Math.Between(12, 16);
+        const colors = [0xb0b0b0, 0x888888, 0xd8d8d8, 0xffffff, 0x6a6a6a, 0xc4b8a8];
+        const baseAngle = Math.random() * Math.PI * 2;
+        for (let i = 0; i < n; i++) {
+            const size = Phaser.Math.Between(1, 3);
+            const p = scene.add.rectangle(x, y, size, size, colors[i % colors.length], 1)
+                .setDepth((y || 0) + 30);
+            scene.mainLayer?.add(p);
+
+            // Evenly spaced rays from center so paths don't cross
+            const angle = baseAngle + (i / n) * Math.PI * 2 + Phaser.Math.FloatBetween(-0.08, 0.08);
+            const dist = Phaser.Math.FloatBetween(7, 14);
+            const tx = x + Math.cos(angle) * dist;
+            const ty = y + Math.sin(angle) * dist;
+            const dur = Phaser.Math.Between(900, 1500);
+
+            scene.tweens.add({
+                targets: p,
+                x: tx,
+                y: ty,
+                duration: dur,
+                ease: "Sine.easeOut"
+            });
+            // Twinkle, then fade out
+            scene.tweens.add({
+                targets: p,
+                alpha: { from: 1, to: 0.15 },
+                duration: Phaser.Math.Between(90, 140),
+                yoyo: true,
+                repeat: Math.max(3, Math.floor(dur / 160)),
+                ease: "Sine.easeInOut",
+                onComplete: () => {
+                    if (!p.active) return;
+                    scene.tweens.add({
+                        targets: p,
+                        alpha: 0,
+                        duration: 280,
+                        onComplete: () => p.destroy()
+                    });
+                }
+            });
+        }
     }
 
     /**
@@ -108,11 +153,14 @@ class Corpse extends Phaser.GameObjects.Sprite {
     /** Remove from chunk meta and destroy sprite. */
     removeForever() {
         const scene = this.scene;
+        const x = this.x;
+        const y = this.y;
         if (scene.corpsePanel?.corpse === this) scene.corpsePanel.close(true);
         if (this.chunk?.meta?.corpses) {
             const i = this.chunk.meta.corpses.indexOf(this.entry);
             if (i >= 0) this.chunk.meta.corpses.splice(i, 1);
         }
+        Corpse.puffAway(scene, x, y);
         this.destroy();
     }
 }

@@ -91,7 +91,9 @@ const BodyCombat = {
                     cooldown,
                     name: a.name || a.id || "Attack",
                     range,
-                    unarmed: fist
+                    unarmed: fist,
+                    // Item name for injury attribution (hand is only for reach/weight)
+                    weaponName: fist ? null : (weaponMeta.name || weaponMeta.id || null)
                 });
             }
             return attacks;
@@ -139,6 +141,19 @@ const BodyCombat = {
     },
 
     /**
+     * Injury tooltip attribution: weapon item for armed hits, body part for unarmed.
+     * @returns {string|null}
+     */
+    sourceLabelFor(attacker, attack) {
+        if (!attacker || !attack) return null;
+        const tool = !attack.unarmed && attack.weaponName
+            ? attack.weaponName
+            : (attack.sourcePart?.name || "body");
+        const who = attacker.displayName?.() || attacker.def?.name || attacker.name || "Someone";
+        return `${who}'s ${tool}`;
+    },
+
+    /**
      * Apply a resolved melee hit to target's body.
      * @returns {{ damage, part, destroyed, injury }|null}
      */
@@ -179,9 +194,7 @@ const BodyCombat = {
             scarPending: false,
             scarSeverity: 0,
             painCategory: null,
-            sourceLabel: attacker
-                ? `${attacker.displayName?.() || attacker.def?.name || attacker.name || "Someone"}'s ${attack.sourcePart?.name || "body"}`
-                : null
+            sourceLabel: this.sourceLabelFor(attacker, attack)
         };
 
         // Scar roll at injury time (RW-ish); bruises never scar
@@ -218,17 +231,37 @@ const BodyCombat = {
                 : (attacker?.displayName?.() || attacker?.def?.name || "Someone");
             const verb = attack.verb || "hit";
             const weaponName = attack.name || attack.sourcePart?.name || "blow";
-            const vicPossessive = target === scene.player
+            const vicIsYou = target === scene.player;
+            const vicPossessive = vicIsYou
                 ? "your"
                 : `${target.def?.name || target.displayName?.() || "foe"}'s`;
-            scene.combatLog.push(
-                `${subj} ${verb} ${weaponName} into ${vicPossessive} ${victimPart.name} (${Number(damage).toFixed(1)})`
-            );
+            const youC = CombatLog.COLOR_YOU;
+            const enemyC = CombatLog.COLOR_ENEMY;
+            const wepC = CombatLog.COLOR_WEAPON;
+            const dmgStr = `(${Number(damage).toFixed(1)})`;
+            scene.combatLog.push(null, {
+                combat: true,
+                segments: [
+                    { text: subj, color: isYou ? youC : enemyC },
+                    { text: verb },
+                    { text: weaponName, color: wepC },
+                    { text: "into" },
+                    { text: vicPossessive, color: vicIsYou ? youC : enemyC },
+                    { text: victimPart.name },
+                    { text: dmgStr, color: wepC }
+                ]
+            });
             if (destroyed) {
-                const who = target === scene.player
+                const who = vicIsYou
                     ? "Your"
-                    : `${target.def?.name || "Their"}`;
-                scene.combatLog.push(`${who} ${victimPart.name} was destroyed!`);
+                    : `${target.def?.name || target.displayName?.() || "Their"}'s`;
+                scene.combatLog.push(null, {
+                    combat: true,
+                    segments: [
+                        { text: who, color: vicIsYou ? youC : enemyC },
+                        { text: `${victimPart.name} was destroyed!` }
+                    ]
+                });
             }
         }
 

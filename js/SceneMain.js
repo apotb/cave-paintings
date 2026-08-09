@@ -16,6 +16,7 @@ class SceneMain extends SceneBase {
         this.tileSize = 16;
         this.worldZoom = 3;
         this.chunks = {};
+        this.chunkDebug = false;
         this.updateChunkDistances();
         this.updateUiScale();
         this.scale.on("resize", () => {
@@ -121,9 +122,10 @@ class SceneMain extends SceneBase {
     }
 
     createBars() {
-        // Channel bar on UI layer (do NOT camera.ignore() Layer children — breaks world render)
-        this.channelBar = this.add.graphics().setVisible(false);
-        this.uiLayer.add(this.channelBar);
+        // Channel bar is parented to the player's fxRoot (world space) so it
+        // stays locked after the render snap — see showChannelBar.
+        this.channelBar = null;
+        this._channelBarProgress = null;
 
         this.painBar = this.add.graphics();
         this.uiLayer.add(this.painBar);
@@ -248,40 +250,86 @@ class SceneMain extends SceneBase {
         this._lastStrength = strength;
     }
 
-    /** Progress 0–1 bar centered above the player (screen-space over world). */
+    /**
+     * Progress 0–1 bar above the player. Drawn in fxRoot local space (scaled
+     * 1/zoom) so it stays locked to the sprite after the render snap — same
+     * approach as chat bubbles. Screen-space projection jittered while walking.
+     */
     showChannelBar(progress) {
-        const gfx = this.channelBar;
-        const player = this.player;
-        if (!gfx || !player) return;
-        gfx.setVisible(true);
-
-        const s = this.uiScale || 1;
-        const cam = this.cameras.main;
-        const w = Math.round(40 * s);
-        const h = Math.round(5 * s);
-        // Sprite origin is bottom-left — center X, just above top of sprite
-        const worldX = player.x + player.width * 0.5;
-        const worldY = player.y - player.height - 2;
-        // Stable world→screen via camera midPoint; round to avoid subpixel jitter
-        const sx = Math.round((worldX - cam.midPoint.x) * cam.zoom + cam.width * 0.5);
-        const sy = Math.round((worldY - cam.midPoint.y) * cam.zoom + cam.height * 0.5);
-        const x = sx - Math.floor(w / 2);
-        const y = sy - h;
-
-        const frac = Phaser.Math.Clamp(progress, 0, 1);
-        // red → orange → yellow → green as it fills
-        let color = 0xD24A43;
-        if (frac > 0.75) color = 0x3CB043;
-        else if (frac > 0.5) color = 0xE6C200;
-        else if (frac > 0.25) color = 0xE67A00;
-
-        gfx.clear();
-        this._drawBar(gfx, x, y, w, h, frac, 0x000000, 0x222222, color, 2);
+        this._channelBarProgress = Phaser.Math.Clamp(progress, 0, 1);
+        this._drawChannelBar();
     }
 
     hideChannelBar() {
+        this._channelBarProgress = null;
         this.channelBar?.clear();
         this.channelBar?.setVisible(false);
+    }
+
+    _drawChannelBar() {
+        const player = this.player;
+        const frac = this._channelBarProgress;
+        if (frac == null || !player?.active) {
+            this.hideChannelBar();
+            return;
+        }
+
+        const root = player.ensureFxRoot();
+        player.syncFxRoot();
+
+        if (!this.channelBar?.active) {
+            this.channelBar = this.add.graphics();
+            root.add(this.channelBar);
+        } else if (this.channelBar.parentContainer !== root) {
+            root.add(this.channelBar);
+        }
+
+        const s = this.uiScale || 1;
+        const zoom = this.worldZoom || this.cameras.main?.zoom || 1;
+        const w = Math.round(40 * s);
+        const h = Math.round(5 * s);
+
+        let lx, ly;
+        if (player._prone) {
+            lx = 0;
+            ly = -Math.round(Math.max(player.width, player.height) * 0.5 + 2);
+        } else {
+            // Sprite origin is bottom-left — center X, just above top of sprite
+            lx = Math.round(player.width * 0.5);
+            ly = -Math.round(player.height + 2);
+        }
+
+        // 0–25% red → 25–50% → orange → 50–75% → yellow → 75–90% → green → 90–100% solid green
+        const color = this._channelBarFillColor(frac);
+
+        const g = this.channelBar;
+        g.clear().setVisible(true);
+        g.setScale(1 / zoom);
+        g.setPosition(lx, ly);
+        // Local draw in screen-pixel units; scale makes them world-sized
+        this._drawBar(g, -Math.floor(w / 2), -h, w, h, frac, 0x000000, 0x222222, color, 2);
+    }
+
+    /** Smooth tend-bar fill color through the progress thresholds. */
+    _channelBarFillColor(frac) {
+        const t = Phaser.Math.Clamp(frac, 0, 1);
+        const red = 0xD24A43;
+        const orange = 0xE67A00;
+        const yellow = 0xE6C200;
+        const green = 0x3CB043;
+        const lerp = (a, b, u) => {
+            const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+            const br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+            const r = Math.round(ar + (br - ar) * u);
+            const g = Math.round(ag + (bg - ag) * u);
+            const bl = Math.round(ab + (bb - ab) * u);
+            return (r << 16) | (g << 8) | bl;
+        };
+        if (t < 0.25) return red;
+        if (t < 0.5) return lerp(red, orange, (t - 0.25) / 0.25);
+        if (t < 0.75) return lerp(orange, yellow, (t - 0.5) / 0.25);
+        if (t < 0.9) return lerp(yellow, green, (t - 0.75) / 0.15);
+        return green;
     }
 
     _drawBar(gfx, x, y, w, h, frac, borderColor, bgColor, fillColor, border=1) {
@@ -571,6 +619,7 @@ class SceneMain extends SceneBase {
             this.player?.syncFxRoot?.();
             this.player?._syncChatBubble?.();
             this.meleeSlots?.drawDebug?.();
+            this.drawChunkDebug();
         });
         this.scale.on("resize", () => this.hideTooltip());
     }
@@ -1863,8 +1912,81 @@ class SceneMain extends SceneBase {
         return this.chunks[this.getKey(x, y)] || null;
     }
 
+    /**
+     * Drop every chunk (and live world sprites). Nearby chunks are recreated
+     * next frame as the player stays in range — same path as first exploration.
+     * @returns {number} how many chunks were discarded
+     */
+    regenChunks() {
+        const n = Object.keys(this.chunks || {}).length;
+        // World panels hold refs into chunk things/corpses
+        if (this.corpsePanel?.visible) this.corpsePanel.close(true);
+        if (this.campfirePanel?.visible) this.campfirePanel.close();
+        if (this.healthPanel?.isInspecting?.()) this.healthPanel.close();
+
+        for (const chunk of Object.values(this.chunks || {})) chunk.unload();
+        this.chunks = {};
+        this._things?.clear(true, true);
+        if (this.mobs) {
+            for (const mob of this.mobs.getChildren().slice()) {
+                this.damageables?.remove(mob);
+            }
+            this.mobs.clear(true, true);
+        }
+        if (this.droppedItems) this.droppedItems.clear(true, true);
+        if (this.corpses) {
+            for (const c of this.corpses.getChildren().slice()) c.destroy();
+            this.corpses.clear(true, true);
+        }
+        if (this.meleeSlots?.slots) {
+            for (const s of this.meleeSlots.slots) s.owners = [];
+        }
+        this.markLightDirty?.();
+        return n;
+    }
+
     chunkPx() {
         return this.chunkSize * this.tileSize;
+    }
+
+    /** Debug: draw chunk border grid over the camera view. */
+    setChunkDebug(on) {
+        this.chunkDebug = !!on;
+        if (!this.chunkDebug) {
+            this._chunkDebugGfx?.clear();
+            this._chunkDebugGfx?.setVisible(false);
+            return this.chunkDebug;
+        }
+        this.drawChunkDebug();
+        return this.chunkDebug;
+    }
+
+    drawChunkDebug() {
+        if (!this.chunkDebug) return;
+        if (!this._chunkDebugGfx) {
+            this._chunkDebugGfx = this.add.graphics().setDepth(100);
+            this.mainLayer.add(this._chunkDebugGfx);
+        }
+        const g = this._chunkDebugGfx;
+        g.clear().setVisible(true);
+
+        const cam = this.cameras.main;
+        const px = this.chunkPx();
+        const wv = cam.worldView;
+        const cx0 = Math.floor(wv.x / px);
+        const cy0 = Math.floor(wv.y / px);
+        const cx1 = Math.ceil(wv.right / px);
+        const cy1 = Math.ceil(wv.bottom / px);
+
+        g.lineStyle(1, 0x55ffaa, 0.55);
+        for (let cx = cx0; cx <= cx1; cx++) {
+            const x = cx * px;
+            g.lineBetween(x, cy0 * px, x, cy1 * px);
+        }
+        for (let cy = cy0; cy <= cy1; cy++) {
+            const y = cy * px;
+            g.lineBetween(cx0 * px, y, cx1 * px, y);
+        }
     }
 
     updateChunkDistances() {

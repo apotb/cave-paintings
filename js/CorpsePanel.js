@@ -1,6 +1,7 @@
 /**
  * World-anchored corpse loot UI: take-only, 5 cols, rows grow upward.
- * Empty holes stick for the open session; compact on close / reopen.
+ * Empty holes stick for the open session; compact on close.
+ * Corpse is only removed when the UI closes on an empty inventory.
  */
 class CorpsePanel {
     constructor(scene) {
@@ -57,10 +58,9 @@ class CorpsePanel {
 
         this.corpse = corpse;
         this.session = (corpse.entry.loot || []).map(s => cloneItemStack(s));
-        if (!this.session.length) {
-            corpse.removeForever();
-            return;
-        }
+        this._hadLootOnOpen = this.session.some(Boolean);
+        // Empty corpse: one inert slot until the UI is closed
+        if (!this.session.length) this.session = [null];
 
         this.visible = true;
         this.container.setVisible(true);
@@ -136,6 +136,7 @@ class CorpsePanel {
 
     _rebuildSlots() {
         this._clearSlots();
+        if (!this.session.length) this.session = [null];
         const n = this.session.length;
         for (let i = 0; i < n; i++) {
             this._buildSlot(i);
@@ -181,11 +182,12 @@ class CorpsePanel {
         });
 
         slot.on("pointerdown", (pointer) => {
+            // Empty slots are display-only
+            if (!this.session[index]) return;
             if (pointer.rightButtonDown()) {
                 this._takeToInventory(index);
                 return;
             }
-            if (!this.session[index]) return;
             this._pointerDownPos = { x: pointer.x, y: pointer.y };
             this._pointerIsDown = true;
             this._dragFrom = index;
@@ -303,14 +305,16 @@ class CorpsePanel {
 
     _afterTake() {
         this._syncPersist();
-        this.refresh();
         this.scene.hotbar.dirty = true;
         this.scene.refreshTooltip?.();
-        if (!this.session.some(Boolean)) {
+        // Looted corpses: last item taken → close UI/health and destroy immediately
+        if (this._hadLootOnOpen && !this.session.some(Boolean)) {
             const corpse = this.corpse;
             this.close(true);
             corpse?.removeForever();
+            return;
         }
+        this.refresh();
     }
 
     /**

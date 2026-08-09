@@ -82,6 +82,35 @@
         }
     },
     {
+        "id": "raw_venison",
+        "name": "Raw Venison",
+        "key": "raw_venison",
+        "maxStack": 99,
+        "weight": 0.12,
+        "fillColor": "#8B3A2A",
+        "food": {
+            "kc": 80,
+            "spoil": 12
+        },
+        "cook": {
+            "stick_roast": {
+                "result": "roasted_venison",
+                "minutes": 15
+            }
+        }
+    },
+    {
+        "id": "roasted_venison",
+        "name": "Roasted Venison",
+        "key": "roasted_venison",
+        "maxStack": 99,
+        "weight": 0.1,
+        "food": {
+            "kc": 145,
+            "spoil": 36
+        }
+    },
+    {
         "id": "coconut",
         "name": "Coconut",
         "key": "coconut",

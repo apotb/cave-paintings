@@ -39,9 +39,24 @@ class DoofusAI {
         return Number(mob.def?.speed) || 1;
     }
 
+    /**
+     * Walk anims are authored for human walk speed (~3.5 tiles/s at timeScale 1).
+     * Scale cadence with actual movement so slow wander doesn't look like a sprint.
+     */
+    _animTimeScale(tilesPerSec) {
+        const human = this.mob.scene.getMob?.("human");
+        const ref = Number(human?.speed) || 3.5;
+        return Phaser.Math.Clamp(tilesPerSec / ref, 0.2, 2.5);
+    }
+
     _applyWalk(speedMult) {
         const mob = this.mob;
-        const speed = this._wanderBase() * mob.scene.tileSize * speedMult;
+        // Same as player / AggressiveAnimal: Moving capacity slows damaged legs
+        const moveMul = mob.capacities?.moving
+            ? Math.max(0.05, Math.min(1.5, mob.capacities.moving()))
+            : 1;
+        const tilesPerSec = this._wanderBase() * speedMult * moveMul;
+        const speed = tilesPerSec * mob.scene.tileSize;
         let x = this.dirX;
         let y = this.dirY;
         const len = Math.hypot(x, y) || 1;
@@ -54,7 +69,7 @@ class DoofusAI {
         } else if (y !== 0) {
             mob.facing = y > 0 ? "down" : "up";
         }
-        mob.anims.timeScale = speedMult > 1.2 ? 1.5 : 1;
+        mob.anims.timeScale = this._animTimeScale(tilesPerSec);
         mob.playAnim(`walk-${mob.facing}`);
     }
 
