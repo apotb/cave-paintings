@@ -38,6 +38,7 @@ class Chunk {
         this.things = this.scene.add.group();
         this.mobs = this.scene.add.group();
         this.drops = this.scene.add.group();
+        this.corpses = this.scene.add.group();
         this.isLoaded = false;
         this.isGenerated = false;
         this.meta = meta || {
@@ -45,15 +46,36 @@ class Chunk {
             things: [],
             lootableThings: [],
             mobs: [],
-            drops: []
+            drops: [],
+            bloodStains: [],
+            corpses: []
         };
         if (!this.meta.mobs) this.meta.mobs = [];
         if (!this.meta.drops) this.meta.drops = [];
+        if (!this.meta.bloodStains) this.meta.bloodStains = [];
+        if (!this.meta.corpses) this.meta.corpses = [];
     }
 
     toJSON() {
         this.flushMobs();
         this.flushDrops();
+        const bloodStains = (this.meta.bloodStains || []).map(e => ({
+            x: e.x,
+            y: e.y,
+            radius: e.radius,
+            lifeMinutes: e.lifeMinutes
+        }));
+        const corpses = (this.meta.corpses || []).map(e => ({
+            id: e.id,
+            x: e.x,
+            y: e.y,
+            key: e.key,
+            frame: e.frame,
+            name: e.name,
+            loot: (e.loot || []).map(s => cloneItemStack(s)).filter(Boolean),
+            body: e.body || null,
+            bodyPlan: e.bodyPlan || e.body?.planId || "human"
+        }));
         return {
             x: this.x,
             y: this.y,
@@ -61,7 +83,9 @@ class Chunk {
             things: this.meta.things,
             lootableThings: this.meta.lootableThings,
             mobs: this.meta.mobs,
-            drops: this.meta.drops
+            drops: this.meta.drops,
+            bloodStains,
+            corpses
         };
     }
 
@@ -81,6 +105,7 @@ class Chunk {
             this.rt = null;
         }
         this.things.children.each(thing => thing.destroy());
+        this._clearBloodSprites();
         this.flushMobs();
         this.flushDrops();
         for (const mob of this.mobs.getChildren().slice()) {
@@ -94,6 +119,11 @@ class Chunk {
             else drop.destroy();
         }
         this.drops.clear(false, false);
+        for (const corpse of this.corpses.getChildren().slice()) {
+            this.scene.corpses?.remove(corpse);
+            corpse.destroy();
+        }
+        this.corpses.clear(false, false);
         this.scene.markLightDirty?.();
     }
 
@@ -103,13 +133,35 @@ class Chunk {
         await this.generate();
         await this.render();
         await this.makeThings();
+        await this.makeBloodStains();
         await this.makeMobs();
         await this.makeDrops();
+        await this.makeCorpses();
+    }
+
+    _clearBloodSprites() {
+        for (const e of this.meta.bloodStains || []) {
+            e._sprite = null;
+        }
+        if (this._bloodSprites) {
+            for (const s of this._bloodSprites) s?.destroy?.();
+            this._bloodSprites = [];
+        }
+        this._bloodGfx?.destroy();
+        this._bloodGfx = null;
+    }
+
+    async makeBloodStains() {
+        if (!this.meta.bloodStains) this.meta.bloodStains = [];
+        if (this.meta.bloodStains.length) {
+            this.scene.rebuildBloodGfx?.(this);
+        }
+        return Promise.resolve();
     }
 
     flushMobs() {
         this.mobs?.children?.each(mob => {
-            if (typeof mob.syncToEntry === "function") mob.syncToEntry();
+            if (typeof mob.syncToEntry === "function") mob.syncToEntry({ forceBody: true });
         });
     }
 
@@ -337,6 +389,19 @@ class Chunk {
             if (!entry?.id || !(entry.quantity > 0)) continue;
             if (live.some(d => d.entry === entry)) continue;
             new DroppedItem(this.scene, entry, this);
+        }
+        return Promise.resolve();
+    }
+
+    async makeCorpses() {
+        if (!this.meta.corpses) this.meta.corpses = [];
+        // Drop empty corpse entries
+        this.meta.corpses = this.meta.corpses.filter(e => e?.loot?.length);
+        const live = this.corpses?.getChildren() || [];
+        for (const entry of this.meta.corpses) {
+            if (!entry?.loot?.length) continue;
+            if (live.some(c => c.entry === entry)) continue;
+            new Corpse(this.scene, entry, this);
         }
         return Promise.resolve();
     }

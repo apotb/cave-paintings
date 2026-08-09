@@ -12,6 +12,8 @@ class SceneBase extends Phaser.Scene {
         // Data
         this.load.json("items", "data/Items.json");
         this.load.json("things", "data/Things.json");
+        this.load.json("bodyPlans", "data/BodyPlans.json");
+        this.load.json("injuries", "data/Injuries.json");
         // Queue thing textures once JSON arrives (spritesheet if `anim`, else image)
         this.load.once("filecomplete-json-things", (_key, _type, data) => {
             for (const t of data) {
@@ -73,10 +75,36 @@ class SceneBase extends Phaser.Scene {
             "load_open",
             "help",
             "help_hover",
-            "help_click"
+            "help_click",
+            "health",
+            "health_hover",
+            "health_open",
+            "status2"
         ];
         for (const ui of uis) {
             this.loadImage(ui, 'ui');
+        }
+
+        // Health doll part masks (black silhouettes in status_parts/)
+        const statusParts = [
+            "Brain", "Head", "Heart", "Jaw", "Tongue", "Nose",
+            "Left_Eye", "Right_Eye", "Left_Ear", "Right_Ear",
+            "Neck", "Torso", "Waist", "Spine", "Ribcage", "Sternum", "Stomach", "Liver", "Pelvis", "Skull",
+            "Left_Lung", "Right_Lung", "Left_Kidney", "Right_Kidney",
+            "Left_Shoulder", "Right_Shoulder", "Left_Clavicle", "Right_Clavicle",
+            "Left_Arm", "Right_Arm", "Left_Humerus", "Right_Humerus", "Left_Radius", "Right_Radius",
+            "Left_Hand", "Right_Hand",
+            "Left_Thumb", "Right_Thumb", "Left_Index_Finger", "Right_Index_Finger",
+            "Left_Middle_Finger", "Right_Middle_Finger", "Left_Ring_Finger", "Right_Ring_Finger",
+            "Left_Pinky_Finger", "Right_Pinky_Finger",
+            "Left_Leg", "Right_Leg", "Left_Femur", "Right_Femur", "Left_Tibia", "Right_Tibia",
+            "Left_Foot", "Right_Foot",
+            "Left_Big_Toe", "Right_Big_Toe", "Left_Second_Toe", "Right_Second_Toe",
+            "Left_Middle_Toe", "Right_Middle_Toe", "Left_Fourth_Toe", "Right_Fourth_Toe",
+            "Left_Little_Toe", "Right_Little_Toe"
+        ];
+        for (const part of statusParts) {
+            this.loadImage(`status_part_${part}`, "ui", `status_parts/${part}`);
         }
 
         // Tiles

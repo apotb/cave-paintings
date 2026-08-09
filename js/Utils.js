@@ -70,6 +70,40 @@ function setTickSpeed(mult) {
 }
 
 /**
+ * Debug: apply a cut/bruise to a body part (default: random limb).
+ * @param {Number} [severity=8]
+ * @param {String} [partName] e.g. "Left Arm"
+ * @param {"cut"|"bruise"} [type="cut"]
+ * @example injureMe(12, "Torso")
+ */
+function injureMe(severity = 8, partName = null, type = "cut") {
+    const scene = getScene();
+    const player = scene.player;
+    if (!player?.anatomy) return "No player anatomy";
+    const defs = scene.cache.json.get("injuries") || {};
+    const idef = type === "bruise" ? defs.bruise : defs.cut;
+    let part = partName ? player.anatomy.part(partName) : player.anatomy.rollLimb();
+    if (!part) return `Unknown part "${partName}"`;
+    const dmg = Math.max(0.1, Number(severity) || 8);
+    part.injure({
+        id: idef?.id || type,
+        name: idef?.name || type,
+        severity: dmg,
+        permanent: false,
+        bleeding: (Number(idef?.bleedRate) || 0) > 0,
+        bleedRate: Number(idef?.bleedRate) || 0,
+        painPerSeverity: Number(idef?.painPerSeverity) || 0.0125,
+        tended: false,
+        tendQuality: 0,
+        scarPending: false,
+        scarSeverity: 0
+    });
+    player.onBodyDamaged?.(null, { damage: dmg, part });
+    scene.combatLog?.push(`Debug: ${dmg} ${idef?.name || type} on ${part.name}`);
+    return `${part.name}: ${part.hp().toFixed(1)}/${part.mhp}`;
+}
+
+/**
  * Debug: add an item to the player inventory.
  * @param {String} [id]       Item id from Items.json (omit to list ids)
  * @param {Number} [amount=1]
@@ -507,6 +541,16 @@ function makeCoconutMealStack(getItem, ingredientIds, coconutMeta) {
     };
 }
 
+/** Deep-enough clone of an inventory/equipment/loot stack. */
+function cloneItemStack(stack) {
+    if (!stack) return null;
+    const out = { id: stack.id, quantity: stack.quantity };
+    if (stack.spoilMinutes != null) out.spoilMinutes = stack.spoilMinutes;
+    const extras = mealStackExtras(stack);
+    if (extras) Object.assign(out, extras);
+    return out;
+}
+
 /** Clone stack-level meal/food fields for drop/transfer. */
 function mealStackExtras(stack) {
     if (!stack) return null;
@@ -584,4 +628,145 @@ function getTimeOfDayTint(minutes) {
         darkness: lerp(a.darkness ?? 0, b.darkness ?? 0),
         wash: lerp(a.wash ?? 0, b.wash ?? 0)
     };
+}
+
+/**
+ * Lay down like a corpse (right-facing, -90°) without gray tint.
+ * Toggles origin between standing (0,1) and prone (0.5, 0.5), preserving world position.
+ * @param {Phaser.GameObjects.Sprite} sprite
+ * @param {boolean} prone
+ */
+function setCreatureProne(sprite, prone) {
+    if (!sprite) return;
+    const want = !!prone;
+    if (!!sprite._prone === want) {
+        if (want) {
+            sprite.anims?.stop?.();
+            if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
+            sprite.setRotation(-Math.PI / 2);
+            sprite.clearTint?.();
+        }
+        return;
+    }
+
+    const w = sprite.width || 16;
+    const h = sprite.height || 16;
+
+    if (want) {
+        // bottom-left origin → center
+        sprite.x += w * 0.5;
+        sprite.y -= h * 0.5;
+        sprite.setOrigin(0.5, 0.5);
+        sprite.setRotation(-Math.PI / 2);
+        sprite.anims?.stop?.();
+        if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
+        sprite.clearTint?.();
+        sprite._prone = true;
+    } else {
+        sprite.setRotation(0);
+        sprite.x -= w * 0.5;
+        sprite.y += h * 0.5;
+        sprite.setOrigin(0, 1);
+        sprite._prone = false;
+    }
+}
+
+/**
+ * Shared jab curve for player + mob unarmed/weapon thrusts.
+ * @returns {Number} 0..1 (extend then retract)
+ */
+function meleeThrustCurve(progress) {
+    const peak = 0.4;
+    if (progress <= peak) {
+        const t = progress / peak;
+        return 1 - (1 - t) * (1 - t);
+    }
+    const t = (progress - peak) / (1 - peak);
+    return (1 - t) * (1 - t);
+}
+
+/** Place unarmed fist sprite along aim using the shared thrust curve. */
+function placeUnarmedThrustSprite(sprite, cx, cy, angle, range, progress, depthY) {
+    if (!sprite) return;
+    const thrust = meleeThrustCurve(progress);
+    const hold = 3;
+    const dist = hold + (Number(range) || 4) * thrust;
+    sprite.setPosition(
+        cx + Math.cos(angle) * dist,
+        cy + Math.sin(angle) * dist
+    );
+    sprite.setRotation(angle + Math.PI / 2);
+    if (depthY != null) sprite.setDepth(depthY + 1);
+}
+
+/** Short segment around the fist for hit tests. */
+function unarmedHitSegment(sprite, angle) {
+    if (!sprite) return null;
+    const c = { x: sprite.x, y: sprite.y };
+    return {
+        a: { x: c.x - Math.cos(angle) * 3, y: c.y - Math.sin(angle) * 3 },
+        b: { x: c.x + Math.cos(angle) * 3, y: c.y + Math.sin(angle) * 3 }
+    };
+}
+
+function meleeSegmentHitsRect(ax, ay, bx, by, box, radius = 0) {
+    const left = box.left - radius;
+    const right = box.right + radius;
+    const top = box.top - radius;
+    const bottom = box.bottom + radius;
+    if (ax >= left && ax <= right && ay >= top && ay <= bottom) return true;
+    if (bx >= left && bx <= right && by >= top && by <= bottom) return true;
+    const edges = [
+        [left, top, right, top],
+        [right, top, right, bottom],
+        [right, bottom, left, bottom],
+        [left, bottom, left, top]
+    ];
+    for (const [ex1, ey1, ex2, ey2] of edges) {
+        if (meleeSegmentsIntersect(ax, ay, bx, by, ex1, ey1, ex2, ey2)) return true;
+    }
+    return false;
+}
+
+function meleeSegmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
+    const abx = bx - ax, aby = by - ay;
+    const cdx = dx - cx, cdy = dy - cy;
+    const den = abx * cdy - aby * cdx;
+    if (Math.abs(den) < 1e-8) return false;
+    const acx = cx - ax, acy = cy - ay;
+    const t = (acx * cdy - acy * cdx) / den;
+    const u = (acx * aby - acy * abx) / den;
+    return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+}
+
+function meleeDistPointToSegment(px, py, ax, ay, bx, by) {
+    const abx = bx - ax;
+    const aby = by - ay;
+    const len2 = abx * abx + aby * aby;
+    if (len2 <= 1e-8) return Math.hypot(px - ax, py - ay);
+    let t = ((px - ax) * abx + (py - ay) * aby) / len2;
+    t = Phaser.Math.Clamp(t, 0, 1);
+    return Math.hypot(px - (ax + abx * t), py - (ay + aby * t));
+}
+
+/** Unarmed / melee segment vs a damageable target. */
+function meleeSegmentHitsTarget(a, b, radius, target) {
+    if (typeof target.hurtbox === "function") {
+        return meleeSegmentHitsRect(a.x, a.y, b.x, b.y, target.hurtbox(0), radius);
+    }
+    let tx, ty, rad;
+    if (typeof target.bodyCenter === "function") {
+        const bc = target.bodyCenter();
+        tx = bc.x; ty = bc.y;
+        rad = Math.max(target.width, target.height) * 0.5;
+    } else if (target.body) {
+        tx = target.body.center.x;
+        ty = target.body.center.y;
+        rad = Math.max(target.body.width, target.body.height) * 0.55;
+    } else {
+        tx = target.x;
+        ty = target.y;
+        rad = 10;
+    }
+    return meleeDistPointToSegment(tx, ty, a.x, a.y, b.x, b.y) <= rad + radius;
 }

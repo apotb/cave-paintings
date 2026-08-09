@@ -42,8 +42,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         const entry = {
             id,
             x,
-            y,
-            hp: def.hp
+            y
         };
         chunk.meta.mobs.push(entry);
 
@@ -75,10 +74,14 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
 
         this.entry = entry;
         this.chunk = chunk;
-        this.def = def || { id: entry.id, key, hp: 20, speed: 1, hitboxSize: 8 };
-        this.mhp = Number(this.def.hp) || 20;
-        this.hp = entry.hp != null ? Number(entry.hp) : this.mhp;
+        this.def = def || { id: entry.id, key, speed: 1, hitboxSize: 8 };
         this.facing = "down";
+        this._dead = false;
+
+        const planId = this.def.bodyPlan || "human";
+        this.anatomy = new Body(scene, planId, this);
+        if (entry.body) this.anatomy.loadJSON(entry.body);
+        this.capacities = new Capacities(this.anatomy);
 
         const hitboxSize = Number(this.def.hitboxSize) || 8;
         this.hitboxSize = hitboxSize;
@@ -97,31 +100,29 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
 
         const AiClass = typeof MobAI !== "undefined" ? MobAI[this.def.ai] : null;
         this.ai = AiClass ? new AiClass(this) : null;
+        // Restore combat aggro across save/load / chunk unload
+        if (this.ai && entry.hostile) {
+            this.ai.hostile = true;
+            this.ai.timeSinceHitPlayer = 0;
+            this.ai._deaggroTimer = 0;
+        }
 
-        // World-space bar locked to this mob (same approach as campfire panel):
-        // share the mob's exact world coords after physics — no camera reprojection / Math.round.
-        this.hpBarGfx = scene.add.graphics();
-        scene.mainLayer.add(this.hpBarGfx);
-        this._hpBarFrac = null;
-        this._hpBarColorCached = null;
-        this._syncHpBarTransform = () => {
-            const gfx = this.hpBarGfx;
-            if (!gfx || !this.active || !gfx.visible) return;
-            const w = 14;
-            gfx.setPosition(
-                this.x + this.width * 0.5 - w * 0.5,
-                this.y - this.height - 3
-            );
-            gfx.setDepth(this.y + 0.1);
-        };
-        scene.events.on("postupdate", this._syncHpBarTransform);
+        this.unarmedSprite = null;
+        this.attackTimer = 0;
+        this.attackMax = 0;
+        this.attackAngle = 0;
+        this.currentAttack = null;
+        this.attackWeapon = null;
+        this.attackHitSet = null;
+
         this.on("destroy", () => {
-            scene.events.off("postupdate", this._syncHpBarTransform);
-            this._syncHpBarTransform = null;
+            this._endAttack();
+            this.ai?._releaseSlot?.();
+            scene.meleeSlots?.release?.(this);
             if (scene._hoverTarget === this) scene._hoverTarget = null;
             if (scene._tooltipTarget === this) scene.hideTooltip();
-            this.hpBarGfx?.destroy();
-            this.hpBarGfx = null;
+            this.unarmedSprite?.destroy();
+            this.unarmedSprite = null;
         });
 
         this.setInteractive({ cursor: "pointer" });
@@ -137,7 +138,6 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         this.scene.player?.createAnimations?.();
         this.playAnim(`idle-${this.facing}`);
         this.setDepth(this.y);
-        this._updateHpBar();
     }
 
     playAnim(key) {
@@ -145,65 +145,159 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         this.play(key, true);
     }
 
-    /** Green → yellow (50%) → orange (25%) → red (10%). */
-    _hpBarColor(frac) {
-        const stops = [
-            { t: 1.0, c: 0x3CB043 },  // green
-            { t: 0.5, c: 0xE6C200 },  // yellow
-            { t: 0.25, c: 0xE67A00 }, // orange
-            { t: 0.1, c: 0xD24A43 }   // red
-        ];
-        const f = Phaser.Math.Clamp(frac, 0, 1);
-        if (f >= stops[0].t) return stops[0].c;
-        if (f <= stops[stops.length - 1].t) return stops[stops.length - 1].c;
-
-        for (let i = 0; i < stops.length - 1; i++) {
-            const a = stops[i];
-            const b = stops[i + 1];
-            if (f <= a.t && f >= b.t) {
-                const u = (a.t - f) / (a.t - b.t);
-                const ar = (a.c >> 16) & 0xff, ag = (a.c >> 8) & 0xff, ab = a.c & 0xff;
-                const br = (b.c >> 16) & 0xff, bg = (b.c >> 8) & 0xff, bb = b.c & 0xff;
-                const r = Math.round(ar + (br - ar) * u);
-                const g = Math.round(ag + (bg - ag) * u);
-                const bl = Math.round(ab + (bb - ab) * u);
-                return (r << 16) | (g << 8) | bl;
-            }
-        }
-        return stops[stops.length - 1].c;
+    isBodyDead() {
+        return this._dead;
     }
 
-    _updateHpBar() {
-        const gfx = this.hpBarGfx;
-        if (!gfx) return;
-        if (!(this.hp < this.mhp) || this.hp <= 0) {
-            gfx.setVisible(false);
-            this._hpBarFrac = null;
-            this._hpBarColorCached = null;
-            return;
+    isIncapacitated() {
+        // Reuse the capacities snapshot from this frame (avoid a second full body walk)
+        if (!this.capacities) this.capacities = new Capacities(this.anatomy);
+        return this.capacities.isPainShock() || this.capacities.isUnconscious();
+    }
+
+    displayName() {
+        return this.def?.name || this.def?.id || "Someone";
+    }
+
+    getHeldWeaponMeta() {
+        return null; // unarmed for now
+    }
+
+    /**
+     * Unarmed fist fill. Humans (player sheet) use arm orange; others pitch black
+     * unless `fistColor` is set on the mob def (hex number).
+     */
+    fistColor() {
+        if (Number.isFinite(this.def?.fistColor)) return this.def.fistColor >>> 0;
+        const key = this.def?.key || this.texture?.key;
+        if (key === "player" || this.def?.id === "human") return 0xff8900;
+        return 0x000000;
+    }
+
+    onBodyFatal() {
+        this.die();
+    }
+
+    onBodyDamaged(source, _result) {
+        this.capacities = new Capacities(this.anatomy);
+        this.syncToEntry();
+        if (!this._dead) this.ai?.onDamaged?.(source);
+    }
+
+    isAttacking() {
+        return this.attackTimer > 0;
+    }
+
+    /**
+     * Same frame-based unarmed thrust as the player (extend → hit window → retract).
+     * @returns {boolean} true if an attempt started
+     */
+    tryMeleeAttack(target, attack) {
+        if (!target || !attack || this._dead || this.isIncapacitated()) return false;
+        if (this.isAttacking()) return false;
+
+        this.capacities = new Capacities(this.anatomy);
+        const c = this.bodyCenter();
+        const tc = typeof target.bodyCenter === "function"
+            ? target.bodyCenter()
+            : { x: target.x, y: target.y };
+        const ang = Math.atan2(tc.y - c.y, tc.x - c.x);
+        const scale = this.capacities.actionDurationScale();
+        const frames = Math.max(8, Math.floor((attack.cooldown || 2) * 60 * scale));
+
+        this.currentAttack = attack;
+        this.attackWeapon = {
+            type: "melee",
+            range: Number(attack.range) || 4,
+            hitStart: 0.25,
+            hitEnd: 0.75
+        };
+        this.attackMax = frames;
+        this.attackTimer = frames;
+        this.attackAngle = ang;
+        this.attackHitSet = new Set();
+
+        if (Math.abs(Math.cos(ang)) > Math.abs(Math.sin(ang))) {
+            this.facing = Math.cos(ang) > 0 ? "right" : "left";
+        } else {
+            this.facing = Math.sin(ang) > 0 ? "down" : "up";
         }
-        gfx.setVisible(true);
-        this._syncHpBarTransform?.();
 
-        const frac = Phaser.Math.Clamp(this.hp / this.mhp, 0, 1);
-        const color = this._hpBarColor(frac);
-        // Redraw only when fill/color changes; motion is handled in postupdate
-        if (this._hpBarFrac === frac && this._hpBarColorCached === color) return;
-        this._hpBarFrac = frac;
-        this._hpBarColorCached = color;
+        const fistColor = this.fistColor();
+        if (!this.unarmedSprite) {
+            this.unarmedSprite = this.scene.add.rectangle(c.x, c.y, 4, 10, fistColor, 1)
+                .setOrigin(0.5, 1);
+            this.scene.mainLayer.add(this.unarmedSprite);
+        } else {
+            this.unarmedSprite.setFillStyle(fistColor, 1);
+        }
+        this.unarmedSprite.setVisible(true);
+        this._updateUnarmedSprite(0);
+        return true;
+    }
 
-        const w = 14;
-        const h = 2;
-        gfx.clear();
-        gfx.fillStyle(0x000000, 0.75);
-        gfx.fillRect(-1, -1, w + 2, h + 2);
-        gfx.fillStyle(0x333333, 1);
-        gfx.fillRect(0, 0, w, h);
-        gfx.fillStyle(color, 1);
-        gfx.fillRect(0, 0, Math.max(1, Math.round(w * frac)), h);
+    _attackProgress() {
+        if (this.attackMax <= 0) return 1;
+        return 1 - (this.attackTimer / this.attackMax);
+    }
+
+    _updateUnarmedSprite(progress) {
+        if (!this.unarmedSprite || !this.currentAttack) return;
+        const range = Number(this.attackWeapon?.range) || Number(this.currentAttack.range) || 4;
+        const c = this.bodyCenter();
+        placeUnarmedThrustSprite(
+            this.unarmedSprite, c.x, c.y, this.attackAngle, range, progress, this.y
+        );
+    }
+
+    _meleeHitCheck(progress) {
+        const w = this.attackWeapon;
+        const attack = this.currentAttack;
+        if (!w || !attack || !this.attackHitSet) return;
+        const start = Number(w.hitStart ?? 0.25);
+        const end = Number(w.hitEnd ?? 0.75);
+        if (progress < start || progress > end) return;
+
+        const seg = unarmedHitSegment(this.unarmedSprite, this.attackAngle);
+        if (!seg) return;
+
+        const group = this.scene.damageables;
+        if (!group) return;
+        const player = this.scene.player;
+        for (const target of group.getChildren()) {
+            if (!target || !target.active || target === this) continue;
+            if (this.attackHitSet.has(target)) continue;
+            if (target.isBodyDead?.()) continue;
+            // Mobs only hit the player (no friendly fire on other living mobs)
+            if (target !== player) continue;
+            if (!meleeSegmentHitsTarget(seg.a, seg.b, 4, target)) continue;
+
+            this.attackHitSet.add(target);
+            BodyCombat.applyHit(this, target, attack);
+            this.ai?.onDealtHit?.();
+        }
+    }
+
+    _endAttack() {
+        this.attackTimer = 0;
+        this.attackMax = 0;
+        this.attackWeapon = null;
+        this.attackHitSet = null;
+        this.currentAttack = null;
+        if (this.unarmedSprite) this.unarmedSprite.setVisible(false);
+    }
+
+    _tickMeleeAttack() {
+        if (!this.isAttacking()) return;
+        const progress = this._attackProgress();
+        this._updateUnarmedSprite(progress);
+        this._meleeHitCheck(progress);
+        this.attackTimer -= 1;
+        if (this.attackTimer <= 0) this._endAttack();
     }
 
     bodyCenter() {
+        if (this._prone) return { x: this.x, y: this.y };
         return {
             x: this.x + this.width * 0.5,
             y: this.y - this.height * 0.5
@@ -211,9 +305,19 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Melee hurtbox (origin bottom-left): roughly the drawn body.
+     * Melee hurtbox (origin bottom-left when standing).
      */
     hurtbox(pad = 0) {
+        if (this._prone) {
+            const hw = this.width * 0.35;
+            const hh = this.height * 0.35;
+            return {
+                left: this.x - hw - pad,
+                top: this.y - hh - pad,
+                right: this.x + hw + pad,
+                bottom: this.y + hh + pad
+            };
+        }
         const inset = 1;
         return {
             left: this.x + inset - pad,
@@ -223,30 +327,47 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         };
     }
 
+    isImmobile() {
+        return !!this.capacities?.isImmobile?.();
+    }
+
     /**
      * @param {Number} amount
      * @param {Object} [source]
      * @param {{ type?: string }} [opts]
      */
     takeDamage(amount, source = null, opts = null) {
-        const dmg = Number(amount) || 0;
-        if (!(dmg > 0) || this.hp <= 0) return 0;
-        this.hp = Math.max(0, this.hp - dmg);
-        this.syncToEntry();
-        this._updateHpBar();
-        if (this.hp <= 0) {
-            this.die(source, opts);
-        } else {
-            this.ai?.onDamaged?.(source, opts);
+        if (this._dead) return 0;
+        if (opts?.attack) {
+            const result = BodyCombat.applyHit(source, this, opts.attack, opts);
+            return result?.damage || 0;
         }
-        return dmg;
+        const fake = {
+            damage: Number(amount) || 1,
+            type: "blunt",
+            verb: "struck",
+            sourcePart: { name: "blow" },
+            def: { variance: 0.05 },
+            name: "Hit"
+        };
+        const result = BodyCombat.applyHit(source, this, fake, opts);
+        return result?.damage || 0;
     }
 
-    syncToEntry() {
+    /**
+     * @param {{ forceBody?: boolean }} [opts] forceBody: always write anatomy (save/unload)
+     */
+    syncToEntry(opts = null) {
         if (!this.entry) return;
         this.entry.x = this.x;
         this.entry.y = this.y;
-        this.entry.hp = this.hp;
+        const forceBody = !!opts?.forceBody;
+        if (forceBody || this.anatomy?._dirty) {
+            this.entry.body = this.anatomy?.toJSON?.();
+            if (this.anatomy) this.anatomy._dirty = false;
+        }
+        if (this.ai?.hostile) this.entry.hostile = true;
+        else delete this.entry.hostile;
     }
 
     reassignChunkIfNeeded() {
@@ -266,7 +387,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
 
         // Unloaded destination: persist meta only (no duplicate on later makeMobs)
         if (!next.isLoaded) {
-            this.syncToEntry();
+            this.syncToEntry({ forceBody: true });
             scene.damageables?.remove(this);
             scene.mobs?.remove(this);
             this.destroy();
@@ -280,6 +401,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         this._dead = true;
 
         const scene = this.scene;
+        const loot = [];
         const drops = this.def?.drops || [];
         for (const drop of drops) {
             const item = scene.getItem(drop.item);
@@ -292,7 +414,23 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             } else {
                 qty = Number(drop.quantity) || 1;
             }
-            if (qty > 0) DroppedItem.spawn(scene, this.x, this.y, item, qty);
+            if (qty > 0) loot.push(makeItemStack(item, qty));
+        }
+
+        // bodyCenter() respects standing (origin 0,1) and prone (origin 0.5,0.5)
+        const c = this.bodyCenter();
+        const key = this.def?.key || this.texture?.key || "player";
+        if (loot.length) {
+            Corpse.spawn(scene, {
+                x: c.x,
+                y: c.y,
+                key,
+                frame: 7,
+                name: this.def?.name || "Corpse",
+                loot,
+                body: this.anatomy?.toJSON?.(),
+                bodyPlan: this.def?.bodyPlan || this.anatomy?.planId || "human"
+            });
         }
 
         if (this.chunk?.meta?.mobs) {
@@ -306,13 +444,23 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
     }
 
     update(_time, delta) {
-        if (!this.active || this._dead || this.hp <= 0) return;
+        if (!this.active || this._dead) return;
+        this.capacities = new Capacities(this.anatomy);
+        const prone = this.isImmobile() || this.isIncapacitated();
+
         this.ai?.update(delta);
+        this._tickMeleeAttack();
+        // Half move while swinging (same idea as the player)
+        if (this.isAttacking() && this.body?.velocity) {
+            this.setVelocity(this.body.velocity.x * 0.5, this.body.velocity.y * 0.5);
+        }
+        // Apply prone after AI so walk/idle anims don't overwrite the lay-down pose
+        setCreatureProne(this, prone);
+        if (prone) this.setVelocity(0, 0);
         this.setDepth(this.y);
         this.reassignChunkIfNeeded();
         if (!this.active) return;
         this.syncToEntry();
-        this._updateHpBar();
     }
 }
 

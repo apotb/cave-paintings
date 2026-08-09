@@ -43,6 +43,7 @@ class SceneMain extends SceneBase {
         // Combat targets (player, animals/monsters)
         this.damageables = this.add.group();
         this.mobs = this.physics.add.group();
+        this.meleeSlots = new MeleeSlots(this);
 
         // Player
         this.player = new Player(this, 0, 0);
@@ -64,13 +65,19 @@ class SceneMain extends SceneBase {
         // Collisions
         this._things = this.physics.add.staticGroup();
         this.physics.add.collider(this.player, this._things);
-        this.physics.add.collider(this.player, this.mobs);
+        // Overlap only — collider was body-checking / shoving the player during melee
+        this.physics.add.overlap(this.player, this.mobs);
         this.physics.add.collider(this.mobs, this._things);
         this.droppedItems = this.add.group();
 
         // UI
         this.cameras.main.ignore(this.uiLayer);
-        this._uiCam = this.cameras.add(0, 0, this.scale.width, this.scale.height).setScroll(0, 0).setZoom(1);
+        // No roundPixels on UI — overlays pinned to world sprites are pre-rounded to match
+        // the main camera's setQuad snap; a second pass makes chat bubbles crawl while moving.
+        this._uiCam = this.cameras.add(0, 0, this.scale.width, this.scale.height)
+            .setScroll(0, 0)
+            .setZoom(1)
+            .setRoundPixels(false);
         let cameras = [this.groundLayer, this.mainLayer];
         if (this.physics.world.debug) cameras.push(this.physics.world.debugGraphic);
         this._uiCam.ignore(cameras);
@@ -79,11 +86,28 @@ class SceneMain extends SceneBase {
         this.hotbar = new Hotbar(this);
         this.createTooltip();
         this.createClockDisplay();
+        this.combatLog = new CombatLog(this);
         this.createCraftMenu();
         this.createButtons();
         this.equipmentPanel = new EquipmentPanel(this);
         this.campfirePanel = new CampfirePanel(this);
+        this.corpsePanel = new CorpsePanel(this);
+        this.healthPanel = new HealthPanel(this);
+        this.createDeathOverlay();
         this.applyUiScale();
+
+        this.time.addEvent({
+            delay: BodyHealing.HEAL_INTERVAL_MS,
+            callback: () => {
+                if (this.isPaused || this.player?.isBodyDead?.()) return;
+                BodyHealing.healTick(this.player);
+                for (const mob of this.mobs?.getChildren?.() || []) {
+                    if (mob?.active && !mob.isBodyDead?.()) BodyHealing.healTick(mob);
+                }
+                this.healthPanel?.refresh?.();
+            },
+            loop: true
+        });
 
         // Inputs
         this.key1 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE);
@@ -99,11 +123,19 @@ class SceneMain extends SceneBase {
         this.keyC = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.C);
         this.keyE = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
         this.keyG = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.G);
+        this.keyH = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.H);
+        this.keyT = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.T);
+        /** Singleplayer chat display name */
+        this.playerName = "Player";
     }
 
     createBars() {
-        this.hpBar = this.add.graphics();
-        this.uiLayer.add(this.hpBar);
+        // Channel bar on UI layer (do NOT camera.ignore() Layer children — breaks world render)
+        this.channelBar = this.add.graphics().setVisible(false);
+        this.uiLayer.add(this.channelBar);
+
+        this.painBar = this.add.graphics();
+        this.uiLayer.add(this.painBar);
 
         this.kcBar = this.add.graphics();
         this.uiLayer.add(this.kcBar);
@@ -114,9 +146,10 @@ class SceneMain extends SceneBase {
         this.barIcons = this.add.image(0, 0, "bar_icons").setOrigin(0, 0);
         this.uiLayer.add(this.barIcons);
 
-        this.hpBarZone = this._makeBarZone(() =>
-            `HP: ${Math.ceil(this.player.hp)}/${this.player.mhp}`
-        );
+        this.painBarZone = this._makeBarZone(() => {
+            const pct = Math.round((this.player.capacities?.pain?.() ?? 0) * 100);
+            return `Pain: ${pct}%`;
+        });
         this.kcBarZone = this._makeBarZone(() => {
             const kc = Math.ceil(this.player.kc);
             const sat = Math.ceil(this.player.saturation);
@@ -130,8 +163,7 @@ class SceneMain extends SceneBase {
             return `Carry: ${weight}/${strength} kg${weight > strength ? ' (encumbered)' : ''}`;
         });
 
-        this._lastHp = NaN;
-        this._lastMhp = NaN;
+        this._lastPain = NaN;
         this._lastKc = NaN;
         this._lastSaturation = NaN;
         this._lastStomach = NaN;
@@ -169,21 +201,25 @@ class SceneMain extends SceneBase {
             this.barIcons.setScale(s).setPosition(Math.round(4 * s), Math.round(8 * s));
         }
 
-        const hp = Math.ceil(this.player.hp);
-        const mhp = this.player.mhp;
+        const pain = Phaser.Math.Clamp(this.player.capacities?.pain?.() ?? 0, 0, 1);
         const kc = Math.ceil(this.player.kc);
         const sat = this.player.saturation;
         const stomach = this.player.stomach;
         const weight = this.player.getInventoryWeight();
         const strength = this.player.strength;
 
-        const hpFrac = hp / mhp;
         const kcFrac = kc / stomach;
         const satFrac = Phaser.Math.Clamp(sat / stomach, 0, 1);
 
-        // HP
-        this.hpBar.clear();
-        this._drawBar(this.hpBar, x, y, w, h, hpFrac, 0x000000, 0x222222, 0xD24A43, border);
+        // Pain (empty at 0%, fills toward 100%)
+        this.painBar.clear();
+        this._drawBar(this.painBar, x, y, w, h, pain, 0x000000, 0x222222, 0xD24A43, border);
+        // Pain-shock threshold tick (RimWorld default 80%) — inside the bar only
+        const shockT = Number(this.player.anatomy?.plan?.painShockThreshold) || 0.8;
+        const tickX = x + Math.round(w * Phaser.Math.Clamp(shockT, 0, 1));
+        const tickW = Math.max(1, Math.round(s));
+        this.painBar.fillStyle(0x444444, 1);
+        this.painBar.fillRect(tickX - Math.floor(tickW / 2), y, tickW, h);
 
         // Hunger (yellow) + satiety overlay (orange)
         const ky = y + h + gap;
@@ -209,17 +245,52 @@ class SceneMain extends SceneBase {
         const width2 = Math.floor(w * excess / limit1);
         if (width2 > 0) this.weightBar.fillStyle(0xF39C12, 1).fillRect(x, wy, width2, h);
 
-        this._setBarZone(this.hpBarZone, x, y, w, h);
+        this._setBarZone(this.painBarZone, x, y, w, h);
         this._setBarZone(this.kcBarZone, x, ky, w, h);
         this._setBarZone(this.weightBarZone, x, wy, w, h);
 
-        this._lastHp = hp;
-        this._lastMhp = mhp;
+        this._lastPain = pain;
         this._lastKc = kc;
         this._lastSaturation = sat;
         this._lastStomach = stomach;
         this._lastWeight = weight;
         this._lastStrength = strength;
+    }
+
+    /** Progress 0–1 bar centered above the player (screen-space over world). */
+    showChannelBar(progress) {
+        const gfx = this.channelBar;
+        const player = this.player;
+        if (!gfx || !player) return;
+        gfx.setVisible(true);
+
+        const s = this.uiScale || 1;
+        const cam = this.cameras.main;
+        const w = Math.round(40 * s);
+        const h = Math.round(5 * s);
+        // Sprite origin is bottom-left — center X, top of sprite
+        const worldX = player.x + player.width * 0.5;
+        const worldY = player.y - player.height - 6;
+        // Stable world→screen via camera midPoint; round to avoid subpixel jitter
+        const sx = Math.round((worldX - cam.midPoint.x) * cam.zoom + cam.width * 0.5);
+        const sy = Math.round((worldY - cam.midPoint.y) * cam.zoom + cam.height * 0.5);
+        const x = sx - Math.floor(w / 2);
+        const y = sy - h;
+
+        const frac = Phaser.Math.Clamp(progress, 0, 1);
+        // red → orange → yellow → green as it fills
+        let color = 0xD24A43;
+        if (frac > 0.75) color = 0x3CB043;
+        else if (frac > 0.5) color = 0xE6C200;
+        else if (frac > 0.25) color = 0xE67A00;
+
+        gfx.clear();
+        this._drawBar(gfx, x, y, w, h, frac, 0x000000, 0x222222, color, 1);
+    }
+
+    hideChannelBar() {
+        this.channelBar?.clear();
+        this.channelBar?.setVisible(false);
     }
 
     _drawBar(gfx, x, y, w, h, frac, borderColor, bgColor, fillColor, border=1) {
@@ -275,8 +346,44 @@ class SceneMain extends SceneBase {
                 .strokeRoundedRect(-pad, -pad, w, h, radius);
         };
 
+        /** True for hotbar/save/bars/panels — combat may still show these tooltips. */
+        this._isUiTooltipTarget = (obj) => {
+            if (!obj) return false;
+            const seen = new Set();
+            let cur = obj;
+            while (cur && !seen.has(cur)) {
+                seen.add(cur);
+                if (
+                    cur === this.uiLayer ||
+                    cur === this.craftContainer ||
+                    cur === this.equipmentPanel?.container ||
+                    cur === this.healthPanel?.root ||
+                    cur === this.deathOverlay
+                ) {
+                    return true;
+                }
+                if (cur.parentContainer) {
+                    cur = cur.parentContainer;
+                    continue;
+                }
+                // Phaser Layer children use displayList, not parentContainer
+                if (cur.displayList && cur.displayList !== cur) {
+                    cur = cur.displayList;
+                    continue;
+                }
+                break;
+            }
+            return false;
+        };
+
+        this.hideWorldTooltip = () => {
+            if (this._tooltipTarget && this._isUiTooltipTarget(this._tooltipTarget)) return;
+            this.hideTooltip();
+        };
+
         this.showTooltip = (textOrFn, x, y, target=null) => {
-            if (this.player?.blocksTooltips?.()) return;
+            // Combat only suppresses world (thing/mob/drop) tooltips, not side UI
+            if (this.player?.blocksTooltips?.() && !this._isUiTooltipTarget(target)) return;
             this._tooltipSource = (typeof textOrFn === "function") ? textOrFn : () => textOrFn;
             this._tooltipTarget = target;
             const t = this._tooltipSource() || "";
@@ -306,6 +413,41 @@ class SceneMain extends SceneBase {
         this._pickHoverTarget = (pointer) => {
             const hits = this.input.hitTestPointer(pointer);
 
+            // Health panel blocks world/UI behind it
+            const health = this.healthPanel;
+            if (health?.visible && health.bg) {
+                const overHealth = Phaser.Geom.Rectangle.Contains(
+                    health.bg.getBounds(), pointer.x, pointer.y
+                );
+                if (overHealth) {
+                    for (let i = hits.length - 1; i >= 0; i--) {
+                        const obj = hits[i];
+                        if (!obj?.active || !obj.input?.enabled) continue;
+                        if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
+                        if (this._isUnderHealthPanel(obj)) return obj;
+                    }
+                    return health.bg;
+                }
+            }
+
+            // Corpse loot panel (world-space) blocks behind it
+            const corpseP = this.corpsePanel;
+            if (corpseP?.visible && corpseP.bg) {
+                const wpt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+                const overCorpse = Phaser.Geom.Rectangle.Contains(
+                    corpseP.bg.getBounds(), wpt.x, wpt.y
+                );
+                if (overCorpse) {
+                    for (let i = hits.length - 1; i >= 0; i--) {
+                        const obj = hits[i];
+                        if (!obj?.active || !obj.input?.enabled) continue;
+                        if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
+                        if (this._isUnderCorpsePanel(obj)) return obj;
+                    }
+                    return corpseP.bg;
+                }
+            }
+
             // Equipment panel body blocks world/UI behind it
             const panel = this.equipmentPanel;
             if (panel?.visible && panel.body) {
@@ -332,6 +474,33 @@ class SceneMain extends SceneBase {
             return null;
         };
 
+        this._isUnderHealthPanel = (obj) => {
+            const panel = this.healthPanel;
+            if (!panel) return false;
+            let cur = obj;
+            while (cur) {
+                if (cur === panel.root || cur === panel.bg) return true;
+                cur = cur.parentContainer;
+            }
+            return false;
+        };
+
+        this._isUnderCorpsePanel = (obj) => {
+            const panel = this.corpsePanel;
+            if (!panel) return false;
+            let cur = obj;
+            while (cur) {
+                if (cur === panel.container || cur === panel.bg || cur === panel.slotsLayer) {
+                    return true;
+                }
+                if (panel.slotViews?.some(v =>
+                    v.slot === cur || v.icon === cur || v.fill === cur || v.qty === cur
+                )) return true;
+                cur = cur.parentContainer;
+            }
+            return false;
+        };
+
         this._isUnderEquipmentPanel = (obj) => {
             const panel = this.equipmentPanel;
             if (!panel) return false;
@@ -356,43 +525,35 @@ class SceneMain extends SceneBase {
         // Reconcile hover after camera/player movement (Phaser only updates on mouse move)
         this.syncPointerHover = () => {
             const pointer = this.input.activePointer;
+            const blockWorld = !!this.player?.blocksTooltips?.();
 
-            if (this.player?.blocksTooltips?.()) {
-                if (this._hoverTarget) {
-                    const prev = this._hoverTarget;
-                    this._hoverTarget = null;
-                    if (prev.active && prev.input?.enabled) prev.emit("pointerout", pointer);
-                }
-                this.hideTooltip();
-                this._wasTooltipBlocked = true;
-                this.input.setDefaultCursor("default");
-                return;
-            }
-
-            if (this._wasTooltipBlocked) {
+            if (this._wasTooltipBlocked && !blockWorld) {
                 this._wasTooltipBlocked = false;
                 this._hoverTarget = null; // re-fire pointerover after attack
             }
+            if (blockWorld) this._wasTooltipBlocked = true;
 
-            const top = this._pickHoverTarget(pointer);
+            const hit = this._pickHoverTarget(pointer);
+            // During attacks, ignore world hover for tooltips; side UI still works
+            const top = (blockWorld && hit && !this._isUiTooltipTarget(hit)) ? null : hit;
 
             if (top !== this._hoverTarget) {
                 const prev = this._hoverTarget;
                 this._hoverTarget = top;
 
                 if (prev && prev.active && prev.input?.enabled) {
-                    prev.emit('pointerout', pointer);
+                    prev.emit("pointerout", pointer);
                 } else if (this._tooltipTarget && this._tooltipTarget !== top) {
                     this.hideTooltip();
                 }
 
-                if (top) top.emit('pointerover', pointer);
-                else this.hideTooltip();
+                if (top) top.emit("pointerover", pointer);
+                else this.hideWorldTooltip();
             } else if (top && this.tooltip.visible) {
                 this.positionTooltip(pointer.x, pointer.y);
             }
 
-            this.input.setDefaultCursor(top ? this._cursorFor(top) : 'default');
+            this.input.setDefaultCursor(top ? this._cursorFor(top) : "default");
         };
 
         this.positionTooltip = (x, y) => {
@@ -409,7 +570,13 @@ class SceneMain extends SceneBase {
         this.input.on("pointermove", (pointer) => {
             if (this.tooltip.visible) this.positionTooltip(pointer.x, pointer.y);
         });
-        this.events.on("postupdate", () => this.syncPointerHover());
+        this.events.on("postupdate", () => {
+            this.syncPointerHover();
+            // After physics: lock world FX to the player's final x/y for this frame
+            this.player?.syncFxRoot?.();
+            this.player?._syncChatBubble?.();
+            this.meleeSlots?.drawDebug?.();
+        });
         this.scale.on("resize", () => this.hideTooltip());
     }
 
@@ -420,9 +587,66 @@ class SceneMain extends SceneBase {
             color: "#ffffff",
             stroke: "#000000",
             strokeThickness: 3
-        }).setOrigin(0, 1).setDepth(9998);
+        }).setOrigin(0.5, 0).setDepth(9998);
         this.uiLayer.add(this.clockText);
         this.updateClockText();
+
+        this.fpsText = this.add.text(0, 0, "", {
+            fontSize: "12px",
+            fontFamily: "monospace",
+            color: "#a8e6a0",
+            stroke: "#000000",
+            strokeThickness: 3
+        }).setOrigin(0.5, 0).setDepth(9998).setVisible(false).setScrollFactor(0);
+        this.uiLayer.add(this.fpsText);
+        this._fpsVisible = false;
+        /** @type {{ t: number, d: number }[]} frame deltas in the last ~1s */
+        this._fpsSamples = [];
+        this._fpsUiAcc = 0;
+    }
+
+    setFpsMeter(on) {
+        this._fpsVisible = !!on;
+        this.fpsText?.setVisible(this._fpsVisible);
+        this._fpsSamples = [];
+        this._fpsUiAcc = 0;
+        if (!this._fpsVisible) {
+            this.fpsText?.setText("");
+        } else {
+            this.applyUiScale?.();
+            this.fpsText?.setText("— fps · 0 mobs");
+        }
+        return this._fpsVisible;
+    }
+
+    updateFpsMeter(delta) {
+        if (!this._fpsVisible || !this.fpsText) return;
+        const d = Math.max(0.001, Number(delta) || 16);
+        const now = this.time?.now || performance.now();
+        this._fpsSamples.push({ t: now, d });
+        // Keep a short window so dips show up; not Phaser's slow EMA
+        const windowMs = 1000;
+        while (this._fpsSamples.length > 1 && now - this._fpsSamples[0].t > windowMs) {
+            this._fpsSamples.shift();
+        }
+
+        this._fpsUiAcc += d;
+        if (this._fpsUiAcc < 100 && this._fpsSamples.length > 3) return;
+        this._fpsUiAcc = 0;
+
+        let sum = 0;
+        let minFps = Infinity;
+        for (let i = 0; i < this._fpsSamples.length; i++) {
+            const sd = this._fpsSamples[i].d;
+            sum += sd;
+            const f = 1000 / sd;
+            if (f < minFps) minFps = f;
+        }
+        const n = this._fpsSamples.length;
+        const avg = n > 0 && sum > 0 ? Math.round((n * 1000) / sum) : 0;
+        const min = Number.isFinite(minFps) ? Math.round(minFps) : avg;
+        const mobs = this.mobs?.countActive?.(true) ?? 0;
+        this.fpsText.setText(`${avg} fps (min ${min}) · ${mobs} mobs`);
     }
 
     createLightVeil() {
@@ -799,6 +1023,93 @@ class SceneMain extends SceneBase {
         this.tickSpoilage();
         this.tickCampfires();
         this.tickLootableRegrows();
+        this.tickBodySystems();
+        this.tickBloodStains();
+    }
+
+    tickBodySystems() {
+        if (this.player && !this.player.isBodyDead?.()) {
+            BodyHealing.minuteTick(this.player, this);
+        }
+        for (const mob of this.mobs?.getChildren?.() || []) {
+            if (mob?.active && !mob.isBodyDead?.()) BodyHealing.minuteTick(mob, this);
+        }
+        this.healthPanel?.refresh?.();
+    }
+
+    /** Cap stains per chunk — one Graphics mesh, so a high cap is still cheap. */
+    static BLOOD_STAINS_MAX = 1000;
+
+    spawnBloodStain(x, y) {
+        const chunk = LivingMob.ensureChunkAt(this, x, y);
+        if (!chunk) return;
+        if (!chunk.meta.bloodStains) chunk.meta.bloodStains = [];
+        const list = chunk.meta.bloodStains;
+        let needsRebuild = false;
+        while (list.length >= SceneMain.BLOOD_STAINS_MAX) {
+            list.shift();
+            needsRebuild = true;
+        }
+        // Current radius 3 is the max; most drips are smaller
+        const radius = Phaser.Math.FloatBetween(0.8, 3);
+        const entry = {
+            x,
+            y,
+            radius,
+            lifeMinutes: 1440 // 1 game day
+        };
+        list.push(entry);
+        if (!chunk.isLoaded) return;
+        if (needsRebuild) this.rebuildBloodGfx(chunk);
+        else this._paintBloodStain(chunk, entry);
+    }
+
+    _ensureBloodGfx(chunk) {
+        if (chunk._bloodGfx?.active) return chunk._bloodGfx;
+        const g = this.add.graphics().setDepth(0.5);
+        this.groundLayer.add(g);
+        chunk._bloodGfx = g;
+        return g;
+    }
+
+    _paintBloodStain(chunk, entry) {
+        const r = Math.min(3, Number(entry.radius) || 1.5);
+        entry.radius = r;
+        const g = this._ensureBloodGfx(chunk);
+        g.fillStyle(0x6b1010, 0.65);
+        g.fillCircle(entry.x, entry.y, r);
+    }
+
+    /** Full redraw (after expiry / eviction / chunk load). */
+    rebuildBloodGfx(chunk) {
+        if (!chunk) return;
+        const g = this._ensureBloodGfx(chunk);
+        g.clear();
+        for (const entry of chunk.meta?.bloodStains || []) {
+            this._paintBloodStain(chunk, entry);
+        }
+    }
+
+    /** @deprecated use rebuildBloodGfx — kept for Chunk.makeBloodStains call sites */
+    _ensureBloodStainSprite(chunk, _entry) {
+        this.rebuildBloodGfx(chunk);
+    }
+
+    tickBloodStains() {
+        for (const chunk of Object.values(this.chunks || {})) {
+            const list = chunk.meta?.bloodStains;
+            if (!list?.length) continue;
+            let removed = false;
+            for (let i = list.length - 1; i >= 0; i--) {
+                const e = list[i];
+                e.lifeMinutes = (e.lifeMinutes || 0) - 1;
+                if (e.lifeMinutes <= 0) {
+                    list.splice(i, 1);
+                    removed = true;
+                }
+            }
+            if (removed && chunk.isLoaded) this.rebuildBloodGfx(chunk);
+        }
     }
 
     tickSpoilage() {
@@ -1171,7 +1482,7 @@ class SceneMain extends SceneBase {
 
     createButtons() {
         const s = this.uiScale || 1;
-        this.craft = this.add.image(44 * s, this.scale.height / 2 + 52 * s, 'craft');
+        this.craft = this.add.image(44 * s, this.scale.height / 2, 'craft');
         this.craft.setInteractive({ cursor: 'pointer', pixelPerfect: true });
         this.craft.on('pointerdown', () => this.toggleCraftMenu());
         this.craft.on('pointerover', () => {
@@ -1181,7 +1492,19 @@ class SceneMain extends SceneBase {
         this.craft.setOrigin(0.5, 0.5).setScale(6 * s);
         this.uiLayer.add(this.craft);
 
-        this.equipmentBtn = this.add.image(44 * s, this.scale.height / 2 - 52 * s, 'equipment');
+        this.healthBtn = this.add.image(44 * s, this.scale.height / 2 + 104 * s, "health");
+        this.healthBtn.setInteractive({ cursor: "pointer", pixelPerfect: true });
+        this.healthBtn.on("pointerdown", () => this.toggleHealthMenu());
+        this.healthBtn.on("pointerover", () => {
+            if (!this.healthPanel?.visible) this.healthBtn.setTexture("health_hover");
+        });
+        this.healthBtn.on("pointerout", () => {
+            this.healthBtn.setTexture(this.healthPanel?.visible ? "health_open" : "health");
+        });
+        this.healthBtn.setOrigin(0.5, 0.5).setScale(6 * s);
+        this.uiLayer.add(this.healthBtn);
+
+        this.equipmentBtn = this.add.image(44 * s, this.scale.height / 2 - 104 * s, 'equipment');
         this.equipmentBtn.setInteractive({ cursor: 'pointer', pixelPerfect: true });
         this.equipmentBtn.on('pointerdown', () => this.toggleEquipmentMenu());
         this.equipmentBtn.on('pointerover', () => {
@@ -1279,14 +1602,87 @@ class SceneMain extends SceneBase {
             "Space — Use item / Attack",
             "Mouse — Aim attacks",
             "Click — Pick up / interact",
-            "Z — Pick up nearby items",
+            "F — Pick up nearby items",
             "Q — Drop item",
             "Shift+Q — Drop stack",
             "Ctrl+Q — Drop 10",
             "1-0 — Hotbar slots",
             "C — Crafting",
-            "E — Equipment"
+            "E — Equipment",
+            "H — Health",
+            "T — Chat"
         ].join("\n");
+    }
+
+    createDeathOverlay() {
+        this.deathOverlay = this.add.container(0, 0).setScrollFactor(0).setDepth(20000).setVisible(false);
+        this.uiLayer.add(this.deathOverlay);
+        this.deathBg = this.add.rectangle(0, 0, 400, 200, 0x000000, 0.75).setOrigin(0.5);
+        this.deathTitle = this.add.text(0, -50, "You died", {
+            fontFamily: "monospace",
+            fontSize: "36px",
+            color: "#ff6666"
+        }).setOrigin(0.5);
+        this.deathRespawn = this.add.text(0, 20, "[ Respawn ]", {
+            fontFamily: "monospace",
+            fontSize: "20px",
+            color: "#e8e0d0"
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        this.deathRespawnHere = this.add.text(0, 55, "[ Respawn Here (dev) ]", {
+            fontFamily: "monospace",
+            fontSize: "16px",
+            color: "#aaa090"
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        this.deathOverlay.add([this.deathBg, this.deathTitle, this.deathRespawn, this.deathRespawnHere]);
+        this.deathRespawn.on("pointerdown", () => this.respawnPlayer(false));
+        this.deathRespawnHere.on("pointerdown", () => this.respawnPlayer(true));
+        this._deathPos = { x: 0, y: 0 };
+    }
+
+    onPlayerDied() {
+        this._deathPos = { x: this.player.x, y: this.player.y };
+        this.player._tendChannel = null;
+        this.hideChannelBar?.();
+        this.corpsePanel?.close?.(true);
+        this.player.createDeathCorpse();
+        this.player.setVisible(false);
+        if (this.player.body) this.player.body.enable = false;
+        this.player.setVelocity(0, 0);
+        this.combatLog?.push("You died.");
+        this.deathOverlay?.setVisible(true);
+        this.layoutDeathOverlay();
+    }
+
+    layoutDeathOverlay() {
+        if (!this.deathOverlay) return;
+        const s = this.uiScale || 1;
+        this.deathOverlay.setPosition(this.scale.width / 2, this.scale.height / 2);
+        this.deathTitle.setFontSize(Math.round(36 * s));
+        this.deathRespawn.setFontSize(Math.round(20 * s));
+        this.deathRespawnHere.setFontSize(Math.round(16 * s));
+        this.deathBg.setSize(420 * s, 220 * s);
+    }
+
+    respawnPlayer(here) {
+        const x = here ? this._deathPos.x : 0;
+        const y = here ? this._deathPos.y : 0;
+        this.player.respawnFresh(x, y);
+        this.deathOverlay?.setVisible(false);
+        this.healthPanel?.refresh?.();
+        this.combatLog?.push(here ? "Respawned here (dev)." : "Respawned.");
+    }
+
+    toggleHealthMenu() {
+        if (!this.healthPanel) return;
+        // Any health view open (own or corpse inspect) → close panel only
+        if (this.healthPanel.visible) {
+            this.healthPanel.close();
+            return;
+        }
+        // Side menus exclude each other; world UIs can stay open
+        if (this.craftMenuVisible) this.closeCraftMenu();
+        if (this.equipmentPanel?.visible) this.equipmentPanel.close();
+        this.healthPanel.open();
     }
 
     closeCraftMenu() {
@@ -1303,8 +1699,9 @@ class SceneMain extends SceneBase {
             this.closeCraftMenu();
             return;
         }
+        // Side menus exclude each other; world UIs can stay open
         if (this.equipmentPanel?.visible) this.equipmentPanel.close();
-        if (this.campfirePanel?.visible) this.campfirePanel.close();
+        if (this.healthPanel?.visible) this.healthPanel.close();
         this.craftMenuVisible = true;
         this.refreshCraftMenu();
         this.positionCraftMenu();
@@ -1362,18 +1759,35 @@ class SceneMain extends SceneBase {
             this.tooltipText.setStroke('#000000', Math.max(2, Math.round(2 * s)));
         }
 
+        const pad = 8 * s;
+        const cx = this.scale.width / 2;
         if (this.clockText) {
-            const pad = 8 * s;
             this.clockText.setFontSize(`${Math.round(16 * s)}px`);
             this.clockText.setStroke("#000000", Math.max(2, Math.round(3 * s)));
-            this.clockText.setPosition(pad, this.scale.height - pad);
+            this.clockText.setOrigin(0.5, 0).setPosition(cx, pad);
+        }
+        if (this.fpsText) {
+            const clockBottom = this.clockText
+                ? pad + (this.clockText.height || Math.round(16 * s))
+                : pad;
+            this.fpsText
+                .setFontSize(`${Math.round(12 * s)}px`)
+                .setStroke("#000000", Math.max(2, Math.round(3 * s)))
+                .setOrigin(0.5, 0)
+                .setPosition(cx, clockBottom + Math.round(2 * s));
         }
 
         if (this.craft) {
-            this.craft.setScale(6 * s).setPosition(44 * s, this.scale.height / 2 + 52 * s);
+            this.craft.setScale(6 * s).setPosition(44 * s, this.scale.height / 2);
             if (this.equipmentBtn) {
-                this.equipmentBtn.setScale(6 * s).setPosition(44 * s, this.scale.height / 2 - 52 * s);
+                this.equipmentBtn.setScale(6 * s).setPosition(44 * s, this.scale.height / 2 - 104 * s);
             }
+            if (this.healthBtn) {
+                this.healthBtn.setScale(6 * s).setPosition(44 * s, this.scale.height / 2 + 104 * s);
+            }
+            this.healthPanel?.layout?.();
+            this.combatLog?.layout?.();
+            this.layoutDeathOverlay();
             this.save.setScale(3 * s).setPosition(this.scale.width - 80 * s, 32 * s);
             this.load.setScale(3 * s).setPosition(this.scale.width - 32 * s, 32 * s);
             if (this.help) {
@@ -1497,7 +1911,9 @@ class SceneMain extends SceneBase {
                                 things: meta.things,
                                 lootableThings: meta.lootableThings,
                                 mobs: meta.mobs || [],
-                                drops: meta.drops || []
+                                drops: meta.drops || [],
+                                bloodStains: meta.bloodStains || [],
+                                corpses: meta.corpses || []
                             });
                             chunk.isGenerated = !chunk.meta.tiles.every(t => !t);
                             this.chunks[key] = chunk;
@@ -1505,8 +1921,12 @@ class SceneMain extends SceneBase {
 
                         // Player
                         this.player.teleport(data.player.x, data.player.y);
-                        this.player.hp = data.player.hp;
-                        this.player.mhp = data.player.mhp;
+                        if (data.player.body) {
+                            this.player.anatomy.loadJSON(data.player.body);
+                            this.player.capacities = new Capacities(this.player.anatomy);
+                            this.player._bodyDead = false;
+                            this.player._refreshDownedState?.();
+                        }
                         this.player.kc = data.player.kc;
                         this.player.saturation = data.player.saturation;
                         this.player.inventory = data.player.inventory;
@@ -1529,7 +1949,13 @@ class SceneMain extends SceneBase {
 
                         // Refresh UI
                         this.hotbar.dirty = true;
+                        this.deathOverlay?.setVisible(false);
+                        this.healthPanel?.refresh?.();
                         if (this.campfirePanel?.visible) this.campfirePanel.close();
+                        if (this.healthPanel?.visible) {
+                            this.healthPanel.close();
+                            this.healthBtn?.setTexture("health");
+                        }
                         if (this.equipmentPanel?.visible) {
                             this.equipmentPanel.refresh();
                             this.equipmentPanel.layout();
@@ -1587,24 +2013,32 @@ class SceneMain extends SceneBase {
         }
 
         // Process input
-        if (this.key1.isDown && this.hotbar.size >= 1) this.hotbar.changeSlot(0);
-        if (this.key2.isDown && this.hotbar.size >= 2) this.hotbar.changeSlot(1);
-        if (this.key3.isDown && this.hotbar.size >= 3) this.hotbar.changeSlot(2);
-        if (this.key4.isDown && this.hotbar.size >= 4) this.hotbar.changeSlot(3);
-        if (this.key5.isDown && this.hotbar.size >= 5) this.hotbar.changeSlot(4);
-        if (this.key6.isDown && this.hotbar.size >= 6) this.hotbar.changeSlot(5);
-        if (this.key7.isDown && this.hotbar.size >= 7) this.hotbar.changeSlot(6);
-        if (this.key8.isDown && this.hotbar.size >= 8) this.hotbar.changeSlot(7);
-        if (this.key9.isDown && this.hotbar.size >= 9) this.hotbar.changeSlot(8);
-        if (this.key0.isDown && this.hotbar.size >= 10) this.hotbar.changeSlot(9);
-        if (Phaser.Input.Keyboard.JustDown(this.keyC)) this.toggleCraftMenu();
-        if (Phaser.Input.Keyboard.JustDown(this.keyE)) this.toggleEquipmentMenu();
-        if (Phaser.Input.Keyboard.JustDown(this.keyG)) {
-            LivingMob.spawn(this, "human", this.player.x, this.player.y);
+        const chatting = !!this.combatLog?.isComposing?.();
+        if (!chatting) {
+            if (this.key1.isDown && this.hotbar.size >= 1) this.hotbar.changeSlot(0);
+            if (this.key2.isDown && this.hotbar.size >= 2) this.hotbar.changeSlot(1);
+            if (this.key3.isDown && this.hotbar.size >= 3) this.hotbar.changeSlot(2);
+            if (this.key4.isDown && this.hotbar.size >= 4) this.hotbar.changeSlot(3);
+            if (this.key5.isDown && this.hotbar.size >= 5) this.hotbar.changeSlot(4);
+            if (this.key6.isDown && this.hotbar.size >= 6) this.hotbar.changeSlot(5);
+            if (this.key7.isDown && this.hotbar.size >= 7) this.hotbar.changeSlot(6);
+            if (this.key8.isDown && this.hotbar.size >= 8) this.hotbar.changeSlot(7);
+            if (this.key9.isDown && this.hotbar.size >= 9) this.hotbar.changeSlot(8);
+            if (this.key0.isDown && this.hotbar.size >= 10) this.hotbar.changeSlot(9);
+            if (Phaser.Input.Keyboard.JustDown(this.keyC)) this.toggleCraftMenu();
+            if (Phaser.Input.Keyboard.JustDown(this.keyE)) this.toggleEquipmentMenu();
+            if (Phaser.Input.Keyboard.JustDown(this.keyH)) this.toggleHealthMenu();
+            // Chat open is handled by CombatLog's window keydown listener (avoids
+            // JustDown(T) dying after keyboard.enabled toggles miss the T keyup).
+            if (Phaser.Input.Keyboard.JustDown(this.keyG)) {
+                LivingMob.spawn(this, "human", this.player.x, this.player.y);
+            }
         }
 
         // Update player
-        this.player.update();
+        this.player.update(time, delta);
+        this.combatLog?.update?.();
+        this.updateFpsMeter?.(delta);
 
         // Update living mobs (slice: AI may destroy self on chunk boundary)
         for (const mob of this.mobs.getChildren().slice()) {
@@ -1617,9 +2051,9 @@ class SceneMain extends SceneBase {
                 drop.update(time, delta);
             }
         }
+        const pain = this.player.capacities?.pain?.() ?? 0;
         if (
-            this.player.hp !== this._lastHp ||
-            this.player.mhp !== this._lastMhp ||
+            pain !== this._lastPain ||
             this.player.kc !== this._lastKc ||
             this.player.saturation !== this._lastSaturation ||
             this.player.stomach !== this._lastStomach ||
@@ -1636,6 +2070,7 @@ class SceneMain extends SceneBase {
         }
 
         this.campfirePanel?.update();
+        this.corpsePanel?.update();
         this.updateLightVeil();
 
         // Update water sprite position

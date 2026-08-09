@@ -1,0 +1,30 @@
+{
+    "cut": {
+        "id": "cut",
+        "name": "Cut",
+        "type": "sharp",
+        "painPerSeverity": 0.0125,
+        "bleedRate": 0.06,
+        "canScar": true,
+        "delicate": false
+    },
+    "bruise": {
+        "id": "bruise",
+        "name": "Bruise",
+        "type": "blunt",
+        "painPerSeverity": 0.0125,
+        "bleedRate": 0,
+        "canScar": false,
+        "delicate": false
+    },
+    "brain_cut": {
+        "id": "brain_cut",
+        "name": "Cut",
+        "type": "sharp",
+        "painPerSeverity": 0.04,
+        "bleedRate": 0.06,
+        "canScar": true,
+        "delicate": true,
+        "alwaysScar": true
+    }
+}

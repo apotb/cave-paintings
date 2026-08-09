@@ -156,6 +156,13 @@
             "kj": 5,
             "moisture": 0.4
         },
+        "bandage": {
+            "tendQuality": 0.4,
+            "channelSeconds": 5
+        },
+        "tooltip": [
+            "Space — Bandage yourself"
+        ],
         "recipe": {
             "leaf": 5
         }
@@ -191,11 +198,53 @@
         "weight": 0.9,
         "weapon": {
             "type": "melee",
-            "damage": 5,
-            "useTime": 60,
-            "range": 8,
+            "range": 12,
             "hitStart": 0.25,
-            "hitEnd": 0.75
+            "hitEnd": 0.75,
+            "attacks": [
+                {
+                    "id": "point_stab",
+                    "name": "Point (Stab)",
+                    "damage": 8,
+                    "type": "sharp",
+                    "verb": "thrust",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 1.0,
+                    "source": "hand"
+                },
+                {
+                    "id": "shaft_poke",
+                    "name": "Shaft (Poke)",
+                    "damage": 4,
+                    "type": "sharp",
+                    "verb": "poked",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 0.25,
+                    "source": "hand"
+                },
+                {
+                    "id": "shaft_blunt",
+                    "name": "Shaft (Blunt)",
+                    "damage": 5,
+                    "type": "blunt",
+                    "verb": "bashed",
+                    "cooldown": 2.2,
+                    "weightMultiplier": 0.2,
+                    "source": "hand"
+                },
+                {
+                    "id": "other_fist",
+                    "name": "Fist",
+                    "damage": 6,
+                    "type": "blunt",
+                    "verb": "swung",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 0.15,
+                    "source": "otherHand",
+                    "unarmed": "punch",
+                    "range": 4
+                }
+            ]
         },
         "fuel": {
             "kj": 45,

@@ -1,0 +1,80 @@
+{
+    "human": {
+        "id": "human",
+        "name": "Human",
+        "healRate": 11.52,
+        "painShockThreshold": 0.8,
+        "core": "Torso",
+        "parts": {
+            "Brain": { "mhp": 10, "coverage": 0.8, "internal": true, "delicate": true, "alwaysScar": true },
+            "Skull": { "mhp": 25, "coverage": 0.18, "internal": true, "children": ["Brain"] },
+            "Eye": { "mhp": 10, "coverage": 0.07, "delicate": true },
+            "Ear": { "mhp": 12, "coverage": 0.07 },
+            "Nose": { "mhp": 10, "coverage": 0.1 },
+            "Tongue": { "mhp": 10, "coverage": 0.001, "internal": true },
+            "Jaw": { "mhp": 20, "coverage": 0.15, "attacks": ["bite"], "children": ["Tongue"] },
+            "Head": {
+                "mhp": 25,
+                "coverage": 0.8,
+                "attacks": ["headbutt"],
+                "children": ["Skull", "Nose", "Jaw"],
+                "pairChildren": ["Eye", "Ear"]
+            },
+            "Neck": { "mhp": 25, "coverage": 0.075, "bleedMult": 4, "children": ["Head"] },
+            "Waist": { "mhp": 10, "coverage": 0 },
+            "Spine": { "mhp": 25, "coverage": 0.025, "internal": true },
+            "Ribcage": { "mhp": 30, "coverage": 0.036, "internal": true },
+            "Sternum": { "mhp": 20, "coverage": 0.015, "internal": true },
+            "Heart": { "mhp": 15, "coverage": 0.02, "internal": true, "bleedMult": 5, "fatal": true },
+            "Lung": { "mhp": 15, "coverage": 0.025, "internal": true },
+            "Stomach": { "mhp": 20, "coverage": 0.025, "internal": true },
+            "Liver": { "mhp": 20, "coverage": 0.025, "internal": true },
+            "Kidney": { "mhp": 15, "coverage": 0.017, "internal": true },
+            "Humerus": { "mhp": 25, "coverage": 0.1, "internal": true },
+            "Radius": { "mhp": 20, "coverage": 0.1, "internal": true },
+            "Thumb": { "mhp": 8, "coverage": 0.08 },
+            "Index Finger": { "mhp": 8, "coverage": 0.07 },
+            "Middle Finger": { "mhp": 8, "coverage": 0.08 },
+            "Ring Finger": { "mhp": 8, "coverage": 0.07 },
+            "Pinky Finger": { "mhp": 8, "coverage": 0.06 },
+            "Hand": {
+                "mhp": 20,
+                "coverage": 0.14,
+                "attacks": ["punch"],
+                "children": ["Thumb", "Index Finger", "Middle Finger", "Ring Finger", "Pinky Finger"]
+            },
+            "Arm": { "mhp": 30, "coverage": 0.77, "children": ["Humerus", "Radius", "Hand"] },
+            "Clavicle": { "mhp": 25, "coverage": 0.09, "internal": true },
+            "Shoulder": { "mhp": 30, "coverage": 0.12, "children": ["Arm", "Clavicle"] },
+            "Pelvis": { "mhp": 25, "coverage": 0.025, "internal": true },
+            "Femur": { "mhp": 25, "coverage": 0.1, "internal": true },
+            "Tibia": { "mhp": 25, "coverage": 0.1, "internal": true },
+            "Big Toe": { "mhp": 8, "coverage": 0.09 },
+            "Second Toe": { "mhp": 8, "coverage": 0.09 },
+            "Middle Toe": { "mhp": 8, "coverage": 0.08 },
+            "Fourth Toe": { "mhp": 8, "coverage": 0.07 },
+            "Little Toe": { "mhp": 8, "coverage": 0.06 },
+            "Foot": {
+                "mhp": 25,
+                "coverage": 0.1,
+                "attacks": ["kick"],
+                "children": ["Big Toe", "Second Toe", "Middle Toe", "Fourth Toe", "Little Toe"]
+            },
+            "Leg": { "mhp": 30, "coverage": 0.14, "children": ["Femur", "Tibia", "Foot"] },
+            "Torso": {
+                "mhp": 40,
+                "coverage": 1.0,
+                "fatal": true,
+                "children": ["Neck", "Waist", "Spine", "Ribcage", "Sternum", "Heart", "Stomach", "Liver", "Pelvis"],
+                "pairChildren": ["Lung", "Kidney", "Shoulder", "Leg"]
+            }
+        },
+        "unarmedAttacks": {
+            "punch": { "name": "Punch", "damage": 6, "type": "blunt", "verb": "swung", "cooldown": 2.0, "weightMultiplier": 1, "range": 4 },
+            "kick": { "name": "Kick", "damage": 4, "type": "blunt", "verb": "kicked", "cooldown": 2.0, "weightMultiplier": 1, "range": 5 },
+            "headbutt": { "name": "Headbutt", "damage": 3, "type": "blunt", "verb": "bashed", "cooldown": 2.0, "weightMultiplier": 0.2, "range": 3 },
+            "bite": { "name": "Bite", "damage": 4, "type": "sharp", "verb": "sunk", "cooldown": 2.0, "weightMultiplier": 0.2, "range": 3 }
+        },
+        "fatalParts": ["Brain", "Heart", "Torso"]
+    }
+}

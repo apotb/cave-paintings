@@ -14,7 +14,7 @@ class DoofusAI {
 
     update(delta) {
         const mob = this.mob;
-        if (!mob?.active || mob.hp <= 0) return;
+        if (!mob?.active || mob.isBodyDead?.() || mob.hp <= 0) return;
 
         this.timer -= delta;
         if (this.timer <= 0) {
@@ -31,9 +31,17 @@ class DoofusAI {
         }
     }
 
+    /** Chill roam speed; chase/combat should use `def.speed` instead. */
+    _wanderBase() {
+        const mob = this.mob;
+        const w = Number(mob.def?.wanderSpeed);
+        if (Number.isFinite(w) && w > 0) return w;
+        return Number(mob.def?.speed) || 1;
+    }
+
     _applyWalk(speedMult) {
         const mob = this.mob;
-        const speed = (Number(mob.def?.speed) || 1) * mob.scene.tileSize * speedMult;
+        const speed = this._wanderBase() * mob.scene.tileSize * speedMult;
         let x = this.dirX;
         let y = this.dirY;
         const len = Math.hypot(x, y) || 1;
