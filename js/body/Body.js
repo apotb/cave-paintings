@@ -70,8 +70,9 @@ class BodyPart {
     destroy() {
         if (this.dead) return;
         this.dead = true;
-        // Keep injuries + child limbs so the health UI still shows every hit
-        // (destroying Torso must not wipe the rest of the damage picture).
+        // Wounds on this part are replaced by stump bleed; keep child limbs
+        // in the tree so the rest of the body picture still makes sense.
+        this.injuries = [];
         this.body.markDirty?.();
         this.body._onPartDestroyed?.(this);
     }
@@ -194,16 +195,20 @@ class Body {
     _onPartDestroyed(part) {
         this.rebuildIndex();
         this.markDirty();
-        const mult = Number(part.def?.bleedMult) || 1;
-        // Destroyed parts keep bleeding until tended (RW-style)
-        this.destroyedBleed.push({
-            partName: part.name,
-            mhp: part.mhp,
-            bleedMult: mult,
-            tended: false
-        });
         const fatals = this.plan.fatalParts || ["Brain", "Heart", "Torso"];
-        if (fatals.includes(part.baseId) || fatals.includes(part.name)) {
+        const isFatal = fatals.includes(part.baseId) || fatals.includes(part.name);
+        // Destroyed parts keep bleeding until tended (RW-style), except the
+        // killing blow on a fatal part (torso/heart/brain) — you're already dead.
+        if (!isFatal) {
+            const mult = Number(part.def?.bleedMult) || 1;
+            this.destroyedBleed.push({
+                partName: part.name,
+                mhp: part.mhp,
+                bleedMult: mult,
+                tended: false
+            });
+        }
+        if (isFatal) {
             // Defer: Combat.applyHit logs the blow after injure(); if we kill
             // synchronously, "You died." appears above the killing hit in chat.
             this._pendingFatalPart = part;

@@ -2,27 +2,69 @@
  * Bleed, blood loss, natural healing, tending helpers.
  */
 const BodyHealing = {
-    HEAL_INTERVAL_MS: 10000,
+    /** Severity healed per game day at plan healRate (RimWorld-ish). */
     BASE_HEAL_RATE: 11.52,
+    MINUTES_PER_DAY: 1440,
+    /** Blood volume recovered per game minute while not bleeding (~33.3%/day, RW). */
+    BLOOD_RECOVERY_PER_MINUTE: 1 / 3 / 1440,
+    /** Default cut bleedRate used for stump bleed (Injuries.json cut). */
+    STUMP_BLEED_RATE: 0.06,
+
+    /**
+     * RW-ish: severity × bleedRate × partMult = fraction of blood volume lost per day.
+     * (Old code also ×0.01 and applied that every minute → ~144× too fast.)
+     */
+    injuryBleedPerDay(inj, part) {
+        if (!inj || inj.permanent || inj.tended || !inj.bleeding) return 0;
+        const mult = Number(part?.def?.bleedMult) || 1;
+        return (Number(inj.severity) || 0) * (Number(inj.bleedRate) || 0) * mult;
+    },
+
+    /** Per-minute bloodLoss from one injury. */
+    injuryBleedPerMinute(inj, part) {
+        return this.injuryBleedPerDay(inj, part) / this.MINUTES_PER_DAY;
+    },
+
+    /** Destroyed part: bleed as 2×mhp cut until tended. */
+    stumpBleedPerDay(d) {
+        if (!d || d.tended) return 0;
+        return d.mhp * 2 * this.STUMP_BLEED_RATE * (d.bleedMult || 1);
+    },
+
+    stumpBleedPerMinute(d) {
+        return this.stumpBleedPerDay(d) / this.MINUTES_PER_DAY;
+    },
 
     /** Bleed contribution per game-minute tick → bloodLoss delta. */
     bleedRateTotal(body) {
         let rate = 0;
+        // Dead parts skip injury bleed — stump entry covers them (no double count)
         for (const part of Object.values(body.parts())) {
             if (part.isDead()) continue;
-            const mult = Number(part.def?.bleedMult) || 1;
             for (const inj of part.injuries) {
-                if (inj.permanent || inj.tended || !inj.bleeding) continue;
-                // RW-ish: bleed% related to severity * bleedRate factor
-                rate += (Number(inj.severity) || 0) * (Number(inj.bleedRate) || 0) * 0.01 * mult;
+                rate += this.injuryBleedPerMinute(inj, part);
             }
         }
         for (const d of body.destroyedBleed || []) {
-            if (d.tended) continue;
-            // Destroyed part: 2 * mhp * bleed factor
-            rate += d.mhp * 2 * 0.06 * 0.01 * (d.bleedMult || 1);
+            rate += this.stumpBleedPerMinute(d);
         }
         return rate;
+    },
+
+    /** Fraction of blood volume lost per game day at current bleed rate. */
+    bleedPerDay(body) {
+        return this.bleedRateTotal(body) * this.MINUTES_PER_DAY;
+    },
+
+    /**
+     * Game minutes until bloodLoss reaches 1.0 at the current bleed rate.
+     * @returns {number|null}
+     */
+    minutesToBleedOut(body) {
+        const perMin = this.bleedRateTotal(body);
+        if (!(perMin > 0)) return null;
+        const remaining = Math.max(0, 1 - (body.bloodLoss || 0));
+        return remaining / perMin;
     },
 
     /**
@@ -43,7 +85,7 @@ const BodyHealing = {
             }
         } else if ((body.bloodLoss || 0) > 0) {
             // Slow recovery while not bleeding (severe / RW-like)
-            body.bloodLoss = Math.max(0, body.bloodLoss - 0.00035);
+            body.bloodLoss = Math.max(0, body.bloodLoss - this.BLOOD_RECOVERY_PER_MINUTE);
             body.markDirty?.();
         }
 
@@ -56,15 +98,18 @@ const BodyHealing = {
         if (owner.capacities.isDeadFromCapacities()) {
             owner.onBodyFatal?.(null, "capacity");
         }
+
+        // Natural healing follows the world clock (scales with /tick)
+        this.healGameMinute(owner, scene);
     },
 
     /**
-     * Place N stains in a ring around the owner (not stacked on one pixel).
+     * Place N stains in a ring around the owner (nearby drips merge into pools).
      * @param {Number} n
      * @param {Number} [minDistTiles=0.08]
-     * @param {Number} [maxDistTiles=0.55]
+     * @param {Number} [maxDistTiles=0.5]
      */
-    _scatterStains(owner, scene, n, minDistTiles = 0.08, maxDistTiles = 0.55) {
+    _scatterStains(owner, scene, n, minDistTiles = 0.08, maxDistTiles = 0.5) {
         if (!scene?.spawnBloodStain || !(n > 0)) return;
         const ts = scene.tileSize || 16;
         const c = typeof owner.bodyCenter === "function"
@@ -90,15 +135,13 @@ const BodyHealing = {
      * @param {Number} bleed  per-minute bloodLoss delta
      */
     _spawnBleedStains(owner, scene, bleed) {
-        // Heavier bleeding → more spatters (roughly 0–6 / game minute; light bleeds often skip)
-        let n = Math.floor(bleed * 80);
-        if (Math.random() < Math.min(0.9, 0.25 + bleed * 35)) n += 1;
-        if (bleed > 0.015 && Math.random() < 0.5) n += 1;
-        if (bleed > 0.04 && Math.random() < 0.45) n += 1;
-        n = Phaser.Math.Clamp(n, 0, 6);
+        // Lighter drip rate — merges turn repeats into growing pools
+        let n = Math.floor(bleed * 40);
+        if (Math.random() < Math.min(0.75, 0.2 + bleed * 25)) n += 1;
+        if (bleed > 0.02 && Math.random() < 0.35) n += 1;
+        n = Phaser.Math.Clamp(n, 0, 2);
         if (n <= 0 || !scene?.time?.delayedCall) return;
 
-        // Stable-ish phase per bleeder so a pack doesn't share one drip clock
         if (owner._bleedDripPhase == null) {
             owner._bleedDripPhase = Math.random();
         }
@@ -106,7 +149,6 @@ const BodyHealing = {
         const phase = owner._bleedDripPhase * minuteMs;
 
         for (let i = 0; i < n; i++) {
-            // Spread drips through the minute; jitter so they don't land on a grid
             const slot = (phase + ((i + 0.5) / n) * minuteMs) % minuteMs;
             const delay = Phaser.Math.Clamp(
                 slot + (Math.random() - 0.5) * (minuteMs / Math.max(2, n)),
@@ -133,20 +175,25 @@ const BodyHealing = {
 
         const mult = Number(part?.def?.bleedMult) || 1;
         const score = severity * bleedRate * mult;
-        // Graphics mesh can take denser bursts; keep a sane cap for spawn storms
-        let n = 2 + Math.floor(score * 10);
-        if (score > 0.5) n += 1;
-        if (score > 1.2) n += 2;
-        if (destroyed) n += 3 + Math.floor((Number(part?.mhp) || 10) * 0.12);
-        n = Phaser.Math.Clamp(n, 2, 12);
-        // Slightly wider burst than drip stains
-        this._scatterStains(owner, scene, n, 0.06, 0.75);
+        let n = 1 + Math.floor(score * 5);
+        if (score > 1) n += 1;
+        if (destroyed) n += 1;
+        n = Phaser.Math.Clamp(n, 1, 4);
+        this._scatterStains(owner, scene, n, 0.06, 0.65);
     },
 
-    /** Heal one random wound every 10s (real). */
-    healTick(owner) {
+    /**
+     * RimWorld heal tick on our clock: every 10 game minutes (= RW's ~10s at 1×),
+     * heal ONE random non-permanent wound by healRate × 0.01.
+     * Tend bonus (+4 + 8×quality) applies only when that wound is picked.
+     */
+    healGameMinute(owner, scene) {
         const body = owner.anatomy;
         if (!body) return;
+        // Align to absolute world minutes so day rollover stays on cadence
+        const worldMin = scene?.worldMinuteIndex?.();
+        if (worldMin != null && worldMin % 10 !== 0) return;
+
         const wounds = [];
         for (const part of Object.values(body.parts())) {
             if (part.isDead()) continue;
@@ -157,39 +204,46 @@ const BodyHealing = {
         if (!wounds.length) return;
 
         const pick = Phaser.Utils.Array.GetRandom(wounds);
-        body.markDirty?.();
-        let healRate = Number(body.plan?.healRate) || this.BASE_HEAL_RATE;
-        // Tend quality bonus to daily heal rate (RW simplified): +4 + 0.08*% at quality
-        if (pick.inj.tended) {
-            const q = Phaser.Math.Clamp(Number(pick.inj.tendQuality) || 0, 0, 1);
+        const { part, inj } = pick;
+        const base = Number(body.plan?.healRate) || this.BASE_HEAL_RATE;
+        let healRate = base;
+        if (inj.tended) {
+            const q = Phaser.Math.Clamp(Number(inj.tendQuality) || 0, 0, 1);
             healRate += 4 + q * 8;
         }
-        const amount = healRate * 0.01;
-        pick.inj.severity = Math.max(0, (Number(pick.inj.severity) || 0) - amount);
+        // RW: each heal tick applies healRate × 0.01
+        inj.severity = Math.max(0, (Number(inj.severity) || 0) - healRate * 0.01);
 
-        // Reveal scar when wound heals down to scar severity
-        if (pick.inj.scarPending && pick.inj.severity <= (pick.inj.scarSeverity || 0)) {
-            pick.inj.permanent = true;
-            pick.inj.severity = pick.inj.scarSeverity || 1;
-            pick.inj.bleeding = false;
-            pick.inj.scarPending = false;
-            pick.inj.name = (pick.inj.name || "Injury") + " scar";
-        } else if (pick.inj.severity <= 0.05 && !pick.inj.scarPending) {
-            // Remove healed wound
-            const idx = pick.part.injuries.indexOf(pick.inj);
-            if (idx >= 0) pick.part.injuries.splice(idx, 1);
-        } else if (pick.inj.severity <= 0 && pick.inj.scarPending) {
-            pick.inj.permanent = true;
-            pick.inj.severity = pick.inj.scarSeverity || 1;
-            pick.inj.bleeding = false;
-            pick.inj.scarPending = false;
-            pick.inj.name = (pick.inj.name || "Injury") + " scar";
+        if (inj.scarPending && inj.severity <= (inj.scarSeverity || 0)) {
+            inj.permanent = true;
+            inj.severity = inj.scarSeverity || 1;
+            inj.bleeding = false;
+            inj.scarPending = false;
+            inj.name = (inj.name || "Injury") + " scar";
+        } else if (inj.severity <= 0.05 && !inj.scarPending) {
+            const idx = part.injuries.indexOf(inj);
+            if (idx >= 0) part.injuries.splice(idx, 1);
+        } else if (inj.severity <= 0 && inj.scarPending) {
+            inj.permanent = true;
+            inj.severity = inj.scarSeverity || 1;
+            inj.bleeding = false;
+            inj.scarPending = false;
+            inj.name = (inj.name || "Injury") + " scar";
         }
 
-        // Low severity stops bleed naturally
-        if (!pick.inj.permanent && pick.inj.severity < 1) {
-            // keep bleeding flag until tended or fully gone; RW stops with tend primarily
+        body.markDirty?.();
+    },
+
+    /** True if a previously picked tend target is still on the body and untended. */
+    isTendTargetValid(body, target) {
+        if (!body || !target) return false;
+        if (target.destroyed) {
+            const d = target.destroyed;
+            return !d.tended && (body.destroyedBleed || []).includes(d);
         }
+        const { part, inj } = target;
+        if (!part || !inj || inj.permanent || inj.tended) return false;
+        return Array.isArray(part.injuries) && part.injuries.includes(inj);
     },
 
     /** Pick next wound to tend: worst bleed first, else highest severity. */
@@ -228,6 +282,19 @@ const BodyHealing = {
             return other[0];
         }
         return null;
+    },
+
+    /**
+     * Tend quality roll: base × random(0..1.25), clamped to [0, max].
+     * Floor is 0% (no bare-hand tend in this game — worst bandage can fail).
+     * @param {Number} base  typical quality for this medicine (e.g. 0.4 leaf cord)
+     * @param {Number} [max=0.7]  medicine ceiling (herbal-like default)
+     */
+    rollTendQuality(base = 0.4, max = 0.7) {
+        const b = Math.max(0, Number(base) || 0);
+        const cap = Math.max(0, Number(max) || 0.7);
+        const rolled = b * Phaser.Math.FloatBetween(0, 1.25);
+        return Phaser.Math.Clamp(rolled, 0, cap);
     },
 
     applyTend(body, target, quality = 0.4) {

@@ -83,7 +83,8 @@ class CorpsePanel {
         const planId = entry.bodyPlan || entry.body.planId || "human";
         const body = new Body(this.scene, planId, null);
         body.loadJSON(entry.body);
-        hp.openInspect(body, entry.name || "Corpse");
+        const name = entry.name || "Corpse";
+        hp.openInspect(body, name === "Corpse" ? "Corpse" : `${name} (corpse)`);
     }
 
     _closeCorpseHealth() {

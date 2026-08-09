@@ -325,6 +325,8 @@ class Capacities {
                 parts.push(...this._collectPartFactors(["Jaw"]));
                 pushUp("Consciousness", this.consciousness());
                 break;
+            case "bloodLoss":
+                return this._explainBloodLoss();
             default:
                 return [];
         }
@@ -332,6 +334,54 @@ class Capacities {
         const lines = [...parts, ...upstream];
         if (!lines.length) return ["Reduced by multiple minor factors"];
         return lines;
+    }
+
+    /** RW-style bleed rate / time-to-death (or recovery when not bleeding). */
+    _explainBloodLoss() {
+        const body = this.body;
+        const bl = body.bloodLoss || 0;
+        if (bl >= 1 || body.dead || body.isDead?.()) {
+            return ["Dead"];
+        }
+
+        const perDay = typeof BodyHealing !== "undefined"
+            ? BodyHealing.bleedPerDay(body)
+            : 0;
+        const minutes = typeof BodyHealing !== "undefined"
+            ? BodyHealing.minutesToBleedOut(body)
+            : null;
+
+        if (perDay > 0 && minutes != null) {
+            const pctDay = Math.round(perDay * 100);
+            return [
+                `Bleeding: ${pctDay}%/day`,
+                `~${this._formatBleedEta(minutes)} until death`
+            ];
+        }
+
+        const lines = ["Not bleeding"];
+        if (bl > 0) {
+            const recPerMin = (typeof BodyHealing !== "undefined"
+                ? BodyHealing.BLOOD_RECOVERY_PER_MINUTE
+                : 0.00035);
+            const day = (typeof BodyHealing !== "undefined"
+                ? BodyHealing.MINUTES_PER_DAY
+                : 1440);
+            const recPct = Math.round(recPerMin * day * 100);
+            lines.push(`Recovering: ~${recPct}%/day`);
+        }
+        return lines;
+    }
+
+    /** @param {number} minutes */
+    _formatBleedEta(minutes) {
+        if (!(minutes > 0) || !Number.isFinite(minutes)) return "moments";
+        if (minutes < 60) {
+            return `${Math.max(1, Math.round(minutes))} minutes`;
+        }
+        const hours = minutes / 60;
+        if (hours < 10) return `${hours.toFixed(1)} hours`;
+        return `${Math.round(hours)} hours`;
     }
 
     isPainShock() {

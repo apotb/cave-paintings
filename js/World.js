@@ -147,8 +147,10 @@ class Chunk {
             for (const s of this._bloodSprites) s?.destroy?.();
             this._bloodSprites = [];
         }
-        this._bloodGfx?.destroy();
+        this._bloodGfx?.destroy?.();
         this._bloodGfx = null;
+        this._bloodRt?.destroy?.();
+        this._bloodRt = null;
     }
 
     async makeBloodStains() {

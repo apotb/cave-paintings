@@ -19,6 +19,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._bodyDead = false;
         this._downed = false;
         this._tendChannel = null; // { remaining, max, slot }
+        /** After Space uses food/tool, ignore autofire until Space is released. */
+        this._blockSpaceAutofire = false;
         this._lastHotbarSlot = null;
         this.currentAttack = null;
         this.unarmedSprite = null;
@@ -174,9 +176,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     toJSON() {
+        // Prefer continuous physics pose over the render-only pixel snap
         return {
-            x: this.x,
-            y: this.y,
+            x: this._physX ?? this.x,
+            y: this._physY ?? this.y,
             body: this.anatomy?.toJSON?.(),
             kc: this.kc,
             saturation: this.saturation,
@@ -186,7 +189,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     displayName() {
-        return "You";
+        return this.scene.playerName || "Player";
     }
 
     isBodyDead() {
@@ -695,6 +698,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     teleport(x, y) {
         this.setPosition(x, y);
+        // Keep render-snap restore in sync (otherwise next preupdate warps back)
+        this._physX = x;
+        this._physY = y;
     }
 
     damage(amount) {
@@ -1149,7 +1155,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             remaining: max,
             max,
             slot: this.scene.hotbar.activeIndex,
-            quality: Number(meta.bandage.tendQuality) || 0.4,
+            // Locked at start so natural healing mid-channel doesn't retarget/cancel
+            target,
+            // Base + max from item; actual quality rolled when the channel finishes
+            qualityBase: Number(meta.bandage.tendQuality) || 0.4,
+            qualityMax: Number(meta.bandage.tendQualityMax) || 0.7,
             itemId: item.id
         };
         this.scene.showChannelBar?.(0);
@@ -1169,13 +1179,30 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.scene.showChannelBar?.(Phaser.Math.Clamp(prog, 0, 1));
         if (this._tendChannel.remaining > 0) return;
 
-        const target = BodyHealing.pickTendTarget(this.anatomy);
-        BodyHealing.applyTend(this.anatomy, target, this._tendChannel.quality);
+        const target = this._tendChannel.target;
+        const stillThere = BodyHealing.isTendTargetValid(this.anatomy, target);
+        if (!stillThere) {
+            // Wound closed on its own — finish the channel, keep the bandage
+            this.scene.combatLog?.push("The wound healed before you finished.");
+            this._tendChannel = null;
+            this.scene.hideChannelBar?.();
+            this.scene.healthPanel?.refresh?.();
+            return;
+        }
+
+        const quality = BodyHealing.rollTendQuality(
+            this._tendChannel.qualityBase,
+            this._tendChannel.qualityMax
+        );
+        BodyHealing.applyTend(this.anatomy, target, quality);
         this.loseAnyItem(this._tendChannel.itemId, 1);
+        const qPct = Math.round(quality * 100);
         this.scene.combatLog?.push(
             target?.part
-                ? `You bandaged your ${target.part.name}.`
-                : "You finished bandaging."
+                ? `You bandaged your ${target.part.name} (${qPct}%).`
+                : target?.destroyed
+                    ? `You bandaged a stump (${qPct}%).`
+                    : `You finished bandaging (${qPct}%).`
         );
         this._tendChannel = null;
         this.scene.hideChannelBar?.();
@@ -1382,9 +1409,22 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
 
         if (!incapacitated) {
+            if (!this.keys.SPACE.isDown) {
+                this._blockSpaceAutofire = false;
+            }
             if (Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) {
+                const held = this.getHeldItem();
+                const heldMeta = held ? this.scene.getItem(held.id) : null;
                 this.useHeldItem();
-            } else if (this.keys.SPACE.isDown && !this._tendChannel) {
+                // Eating/using a tool then keeping Space down must not punch
+                if (held && (heldMeta?.food || heldMeta?.use || heldMeta?.bandage)) {
+                    this._blockSpaceAutofire = true;
+                }
+            } else if (
+                this.keys.SPACE.isDown &&
+                !this._tendChannel &&
+                !this._blockSpaceAutofire
+            ) {
                 this.tryWeaponAutofire();
             }
         }

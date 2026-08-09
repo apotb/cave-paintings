@@ -7,6 +7,46 @@ const BodyCombat = {
     },
 
     /**
+     * RimWorld-style average melee DPS from weapon attack verbs.
+     * Selection weight = damage² × weightMultiplier; DPS = avgDamage / avgCooldown.
+     * Skips off-hand unarmed extras so the item tooltip reflects the weapon itself.
+     * @param {Object} weapon  item.weapon
+     * @returns {{ dps: number, type: string }|null}
+     */
+    meleeWeaponAverageDps(weapon) {
+        if (!weapon?.attacks?.length) return null;
+        let list = weapon.attacks.filter((a) => !a.unarmed && a.source !== "otherHand");
+        if (!list.length) list = weapon.attacks.slice();
+        let sumW = 0;
+        const rows = [];
+        for (const a of list) {
+            const damage = Math.max(0, Number(a.damage) || 0);
+            const cooldown = Math.max(0.2, Number(a.cooldown) || 2);
+            const wMult = Number(a.weightMultiplier);
+            const weight = damage * damage * (Number.isFinite(wMult) ? wMult : 1);
+            if (!(weight > 0)) continue;
+            sumW += weight;
+            rows.push({ damage, cooldown, weight, type: a.type || weapon.type || "melee" });
+        }
+        if (!(sumW > 0) || !rows.length) return null;
+        let avgDmg = 0;
+        let avgCd = 0;
+        let bestType = rows[0].type;
+        let bestW = 0;
+        for (const r of rows) {
+            const p = r.weight / sumW;
+            avgDmg += r.damage * p;
+            avgCd += r.cooldown * p;
+            if (r.weight > bestW) {
+                bestW = r.weight;
+                bestType = r.type;
+            }
+        }
+        if (!(avgCd > 0)) return null;
+        return { dps: avgDmg / avgCd, type: bestType };
+    },
+
+    /**
      * Build weighted attack list for an owner (player/mob).
      * @returns {Array<{def, sourcePart, weight, damage, type, verb, cooldown, name}>}
      */

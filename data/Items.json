@@ -158,6 +158,7 @@
         },
         "bandage": {
             "tendQuality": 0.4,
+            "tendQualityMax": 0.7,
             "channelSeconds": 5
         },
         "tooltip": [

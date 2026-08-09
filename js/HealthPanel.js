@@ -207,7 +207,9 @@ class HealthPanel {
 
     _clearCapTooltip() {
         const t = this.scene._tooltipTarget;
-        if (t && this._capRows.includes(t)) this.scene.hideTooltip?.();
+        if (!t) return;
+        if (this._capRows.includes(t)) this.scene.hideTooltip?.();
+        else if (this._injLines.some((row) => row.text === t)) this.scene.hideTooltip?.();
     }
 
     _pointerInInjView(screenX, screenY) {
@@ -285,8 +287,8 @@ class HealthPanel {
         const listTop = titleBottom + 2 * s;
         const scrollBarW = 7 * s;
         const wrapW = Math.max(80 * s, panelW / 2 - pad - listX - scrollBarW);
-        const fontSize = Math.round(11 * s);
-        const lineH = Math.round(14 * s);
+        const fontSize = Math.round(10 * s);
+        const lineH = Math.round(13 * s);
 
         this.capLayer.setPosition(listX, listTop);
         for (let i = 0; i < this._capRows.length; i++) {
@@ -306,18 +308,27 @@ class HealthPanel {
         this._injViewH = viewH;
 
         this.injView.setPosition(listX, viewTop);
-        let visibleLines = 0;
+        let y = 0;
         for (let i = 0; i < this._injLines.length; i++) {
             const line = this._injLines[i];
             if (!line.text.visible) continue;
-            const y = visibleLines * lineH;
-            visibleLines++;
-            line.text.setFontSize(fontSize).setWordWrapWidth(wrapW).setPosition(1 * s, y);
-            line.bg.setPosition(0, y).setSize(wrapW, lineH);
+            line.text.setFontSize(fontSize).setWordWrapWidth(wrapW);
+            // Row height from wrap count × lineH — not text.height (font metrics
+            // add empty descent, so the red bar looked bottom-heavy).
+            const wrapped = line.text.getWrappedText?.(String(line.text.text || ""));
+            const rows = Math.max(1, (wrapped && wrapped.length) || 1);
+            const h = rows * lineH;
+            const padY = Math.max(0, Math.round((lineH - fontSize) * 0.5));
+            line.text.setPosition(1 * s, y + padY);
+            line.bg.setPosition(0, y).setSize(wrapW, h);
             line.bg.setVisible(!!line.bleeding);
             if (line.bleeding) line.bg.setFillStyle(0x3a0808, 1);
+            if (line.text.input?.hitArea?.setSize) {
+                line.text.input.hitArea.setSize(Math.max(wrapW, 1), Math.max(h, 1));
+            }
+            y += h;
         }
-        this._injContentH = Math.max(visibleLines * lineH, 1);
+        this._injContentH = Math.max(y, 1);
         this._injMaxScroll = Math.max(0, this._injContentH - viewH);
         this._setInjScroll(Math.min(this._injScroll, this._injMaxScroll));
 
@@ -365,7 +376,7 @@ class HealthPanel {
     }
 
     /**
-     * @param {{ text: string, bleeding?: boolean }[]} lines
+     * @param {{ text: string, bleeding?: boolean, tip?: string|null }[]} lines
      */
     _setInjLines(lines) {
         while (this._injLines.length < lines.length) {
@@ -377,20 +388,32 @@ class HealthPanel {
                 fontSize: "11px",
                 color: "#ddd0c0"
             }).setOrigin(0, 0);
+            text.setInteractive({ useHandCursor: false });
+            const row = { bg, text, bleeding: false, tip: null };
+            text.on("pointerover", (p) => {
+                if (!row.tip) return;
+                this.scene.showTooltip(row.tip, p.x, p.y, text);
+            });
+            text.on("pointerout", () => {
+                if (this.scene._tooltipTarget === text) this.scene.hideTooltip?.();
+            });
             this.injContent.add(bg);
             this.injContent.add(text);
-            this._injLines.push({ bg, text, bleeding: false });
+            this._injLines.push(row);
         }
         for (let i = 0; i < this._injLines.length; i++) {
             const row = this._injLines[i];
             if (i < lines.length) {
                 row.text.setText(lines[i].text).setVisible(true);
                 row.bleeding = !!lines[i].bleeding;
+                row.tip = lines[i].tip || null;
                 row.bg.setVisible(row.bleeding);
             } else {
                 row.text.setText("").setVisible(false);
                 row.bleeding = false;
+                row.tip = null;
                 row.bg.setVisible(false);
+                if (this.scene._tooltipTarget === row.text) this.scene.hideTooltip?.();
             }
         }
     }
@@ -404,7 +427,9 @@ class HealthPanel {
             }).setOrigin(0, 0);
             row.setInteractive({ useHandCursor: false });
             row.on("pointerover", (p) => {
-                if (row._capValue == null || !(row._capValue < 0.999) || !row._capKey) return;
+                if (!row._capKey || row._capValue == null) return;
+                // Blood Loss always tips; other caps only when below 100%
+                if (row._capKey !== "bloodLoss" && !(row._capValue < 0.999)) return;
                 const body = this._inspectBody || this.scene.player?.anatomy;
                 if (!body) return;
                 const caps = new Capacities(body);
@@ -439,7 +464,7 @@ class HealthPanel {
         const title = this._inspectTitle || "Health";
         this.title.setText(title);
 
-        // Hoverable capacities (Pain / Blood Loss are display-only)
+        // Hoverable capacities (Pain is display-only; Blood Loss always tips)
         const rows = [
             { key: "consciousness", label: "Consciousness", value: c.consciousness },
             { key: "moving", label: "Moving", value: c.moving },
@@ -453,7 +478,7 @@ class HealthPanel {
             { key: "hearing", label: "Hearing", value: c.hearing },
             { key: "talking", label: "Talking", value: c.talking },
             { key: "eating", label: "Eating", value: c.eating },
-            { key: null, label: "Blood Loss", value: c.bloodLoss }
+            { key: "bloodLoss", label: "Blood Loss", value: c.bloodLoss }
         ];
 
         this._ensureCapRows(rows.length);
@@ -463,7 +488,7 @@ class HealthPanel {
             row.setText(`${def.label}: ${pct(def.value)}`);
             row._capKey = def.key;
             row._capValue = def.value;
-            const canTip = !!def.key && def.value < 0.999;
+            const canTip = !!def.key && (def.key === "bloodLoss" || def.value < 0.999);
             if (row.input) row.input.enabled = canTip;
             if (row.input?.hitArea?.setSize) {
                 row.input.hitArea.setSize(Math.max(row.width, 1), Math.max(row.height, 1));
@@ -471,23 +496,61 @@ class HealthPanel {
             if (!canTip && this.scene._tooltipTarget === row) this.scene.hideTooltip?.();
         }
 
-        /** @type {{ text: string, bleeding?: boolean }[]} */
+        /** @type {{ text: string, bleeding?: boolean, tip?: string|null }[]} */
         const lines = [];
         let any = false;
+        /** @type {Object.<string, { partName: string, tended?: boolean }>} */
+        const stumpByPart = {};
+        for (const d of body.destroyedBleed || []) {
+            if (d?.partName) stumpByPart[d.partName] = d;
+        }
+        const fmtBleedDay = (perDay) => {
+            if (!(perDay > 0)) return null;
+            return `Bleeding: ${Math.round(perDay * 100)}%/day`;
+        };
+        const pushStumpBleed = (partName) => {
+            const stump = stumpByPart[partName];
+            if (!stump) return;
+            delete stumpByPart[partName];
+            // Tended stumps don't list a wound — just "Part: Destroyed" remains
+            if (stump.tended) return;
+            const tipLines = [];
+            if (typeof BodyHealing !== "undefined") {
+                const line = fmtBleedDay(BodyHealing.stumpBleedPerDay(stump));
+                if (line) tipLines.push(line);
+            }
+            lines.push({
+                text: "  stump (bleeding)",
+                bleeding: true,
+                tip: tipLines.length ? tipLines.join("\n") : null
+            });
+        };
         const pushInjuries = (part) => {
             for (const inj of part.injuries) {
                 const bleeding = !inj.permanent && !!inj.bleeding && !inj.tended;
-                const tag = inj.permanent ? "scar" : inj.tended ? "tended" : "";
+                const tag = inj.permanent ? "scar" : inj.tended ? "tended" : bleeding ? "bleeding" : "";
+                const tipLines = [];
+                if (bleeding && typeof BodyHealing !== "undefined") {
+                    const line = fmtBleedDay(BodyHealing.injuryBleedPerDay(inj, part));
+                    if (line) tipLines.push(line);
+                }
+                if (inj.tended && !inj.permanent) {
+                    const q = Phaser.Math.Clamp(Number(inj.tendQuality) || 0, 0, 1);
+                    tipLines.push(`Tend quality: ${Math.round(q * 100)}%`);
+                }
+                if (inj.sourceLabel) tipLines.push(`From ${inj.sourceLabel}`);
                 lines.push({
                     text: `  ${inj.severity.toFixed(1)} ${inj.name}${tag ? ` (${tag})` : ""}`,
-                    bleeding
+                    bleeding,
+                    tip: tipLines.length ? tipLines.join("\n") : null
                 });
             }
         };
         for (const part of Object.values(body.parts())) {
             if (part.isDead()) {
+                // Destroyed parts: header + stump only (no old cut list)
                 lines.push({ text: `${part.name}: Destroyed` });
-                pushInjuries(part);
+                pushStumpBleed(part.name);
                 any = true;
                 continue;
             }
@@ -495,6 +558,11 @@ class HealthPanel {
             any = true;
             lines.push({ text: `${part.name}: ${part.hp().toFixed(1)}/${part.mhp}` });
             pushInjuries(part);
+        }
+        for (const stump of Object.values(stumpByPart)) {
+            lines.push({ text: `${stump.partName}: Destroyed` });
+            pushStumpBleed(stump.partName);
+            any = true;
         }
         if (!any) lines.push({ text: "None" });
         this._setInjLines(lines);

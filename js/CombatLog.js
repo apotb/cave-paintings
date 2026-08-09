@@ -146,8 +146,15 @@ class CombatLog {
     _handleCommand(raw) {
         const parts = String(raw).trim().split(/\s+/);
         const cmd = (parts[0] || "").toLowerCase();
+        if (cmd === "/help") {
+            this.push("Commands:");
+            this.push("  /help — list commands");
+            this.push("  /tick [speed] — world clock speed (1 = normal, 0 = pause)");
+            this.push("  /debug fps|melee_slots|blood [show|hide] — toggle debug overlays");
+            return;
+        }
         if (cmd === "/debug") {
-            const usage = "Usage: /debug fps|melee_slots [show|hide]";
+            const usage = "Usage: /debug fps|melee_slots|blood [show|hide]";
             const topic = (parts[1] || "").toLowerCase();
             const action = (parts[2] || "").toLowerCase();
             if (topic === "melee_slots" || topic === "melee-slots") {
@@ -179,10 +186,47 @@ class CombatLog {
                 this.scene.setFpsMeter?.(on);
                 return;
             }
+            if (topic === "blood") {
+                if (action && action !== "show" && action !== "hide") {
+                    this.push(usage);
+                    return;
+                }
+                const on = action === "show"
+                    ? true
+                    : action === "hide"
+                        ? false
+                        : this.scene.bloodDraw === false;
+                this.push(on ? "Debug: blood shown" : "Debug: blood hidden");
+                this.scene.setBloodDraw?.(on);
+                return;
+            }
             this.push(usage);
             return;
         }
-        this.push(`Unknown command: ${parts[0]}`);
+        if (cmd === "/tick") {
+            const arg = parts[1];
+            const report = (speed) => {
+                const s = Number(speed);
+                if (!Number.isFinite(s) || s <= 0) {
+                    this.push("Tick speed: paused (0)");
+                } else {
+                    const delay = Math.max(1, 1000 / s);
+                    this.push(`Tick speed: ${s}× (${delay.toFixed(0)} ms / game minute)`);
+                }
+            };
+            if (arg == null || arg === "") {
+                report(this.scene.tickSpeed);
+                return;
+            }
+            const m = Number(arg);
+            if (!Number.isFinite(m) || m < 0) {
+                this.push("Usage: /tick [speed]  (1 = normal, 60 ≈ 1 game hour/sec, 0 = pause)");
+                return;
+            }
+            report(this.scene.setTickSpeed?.(m));
+            return;
+        }
+        this.push(`Unknown command: ${parts[0]} (try /help)`);
     }
 
     _rememberSent(msg) {

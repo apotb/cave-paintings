@@ -48,8 +48,12 @@ class SceneMain extends SceneBase {
         // Player
         this.player = new Player(this, 0, 0);
         this.damageables.add(this.player);
-        this.cameras.main.startFollow(this.player);
+        // Manual camera follow (see syncCameraToPlayer). startFollow(..., true) floors
+        // scroll while the player stays fractional → whole-world diagonal shake.
+        // Snap to the screen-pixel grid (1/zoom world units) instead; physics untouched.
         this.cameras.main.setZoom(this.worldZoom);
+        this.cameras.main.setRoundPixels(false);
+        this.syncCameraToPlayer();
 
         // In-game clock: 1 game minute per real second, starts Day 1 08:00
         this.gameDay = 1;
@@ -95,19 +99,6 @@ class SceneMain extends SceneBase {
         this.healthPanel = new HealthPanel(this);
         this.createDeathOverlay();
         this.applyUiScale();
-
-        this.time.addEvent({
-            delay: BodyHealing.HEAL_INTERVAL_MS,
-            callback: () => {
-                if (this.isPaused || this.player?.isBodyDead?.()) return;
-                BodyHealing.healTick(this.player);
-                for (const mob of this.mobs?.getChildren?.() || []) {
-                    if (mob?.active && !mob.isBodyDead?.()) BodyHealing.healTick(mob);
-                }
-                this.healthPanel?.refresh?.();
-            },
-            loop: true
-        });
 
         // Inputs
         this.key1 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE);
@@ -268,9 +259,9 @@ class SceneMain extends SceneBase {
         const cam = this.cameras.main;
         const w = Math.round(40 * s);
         const h = Math.round(5 * s);
-        // Sprite origin is bottom-left — center X, top of sprite
+        // Sprite origin is bottom-left — center X, just above top of sprite
         const worldX = player.x + player.width * 0.5;
-        const worldY = player.y - player.height - 6;
+        const worldY = player.y - player.height - 2;
         // Stable world→screen via camera midPoint; round to avoid subpixel jitter
         const sx = Math.round((worldX - cam.midPoint.x) * cam.zoom + cam.width * 0.5);
         const sy = Math.round((worldY - cam.midPoint.y) * cam.zoom + cam.height * 0.5);
@@ -285,7 +276,7 @@ class SceneMain extends SceneBase {
         else if (frac > 0.25) color = 0xE67A00;
 
         gfx.clear();
-        this._drawBar(gfx, x, y, w, h, frac, 0x000000, 0x222222, color, 1);
+        this._drawBar(gfx, x, y, w, h, frac, 0x000000, 0x222222, color, 2);
     }
 
     hideChannelBar() {
@@ -570,9 +561,13 @@ class SceneMain extends SceneBase {
         this.input.on("pointermove", (pointer) => {
             if (this.tooltip.visible) this.positionTooltip(pointer.x, pointer.y);
         });
+        // Snap player for draw only; restore true pose before the next physics step
+        // so diagonal speed stays normalized (square-grid body snaps are √2-fast).
+        this.events.on("preupdate", () => this.restorePlayerPhysicsPos());
         this.events.on("postupdate", () => {
             this.syncPointerHover();
-            // After physics: lock world FX to the player's final x/y for this frame
+            // After physics: snap player+camera for this frame's render
+            this.syncCameraToPlayer();
             this.player?.syncFxRoot?.();
             this.player?._syncChatBubble?.();
             this.meleeSlots?.drawDebug?.();
@@ -1037,26 +1032,84 @@ class SceneMain extends SceneBase {
         this.healthPanel?.refresh?.();
     }
 
-    /** Cap stains per chunk — one Graphics mesh, so a high cap is still cheap. */
-    static BLOOD_STAINS_MAX = 1000;
+    /** Soft cap — merging nearby drips keeps count low in normal fights. */
+    static BLOOD_STAINS_MAX = 180;
+    /** Merge into an existing pool if within this many pixels. */
+    static BLOOD_MERGE_DIST = 6;
+    static BLOOD_RADIUS_MIN = 0.9;
+    static BLOOD_RADIUS_MAX = 5;
+    /** Radius added when a drip merges into a pool. */
+    static BLOOD_MERGE_GROW = 0.4;
+    static BLOOD_LIFE_MINUTES = 1440; // 1 game day
+
+    /** Debug: when false, skip spawning/painting blood stains. */
+    setBloodDraw(on) {
+        this.bloodDraw = !!on;
+        for (const chunk of Object.values(this.chunks || {})) {
+            if (!chunk?.isLoaded) continue;
+            if (this.bloodDraw) this.rebuildBloodGfx(chunk);
+            else {
+                const rt = chunk._bloodRt;
+                if (rt?.active) {
+                    rt.clear();
+                    rt.setVisible(false);
+                }
+                chunk._bloodGfx?.clear?.();
+                chunk._bloodGfx?.setVisible?.(false);
+            }
+        }
+        return this.bloodDraw;
+    }
 
     spawnBloodStain(x, y) {
+        if (this.bloodDraw === false) return;
         const chunk = LivingMob.ensureChunkAt(this, x, y);
         if (!chunk) return;
         if (!chunk.meta.bloodStains) chunk.meta.bloodStains = [];
         const list = chunk.meta.bloodStains;
+        const mergeDist = SceneMain.BLOOD_MERGE_DIST;
+        const mergeDistSq = mergeDist * mergeDist;
+
+        // Grow a nearby pool instead of adding another circle
+        let best = null;
+        let bestD = mergeDistSq;
+        for (let i = 0; i < list.length; i++) {
+            const e = list[i];
+            const dx = e.x - x;
+            const dy = e.y - y;
+            const d = dx * dx + dy * dy;
+            if (d <= bestD) {
+                bestD = d;
+                best = e;
+            }
+        }
+        if (best) {
+            const grow = SceneMain.BLOOD_MERGE_GROW;
+            best.radius = Math.min(
+                SceneMain.BLOOD_RADIUS_MAX,
+                (Number(best.radius) || SceneMain.BLOOD_RADIUS_MIN) + grow
+            );
+            // Pull pool slightly toward the new drip
+            best.x = best.x * 0.75 + x * 0.25;
+            best.y = best.y * 0.75 + y * 0.25;
+            best.lifeMinutes = SceneMain.BLOOD_LIFE_MINUTES;
+            if (chunk.isLoaded) this._paintBloodStain(chunk, best);
+            return;
+        }
+
         let needsRebuild = false;
         while (list.length >= SceneMain.BLOOD_STAINS_MAX) {
             list.shift();
             needsRebuild = true;
         }
-        // Current radius 3 is the max; most drips are smaller
-        const radius = Phaser.Math.FloatBetween(0.8, 3);
         const entry = {
             x,
             y,
-            radius,
-            lifeMinutes: 1440 // 1 game day
+            radius: Phaser.Math.FloatBetween(
+                SceneMain.BLOOD_RADIUS_MIN,
+                Math.min(2.4, SceneMain.BLOOD_RADIUS_MAX)
+            ),
+            lifeMinutes: SceneMain.BLOOD_LIFE_MINUTES
         };
         list.push(entry);
         if (!chunk.isLoaded) return;
@@ -1064,27 +1117,64 @@ class SceneMain extends SceneBase {
         else this._paintBloodStain(chunk, entry);
     }
 
-    _ensureBloodGfx(chunk) {
-        if (chunk._bloodGfx?.active) return chunk._bloodGfx;
-        const g = this.add.graphics().setDepth(0.5);
-        this.groundLayer.add(g);
-        chunk._bloodGfx = g;
-        return g;
+    _bloodStampGfx() {
+        if (!this._bloodStamp || !this._bloodStamp.active) {
+            this._bloodStamp = this.make.graphics({ x: 0, y: 0, add: false });
+        }
+        return this._bloodStamp;
+    }
+
+    /** Chunk-local blood RT — one texture, stamp circles (no growing command list). */
+    _ensureBloodRt(chunk) {
+        if (chunk._bloodRt?.active) return chunk._bloodRt;
+        const size = chunk.px();
+        const rt = this.make.renderTexture({
+            x: chunk.x * size,
+            y: chunk.y * size,
+            width: size,
+            height: size,
+            add: false
+        }).setOrigin(0).setDepth(0.5);
+        this.groundLayer.add(rt);
+        chunk._bloodRt = rt;
+        // Drop legacy Graphics mesh if present
+        chunk._bloodGfx?.destroy?.();
+        chunk._bloodGfx = null;
+        return rt;
     }
 
     _paintBloodStain(chunk, entry) {
-        const r = Math.min(3, Number(entry.radius) || 1.5);
+        if (this.bloodDraw === false) return;
+        const r = Phaser.Math.Clamp(
+            Number(entry.radius) || SceneMain.BLOOD_RADIUS_MIN,
+            SceneMain.BLOOD_RADIUS_MIN,
+            SceneMain.BLOOD_RADIUS_MAX
+        );
         entry.radius = r;
-        const g = this._ensureBloodGfx(chunk);
-        g.fillStyle(0x6b1010, 0.65);
-        g.fillCircle(entry.x, entry.y, r);
+        const rt = this._ensureBloodRt(chunk);
+        rt.setVisible(true);
+        const size = chunk.px();
+        const lx = entry.x - chunk.x * size;
+        const ly = entry.y - chunk.y * size;
+        const stamp = this._bloodStampGfx();
+        stamp.clear();
+        stamp.fillStyle(0x6b1010, 0.55);
+        stamp.fillCircle(0, 0, r);
+        rt.draw(stamp, lx, ly);
     }
 
     /** Full redraw (after expiry / eviction / chunk load). */
     rebuildBloodGfx(chunk) {
         if (!chunk) return;
-        const g = this._ensureBloodGfx(chunk);
-        g.clear();
+        if (this.bloodDraw === false) {
+            if (chunk._bloodRt?.active) {
+                chunk._bloodRt.clear();
+                chunk._bloodRt.setVisible(false);
+            }
+            return;
+        }
+        const rt = this._ensureBloodRt(chunk);
+        rt.clear().setVisible(true);
         for (const entry of chunk.meta?.bloodStains || []) {
             this._paintBloodStain(chunk, entry);
         }
@@ -1252,12 +1342,21 @@ class SceneMain extends SceneBase {
         }
 
         if (item.weapon) {
-            const dmg = Number(item.weapon.damage ?? 0);
-            if (dmg > 0) {
-                const type = item.weapon.type ? ` ${item.weapon.type}` : "";
-                lines.push(`Damage: ${dmg}${type}`);
-            } else if (item.weapon.type) {
-                lines.push(`Type: ${item.weapon.type}`);
+            const avg = typeof BodyCombat !== "undefined"
+                ? BodyCombat.meleeWeaponAverageDps?.(item.weapon)
+                : null;
+            if (avg && avg.dps > 0) {
+                const dps = avg.dps.toFixed(1);
+                const dtype = avg.type || item.weapon.type || "melee";
+                lines.push(`DPS: ${dps} ${dtype}`);
+            } else {
+                const dmg = Number(item.weapon.damage ?? 0);
+                if (dmg > 0) {
+                    const type = item.weapon.type ? ` ${item.weapon.type}` : "";
+                    lines.push(`Damage: ${dmg}${type}`);
+                } else if (item.weapon.type) {
+                    lines.push(`Type: ${item.weapon.type}`);
+                }
             }
         }
 
@@ -1663,13 +1762,55 @@ class SceneMain extends SceneBase {
         this.deathBg.setSize(420 * s, 220 * s);
     }
 
+    /** Put the player back on the continuous physics pose before the next step. */
+    restorePlayerPhysicsPos() {
+        const player = this.player;
+        if (!player?.active || player._physX == null) return;
+        if (player.x !== player._physX || player.y !== player._physY) {
+            player.setPosition(player._physX, player._physY);
+        }
+    }
+
+    /**
+     * After physics: remember the true pose, then snap player + camera to the
+     * screen-pixel grid for rendering (1/zoom world units). Physics keeps using
+     * the unsnapped pose via restorePlayerPhysicsPos on preupdate.
+     */
+    syncCameraToPlayer() {
+        const player = this.player;
+        const cam = this.cameras?.main;
+        if (!player?.active || !cam) return;
+        const z = this.worldZoom || cam.zoom || 1;
+        player._physX = player.x;
+        player._physY = player.y;
+        const x = Math.floor(player.x * z) / z;
+        const y = Math.floor(player.y * z) / z;
+        if (player.x !== x || player.y !== y) {
+            player.setPosition(x, y);
+        }
+        cam.centerOn(x, y);
+    }
+
     respawnPlayer(here) {
         const x = here ? this._deathPos.x : 0;
         const y = here ? this._deathPos.y : 0;
         this.player.respawnFresh(x, y);
         this.deathOverlay?.setVisible(false);
+        this.closeOpenMenus();
+        this.syncCameraToPlayer();
         this.healthPanel?.refresh?.();
         this.combatLog?.push(here ? "Respawned here (dev)." : "Respawned.");
+    }
+
+    /** Close side menus, world panels, channel bar, and chat compose. */
+    closeOpenMenus() {
+        this.hideChannelBar?.();
+        if (this.craftMenuVisible) this.closeCraftMenu();
+        if (this.equipmentPanel?.visible) this.equipmentPanel.close();
+        if (this.healthPanel?.visible) this.healthPanel.close();
+        if (this.corpsePanel?.visible) this.corpsePanel.close();
+        if (this.campfirePanel?.visible) this.campfirePanel.close();
+        if (this.combatLog?.composing) this.combatLog.closeChat(false);
     }
 
     toggleHealthMenu() {
@@ -1921,6 +2062,7 @@ class SceneMain extends SceneBase {
 
                         // Player
                         this.player.teleport(data.player.x, data.player.y);
+                        this.syncCameraToPlayer();
                         if (data.player.body) {
                             this.player.anatomy.loadJSON(data.player.body);
                             this.player.capacities = new Capacities(this.player.anatomy);
