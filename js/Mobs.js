@@ -259,7 +259,8 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Same frame-based unarmed thrust as the player (extend → hit window → retract).
+     * Same unarmed thrust as the player (extend → hit window → retract).
+     * Duration is wall-clock ms (tuned to the old 144Hz frame feel).
      * @returns {boolean} true if an attempt started
      */
     tryMeleeAttack(target, attack) {
@@ -275,7 +276,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             : { x: target.x, y: target.y };
         const ang = Math.atan2(tc.y - c.y, tc.x - c.x);
         const scale = this.capacities.actionDurationScale();
-        const frames = Math.max(8, Math.floor((attack.cooldown || 2) * 60 * scale));
+        const durationMs = meleeAttackDurationMs(attack.cooldown || 2, scale);
 
         this.currentAttack = attack;
         this.attackWeapon = {
@@ -284,8 +285,8 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             hitStart: 0.25,
             hitEnd: 0.75
         };
-        this.attackMax = frames;
-        this.attackTimer = frames;
+        this.attackMax = durationMs;
+        this.attackTimer = durationMs;
         this.attackAngle = ang;
         this.attackHitSet = new Set();
 
@@ -359,12 +360,13 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         if (this.unarmedSprite) this.unarmedSprite.setVisible(false);
     }
 
-    _tickMeleeAttack() {
+    _tickMeleeAttack(delta) {
         if (!this.isAttacking()) return;
         const progress = this._attackProgress();
         this._updateUnarmedSprite(progress);
         this._meleeHitCheck(progress);
-        this.attackTimer -= 1;
+        const dt = Number(delta);
+        this.attackTimer -= Number.isFinite(dt) ? dt : 16;
         if (this.attackTimer <= 0) this._endAttack();
     }
 
@@ -524,7 +526,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         const startVy = this._iceVy ?? this.body?.velocity?.y ?? 0;
 
         this.ai?.update(delta);
-        this._tickMeleeAttack();
+        this._tickMeleeAttack(delta);
         // Half move while swinging (same idea as the player)
         if (this.isAttacking() && this.body?.velocity) {
             this.setVelocity(this.body.velocity.x * 0.5, this.body.velocity.y * 0.5);

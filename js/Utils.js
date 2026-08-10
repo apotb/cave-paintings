@@ -1057,6 +1057,22 @@ function meleeDistPointToSegment(px, py, ax, ay, bx, by) {
     return Math.hypot(px - (ax + abx * t), py - (ay + aby * t));
 }
 
+/**
+ * Melee swing length in ms. Matches the old frame timer at 144Hz
+ * (`frames = cooldownSec * 60`, real duration = frames / 144).
+ * @param {number} cooldownSec
+ * @param {number} [scale=1]
+ */
+function meleeAttackDurationMs(cooldownSec, scale = 1) {
+    const REF_FPS = 144;
+    const cd = Number(cooldownSec);
+    const sc = Number(scale);
+    const sec = (Number.isFinite(cd) ? cd : 2) * (Number.isFinite(sc) && sc > 0 ? sc : 1);
+    const ms = sec * (60 / REF_FPS) * 1000;
+    // Former floor was 8 frames @ 144Hz
+    return Math.max((8 / REF_FPS) * 1000, ms);
+}
+
 /** Unarmed / melee segment vs a damageable target. */
 function meleeSegmentHitsTarget(a, b, radius, target) {
     if (typeof target.hurtbox === "function") {

@@ -858,7 +858,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!Number.isFinite(angle)) angle = 0;
 
         const scale = this.capacities.actionDurationScale();
-        const frames = Math.max(8, Math.floor((attack.cooldown || 2) * 60 * scale));
+        const durationMs = meleeAttackDurationMs(attack.cooldown || 2, scale);
 
         this.currentAttack = attack;
         // Offhand fist / pure unarmed: short reach — never inherit spear range/art
@@ -866,7 +866,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.attackWeapon = useWeaponArt
             ? meta.weapon
             : { type: "melee", range: attack.range || 4, hitStart: 0.25, hitEnd: 0.75 };
-        this.attackMax = frames;
+        this.attackMax = durationMs;
         this.attackTimer = this.attackMax;
         this.attackAngle = angle;
         this.attackHitSet = new Set();
@@ -1722,7 +1722,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (this.weaponSprite?.visible) this._updateWeaponSprite(progress);
             if (this.unarmedSprite?.visible) this._updateUnarmedSprite(progress);
             this._meleeHitCheck(progress);
-            this.attackTimer -= 1;
+            this.attackTimer -= dt;
             if (this.attackTimer <= 0) this._endAttack();
         }
 
