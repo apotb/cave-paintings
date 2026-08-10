@@ -14,6 +14,7 @@ class SceneBase extends Phaser.Scene {
         this.load.json("things", "data/Things.json");
         this.load.json("bodyPlans", "data/BodyPlans.json");
         this.load.json("injuries", "data/Injuries.json");
+        this.load.json("hediffs", "data/Hediffs.json");
         // Queue thing textures once JSON arrives (spritesheet if `anim`, else image)
         this.load.once("filecomplete-json-things", (_key, _type, data) => {
             for (const t of data) {

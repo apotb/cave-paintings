@@ -420,8 +420,8 @@ class HealthPanel {
             text.setInteractive({ useHandCursor: false });
             const row = { bg, text, bleeding: false, destroyed: false, tip: null };
             text.on("pointerover", (p) => {
-                if (!row.tip) return;
-                this.scene.showTooltip(row.tip, p.x, p.y, text);
+                // Live getter so severity/stage tips update while hovering
+                this.scene.showTooltip(() => row.tip || "", p.x, p.y, text);
             });
             text.on("pointerout", () => {
                 if (this.scene._tooltipTarget === text) this.scene.hideTooltip?.();
@@ -458,15 +458,19 @@ class HealthPanel {
             }).setOrigin(0, 0);
             row.setInteractive({ useHandCursor: false });
             row.on("pointerover", (p) => {
-                if (!row._capKey || row._capValue == null) return;
-                // Blood Loss always tips; other caps only when below 100%
-                if (row._capKey !== "bloodLoss" && !(row._capValue < 0.999)) return;
-                const body = this._inspectBody || this.scene.player?.anatomy;
-                if (!body) return;
-                const caps = new Capacities(body);
-                const lines = caps.explain(row._capKey);
-                if (!lines?.length) return;
-                this.scene.showTooltip(lines.join("\n"), p.x, p.y, row);
+                this.scene.showTooltip(() => {
+                    if (!row._capKey || row._capValue == null) return "";
+                    if (row._capKey === "pain") {
+                        if (!(row._capValue > 0.001)) return "";
+                    } else if (row._capKey !== "bloodLoss" && !(row._capValue < 0.999)) {
+                        return "";
+                    }
+                    const body = this._inspectBody || this.scene.player?.anatomy;
+                    if (!body) return "";
+                    const caps = new Capacities(body);
+                    const lines = caps.explain(row._capKey);
+                    return lines?.length ? lines.join("\n") : "";
+                }, p.x, p.y, row);
             });
             row.on("pointerout", () => {
                 if (this.scene._tooltipTarget === row) this.scene.hideTooltip?.();
@@ -501,7 +505,7 @@ class HealthPanel {
             { key: "consciousness", label: "Consciousness", value: c.consciousness },
             { key: "moving", label: "Moving", value: c.moving },
             { key: "manipulation", label: "Manipulation", value: c.manipulation },
-            { key: null, label: "Pain", value: c.pain },
+            { key: "pain", label: "Pain", value: c.pain },
             { key: "breathing", label: "Breathing", value: c.breathing },
             { key: "bloodPumping", label: "Blood Pumping", value: c.bloodPumping },
             { key: "bloodFiltration", label: "Blood Filtration", value: c.bloodFiltration },
@@ -520,7 +524,10 @@ class HealthPanel {
             row.setText(`${def.label}: ${pct(def.value)}`);
             row._capKey = def.key;
             row._capValue = def.value;
-            const canTip = !!def.key && (def.key === "bloodLoss" || def.value < 0.999);
+            const canTip = !!def.key && (
+                def.key === "bloodLoss"
+                || (def.key === "pain" ? def.value > 0.001 : def.value < 0.999)
+            );
             if (row.input) row.input.enabled = canTip;
             if (row.input?.hitArea?.setSize) {
                 row.input.hitArea.setSize(Math.max(row.width, 1), Math.max(row.height, 1));
@@ -601,6 +608,23 @@ class HealthPanel {
             pushStumpBleed(stump.partName);
             any = true;
         }
+
+        // Whole-body hediffs (food poisoning, malnutrition, …)
+        const hediffs = body.hediffs || [];
+        if (hediffs.length) {
+            any = true;
+            lines.push({ text: "Whole Body:" });
+            for (const h of hediffs) {
+                const label = typeof Hediffs !== "undefined"
+                    ? Hediffs.displayLabel(h, this.scene)
+                    : h.id;
+                const tip = typeof Hediffs !== "undefined"
+                    ? Hediffs.tooltipFor(h, this.scene)
+                    : null;
+                lines.push({ text: `  ${label}`, tip });
+            }
+        }
+
         if (!any) lines.push({ text: "None" });
         this._setInjLines(lines);
         // Keep scroll position across refreshes (tickBodySystems); clamp in layout()
@@ -608,6 +632,14 @@ class HealthPanel {
         this.layout();
         // Doll tints are the heavy bit — do them next frame so the panel opens immediately
         this._queueOverlayRefresh();
+
+        // Live-update open tooltip (hediff severity, capacity explain, …)
+        const tipTarget = this.scene._tooltipTarget;
+        if (tipTarget && this.scene.tooltip?.visible) {
+            const onInj = this._injLines.some((row) => row.text === tipTarget);
+            const onCap = this._capRows.includes(tipTarget);
+            if (onInj || onCap) this.scene.refreshTooltip?.();
+        }
     }
 
     _queueOverlayRefresh() {

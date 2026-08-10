@@ -777,7 +777,12 @@ function makeCoconutMealStack(getItem, ingredientIds, coconutMeta, now = null) {
         id: mealMeta?.id || "coconut_meal",
         quantity: 1,
         customName: info.name,
-        food: { kc: info.kc, kcFull: info.kc, spoil: info.spoilHours },
+        food: {
+            kc: info.kc,
+            kcFull: info.kc,
+            spoil: info.spoilHours,
+            satietyRatio: Number(mealMeta?.food?.satietyRatio) || 0.3
+        },
         weight: info.weight,
         kind: info.kind,
         fillTint: info.fillTint,
@@ -808,7 +813,7 @@ function mealStackExtras(stack) {
         stack.customName
         || stack.food
         || stack.ingredients?.length
-        || stack.weight != null
+        || (stack.weight != null && !knap)
         || stack.kind
         || stack.fillTint != null
         || knap
@@ -818,7 +823,8 @@ function mealStackExtras(stack) {
         customName: stack.customName,
         food: stack.food ? { ...stack.food } : undefined,
         ingredients: stack.ingredients ? stack.ingredients.slice() : undefined,
-        weight: stack.weight,
+        // Knapped tools use stone_tool/flint_tool weight — don't carry stale overrides
+        weight: knap ? undefined : stack.weight,
         kind: stack.kind,
         fillTint: stack.fillTint,
         ...(knap || {})

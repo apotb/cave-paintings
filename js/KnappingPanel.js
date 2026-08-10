@@ -449,7 +449,7 @@ class KnappingPanel {
             key: stack.knapMaterial === "flint" ? "flint" : "pebble",
             maxStack: 1,
             name: stack.customName || "Tool",
-            weight: stack.weight
+            weight: 0.3
         };
         const clone = typeof cloneItemStack === "function"
             ? cloneItemStack(stack)

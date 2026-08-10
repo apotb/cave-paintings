@@ -208,12 +208,54 @@ class Body {
         }
         this.bloodLoss = 0;
         this.destroyedBleed = []; // { partName, mhp, bleedMult, tended }
+        /** @type {{ id: string, severity: number }[]} Whole-body hediffs (RW-style). */
+        this.hediffs = [];
+        // RimWorld malnutrition: ~1.51%–2.265%/hour → ~0.362–0.544/day (fixed per body)
+        this.malnutritionRatePerDay = Phaser.Math.FloatBetween(0.3624, 0.5436);
         /** When true, LivingMob should re-serialize body into chunk meta. */
         this._dirty = false;
         const coreDef = this.plan.parts[this.plan.core || "Torso"];
         this.core = new BodyPart(this, this.plan.core || "Torso", coreDef, "", this.plan.core || "Torso");
         this._partIndex = null;
         this.rebuildIndex();
+    }
+
+    /** @param {string} id */
+    hediff(id) {
+        return (this.hediffs || []).find((h) => h.id === id) || null;
+    }
+
+    /**
+     * Add or return existing hediff. Sets severity to initial (or override).
+     * @param {string} id
+     * @param {number} [severity]
+     */
+    addHediff(id, severity = undefined) {
+        const def = typeof Hediffs !== "undefined" ? Hediffs.def(this.scene, id) : null;
+        if (!def && severity === undefined) {
+            console.warn("Unknown hediff", id);
+        }
+        let h = this.hediff(id);
+        const sev = severity !== undefined
+            ? Number(severity)
+            : (Number(def?.initialSeverity) || 0);
+        if (h) {
+            h.severity = Number.isFinite(sev) ? sev : 0;
+        } else {
+            h = { id, severity: Number.isFinite(sev) ? sev : 0 };
+            this.hediffs.push(h);
+        }
+        this.markDirty();
+        return h;
+    }
+
+    /** @param {string} id */
+    removeHediff(id) {
+        const i = (this.hediffs || []).findIndex((h) => h.id === id);
+        if (i < 0) return false;
+        this.hediffs.splice(i, 1);
+        this.markDirty();
+        return true;
     }
 
     markDirty() {
@@ -301,6 +343,7 @@ class Body {
     fullHeal() {
         this.bloodLoss = 0;
         this.destroyedBleed = [];
+        this.hediffs = [];
         const coreDef = this.plan.parts[this.plan.core || "Torso"];
         this.core = new BodyPart(this, this.plan.core || "Torso", coreDef, "", this.plan.core || "Torso");
         this.rebuildIndex();
@@ -312,6 +355,11 @@ class Body {
             planId: this.planId,
             bloodLoss: this.bloodLoss,
             destroyedBleed: this.destroyedBleed.slice(),
+            hediffs: (this.hediffs || []).map((h) => ({
+                id: h.id,
+                severity: Number(h.severity) || 0
+            })),
+            malnutritionRatePerDay: this.malnutritionRatePerDay,
             core: this.core.toJSON()
         };
     }
@@ -320,6 +368,14 @@ class Body {
         if (!data) return;
         this.bloodLoss = Number(data.bloodLoss) || 0;
         this.destroyedBleed = (data.destroyedBleed || []).slice();
+        this.hediffs = (data.hediffs || []).map((h) => ({
+            id: h.id,
+            severity: Number(h.severity) || 0
+        }));
+        const rate = Number(data.malnutritionRatePerDay);
+        this.malnutritionRatePerDay = Number.isFinite(rate) && rate > 0
+            ? rate
+            : Phaser.Math.FloatBetween(0.3624, 0.5436);
         if (data.core) this.core.loadJSON(data.core);
         this.rebuildIndex();
         this._dirty = false;

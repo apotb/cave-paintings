@@ -1,0 +1,90 @@
+{
+    "food_poisoning": {
+        "id": "food_poisoning",
+        "name": "Food poisoning",
+        "initialSeverity": 1,
+        "severityPerDay": -1,
+        "lethalSeverity": null,
+        "stages": [
+            {
+                "label": "recovering",
+                "minSeverity": 0,
+                "painOffset": 0.2,
+                "capacityFactors": {
+                    "consciousness": 0.6,
+                    "moving": 0.8,
+                    "manipulation": 0.9,
+                    "bloodFiltration": 0.95,
+                    "eating": 0.5
+                },
+                "vomitMtbDays": 0.3
+            },
+            {
+                "label": "major",
+                "minSeverity": 0.2,
+                "painOffset": 0.4,
+                "capacityFactors": {
+                    "consciousness": 0.5,
+                    "moving": 0.5,
+                    "manipulation": 0.8,
+                    "bloodFiltration": 0.85,
+                    "talking": 0.8,
+                    "eating": 0.3
+                },
+                "vomitMtbDays": 0.2
+            },
+            {
+                "label": "initial",
+                "minSeverity": 0.8,
+                "painOffset": 0.2,
+                "capacityFactors": {
+                    "consciousness": 0.6,
+                    "moving": 0.8,
+                    "manipulation": 0.9,
+                    "bloodFiltration": 0.95,
+                    "eating": 0.5
+                },
+                "vomitMtbDays": 0.4
+            }
+        ]
+    },
+    "malnutrition": {
+        "id": "malnutrition",
+        "name": "Malnutrition",
+        "initialSeverity": 0,
+        "severityPerDay": 0,
+        "lethalSeverity": 1,
+        "stages": [
+            {
+                "label": "trivial",
+                "minSeverity": 0,
+                "capacityOffsets": { "consciousness": -0.05 },
+                "hungerRateFactor": 1.5
+            },
+            {
+                "label": "minor",
+                "minSeverity": 0.2,
+                "capacityOffsets": { "consciousness": -0.1 },
+                "hungerRateFactor": 1.6
+            },
+            {
+                "label": "moderate",
+                "minSeverity": 0.4,
+                "capacityOffsets": { "consciousness": -0.2 },
+                "hungerRateFactor": 2.5
+            },
+            {
+                "label": "severe",
+                "minSeverity": 0.6,
+                "capacityOffsets": { "consciousness": -0.3 },
+                "hungerRateFactor": 3.0
+            },
+            {
+                "label": "extreme",
+                "minSeverity": 0.8,
+                "capacityMax": { "consciousness": 0.1 },
+                "hungerRateFactor": 3.0
+            }
+        ]
+    }
+}

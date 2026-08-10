@@ -21,6 +21,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._tendChannel = null; // { remaining, max, slot }
         /** Knife skinning channel on a corpse (same bar as tend). */
         this._skinChannel = null;
+        /** Eating channel (same bar as tend/skin). */
+        this._eatChannel = null;
         /** After Space uses food/tool, ignore autofire until Space is released. */
         this._blockSpaceAutofire = false;
         this._lastHotbarSlot = null;
@@ -203,6 +205,59 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return this.capacities.isPainShock() || this.capacities.isUnconscious();
     }
 
+    isVomiting() {
+        return !!(this._vomit && this._vomit.remainingMs > 0);
+    }
+
+    /**
+     * Start a RimWorld-style vomit bout (5–15s). Ignores if already vomiting.
+     */
+    startVomit() {
+        if (this._bodyDead || this.isVomiting()) return;
+        this._cancelEat();
+        this._vomit = {
+            remainingMs: Phaser.Math.Between(5000, 15000),
+            dripAccMs: 0
+        };
+        this.setVelocity(0, 0);
+        if (this.isAttacking()) this._endAttack?.();
+        this.scene.combatLog?.push("You vomit.");
+        this._vomitDrip();
+    }
+
+    _vomitDrip() {
+        const lose = 0.04 * (Number(this.stomach) || 1600);
+        this.starve(lose);
+        const c = typeof this.bodyCenter === "function"
+            ? this.bodyCenter()
+            : { x: this.x, y: this.y };
+        const ts = this.scene.tileSize || 16;
+        let dx = 0;
+        let dy = 0;
+        if (this.facing === "right") dx = 1;
+        else if (this.facing === "left") dx = -1;
+        else if (this.facing === "down") dy = 1;
+        else dy = -1;
+        // Origin near the face / front of the sprite
+        const dist = ts * 0.4;
+        this.scene.spawnVomitStain?.(
+            c.x + dx * dist,
+            c.y + dy * dist - (dy === 0 ? ts * 0.15 : 0),
+            { facing: this.facing }
+        );
+    }
+
+    _tickVomit(dt) {
+        if (!this.isVomiting()) return;
+        this._vomit.remainingMs -= dt;
+        this._vomit.dripAccMs += dt;
+        while (this._vomit.dripAccMs >= 2500) {
+            this._vomit.dripAccMs -= 2500;
+            if (this._vomit.remainingMs > 0) this._vomitDrip();
+        }
+        if (this._vomit.remainingMs <= 0) this._vomit = null;
+    }
+
     /** Legs/moving too wrecked to walk (prone, no crawling). */
     isImmobile() {
         return !!this.capacities?.isImmobile?.();
@@ -283,6 +338,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._downed = false;
         this._tendChannel = null;
         this._skinChannel = null;
+        this._eatChannel = null;
+        this._vomit = null;
         setCreatureProne(this, false);
         this.anatomy.fullHeal();
         this.capacities = new Capacities(this.anatomy);
@@ -843,7 +900,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     startMeleeAttack(meta = null) {
         if (this.isAttacking() || this._bodyDead) return false;
+        if (this.isVomiting()) return false;
         if (this.isIncapacitated()) return false;
+        if (this._eatChannel) this._cancelEat();
         if (this._tendChannel || this._skinChannel) return false;
 
         this.capacities = new Capacities(this.anatomy);
@@ -1201,17 +1260,64 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
+     * Satiety multiplier for a food stack/def (default 0.1 if unset).
+     * Meals fall back to 0.3 when missing.
+     */
+    _satietyRatio(food, meta = null, isMeal = false) {
+        const raw = food?.satietyRatio ?? meta?.food?.satietyRatio;
+        const n = Number(raw);
+        if (Number.isFinite(n) && n >= 0) return n;
+        return isMeal ? 0.3 : 0.1;
+    }
+
+    /**
      * Eat up to stomach capacity.
      * @returns {number} kcal actually consumed (0 if none)
      */
-    eat(food) {
+    eat(food, meta = null) {
         const kc = Number(food?.kc ?? 0);
         if (!(kc > 0)) return 0;
         if (this.kc >= this.stomach) return 0;
         const consumed = Math.min(kc, this.stomach - this.kc);
         this.kc += consumed;
-        this.saturation += consumed * 0.1;
+        this.saturation += consumed * this._satietyRatio(food, meta, false);
         return consumed;
+    }
+
+    /**
+     * Roll food-poison chance after a successful eat.
+     * First hit → severity 1.0 (initial). Re-poison while already sick restarts the
+     * clock but never eases you out of major: if past initial, jump to peak major
+     * (~0.799) instead of resetting to mild initial.
+     * @param {Object} food stack or item food block
+     * @param {Object} [meta] item def
+     */
+    _tryFoodPoison(food, meta = null) {
+        const chance = Number(food?.foodPoisonChance ?? meta?.food?.foodPoisonChance ?? 0);
+        if (!(chance > 0) || Math.random() >= chance) return;
+
+        const body = this.anatomy;
+        if (!body?.addHediff) return;
+
+        const existing = body.hediff?.("food_poisoning");
+        // Stages: initial ≥0.8, major ≥0.2, recovering <0.2. Peak major sits just under initial.
+        const INITIAL_MIN = 0.8;
+        const MAJOR_PEAK = INITIAL_MIN - 0.001;
+        let sev = 1;
+        let msg = "You have food poisoning.";
+        if (existing) {
+            const cur = Number(existing.severity) || 0;
+            if (cur >= INITIAL_MIN) {
+                sev = 1; // still in initial — full restart
+            } else {
+                sev = Math.max(cur, MAJOR_PEAK); // was major/recovering — stay in/return to major
+            }
+            msg = "Your food poisoning got worse.";
+        }
+        body.addHediff("food_poisoning", sev);
+        this.capacities = new Capacities(this.anatomy);
+        this.scene.combatLog?.push(msg);
+        this.scene.healthPanel?.refresh?.();
     }
 
     starve(kc) {
@@ -1223,12 +1329,18 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     hungerTick() {
+        // Snapshot before drain — malnutrition recovery uses this so a minute that
+        // starts fed still counts as fed even if hungerRateFactor empties the stomach.
+        this._malnutritionFed = (this.kc > 0) || (this.saturation > 0);
+
         // 2000 kcal over 1440 game minutes (one day) while idle
         let tick = this.hunger / (24 * 60);
         if (this.isSprinting) tick *= 1.5;
         tick *= this.getEncumbrance().hungerRate;
+        this.capacities = this.capacities || new Capacities(this.anatomy);
+        tick *= this.capacities.hungerRateFactor?.() || 1;
         this.starve(tick);
-        if (this.kc === 0) this.damage(0.25);
+        // Malnutrition hediff rises/falls in Hediffs.minuteTick
     }
 
     gainItem(item, amount = 1, spoilAt = undefined) {
@@ -1362,8 +1474,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     /** Hold Space to keep attacking (weapon or unarmed). */
     tryWeaponAutofire() {
-        if (this.isAttacking() || this._tendChannel || this._skinChannel || this._bodyDead) return;
-        if (this.isIncapacitated()) return;
+        if (this.isAttacking() || this._tendChannel || this._skinChannel || this._eatChannel || this._bodyDead) return;
+        if (this.isVomiting() || this.isIncapacitated()) return;
         const item = this.getHeldItem();
         if (!item) {
             this.startMeleeAttack(null);
@@ -1383,7 +1495,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     beginTend() {
+        if (this._eatChannel) this._cancelEat();
         if (this._tendChannel || this._skinChannel || this._bodyDead || this.isAttacking()) return false;
+        if (this.isVomiting()) return false;
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
         if (this.isIncapacitated()) return false;
@@ -1418,7 +1532,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      * Start skinning a corpse with a held knife (5s channel, cancel if you swap off / walk away).
      */
     beginSkin(corpse) {
+        if (this._eatChannel) this._cancelEat();
         if (this._tendChannel || this._skinChannel || this._bodyDead || this.isAttacking()) return false;
+        if (this.isVomiting()) return false;
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
         if (this.isIncapacitated()) return false;
@@ -1531,34 +1647,132 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return !!(item?.customName || item?.ingredients?.length);
     }
 
+    /**
+     * Resolve eat duration in seconds for a food stack.
+     * Meals without eatSeconds use clamp(1.5 + kc/150, 2, 8).
+     * Fallback: clamp(1 + kc/120, 1, 6).
+     */
+    _eatSecondsFor(food, isMeal) {
+        const explicit = Number(food?.eatSeconds);
+        if (Number.isFinite(explicit) && explicit > 0) return explicit;
+        const kc = Math.max(0, Number(food?.kc) || 0);
+        if (isMeal) return Phaser.Math.Clamp(1.5 + kc / 150, 2, 8);
+        return Phaser.Math.Clamp(1 + kc / 120, 1, 6);
+    }
+
+    beginEat(item) {
+        if (this._tendChannel || this._skinChannel || this._eatChannel || this._bodyDead || this.isAttacking()) {
+            return false;
+        }
+        if (this.isVomiting() || this.isIncapacitated()) return false;
+        const meta = this.scene.getItem(item.id);
+        const food = item.food || meta?.food;
+        const total = Number(food?.kc ?? 0);
+        if (!(total > 0)) return false;
+        const isMeal = this._isPartialFood(item);
+        const room = this.stomach - this.kc;
+        if (isMeal && !(room > 0)) return false;
+
+        this.capacities = new Capacities(this.anatomy);
+        const seconds = this._eatSecondsFor(food, isMeal);
+        const scale = this.capacities.eatingDurationScale();
+        const max = seconds * 1000 * scale;
+        this._eatChannel = {
+            remaining: max,
+            max,
+            slot: this.scene.hotbar.activeIndex,
+            item,
+            itemId: item.id,
+            isMeal
+        };
+        this.scene.showChannelBar?.(0);
+        return true;
+    }
+
+    _cancelEat() {
+        if (!this._eatChannel) return;
+        this._eatChannel = null;
+        this.scene.hideChannelBar?.();
+    }
+
+    _tickEat(delta) {
+        if (!this._eatChannel) return;
+        if (this.isVomiting() || this.isIncapacitated() || this._bodyDead) {
+            this._cancelEat();
+            return;
+        }
+        const slot = this.scene.hotbar.activeIndex;
+        const held = this.getHeldItem();
+        if (
+            slot !== this._eatChannel.slot
+            || held !== this._eatChannel.item
+            || !held
+        ) {
+            this._cancelEat();
+            return;
+        }
+        const meta = this.scene.getItem(held.id);
+        const food = held.food || meta?.food;
+        if (!(Number(food?.kc ?? 0) > 0)) {
+            this._cancelEat();
+            return;
+        }
+        this._eatChannel.remaining -= delta;
+        const prog = 1 - this._eatChannel.remaining / this._eatChannel.max;
+        this.scene.showChannelBar?.(Phaser.Math.Clamp(prog, 0, 1));
+        if (this._eatChannel.remaining > 0) return;
+
+        this.finishEat(held);
+    }
+
+    /**
+     * Apply nutrition at end of eat channel.
+     * Normal foods: always consume 1, satiety from full item kc, stomach fill up to cap.
+     * Partial meals: leftovers on stack, satiety only for kcal that fit.
+     */
+    finishEat(item) {
+        this._eatChannel = null;
+        this.scene.hideChannelBar?.();
+        const meta = this.scene.getItem(item.id);
+        const food = item.food || meta?.food;
+        const total = Number(food?.kc ?? 0);
+        if (!(total > 0)) return;
+
+        const isMeal = this._isPartialFood(item);
+        const room = Math.max(0, this.stomach - this.kc);
+
+        if (isMeal) {
+            const consumed = Math.min(total, room);
+            if (!(consumed > 0)) return;
+            this.kc += consumed;
+            this.saturation += consumed * this._satietyRatio(food, meta, true);
+            this._tryFoodPoison(food, meta);
+            if (consumed >= total) {
+                this.loseItem(item);
+            } else {
+                if (!item.food) item.food = { ...(meta?.food || {}) };
+                if (item.food.kcFull == null) item.food.kcFull = Math.round(total);
+                item.food.kc = Math.max(0, Math.round(total - consumed));
+                if (item.food.kc <= 0) this.loseItem(item);
+            }
+        } else {
+            // Full satiety even if stomach was already full (overflow discarded)
+            this.kc += Math.min(total, room);
+            this.saturation += total * this._satietyRatio(food, meta, false);
+            this._tryFoodPoison(food, meta);
+            this.loseItem(item);
+        }
+        this.scene.hotbar.dirty = true;
+    }
+
     useItem(item) {
+        if (this.isVomiting()) return;
         const meta = this.scene.getItem(item.id);
         // Stack-level food (dynamic meals) overrides item def
         const food = item.food || meta?.food;
         // 0 kcal foods still spoil but are not edible
         if (food && Number(food.kc ?? 0) > 0) {
-            const total = Number(food.kc);
-            const room = this.stomach - this.kc;
-            if (room <= 0) return;
-            const isMeal = this._isPartialFood(item);
-            // Non-meals: need room for ≥50% of kcal (rest wasted); meals can leave leftovers
-            if (!isMeal && room < total * 0.5) return;
-
-            const consumed = this.eat(food);
-            if (!(consumed > 0)) return;
-
-            if (!isMeal || consumed >= total) {
-                this.loseItem(item);
-            } else {
-                // Leftover kcal stays on this meal only
-                if (!item.food) item.food = { ...(meta?.food || {}) };
-                if (item.food.kcFull == null) item.food.kcFull = Math.round(total);
-                item.food.kc = Math.max(0, Math.round(total - consumed));
-                if (item.food.kc <= 0) {
-                    this.loseItem(item);
-                }
-            }
-            this.scene.hotbar.dirty = true;
+            this.beginEat(item);
             return;
         }
         if (meta?.bandage) {
@@ -1583,7 +1797,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         for (const stack of this.inventory) {
             if (!stack) continue;
             const meta = this.scene.getItem(stack.id);
-            const w = stack.weight != null ? stack.weight : meta.weight;
+            const knap = !!(stack.toolClass || stack.knapMaterial);
+            const w = knap
+                ? (meta?.weight ?? 0)
+                : (stack.weight != null ? stack.weight : meta.weight);
             total += w * stack.quantity;
         }
         const worn = [
@@ -1596,7 +1813,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         for (const stack of worn) {
             if (!stack) continue;
             const meta = this.scene.getItem(stack.id);
-            const w = stack.weight != null ? stack.weight : meta.weight;
+            const knap = !!(stack.toolClass || stack.knapMaterial);
+            const w = knap
+                ? (meta?.weight ?? 0)
+                : (stack.weight != null ? stack.weight : meta.weight);
             total += w * stack.quantity;
         }
         return Math.round(total * 100) / 100;
@@ -1624,6 +1844,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             const dtChat = delta || (this.scene.game.loop.delta || 16);
             if (this._tendChannel) this._tickTend(dtChat);
             if (this._skinChannel) this._tickSkin(dtChat);
+            if (this._eatChannel) this._tickEat(dtChat);
+            this._tickVomit(dtChat);
             return;
         }
 
@@ -1640,15 +1862,18 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const dt = delta || (this.scene.game.loop.delta || 16);
         if (this._tendChannel) this._tickTend(dt);
         if (this._skinChannel) this._tickSkin(dt);
+        if (this._eatChannel) this._tickEat(dt);
+        this._tickVomit(dt);
 
         const incapacitated = this.isIncapacitated();
         const immobile = this.isImmobile();
+        const vomiting = this.isVomiting();
         const prone = immobile || incapacitated;
         setCreatureProne(this, prone);
 
-        // Movement — no crawling; immobile / incapacitated stay put
+        // Movement — no crawling; immobile / incapacitated / vomiting stay put
         let x = 0, y = 0;
-        if (!prone) {
+        if (!prone && !vomiting) {
             const left  = this.cursors.left.isDown  || this.keys.A.isDown;
             const right = this.cursors.right.isDown || this.keys.D.isDown;
             const up    = this.cursors.up.isDown    || this.keys.W.isDown;
@@ -1664,16 +1889,18 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const encumbrance = this.getEncumbrance();
         const moving = x !== 0 || y !== 0;
         const attacking = this.isAttacking();
-        const tending = !!this._tendChannel;
+        const tending = !!this._tendChannel || !!this._eatChannel;
         const livingLegs = this.anatomy.livingLegs();
         const canSprint = livingLegs >= 2
             && !prone
+            && !vomiting
             && !tending
             && !encumbrance.cannotSprint
             && this.kc > 0;
 
         this.isSprinting = !attacking
             && !tending
+            && !vomiting
             && moving
             && this.keys.SHIFT.isDown
             && canSprint;
@@ -1690,15 +1917,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             * (this.scene.terrainSpeedMult?.(this.x, this.y - 1) ?? 1);
         this.anims.timeScale = this.isSprinting ? 1.5 : 1.0;
 
-        const wantVx = prone ? 0 : x * speed;
-        const wantVy = prone ? 0 : y * speed;
+        const wantVx = (prone || vomiting) ? 0 : x * speed;
+        const wantVy = (prone || vomiting) ? 0 : y * speed;
         applyEntityVelocity(this, wantVx, wantVy, delta, this.scene);
         this.setDepth(this.y);
 
         const sliding = Math.hypot(this._iceVx ?? 0, this._iceVy ?? 0) > 12
             && !!this.scene._isIceAt?.(this.x, this.y - 1);
 
-        if (!prone) {
+        if (!prone && !vomiting) {
             if (attacking) {
                 this.facing = this.facingFromAngle(this.attackAngle);
                 this.play(moving || sliding ? `walk-${this.facing}` : `idle-${this.facing}`, true);
@@ -1745,7 +1972,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             }
         }
 
-        if (!incapacitated) {
+        if (!incapacitated && !vomiting) {
             if (!this.keys.SPACE.isDown) {
                 this._blockSpaceAutofire = false;
             }
@@ -1754,15 +1981,23 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 const heldMeta = held ? this.scene.getItem(held.id) : null;
                 this.useHeldItem();
                 // Eating/using a tool then keeping Space down must not punch
-                if (held && (heldMeta?.food || heldMeta?.use || heldMeta?.bandage)) {
+                if (held && (heldMeta?.food || held?.food || heldMeta?.use || heldMeta?.bandage)) {
                     this._blockSpaceAutofire = true;
                 }
             } else if (
                 this.keys.SPACE.isDown &&
                 !this._tendChannel &&
-                !this._blockSpaceAutofire
+                !this._eatChannel
             ) {
-                this.tryWeaponAutofire();
+                // Hold Space: keep eating through a food stack (same idea as weapon autofire)
+                const held = this.getHeldItem();
+                const heldMeta = held ? this.scene.getItem(held.id) : null;
+                const food = held?.food || heldMeta?.food;
+                if (held && food && Number(food.kc ?? 0) > 0) {
+                    this.beginEat(held);
+                } else if (!this._blockSpaceAutofire) {
+                    this.tryWeaponAutofire();
+                }
             }
         }
     }

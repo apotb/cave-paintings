@@ -10,7 +10,6 @@ class NeutralAnimalAI extends DoofusAI {
         this.timeSinceHitPlayer = 0;
         this.LEASH_TILES = 10;
         this.GIVE_UP_MS = 9000;
-        this.attackCooldown = 0;
         this.MELEE_RESUME_PAD = 10;
         // Arrive/resume hysteresis — a single threshold flickers walk↔idle every frame
         this.ANCHOR_ARRIVE = 6;
@@ -102,8 +101,6 @@ class NeutralAnimalAI extends DoofusAI {
 
         const immobilized = mob.capacities.isImmobile();
 
-        this.attackCooldown = Math.max(0, this.attackCooldown - delta);
-
         if (!this.hostile) {
             this._clearCombatMove();
             if (immobilized) {
@@ -190,18 +187,16 @@ class NeutralAnimalAI extends DoofusAI {
 
         // Only primary ring (queueIndex 0) swings; queue waits for a spot
         const isPrimary = !this._slotClaim || this._slotClaim.queueIndex === 0;
+        // Same gate as the player: tryMeleeAttack refuses while attackTimer > 0
+        // (duration from meleeAttackDurationMs). No extra AI cooldown on top.
         if (
             isPrimary &&
             !swinging &&
-            this.attackCooldown <= 0 &&
             atk &&
             inReach &&
             mob.capacities.canManipulate?.()
         ) {
-            if (mob.tryMeleeAttack?.(player, atk)) {
-                const scale = mob.capacities.actionDurationScale();
-                this.attackCooldown = (atk.cooldown || 2) * 1000 * scale;
-            }
+            mob.tryMeleeAttack?.(player, atk);
         }
 
         const base = Number(mob.def?.speed) || Number(player.speed) || 3.5;

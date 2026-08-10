@@ -695,9 +695,10 @@ class SceneMain extends SceneBase {
             color: "#a8e6a0",
             stroke: "#000000",
             strokeThickness: 3
-        }).setOrigin(0.5, 0).setDepth(9998).setVisible(false).setScrollFactor(0);
+        }).setOrigin(0.5, 0).setDepth(9998).setScrollFactor(0);
         this.uiLayer.add(this.fpsText);
-        this._fpsVisible = false;
+        this._fpsVisible = true;
+        this.fpsText.setVisible(true).setText("— fps · 0 mobs");
         /** @type {{ t: number, d: number }[]} frame deltas in the last ~1s */
         this._fpsSamples = [];
         this._fpsUiAcc = 0;
@@ -711,7 +712,8 @@ class SceneMain extends SceneBase {
         if (!this._fpsVisible) {
             this.fpsText?.setText("");
         } else {
-            this.applyUiScale?.();
+            // applyUiScale needs craft/UI buttons — skip if create() isn't finished yet
+            if (this.craftContainer) this.applyUiScale?.();
             this.fpsText?.setText("— fps · 0 mobs");
         }
         return this._fpsVisible;
@@ -1431,7 +1433,7 @@ class SceneMain extends SceneBase {
         return this.bloodDraw;
     }
 
-    spawnBloodStain(x, y) {
+    spawnBloodStain(x, y, opts = null) {
         if (this.bloodDraw === false) return;
         // No blood pools on water (ice is fine)
         if (this._isWaterAt(x, y - 1)) return;
@@ -1439,14 +1441,37 @@ class SceneMain extends SceneBase {
         if (!chunk) return;
         if (!chunk.meta.bloodStains) chunk.meta.bloodStains = [];
         const list = chunk.meta.bloodStains;
-        const mergeDist = SceneMain.BLOOD_MERGE_DIST;
+        const kind = opts?.kind || "blood";
+        const isVomit = kind === "vomit";
+        const color = opts?.color != null
+            ? opts.color
+            : (isVomit ? 0x7a9e28 : 0x6b1010);
+        const rMin = opts?.radiusMin != null
+            ? opts.radiusMin
+            : (isVomit ? 0.7 : SceneMain.BLOOD_RADIUS_MIN);
+        const rMax = opts?.radiusMax != null
+            ? opts.radiusMax
+            : (isVomit ? 1.8 : Math.min(2.4, SceneMain.BLOOD_RADIUS_MAX));
+        const rCap = opts?.radiusCap != null
+            ? opts.radiusCap
+            : (isVomit ? 4.5 : SceneMain.BLOOD_RADIUS_MAX);
+        const grow = opts?.grow != null
+            ? opts.grow
+            : (isVomit ? 0.35 : SceneMain.BLOOD_MERGE_GROW);
+        const alpha = opts?.alpha != null
+            ? opts.alpha
+            : (isVomit ? 0.7 : 0.55);
+        const mergeDist = isVomit
+            ? SceneMain.BLOOD_MERGE_DIST * 1.35
+            : SceneMain.BLOOD_MERGE_DIST;
         const mergeDistSq = mergeDist * mergeDist;
 
-        // Grow a nearby pool instead of adding another circle
+        // Grow a nearby pool of the same kind instead of adding another circle
         let best = null;
         let bestD = mergeDistSq;
         for (let i = 0; i < list.length; i++) {
             const e = list[i];
+            if ((e.kind || "blood") !== kind) continue;
             const dx = e.x - x;
             const dy = e.y - y;
             const d = dx * dx + dy * dy;
@@ -1456,15 +1481,17 @@ class SceneMain extends SceneBase {
             }
         }
         if (best) {
-            const grow = SceneMain.BLOOD_MERGE_GROW;
             best.radius = Math.min(
-                SceneMain.BLOOD_RADIUS_MAX,
-                (Number(best.radius) || SceneMain.BLOOD_RADIUS_MIN) + grow
+                rCap,
+                (Number(best.radius) || rMin) + grow
             );
             // Pull pool slightly toward the new drip
             best.x = best.x * 0.75 + x * 0.25;
             best.y = best.y * 0.75 + y * 0.25;
             best.lifeMinutes = SceneMain.BLOOD_LIFE_MINUTES;
+            best.color = color;
+            best.kind = kind;
+            best.alpha = alpha;
             if (chunk.isLoaded) this._paintBloodStain(chunk, best);
             return;
         }
@@ -1477,16 +1504,177 @@ class SceneMain extends SceneBase {
         const entry = {
             x,
             y,
-            radius: Phaser.Math.FloatBetween(
-                SceneMain.BLOOD_RADIUS_MIN,
-                Math.min(2.4, SceneMain.BLOOD_RADIUS_MAX)
-            ),
+            kind,
+            color,
+            alpha,
+            radius: Phaser.Math.FloatBetween(rMin, Math.min(rMax, rCap)),
             lifeMinutes: SceneMain.BLOOD_LIFE_MINUTES
         };
         list.push(entry);
         if (!chunk.isLoaded) return;
         if (needsRebuild) this.rebuildBloodGfx(chunk);
         else this._paintBloodStain(chunk, entry);
+    }
+
+    /**
+     * Projectile bile spray: staggered elongated droplets fly from the mouth
+     * in a cone, then leave small puddle stains on impact.
+     * @param {number} x mouth / origin x
+     * @param {number} y mouth / origin y
+     * @param {{ facing?: string }} [opts]
+     */
+    spawnVomitStain(x, y, opts = null) {
+        const facing = opts?.facing || "down";
+        let fx = 0;
+        let fy = 1;
+        if (facing === "right") { fx = 1; fy = 0; }
+        else if (facing === "left") { fx = -1; fy = 0; }
+        else if (facing === "up") { fx = 0; fy = -1; }
+        const px = -fy;
+        const py = fx;
+
+        // Sickly bile / olive / mustard — not neon highlighter green
+        const palette = [
+            0x6b8f22, 0x7a9e28, 0x9bb83a, 0xa8a030,
+            0xc2c84a, 0x5a7a1c, 0x8a6e20, 0x4e6818
+        ];
+
+        const count = Phaser.Math.Between(14, 22);
+        for (let i = 0; i < count; i++) {
+            const delay = i * Phaser.Math.Between(10, 26);
+            // Mix short dribbles with longer projectiles
+            const roll = Math.random();
+            const dist = roll < 0.25
+                ? Phaser.Math.FloatBetween(4, 10)
+                : roll < 0.7
+                    ? Phaser.Math.FloatBetween(10, 22)
+                    : Phaser.Math.FloatBetween(20, 34);
+            const cone = 2.5 + dist * 0.32;
+            const spread = (Math.random() - 0.5) * 2 * cone;
+            const jx = (Math.random() - 0.5) * 1.5;
+            const jy = (Math.random() - 0.5) * 1.5;
+            const landX = x + fx * dist + px * spread + jx;
+            const landY = y + fy * dist + py * spread + jy;
+            const color = Phaser.Utils.Array.GetRandom(palette);
+            const size = Phaser.Math.FloatBetween(0.55, 1.55);
+            const flightMs = Phaser.Math.Clamp(
+                110 + dist * 7 + Phaser.Math.Between(0, 60),
+                120,
+                380
+            );
+
+            this.time.delayedCall(delay, () => {
+                if (!this.sys?.isActive?.()) return;
+                this._spawnVomitDroplet(x, y, landX, landY, {
+                    color,
+                    size,
+                    flightMs,
+                    fx,
+                    fy,
+                    px,
+                    py
+                });
+            });
+        }
+    }
+
+    /**
+     * One flying vomit droplet; leaves ground stains on impact.
+     * @param {number} sx
+     * @param {number} sy
+     * @param {number} lx
+     * @param {number} ly
+     * @param {{ color: number, size: number, flightMs: number, fx: number, fy: number, px: number, py: number }} opts
+     */
+    _spawnVomitDroplet(sx, sy, lx, ly, opts) {
+        const dx = lx - sx;
+        const dy = ly - sy;
+        const len = Math.hypot(dx, dy) || 1;
+        const angle = Math.atan2(dy, dx);
+        const color = opts.color;
+        const r = opts.size;
+
+        // Elongated blob stretched along flight direction
+        const blob = this.add.circle(sx, sy, r, color, 0.92);
+        this.mainLayer?.add(blob);
+        blob.setDepth(sy + 28);
+        blob.setRotation(angle);
+        const stretchX = Phaser.Math.FloatBetween(1.7, 2.6);
+        const stretchY = Phaser.Math.FloatBetween(0.4, 0.65);
+        blob.setScale(stretchX, stretchY);
+
+        // Loft the path slightly (screen-up) so it reads as a spray arc in top-down
+        const loft = Phaser.Math.FloatBetween(3, 8);
+        const sideWobble = (Math.random() - 0.5) * 3;
+        const midX = (sx + lx) * 0.5 + opts.px * sideWobble;
+        const midY = (sy + ly) * 0.5 + opts.py * sideWobble - loft;
+
+        const state = { t: 0 };
+        this.tweens.add({
+            targets: state,
+            t: 1,
+            duration: opts.flightMs,
+            ease: "Cubic.easeOut",
+            onUpdate: () => {
+                if (!blob.active) return;
+                const t = state.t;
+                const omt = 1 - t;
+                // Quadratic Bezier mouth → loft → land
+                blob.x = omt * omt * sx + 2 * omt * t * midX + t * t * lx;
+                blob.y = omt * omt * sy + 2 * omt * t * midY + t * t * ly;
+                const bulge = 1 + Math.sin(t * Math.PI) * 0.4;
+                blob.setScale(stretchX * bulge, stretchY * bulge);
+                blob.setAlpha(0.95 - t * 0.12);
+                blob.setDepth(blob.y + 28);
+
+                // Occasional mid-air drip trail
+                if (t > 0.2 && t < 0.85 && Math.random() < 0.04) {
+                    this.spawnBloodStain(blob.x, blob.y, {
+                        kind: "vomit",
+                        color,
+                        alpha: Phaser.Math.FloatBetween(0.35, 0.55),
+                        radiusMin: 0.35,
+                        radiusMax: 0.8,
+                        radiusCap: 2.2,
+                        grow: 0.2
+                    });
+                }
+            },
+            onComplete: () => {
+                if (blob.active) blob.destroy();
+                // Primary splat
+                this.spawnBloodStain(lx, ly, {
+                    kind: "vomit",
+                    color,
+                    alpha: Phaser.Math.FloatBetween(0.55, 0.8),
+                    radiusMin: 0.7,
+                    radiusMax: 1.9,
+                    radiusCap: 4.2,
+                    grow: 0.4
+                });
+                // Satellite flecks
+                const flecks = Phaser.Math.Between(1, 3);
+                for (let i = 0; i < flecks; i++) {
+                    const ang = Math.random() * Math.PI * 2;
+                    const d = Phaser.Math.FloatBetween(1.5, 5);
+                    this.spawnBloodStain(
+                        lx + Math.cos(ang) * d,
+                        ly + Math.sin(ang) * d,
+                        {
+                            kind: "vomit",
+                            color: Phaser.Utils.Array.GetRandom([
+                                color, 0x5a7a1c, 0x8a6e20
+                            ]),
+                            alpha: Phaser.Math.FloatBetween(0.4, 0.65),
+                            radiusMin: 0.35,
+                            radiusMax: 0.9,
+                            radiusCap: 2.5,
+                            grow: 0.2
+                        }
+                    );
+                }
+            }
+        });
     }
 
     _bloodStampGfx() {
@@ -1517,10 +1705,13 @@ class SceneMain extends SceneBase {
 
     _paintBloodStain(chunk, entry) {
         if (this.bloodDraw === false) return;
+        const isVomit = (entry.kind || "blood") === "vomit";
+        const rCap = isVomit ? 4.5 : SceneMain.BLOOD_RADIUS_MAX;
+        const rMin = isVomit ? 0.55 : SceneMain.BLOOD_RADIUS_MIN;
         const r = Phaser.Math.Clamp(
-            Number(entry.radius) || SceneMain.BLOOD_RADIUS_MIN,
-            SceneMain.BLOOD_RADIUS_MIN,
-            SceneMain.BLOOD_RADIUS_MAX
+            Number(entry.radius) || rMin,
+            rMin,
+            rCap
         );
         entry.radius = r;
         const rt = this._ensureBloodRt(chunk);
@@ -1530,8 +1721,26 @@ class SceneMain extends SceneBase {
         const ly = entry.y - chunk.y * size;
         const stamp = this._bloodStampGfx();
         stamp.clear();
-        stamp.fillStyle(0x6b1010, 0.55);
-        stamp.fillCircle(0, 0, r);
+        const color = entry.color != null ? entry.color : (isVomit ? 0x7a9e28 : 0x6b1010);
+        const alpha = entry.alpha != null ? entry.alpha : (isVomit ? 0.7 : 0.55);
+
+        if (isVomit) {
+            // Irregular small puddle — lobes stay subtle so it doesn't read as big circles
+            stamp.fillStyle(color, alpha);
+            stamp.fillCircle(0, 0, r);
+            stamp.fillStyle(color, Math.min(1, alpha + 0.05));
+            stamp.fillCircle(r * 0.4, r * 0.15, r * 0.45);
+            stamp.fillCircle(-r * 0.35, r * 0.25, r * 0.38);
+            // Darker sludge fleck
+            stamp.fillStyle(0x3d5210, alpha * 0.5);
+            stamp.fillCircle(-r * 0.15, -r * 0.1, r * 0.22);
+            // Dull highlight (not neon)
+            stamp.fillStyle(0xc5c85a, alpha * 0.28);
+            stamp.fillCircle(r * 0.08, r * 0.02, r * 0.18);
+        } else {
+            stamp.fillStyle(color, alpha);
+            stamp.fillCircle(0, 0, r);
+        }
         rt.draw(stamp, lx, ly);
     }
 
@@ -1789,8 +1998,11 @@ class SceneMain extends SceneBase {
             lines.push(q.charAt(0).toUpperCase() + q.slice(1));
         }
 
-        // Weight (stack.weight for dynamic meals)
-        const weight = stack?.weight != null ? stack.weight : item.weight;
+        // Weight (stack.weight for dynamic meals; knapped tools use item def)
+        const knapTool = !!(stack?.toolClass || stack?.knapMaterial);
+        const weight = knapTool
+            ? (item.weight ?? 0)
+            : (stack?.weight != null ? stack.weight : item.weight);
         if (weight > 0) {
             lines.push(`Weight: ${weight} kg`);
         }
@@ -1809,6 +2021,13 @@ class SceneMain extends SceneBase {
                 const pct = full > 0 ? Math.round((kc / full) * 100) : 100;
                 if (pct < 100) lines.push(`Food: ${kc} kcal (${pct}%)`);
                 else lines.push(`Food: ${kc} kcal`);
+                const satR = Number(food.satietyRatio ?? item.food?.satietyRatio);
+                if (Number.isFinite(satR) && satR >= 0) {
+                    const shown = Number.isInteger(satR)
+                        ? String(satR)
+                        : String(Math.round(satR * 100) / 100);
+                    lines.push(`Satiety: ×${shown}`);
+                }
             }
 
             const now = this.worldMinuteIndex?.() ?? null;
@@ -1942,6 +2161,7 @@ class SceneMain extends SceneBase {
     }
 
     positionCraftMenu() {
+        if (!this.craftContainer || !this.craft) return;
         const left = this.craft.x + this.craft.displayWidth / 2;
         const height = this._craftMenuData?.gridH || 0;
         const top = Phaser.Math.Clamp((this.scale.height - height) / 2, 0, this.scale.height - height);
@@ -2318,6 +2538,7 @@ class SceneMain extends SceneBase {
         this._deathPos = { x: this.player.x, y: this.player.y };
         this.player._tendChannel = null;
         this.player._skinChannel = null;
+        this.player._eatChannel = null;
         this.hideChannelBar?.();
         this.corpsePanel?.close?.(true);
         this.player.createDeathCorpse();

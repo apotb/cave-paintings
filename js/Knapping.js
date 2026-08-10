@@ -249,6 +249,10 @@ const Knapping = {
      */
     ensureToolTexture(scene, stack) {
         if (!scene?.textures || !stack) return null;
+        // Legacy knaps stored 0.05/0.06; tools use item-def weight (pebble/flint 0.3)
+        if (stack.weight != null && (stack.toolClass || stack.knapMaterial)) {
+            delete stack.weight;
+        }
         let pixels = this.unpackIconData(stack.knapIconData);
         if (!pixels) {
             if (stack.knapIcon && scene.textures.exists(stack.knapIcon)) return stack.knapIcon;
@@ -828,9 +832,8 @@ const Knapping = {
             toolClass: result.toolClass,
             sharpness: result.sharpness,
             knapDamage: result.damage,
-            knapMaterial: material,
-            // Match blank weight (pebble 0.05 / flint 0.06)
-            weight: material === "flint" ? 0.06 : 0.05
+            knapMaterial: material
+            // weight comes from stone_tool / flint_tool defs (same as pebble / flint)
         };
         // Weapons use DPS from attack verbs (like spears) — no raw Damage: line
         if (result.toolClass === "blank") {

@@ -20,7 +20,9 @@
         "fillColor": "#3B6FE0",
         "food": {
             "kc": 10,
-            "spoil": 24
+            "spoil": 24,
+            "eatSeconds": 1.0,
+            "satietyRatio": 0.08
         }
     },
     {
@@ -32,7 +34,9 @@
         "fillColor": "#C43C32",
         "food": {
             "kc": 80,
-            "spoil": 120
+            "spoil": 120,
+            "eatSeconds": 2.0,
+            "satietyRatio": 0.15
         },
         "cook": {
             "stick_roast": {
@@ -49,7 +53,9 @@
         "weight": 0.18,
         "food": {
             "kc": 150,
-            "spoil": 48
+            "spoil": 48,
+            "eatSeconds": 2.5,
+            "satietyRatio": 0.22
         }
     },
     {
@@ -61,7 +67,10 @@
         "fillColor": "#A63D3D",
         "food": {
             "kc": 375,
-            "spoil": 12
+            "spoil": 12,
+            "foodPoisonChance": 0.2,
+            "eatSeconds": 4.0,
+            "satietyRatio": 0.12
         },
         "cook": {
             "stick_roast": {
@@ -78,7 +87,9 @@
         "weight": 0.22,
         "food": {
             "kc": 500,
-            "spoil": 36
+            "spoil": 36,
+            "eatSeconds": 4.5,
+            "satietyRatio": 0.28
         }
     },
     {
@@ -90,7 +101,10 @@
         "fillColor": "#8B3A2A",
         "food": {
             "kc": 300,
-            "spoil": 12
+            "spoil": 12,
+            "foodPoisonChance": 0.2,
+            "eatSeconds": 4.0,
+            "satietyRatio": 0.12
         },
         "cook": {
             "stick_roast": {
@@ -107,7 +121,9 @@
         "weight": 0.22,
         "food": {
             "kc": 400,
-            "spoil": 36
+            "spoil": 36,
+            "eatSeconds": 4.5,
+            "satietyRatio": 0.28
         }
     },
     {
@@ -128,7 +144,9 @@
         "maxStack": 99,
         "food": {
             "kc": 400,
-            "spoil": 48
+            "spoil": 48,
+            "eatSeconds": 4.0,
+            "satietyRatio": 0.2
         },
         "cook": {
             "method": "shell_simmer"
@@ -150,7 +168,8 @@
         "weight": 0.75,
         "food": {
             "kc": 0,
-            "spoil": 24
+            "spoil": 24,
+            "satietyRatio": 0.3
         }
     },
     {

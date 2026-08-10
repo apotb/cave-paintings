@@ -192,11 +192,14 @@ class CombatLog {
             player._downed = false;
             player._tendChannel = null;
             player._skinChannel = null;
+            player._eatChannel = null;
+            player._vomit = null;
             player.capacities = new Capacities(player.anatomy);
             setCreatureProne(player, false);
             player.setVisible(true);
             if (player.body) player.body.enable = true;
             this.scene.deathOverlay?.setVisible(false);
+            this.scene.hideChannelBar?.();
             this.scene.healthPanel?.refresh?.();
             this.push("Fully healed.");
             return;

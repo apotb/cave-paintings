@@ -81,7 +81,60 @@ class Capacities {
                 }
             }
         }
+        pain += this._hediffPainOffset();
         return Phaser.Math.Clamp(pain, 0, 1);
+    }
+
+    /** Sum of hediff stage painOffset values. */
+    _hediffPainOffset() {
+        let sum = 0;
+        for (const h of this.body.hediffs || []) {
+            const stage = typeof Hediffs !== "undefined"
+                ? Hediffs.stageFor(h, this.body.scene)
+                : null;
+            if (stage?.painOffset) sum += Number(stage.painOffset) || 0;
+        }
+        return sum;
+    }
+
+    /**
+     * Apply whole-body hediff offsets, post-factors, and max caps to a capacity.
+     * @param {string} key
+     * @param {number} value
+     * @param {number} [clampMax=1]
+     */
+    _applyHediffCap(key, value, clampMax = 1) {
+        let v = value;
+        let maxCap = null;
+        for (const h of this.body.hediffs || []) {
+            const stage = typeof Hediffs !== "undefined"
+                ? Hediffs.stageFor(h, this.body.scene)
+                : null;
+            if (!stage) continue;
+            const off = stage.capacityOffsets?.[key];
+            if (off != null) v += Number(off) || 0;
+            const fac = stage.capacityFactors?.[key];
+            if (fac != null && Number.isFinite(Number(fac))) v *= Number(fac);
+            const mx = stage.capacityMax?.[key];
+            if (mx != null && Number.isFinite(Number(mx))) {
+                maxCap = maxCap == null ? Number(mx) : Math.min(maxCap, Number(mx));
+            }
+        }
+        if (maxCap != null) v = Math.min(v, maxCap);
+        return Phaser.Math.Clamp(v, 0, clampMax);
+    }
+
+    /** Combined hunger-rate multiplier from hediffs (malnutrition stages). */
+    hungerRateFactor() {
+        let f = 1;
+        for (const h of this.body.hediffs || []) {
+            const stage = typeof Hediffs !== "undefined"
+                ? Hediffs.stageFor(h, this.body.scene)
+                : null;
+            const hf = Number(stage?.hungerRateFactor);
+            if (Number.isFinite(hf) && hf > 0) f *= hf;
+        }
+        return f;
     }
 
     bloodPumping() {
@@ -98,11 +151,12 @@ class Capacities {
     }
 
     bloodFiltration() {
-        return Phaser.Math.Clamp(
+        const base = Phaser.Math.Clamp(
             (this.eff("Left Kidney") + this.eff("Right Kidney")) * 0.5 * this.eff("Liver"),
             0,
             1
         );
+        return this._applyHediffCap("bloodFiltration", base, 1);
     }
 
     digestion() {
@@ -121,12 +175,17 @@ class Capacities {
         const brain = this.eff("Brain");
         const bp = this.bloodPumping();
         const br = this.breathing();
-        const bf = this.bloodFiltration();
+        // Use raw filtration (pre-hediff) for vital factor to avoid feedback loops
+        const bfRaw = Phaser.Math.Clamp(
+            (this.eff("Left Kidney") + this.eff("Right Kidney")) * 0.5 * this.eff("Liver"),
+            0,
+            1
+        );
         const pain = this.pain();
 
         const bpF = 1 + (Math.min(bp, 1) - 1) * 0.2;
         const brF = 1 + (Math.min(br, 1) - 1) * 0.2;
-        const bfF = 1 + (Math.min(bf, 1) - 1) * 0.1;
+        const bfF = 1 + (Math.min(bfRaw, 1) - 1) * 0.1;
         let painF = 1;
         if (pain > 0.1) {
             // IF Pain > 10%: consciousness -= (pain-0.1)/2.25
@@ -140,7 +199,7 @@ class Capacities {
         else if (bl >= 0.5) c -= 0.2;
         else if (bl >= 0.3) c -= 0.1;
 
-        return Phaser.Math.Clamp(c, 0, 1);
+        return this._applyHediffCap("consciousness", c, 1);
     }
 
     legEfficiency() {
@@ -188,12 +247,14 @@ class Capacities {
         const br = this.breathing();
         const bpF = 1 + (bp - 1) * 0.2;
         const brF = 1 + (br - 1) * 0.2;
-        return Phaser.Math.Clamp(consF * bpF * brF * this.legEfficiency(), 0, 2);
+        const base = Phaser.Math.Clamp(consF * bpF * brF * this.legEfficiency(), 0, 2);
+        return this._applyHediffCap("moving", base, 2);
     }
 
     manipulation() {
         const cons = this.consciousness();
-        return Phaser.Math.Clamp(cons * this.armEfficiency(), 0, 2);
+        const base = Phaser.Math.Clamp(cons * this.armEfficiency(), 0, 2);
+        return this._applyHediffCap("manipulation", base, 2);
     }
 
     sight() {
@@ -213,15 +274,17 @@ class Capacities {
     }
 
     talking() {
-        return Phaser.Math.Clamp(
+        const base = Phaser.Math.Clamp(
             this.consciousness() * this.eff("Jaw") * this.eff("Tongue"),
             0,
             1
         );
+        return this._applyHediffCap("talking", base, 1);
     }
 
     eating() {
-        return Phaser.Math.Clamp(this.consciousness() * this.eff("Jaw"), 0, 1);
+        const base = Phaser.Math.Clamp(this.consciousness() * this.eff("Jaw"), 0, 1);
+        return this._applyHediffCap("eating", base, 1);
     }
 
     /** Snapshot for UI / gameplay. */
@@ -433,15 +496,68 @@ class Capacities {
                 parts.push(...this._collectPartFactors(["Jaw"]));
                 pushUp("Consciousness", this.consciousness());
                 break;
+            case "pain":
+                return this._explainPain();
             case "bloodLoss":
                 return this._explainBloodLoss();
             default:
                 return [];
         }
 
-        const lines = [...parts, ...upstream];
+        const lines = [...parts, ...upstream, ...this._hediffExplainLines(key)];
         if (!lines.length) return ["Reduced by multiple minor factors"];
         return lines;
+    }
+
+    /**
+     * Hediff contributions for a capacity tooltip (offsets, ×factors, max caps).
+     * @param {string} key
+     * @returns {string[]}
+     */
+    _hediffExplainLines(key) {
+        const lines = [];
+        if (typeof Hediffs === "undefined") return lines;
+        const scene = this.body.scene;
+        for (const h of this.body.hediffs || []) {
+            const stage = Hediffs.stageFor(h, scene);
+            if (!stage) continue;
+            const label = Hediffs.displayLabel(h, scene);
+            const off = stage.capacityOffsets?.[key];
+            if (off != null && Number(off) !== 0) {
+                const n = Number(off) || 0;
+                const sign = n >= 0 ? "+" : "";
+                lines.push(`${label}: ${sign}${Math.round(n * 100)}%`);
+            }
+            const fac = stage.capacityFactors?.[key];
+            if (fac != null && Number.isFinite(Number(fac)) && Number(fac) !== 1) {
+                lines.push(`${label}: ×${fac}`);
+            }
+            const mx = stage.capacityMax?.[key];
+            if (mx != null && Number.isFinite(Number(mx))) {
+                lines.push(`${label}: max ${Math.round(Number(mx) * 100)}%`);
+            }
+        }
+        return lines;
+    }
+
+    /** Pain sources: hediff offsets, plus a catch-all for injury / stump pain. */
+    _explainPain() {
+        const lines = [];
+        if (typeof Hediffs !== "undefined") {
+            const scene = this.body.scene;
+            for (const h of this.body.hediffs || []) {
+                const stage = Hediffs.stageFor(h, scene);
+                const off = Number(stage?.painOffset) || 0;
+                if (!(off > 0)) continue;
+                lines.push(`${Hediffs.displayLabel(h, scene)}: +${Math.round(off * 100)}%`);
+            }
+        }
+        const hediffPain = this._hediffPainOffset();
+        const total = this.pain();
+        if (total > hediffPain + 0.001) {
+            lines.push("Injuries / missing parts");
+        }
+        return lines.length ? lines : ["No pain sources"];
     }
 
     /** RW-style bleed rate / time-to-death (or recovery when not bleeding). */
@@ -525,5 +641,10 @@ class Capacities {
     /** Multiplier for action duration: 0.5 manip → 2× time. */
     actionDurationScale() {
         return 1 / Math.max(0.05, this.manipulation());
+    }
+
+    /** Multiplier for eating duration: 0.5 Eating → 2× time. */
+    eatingDurationScale() {
+        return 1 / Math.max(0.05, this.eating());
     }
 }

@@ -16,8 +16,6 @@ New burning system -- fires won't heat up immediately, different fuels burn at d
 
 More animals -- boar, lynx, auroch
 
-Malnutrition and starvation
-
 Infection
 
 Clothing and armor

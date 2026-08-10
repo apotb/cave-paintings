@@ -63,7 +63,10 @@ class Chunk {
             x: e.x,
             y: e.y,
             radius: e.radius,
-            lifeMinutes: e.lifeMinutes
+            lifeMinutes: e.lifeMinutes,
+            kind: e.kind || "blood",
+            color: e.color,
+            alpha: e.alpha
         }));
         const corpses = (this.meta.corpses || []).map(e => ({
             id: e.id,
@@ -72,7 +75,7 @@ class Chunk {
             key: e.key,
             frame: e.frame,
             name: e.name,
-            loot,
+            loot: e.loot,
             body: e.body || null,
             bodyPlan: e.bodyPlan || e.body?.planId || "human",
             mobId: e.mobId || null,

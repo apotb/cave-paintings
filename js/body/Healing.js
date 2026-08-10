@@ -121,6 +121,11 @@ const BodyHealing = {
 
         // Natural healing follows the world clock (scales with /tick)
         this.healGameMinute(owner, scene);
+
+        // Whole-body hediffs (player hunger drives malnutrition; any body can decay hediffs)
+        if (typeof Hediffs !== "undefined") {
+            Hediffs.minuteTick(owner, scene);
+        }
     },
 
     /**
