@@ -72,9 +72,11 @@ class Chunk {
             key: e.key,
             frame: e.frame,
             name: e.name,
-            loot: (e.loot || []).map(s => cloneItemStack(s)).filter(Boolean),
+            loot,
             body: e.body || null,
-            bodyPlan: e.bodyPlan || e.body?.planId || "human"
+            bodyPlan: e.bodyPlan || e.body?.planId || "human",
+            mobId: e.mobId || null,
+            skinned: !!e.skinned
         }));
         return {
             x: this.x,
@@ -195,7 +197,8 @@ class Chunk {
                 }
                 if (i >= 0) this.scene.time.delayedCall(0, slice);
                 else {
-                    // Same RNG stream as tiles — one-time natural mobs for this chunk
+                    // Same RNG stream as tiles — pebbles then one-time natural mobs
+                    this.populatePebbles(rand);
                     this.populateNaturalMobs(rand);
                     this.isGenerated = true;
                     resolve();
@@ -203,6 +206,62 @@ class Chunk {
             };
             slice();
         });
+    }
+
+    /**
+     * Seed-deterministic pebbles on empty tiles adjacent to any rock (plains,
+     * hills, mountains). Ambient hill/mountain pebbles spawn in generateTile.
+     * Writes meta.lootableThings only. In-chunk neighbors only.
+     */
+    populatePebbles(rand) {
+        const cs = this.scene.chunkSize;
+        const ts = this.scene.tileSize;
+        const chunkOx = this.x * this.px();
+        const chunkOy = this.y * this.px();
+        const PEBBLE_CHANCE = 0.05;
+        const blockedGround = new Set(["water", "ice"]);
+
+        const occupied = new Set();
+        const markOccupied = (entry) => {
+            if (!entry) return;
+            const lx = Math.round((entry.x - ts / 2 - chunkOx) / ts);
+            const ly = Math.round((entry.y - ts - chunkOy) / ts);
+            if (lx >= 0 && ly >= 0 && lx < cs && ly < cs) occupied.add(`${lx},${ly}`);
+        };
+        for (const t of this.meta.things || []) markOccupied(t);
+        for (const t of this.meta.lootableThings || []) markOccupied(t);
+
+        const tileAt = (lx, ly) => {
+            if (lx < 0 || ly < 0 || lx >= cs || ly >= cs) return null;
+            return this.meta.tiles[lx + ly * cs];
+        };
+
+        const dirs = [
+            [-1, -1], [0, -1], [1, -1],
+            [-1, 0],           [1, 0],
+            [-1, 1],  [0, 1],  [1, 1]
+        ];
+
+        for (const entry of this.meta.things || []) {
+            if (entry?.id !== "rock") continue;
+            const lx = Math.round((entry.x - ts / 2 - chunkOx) / ts);
+            const ly = Math.round((entry.y - ts - chunkOy) / ts);
+
+            for (const [dx, dy] of dirs) {
+                const nx = lx + dx;
+                const ny = ly + dy;
+                const key = `${nx},${ny}`;
+                if (occupied.has(key)) continue;
+                const tile = tileAt(nx, ny);
+                if (!tile || blockedGround.has(tile)) continue;
+                if (rand() >= PEBBLE_CHANCE) continue;
+
+                const tx = chunkOx + nx * ts;
+                const ty = chunkOy + ny * ts;
+                this.addLootableThing(tx, ty, "pebbles");
+                occupied.add(key);
+            }
+        }
     }
 
     /**
@@ -254,22 +313,51 @@ class Chunk {
             packMax = Math.min(packMax, candidates.length);
             packMin = Math.min(packMin, packMax);
             const pack = packMin + Math.floor(rand() * (packMax - packMin + 1));
+            // Prefer packing near an anchor (Minecraft-style tight groups)
+            const packRadius = Math.max(1, Math.floor(Number(sp.packRadius) || 2));
 
-            // Fisher–Yates shuffle using chunk RNG, then take `pack` tiles
+            // Shuffle, pick anchor, then take nearest remaining within radius (fallback: nearest overall)
             for (let i = candidates.length - 1; i > 0; i--) {
                 const j = Math.floor(rand() * (i + 1));
                 const tmp = candidates[i];
                 candidates[i] = candidates[j];
                 candidates[j] = tmp;
             }
-            for (let n = 0; n < pack; n++) {
-                const { cx, cy } = candidates[n];
+            const picks = [];
+            const anchor = candidates[0];
+            picks.push(anchor);
+            const rest = candidates.slice(1).map((c) => ({
+                c,
+                d: Math.abs(c.cx - anchor.cx) + Math.abs(c.cy - anchor.cy)
+            }));
+            rest.sort((a, b) => a.d - b.d || a.c.cx - b.c.cx || a.c.cy - b.c.cy);
+            const used = new Set([`${anchor.cx},${anchor.cy}`]);
+            // Prefer tiles within packRadius, then fill with next-nearest
+            for (const e of rest) {
+                if (picks.length >= pack) break;
+                if (e.d > packRadius) continue;
+                picks.push(e.c);
+                used.add(`${e.c.cx},${e.c.cy}`);
+            }
+            for (const e of rest) {
+                if (picks.length >= pack) break;
+                const k = `${e.c.cx},${e.c.cy}`;
+                if (used.has(k)) continue;
+                picks.push(e.c);
+                used.add(k);
+            }
+
+            for (const { cx, cy } of picks) {
                 const tx = chunkOx + cx * ts;
                 const ty = chunkOy + cy * ts;
+                const x = tx;
+                const y = ty + ts;
                 this.meta.mobs.push({
                     id: def.id,
-                    x: tx,
-                    y: ty + ts
+                    x,
+                    y,
+                    homeX: x,
+                    homeY: y
                 });
                 blocked.add(`${cx},${cy}`);
             }
@@ -297,11 +385,14 @@ class Chunk {
             }
         } else if (river < 0.0065 && elevation < 0.14) {
             key = 'gravel';
+            // Uncommon flint on gravel shores (~3%)
+            if (randValue < 0.03) this.addLootableThing(tx, ty, 'flint');
         } else if (elevation < -0.19) {
             if (river < 0.005) {
                 key = 'water';
             } else if (river < 0.0065) {
                 key = 'gravel';
+                if (randValue < 0.03) this.addLootableThing(tx, ty, 'flint');
             } else if (temperature < -0.25) {
                 key = 'snow_beach';
             } else {
@@ -324,7 +415,7 @@ class Chunk {
                 else if (randValue < 0.185) this.addThing(tx, ty, 'rock');
                 else if (randValue < 0.19) this.addLootableThing(tx, ty, 'blueberry_bush');
                 else if (randValue < 0.21) this.addLootableThing(tx, ty, 'leaves');
-                else if (randValue < 0.211) this.addLootableThing(tx, ty, 'apple_tree');
+                else if (randValue < 0.212) this.addLootableThing(tx, ty, 'apple_tree');
             } else {
                 key = 'sand';
                 if (randValue < 0.05) this.addThing(tx, ty, 'cactus');
@@ -332,27 +423,33 @@ class Chunk {
                 else if (randValue < 0.056) this.addThing(tx, ty, 'rock');
             }
         } else if (elevation < 0.25) {
-            if (randValue < 0.1) this.addThing(tx, ty, 'rock');
+            if (randValue < 0.07) this.addThing(tx, ty, 'rock');
             if (temperature < -0.25) {
                 key = 'snow_hill';
-                if (randValue >= 0.1) {
+                if (randValue >= 0.07) {
                     if (randValue < 0.13) this.addThing(tx, ty, 'snow_tree');
                     else if (randValue < 0.14) this.addLootableThing(tx, ty, 'sticks', 'stick', 3);
+                    else if (randValue < 0.144) this.addLootableThing(tx, ty, 'pebbles');
+                    else if (randValue < 0.1455) this.addLootableThing(tx, ty, 'flint'); // rare ~0.15%
                 }
             } else if (temperature < 0.25) {
                 key = 'grass_hill';
-                if (randValue >= 0.1) {
+                if (randValue >= 0.07) {
                     if (randValue < 0.15) this.addThing(tx, ty, 'tree');
                     else if (randValue < 0.165) this.addLootableThing(tx, ty, 'sticks');
-                    else if (randValue < 0.19) this.addThing(tx, ty, 'bush');
-                    else if (randValue < 0.1925) this.addLootableThing(tx, ty, 'blueberry_bush');
+                    else if (randValue < 0.175) this.addLootableThing(tx, ty, 'leaves');
+                    else if (randValue < 0.205) this.addThing(tx, ty, 'bush');
+                    else if (randValue < 0.2075) this.addLootableThing(tx, ty, 'blueberry_bush');
+                    else if (randValue < 0.211) this.addLootableThing(tx, ty, 'pebbles');
+                    else if (randValue < 0.2125) this.addLootableThing(tx, ty, 'flint'); // rare ~0.15%
                 }
             } else {
                 key = 'sand_hill';
-                if (randValue >= 0.1) {
-                    if (randValue < 0.02) this.addLootableThing(tx, ty, 'cactus');
-                    else if (randValue < 0.025) this.addLootableThing(tx, ty, 'flowering_cactus');
-                }
+                // randValue >= 0.07 when no rock
+                if (randValue >= 0.07 && randValue < 0.12) this.addLootableThing(tx, ty, 'cactus');
+                else if (randValue >= 0.12 && randValue < 0.125) this.addLootableThing(tx, ty, 'flowering_cactus');
+                else if (randValue >= 0.125 && randValue < 0.13) this.addLootableThing(tx, ty, 'pebbles');
+                else if (randValue >= 0.13 && randValue < 0.1315) this.addLootableThing(tx, ty, 'flint'); // rare ~0.15%
             }
         } else if (elevation < 0.55) {
             if (temperature < -0.25) {
@@ -363,16 +460,24 @@ class Chunk {
                 key = 'mesa';
             }
             if (randValue < 0.05) this.addThing(tx, ty, 'rock');
+            else if (randValue < 0.06) this.addLootableThing(tx, ty, 'pebbles');
+            else if (randValue < 0.064) this.addLootableThing(tx, ty, 'flint'); // sparse ~0.4% (still > hills)
         } else if (elevation < 0.7) {
             key = 'mountain';
+            if (randValue < 0.012) this.addLootableThing(tx, ty, 'pebbles');
+            else if (randValue < 0.016) this.addLootableThing(tx, ty, 'flint'); // sparse ~0.4%
         } else {
             key = 'snow_mountain';
+            if (randValue < 0.012) this.addLootableThing(tx, ty, 'pebbles');
+            else if (randValue < 0.016) this.addLootableThing(tx, ty, 'flint'); // sparse ~0.4%
         }
 
         this.meta.tiles[cx + cy * this.scene.chunkSize] = key;
     }
 
     addThing(tileX, tileY, id) {
+        // Reserved for the spawn sign — never place natural Things at origin
+        if (tileX === 0 && tileY === 0) return;
         this.meta.things.push({
             x: tileX + this.scene.tileSize / 2,
             y: tileY + this.scene.tileSize,
@@ -381,6 +486,8 @@ class Chunk {
     }
 
     addLootableThing(tileX, tileY, id) {
+        // Reserved for the spawn sign — never place natural lootables at origin
+        if (tileX === 0 && tileY === 0) return;
         this.meta.lootableThings.push({
             x: tileX + this.scene.tileSize / 2,
             y: tileY + this.scene.tileSize,
@@ -431,6 +538,11 @@ class Chunk {
                 thing = new Campfire(this.scene, meta);
             } else {
                 thing = new Thing(this.scene, meta.x, meta.y, meta.id);
+                if (meta.id === "rock") {
+                    this.scene.wireRockKnapping?.(thing);
+                } else if (meta.id === "sign") {
+                    this.scene.wireThingTooltip?.(thing);
+                }
             }
             this.things.add(thing);
         }

@@ -42,7 +42,9 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         const entry = {
             id,
             x,
-            y
+            y,
+            homeX: x,
+            homeY: y
         };
         chunk.meta.mobs.push(entry);
 
@@ -77,6 +79,9 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         this.def = def || { id: entry.id, key, speed: 1, hitboxSize: 8 };
         this.facing = "down";
         this._dead = false;
+        // Home leash for wander (legacy saves: seed from current position)
+        if (entry.homeX == null) entry.homeX = entry.x;
+        if (entry.homeY == null) entry.homeY = entry.y;
 
         const planId = this.def.bodyPlan || "human";
         this.anatomy = new Body(scene, planId, this);
@@ -225,6 +230,28 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             return;
         }
         this.ai?.onDamaged?.(source);
+        this.alertNearbyMobs(source);
+    }
+
+    /**
+     * Hitting one animal triggers nearby AIs: scared flee, aggressive/neutral aggro.
+     * Does not re-alert (one hop) to avoid chain reactions across the map.
+     */
+    alertNearbyMobs(source) {
+        const scene = this.scene;
+        if (!scene?.mobs || !source) return;
+        const ts = scene.tileSize || 16;
+        const rangeTiles = 8;
+        const range = rangeTiles * ts;
+        const rangeSq = range * range;
+        for (const other of scene.mobs.getChildren()) {
+            if (!other || other === this || !other.active || other._dead) continue;
+            if (typeof other.ai?.onDamaged !== "function") continue;
+            const dx = other.x - this.x;
+            const dy = other.y - this.y;
+            if (dx * dx + dy * dy > rangeSq) continue;
+            other.ai.onDamaged(source, { alert: true });
+        }
     }
 
     isAttacking() {
@@ -459,7 +486,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             } else {
                 qty = Number(drop.quantity) || 1;
             }
-            if (qty > 0) loot.push(makeItemStack(item, qty));
+            if (qty > 0) loot.push(makeItemStack(item, qty, undefined, scene.worldMinuteIndex?.()));
         }
 
         // bodyCenter() respects standing (origin 0,1) and prone (origin 0.5,0.5)
@@ -473,7 +500,8 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             name: this.def?.name || "Corpse",
             loot,
             body: this.anatomy?.toJSON?.(),
-            bodyPlan: this.def?.bodyPlan || this.anatomy?.planId || "human"
+            bodyPlan: this.def?.bodyPlan || this.anatomy?.planId || "human",
+            mobId: this.def?.id || null
         });
 
         if (this.chunk?.meta?.mobs) {
@@ -491,6 +519,10 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         this.capacities = new Capacities(this.anatomy);
         const prone = this.isImmobile() || this.isIncapacitated();
 
+        // Preserve prior velocity so ice can ease toward the AI's new intent
+        const startVx = this._iceVx ?? this.body?.velocity?.x ?? 0;
+        const startVy = this._iceVy ?? this.body?.velocity?.y ?? 0;
+
         this.ai?.update(delta);
         this._tickMeleeAttack();
         // Half move while swinging (same idea as the player)
@@ -499,7 +531,13 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         }
         // Apply prone after AI so walk/idle anims don't overwrite the lay-down pose
         setCreatureProne(this, prone);
-        if (prone) this.setVelocity(0, 0);
+
+        const wantVx = prone ? 0 : (this.body?.velocity?.x ?? 0);
+        const wantVy = prone ? 0 : (this.body?.velocity?.y ?? 0);
+        this._iceVx = startVx;
+        this._iceVy = startVy;
+        applyEntityVelocity(this, wantVx, wantVy, delta, this.scene);
+
         this.setDepth(this.y);
         this.reassignChunkIfNeeded();
         if (!this.active) return;
@@ -518,7 +556,7 @@ class DroppedItem extends Mob {
     /**
      * @param {Object} [stackExtras]  optional customName/food/ingredients for dynamic meals
      */
-    static spawn(scene, x, y, item, quantity, spoilMinutes = undefined, stackExtras = null) {
+    static spawn(scene, x, y, item, quantity, spoilAt = undefined, stackExtras = null) {
         if (!item || quantity <= 0) return null;
 
         if (!scene.droppedItems) scene.droppedItems = scene.add.group();
@@ -527,18 +565,27 @@ class DroppedItem extends Mob {
         const maxDist = scene.tileSize;
         let remaining = quantity;
         let last = null;
-        const incomingSpoil = spoilMinutes !== undefined
-            ? spoilMinutes
-            : defaultSpoilMinutes(item);
+        const now = scene.worldMinuteIndex?.() ?? null;
+        let incomingSpoil = spoilAt !== undefined
+            ? spoilAt
+            : defaultSpoilAt(item, now);
+        if (incomingSpoil == null && now != null && stackExtras?.food?.spoil > 0) {
+            incomingSpoil = Math.round(now) + Math.round(stackExtras.food.spoil * 60);
+        }
 
         const canMerge = !stackExtras?.customName
             && !stackExtras?.food
-            && !stackExtras?.ingredients?.length;
+            && !stackExtras?.ingredients?.length
+            && !stackExtras?.toolClass
+            && stackExtras?.knapDamage == null
+            && !stackExtras?.knapQuality;
 
         if (canMerge) {
             const nearby = scene.droppedItems.getChildren()
                 .filter(drop => drop.active && drop.item?.id === item.id
                     && !drop.customName && !drop.food && !drop.ingredients
+                    && !drop.toolClass && drop.knapDamage == null
+                    && !drop.knapQuality
                     && drop.quantity < maxStack)
                 .map(drop => ({
                     drop,
@@ -551,8 +598,8 @@ class DroppedItem extends Mob {
                 if (remaining <= 0) break;
                 const space = maxStack - drop.quantity;
                 const add = Math.min(space, remaining);
-                drop.spoilMinutes = mergeSpoilMinutes(
-                    drop.quantity, drop.spoilMinutes,
+                drop.spoilAt = mergeSpoilAt(
+                    drop.quantity, drop.spoilAt,
                     add, incomingSpoil
                 );
                 drop.quantity += add;
@@ -586,7 +633,7 @@ class DroppedItem extends Mob {
         return last;
     }
 
-    static makeEntry(item, x, y, quantity, spoilMinutes, stackExtras = null) {
+    static makeEntry(item, x, y, quantity, spoilAt, stackExtras = null) {
         const entry = {
             id: item.id,
             x,
@@ -594,13 +641,20 @@ class DroppedItem extends Mob {
             quantity,
             lifeMs: DROP_LIFE_MS
         };
-        if (spoilMinutes != null) entry.spoilMinutes = spoilMinutes;
+        if (spoilAt != null) entry.spoilAt = spoilAt;
         if (stackExtras?.customName) entry.customName = stackExtras.customName;
         if (stackExtras?.food) entry.food = { ...stackExtras.food };
         if (stackExtras?.ingredients) entry.ingredients = stackExtras.ingredients.slice();
         if (stackExtras?.weight != null) entry.weight = stackExtras.weight;
         if (stackExtras?.kind) entry.kind = stackExtras.kind;
         if (stackExtras?.fillTint != null) entry.fillTint = stackExtras.fillTint;
+        if (stackExtras?.toolClass) entry.toolClass = stackExtras.toolClass;
+        if (stackExtras?.sharpness != null) entry.sharpness = stackExtras.sharpness;
+        if (stackExtras?.knapDamage != null) entry.knapDamage = stackExtras.knapDamage;
+        if (stackExtras?.knapMaterial) entry.knapMaterial = stackExtras.knapMaterial;
+        if (stackExtras?.tooltipExtra) entry.tooltipExtra = stackExtras.tooltipExtra;
+        if (stackExtras?.knapIconData) entry.knapIconData = stackExtras.knapIconData;
+        if (stackExtras?.knapQuality) entry.knapQuality = stackExtras.knapQuality;
         return entry;
     }
 
@@ -620,13 +674,35 @@ class DroppedItem extends Mob {
         this.item = item || { id: entry.id, key: texKey, maxStack: 1 };
         this.quantity = Number(entry.quantity) || 1;
         this.lifeMs = entry.lifeMs != null ? Number(entry.lifeMs) : DROP_LIFE_MS;
-        if (entry.spoilMinutes != null) this.spoilMinutes = entry.spoilMinutes;
+        if (typeof migrateStackSpoil === "function" && scene.worldMinuteIndex) {
+            migrateStackSpoil(entry, scene.worldMinuteIndex(), (id) => scene.getItem(id));
+        }
+        if (entry.spoilAt != null) this.spoilAt = entry.spoilAt;
         if (entry.customName) this.customName = entry.customName;
         if (entry.food) this.food = { ...entry.food };
         if (entry.ingredients) this.ingredients = entry.ingredients.slice();
         if (entry.weight != null) this.stackWeight = entry.weight;
         if (entry.kind) this.kind = entry.kind;
         if (entry.fillTint != null) this.fillTint = entry.fillTint;
+        if (entry.toolClass) this.toolClass = entry.toolClass;
+        if (entry.sharpness != null) this.sharpness = entry.sharpness;
+        if (entry.knapDamage != null) this.knapDamage = entry.knapDamage;
+        if (entry.knapMaterial) this.knapMaterial = entry.knapMaterial;
+        if (entry.tooltipExtra) this.tooltipExtra = entry.tooltipExtra;
+        if (entry.knapIconData) this.knapIconData = entry.knapIconData;
+        if (entry.knapQuality) this.knapQuality = entry.knapQuality;
+
+        // Knapped silhouette on the ground drop
+        if (this.knapIconData && typeof Knapping !== "undefined") {
+            const knapKey = Knapping.ensureToolTexture(scene, {
+                knapIconData: this.knapIconData,
+                knapIcon: entry.knapIcon
+            });
+            if (knapKey && scene.textures.exists(knapKey)) {
+                this.knapIcon = knapKey;
+                this.setTexture(knapKey);
+            }
+        }
 
         scene.add.existing(this);
         scene.physics.add.existing(this);
@@ -693,14 +769,21 @@ class DroppedItem extends Mob {
         this.entry.y = this.y;
         this.entry.quantity = this.quantity;
         this.entry.lifeMs = this.lifeMs;
-        if (this.spoilMinutes != null) this.entry.spoilMinutes = this.spoilMinutes;
-        else delete this.entry.spoilMinutes;
+        if (this.spoilAt != null) this.entry.spoilAt = this.spoilAt;
+        else delete this.entry.spoilAt;
         if (this.customName) this.entry.customName = this.customName;
         if (this.food) this.entry.food = { ...this.food };
         if (this.ingredients) this.entry.ingredients = this.ingredients.slice();
         if (this.stackWeight != null) this.entry.weight = this.stackWeight;
         if (this.kind) this.entry.kind = this.kind;
         if (this.fillTint != null) this.entry.fillTint = this.fillTint;
+        if (this.toolClass) this.entry.toolClass = this.toolClass;
+        if (this.sharpness != null) this.entry.sharpness = this.sharpness;
+        if (this.knapDamage != null) this.entry.knapDamage = this.knapDamage;
+        if (this.knapMaterial) this.entry.knapMaterial = this.knapMaterial;
+        if (this.tooltipExtra) this.entry.tooltipExtra = this.tooltipExtra;
+        if (this.knapIconData) this.entry.knapIconData = this.knapIconData;
+        if (this.knapQuality) this.entry.knapQuality = this.knapQuality;
     }
 
     _removeEntry() {
@@ -759,7 +842,7 @@ class DroppedItem extends Mob {
         const player = this.scene.player;
         if (!player) return false;
 
-        if (typeof hasStackExtras === "function" ? hasStackExtras(this) : (this.customName || this.food || this.ingredients)) {
+        if (typeof hasStackExtras === "function" ? hasStackExtras(this) : (this.customName || this.food || this.ingredients || this.toolClass)) {
             const stack = {
                 id: this.item.id,
                 quantity: this.quantity,
@@ -769,7 +852,14 @@ class DroppedItem extends Mob {
                 ...(this.stackWeight != null ? { weight: this.stackWeight } : {}),
                 ...(this.kind ? { kind: this.kind } : {}),
                 ...(this.fillTint != null ? { fillTint: this.fillTint } : {}),
-                ...(this.spoilMinutes != null ? { spoilMinutes: this.spoilMinutes } : {})
+                ...(this.spoilAt != null ? { spoilAt: this.spoilAt } : {}),
+                ...(this.toolClass ? { toolClass: this.toolClass } : {}),
+                ...(this.sharpness != null ? { sharpness: this.sharpness } : {}),
+                ...(this.knapDamage != null ? { knapDamage: this.knapDamage } : {}),
+                ...(this.knapMaterial ? { knapMaterial: this.knapMaterial } : {}),
+                ...(this.tooltipExtra ? { tooltipExtra: this.tooltipExtra } : {}),
+                ...(this.knapIconData ? { knapIconData: this.knapIconData } : {}),
+                ...(this.knapQuality ? { knapQuality: this.knapQuality } : {})
             };
             const inv = player.inventory;
             const empty = inv.findIndex(s => !s);
@@ -789,7 +879,7 @@ class DroppedItem extends Mob {
         }
 
         const before = this.quantity;
-        const remaining = player.gainItem(this.item, this.quantity, this.spoilMinutes);
+        const remaining = player.gainItem(this.item, this.quantity, this.spoilAt);
         if (remaining === before) return false;
         this.scene.hotbar.dirty = true;
         if (remaining === 0) this.destroy();
@@ -801,17 +891,22 @@ class DroppedItem extends Mob {
     }
 
     tooltip(pointer) {
-        const stackProxy = (this.customName || this.food || this.ingredients) ? {
+        const stackProxy = (this.customName || this.food || this.ingredients || this.toolClass) ? {
             customName: this.customName,
             food: this.food,
             ingredients: this.ingredients,
             weight: this.stackWeight,
             kind: this.kind,
-            fillTint: this.fillTint
+            fillTint: this.fillTint,
+            toolClass: this.toolClass,
+            sharpness: this.sharpness,
+            knapDamage: this.knapDamage,
+            knapMaterial: this.knapMaterial,
+            tooltipExtra: this.tooltipExtra
         } : null;
         this.scene.showTooltip(
             () => this.scene.formatItemTooltip(
-                this.item, this.quantity, this.spoilMinutes, stackProxy
+                this.item, this.quantity, this.spoilAt, stackProxy
             ),
             pointer.x,
             pointer.y,

@@ -23,7 +23,9 @@ class Corpse extends Phaser.GameObjects.Sprite {
             name: opts.name || "Corpse",
             loot,
             body: opts.body || null,
-            bodyPlan: opts.bodyPlan || opts.body?.planId || "human"
+            bodyPlan: opts.bodyPlan || opts.body?.planId || "human",
+            mobId: opts.mobId || null,
+            skinned: !!opts.skinned
         };
         chunk.meta.corpses.push(entry);
         if (!chunk.isLoaded) return null;
@@ -104,8 +106,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
 
         this.setInteractive({ cursor: "pointer", pixelPerfect: false });
         this.on("pointerover", (pointer) => {
-            const name = entry.name || "Corpse";
-            scene.showTooltip(`${name} (corpse)`, pointer.x, pointer.y, this);
+            scene.showTooltip(() => this.tooltipText(), pointer.x, pointer.y, this);
         });
         this.on("pointerout", () => {
             if (scene._hoverTarget === this) scene._hoverTarget = null;
@@ -113,6 +114,17 @@ class Corpse extends Phaser.GameObjects.Sprite {
         });
         this.on("pointerdown", () => {
             if (!this.inRange()) return;
+            const player = scene.player;
+            const held = player?.getHeldItem?.();
+            // Knife + unskinned → skin channel; otherwise loot panel
+            if (
+                held?.toolClass === "knife"
+                && !this.entry?.skinned
+                && typeof player.beginSkin === "function"
+            ) {
+                player.beginSkin(this);
+                return;
+            }
             scene.corpsePanel?.toggle?.(this);
         });
 
@@ -133,6 +145,81 @@ class Corpse extends Phaser.GameObjects.Sprite {
         const dy = this.y - player.y;
         const r = (this.scene.tileSize || 16) * (player.interactionRange || 4);
         return dx * dx + dy * dy <= r * r;
+    }
+
+    tooltipText() {
+        const name = this.entry?.name || "Corpse";
+        const lines = [`${name} (corpse)`];
+        if (this.entry?.skinned) lines.push("Skinned");
+        return lines.join("\n");
+    }
+
+    /**
+     * Loot granted when finishing a knife skin channel.
+     * @returns {{ id: string, min: number, max: number }[]}
+     */
+    skinLootTable() {
+        const id = this.entry?.mobId || "";
+        if (id === "deer") {
+            return [
+                { id: "raw_venison", min: 2, max: 4 },
+                { id: "deer_hide", min: 1, max: 1 },
+                { id: "bone", min: 2, max: 4 }
+            ];
+        }
+        if (id === "human") {
+            return [
+                { id: "raw_beef", min: 2, max: 4 },
+                { id: "bone", min: 1, max: 2 }
+            ];
+        }
+        return [{ id: "bone", min: 1, max: 2 }];
+    }
+
+    /** Apply skinning: mark skinned and append butcher loot. */
+    applySkin() {
+        if (!this.entry || this.entry.skinned) return [];
+        this.entry.skinned = true;
+        if (!this.entry.loot) this.entry.loot = [];
+        const gained = [];
+        for (const drop of this.skinLootTable()) {
+            const item = this.scene.getItem(drop.id);
+            if (!item) continue;
+            const lo = Math.max(0, Math.floor(Number(drop.min ?? 1) || 0));
+            const hi = Math.max(lo, Math.floor(Number(drop.max ?? lo) || 0));
+            let qty = Phaser.Math.Between(lo, hi);
+            if (!(qty > 0)) continue;
+            const maxStack = Math.max(1, Number(item.maxStack) || 1);
+            // Merge into existing plain stacks of the same item (e.g. venison)
+            for (const slot of this.entry.loot) {
+                if (!(qty > 0) || !slot || slot.id !== item.id) continue;
+                if (slot.customName || slot.food || slot.ingredients || slot.toolClass) continue;
+                if (slot.quantity >= maxStack) continue;
+                const add = Math.min(qty, maxStack - slot.quantity);
+                const freshAt = defaultSpoilAt(item, this.scene.worldMinuteIndex?.());
+                slot.spoilAt = mergeSpoilAt(slot.quantity, slot.spoilAt, add, freshAt);
+                slot.quantity += add;
+                qty -= add;
+                gained.push({ id: item.id, quantity: add });
+            }
+            while (qty > 0) {
+                const add = Math.min(qty, maxStack);
+                const stack = makeItemStack(item, add, undefined, this.scene.worldMinuteIndex?.());
+                this.entry.loot.push(stack);
+                gained.push(stack);
+                qty -= add;
+            }
+        }
+        // Refresh open loot UI if this corpse is open
+        const panel = this.scene.corpsePanel;
+        if (panel?.visible && panel.corpse === this) {
+            panel.session = (this.entry.loot || []).map((s) => cloneItemStack(s));
+            if (!panel.session.length) panel.session = [null];
+            panel._rebuildSlots?.();
+            panel.refresh?.();
+        }
+        this.scene.refreshTooltip?.();
+        return gained;
     }
 
     syncToEntry() {

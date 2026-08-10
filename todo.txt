@@ -1,0 +1,27 @@
+Building -- first make a lean-to that can be used for sleeping, will speed up time and increase recovery rate
+
+Multiplayer
+
+Animal hides system -- drying rack you can place a hide on, use Scraper to turn it into a skinned hide, gateway before curing
+
+Awls -- related to hides system, maybe make the Leaf Pouch recipe require one?
+
+Choppers -- no clue, maybe something with trees?
+
+Bones
+
+Random structures -- start with an abandoned camp that has a lean-to, unlit campfire, and some leftover supplies
+
+New burning system -- fires won't heat up immediately, different fuels burn at different temperatures, moisture will actually do something
+
+More animals -- boar, lynx, auroch
+
+Malnutrition and starvation
+
+Infection
+
+Clothing and armor
+
+Durability (?)
+
+Corpse decay (?)

@@ -106,7 +106,7 @@ class CampfirePanel {
                         }
                         const meta = this.scene.getItem(stack.id);
                         return this.scene.formatItemTooltip(
-                            meta, stack.quantity, stack.spoilMinutes, stack
+                            meta, stack.quantity, stack.spoilAt, stack
                         );
                     },
                     p.x, p.y, slot
@@ -121,7 +121,7 @@ class CampfirePanel {
                 if (key.startsWith('simmer:') && !this._simmerSlotsOpen()) return;
                 if (pointer.rightButtonDown()) {
                     if (key === 'catalyst' && this._catalystLocked()) return;
-                    this._returnStackToHotbar(key);
+                    this._returnStackToHotbar(key, pointer);
                     return;
                 }
                 if (key === 'catalyst' && this._catalystLocked()) return;
@@ -442,7 +442,7 @@ class CampfirePanel {
         return this.tryAddFromHotbar(hotbarIndex, pointer);
     }
 
-    tryQuickAdd(hotbarIndex) {
+    tryQuickAdd(hotbarIndex, pointer = null) {
         if (!this.visible || !this.campfire) return false;
         const inv = this.scene.player.inventory;
         const stack = inv[hotbarIndex];
@@ -482,11 +482,11 @@ class CampfirePanel {
                         if (!dest || dest.id !== stack.id) continue;
                         const maxStack = Math.max(1, meta.maxStack || 1);
                         if (dest.quantity >= maxStack) continue;
-                        this._depositFuelIntoSlot(idx, hotbarIndex);
+                        this._depositFuelIntoSlot(idx, hotbarIndex, pointer);
                         return true;
                     }
                     if (!dest) {
-                        this._depositFuelIntoSlot(idx, hotbarIndex);
+                        this._depositFuelIntoSlot(idx, hotbarIndex, pointer);
                         return true;
                     }
                 }
@@ -497,7 +497,7 @@ class CampfirePanel {
         if (meta?.fuel && isCatalyst && this.campfire.getCatalyst()) {
             for (let idx = 0; idx < 2; idx++) {
                 if (!this.campfire.getFuel(idx)) {
-                    this._depositFuelIntoSlot(idx, hotbarIndex);
+                    this._depositFuelIntoSlot(idx, hotbarIndex, pointer);
                     return true;
                 }
             }
@@ -515,15 +515,15 @@ class CampfirePanel {
         return false;
     }
 
-    tryQuickAddFuel(hotbarIndex) {
-        return this.tryQuickAdd(hotbarIndex);
+    tryQuickAddFuel(hotbarIndex, pointer = null) {
+        return this.tryQuickAdd(hotbarIndex, pointer);
     }
 
     _oneFromStack(stack) {
         const one = {
             id: stack.id,
             quantity: 1,
-            ...(stack.spoilMinutes != null ? { spoilMinutes: stack.spoilMinutes } : {})
+            ...(stack.spoilAt != null ? { spoilAt: stack.spoilAt } : {})
         };
         if (stack.customName) one.customName = stack.customName;
         if (stack.food) one.food = { ...stack.food };
@@ -538,7 +538,7 @@ class CampfirePanel {
         return {
             id: stack.id,
             quantity: stack.quantity,
-            ...(stack.spoilMinutes != null ? { spoilMinutes: stack.spoilMinutes } : {}),
+            ...(stack.spoilAt != null ? { spoilAt: stack.spoilAt } : {}),
             ...(stack.customName ? { customName: stack.customName } : {}),
             ...(stack.food ? { food: { ...stack.food } } : {}),
             ...(stack.ingredients ? { ingredients: stack.ingredients.slice() } : {}),
@@ -650,42 +650,51 @@ class CampfirePanel {
         // Fall back to gainItem (loses custom fields for non-meals; meals maxStack 1)
         if (stack.customName || stack.food) return false;
         const meta = this.scene.getItem(stack.id);
-        const left = this.scene.player.gainItem(meta, stack.quantity, stack.spoilMinutes);
+        const left = this.scene.player.gainItem(meta, stack.quantity, stack.spoilAt);
         return left < stack.quantity && left === 0;
     }
 
-    _depositFuelIntoSlot(idx, hotbarIndex) {
+    _depositFuelIntoSlot(idx, hotbarIndex, pointer = null) {
         const inv = this.scene.player.inventory;
         const stack = inv[hotbarIndex];
         if (!stack) return;
         const meta = this.scene.getItem(stack.id);
         const dest = this.campfire.getFuel(idx);
+        const want = pointer != null && typeof quickMoveAmount === "function"
+            ? quickMoveAmount(stack.quantity, pointer, this.scene)
+            : stack.quantity;
 
         if (!dest) {
+            const moved = Math.min(stack.quantity, want);
+            if (!(moved > 0)) return;
             this.campfire.setFuel(idx, {
                 id: stack.id,
-                quantity: stack.quantity,
-                ...(stack.spoilMinutes != null ? { spoilMinutes: stack.spoilMinutes } : {})
+                quantity: moved,
+                ...(stack.spoilAt != null ? { spoilAt: stack.spoilAt } : {})
             });
-            inv[hotbarIndex] = null;
+            stack.quantity -= moved;
+            if (stack.quantity <= 0) inv[hotbarIndex] = null;
         } else if (dest.id === stack.id) {
             const maxStack = Math.max(1, meta?.maxStack || 1);
             const space = Math.max(0, maxStack - dest.quantity);
             if (space <= 0) return;
-            const moved = Math.min(space, stack.quantity);
-            dest.spoilMinutes = mergeSpoilMinutes(
-                dest.quantity, dest.spoilMinutes,
-                moved, stack.spoilMinutes
+            const moved = Math.min(space, want, stack.quantity);
+            if (!(moved > 0)) return;
+            dest.spoilAt = mergeSpoilAt(
+                dest.quantity, dest.spoilAt,
+                moved, stack.spoilAt
             );
             dest.quantity += moved;
             stack.quantity -= moved;
             if (stack.quantity <= 0) inv[hotbarIndex] = null;
             this.campfire.setFuel(idx, dest);
         } else {
+            // Different item: only full-stack swap
+            if (want < stack.quantity) return;
             this.campfire.setFuel(idx, {
                 id: stack.id,
                 quantity: stack.quantity,
-                ...(stack.spoilMinutes != null ? { spoilMinutes: stack.spoilMinutes } : {})
+                ...(stack.spoilAt != null ? { spoilAt: stack.spoilAt } : {})
             });
             inv[hotbarIndex] = dest;
         }
@@ -695,7 +704,7 @@ class CampfirePanel {
         this.scene.refreshTooltip();
     }
 
-    _returnStackToHotbar(key) {
+    _returnStackToHotbar(key, pointer = null) {
         if (key === 'catalyst' && this._catalystLocked()) return;
         const stack = this._stackFor(key);
         if (!stack) return;
@@ -706,16 +715,19 @@ class CampfirePanel {
         } else {
             const meta = this.scene.getItem(stack.id);
             if (!meta) return;
+            const want = pointer != null && typeof quickMoveAmount === "function"
+                ? quickMoveAmount(stack.quantity, pointer, this.scene)
+                : stack.quantity;
+            const amount = Math.min(stack.quantity, want);
+            if (!(amount > 0)) return;
             const remaining = this.scene.player.gainItem(
-                meta, stack.quantity, stack.spoilMinutes
+                meta, amount, stack.spoilAt
             );
-            if (remaining === stack.quantity) return;
-            if (remaining > 0) {
-                stack.quantity = remaining;
-                this._setStack(key, stack);
-            } else {
-                this._setStack(key, null);
-            }
+            const moved = amount - remaining;
+            if (moved <= 0) return;
+            stack.quantity -= moved;
+            if (stack.quantity <= 0) this._setStack(key, null);
+            else this._setStack(key, stack);
         }
         this.layout();
         this.scene.hotbar.dirty = true;
@@ -765,9 +777,9 @@ class CampfirePanel {
             const space = maxStack - dest.quantity;
             if (space > 0) {
                 const moved = Math.min(space, stack.quantity);
-                dest.spoilMinutes = mergeSpoilMinutes(
-                    dest.quantity, dest.spoilMinutes,
-                    moved, stack.spoilMinutes
+                dest.spoilAt = mergeSpoilAt(
+                    dest.quantity, dest.spoilAt,
+                    moved, stack.spoilAt
                 );
                 dest.quantity += moved;
                 stack.quantity -= moved;
@@ -866,9 +878,9 @@ class CampfirePanel {
                 const meta = this.scene.getItem(b.id);
                 const maxStack = Math.max(1, meta?.maxStack || 1);
                 if (b.quantity >= maxStack) return;
-                b.spoilMinutes = mergeSpoilMinutes(
-                    b.quantity, b.spoilMinutes,
-                    a.quantity, a.spoilMinutes
+                b.spoilAt = mergeSpoilAt(
+                    b.quantity, b.spoilAt,
+                    a.quantity, a.spoilAt
                 );
                 b.quantity += a.quantity;
                 this._setStack(toKey, b);

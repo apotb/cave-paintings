@@ -62,7 +62,11 @@ class Capacities {
     pain() {
         let pain = 0;
         for (const part of Object.values(this.body.parts())) {
-            if (part.isDead()) continue;
+            if (part.isDead()) {
+                // Destroyed parts still hurt (injuries were cleared on destroy)
+                pain += Number(part.amputationPain) || 0.18;
+                continue;
+            }
             for (const inj of part.injuries) {
                 const pps = Number(inj.painPerSeverity);
                 if (inj.permanent) {

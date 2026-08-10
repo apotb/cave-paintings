@@ -103,13 +103,47 @@
         "hitboxSize": 5
     },
     {
+        "id": "sign",
+        "name": "Sign",
+        "key": "sign",
+        "hitboxSize": 5,
+        "tooltip": [
+            "Refresh the game to find a new spawn point.",
+            "It's recommended for new players to start in a forest."
+        ]
+    },
+    {
+        "id": "pebbles",
+        "name": "Pebbles",
+        "key": "pebble",
+        "hitboxSize": 0,
+        "lootable": {
+            "item": "pebble",
+            "yield": 1,
+            "transform": null,
+            "regrowMinutes": 0
+        }
+    },
+    {
+        "id": "flint",
+        "name": "Flint",
+        "key": "flint",
+        "hitboxSize": 0,
+        "lootable": {
+            "item": "flint",
+            "yield": 1,
+            "transform": null,
+            "regrowMinutes": 0
+        }
+    },
+    {
         "id": "leaves",
         "name": "Leaves",
         "key": "leaves",
         "hitboxSize": 0,
         "lootable": {
             "item": "leaf",
-            "yield": 3,
+            "yield": 5,
             "transform": null,
             "regrowMinutes": 7200
         }

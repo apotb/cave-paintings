@@ -230,7 +230,10 @@ const BodyCombat = {
                 ? "You"
                 : (attacker?.displayName?.() || attacker?.def?.name || "Someone");
             const verb = attack.verb || "hit";
-            const weaponName = attack.name || attack.sourcePart?.name || "blow";
+            // Prefer the item/body part — attack.name is the mode ("Stab"), not the tool
+            const weaponName = (!attack.unarmed && attack.weaponName)
+                ? attack.weaponName
+                : (attack.sourcePart?.name || attack.weaponName || "blow");
             const vicIsYou = target === scene.player;
             const vicPossessive = vicIsYou
                 ? "your"

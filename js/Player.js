@@ -19,6 +19,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._bodyDead = false;
         this._downed = false;
         this._tendChannel = null; // { remaining, max, slot }
+        /** Knife skinning channel on a corpse (same bar as tend). */
+        this._skinChannel = null;
         /** After Space uses food/tool, ignore autofire until Space is released. */
         this._blockSpaceAutofire = false;
         this._lastHotbarSlot = null;
@@ -210,8 +212,39 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const stack = this.getHeldItem();
         if (!stack) return null;
         const meta = this.scene.getItem(stack.id);
-        if (meta?.weapon?.type === "melee") return meta;
+        if (typeof Knapping !== "undefined" && stack.toolClass) {
+            if (stack.knapIconData) Knapping.ensureToolTexture(this.scene, stack);
+            const knap = Knapping.weaponMetaFromStack(meta, stack);
+            if (knap?.weapon?.type === "melee") return knap;
+        }
+        if (meta?.weapon?.type === "melee") {
+            if (stack.knapQuality && typeof weaponMetaWithKnapQuality === "function") {
+                return weaponMetaWithKnapQuality(meta, stack);
+            }
+            return meta;
+        }
         return null;
+    }
+
+    /**
+     * Insert a unique stack (meals / knapped tools). Returns false if inventory full
+     * (caller should drop on ground).
+     */
+    gainStack(stack) {
+        if (!stack || !(stack.quantity > 0)) return false;
+        const clone = typeof cloneItemStack === "function" ? cloneItemStack(stack) : { ...stack };
+        const nullIndex = this.inventory.findIndex((s) => !s);
+        if (nullIndex !== -1) {
+            this.inventory[nullIndex] = clone;
+            this.scene.hotbar.dirty = true;
+            return true;
+        }
+        if (this.inventory.length < this.inventorySize) {
+            this.inventory.push(clone);
+            this.scene.hotbar.dirty = true;
+            return true;
+        }
+        return false;
     }
 
     /** Unarmed fist fill — matches arm orange on the player sheet. */
@@ -249,6 +282,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._bodyDead = false;
         this._downed = false;
         this._tendChannel = null;
+        this._skinChannel = null;
         setCreatureProne(this, false);
         this.anatomy.fullHeal();
         this.capacities = new Capacities(this.anatomy);
@@ -266,7 +300,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      */
     takeLootStack(stack) {
         if (!stack || !(stack.quantity > 0)) return false;
-        const special = !!(stack.customName || stack.food || stack.ingredients);
+        const special = typeof isSpecialStack === "function"
+            ? isSpecialStack(stack)
+            : !!(stack.customName || stack.food || stack.ingredients || stack.toolClass);
         if (special) {
             const clone = cloneItemStack(stack);
             const nullIndex = this.inventory.findIndex(s => !s);
@@ -284,16 +320,16 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (!meta) return false;
             DroppedItem.spawn(
                 this.scene, this.x, this.y, meta, clone.quantity,
-                clone.spoilMinutes, mealStackExtras(clone)
+                clone.spoilAt, mealStackExtras(clone)
             );
             return true;
         }
         const meta = this.scene.getItem(stack.id);
         if (!meta) return false;
-        const remaining = this.gainItem(meta, stack.quantity, stack.spoilMinutes);
+        const remaining = this.gainItem(meta, stack.quantity, stack.spoilAt);
         if (remaining === stack.quantity) return false;
         if (remaining > 0) {
-            DroppedItem.spawn(this.scene, this.x, this.y, meta, remaining, stack.spoilMinutes);
+            DroppedItem.spawn(this.scene, this.x, this.y, meta, remaining, stack.spoilAt);
         }
         return true;
     }
@@ -338,7 +374,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             name: this.scene.playerName || "Player",
             loot,
             body: this.anatomy?.toJSON?.(),
-            bodyPlan: this.anatomy?.planId || "human"
+            bodyPlan: this.anatomy?.planId || "human",
+            mobId: "human"
         });
     }
 
@@ -431,7 +468,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 const extras = mealStackExtras(stack);
                 DroppedItem.spawn(
                     this.scene, this.x, this.y,
-                    meta, stack.quantity, stack.spoilMinutes, extras
+                    meta, stack.quantity, stack.spoilAt, extras
                 );
             }
             this.inventory.length = size;
@@ -593,7 +630,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         if (stack.quantity > 1) {
             stack.quantity -= 1;
-            this.setEquipmentStack(slotKey, makeItemStack(meta, 1, stack.spoilMinutes));
+            this.setEquipmentStack(slotKey, makeItemStack(meta, 1, stack.spoilAt));
             if (existing) {
                 // Try to return existing to an empty inventory slot
                 const empty = inv.findIndex(s => !s);
@@ -607,7 +644,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             }
         } else {
             inv[hotbarIndex] = existing;
-            this.setEquipmentStack(slotKey, makeItemStack(meta, 1, stack.spoilMinutes));
+            this.setEquipmentStack(slotKey, makeItemStack(meta, 1, stack.spoilAt));
         }
 
         this.syncWaistSlots();
@@ -639,9 +676,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             const meta = this.scene.getItem(dest.id);
             const maxStack = Math.max(1, meta?.maxStack || 1);
             if (dest.quantity + equipped.quantity > maxStack) return { ok: false, reason: 'full' };
-            dest.spoilMinutes = mergeSpoilMinutes(
-                dest.quantity, dest.spoilMinutes,
-                equipped.quantity, equipped.spoilMinutes
+            dest.spoilAt = mergeSpoilAt(
+                dest.quantity, dest.spoilAt,
+                equipped.quantity, equipped.spoilAt
             );
             dest.quantity += equipped.quantity;
             this.setEquipmentStack(slotKey, null);
@@ -654,7 +691,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 return { ok: false, reason: 'waist_blocked' };
             }
             inv[hotbarIndex] = equipped;
-            this.setEquipmentStack(slotKey, makeItemStack(destMeta, 1, dest.spoilMinutes));
+            this.setEquipmentStack(slotKey, makeItemStack(destMeta, 1, dest.spoilAt));
             if (dest.quantity > 1) {
                 dest.quantity -= 1;
                 const empty = inv.findIndex(s => !s);
@@ -753,6 +790,23 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         };
     }
 
+    /** Body center in fxRoot local space (root is pinned to this.x/this.y). */
+    bodyCenterLocal() {
+        if (this._prone) return { x: 0, y: 0 };
+        return {
+            x: this.width * 0.5,
+            y: -this.height * 0.5
+        };
+    }
+
+    /** Parent attack VFX to fxRoot so roundPixels can't desync them from the player. */
+    _attachAttackSprite(spr) {
+        if (!spr) return;
+        const root = this.ensureFxRoot();
+        this.syncFxRoot();
+        if (spr.parentContainer !== root) root.add(spr);
+    }
+
     /**
      * Solid body bounds for melee (origin bottom-left when standing).
      * Insets empty frame edges so the box matches the drawn character.
@@ -790,7 +844,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     startMeleeAttack(meta = null) {
         if (this.isAttacking() || this._bodyDead) return false;
         if (this.isIncapacitated()) return false;
-        if (this._tendChannel) return false;
+        if (this._tendChannel || this._skinChannel) return false;
 
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
@@ -822,27 +876,35 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (useWeaponArt) {
             const key = meta.key || meta.id;
             if (!this.weaponSprite) {
-                this.weaponSprite = this.scene.add.image(c.x, c.y, key)
+                this.weaponSprite = this.scene.add.image(0, 0, key)
                     .setOrigin(0.2, 0.8)
                     .setVisible(false);
-                this.scene.mainLayer.add(this.weaponSprite);
             } else if (this.scene.textures.exists(key)) {
                 this.weaponSprite.setTexture(key);
             }
-            this.weaponSprite.setOrigin(0.2, 0.8).setVisible(true).setDepth(this.y + 1);
+            this._attachAttackSprite(this.weaponSprite);
+            this.weaponSprite.setOrigin(0.2, 0.8).setScale(1).setVisible(true).setDepth(1);
             this.unarmedSprite?.setVisible(false);
+            // Grip near body, tip forward — never re-pick from world pos (jitter while moving)
+            if (useWeaponArt && meta.weapon?.knapSilhouette) {
+                this._knapTipCell = this._knapExtremeCellAlongAim(angle, true);
+                this._knapGripCell = this._knapExtremeCellAlongAim(angle, false);
+            } else {
+                this._knapTipCell = null;
+                this._knapGripCell = null;
+            }
             this._updateWeaponSprite(0);
         } else {
             // Tiny unarmed thrust rectangle (matches arm color on player sheet)
             const fistColor = this.fistColor();
             if (!this.unarmedSprite) {
-                this.unarmedSprite = this.scene.add.rectangle(c.x, c.y, 4, 10, fistColor, 1)
+                this.unarmedSprite = this.scene.add.rectangle(0, 0, 4, 10, fistColor, 1)
                     .setOrigin(0.5, 1);
-                this.scene.mainLayer.add(this.unarmedSprite);
             } else {
                 this.unarmedSprite.setFillStyle(fistColor, 1);
             }
-            this.unarmedSprite.setVisible(true).setDepth(this.y + 1);
+            this._attachAttackSprite(this.unarmedSprite);
+            this.unarmedSprite.setVisible(true).setDepth(1);
             this.weaponSprite?.setVisible(false);
             this._updateUnarmedSprite(0);
         }
@@ -851,11 +913,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     _updateUnarmedSprite(progress) {
         if (!this.unarmedSprite || !this.currentAttack) return;
+        this.syncFxRoot();
         const range = Number(this.attackWeapon?.range) || Number(this.currentAttack.range) || 4;
-        const c = this.bodyCenter();
+        const c = this.bodyCenterLocal();
         placeUnarmedThrustSprite(
-            this.unarmedSprite, c.x, c.y, this.attackAngle, range, progress, this.y
+            this.unarmedSprite, c.x, c.y, this.attackAngle, range, progress, null
         );
+        this.unarmedSprite.setDepth(1);
     }
 
     _attackProgress() {
@@ -868,6 +932,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return aimAngle + Math.PI / 4;
     }
 
+    /** Knapped silhouettes have tip facing up → +90° so tip follows aim. */
+    _weaponAimRotation(aimAngle) {
+        if (this.attackWeapon?.knapSilhouette) return aimAngle + Math.PI / 2;
+        return this._spearRotation(aimAngle);
+    }
+
     /** Jab: 0→1 extends out, 1→0 pulls back (shared with mobs). */
     _spearThrust(progress) {
         return meleeThrustCurve(progress);
@@ -875,24 +945,43 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     _updateWeaponSprite(progress) {
         if (!this.weaponSprite || !this.attackWeapon) return;
+        this.syncFxRoot();
         const range = Number(this.attackWeapon.range) || 12;
         const thrust = this._spearThrust(progress);
-        // Anchor the mid-shaft at hold + range * thrust (between grip-forward and tip-forward).
-        const hold = 6;
-        const anchorDist = hold + range * thrust;
-        const c = this.bodyCenter();
+        const c = this.bodyCenterLocal();
         const ang = this.attackAngle;
-        const rot = this._spearRotation(ang);
+        const rot = this._weaponAimRotation(ang);
         this.weaponSprite.setRotation(rot);
 
+        // Knapped tools: grip near the body; tip extends forward (not tip-at-hold,
+        // which left most of the silhouette behind the player).
+        if (this.attackWeapon.knapSilhouette) {
+            const hold = 5;
+            const anchorDist = hold + range * thrust;
+            const ax = c.x + Math.cos(ang) * anchorDist;
+            const ay = c.y + Math.sin(ang) * anchorDist;
+            const gripCell = this._knapGripCell
+                || this._knapExtremeCellAlongAim(ang, false);
+            if (gripCell) {
+                const gripOff = this._weaponFrameLocalOffset(gripCell.x, gripCell.y);
+                this.weaponSprite.setPosition(ax - gripOff.x, ay - gripOff.y);
+            } else {
+                this.weaponSprite.setPosition(ax, ay);
+            }
+            this.weaponSprite.setDepth(1);
+            return;
+        }
+
+        // Spears: anchor mid-shaft at hold + range * thrust
+        const hold = 6;
+        const anchorDist = hold + range * thrust;
         const ax = c.x + Math.cos(ang) * anchorDist;
         const ay = c.y + Math.sin(ang) * anchorDist;
         const fw = this.weaponSprite.frame?.width || this.weaponSprite.width || 16;
         const fh = this.weaponSprite.frame?.height || this.weaponSprite.height || 16;
-        // Midpoint along the diagonal shaft (butt → tip)
         const mid = this._weaponFrameLocalOffset((fw - 1) * 0.5, (fh - 1) * 0.5);
         this.weaponSprite.setPosition(ax - mid.x, ay - mid.y);
-        this.weaponSprite.setDepth(this.y + 1);
+        this.weaponSprite.setDepth(1);
     }
 
     /** World-space offset from sprite origin to a frame-space pixel (uses current rotation). */
@@ -912,6 +1001,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     /**
      * Transform a frame-space pixel on the weapon sprite into world coords.
+     * Sprite lives in fxRoot local space when attacking.
      */
     _weaponFrameToWorld(frameX, frameY) {
         const spr = this.weaponSprite;
@@ -922,10 +1012,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const localY = frameY - spr.originY * h;
         const cos = Math.cos(spr.rotation);
         const sin = Math.sin(spr.rotation);
-        return {
-            x: spr.x + localX * cos - localY * sin,
-            y: spr.y + localX * sin + localY * cos
-        };
+        const ox = localX * cos - localY * sin;
+        const oy = localX * sin + localY * cos;
+        if (spr.parentContainer && this.fxRoot && spr.parentContainer === this.fxRoot) {
+            return { x: this.x + spr.x + ox, y: this.y + spr.y + oy };
+        }
+        return { x: spr.x + ox, y: spr.y + oy };
     }
 
     /**
@@ -948,6 +1040,109 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return { a: mid, b: tip };
     }
 
+    /** Cached opaque pixel coords for a knapped tool texture. */
+    _knapOpaqueCells(spr) {
+        const key = spr?.texture?.key;
+        if (!key) return null;
+        if (!this._knapOpaqueCache) this._knapOpaqueCache = new Map();
+        if (this._knapOpaqueCache.has(key)) return this._knapOpaqueCache.get(key);
+
+        const w = spr.frame?.width || spr.width || 16;
+        const h = spr.frame?.height || spr.height || 16;
+        let src = null;
+        try {
+            src = spr.texture.getSourceImage();
+        } catch (_) {
+            return null;
+        }
+        if (!src) return null;
+        let data = null;
+        if (src.getContext) {
+            try {
+                data = src.getContext("2d").getImageData(0, 0, w, h).data;
+            } catch (_) {
+                return null;
+            }
+        } else if (typeof document !== "undefined") {
+            const c = document.createElement("canvas");
+            c.width = w;
+            c.height = h;
+            const ctx = c.getContext("2d");
+            ctx.drawImage(src, 0, 0);
+            data = ctx.getImageData(0, 0, w, h).data;
+        }
+        if (!data) return null;
+
+        const cells = [];
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                if (data[(y * w + x) * 4 + 3] < 16) continue;
+                cells.push({ x, y });
+            }
+        }
+        const out = cells.length ? cells : null;
+        this._knapOpaqueCache.set(key, out);
+        return out;
+    }
+
+    /**
+     * Opaque cell farthest (tip) or nearest (grip) along aim in frame space.
+     * Ignores current sprite world pos.
+     */
+    _knapExtremeCellAlongAim(ang, wantTip) {
+        const spr = this.weaponSprite;
+        const cells = this._knapOpaqueCells(spr);
+        if (!cells?.length) return null;
+        const w = spr.frame?.width || spr.width || 16;
+        const h = spr.frame?.height || spr.height || 16;
+        const rot = this._weaponAimRotation(ang);
+        const cosR = Math.cos(rot);
+        const sinR = Math.sin(rot);
+        const cosA = Math.cos(ang);
+        const sinA = Math.sin(ang);
+        let best = null;
+        let bestProj = wantTip ? -Infinity : Infinity;
+        for (const cell of cells) {
+            const localX = cell.x - spr.originX * w;
+            const localY = cell.y - spr.originY * h;
+            const ox = localX * cosR - localY * sinR;
+            const oy = localX * sinR + localY * cosR;
+            const proj = ox * cosA + oy * sinA;
+            if (wantTip ? proj > bestProj : proj < bestProj) {
+                bestProj = proj;
+                best = cell;
+            }
+        }
+        return best;
+    }
+
+    /** @deprecated Prefer _knapExtremeCellAlongAim(ang, true) */
+    _knapTipCellAlongAim(ang) {
+        return this._knapExtremeCellAlongAim(ang, true);
+    }
+
+    /**
+     * Tiny tip-only segment for knapped tools — no spear frame / centroid span.
+     */
+    _getKnapHitSegment() {
+        const spr = this.weaponSprite;
+        if (!spr || !spr.visible) return null;
+        const tipCell = this._knapTipCell || this._knapExtremeCellAlongAim(this.attackAngle, true);
+        if (!tipCell) return null;
+        const tip = this._weaponFrameToWorld(tipCell.x, tipCell.y);
+        if (!tip) return null;
+        const ang = this.attackAngle;
+        // ~2px of blade behind the tip — stays on the stone, not empty frame
+        const len = 2;
+        return {
+            a: {
+                x: tip.x - Math.cos(ang) * len,
+                y: tip.y - Math.sin(ang) * len
+            },
+            b: tip
+        };
+    }
+
     _meleeHitCheck(progress) {
         const w = this.attackWeapon;
         const attack = this.currentAttack;
@@ -959,9 +1154,21 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         let seg = null;
         let radius = 3;
         if (this.weaponSprite?.visible) {
-            seg = this._getSpearHitSegment();
+            if (w.knapSilhouette) {
+                seg = this._getKnapHitSegment();
+                radius = 0; // tip pixel only — no fat padding past the stone
+            } else {
+                seg = this._getSpearHitSegment();
+            }
         } else if (this.unarmedSprite?.visible) {
             seg = unarmedHitSegment(this.unarmedSprite, this.attackAngle);
+            // Fist sprite is in fxRoot local space
+            if (seg && this.fxRoot && this.unarmedSprite.parentContainer === this.fxRoot) {
+                seg.a.x += this.x;
+                seg.a.y += this.y;
+                seg.b.x += this.x;
+                seg.b.y += this.y;
+            }
             radius = 4;
         }
         if (!seg) return;
@@ -986,6 +1193,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.attackWeapon = null;
         this.attackHitSet = null;
         this.currentAttack = null;
+        this._knapTipCell = null;
+        this._knapGripCell = null;
         if (this.weaponSprite) this.weaponSprite.setVisible(false);
         if (this.unarmedSprite) this.unarmedSprite.setVisible(false);
         this.tooltipBlockUntil = (this.scene.time?.now ?? 0) + 250;
@@ -1022,22 +1231,23 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this.kc === 0) this.damage(0.25);
     }
 
-    gainItem(item, amount = 1, spoilMinutes = undefined) {
+    gainItem(item, amount = 1, spoilAt = undefined) {
         let remaining = amount;
         const weightLeft = Math.max(0, this.strength * 2 - this.getInventoryWeight());
         let allowedByWeight = Math.floor((weightLeft + Math.pow(10, -8)) / item.weight);
-        const incomingSpoil = spoilMinutes !== undefined
-            ? spoilMinutes
-            : defaultSpoilMinutes(item);
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        const incomingSpoil = spoilAt !== undefined
+            ? spoilAt
+            : defaultSpoilAt(item, now);
 
         // Fill existing stacks first (never merge into meals / food-overridden stacks)
         for (const slot of this.inventory) {
             if (!slot || slot.id !== item.id || slot.quantity >= item.maxStack) continue;
-            if (slot.customName || slot.food || slot.ingredients) continue;
+            if (slot.customName || slot.food || slot.ingredients || slot.toolClass) continue;
             const space = item.maxStack - slot.quantity;
             const toAdd = Math.min(space, remaining, allowedByWeight);
-            slot.spoilMinutes = mergeSpoilMinutes(
-                slot.quantity, slot.spoilMinutes,
+            slot.spoilAt = mergeSpoilAt(
+                slot.quantity, slot.spoilAt,
                 toAdd, incomingSpoil
             );
             slot.quantity += toAdd;
@@ -1052,7 +1262,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         // Create new stacks as needed
         while (remaining > 0 && allowedByWeight > 0) {
             const toAdd = Math.min(item.maxStack, remaining, allowedByWeight);
-            const stack = makeItemStack(item, toAdd, incomingSpoil);
+            const stack = makeItemStack(item, toAdd, incomingSpoil, now);
             const nullIndex = this.inventory.findIndex(s => !s);
             if (nullIndex !== -1) {
                 this.inventory[nullIndex] = stack;
@@ -1084,25 +1294,59 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     loseAnyItem(id, amount=1) {
-        let remaining = amount;
+        return this.loseMatchingItems({ id, qty: amount });
+    }
+
+    /**
+     * Remove stacks matching id (and optional toolClass). Prefer exact toolClass matches.
+     * @param {{ id: string, qty?: number, toolClass?: string|null }} match
+     */
+    loseMatchingItems(match) {
+        const id = match?.id;
+        let remaining = Math.max(0, Number(match?.qty) || 1);
+        const wantClass = match?.toolClass || null;
+        if (!id || !(remaining > 0)) return 0;
         let numLost = 0;
-        for (let i = 0; i < this.inventory.length && remaining > 0; i++) {
-            const s = this.inventory[i];
-            if (!s || s.id !== id) continue;
-            const take = Math.min(s.quantity, remaining);
-            s.quantity -= take;
-            remaining -= take;
-            numLost += take;
-            if (s.quantity <= 0) this.inventory[i] = null;
-        }
+
+        const takeFrom = (requireClass) => {
+            for (let i = 0; i < this.inventory.length && remaining > 0; i++) {
+                const s = this.inventory[i];
+                if (!s || s.id !== id) continue;
+                if (requireClass && s.toolClass !== requireClass) continue;
+                if (!requireClass && wantClass && s.toolClass === wantClass) continue;
+                const take = Math.min(s.quantity, remaining);
+                s.quantity -= take;
+                remaining -= take;
+                numLost += take;
+                if (s.quantity <= 0) this.inventory[i] = null;
+            }
+        };
+
+        if (wantClass) takeFrom(wantClass);
+        // Only fall back to bare id when no toolClass was required
+        if (!wantClass) takeFrom(null);
+
         if (numLost > 0) this.scene.hotbar.dirty = true;
         return numLost;
     }
 
     getNumItems(id) {
+        return this.getNumMatchingItems({ id });
+    }
+
+    /**
+     * Count stacks matching id (and optional toolClass).
+     * @param {{ id: string, toolClass?: string|null }} match
+     */
+    getNumMatchingItems(match) {
+        const id = match?.id;
+        const wantClass = match?.toolClass || null;
+        if (!id) return 0;
         let sum = 0;
         for (const stack of this.inventory) {
-            if (stack && stack.id === id) sum += stack.quantity;
+            if (!stack || stack.id !== id) continue;
+            if (wantClass && stack.toolClass !== wantClass) continue;
+            sum += stack.quantity;
         }
         return sum;
     }
@@ -1118,7 +1362,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     /** Hold Space to keep attacking (weapon or unarmed). */
     tryWeaponAutofire() {
-        if (this.isAttacking() || this._tendChannel || this._bodyDead) return;
+        if (this.isAttacking() || this._tendChannel || this._skinChannel || this._bodyDead) return;
         if (this.isIncapacitated()) return;
         const item = this.getHeldItem();
         if (!item) {
@@ -1127,15 +1371,19 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
         const meta = this.scene.getItem(item.id);
         if (meta?.bandage) return; // channel handled separately
-        if (meta?.weapon?.type === "melee") {
-            this.startMeleeAttack(meta);
-        } else if (!meta?.food && !meta?.use) {
+        if (item.toolClass === "knife") {
+            // Skinning is click-on-corpse; Space still attacks with the knife
+        }
+        const weaponMeta = this.getHeldWeaponMeta();
+        if (weaponMeta?.weapon?.type === "melee") {
+            this.startMeleeAttack(weaponMeta);
+        } else if (!meta?.food && !meta?.use && !meta?.knapping) {
             this.startMeleeAttack(null);
         }
     }
 
     beginTend() {
-        if (this._tendChannel || this._bodyDead || this.isAttacking()) return false;
+        if (this._tendChannel || this._skinChannel || this._bodyDead || this.isAttacking()) return false;
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
         if (this.isIncapacitated()) return false;
@@ -1164,6 +1412,68 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         };
         this.scene.showChannelBar?.(0);
         return true;
+    }
+
+    /**
+     * Start skinning a corpse with a held knife (5s channel, cancel if you swap off / walk away).
+     */
+    beginSkin(corpse) {
+        if (this._tendChannel || this._skinChannel || this._bodyDead || this.isAttacking()) return false;
+        this.capacities = new Capacities(this.anatomy);
+        if (!this.capacities.canManipulate()) return false;
+        if (this.isIncapacitated()) return false;
+        if (!corpse?.entry || corpse.entry.skinned) return false;
+        if (!corpse.inRange?.()) return false;
+        const item = this.getHeldItem();
+        if (!item || item.toolClass !== "knife") return false;
+
+        // Close loot UI while skinning
+        if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
+
+        const seconds = 5;
+        const scale = this.capacities.actionDurationScale();
+        const max = seconds * 1000 * scale;
+        this._skinChannel = {
+            remaining: max,
+            max,
+            slot: this.scene.hotbar.activeIndex,
+            corpse,
+            itemId: item.id
+        };
+        this.scene.showChannelBar?.(0);
+        return true;
+    }
+
+    _cancelSkin() {
+        if (!this._skinChannel) return;
+        this._skinChannel = null;
+        this.scene.hideChannelBar?.();
+    }
+
+    _tickSkin(delta) {
+        if (!this._skinChannel) return;
+        const slot = this.scene.hotbar.activeIndex;
+        const held = this.getHeldItem();
+        const corpse = this._skinChannel.corpse;
+        if (
+            slot !== this._skinChannel.slot
+            || !held
+            || held.toolClass !== "knife"
+            || !corpse?.active
+            || corpse.entry?.skinned
+            || !corpse.inRange?.()
+        ) {
+            this._cancelSkin();
+            return;
+        }
+        this._skinChannel.remaining -= delta;
+        const prog = 1 - this._skinChannel.remaining / this._skinChannel.max;
+        this.scene.showChannelBar?.(Phaser.Math.Clamp(prog, 0, 1));
+        if (this._skinChannel.remaining > 0) return;
+
+        corpse.applySkin?.();
+        this._skinChannel = null;
+        this.scene.hideChannelBar?.();
     }
 
     _tickTend(delta) {
@@ -1255,8 +1565,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this.beginTend();
             return;
         }
-        if (meta?.weapon?.type === "melee") {
-            this.startMeleeAttack(meta);
+        const weaponMeta = this.getHeldWeaponMeta();
+        if (weaponMeta?.weapon?.type === "melee") {
+            this.startMeleeAttack(weaponMeta);
             return;
         }
         if (meta?.weapon?.type === "ranged") {
@@ -1312,6 +1623,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this.setVelocity(0, 0);
             const dtChat = delta || (this.scene.game.loop.delta || 16);
             if (this._tendChannel) this._tickTend(dtChat);
+            if (this._skinChannel) this._tickSkin(dtChat);
             return;
         }
 
@@ -1319,8 +1631,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._refreshDownedState();
         if (this._bodyDead) return;
 
+        // Frozen while knapping GUI is open
+        if (this.scene.knappingPanel?.visible) {
+            this.setVelocity(0, 0);
+            return;
+        }
+
         const dt = delta || (this.scene.game.loop.delta || 16);
         if (this._tendChannel) this._tickTend(dt);
+        if (this._skinChannel) this._tickSkin(dt);
 
         const incapacitated = this.isIncapacitated();
         const immobile = this.isImmobile();
@@ -1367,19 +1686,31 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             * (this.isSprinting ? this.sprintFactor : 1)
             * encumbrance.speedMultiplier
             * this.equipSpeedMultiplier
-            * Math.max(0.05, Math.min(1.5, moveMul));
+            * Math.max(0.05, Math.min(1.5, moveMul))
+            * (this.scene.terrainSpeedMult?.(this.x, this.y - 1) ?? 1);
         this.anims.timeScale = this.isSprinting ? 1.5 : 1.0;
 
-        this.setVelocity(prone ? 0 : x * speed, prone ? 0 : y * speed);
+        const wantVx = prone ? 0 : x * speed;
+        const wantVy = prone ? 0 : y * speed;
+        applyEntityVelocity(this, wantVx, wantVy, delta, this.scene);
         this.setDepth(this.y);
+
+        const sliding = Math.hypot(this._iceVx ?? 0, this._iceVy ?? 0) > 12
+            && !!this.scene._isIceAt?.(this.x, this.y - 1);
 
         if (!prone) {
             if (attacking) {
                 this.facing = this.facingFromAngle(this.attackAngle);
-                this.play(moving ? `walk-${this.facing}` : `idle-${this.facing}`, true);
+                this.play(moving || sliding ? `walk-${this.facing}` : `idle-${this.facing}`, true);
             } else if (moving) {
                 if (Math.abs(x) > Math.abs(y)) this.facing = x > 0 ? "right" : "left";
                 else this.facing = y > 0 ? "down" : "up";
+                this.play(`walk-${this.facing}`, true);
+            } else if (sliding) {
+                const sx = this._iceVx || 0;
+                const sy = this._iceVy || 0;
+                if (Math.abs(sx) > Math.abs(sy)) this.facing = sx > 0 ? "right" : "left";
+                else this.facing = sy > 0 ? "down" : "up";
                 this.play(`walk-${this.facing}`, true);
             } else {
                 this.play(`idle-${this.facing}`, true);
@@ -1403,12 +1734,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 let amount = 1;
                 if (this.keys.SHIFT.isDown) amount = heldItem.quantity;
                 else if (this.keys.CTRL.isDown) amount = 10;
-                const spoilMinutes = heldItem.spoilMinutes;
+                const spoilAt = heldItem.spoilAt;
                 const extras = mealStackExtras(heldItem);
                 const numDropped = this.loseItemAt(this.scene.hotbar.activeIndex, amount);
                 DroppedItem.spawn(
                     this.scene, this.x, this.y,
-                    this.scene.getItem(heldItem.id), numDropped, spoilMinutes, extras
+                    this.scene.getItem(heldItem.id), numDropped, spoilAt, extras
                 );
                 this.scene.hotbar.dirty = true;
             }

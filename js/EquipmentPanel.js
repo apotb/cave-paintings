@@ -43,6 +43,7 @@ class EquipmentPanel {
     }
 
     open() {
+        if (this.scene.knappingPanel?.visible) return;
         // Side menus exclude each other; world UIs (corpse / campfire) can stay open
         if (this.scene.craftMenuVisible) this.scene.closeCraftMenu();
         if (this.scene.healthPanel?.visible) this.scene.healthPanel.close();
@@ -211,7 +212,7 @@ class EquipmentPanel {
             }
             const meta = this.scene.getItem(stack.id);
             this.scene.showTooltip(
-                () => this.scene.formatItemTooltip(meta, stack.quantity, stack.spoilMinutes, stack),
+                () => this.scene.formatItemTooltip(meta, stack.quantity, stack.spoilAt, stack),
                 p.x, p.y, slot
             );
         });

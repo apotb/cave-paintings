@@ -236,36 +236,259 @@ function formatHours(hours) {
 }
 
 /**
- * Default remaining spoil time in game minutes for a fresh item.
+ * Amount to move on a quick-transfer (right-click).
+ * Default 1; Shift = whole stack; Ctrl = half (at least 1).
+ * @param {number} quantity
+ * @param {Phaser.Input.Pointer|null} pointer
+ * @param {Phaser.Scene|null} scene
+ */
+function quickMoveAmount(quantity, pointer = null, scene = null) {
+    const q = Math.max(0, Math.floor(Number(quantity) || 0));
+    if (q <= 0) return 0;
+    const ev = pointer?.event;
+    const shift = !!(ev?.shiftKey || scene?.player?.keys?.SHIFT?.isDown);
+    const ctrl = !!(ev?.ctrlKey || scene?.player?.keys?.CTRL?.isDown);
+    if (shift) return q;
+    if (ctrl) return Math.max(1, Math.floor(q / 2));
+    return 1;
+}
+
+/**
+ * Spoil duration in game minutes for a fresh item (from food.spoil hours).
  * @param   {Object} item   Item definition from Items.json.
  * @return  {Number|null}   Minutes, or null if not spoilable.
  */
-function defaultSpoilMinutes(item) {
+function spoilDurationMinutes(item) {
     const hours = item?.food?.spoil;
     if (!hours || hours <= 0) return null;
     return Math.round(hours * 60);
 }
 
-/**
- * Quantity-weighted average of two spoil timers (game minutes).
- */
-function mergeSpoilMinutes(countA, minutesA, countB, minutesB) {
-    if (minutesA == null && minutesB == null) return null;
-    if (minutesA == null) return minutesB;
-    if (minutesB == null) return minutesA;
-    const total = countA + countB;
-    if (total <= 0) return Math.round(minutesA);
-    return Math.round((countA * minutesA + countB * minutesB) / total);
+/** @deprecated Use spoilDurationMinutes */
+function defaultSpoilMinutes(item) {
+    return spoilDurationMinutes(item);
 }
 
 /**
- * Build an inventory/equipment stack object, attaching spoilMinutes when applicable.
+ * Absolute world-minute index when a fresh item should spoil.
+ * @param {Object} item
+ * @param {number} now  scene.worldMinuteIndex()
+ * @returns {number|null}
  */
-function makeItemStack(item, quantity, spoilMinutes = undefined) {
+function defaultSpoilAt(item, now) {
+    const dur = spoilDurationMinutes(item);
+    if (dur == null || now == null) return null;
+    return Math.round(now) + dur;
+}
+
+/**
+ * Remaining game minutes until spoilAt (0 if due/past).
+ */
+function remainingSpoilMinutes(spoilAt, now) {
+    if (spoilAt == null || now == null) return null;
+    return Math.max(0, Math.round(spoilAt) - Math.round(now));
+}
+
+/**
+ * Quantity-weighted average of two absolute spoilAt timestamps.
+ * Equivalent to averaging remaining times (now cancels out).
+ */
+function mergeSpoilAt(countA, atA, countB, atB) {
+    if (atA == null && atB == null) return null;
+    if (atA == null) return atB;
+    if (atB == null) return atA;
+    const total = countA + countB;
+    if (total <= 0) return Math.round(atA);
+    return Math.round((countA * atA + countB * atB) / total);
+}
+
+/** @deprecated Use mergeSpoilAt */
+function mergeSpoilMinutes(countA, minutesA, countB, minutesB) {
+    return mergeSpoilAt(countA, minutesA, countB, minutesB);
+}
+
+/**
+ * Derive crafted item weights from recipe ingredients (recursive).
+ * Mutates items in place. Skips REQUIRE_THING; divides by QUANTITY.
+ * Items with weightFixed keep their authored weight.
+ * @param {Object[]} items
+ */
+function resolveCraftedWeights(items) {
+    if (!Array.isArray(items)) return;
+    const byId = new Map();
+    for (const item of items) {
+        if (item?.id) byId.set(item.id, item);
+    }
+    const resolving = new Set();
+    const resolved = new Map();
+
+    function weightOf(id) {
+        if (resolved.has(id)) return resolved.get(id);
+        const item = byId.get(id);
+        if (!item) {
+            console.warn(`resolveCraftedWeights: missing item "${id}"`);
+            resolved.set(id, 0);
+            return 0;
+        }
+        if (!item.recipe || item.weightFixed) {
+            const w = Number(item.weight) || 0;
+            resolved.set(id, w);
+            return w;
+        }
+        if (resolving.has(id)) {
+            console.warn(`resolveCraftedWeights: cycle at "${id}"`);
+            const w = Number(item.weight) || 0;
+            resolved.set(id, w);
+            return w;
+        }
+        resolving.add(id);
+        let quantity = 1;
+        let sum = 0;
+        for (const [k, v] of Object.entries(item.recipe)) {
+            if (k === "QUANTITY") {
+                quantity = +v || 1;
+                continue;
+            }
+            if (k === "REQUIRE_THING") continue;
+            const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
+            sum += weightOf(k) * qty;
+        }
+        resolving.delete(id);
+        const w = Math.round((sum / Math.max(1, quantity)) * 100) / 100;
+        item.weight = w;
+        resolved.set(id, w);
+        return w;
+    }
+
+    for (const item of items) {
+        if (item?.id) weightOf(item.id);
+    }
+}
+
+/**
+ * Derive crafted item fuel.kj from recipe ingredients (recursive).
+ * Mutates items in place. Skips REQUIRE_THING; divides by QUANTITY.
+ * Authored fuel.kj on a craftable (or fuelFixed) is an override; otherwise inherit.
+ * Adds fuel when the derived sum > 0.
+ * @param {Object[]} items
+ */
+function resolveCraftedFuel(items) {
+    if (!Array.isArray(items)) return;
+    const byId = new Map();
+    for (const item of items) {
+        if (item?.id) byId.set(item.id, item);
+    }
+    const resolving = new Set();
+    const resolved = new Map();
+
+    function hasKjOverride(item) {
+        return !!(item.fuelFixed || (item.fuel && Object.prototype.hasOwnProperty.call(item.fuel, "kj")));
+    }
+
+    function fuelKjOf(id) {
+        if (resolved.has(id)) return resolved.get(id);
+        const item = byId.get(id);
+        if (!item) {
+            console.warn(`resolveCraftedFuel: missing item "${id}"`);
+            resolved.set(id, 0);
+            return 0;
+        }
+        if (!item.recipe || hasKjOverride(item)) {
+            const kj = Number(item.fuel?.kj) || 0;
+            resolved.set(id, kj);
+            return kj;
+        }
+        if (resolving.has(id)) {
+            console.warn(`resolveCraftedFuel: cycle at "${id}"`);
+            const kj = Number(item.fuel?.kj) || 0;
+            resolved.set(id, kj);
+            return kj;
+        }
+        resolving.add(id);
+        let quantity = 1;
+        let sum = 0;
+        for (const [k, v] of Object.entries(item.recipe)) {
+            if (k === "QUANTITY") {
+                quantity = +v || 1;
+                continue;
+            }
+            if (k === "REQUIRE_THING") continue;
+            const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
+            sum += fuelKjOf(k) * qty;
+        }
+        resolving.delete(id);
+        const kj = Math.round(sum / Math.max(1, quantity));
+        if (kj > 0) {
+            if (!item.fuel) item.fuel = {};
+            item.fuel.kj = kj;
+        }
+        resolved.set(id, kj);
+        return kj;
+    }
+
+    for (const item of items) {
+        if (item?.id) fuelKjOf(item.id);
+    }
+}
+
+/**
+ * Build an inventory/equipment stack object, attaching spoilAt when applicable.
+ * @param {Object} item
+ * @param {number} quantity
+ * @param {number|null|undefined} spoilAt  absolute world minute; omit to use now+duration
+ * @param {number|null} now  worldMinuteIndex(); required when spoilAt is omitted for spoilable items
+ */
+function makeItemStack(item, quantity, spoilAt = undefined, now = null) {
     const stack = { id: item.id, quantity };
-    const spoil = spoilMinutes !== undefined ? spoilMinutes : defaultSpoilMinutes(item);
-    if (spoil != null) stack.spoilMinutes = spoil;
+    let at = spoilAt;
+    if (at === undefined) {
+        at = defaultSpoilAt(item, now);
+        // Dynamic meal stacks may carry food.spoil without meta.food
+        if (at == null && now != null && item?.food?.spoil > 0) {
+            at = Math.round(now) + Math.round(item.food.spoil * 60);
+        }
+    }
+    if (at != null) stack.spoilAt = at;
     return stack;
+}
+
+/**
+ * Migrate legacy spoilMinutes (remaining) → spoilAt, or assign fresh spoilAt if missing.
+ * @param {Object|null} stack
+ * @param {number} now
+ * @param {Function} [getItem]
+ */
+function migrateStackSpoil(stack, now, getItem = null) {
+    if (!stack || now == null) return stack;
+    if (stack.spoilAt != null) {
+        if (stack.spoilMinutes != null) delete stack.spoilMinutes;
+        return stack;
+    }
+    if (stack.spoilMinutes != null) {
+        stack.spoilAt = Math.round(now) + Math.round(stack.spoilMinutes);
+        delete stack.spoilMinutes;
+        return stack;
+    }
+    const meta = getItem ? getItem(stack.id) : null;
+    const foodSpoil = stack.food?.spoil ?? meta?.food?.spoil;
+    if (foodSpoil > 0) {
+        stack.spoilAt = Math.round(now) + Math.round(foodSpoil * 60);
+    }
+    return stack;
+}
+
+/**
+ * If stack is due to spoil at/before now, return a rot stack (or strip timer).
+ * @returns {{ stack: Object|null, changed: boolean }}
+ */
+function spoilStackIfDue(stack, now, rotItem) {
+    if (!stack || stack.spoilAt == null) return { stack, changed: false };
+    if (Math.round(now) < Math.round(stack.spoilAt)) return { stack, changed: false };
+    if (!rotItem) {
+        delete stack.spoilAt;
+        return { stack, changed: true };
+    }
+    return { stack: { id: rotItem.id, quantity: stack.quantity }, changed: true };
 }
 
 /**
@@ -434,7 +657,15 @@ function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
             .setVisible(true);
         return;
     }
-    const key = meta?.key || stack.id;
+    // Knapped tools: silhouette cut from the pebble/flint sprite
+    let key = meta?.key || stack.id;
+    if (stack.knapIconData && typeof Knapping !== "undefined") {
+        const scene = base.scene;
+        const knapKey = Knapping.ensureToolTexture(scene, stack);
+        if (knapKey && textures.exists(knapKey)) key = knapKey;
+    } else if (stack.knapIcon && textures.exists(stack.knapIcon)) {
+        key = stack.knapIcon;
+    }
     if (textures.exists(key)) {
         base.setTexture(key).setScale(scale).clearTint().setVisible(true);
     } else {
@@ -453,7 +684,13 @@ function createStackDragIcon(scene, x, y, stack, meta, scale) {
         scene.uiLayer.add(cont);
         return cont;
     }
-    const key = meta?.key || stack.id;
+    let key = meta?.key || stack.id;
+    if (stack?.knapIconData && typeof Knapping !== "undefined") {
+        const knapKey = Knapping.ensureToolTexture(scene, stack);
+        if (knapKey) key = knapKey;
+    } else if (stack?.knapIcon && scene.textures.exists(stack.knapIcon)) {
+        key = stack.knapIcon;
+    }
     if (!scene.textures.exists(key)) return null;
     const img = scene.add.image(x, y, key)
         .setOrigin(0.5, 0.5)
@@ -533,10 +770,10 @@ function destroyIngredientBadges(badges) {
 /**
  * Build a coconut_meal inventory stack from simmer ingredients.
  */
-function makeCoconutMealStack(getItem, ingredientIds, coconutMeta) {
+function makeCoconutMealStack(getItem, ingredientIds, coconutMeta, now = null) {
     const mealMeta = getItem("coconut_meal");
     const info = getSimmerDishInfo(getItem, ingredientIds, coconutMeta);
-    return {
+    const stack = {
         id: mealMeta?.id || "coconut_meal",
         quantity: 1,
         customName: info.name,
@@ -544,24 +781,29 @@ function makeCoconutMealStack(getItem, ingredientIds, coconutMeta) {
         weight: info.weight,
         kind: info.kind,
         fillTint: info.fillTint,
-        ingredients: ingredientIds.filter(Boolean).slice(),
-        spoilMinutes: Math.round(info.spoilHours * 60)
+        ingredients: ingredientIds.filter(Boolean).slice()
     };
+    if (now != null && info.spoilHours > 0) {
+        stack.spoilAt = Math.round(now) + Math.round(info.spoilHours * 60);
+    }
+    return stack;
 }
 
 /** Deep-enough clone of an inventory/equipment/loot stack. */
 function cloneItemStack(stack) {
     if (!stack) return null;
     const out = { id: stack.id, quantity: stack.quantity };
+    if (stack.spoilAt != null) out.spoilAt = stack.spoilAt;
     if (stack.spoilMinutes != null) out.spoilMinutes = stack.spoilMinutes;
     const extras = mealStackExtras(stack);
     if (extras) Object.assign(out, extras);
     return out;
 }
 
-/** Clone stack-level meal/food fields for drop/transfer. */
+/** Clone stack-level meal/food/knap fields for drop/transfer. */
 function mealStackExtras(stack) {
     if (!stack) return null;
+    const knap = knapStackExtras(stack);
     const hasExtras = !!(
         stack.customName
         || stack.food
@@ -569,6 +811,7 @@ function mealStackExtras(stack) {
         || stack.weight != null
         || stack.kind
         || stack.fillTint != null
+        || knap
     );
     if (!hasExtras) return null;
     return {
@@ -577,8 +820,32 @@ function mealStackExtras(stack) {
         ingredients: stack.ingredients ? stack.ingredients.slice() : undefined,
         weight: stack.weight,
         kind: stack.kind,
-        fillTint: stack.fillTint
+        fillTint: stack.fillTint,
+        ...(knap || {})
     };
+}
+
+/** Knapped tool instance fields (unique stats — do not merge stacks). */
+function knapStackExtras(stack) {
+    if (
+        !stack?.toolClass
+        && stack?.knapDamage == null
+        && !stack?.knapMaterial
+        && !stack?.knapIconData
+        && !stack?.knapQuality
+        && !stack?.tooltipExtra
+    ) {
+        return null;
+    }
+    const out = {};
+    if (stack.toolClass) out.toolClass = stack.toolClass;
+    if (stack.sharpness != null) out.sharpness = stack.sharpness;
+    if (stack.knapDamage != null) out.knapDamage = stack.knapDamage;
+    if (stack.knapMaterial) out.knapMaterial = stack.knapMaterial;
+    if (stack.knapQuality) out.knapQuality = stack.knapQuality;
+    if (stack.tooltipExtra) out.tooltipExtra = stack.tooltipExtra;
+    if (stack.knapIconData) out.knapIconData = stack.knapIconData;
+    return out;
 }
 
 /** True if a ground drop / stack carries meal or food-override data. */
@@ -590,7 +857,40 @@ function hasStackExtras(dropOrStack) {
         || dropOrStack?.stackWeight != null
         || dropOrStack?.kind
         || dropOrStack?.fillTint != null
+        || dropOrStack?.toolClass
+        || dropOrStack?.knapDamage != null
+        || dropOrStack?.knapIconData
+        || dropOrStack?.knapQuality
     );
+}
+
+/** Quality band → damage multiplier (matches knapped tool bands). */
+function knapQualityMult(quality) {
+    return { crude: 0.65, rough: 0.95, fine: 1.35 }[quality] || 1;
+}
+
+/** Clone weapon meta with tip-quality scaled point damage (tipped spears). */
+function weaponMetaWithKnapQuality(meta, stack) {
+    if (!meta?.weapon || !stack?.knapQuality) return meta;
+    const mult = knapQualityMult(stack.knapQuality);
+    if (mult === 1) return meta;
+    const attacks = (meta.weapon.attacks || []).map((a) => {
+        if (a.id !== "point_stab") return { ...a };
+        const dmg = Math.round((Number(a.damage) || 0) * mult * 10) / 10;
+        return { ...a, damage: dmg };
+    });
+    return { ...meta, weapon: { ...meta.weapon, attacks } };
+}
+
+function isSpecialStack(stack) {
+    return !!(stack && (
+        stack.customName
+        || stack.food
+        || stack.ingredients?.length
+        || stack.toolClass
+        || stack.knapDamage != null
+        || stack.knapIconData
+    ));
 }
 
 /**
@@ -777,4 +1077,57 @@ function meleeSegmentHitsTarget(a, b, radius, target) {
         rad = 10;
     }
     return meleeDistPointToSegment(tx, ty, a.x, a.y, b.x, b.y) <= rad + radius;
+}
+
+/**
+ * Set move velocity; on ice, accelerate toward the target instead of snapping
+ * (reversing takes time — you slide).
+ * @param {Phaser.Physics.Arcade.Sprite} sprite
+ * @param {number} targetVx
+ * @param {number} targetVy
+ * @param {number} delta  ms
+ * @param {Phaser.Scene} scene
+ */
+function applyEntityVelocity(sprite, targetVx, targetVy, delta, scene) {
+    if (!sprite) return;
+    const onIce = !!scene?._isIceAt?.(sprite.x, sprite.y - 1);
+    if (!onIce) {
+        sprite._iceVx = targetVx;
+        sprite._iceVy = targetVy;
+        sprite.setVelocity(targetVx, targetVy);
+        return;
+    }
+
+    const dt = Math.min(Math.max(Number(delta) || 16, 0), 50) / 1000;
+    let vx = sprite._iceVx;
+    let vy = sprite._iceVy;
+    if (vx == null || vy == null) {
+        vx = sprite.body?.velocity?.x ?? 0;
+        vy = sprite.body?.velocity?.y ?? 0;
+    }
+
+    // Fast response while steering; long coast after releasing keys
+    const steering = Math.hypot(targetVx, targetVy) > 0.5;
+    const maxAccel = steering ? 200 : 45;
+    const dvx = targetVx - vx;
+    const dvy = targetVy - vy;
+    const err = Math.hypot(dvx, dvy);
+    const maxStep = maxAccel * dt;
+    if (err <= maxStep || err < 0.5) {
+        vx = targetVx;
+        vy = targetVy;
+    } else {
+        vx += (dvx / err) * maxStep;
+        vy += (dvy / err) * maxStep;
+    }
+
+    // Snap tiny residuals so you eventually stop
+    if (Math.hypot(vx, vy) < 1 && Math.hypot(targetVx, targetVy) < 0.5) {
+        vx = 0;
+        vy = 0;
+    }
+
+    sprite._iceVx = vx;
+    sprite._iceVy = vy;
+    sprite.setVelocity(vx, vy);
 }

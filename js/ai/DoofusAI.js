@@ -15,6 +15,11 @@ class DoofusAI {
     update(delta) {
         const mob = this.mob;
         if (!mob?.active || mob.isBodyDead?.() || mob.hp <= 0) return;
+        // Capacities are refreshed before AI each frame — stay put while downed
+        if (mob.isImmobile?.() || mob.isIncapacitated?.()) {
+            mob.setVelocity(0, 0);
+            return;
+        }
 
         this.timer -= delta;
         if (this.timer <= 0) {
@@ -51,11 +56,12 @@ class DoofusAI {
 
     _applyWalk(speedMult) {
         const mob = this.mob;
-        // Same as player / AggressiveAnimal: Moving capacity slows damaged legs
+        // Same as player / NeutralAnimal: Moving capacity slows damaged legs
         const moveMul = mob.capacities?.moving
             ? Math.max(0.05, Math.min(1.5, mob.capacities.moving()))
             : 1;
-        const tilesPerSec = this._wanderBase() * speedMult * moveMul;
+        const tilesPerSec = this._wanderBase() * speedMult * moveMul
+            * (mob.scene.terrainSpeedMult?.(mob.x, mob.y - 1) ?? 1);
         const speed = tilesPerSec * mob.scene.tileSize;
         let x = this.dirX;
         let y = this.dirY;
@@ -86,9 +92,47 @@ class DoofusAI {
             [1, 0], [-1, 0], [0, 1], [0, -1],
             [1, 1], [1, -1], [-1, 1], [-1, -1]
         ];
-        const [dx, dy] = Phaser.Utils.Array.GetRandom(dirs);
-        this.dirX = dx;
-        this.dirY = dy;
+        const mob = this.mob;
+        const homeX = mob.entry?.homeX;
+        const homeY = mob.entry?.homeY;
+        const ts = mob.scene?.tileSize || 16;
+        // Soft leash ~4 tiles (bias home); hard leash ~7 tiles (always walk home)
+        const SOFT = 4;
+        const HARD = 7;
+
+        let pick = null;
+        if (homeX != null && homeY != null) {
+            const hx = (homeX - mob.x) / ts;
+            const hy = (homeY - mob.y) / ts;
+            const dist = Math.hypot(hx, hy);
+            if (dist > 0.15) {
+                const nx = hx / dist;
+                const ny = hy / dist;
+                const forceHome = dist >= HARD || (dist >= SOFT && Math.random() < 0.65);
+                if (forceHome) {
+                    const weights = dirs.map(([dx, dy]) => {
+                        const len = Math.hypot(dx, dy) || 1;
+                        const align = (dx / len) * nx + (dy / len) * ny;
+                        return Math.max(0.05, align + 1);
+                    });
+                    pick = this._weightedPickDirs(dirs, weights);
+                }
+            }
+        }
+        if (!pick) pick = Phaser.Utils.Array.GetRandom(dirs);
+        this.dirX = pick[0];
+        this.dirY = pick[1];
         this.timer = Phaser.Math.Between(1000, 2000);
+    }
+
+    _weightedPickDirs(items, weights) {
+        let total = 0;
+        for (const w of weights) total += w;
+        let r = Math.random() * total;
+        for (let i = 0; i < items.length; i++) {
+            r -= weights[i];
+            if (r <= 0) return items[i];
+        }
+        return items[items.length - 1];
     }
 }

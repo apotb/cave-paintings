@@ -76,6 +76,9 @@ class SceneBase extends Phaser.Scene {
             "help",
             "help_hover",
             "help_click",
+            "help_alt",
+            "help_alt_hover",
+            "help_alt_click",
             "health",
             "health_hover",
             "health_open",
@@ -146,7 +149,9 @@ class SceneBase extends Phaser.Scene {
             "blueberries",
             "leaf_cord",
             "sharp_stick",
-            "wood_spear",
+            "wooden_spear",
+            "stone_spear",
+            "flint_spear",
             "stick_frame",
             "leaf_wrap",
             "leaf_loincloth",
@@ -154,7 +159,11 @@ class SceneBase extends Phaser.Scene {
             "leaf_pouch",
             "cracked_coconut",
             "cracked_coconut_overlay",
-            "rot"
+            "rot",
+            "pebble",
+            "flint",
+            "deer_hide",
+            "bone"
         ];
         for (const item of items) {
             this.loadImage(item, 'items');

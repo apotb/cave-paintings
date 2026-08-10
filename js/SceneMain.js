@@ -5,6 +5,8 @@ class SceneMain extends SceneBase {
 
     create() {
         this.input.mouse.disableContextMenu();
+        resolveCraftedWeights(this.items());
+        resolveCraftedFuel(this.items());
 
         // Layers
         this.groundLayer = this.add.layer().setDepth(0);
@@ -49,6 +51,10 @@ class SceneMain extends SceneBase {
         // Player
         this.player = new Player(this, 0, 0);
         this.damageables.add(this.player);
+        /** One-time spawn setup: sign at (0,0), player in random free tile nearby. */
+        this._spawnSignPlaced = false;
+        this._spawnSignBusy = false;
+        this._playerSpawnPlaced = false;
         // Manual camera follow (see syncCameraToPlayer). startFollow(..., true) floors
         // scroll while the player stays fractional → whole-world diagonal shake.
         // Snap to the screen-pixel grid (1/zoom world units) instead; physics untouched.
@@ -98,6 +104,7 @@ class SceneMain extends SceneBase {
         this.campfirePanel = new CampfirePanel(this);
         this.corpsePanel = new CorpsePanel(this);
         this.healthPanel = new HealthPanel(this);
+        this.knappingPanel = new KnappingPanel(this);
         this.createDeathOverlay();
         this.applyUiScale();
 
@@ -397,6 +404,8 @@ class SceneMain extends SceneBase {
                     cur === this.craftContainer ||
                     cur === this.equipmentPanel?.container ||
                     cur === this.healthPanel?.root ||
+                    cur === this.knappingPanel?.container ||
+                    cur === this.knappingPanel?.helpBtn ||
                     cur === this.deathOverlay
                 ) {
                     return true;
@@ -429,18 +438,22 @@ class SceneMain extends SceneBase {
             this.tooltipText.setText(t);
             drawBg();
             this.tooltip.setVisible(!!t);
+            // Keep tooltip above every UI sibling (knapping help used to bringToTop itself)
+            this.uiLayer?.bringToTop?.(this.tooltip);
             this.positionTooltip(x, y);
         };
 
         this.refreshTooltip = () => {
-            if (!this.tooltip.visible || !this._tooltipSource) return;
+            // Keep source when text is empty so hotbar swaps can re-show (e.g. rock knap tip)
+            if (!this._tooltipSource) return;
             const t = this._tooltipSource() || "";
             if (!t) {
-                this.hideTooltip();
+                this.tooltip.setVisible(false);
                 return;
             }
             this.tooltipText.setText(t);
             drawBg();
+            this.tooltip.setVisible(true);
         };
 
         this.hideTooltip = () => {
@@ -451,6 +464,23 @@ class SceneMain extends SceneBase {
 
         this._pickHoverTarget = (pointer) => {
             const hits = this.input.hitTestPointer(pointer);
+
+            // Knapping modal blocks world behind it (help uses pixelPerfect like main HUD)
+            const knap = this.knappingPanel;
+            if (knap?.visible && knap.backdrop) {
+                const overKnap = Phaser.Geom.Rectangle.Contains(
+                    knap.backdrop.getBounds(), pointer.x, pointer.y
+                );
+                if (overKnap) {
+                    for (let i = hits.length - 1; i >= 0; i--) {
+                        const obj = hits[i];
+                        if (!obj?.active || !obj.input?.enabled) continue;
+                        if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
+                        if (this._isUnderKnappingPanel(obj)) return obj;
+                    }
+                    return knap.backdrop;
+                }
+            }
 
             // Health panel blocks world/UI behind it
             const health = this.healthPanel;
@@ -513,6 +543,26 @@ class SceneMain extends SceneBase {
             return null;
         };
 
+        this._isUnderKnappingPanel = (obj) => {
+            const panel = this.knappingPanel;
+            if (!panel) return false;
+            let cur = obj;
+            while (cur) {
+                if (
+                    cur === panel.container
+                    || cur === panel.backdrop
+                    || cur === panel.helpBtn
+                    || cur === panel.gridHit
+                    || cur === panel.btnRotate?.label
+                    || cur === panel.btnFinish?.label
+                ) {
+                    return true;
+                }
+                cur = cur.parentContainer;
+            }
+            return false;
+        };
+
         this._isUnderHealthPanel = (obj) => {
             const panel = this.healthPanel;
             if (!panel) return false;
@@ -556,6 +606,10 @@ class SceneMain extends SceneBase {
 
         this._cursorFor = (obj) => {
             if (!obj?.input) return 'default';
+            // Rocks: hand cursor only when "Click to knap" tip would show
+            if (obj.meta?.id === "rock") {
+                return this._rockKnapTooltipText() ? "pointer" : "default";
+            }
             if (obj.input.cursor) return obj.input.cursor;
             if (obj.input.useHandCursor) return 'pointer';
             return 'pointer';
@@ -836,6 +890,253 @@ class SceneMain extends SceneBase {
         return this.chunks[this.getKey(Math.floor(wx / px), Math.floor(wy / px))] || null;
     }
 
+    /** Hover tooltip for non-lootable Things that define `tooltip` lines in Things.json. */
+    wireThingTooltip(thing) {
+        if (!thing?.meta?.tooltip?.length) return;
+        thing.setInteractive({ cursor: "pointer", pixelPerfect: false });
+        thing.on("pointerover", (pointer) => {
+            this.showTooltip(
+                () => (thing.meta.tooltip || []).join("\n"),
+                pointer.x,
+                pointer.y,
+                thing
+            );
+        });
+        thing.on("pointerout", () => {
+            if (this._hoverTarget === thing) this._hoverTarget = null;
+            if (this._tooltipTarget === thing) this.hideTooltip();
+        });
+    }
+
+    /** Rock: click to knap + hover tip while holding pebble/flint. */
+    wireRockKnapping(thing) {
+        if (!thing || thing.meta?.id !== "rock") return;
+        // Default arrow; _cursorFor switches to pointer only when knap tip is active
+        thing.setInteractive({ cursor: "default", pixelPerfect: false });
+        thing.on("pointerdown", () => {
+            this.knappingPanel?.tryOpenAtRock?.(thing);
+        });
+        thing.on("pointerover", (pointer) => {
+            this.showTooltip(
+                () => this._rockKnapTooltipText(),
+                pointer.x,
+                pointer.y,
+                thing
+            );
+        });
+        thing.on("pointerout", () => {
+            if (this._hoverTarget === thing) this._hoverTarget = null;
+            if (this._tooltipTarget === thing) this.hideTooltip();
+        });
+    }
+
+    _rockKnapTooltipText() {
+        const held = this.player?.getHeldItem?.();
+        if (!held || !(held.quantity > 0)) return "";
+        if (held.knapIconData && (held.id === "stone_tool" || held.id === "flint_tool")) {
+            return "Click to reshape";
+        }
+        const meta = this.getItem(held.id);
+        if (!meta?.knapping?.material) return "";
+        return "Click to knap";
+    }
+
+    /** Load all chunks covering tile coords [-radius, radius]². */
+    async _loadSpawnNeighborhood(radius) {
+        const px = this.chunkPx();
+        for (let ty = -radius; ty <= radius; ty++) {
+            for (let tx = -radius; tx <= radius; tx++) {
+                const { x, y } = this.tileCenter(tx, ty);
+                const cx = Math.floor(x / px);
+                const cy = Math.floor((y - 1) / px);
+                const key = this.getKey(cx, cy);
+                if (!this.chunks[key]) this.chunks[key] = new Chunk(this, cx, cy);
+                await this.chunks[key].load();
+            }
+        }
+    }
+
+    /** Tile keys occupied by things / lootables in loaded chunks. */
+    _spawnOccupiedTiles() {
+        const occupied = new Set();
+        const mark = (entry) => {
+            if (!entry) return;
+            const { tx, ty } = this.worldToTile(entry.x, entry.y - 1);
+            occupied.add(`${tx},${ty}`);
+        };
+        for (const chunk of Object.values(this.chunks)) {
+            for (const t of chunk.meta?.things || []) mark(t);
+            for (const t of chunk.meta?.lootableThings || []) {
+                if (!t?.gone) mark(t);
+            }
+        }
+        return occupied;
+    }
+
+    _tileWalkable(tx, ty) {
+        const cs = this.chunkSize;
+        const { x, y } = this.tileCenter(tx, ty);
+        const chunk = this.getChunkAtWorld(x, y - 1);
+        if (!chunk?.isGenerated) return false;
+        const localX = tx - chunk.x * cs;
+        const localY = ty - chunk.y * cs;
+        if (localX < 0 || localY < 0 || localX >= cs || localY >= cs) return false;
+        const tile = chunk.meta.tiles[localX + localY * cs];
+        if (!tile || tile === "water" || tile === "ice") return false;
+        return true;
+    }
+
+    /** True if the world point sits on a water tile. */
+    _isWaterAt(wx, wy) {
+        const chunk = this.getChunkAtWorld(wx, wy);
+        if (!chunk?.isGenerated || !chunk.meta?.tiles) return false;
+        const { tx, ty } = this.worldToTile(wx, wy);
+        const cs = this.chunkSize;
+        const localX = tx - chunk.x * cs;
+        const localY = ty - chunk.y * cs;
+        if (localX < 0 || localY < 0 || localX >= cs || localY >= cs) return false;
+        return chunk.meta.tiles[localX + localY * cs] === "water";
+    }
+
+    /** True if the world point sits on a water or ice tile. */
+    _isWaterOrIceAt(wx, wy) {
+        const chunk = this.getChunkAtWorld(wx, wy);
+        if (!chunk?.isGenerated || !chunk.meta?.tiles) return false;
+        const { tx, ty } = this.worldToTile(wx, wy);
+        const cs = this.chunkSize;
+        const localX = tx - chunk.x * cs;
+        const localY = ty - chunk.y * cs;
+        if (localX < 0 || localY < 0 || localX >= cs || localY >= cs) return false;
+        const tile = chunk.meta.tiles[localX + localY * cs];
+        return tile === "water" || tile === "ice";
+    }
+
+    /** True if the world point sits on an ice tile. */
+    _isIceAt(wx, wy) {
+        const chunk = this.getChunkAtWorld(wx, wy);
+        if (!chunk?.isGenerated || !chunk.meta?.tiles) return false;
+        const { tx, ty } = this.worldToTile(wx, wy);
+        const cs = this.chunkSize;
+        const localX = tx - chunk.x * cs;
+        const localY = ty - chunk.y * cs;
+        if (localX < 0 || localY < 0 || localX >= cs || localY >= cs) return false;
+        return chunk.meta.tiles[localX + localY * cs] === "ice";
+    }
+
+    /** Move speed scale for standing in water (ice is not slowed). */
+    terrainSpeedMult(wx, wy) {
+        const chunk = this.getChunkAtWorld(wx, wy);
+        if (!chunk?.isGenerated || !chunk.meta?.tiles) return 1;
+        const { tx, ty } = this.worldToTile(wx, wy);
+        const cs = this.chunkSize;
+        const localX = tx - chunk.x * cs;
+        const localY = ty - chunk.y * cs;
+        if (localX < 0 || localY < 0 || localX >= cs || localY >= cs) return 1;
+        const tile = chunk.meta.tiles[localX + localY * cs];
+        return tile === "water" ? 0.5 : 1;
+    }
+
+    /**
+     * Clear world Things/lootables on a tile (used so the spawn sign can sit at 0,0).
+     */
+    _clearTileThings(tx, ty) {
+        const { x, y } = this.tileCenter(tx, ty);
+        const chunk = this.getChunkAtWorld(x, y - 1);
+        if (!chunk) return;
+        const onTile = (entry) => {
+            if (!entry) return false;
+            const t = this.worldToTile(entry.x, entry.y - 1);
+            return t.tx === tx && t.ty === ty;
+        };
+        if (chunk.meta.things) {
+            chunk.meta.things = chunk.meta.things.filter((t) => !onTile(t));
+        }
+        if (chunk.meta.lootableThings) {
+            chunk.meta.lootableThings = chunk.meta.lootableThings.filter((t) => !onTile(t));
+        }
+        if (chunk.isLoaded && chunk.things) {
+            for (const spr of chunk.things.getChildren().slice()) {
+                const t = this.worldToTile(spr.x, spr.y - 1);
+                if (t.tx === tx && t.ty === ty) spr.destroy();
+            }
+        }
+    }
+
+    /**
+     * Random free tile in [-radius, radius]² (no Thing; walkable ground).
+     * @returns {{ tx: number, ty: number, x: number, y: number }|null}
+     */
+    pickRandomSpawnTile(radius = 4, rand = null) {
+        const rng = rand || mulberry32(hash2D(0, 0, worldSeed) ^ 0x504c4159);
+        const occupied = this._spawnOccupiedTiles();
+        const candidates = [];
+        for (let ty = -radius; ty <= radius; ty++) {
+            for (let tx = -radius; tx <= radius; tx++) {
+                if (occupied.has(`${tx},${ty}`)) continue;
+                if (!this._tileWalkable(tx, ty)) continue;
+                const c = this.tileCenter(tx, ty);
+                candidates.push({ tx, ty, x: c.x, y: c.y });
+            }
+        }
+        if (!candidates.length) return null;
+        return candidates[Math.floor(rng() * candidates.length)];
+    }
+
+    /**
+     * Sign always at world origin tile (0,0); player teleports to a random free
+     * tile in a radius-4 box (−4…4). Skipped for saves that already have a sign.
+     */
+    async ensureSpawnSign() {
+        if (this._spawnSignBusy) return;
+        if (this._spawnSignPlaced && this._playerSpawnPlaced) return;
+        this._spawnSignBusy = true;
+        try {
+            const radius = 4; // diameter 8 → −4…4 inclusive
+            await this._loadSpawnNeighborhood(radius);
+
+            let hasSign = false;
+            for (const chunk of Object.values(this.chunks)) {
+                if (chunk.meta?.things?.some((t) => t.id === "sign" && t.spawnHint)) {
+                    hasSign = true;
+                    break;
+                }
+            }
+
+            if (!hasSign && !this._spawnSignPlaced) {
+                this._clearTileThings(0, 0);
+                const { x, y } = this.tileCenter(0, 0);
+                const chunk = this.getChunkAtWorld(x, y - 1);
+                if (chunk) {
+                    const entry = { id: "sign", x, y, spawnHint: true };
+                    chunk.meta.things.push(entry);
+                    if (chunk.isLoaded) {
+                        const thing = new Thing(this, entry.x, entry.y, entry.id);
+                        this.wireThingTooltip(thing);
+                        chunk.things.add(thing);
+                    }
+                }
+                this._spawnSignPlaced = true;
+            } else {
+                this._spawnSignPlaced = true;
+            }
+
+            // Fresh world only — don't move the player when loading a save
+            if (!this._playerSpawnPlaced && !hasSign) {
+                const pick = this.pickRandomSpawnTile(radius);
+                if (pick) {
+                    this.player.teleport(pick.x, pick.y);
+                    this.syncCameraToPlayer();
+                }
+                this._playerSpawnPlaced = true;
+            } else if (hasSign) {
+                // Save already had spawn setup; keep loaded player position
+                this._playerSpawnPlaced = true;
+            }
+        } finally {
+            this._spawnSignBusy = false;
+        }
+    }
+
     findCampfireOnTile(tx, ty) {
         for (const fire of this.getCampfires()) {
             const ft = this.worldToTile(fire.x, fire.y - 1);
@@ -869,14 +1170,13 @@ class SceneMain extends SceneBase {
         return fire;
     }
 
-    consumeNearbyDrops(requirements) {
-        // requirements: { stick: 15, leaf: 10 }
+    /** Ground drops within the player's interaction range, nearest first. */
+    nearbyDrops() {
         const r = this.tileSize * this.player.interactionRange;
         const r2 = r * r;
         const px = this.player.x;
         const py = this.player.y;
-
-        const drops = this.droppedItems.getChildren()
+        return this.droppedItems.getChildren()
             .filter(d => d.active)
             .map(d => ({
                 drop: d,
@@ -885,6 +1185,11 @@ class SceneMain extends SceneBase {
             .filter(e => e.dist * e.dist <= r2)
             .sort((a, b) => a.dist - b.dist)
             .map(e => e.drop);
+    }
+
+    consumeNearbyDrops(requirements) {
+        // requirements: { stick: 15, leaf: 10 }
+        const drops = this.nearbyDrops();
 
         const available = {};
         for (const id of Object.keys(requirements)) available[id] = 0;
@@ -909,6 +1214,18 @@ class SceneMain extends SceneBase {
             }
         }
         return true;
+    }
+
+    /**
+     * Tile for a new campfire from ground sticks/leaves.
+     * Prefer nearest leaf pile; fall back to nearest stick pile.
+     */
+    campfireTileFromDrops(drops) {
+        const leaf = drops.find(d => d.item?.id === "leaf");
+        const stick = drops.find(d => d.item?.id === "stick");
+        const anchor = leaf || stick;
+        if (!anchor) return null;
+        return this.worldToTile(anchor.x, anchor.y - 1);
     }
 
     tryUseFirestarter() {
@@ -937,8 +1254,12 @@ class SceneMain extends SceneBase {
             return true;
         }
 
-        // Ground recipe: 15 sticks + 10 leaves
-        const { tx, ty } = this.worldToTile(this.player.x, this.player.y - 1);
+        // Ground recipe: 15 sticks + 10 leaves — spawn on the materials' tile
+        // (leaves preferred over sticks), not the player's tile.
+        const drops = this.nearbyDrops();
+        const tile = this.campfireTileFromDrops(drops);
+        if (!tile) return false;
+        const { tx, ty } = tile;
         if (this.findCampfireOnTile(tx, ty)) return false;
         if (!this.consumeNearbyDrops({ stick: 15, leaf: 10 })) return false;
 
@@ -947,8 +1268,8 @@ class SceneMain extends SceneBase {
         const fire = this.placeCampfire(
             tx,
             ty,
-            makeItemStack(leaf, 10),
-            makeItemStack(stick, 15)
+            makeItemStack(leaf, 10, undefined, this.worldMinuteIndex()),
+            makeItemStack(stick, 15, undefined, this.worldMinuteIndex())
         );
         if (fire) fire.ensureBurning();
         return !!fire;
@@ -1112,6 +1433,8 @@ class SceneMain extends SceneBase {
 
     spawnBloodStain(x, y) {
         if (this.bloodDraw === false) return;
+        // No blood pools on water (ice is fine)
+        if (this._isWaterAt(x, y - 1)) return;
         const chunk = LivingMob.ensureChunkAt(this, x, y);
         if (!chunk) return;
         if (!chunk.meta.bloodStains) chunk.meta.bloodStains = [];
@@ -1252,77 +1575,145 @@ class SceneMain extends SceneBase {
     }
 
     tickSpoilage() {
-        let dirty = false;
+        const now = this.worldMinuteIndex();
         const rot = this.getItem("rot");
+        let dirty = false;
+        let cookDirty = false;
+        let corpsePanelDirty = false;
+        const getItem = (id) => this.getItem(id);
 
-        const spoilStack = (stack) => {
-            if (!stack || stack.spoilMinutes == null) return stack;
-            stack.spoilMinutes -= 1;
-            if (stack.spoilMinutes > 0) return stack;
-            dirty = true;
-            if (!rot) {
-                delete stack.spoilMinutes;
-                return stack;
-            }
-            return { id: rot.id, quantity: stack.quantity };
+        const applyStack = (stack) => {
+            if (!stack) return stack;
+            migrateStackSpoil(stack, now, getItem);
+            const { stack: next, changed } = spoilStackIfDue(stack, now, rot);
+            if (changed) dirty = true;
+            return next;
         };
 
         const inv = this.player.inventory;
         for (let i = 0; i < inv.length; i++) {
-            if (inv[i]) inv[i] = spoilStack(inv[i]);
+            if (inv[i]) inv[i] = applyStack(inv[i]);
         }
 
         const eq = this.player.equipment;
         for (const key of ["head", "torso", "legs", "feet"]) {
-            if (eq[key]) eq[key] = spoilStack(eq[key]);
+            if (eq[key]) eq[key] = applyStack(eq[key]);
         }
         for (let i = 0; i < eq.waist.length; i++) {
-            if (eq.waist[i]) eq.waist[i] = spoilStack(eq.waist[i]);
+            if (eq.waist[i]) eq.waist[i] = applyStack(eq.waist[i]);
         }
 
-        for (const drop of this.droppedItems.getChildren()) {
-            if (!drop.active || drop.spoilMinutes == null) continue;
-            drop.spoilMinutes -= 1;
-            if (drop.spoilMinutes > 0) {
-                drop.syncToEntry?.();
-                continue;
+        const liveDrops = this.droppedItems?.getChildren?.() || [];
+        for (const chunk of Object.values(this.chunks || {})) {
+            const drops = chunk.meta?.drops;
+            if (Array.isArray(drops)) {
+                for (const entry of drops) {
+                    if (!entry) continue;
+                    migrateStackSpoil(entry, now, getItem);
+                    const live = liveDrops.find((d) => d.active && d.entry === entry);
+                    if (live) {
+                        if (entry.spoilAt != null) live.spoilAt = entry.spoilAt;
+                        else delete live.spoilAt;
+                    }
+                    if (entry.spoilAt == null) continue;
+                    if (Math.round(now) < Math.round(entry.spoilAt)) continue;
+                    dirty = true;
+                    const qty = entry.quantity;
+                    if (!rot) {
+                        delete entry.spoilAt;
+                        if (live) delete live.spoilAt;
+                        continue;
+                    }
+                    const beforeId = entry.id;
+                    entry.id = rot.id;
+                    entry.quantity = qty;
+                    delete entry.spoilAt;
+                    delete entry.spoilMinutes;
+                    delete entry.customName;
+                    delete entry.food;
+                    delete entry.ingredients;
+                    delete entry.weight;
+                    delete entry.kind;
+                    delete entry.fillTint;
+                    if (live) {
+                        live.item = rot;
+                        delete live.spoilAt;
+                        live.quantity = qty;
+                        if (beforeId !== rot.id) live.setTexture(rot.key);
+                        live.syncToEntry?.();
+                    }
+                }
             }
-            dirty = true;
-            if (!rot) {
-                delete drop.spoilMinutes;
-                drop.syncToEntry?.();
-                continue;
+
+            const corpses = chunk.meta?.corpses;
+            if (Array.isArray(corpses)) {
+                for (const corpseEntry of corpses) {
+                    if (!Array.isArray(corpseEntry?.loot)) continue;
+                    let lootChanged = false;
+                    for (let i = 0; i < corpseEntry.loot.length; i++) {
+                        if (!corpseEntry.loot[i]) continue;
+                        const prevId = corpseEntry.loot[i].id;
+                        const prevAt = corpseEntry.loot[i].spoilAt;
+                        corpseEntry.loot[i] = applyStack(corpseEntry.loot[i]);
+                        const cur = corpseEntry.loot[i];
+                        if (cur?.id !== prevId || cur?.spoilAt !== prevAt) lootChanged = true;
+                    }
+                    if (lootChanged) {
+                        dirty = true;
+                        const panel = this.corpsePanel;
+                        if (panel?.visible && panel.corpse?.entry === corpseEntry) {
+                            corpsePanelDirty = true;
+                        }
+                    }
+                }
             }
-            drop.item = rot;
-            if (drop.entry) drop.entry.id = rot.id;
-            delete drop.spoilMinutes;
-            drop.setTexture(rot.key);
-            drop.syncToEntry?.();
+
+            const things = chunk.meta?.things;
+            if (Array.isArray(things)) {
+                for (const entry of things) {
+                    if (!entry) continue;
+                    const thingMeta = this.getThing?.(entry.id);
+                    const isCamp = thingMeta?.campfire
+                        || entry.id === "campfire"
+                        || entry.id === "unlit_campfire"
+                        || entry.cook !== undefined
+                        || entry.catalyst !== undefined
+                        || Array.isArray(entry.simmer);
+                    if (!isCamp) continue;
+
+                    if (entry.cook) {
+                        const prevId = entry.cook.id;
+                        entry.cook = applyStack(entry.cook);
+                        if (entry.cook?.id !== prevId) {
+                            entry.cookProgress = 0;
+                            cookDirty = true;
+                        }
+                    }
+                    if (entry.catalyst) {
+                        const prevId = entry.catalyst.id;
+                        entry.catalyst = applyStack(entry.catalyst);
+                        if (entry.catalyst?.id !== prevId) cookDirty = true;
+                    }
+                    if (Array.isArray(entry.simmer)) {
+                        for (let i = 0; i < entry.simmer.length; i++) {
+                            if (!entry.simmer[i]) continue;
+                            const prevId = entry.simmer[i].id;
+                            entry.simmer[i] = applyStack(entry.simmer[i]);
+                            if (entry.simmer[i]?.id !== prevId) cookDirty = true;
+                        }
+                    }
+                }
+            }
         }
 
-        let cookDirty = false;
-        for (const fire of this.getCampfires()) {
-            if (fire.entry.cook) {
-                const prevId = fire.entry.cook.id;
-                fire.entry.cook = spoilStack(fire.entry.cook);
-                if (fire.entry.cook?.id !== prevId) {
-                    fire.entry.cookProgress = 0;
-                    cookDirty = true;
-                }
-            }
-            if (fire.entry.catalyst) {
-                const prevId = fire.entry.catalyst.id;
-                fire.entry.catalyst = spoilStack(fire.entry.catalyst);
-                if (fire.entry.catalyst?.id !== prevId) cookDirty = true;
-            }
-            if (Array.isArray(fire.entry.simmer)) {
-                for (let i = 0; i < fire.entry.simmer.length; i++) {
-                    if (!fire.entry.simmer[i]) continue;
-                    const prevId = fire.entry.simmer[i].id;
-                    fire.entry.simmer[i] = spoilStack(fire.entry.simmer[i]);
-                    // Spoiled/junk slots block simmer and drain progress over time (don't hard-reset)
-                    if (fire.entry.simmer[i]?.id !== prevId) cookDirty = true;
-                }
+        if (corpsePanelDirty) {
+            const panel = this.corpsePanel;
+            const corpse = panel?.corpse;
+            if (panel && corpse?.entry) {
+                panel.session = (corpse.entry.loot || []).map((s) => cloneItemStack(s));
+                if (!panel.session.length) panel.session = [null];
+                panel._rebuildSlots?.();
+                panel.refresh?.();
             }
         }
 
@@ -1334,32 +1725,79 @@ class SceneMain extends SceneBase {
         if (this.tooltip?.visible) this.refreshTooltip();
     }
 
-    ensureSpoilMinutes(stacks) {
-        if (!stacks) return;
-        for (const stack of stacks) {
-            if (!stack) continue;
-            if (stack.spoilMinutes != null) continue;
-            if (stack.food?.spoil != null) {
-                stack.spoilMinutes = Math.round(stack.food.spoil * 60);
-                continue;
+    /** Migrate spoil timers on all chunk meta (drops, corpses, campfires). */
+    migrateWorldSpoilAt() {
+        const now = this.worldMinuteIndex();
+        const getItem = (id) => this.getItem(id);
+        for (const chunk of Object.values(this.chunks || {})) {
+            for (const entry of chunk.meta?.drops || []) {
+                if (entry) migrateStackSpoil(entry, now, getItem);
             }
-            const meta = this.getItem(stack.id);
-            if (meta?.food?.spoil) {
-                stack.spoilMinutes = defaultSpoilMinutes(meta);
+            for (const corpse of chunk.meta?.corpses || []) {
+                for (const stack of corpse?.loot || []) {
+                    if (stack) migrateStackSpoil(stack, now, getItem);
+                }
+            }
+            for (const entry of chunk.meta?.things || []) {
+                if (!entry) continue;
+                if (entry.cook) migrateStackSpoil(entry.cook, now, getItem);
+                if (entry.catalyst) migrateStackSpoil(entry.catalyst, now, getItem);
+                for (const s of entry.simmer || []) {
+                    if (s) migrateStackSpoil(s, now, getItem);
+                }
             }
         }
     }
 
-    formatItemTooltip(item, quantity, spoilMinutes, stack = null) {
+    /** Migrate/ensure spoilAt on stacks (after clock is known). */
+    ensureSpoilAt(stacks) {
+        if (!stacks) return;
+        const now = this.worldMinuteIndex();
+        const getItem = (id) => this.getItem(id);
+        for (const stack of stacks) {
+            if (!stack) continue;
+            migrateStackSpoil(stack, now, getItem);
+        }
+    }
+
+    /** @deprecated */
+    ensureSpoilMinutes(stacks) {
+        this.ensureSpoilAt(stacks);
+    }
+
+    /** Rename legacy item ids in inventory/loot stacks (e.g. wood_spear → wooden_spear). */
+    _migrateLegacyItemIds(stacks) {
+        if (!stacks) return;
+        for (const stack of stacks) {
+            if (!stack?.id) continue;
+            if (stack.id === "wood_spear") stack.id = "wooden_spear";
+        }
+    }
+
+    formatItemTooltip(item, quantity, spoilAt, stack = null) {
         const lines = [];
         const displayName = stack?.customName || item.name;
         const name = quantity > 1 ? `${displayName} x${quantity}` : displayName;
         lines.push(name);
 
+        // Tip / tipped-spear quality on line 2 (knives still bake quality into the name)
+        if (
+            stack?.knapQuality
+            && (stack.toolClass === "spear_tip" || !stack.toolClass)
+        ) {
+            const q = String(stack.knapQuality);
+            lines.push(q.charAt(0).toUpperCase() + q.slice(1));
+        }
+
         // Weight (stack.weight for dynamic meals)
         const weight = stack?.weight != null ? stack.weight : item.weight;
         if (weight > 0) {
             lines.push(`Weight: ${weight} kg`);
+        }
+
+        if (item.bandage) {
+            const base = Math.round((Number(item.bandage.tendQuality) || 0) * 100);
+            lines.push(`Tend quality: ${base}%`);
         }
 
         // Food (stack.food overrides meta for dynamic meals). 0 kcal = spoils only, not edible.
@@ -1373,9 +1811,17 @@ class SceneMain extends SceneBase {
                 else lines.push(`Food: ${kc} kcal`);
             }
 
-            const mins = spoilMinutes != null
-                ? spoilMinutes
-                : (food.spoil != null ? Math.round(food.spoil * 60) : defaultSpoilMinutes(item));
+            const now = this.worldMinuteIndex?.() ?? null;
+            let mins = null;
+            if (spoilAt != null && now != null) {
+                mins = remainingSpoilMinutes(spoilAt, now);
+            } else if (stack?.spoilAt != null && now != null) {
+                mins = remainingSpoilMinutes(stack.spoilAt, now);
+            } else if (food.spoil != null) {
+                mins = Math.round(food.spoil * 60);
+            } else {
+                mins = spoilDurationMinutes(item);
+            }
             if (mins != null) {
                 lines.push(`Spoils in: ${formatHours(Math.floor(mins / 60))}`);
             }
@@ -1390,23 +1836,57 @@ class SceneMain extends SceneBase {
             lines.push(`Stack total: ${totWeight} kg`);
         }
 
-        if (item.weapon) {
+        const knapWeapon = (stack?.toolClass && typeof Knapping !== "undefined")
+            ? Knapping.weaponMetaFromStack(item, stack)
+            : null;
+        let weapon = knapWeapon?.weapon || item.weapon;
+        let weaponMetaForDps = knapWeapon || item;
+        if (
+            !knapWeapon
+            && stack?.knapQuality
+            && item.weapon
+            && typeof weaponMetaWithKnapQuality === "function"
+        ) {
+            weaponMetaForDps = weaponMetaWithKnapQuality(item, stack);
+            weapon = weaponMetaForDps.weapon;
+        }
+        if (weapon) {
             const avg = typeof BodyCombat !== "undefined"
-                ? BodyCombat.meleeWeaponAverageDps?.(item.weapon)
+                ? BodyCombat.meleeWeaponAverageDps?.(weapon)
                 : null;
             if (avg && avg.dps > 0) {
                 const dps = avg.dps.toFixed(1);
-                const dtype = avg.type || item.weapon.type || "melee";
+                const dtype = avg.type || weapon.type || "melee";
                 lines.push(`DPS: ${dps} ${dtype}`);
             } else {
-                const dmg = Number(item.weapon.damage ?? 0);
+                const dmg = Number(stack?.knapDamage ?? weapon.damage ?? 0);
                 if (dmg > 0) {
-                    const type = item.weapon.type ? ` ${item.weapon.type}` : "";
+                    const type = weapon.type ? ` ${weapon.type}` : "";
                     lines.push(`Damage: ${dmg}${type}`);
-                } else if (item.weapon.type) {
-                    lines.push(`Type: ${item.weapon.type}`);
+                } else if (weapon.type) {
+                    lines.push(`Type: ${weapon.type}`);
                 }
             }
+        }
+        // Skip legacy knap "Damage:" lines — weapons show DPS from verbs (like spears)
+        let knapFlavor = stack?.tooltipExtra;
+        if (
+            !knapFlavor
+            && stack?.toolClass === "knife"
+        ) {
+            knapFlavor = "Mr. Stabby";
+        } else if (!knapFlavor && stack?.toolClass === "chopper") {
+            knapFlavor = "Slow but heavy";
+        }
+        if (
+            knapFlavor
+            && knapFlavor !== "Needs a shaft"
+            && !/^Damage:/i.test(knapFlavor)
+        ) {
+            lines.push(knapFlavor);
+        }
+        if (stack?.toolClass === "knife") {
+            lines.push("Click a corpse to skin it for more resources");
         }
 
         if (item.fuel) {
@@ -1523,8 +2003,8 @@ class SceneMain extends SceneBase {
 
                 // Ingredients list
                 for (const ingredient of recipe.ingredients) {
-                    const meta = this.getItem(ingredient.id);
-                    lines.push(`${meta.name}: ${this.player.getNumItems(ingredient.id)}/${ingredient.qty}`);
+                    const have = this.player.getNumMatchingItems(ingredient);
+                    lines.push(`${this._craftIngredientLabel(ingredient)}: ${have}/${ingredient.qty}`);
                 }
 
                 // Require nearby Thing
@@ -1581,7 +2061,15 @@ class SceneMain extends SceneBase {
             for (const [k, v] of Object.entries(r)) {
                 if (k === 'QUANTITY') quantity = +v || 1;
                 else if (k === 'REQUIRE_THING') requireThing = String(v);
-                else ingredients.push({ id: k, qty: +v || 1 });
+                else if (v && typeof v === 'object') {
+                    ingredients.push({
+                        id: k,
+                        qty: +v.qty || 1,
+                        toolClass: v.toolClass || null
+                    });
+                } else {
+                    ingredients.push({ id: k, qty: +v || 1, toolClass: null });
+                }
             }
             return {
                 id: meta.id,
@@ -1592,6 +2080,15 @@ class SceneMain extends SceneBase {
                 requireThing
             };
         });
+    }
+
+    /** Display name for a craft ingredient (supports knapped tip requirements). */
+    _craftIngredientLabel(ingredient) {
+        if (ingredient.toolClass === "spear_tip") {
+            if (ingredient.id === "flint_tool") return "Flint Spear Tip";
+            if (ingredient.id === "stone_tool") return "Stone Spear Tip";
+        }
+        return this.getItem(ingredient.id)?.name || ingredient.id;
     }
 
     hasNearbyThing(id) {
@@ -1612,7 +2109,9 @@ class SceneMain extends SceneBase {
     }
 
     canCraft(recipe) {
-        if (!recipe.ingredients.every(ingredient => this.player.getNumItems(ingredient.id) >= ingredient.qty)) {
+        if (!recipe.ingredients.every(
+            (ingredient) => this.player.getNumMatchingItems(ingredient) >= ingredient.qty
+        )) {
             return false;
         }
         if (recipe.requireThing && !this.hasNearbyThing(recipe.requireThing)) {
@@ -1623,7 +2122,32 @@ class SceneMain extends SceneBase {
 
     doCraft(recipe) {
         const item = this.getItem(recipe.id);
-        for (const ing of recipe.ingredients) this.player.loseAnyItem(ing.id, ing.qty);
+        // Tipped spears inherit quality from the leftmost matching tip in the hotbar
+        let tipQuality = null;
+        const tipIng = recipe.ingredients?.find((i) => i.toolClass === "spear_tip");
+        if (tipIng) {
+            for (const stack of this.player.inventory) {
+                if (!stack || stack.id !== tipIng.id) continue;
+                if (stack.toolClass !== tipIng.toolClass) continue;
+                tipQuality = stack.knapQuality || null;
+                break;
+            }
+        }
+        for (const ing of recipe.ingredients) this.player.loseMatchingItems(ing);
+
+        if (tipQuality && (recipe.id === "stone_spear" || recipe.id === "flint_spear")) {
+            const stack = makeItemStack(item, recipe.quantity || 1, undefined, this.worldMinuteIndex());
+            stack.knapQuality = tipQuality;
+            if (typeof this.player.gainStack === "function" && this.player.gainStack(stack)) {
+                return;
+            }
+            DroppedItem.spawn(
+                this, this.player.x, this.player.y, item, recipe.quantity || 1,
+                undefined, { knapQuality: tipQuality }
+            );
+            return;
+        }
+
         const remaining = this.player.gainItem(item, recipe.quantity);
         if (remaining > 0) DroppedItem.spawn(this, this.player.x, this.player.y, item, remaining);
     }
@@ -1749,11 +2273,14 @@ class SceneMain extends SceneBase {
             "Shift — Sprint",
             "Space — Use item / Attack",
             "Mouse — Aim attacks",
-            "Click — Pick up / interact",
-            "F — Pick up nearby items",
+            "Left-click — Pick up / interact",
+            "Right-click — Move 1 item",
+            "Shift+Right-click — Move whole stack",
+            "Ctrl+Right-click — Move half stack",
             "Q — Drop item",
             "Shift+Q — Drop stack",
             "Ctrl+Q — Drop 10",
+            "F — Pick up dropped items",
             "1-0 — Hotbar slots",
             "C — Crafting",
             "E — Equipment",
@@ -1790,6 +2317,7 @@ class SceneMain extends SceneBase {
     onPlayerDied() {
         this._deathPos = { x: this.player.x, y: this.player.y };
         this.player._tendChannel = null;
+        this.player._skinChannel = null;
         this.hideChannelBar?.();
         this.corpsePanel?.close?.(true);
         this.player.createDeathCorpse();
@@ -1841,8 +2369,19 @@ class SceneMain extends SceneBase {
     }
 
     respawnPlayer(here) {
-        const x = here ? this._deathPos.x : 0;
-        const y = here ? this._deathPos.y : 0;
+        let x = 0;
+        let y = 0;
+        if (here && this._deathPos) {
+            x = this._deathPos.x;
+            y = this._deathPos.y;
+        } else {
+            // Same random free-tile ring as a new game (−4…4)
+            const pick = this.pickRandomSpawnTile(4, Math.random);
+            if (pick) {
+                x = pick.x;
+                y = pick.y;
+            }
+        }
         this.player.respawnFresh(x, y);
         this.deathOverlay?.setVisible(false);
         this.closeOpenMenus();
@@ -1864,6 +2403,7 @@ class SceneMain extends SceneBase {
 
     toggleHealthMenu() {
         if (!this.healthPanel) return;
+        if (this.knappingPanel?.visible) return;
         // Any health view open (own or corpse inspect) → close panel only
         if (this.healthPanel.visible) {
             this.healthPanel.close();
@@ -1885,6 +2425,7 @@ class SceneMain extends SceneBase {
     }
 
     toggleCraftMenu() {
+        if (this.knappingPanel?.visible) return;
         if (this.craftMenuVisible) {
             this.closeCraftMenu();
             return;
@@ -1901,6 +2442,7 @@ class SceneMain extends SceneBase {
 
     toggleEquipmentMenu() {
         if (!this.equipmentPanel) return;
+        if (this.knappingPanel?.visible) return;
         this.equipmentPanel.toggle();
     }
 
@@ -1926,6 +2468,10 @@ class SceneMain extends SceneBase {
 
         for (const chunk of Object.values(this.chunks || {})) chunk.unload();
         this.chunks = {};
+        // Re-place the origin sign in the new world, but do not reset player spawn —
+        // /regen must keep the current camera/player position.
+        this._spawnSignPlaced = false;
+        this._spawnSignBusy = false;
         this._things?.clear(true, true);
         if (this.mobs) {
             for (const mob of this.mobs.getChildren().slice()) {
@@ -2072,6 +2618,7 @@ class SceneMain extends SceneBase {
         }
 
         if (this.campfirePanel?.visible) this.campfirePanel.layout();
+        if (this.knappingPanel?.visible) this.knappingPanel.layout();
 
         if (this._waterSprite) {
             const w = (roundUpToEven(this.scale.width / this.tileSize / this.worldZoom) + 2) * this.tileSize;
@@ -2152,6 +2699,9 @@ class SceneMain extends SceneBase {
 
                         for (const chunk of Object.values(this.chunks)) chunk.unload();
                         this.chunks = {};
+                        this._spawnSignPlaced = false;
+                        this._spawnSignBusy = false;
+                        this._playerSpawnPlaced = true; // keep loaded player coords
                         this._things.clear(true, true);
                         if (this.mobs) {
                             for (const mob of this.mobs.getChildren().slice()) {
@@ -2169,12 +2719,17 @@ class SceneMain extends SceneBase {
 
                         // Chunks
                         for (const [key, meta] of Object.entries(data.chunks)) {
+                            const drops = meta.drops || [];
+                            this._migrateLegacyItemIds(drops);
+                            for (const corpse of meta.corpses || []) {
+                                this._migrateLegacyItemIds(corpse?.loot);
+                            }
                             const chunk = new Chunk(this, meta.x, meta.y, {
                                 tiles: meta.tiles,
                                 things: meta.things,
                                 lootableThings: meta.lootableThings,
                                 mobs: meta.mobs || [],
-                                drops: meta.drops || [],
+                                drops,
                                 bloodStains: meta.bloodStains || [],
                                 corpses: meta.corpses || []
                             });
@@ -2194,22 +2749,25 @@ class SceneMain extends SceneBase {
                         this.player.kc = data.player.kc;
                         this.player.saturation = data.player.saturation;
                         this.player.inventory = data.player.inventory;
+                        this._migrateLegacyItemIds(this.player.inventory);
                         this.player.loadEquipment(data.player.equipment);
-                        this.ensureSpoilMinutes(this.player.inventory);
-                        this.ensureSpoilMinutes([
+
+                        // Clock before spoil migration (spoilAt is absolute world minutes)
+                        this.gameDay = data.clock?.day ?? 1;
+                        this.gameMinutes = data.clock?.minutes ?? 8 * 60;
+                        this.updateClockText();
+                        this.markLightDirty();
+                        this.updateLightVeil();
+
+                        this.ensureSpoilAt(this.player.inventory);
+                        this.ensureSpoilAt([
                             this.player.equipment.head,
                             this.player.equipment.torso,
                             this.player.equipment.legs,
                             this.player.equipment.feet,
                             ...this.player.equipment.waist
                         ]);
-
-                        // Clock
-                        this.gameDay = data.clock?.day ?? 1;
-                        this.gameMinutes = data.clock?.minutes ?? 8 * 60;
-                        this.updateClockText();
-                        this.markLightDirty();
-                        this.updateLightVeil();
+                        this.migrateWorldSpoilAt();
 
                         // Refresh UI
                         this.hotbar.dirty = true;
@@ -2276,9 +2834,12 @@ class SceneMain extends SceneBase {
             }
         }
 
-        // Process input
+        if (!this._spawnSignPlaced || !this._playerSpawnPlaced) this.ensureSpawnSign();
+
+        // Process input (menus / hotbar / chat blocked while knapping — R/Esc stay in panel)
         const chatting = !!this.combatLog?.isComposing?.();
-        if (!chatting) {
+        const knapping = !!this.knappingPanel?.visible;
+        if (!chatting && !knapping) {
             if (this.key1.isDown && this.hotbar.size >= 1) this.hotbar.changeSlot(0);
             if (this.key2.isDown && this.hotbar.size >= 2) this.hotbar.changeSlot(1);
             if (this.key3.isDown && this.hotbar.size >= 3) this.hotbar.changeSlot(2);
@@ -2300,6 +2861,7 @@ class SceneMain extends SceneBase {
         }
 
         // Update player
+        this.knappingPanel?.update?.();
         this.player.update(time, delta);
         this.combatLog?.update?.();
         this.updateFpsMeter?.(delta);

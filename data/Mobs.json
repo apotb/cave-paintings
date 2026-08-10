@@ -8,13 +8,13 @@
         "speed": 3.5,
         "wanderSpeed": 1.2,
         "hitboxSize": 8,
-        "ai": "aggressiveAnimal",
+        "ai": "neutralAnimal",
         "attacks": [],
         "drops": [
             {
                 "item": "raw_beef",
-                "min": 1,
-                "max": 3
+                "min": 2,
+                "max": 4
             }
         ]
     },
@@ -34,16 +34,17 @@
         "spawn": {
             "tiles": ["grass", "grass_hill"],
             "chunkChance": 0.08,
-            "packMin": 1,
-            "packMax": 2,
+            "packMin": 2,
+            "packMax": 3,
+            "packRadius": 2,
             "minCandidates": 4
         },
         "attacks": [],
         "drops": [
             {
                 "item": "raw_venison",
-                "min": 1,
-                "max": 2
+                "min": 2,
+                "max": 4
             }
         ]
     }

@@ -53,8 +53,10 @@ class CorpsePanel {
     open(corpse) {
         if (!corpse?.entry) return;
         if (corpse.inRange && !corpse.inRange()) return;
-        // Only one world UI at a time; side menus (equip/craft/health) can stay open
+        // Only one world UI at a time; close side craft/equip so health can focus the corpse
         if (this.scene.campfirePanel?.visible) this.scene.campfirePanel.close();
+        if (this.scene.craftMenuVisible) this.scene.closeCraftMenu();
+        if (this.scene.equipmentPanel?.visible) this.scene.equipmentPanel.close();
 
         this.corpse = corpse;
         this.session = (corpse.entry.loot || []).map(s => cloneItemStack(s));
@@ -74,8 +76,6 @@ class CorpsePanel {
         const entry = this.corpse?.entry;
         const hp = this.scene.healthPanel;
         if (!hp) return;
-        // Equipment/craft already using the left rail — skip inspect overlay
-        if (this.scene.equipmentPanel?.visible || this.scene.craftMenuVisible) return;
         if (!entry?.body) {
             if (hp.visible) hp.close();
             return;
@@ -172,7 +172,7 @@ class CorpsePanel {
             const meta = this.scene.getItem(stack.id);
             this.scene.showTooltip(
                 () => this.scene.formatItemTooltip(
-                    meta, stack.quantity, stack.spoilMinutes, stack
+                    meta, stack.quantity, stack.spoilAt, stack
                 ),
                 p.x, p.y, slot
             );
@@ -185,7 +185,7 @@ class CorpsePanel {
             // Empty slots are display-only
             if (!this.session[index]) return;
             if (pointer.rightButtonDown()) {
-                this._takeToInventory(index);
+                this._takeToInventory(index, pointer);
                 return;
             }
             this._pointerDownPos = { x: pointer.x, y: pointer.y };
@@ -320,8 +320,9 @@ class CorpsePanel {
     /**
      * Right-click take: if equipment menu is open and the item's slot is empty,
      * equip there; otherwise move into inventory/hotbar.
+     * Amount: 1 / Shift=all / Ctrl=half.
      */
-    _takeToInventory(index) {
+    _takeToInventory(index, pointer = null) {
         const stack = this.session[index];
         if (!stack) return;
 
@@ -336,9 +337,28 @@ class CorpsePanel {
             return;
         }
 
-        const ok = this.scene.player.takeLootStack?.(stack);
+        const amount = Math.min(
+            stack.quantity,
+            typeof quickMoveAmount === "function"
+                ? quickMoveAmount(stack.quantity, pointer, this.scene)
+                : 1
+        );
+        if (!(amount > 0)) return;
+
+        if (amount >= stack.quantity) {
+            const ok = this.scene.player.takeLootStack?.(stack);
+            if (!ok) return;
+            this.session[index] = null;
+            this._afterTake();
+            return;
+        }
+
+        const part = cloneItemStack(stack);
+        part.quantity = amount;
+        const ok = this.scene.player.takeLootStack?.(part);
         if (!ok) return;
-        this.session[index] = null;
+        stack.quantity -= amount;
+        if (stack.quantity <= 0) this.session[index] = null;
         this._afterTake();
     }
 
@@ -368,9 +388,9 @@ class CorpsePanel {
             const space = Math.max(0, maxStack - dest.quantity);
             if (space <= 0) return false;
             const moved = Math.min(space, stack.quantity);
-            dest.spoilMinutes = mergeSpoilMinutes(
-                dest.quantity, dest.spoilMinutes,
-                moved, stack.spoilMinutes
+            dest.spoilAt = mergeSpoilAt(
+                dest.quantity, dest.spoilAt,
+                moved, stack.spoilAt
             );
             dest.quantity += moved;
             stack.quantity -= moved;

@@ -57,10 +57,10 @@
         "name": "Raw Beef",
         "key": "raw_beef",
         "maxStack": 99,
-        "weight": 0.12,
+        "weight": 0.25,
         "fillColor": "#A63D3D",
         "food": {
-            "kc": 100,
+            "kc": 375,
             "spoil": 12
         },
         "cook": {
@@ -75,9 +75,9 @@
         "name": "Roast Beef",
         "key": "roast_beef",
         "maxStack": 99,
-        "weight": 0.1,
+        "weight": 0.22,
         "food": {
-            "kc": 180,
+            "kc": 500,
             "spoil": 36
         }
     },
@@ -86,10 +86,10 @@
         "name": "Raw Venison",
         "key": "raw_venison",
         "maxStack": 99,
-        "weight": 0.12,
+        "weight": 0.25,
         "fillColor": "#8B3A2A",
         "food": {
-            "kc": 80,
+            "kc": 300,
             "spoil": 12
         },
         "cook": {
@@ -104,9 +104,9 @@
         "name": "Roasted Venison",
         "key": "roasted_venison",
         "maxStack": 99,
-        "weight": 0.1,
+        "weight": 0.22,
         "food": {
-            "kc": 145,
+            "kc": 400,
             "spoil": 36
         }
     },
@@ -126,7 +126,6 @@
         "name": "Coconut Shell",
         "key": "cracked_coconut",
         "maxStack": 99,
-        "weight": 0.75,
         "food": {
             "kc": 400,
             "spoil": 48
@@ -165,6 +164,70 @@
         }
     },
     {
+        "id": "pebble",
+        "name": "Pebble",
+        "key": "pebble",
+        "maxStack": 99,
+        "weight": 0.3,
+        "knapping": {
+            "material": "pebble"
+        },
+        "tooltip": [
+            "Click a rock while holding to knap"
+        ]
+    },
+    {
+        "id": "flint",
+        "name": "Flint",
+        "key": "flint",
+        "maxStack": 99,
+        "weight": 0.3,
+        "knapping": {
+            "material": "flint"
+        },
+        "tooltip": [
+            "Click a rock while holding to knap"
+        ]
+    },
+    {
+        "id": "stone_tool",
+        "name": "Stone Tool",
+        "key": "pebble",
+        "maxStack": 1,
+        "weight": 0.3,
+        "tooltip": [
+            "Knapped from a pebble"
+        ]
+    },
+    {
+        "id": "flint_tool",
+        "name": "Flint Tool",
+        "key": "flint",
+        "maxStack": 1,
+        "weight": 0.3,
+        "tooltip": [
+            "Knapped from flint"
+        ]
+    },
+    {
+        "id": "deer_hide",
+        "name": "Deer Hide",
+        "key": "deer_hide",
+        "maxStack": 99,
+        "weight": 2.5,
+        "food": {
+            "kc": 0,
+            "spoil": 96
+        }
+    },
+    {
+        "id": "bone",
+        "name": "Bone",
+        "key": "bone",
+        "maxStack": 99,
+        "weight": 0.3
+    },
+    {
         "id": "leaf",
         "name": "Leaf",
         "key": "leaves",
@@ -180,9 +243,7 @@
         "name": "Leaf Cord",
         "key": "leaf_cord",
         "maxStack": 99,
-        "weight": 0.05,
         "fuel": {
-            "kj": 5,
             "moisture": 0.4
         },
         "bandage": {
@@ -191,7 +252,7 @@
             "channelSeconds": 5
         },
         "tooltip": [
-            "Space — Bandage yourself"
+            "Press Space to bandage"
         ],
         "recipe": {
             "leaf": 5
@@ -202,13 +263,11 @@
         "name": "Sharp Stick",
         "key": "sharp_stick",
         "maxStack": 99,
-        "weight": 0.2,
         "use": "light_fire",
         "cook": {
             "method": "stick_roast"
         },
         "fuel": {
-            "kj": 5,
             "moisture": 0.15
         },
         "tooltip": [
@@ -221,11 +280,10 @@
         }
     },
     {
-        "id": "wood_spear",
-        "name": "Wood Spear",
-        "key": "wood_spear",
+        "id": "wooden_spear",
+        "name": "Wooden Spear",
+        "key": "wooden_spear",
         "maxStack": 1,
-        "weight": 0.9,
         "weapon": {
             "type": "melee",
             "range": 12,
@@ -277,7 +335,6 @@
             ]
         },
         "fuel": {
-            "kj": 45,
             "moisture": 0.32
         },
         "tooltip": [
@@ -290,28 +347,139 @@
         }
     },
     {
-        "id": "stick_frame",
-        "name": "Stick Frame",
-        "key": "stick_frame",
-        "maxStack": 99,
-        "weight": 1.0,
-        "fuel": {
-            "kj": 40,
-            "moisture": 0.28
+        "id": "stone_spear",
+        "name": "Stone Spear",
+        "key": "stone_spear",
+        "maxStack": 1,
+        "weapon": {
+            "type": "melee",
+            "range": 12,
+            "hitStart": 0.25,
+            "hitEnd": 0.75,
+            "attacks": [
+                {
+                    "id": "point_stab",
+                    "name": "Point (Stab)",
+                    "damage": 11,
+                    "type": "sharp",
+                    "verb": "thrust",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 1.0,
+                    "source": "hand"
+                },
+                {
+                    "id": "shaft_poke",
+                    "name": "Shaft (Poke)",
+                    "damage": 4,
+                    "type": "sharp",
+                    "verb": "poked",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 0.25,
+                    "source": "hand"
+                },
+                {
+                    "id": "shaft_blunt",
+                    "name": "Shaft (Blunt)",
+                    "damage": 5,
+                    "type": "blunt",
+                    "verb": "bashed",
+                    "cooldown": 2.2,
+                    "weightMultiplier": 0.2,
+                    "source": "hand"
+                },
+                {
+                    "id": "other_fist",
+                    "name": "Fist",
+                    "damage": 6,
+                    "type": "blunt",
+                    "verb": "swung",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 0.15,
+                    "source": "otherHand",
+                    "unarmed": "punch",
+                    "range": 4
+                }
+            ]
         },
         "recipe": {
-            "stick": 4,
-            "leaf_cord": 4
+            "wooden_spear": 1,
+            "stone_tool": {
+                "qty": 1,
+                "toolClass": "spear_tip"
+            },
+            "leaf_cord": 2
         }
     },
-        {
+    {
+        "id": "flint_spear",
+        "name": "Flint Spear",
+        "key": "flint_spear",
+        "maxStack": 1,
+        "weapon": {
+            "type": "melee",
+            "range": 12,
+            "hitStart": 0.25,
+            "hitEnd": 0.75,
+            "attacks": [
+                {
+                    "id": "point_stab",
+                    "name": "Point (Stab)",
+                    "damage": 14,
+                    "type": "sharp",
+                    "verb": "thrust",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 1.0,
+                    "source": "hand"
+                },
+                {
+                    "id": "shaft_poke",
+                    "name": "Shaft (Poke)",
+                    "damage": 4,
+                    "type": "sharp",
+                    "verb": "poked",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 0.25,
+                    "source": "hand"
+                },
+                {
+                    "id": "shaft_blunt",
+                    "name": "Shaft (Blunt)",
+                    "damage": 5,
+                    "type": "blunt",
+                    "verb": "bashed",
+                    "cooldown": 2.2,
+                    "weightMultiplier": 0.2,
+                    "source": "hand"
+                },
+                {
+                    "id": "other_fist",
+                    "name": "Fist",
+                    "damage": 6,
+                    "type": "blunt",
+                    "verb": "swung",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 0.15,
+                    "source": "otherHand",
+                    "unarmed": "punch",
+                    "range": 4
+                }
+            ]
+        },
+        "recipe": {
+            "wooden_spear": 1,
+            "flint_tool": {
+                "qty": 1,
+                "toolClass": "spear_tip"
+            },
+            "leaf_cord": 2
+        }
+    },
+    {
         "id": "leaf_wrap",
         "name": "Leaf Wrap",
         "key": "leaf_wrap",
         "maxStack": 1,
-        "weight": 0.5,
         "fuel": {
-            "kj": 50,
             "moisture": 0.4
         },
         "equip": {
@@ -327,9 +495,7 @@
         "name": "Leaf Loincloth",
         "key": "leaf_loincloth",
         "maxStack": 1,
-        "weight": 0.4,
         "fuel": {
-            "kj": 40,
             "moisture": 0.4
         },
         "equip": {
@@ -347,13 +513,33 @@
         }
     },
     {
+        "id": "leaf_pouch",
+        "name": "Leaf Pouch",
+        "key": "leaf_pouch",
+        "maxStack": 1,
+        "fuel": {
+            "moisture": 0.4
+        },
+        "equip": {
+            "slot": "waist",
+            "effects": {
+                "strength": 2.5,
+                "addSlot": [
+                    "hotbar"
+                ]
+            }
+        },
+        "recipe": {
+            "leaf_cord": 3,
+            "leaf": 12
+        }
+    },
+    {
         "id": "leaf_sandals",
         "name": "Leaf Sandals",
         "key": "leaf_sandals",
         "maxStack": 1,
-        "weight": 0.65,
         "fuel": {
-            "kj": 35,
             "moisture": 0.33
         },
         "equip": {
@@ -369,27 +555,16 @@
         }
     },
     {
-        "id": "leaf_pouch",
-        "name": "Leaf Pouch",
-        "key": "leaf_pouch",
-        "maxStack": 1,
-        "weight": 0.3,
+        "id": "stick_frame",
+        "name": "Stick Frame",
+        "key": "stick_frame",
+        "maxStack": 99,
         "fuel": {
-            "kj": 27,
-            "moisture": 0.4
-        },
-        "equip": {
-            "slot": "waist",
-            "effects": {
-                "strength": 2.5,
-                "addSlot": [
-                    "hotbar"
-                ]
-            }
+            "moisture": 0.28
         },
         "recipe": {
-            "leaf_cord": 3,
-            "leaf": 12
+            "stick": 4,
+            "leaf_cord": 4
         }
     },
     {

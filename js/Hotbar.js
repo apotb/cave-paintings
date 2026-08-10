@@ -76,7 +76,8 @@ class Hotbar {
         const spacing = slotW + padding;
 
         const totalW = spacing * this.size - padding;
-        const startX = Math.floor((this.scene.scale.width - totalW) / 2) + padding + slotW / 4;
+        // Slots use origin (0,1); startX is the left edge of the first slot
+        const startX = Math.floor((this.scene.scale.width - totalW) / 2);
         const y = this.scene.scale.height - Math.round(16 * s);
 
         this.slotW = slotW;
@@ -127,7 +128,7 @@ class Hotbar {
                 const stack = stacks[i];
                 if (!stack) return "";
                 const meta = this.scene.getItem(stack.id);
-                return this.scene.formatItemTooltip(meta, stack.quantity, stack.spoilMinutes, stack);
+                return this.scene.formatItemTooltip(meta, stack.quantity, stack.spoilAt, stack);
             };
             const text = getText();
             if (text) this.scene.showTooltip(getText, pointer.x, pointer.y, slot);
@@ -149,7 +150,7 @@ class Hotbar {
         slot.on('pointerdown', (pointer) => {
             if (pointer.rightButtonDown()) {
                 if (this.scene.campfirePanel?.visible) {
-                    if (this.scene.campfirePanel.tryQuickAddFuel(slot.index)) {
+                    if (this.scene.campfirePanel.tryQuickAddFuel(slot.index, pointer)) {
                         this.dirty = true;
                         this.scene.refreshTooltip();
                     }
@@ -285,8 +286,12 @@ class Hotbar {
                         const b = inv[to]   ?? null;
 
                         if (a) {
-                            const aSpecial = !!(a.customName || a.food || a.ingredients);
-                            const bSpecial = !!(b && (b.customName || b.food || b.ingredients));
+                            const aSpecial = typeof isSpecialStack === "function"
+                                ? isSpecialStack(a)
+                                : !!(a.customName || a.food || a.ingredients || a.toolClass);
+                            const bSpecial = typeof isSpecialStack === "function"
+                                ? isSpecialStack(b)
+                                : !!(b && (b.customName || b.food || b.ingredients || b.toolClass));
                             if (b && a.id === b.id && !aSpecial && !bSpecial) {
                                 const meta = this.scene.getItem(a.id);
                                 const maxStack = Math.max(1, meta?.maxStack || 1);
@@ -294,9 +299,9 @@ class Hotbar {
 
                                 if (space > 0) {
                                     const moved = Math.min(space, a.quantity);
-                                    b.spoilMinutes = mergeSpoilMinutes(
-                                        b.quantity, b.spoilMinutes,
-                                        moved, a.spoilMinutes
+                                    b.spoilAt = mergeSpoilAt(
+                                        b.quantity, b.spoilAt,
+                                        moved, a.spoilAt
                                     );
                                     b.quantity += moved;
                                     a.quantity -= moved;

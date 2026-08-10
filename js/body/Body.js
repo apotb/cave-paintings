@@ -107,6 +107,15 @@ class BodyPart {
         // Remember killing blow source for UI (injury list is cleared below)
         const last = this.injuries[this.injuries.length - 1];
         if (last?.sourceLabel) this.destroySource = last.sourceLabel;
+        // Pain from wounds on this part — keep at least that much as stump pain so
+        // destroying a mangled limb can't instantly end pain shock / let them stand.
+        let woundPain = 0;
+        for (const inj of this.injuries) {
+            if (inj.permanent) continue;
+            const pps = Number(inj.painPerSeverity);
+            woundPain += (Number(inj.severity) || 0) * (Number.isFinite(pps) ? pps : 0.0125);
+        }
+        this.amputationPain = Math.max(0.18, woundPain);
         // Wounds on this part are replaced by stump bleed; keep child limbs
         // in the tree so the rest of the body picture still makes sense.
         this.injuries = [];
@@ -149,6 +158,7 @@ class BodyPart {
         return {
             dead: this.dead,
             destroySource: this.destroySource || null,
+            amputationPain: this.amputationPain || 0,
             injuries: this.injuries.map(i => ({
                 id: i.id,
                 name: i.name,
@@ -173,6 +183,7 @@ class BodyPart {
         if (!data) return;
         this.dead = !!data.dead;
         this.destroySource = data.destroySource || null;
+        this.amputationPain = Number(data.amputationPain) || 0;
         this.injuries = (data.injuries || []).map(i => ({ ...i }));
         for (const [k, v] of Object.entries(data.limbs || {})) {
             if (this.limbs[k]) this.limbs[k].loadJSON(v);

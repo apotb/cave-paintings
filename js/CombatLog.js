@@ -102,6 +102,7 @@ class CombatLog {
 
     openChat(initialDraft = "") {
         if (this.composing) return;
+        if (this.scene.knappingPanel?.visible) return;
         this.composing = true;
         this.draft = String(initialDraft || "");
         this._draftStash = "";
@@ -148,6 +149,7 @@ class CombatLog {
         const cmd = (parts[0] || "").toLowerCase();
         const helpSyntax = {
             debug: "/debug blood|chunks|combat_log|fps|melee_slots [show|hide]",
+            give: "/give <item> [qty]",
             heal: "/heal",
             help: "/help [command]",
             kms: "/kms",
@@ -189,6 +191,7 @@ class CombatLog {
             player._bodyDead = false;
             player._downed = false;
             player._tendChannel = null;
+            player._skinChannel = null;
             player.capacities = new Capacities(player.anatomy);
             setCreatureProne(player, false);
             player.setVisible(true);
@@ -265,6 +268,51 @@ class CombatLog {
                 return;
             }
             this.push(`Spawned ${def.name || id}`);
+            return;
+        }
+        if (cmd === "/give") {
+            const usage = "Usage: /give <item> [qty]";
+            const idArg = (parts[1] || "").toLowerCase();
+            if (!idArg) {
+                this.pushError(usage);
+                return;
+            }
+            let qty = 1;
+            if (parts[2] != null && parts[2] !== "") {
+                qty = Number(parts[2]);
+                if (!Number.isFinite(qty) || qty < 1 || !Number.isInteger(qty)) {
+                    this.pushError(usage);
+                    return;
+                }
+                qty = Math.min(9999, qty);
+            }
+            const items = (this.scene.items?.() || []).filter(Boolean);
+            const needle = idArg.replace(/-/g, "_");
+            let meta = this.scene.getItem?.(needle)
+                || items.find(i => (i.id || "").toLowerCase() === needle)
+                || items.find(i => (i.name || "").toLowerCase().replace(/\s+/g, "_") === needle)
+                || items.find(i => (i.name || "").toLowerCase() === idArg.replace(/_/g, " "));
+            if (!meta?.id) {
+                this.pushError(`Unknown item "${parts[1]}".`);
+                return;
+            }
+            const player = this.scene.player;
+            if (!player) {
+                this.push("No player to give to.");
+                return;
+            }
+            const remaining = player.gainItem(meta, qty);
+            const got = qty - remaining;
+            if (remaining > 0) {
+                DroppedItem.spawn(this.scene, player.x, player.y, meta, remaining);
+            }
+            if (got <= 0 && remaining > 0) {
+                this.push(`Inventory full — dropped ${remaining}× ${meta.name || meta.id}`);
+            } else if (remaining > 0) {
+                this.push(`Gave ${got}× ${meta.name || meta.id} (${remaining} dropped)`);
+            } else {
+                this.push(`Gave ${got}× ${meta.name || meta.id}`);
+            }
             return;
         }
         if (cmd === "/debug") {

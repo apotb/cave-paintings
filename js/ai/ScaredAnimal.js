@@ -19,6 +19,10 @@ class ScaredAnimalAI extends DoofusAI {
     update(delta) {
         const mob = this.mob;
         if (!mob?.active || mob.isBodyDead?.()) return;
+        if (mob.isImmobile?.() || mob.isIncapacitated?.()) {
+            mob.setVelocity(0, 0);
+            return;
+        }
 
         if (this.panicMs > 0) {
             this._updatePanic(delta);

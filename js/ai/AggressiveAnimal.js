@@ -1,9 +1,9 @@
 /**
- * Retaliatory aggressive animal: wanders until damaged by the player,
+ * Neutral animal: wanders until damaged by the player (or alerted),
  * then sprints in, claims a melee orbit slot (with queue behind), reshuffles,
  * and plants when at the anchor. Staggered give-up if far or idle too long.
  */
-class AggressiveAnimalAI extends DoofusAI {
+class NeutralAnimalAI extends DoofusAI {
     constructor(mob) {
         super(mob);
         this.hostile = false;
@@ -208,7 +208,8 @@ class AggressiveAnimalAI extends DoofusAI {
         const sprintFactor = Number(mob.def?.sprintFactor) || Number(player.sprintFactor) || 1.5;
         const livingLegs = mob.anatomy?.livingLegs?.() ?? 2;
         const moveMul = Math.max(0.05, Math.min(1.5, mob.capacities.moving()));
-        const walk = base * ts * moveMul;
+        const terrain = mob.scene.terrainSpeedMult?.(mob.x, mob.y - 1) ?? 1;
+        const walk = base * ts * moveMul * terrain;
 
         let tx = pc.x;
         let ty = pc.y;
@@ -394,10 +395,46 @@ class AggressiveAnimalAI extends DoofusAI {
     }
 }
 
+/**
+ * Always-hostile aggressive: same combat as neutral, but aggroes on sight.
+ */
+class AggressiveAnimalAI extends NeutralAnimalAI {
+    constructor(mob) {
+        super(mob);
+        this.SIGHT_TILES = 8;
+    }
+
+    update(delta) {
+        if (!this.hostile) this._trySightAggro();
+        super.update(delta);
+    }
+
+    _trySightAggro() {
+        const mob = this.mob;
+        if (!mob?.active || mob.isBodyDead?.()) return;
+        if (mob.isIncapacitated?.() || mob.isImmobile?.()) return;
+        const player = mob.scene?.player;
+        if (!player || player.isBodyDead?.()) return;
+        const ts = mob.scene.tileSize || 16;
+        const distTiles = Math.hypot(
+            (mob.x - player.x) / ts,
+            (mob.y - player.y) / ts
+        );
+        const sight = this.SIGHT_TILES + (this._leashBonus || 0) * 0.25;
+        if (distTiles > sight) return;
+        this.hostile = true;
+        this.timeSinceHitPlayer = 0;
+        this._deaggroTimer = 0;
+        this._atkCache = null;
+        this._atkCacheMs = 0;
+    }
+}
+
 /** AI id → constructor */
 const MobAI = {
     doofus: DoofusAI,
     scaredAnimal: ScaredAnimalAI,
+    neutralAnimal: NeutralAnimalAI,
     aggressiveAnimal: AggressiveAnimalAI,
     // aliases
     animal: ScaredAnimalAI

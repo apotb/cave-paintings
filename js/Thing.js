@@ -473,7 +473,7 @@ class Campfire extends Thing {
             const resultMeta = this.scene.getItem(recipe.result);
             delete this.entry.roastBarMinutes;
             if (resultMeta) {
-                this.setCook(makeItemStack(resultMeta, cook.quantity || 1));
+                this.setCook(makeItemStack(resultMeta, cook.quantity || 1, undefined, this.scene.worldMinuteIndex?.()));
             } else {
                 this.entry.cookProgress = 0;
                 this.scene.campfirePanel?.refresh();
@@ -545,7 +545,8 @@ class Campfire extends Thing {
             const meal = makeCoconutMealStack(
                 id => this.scene.getItem(id),
                 ids,
-                coconutMeta
+                coconutMeta,
+                this.scene.worldMinuteIndex?.()
             );
             this.clearSimmer();
             this.entry.cookProgress = 0;
