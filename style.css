@@ -16,4 +16,7 @@ html, body {
 
 canvas {
     display: block;
+    /* Nearest-neighbor when the OS/browser scales the canvas (e.g. 125% DPI) */
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
 }

@@ -1,0 +1,16 @@
+{
+  "name": "cave-paintings",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cave Paintings — Phaser client + dedicated multiplayer world server",
+  "scripts": {
+    "start": "node server/index.js",
+    "server": "node server/index.js",
+    "server:world": "node server/index.js --world",
+    "client": "npx --yes serve -l 21825",
+    "test:shared-combat": "node -e \"require('./shared/body/Combat.js'); require('./server/SimCreature'); require('./shared/ai/headless'); console.log('shared combat ok');\""
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

@@ -41,6 +41,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
 
         const entry = {
             id,
+            uid: `mob-${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`,
             x,
             y,
             homeX: x,
@@ -234,7 +235,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Hitting one animal triggers nearby AIs: scared flee, aggressive/neutral aggro.
+     * Hitting one animal triggers nearby AIs: scared flee, same-species pack aggro.
      * Does not re-alert (one hop) to avoid chain reactions across the map.
      */
     alertNearbyMobs(source) {
@@ -250,7 +251,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             const dx = other.x - this.x;
             const dy = other.y - this.y;
             if (dx * dx + dy * dy > rangeSq) continue;
-            other.ai.onDamaged(source, { alert: true });
+            other.ai.onDamaged(source, { alert: true, victim: this });
         }
     }
 
@@ -494,7 +495,10 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         // bodyCenter() respects standing (origin 0,1) and prone (origin 0.5,0.5)
         const c = this.bodyCenter();
         const key = this.def?.key || this.texture?.key || "player";
-        Corpse.spawn(scene, {
+        const dedicated = !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
+        const corpseId = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+        const corpseOpts = {
+            id: corpseId,
             x: c.x,
             y: c.y,
             key,
@@ -504,7 +508,36 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             body: this.anatomy?.toJSON?.(),
             bodyPlan: this.def?.bodyPlan || this.anatomy?.planId || "human",
             mobId: this.def?.id || null
-        });
+        };
+
+        if (dedicated) {
+            // Server authors the shared corpse; spawn locally with the same id so
+            // snapshot/event reconcile instead of duplicating.
+            const worldLoot = loot.map((s) => {
+                const clone = typeof cloneItemStack === "function" ? cloneItemStack(s) : { ...s };
+                if (clone && typeof migrateToSpoilAt === "function") {
+                    migrateToSpoilAt(clone, scene.worldMinuteIndex?.() ?? null);
+                }
+                return clone;
+            }).filter(Boolean);
+            scene.net.sendAction({
+                type: NetProtocol.Actions.MOB_DEATH,
+                uid: this.entry?.uid || null,
+                kind: this.def?.id || this.entry?.id || null,
+                x: c.x,
+                y: c.y,
+                corpse: { ...corpseOpts, loot: worldLoot }
+            });
+            const corpse = Corpse.spawn(scene, corpseOpts);
+            if (corpse?.entry) {
+                corpse.entry.netSync = true;
+                corpse.entry.pendingServer = true;
+                corpse.entry.pendingAt = performance.now();
+            }
+            if (corpse && scene.netCorpses) scene.netCorpses.set(corpseId, corpse);
+        } else {
+            Corpse.spawn(scene, corpseOpts);
+        }
 
         if (this.chunk?.meta?.mobs) {
             const i = this.chunk.meta.mobs.indexOf(this.entry);
@@ -561,12 +594,6 @@ class DroppedItem extends Mob {
     static spawn(scene, x, y, item, quantity, spoilAt = undefined, stackExtras = null) {
         if (!item || quantity <= 0) return null;
 
-        if (!scene.droppedItems) scene.droppedItems = scene.add.group();
-
-        const maxStack = Math.max(1, item.maxStack || 1);
-        const maxDist = scene.tileSize;
-        let remaining = quantity;
-        let last = null;
         const now = scene.worldMinuteIndex?.() ?? null;
         let incomingSpoil = spoilAt !== undefined
             ? spoilAt
@@ -574,6 +601,37 @@ class DroppedItem extends Mob {
         if (incomingSpoil == null && now != null && stackExtras?.food?.spoil > 0) {
             incomingSpoil = Math.round(now) + Math.round(stackExtras.food.spoil * 60);
         }
+
+        // Dedicated MP: server owns ground loot. LocalSim SP uses chunk.meta like offline.
+        if (scene.isNet && scene.net?.connected && !scene.net.isLocal) {
+            scene._netSendMove?.(true);
+            scene.net.sendAction({
+                type: NetProtocol.Actions.SPAWN_DROP,
+                id: item.id,
+                quantity,
+                x,
+                y,
+                spoilAt: incomingSpoil,
+                food: stackExtras?.food ? { ...stackExtras.food } : undefined,
+                customName: stackExtras?.customName,
+                ingredients: stackExtras?.ingredients,
+                toolClass: stackExtras?.toolClass,
+                sharpness: stackExtras?.sharpness,
+                knapDamage: stackExtras?.knapDamage,
+                knapMaterial: stackExtras?.knapMaterial,
+                knapQuality: stackExtras?.knapQuality,
+                tooltipExtra: stackExtras?.tooltipExtra,
+                knapIconData: stackExtras?.knapIconData
+            });
+            return null;
+        }
+
+        if (!scene.droppedItems) scene.droppedItems = scene.add.group();
+
+        const maxStack = Math.max(1, item.maxStack || 1);
+        const maxDist = scene.tileSize;
+        let remaining = quantity;
+        let last = null;
 
         const canMerge = !stackExtras?.customName
             && !stackExtras?.food
@@ -825,7 +883,13 @@ class DroppedItem extends Mob {
 
     update(_time, delta) {
         if (!this.active) return;
-        this.lifeMs -= delta;
+        // Server-owned drops: don't despawn locally or rewrite chunk meta
+        if (this.entry?.netSync || (this.scene.isNet && !this.scene.net?.isLocal)) {
+            return;
+        }
+        const speed = Number(this.scene.tickSpeed);
+        const scale = Number.isFinite(speed) ? Math.max(0, speed) : 1;
+        this.lifeMs -= delta * scale;
         if (this.lifeMs <= 0) {
             this.destroy();
             return;
@@ -841,10 +905,25 @@ class DroppedItem extends Mob {
      */
     tryPickup() {
         if (!this.active || !this.item || !(this.quantity > 0)) return false;
+        // Dedicated MP: ask the server. LocalSim SP takes from chunk.meta locally.
+        if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            if (this.entry?.netSync) {
+                this.scene.net.sendAction({
+                    type: NetProtocol.Actions.PICKUP,
+                    dropId: this.entry.uid || null
+                });
+            }
+            return false;
+        }
         const player = this.scene.player;
         if (!player) return false;
 
         if (typeof hasStackExtras === "function" ? hasStackExtras(this) : (this.customName || this.food || this.ingredients || this.toolClass)) {
+            const now = this.scene.worldMinuteIndex?.() ?? null;
+            const spoilLeft = spoilLeftForCharacter(
+                { spoilAt: this.spoilAt, spoilLeft: this.spoilLeft },
+                now
+            );
             const stack = {
                 id: this.item.id,
                 quantity: this.quantity,
@@ -854,7 +933,7 @@ class DroppedItem extends Mob {
                 ...(this.stackWeight != null ? { weight: this.stackWeight } : {}),
                 ...(this.kind ? { kind: this.kind } : {}),
                 ...(this.fillTint != null ? { fillTint: this.fillTint } : {}),
-                ...(this.spoilAt != null ? { spoilAt: this.spoilAt } : {}),
+                ...(spoilLeft != null ? { spoilLeft } : {}),
                 ...(this.toolClass ? { toolClass: this.toolClass } : {}),
                 ...(this.sharpness != null ? { sharpness: this.sharpness } : {}),
                 ...(this.knapDamage != null ? { knapDamage: this.knapDamage } : {}),
@@ -881,7 +960,12 @@ class DroppedItem extends Mob {
         }
 
         const before = this.quantity;
-        const remaining = player.gainItem(this.item, this.quantity, this.spoilAt);
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        const spoilLeft = spoilLeftForCharacter(
+            { spoilAt: this.spoilAt, spoilLeft: this.spoilLeft },
+            now
+        );
+        const remaining = player.gainItem(this.item, this.quantity, spoilLeft);
         if (remaining === before) return false;
         this.scene.hotbar.dirty = true;
         if (remaining === 0) this.destroy();
@@ -893,7 +977,11 @@ class DroppedItem extends Mob {
     }
 
     tooltip(pointer) {
-        const stackProxy = (this.customName || this.food || this.ingredients || this.toolClass) ? {
+        // Match hotbar: tipped spears carry knapQuality without toolClass.
+        const stackProxy = (typeof hasStackExtras === "function" ? hasStackExtras(this) : (
+            this.customName || this.food || this.ingredients || this.toolClass
+            || this.knapQuality || this.knapDamage != null || this.knapIconData
+        )) ? {
             customName: this.customName,
             food: this.food,
             ingredients: this.ingredients,
@@ -904,7 +992,11 @@ class DroppedItem extends Mob {
             sharpness: this.sharpness,
             knapDamage: this.knapDamage,
             knapMaterial: this.knapMaterial,
-            tooltipExtra: this.tooltipExtra
+            knapIconData: this.knapIconData,
+            tooltipExtra: this.tooltipExtra,
+            knapQuality: this.knapQuality,
+            spoilAt: this.spoilAt,
+            spoilLeft: this.spoilLeft
         } : null;
         this.scene.showTooltip(
             () => this.scene.formatItemTooltip(

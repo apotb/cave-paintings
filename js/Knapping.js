@@ -812,7 +812,7 @@ const Knapping = {
             case "scraper": return `Looks like a ${quality} scraper…`;
             case "chopper": return `Looks like a ${quality} chopper…`;
             case "awl": return `Looks like a ${quality} awl…`;
-            case "spear_tip": return `Elongated point — a spear tip…`;
+            case "spear_tip": return `Looks like a ${quality} spear tip…`;
             default: return "Unclear flake…";
         }
     },

@@ -108,8 +108,7 @@
         "key": "sign",
         "hitboxSize": 5,
         "tooltip": [
-            "Refresh the game to find a new spawn point.",
-            "It's recommended for new players to start in a forest."
+            "Welcome to World!"
         ]
     },
     {

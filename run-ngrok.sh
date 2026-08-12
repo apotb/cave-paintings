@@ -13,7 +13,7 @@ set -a
 source ngrok.env
 set +a
 
-: "${NGROK_PORT:=8888}"
+: "${NGROK_PORT:=21826}"
 if [[ -z "${NGROK_URL:-}" ]]; then
   echo "NGROK_URL is not set in ngrok.env"
   exit 1

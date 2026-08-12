@@ -108,7 +108,8 @@ class LootableThing extends Thing {
         this.entry = entry;
         this.chunk = chunk;
 
-        this.on("pointerdown", () => {
+        this.on("pointerdown", (pointer) => {
+            if (this.scene.pointerOverWorldUi?.(pointer)) return;
             if (this.canPickup()) this.pickUp();
         });
         this.on("pointerover", (pointer) => {
@@ -163,6 +164,19 @@ class LootableThing extends Thing {
     pickUp() {
         const loot = this.meta?.lootable;
         if (!loot || !this.entry) return;
+
+        // Dedicated MP: server owns lootables + inventory (YOU).
+        if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            this.scene._netSendMove?.(true);
+            this.scene.net.sendAction({
+                type: NetProtocol.Actions.HARVEST,
+                uid: this.entry?.uid || null,
+                id: this.meta?.id || this.entry?.id || null,
+                x: this.x,
+                y: this.y
+            });
+            return;
+        }
 
         const harvestedId = this.meta.id;
         const item = this.scene.getItem(loot.item);
@@ -239,6 +253,7 @@ class Campfire extends Thing {
         });
         this.on('pointerdown', (pointer) => {
             if (pointer.rightButtonDown()) return;
+            if (this.scene.pointerOverWorldUi?.(pointer)) return;
             if (!this.inRange()) return;
             this.scene.campfirePanel?.toggle(this);
         });
@@ -251,7 +266,9 @@ class Campfire extends Thing {
     }
 
     isLit() {
-        return !!this.meta.lit;
+        if (this.entry?.id === "unlit_campfire") return false;
+        if (this.entry?.id === "campfire") return true;
+        return !!this.meta?.lit;
     }
 
     inRange() {
@@ -473,7 +490,7 @@ class Campfire extends Thing {
             const resultMeta = this.scene.getItem(recipe.result);
             delete this.entry.roastBarMinutes;
             if (resultMeta) {
-                this.setCook(makeItemStack(resultMeta, cook.quantity || 1, undefined, this.scene.worldMinuteIndex?.()));
+                this.setCook(makeWorldItemStack(resultMeta, cook.quantity || 1, undefined, this.scene.worldMinuteIndex?.()));
             } else {
                 this.entry.cookProgress = 0;
                 this.scene.campfirePanel?.refresh();

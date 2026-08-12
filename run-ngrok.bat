@@ -18,7 +18,7 @@ if "%NGROK_URL%"=="" (
   pause
   exit /b 1
 )
-if "%NGROK_PORT%"=="" set "NGROK_PORT=8888"
+if "%NGROK_PORT%"=="" set "NGROK_PORT=21826"
 
 ngrok http --url=%NGROK_URL% %NGROK_PORT%
 pause

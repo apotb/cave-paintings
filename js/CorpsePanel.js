@@ -12,7 +12,8 @@ class CorpsePanel {
         this.session = [];
         this.slotViews = [];
 
-        this.container = scene.add.container(0, 0).setVisible(false).setDepth(60);
+        this.container = scene.add.container(0, 0).setVisible(false).setDepth(100);
+        // Scene root (not a Layer) so Phaser input depth-sort works; above time veil (depth 50).
         if (scene._uiCam) scene._uiCam.ignore(this.container);
 
         this.bg = scene.add.rectangle(0, 0, 16, 16, 0x1a1410, 0.85)
@@ -53,10 +54,9 @@ class CorpsePanel {
     open(corpse) {
         if (!corpse?.entry) return;
         if (corpse.inRange && !corpse.inRange()) return;
-        // Only one world UI at a time; close side craft/equip so health can focus the corpse
+        // Close other world/craft UIs; equipment can stay open for right-click equip-from-loot
         if (this.scene.campfirePanel?.visible) this.scene.campfirePanel.close();
         if (this.scene.craftMenuVisible) this.scene.closeCraftMenu();
-        if (this.scene.equipmentPanel?.visible) this.scene.equipmentPanel.close();
 
         this.corpse = corpse;
         this.session = (corpse.entry.loot || []).map(s => cloneItemStack(s));
@@ -66,6 +66,9 @@ class CorpsePanel {
 
         this.visible = true;
         this.container.setVisible(true);
+        // Above corpses (≈y) and the time veil (50); keep relative order by world Y
+        const dy = Number(corpse.y) || 0;
+        this.container.setDepth(Math.max(100, dy + 80));
         this._rebuildSlots();
         this.layout();
         this.refresh();
@@ -102,14 +105,18 @@ class CorpsePanel {
         this._closeCorpseHealth();
 
         const corpse = this.corpse;
+        const sessionEmpty = !this.session.some(Boolean);
         if (corpse && !skipCompact) {
-            corpse.setLootFromSession(this.session);
-            if (corpse.isEmpty()) {
+            if (!this._dedicatedNet()) {
+                corpse.setLootFromSession(this.session);
+            }
+            if (sessionEmpty || corpse.isEmpty?.()) {
                 this.visible = false;
                 this.corpse = null;
                 this.session = [];
                 this.container.setVisible(false);
                 this._clearSlots();
+                if (this._dedicatedNet()) this._notifyServerDismiss(corpse);
                 corpse.removeForever();
                 return;
             }
@@ -153,7 +160,8 @@ class CorpsePanel {
         const fill = this.scene.add.image(0, 0, "").setOrigin(0.5, 0.5).setVisible(false);
         const qty = this.scene.add.text(0, 0, "", {
             fontSize: "14px",
-            fontFamily: "monospace",
+            fontFamily: "PrimaryFont",
+            align: "right",
             color: "#ffffff",
             stroke: "#000000",
             strokeThickness: 2
@@ -250,6 +258,10 @@ class CorpsePanel {
             this.bg.input.hitArea.setSize(this.bg.width, this.bg.height);
         }
 
+        const s = this.scene.uiScale || 1;
+        const zoom = this.scene.worldZoom || 1;
+        const fontPx = Math.round(14 * s);
+        const strokePx = Math.max(2, Math.round(2 * s));
         for (let i = 0; i < n; i++) {
             const view = this.slotViews[i];
             const col = i % cols;
@@ -261,7 +273,12 @@ class CorpsePanel {
             const cy = y + slotW / 2;
             view.icon.setPosition(cx, cy);
             view.fill.setPosition(cx, cy);
-            view.qty.setPosition(x + slotW - 2 * ws, y + slotW - 2 * ws);
+            // Crisp screen-sized glyphs under worldZoom (same as campfire qty)
+            view.qty.setResolution(zoom * (window.devicePixelRatio || 1));
+            view.qty.setFontSize(`${fontPx}px`);
+            view.qty.setStroke("#000", strokePx);
+            view.qty.setScale(1 / zoom);
+            view.qty.setPosition(x + slotW - 4 * ws, y + slotW - 4 * ws);
             syncIngredientBadges(
                 view.badges,
                 view.qty.x, view.qty.y, ws,
@@ -300,41 +317,114 @@ class CorpsePanel {
 
     _syncPersist() {
         if (!this.corpse) return;
+        // Dedicated: server owns corpse loot — never write the local session over it.
+        if (this._dedicatedNet()) return;
         this.corpse.setLootFromSession(this.session);
+    }
+
+    _dedicatedNet() {
+        return !!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
+    }
+
+    /** Tell the dedicated server we took qty from a corpse slot. */
+    _notifyServerTake(index, quantity, opts = null) {
+        if (!this._dedicatedNet()) return;
+        const id = this.corpse?.entry?.id;
+        const stack = this.session[index];
+        if (!id || !(quantity > 0) || !stack?.id) return;
+        const player = this.scene.player;
+        this.scene._netSendMove?.(true);
+        this.scene.net.sendAction({
+            type: NetProtocol.Actions.CORPSE_TAKE,
+            corpseId: id,
+            index,
+            itemId: stack.id,
+            quantity,
+            equipIfEmpty: !!opts?.equipIfEmpty,
+            x: player?.x,
+            y: player?.y
+        });
+    }
+
+    /** Dedicated: ask the server to despawn an empty corpse after the loot UI closes. */
+    _notifyServerDismiss(corpse) {
+        if (!this._dedicatedNet()) return;
+        const id = corpse?.entry?.id;
+        if (!id) return;
+        const player = this.scene.player;
+        this.scene._netSendMove?.(true);
+        this.scene.net.sendAction({
+            type: NetProtocol.Actions.CORPSE_DISMISS,
+            corpseId: id,
+            x: player?.x,
+            y: player?.y
+        });
+    }
+
+    /** Rebuild session from authoritative entry loot (dedicated snapshots / events). */
+    syncFromEntry() {
+        if (!this.corpse?.entry || !this.visible) return;
+        const loot = (this.corpse.entry.loot || [])
+            .filter(Boolean)
+            .map((s) => (typeof cloneItemStack === "function" ? cloneItemStack(s) : { ...s }));
+        const pool = loot.slice();
+
+        // Sticky holes while open: never compact the grid mid-session.
+        // Rematch remaining stacks into existing slots; extras (e.g. skin loot) append.
+        if (!this.session.length) this.session = [null];
+        for (let i = 0; i < this.session.length; i++) {
+            if (!this.session[i]) continue;
+            const id = this.session[i].id;
+            const j = pool.findIndex((s) => s && s.id === id);
+            if (j >= 0) this.session[i] = pool.splice(j, 1)[0];
+            else this.session[i] = null;
+        }
+        let grew = false;
+        for (const s of pool) {
+            this.session.push(s);
+            grew = true;
+        }
+        this._hadLootOnOpen = this._hadLootOnOpen || this.session.some(Boolean);
+        if (grew) this._rebuildSlots();
+        else this.refresh();
     }
 
     _afterTake() {
         this._syncPersist();
         this.scene.hotbar.dirty = true;
         this.scene.refreshTooltip?.();
-        // Looted corpses: last item taken → close UI/health and destroy immediately
-        if (this._hadLootOnOpen && !this.session.some(Boolean)) {
-            const corpse = this.corpse;
-            this.close(true);
-            corpse?.removeForever();
-            return;
-        }
+        // Empty holes stick until close — reopen rebuilds from compacted loot.
         this.refresh();
     }
 
     /**
      * Right-click take: if equipment menu is open and the item's slot is empty,
      * equip there; otherwise move into inventory/hotbar.
-     * Amount: 1 / Shift=all / Ctrl=half.
+     * Amount: 1 / Shift=all / Ctrl=half (equip path always takes 1).
      */
     _takeToInventory(index, pointer = null) {
         const stack = this.session[index];
         if (!stack) return;
 
-        if (
-            this.scene.equipmentPanel?.visible &&
-            this.scene.player.tryEquipLootStackIfSlotEmpty?.(stack)
-        ) {
-            if (!(stack.quantity > 0)) this.session[index] = null;
-            this._afterTake();
-            this.scene.equipmentPanel.refresh();
-            this.scene.equipmentPanel.layout();
-            return;
+        const equipOpen = !!this.scene.equipmentPanel?.visible;
+        const canEquipEmpty = !!(
+            equipOpen
+            && this.scene.player.canEquipLootStackIfSlotEmpty?.(stack)
+        );
+
+        if (canEquipEmpty) {
+            if (this._dedicatedNet()) {
+                this._notifyServerTake(index, 1, { equipIfEmpty: true });
+            }
+            if (!this.scene.player.tryEquipLootStackIfSlotEmpty?.(stack)) {
+                // Race / local reject — fall through to inventory take
+            } else {
+                if (!(stack.quantity > 0)) this.session[index] = null;
+                this._afterTake();
+                this.scene.equipmentPanel.refresh();
+                this.scene.equipmentPanel.layout();
+                return;
+            }
         }
 
         const amount = Math.min(
@@ -344,6 +434,19 @@ class CorpsePanel {
                 : 1
         );
         if (!(amount > 0)) return;
+
+        // Dedicated: optimistic holes locally; server confirms via YOU + corpse loot event.
+        if (this._dedicatedNet()) {
+            this._notifyServerTake(index, amount);
+            if (amount >= stack.quantity) {
+                this.session[index] = null;
+            } else {
+                stack.quantity -= amount;
+                if (stack.quantity <= 0) this.session[index] = null;
+            }
+            this._afterTake();
+            return;
+        }
 
         if (amount >= stack.quantity) {
             const ok = this.scene.player.takeLootStack?.(stack);
@@ -370,6 +473,32 @@ class CorpsePanel {
         if (this._dragFrom == null) return false;
         const stack = this.session[this._dragFrom];
         if (!stack) return false;
+
+        if (this._dedicatedNet()) {
+            const meta = this.scene.getItem(stack.id);
+            if (!meta) return false;
+            const dest = this.scene.player.inventory[hotbarIndex];
+            let moved = stack.quantity;
+            if (dest && (dest.id !== stack.id || dest.customName || dest.food || dest.ingredients
+                || stack.customName || stack.food || stack.ingredients)) {
+                return false;
+            }
+            if (dest && dest.id === stack.id) {
+                const maxStack = Math.max(1, meta.maxStack || 1);
+                const space = Math.max(0, maxStack - dest.quantity);
+                if (space <= 0) return false;
+                moved = Math.min(space, stack.quantity);
+            }
+            this._notifyServerTake(this._dragFrom, moved);
+            if (moved >= stack.quantity) this.session[this._dragFrom] = null;
+            else {
+                stack.quantity -= moved;
+                if (stack.quantity <= 0) this.session[this._dragFrom] = null;
+            }
+            this._afterTake();
+            return true;
+        }
+
         const inv = this.scene.player.inventory;
         while (inv.length <= hotbarIndex) inv.push(null);
         const dest = inv[hotbarIndex];
@@ -378,7 +507,13 @@ class CorpsePanel {
 
         const special = !!(stack.customName || stack.food || stack.ingredients);
         if (!dest) {
-            inv[hotbarIndex] = cloneItemStack(stack);
+            const moved = Math.max(1, Math.floor(Number(stack.quantity) || 1));
+            const from = this._dragFrom;
+            inv[hotbarIndex] = (() => {
+                const c = cloneItemStack(stack);
+                migrateToSpoilLeft(c, this.scene.worldMinuteIndex?.() ?? null);
+                return c;
+            })();
             this.session[this._dragFrom] = null;
             this._afterTake();
             return true;
@@ -388,10 +523,12 @@ class CorpsePanel {
             const space = Math.max(0, maxStack - dest.quantity);
             if (space <= 0) return false;
             const moved = Math.min(space, stack.quantity);
-            dest.spoilAt = mergeSpoilAt(
-                dest.quantity, dest.spoilAt,
-                moved, stack.spoilAt
+            const now = this.scene.worldMinuteIndex?.() ?? null;
+            dest.spoilLeft = mergeSpoilLeft(
+                dest.quantity, dest.spoilLeft,
+                moved, spoilLeftForCharacter(stack, now)
             );
+            delete dest.spoilAt;
             dest.quantity += moved;
             stack.quantity -= moved;
             if (stack.quantity <= 0) this.session[this._dragFrom] = null;
@@ -425,6 +562,15 @@ class CorpsePanel {
         this._dragging = false;
         this._pointerIsDown = false;
         this._pointerDownPos = null;
+    }
+
+    /** For hover/click blocking — true if screen pointer is over the panel in world space. */
+    containsPointer(pointer) {
+        if (!this.visible || !this.bg || !pointer) return false;
+        const cam = this.scene.cameras?.main;
+        if (!cam) return false;
+        const wpt = cam.getWorldPoint(pointer.x, pointer.y);
+        return Phaser.Geom.Rectangle.Contains(this.bg.getBounds(), wpt.x, wpt.y);
     }
 
     /** For hover blocking — bounds of panel background in world space. */

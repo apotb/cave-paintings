@@ -1,4 +1,5 @@
-localStorage.clear();
+// Preserve multiplayer player id / menu prefs across reloads
+// (legacy code cleared storage every boot — that breaks rejoins)
 
 var config = {
     type: Phaser.WEBGL,
@@ -7,7 +8,14 @@ var config = {
     backgroundColor: "black",
     scale: {
         mode: Phaser.Scale.RESIZE,
-        autoCenter: Phaser.Scale.CENTER_BOTH
+        autoCenter: Phaser.Scale.CENTER_BOTH,
+        autoRound: true
+    },
+    render: {
+        pixelArt: true,
+        antialias: false,
+        roundPixels: true,
+        powerPreference: "high-performance"
     },
     physics: {
         default: "arcade",
@@ -18,6 +26,8 @@ var config = {
         }
     },
     scene: [
+        SceneMenu,
+        SceneNet,
         SceneMain
     ],
     pixelArt: true,

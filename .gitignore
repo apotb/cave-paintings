@@ -1,2 +1,7 @@
 # Local ngrok tunnel config (see ngrok.env.example)
 ngrok.env
+
+# Local multiplayer saves (world + playerdata)
+saves/
+
+node_modules/

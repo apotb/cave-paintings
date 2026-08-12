@@ -1,5 +1,5 @@
 /**
- * Neutral animal: wanders until damaged by the player (or alerted),
+ * Neutral animal: wanders until damaged by the player (or a same-species packmate is),
  * then sprints in, claims a melee orbit slot (with queue behind), reshuffles,
  * and plants when at the anchor. Staggered give-up if far or idle too long.
  */
@@ -31,7 +31,15 @@ class NeutralAnimalAI extends DoofusAI {
         this._atkCacheMs = 0;
     }
 
-    onDamaged(source = null, _opts = null) {
+    onDamaged(source = null, opts = null) {
+        // Pack alert: only get mad if the victim is the same species
+        if (opts?.alert) {
+            const mine = String(this.mob?.def?.id || this.mob?.entry?.id || "").toLowerCase();
+            const theirs = String(
+                opts.victim?.def?.id || opts.victim?.entry?.id || ""
+            ).toLowerCase();
+            if (!mine || !theirs || mine !== theirs) return;
+        }
         if (source && source === this.mob.scene?.player) {
             this.hostile = true;
             this.timeSinceHitPlayer = 0;
@@ -202,6 +210,7 @@ class NeutralAnimalAI extends DoofusAI {
         const base = Number(mob.def?.speed) || Number(player.speed) || 3.5;
         const sprintFactor = Number(mob.def?.sprintFactor) || Number(player.sprintFactor) || 1.5;
         const livingLegs = mob.anatomy?.livingLegs?.() ?? 2;
+        const legsNeeded = mob.capacities?.isQuadrupedHoofed?.() ? 3 : 2;
         const moveMul = Math.max(0.05, Math.min(1.5, mob.capacities.moving()));
         const terrain = mob.scene.terrainSpeedMult?.(mob.x, mob.y - 1) ?? 1;
         const walk = base * ts * moveMul * terrain;
@@ -263,7 +272,7 @@ class NeutralAnimalAI extends DoofusAI {
         // Sprint until near the slot; ease to walk on final approach
         const slotR = slots?.radiusFor(reach) ?? 10;
         const nearSlot = hasAnchor && distAnchor <= Math.max(slotR, this.ANCHOR_RESUME);
-        const canSprint = livingLegs >= 2 && !swinging && !nearSlot;
+        const canSprint = livingLegs >= legsNeeded && !swinging && !nearSlot;
         mob.isSprinting = canSprint;
         const speed = walk * (canSprint ? sprintFactor : 1);
         mob.setVelocity(nx * speed, ny * speed);

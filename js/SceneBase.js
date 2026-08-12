@@ -1,6 +1,6 @@
 class SceneBase extends Phaser.Scene {
-    constructor() {
-        super({ key: "SceneBase" });
+    constructor(config) {
+        super(config || { key: "SceneBase" });
     }
 
     loadImage(key, type='tiles', path=null) {
@@ -9,6 +9,11 @@ class SceneBase extends Phaser.Scene {
     }
 
     preload() {
+        // SceneMain used to assign the Load UI button to this.load, which clobbers
+        // Phaser's LoaderPlugin and breaks the next SceneMain boot. Restore if needed.
+        if (this.sys?.load && this.load !== this.sys.load) {
+            this.load = this.sys.load;
+        }
         // Data
         this.load.json("items", "data/Items.json");
         this.load.json("things", "data/Things.json");
@@ -76,10 +81,10 @@ class SceneBase extends Phaser.Scene {
             "load_open",
             "help",
             "help_hover",
-            "help_click",
+            "help_open",
             "help_alt",
             "help_alt_hover",
-            "help_alt_click",
+            "help_alt_open",
             "health",
             "health_hover",
             "health_open",

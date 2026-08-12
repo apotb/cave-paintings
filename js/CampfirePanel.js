@@ -5,7 +5,8 @@ class CampfirePanel {
         this.campfire = null;
         this.slotViews = []; // { key, slot, icon, qty }
 
-        this.container = scene.add.container(0, 0).setVisible(false).setDepth(60);
+        this.container = scene.add.container(0, 0).setVisible(false).setDepth(100);
+        // Scene root (not a Layer) so Phaser input depth-sort works; above time veil (depth 50).
         if (scene._uiCam) scene._uiCam.ignore(this.container);
 
         this._dragging = false;
@@ -204,16 +205,45 @@ class CampfirePanel {
         }
     }
 
+    _isDedicated() {
+        return !!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
+    }
+
+    _notifyCampfire(op, extra = {}) {
+        if (!this._isDedicated() || !this.campfire || typeof NetProtocol === "undefined") return;
+        const entry = this.campfire.entry || {};
+        if (!entry.uid) {
+            entry.uid = `cf_${Math.round(this.campfire.x)}_${Math.round(this.campfire.y)}`;
+        }
+        if (op !== "attend" && op !== "leave") {
+            this.scene._invSwapGuardUntil = performance.now() + 1000;
+            this.scene._netSendMove?.(true);
+        }
+        this.scene.net.sendAction({
+            type: NetProtocol.Actions.CAMPFIRE,
+            op,
+            uid: entry.uid,
+            x: this.campfire.x,
+            y: this.campfire.y,
+            ...extra
+        });
+    }
+
     open(campfire) {
         // Only one world UI at a time; side menus (equip/craft/health) can stay open
         if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
 
+        if (this.campfire && this.campfire !== campfire) this._notifyCampfire("leave");
         this.campfire = campfire;
+        if (campfire?.entry && !campfire.entry.uid) {
+            campfire.entry.uid = `cf_${Math.round(campfire.x)}_${Math.round(campfire.y)}`;
+        }
         this.visible = true;
         this.container.setVisible(true);
         this.container.setPosition(campfire.x, campfire.y);
         this.refresh();
         this.layout();
+        this._notifyCampfire("attend");
     }
 
     toggle(campfire) {
@@ -222,6 +252,7 @@ class CampfirePanel {
     }
 
     close() {
+        this._notifyCampfire("leave");
         this.visible = false;
         this.campfire = null;
         this.container.setVisible(false);
@@ -229,6 +260,13 @@ class CampfirePanel {
         this.cookBarFill.clear();
         this._cancelDrag();
         this.scene.hideTooltip();
+        // Dedicated: apply any YOU gear that arrived while the panel was open
+        this.scene._flushPendingYouGear?.();
+        if (this.scene.hotbar) {
+            this.scene.hotbar.dirty = true;
+            this.scene.hotbar.layout?.();
+            this.scene.hotbar.dirty = false;
+        }
     }
 
     refresh() {
@@ -315,7 +353,10 @@ class CampfirePanel {
                 || 0;
             if (!(minutes > 0) || (progressAmt <= 0 && !recipe)) return;
             barView = this.slotViews.find(v => v.key === 'cook');
-            advancing = this.campfire.isRoastAdvancing();
+            // Orange while the fire is lit; gray only when draining after it goes out.
+            // Don't use isRoastAdvancing() — dedicated MP can have a valid roast
+            // (server-ticked) while the client helper still thinks it's paused.
+            advancing = this.campfire.isLit();
         }
 
         if (!barView || !barView.slot.visible || !(minutes > 0)) return;
@@ -520,10 +561,12 @@ class CampfirePanel {
     }
 
     _oneFromStack(stack) {
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        const spoilAt = spoilAtForWorld(stack, now);
         const one = {
             id: stack.id,
             quantity: 1,
-            ...(stack.spoilAt != null ? { spoilAt: stack.spoilAt } : {})
+            ...(spoilAt != null ? { spoilAt } : {})
         };
         if (stack.customName) one.customName = stack.customName;
         if (stack.food) one.food = { ...stack.food };
@@ -534,11 +577,14 @@ class CampfirePanel {
         return one;
     }
 
+    /** Campfire/world stack clone (spoilAt). */
     _cloneStack(stack) {
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        const spoilAt = spoilAtForWorld(stack, now);
         return {
             id: stack.id,
             quantity: stack.quantity,
-            ...(stack.spoilAt != null ? { spoilAt: stack.spoilAt } : {}),
+            ...(spoilAt != null ? { spoilAt } : {}),
             ...(stack.customName ? { customName: stack.customName } : {}),
             ...(stack.food ? { food: { ...stack.food } } : {}),
             ...(stack.ingredients ? { ingredients: stack.ingredients.slice() } : {}),
@@ -546,6 +592,14 @@ class CampfirePanel {
             ...(stack.kind ? { kind: stack.kind } : {}),
             ...(stack.fillTint != null ? { fillTint: stack.fillTint } : {})
         };
+    }
+
+    /** Inventory stack from a campfire/world stack (spoilLeft). */
+    _toInvStack(stack) {
+        const clone = this._cloneStack(stack);
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        migrateToSpoilLeft(clone, now);
+        return clone;
     }
 
     _depositCatalystFromHotbar(hotbarIndex) {
@@ -565,7 +619,7 @@ class CampfirePanel {
             stack.quantity -= 1;
             if (stack.quantity <= 0) inv[hotbarIndex] = null;
         } else {
-            const returning = this._cloneStack(dest);
+            const returning = this._toInvStack(dest);
             this.campfire.setCatalyst(this._oneFromStack(stack));
             stack.quantity -= 1;
             if (stack.quantity <= 0) {
@@ -582,6 +636,7 @@ class CampfirePanel {
         this.scene.hotbar.dirty = true;
         this.layout();
         this.scene.refreshTooltip();
+        this._notifyCampfire("inv_to_slot", { inv: hotbarIndex, slot: "catalyst", amount: 1 });
     }
 
     _depositSimmerFromHotbar(key, hotbarIndex) {
@@ -600,6 +655,7 @@ class CampfirePanel {
         this.scene.hotbar.dirty = true;
         this.refresh();
         this.scene.refreshTooltip();
+        this._notifyCampfire("inv_to_slot", { inv: hotbarIndex, slot: key, amount: 1 });
     }
 
     _depositQty1FromHotbar(key, hotbarIndex) {
@@ -618,7 +674,7 @@ class CampfirePanel {
             stack.quantity -= 1;
             if (stack.quantity <= 0) inv[hotbarIndex] = null;
         } else {
-            const returning = this._cloneStack(dest);
+            const returning = this._toInvStack(dest);
             this._setStack(key, this._oneFromStack(stack));
             stack.quantity -= 1;
             if (stack.quantity <= 0) {
@@ -633,25 +689,34 @@ class CampfirePanel {
         this.scene.hotbar.dirty = true;
         this.refresh();
         this.scene.refreshTooltip();
+        this._notifyCampfire("inv_to_slot", { inv: hotbarIndex, slot: key, amount: 1 });
     }
 
     /** Insert a full stack object into inventory (preserves custom meal fields). */
     _tryInsertStack(stack) {
         const inv = this.scene.player.inventory;
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        const forInv = stack.spoilLeft != null ? stack : (() => {
+            const c = cloneItemStack(stack) || stack;
+            migrateToSpoilLeft(c, now);
+            return c;
+        })();
         const empty = inv.findIndex(s => !s);
         if (empty !== -1) {
-            inv[empty] = stack;
+            inv[empty] = forInv;
             return true;
         }
         if (inv.length < this.scene.player.inventorySize) {
-            inv.push(stack);
+            inv.push(forInv);
             return true;
         }
         // Fall back to gainItem (loses custom fields for non-meals; meals maxStack 1)
-        if (stack.customName || stack.food) return false;
-        const meta = this.scene.getItem(stack.id);
-        const left = this.scene.player.gainItem(meta, stack.quantity, stack.spoilAt);
-        return left < stack.quantity && left === 0;
+        if (forInv.customName || forInv.food) return false;
+        const meta = this.scene.getItem(forInv.id);
+        const left = this.scene.player.gainItem(
+            meta, forInv.quantity, spoilLeftForCharacter(forInv, now)
+        );
+        return left < forInv.quantity && left === 0;
     }
 
     _depositFuelIntoSlot(idx, hotbarIndex, pointer = null) {
@@ -663,14 +728,17 @@ class CampfirePanel {
         const want = pointer != null && typeof quickMoveAmount === "function"
             ? quickMoveAmount(stack.quantity, pointer, this.scene)
             : stack.quantity;
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        let moved = 0;
 
         if (!dest) {
-            const moved = Math.min(stack.quantity, want);
+            moved = Math.min(stack.quantity, want);
             if (!(moved > 0)) return;
+            const spoilAt = spoilAtForWorld(stack, now);
             this.campfire.setFuel(idx, {
                 id: stack.id,
                 quantity: moved,
-                ...(stack.spoilAt != null ? { spoilAt: stack.spoilAt } : {})
+                ...(spoilAt != null ? { spoilAt } : {})
             });
             stack.quantity -= moved;
             if (stack.quantity <= 0) inv[hotbarIndex] = null;
@@ -678,11 +746,11 @@ class CampfirePanel {
             const maxStack = Math.max(1, meta?.maxStack || 1);
             const space = Math.max(0, maxStack - dest.quantity);
             if (space <= 0) return;
-            const moved = Math.min(space, want, stack.quantity);
+            moved = Math.min(space, want, stack.quantity);
             if (!(moved > 0)) return;
             dest.spoilAt = mergeSpoilAt(
                 dest.quantity, dest.spoilAt,
-                moved, stack.spoilAt
+                moved, spoilAtForWorld(stack, now)
             );
             dest.quantity += moved;
             stack.quantity -= moved;
@@ -691,26 +759,35 @@ class CampfirePanel {
         } else {
             // Different item: only full-stack swap
             if (want < stack.quantity) return;
+            const spoilAt = spoilAtForWorld(stack, now);
+            moved = stack.quantity;
             this.campfire.setFuel(idx, {
                 id: stack.id,
                 quantity: stack.quantity,
-                ...(stack.spoilAt != null ? { spoilAt: stack.spoilAt } : {})
+                ...(spoilAt != null ? { spoilAt } : {})
             });
-            inv[hotbarIndex] = dest;
+            inv[hotbarIndex] = this._toInvStack(dest);
         }
 
         this.scene.hotbar.dirty = true;
         this.refresh();
         this.scene.refreshTooltip();
+        this._notifyCampfire("inv_to_slot", {
+            inv: hotbarIndex,
+            slot: `fuel:${idx}`,
+            amount: moved
+        });
     }
 
     _returnStackToHotbar(key, pointer = null) {
         if (key === 'catalyst' && this._catalystLocked()) return;
         const stack = this._stackFor(key);
         if (!stack) return;
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        let moved = stack.quantity;
 
         if (stack.customName || stack.food) {
-            if (!this._tryInsertStack(this._cloneStack(stack))) return;
+            if (!this._tryInsertStack(this._toInvStack(stack))) return;
             this._setStack(key, null);
         } else {
             const meta = this.scene.getItem(stack.id);
@@ -721,9 +798,9 @@ class CampfirePanel {
             const amount = Math.min(stack.quantity, want);
             if (!(amount > 0)) return;
             const remaining = this.scene.player.gainItem(
-                meta, amount, stack.spoilAt
+                meta, amount, spoilLeftForCharacter(stack, now)
             );
-            const moved = amount - remaining;
+            moved = amount - remaining;
             if (moved <= 0) return;
             stack.quantity -= moved;
             if (stack.quantity <= 0) this._setStack(key, null);
@@ -732,6 +809,7 @@ class CampfirePanel {
         this.layout();
         this.scene.hotbar.dirty = true;
         this.scene.refreshTooltip();
+        this._notifyCampfire("slot_to_inv", { slot: key, inv: -1, amount: moved });
     }
 
     _onPointerUp(pointer) {
@@ -767,20 +845,23 @@ class CampfirePanel {
         const inv = this.scene.player.inventory;
         while (inv.length <= toHotbar) inv.push(null);
         const dest = inv[toHotbar];
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        let moved = stack.quantity;
 
         if (!dest) {
-            inv[toHotbar] = this._cloneStack(stack);
+            inv[toHotbar] = this._toInvStack(stack);
             this._setStack(fromKey, null);
         } else if (dest.id === stack.id && !stack.customName && !dest.customName) {
             const meta = this.scene.getItem(dest.id);
             const maxStack = Math.max(1, meta?.maxStack || 1);
             const space = maxStack - dest.quantity;
             if (space > 0) {
-                const moved = Math.min(space, stack.quantity);
-                dest.spoilAt = mergeSpoilAt(
-                    dest.quantity, dest.spoilAt,
-                    moved, stack.spoilAt
+                moved = Math.min(space, stack.quantity);
+                dest.spoilLeft = mergeSpoilLeft(
+                    dest.quantity, dest.spoilLeft,
+                    moved, spoilLeftForCharacter(stack, now)
                 );
+                delete dest.spoilAt;
                 dest.quantity += moved;
                 stack.quantity -= moved;
                 if (stack.quantity <= 0) this._setStack(fromKey, null);
@@ -795,21 +876,31 @@ class CampfirePanel {
 
             const one = this._oneFromStack(dest);
             dest.quantity -= 1;
-            inv[toHotbar] = this._cloneStack(stack);
+            inv[toHotbar] = this._toInvStack(stack);
             this._setStack(fromKey, one);
             if (dest.quantity > 0) {
-                const leftStack = this._cloneStack(dest);
+                const leftStack = this._toInvStack(dest);
                 if (!this._tryInsertStack(leftStack)) {
                     inv[toHotbar] = dest;
                     dest.quantity += 1;
                     this._setStack(fromKey, stack);
+                    return;
                 }
+            } else {
+                // dest fully moved into campfire slot
             }
         } else {
-            inv[toHotbar] = this._cloneStack(stack);
-            this._setStack(fromKey, dest);
+            inv[toHotbar] = this._toInvStack(stack);
+            this._setStack(fromKey, this._cloneStack(dest));
         }
+
         this.scene.hotbar.dirty = true;
+        this.scene.refreshTooltip();
+        this._notifyCampfire("slot_to_inv", {
+            slot: fromKey,
+            inv: toHotbar,
+            amount: moved
+        });
     }
 
     _moveBetweenSlots(fromKey, toKey) {
@@ -832,7 +923,10 @@ class CampfirePanel {
             } else if (a.quantity <= 1) {
                 this._setStack(fromKey, b);
                 this._setStack('catalyst', one);
+            } else {
+                return;
             }
+            this._notifyCampfire("slot_to_slot", { from: fromKey, to: toKey });
             return;
         }
 
@@ -845,6 +939,7 @@ class CampfirePanel {
                 if (fromKey.startsWith('simmer:') && a.quantity <= 1) {
                     this._setStack(fromKey, b);
                     this._setStack(toKey, a);
+                    this._notifyCampfire("slot_to_slot", { from: fromKey, to: toKey });
                 }
                 return;
             }
@@ -852,6 +947,7 @@ class CampfirePanel {
             a.quantity -= 1;
             this._setStack(toKey, one);
             this._setStack(fromKey, a.quantity > 0 ? a : null);
+            this._notifyCampfire("slot_to_slot", { from: fromKey, to: toKey });
             return;
         }
 
@@ -866,7 +962,10 @@ class CampfirePanel {
             } else if (a.quantity <= 1) {
                 this._setStack(fromKey, b);
                 this._setStack('cook', one);
+            } else {
+                return;
             }
+            this._notifyCampfire("slot_to_slot", { from: fromKey, to: toKey });
             return;
         }
 
@@ -892,12 +991,16 @@ class CampfirePanel {
                 }
                 this._setStack(fromKey, b);
                 this._setStack(toKey, a);
+            } else {
+                return;
             }
+            this._notifyCampfire("slot_to_slot", { from: fromKey, to: toKey });
             return;
         }
 
         this._setStack(fromKey, b);
         this._setStack(toKey, a);
+        this._notifyCampfire("slot_to_slot", { from: fromKey, to: toKey });
     }
 
     _cancelDrag() {
@@ -907,5 +1010,11 @@ class CampfirePanel {
         this._dragFromKey = null;
         this._pointerIsDown = false;
         this._pointerDownPos = null;
+    }
+
+    /** True if screen pointer is over campfire slot chrome (not the empty center over the fire). */
+    containsPointer(pointer) {
+        if (!this.visible || !this.container?.visible || !pointer) return false;
+        return this.getSlotAt(pointer.x, pointer.y) != null;
     }
 }

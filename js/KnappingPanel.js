@@ -84,7 +84,7 @@ class KnappingPanel {
         });
         this.helpBtn.on("pointerdown", () => {
             this._helpPressed = true;
-            this.helpBtn.setTexture("help_alt_click");
+            this.helpBtn.setTexture("help_alt_open");
         });
         this.helpBtn.setOrigin(0.5, 0.5).setScale(3).setDepth(130).setVisible(false);
         scene.uiLayer.add(this.helpBtn);
@@ -173,6 +173,8 @@ class KnappingPanel {
     tryOpenAtRock(rock) {
         if (this.visible) return false;
         if (!rock || rock.meta?.id !== "rock") return false;
+        const pointer = this.scene.input?.activePointer;
+        if (this.scene.pointerOverWorldUi?.(pointer)) return false;
         const player = this.scene.player;
         if (!player || player._bodyDead || player.isIncapacitated?.()) return false;
         // Close whatever menu is open, then start knapping
@@ -239,6 +241,23 @@ class KnappingPanel {
         return true;
     }
 
+    _isDedicated() {
+        return !!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
+    }
+
+    _notifyKnap(op, extra = {}) {
+        if (!this._isDedicated() || typeof NetProtocol === "undefined") return;
+        this.scene._invSwapGuardUntil = performance.now() + 1200;
+        this.scene._netSendMove?.(true);
+        this.scene.net.sendAction({
+            type: NetProtocol.Actions.KNAP,
+            op,
+            slot: this.blankSlotIndex,
+            id: this.blankItemId,
+            ...extra
+        });
+    }
+
     _consumeBlankOnce() {
         if (this._blankConsumed || !this.blankItemId) return;
         const player = this.scene.player;
@@ -253,6 +272,7 @@ class KnappingPanel {
         if (n > 0) {
             this._blankConsumed = true;
             this.scene.hotbar.dirty = true;
+            this._notifyKnap("consume");
         }
     }
 
@@ -270,6 +290,7 @@ class KnappingPanel {
         slot.knapIcon = null;
         Knapping.ensureToolTexture(this.scene, slot);
         this.scene.hotbar.dirty = true;
+        this._notifyKnap("orient", { knapIconData: packed });
     }
 
     _redraw() {
@@ -455,6 +476,10 @@ class KnappingPanel {
             ? cloneItemStack(stack)
             : { ...stack };
 
+        if (this._isDedicated()) {
+            this._notifyKnap("finish", { stack: clone });
+        }
+
         // Prefer the slot that held the blank (now empty after consume)
         const prefer = this.blankSlotIndex;
         if (prefer >= 0 && prefer < player.inventorySize && !player.inventory[prefer]) {
@@ -477,15 +502,18 @@ class KnappingPanel {
             this.scene.hotbar.dirty = true;
             return true;
         }
+        // Dedicated: server drops the overflow — don't also SPAWN_DROP a stripped copy
+        if (this._isDedicated()) return true;
         const drop = DroppedItem.spawn(
             this.scene, player.x, player.y, meta, 1, undefined,
-            typeof knapStackExtras === "function" ? knapStackExtras(stack) : null
+            typeof knapStackExtras === "function" ? knapStackExtras(stack) : mealStackExtras?.(stack)
         );
         return !!drop;
     }
 
     close() {
         if (!this.visible) return;
+        if (this._blankConsumed && !this._finished) this._notifyKnap("abort");
         this.visible = false;
         this.container.setVisible(false);
         this.grid = null;
@@ -503,6 +531,8 @@ class KnappingPanel {
         if (this.scene._tooltipTarget === this.helpBtn) this.scene.hideTooltip();
         this._helpPressed = false;
         this.helpBtn?.setTexture("help_alt").setVisible(false);
+        // Dedicated: apply YOU gear that arrived while knapping UI owned inventory
+        this.scene._flushPendingYouGear?.();
     }
 
     update() {

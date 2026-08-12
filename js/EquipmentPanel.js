@@ -212,7 +212,7 @@ class EquipmentPanel {
             }
             const meta = this.scene.getItem(stack.id);
             this.scene.showTooltip(
-                () => this.scene.formatItemTooltip(meta, stack.quantity, stack.spoilAt, stack),
+                () => this.scene.formatItemTooltip(meta, stack.quantity, stack.spoilLeft ?? stack.spoilAt, stack),
                 p.x, p.y, slot
             );
         });
@@ -401,6 +401,10 @@ class EquipmentPanel {
         player.setEquipmentStack(toKey, a);
         player.syncWaistSlots();
         player.recomputeEquipmentEffects();
+        player._notifyNetGear?.(
+            typeof NetProtocol !== "undefined" ? NetProtocol.Actions.EQUIP_SWAP : "equip_swap",
+            { from: fromKey, to: toKey }
+        );
         return true;
     }
 

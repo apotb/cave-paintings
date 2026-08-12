@@ -1,13 +1,20 @@
 const NOISE_SCALE = 6000;
 
-let worldSeed = Date.now();
+function _freshWorldSeed() {
+    if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+        return crypto.getRandomValues(new Uint32Array(1))[0] >>> 0;
+    }
+    return (Math.random() * 0x100000000) >>> 0;
+}
+
+let worldSeed = _freshWorldSeed();
 while (true) {
     noise.seed(worldSeed);
     const elevation = octaveNoise2D(0, 0, 2, 0.5, 2.5, 0);
     // const temperature = octaveNoise2D(0, 0, 3, 0.2, 4.2, 1);
     const river = Math.abs(octaveNoise2D(0, 0, 3, 1.2, 0.7, 2));
     if (elevation > -0.2 && elevation < 0.25 && river > 0.005) break;
-    worldSeed++;
+    worldSeed = (worldSeed + 1) >>> 0;
 }
 
 function octaveNoise2D(x, y, octaves=1, persistence=1.0, lacunarity=1.0, seed=0) {
@@ -125,6 +132,12 @@ class Chunk {
         }
         this.drops.clear(false, false);
         for (const corpse of this.corpses.getChildren().slice()) {
+            // Dedicated net corpses are owned by snapshots/events — keep them
+            // across chunk unload so a kill doesn't vanish when streaming reloads.
+            if (corpse?.entry?.netSync) {
+                this.corpses.remove(corpse);
+                continue;
+            }
             this.scene.corpses?.remove(corpse);
             corpse.destroy();
         }
@@ -272,6 +285,8 @@ class Chunk {
      * sprites are created later in makeMobs(). Never runs again for this chunk.
      */
     populateNaturalMobs(rand) {
+        // Dedicated MP: wildlife is server-authoritative. LocalSim SP seeds chunk meta.
+        if (this.scene.isNet && !this.scene.net?.isLocal) return;
         if (!this.meta.mobs) this.meta.mobs = [];
         const rules = (this.scene.mobsData?.() || []).filter(m => m?.id && m.spawn);
         if (!rules.length) return;
@@ -491,10 +506,13 @@ class Chunk {
     addLootableThing(tileX, tileY, id) {
         // Reserved for the spawn sign — never place natural lootables at origin
         if (tileX === 0 && tileY === 0) return;
+        const x = tileX + this.scene.tileSize / 2;
+        const y = tileY + this.scene.tileSize;
         this.meta.lootableThings.push({
-            x: tileX + this.scene.tileSize / 2,
-            y: tileY + this.scene.tileSize,
-            id
+            x,
+            y,
+            id,
+            uid: `lt_${Math.round(x)}_${Math.round(y)}_${id}`
         });
     }
 
@@ -544,15 +562,20 @@ class Chunk {
                 if (meta.id === "rock") {
                     this.scene.wireRockKnapping?.(thing);
                 } else if (meta.id === "sign") {
+                    thing.entry = meta;
+                    if (meta.spawnHint && this.scene._spawnSignTooltip) {
+                        meta.tooltip = this.scene._spawnSignTooltip();
+                    }
                     this.scene.wireThingTooltip?.(thing);
                 }
             }
             this.things.add(thing);
         }
         if (!this.meta.lootableThings) this.meta.lootableThings = [];
+        const dedicated = !!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
         for (const entry of this.meta.lootableThings) {
-            // Catch up regrows that came due while this chunk was unloaded
-            this.scene.applyDueLootableRegrow?.(entry);
+            // Dedicated: server owns regrow. Local catch-up desynced harvested bushes.
+            if (!dedicated) this.scene.applyDueLootableRegrow?.(entry);
             if (entry.gone) continue;
             if (!entry?.id) continue;
             this.things.add(new LootableThing(this.scene, entry, this));
@@ -562,17 +585,27 @@ class Chunk {
     }
 
     async makeMobs() {
+        // Dedicated MP: server owns wildlife (SimCreature); show snapshot puppets only.
+        if (this.scene.isNet && !this.scene.net?.isLocal) {
+            return Promise.resolve();
+        }
         if (!this.meta.mobs) this.meta.mobs = [];
         const live = this.scene.mobs?.getChildren() || [];
         for (const entry of this.meta.mobs) {
             if (!entry?.id) continue;
             if (live.some(m => m.entry === entry)) continue;
+            // Stable id for MOB_DEATH sync (server WorldGen may omit uid)
+            if (!entry.uid) {
+                entry.uid = `mob-${this.x},${this.y}-${Math.round(entry.x)}-${Math.round(entry.y)}`;
+            }
             new LivingMob(this.scene, entry, this);
         }
         return Promise.resolve();
     }
 
     async makeDrops() {
+        // Dedicated MP: ground loot from snapshots. LocalSim SP uses chunk meta + snapshots.
+        if (this.scene.isNet && !this.scene.net?.isLocal) return Promise.resolve();
         if (!this.meta.drops) this.meta.drops = [];
         const live = this.scene.droppedItems?.getChildren() || [];
         for (const entry of this.meta.drops) {
@@ -584,6 +617,8 @@ class Chunk {
     }
 
     async makeCorpses() {
+        // Dedicated MP: corpses from server snapshots (same as drops/mobs).
+        if (this.scene.isNet && !this.scene.net?.isLocal) return Promise.resolve();
         if (!this.meta.corpses) this.meta.corpses = [];
         // Empty corpses stay until the loot UI is closed (CorpsePanel → removeForever)
         const live = this.corpses?.getChildren() || [];

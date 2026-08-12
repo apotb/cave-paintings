@@ -40,6 +40,13 @@ function setHour(hour, minute = 0) {
     const scene = getScene();
     const h = ((Math.floor(hour) % 24) + 24) % 24;
     const m = Phaser.Math.Clamp(Math.floor(minute), 0, 59);
+    if (scene.isNet && scene.net?.connected) {
+        scene.net.sendAction({
+            type: NetProtocol.Actions.CHAT,
+            text: `/time ${h} ${m}`
+        });
+        return `Requesting Day ${scene.gameDay} ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}…`;
+    }
     scene.gameMinutes = h * 60 + m;
     scene._lightSig = null; // force veil redraw
     scene.updateClockText();
@@ -62,6 +69,13 @@ function setTickSpeed(mult) {
     const m = Number(mult);
     if (!Number.isFinite(m) || m < 0) {
         return `Invalid speed "${mult}". Use setTickSpeed(1) for normal, 0 to pause.`;
+    }
+    if (scene.isNet && scene.net?.connected) {
+        scene.net.sendAction({
+            type: NetProtocol.Actions.CHAT,
+            text: `/tick ${m}`
+        });
+        return `Requesting tick speed ${m}×…`;
     }
     const speed = scene.setTickSpeed(m);
     if (speed === 0) return "Tick speed: paused (0)";
@@ -254,60 +268,6 @@ function quickMoveAmount(quantity, pointer = null, scene = null) {
 }
 
 /**
- * Spoil duration in game minutes for a fresh item (from food.spoil hours).
- * @param   {Object} item   Item definition from Items.json.
- * @return  {Number|null}   Minutes, or null if not spoilable.
- */
-function spoilDurationMinutes(item) {
-    const hours = item?.food?.spoil;
-    if (!hours || hours <= 0) return null;
-    return Math.round(hours * 60);
-}
-
-/** @deprecated Use spoilDurationMinutes */
-function defaultSpoilMinutes(item) {
-    return spoilDurationMinutes(item);
-}
-
-/**
- * Absolute world-minute index when a fresh item should spoil.
- * @param {Object} item
- * @param {number} now  scene.worldMinuteIndex()
- * @returns {number|null}
- */
-function defaultSpoilAt(item, now) {
-    const dur = spoilDurationMinutes(item);
-    if (dur == null || now == null) return null;
-    return Math.round(now) + dur;
-}
-
-/**
- * Remaining game minutes until spoilAt (0 if due/past).
- */
-function remainingSpoilMinutes(spoilAt, now) {
-    if (spoilAt == null || now == null) return null;
-    return Math.max(0, Math.round(spoilAt) - Math.round(now));
-}
-
-/**
- * Quantity-weighted average of two absolute spoilAt timestamps.
- * Equivalent to averaging remaining times (now cancels out).
- */
-function mergeSpoilAt(countA, atA, countB, atB) {
-    if (atA == null && atB == null) return null;
-    if (atA == null) return atB;
-    if (atB == null) return atA;
-    const total = countA + countB;
-    if (total <= 0) return Math.round(atA);
-    return Math.round((countA * atA + countB * atB) / total);
-}
-
-/** @deprecated Use mergeSpoilAt */
-function mergeSpoilMinutes(countA, minutesA, countB, minutesB) {
-    return mergeSpoilAt(countA, minutesA, countB, minutesB);
-}
-
-/**
  * Derive crafted item weights from recipe ingredients (recursive).
  * Mutates items in place. Skips REQUIRE_THING; divides by QUANTITY.
  * Items with weightFixed keep their authored weight.
@@ -429,66 +389,6 @@ function resolveCraftedFuel(items) {
     for (const item of items) {
         if (item?.id) fuelKjOf(item.id);
     }
-}
-
-/**
- * Build an inventory/equipment stack object, attaching spoilAt when applicable.
- * @param {Object} item
- * @param {number} quantity
- * @param {number|null|undefined} spoilAt  absolute world minute; omit to use now+duration
- * @param {number|null} now  worldMinuteIndex(); required when spoilAt is omitted for spoilable items
- */
-function makeItemStack(item, quantity, spoilAt = undefined, now = null) {
-    const stack = { id: item.id, quantity };
-    let at = spoilAt;
-    if (at === undefined) {
-        at = defaultSpoilAt(item, now);
-        // Dynamic meal stacks may carry food.spoil without meta.food
-        if (at == null && now != null && item?.food?.spoil > 0) {
-            at = Math.round(now) + Math.round(item.food.spoil * 60);
-        }
-    }
-    if (at != null) stack.spoilAt = at;
-    return stack;
-}
-
-/**
- * Migrate legacy spoilMinutes (remaining) → spoilAt, or assign fresh spoilAt if missing.
- * @param {Object|null} stack
- * @param {number} now
- * @param {Function} [getItem]
- */
-function migrateStackSpoil(stack, now, getItem = null) {
-    if (!stack || now == null) return stack;
-    if (stack.spoilAt != null) {
-        if (stack.spoilMinutes != null) delete stack.spoilMinutes;
-        return stack;
-    }
-    if (stack.spoilMinutes != null) {
-        stack.spoilAt = Math.round(now) + Math.round(stack.spoilMinutes);
-        delete stack.spoilMinutes;
-        return stack;
-    }
-    const meta = getItem ? getItem(stack.id) : null;
-    const foodSpoil = stack.food?.spoil ?? meta?.food?.spoil;
-    if (foodSpoil > 0) {
-        stack.spoilAt = Math.round(now) + Math.round(foodSpoil * 60);
-    }
-    return stack;
-}
-
-/**
- * If stack is due to spoil at/before now, return a rot stack (or strip timer).
- * @returns {{ stack: Object|null, changed: boolean }}
- */
-function spoilStackIfDue(stack, now, rotItem) {
-    if (!stack || stack.spoilAt == null) return { stack, changed: false };
-    if (Math.round(now) < Math.round(stack.spoilAt)) return { stack, changed: false };
-    if (!rotItem) {
-        delete stack.spoilAt;
-        return { stack, changed: true };
-    }
-    return { stack: { id: rotItem.id, quantity: stack.quantity }, changed: true };
 }
 
 /**
@@ -788,8 +688,13 @@ function makeCoconutMealStack(getItem, ingredientIds, coconutMeta, now = null) {
         fillTint: info.fillTint,
         ingredients: ingredientIds.filter(Boolean).slice()
     };
-    if (now != null && info.spoilHours > 0) {
-        stack.spoilAt = Math.round(now) + Math.round(info.spoilHours * 60);
+    if (info.spoilHours > 0) {
+        // Campfire cook slot is world-owned (spoilAt); callers without `now` get spoilLeft.
+        if (now != null) {
+            stack.spoilAt = Math.round(now) + Math.round(info.spoilHours * 60);
+        } else {
+            stack.spoilLeft = Math.round(info.spoilHours * 60);
+        }
     }
     return stack;
 }
@@ -798,6 +703,7 @@ function makeCoconutMealStack(getItem, ingredientIds, coconutMeta, now = null) {
 function cloneItemStack(stack) {
     if (!stack) return null;
     const out = { id: stack.id, quantity: stack.quantity };
+    if (stack.spoilLeft != null) out.spoilLeft = stack.spoilLeft;
     if (stack.spoilAt != null) out.spoilAt = stack.spoilAt;
     if (stack.spoilMinutes != null) out.spoilMinutes = stack.spoilMinutes;
     const extras = mealStackExtras(stack);
@@ -981,6 +887,50 @@ function setCreatureProne(sprite, prone) {
         sprite.x -= w * 0.5;
         sprite.y += h * 0.5;
         sprite.setOrigin(0, 1);
+        sprite._prone = false;
+    }
+}
+
+/**
+ * Prone pose for net puppets (sprite is a child of a world-positioned container).
+ * Remote players: container is already at body center while downed (poseAuth).
+ * Net mobs: container stays at feet — offset the sprite to body center so blood
+ * and the laid-out body share the same world point.
+ * @param {Phaser.GameObjects.Sprite} sprite
+ * @param {boolean} prone
+ * @param {{ feetAnchored?: boolean }} [opts]
+ */
+function setPuppetProne(sprite, prone, opts = {}) {
+    if (!sprite) return;
+    const want = !!prone;
+    const w = sprite.displayWidth || sprite.width || 16;
+    const h = sprite.displayHeight || sprite.height || 16;
+    // Feet-anchored puppets (mobs): shift to geometric body center while prone
+    const localX = opts.feetAnchored ? w * 0.5 : 0;
+    const localY = opts.feetAnchored ? -h * 0.5 : 0;
+    if (!!sprite._prone === want) {
+        if (want) {
+            sprite.anims?.stop?.();
+            if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
+            sprite.setRotation(-Math.PI / 2);
+            sprite.clearTint?.();
+            sprite.setOrigin(0.5, 0.5);
+            sprite.setPosition(localX, localY);
+        }
+        return;
+    }
+    if (want) {
+        sprite.setOrigin(0.5, 0.5);
+        sprite.setPosition(localX, localY);
+        sprite.setRotation(-Math.PI / 2);
+        sprite.anims?.stop?.();
+        if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
+        sprite.clearTint?.();
+        sprite._prone = true;
+    } else {
+        sprite.setRotation(0);
+        sprite.setOrigin(0, 1);
+        sprite.setPosition(0, 0);
         sprite._prone = false;
     }
 }

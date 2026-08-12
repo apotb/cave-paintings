@@ -5,10 +5,46 @@ class Hotbar {
     }
 
     changeSlot(index) {
-        if (index < 0 || index >= this.size) return;
-        if (this.slots[this.activeIndex]) this.slots[this.activeIndex].setTexture('slot');
-        this.slots[index].setTexture('active_slot');
+        this.setActiveIndex(index, { notifyNet: true });
+    }
+
+    /**
+     * Update selected hotbar slot textures + index.
+     * @param {number} index
+     * @param {{ notifyNet?: boolean }} [opts] notifyNet=false when syncing from YOU (avoid echo)
+     */
+    setActiveIndex(index, opts = {}) {
+        const notifyNet = opts.notifyNet !== false;
+        if (!Number.isInteger(index) || index < 0 || index >= this.size) return;
+        if (this.slots[this.activeIndex]) this.slots[this.activeIndex].setTexture("slot");
+        if (this.slots[index]) this.slots[index].setTexture("active_slot");
+        // Clear any other active textures (stale from YOU sync / resize races)
+        for (let i = 0; i < this.slots.length; i++) {
+            if (i === index) continue;
+            if (this.slots[i]?.texture?.key === "active_slot") {
+                this.slots[i].setTexture("slot");
+            }
+        }
         this.activeIndex = index;
+        if (this.scene.player) this.scene.player.hotbarIndex = index;
+        if (notifyNet && this.scene.isNet && this.scene.net?.connected) {
+            this.scene.net.sendAction({
+                type: NetProtocol.Actions.HOTBAR,
+                index
+            });
+        }
+    }
+
+    /** Dedicated MP: server owns inventory — local swap would be stomped by YOU. */
+    _notifyInvSwap(from, to) {
+        if (!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal)) return;
+        if (typeof NetProtocol === "undefined" || !NetProtocol.Actions?.INV_SWAP) return;
+        this.scene._invSwapGuardUntil = performance.now() + 500;
+        this.scene.net.sendAction({
+            type: NetProtocol.Actions.INV_SWAP,
+            from,
+            to
+        });
     }
 
     /** Grow/shrink visible hotbar to match player.inventorySize. */
@@ -128,7 +164,7 @@ class Hotbar {
                 const stack = stacks[i];
                 if (!stack) return "";
                 const meta = this.scene.getItem(stack.id);
-                return this.scene.formatItemTooltip(meta, stack.quantity, stack.spoilAt, stack);
+                return this.scene.formatItemTooltip(meta, stack.quantity, stack.spoilLeft ?? stack.spoilAt, stack);
             };
             const text = getText();
             if (text) this.scene.showTooltip(getText, pointer.x, pointer.y, slot);
@@ -217,7 +253,7 @@ class Hotbar {
 
         const quantity = this.scene.add.text(0, 0, "", {
             fontSize: "14px",
-            fontFamily: "monospace",
+            fontFamily: "PrimaryFont",
             align: "right",
             stroke: "#000",
             strokeThickness: 2
@@ -299,10 +335,11 @@ class Hotbar {
 
                                 if (space > 0) {
                                     const moved = Math.min(space, a.quantity);
-                                    b.spoilAt = mergeSpoilAt(
-                                        b.quantity, b.spoilAt,
-                                        moved, a.spoilAt
+                                    b.spoilLeft = mergeSpoilLeft(
+                                        b.quantity, b.spoilLeft,
+                                        moved, a.spoilLeft
                                     );
+                                    delete b.spoilAt;
                                     b.quantity += moved;
                                     a.quantity -= moved;
                                     if (a.quantity <= 0) inv[from] = null;
@@ -315,6 +352,7 @@ class Hotbar {
                                 inv[from] = b || null;
                             }
 
+                            this._notifyInvSwap(from, to);
                             this.changeSlot(to);
                             this.dirty = true;
                             this.scene.refreshTooltip();
@@ -336,7 +374,11 @@ class Hotbar {
         });
 
         this.layout();
-        this.changeSlot(0);
+        const startIdx = Math.max(
+            0,
+            Math.min(this.size - 1, Math.floor(Number(this.scene.player?.hotbarIndex) || 0))
+        );
+        this.setActiveIndex(startIdx, { notifyNet: false });
         this.dirty = true;
 
         this.scene.input.on('wheel', (_pointer, _over, _deltaX, deltaY) => {

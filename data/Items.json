@@ -283,6 +283,46 @@
         "key": "sharp_stick",
         "maxStack": 99,
         "use": "light_fire",
+        "weapon": {
+            "type": "melee",
+            "range": 5,
+            "hitStart": 0.25,
+            "hitEnd": 0.75,
+            "attacks": [
+                {
+                    "id": "point_stab",
+                    "name": "Point (Stab)",
+                    "damage": 5,
+                    "type": "sharp",
+                    "verb": "thrust",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 1.0,
+                    "source": "hand"
+                },
+                {
+                    "id": "shaft_poke",
+                    "name": "Shaft (Poke)",
+                    "damage": 3,
+                    "type": "sharp",
+                    "verb": "poked",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 0.25,
+                    "source": "hand"
+                },
+                {
+                    "id": "other_fist",
+                    "name": "Fist",
+                    "damage": 6,
+                    "type": "blunt",
+                    "verb": "swung",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 0.15,
+                    "source": "otherHand",
+                    "unarmed": "punch",
+                    "range": 4
+                }
+            ]
+        },
         "cook": {
             "method": "stick_roast"
         },

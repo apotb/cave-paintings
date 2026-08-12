@@ -133,7 +133,11 @@ class CombatLog {
                 this._handleCommand(msg);
             } else {
                 const name = this.scene.playerName || this.playerName || "Player";
-                this.push(`${name}: ${msg}`, { color: CombatLog.COLOR_CHAT });
+                if (this.scene.isNet && this.scene.net?.connected) {
+                    this.scene.net.sendAction({ type: NetProtocol.Actions.CHAT, text: msg });
+                } else {
+                    this.push(`${name}: ${msg}`, { color: CombatLog.COLOR_CHAT });
+                }
                 this.scene.player?.showChatBubble?.(msg, this.fadeMs);
             }
         } else {
@@ -148,7 +152,7 @@ class CombatLog {
         const parts = String(raw).trim().split(/\s+/);
         const cmd = (parts[0] || "").toLowerCase();
         const helpSyntax = {
-            debug: "/debug blood|chunks|combat_log|fps|melee_slots [show|hide]",
+            debug: "/debug blood|chunks|combat_log|fps|location|melee_slots [show|hide]",
             give: "/give <item> [qty]",
             heal: "/heal",
             help: "/help [command]",
@@ -156,7 +160,9 @@ class CombatLog {
             regen: "/regen",
             seed: "/seed",
             spawn: "/spawn <mob>",
-            tick: "/tick [speed]"
+            tick: "/tick [speed]",
+            time: "/time [HH] [MM]",
+            tp: "/tp <x> <y>"
         };
         if (cmd === "/help") {
             const topic = (parts[1] || "").toLowerCase().replace(/^\//, "");
@@ -185,9 +191,16 @@ class CombatLog {
                 this.push("No player to heal.");
                 return;
             }
+            // Net sessions: server/sim owns hunger — local heal alone is stomped by YOU.
+            if (this.scene.isNet && this.scene.net?.connected) {
+                this.scene.net.sendAction({
+                    type: NetProtocol.Actions.CHAT,
+                    text: "/heal"
+                });
+            }
             player.anatomy?.fullHeal?.();
             player.kc = player.stomach;
-            player.saturation = 0;
+            player._malnutritionFed = true;
             player._bodyDead = false;
             player._downed = false;
             player._tendChannel = null;
@@ -240,6 +253,14 @@ class CombatLog {
             return;
         }
         if (cmd === "/regen") {
+            if (this.scene.isNet && this.scene.net?.connected) {
+                // Shared world / LocalSim: server (or sim) regenerates for the session
+                this.scene.net.sendAction({
+                    type: NetProtocol.Actions.CHAT,
+                    text: "/regen"
+                });
+                return;
+            }
             const n = this.scene.regenChunks?.() ?? 0;
             this.push(`Regenerated world (${n} chunk${n === 1 ? "" : "s"} cleared)`);
             return;
@@ -247,16 +268,12 @@ class CombatLog {
         if (cmd === "/spawn") {
             const id = (parts[1] || "").toLowerCase();
             if (!id) {
-                const ids = (this.scene.mobsData?.() || [])
-                    .filter(m => m?.id)
-                    .map(m => m.id)
-                    .join(", ");
-                this.pushError(ids ? `Usage: /spawn <mob>  (${ids})` : "Usage: /spawn <mob>");
+                this.pushError("Usage: /spawn <mob>");
                 return;
             }
             const def = this.scene.getMob?.(id);
             if (!def) {
-                this.pushError(`Unknown mob "${id}". Try /spawn with no args for a list.`);
+                this.pushError(`Unknown mob "${id}".`);
                 return;
             }
             const player = this.scene.player;
@@ -264,13 +281,24 @@ class CombatLog {
                 this.push("No player to spawn at.");
                 return;
             }
+            // Dedicated MP: server owns wildlife (SNAPSHOT.mobs). Local spawn would freeze.
+            if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+                this.scene._netSendMove?.(true);
+                this.scene.net.sendAction({
+                    type: NetProtocol.Actions.SPAWN_MOB,
+                    kind: id,
+                    x: player.x,
+                    y: player.y
+                });
+                return;
+            }
             // Player origin is bottom-left; spawn so feet line up
             const mob = LivingMob.spawn(this.scene, id, player.x, player.y);
             if (!mob) {
-                this.push(`Failed to spawn ${def.name || id} (chunk not ready?).`);
+                this.pushError(`Failed to spawn ${def.name || id} (chunk not ready?).`);
                 return;
             }
-            this.push(`Spawned ${def.name || id}`);
+            this.push(`Spawned ${def.name || id}.`);
             return;
         }
         if (cmd === "/give") {
@@ -304,6 +332,15 @@ class CombatLog {
                 this.push("No player to give to.");
                 return;
             }
+            // Dedicated MP: server owns inventory (YOU). Local give alone is stomped.
+            if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+                this.scene._netSendMove?.(true);
+                this.scene.net.sendAction({
+                    type: NetProtocol.Actions.CHAT,
+                    text: `/give ${meta.id} ${qty}`
+                });
+                return;
+            }
             const remaining = player.gainItem(meta, qty);
             const got = qty - remaining;
             if (remaining > 0) {
@@ -319,7 +356,7 @@ class CombatLog {
             return;
         }
         if (cmd === "/debug") {
-            const usage = "Usage: /debug blood|chunks|combat_log|fps|melee_slots [show|hide]";
+            const usage = "Usage: /debug blood|chunks|combat_log|fps|location|melee_slots [show|hide]";
             const topic = (parts[1] || "").toLowerCase();
             const action = (parts[2] || "").toLowerCase();
             if (topic === "melee_slots" || topic === "melee-slots") {
@@ -349,6 +386,20 @@ class CombatLog {
                 // Chat line first — setFpsMeter(true) runs applyUiScale / layout
                 this.push(on ? "Debug: fps shown" : "Debug: fps hidden");
                 this.scene.setFpsMeter?.(on);
+                return;
+            }
+            if (topic === "location" || topic === "loc" || topic === "pos") {
+                if (action && action !== "show" && action !== "hide") {
+                    this.pushError(usage);
+                    return;
+                }
+                const on = action === "show"
+                    ? true
+                    : action === "hide"
+                        ? false
+                        : !this.scene._locationDebugVisible;
+                this.push(on ? "Debug: location shown" : "Debug: location hidden");
+                this.scene.setLocationDebug?.(on);
                 return;
             }
             if (topic === "blood") {
@@ -398,6 +449,20 @@ class CombatLog {
         }
         if (cmd === "/tick") {
             const arg = parts[1];
+            if (this.scene.isNet && this.scene.net?.connected) {
+                if (arg != null && arg !== "") {
+                    const m = Number(arg);
+                    if (!Number.isFinite(m) || m < 0) {
+                        this.pushError("Usage: /tick [speed]  (1 = normal, 60 ≈ 1 game hour/sec, 0 = pause)");
+                        return;
+                    }
+                }
+                this.scene.net.sendAction({
+                    type: NetProtocol.Actions.CHAT,
+                    text: raw
+                });
+                return;
+            }
             const report = (speed) => {
                 const s = Number(speed);
                 if (!Number.isFinite(s) || s <= 0) {
@@ -417,6 +482,93 @@ class CombatLog {
                 return;
             }
             report(this.scene.setTickSpeed?.(m));
+            return;
+        }
+        if (cmd === "/time") {
+            if (this.scene.isNet && this.scene.net?.connected) {
+                if (parts.length >= 2) {
+                    const h = Number(parts[1]);
+                    const m = parts[2] != null ? Number(parts[2]) : 0;
+                    if (!Number.isFinite(h) || h < 0 || h > 23 || !Number.isFinite(m) || m < 0 || m > 59) {
+                        this.pushError("Usage: /time [HH] [MM]");
+                        return;
+                    }
+                }
+                this.scene.net.sendAction({
+                    type: NetProtocol.Actions.CHAT,
+                    text: raw
+                });
+                return;
+            }
+            if (parts.length < 2) {
+                const h = Math.floor((this.scene.gameMinutes || 0) / 60);
+                const m = (this.scene.gameMinutes || 0) % 60;
+                this.push(
+                    `Day ${this.scene.gameDay}  ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")} (${this.scene.tickSpeed ?? 1}×)`
+                );
+                return;
+            }
+            const h = Number(parts[1]);
+            const m = parts[2] != null ? Number(parts[2]) : 0;
+            if (!Number.isFinite(h) || h < 0 || h > 23 || !Number.isFinite(m) || m < 0 || m > 59) {
+                this.pushError("Usage: /time [HH] [MM]");
+                return;
+            }
+            if (typeof setHour === "function") {
+                this.push(setHour(h, m));
+            } else {
+                this.scene.gameMinutes = Math.floor(h) * 60 + Math.floor(m);
+                this.scene._lightSig = null;
+                this.scene.updateClockText?.();
+                this.scene.updateTimeTint?.();
+                this.push(
+                    `Set time to ${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor(m)).padStart(2, "0")}.`
+                );
+            }
+            return;
+        }
+        if (cmd === "/tp" || cmd === "/teleport") {
+            const usage = "Usage: /tp <x> <y>  (tile coords, same as /debug location)";
+            if (parts.length < 3) {
+                this.pushError(usage);
+                return;
+            }
+            const tx = Number(parts[1]);
+            const ty = Number(parts[2]);
+            if (!Number.isFinite(tx) || !Number.isFinite(ty)) {
+                this.pushError(usage);
+                return;
+            }
+            const player = this.scene.player;
+            if (!player) {
+                this.push("No player to teleport.");
+                return;
+            }
+            const ts = this.scene.tileSize || 16;
+            const w = player.displayWidth || player.width || ts;
+            // Place sprite so bottom-middle (not bottom-left) lands on (tx, ty)
+            const px = tx * ts - w * 0.5;
+            const py = ty * ts;
+            // Dedicated MP: server owns pose — YOU applies via _netAwaitPoseFromYou.
+            if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+                this.scene._netAwaitPoseFromYou = true;
+                this.scene.net.sendAction({
+                    type: NetProtocol.Actions.CHAT,
+                    text: `/tp ${tx} ${ty}`
+                });
+                return;
+            }
+            player.teleport(px, py);
+            this.scene.syncCameraToPlayer?.();
+            if (this.scene.isNet && this.scene.net?.connected) {
+                // LocalSim: push pose so interest/chunks follow
+                if (this.scene.net._pawn) {
+                    this.scene.net._pawn.x = px;
+                    this.scene.net._pawn.y = py;
+                }
+                this.scene._netSendMove?.(true);
+            }
+            this.push(`Teleported to ${tx}, ${ty}.`);
             return;
         }
         this.pushError(`Unknown command: ${parts[0]} (try /help)`);
@@ -481,7 +633,8 @@ class CombatLog {
                 !event.repeat &&
                 !event.ctrlKey &&
                 !event.metaKey &&
-                !event.altKey
+                !event.altKey &&
+                !this.scene?._gamePaused
             ) {
                 if (event.key === "t" || event.key === "T") {
                     event.preventDefault();
@@ -577,10 +730,9 @@ class CombatLog {
 
     /** Compose row pieces (same wrap/font path as log lines). */
     _composeRows(wrapW, fontSize) {
-        const name = this.scene.playerName || this.playerName || "Player";
         const blink = Math.floor((this.scene.time?.now || 0) / 500) % 2 === 0 ? "_" : " ";
         return this._wrapSegments(
-            [{ text: `${name}: ${this.draft}${blink}`, color: "#ffffff" }],
+            [{ text: `${this.draft}${blink}`, color: "#ffffff" }],
             wrapW,
             fontSize
         );
@@ -923,28 +1075,38 @@ class CombatLog {
             ? Phaser.Math.Clamp(this.scrollOffset | 0, 0, maxScroll)
             : 0;
 
-        // Walk newest → oldest: skip scrollOffset visual lines, then fill budget
+        // Walk newest → oldest: skip scrollOffset visual lines, then fill budget.
+        // Multi-line messages can be partially visible (no whole-message pop-in).
         const toShow = []; // newest first
         let skip = this.composing ? this.scrollOffset : 0;
         let used = 0;
         for (let i = measured.length - 1; i >= 0; i--) {
             const m = measured[i];
+            let rows = m.rows;
+            if (!rows?.length) continue;
+
             if (skip > 0) {
-                if (skip >= m.visualLines) {
-                    skip -= m.visualLines;
+                if (skip >= rows.length) {
+                    skip -= rows.length;
                     continue;
                 }
+                // Newest visual lines are at the end of the wrap — drop those first.
+                rows = rows.slice(0, rows.length - skip);
                 skip = 0;
             }
-            if (used + m.visualLines > budget) {
-                if (used === 0) {
-                    toShow.push(m);
-                    used += m.visualLines;
-                }
-                break;
+            if (!rows.length) continue;
+
+            const room = budget - used;
+            if (room <= 0) break;
+            if (rows.length > room) {
+                // Top of the viewport: keep the newest `room` rows of this message
+                // so earlier wrap lines reveal as you scroll further up.
+                rows = rows.slice(rows.length - room);
             }
-            toShow.push(m);
-            used += m.visualLines;
+
+            toShow.push({ line: m.line, alpha: m.alpha, rows, visualLines: rows.length });
+            used += rows.length;
+            if (used >= budget) break;
         }
 
         this._paintLog(toShow, composeRows, wrapW, fontSize, lineH);

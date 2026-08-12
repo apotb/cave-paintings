@@ -128,7 +128,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 fontSize: `${fontPx}px`,
                 color: "#ffffff",
                 stroke: "#000000",
-                strokeThickness: 3,
+                strokeThickness: Math.max(2, Math.round(3 * s)),
                 align: "center",
                 wordWrap: { width: Math.round(140 * s), useAdvancedWrap: true }
             }).setOrigin(0.5, 1);
@@ -137,6 +137,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.chatBubble
             .setResolution(zoom * (window.devicePixelRatio || 1))
             .setFontSize(`${fontPx}px`)
+            .setStroke("#000000", Math.max(2, Math.round(3 * s)))
             .setWordWrapWidth(Math.round(140 * s), true)
             .setScale(1 / zoom)
             .setText(String(msg))
@@ -144,6 +145,23 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             .setAlpha(1);
         this.chatBubbleUntil = (scene.time?.now || 0) + durationMs;
         this.syncFxRoot();
+        this._syncChatBubble();
+    }
+
+    /** Re-apply GUI / world zoom to an existing chat bubble (scale changes mid-display). */
+    applyChatBubbleScale() {
+        const bubble = this.chatBubble;
+        if (!bubble?.active) return;
+        const scene = this.scene;
+        const s = scene.uiScale || 1;
+        const zoom = scene.worldZoom || scene.cameras?.main?.zoom || 1;
+        const fontPx = Math.round(11 * s);
+        bubble
+            .setResolution(zoom * (window.devicePixelRatio || 1))
+            .setFontSize(`${fontPx}px`)
+            .setStroke("#000000", Math.max(2, Math.round(3 * s)))
+            .setWordWrapWidth(Math.round(140 * s), true)
+            .setScale(1 / zoom);
         this._syncChatBubble();
     }
 
@@ -375,18 +393,24 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             }
             const meta = this.scene.getItem(stack.id);
             if (!meta) return false;
+            const now = this.scene.worldMinuteIndex?.() ?? null;
             DroppedItem.spawn(
                 this.scene, this.x, this.y, meta, clone.quantity,
-                clone.spoilAt, mealStackExtras(clone)
+                spoilAtForWorld(clone, now), mealStackExtras(clone)
             );
             return true;
         }
         const meta = this.scene.getItem(stack.id);
         if (!meta) return false;
-        const remaining = this.gainItem(meta, stack.quantity, stack.spoilAt);
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        const left = spoilLeftForCharacter(stack, now);
+        const remaining = this.gainItem(meta, stack.quantity, left);
         if (remaining === stack.quantity) return false;
         if (remaining > 0) {
-            DroppedItem.spawn(this.scene, this.x, this.y, meta, remaining, stack.spoilAt);
+            DroppedItem.spawn(
+                this.scene, this.x, this.y, meta, remaining,
+                spoilAtForWorld({ spoilLeft: left }, now)
+            );
         }
         return true;
     }
@@ -394,18 +418,28 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     /**
      * Dump equipment then full hotbar into a corpse, clear gear/inv (pouch-safe).
      * Call on death before respawn UI.
+     * @param {{ spawn?: boolean }} [opts] spawn=false clears gear without a local corpse
+     *   (dedicated MP: server authors the corpse).
      */
-    createDeathCorpse() {
+    createDeathCorpse(opts = {}) {
+        const spawn = opts.spawn !== false;
         // Snapshot hotbar BEFORE unequipping pouches (keeps slots 6+)
-        const hotbarSnap = this.inventory.map(s => cloneItemStack(s));
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        const toLoot = (s) => {
+            const clone = cloneItemStack(s);
+            if (!clone || now == null) return clone;
+            migrateToSpoilAt(clone, now);
+            return clone;
+        };
+        const hotbarSnap = this.inventory.map(s => (s ? toLoot(s) : null));
 
         const loot = [];
         for (const key of ["head", "torso", "legs", "feet"]) {
             const s = this.equipment[key];
-            if (s) loot.push(cloneItemStack(s));
+            if (s) loot.push(toLoot(s));
         }
         for (const s of this.equipment.waist || []) {
-            if (s) loot.push(cloneItemStack(s));
+            if (s) loot.push(toLoot(s));
         }
         for (const s of hotbarSnap) {
             if (s) loot.push(s);
@@ -423,6 +457,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         // bodyCenter() respects standing (origin 0,1) and prone (origin 0.5,0.5)
         const c = this.bodyCenter();
+        if (!spawn) {
+            return { x: c.x, y: c.y, loot, name: this.scene.playerName || "Player" };
+        }
         return Corpse.spawn(this.scene, {
             x: c.x,
             y: c.y,
@@ -523,9 +560,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 const meta = this.scene.getItem(stack.id);
                 if (!meta) continue;
                 const extras = mealStackExtras(stack);
+                const now = this.scene.worldMinuteIndex?.() ?? null;
                 DroppedItem.spawn(
                     this.scene, this.x, this.y,
-                    meta, stack.quantity, stack.spoilAt, extras
+                    meta, stack.quantity, spoilAtForWorld(stack, now), extras
                 );
             }
             this.inventory.length = size;
@@ -573,19 +611,39 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Equip a loot stack into its natural slot only if that slot is empty.
-     * Consumes 1 from `stack` in place. Returns true if equipped.
+     * True if tryEquipLootStackIfSlotEmpty would succeed (no mutation).
      */
-    tryEquipLootStackIfSlotEmpty(stack) {
+    canEquipLootStackIfSlotEmpty(stack) {
         if (!stack || !(stack.quantity > 0)) return false;
         const meta = this.scene.getItem(stack.id);
         const want = this.getEquipSlotName(meta);
         if (!want) return false;
 
-        let slotKey;
         if (want === "waist") {
             const cap = this.getWaistCapacity();
             if (cap <= 0) return false;
+            for (let i = 0; i < cap; i++) {
+                if (!this.equipment.waist[i]) return true;
+            }
+            return false;
+        }
+        if (this.getEquipmentStack(want)) return false;
+        if (!this.canChangeBodySlot(want, meta)) return false;
+        return true;
+    }
+
+    /**
+     * Equip a loot stack into its natural slot only if that slot is empty.
+     * Consumes 1 from `stack` in place. Returns true if equipped.
+     */
+    tryEquipLootStackIfSlotEmpty(stack) {
+        if (!this.canEquipLootStackIfSlotEmpty(stack)) return false;
+        const meta = this.scene.getItem(stack.id);
+        const want = this.getEquipSlotName(meta);
+
+        let slotKey;
+        if (want === "waist") {
+            const cap = this.getWaistCapacity();
             let empty = -1;
             for (let i = 0; i < cap; i++) {
                 if (!this.equipment.waist[i]) {
@@ -596,8 +654,6 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (empty === -1) return false;
             slotKey = `waist:${empty}`;
         } else {
-            if (this.getEquipmentStack(want)) return false;
-            if (!this.canChangeBodySlot(want, meta)) return false;
             slotKey = want;
         }
 
@@ -687,7 +743,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         if (stack.quantity > 1) {
             stack.quantity -= 1;
-            this.setEquipmentStack(slotKey, makeItemStack(meta, 1, stack.spoilAt));
+            this.setEquipmentStack(slotKey, makeItemStack(meta, 1, stack.spoilLeft));
             if (existing) {
                 // Try to return existing to an empty inventory slot
                 const empty = inv.findIndex(s => !s);
@@ -701,13 +757,26 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             }
         } else {
             inv[hotbarIndex] = existing;
-            this.setEquipmentStack(slotKey, makeItemStack(meta, 1, stack.spoilAt));
+            this.setEquipmentStack(slotKey, makeItemStack(meta, 1, stack.spoilLeft));
         }
 
         this.syncWaistSlots();
         this.recomputeEquipmentEffects();
         this.scene.hotbar.dirty = true;
+        this._notifyNetGear(typeof NetProtocol !== "undefined" ? NetProtocol.Actions.EQUIP : "equip", {
+            from: hotbarIndex,
+            slot: slotKey
+        });
         return { ok: true };
+    }
+
+    /** Dedicated MP: server owns gear — local mutate would be stomped by YOU. */
+    _notifyNetGear(type, payload) {
+        const scene = this.scene;
+        if (!(scene.isNet && scene.net?.connected && !scene.net.isLocal)) return;
+        if (!type) return;
+        scene._invSwapGuardUntil = performance.now() + 500;
+        scene.net.sendAction({ type, ...payload });
     }
 
     /**
@@ -733,10 +802,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             const meta = this.scene.getItem(dest.id);
             const maxStack = Math.max(1, meta?.maxStack || 1);
             if (dest.quantity + equipped.quantity > maxStack) return { ok: false, reason: 'full' };
-            dest.spoilAt = mergeSpoilAt(
-                dest.quantity, dest.spoilAt,
-                equipped.quantity, equipped.spoilAt
+            dest.spoilLeft = mergeSpoilLeft(
+                dest.quantity, dest.spoilLeft,
+                equipped.quantity, equipped.spoilLeft
             );
+            delete dest.spoilAt;
             dest.quantity += equipped.quantity;
             this.setEquipmentStack(slotKey, null);
         } else {
@@ -748,7 +818,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 return { ok: false, reason: 'waist_blocked' };
             }
             inv[hotbarIndex] = equipped;
-            this.setEquipmentStack(slotKey, makeItemStack(destMeta, 1, dest.spoilAt));
+            this.setEquipmentStack(slotKey, makeItemStack(destMeta, 1, dest.spoilLeft));
             if (dest.quantity > 1) {
                 dest.quantity -= 1;
                 const empty = inv.findIndex(s => !s);
@@ -766,6 +836,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.syncWaistSlots();
         this.recomputeEquipmentEffects();
         this.scene.hotbar.dirty = true;
+        this._notifyNetGear(typeof NetProtocol !== "undefined" ? NetProtocol.Actions.UNEQUIP : "unequip", {
+            slot: slotKey,
+            to: hotbarIndex
+        });
         return { ok: true };
     }
 
@@ -931,6 +1005,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.attackHitSet = new Set();
         this.facing = this.facingFromAngle(angle);
         this.scene.hideWorldTooltip?.();
+
+        if (this.scene.isNet && this.scene.net?.connected) {
+            // Keep server pose current so hitboxes match what you see
+            this.scene._netSendMove?.(true);
+            this._sendNetAttack(angle);
+        }
 
         if (useWeaponArt) {
             const key = meta.key || meta.id;
@@ -1206,6 +1286,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const w = this.attackWeapon;
         const attack = this.currentAttack;
         if (!w || !attack) return;
+        // Dedicated MP: server SimWorld resolves BodyCombat hits.
+        if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            return;
+        }
         const start = Number(w.hitStart ?? 0.25);
         const end = Number(w.hitEnd ?? 0.75);
         if (progress < start || progress > end) return;
@@ -1343,14 +1427,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         // Malnutrition hediff rises/falls in Hediffs.minuteTick
     }
 
-    gainItem(item, amount = 1, spoilAt = undefined) {
+    gainItem(item, amount = 1, spoilLeft = undefined) {
         let remaining = amount;
         const weightLeft = Math.max(0, this.strength * 2 - this.getInventoryWeight());
         let allowedByWeight = Math.floor((weightLeft + Math.pow(10, -8)) / item.weight);
-        const now = this.scene.worldMinuteIndex?.() ?? null;
-        const incomingSpoil = spoilAt !== undefined
-            ? spoilAt
-            : defaultSpoilAt(item, now);
+        const incomingSpoil = spoilLeft !== undefined
+            ? spoilLeft
+            : defaultSpoilLeft(item);
 
         // Fill existing stacks first (never merge into meals / food-overridden stacks)
         for (const slot of this.inventory) {
@@ -1358,10 +1441,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (slot.customName || slot.food || slot.ingredients || slot.toolClass) continue;
             const space = item.maxStack - slot.quantity;
             const toAdd = Math.min(space, remaining, allowedByWeight);
-            slot.spoilAt = mergeSpoilAt(
-                slot.quantity, slot.spoilAt,
+            slot.spoilLeft = mergeSpoilLeft(
+                slot.quantity, slot.spoilLeft,
                 toAdd, incomingSpoil
             );
+            delete slot.spoilAt;
             slot.quantity += toAdd;
             remaining -= toAdd;
             allowedByWeight -= toAdd;
@@ -1374,7 +1458,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         // Create new stacks as needed
         while (remaining > 0 && allowedByWeight > 0) {
             const toAdd = Math.min(item.maxStack, remaining, allowedByWeight);
-            const stack = makeItemStack(item, toAdd, incomingSpoil, now);
+            const stack = makeItemStack(item, toAdd, incomingSpoil);
             const nullIndex = this.inventory.findIndex(s => !s);
             if (nullIndex !== -1) {
                 this.inventory[nullIndex] = stack;
@@ -1469,7 +1553,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     useHeldItem() {
         const item = this.getHeldItem();
-        if (item) this.useItem(item);
+        if (item) return this.useItem(item);
+        return null;
     }
 
     /** Hold Space to keep attacking (weapon or unarmed). */
@@ -1486,12 +1571,37 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (item.toolClass === "knife") {
             // Skinning is click-on-corpse; Space still attacks with the knife
         }
+        // Firestarter weapons: Space near piles/unlit fire lights; otherwise attack
+        if (meta?.use === "light_fire" && this.scene.canUseFirestarter?.()) {
+            this.scene.tryUseFirestarter();
+            this._blockSpaceAutofire = true;
+            return;
+        }
         const weaponMeta = this.getHeldWeaponMeta();
         if (weaponMeta?.weapon?.type === "melee") {
             this.startMeleeAttack(weaponMeta);
         } else if (!meta?.food && !meta?.use && !meta?.knapping) {
             this.startMeleeAttack(null);
         }
+    }
+
+    /** Aim angle toward the mouse (same math as startMeleeAttack). */
+    _aimAngle() {
+        const pointer = this.scene.input.activePointer;
+        const world = this.scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const c = this.bodyCenter();
+        const angle = Math.atan2(world.y - c.y, world.x - c.x);
+        return Number.isFinite(angle) ? angle : 0;
+    }
+
+    _sendNetAttack(angle) {
+        if (!this.scene.isNet || !this.scene.net?.connected) return;
+        let ang = Number(angle);
+        if (!Number.isFinite(ang)) ang = this._aimAngle();
+        this.scene.net.sendAction({
+            type: NetProtocol.Actions.ATTACK,
+            angle: ang
+        });
     }
 
     beginTend() {
@@ -1511,7 +1621,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             return false;
         }
         const seconds = Number(meta.bandage.channelSeconds) || 5;
-        const scale = this.capacities.actionDurationScale();
+        // Manipulation slows/speeds tending the same way Eating slows/speeds food.
+        const scale = this.capacities.manipulationDurationScale();
         const max = seconds * 1000 * scale;
         this._tendChannel = {
             remaining: max,
@@ -1519,6 +1630,17 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             slot: this.scene.hotbar.activeIndex,
             // Locked at start so natural healing mid-channel doesn't retarget/cancel
             target,
+            // Serializable hint — MP YOU body reloads replace injury object identity
+            targetHint: {
+                partName: target.part?.name || null,
+                injuryIndex: target.part && target.inj
+                    ? target.part.injuries.indexOf(target.inj)
+                    : -1,
+                injuryId: target.inj?.id,
+                injuryName: target.inj?.name,
+                injurySeverity: target.inj?.severity,
+                destroyedPartName: target.destroyed?.partName || null
+            },
             // Base + max from item; actual quality rolled when the channel finishes
             qualityBase: Number(meta.bandage.tendQuality) || 0.4,
             qualityMax: Number(meta.bandage.tendQualityMax) || 0.7,
@@ -1547,7 +1669,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
 
         const seconds = 5;
-        const scale = this.capacities.actionDurationScale();
+        // Manipulation slows/speeds skinning the same way Eating slows/speeds food.
+        const scale = this.capacities.manipulationDurationScale();
         const max = seconds * 1000 * scale;
         this._skinChannel = {
             remaining: max,
@@ -1587,9 +1710,22 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.scene.showChannelBar?.(Phaser.Math.Clamp(prog, 0, 1));
         if (this._skinChannel.remaining > 0) return;
 
-        corpse.applySkin?.();
+        // Dedicated MP: server owns skinned + butcher loot (snapshots would stomp local applySkin).
+        if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            this.scene._netSendMove?.(true);
+            this.scene.net.sendAction({
+                type: NetProtocol.Actions.CORPSE_SKIN,
+                corpseId: corpse.entry?.id,
+                x: this.x,
+                y: this.y
+            });
+        } else {
+            corpse.applySkin?.();
+        }
         this._skinChannel = null;
         this.scene.hideChannelBar?.();
+        // Loot + health inspect (same as clicking the corpse after skinning)
+        this.scene.corpsePanel?.open?.(corpse);
     }
 
     _tickTend(delta) {
@@ -1605,9 +1741,30 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.scene.showChannelBar?.(Phaser.Math.Clamp(prog, 0, 1));
         if (this._tendChannel.remaining > 0) return;
 
-        const target = this._tendChannel.target;
-        const stillThere = BodyHealing.isTendTargetValid(this.anatomy, target);
-        if (!stillThere) {
+        const ch = this._tendChannel;
+        const hint = ch.targetHint || ch.target;
+
+        // Dedicated MP: server applies tend + consumes bandage (YOU syncs body/inv).
+        if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            this.scene._netSendMove?.(true);
+            this.scene.net.sendAction({
+                type: NetProtocol.Actions.TEND,
+                itemId: ch.itemId,
+                partName: hint?.partName || hint?.part?.name || null,
+                injuryIndex: hint?.injuryIndex,
+                injuryId: hint?.injuryId ?? hint?.inj?.id,
+                injuryName: hint?.injuryName || hint?.inj?.name || null,
+                injurySeverity: hint?.injurySeverity ?? hint?.inj?.severity,
+                destroyedPartName: hint?.destroyedPartName || hint?.destroyed?.partName || null
+            });
+            this._tendChannel = null;
+            this.scene.hideChannelBar?.();
+            return;
+        }
+
+        const target = BodyHealing.resolveTendTarget?.(this.anatomy, hint)
+            || (BodyHealing.isTendTargetValid(this.anatomy, ch.target) ? ch.target : null);
+        if (!target) {
             // Wound closed on its own — finish the channel, keep the bandage
             this.scene.combatLog?.push("The wound healed before you finished.");
             this._tendChannel = null;
@@ -1617,11 +1774,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
 
         const quality = BodyHealing.rollTendQuality(
-            this._tendChannel.qualityBase,
-            this._tendChannel.qualityMax
+            ch.qualityBase,
+            ch.qualityMax
         );
         BodyHealing.applyTend(this.anatomy, target, quality);
-        this.loseAnyItem(this._tendChannel.itemId, 1);
+        this.loseAnyItem(ch.itemId, 1);
         const qPct = Math.round(quality * 100);
         let tendMsg = `You finished bandaging (${qPct}%).`;
         if (target?.part) {
@@ -1660,7 +1817,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return Phaser.Math.Clamp(1 + kc / 120, 1, 6);
     }
 
-    beginEat(item) {
+    beginEat(item, opts = {}) {
         if (this._tendChannel || this._skinChannel || this._eatChannel || this._bodyDead || this.isAttacking()) {
             return false;
         }
@@ -1673,6 +1830,14 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const room = this.stomach - this.kc;
         if (isMeal && !(room > 0)) return false;
 
+        // Dedicated MP: server owns hunger + food stacks — ask it to run the eat channel.
+        const serverAuth = !!opts.serverAuth
+            || (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
+        if (serverAuth && this.scene.net?.connected) {
+            this.scene._netSendMove?.(true);
+            this.scene.net.sendAction({ type: NetProtocol.Actions.USE });
+        }
+
         this.capacities = new Capacities(this.anatomy);
         const seconds = this._eatSecondsFor(food, isMeal);
         const scale = this.capacities.eatingDurationScale();
@@ -1683,7 +1848,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             slot: this.scene.hotbar.activeIndex,
             item,
             itemId: item.id,
-            isMeal
+            isMeal,
+            serverAuth
         };
         this.scene.showChannelBar?.(0);
         return true;
@@ -1691,8 +1857,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     _cancelEat() {
         if (!this._eatChannel) return;
+        const serverAuth = !!this._eatChannel.serverAuth;
         this._eatChannel = null;
         this.scene.hideChannelBar?.();
+        if (serverAuth && this.scene.net?.connected && !this.scene.net.isLocal) {
+            this.scene.net.sendAction({ type: NetProtocol.Actions.CANCEL_CHANNEL });
+        }
     }
 
     _tickEat(delta) {
@@ -1701,6 +1871,24 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this._cancelEat();
             return;
         }
+
+        // Dedicated MP: server owns channel progress + nutrition (EVENT/YOU).
+        // Don't compare stack object identity — YOU replaces inventory arrays every sync.
+        if (this._eatChannel.serverAuth) {
+            const slot = this.scene.hotbar.activeIndex;
+            const held = this.getHeldItem();
+            if (
+                slot !== this._eatChannel.slot
+                || !held
+                || held.id !== this._eatChannel.itemId
+            ) {
+                this._cancelEat();
+                return;
+            }
+            this._eatChannel.item = held;
+            return;
+        }
+
         const slot = this.scene.hotbar.activeIndex;
         const held = this.getHeldItem();
         if (
@@ -1717,6 +1905,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this._cancelEat();
             return;
         }
+
         this._eatChannel.remaining -= delta;
         const prog = 1 - this._eatChannel.remaining / this._eatChannel.max;
         this.scene.showChannelBar?.(Phaser.Math.Clamp(prog, 0, 1));
@@ -1731,8 +1920,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      * Partial meals: leftovers on stack, satiety only for kcal that fit.
      */
     finishEat(item) {
+        const serverAuth = !!this._eatChannel?.serverAuth;
         this._eatChannel = null;
         this.scene.hideChannelBar?.();
+        // Dedicated MP: server already applied nutrition + consumed the stack (YOU syncs).
+        if (serverAuth) return;
         const meta = this.scene.getItem(item.id);
         const food = item.food || meta?.food;
         const total = Number(food?.kc ?? 0);
@@ -1766,30 +1958,37 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     useItem(item) {
-        if (this.isVomiting()) return;
+        if (this.isVomiting()) return null;
         const meta = this.scene.getItem(item.id);
         // Stack-level food (dynamic meals) overrides item def
         const food = item.food || meta?.food;
         // 0 kcal foods still spoil but are not edible
         if (food && Number(food.kc ?? 0) > 0) {
             this.beginEat(item);
-            return;
+            return "use";
         }
         if (meta?.bandage) {
             this.beginTend();
-            return;
+            return "use";
+        }
+        // Melee + firestarter (sharp stick): light when aiming at piles / unlit fire
+        if (meta?.use === "light_fire" && this.scene.canUseFirestarter?.()) {
+            this.scene.tryUseFirestarter();
+            return "use";
         }
         const weaponMeta = this.getHeldWeaponMeta();
         if (weaponMeta?.weapon?.type === "melee") {
             this.startMeleeAttack(weaponMeta);
-            return;
+            return "attack";
         }
         if (meta?.weapon?.type === "ranged") {
-            return;
+            return null;
         }
         if (meta.use === "light_fire") {
             this.scene.tryUseFirestarter();
+            return "use";
         }
+        return null;
     }
 
     getInventoryWeight() {
@@ -1846,6 +2045,20 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (this._skinChannel) this._tickSkin(dtChat);
             if (this._eatChannel) this._tickEat(dtChat);
             this._tickVomit(dtChat);
+            return;
+        }
+
+        // Escape menu open — freeze local controls (MP world keeps updating behind the menu)
+        if (this.scene._gamePaused) {
+            this.setVelocity(0, 0);
+            this.isSprinting = false;
+            const dtPause = delta || (this.scene.game.loop.delta || 16);
+            if (this._tendChannel) this._tickTend(dtPause);
+            if (this._skinChannel) this._tickSkin(dtPause);
+            if (this._eatChannel) this._tickEat(dtPause);
+            this._tickVomit(dtPause);
+            this.setDepth(this.y);
+            this.syncFxRoot?.();
             return;
         }
 
@@ -1961,7 +2174,30 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 let amount = 1;
                 if (this.keys.SHIFT.isDown) amount = heldItem.quantity;
                 else if (this.keys.CTRL.isDown) amount = 10;
-                const spoilAt = heldItem.spoilAt;
+                if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+                    const now = this.scene.worldMinuteIndex?.() ?? null;
+                    const spoilAt = spoilAtForWorld(heldItem, now);
+                    const extras = mealStackExtras(heldItem);
+                    this.scene._netSendMove?.(true);
+                    this.scene.net.sendAction({
+                        type: NetProtocol.Actions.DROP,
+                        amount,
+                        x: this.x,
+                        y: this.y,
+                        stack: {
+                            id: heldItem.id,
+                            quantity: heldItem.quantity,
+                            spoilAt,
+                            ...(extras || {})
+                        }
+                    });
+                    // Optimistic local remove — YOU snapshot reconciles
+                    this.loseItemAt(this.scene.hotbar.activeIndex, amount);
+                    this.scene.hotbar.dirty = true;
+                    return;
+                }
+                const now = this.scene.worldMinuteIndex?.() ?? null;
+                const spoilAt = spoilAtForWorld(heldItem, now);
                 const extras = mealStackExtras(heldItem);
                 const numDropped = this.loseItemAt(this.scene.hotbar.activeIndex, amount);
                 DroppedItem.spawn(
@@ -1979,9 +2215,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) {
                 const held = this.getHeldItem();
                 const heldMeta = held ? this.scene.getItem(held.id) : null;
-                this.useHeldItem();
-                // Eating/using a tool then keeping Space down must not punch
-                if (held && (heldMeta?.food || held?.food || heldMeta?.use || heldMeta?.bandage)) {
+                const used = this.useHeldItem();
+                // Eating / lighting / bandaging: don't punch while Space is still held.
+                // Melee weapons that also have `use` (sharp stick) only block when they used.
+                if (
+                    used === "use"
+                    || (held && (heldMeta?.food || held?.food || heldMeta?.bandage))
+                ) {
                     this._blockSpaceAutofire = true;
                 }
             } else if (
@@ -2004,6 +2244,29 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     /** Pick up dropped items within pickupRange (nearest first). */
     tryPickupNearby() {
+        // Dedicated MP: server resolves pickup. LocalSim SP picks up from chunk.meta locally.
+        if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            const group = this.scene.droppedItems;
+            if (!group) {
+                this.scene.net.sendAction({ type: NetProtocol.Actions.PICKUP });
+                return;
+            }
+            const r = this.scene.tileSize * this.pickupRange;
+            const r2 = r * r;
+            const nearest = group.getChildren()
+                .filter(d => d?.active && d.entry?.netSync)
+                .map(d => ({
+                    drop: d,
+                    d2: Phaser.Math.Distance.Squared(this.x, this.y, d.x, d.y)
+                }))
+                .filter(e => e.d2 <= r2)
+                .sort((a, b) => a.d2 - b.d2)[0];
+            this.scene.net.sendAction({
+                type: NetProtocol.Actions.PICKUP,
+                dropId: nearest?.drop?.entry?.uid || null
+            });
+            return;
+        }
         const group = this.scene.droppedItems;
         if (!group) return;
         const r = this.scene.tileSize * this.pickupRange;
@@ -2025,38 +2288,48 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     createAnimations() {
         // Global manager so LivingMobs (and anything else) can reuse these keys
         const anims = this.scene.anims;
-        if (anims.exists("walk-down")) return;
-        anims.create({
-            key: "walk-down",
-            frames: anims.generateFrameNumbers("player", { start: 0, end: 2 }),
-            frameRate: 5,
-            repeat: -1,
-            yoyo: true
-        });
-        anims.create({
-            key: "walk-left",
-            frames: anims.generateFrameNumbers("player", { start: 3, end: 5 }),
-            frameRate: 5,
-            repeat: -1,
-            yoyo: true
-        });
-        anims.create({
-            key: "walk-right",
-            frames: anims.generateFrameNumbers("player", { start: 6, end: 8 }),
-            frameRate: 5,
-            repeat: -1,
-            yoyo: true
-        });
-        anims.create({
-            key: "walk-up",
-            frames: anims.generateFrameNumbers("player", { start: 9, end: 11 }),
-            frameRate: 5,
-            repeat: -1,
-            yoyo: true
-        });
-        anims.create({ key: "idle-down", frames: [ { key: "player", frame: 1 } ], frameRate: 10 });
-        anims.create({ key: "idle-left", frames: [ { key: "player", frame: 4 } ], frameRate: 10 });
-        anims.create({ key: "idle-right", frames: [ { key: "player", frame: 7 } ], frameRate: 10 });
-        anims.create({ key: "idle-up", frames: [ { key: "player", frame: 10 } ], frameRate: 10 });
+        if (!anims.exists("walk-down")) {
+            anims.create({
+                key: "walk-down",
+                frames: anims.generateFrameNumbers("player", { start: 0, end: 2 }),
+                frameRate: 5,
+                repeat: -1,
+                yoyo: true
+            });
+            anims.create({
+                key: "walk-left",
+                frames: anims.generateFrameNumbers("player", { start: 3, end: 5 }),
+                frameRate: 5,
+                repeat: -1,
+                yoyo: true
+            });
+            anims.create({
+                key: "walk-right",
+                frames: anims.generateFrameNumbers("player", { start: 6, end: 8 }),
+                frameRate: 5,
+                repeat: -1,
+                yoyo: true
+            });
+            anims.create({
+                key: "walk-up",
+                frames: anims.generateFrameNumbers("player", { start: 9, end: 11 }),
+                frameRate: 5,
+                repeat: -1,
+                yoyo: true
+            });
+        }
+        // Menu may have created walks + idle-down only — fill any missing idles
+        if (!anims.exists("idle-down")) {
+            anims.create({ key: "idle-down", frames: [{ key: "player", frame: 1 }], frameRate: 10 });
+        }
+        if (!anims.exists("idle-left")) {
+            anims.create({ key: "idle-left", frames: [{ key: "player", frame: 4 }], frameRate: 10 });
+        }
+        if (!anims.exists("idle-right")) {
+            anims.create({ key: "idle-right", frames: [{ key: "player", frame: 7 }], frameRate: 10 });
+        }
+        if (!anims.exists("idle-up")) {
+            anims.create({ key: "idle-up", frames: [{ key: "player", frame: 10 }], frameRate: 10 });
+        }
     }
 }

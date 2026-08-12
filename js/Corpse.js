@@ -97,14 +97,16 @@ class Corpse extends Phaser.GameObjects.Sprite {
         this.setOrigin(0.5, 0.5);
         this.setRotation(-Math.PI / 2);
         this.setTint(0x888888);
-        this.setDepth(entry.y);
+        // Above same-y Things / slightly above blood so pools don't steal hover
+        this.setDepth((Number(entry.y) || 0) + 1);
 
         if (!chunk.corpses) chunk.corpses = scene.add.group();
         chunk.corpses.add(this);
         if (!scene.corpses) scene.corpses = scene.add.group();
         scene.corpses.add(this);
 
-        this.setInteractive({ cursor: "pointer", pixelPerfect: false });
+        // Axis-aligned texture hitboxes break after -90° rotation — use a center circle.
+        this._setCorpseHitArea();
         this.on("pointerover", (pointer) => {
             scene.showTooltip(() => this.tooltipText(), pointer.x, pointer.y, this);
         });
@@ -112,7 +114,8 @@ class Corpse extends Phaser.GameObjects.Sprite {
             if (scene._hoverTarget === this) scene._hoverTarget = null;
             if (scene._tooltipTarget === this) scene.hideTooltip();
         });
-        this.on("pointerdown", () => {
+        this.on("pointerdown", (pointer) => {
+            if (scene.pointerOverWorldUi?.(pointer)) return;
             if (!this.inRange()) return;
             const player = scene.player;
             const held = player?.getHeldItem?.();
@@ -137,12 +140,31 @@ class Corpse extends Phaser.GameObjects.Sprite {
         });
     }
 
+    /** Stable click/hover target around the laid-out body (rotation-safe). */
+    _setCorpseHitArea() {
+        // Hit shapes are in texture/local space (top-left origin), not sprite origin.
+        const w = Math.max(1, this.width || this.displayWidth || 16);
+        const h = Math.max(1, this.height || this.displayHeight || 16);
+        const r = Math.max(14, Math.hypot(w, h) * 0.55);
+        this.setInteractive(
+            new Phaser.Geom.Circle(w * 0.5, h * 0.5, r),
+            Phaser.Geom.Circle.Contains
+        );
+        if (this.input) {
+            this.input.cursor = "pointer";
+            this.input.enabled = true;
+        }
+    }
+
     /** Same radius as campfires / world interactions. */
     inRange() {
         const player = this.scene?.player;
         if (!player) return false;
-        const dx = this.x - player.x;
-        const dy = this.y - player.y;
+        const pc = typeof player.bodyCenter === "function"
+            ? player.bodyCenter()
+            : { x: player.x, y: player.y };
+        const dx = this.x - pc.x;
+        const dy = this.y - pc.y;
         const r = (this.scene.tileSize || 16) * (player.interactionRange || 4);
         return dx * dx + dy * dy <= r * r;
     }
@@ -204,7 +226,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
             }
             while (qty > 0) {
                 const add = Math.min(qty, maxStack);
-                const stack = makeItemStack(item, add, undefined, this.scene.worldMinuteIndex?.());
+                const stack = makeWorldItemStack(item, add, undefined, this.scene.worldMinuteIndex?.());
                 this.entry.loot.push(stack);
                 gained.push(stack);
                 qty -= add;
@@ -234,7 +256,8 @@ class Corpse extends Phaser.GameObjects.Sprite {
     }
 
     isEmpty() {
-        return !(this.entry.loot && this.entry.loot.length);
+        const loot = this.entry?.loot;
+        return !loot || !loot.some(Boolean);
     }
 
     /** Remove from chunk meta and destroy sprite. */
@@ -242,11 +265,13 @@ class Corpse extends Phaser.GameObjects.Sprite {
         const scene = this.scene;
         const x = this.x;
         const y = this.y;
+        const id = this.entry?.id;
         if (scene.corpsePanel?.corpse === this) scene.corpsePanel.close(true);
         if (this.chunk?.meta?.corpses) {
             const i = this.chunk.meta.corpses.indexOf(this.entry);
             if (i >= 0) this.chunk.meta.corpses.splice(i, 1);
         }
+        if (id && scene.netCorpses?.has(id)) scene.netCorpses.delete(id);
         Corpse.puffAway(scene, x, y);
         this.destroy();
     }
