@@ -734,6 +734,7 @@ class SceneMain extends SceneBase {
                     (Number(this.player.kc) > 0) || (Number(this.player.saturation) > 0);
             }
             this.tickSpoilage();
+            this.tickCorpseDecay();
             // Dedicated MP: campfire burn/cook is server-authored (events + snapshots).
             if (!(this.isNet && this.net?.connected && !this.net.isLocal)) {
                 this.tickCampfires();
@@ -923,6 +924,8 @@ class SceneMain extends SceneBase {
                 bodyPlan: c.bodyPlan || "human",
                 mobId: c.mobId || null,
                 skinned: !!c.skinned,
+                diedAt: c.diedAt,
+                stage: c.stage === "carcass" ? "carcass" : "corpse",
                 netSync: true
             };
             if (opts.pending) {
@@ -965,7 +968,10 @@ class SceneMain extends SceneBase {
             spr.entry.bodyPlan = c.bodyPlan || spr.entry.bodyPlan || "human";
             spr.entry.mobId = c.mobId != null ? c.mobId : spr.entry.mobId;
             spr.entry.loot = loot;
+            if (c.diedAt != null) spr.entry.diedAt = c.diedAt;
+            if (c.stage) spr.entry.stage = c.stage;
             spr.entry.netSync = true;
+            spr.applyStageAppearance?.();
             if (opts.pending) {
                 spr.entry.pendingServer = true;
                 spr.entry.pendingAt = performance.now();
@@ -1080,6 +1086,12 @@ class SceneMain extends SceneBase {
             if (this._tooltipTarget === spr) this.hideTooltip();
         });
 
+        const fistColor = this._netFistColor({ kind, look: m.look });
+        const fist = this.add.rectangle(0, 0, 4, 10, fistColor, 1)
+            .setOrigin(0.5, 1)
+            .setVisible(false);
+        root.add(fist);
+
         const now = performance.now();
         return {
             id: m.id,
@@ -1088,6 +1100,7 @@ class SceneMain extends SceneBase {
             tex,
             kind,
             name: label,
+            fist,
             x: m.x,
             y: m.y,
             fromX: m.x,
@@ -1102,7 +1115,11 @@ class SceneMain extends SceneBase {
             vx: m.vx || 0,
             vy: m.vy || 0,
             animKey: null,
-            facingHoldUntil: 0
+            facingHoldUntil: 0,
+            attackTimer: 0,
+            attackMax: 0,
+            attackAngle: 0,
+            look: m.look || null
         };
     }
 
@@ -1144,6 +1161,15 @@ class SceneMain extends SceneBase {
             entry.panic = !!m.panic;
             entry.state = m.state || entry.state;
             entry.prone = !!m.prone;
+            if (m.look) entry.look = m.look;
+            if (m.attacking && Number.isFinite(m.attackAngle)) {
+                if (!(entry.attackTimer > 0)) {
+                    this._netStartRemoteAttack(entry, m.attackAngle, m.facing, m.attackArt);
+                } else {
+                    entry.attackAngle = m.attackAngle;
+                    if (m.attackArt) entry.attackArt = m.attackArt;
+                }
+            }
         }
         for (const [id, entry] of this.netMobs) {
             if (!seen.has(id)) {
@@ -1179,6 +1205,22 @@ class SceneMain extends SceneBase {
 
             entry.root.setPosition(entry.x, entry.y);
             entry.root.setDepth(entry.y);
+
+            if (entry.attackTimer > 0) {
+                entry.attackTimer = Math.max(0, entry.attackTimer - (delta || 16));
+                const progress = entry.attackMax > 0
+                    ? 1 - entry.attackTimer / entry.attackMax
+                    : 1;
+                this._netUpdateRemoteAttackSprites(entry, progress);
+                if (entry.attackTimer <= 0) {
+                    if (entry.fist) entry.fist.setVisible(false);
+                    if (entry.weapon) entry.weapon.setVisible(false);
+                    entry.attackArt = null;
+                }
+            } else {
+                if (entry.fist?.visible) entry.fist.setVisible(false);
+                if (entry.weapon?.visible) entry.weapon.setVisible(false);
+            }
 
             const dx = entry.x - prevX;
             const dy = entry.y - prevY;
@@ -1328,22 +1370,29 @@ class SceneMain extends SceneBase {
                 this.remotePlayers.delete(ev.playerId);
             }
         }
-        if (ev.kind === "attack" && ev.playerId) {
+        if (ev.kind === "attack") {
             const selfId = this._netPlayerId || this.net?.playerId;
-            if (ev.playerId === selfId) return;
-            let entry = this.remotePlayers.get(ev.playerId);
-            if (!entry) {
-                // Remote may not exist yet — create a stub from the event pose
-                entry = this._netMakeRemote({
-                    id: ev.playerId,
-                    name: "?",
-                    x: ev.x ?? 0,
-                    y: ev.y ?? 0,
-                    facing: ev.facing || "down"
-                });
-                this.remotePlayers.set(ev.playerId, entry);
+            if (ev.playerId && ev.playerId === selfId) return;
+            if (ev.playerId) {
+                let entry = this.remotePlayers.get(ev.playerId);
+                if (!entry) {
+                    // Remote may not exist yet — create a stub from the event pose
+                    entry = this._netMakeRemote({
+                        id: ev.playerId,
+                        name: "?",
+                        x: ev.x ?? 0,
+                        y: ev.y ?? 0,
+                        facing: ev.facing || "down"
+                    });
+                    this.remotePlayers.set(ev.playerId, entry);
+                }
+                this._netStartRemoteAttack(entry, Number(ev.angle) || 0, ev.facing, ev.art);
+            } else if (ev.uid && this.netMobs) {
+                const puppet = this.netMobs.get(ev.uid);
+                if (puppet) {
+                    this._netStartRemoteAttack(puppet, Number(ev.angle) || 0, ev.facing, ev.art);
+                }
             }
-            this._netStartRemoteAttack(entry, Number(ev.angle) || 0, ev.facing, ev.art);
         }
         if (ev.kind === "combat_log") {
             this.combatLog?.push?.(ev.text, {
@@ -1526,11 +1575,19 @@ class SceneMain extends SceneBase {
             }
             return;
         }
-        if ((ev.op === "loot" || ev.op === "skin") && ev.entry?.id) {
+        if ((ev.op === "loot" || ev.op === "skin" || ev.op === "carcass") && ev.entry?.id) {
             const spr = this.netCorpses.get(ev.entry.id);
             if (spr?.entry) {
-                if (ev.op === "skin" || ev.entry.skinned != null) {
-                    spr.entry.skinned = !!ev.entry.skinned;
+                if (ev.op === "skin" || ev.op === "carcass" || ev.entry.skinned != null) {
+                    spr.entry.skinned = !!ev.entry.skinned || ev.op === "carcass";
+                }
+                if (ev.op === "carcass" || ev.entry.stage) {
+                    spr.entry.stage = ev.entry.stage || "carcass";
+                    if (ev.entry.diedAt != null) spr.entry.diedAt = ev.entry.diedAt;
+                    spr.applyStageAppearance?.();
+                    if (this.player?._skinChannel?.corpse === spr) {
+                        this.player._cancelSkin?.();
+                    }
                 }
                 if (Array.isArray(ev.entry.loot)) {
                     const loot = ev.entry.loot
@@ -1539,8 +1596,10 @@ class SceneMain extends SceneBase {
                     spr.entry.loot = loot;
                     if (this.corpsePanel?.visible && this.corpsePanel.corpse === spr) {
                         this.corpsePanel.syncFromEntry?.();
+                        if (ev.op === "carcass") this.corpsePanel._showCorpseHealth?.();
                     }
                 }
+                this.refreshTooltip?.();
             }
             return;
         }
@@ -1861,6 +1920,18 @@ class SceneMain extends SceneBase {
         }
     }
 
+    /** Unarmed thrust fill for remotes / net mobs. */
+    _netFistColor(entry) {
+        if (entry?.look && typeof PlayerLook !== "undefined") {
+            return PlayerLook.fistColor(entry.look);
+        }
+        const kind = entry?.kind || "";
+        if (kind === "human" || kind === "player") return 0xff8900;
+        const def = kind && typeof this.getMob === "function" ? this.getMob(kind) : null;
+        if (Number.isFinite(def?.fistColor)) return def.fistColor >>> 0;
+        return 0x000000;
+    }
+
     _netStartRemoteAttack(entry, angle, facing = null, art = null) {
         if (!entry) return;
         const a = Number(angle);
@@ -1918,9 +1989,12 @@ class SceneMain extends SceneBase {
         }
 
         if (!entry.fist || !entry.fist.active) {
-            entry.fist = this.add.rectangle(0, 0, 4, 10, 0xff8900, 1)
+            const color = this._netFistColor(entry);
+            entry.fist = this.add.rectangle(0, 0, 4, 10, color, 1)
                 .setOrigin(0.5, 1);
             entry.root.add(entry.fist);
+        } else {
+            entry.fist.setFillStyle(this._netFistColor(entry), 1);
         }
         entry.fist.setVisible(true);
         if (entry.weapon) entry.weapon.setVisible(false);
@@ -2279,10 +2353,9 @@ class SceneMain extends SceneBase {
             root.add(this.channelBar);
         }
 
-        const s = this.uiScale || 1;
         const zoom = this.worldZoom || this.cameras.main?.zoom || 1;
-        const w = Math.round(40 * s);
-        const h = Math.round(5 * s);
+        const w = 40;
+        const h = 5;
 
         let lx, ly;
         if (player._prone) {
@@ -3652,6 +3725,7 @@ class SceneMain extends SceneBase {
 
         this.player.hungerTick();
         this.tickSpoilage();
+        this.tickCorpseDecay();
         this.tickCampfires();
         this.tickLootableRegrows();
         this.tickBodySystems();
@@ -4050,6 +4124,97 @@ class SceneMain extends SceneBase {
                 }
             }
             if (removed && chunk.isLoaded) this.rebuildBloodGfx(chunk);
+        }
+    }
+
+    /** Live sprite for a chunk corpse entry, if the chunk is loaded. */
+    _liveCorpseSprite(chunk, entry) {
+        if (!entry) return null;
+        const groups = [chunk?.corpses, this.corpses];
+        for (const g of groups) {
+            const kids = g?.getChildren?.() || [];
+            const hit = kids.find((c) => c?.active && c.entry === entry);
+            if (hit) return hit;
+        }
+        if (entry.id && this.netCorpses?.has(entry.id)) return this.netCorpses.get(entry.id);
+        return null;
+    }
+
+    _convertCorpseToCarcass(chunk, entry, now) {
+        const Decay = typeof CorpseDecay !== "undefined" ? CorpseDecay : null;
+        if (!Decay || !entry) return;
+        const getItem = (id) => this.getItem(id);
+        const dump = Decay.lootToDumpOnCarcass(entry.loot, getItem);
+        for (const stack of dump) {
+            const meta = getItem(stack.id);
+            if (!meta) continue;
+            const extras = typeof mealStackExtras === "function" ? mealStackExtras(stack) : null;
+            const spoilAt = typeof spoilAtForWorld === "function"
+                ? spoilAtForWorld(stack, now)
+                : stack.spoilAt;
+            DroppedItem.spawn(this, entry.x, entry.y, meta, stack.quantity, spoilAt, extras);
+        }
+        entry.loot = Decay.buildCarcassLoot(entry.mobId, {
+            getItem,
+            now,
+            rng: () => Math.random(),
+            makeStack: (item, qty, at) => makeWorldItemStack(item, qty, undefined, at)
+        });
+        entry.stage = "carcass";
+        entry.skinned = true;
+
+        const spr = this._liveCorpseSprite(chunk, entry);
+        if (spr) {
+            spr.applyStageAppearance?.();
+            if (this.player?._skinChannel?.corpse === spr) {
+                this.player._cancelSkin?.();
+            }
+            const panel = this.corpsePanel;
+            if (panel?.visible && panel.corpse === spr) {
+                panel.syncFromEntry?.();
+                panel._showCorpseHealth?.();
+            }
+        }
+        this.refreshTooltip?.();
+    }
+
+    _decayRemoveCorpse(chunk, entry) {
+        const spr = this._liveCorpseSprite(chunk, entry);
+        if (spr?.removeForever) {
+            spr.removeForever();
+            return;
+        }
+        const list = chunk?.meta?.corpses;
+        if (!Array.isArray(list) || !entry) return;
+        const i = list.indexOf(entry);
+        if (i >= 0) list.splice(i, 1);
+    }
+
+    /**
+     * Corpse → carcass after 12h, carcass → gone after 30d.
+     * Dedicated MP: server owns this (events + snapshots).
+     */
+    tickCorpseDecay() {
+        if (this.isNet && this.net?.connected && !this.net.isLocal) return;
+        const Decay = typeof CorpseDecay !== "undefined" ? CorpseDecay : null;
+        if (!Decay) return;
+        const now = this.worldMinuteIndex();
+        for (const chunk of Object.values(this.chunks || {})) {
+            const list = chunk?.meta?.corpses;
+            if (!Array.isArray(list) || !list.length) continue;
+            for (let i = list.length - 1; i >= 0; i--) {
+                const entry = list[i];
+                if (!entry) continue;
+                Decay.ensureDiedAt(entry, now);
+                const next = Decay.stageFor(entry.diedAt, now);
+                if (next === "gone") {
+                    this._decayRemoveCorpse(chunk, entry);
+                    continue;
+                }
+                if (next === "carcass" && entry.stage !== "carcass") {
+                    this._convertCorpseToCarcass(chunk, entry, now);
+                }
+            }
         }
     }
 
@@ -5089,26 +5254,23 @@ class SceneMain extends SceneBase {
         } catch (_) {}
     }
 
-    /** Design-relative raw factor (1.0 ≈ 1024×768). */
-    _guiScaleRaw() {
+    /**
+     * Largest integer GUI scale that fits this window.
+     * 480×360 reference so 1080p reaches 3 (not 1080/768 ≈ 1.4).
+     */
+    _guiScaleFit() {
         const w = this.scale?.width || window.innerWidth || 1024;
         const h = this.scale?.height || window.innerHeight || 768;
-        return Math.min(w / 1024, h / 768);
+        return Math.min(w / 480, h / 360);
     }
 
-    /**
-     * Highest fixed GUI scale for this window.
-     * Uses a half-design reference so 1080p reaches 3 (not floor(1080/768)=1).
-     */
+    /** Highest fixed integer GUI scale for this window. */
     getMaxGuiScaleOption() {
-        const w = this.scale?.width || window.innerWidth || 1024;
-        const h = this.scale?.height || window.innerHeight || 768;
-        return Math.max(1, Math.floor(Math.min(w / 480, h / 360)));
+        return Math.max(1, Math.floor(this._guiScaleFit()));
     }
 
     _autoUiScale() {
-        const raw = this._guiScaleRaw();
-        return Math.max(1, Math.round(raw * 2) / 2);
+        return this.getMaxGuiScaleOption();
     }
 
     _guiScaleButtonLabel() {

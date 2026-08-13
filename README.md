@@ -1,55 +1,64 @@
 # Cave Paintings
 
-Play at the **game website** (static client). Singleplayer runs in the browser. Multiplayer joins a friend’s **dedicated world server**.
+Phaser survival game. Pixel-art world, RimWorld-style body simulation (injuries, hunger, food poisoning). Singleplayer runs entirely in the browser. Multiplayer is a Node world server; your character stays on your machine.
 
-## Play
+## Client
 
-Open the hosted game (or serve the repo locally for development):
-
-```powershell
-npx --yes serve -l 21825
+```bash
+npm run client
 ```
 
-Then open http://127.0.0.1:21825
+Open http://127.0.0.1:21825
 
-- **Singleplayer** — character → world (IndexedDB). No dedicated server.
-- **Multiplayer** — enter a server address → Connect → pick character → join.
+- **Singleplayer** — character, then a world. Worlds live in IndexedDB.
+- **Multiplayer** — character, then a server address (`host:port`). Default is `127.0.0.1:21826`.
 
-Characters are client-owned (browser IndexedDB + export files). Leaving a multiplayer session saves your character locally; the world server does not keep your gear.
+Characters (look, inventory, body) are stored in the browser. Export/import them from the menu. The world server does not keep your gear after you leave.
 
-### Joining from HTTPS
+If the client is served over HTTPS, joins use `wss://`. Bare `host:port` becomes `wss://host:port`, so the server needs TLS or a tunnel. HTTP clients can use plain `ws://`.
 
-If the game page is **HTTPS**, the browser only allows **`wss://`**. Bare `host:port` is treated as `wss://host:port`. The host must enable TLS on the dedicated server (`tls-cert` / `tls-key`) or expose a tunnel (ngrok, etc.). Port-forward alone with plain `ws://` will not work from an HTTPS site.
+## Server
 
-## Host a multiplayer world
-
-On the machine that runs the shared world:
-
-```powershell
+```bash
 npm install
 npm start
 ```
 
-Pick or create a world in the console. Friends open the **game website** → Multiplayer → paste your join address (shown in the server banner), not your PC’s webpage.
+Console asks for a world (`n` = new, `1`–`9` = existing). Banner prints a LAN join address. Saves go in `saves/<world>/`.
 
-- Optional password: console `password <pw>` or `server.properties`
-- Port-forward / tunnel is your responsibility (same idea as Minecraft / Terraria)
-- Details: [server/README.md](server/README.md)
-
-Console: `save`, `list`, `kick <name>`, `password <pw>`, `stop`
-
-Saves: `saves/<world>/world.json` + `server.properties` (session pawns only; no durable player gear files).
-
-## Ngrok (example tunnel for WSS)
-
-```powershell
-copy ngrok.env.example ngrok.env
-# edit ngrok.env — set NGROK_URL to your reserved domain
-.\run-ngrok.bat
+```bash
+node server/index.js --world MyWorld --port 21826
 ```
 
-`ngrok.env` is gitignored; only `ngrok.env.example` is committed.
+Flags, TLS, console commands: [server/README.md](server/README.md).
 
-## In-game (net)
+### Ngrok
 
-WASD, Shift sprint, Space eat/attack, E pickup, Q drop, Enter chat, `/heal` `/give apple 5`
+```bash
+cp ngrok.env.example ngrok.env   # set NGROK_URL
+./run-ngrok.sh                   # Windows: run-ngrok.bat
+```
+
+`ngrok.env` is gitignored.
+
+## Controls
+
+Hover **?** in the corner for the full list.
+
+```
+WASD / arrows   Move
+Shift           Sprint
+Mouse           Aim
+Space           Use held item / attack
+Left-click      Pick up / interact
+F               Pick up nearby drops
+Q               Drop (Shift = stack, Ctrl = 10)
+1–0             Hotbar
+C / E / H       Craft / equipment / health
+T               Chat  (/ opens a command)
+Esc             Pause / menu
+```
+
+Right-click moves 1 item between slots; Shift+right-click the stack, Ctrl+right-click half.
+
+Chat commands: `/help`

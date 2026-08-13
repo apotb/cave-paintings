@@ -382,6 +382,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         setCreatureProne(this, false);
         this.anatomy.fullHeal();
         this.capacities = new Capacities(this.anatomy);
+        this.kc = 1200;
+        this.saturation = 0;
         this.teleport(x, y);
         this.setVisible(true);
         if (this.body) this.body.enable = true;
@@ -1449,6 +1451,41 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         // Malnutrition hediff rises/falls in Hediffs.minuteTick
     }
 
+    /**
+     * How many of `stack` would fit in inventory right now (no mutation).
+     * Used so corpse right-click doesn't optimistic-clear a slot the server will reject.
+     */
+    countLootSpace(stack, want = 1) {
+        if (!stack?.id) return 0;
+        const item = this.scene.getItem(stack.id);
+        if (!item) return 0;
+        const wantN = Math.max(0, Math.floor(Number(want) || 0));
+        if (!wantN) return 0;
+        const maxStack = Math.max(1, Number(item.maxStack) || 1);
+        const special = typeof isSpecialStack === "function"
+            ? isSpecialStack(stack)
+            : !!(stack.customName || stack.food || stack.ingredients || stack.toolClass);
+        const weight = Number(item.weight) || 0;
+        const weightLeft = Math.max(0, this.strength * 2 - this.getInventoryWeight());
+        const allowedByWeight = weight > 0
+            ? Math.floor((weightLeft + Math.pow(10, -8)) / weight)
+            : wantN;
+        if (allowedByWeight <= 0) return 0;
+
+        let space = 0;
+        if (!special) {
+            for (const slot of this.inventory) {
+                if (!slot || slot.id !== item.id || slot.quantity >= maxStack) continue;
+                if (slot.customName || slot.food || slot.ingredients || slot.toolClass) continue;
+                space += maxStack - slot.quantity;
+            }
+        }
+        const empty = this.inventory.filter((s) => !s).length
+            + Math.max(0, this.inventorySize - this.inventory.length);
+        space += empty * maxStack;
+        return Math.min(wantN, space, allowedByWeight);
+    }
+
     gainItem(item, amount = 1, spoilLeft = undefined) {
         let remaining = amount;
         const weightLeft = Math.max(0, this.strength * 2 - this.getInventoryWeight());
@@ -1682,7 +1719,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
         if (this.isIncapacitated()) return false;
-        if (!corpse?.entry || corpse.entry.skinned) return false;
+        if (!corpse?.entry || corpse.entry.skinned || corpse.entry.stage === "carcass") return false;
         if (!corpse.inRange?.()) return false;
         const item = this.getHeldItem();
         if (!item || item.toolClass !== "knife") return false;
@@ -1722,6 +1759,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             || held.toolClass !== "knife"
             || !corpse?.active
             || corpse.entry?.skinned
+            || corpse.entry?.stage === "carcass"
             || !corpse.inRange?.()
         ) {
             this._cancelSkin();

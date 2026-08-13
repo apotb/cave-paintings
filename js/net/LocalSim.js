@@ -294,7 +294,8 @@ class LocalSim {
         if (type === NetProtocol.Actions.RESPAWN) {
             p.dead = false;
             p.hp = p.mhp;
-            p.kc = Math.max(p.kc, 400);
+            p.kc = 1200;
+            p.saturation = 0;
             this._dispatch(NetProtocol.Types.YOU, this._youPayload());
         }
     }

@@ -8,6 +8,7 @@ const Protocol = require("../shared/protocol");
 const Look = require("../shared/look");
 const { mulberry32, hash2D, uuid } = require("../shared/rng");
 const Spoil = require("../shared/spoil");
+const CorpseDecay = require("../shared/corpseDecay");
 const GameMath = require("../shared/gameMath");
 const DataStore = require("../shared/DataStore");
 const BodyHealing = require("../shared/body/Healing");
@@ -1232,7 +1233,8 @@ class SimWorld {
         const pose = this._pickRandomSpawnPose(4);
         p.x = pose.x;
         p.y = pose.y;
-        p.kc = Math.max(p.kc, 400);
+        p.kc = 1200;
+        p.saturation = 0;
         this._cancelChannels(p);
         p.pendingAttackAngle = null;
         this._resetPlayerAnatomy(p);
@@ -1980,7 +1982,11 @@ class SimWorld {
             body: opts.body || null,
             bodyPlan: opts.bodyPlan || "human",
             mobId: opts.mobId || null,
-            skinned: !!opts.skinned
+            skinned: !!opts.skinned || opts.stage === "carcass",
+            diedAt: opts.diedAt != null && Number.isFinite(Number(opts.diedAt))
+                ? Math.round(Number(opts.diedAt))
+                : this.worldMinuteIndex(),
+            stage: opts.stage === "carcass" ? "carcass" : "corpse"
         };
         c.corpses.push(entry);
         this.pushEvent({ kind: "corpse", op: "add", cx, cy, entry });
@@ -2148,17 +2154,6 @@ class SimWorld {
                 skinned: !!corpse.skinned
             });
         }
-        if (killer) {
-            const killerName = this._killerLabel(killer);
-            if (killerName) {
-                const victim = corpse?.name || mob.displayName?.() || "Creature";
-                this.pushEvent({
-                    kind: "chat",
-                    text: Protocol.deathMessage(victim, killerName),
-                    system: true
-                });
-            }
-        }
     }
 
     _skinLootTable(mobId) {
@@ -2191,7 +2186,7 @@ class SimWorld {
         const found = this._findCorpse(action.corpseId);
         if (!found) return;
         const { entry } = found;
-        if (entry.skinned) return;
+        if (entry.skinned || entry.stage === "carcass") return;
         const dx = entry.x - p.x;
         const dy = entry.y - p.y;
         const r = TS * (HARVEST_RANGE_TILES + 2);
@@ -3842,7 +3837,23 @@ class SimWorld {
             const nearest = aiWorld.getNearestPlayer(mob);
             mob.ctx.player = nearest || null;
             mob.refreshCapacities?.();
+            const wasSwinging = !!mob.isAttacking?.();
             mob.ai?.update?.(dtMs, aiWorld);
+            if (!wasSwinging && mob.isAttacking?.()) {
+                this.pushEvent({
+                    kind: "attack",
+                    uid: mob.id,
+                    x: mob.x,
+                    y: mob.y,
+                    angle: mob.attackAngle,
+                    facing: mob.facing,
+                    art: mob.attackArt || {
+                        unarmed: true,
+                        range: 4,
+                        max: mob.attackMax || 833
+                    }
+                });
+            }
             // Hold a short unstick velocity so AI bee-lines don't immediately re-wedge
             if (mob._nudgeMs > 0) {
                 mob.setDesiredVel(mob._nudgeVx || 0, mob._nudgeVy || 0);
@@ -3953,6 +3964,59 @@ class SimWorld {
         }
         this._tickLootableRegrows();
         this._tickCampfires();
+        this._tickCorpseDecay();
+    }
+
+    _convertCorpseToCarcass(entry, now) {
+        if (!entry) return;
+        const getItem = (id) => itemDefs().get(id);
+        const dump = CorpseDecay.lootToDumpOnCarcass(entry.loot, getItem);
+        for (const stack of dump) {
+            const world = this._cloneStackForWorld(stack);
+            if (world) this._pushDrop(entry.x, entry.y, world);
+        }
+        entry.loot = CorpseDecay.buildCarcassLoot(entry.mobId, {
+            getItem,
+            now,
+            rng: () => this.rng(),
+            makeStack: (item, qty, at) => Spoil.makeWorldItemStack(item, qty, undefined, at)
+        });
+        entry.stage = "carcass";
+        entry.skinned = true;
+        this.pushEvent({
+            kind: "corpse",
+            op: "carcass",
+            entry: {
+                id: entry.id,
+                stage: "carcass",
+                skinned: true,
+                loot: entry.loot,
+                diedAt: entry.diedAt
+            }
+        });
+    }
+
+    /** Corpse → carcass after 12h, carcass → gone after 30d. Runs for all chunks. */
+    _tickCorpseDecay() {
+        const now = this.worldMinuteIndex();
+        for (const c of this.chunks.values()) {
+            if (!Array.isArray(c.corpses) || !c.corpses.length) continue;
+            for (let i = c.corpses.length - 1; i >= 0; i--) {
+                const entry = c.corpses[i];
+                if (!entry) continue;
+                CorpseDecay.ensureDiedAt(entry, now);
+                const next = CorpseDecay.stageFor(entry.diedAt, now);
+                if (next === "gone") {
+                    const id = entry.id;
+                    c.corpses.splice(i, 1);
+                    this.pushEvent({ kind: "corpse", op: "remove", id });
+                    continue;
+                }
+                if (next === "carcass" && entry.stage !== "carcass") {
+                    this._convertCorpseToCarcass(entry, now);
+                }
+            }
+        }
     }
 
     /** Respawn due world lootables (sticks, bushes, …). */
@@ -4574,6 +4638,8 @@ class SimWorld {
                     bodyPlan: corpse.bodyPlan || "human",
                     mobId: corpse.mobId || null,
                     skinned: !!corpse.skinned,
+                    diedAt: corpse.diedAt,
+                    stage: corpse.stage || "corpse",
                     cx: c.cx,
                     cy: c.cy
                 });
@@ -4604,7 +4670,10 @@ class SimWorld {
                 moving,
                 panic: !!(mob.panicMs > 0 || mob.ai?.panicMs > 0),
                 hostile: !!mob.hostile,
-                prone: !!mob._prone
+                prone: !!mob._prone,
+                attacking: !!(mob.attackTimer > 0),
+                attackAngle: Number.isFinite(mob.attackAngle) ? mob.attackAngle : null,
+                attackArt: mob.attackTimer > 0 ? (mob.attackArt || null) : null
             };
             if (mob.anatomy?._dirty) {
                 row.body = mob.anatomy.toJSON();

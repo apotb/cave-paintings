@@ -17,7 +17,7 @@
                     "bloodFiltration": 0.95,
                     "eating": 0.5
                 },
-                "vomitMtbDays": 0.3
+                "vomitMtbDays": 0.4
             },
             {
                 "label": "major",
@@ -44,7 +44,7 @@
                     "bloodFiltration": 0.95,
                     "eating": 0.5
                 },
-                "vomitMtbDays": 0.4
+                "vomitMtbDays": 0.3
             }
         ]
     },

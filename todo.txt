@@ -10,8 +10,6 @@ Awls -- related to hides system, maybe make the Leaf Pouch recipe require one?
 
 Choppers -- cut down trees permanently, will give some logs and a bunch of sticks/leaves
 
-Rename Leaf to Leaves
-
 Give Stick a custom icon for the item that is a singular stick rather than the pile of sticks ground icon that has been used so far
 
 Bones
@@ -25,14 +23,6 @@ More animals -- boar, lynx, auroch
 Infection
 
 Clothing and armor
-
-Corpse decay -- after a certain amount of time, turn into a "Carcass" object where you can extract some bones and rot but nothing else, after enough time even the carcass will decay to nothing
-
-Rocks should spawn in the snow biome
-
-Skinning a corpse should immediately open its GUI and health tab
-
-Is the vomiting MTB accurate?
 
 Durability -- weapons and tools have durability when they are used, either for their intended purpose or for attacking. Show it as a bar going from 100% to 0%, it will be on the bottom of that icon slot like how the cooking progress bar is positioned. The progress bar will use the same color coding as the tending/eating bar. 100% durability will not show the bar.
 

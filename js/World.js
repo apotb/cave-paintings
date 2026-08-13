@@ -80,13 +80,16 @@ class Chunk {
             x: e.x,
             y: e.y,
             key: e.key,
+            look: e.look || null,
             frame: e.frame,
             name: e.name,
             loot: e.loot,
             body: e.body || null,
             bodyPlan: e.bodyPlan || e.body?.planId || "human",
             mobId: e.mobId || null,
-            skinned: !!e.skinned
+            skinned: !!e.skinned,
+            diedAt: e.diedAt != null ? e.diedAt : undefined,
+            stage: e.stage || "corpse"
         }));
         return {
             x: this.x,
@@ -425,6 +428,7 @@ class Chunk {
                 if (randValue < 0.1) this.addThing(tx, ty, 'snow_tree');
                 else if (randValue < 0.12) this.addLootableThing(tx, ty, 'sticks');
                 else if (randValue < 0.14) this.addThing(tx, ty, 'snow_bush');
+                else if (randValue < 0.145) this.addThing(tx, ty, 'rock');
             } else if (temperature < 0.25) {
                 key = 'grass';
                 if (randValue < 0.10) this.addThing(tx, ty, 'tree');

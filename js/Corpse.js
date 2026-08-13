@@ -2,6 +2,47 @@
  * Persistent corpse: gray, face-right, rotated -90° CCW. Loot lives in chunk.meta.corpses.
  */
 class Corpse extends Phaser.GameObjects.Sprite {
+    static TINT_CORPSE = 0x888888;
+
+    /** Cached grayscale sheet for a texture key (`key__gray`). */
+    static grayscaleTextureKey(scene, key) {
+        if (!scene?.textures || !key) return key;
+        const grayKey = `${key}__gray`;
+        if (scene.textures.exists(grayKey)) return grayKey;
+        const srcTex = scene.textures.get(key);
+        if (!srcTex || srcTex.key === "__MISSING") return key;
+        const img = srcTex.getSourceImage?.() || srcTex.source?.[0]?.image;
+        if (!img || !img.width) return key;
+        const w = img.width;
+        const h = img.height;
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return key;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const px = imageData.data;
+        for (let i = 0; i < px.length; i += 4) {
+            if (px[i + 3] === 0) continue;
+            const g = (px[i] * 0.299 + px[i + 1] * 0.587 + px[i + 2] * 0.114 + 0.5) | 0;
+            px[i] = px[i + 1] = px[i + 2] = g;
+        }
+        ctx.putImageData(imageData, 0, 0);
+        const gray = scene.textures.addCanvas(grayKey, canvas);
+        if (!gray) return key;
+        const names = typeof srcTex.getFrameNames === "function" ? srcTex.getFrameNames() : [];
+        for (const name of names) {
+            const f = srcTex.get(name);
+            if (!f || f.name === "__BASE") continue;
+            if (gray.has(name) || gray.has(String(name))) continue;
+            gray.add(name, 0, f.cutX, f.cutY, f.cutWidth, f.cutHeight);
+        }
+        return grayKey;
+    }
+
+
     /**
      * @param {Phaser.Scene} scene
      * @param {{ x, y, key, frame?, name?, loot: Object[] }} opts
@@ -14,6 +55,11 @@ class Corpse extends Phaser.GameObjects.Sprite {
         if (!chunk) return null;
         if (!chunk.meta.corpses) chunk.meta.corpses = [];
 
+        const now = scene.worldMinuteIndex?.() ?? 0;
+        const diedAt = opts.diedAt != null && Number.isFinite(Number(opts.diedAt))
+            ? Math.round(Number(opts.diedAt))
+            : now;
+        const stage = opts.stage === "carcass" ? "carcass" : "corpse";
         const entry = {
             id: opts.id || `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
             x: opts.x,
@@ -26,7 +72,9 @@ class Corpse extends Phaser.GameObjects.Sprite {
             body: opts.body || null,
             bodyPlan: opts.bodyPlan || opts.body?.planId || "human",
             mobId: opts.mobId || null,
-            skinned: !!opts.skinned
+            skinned: !!opts.skinned || stage === "carcass",
+            diedAt,
+            stage
         };
         chunk.meta.corpses.push(entry);
         if (!chunk.isLoaded) return null;
@@ -95,12 +143,13 @@ class Corpse extends Phaser.GameObjects.Sprite {
 
         this.entry = entry;
         this.chunk = chunk;
+        this._colorTexKey = key;
 
         scene.add.existing(this);
         scene.mainLayer.add(this);
         this.setOrigin(0.5, 0.5);
         this.setRotation(-Math.PI / 2);
-        this.setTint(0x888888);
+        this.applyStageAppearance();
         // Above same-y Things / slightly above blood so pools don't steal hover
         this.setDepth((Number(entry.y) || 0) + 1);
 
@@ -123,10 +172,11 @@ class Corpse extends Phaser.GameObjects.Sprite {
             if (!this.inRange()) return;
             const player = scene.player;
             const held = player?.getHeldItem?.();
-            // Knife + unskinned → skin channel; otherwise loot panel
+            // Knife + unskinned corpse (not carcass) → skin channel; otherwise loot panel
             if (
                 held?.toolClass === "knife"
                 && !this.entry?.skinned
+                && this.entry?.stage !== "carcass"
                 && typeof player.beginSkin === "function"
             ) {
                 player.beginSkin(this);
@@ -173,8 +223,28 @@ class Corpse extends Phaser.GameObjects.Sprite {
         return dx * dx + dy * dy <= r * r;
     }
 
+    isCarcass() {
+        return this.entry?.stage === "carcass";
+    }
+
+    applyStageAppearance() {
+        const frame = this.frame?.name;
+        if (!this._colorTexKey) this._colorTexKey = this.texture?.key;
+        if (this.isCarcass()) {
+            this.clearTint();
+            const grayKey = Corpse.grayscaleTextureKey(this.scene, this._colorTexKey);
+            if (grayKey && this.texture?.key !== grayKey) this.setTexture(grayKey, frame);
+        } else {
+            if (this._colorTexKey && this.texture?.key !== this._colorTexKey) {
+                this.setTexture(this._colorTexKey, frame);
+            }
+            this.setTint(Corpse.TINT_CORPSE);
+        }
+    }
+
     tooltipText() {
         const name = this.entry?.name || "Corpse";
+        if (this.isCarcass()) return `${name} (carcass)`;
         const lines = [`${name} (corpse)`];
         if (this.entry?.skinned) lines.push("Skinned");
         return lines.join("\n");
@@ -204,7 +274,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
 
     /** Apply skinning: mark skinned and append butcher loot. */
     applySkin() {
-        if (!this.entry || this.entry.skinned) return [];
+        if (!this.entry || this.entry.skinned || this.entry.stage === "carcass") return [];
         this.entry.skinned = true;
         if (!this.entry.loot) this.entry.loot = [];
         const gained = [];

@@ -1,6 +1,6 @@
 # Cave Paintings — Dedicated world server
 
-Hosts a shared multiplayer world. Players open the **public game client** (website), choose Multiplayer, and paste your join address. This process does **not** serve the full game UI by default.
+Hosts a shared multiplayer world. Players open the Phaser client, choose Multiplayer, and paste your join address. This process does **not** serve the game UI by default.
 
 ## Quick start
 
@@ -23,7 +23,7 @@ Banner prints something like `192.168.x.x:21826` (LAN IPv4) — paste that in Mu
 | --- | --- |
 | `--world <name>` | Skip world picker |
 | `--port <n>` | Override `server.properties` port |
-| `--serve-client` | Serve the local Phaser UI (dev/LAN only). Prefer the public game URL. |
+| `--serve-client` | Also serve the Phaser UI from this process (dev/LAN) |
 | `--tls-cert <path>` | Enable HTTPS + WSS (with `--tls-key`) |
 | `--tls-key <path>` | Private key for TLS |
 
@@ -68,8 +68,4 @@ Characters / inventory are **client-owned**. The server keeps ephemeral session 
 
 ## In-game (joined clients)
 
-- WASD move, Shift sprint
-- Space: eat if holding food, else melee toward cursor
-- E / F pickup, Q drop
-- Hotbar, Enter chat
-- Slash commands for testing: `/heal`, `/give apple 5`, `/tp x y`, `/kill`
+Hover **?** in the client. Chat commands: `/help`

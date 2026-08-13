@@ -102,6 +102,7 @@ function generateTileKey(tx, ty, rand) {
             if (randValue < 0.1) things.push("snow_tree");
             else if (randValue < 0.12) loot.push("sticks");
             else if (randValue < 0.14) things.push("snow_bush");
+            else if (randValue < 0.145) things.push("rock");
             return { key: "snow", things, loot };
         }
         if (temperature < 0.25) {

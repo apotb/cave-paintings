@@ -248,7 +248,7 @@
     },
     {
         "id": "leaf",
-        "name": "Leaf",
+        "name": "Leaves",
         "key": "leaves",
         "maxStack": 99,
         "weight": 0.01,

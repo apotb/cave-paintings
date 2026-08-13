@@ -16,9 +16,9 @@
         head: "Head",
         eyes: "Eyes",
         arms: "Arms",
-        shirt: "Shirt",
-        pants: "Pants",
-        shoes: "Shoes"
+        shirt: "Body",
+        pants: "Legs",
+        shoes: "Feet"
     };
 
     /** Original human.png fill colors (eyes stay near-black via the slider). */

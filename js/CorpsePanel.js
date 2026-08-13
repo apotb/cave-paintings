@@ -86,7 +86,11 @@ class CorpsePanel {
         const body = new Body(this.scene, planId, null);
         body.loadJSON(entry.body);
         const name = entry.name || "Corpse";
-        hp.openInspect(body, name === "Corpse" ? "Corpse" : `${name} (corpse)`);
+        const carcass = entry.stage === "carcass";
+        const label = name === "Corpse"
+            ? (carcass ? "Carcass" : "Corpse")
+            : `${name} (${carcass ? "carcass" : "corpse"})`;
+        hp.openInspect(body, label);
     }
 
     _closeCorpseHealth() {
@@ -378,6 +382,12 @@ class CorpsePanel {
             if (j >= 0) this.session[i] = pool.splice(j, 1)[0];
             else this.session[i] = null;
         }
+        // Failed takes / snapshot rewind: put leftover stacks back into sticky holes
+        // before growing the grid (otherwise each rejected right-click adds a slot).
+        for (let i = 0; i < this.session.length && pool.length; i++) {
+            if (this.session[i]) continue;
+            this.session[i] = pool.shift();
+        }
         let grew = false;
         for (const s of pool) {
             this.session.push(s);
@@ -449,12 +459,16 @@ class CorpsePanel {
         if (!(amount > 0)) return;
 
         // Dedicated: optimistic holes locally; server confirms via YOU + corpse loot event.
+        // If nothing fits, leave the stack in this slot — don't send a take the server will reject.
         if (this._dedicatedNet()) {
-            this._notifyServerTake(index, amount);
-            if (amount >= stack.quantity) {
+            const canTake = this.scene.player.countLootSpace?.(stack, amount) ?? 0;
+            if (!(canTake > 0)) return;
+            const moved = Math.min(amount, canTake);
+            this._notifyServerTake(index, moved);
+            if (moved >= stack.quantity) {
                 this.session[index] = null;
             } else {
-                stack.quantity -= amount;
+                stack.quantity -= moved;
                 if (stack.quantity <= 0) this.session[index] = null;
             }
             this._afterTake();
