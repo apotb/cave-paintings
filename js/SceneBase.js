@@ -166,7 +166,9 @@ class SceneBase extends Phaser.Scene {
             "pebble",
             "flint",
             "deer_hide",
-            "bone"
+            "bone",
+            "stick",
+            "log"
         ];
         for (const item of items) {
             this.loadImage(item, 'items');

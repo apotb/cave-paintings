@@ -8,10 +8,6 @@ Animal hides system -- drying rack you can place a hide on, use Scraper to turn 
 
 Awls -- related to hides system, maybe make the Leaf Pouch recipe require one?
 
-Choppers -- cut down trees permanently, will give some logs and a bunch of sticks/leaves
-
-Give Stick a custom icon for the item that is a singular stick rather than the pile of sticks ground icon that has been used so far
-
 Bones
 
 Random structures -- start with an abandoned camp that has a lean-to, unlit campfire, and some leftover supplies
@@ -28,4 +24,12 @@ Recruiting wandering humans to join your faction -- when you have at least 2 peo
 
 Sternum and Ribcage status overlay sprites
 
-Server pauses if no one online for 1 minute
+Rock types -- more than pebble vs flint (obsidian, quartz, basalt, sandstone). Different knap feel / quality, some better for blades, some blunt for plant stuff. Later gate for tools a pebble shouldn't make.
+
+Hand-axe and cleaver -- later knapped tools, not day-one. Choppers stay the way you get wood. Hand-axe = biface, general-purpose; cleaver = big-game processing. Needs better stone and a harder silhouette so they don't fall out of a messy pebble.
+
+Mode 3 blades -- prepared-core / long flakes (at least twice as long as wide). Further down than hand-axes.
+
+Fishing
+
+Burials / ritual -- early spiritualism, much later

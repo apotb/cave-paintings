@@ -16,13 +16,19 @@
         "id": "tree",
         "name": "Tree",
         "key": "tree",
-        "hitboxSize": 5
+        "hitboxSize": 5,
+        "choppable": {
+            "stump": "tree_stump"
+        }
     },
     {
         "id": "apple_tree",
         "name": "Apple Tree",
         "key": "apple_tree",
         "hitboxSize": 5,
+        "choppable": {
+            "stump": "tree_stump"
+        },
         "lootable": {
             "item": "apple",
             "yield": 3,
@@ -34,7 +40,10 @@
         "id": "snow_tree",
         "name": "Snow Tree",
         "key": "snow_tree",
-        "hitboxSize": 5
+        "hitboxSize": 5,
+        "choppable": {
+            "stump": "snow_tree_stump"
+        }
     },
     {
         "id": "cactus",
@@ -58,13 +67,19 @@
         "id": "palm_tree",
         "name": "Palm Tree",
         "key": "palm_tree",
-        "hitboxSize": 5
+        "hitboxSize": 5,
+        "choppable": {
+            "stump": "coconut_tree_stump"
+        }
     },
     {
         "id": "coconut_tree",
         "name": "Coconut Tree",
         "key": "coconut_tree",
         "hitboxSize": 5,
+        "choppable": {
+            "stump": "coconut_tree_stump"
+        },
         "lootable": {
             "item": "coconut",
             "yield": 2,
@@ -170,5 +185,23 @@
         "campfire": true,
         "lit": false,
         "lightLevel": 0
+    },
+    {
+        "id": "tree_stump",
+        "name": "Tree Stump",
+        "key": "tree_stump",
+        "hitboxSize": 5
+    },
+    {
+        "id": "snow_tree_stump",
+        "name": "Snow Tree Stump",
+        "key": "snow_tree_stump",
+        "hitboxSize": 5
+    },
+    {
+        "id": "coconut_tree_stump",
+        "name": "Palm Stump",
+        "key": "coconut_tree_stump",
+        "hitboxSize": 5
     }
 ]

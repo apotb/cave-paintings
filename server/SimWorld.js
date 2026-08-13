@@ -9,10 +9,12 @@ const Look = require("../shared/look");
 const { mulberry32, hash2D, uuid } = require("../shared/rng");
 const Spoil = require("../shared/spoil");
 const Durability = require("../shared/durability");
+const Chop = require("../shared/chop");
 const CorpseDecay = require("../shared/corpseDecay");
 const GameMath = require("../shared/gameMath");
 const DataStore = require("../shared/DataStore");
 const BodyHealing = require("../shared/body/Healing");
+const BodyCombat = require("../shared/body/Combat");
 const { Body } = require("../shared/body/Body");
 const Capacities = require("../shared/body/Capacities");
 const { createAI } = require("../shared/ai/headless");
@@ -1432,6 +1434,115 @@ class SimWorld {
         return result;
     }
 
+    _pickPlayerAttack(creature, angle) {
+        if (!creature) return null;
+        const held = creature.getHeldItem?.();
+        if (Chop.chopFraction(held) > 0) {
+            const chop = Chop.pickChopFromAttacks(BodyCombat.collectAttacks(creature));
+            if (chop && this._aimHitsChoppable(creature, angle)) return chop;
+        }
+        return BodyCombat.pickAttack(creature);
+    }
+
+    _aimHitsChoppable(creature, angle) {
+        if (!creature) return false;
+        const c = creature.bodyCenter?.() || { x: creature.x, y: creature.y };
+        const seg = Chop.aimSegment(c.x, c.y, angle, Chop.AIM_REACH);
+        let hit = false;
+        this._eachNearbyChoppable(creature.x, creature.y, (e, def) => {
+            if (hit) return;
+            const hs = Number(def.hitboxSize) || 5;
+            if (Chop.trunkHitsSegment(seg, e.x, e.y, hs, Chop.HIT_RADIUS)) hit = true;
+        });
+        return hit;
+    }
+
+    _eachNearbyChoppable(wx, wy, fn) {
+        const range = Chop.AIM_REACH + 16;
+        const r2 = range * range;
+        for (const c of this._chunksNear(wx, wy, 1)) {
+            const lists = [
+                { name: "things", arr: c.things },
+                { name: "lootable", arr: c.lootableThings }
+            ];
+            for (const { name, arr } of lists) {
+                if (!Array.isArray(arr)) continue;
+                for (const e of arr) {
+                    if (!e || e.gone || !e.id) continue;
+                    const def = thingDefs().get(e.id);
+                    if (!Chop.isChoppable(def)) continue;
+                    const dx = (Number(e.x) || 0) - wx;
+                    const dy = (Number(e.y) || 0) - wy;
+                    if (dx * dx + dy * dy > r2) continue;
+                    fn(e, def, c, name);
+                }
+            }
+        }
+    }
+
+    _tryChopFromMelee(creature, swingSeg) {
+        if (!creature || creature.kind !== "player") return;
+        if (creature._attackChoppedTree) return;
+        if (!Chop.isChopAttack(creature.currentAttack)) return;
+        const held = creature.getHeldItem?.();
+        const frac = Chop.chopFraction(held);
+        if (!(frac > 0)) return;
+        const c = creature.bodyCenter?.() || { x: creature.x, y: creature.y };
+        const chopSeg = Chop.aimSegment(c.x, c.y, creature.attackAngle, Chop.AIM_REACH);
+        let best = null;
+        let bestDef = null;
+        let bestChunk = null;
+        let bestList = null;
+        let bestD = Infinity;
+        this._eachNearbyChoppable(creature.x, creature.y, (e, def, chunk, listName) => {
+            if (creature.attackHitSet?.has(e)) return;
+            const hs = Number(def.hitboxSize) || 5;
+            const hit = Chop.trunkHitsSegment(chopSeg, e.x, e.y, hs, Chop.HIT_RADIUS)
+                || (swingSeg && Chop.trunkHitsSegment(swingSeg, e.x, e.y, hs, Chop.HIT_RADIUS));
+            if (!hit) return;
+            const dx = e.x - creature.x;
+            const dy = e.y - creature.y;
+            const d = dx * dx + dy * dy;
+            if (d < bestD) {
+                best = e;
+                bestDef = def;
+                bestChunk = chunk;
+                bestList = listName;
+                bestD = d;
+            }
+        });
+        if (!best || !bestChunk) return;
+        if (!creature.attackHitSet) creature.attackHitSet = new Set();
+        creature.attackHitSet.add(best);
+        creature._attackChoppedTree = true;
+        const result = Chop.applyChop(best, frac);
+        if (!creature._attackWoreHeld) {
+            this._wearPlayerHeld(creature.id, 1);
+            creature._attackWoreHeld = true;
+        }
+        if (result.felled) {
+            const drops = Chop.rollDrops(bestDef, () => this.rng());
+            const piles = Chop.scatterFellPiles(drops, best.x, best.y, () => this.rng());
+            Chop.fellToStump(best, bestDef);
+            for (const p of piles) {
+                this._pushDrop(p.x, p.y, { id: p.id, quantity: p.quantity }, { noMerge: true });
+            }
+        }
+        this.pushEvent({
+            kind: "chop",
+            playerId: creature.id,
+            cx: bestChunk.cx,
+            cy: bestChunk.cy,
+            x: best.x,
+            y: best.y,
+            uid: best.uid || null,
+            id: best.id,
+            chopProgress: result.felled ? null : result.progress,
+            felled: !!result.felled,
+            list: bestList === "lootable" ? "lootable" : "things"
+        });
+    }
+
     _stackIsSpecial(s) {
         return !!(s && (
             s.customName || s.food || s.ingredients || s.toolClass
@@ -1938,7 +2049,7 @@ class SimWorld {
         return out;
     }
 
-    _pushDrop(wx, wy, drop) {
+    _pushDrop(wx, wy, drop, opts = null) {
         if (!drop?.id) return null;
         let remaining = Math.max(1, Math.floor(Number(drop.quantity) || 1));
         const meta = itemDefs().get(drop.id);
@@ -1946,9 +2057,10 @@ class SimWorld {
         const incomingSpecial = this._stackIsSpecial(drop);
         const maxDist2 = TS * TS;
         let last = null;
+        const noMerge = !!(opts && opts.noMerge);
 
         // Same as client DroppedItem.spawn: fill nearby plain piles first
-        if (!incomingSpecial) {
+        if (!incomingSpecial && !noMerge) {
             const nearby = [];
             for (const c of this._chunksNear(wx, wy, 1)) {
                 if (!Array.isArray(c.drops)) continue;

@@ -368,11 +368,14 @@ class SimCreature {
         if (this._dead || this.isAttacking() || this.isIncapacitated()) return false;
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
-        const attack = BodyCombat.pickAttack(this);
-        if (!attack) return false;
 
         let ang = Number(angle);
         if (!Number.isFinite(ang)) ang = 0;
+        const attack = this.kind === "player"
+            ? (this.ctx.sim?._pickPlayerAttack?.(this, ang) || BodyCombat.pickAttack(this))
+            : BodyCombat.pickAttack(this);
+        if (!attack) return false;
+
         const scale = this.capacities.actionDurationScale();
         const durationMs = MeleeMath.meleeAttackDurationMs(attack.cooldown || 2, scale);
 
@@ -391,6 +394,8 @@ class SimCreature {
         this.attackTimer = durationMs;
         this.attackAngle = ang;
         this.attackHitSet = new Set();
+        this._attackWoreHeld = false;
+        this._attackChoppedTree = false;
         this.facing = this.facingFromAngle(ang);
         this.attackArt = this.getAttackArt();
         return true;
@@ -474,11 +479,16 @@ class SimCreature {
             BodyCombat.applyHit(this, target, attack);
             if (!attack.unarmed && this.kind === "player") {
                 this.ctx.sim?._wearPlayerHeld?.(this.id, 1);
+                this._attackWoreHeld = true;
             }
             // Fatal part destroy is deferred via microtask — flush so SimWorld
             // sees isBodyDead() in the same tick and can spawn the corpse.
             target.anatomy?.flushPendingFatal?.();
             this.ai?.onDealtHit?.(target);
+        }
+
+        if (this.kind === "player") {
+            this.ctx.sim?._tryChopFromMelee?.(this, seg, radius);
         }
     }
 

@@ -27,6 +27,8 @@ npm start
 Console asks for a world (`n` = new, `1`–`9` = existing). Banner prints a LAN join address. Saves go in `saves/<world>/`.
 
 ```bash
+npm start --world world
+npm start --world 1
 node server/index.js --world MyWorld --port 21826
 ```
 

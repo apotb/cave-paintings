@@ -30,6 +30,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._skinChannel = null;
         /** Eating channel (same bar as tend/skin). */
         this._eatChannel = null;
+        this._chopBar = null;
         /** After Space uses food/tool, ignore autofire until Space is released. */
         this._blockSpaceAutofire = false;
         this._lastHotbarSlot = null;
@@ -1031,6 +1032,18 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return "right";
     }
 
+    _pickMeleeAttack(angle) {
+        if (typeof Chop !== "undefined" && typeof BodyCombat !== "undefined") {
+            const held = this.getHeldItem();
+            if (Chop.chopFraction(held) > 0) {
+                const chop = Chop.pickChopFromAttacks(BodyCombat.collectAttacks(this));
+                const c = this.bodyCenter();
+                if (chop && this.scene.aimHitsChoppableTrunk?.(c, angle)) return chop;
+            }
+        }
+        return BodyCombat.pickAttack(this);
+    }
+
     startMeleeAttack(meta = null) {
         if (this.isAttacking() || this._bodyDead) return false;
         if (this.isVomiting()) return false;
@@ -1040,14 +1053,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
-        const attack = BodyCombat.pickAttack(this);
-        if (!attack) return false;
 
         const pointer = this.scene.input.activePointer;
         const world = this.scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
         const c = this.bodyCenter();
         let angle = Math.atan2(world.y - c.y, world.x - c.x);
         if (!Number.isFinite(angle)) angle = 0;
+
+        const attack = this._pickMeleeAttack(angle);
+        if (!attack) return false;
 
         const scale = this.capacities.actionDurationScale();
         const durationMs = meleeAttackDurationMs(attack.cooldown || 2, scale);
@@ -1062,6 +1076,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.attackTimer = this.attackMax;
         this.attackAngle = angle;
         this.attackHitSet = new Set();
+        this._attackWoreHeld = false;
+        this._attackChoppedTree = false;
         this.facing = this.facingFromAngle(angle);
         this.scene.hideWorldTooltip?.();
 
@@ -1373,21 +1389,97 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             }
             radius = 4;
         }
-        if (!seg) return;
+        if (!seg && !(typeof Chop !== "undefined" && Chop.isChopAttack(attack))) return;
 
         const group = this.scene.damageables;
-        if (!group) return;
-        for (const target of group.getChildren()) {
-            if (!target || !target.active || target === this) continue;
-            if (this.attackHitSet.has(target)) continue;
-            if (target.isBodyDead?.()) continue;
+        if (seg && group) {
+            for (const target of group.getChildren()) {
+                if (!target || !target.active || target === this) continue;
+                if (this.attackHitSet.has(target)) continue;
+                if (target.isBodyDead?.()) continue;
 
-            if (!meleeSegmentHitsTarget(seg.a, seg.b, radius, target)) continue;
+                if (!meleeSegmentHitsTarget(seg.a, seg.b, radius, target)) continue;
 
-            this.attackHitSet.add(target);
-            BodyCombat.applyHit(this, target, attack);
-            if (!attack.unarmed) this.wearHeld(1);
+                this.attackHitSet.add(target);
+                BodyCombat.applyHit(this, target, attack);
+                if (!attack.unarmed) {
+                    this.wearHeld(1);
+                    this._attackWoreHeld = true;
+                }
+            }
         }
+
+        this._tryChopHit(seg);
+    }
+
+    _tryChopHit(seg) {
+        if (this._attackChoppedTree) return;
+        if (typeof Chop === "undefined" || !Chop.isChopAttack(this.currentAttack)) return;
+        const frac = Chop.chopFraction(this.getHeldItem());
+        if (!(frac > 0)) return;
+        const trees = this.scene.choppableThingsNear?.(this.x, this.y, Chop.AIM_REACH + 16) || [];
+        const c = this.bodyCenter();
+        const aimSeg = Chop.aimSegment(c.x, c.y, this.attackAngle, Chop.AIM_REACH);
+        let best = null;
+        let bestD = Infinity;
+        for (const t of trees) {
+            if (!t || this.attackHitSet.has(t)) continue;
+            const hs = t.hitboxSize || t.meta?.hitboxSize || 5;
+            const hit = (seg && Chop.trunkHitsSegment(seg, t.x, t.y, hs, Chop.HIT_RADIUS))
+                || Chop.trunkHitsSegment(aimSeg, t.x, t.y, hs, Chop.HIT_RADIUS);
+            if (!hit) continue;
+            const dx = t.x - this.x;
+            const dy = t.y - this.y;
+            const d = dx * dx + dy * dy;
+            if (d < bestD) {
+                best = t;
+                bestD = d;
+            }
+        }
+        if (!best) return;
+        this._attackChoppedTree = true;
+        this.attackHitSet.add(best);
+        this.scene.applyLocalChop?.(best, frac);
+        if (!this.currentAttack.unarmed && !this._attackWoreHeld) {
+            this.wearHeld(1);
+            this._attackWoreHeld = true;
+        }
+    }
+
+    noteChopProgress(thing, frac, felled) {
+        if (felled || !thing?.active) {
+            this._chopBar = null;
+            this.scene.hideTreeChopBar?.();
+            return;
+        }
+        const f = Phaser.Math.Clamp(Number(frac) || 0, 0, 1);
+        this._chopBar = { thing, frac: f };
+        this.scene.showTreeChopBar?.(thing, f);
+    }
+
+    _tickChopBar() {
+        if (!this._chopBar) return;
+        const thing = this._chopBar.thing;
+        if (!thing?.active) {
+            this._chopBar = null;
+            this.scene.hideTreeChopBar?.();
+            return;
+        }
+        const held = this.getHeldItem();
+        if (typeof Chop === "undefined" || !(Chop.chopFraction(held) > 0)) {
+            this._chopBar = null;
+            this.scene.hideTreeChopBar?.();
+            return;
+        }
+        const dx = this.x - thing.x;
+        const dy = this.y - thing.y;
+        const range = Chop.BAR_RANGE || 48;
+        if (dx * dx + dy * dy > range * range) {
+            this._chopBar = null;
+            this.scene.hideTreeChopBar?.();
+            return;
+        }
+        this.scene.showTreeChopBar?.(thing, this._chopBar.frac);
     }
 
     _endAttack() {
@@ -2141,6 +2233,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (this._tendChannel) this._tickTend(dtChat);
             if (this._skinChannel) this._tickSkin(dtChat);
             if (this._eatChannel) this._tickEat(dtChat);
+            this._tickChopBar();
             this._tickVomit(dtChat);
             return;
         }
@@ -2153,6 +2246,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (this._tendChannel) this._tickTend(dtPause);
             if (this._skinChannel) this._tickSkin(dtPause);
             if (this._eatChannel) this._tickEat(dtPause);
+            this._tickChopBar();
             this._tickVomit(dtPause);
             this.setDepth(this.y);
             this.syncFxRoot?.();
@@ -2173,6 +2267,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this._tendChannel) this._tickTend(dt);
         if (this._skinChannel) this._tickSkin(dt);
         if (this._eatChannel) this._tickEat(dt);
+        this._tickChopBar();
         this._tickVomit(dt);
 
         const incapacitated = this.isIncapacitated();

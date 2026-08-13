@@ -563,6 +563,7 @@ class Chunk {
                 thing = new Campfire(this.scene, meta);
             } else {
                 thing = new Thing(this.scene, meta.x, meta.y, meta.id);
+                thing.entry = meta;
                 if (meta.id === "rock") {
                     this.scene.wireRockKnapping?.(thing);
                 } else if (meta.id === "sign") {

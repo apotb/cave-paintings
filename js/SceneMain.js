@@ -1417,6 +1417,9 @@ class SceneMain extends SceneBase {
         if (ev.kind === "lootable") {
             this._netApplyLootableEvent(ev);
         }
+        if (ev.kind === "chop") {
+            this._netApplyChopEvent(ev);
+        }
         if (ev.kind === "corpse") {
             this._netApplyCorpseEvent(ev);
         }
@@ -1723,6 +1726,143 @@ class SceneMain extends SceneBase {
         }
         this.hideTooltip?.();
         this.markLightDirty?.();
+    }
+
+    choppableThingsNear(wx, wy, rangePx) {
+        const r = Number(rangePx);
+        const range = Number.isFinite(r) && r > 0 ? r : 48;
+        const r2 = range * range;
+        const out = [];
+        for (const chunk of Object.values(this.chunks || {})) {
+            const kids = chunk.things?.getChildren?.() || [];
+            for (const t of kids) {
+                if (!t?.active || t.entry?.gone) continue;
+                const def = t.meta || this.getThing(t.entry?.id);
+                if (typeof Chop === "undefined" || !Chop.isChoppable(def)) continue;
+                const dx = t.x - wx;
+                const dy = t.y - wy;
+                if (dx * dx + dy * dy <= r2) out.push(t);
+            }
+        }
+        return out;
+    }
+
+    aimHitsChoppableTrunk(center, angle) {
+        if (typeof Chop === "undefined" || !center) return false;
+        const seg = Chop.aimSegment(center.x, center.y, angle, Chop.AIM_REACH);
+        const trees = this.choppableThingsNear(center.x, center.y, Chop.AIM_REACH + 16);
+        for (const t of trees) {
+            const hs = t.hitboxSize || t.meta?.hitboxSize || 5;
+            if (Chop.trunkHitsSegment(seg, t.x, t.y, hs, Chop.HIT_RADIUS)) return true;
+        }
+        return false;
+    }
+
+    applyLocalChop(thing, frac) {
+        const entry = thing?.entry;
+        if (!entry || typeof Chop === "undefined") return null;
+        const def = this.getThing(entry.id) || thing.meta;
+        if (!Chop.isChoppable(def)) return null;
+        const result = Chop.applyChop(entry, frac);
+        this.player?.noteChopProgress?.(thing, result.progress, false);
+        if (!result.felled) return result;
+        const drops = Chop.rollDrops(def, () => Math.random());
+        const piles = Chop.scatterFellPiles(drops, entry.x, entry.y, () => Math.random());
+        Chop.fellToStump(entry, def);
+        if (typeof thing.morph === "function") thing.morph(entry.id);
+        for (const p of piles) {
+            const meta = this.getItem(p.id);
+            if (meta && p.quantity > 0) {
+                DroppedItem.spawn(this, p.x, p.y, meta, p.quantity, undefined, null, true);
+            }
+        }
+        this.player?.noteChopProgress?.(thing, 1, true);
+        this.hideTooltip?.();
+        this.markLightDirty?.();
+        return result;
+    }
+
+    _chopEventMatch(e, ev) {
+        if (!e) return false;
+        if (ev.uid && e.uid && e.uid === ev.uid) return true;
+        if (ev.uid && e.uid && e.uid !== ev.uid) return false;
+        const x = Number(ev.x);
+        const y = Number(ev.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+        return Math.abs(Number(e.x) - x) < 1.5 && Math.abs(Number(e.y) - y) < 1.5;
+    }
+
+    _netApplyChopEvent(ev) {
+        if (!ev || this.net?.isLocal) return;
+        const x = Number(ev.x);
+        const y = Number(ev.y);
+        const keys = [];
+        if (Number.isInteger(ev.cx) && Number.isInteger(ev.cy)) {
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    keys.push(this.getKey(ev.cx + dx, ev.cy + dy));
+                }
+            }
+        }
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+            keys.push(this.getKey(
+                Math.floor(x / this.chunkPx()),
+                Math.floor((y - 1) / this.chunkPx())
+            ));
+        }
+        const match = (e) => this._chopEventMatch(e, ev);
+        let chunk = null;
+        let entry = null;
+        let listName = ev.list === "lootable" ? "lootableThings" : "things";
+        const lists = listName === "lootableThings"
+            ? ["lootableThings", "things"]
+            : ["things", "lootableThings"];
+        for (const k of keys) {
+            const c = this.chunks[k];
+            if (!c?.meta) continue;
+            for (const name of lists) {
+                const lst = c.meta[name];
+                if (!Array.isArray(lst)) continue;
+                const found = lst.find(match);
+                if (found) {
+                    chunk = c;
+                    entry = found;
+                    listName = name;
+                    break;
+                }
+            }
+            if (entry) break;
+        }
+        if (entry) {
+            if (ev.felled) {
+                if (ev.id) entry.id = ev.id;
+                delete entry.chopProgress;
+                delete entry.regrowAt;
+                delete entry.regrowId;
+                delete entry.gone;
+            } else if (ev.chopProgress != null) {
+                entry.chopProgress = ev.chopProgress;
+            }
+            const live = (chunk.things?.getChildren?.() || []).find(
+                (t) => t?.entry === entry || (t?.entry && match(t.entry))
+            ) || null;
+            if (ev.felled && live && typeof live.morph === "function" && ev.id) {
+                live.morph(ev.id);
+            }
+            const selfId = this._netPlayerId || this.net?.playerId;
+            if (ev.playerId && ev.playerId === selfId) {
+                this.player?.noteChopProgress?.(live, ev.chopProgress, !!ev.felled);
+            }
+        } else {
+            const selfId = this._netPlayerId || this.net?.playerId;
+            if (ev.playerId && ev.playerId === selfId && ev.felled) {
+                this.player?.noteChopProgress?.(null, 1, true);
+            }
+        }
+        if (ev.felled) {
+            this.hideTooltip?.();
+            this.markLightDirty?.();
+        }
     }
 
     _netFindCampfire(src, hint = {}) {
@@ -2193,10 +2333,14 @@ class SceneMain extends SceneBase {
     }
 
     createBars() {
-        // Channel bar is parented to the player's fxRoot (world space) so it
-        // stays locked after the render snap — see showChannelBar.
-        this.channelBar = null;
+        // World action bars sit above the time-of-day veil (depth 51 > lightGfx 50)
+        // so night/dawn wash can't hide them. Position is world space; postupdate
+        // redraws after the player snap so they stay locked to the sprite.
         this._channelBarProgress = null;
+        this._chopBarThing = null;
+        this._chopBarFrac = null;
+        this.channelBar = this._ensureWorldHudBar(this.channelBar);
+        this.treeChopBar = this._ensureWorldHudBar(this.treeChopBar);
 
         this.painBar = this.add.graphics();
         this.uiLayer.add(this.painBar);
@@ -2322,9 +2466,28 @@ class SceneMain extends SceneBase {
     }
 
     /**
-     * Progress 0–1 bar above the player. Drawn in fxRoot local space (scaled
-     * 1/zoom) so it stays locked to the sprite after the render snap — same
-     * approach as chat bubbles. Screen-space projection jittered while walking.
+     * Graphics above the time-of-day veil. Not parented into a Layer — Layers
+     * sit under lightGfx — and ignored by the UI cam so they stay world-locked.
+     */
+    _ensureWorldHudBar(existing) {
+        const depth = 51;
+        if (existing?.active) {
+            if (existing.parentContainer) {
+                existing.parentContainer.remove(existing);
+                this.add.existing(existing);
+            }
+            existing.setDepth(depth);
+            this._uiCam?.ignore(existing);
+            return existing;
+        }
+        const g = this.add.graphics().setDepth(depth).setVisible(false);
+        this._uiCam?.ignore(g);
+        return g;
+    }
+
+    /**
+     * Progress 0–1 bar above the player. World-space, scaled 1/zoom so it stays
+     * a constant screen size. Redrawn after the render snap in postupdate.
      */
     showChannelBar(progress) {
         this._channelBarProgress = Phaser.Math.Clamp(progress, 0, 1);
@@ -2345,15 +2508,7 @@ class SceneMain extends SceneBase {
             return;
         }
 
-        const root = player.ensureFxRoot();
-        player.syncFxRoot();
-
-        if (!this.channelBar?.active) {
-            this.channelBar = this.add.graphics();
-            root.add(this.channelBar);
-        } else if (this.channelBar.parentContainer !== root) {
-            root.add(this.channelBar);
-        }
+        this.channelBar = this._ensureWorldHudBar(this.channelBar);
 
         const zoom = this.worldZoom || this.cameras.main?.zoom || 1;
         const w = 40;
@@ -2375,8 +2530,46 @@ class SceneMain extends SceneBase {
         const g = this.channelBar;
         g.clear().setVisible(true);
         g.setScale(1 / zoom);
-        g.setPosition(lx, ly);
+        g.setPosition(player.x + lx, player.y + ly);
         // Local draw in screen-pixel units; scale makes them world-sized
+        this._drawBar(g, -Math.floor(w / 2), -h, w, h, frac, 0x000000, 0x222222, color, 2);
+    }
+
+    showTreeChopBar(thing, frac) {
+        if (!thing?.active) {
+            this.hideTreeChopBar();
+            return;
+        }
+        this._chopBarThing = thing;
+        this._chopBarFrac = Phaser.Math.Clamp(Number(frac) || 0, 0, 1);
+        this._drawTreeChopBar();
+    }
+
+    hideTreeChopBar() {
+        this._chopBarThing = null;
+        this._chopBarFrac = null;
+        this.treeChopBar?.clear();
+        this.treeChopBar?.setVisible(false);
+    }
+
+    _drawTreeChopBar() {
+        const thing = this._chopBarThing;
+        const frac = this._chopBarFrac;
+        if (frac == null || !thing?.active) {
+            this.hideTreeChopBar();
+            return;
+        }
+
+        this.treeChopBar = this._ensureWorldHudBar(this.treeChopBar);
+
+        const zoom = this.worldZoom || this.cameras.main?.zoom || 1;
+        const w = 40;
+        const h = 5;
+        const color = this._channelBarFillColor(frac);
+        const g = this.treeChopBar;
+        g.clear().setVisible(true);
+        g.setScale(1 / zoom);
+        g.setPosition(thing.x, thing.y - thing.height - 2);
         this._drawBar(g, -Math.floor(w / 2), -h, w, h, frac, 0x000000, 0x222222, color, 2);
     }
 
@@ -2748,6 +2941,8 @@ class SceneMain extends SceneBase {
             this.syncCameraToPlayer();
             this.player?.syncFxRoot?.();
             this.player?._syncChatBubble?.();
+            if (this._channelBarProgress != null) this._drawChannelBar();
+            if (this._chopBarFrac != null) this._drawTreeChopBar();
             this.meleeSlots?.drawDebug?.();
             this.drawChunkDebug();
         });
@@ -4501,15 +4696,19 @@ class SceneMain extends SceneBase {
             if (mins != null) {
                 lines.push(`Spoils in: ${formatHours(Math.floor(mins / 60))}`);
             }
+        }
 
-            if (quantity > 1) {
-                const totWeight = Math.round(weight * quantity * 100) / 100;
-                if (kc > 0) lines.push(`Stack total: ${totWeight} kg, ${kc * quantity} kcal`);
-                else if (weight > 0) lines.push(`Stack total: ${totWeight} kg`);
-            }
-        } else if (quantity > 1 && weight > 0) {
+        const fuelKj = Number(item.fuel?.kj ?? 0);
+        if (fuelKj > 0) lines.push(`Fuel: ${fuelKj} kj`);
+
+        if (quantity > 1) {
             const totWeight = Math.round(weight * quantity * 100) / 100;
-            lines.push(`Stack total: ${totWeight} kg`);
+            const parts = [];
+            if (weight > 0) parts.push(`${totWeight} kg`);
+            const foodKc = food ? Math.round(Number(food.kc ?? 0)) : 0;
+            if (foodKc > 0) parts.push(`${foodKc * quantity} kcal`);
+            if (fuelKj > 0) parts.push(`${Math.round(fuelKj * quantity * 100) / 100} kj`);
+            if (parts.length) lines.push(`Stack total: ${parts.join(", ")}`);
         }
 
         const knapWeapon = (stack?.toolClass && typeof Knapping !== "undefined")
@@ -4544,6 +4743,8 @@ class SceneMain extends SceneBase {
                 }
             }
         }
+        const chopLine = typeof Chop !== "undefined" ? Chop.chopPercentLine(stack) : null;
+        if (chopLine) lines.push(chopLine);
         // Skip legacy knap "Damage:" lines — weapons show DPS from verbs (like spears)
         let knapFlavor = stack?.tooltipExtra;
         if (
@@ -4564,10 +4765,8 @@ class SceneMain extends SceneBase {
         if (stack?.toolClass === "knife") {
             lines.push("Click a corpse to skin it for more resources");
         }
-
-        if (item.fuel) {
-            const kj = Number(item.fuel.kj ?? 0);
-            if (kj > 0) lines.push(`Fuel: ${kj} kj`);
+        if (stack?.toolClass === "chopper" || (typeof Chop !== "undefined" && Chop.chopFraction(stack) > 0)) {
+            lines.push("Attack trees to chop them down");
         }
 
         // Static tooltips only when not a custom-named meal

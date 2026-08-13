@@ -12,6 +12,8 @@ npm start
 Without `--world`, the console asks: `n` = new world, `1`–`9` = existing (max 9).
 
 ```bash
+npm start --world world
+npm start --world 1
 node server/index.js --world MyWorld --port 21826
 ```
 
@@ -21,7 +23,7 @@ Banner prints something like `192.168.x.x:21826` (LAN IPv4) — paste that in Mu
 
 | Flag | Effect |
 | --- | --- |
-| `--world <name>` | Skip world picker |
+| `--world <name or 1–9>` | Skip world picker (name, or the same number as the startup list) |
 | `--port <n>` | Override `server.properties` port |
 | `--serve-client` | Also serve the Phaser UI from this process (dev/LAN) |
 | `--tls-cert <path>` | Enable HTTPS + WSS (with `--tls-key`) |
@@ -54,7 +56,7 @@ Default (no `--serve-client`): `GET /` or `/status` returns JSON (`world`, `prot
 | `password <pw>` | Set/clear join password for this session only (empty clears) |
 | `stop` | Save and exit |
 
-Autosave every N minutes (`autosave-minutes` in `server.properties`).
+Autosave every N minutes (`autosave-minutes` in `server.properties`). The sim pauses (and saves) after 1 game minute with no one online (scaled by tick speed), then resumes when someone joins.
 
 ## Saves
 

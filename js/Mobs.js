@@ -591,7 +591,7 @@ class DroppedItem extends Mob {
     /**
      * @param {Object} [stackExtras]  optional customName/food/ingredients for dynamic meals
      */
-    static spawn(scene, x, y, item, quantity, spoilAt = undefined, stackExtras = null) {
+    static spawn(scene, x, y, item, quantity, spoilAt = undefined, stackExtras = null, noMerge = false) {
         if (!item || quantity <= 0) return null;
 
         const now = scene.worldMinuteIndex?.() ?? null;
@@ -642,7 +642,7 @@ class DroppedItem extends Mob {
             && !stackExtras?.knapQuality
             && stackExtras?.durability == null;
 
-        if (canMerge) {
+        if (canMerge && !noMerge) {
             const nearby = scene.droppedItems.getChildren()
                 .filter(drop => drop.active && drop.item?.id === item.id
                     && !drop.customName && !drop.food && !drop.ingredients

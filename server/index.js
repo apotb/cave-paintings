@@ -1,9 +1,10 @@
 /**
  * Cave Paintings dedicated world server — WebSocket sim (+ optional TLS).
  * Does not host the game UI by default; players open the public client site and join.
- * Usage: node server/index.js [--world name] [--port 21826] [--serve-client]
+ * Usage: node server/index.js [--world name|1-9] [--port 21826] [--serve-client]
  *        [--tls-cert path] [--tls-key path]
  * Without --world, prompts: n = new, 1–9 = existing (max 9 worlds).
+ * `npm start --world world` works (npm puts the name in npm_config_world).
  */
 const http = require("http");
 const https = require("https");
@@ -27,6 +28,7 @@ function parseArgs(argv) {
         tlsCert: null,
         tlsKey: null
     };
+    const positional = [];
     for (let i = 2; i < argv.length; i++) {
         const a = argv[i];
         if (a === "--world" && argv[i + 1]) out.world = argv[++i];
@@ -34,8 +36,33 @@ function parseArgs(argv) {
         else if (a === "--serve-client") out.serveClient = true;
         else if (a === "--tls-cert" && argv[i + 1]) out.tlsCert = argv[++i];
         else if (a === "--tls-key" && argv[i + 1]) out.tlsKey = argv[++i];
+        else if (!a.startsWith("-")) positional.push(a);
     }
+    // `npm start --world NAME` does not put --world on argv; npm sets this env.
+    const npmWorld = process.env.npm_config_world;
+    if (!out.world && npmWorld && npmWorld !== "true") out.world = npmWorld;
+    if (!out.world && positional[0]) out.world = positional[0];
     return out;
+}
+
+/** `--world 1` / picker index → existing save name; otherwise a sanitized folder name. */
+function resolveWorldArg(raw) {
+    const s = String(raw || "").trim();
+    if (/^[1-9]$/.test(s)) {
+        const worlds = SaveIO.listWorlds(ROOT);
+        const w = worlds[Number(s) - 1];
+        if (!w) {
+            console.error(`No world in slot [${s}].`);
+            process.exit(1);
+        }
+        return w.name;
+    }
+    const safe = SaveIO.sanitizeWorldName(s);
+    if (!safe) {
+        console.error(`Invalid --world name "${raw}"`);
+        process.exit(1);
+    }
+    return safe;
 }
 
 /** First non-internal IPv4 (LAN). Falls back to 127.0.0.1. */
@@ -88,6 +115,8 @@ function safeJoin(root, reqPath) {
 }
 
 class GameServer {
+    static IDLE_PAUSE_MS = 60 * 1000;
+
     constructor({ worldName, props }) {
         this.worldName = worldName;
         this.props = props;
@@ -102,6 +131,8 @@ class GameServer {
         this._snapAcc = 0;
         this._autoAcc = 0;
         this._running = true;
+        this._idleEmptyMs = 0;
+        this._idlePaused = false;
     }
 
     send(ws, type, payload) {
@@ -258,6 +289,7 @@ class GameServer {
             playerId
         );
         console.log(`[+] ${pawn.name} (${playerId.slice(0, 8)}…) online (${this.playerSockets.size}/${max})`);
+        this._resumeIdle();
     }
 
     syncChunks(ws, meta, force = false) {
@@ -316,6 +348,23 @@ class GameServer {
 
     tick(dtMs) {
         if (!this._running) return;
+
+        if (this.playerSockets.size === 0) {
+            if (!this._idlePaused) {
+                const speed = Number(this.sim.tickSpeed);
+                const scaled = dtMs * (Number.isFinite(speed) && speed > 0 ? speed : 0);
+                this._idleEmptyMs += scaled;
+                if (this._idleEmptyMs >= GameServer.IDLE_PAUSE_MS) {
+                    this._idlePaused = true;
+                    this.save("idle");
+                    console.log("Server paused due to inactivity for 60 ticks");
+                }
+            }
+            if (this._idlePaused) return;
+        } else if (this._idlePaused || this._idleEmptyMs > 0) {
+            this._resumeIdle();
+        }
+
         this.sim.tick(dtMs);
         this.flushEvents();
 
@@ -343,9 +392,17 @@ class GameServer {
         this.sim.saveAll();
         if (reason === "autosave") {
             console.log(`[autosave] Saved ${this.worldName}`);
+        } else if (reason === "idle") {
+            console.log(`[idle] Saved ${this.worldName}`);
         } else {
             console.log(`[save] Saved ${this.worldName}`);
         }
+    }
+
+    _resumeIdle() {
+        if (this._idlePaused) console.log("[idle] Resumed");
+        this._idlePaused = false;
+        this._idleEmptyMs = 0;
     }
 
     stop() {
@@ -719,12 +776,7 @@ async function startServer() {
     if (!worldName) {
         worldName = await chooseWorld();
     } else {
-        const safe = SaveIO.sanitizeWorldName(worldName);
-        if (!safe) {
-            console.error(`Invalid --world name "${worldName}"`);
-            process.exit(1);
-        }
-        worldName = safe;
+        worldName = resolveWorldArg(worldName);
     }
 
     clearConsole();

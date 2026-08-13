@@ -25,6 +25,7 @@ class SceneMenu extends Phaser.Scene {
         this.cameras.main.setRoundPixels(true);
         this._dom = [];
         this._phase = "root";
+        this._backAction = null;
         this._selectedCharacter = null;
         this._mode = null; // "sp" | "mp"
         this._mpHost = null;
@@ -41,6 +42,8 @@ class SceneMenu extends Phaser.Scene {
         this._ensurePlayerAnims();
         // Don't let the canvas steal tab/focus from HTML fields
         if (this.game?.canvas) this.game.canvas.tabIndex = -1;
+        this._onMenuKeydown = (e) => this._handleMenuEscape(e);
+        document.addEventListener("keydown", this._onMenuKeydown, true);
         this._onResize = () => {
             if (this._resizeTimer) clearTimeout(this._resizeTimer);
             this._resizeTimer = setTimeout(() => this._relayout(), 40);
@@ -163,6 +166,17 @@ class SceneMenu extends Phaser.Scene {
         kb.enabled = !this._anyMenuInputFocused();
     }
 
+    /** Same as the on-screen Back button (capture so focused fields still work). */
+    _handleMenuEscape(e) {
+        if (e.key !== "Escape" && e.code !== "Escape") return;
+        if (e.repeat) return;
+        if (!this.sys?.isActive?.()) return;
+        if (typeof this._backAction !== "function") return;
+        e.preventDefault();
+        e.stopPropagation();
+        this._backAction();
+    }
+
     /** Rebuild the current menu screen after a window resize. */
     _relayout() {
         if (!this.sys || this.sys.isActive === false) return;
@@ -239,6 +253,7 @@ class SceneMenu extends Phaser.Scene {
     _clear() {
         this._unbindCreateHslInput();
         this._cancelMpProbe();
+        this._backAction = null;
         if (this._armedDeleteTimer) {
             clearTimeout(this._armedDeleteTimer);
             this._armedDeleteTimer = null;
@@ -415,6 +430,7 @@ class SceneMenu extends Phaser.Scene {
         });
 
         this._track(root);
+        if (label === "Back") this._backAction = onClick;
         root.btnWidth = bw;
         root.btnHeight = bh;
         root.btnRect = rect;
@@ -1877,6 +1893,10 @@ class SceneMenu extends Phaser.Scene {
             this._onResize = null;
         }
         this._clear();
+        if (this._onMenuKeydown) {
+            document.removeEventListener("keydown", this._onMenuKeydown, true);
+            this._onMenuKeydown = null;
+        }
         if (this.game?.canvas) this.game.canvas.tabIndex = 0;
         if (this.input?.keyboard) this.input.keyboard.enabled = true;
     }

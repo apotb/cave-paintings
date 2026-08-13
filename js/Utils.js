@@ -824,17 +824,21 @@ function drawSlotConditionBar(gfx, slot, frac) {
     if (!(slotW > 0) || !(slotH > 0)) return;
     const src = slot.width || 64;
     const px = slotW / src;
-    const barH = Math.max(1, 4 * px);
-    const inset = 4 * px;
-    const x = slot.x - slotW * (slot.originX ?? 0) + inset;
-    const y = slot.y - slotH * (slot.originY ?? 0) + slotH - barH;
-    const maxW = slotW - inset * 2;
+    const barH = Math.max(1, Math.round(4 * px));
+    const inset = Math.round(4 * px);
+    const left = slot.x - slotW * (slot.originX ?? 0);
+    const top = slot.y - slotH * (slot.originY ?? 0);
+    const x = Math.round(left + inset);
+    const w = Math.round(left + slotW - inset) - x;
+    const y1 = Math.round(top + slotH);
+    const y = y1 - barH - 1;
+    const maxW = Math.max(0, w);
     const color = (typeof Durability !== "undefined" && Durability.rampBarFillColor)
         ? Durability.rampBarFillColor(t)
         : 0x3CB043;
     if (maxW <= 0) return;
     gfx.fillStyle(color, 1);
-    gfx.fillRect(x, y, maxW * t, barH);
+    gfx.fillRect(x, y, maxW * t, barH + 1);
 }
 
 /**

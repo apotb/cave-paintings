@@ -3,7 +3,7 @@
     {
         "id": "stick",
         "name": "Stick",
-        "key": "sticks",
+        "key": "stick",
         "maxStack": 99,
         "weight": 0.2,
         "fuel": {
@@ -638,5 +638,16 @@
         "key": "rot",
         "maxStack": 99,
         "weight": 0.1
+    },
+    {
+        "id": "log",
+        "name": "Log",
+        "key": "log",
+        "maxStack": 99,
+        "weight": 2,
+        "fuel": {
+            "kj": 40,
+            "moisture": 0.22
+        }
     }
 ]
