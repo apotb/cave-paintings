@@ -526,7 +526,7 @@ class SimWorld {
             return;
         }
         const label = mobDefs().get(entry.id)?.name || entry.id;
-        this.announceCmd(`Spawned ${label}.`, { to: p.id });
+        this.announceCmd(`Spawned ${label}`, { to: p.id });
     }
 
     _findSpawnClearing() {
@@ -939,7 +939,7 @@ class SimWorld {
             return;
         }
         if (type === Protocol.Actions.DIE) {
-            this._kill(p, null);
+            this._kill(p, null, action);
             return;
         }
         if (p.dead) {
@@ -1001,8 +1001,7 @@ class SimWorld {
             return;
         }
         if (type === Protocol.Actions.SPAWN_MOB) {
-            console.log(`[cmd] ${p.name}: /spawn ${String(action.kind || action.id || "human").toLowerCase()}`);
-            this._trySpawnMob(p, action);
+            // Debug G-key used to send this. Spawns are /spawn chat only.
             return;
         }
         if (type === Protocol.Actions.DROP) {
@@ -1022,7 +1021,7 @@ class SimWorld {
             return;
         }
         if (type === Protocol.Actions.LIGHT_FIRE) {
-            this._tryLightFire(p);
+            this._tryLightFire(p, action);
             return;
         }
         if (type === Protocol.Actions.CAMPFIRE) {
@@ -1051,7 +1050,6 @@ class SimWorld {
             p.kc = p.stomach;
             this._resetPlayerAnatomy(p);
             this._youDirty.add(p.id);
-            this.announceCmd(`${p.name} healed.`, { except: p.id });
             return;
         }
         if (cmd === "/give") {
@@ -1084,16 +1082,10 @@ class SimWorld {
             if (left > 0) {
                 this._pushDrop(p.x, p.y, { id: meta.id, quantity: left });
             }
-            const got = qty - left;
             const label = meta.name || meta.id;
-            let out;
-            if (got <= 0 && left > 0) {
-                out = `Inventory full — dropped ${left}× ${label}`;
-            } else if (left > 0) {
-                out = `Gave ${got}× ${label} (${left} dropped)`;
-            } else {
-                out = `Gave ${got}× ${label}`;
-            }
+            const out = left > 0
+                ? `Gave ${qty}× ${label} (${left} dropped on ground)`
+                : `Gave ${qty}× ${label}`;
             this.announceCmd(out, { to: p.id });
             return;
         }
@@ -1109,7 +1101,7 @@ class SimWorld {
                 return;
             }
             const label = mobDefs().get(mob.id)?.name || mob.id;
-            this.announceCmd(`Spawned ${label}.`, { to: p.id });
+            this.announceCmd(`Spawned ${label}`, { to: p.id });
             return;
         }
         if (cmd === "/kill") {
@@ -1159,7 +1151,7 @@ class SimWorld {
             this.gameMinutes = Math.floor(h) * 60 + Math.floor(m);
             this._minuteAcc = 0;
             this.announceCmd(
-                `${p.name} set the time to ${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor(m)).padStart(2, "0")}.`
+                `${p.name} set the time to ${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor(m)).padStart(2, "0")}`
             );
             return;
         }
@@ -1181,7 +1173,7 @@ class SimWorld {
             p.poseAuth = true;
             this._interestLoad(p.x, p.y, this.interestRadius(p));
             this._youDirty.add(p.id);
-            this.announceCmd(`Teleported to ${tx}, ${ty}.`, { to: p.id });
+            this.announceCmd(`Teleported to ${tx}, ${ty}`, { to: p.id });
             return;
         }
         this.announceCmd(`Unknown command: ${cmd}`, { to: p.id });
@@ -1241,7 +1233,6 @@ class SimWorld {
         this._syncPlayerCreature(p);
         this._interestLoad(p.x, p.y, this.interestRadius(p));
         this._youDirty.add(p.id);
-        this.pushEvent({ kind: "chat", text: `${p.name} respawned.`, system: true });
     }
 
     /**
@@ -2057,14 +2048,39 @@ class SimWorld {
         this._finishMobDeath(mob, killer);
     }
 
+    _killerLabel(killer) {
+        if (!killer) return null;
+        if (typeof killer === "string") {
+            const s = killer.trim();
+            return s || null;
+        }
+        const name =
+            (typeof killer.displayName === "function" ? killer.displayName() : null) ||
+            killer.name ||
+            killer.def?.name ||
+            null;
+        const s = name != null ? String(name).trim() : "";
+        return s || null;
+    }
+
+    _reapDeadPlayers() {
+        for (const p of this.players.values()) {
+            if (!p.connected || p.dead) continue;
+            const creature = p.creature || this.creatures.get(p.id);
+            if (!creature?.isBodyDead?.()) continue;
+            p.body = creature.anatomy?.toJSON?.() || p.body;
+            this._kill(p, creature._lastHitBy || null);
+        }
+    }
+
     /**
      * Fatal anatomy hits schedule onBodyFatal via queueMicrotask, so `_dead` often
      * flips AFTER the combat loop's death checks. Those mobs were then skipped by
      * liveMobs forever (no corpse). Reap any dead SimCreatures still in the map.
      */
-    _reapDeadMobs(killer = null) {
+    _reapDeadMobs() {
         for (const mob of [...this.mobs.values()]) {
-            if (mob?.isBodyDead?.()) this._finishMobDeath(mob, killer);
+            if (mob?.isBodyDead?.()) this._finishMobDeath(mob, mob._lastHitBy || null);
         }
     }
 
@@ -2124,13 +2140,16 @@ class SimWorld {
                 skinned: !!corpse.skinned
             });
         }
-        if (killer?.name) {
-            const victim = corpse?.name || mob.displayName?.() || "Creature";
-            this.pushEvent({
-                kind: "chat",
-                text: `${victim} was slain by ${killer.name}.`,
-                system: true
-            });
+        if (killer) {
+            const killerName = this._killerLabel(killer);
+            if (killerName) {
+                const victim = corpse?.name || mob.displayName?.() || "Creature";
+                this.pushEvent({
+                    kind: "chat",
+                    text: Protocol.deathMessage(victim, killerName),
+                    system: true
+                });
+            }
         }
     }
 
@@ -2913,7 +2932,31 @@ class SimWorld {
         return null;
     }
 
-    _tryLightFire(p) {
+    /** Match client DroppedItem: origin (0, 1), scale 0.7, 16px frames. */
+    _dropTile(d) {
+        const half = TS * 0.7 * 0.5;
+        return this._tileOf(Number(d.x) + half, Number(d.y) - 1);
+    }
+
+    _pickDropNearAim(piles, aimX, aimY) {
+        if (!piles.length) return null;
+        if (!Number.isFinite(aimX) || !Number.isFinite(aimY)) return piles[0]?.drop;
+        let best = piles[0];
+        let bestD = Infinity;
+        for (const pile of piles) {
+            const d = pile.drop;
+            const dx = Number(d.x) - aimX;
+            const dy = Number(d.y) - aimY;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < bestD) {
+                bestD = d2;
+                best = pile;
+            }
+        }
+        return best?.drop;
+    }
+
+    _tryLightFire(p, action = {}) {
         if (!p || p.dead) return;
         const held = this._held(p);
         const meta = held?.id ? itemDefs().get(held.id) : null;
@@ -2949,9 +2992,12 @@ class SimWorld {
         const leaves = this._nearbyDropPiles(p.x, p.y, "leaf");
         if (this._countDropPiles(sticks) < 15 || this._countDropPiles(leaves) < 10) return;
 
-        const anchor = leaves[0]?.drop || sticks[0]?.drop;
+        const aimX = Number(action?.x);
+        const aimY = Number(action?.y);
+        const anchor = this._pickDropNearAim(leaves, aimX, aimY)
+            || this._pickDropNearAim(sticks, aimX, aimY);
         if (!anchor) return;
-        const { tx, ty } = this._tileOf(anchor.x, anchor.y - 1);
+        const { tx, ty } = this._dropTile(anchor);
         if (this._findCampfireOnTile(tx, ty)) return;
         if (!this._consumeDropPiles(sticks, 15)) return;
         if (!this._consumeDropPiles(leaves, 10)) return;
@@ -3624,7 +3670,7 @@ class SimWorld {
         if (target.hp <= 0) this._kill(target, attacker);
     }
 
-    _kill(p, killer) {
+    _kill(p, killer, action = {}) {
         if (!p) return;
         const alreadyDead = !!p.dead;
         p.dead = true;
@@ -3652,9 +3698,15 @@ class SimWorld {
                 if (s) loot.push(this._cloneStackForWorld(s));
             }
             const c = creature?.bodyCenter?.() || { x: p.x, y: p.y - 8 };
+            const ax = Number(action?.x);
+            const ay = Number(action?.y);
+            const corpseId = typeof action?.corpseId === "string" && action.corpseId
+                ? action.corpseId.slice(0, 48)
+                : undefined;
             this._pushCorpse({
-                x: c.x,
-                y: c.y,
+                id: corpseId,
+                x: Number.isFinite(ax) ? ax : c.x,
+                y: Number.isFinite(ay) ? ay : c.y,
                 key: "player",
                 frame: 7,
                 name: p.name || "Player",
@@ -3675,14 +3727,8 @@ class SimWorld {
         }
         this._youDirty.add(p.id);
         if (alreadyDead) return;
-        const killerName =
-            killer?.name ||
-            killer?.displayName?.() ||
-            killer?.def?.name ||
-            null;
-        const msg = killerName
-            ? `${p.name} was slain by ${killerName}.`
-            : `${p.name} died.`;
+        const killerName = this._killerLabel(killer);
+        const msg = Protocol.deathMessage(p.name, killerName);
         this.pushEvent({ kind: "death", playerId: p.id, text: msg });
         this.pushEvent({ kind: "chat", text: msg, system: true });
     }
@@ -3704,7 +3750,11 @@ class SimWorld {
                 });
                 if (p.eatChannel.remaining <= 0) this._finishEat(p);
             }
-            if (p.dead) continue;
+            if (p.dead) {
+                // Keep chunks around the corpse in interest so the owner still sees it
+                this._interestLoad(p.x, p.y, this.interestRadius(p));
+                continue;
+            }
             // Client-authored pose (SceneMain presence) — don't double-integrate
             if (p.poseAuth) {
                 this._interestLoad(p.x, p.y, this.interestRadius(p));
@@ -3772,16 +3822,12 @@ class SimWorld {
                 p.prone = !p.dead && !!creature._prone;
                 this._youDirty.add(p.id);
             }
-            if (creature.isBodyDead() && !p.dead) {
-                p.body = creature.anatomy?.toJSON?.() || p.body;
-                this._kill(p, null);
-            }
         }
 
         for (const mob of liveMobs) {
             if (mob.isBodyDead()) {
                 // Killed during a player swing earlier this tick
-                this._finishMobDeath(mob, null);
+                this._finishMobDeath(mob, mob._lastHitBy || null);
                 continue;
             }
             const nearest = aiWorld.getNearestPlayer(mob);
@@ -3829,20 +3875,12 @@ class SimWorld {
             }
             mob.tickMelee(dtMs, playerCreatures);
 
-            // Players may have died from mob swings this tick
-            for (const p of this.players.values()) {
-                if (!p.connected || p.dead) continue;
-                const pc = p.creature;
-                if (!pc || !pc.isBodyDead()) continue;
-                p.body = pc.anatomy?.toJSON?.() || p.body;
-                this._kill(p, mob);
-            }
-
             if (mob.isBodyDead()) {
-                this._finishMobDeath(mob, nearest);
+                this._finishMobDeath(mob, mob._lastHitBy || null);
             }
         }
 
+        this._reapDeadPlayers();
         // Sync capacity deaths are handled above; fatal-part microtasks may still
         // be pending until after this call returns — next tick's reap catches them.
         this._reapDeadMobs();

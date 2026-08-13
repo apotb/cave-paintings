@@ -259,6 +259,7 @@ class CombatLog {
                     type: NetProtocol.Actions.CHAT,
                     text: "/regen"
                 });
+                this.push("World regenerated.");
                 return;
             }
             const n = this.scene.regenChunks?.() ?? 0;
@@ -285,10 +286,8 @@ class CombatLog {
             if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
                 this.scene._netSendMove?.(true);
                 this.scene.net.sendAction({
-                    type: NetProtocol.Actions.SPAWN_MOB,
-                    kind: id,
-                    x: player.x,
-                    y: player.y
+                    type: NetProtocol.Actions.CHAT,
+                    text: `/spawn ${id}`
                 });
                 return;
             }
@@ -298,7 +297,7 @@ class CombatLog {
                 this.pushError(`Failed to spawn ${def.name || id} (chunk not ready?).`);
                 return;
             }
-            this.push(`Spawned ${def.name || id}.`);
+            this.push(`Spawned ${def.name || id}`);
             return;
         }
         if (cmd === "/give") {
@@ -342,16 +341,14 @@ class CombatLog {
                 return;
             }
             const remaining = player.gainItem(meta, qty);
-            const got = qty - remaining;
             if (remaining > 0) {
                 DroppedItem.spawn(this.scene, player.x, player.y, meta, remaining);
             }
-            if (got <= 0 && remaining > 0) {
-                this.push(`Inventory full — dropped ${remaining}× ${meta.name || meta.id}`);
-            } else if (remaining > 0) {
-                this.push(`Gave ${got}× ${meta.name || meta.id} (${remaining} dropped)`);
+            const label = meta.name || meta.id;
+            if (remaining > 0) {
+                this.push(`Gave ${qty}× ${label} (${remaining} dropped on ground)`);
             } else {
-                this.push(`Gave ${got}× ${meta.name || meta.id}`);
+                this.push(`Gave ${qty}× ${label}`);
             }
             return;
         }
@@ -522,7 +519,7 @@ class CombatLog {
                 this.scene.updateClockText?.();
                 this.scene.updateTimeTint?.();
                 this.push(
-                    `Set time to ${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor(m)).padStart(2, "0")}.`
+                    `Set time to ${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor(m)).padStart(2, "0")}`
                 );
             }
             return;
@@ -568,7 +565,7 @@ class CombatLog {
                 }
                 this.scene._netSendMove?.(true);
             }
-            this.push(`Teleported to ${tx}, ${ty}.`);
+            this.push(`Teleported to ${tx}, ${ty}`);
             return;
         }
         this.pushError(`Unknown command: ${parts[0]} (try /help)`);

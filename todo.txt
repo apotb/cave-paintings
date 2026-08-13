@@ -41,3 +41,5 @@ When durability is added, also make meals have the same bar that shows what perc
 Recruiting wandering humans to join your faction -- when you have at least 2 people in your faction, you'll be able to see the status of all your characters on the right, your character is special and will always be first and have a little crown icon, the rest will be listed and you can see an overview of them and be able to switch who you're controlling by clicking them. You can also move forward with . and back with , and using ctrl + 1 would pick the 1st guy, ctrl + 2 would pick the 2nd guy, and so on
 
 Sternum and Ribcage status overlay sprites
+
+Server pauses if no one online for 1 minute

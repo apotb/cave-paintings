@@ -484,6 +484,13 @@
                         const bl = this.body.bloodLoss || 0;
                         if (bl > 0) upstream.push(`Blood Loss ${Math.round(bl * 100)}%`);
                     }
+                    {
+                        // consciousness() applies pain once it exceeds 0.1
+                        const pain = this.pain();
+                        if (pain > 0.1) {
+                            upstream.push(`Pain ${Math.round(pain * 100)}%`);
+                        }
+                    }
                     break;
                 case "moving":
                     if (this.isQuadrupedHoofed()) {

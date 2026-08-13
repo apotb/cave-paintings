@@ -292,8 +292,8 @@ class GameServer {
                     const toName = ev.to
                         ? (this.sim.players.get(ev.to)?.name || String(ev.to).slice(0, 8))
                         : null;
-                    if (toName) console.log(`[cmd → ${toName}] ${text}`);
-                    else console.log(`[cmd] ${text}`);
+                    if (toName) console.log(`[sys → ${toName}] ${text}`);
+                    else console.log(`[sys] ${text}`);
                 }
             }
             if (ev.to) {
@@ -426,7 +426,7 @@ class GameServer {
         const label = `${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor(m)).padStart(2, "0")}`;
         this.broadcast(Protocol.Types.EVENT, {
             kind: "chat",
-            text: `Server set the time to ${label}.`,
+            text: `Server set the time to ${label}`,
             system: true
         });
         return this.formatClock();

@@ -155,6 +155,7 @@ class SimCreature {
         this.attackWeapon = null;
         this.attackHitSet = null;
         this.isSprinting = false;
+        this._lastHitBy = null;
 
         this.ai = null;
     }
@@ -301,7 +302,12 @@ class SimCreature {
         this.vy = vy;
     }
 
+    displayName() {
+        return this.name || this.def?.name || "Creature";
+    }
+
     onBodyDamaged(source, _result) {
+        if (source && source !== this) this._lastHitBy = source;
         this.capacities = new Capacities(this.anatomy);
         this._prone = this.isImmobile() || this.isIncapacitated();
         if (this._dead) return;

@@ -18,6 +18,13 @@ class LocalSim {
         this.scene = null;
         this._pawn = null;
         this._knownChunks = new Set();
+        this._inflightChunks = new Set();
+        this._interestBusy = false;
+        this._interestAgain = false;
+        this._interestForce = false;
+        this._interestCx = null;
+        this._interestCy = null;
+        this._interestR = null;
         this._tickTimer = null;
         this._snapAcc = 0;
         this._minuteAcc = 0;
@@ -70,7 +77,7 @@ class LocalSim {
     /** SceneMain calls this after create so we can generate chunks with Chunk APIs. */
     attachScene(scene) {
         this.scene = scene;
-        this._syncInterest(true);
+        this._kickInterest(true);
     }
 
     async connect() {
@@ -208,7 +215,7 @@ class LocalSim {
             p.moveX = 0;
             p.moveY = 0;
         }
-        this._syncInterest(false);
+        this._kickInterest(false);
     }
 
     sendAction(action) {
@@ -217,7 +224,11 @@ class LocalSim {
         const p = this._pawn;
         if (type === NetProtocol.Actions.RESYNC) {
             this._knownChunks.clear();
-            this._syncInterest(true);
+            this._inflightChunks.clear();
+            this._interestCx = null;
+            this._interestCy = null;
+            this._interestR = null;
+            this._kickInterest(true);
             this._dispatch(NetProtocol.Types.YOU, this._youPayload());
             return;
         }
@@ -357,7 +368,7 @@ class LocalSim {
             this._minuteAcc = 0;
             this._sendSnapshot();
             chat(
-                `${p.name} set the time to ${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor(m)).padStart(2, "0")}.`
+                `${p.name} set the time to ${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor(m)).padStart(2, "0")}`
             );
             return;
         }
@@ -380,7 +391,7 @@ class LocalSim {
             p.x = tx * ts - ts / 2;
             p.y = ty * ts;
             this._dispatch(NetProtocol.Types.YOU, this._youPayload());
-            chat(`Teleported to ${tx}, ${ty}.`);
+            chat(`Teleported to ${tx}, ${ty}`);
             return;
         }
 
@@ -528,22 +539,74 @@ class LocalSim {
         return Math.max(floor, Math.min(24, view + 1));
     }
 
+    _kickInterest(force) {
+        if (force) this._interestForce = true;
+        if (this._interestBusy) {
+            this._interestAgain = true;
+            return;
+        }
+        if (!this._pawn) return;
+        const ts = NetProtocol.TILE_SIZE || 16;
+        const cs = NetProtocol.CHUNK_SIZE || 8;
+        const px = cs * ts;
+        const cx = Math.floor(this._pawn.x / px);
+        const cy = Math.floor(this._pawn.y / px);
+        const r = this._interestRadius();
+        if (!this._interestForce
+            && cx === this._interestCx
+            && cy === this._interestCy
+            && r === this._interestR) {
+            return;
+        }
+        this._syncInterest(!!this._interestForce);
+    }
+
+    _yieldFrame() {
+        return new Promise((resolve) => {
+            if (this.scene?.time?.delayedCall) this.scene.time.delayedCall(0, resolve);
+            else setTimeout(resolve, 0);
+        });
+    }
+
     async _syncInterest(force) {
         if (!this._pawn) return;
+        if (this._interestBusy) {
+            this._interestAgain = true;
+            if (force) this._interestForce = true;
+            return;
+        }
+        this._interestBusy = true;
+        this._interestForce = false;
         const ts = NetProtocol.TILE_SIZE || 16;
         const cs = NetProtocol.CHUNK_SIZE || 8;
         const px = cs * ts;
         const cx0 = Math.floor(this._pawn.x / px);
         const cy0 = Math.floor(this._pawn.y / px);
         const r = this._interestRadius();
-        for (let cx = cx0 - r; cx <= cx0 + r; cx++) {
-            for (let cy = cy0 - r; cy <= cy0 + r; cy++) {
-                const key = `${cx},${cy}`;
-                if (!force && this._knownChunks.has(key)) continue;
-                const payload = await this._ensureChunkPayload(cx, cy);
-                if (!payload) continue;
-                this._knownChunks.add(key);
-                this._dispatch(NetProtocol.Types.CHUNK, payload);
+        this._interestCx = cx0;
+        this._interestCy = cy0;
+        this._interestR = r;
+        try {
+            for (let cx = cx0 - r; cx <= cx0 + r; cx++) {
+                for (let cy = cy0 - r; cy <= cy0 + r; cy++) {
+                    const key = `${cx},${cy}`;
+                    if (!force && this._knownChunks.has(key)) continue;
+                    if (this._inflightChunks.has(key)) continue;
+                    this._inflightChunks.add(key);
+                    const existed = !!(this.world.chunks?.[key]?.tiles);
+                    const payload = await this._ensureChunkPayload(cx, cy);
+                    this._inflightChunks.delete(key);
+                    if (!payload) continue;
+                    this._knownChunks.add(key);
+                    this._dispatch(NetProtocol.Types.CHUNK, payload);
+                    if (!existed) await this._yieldFrame();
+                }
+            }
+        } finally {
+            this._interestBusy = false;
+            if (this._interestAgain) {
+                this._interestAgain = false;
+                this._kickInterest(false);
             }
         }
     }

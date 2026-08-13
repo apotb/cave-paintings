@@ -620,7 +620,7 @@ class Chunk {
         // Dedicated MP: corpses from server snapshots (same as drops/mobs).
         if (this.scene.isNet && !this.scene.net?.isLocal) return Promise.resolve();
         if (!this.meta.corpses) this.meta.corpses = [];
-        // Empty corpses stay until the loot UI is closed (CorpsePanel → removeForever)
+        // Empty corpses despawn when the last item is taken (CorpsePanel → removeForever)
         const live = this.corpses?.getChildren() || [];
         for (const entry of this.meta.corpses) {
             if (!entry) continue;

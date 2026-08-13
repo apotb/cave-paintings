@@ -1,7 +1,6 @@
 /**
  * World-anchored corpse loot UI: take-only, 5 cols, rows grow upward.
- * Empty holes stick for the open session; compact on close.
- * Corpse is only removed when the UI closes on an empty inventory.
+ * Empty holes stick while anything remains; taking the last item closes and despawns.
  */
 class CorpsePanel {
     constructor(scene) {
@@ -385,6 +384,17 @@ class CorpsePanel {
             grew = true;
         }
         this._hadLootOnOpen = this._hadLootOnOpen || this.session.some(Boolean);
+        if (!this.session.some(Boolean)) {
+            // Took the last item (or another player did) — despawn immediately.
+            // Never-looted empty corpses stay open for inspect until closed.
+            if (this._hadLootOnOpen) {
+                this.close();
+                return;
+            }
+            if (!this.session.length) this.session = [null];
+            this.refresh();
+            return;
+        }
         if (grew) this._rebuildSlots();
         else this.refresh();
     }
@@ -393,7 +403,10 @@ class CorpsePanel {
         this._syncPersist();
         this.scene.hotbar.dirty = true;
         this.scene.refreshTooltip?.();
-        // Empty holes stick until close — reopen rebuilds from compacted loot.
+        if (!this.session.some(Boolean) && this._hadLootOnOpen) {
+            this.close();
+            return;
+        }
         this.refresh();
     }
 

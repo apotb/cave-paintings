@@ -91,6 +91,14 @@
         return JSON.stringify(msg(type, payload));
     }
 
+    /** Chat/system death line. Overlay uses first-person separately. */
+    function deathMessage(victimName, killerName) {
+        const victim = String(victimName || "Player").trim() || "Player";
+        const killer = killerName != null ? String(killerName).trim() : "";
+        if (killer) return `${victim} was slain by ${killer}`;
+        return `${victim} died`;
+    }
+
     return {
         PROTOCOL_VERSION,
         Types,
@@ -98,6 +106,7 @@
         msg,
         parse,
         encode,
+        deathMessage,
         DEFAULT_PORT: 21826,
         MAX_PLAYERS: 8,
         SNAPSHOT_HZ: 15,

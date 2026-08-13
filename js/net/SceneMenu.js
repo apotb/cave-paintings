@@ -6,6 +6,10 @@ class SceneMenu extends Phaser.Scene {
         super({ key: "SceneMenu" });
     }
 
+    init(data) {
+        this._openDisconnected = !!(data && data.disconnected);
+    }
+
     preload() {
         if (!this.textures.exists("player")) {
             this.load.spritesheet("player", "assets/player/player.png", {
@@ -47,6 +51,7 @@ class SceneMenu extends Phaser.Scene {
             this._resizeTimer = setTimeout(() => this._relayout(), 40);
         };
         this.scale.on("resize", this._onResize);
+        if (this._openDisconnected) this._phase = "disconnected";
         // Wait for yoster — first paint otherwise falls back to Arial
         this._bootRoot();
     }
@@ -67,6 +72,11 @@ class SceneMenu extends Phaser.Scene {
     async _bootRoot() {
         await this._ensurePrimaryFont();
         if (!this.sys?.isActive?.()) return;
+        if (this._openDisconnected || this._phase === "disconnected") {
+            this._openDisconnected = false;
+            this._showDisconnected();
+            return;
+        }
         this._showRoot();
     }
 
@@ -169,6 +179,9 @@ class SceneMenu extends Phaser.Scene {
         switch (phase) {
             case "root":
                 this._showRoot();
+                break;
+            case "disconnected":
+                this._showDisconnected();
                 break;
             case "mpHost":
                 this._showMpHost({ drafts, relayout: true });
@@ -804,6 +817,16 @@ class SceneMenu extends Phaser.Scene {
         this._status();
         this._button(w / 2, h * 0.42, "Singleplayer", () => this._beginSp(), { size: "large" });
         this._button(w / 2, h * 0.42 + 60, "Multiplayer", () => this._beginMp(), { size: "large" });
+    }
+
+    _showDisconnected() {
+        this._clear();
+        this._phase = "disconnected";
+        this._mode = "mp";
+        const w = this.scale.width;
+        const h = this.scale.height;
+        this._title("Disconnected");
+        this._button(w / 2, h * 0.42, "OK", () => this._beginMp(), { size: "large" });
     }
 
     async _beginSp() {

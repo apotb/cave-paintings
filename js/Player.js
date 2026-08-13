@@ -17,6 +17,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.anatomy = new Body(scene, "human", this);
         this.capacities = new Capacities(this.anatomy);
         this._bodyDead = false;
+        this._hitKiller = null;
+        this._hitKillerAt = 0;
         this._downed = false;
         this._tendChannel = null; // { remaining, max, slot }
         /** Knife skinning channel on a corpse (same bar as tend). */
@@ -329,10 +331,20 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this._bodyDead) return;
         this._bodyDead = true;
         this.setVelocity(0, 0);
-        this.scene.onPlayerDied?.();
+        const environmental = _reason === "bloodLoss" || _reason === "starvation";
+        const killer = !environmental && this._hitKiller
+            ? this._hitKiller
+            : null;
+        this._hitKiller = null;
+        this._hitKillerAt = 0;
+        this.scene.onPlayerDied?.(killer);
     }
 
     onBodyDamaged(_attacker, _result) {
+        if (_attacker) {
+            this._hitKiller = _attacker;
+            this._hitKillerAt = this.scene?.time?.now ?? 0;
+        }
         this.capacities = new Capacities(this.anatomy);
         this._refreshDownedState();
         this.scene.healthPanel?.refresh?.();
@@ -353,6 +365,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     respawnFresh(x, y) {
         this._bodyDead = false;
+        this._hitKiller = null;
+        this._hitKillerAt = 0;
         this._downed = false;
         this._tendChannel = null;
         this._skinChannel = null;

@@ -188,7 +188,6 @@ class SceneMain extends SceneBase {
         this.key0 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ZERO);
         this.keyC = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.C);
         this.keyE = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
-        this.keyG = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.G);
         this.keyH = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.H);
         this.keyT = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.T);
         this.keyEsc = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
@@ -336,23 +335,22 @@ class SceneMain extends SceneBase {
     _netOnDisconnect() {
         if (this._netLeaving || this._netDisconnectHandled) return;
         this._netDisconnectHandled = true;
-        const msg = this._netDisconnectReason || "Disconnected from server.";
         this._netDisconnectReason = null;
-        this.combatLog?.push?.(msg, { color: CombatLog.COLOR_ERROR });
-        // Save before title (SESSION_END may already have written; this covers abrupt close)
+        const disconnected = !this._isSingleplayerSession();
+        // Save before menu (SESSION_END may already have written; this covers abrupt close)
         Promise.resolve(this._saveCharacterNow()).finally(() => {
-            this.time?.delayedCall?.(750, () => this._netKickToMenu());
+            this._netKickToMenu(disconnected ? { disconnected: true } : {});
         });
     }
 
-    _netKickToMenu() {
+    _netKickToMenu(data = {}) {
         if (this._netLeaving) return;
         this._netLeaving = true;
         this._teardownCharacterAutosave();
         try {
             this.net?.close();
         } catch (_) {}
-        this.scene.start("SceneMenu");
+        this.scene.start("SceneMenu", data);
     }
 
     _teardownCharacterAutosave() {
@@ -393,7 +391,8 @@ class SceneMain extends SceneBase {
         ) {
             this.player._bodyDead = true;
             this.player.setVelocity(0, 0);
-            this.onPlayerDied();
+            // Server already authored the corpse — don't dump a second empty one.
+            this.onPlayerDied(null, { spawnCorpse: false });
             return;
         }
         if (this._netAwaitPoseFromYou && typeof you.x === "number" && typeof you.y === "number") {
@@ -696,7 +695,7 @@ class SceneMain extends SceneBase {
         }
 
         this.updateClockText();
-        if (this.lightGfx) this.updateTimeTint();
+        if (this.lightGfx && this.worldMinuteIndex() !== prevIdx) this.updateTimeTint();
 
         if (opts.catchUp === false) return;
 
@@ -1276,6 +1275,16 @@ class SceneMain extends SceneBase {
             this.combatLog?.push?.(text, yellow ? { color: CombatLog.COLOR_CHAT } : null);
             if (ev.from && ev.from !== selfId) {
                 this._netShowRemoteBubble(ev.from, text);
+            }
+        }
+        if (ev.kind === "death" && ev.text) {
+            const selfId = this._netPlayerId || this.net?.playerId;
+            const msg = String(ev.text).replace(/\.+$/, "");
+            if (ev.playerId === selfId) {
+                this._pendingDeathText = msg;
+                if (this.player?._bodyDead || this.deathOverlay?.visible) {
+                    this._applyDeathMessage(msg);
+                }
             }
         }
         if (ev.kind === "channel" && ev.channel === "eat") {
@@ -1961,7 +1970,6 @@ class SceneMain extends SceneBase {
         this._spawnSignBusy = false;
         this._netAwaitPoseFromYou = true;
         this.net.sendAction({ type: NetProtocol.Actions.RESYNC });
-            this.combatLog?.push?.("World regenerated.");
     }
 
     _netSendMove(force = false) {
@@ -2317,7 +2325,7 @@ class SceneMain extends SceneBase {
     createTooltip() {
         this._tooltipPadding = 6;
 
-        this.tooltip = this.add.container(0, 0).setDepth(9999).setVisible(false);
+        this.tooltip = this.add.container(0, 0).setDepth(40000).setVisible(false);
         this.tooltipBg = this.add.graphics();
         this.tooltipText = this.add.text(0, 0, "", {
             fontFamily: "PrimaryFont",
@@ -3337,16 +3345,62 @@ class SceneMain extends SceneBase {
         return true;
     }
 
+    /** Pointer world position for firestarter aim, or null. */
+    _firestarterAimWorld() {
+        const pointer = this.input?.activePointer;
+        if (!pointer || !this.cameras?.main) return null;
+        return this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    }
+
+    /**
+     * Tile under a ground drop's sprite. Drops use origin (0, 1), so the stored
+     * x,y is the bottom-left — using that directly often picks the tile to the
+     * left of the visible pile.
+     */
+    _dropVisualTile(drop) {
+        if (!drop) return null;
+        const b = drop.getBounds?.();
+        if (b && Number.isFinite(b.centerX) && Number.isFinite(b.centerY)) {
+            return this.worldToTile(b.centerX, b.centerY);
+        }
+        const w = Number(drop.displayWidth) || this.tileSize * 0.7;
+        return this.worldToTile(Number(drop.x) + w * 0.5, Number(drop.y) - 1);
+    }
+
+    _pickDropNearAim(drops, aim, itemId) {
+        const list = drops.filter(d => d.item?.id === itemId);
+        if (!list.length) return null;
+        if (!aim) return list[0];
+        const aimR2 = (this.tileSize * 1.25) * (this.tileSize * 1.25);
+        let aimed = null;
+        let nearest = list[0];
+        let nearestD = Infinity;
+        for (const d of list) {
+            const dx = d.x - aim.x;
+            const dy = d.y - aim.y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < nearestD) {
+                nearestD = d2;
+                nearest = d;
+            }
+            const b = d.getBounds?.();
+            const underCursor = d2 <= aimR2
+                || !!(b && Phaser.Geom.Rectangle.Contains(b, aim.x, aim.y));
+            if (underCursor && !aimed) aimed = d;
+        }
+        return aimed || nearest;
+    }
+
     /**
      * Tile for a new campfire from ground sticks/leaves.
-     * Prefer nearest leaf pile; fall back to nearest stick pile.
+     * Prefer the leaf pile under the cursor (else nearest leaf to aim);
+     * fall back to sticks only if there are no leaves.
      */
-    campfireTileFromDrops(drops) {
-        const leaf = drops.find(d => d.item?.id === "leaf");
-        const stick = drops.find(d => d.item?.id === "stick");
-        const anchor = leaf || stick;
+    campfireTileFromDrops(drops, aim = null) {
+        const anchor = this._pickDropNearAim(drops, aim, "leaf")
+            || this._pickDropNearAim(drops, aim, "stick");
         if (!anchor) return null;
-        return this.worldToTile(anchor.x, anchor.y - 1);
+        return this._dropVisualTile(anchor);
     }
 
     /**
@@ -3394,7 +3448,7 @@ class SceneMain extends SceneBase {
             }
         }
         if (!aimAtMaterial || sticks < 15 || leaves < 10) return false;
-        const tile = this.campfireTileFromDrops(drops);
+        const tile = this.campfireTileFromDrops(drops, world);
         if (!tile) return false;
         if (this.findCampfireOnTile(tile.tx, tile.ty)) return false;
         return true;
@@ -3403,7 +3457,12 @@ class SceneMain extends SceneBase {
     tryUseFirestarter() {
         if (this.isNet && this.net?.connected && !this.net.isLocal) {
             this._netSendMove?.(true);
-            this.net.sendAction({ type: NetProtocol.Actions.LIGHT_FIRE });
+            const aim = this._firestarterAimWorld();
+            this.net.sendAction({
+                type: NetProtocol.Actions.LIGHT_FIRE,
+                x: aim?.x,
+                y: aim?.y
+            });
             return true;
         }
         const r = this.tileSize * this.player.interactionRange;
@@ -3431,10 +3490,10 @@ class SceneMain extends SceneBase {
             return true;
         }
 
-        // Ground recipe: 15 sticks + 10 leaves — spawn on the materials' tile
-        // (leaves preferred over sticks), not the player's tile.
+        // Ground recipe: 15 sticks + 10 leaves — spawn on the leaves' tile
+        // (the pile under the cursor, else nearest leaf to aim).
         const drops = this.nearbyDrops();
-        const tile = this.campfireTileFromDrops(drops);
+        const tile = this.campfireTileFromDrops(drops, this._firestarterAimWorld());
         if (!tile) return false;
         const { tx, ty } = tile;
         if (this.findCampfireOnTile(tx, ty)) return false;
@@ -4731,7 +4790,8 @@ class SceneMain extends SceneBase {
         this.deathTitle = this.add.text(0, -50, "You died", {
             fontFamily: "monospace",
             fontSize: "36px",
-            color: "#ff6666"
+            color: "#ff6666",
+            align: "center"
         }).setOrigin(0.5);
         this.deathRespawn = this.add.text(0, 20, "[ Respawn ]", {
             fontFamily: "monospace",
@@ -4747,9 +4807,42 @@ class SceneMain extends SceneBase {
         this.deathRespawn.on("pointerdown", () => this.respawnPlayer(false));
         this.deathRespawnHere.on("pointerdown", () => this.respawnPlayer(true));
         this._deathPos = { x: 0, y: 0 };
+        this._pendingDeathText = null;
     }
 
-    onPlayerDied() {
+    _formatPlayerDeathMessage(killer) {
+        const victim = this.playerName || this.player?.displayName?.() || "Player";
+        let killerName = null;
+        if (typeof killer === "string") killerName = killer;
+        else if (killer) {
+            killerName = killer.displayName?.() || killer.def?.name || killer.name || null;
+        }
+        return NetProtocol.deathMessage(victim, killerName);
+    }
+
+    /** Popup only: your name → "You" ("You were slain by …" / "You died"). */
+    _deathOverlayText(chatText) {
+        const victim = this.playerName || this.player?.displayName?.() || "Player";
+        const text = String(chatText || "").replace(/\.+$/, "");
+        if (!text) return "You died";
+        const slain = `${victim} was slain by `;
+        if (victim && text.startsWith(slain)) {
+            return `You were slain by ${text.slice(slain.length)}`;
+        }
+        if (victim && text === `${victim} died`) return "You died";
+        return text
+            .replace(/^.+ was slain by /, "You were slain by ")
+            .replace(/^.+ died$/, "You died");
+    }
+
+    _applyDeathMessage(msg) {
+        const text = String(msg || "").replace(/\.+$/, "") || this._formatPlayerDeathMessage();
+        this._deathMessage = text;
+        if (this.deathTitle) this.deathTitle.setText(this._deathOverlayText(text));
+        this.layoutDeathOverlay();
+    }
+
+    onPlayerDied(killer, opts = {}) {
         this._deathPos = { x: this.player.x, y: this.player.y };
         this.player._tendChannel = null;
         this.player._skinChannel = null;
@@ -4757,8 +4850,19 @@ class SceneMain extends SceneBase {
         this.hideChannelBar?.();
         this.corpsePanel?.close?.(true);
         const dedicated = !!(this.isNet && this.net?.connected && !this.net.isLocal);
-        // Dedicated: server authors the corpse for all clients. LocalSim/SP: spawn here.
-        this.player.createDeathCorpse({ spawn: !dedicated });
+        const spawnCorpse = opts.spawnCorpse !== false;
+        // Dedicated: spawn a pending local corpse with a shared id so you can
+        // see/loot it immediately; server adopts that id on DIE.
+        const deathCorpse = spawnCorpse
+            ? this.player.createDeathCorpse({ spawn: true })
+            : this.player.createDeathCorpse({ spawn: false });
+        if (dedicated && deathCorpse?.entry) {
+            deathCorpse.entry.netSync = true;
+            deathCorpse.entry.pendingServer = true;
+            deathCorpse.entry.pendingAt = performance.now();
+            if (!this.netCorpses) this.netCorpses = new Map();
+            this.netCorpses.set(deathCorpse.entry.id, deathCorpse);
+        }
         this.player.setVisible(false);
         if (this.player.body) this.player.body.enable = false;
         this.player.setVelocity(0, 0);
@@ -4774,11 +4878,21 @@ class SceneMain extends SceneBase {
         if (this.isNet && this.net?.connected) {
             if (this.net.isLocal) {
                 this.net.syncPawnFromClient?.(this._playerCharacterPartial());
-            } else {
-                this.net.sendAction({ type: NetProtocol.Actions.DIE });
+            } else if (spawnCorpse) {
+                this.net.sendAction({
+                    type: NetProtocol.Actions.DIE,
+                    corpseId: deathCorpse?.entry?.id || null,
+                    x: deathCorpse?.x,
+                    y: deathCorpse?.y
+                });
             }
         }
-        this.combatLog?.push("You died.");
+        const msg = (dedicated && this._pendingDeathText)
+            ? this._pendingDeathText
+            : this._formatPlayerDeathMessage(killer);
+        this._pendingDeathText = null;
+        this._applyDeathMessage(msg);
+        if (!dedicated) this.combatLog?.push(msg);
         this.deathOverlay?.setVisible(true);
         this.layoutDeathOverlay();
     }
@@ -4788,6 +4902,8 @@ class SceneMain extends SceneBase {
         const s = this.uiScale || 1;
         this.deathOverlay.setPosition(this.scale.width / 2, this.scale.height / 2);
         this.deathTitle.setFontSize(Math.round(36 * s));
+        this.deathTitle.setWordWrapWidth(Math.round(380 * s));
+        this.deathTitle.setAlign("center");
         this.deathRespawn.setFontSize(Math.round(20 * s));
         this.deathRespawnHere.setFontSize(Math.round(16 * s));
         this.deathBg.setSize(420 * s, 220 * s);
@@ -4845,11 +4961,11 @@ class SceneMain extends SceneBase {
             }
         }
         this.player.respawnFresh(x, y);
+        this._pendingDeathText = null;
         this.deathOverlay?.setVisible(false);
         this.closeOpenMenus();
         this.syncCameraToPlayer();
         this.healthPanel?.refresh?.();
-        this.combatLog?.push(here ? "Respawned here (dev)." : "Respawned.");
         if (this.isNet && this.net?.connected) {
             if (!this.net.isLocal) {
                 this.net.sendAction({ type: NetProtocol.Actions.RESPAWN });
@@ -5600,6 +5716,7 @@ class SceneMain extends SceneBase {
         }
 
         // Load/unload chunks (iterate known chunks so a shrink on resize unloads correctly)
+        let startedLoads = 0;
         for (const chunk of Object.values(this.chunks)) {
             const dist = Phaser.Math.Distance.Between(
                 snappedChunkX,
@@ -5608,6 +5725,10 @@ class SceneMain extends SceneBase {
                 chunk.y
             );
             if (dist <= genR) {
+                if (!chunk.isLoaded) {
+                    if (startedLoads >= 1) continue;
+                    startedLoads++;
+                }
                 chunk.load();
             } else {
                 chunk.unload();
@@ -5635,20 +5756,6 @@ class SceneMain extends SceneBase {
             if (Phaser.Input.Keyboard.JustDown(this.keyH)) this.toggleHealthMenu();
             // Chat open is handled by CombatLog's window keydown listener (avoids
             // JustDown(T) dying after keyboard.enabled toggles miss the T keyup).
-            if (Phaser.Input.Keyboard.JustDown(this.keyG)) {
-                // Debug spawn human — dedicated MP asks the server so remotes see AI.
-                if (this.isNet && this.net?.connected && !this.net.isLocal) {
-                    this._netSendMove?.(true);
-                    this.net.sendAction({
-                        type: NetProtocol.Actions.SPAWN_MOB,
-                        kind: "human",
-                        x: this.player.x,
-                        y: this.player.y
-                    });
-                } else {
-                LivingMob.spawn(this, "human", this.player.x, this.player.y);
-                }
-            }
         }
 
         // Update player

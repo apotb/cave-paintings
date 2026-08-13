@@ -381,12 +381,14 @@ class Hotbar {
         this.setActiveIndex(startIdx, { notifyNet: false });
         this.dirty = true;
 
-        this.scene.input.on('wheel', (_pointer, _over, _deltaX, deltaY) => {
+        this.scene.input.on('wheel', (_pointer, _over, deltaX, deltaY) => {
             const hp = this.scene.healthPanel;
             const p = this.scene.input.activePointer;
             if (hp?.visible && hp._pointerInInjView?.(p.x, p.y)) return;
-            if (deltaY < 0) this.prevSlot();
-            else if (deltaY > 0) this.nextSlot();
+            // Shift+wheel is often reported as deltaX (browser "horizontal scroll")
+            const delta = deltaY || deltaX;
+            if (delta < 0) this.prevSlot();
+            else if (delta > 0) this.nextSlot();
         });
     }
 

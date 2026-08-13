@@ -479,7 +479,6 @@ class SceneNet extends Phaser.Scene {
         if (ev.kind === "damage" && ev.targetId === this.playerId) {
             this._pushLog(`You took ${ev.amount} damage.`);
         }
-        if (ev.kind === "death" && ev.text) this._pushLog(ev.text);
         if (ev.kind === "channel" && ev.playerId === this.playerId) {
             this._channelProg = ev.done ? null : ev.progress;
         }
