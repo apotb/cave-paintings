@@ -3,12 +3,16 @@
     {
         "id": "human",
         "name": "Human",
-        "key": "player",
+        "key": "human",
         "bodyPlan": "human",
         "speed": 3.5,
         "wanderSpeed": 1.2,
         "hitboxSize": 8,
         "ai": "neutralAnimal",
+        "anim": {
+            "frameWidth": 16,
+            "frameHeight": 16
+        },
         "attacks": [],
         "drops": [
             {

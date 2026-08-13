@@ -138,6 +138,9 @@ class LocalSim {
             hp: char.hp ?? 100,
             mhp: char.mhp ?? 100,
             body: char.body ? JSON.parse(JSON.stringify(char.body)) : null,
+            look: typeof Look !== "undefined"
+                ? Look.normalizeLook(char.look)
+                : (char.look || null),
             dead: false,
             viewChunks: 6,
             poseAuth: true
@@ -529,7 +532,8 @@ class LocalSim {
             body: p.body,
             hp: p.hp,
             mhp: p.mhp,
-            dead: p.dead
+            dead: p.dead,
+            look: p.look || null
         };
     }
 
@@ -755,7 +759,8 @@ class LocalSim {
                 prone: !!(p.dead || p.prone),
                 attacking: (p.attackTimer || 0) > 0,
                 attackAngle: p.attackAngle ?? null,
-                attackArt: (p.attackTimer || 0) > 0 ? (p.attackArt || null) : null
+                attackArt: (p.attackTimer || 0) > 0 ? (p.attackArt || null) : null,
+                look: p.look || null
             }],
             drops,
             mobs: [],
@@ -871,6 +876,7 @@ class LocalSim {
         if (typeof partial.hp === "number") p.hp = partial.hp;
         if (typeof partial.mhp === "number") p.mhp = partial.mhp;
         if (partial.body !== undefined) p.body = partial.body;
+        if (partial.look) p.look = partial.look;
         if (typeof partial.x === "number") p.x = partial.x;
         if (typeof partial.y === "number") p.y = partial.y;
         if (typeof partial.facing === "string" && partial.facing) p.facing = partial.facing;

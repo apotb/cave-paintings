@@ -18,7 +18,8 @@ class Corpse extends Phaser.GameObjects.Sprite {
             id: opts.id || `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
             x: opts.x,
             y: opts.y,
-            key: opts.key || "player",
+            key: opts.key || "human",
+            look: opts.look || null,
             frame: opts.frame != null ? opts.frame : 7,
             name: opts.name || "Corpse",
             loot,
@@ -85,7 +86,10 @@ class Corpse extends Phaser.GameObjects.Sprite {
      * @param {Chunk} chunk
      */
     constructor(scene, entry, chunk) {
-        const key = entry.key || "player";
+        const look = entry.look || null;
+        const key = typeof PlayerLook !== "undefined"
+            ? PlayerLook.resolveTexture(scene, entry.key || "human", look)
+            : (entry.key && entry.key !== "player" ? entry.key : "human");
         const frame = entry.frame != null ? entry.frame : 7;
         super(scene, entry.x, entry.y, key, frame);
 

@@ -1,6 +1,11 @@
 class Player extends Phaser.Physics.Arcade.Sprite {
-    constructor(scene, x, y) {
-        super(scene, x, y, "player", 0);
+    constructor(scene, x, y, look = null) {
+        const tex = typeof PlayerLook !== "undefined"
+            ? PlayerLook.ensure(scene, look)
+            : (scene.textures?.exists("human") ? "human" : "player");
+        super(scene, x, y, tex, 1);
+        this.look = typeof Look !== "undefined" ? Look.normalizeLook(look) : look;
+        if (this.frame?.width !== 16) this.setFrame(1);
 
         // Physics — hitbox matches human mob def
         scene.mainLayer.add(this);
@@ -76,7 +81,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         // Animations
         this.createAnimations();
         this.facing = "down";
-        this.play("idle-down");
+        if (typeof PlayerLook !== "undefined") PlayerLook.play(this, this.facing, false);
+        else this.play("idle-down");
 
         // Melee attack
         this.attackTimer = 0;
@@ -322,8 +328,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return false;
     }
 
-    /** Unarmed fist fill — matches arm orange on the player sheet. */
+    /** Unarmed fist fill — matches arm color on the character look. */
     fistColor() {
+        if (typeof PlayerLook !== "undefined") return PlayerLook.fistColor(this.look);
         return 0xff8900;
     }
 
@@ -477,7 +484,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return Corpse.spawn(this.scene, {
             x: c.x,
             y: c.y,
-            key: "player",
+            key: this.texture?.key || "human",
+            look: this.look || null,
             frame: 7,
             name: this.scene.playerName || "Player",
             loot,
@@ -2153,22 +2161,20 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             && !!this.scene._isIceAt?.(this.x, this.y - 1);
 
         if (!prone && !vomiting) {
+            const walk = moving || sliding;
             if (attacking) {
                 this.facing = this.facingFromAngle(this.attackAngle);
-                this.play(moving || sliding ? `walk-${this.facing}` : `idle-${this.facing}`, true);
             } else if (moving) {
                 if (Math.abs(x) > Math.abs(y)) this.facing = x > 0 ? "right" : "left";
                 else this.facing = y > 0 ? "down" : "up";
-                this.play(`walk-${this.facing}`, true);
             } else if (sliding) {
                 const sx = this._iceVx || 0;
                 const sy = this._iceVy || 0;
                 if (Math.abs(sx) > Math.abs(sy)) this.facing = sx > 0 ? "right" : "left";
                 else this.facing = sy > 0 ? "down" : "up";
-                this.play(`walk-${this.facing}`, true);
-            } else {
-                this.play(`idle-${this.facing}`, true);
             }
+            if (typeof PlayerLook !== "undefined") PlayerLook.play(this, this.facing, walk);
+            else this.play(walk ? `walk-${this.facing}` : `idle-${this.facing}`, true);
         }
 
         if (attacking) {
@@ -2300,6 +2306,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     createAnimations() {
+        if (typeof PlayerLook !== "undefined") {
+            PlayerLook.ensureAnims(this.scene, this.texture?.key);
+            return;
+        }
         // Global manager so LivingMobs (and anything else) can reuse these keys
         const anims = this.scene.anims;
         if (!anims.exists("walk-down")) {

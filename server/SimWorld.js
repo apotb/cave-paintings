@@ -5,6 +5,7 @@
 const fs = require("fs");
 const path = require("path");
 const Protocol = require("../shared/protocol");
+const Look = require("../shared/look");
 const { mulberry32, hash2D, uuid } = require("../shared/rng");
 const Spoil = require("../shared/spoil");
 const GameMath = require("../shared/gameMath");
@@ -732,6 +733,10 @@ class SimWorld {
         if (typeof character.hp === "number") p.hp = character.hp;
         if (typeof character.mhp === "number") p.mhp = character.mhp;
         if (character.body !== undefined) p.body = character.body;
+        if (character.look) {
+            p.look = Look.normalizeLook(character.look);
+            if (p.creature) p.creature.look = p.look;
+        }
         if (p.hp <= 0) {
             p.dead = true;
         }
@@ -775,7 +780,8 @@ class SimWorld {
             connected: true,
             viewChunks: INTEREST,
             poseAuth: false,
-            lastInputMs: 0
+            lastInputMs: 0,
+            look: Look.normalizeLook(null)
         };
     }
 
@@ -1966,7 +1972,8 @@ class SimWorld {
             id: opts.id || `c_${uuid()}`,
             x: wx,
             y: wy,
-            key: opts.key || "player",
+            key: opts.key || "human",
+            look: opts.look || null,
             frame: opts.frame != null ? opts.frame : 7,
             name: opts.name || "Corpse",
             loot: (opts.loot || []).filter(Boolean),
@@ -2112,7 +2119,7 @@ class SimWorld {
                 id: `c_${uuid()}`,
                 x: c.x,
                 y: c.y,
-                key: mob.def?.key || "player",
+                key: mob.def?.key || "human",
                 frame: 7,
                 name: mob.def?.name || mob.name || "Corpse",
                 loot: this._lootFromMobDef(mob.def?.id || mob.entry?.id),
@@ -2131,6 +2138,7 @@ class SimWorld {
                 x: corpse.x,
                 y: corpse.y,
                 key: corpse.key,
+                look: corpse.look || null,
                 frame: corpse.frame != null ? corpse.frame : 7,
                 name: corpse.name,
                 loot: corpse.loot || [],
@@ -3707,7 +3715,8 @@ class SimWorld {
                 id: corpseId,
                 x: Number.isFinite(ax) ? ax : c.x,
                 y: Number.isFinite(ay) ? ay : c.y,
-                key: "player",
+                key: "human",
+                look: p.look || null,
                 frame: 7,
                 name: p.name || "Player",
                 loot: loot.filter(Boolean),
@@ -4532,7 +4541,8 @@ class SimWorld {
                 attackProgress: p.attackTimer > 0 && p.attackMax > 0
                     ? 1 - p.attackTimer / p.attackMax
                     : 0,
-                attackArt: p.attackTimer > 0 ? (p.attackArt || null) : null
+                attackArt: p.attackTimer > 0 ? (p.attackArt || null) : null,
+                look: p.look || Look.normalizeLook(null)
             });
         }
         // Non-finite pose would make _chunksNear return [] and clients would
@@ -4555,7 +4565,8 @@ class SimWorld {
                     id: corpse.id,
                     x: corpse.x,
                     y: corpse.y,
-                    key: corpse.key || "player",
+                    key: corpse.key || "human",
+                    look: corpse.look || null,
                     frame: corpse.frame != null ? corpse.frame : 7,
                     name: corpse.name || "Corpse",
                     loot: corpse.loot || [],
@@ -4640,6 +4651,7 @@ class SimWorld {
             mhp: p.mhp,
             dead: p.dead,
             prone: !!(p.dead || p.prone || creature?._prone),
+            look: p.look || Look.normalizeLook(null),
             eatChannel: p.eatChannel
                 ? { progress: 1 - p.eatChannel.remaining / p.eatChannel.max }
                 : null

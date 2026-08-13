@@ -213,7 +213,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
     fistColor() {
         if (Number.isFinite(this.def?.fistColor)) return this.def.fistColor >>> 0;
         const key = this.def?.key || this.texture?.key;
-        if (key === "player" || this.def?.id === "human") return 0xff8900;
+        if (key === "player" || key === "human" || this.def?.id === "human") return 0xff8900;
         return 0x000000;
     }
 
@@ -494,7 +494,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
 
         // bodyCenter() respects standing (origin 0,1) and prone (origin 0.5,0.5)
         const c = this.bodyCenter();
-        const key = this.def?.key || this.texture?.key || "player";
+        const key = this.def?.key || this.texture?.key || "human";
         const dedicated = !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
         const corpseId = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
         const corpseOpts = {

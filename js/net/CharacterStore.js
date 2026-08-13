@@ -35,6 +35,29 @@ const CharacterStore = (() => {
         return Array.from({ length: size }, () => null);
     }
 
+    function defaultLook() {
+        if (typeof Look !== "undefined") return Look.normalizeLook(null);
+        return {
+            head: 0xff00ee,
+            eyes: 0x000000,
+            arms: 0xff8900,
+            shirt: 0x006cff,
+            pants: 0xff0000,
+            shoes: 0x7a6c47
+        };
+    }
+
+    function normalizeLook(raw) {
+        if (typeof Look !== "undefined") return Look.normalizeLook(raw);
+        const base = defaultLook();
+        if (!raw || typeof raw !== "object") return base;
+        const out = { ...base };
+        for (const k of Object.keys(base)) {
+            if (typeof raw[k] === "number") out[k] = raw[k] >>> 0;
+        }
+        return out;
+    }
+
     function defaultCharacter(name = "Player") {
         const now = Date.now();
         return {
@@ -50,7 +73,9 @@ const CharacterStore = (() => {
             hotbarIndex: 0,
             hp: 100,
             mhp: 100,
-            body: null
+            body: null,
+            look: defaultLook(),
+            favorite: false
         };
     }
 
@@ -87,7 +112,12 @@ const CharacterStore = (() => {
             const tx = db.transaction(STORE, "readonly");
             const req = tx.objectStore(STORE).getAll();
             req.onsuccess = () => {
-                const rows = (req.result || []).slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+                const rows = (req.result || []).slice().sort((a, b) => {
+                    const fa = a.favorite ? 1 : 0;
+                    const fb = b.favorite ? 1 : 0;
+                    if (fb !== fa) return fb - fa;
+                    return (b.updatedAt || 0) - (a.updatedAt || 0);
+                });
                 db.close();
                 resolve(rows);
             };
@@ -128,11 +158,14 @@ const CharacterStore = (() => {
         return rows.some((r) => r.id !== exceptId && nameKey(r.name) === key);
     }
 
-    async function put(character) {
+    async function put(character, opts = {}) {
         if (!character?.id) throw new Error("Character needs id");
         const row = clone(character);
-        row.updatedAt = Date.now();
+        if (!opts.preserveUpdatedAt) row.updatedAt = Date.now();
+        else row.updatedAt = Number(character.updatedAt) || Date.now();
         row.name = normalizeName(row.name);
+        row.look = normalizeLook(row.look);
+        row.favorite = !!row.favorite;
         normalizeCharacterSpoil(row);
         if (await nameTaken(row.name, row.id)) {
             throw new Error(`A character named "${row.name}" already exists.`);
@@ -141,8 +174,10 @@ const CharacterStore = (() => {
         return row;
     }
 
-    async function create(name) {
-        return put(defaultCharacter(name));
+    async function create(name, look) {
+        const c = defaultCharacter(name);
+        c.look = normalizeLook(look);
+        return put(c);
     }
 
     async function remove(id) {
@@ -154,6 +189,13 @@ const CharacterStore = (() => {
         if (!c) throw new Error("Character not found");
         c.name = normalizeName(name);
         return put(c);
+    }
+
+    async function setFavorite(id, favorite) {
+        const c = await get(id);
+        if (!c) throw new Error("Character not found");
+        c.favorite = !!favorite;
+        return put(c, { preserveUpdatedAt: true });
     }
 
     function stripWorldSpoil(stack) {
@@ -198,7 +240,8 @@ const CharacterStore = (() => {
             hotbarIndex: character.hotbarIndex || 0,
             hp: character.hp,
             mhp: character.mhp,
-            body: character.body ? clone(character.body) : null
+            body: character.body ? clone(character.body) : null,
+            look: normalizeLook(character.look)
         };
         normalizeCharacterSpoil(snap);
         return snap;
@@ -218,6 +261,8 @@ const CharacterStore = (() => {
         if (typeof you.hp === "number") next.hp = you.hp;
         if (typeof you.mhp === "number") next.mhp = you.mhp;
         if (you.body !== undefined) next.body = you.body ? clone(you.body) : null;
+        if (you.look) next.look = normalizeLook(you.look);
+        else next.look = normalizeLook(next.look);
         next.updatedAt = Date.now();
         normalizeCharacterSpoil(next);
         return next;
@@ -251,7 +296,9 @@ const CharacterStore = (() => {
             hotbarIndex: raw.hotbarIndex || 0,
             hp: raw.hp ?? c.hp,
             mhp: raw.mhp ?? c.mhp,
-            body: raw.body ? clone(raw.body) : null
+            body: raw.body ? clone(raw.body) : null,
+            look: normalizeLook(raw.look),
+            favorite: !!raw.favorite
         });
         // Always new id on import so we don't clobber an existing char
         c.id = uuid();
@@ -299,6 +346,7 @@ const CharacterStore = (() => {
         create,
         remove,
         rename,
+        setFavorite,
         toJoinSnapshot,
         applyYou,
         exportJson,

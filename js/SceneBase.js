@@ -36,11 +36,8 @@ class SceneBase extends Phaser.Scene {
             }
         });
 
-        // Player (before mobs so shared keys like "player" are already queued)
-        this.load.spritesheet("player", "assets/player/player.png", {
-            frameWidth: 16,
-            frameHeight: 16
-        });
+        // Player part sheets (composited at runtime); Human mob uses assets/mobs/human.png
+        if (typeof PlayerLook !== "undefined") PlayerLook.loadParts(this);
 
         this.load.json("mobs", "data/Mobs.json");
         // Queue mob textures (skip keys already queued/loaded, e.g. player)

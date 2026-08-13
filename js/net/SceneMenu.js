@@ -11,12 +11,7 @@ class SceneMenu extends Phaser.Scene {
     }
 
     preload() {
-        if (!this.textures.exists("player")) {
-            this.load.spritesheet("player", "assets/player/player.png", {
-                frameWidth: 16,
-                frameHeight: 16
-            });
-        }
+        if (typeof PlayerLook !== "undefined") PlayerLook.loadParts(this);
         if (!this.textures.exists("menu-palm")) {
             this.load.image("menu-palm", "assets/things/palm_tree.png");
         }
@@ -117,7 +112,9 @@ class SceneMenu extends Phaser.Scene {
             worldName: this.worldNameInput?.value,
             seed: this.seedInput?.value,
             renameName: this.renameInput?.value,
-            faceIdx: this._createFaceIdx
+            faceIdx: this._createFaceIdx,
+            look: this._createLook,
+            lookPart: this._createLookPart
         };
     }
 
@@ -226,69 +223,21 @@ class SceneMenu extends Phaser.Scene {
     }
 
     _ensurePlayerAnims() {
-        if (!this.textures.exists("player")) return;
-        this._pixelFilter("player");
-        if (!this.anims.exists("walk-down")) {
-            this.anims.create({
-                key: "walk-down",
-                frames: this.anims.generateFrameNumbers("player", { start: 0, end: 2 }),
-                frameRate: 5,
-                repeat: -1,
-                yoyo: true
-            });
-            this.anims.create({
-                key: "walk-left",
-                frames: this.anims.generateFrameNumbers("player", { start: 3, end: 5 }),
-                frameRate: 5,
-                repeat: -1,
-                yoyo: true
-            });
-            this.anims.create({
-                key: "walk-right",
-                frames: this.anims.generateFrameNumbers("player", { start: 6, end: 8 }),
-                frameRate: 5,
-                repeat: -1,
-                yoyo: true
-            });
-            this.anims.create({
-                key: "walk-up",
-                frames: this.anims.generateFrameNumbers("player", { start: 9, end: 11 }),
-                frameRate: 5,
-                repeat: -1,
-                yoyo: true
-            });
+        // Walk/idle anims are created per baked look in PlayerLook.ensure
+    }
+
+    _unbindCreateHslInput() {
+        if (this._onHslMove) {
+            this.input?.off?.("pointermove", this._onHslMove);
+            this.input?.off?.("pointerup", this._onHslUp);
+            this.input?.off?.("pointerupoutside", this._onHslUp);
         }
-        if (!this.anims.exists("idle-down")) {
-            this.anims.create({
-                key: "idle-down",
-                frames: [{ key: "player", frame: 1 }],
-                frameRate: 10
-            });
-        }
-        if (!this.anims.exists("idle-left")) {
-            this.anims.create({
-                key: "idle-left",
-                frames: [{ key: "player", frame: 4 }],
-                frameRate: 10
-            });
-        }
-        if (!this.anims.exists("idle-right")) {
-            this.anims.create({
-                key: "idle-right",
-                frames: [{ key: "player", frame: 7 }],
-                frameRate: 10
-            });
-        }
-        if (!this.anims.exists("idle-up")) {
-            this.anims.create({
-                key: "idle-up",
-                frames: [{ key: "player", frame: 10 }],
-                frameRate: 10
-            });
-        }
+        this._onHslMove = this._onHslUp = null;
+        this._hslDrag = null;
     }
 
     _clear() {
+        this._unbindCreateHslInput();
         this._cancelMpProbe();
         if (this._armedDeleteTimer) {
             clearTimeout(this._armedDeleteTimer);
@@ -310,6 +259,8 @@ class SceneMenu extends Phaser.Scene {
         this._previewSprite = null;
         this._previewGfx = null;
         this._previewFrame = null;
+        this._createSwatches = null;
+        this._createHslBars = null;
         this.hostInput = this.passInput = this.nameInput = this.worldNameInput = this.seedInput = this.renameInput = null;
         this._syncKeyboardForDom();
     }
@@ -536,7 +487,7 @@ class SceneMenu extends Phaser.Scene {
     }
 
     /**
-     * Terraria-style select card: icon, title, info, Play/Rename, Export/Delete stack.
+     * Terraria-style select card: icon, title, info, Play/Rename/Favorite, Export/Delete stack.
      * Play = 1 click; double-click empty card area also activates.
      */
     _selectCard(opts) {
@@ -551,6 +502,8 @@ class SceneMenu extends Phaser.Scene {
             lines = [],
             onActivate,
             onRename,
+            onFavorite,
+            favorited = false,
             onExport,
             onDelete,
             onHoverActive
@@ -632,6 +585,12 @@ class SceneMenu extends Phaser.Scene {
             onActive: onHoverActive
         });
         const renameBtn = this._button(0, 0, "Rename", () => onRename?.(), { size: "small" });
+        const favoriteBtn = onFavorite
+            ? this._button(0, 0, "Favorite", () => onFavorite?.(!favorited), {
+                size: "small",
+                armed: !!favorited
+            })
+            : null;
         const exportBtn = this._button(0, 0, "Export", () => onExport?.(), { size: "small" });
         const deleteBtn = this._button(0, 0, "Delete", () => {
             if (this._armedDeleteId === cardId) {
@@ -652,6 +611,10 @@ class SceneMenu extends Phaser.Scene {
         playBtn.y = btnY;
         renameBtn.x = playBtn.x + playBtn.btnWidth / 2 + 8 + renameBtn.btnWidth / 2;
         renameBtn.y = btnY;
+        if (favoriteBtn) {
+            favoriteBtn.x = renameBtn.x + renameBtn.btnWidth / 2 + 8 + favoriteBtn.btnWidth / 2;
+            favoriteBtn.y = btnY;
+        }
 
         // Top-right stack: Export, then Delete
         const sideGap = 6;
@@ -661,7 +624,7 @@ class SceneMenu extends Phaser.Scene {
         deleteBtn.x = sideX;
         deleteBtn.y = exportBtn.y + exportBtn.btnHeight / 2 + sideGap + deleteBtn.btnHeight / 2;
 
-        return { panel, playBtn, renameBtn, exportBtn, deleteBtn, height };
+        return { panel, playBtn, renameBtn, favoriteBtn, exportBtn, deleteBtn, height };
     }
 
     /**
@@ -1102,10 +1065,13 @@ class SceneMenu extends Phaser.Scene {
         let y = Math.round(h * 0.26 + cardH / 2);
 
         for (const c of list.slice(0, 8)) {
-            const spr = this.add.sprite(0, 0, "player", 1);
+            const lookKey = typeof PlayerLook !== "undefined"
+                ? PlayerLook.ensure(this, c.look)
+                : "human";
+            const spr = this.add.sprite(0, 0, lookKey, 1);
             this._placePixelIcon(spr, 0, 0, 3);
             this._track(spr);
-            if (this.anims.exists("idle-down")) spr.play("idle-down", true);
+            if (typeof PlayerLook !== "undefined") PlayerLook.play(spr, "down", false);
 
             const activate = async () => {
                 this._selectedCharacter = c;
@@ -1133,6 +1099,16 @@ class SceneMenu extends Phaser.Scene {
                         maxLen: 24
                     });
                 },
+                favorited: !!c.favorite,
+                onFavorite: async (on) => {
+                    try {
+                        const row = await CharacterStore.setFavorite(c.id, on);
+                        if (this._selectedCharacter?.id === c.id) this._selectedCharacter = row;
+                        await this._showCharacters({ next });
+                    } catch (e) {
+                        this.status?.setText(String(e.message || e));
+                    }
+                },
                 onExport: () => CharacterStore.download(c),
                 onDelete: async () => {
                     await CharacterStore.remove(c.id);
@@ -1141,8 +1117,7 @@ class SceneMenu extends Phaser.Scene {
                 },
                 onHoverActive: (on) => {
                     if (!spr.active) return;
-                    if (on && this.anims.exists("walk-down")) spr.play("walk-down", true);
-                    else if (this.anims.exists("idle-down")) spr.play("idle-down", true);
+                    if (typeof PlayerLook !== "undefined") PlayerLook.play(spr, "down", on);
                     else spr.setFrame(1);
                 }
             });
@@ -1170,67 +1145,323 @@ class SceneMenu extends Phaser.Scene {
         });
     }
 
+    _createLookNormalized() {
+        if (typeof Look !== "undefined") return Look.normalizeLook(this._createLook);
+        return this._createLook || {
+            head: 0xff00ee,
+            eyes: 0x000000,
+            arms: 0xff8900,
+            shirt: 0x006cff,
+            pants: 0xff0000,
+            shoes: 0x7a6c47
+        };
+    }
+
+    _refreshCreatePreview() {
+        const spr = this._previewSprite;
+        if (!spr?.active || typeof PlayerLook === "undefined") return;
+        const look = this._createLookNormalized();
+        this._createLook = look;
+        PlayerLook.ensure(this, look, { key: PlayerLook.PREVIEW_KEY, replace: true });
+        if (spr.texture?.key !== PlayerLook.PREVIEW_KEY) {
+            spr.setTexture(PlayerLook.PREVIEW_KEY, 1);
+        }
+        const facings = ["down", "right", "up", "left"];
+        PlayerLook.play(spr, facings[this._createFaceIdx] || "down", true);
+        this._paintCreateSwatches();
+    }
+
+    _paintCreateSwatches() {
+        const look = this._createLookNormalized();
+        const part = this._createLookPart || "head";
+        for (const row of this._createSwatches || []) {
+            const color = look[row.part] >>> 0;
+            row.rect.setFillStyle(color, 1);
+            row.rect.setStrokeStyle(2, row.part === part ? 0xd4a84b : 0x6a5a4a);
+        }
+    }
+
+    _syncCreateSliders() {
+        this._syncCreateHslFromLook();
+    }
+
+    _syncCreateHslFromLook() {
+        const L = typeof Look !== "undefined" ? Look : null;
+        if (!L) return;
+        const look = this._createLookNormalized();
+        const part = this._createLookPart || "head";
+        const hsl = L.rgbToHsl(look[part]);
+        const prev = this._createHsl || hsl;
+        // Black/white have no hue — keep the last hue so the rainbow handle doesn't jump.
+        this._createHsl = {
+            h: hsl.s < 0.001 || hsl.l < 0.001 || hsl.l > 0.999 ? prev.h : hsl.h,
+            s: hsl.s,
+            l: hsl.l
+        };
+        this._paintCreateHslBars();
+    }
+
+    _copyCreateColor() {
+        const look = this._createLookNormalized();
+        const part = this._createLookPart || "head";
+        const color = look[part] >>> 0;
+        this._copiedColor = color;
+        const hex = typeof Look !== "undefined" ? Look.css(color) : `#${color.toString(16).padStart(6, "0")}`;
+        try {
+            navigator.clipboard?.writeText?.(hex);
+        } catch (_) {}
+    }
+
+    async _pasteCreateColor() {
+        let color = this._copiedColor;
+        try {
+            const text = await navigator.clipboard?.readText?.();
+            if (typeof Look !== "undefined" && text) {
+                const parsed = Look.parseColor(String(text).trim());
+                if (parsed != null) color = parsed;
+            }
+        } catch (_) {}
+        if (color == null) {
+            this.status?.setText("Copy a color first.");
+            return;
+        }
+        const part = this._createLookPart || "head";
+        this._copiedColor = color >>> 0;
+        this._createLook = {
+            ...this._createLookNormalized(),
+            [part]: color >>> 0
+        };
+        this._syncCreateHslFromLook();
+        this._refreshCreatePreview();
+    }
+
+    _applyCreateHsl() {
+        const L = typeof Look !== "undefined" ? Look : null;
+        if (!L || !this._createHsl) return;
+        const part = this._createLookPart || "head";
+        const { h, s, l } = this._createHsl;
+        this._createLook = {
+            ...this._createLookNormalized(),
+            [part]: L.hslToRgb(h, s, l)
+        };
+        this._paintCreateHslBars();
+        this._refreshCreatePreview();
+    }
+
+    _fillHslBar(g, x, y, w, h, colorAt) {
+        g.clear();
+        const width = Math.max(1, Math.round(w));
+        for (let i = 0; i < width; i++) {
+            const t = width <= 1 ? 0 : i / (width - 1);
+            g.fillStyle(colorAt(t), 1);
+            g.fillRect(x + i, y, 1, h);
+        }
+        g.lineStyle(2, 0x000000, 1);
+        g.strokeRect(x - 1, y - 1, width + 2, h + 2);
+    }
+
+    _paintCreateHslBars() {
+        const bars = this._createHslBars;
+        const L = typeof Look !== "undefined" ? Look : null;
+        if (!bars || !L || !this._createHsl) return;
+        const { h, s, l } = this._createHsl;
+        this._fillHslBar(bars.hue.g, bars.x, bars.hue.y, bars.w, bars.bh, (t) => L.hslToRgb(t * 360, 1, 0.5));
+        this._fillHslBar(bars.sat.g, bars.x, bars.sat.y, bars.w, bars.bh, (t) => L.hslToRgb(h, t, l));
+        this._fillHslBar(bars.light.g, bars.x, bars.light.y, bars.w, bars.bh, (t) => L.hslToRgb(h, s, t));
+        const tHue = Phaser.Math.Clamp(h / 360, 0, 1);
+        const tSat = Phaser.Math.Clamp(s, 0, 1);
+        const tLight = Phaser.Math.Clamp(l, 0, 1);
+        bars.hue.handle.setPosition(Math.round(bars.x + tHue * bars.w), bars.hue.y + bars.bh / 2);
+        bars.sat.handle.setPosition(Math.round(bars.x + tSat * bars.w), bars.sat.y + bars.bh / 2);
+        bars.light.handle.setPosition(Math.round(bars.x + tLight * bars.w), bars.light.y + bars.bh / 2);
+    }
+
+    _hslSetFromPointer(kind, pointer) {
+        const bars = this._createHslBars;
+        if (!bars || !this._createHsl) return;
+        const t = Phaser.Math.Clamp((pointer.worldX - bars.x) / bars.w, 0, 1);
+        if (kind === "hue") this._createHsl.h = t * 360;
+        else if (kind === "sat") this._createHsl.s = t;
+        else this._createHsl.l = t;
+        this._applyCreateHsl();
+    }
+
+    _bindCreateHslInput() {
+        this._unbindCreateHslInput();
+        this._onHslMove = (p) => {
+            if (!this._hslDrag || !p.isDown) return;
+            this._hslSetFromPointer(this._hslDrag, p);
+        };
+        this._onHslUp = () => { this._hslDrag = null; };
+        this.input.on("pointermove", this._onHslMove);
+        this.input.on("pointerup", this._onHslUp);
+        this.input.on("pointerupoutside", this._onHslUp);
+    }
+
+    _makeHslBar(kind, x, y, w, bh) {
+        const g = this.add.graphics();
+        const hit = this.add.rectangle(x + w / 2, y + bh / 2, w + 8, bh + 10, 0x000000, 0.001)
+            .setInteractive({ useHandCursor: true });
+        hit.on("pointerdown", (p) => {
+            this._hslDrag = kind;
+            this._hslSetFromPointer(kind, p);
+        });
+        const handle = this.add.rectangle(x, y + bh / 2, 5, bh + 8, 0xffffff)
+            .setStrokeStyle(2, 0x000000)
+            .setDepth(8);
+        this._track(g, hit, handle);
+        return { g, hit, handle, y };
+    }
+
+    _onCreateSliderInput() {
+        this._applyCreateHsl();
+    }
+
     _showCreateCharacter({ next = null, drafts = null, relayout = false } = {}) {
         this._clear();
         this._phase = "createCharacter";
         this._charNext = next;
         const w = this.scale.width;
         const h = this.scale.height;
-        this._title("Create");
-        this._status();
-        this._ensurePlayerAnims();
+        this._title("New Character");
+        this._status(0.94);
+
+        const L = typeof Look !== "undefined" ? Look : null;
+        if (drafts?.look) this._createLook = L ? L.normalizeLook(drafts.look) : drafts.look;
+        else if (!relayout || !this._createLook) {
+            this._createLook = L ? L.normalizeLook(null) : this._createLookNormalized();
+        }
+        this._createLookPart = drafts?.lookPart || this._createLookPart || "head";
 
         const facings = ["down", "right", "up", "left"];
         if (typeof drafts?.faceIdx === "number") this._createFaceIdx = drafts.faceIdx;
         else if (!relayout) this._createFaceIdx = 0;
 
-        const spr = this.add.sprite(0, 0, "player", 1);
-        // Feet on the baseline — bottom-left origin, integer top-left via feet pos
-        const previewScale = 6;
+        const previewScale = h < 640 ? 5 : 6;
         const fw = 16;
+        const previewH = fw * previewScale;
+        const gap = 20;
+        const rotateR = 18;
+        const swatchH = 22;
+        const labelBelow = 16;
+        const barH = 16;
+        const sliderStep = 26;
+        const smallBtnH = this._buttonSizePreset("small").height;
+        const nameH = 36;
+        const arrowYOff = 10 + rotateR;
+        const rowYOff = arrowYOff + rotateR + gap + swatchH / 2;
+        const sliderTopOff = rowYOff + swatchH / 2 + labelBelow + gap;
+        const copyYOff = sliderTopOff + sliderStep * 2 + barH + gap + smallBtnH / 2;
+        const nameYOff = copyYOff + smallBtnH / 2 + gap;
+        const contentH = previewH + nameYOff + nameH;
+
+        const titleBottom = Math.round(h * 0.14 + 24);
+        const btnH = this._buttonSizePreset("medium").height;
+        const btnY = Math.round(h * 0.78);
+        const createTop = btnY - btnH / 2;
+        const availTop = titleBottom + 12;
+        const availBot = createTop - 16;
+        const availH = Math.max(contentH, availBot - availTop);
+        const footY = Math.round(availTop + (availH - contentH) / 2 + previewH);
+
+        const previewKey = typeof PlayerLook !== "undefined"
+            ? PlayerLook.ensure(this, this._createLook, { key: PlayerLook.PREVIEW_KEY, replace: true })
+            : "human";
+        const spr = this.add.sprite(0, 0, previewKey, 1);
         const footX = Math.floor(w / 2 - (fw * previewScale) / 2);
-        const footY = Math.floor(h * 0.38);
         spr.setOrigin(0, 1);
         spr.setScale(previewScale);
         spr.setPosition(footX, footY);
-        this._pixelFilter("player");
+        this._pixelFilter(previewKey);
         this._track(spr);
         this._previewSprite = spr;
 
         const playWalk = () => {
             const facing = facings[this._createFaceIdx];
-            const key = `walk-${facing}`;
-            if (this.anims.exists(key)) spr.play(key, true);
+            if (typeof PlayerLook !== "undefined") PlayerLook.play(spr, facing, true);
         };
         playWalk();
 
-        const arrowY = footY + 28;
-        this._roundArrow(Math.floor(w / 2 - 40), arrowY, "↺", () => {
+        const arrowY = footY + arrowYOff;
+        this._roundArrow(Math.floor(w / 2 - 52), arrowY, "↺", () => {
             this._createFaceIdx = (this._createFaceIdx + 1) % 4;
             playWalk();
         });
-        this._roundArrow(Math.floor(w / 2 + 40), arrowY, "↻", () => {
+        this._roundArrow(Math.floor(w / 2 + 52), arrowY, "↻", () => {
             this._createFaceIdx = (this._createFaceIdx + 3) % 4;
             playWalk();
         });
+        this._diceButton(Math.floor(w / 2), arrowY, () => {
+            this._createLook = L ? L.randomLook() : this._createLook;
+            this._syncCreateHslFromLook();
+            this._refreshCreatePreview();
+        }, 32);
+
+        const parts = L?.PARTS || ["head", "eyes", "arms", "shirt", "pants", "shoes"];
+        const labels = L?.PART_LABELS || {};
+        const swatchW = 36;
+        const swatchGap = 8;
+        const rowW = parts.length * swatchW + (parts.length - 1) * swatchGap;
+        const rowX = Math.floor(w / 2 - rowW / 2);
+        const rowY = footY + rowYOff;
+        this._createSwatches = [];
+        parts.forEach((part, i) => {
+            const cx = rowX + i * (swatchW + swatchGap) + swatchW / 2;
+            const rect = this.add.rectangle(cx, rowY, swatchW, 22, this._createLook[part] >>> 0, 1)
+                .setStrokeStyle(2, 0x6a5a4a)
+                .setInteractive({ useHandCursor: true });
+            const label = this.add.text(cx, rowY + 18, labels[part] || part, {
+                fontFamily: "monospace",
+                fontSize: "10px",
+                color: "#c0b0a0"
+            }).setOrigin(0.5, 0);
+            rect.on("pointerdown", () => {
+                this._createLookPart = part;
+                this._paintCreateSwatches();
+                this._syncCreateHslFromLook();
+            });
+            this._track(rect, label);
+            this._createSwatches.push({ part, rect });
+        });
+        this._paintCreateSwatches();
+
+        const sliderW = 280;
+        const sliderX = Math.floor(w / 2 - sliderW / 2);
+        const sliderTop = footY + sliderTopOff;
+        this._createHslBars = {
+            x: sliderX,
+            w: sliderW,
+            bh: barH,
+            hue: this._makeHslBar("hue", sliderX, sliderTop, sliderW, barH),
+            sat: this._makeHslBar("sat", sliderX, sliderTop + sliderStep, sliderW, barH),
+            light: this._makeHslBar("light", sliderX, sliderTop + sliderStep * 2, sliderW, barH)
+        };
+        this._bindCreateHslInput();
+        this._syncCreateHslFromLook();
+
+        const copyY = footY + copyYOff;
+        const copyGap = 88;
+        this._button(w / 2 - copyGap, copyY, "Copy", () => this._copyCreateColor(), { size: "small" });
+        this._button(w / 2 + copyGap, copyY, "Paste", () => this._pasteCreateColor(), { size: "small" });
 
         const nameVal = drafts?.name != null ? drafts.name : "Player";
-        this.nameInput = this._domInput(w / 2 - 140, h * 0.55, 280, "", nameVal);
+        const nameY = footY + nameYOff;
+        this.nameInput = this._domInput(w / 2 - 140, nameY, 280, "", nameVal);
         this.nameInput.maxLength = 24;
         this._clearStatusOnInput(this.nameInput);
         if (!relayout) this.nameInput.focus();
 
-        this._button(w / 2, h * 0.68, "Create", async () => {
+        this._button(w / 2, btnY, "Create", async () => {
             try {
                 const name = (this.nameInput?.value || "Player").trim() || "Player";
-                const c = await CharacterStore.create(name);
+                const c = await CharacterStore.create(name, this._createLookNormalized());
                 this._selectedCharacter = c;
                 await this._showCharacters({ next: this._charNext });
             } catch (e) {
                 this.status?.setText(String(e.message || e));
             }
         });
-        this._button(w / 2, this._mediumStackY(h * 0.68, 1), "Back", () => this._showCharacters({ next: this._charNext }));
+        this._button(w / 2, this._mediumStackY(btnY, 1), "Back", () => this._showCharacters({ next: this._charNext }));
     }
 
     async _showWorlds() {

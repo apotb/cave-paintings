@@ -108,7 +108,7 @@ class SceneMain extends SceneBase {
         }
 
         // Player
-        this.player = new Player(this, 0, 0);
+        this.player = new Player(this, 0, 0, this.character?.look);
         this.damageables.add(this.player);
         /** One-time spawn setup: sign at (0,0), player in random free tile nearby. */
         this._spawnSignPlaced = false;
@@ -275,6 +275,7 @@ class SceneMain extends SceneBase {
             body: pl.anatomy?.toJSON?.() ?? null,
             hp: pl.hp,
             mhp: pl.mhp,
+            look: pl.look || this.character?.look || null,
             facing: pl.facing,
             x: pl.x,
             y: pl.y
@@ -570,7 +571,10 @@ class SceneMain extends SceneBase {
         root.setDepth(rp.y || 0);
         this.mainLayer.add(root);
 
-        const spr = this.add.sprite(0, 0, "player", 1).setOrigin(0, 1);
+        const lookKey = typeof PlayerLook !== "undefined"
+            ? PlayerLook.ensure(this, rp.look)
+            : "human";
+        const spr = this.add.sprite(0, 0, lookKey, 1).setOrigin(0, 1);
         root.add(spr);
 
         const nameFont = Math.round(10 * s);
@@ -601,9 +605,13 @@ class SceneMain extends SceneBase {
         bubble.setScale(1 / zoom);
         root.add(bubble);
 
-        if (this.anims.exists("idle-down")) spr.play("idle-down", true);
+        if (typeof PlayerLook !== "undefined") PlayerLook.play(spr, rp.facing || "down", false);
+        else if (this.anims.exists("idle-down")) spr.play("idle-down", true);
 
-        const fist = this.add.rectangle(0, 0, 4, 10, 0xff8900, 1)
+        const fistColor = typeof PlayerLook !== "undefined"
+            ? PlayerLook.fistColor(rp.look)
+            : 0xff8900;
+        const fist = this.add.rectangle(0, 0, 4, 10, fistColor, 1)
             .setOrigin(0.5, 1)
             .setVisible(false);
         root.add(fist);
@@ -624,7 +632,9 @@ class SceneMain extends SceneBase {
             attackTimer: 0,
             attackMax: 0,
             attackAngle: 0,
-            prone: !!(rp.prone || rp.dead)
+            prone: !!(rp.prone || rp.dead),
+            look: rp.look || null,
+            tex: spr.texture?.key
         };
     }
 
@@ -646,6 +656,15 @@ class SceneMain extends SceneBase {
             entry.facing = rp.facing || "down";
             entry.displayName = rp.name || entry.displayName || "?";
             entry.name.setText(entry.displayName);
+            if (rp.look && typeof Look !== "undefined" && !Look.looksEqual(entry.look, rp.look)) {
+                if (typeof PlayerLook !== "undefined") {
+                    PlayerLook.apply(entry.spr, rp.look);
+                    entry.tex = entry.spr.texture?.key;
+                    entry.animKey = null;
+                    if (entry.fist) entry.fist.setFillStyle(PlayerLook.fistColor(rp.look), 1);
+                }
+                entry.look = rp.look;
+            }
             entry.spr.setAlpha(1);
             entry.prone = !!(rp.prone || rp.dead);
             // Dead players leave a corpse — no translucent ghost puppet
@@ -879,9 +898,11 @@ class SceneMain extends SceneBase {
         const loot = Array.isArray(c.loot)
             ? c.loot.map((s) => (typeof cloneItemStack === "function" ? cloneItemStack(s) : s)).filter(Boolean)
             : [];
-        let key = c.key || "player";
-        if (!this.textures.exists(key)) {
-            if (this.textures.exists("player")) key = "player";
+        let key = c.key || "human";
+        if (typeof PlayerLook !== "undefined") {
+            key = PlayerLook.resolveTexture(this, key, c.look);
+        } else if (!this.textures.exists(key) || key === "player") {
+            if (this.textures.exists("human")) key = "human";
             else if (this.textures.exists("deer")) key = "deer";
         }
         const frame = c.frame != null ? c.frame : 7;
@@ -894,6 +915,7 @@ class SceneMain extends SceneBase {
                 x: c.x,
                 y: c.y,
                 key,
+                look: c.look || null,
                 frame,
                 name: c.name || "Corpse",
                 loot,
@@ -2029,8 +2051,12 @@ class SceneMain extends SceneBase {
             }
             if (!prone) {
                 const facing = entry.facing || "down";
-                const key = moving ? `walk-${facing}` : `idle-${facing}`;
-                if (this.anims.exists(key)) entry.spr.play(key, true);
+                if (typeof PlayerLook !== "undefined") {
+                    PlayerLook.play(entry.spr, facing, moving);
+                } else {
+                    const key = moving ? `walk-${facing}` : `idle-${facing}`;
+                    if (this.anims.exists(key)) entry.spr.play(key, true);
+                }
             }
 
             if (attacking) {

@@ -16,6 +16,7 @@ class SceneNet extends Phaser.Scene {
         this.load.json("items", "data/Items.json");
         this.load.json("things", "data/Things.json");
         this.load.json("mobs", "data/Mobs.json");
+        if (typeof PlayerLook !== "undefined") PlayerLook.loadParts(this);
 
         this.load.once("filecomplete-json-things", (_key, _type, data) => {
             for (const t of data) {
@@ -30,11 +31,6 @@ class SceneNet extends Phaser.Scene {
                     this.load.image(t.key, path);
                 }
             }
-        });
-
-        this.load.spritesheet("player", "assets/player/player.png", {
-            frameWidth: 16,
-            frameHeight: 16
         });
 
         this.load.once("filecomplete-json-mobs", (_key, _type, data) => {
@@ -111,12 +107,16 @@ class SceneNet extends Phaser.Scene {
             mhp: you.mhp ?? 100,
             dead: !!you.dead,
             name: you.name || this.displayName,
-            eating: !!you.eatChannel
+            eating: !!you.eatChannel,
+            look: you.look || null
         };
         this._serverX = this.pawn.x;
         this._serverY = this.pawn.y;
 
-        this.playerSprite = this.add.sprite(this.pawn.x, this.pawn.y, "player", 0);
+        const lookKey = typeof PlayerLook !== "undefined"
+            ? PlayerLook.ensure(this, this.pawn.look)
+            : "human";
+        this.playerSprite = this.add.sprite(this.pawn.x, this.pawn.y, lookKey, 0);
         this.playerSprite.setOrigin(0, 1);
         this.mainLayer.add(this.playerSprite);
         this.cameras.main.startFollow(this.playerSprite, true, 0.2, 0.2);
@@ -161,39 +161,8 @@ class SceneNet extends Phaser.Scene {
     }
 
     _ensureAnims() {
-        if (!this.anims.exists("walk-down")) {
-            this.anims.create({
-                key: "walk-down",
-                frames: this.anims.generateFrameNumbers("player", { start: 0, end: 2 }),
-                frameRate: 5,
-                repeat: -1,
-                yoyo: true
-            });
-            this.anims.create({
-                key: "walk-left",
-                frames: this.anims.generateFrameNumbers("player", { start: 3, end: 5 }),
-                frameRate: 5,
-                repeat: -1,
-                yoyo: true
-            });
-            this.anims.create({
-                key: "walk-right",
-                frames: this.anims.generateFrameNumbers("player", { start: 6, end: 8 }),
-                frameRate: 5,
-                repeat: -1,
-                yoyo: true
-            });
-            this.anims.create({
-                key: "walk-up",
-                frames: this.anims.generateFrameNumbers("player", { start: 9, end: 11 }),
-                frameRate: 5,
-                repeat: -1,
-                yoyo: true
-            });
-            this.anims.create({ key: "idle-down", frames: [{ key: "player", frame: 1 }], frameRate: 10 });
-            this.anims.create({ key: "idle-left", frames: [{ key: "player", frame: 4 }], frameRate: 10 });
-            this.anims.create({ key: "idle-right", frames: [{ key: "player", frame: 7 }], frameRate: 10 });
-            this.anims.create({ key: "idle-up", frames: [{ key: "player", frame: 10 }], frameRate: 10 });
+        if (typeof PlayerLook !== "undefined") {
+            PlayerLook.ensure(this, this.pawn?.look);
         }
         if (this.textures.exists("deer") && !this.anims.exists("deer-walk-down")) {
             const ranges = { down: [0, 2], left: [3, 5], right: [6, 8], up: [9, 11] };
@@ -396,7 +365,10 @@ class SceneNet extends Phaser.Scene {
             }
             let entry = this.remotePlayers.get(rp.id);
             if (!entry) {
-                const spr = this.add.sprite(rp.x, rp.y, "player", 0).setOrigin(0, 1);
+                const lookKey = typeof PlayerLook !== "undefined"
+                    ? PlayerLook.ensure(this, rp.look)
+                    : "human";
+                const spr = this.add.sprite(rp.x, rp.y, lookKey, 0).setOrigin(0, 1);
                 spr.setTint(0xa0c0ff);
                 this.mainLayer.add(spr);
                 const label = this.add.text(rp.x, rp.y - 18, rp.name || "?", {
@@ -525,7 +497,8 @@ class SceneNet extends Phaser.Scene {
             entry.label.setPosition(entry.x + 8, entry.y - 18);
             const moving = Math.hypot(entry.tx - entry.x, entry.ty - entry.y) > 0.4;
             const facing = entry.facing || "down";
-            entry.spr.play(moving ? `walk-${facing}` : `idle-${facing}`, true);
+            if (typeof PlayerLook !== "undefined") PlayerLook.play(entry.spr, facing, moving);
+            else entry.spr.play(moving ? `walk-${facing}` : `idle-${facing}`, true);
         }
         for (const entry of this.mobSprites.values()) {
             const mdx = entry.tx - entry.x;
@@ -591,8 +564,9 @@ class SceneNet extends Phaser.Scene {
         if (!this._isBlockedLocal(nx, this.pawn.y)) this.pawn.x = nx;
         if (!this._isBlockedLocal(this.pawn.x, ny)) this.pawn.y = ny;
         this.playerSprite.setPosition(this.pawn.x, this.pawn.y);
-        if (x !== 0 || y !== 0) this.playerSprite.play(`walk-${facing}`, true);
-        else this.playerSprite.play(`idle-${facing}`, true);
+        if (typeof PlayerLook !== "undefined") {
+            PlayerLook.play(this.playerSprite, facing, x !== 0 || y !== 0);
+        }
 
         if (Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) {
             const pointer = this.input.activePointer;

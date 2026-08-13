@@ -551,7 +551,8 @@ class SimCreature {
             id: `c_${Date.now().toString(36)}_${GameMath.between(1000, 9999)}`,
             x: c.x,
             y: c.y,
-            key: this.def?.key || (this.kind === "player" ? "player" : "player"),
+            key: this.def?.key || (this.kind === "player" ? "human" : "human"),
+            look: this.look || null,
             frame: 7,
             name: this.def?.name || this.name || "Corpse",
             loot,
@@ -590,6 +591,7 @@ function createPlayerCreature(p, dataStore, extras = {}) {
         dataStore: data,
         ctx: extras
     });
+    creature.look = p.look || null;
     return creature;
 }
 
