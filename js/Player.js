@@ -1593,7 +1593,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const special = typeof isSpecialStack === "function"
             ? isSpecialStack(stack)
             : !!(stack.customName || stack.food || stack.ingredients || stack.toolClass);
-        const weight = Number(item.weight) || 0;
+        const weight = typeof Carry !== "undefined"
+            ? Carry.unitWeight(stack, item)
+            : (Number(item.weight) || 0);
         const weightLeft = Math.max(0, this.strength * 2 - this.getInventoryWeight());
         const allowedByWeight = weight > 0
             ? Math.floor((weightLeft + Math.pow(10, -8)) / weight)
@@ -1616,8 +1618,27 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     gainItem(item, amount = 1, spoilLeft = undefined) {
         let remaining = amount;
-        const weightLeft = Math.max(0, this.strength * 2 - this.getInventoryWeight());
-        let allowedByWeight = Math.floor((weightLeft + Math.pow(10, -8)) / item.weight);
+        const unitW = typeof Carry !== "undefined"
+            ? Carry.unitWeight({ id: item.id }, item)
+            : (Number(item.weight) || 0);
+        const cap = typeof Carry !== "undefined"
+            ? Carry.carryCap(this.strength)
+            : this.strength * 2;
+        const fitNow = () => {
+            if (typeof Carry !== "undefined") {
+                return Carry.countFit(
+                    remaining,
+                    unitW,
+                    this.getInventoryWeight(),
+                    cap
+                );
+            }
+            const weightLeft = Math.max(0, cap - this.getInventoryWeight());
+            const allowed = unitW > 0
+                ? Math.floor((weightLeft + Math.pow(10, -8)) / unitW)
+                : remaining;
+            return Math.min(remaining, allowed);
+        };
         const incomingSpoil = spoilLeft !== undefined
             ? spoilLeft
             : defaultSpoilLeft(item);
@@ -1627,7 +1648,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (!slot || slot.id !== item.id || slot.quantity >= item.maxStack) continue;
             if (slot.customName || slot.food || slot.ingredients || slot.toolClass) continue;
             const space = item.maxStack - slot.quantity;
-            const toAdd = Math.min(space, remaining, allowedByWeight);
+            const toAdd = Math.min(space, remaining, fitNow());
+            if (!(toAdd > 0)) break;
             slot.spoilLeft = mergeSpoilLeft(
                 slot.quantity, slot.spoilLeft,
                 toAdd, incomingSpoil
@@ -1635,28 +1657,26 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             delete slot.spoilAt;
             slot.quantity += toAdd;
             remaining -= toAdd;
-            allowedByWeight -= toAdd;
-            if (remaining === 0 || allowedByWeight === 0) {
+            if (remaining === 0) {
                 this.scene.hotbar.dirty = true;
                 return remaining;
             }
         }
 
         // Create new stacks as needed
-        while (remaining > 0 && allowedByWeight > 0) {
-            const toAdd = Math.min(item.maxStack, remaining, allowedByWeight);
+        while (remaining > 0) {
+            const toAdd = Math.min(item.maxStack, remaining, fitNow());
+            if (!(toAdd > 0)) break;
             const stack = makeItemStack(item, toAdd, incomingSpoil);
             const nullIndex = this.inventory.findIndex(s => !s);
             if (nullIndex !== -1) {
                 this.inventory[nullIndex] = stack;
                 remaining -= toAdd;
-                allowedByWeight -= toAdd;
                 continue;
             }
             if (this.inventory.length >= this.inventorySize) break;
             this.inventory.push(stack);
             remaining -= toAdd;
-            allowedByWeight -= toAdd;
         }
         if (remaining !== amount) this.scene.hotbar.dirty = true;
         return remaining;
@@ -1761,6 +1781,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         // Firestarter weapons: Space near piles/unlit fire lights; otherwise attack
         if (meta?.use === "light_fire" && this.scene.canUseFirestarter?.()) {
             this.scene.tryUseFirestarter();
+            this._blockSpaceAutofire = true;
+            return;
+        }
+        if (typeof Place !== "undefined" && Place.placeThingId(meta)) {
+            this.scene.tryPlaceHeld?.();
             this._blockSpaceAutofire = true;
             return;
         }
@@ -2160,6 +2185,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this.beginTend();
             return "use";
         }
+        if (typeof Place !== "undefined" && Place.placeThingId(meta)) {
+            this.scene.tryPlaceHeld?.();
+            return "use";
+        }
         // Melee + firestarter (sharp stick): light when aiming at piles / unlit fire
         if (meta?.use === "light_fire" && this.scene.canUseFirestarter?.()) {
             this.scene.tryUseFirestarter();
@@ -2181,6 +2210,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     getInventoryWeight() {
+        if (typeof Carry !== "undefined") {
+            return Carry.gearMass(
+                this.inventory,
+                this.equipment,
+                (id) => this.scene.getItem(id)
+            );
+        }
         let total = 0;
         for (const stack of this.inventory) {
             if (!stack) continue;
@@ -2189,7 +2225,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             const w = knap
                 ? (meta?.weight ?? 0)
                 : (stack.weight != null ? stack.weight : meta.weight);
-            total += w * stack.quantity;
+            total += (Number(w) || 0) * stack.quantity;
         }
         const worn = [
             this.equipment.head,
@@ -2205,7 +2241,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             const w = knap
                 ? (meta?.weight ?? 0)
                 : (stack.weight != null ? stack.weight : meta.weight);
-            total += w * stack.quantity;
+            total += (Number(w) || 0) * stack.quantity;
         }
         return Math.round(total * 100) / 100;
     }
@@ -2436,6 +2472,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     tryPickupNearby() {
         // Dedicated MP: server resolves pickup. LocalSim SP picks up from chunk.meta locally.
         if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            const now = performance.now();
+            if (now - (this._netPickupAt || 0) < 150) return;
+            this._netPickupAt = now;
             const group = this.scene.droppedItems;
             if (!group) {
                 this.scene.net.sendAction({ type: NetProtocol.Actions.PICKUP });

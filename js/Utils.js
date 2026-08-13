@@ -274,6 +274,10 @@ function quickMoveAmount(quantity, pointer = null, scene = null) {
  * @param {Object[]} items
  */
 function resolveCraftedWeights(items) {
+    if (typeof Carry !== "undefined" && Carry.resolveCraftedWeights) {
+        Carry.resolveCraftedWeights(items);
+        return;
+    }
     if (!Array.isArray(items)) return;
     const byId = new Map();
     for (const item of items) {
@@ -333,6 +337,10 @@ function resolveCraftedWeights(items) {
  * @param {Object[]} items
  */
 function resolveCraftedFuel(items) {
+    if (typeof Carry !== "undefined" && Carry.resolveCraftedFuel) {
+        Carry.resolveCraftedFuel(items);
+        return;
+    }
     if (!Array.isArray(items)) return;
     const byId = new Map();
     for (const item of items) {
@@ -720,7 +728,7 @@ function mealStackExtras(stack) {
         stack.customName
         || stack.food
         || stack.ingredients?.length
-        || (stack.weight != null && !knap)
+        || (Number(stack.weight) > 0 && !knap)
         || stack.kind
         || stack.fillTint != null
         || stack.durability != null
@@ -732,7 +740,8 @@ function mealStackExtras(stack) {
         food: stack.food ? { ...stack.food } : undefined,
         ingredients: stack.ingredients ? stack.ingredients.slice() : undefined,
         // Knapped tools use stone_tool/flint_tool weight — don't carry stale overrides
-        weight: knap ? undefined : stack.weight,
+        // Skip 0 / Phaser Arcade body weight so logs don't become weightless
+        weight: knap ? undefined : (Number(stack.weight) > 0 ? stack.weight : undefined),
         kind: stack.kind,
         fillTint: stack.fillTint,
         durability: stack.durability,
@@ -813,6 +822,8 @@ function isSpecialStack(stack) {
 /**
  * Bottom-of-slot remaining bar (durability or meal leftover). Hidden at 100%.
  * Uses the slot's own origin so hotbar (0,1), campfire (0.5,0.5), and corpse (0,0) all work.
+ * Sizes are in source pixels of the slot art (4px strip, 4px inset) so world-scaled
+ * panels (campfire / storage / corpse) match the hotbar instead of rounding to world pixels.
  */
 function drawSlotConditionBar(gfx, slot, frac) {
     if (!gfx) return;
@@ -824,21 +835,20 @@ function drawSlotConditionBar(gfx, slot, frac) {
     if (!(slotW > 0) || !(slotH > 0)) return;
     const src = slot.width || 64;
     const px = slotW / src;
-    const barH = Math.max(1, Math.round(4 * px));
-    const inset = Math.round(4 * px);
+    const barH = 4 * px;
+    const inset = 4 * px;
     const left = slot.x - slotW * (slot.originX ?? 0);
     const top = slot.y - slotH * (slot.originY ?? 0);
-    const x = Math.round(left + inset);
-    const w = Math.round(left + slotW - inset) - x;
-    const y1 = Math.round(top + slotH);
-    const y = y1 - barH - 1;
-    const maxW = Math.max(0, w);
+    const x = left + inset;
+    const maxW = Math.max(0, slotW - inset * 2);
+    const y = top + slotH - barH - (gfx.parentContainer ? 0 : 1);
+    const h = gfx.parentContainer ? barH : barH + 1;
     const color = (typeof Durability !== "undefined" && Durability.rampBarFillColor)
         ? Durability.rampBarFillColor(t)
         : 0x3CB043;
     if (maxW <= 0) return;
     gfx.fillStyle(color, 1);
-    gfx.fillRect(x, y, maxW * t, barH + 1);
+    gfx.fillRect(x, y, maxW * t, h);
 }
 
 /**

@@ -267,6 +267,10 @@ class LocalSim {
             // Client handles local pickup for SP drops.
             return;
         }
+        if (type === NetProtocol.Actions.PLACE || type === NetProtocol.Actions.STORAGE) {
+            // SP buildings are client-authored into chunk.meta; ignore.
+            return;
+        }
         if (type === NetProtocol.Actions.ATTACK) {
             p.attackTimer = 833;
             p.attackAngle = Number(action.angle) || 0;

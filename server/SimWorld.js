@@ -10,6 +10,8 @@ const { mulberry32, hash2D, uuid } = require("../shared/rng");
 const Spoil = require("../shared/spoil");
 const Durability = require("../shared/durability");
 const Chop = require("../shared/chop");
+const Place = require("../shared/place");
+const Carry = require("../shared/carry");
 const CorpseDecay = require("../shared/corpseDecay");
 const GameMath = require("../shared/gameMath");
 const DataStore = require("../shared/DataStore");
@@ -73,6 +75,8 @@ function itemDefs() {
     const raw = JSON.parse(
         fs.readFileSync(path.join(__dirname, "..", "data", "Items.json"), "utf8")
     );
+    Carry.resolveCraftedWeights(raw);
+    Carry.resolveCraftedFuel(raw);
     const map = new Map();
     for (const it of raw) {
         if (it?.id) map.set(it.id, it);
@@ -745,6 +749,9 @@ class SimWorld {
             p.dead = true;
         }
         this._migratePlayerSpoilLeft(p);
+        this._ensureEquipment(p);
+        this._syncPlayerInvSize(p);
+        this._enforceCarryCap(p);
         if (this.players.has(p.id) || p.creature) {
             this._ensurePlayerCreature(p);
         }
@@ -1038,6 +1045,14 @@ class SimWorld {
             this._tryCampfire(p, action);
             return;
         }
+        if (type === Protocol.Actions.PLACE) {
+            this._tryPlace(p, action);
+            return;
+        }
+        if (type === Protocol.Actions.STORAGE) {
+            this._tryStorage(p, action);
+            return;
+        }
         if (type === Protocol.Actions.CRAFT) {
             this._tryCraft(p, action);
             return;
@@ -1186,7 +1201,130 @@ class SimWorld {
             this.announceCmd(`Teleported to ${tx}, ${ty}`, { to: p.id });
             return;
         }
+        if (cmd === "/set") {
+            const usage = "Usage: /set <thing>|null";
+            const rawId = parts.slice(1).join(" ").trim();
+            if (!rawId) {
+                this.announceCmd(usage, { to: p.id });
+                return;
+            }
+            const needle = rawId.toLowerCase().replace(/-/g, "_").replace(/\s+/g, "_");
+            const { tx, ty } = this._playerTile(p);
+            if (needle === "null" || needle === "none" || needle === "clear") {
+                this._setThingOnTile(tx, ty, null);
+                this.announceCmd("Cleared thing", { to: p.id });
+                return;
+            }
+            const def = thingDefs().get(needle)
+                || [...thingDefs().values()].find((t) =>
+                    (t.name || "").toLowerCase().replace(/\s+/g, "_") === needle
+                    || (t.name || "").toLowerCase() === rawId.toLowerCase().replace(/_/g, " ")
+                );
+            if (!def?.id) {
+                this.announceCmd(`Unknown thing "${rawId}".`, { to: p.id });
+                return;
+            }
+            const made = this._makeThingEntry(def, tx, ty);
+            if (!made?.entry) {
+                this.announceCmd(`Failed to set ${def.name || def.id}.`, { to: p.id });
+                return;
+            }
+            this._setThingOnTile(tx, ty, made.entry, { lootable: made.lootable });
+            this.announceCmd(`Set ${def.name || def.id}`, { to: p.id });
+            return;
+        }
         this.announceCmd(`Unknown command: ${cmd}`, { to: p.id });
+    }
+
+    _playerTile(p) {
+        return {
+            tx: Math.floor((Number(p.x) + TS / 2) / TS),
+            ty: Math.floor(Number(p.y) / TS)
+        };
+    }
+
+    _makeThingEntry(def, tx, ty) {
+        if (!def?.id) return null;
+        const { x, y } = this._tileCenter(tx, ty);
+        if (def.lootable) {
+            return {
+                lootable: true,
+                entry: {
+                    x, y,
+                    id: def.id,
+                    uid: `lt_${Math.round(x)}_${Math.round(y)}_${def.id}`
+                }
+            };
+        }
+        if (def.campfire) {
+            return {
+                lootable: false,
+                entry: {
+                    id: def.id,
+                    x, y,
+                    uid: `cf_${Math.round(x)}_${Math.round(y)}`,
+                    fuel: [null, null],
+                    cook: null,
+                    catalyst: null,
+                    simmer: [null, null, null, null],
+                    cookProgress: 0,
+                    burnRemaining: 0
+                }
+            };
+        }
+        if (def.storage) {
+            const entry = {
+                id: def.id,
+                x, y,
+                rot: 0,
+                slots: Place.emptySlots(def.storage.slots || 6)
+            };
+            Place.ensureStorageEntry(entry, def);
+            return { lootable: false, entry };
+        }
+        return { lootable: false, entry: { id: def.id, x, y } };
+    }
+
+    _clearTileThings(tx, ty) {
+        const { x, y } = this._tileCenter(tx, ty);
+        const { cx, cy } = worldToChunk(x, y - 1);
+        const chunk = this._ensureChunk(cx, cy);
+        const onTile = (entry) => {
+            if (!entry) return false;
+            const etx = Math.floor(Number(entry.x) / TS);
+            const ety = Math.floor((Number(entry.y) - 1) / TS);
+            return etx === tx && ety === ty;
+        };
+        if (Array.isArray(chunk.things)) {
+            chunk.things = chunk.things.filter((t) => !onTile(t));
+        }
+        if (Array.isArray(chunk.lootableThings)) {
+            chunk.lootableThings = chunk.lootableThings.filter((t) => !onTile(t));
+        }
+        return chunk;
+    }
+
+    _setThingOnTile(tx, ty, entry, opts = {}) {
+        const chunk = this._clearTileThings(tx, ty);
+        const lootable = !!opts.lootable;
+        if (entry?.id) {
+            if (lootable) {
+                if (!Array.isArray(chunk.lootableThings)) chunk.lootableThings = [];
+                chunk.lootableThings.push(entry);
+            } else {
+                if (!Array.isArray(chunk.things)) chunk.things = [];
+                chunk.things.push(entry);
+            }
+        }
+        this.pushEvent({
+            kind: "thing_set",
+            tx, ty,
+            cx: chunk.cx,
+            cy: chunk.cy,
+            lootable,
+            entry: entry?.id ? entry : null
+        });
+        return chunk;
     }
 
     /**
@@ -1260,13 +1398,26 @@ class SimWorld {
         if (incomingLeft == null && meta) {
             incomingLeft = Spoil.defaultSpoilLeft(meta);
         }
+        this._ensureEquipment(p);
         const incomingUnique = this._stackIsSpecial(extras);
+        const extraFields = this._giveExtras(extras);
+        const getDef = (id) => itemDefs().get(id);
+        const unitW = Carry.unitWeight({ id: itemId, ...(extraFields || {}) }, meta);
+        const cap = Carry.carryCap(Carry.strengthFromEquip(p.equipment, getDef));
+        const fitNow = () => Carry.countFit(
+            remaining,
+            unitW,
+            Carry.gearMass(p.inventory, p.equipment, getDef),
+            cap
+        );
+        if (fitNow() <= 0 && unitW > 0) return remaining;
         for (let i = 0; i < p.inventory.length && remaining > 0; i++) {
             const s = p.inventory[i];
             if (!s || s.id !== itemId || this._stackIsSpecial(s) || incomingUnique) continue;
             const space = Math.max(0, maxStack - (s.quantity || 1));
             if (space <= 0) continue;
-            const add = Math.min(space, remaining);
+            const add = Math.min(space, remaining, fitNow());
+            if (!(add > 0)) break;
             if (incomingLeft != null) {
                 s.spoilLeft = Spoil.mergeSpoilLeft(
                     s.quantity || 1, s.spoilLeft,
@@ -1279,15 +1430,63 @@ class SimWorld {
         }
         for (let i = 0; i < p.inventory.length && remaining > 0; i++) {
             if (p.inventory[i]) continue;
-            const add = Math.min(maxStack, remaining);
+            const add = Math.min(maxStack, remaining, fitNow());
+            if (!(add > 0)) break;
             const slot = { id: itemId, quantity: add };
-            this._applyStackExtras(slot, extras);
+            this._applyStackExtras(slot, extraFields);
             if (incomingLeft != null) slot.spoilLeft = incomingLeft;
             p.inventory[i] = slot;
             remaining -= add;
         }
+        this._enforceCarryCap(p);
         if (remaining < tookStart) this._youDirty.add(p.id);
         return remaining;
+    }
+
+    /** Strip world-drop fields (uid, lifeMs, Arcade weight) so they can't zero item mass. */
+    _giveExtras(extras) {
+        if (!extras || typeof extras !== "object") return null;
+        if (extras.uid || extras.lifeMs != null || extras.x != null || extras.y != null) {
+            return this._stackExtrasFrom(extras);
+        }
+        return this._stackExtrasFrom(extras) || extras;
+    }
+
+    /**
+     * Peel inventory until mass ≤ cap.
+     * @param {{ drop?: boolean }} [opts] drop=false returns peeled qty (caller drops).
+     * @returns {number} units removed
+     */
+    _enforceCarryCap(p, opts = {}) {
+        if (!p || !Array.isArray(p.inventory)) return 0;
+        const drop = opts.drop !== false;
+        const getDef = (id) => itemDefs().get(id);
+        const cap = Carry.carryCap(Carry.strengthFromEquip(p.equipment, getDef));
+        const mass = () => Carry.gearMass(p.inventory, p.equipment, getDef);
+        let dumped = 0;
+        while (mass() > cap + 1e-6) {
+            let idx = -1;
+            for (let i = p.inventory.length - 1; i >= 0; i--) {
+                const s = p.inventory[i];
+                if (!s?.id) continue;
+                if (Carry.unitWeight(s, getDef(s.id)) > 0) {
+                    idx = i;
+                    break;
+                }
+            }
+            if (idx < 0) break;
+            const s = p.inventory[idx];
+            const qty = Math.max(1, Math.floor(Number(s.quantity) || 1));
+            if (drop) {
+                const piece = this._cloneStackForWorld({ ...s, quantity: 1 });
+                if (piece) this._pushDrop(p.x, p.y, piece);
+            }
+            s.quantity = qty - 1;
+            if (!(s.quantity > 0)) p.inventory[idx] = null;
+            dumped += 1;
+            this._youDirty.add(p.id);
+        }
+        return dumped;
     }
 
     _parseRecipe(itemId) {
@@ -1570,6 +1769,10 @@ class SimWorld {
         if (src.knapIconData) out.knapIconData = src.knapIconData;
         if (src.spoilLeft != null) out.spoilLeft = src.spoilLeft;
         if (src.spoilAt != null) out.spoilAt = src.spoilAt;
+        if (src.weight != null) {
+            const w = Number(src.weight);
+            if (Number.isFinite(w) && w > 0) out.weight = w;
+        }
         if (src.durability != null) {
             const n = Number(src.durability);
             if (Number.isFinite(n) && n >= 0) out.durability = Math.min(10000, n);
@@ -2562,7 +2765,7 @@ class SimWorld {
         }
         if (!best || !bestChunk) return;
         const want = best.quantity || 1;
-        const left = this._give(p, best.id, want, best);
+        const left = this._give(p, best.id, want, this._stackExtrasFrom(best));
         if (left >= want) return; // nothing fit — leave drop
         if (left > 0) best.quantity = left;
         else bestChunk.drops.splice(bestIdx, 1);
@@ -3360,6 +3563,7 @@ class SimWorld {
                 if (left != null) slot.spoilLeft = left;
                 p.inventory[prefer] = slot;
                 this._youDirty.add(p.id);
+                this._enforceCarryCap(p);
                 return true;
             }
             if (dest.id === worldStack.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(worldStack)) {
@@ -3375,7 +3579,10 @@ class SimWorld {
                     delete dest.spoilAt;
                     dest.quantity = (dest.quantity || 1) + moved;
                     this._youDirty.add(p.id);
-                    if (moved >= qty) return true;
+                    if (moved >= qty) {
+                        this._enforceCarryCap(p);
+                        return true;
+                    }
                     worldStack = { ...worldStack, quantity: qty - moved };
                 }
             }
@@ -3387,6 +3594,7 @@ class SimWorld {
                 quantity: leftover
             }));
         }
+        this._enforceCarryCap(p);
         return leftover < (worldStack.quantity || qty);
     }
 
@@ -3414,6 +3622,297 @@ class SimWorld {
         else return;
         this._emitCampfire(chunk, entry);
         this._youDirty.add(p.id);
+    }
+
+    _isStorageEntry(t) {
+        if (!t) return false;
+        if (Array.isArray(t.slots)) return true;
+        const def = thingDefs().get(t.id);
+        return !!def?.storage;
+    }
+
+    _storagePublic(entry, chunk = null) {
+        if (!entry) return null;
+        const def = thingDefs().get(entry.id);
+        Place.ensureStorageEntry(entry, def);
+        return {
+            uid: entry.uid,
+            id: entry.id,
+            x: entry.x,
+            y: entry.y,
+            cx: chunk?.cx,
+            cy: chunk?.cy,
+            rev: Number(entry.rev) || 0,
+            rot: Place.normalizeRot(entry.rot),
+            slots: entry.slots || []
+        };
+    }
+
+    _bumpStorage(entry) {
+        if (!entry) return;
+        entry.rev = (Number(entry.rev) || 0) + 1;
+    }
+
+    _emitStorage(chunk, entry, extra = {}) {
+        if (!chunk || !entry) return;
+        this._bumpStorage(entry);
+        const pub = this._storagePublic(entry, chunk);
+        this.pushEvent({
+            kind: "storage",
+            cx: chunk.cx,
+            cy: chunk.cy,
+            uid: pub.uid,
+            ...pub,
+            ...extra
+        });
+    }
+
+    _emitStorageRemoved(chunk, entry) {
+        if (!chunk || !entry) return;
+        this.pushEvent({
+            kind: "storage",
+            removed: true,
+            uid: entry.uid,
+            id: entry.id,
+            x: entry.x,
+            y: entry.y,
+            cx: chunk.cx,
+            cy: chunk.cy
+        });
+    }
+
+    _tileKeyAt(tx, ty) {
+        const { x, y } = this._tileCenter(tx, ty);
+        const { cx, cy } = worldToChunk(x, y - 1);
+        const c = this._ensureChunk(cx, cy);
+        const lx = tx - c.cx * CS;
+        const ly = ty - c.cy * CS;
+        if (lx < 0 || ly < 0 || lx >= CS || ly >= CS) return null;
+        return c.tiles[lx + ly * CS] || null;
+    }
+
+    _tryPlace(p, action = {}) {
+        if (!p || p.dead) return;
+        const invIndex = Math.floor(Number(p.hotbarIndex) || 0);
+        const held = p.inventory?.[invIndex];
+        if (!held?.id || !(held.quantity > 0)) return;
+        const itemDef = itemDefs().get(held.id);
+        const thingId = Place.placeThingId(itemDef);
+        if (!thingId) return;
+        const thingDef = thingDefs().get(thingId);
+        if (!thingDef) return;
+        const tx = Math.floor(Number(action.tx));
+        const ty = Math.floor(Number(action.ty));
+        if (!Number.isFinite(tx) || !Number.isFinite(ty)) return;
+        const rot = Place.normalizeRot(action.rot);
+        const { x, y } = this._tileCenter(tx, ty);
+        if (!Place.inPlaceRange(p.x, p.y, x, y, TS, HARVEST_RANGE_TILES)) return;
+        const { cx, cy } = worldToChunk(x, y - 1);
+        const chunk = this._ensureChunk(cx, cy);
+        if (!Array.isArray(chunk.things)) chunk.things = [];
+        if (!Array.isArray(chunk.lootableThings)) chunk.lootableThings = [];
+        const tileKey = this._tileKeyAt(tx, ty);
+        if (!Place.canPlaceOnTile({
+            tileKey,
+            things: chunk.things,
+            lootables: chunk.lootableThings,
+            tx, ty,
+            tileSize: TS
+        })) return;
+
+        held.quantity = Math.max(0, Math.floor(Number(held.quantity) || 1) - 1);
+        if (!(held.quantity > 0)) p.inventory[invIndex] = null;
+        this._youDirty.add(p.id);
+
+        const entry = {
+            id: thingId,
+            x,
+            y,
+            rot,
+            uid: `st_${Math.round(x)}_${Math.round(y)}`,
+            slots: Place.emptySlots(thingDef.storage?.slots || 6)
+        };
+        Place.ensureStorageEntry(entry, thingDef);
+        chunk.things.push(entry);
+        this._emitStorage(chunk, entry);
+    }
+
+    _findPlayerStorage(p, action = {}) {
+        if (!p) return null;
+        const range2 = (TS * HARVEST_RANGE_TILES) * (TS * HARVEST_RANGE_TILES);
+        const wantUid = action.uid ? String(action.uid) : null;
+        const ax = Number(action.x);
+        const ay = Number(action.y);
+        let best = null;
+        let bestD = Infinity;
+        for (const c of this._chunksNear(p.x, p.y, 1)) {
+            if (!Array.isArray(c.things)) continue;
+            for (const t of c.things) {
+                if (!this._isStorageEntry(t)) continue;
+                const dx = t.x - p.x;
+                const dy = t.y - p.y;
+                const d2 = dx * dx + dy * dy;
+                if (d2 > range2) continue;
+                if (wantUid && t.uid === wantUid) return { chunk: c, entry: t };
+                if (Number.isFinite(ax) && Number.isFinite(ay)) {
+                    if (Math.abs(t.x - ax) < 1.5 && Math.abs(t.y - ay) < 1.5) {
+                        return { chunk: c, entry: t };
+                    }
+                }
+                if (d2 < bestD) {
+                    bestD = d2;
+                    best = { chunk: c, entry: t };
+                }
+            }
+        }
+        return wantUid || (Number.isFinite(ax) && Number.isFinite(ay)) ? null : best;
+    }
+
+    _storageGetSlot(entry, key) {
+        const def = thingDefs().get(entry?.id);
+        Place.ensureStorageEntry(entry, def);
+        const idx = Place.parseSlotIndex(key, entry.slots.length);
+        if (idx < 0) return undefined;
+        return entry.slots[idx] || null;
+    }
+
+    _storageSetSlot(entry, key, stack) {
+        const def = thingDefs().get(entry?.id);
+        Place.ensureStorageEntry(entry, def);
+        const idx = Place.parseSlotIndex(key, entry.slots.length);
+        if (idx < 0) return;
+        entry.slots[idx] = stack || null;
+    }
+
+    _tryStorage(p, action = {}) {
+        if (!p || p.dead) return;
+        const found = this._findPlayerStorage(p, action);
+        if (!found) return;
+        const { chunk, entry } = found;
+        const def = thingDefs().get(entry.id);
+        Place.ensureStorageEntry(entry, def);
+        const op = String(action.op || "");
+        if (op === "attend" || op === "leave") return;
+        if (op === "pickup") {
+            if (!Place.isStorageEmpty(entry)) return;
+            const itemId = Place.itemIdForThing(entry.id, itemDefs());
+            const leftover = this._give(p, itemId, 1);
+            if (leftover > 0) {
+                this._pushDrop(p.x, p.y, { id: itemId, quantity: leftover });
+            }
+            const i = chunk.things.indexOf(entry);
+            if (i >= 0) chunk.things.splice(i, 1);
+            this._emitStorageRemoved(chunk, entry);
+            this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "inv_to_slot") this._storageInvToSlot(p, entry, action);
+        else if (op === "slot_to_inv") this._storageSlotToInv(p, entry, action);
+        else if (op === "slot_to_slot") this._storageSlotToSlot(entry, action);
+        else return;
+        this._emitStorage(chunk, entry);
+        this._youDirty.add(p.id);
+    }
+
+    _storageInvToSlot(p, entry, action) {
+        const slotKey = String(action.slot ?? "");
+        const dest = this._storageGetSlot(entry, slotKey);
+        if (dest === undefined) return;
+        const invIndex = Math.floor(Number(action.inv));
+        const held = p.inventory?.[invIndex];
+        if (!held?.id) return;
+        const amount = Math.max(1, Math.floor(Number(action.amount) || held.quantity || 1));
+        const meta = itemDefs().get(held.id);
+        const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
+
+        if (!dest) {
+            const piece = this._splitInvToWorld(p, invIndex, amount);
+            if (piece) this._storageSetSlot(entry, slotKey, piece);
+            return;
+        }
+        if (dest.id === held.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(held)) {
+            const space = Math.max(0, maxStack - (dest.quantity || 1));
+            const take = Math.min(space, amount, held.quantity || 1);
+            if (!(take > 0)) return;
+            const piece = this._splitInvToWorld(p, invIndex, take);
+            if (!piece) return;
+            dest.spoilAt = Spoil.mergeSpoilAt(
+                dest.quantity || 1, dest.spoilAt,
+                piece.quantity, piece.spoilAt
+            );
+            dest.quantity = (dest.quantity || 1) + piece.quantity;
+            this._storageSetSlot(entry, slotKey, dest);
+            return;
+        }
+        if (amount < (held.quantity || 1)) return;
+        const incoming = this._splitInvToWorld(p, invIndex, held.quantity);
+        if (!incoming) return;
+        if (!this._returnWorldToInv(p, dest, invIndex)) {
+            p.inventory[invIndex] = this._worldStackToInv(incoming);
+            this._youDirty.add(p.id);
+            return;
+        }
+        this._storageSetSlot(entry, slotKey, incoming);
+    }
+
+    _worldStackToInv(worldStack) {
+        const now = this.worldMinuteIndex();
+        const slot = {
+            id: worldStack.id,
+            quantity: Math.max(1, Math.floor(Number(worldStack.quantity) || 1))
+        };
+        this._applyStackExtras(slot, this._stackExtrasFrom(worldStack));
+        const left = Spoil.spoilLeftForCharacter(worldStack, now);
+        if (left != null) slot.spoilLeft = left;
+        delete slot.spoilAt;
+        return slot;
+    }
+
+    _storageSlotToInv(p, entry, action) {
+        const slotKey = String(action.slot ?? "");
+        const stack = this._storageGetSlot(entry, slotKey);
+        if (!stack?.id) return;
+        const amount = Math.max(1, Math.floor(Number(action.amount) || stack.quantity || 1));
+        const take = Math.min(amount, stack.quantity || 1);
+        const piece = this._cloneStackForWorld({ ...stack, quantity: take });
+        const prefer = Math.floor(Number(action.inv));
+        if (!this._returnWorldToInv(p, piece, prefer)) return;
+        stack.quantity = (stack.quantity || 1) - take;
+        this._storageSetSlot(entry, slotKey, stack.quantity > 0 ? stack : null);
+    }
+
+    _storageSlotToSlot(entry, action) {
+        const fromKey = String(action.from ?? "");
+        const toKey = String(action.to ?? "");
+        if (fromKey === toKey) return;
+        const a = this._storageGetSlot(entry, fromKey);
+        if (!a?.id) return;
+        const b = this._storageGetSlot(entry, toKey);
+        if (b === undefined) return;
+        if (!b) {
+            this._storageSetSlot(entry, toKey, a);
+            this._storageSetSlot(entry, fromKey, null);
+            return;
+        }
+        if (a.id === b.id && !this._stackIsSpecial(a) && !this._stackIsSpecial(b)) {
+            const meta = itemDefs().get(a.id);
+            const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
+            const space = Math.max(0, maxStack - (b.quantity || 1));
+            if (space <= 0) {
+                this._storageSetSlot(entry, fromKey, b);
+                this._storageSetSlot(entry, toKey, a);
+                return;
+            }
+            const moved = Math.min(space, a.quantity || 1);
+            b.spoilAt = Spoil.mergeSpoilAt(b.quantity || 1, b.spoilAt, moved, a.spoilAt);
+            b.quantity = (b.quantity || 1) + moved;
+            a.quantity = (a.quantity || 1) - moved;
+            this._storageSetSlot(entry, toKey, b);
+            this._storageSetSlot(entry, fromKey, a.quantity > 0 ? a : null);
+            return;
+        }
+        this._storageSetSlot(entry, fromKey, b);
+        this._storageSetSlot(entry, toKey, a);
     }
 
     _campfireInvToSlot(p, entry, action) {
@@ -4744,6 +5243,11 @@ class SimWorld {
                         if (t.simmer[i]) this._spoilStackIfDue(t.simmer[i]);
                     }
                 }
+                if (Array.isArray(t?.slots)) {
+                    for (let i = 0; i < t.slots.length; i++) {
+                        if (t.slots[i]) this._spoilStackIfDue(t.slots[i]);
+                    }
+                }
             }
         }
     }
@@ -4814,6 +5318,7 @@ class SimWorld {
         const drops = [];
         const corpses = [];
         const campfires = [];
+        const storages = [];
         for (const c of this._chunksNear(vx, vy, interest)) {
             this._spoilChunkContents(c);
             for (const d of c.drops) {
@@ -4841,8 +5346,8 @@ class SimWorld {
                 });
             }
             for (const t of c.things || []) {
-                if (!this._isCampfireEntry(t)) continue;
-                campfires.push(this._campfirePublic(t, c));
+                if (this._isCampfireEntry(t)) campfires.push(this._campfirePublic(t, c));
+                else if (this._isStorageEntry(t)) storages.push(this._storagePublic(t, c));
             }
         }
         const mobs = [];
@@ -4884,6 +5389,7 @@ class SimWorld {
             drops,
             corpses,
             campfires,
+            storages,
             mobs,
             chunkCursor: { cx, cy },
             youId: viewerId

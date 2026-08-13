@@ -1,15 +1,25 @@
 class Thing extends Phaser.Physics.Arcade.Sprite {
-    constructor(scene, x, y, id) {
+    constructor(scene, x, y, id, entry = null) {
         const meta = scene.getThing(id);
-        super(scene, x, y, meta.key);
+        super(scene, x, y, Thing.textureKeyFor(scene, meta, entry?.rot));
         this.meta = meta;
         this.scene = scene;
+        this.entry = entry || null;
         this._inStaticGroup = false;
         this.setOrigin(0.5, 1);
         this.setDepth(this.y);
         scene.mainLayer.add(this);
         this.setup(meta.hitboxSize);
         this.applyVisual();
+    }
+
+    static textureKeyFor(scene, meta, rot) {
+        if (!meta?.key) return "";
+        if (typeof Place !== "undefined" && Array.isArray(meta.rotations) && meta.rotations.length) {
+            const tex = Place.rotationTextureKey(meta.key, rot);
+            if (scene?.textures?.exists(tex)) return tex;
+        }
+        return meta.key;
     }
 
     toJSON() {
@@ -43,10 +53,17 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         if (this.meta.anim) {
             const key = this.ensureAnim();
             if (key) this.play(key, true);
-        } else {
-            if (this.anims?.isPlaying) this.stop();
-            this.setTexture(this.meta.key);
+            return;
         }
+        if (this.anims?.isPlaying) this.stop();
+        if (typeof Place !== "undefined" && Array.isArray(this.meta.rotations) && this.meta.rotations.length) {
+            const tex = Place.rotationTextureKey(this.meta.key, this.entry?.rot);
+            if (this.scene.textures.exists(tex)) {
+                this.setTexture(tex);
+                return;
+            }
+        }
+        this.setTexture(this.meta.key);
     }
 
     setup(hitboxSize=0) {
@@ -302,17 +319,28 @@ class Campfire extends Thing {
     setKind(id) {
         const def = this.scene.getThing(id);
         if (!def) return;
+        const scene = this.scene;
+        const wasHover = scene._hoverTarget === this || scene._tooltipTarget === this;
         this.entry.id = id;
         this.meta = def;
         this.applyVisual();
         this.setup(def.hitboxSize);
-        this.setInteractive({ cursor: 'pointer' });
+        if (!this.input?.enabled) this.setInteractive({ cursor: 'pointer' });
         if (!this.isLit()) this.entry.burnRemaining = 0;
-        this.scene.markLightDirty?.();
-        if (this.scene.tooltip?.visible && this.scene._tooltipTarget === this) {
-            this.scene.refreshTooltip();
+        scene.markLightDirty?.();
+        // play()/setInteractive drops Phaser's over-state and hides the tip without a
+        // mouse move, so pointerover never fires again until you leave and re-enter.
+        if (wasHover) {
+            scene._hoverTarget = null;
+            const pointer = scene.input?.activePointer;
+            if (pointer && !scene.player?.blocksTooltips?.()) {
+                scene.showTooltip(() => this.tooltipText(), pointer.x, pointer.y, this);
+                scene._hoverTarget = this;
+            }
+        } else if (scene.tooltip?.visible && scene._tooltipTarget === this) {
+            scene.refreshTooltip();
         }
-        this.scene.campfirePanel?.refresh();
+        scene.campfirePanel?.refresh();
     }
 
     /**
@@ -330,6 +358,9 @@ class Campfire extends Thing {
             if (stack.quantity <= 0) this.entry.fuel[i] = null;
             this.entry.burnRemaining = kj;
             this.scene.campfirePanel?.refresh();
+            if (this.scene.tooltip?.visible && this.scene._tooltipTarget === this) {
+                this.scene.refreshTooltip();
+            }
             return kj;
         }
         return 0;
@@ -596,5 +627,83 @@ class Campfire extends Thing {
             return;
         }
         this._refreshSimmerUi();
+    }
+}
+
+/**
+ * Player-placed storage. `entry` lives in chunk.meta.things (mutated in place for save).
+ */
+class Storage extends Thing {
+    constructor(scene, entry) {
+        super(scene, entry.x, entry.y, entry.id, entry);
+        const def = scene.getThing(entry.id);
+        if (typeof Place !== "undefined") Place.ensureStorageEntry(entry, def);
+        else {
+            if (!Array.isArray(entry.slots)) entry.slots = [null, null, null, null, null, null];
+            if (entry.rot == null) entry.rot = 0;
+        }
+        this.applyVisual();
+
+        this.setInteractive({ cursor: "pointer" });
+        this.on("pointerover", (pointer) => {
+            this.scene.showTooltip(
+                () => this.tooltipText(),
+                pointer.x,
+                pointer.y,
+                this
+            );
+        });
+        this.on("pointerout", () => {
+            if (this.scene._hoverTarget === this) this.scene._hoverTarget = null;
+            if (this.scene._tooltipTarget === this) this.scene.hideTooltip();
+        });
+        this.on("pointerdown", (pointer) => {
+            if (pointer.rightButtonDown()) return;
+            if (this.scene.pointerOverWorldUi?.(pointer)) return;
+            if (!this.inRange()) return;
+            this.scene.storagePanel?.toggle(this);
+        });
+        this.on("destroy", () => {
+            if (this.scene.storagePanel?.storage === this) {
+                this.scene.storagePanel.close();
+            }
+        });
+    }
+
+    inRange() {
+        const dx = this.x - this.scene.player.x;
+        const dy = this.y - this.scene.player.y;
+        const r = this.scene.tileSize * this.scene.player.interactionRange;
+        return dx * dx + dy * dy <= r * r;
+    }
+
+    tooltipText() {
+        const name = this.meta?.name || "Storage";
+        const slots = this.entry?.slots || [];
+        const total = typeof Place !== "undefined"
+            ? (Place.storageSlotCount(this.meta, this.entry) || slots.length || 6)
+            : (slots.length || 6);
+        let used = 0;
+        for (const s of slots) {
+            if (s && s.quantity > 0) used++;
+        }
+        return `${name} (${used}/${total})`;
+    }
+
+    getSlot(index) {
+        return this.entry.slots[index] || null;
+    }
+
+    setSlot(index, stack) {
+        this.entry.slots[index] = stack;
+        this.scene.storagePanel?.refresh();
+        if (this.scene.tooltip?.visible && this.scene._tooltipTarget === this) {
+            this.scene.refreshTooltip();
+        }
+    }
+
+    isEmpty() {
+        if (typeof Place !== "undefined") return Place.isStorageEmpty(this.entry);
+        return (this.entry.slots || []).every((s) => !s || !(s.quantity > 0));
     }
 }

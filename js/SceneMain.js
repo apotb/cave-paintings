@@ -21,6 +21,7 @@ class SceneMain extends SceneBase {
         this._netPlayerId = this.welcome?.playerId || this.characterId || null;
         this._netLeaving = false;
         this._netDisconnectHandled = false;
+        this._onNetClose = null;
         this._charSaveTimer = null;
         this._charSaveBusy = false;
         this._charSavePromise = null;
@@ -41,6 +42,7 @@ class SceneMain extends SceneBase {
         this.combatLog = null;
         this.equipmentPanel = null;
         this.campfirePanel = null;
+        this.storagePanel = null;
         this.corpsePanel = null;
         this.healthPanel = null;
         this.knappingPanel = null;
@@ -169,6 +171,7 @@ class SceneMain extends SceneBase {
         this.createButtons();
         this.equipmentPanel = new EquipmentPanel(this);
         this.campfirePanel = new CampfirePanel(this);
+        this.storagePanel = new StoragePanel(this);
         this.corpsePanel = new CorpsePanel(this);
         this.healthPanel = new HealthPanel(this);
         this.knappingPanel = new KnappingPanel(this);
@@ -190,7 +193,9 @@ class SceneMain extends SceneBase {
         this.keyE = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
         this.keyH = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.H);
         this.keyT = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.T);
+        this.keyR = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
         this.keyEsc = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
+        this.placeRot = 0;
         /** Display name (chat / MP) */
         this.playerName = this.displayName
             || this.welcome?.you?.name
@@ -239,7 +244,9 @@ class SceneMain extends SceneBase {
         this.net.on(NetProtocol.Types.REJECT, (payload) => {
             this._netDisconnectReason = payload?.reason || "Kicked from server.";
         });
-        this.net.on("close", () => this._netOnDisconnect());
+        if (this._onNetClose) this.net.off("close", this._onNetClose);
+        this._onNetClose = () => this._netOnDisconnect();
+        this.net.on("close", this._onNetClose);
 
         // LocalSim needs Chunk helpers from this scene before RESYNC interest
         this.net.attachScene?.(this);
@@ -334,19 +341,29 @@ class SceneMain extends SceneBase {
     }
 
     _netOnDisconnect() {
-        if (this._netLeaving || this._netDisconnectHandled) return;
+        if (this._netLeaving || this._netDisconnectHandled || this._leavingGame) return;
         this._netDisconnectHandled = true;
         this._netDisconnectReason = null;
         const disconnected = !this._isSingleplayerSession();
         // Save before menu (SESSION_END may already have written; this covers abrupt close)
         Promise.resolve(this._saveCharacterNow()).finally(() => {
+            // Leave already owns the menu transition — don't overwrite it with Disconnected.
+            if (this._leavingGame || this._netLeaving) return;
             this._netKickToMenu(disconnected ? { disconnected: true } : {});
         });
     }
 
+    _unbindNetClose() {
+        if (this.net && this._onNetClose) {
+            try { this.net.off("close", this._onNetClose); } catch (_) {}
+        }
+        this._onNetClose = null;
+    }
+
     _netKickToMenu(data = {}) {
-        if (this._netLeaving) return;
+        if (this._netLeaving || this._leavingGame) return;
         this._netLeaving = true;
+        this._unbindNetClose();
         this._teardownCharacterAutosave();
         try {
             this.net?.close();
@@ -692,6 +709,7 @@ class SceneMain extends SceneBase {
         this._netApplyDrops(snap.drops || []);
         this._netApplyCorpses(snap.corpses || []);
         this._netApplyCampfires(snap.campfires || []);
+        this._netApplyStorages(snap.storages || []);
     }
 
     /**
@@ -1429,6 +1447,12 @@ class SceneMain extends SceneBase {
         if (ev.kind === "campfire") {
             this._netApplyCampfireEvent(ev);
         }
+        if (ev.kind === "storage") {
+            this._netApplyStorageEvent(ev);
+        }
+        if (ev.kind === "thing_set") {
+            this._netApplyThingSet(ev);
+        }
     }
 
     /**
@@ -2062,6 +2086,181 @@ class SceneMain extends SceneBase {
         }
     }
 
+    _netFindStorage(src, hint = {}) {
+        const x = Number(src?.x);
+        const y = Number(src?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return { chunk: null, entry: null };
+        const keys = [];
+        const hcx = Number.isInteger(hint.cx) ? hint.cx : Number.isInteger(src.cx) ? src.cx : null;
+        const hcy = Number.isInteger(hint.cy) ? hint.cy : Number.isInteger(src.cy) ? src.cy : null;
+        if (hcx != null && hcy != null) {
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    keys.push(this.getKey(hcx + dx, hcy + dy));
+                }
+            }
+        }
+        keys.push(this.getKey(
+            Math.floor(x / this.chunkPx()),
+            Math.floor((y - 1) / this.chunkPx())
+        ));
+        const uid = src.uid || hint.uid || null;
+        const match = (t) => {
+            if (!t) return false;
+            if (uid && t.uid && t.uid === uid) return true;
+            const store = Array.isArray(t.slots) || this.getThing?.(t.id)?.storage;
+            if (!store) return false;
+            return Math.abs(Number(t.x) - x) < 1.5 && Math.abs(Number(t.y) - y) < 1.5;
+        };
+        let chunk = (hcx != null && hcy != null) ? (this.chunks[this.getKey(hcx, hcy)] || null) : null;
+        let entry = null;
+        for (const k of keys) {
+            const c = this.chunks[k];
+            const lst = c?.meta?.things;
+            if (!Array.isArray(lst)) continue;
+            const found = lst.find(match);
+            if (found) {
+                chunk = c;
+                entry = found;
+                break;
+            }
+        }
+        if (!chunk) chunk = this.getChunkAtWorld?.(x, y - 1) || null;
+        return { chunk, entry, x, y };
+    }
+
+    _netStorageHeld(entry) {
+        if (performance.now() < (this._invSwapGuardUntil || 0)) {
+            const open = this.storagePanel?.visible && this.storagePanel.storage?.entry;
+            if (open && entry && (open === entry || (open.uid && open.uid === entry.uid))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    _netApplyStoragePayload(src, opts = {}) {
+        if (!src || this.net?.isLocal) return;
+        if (src.removed || opts.removed) {
+            this._netRemoveStorage(src, opts);
+            return;
+        }
+        const found = this._netFindStorage(src, opts);
+        let { chunk, entry, x, y } = found;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        if (!chunk?.meta) return;
+        if (!Array.isArray(chunk.meta.things)) chunk.meta.things = [];
+
+        const incomingRev = Number(src.rev ?? opts.rev);
+        const curRev = Number(entry?.rev);
+        if (entry && Number.isFinite(curRev) && Number.isFinite(incomingRev) && incomingRev < curRev) {
+            return;
+        }
+
+        const held = entry && this._netStorageHeld(entry);
+        const newer = Number.isFinite(incomingRev) && Number.isFinite(curRev) && incomingRev > curRev;
+        if (held && opts.snapshot && !newer) return;
+
+        if (!entry) {
+            entry = {
+                uid: src.uid || opts.uid || `st_${Math.round(x)}_${Math.round(y)}`,
+                id: src.id || "wicker_basket",
+                x,
+                y,
+                rot: typeof Place !== "undefined" ? Place.normalizeRot(src.rot) : (src.rot || 0),
+                slots: Array.isArray(src.slots) ? src.slots : [null, null, null, null, null, null],
+                rev: Number.isFinite(incomingRev) ? incomingRev : 0
+            };
+            if (typeof Place !== "undefined") {
+                Place.ensureStorageEntry(entry, this.getThing(entry.id));
+            }
+            chunk.meta.things.push(entry);
+        } else {
+            entry.uid = src.uid || opts.uid || entry.uid;
+            if (src.id) entry.id = src.id;
+            entry.x = x;
+            entry.y = y;
+            if (Number.isFinite(incomingRev)) entry.rev = incomingRev;
+            if (src.rot != null) {
+                entry.rot = typeof Place !== "undefined" ? Place.normalizeRot(src.rot) : src.rot;
+            }
+            if (Array.isArray(src.slots)) entry.slots = src.slots;
+        }
+        this._netSyncStorageSprite(chunk, entry, x, y);
+        this.storagePanel?.refresh?.();
+    }
+
+    _netSyncStorageSprite(chunk, entry, x, y) {
+        if (!entry) return;
+        let live = this.findStorageByUid(entry.uid);
+        if (!live) {
+            for (const t of chunk?.things?.getChildren?.() || []) {
+                if (!(t instanceof Storage)) continue;
+                if (t.entry === entry) { live = t; break; }
+                if (Math.abs(t.x - x) < 1.5 && Math.abs(t.y - y) < 1.5) { live = t; break; }
+            }
+        }
+        if (live) {
+            if (live.entry !== entry) live.entry = entry;
+            live.x = x;
+            live.y = y;
+            live.applyVisual?.();
+            return;
+        }
+        if (chunk?.isLoaded) chunk.things.add(new Storage(this, entry));
+    }
+
+    _netRemoveStorage(src, opts = {}) {
+        const found = this._netFindStorage(src, opts);
+        const { chunk, entry, x, y } = found;
+        const uid = src.uid || opts.uid || entry?.uid;
+        const live = this.findStorageByUid(uid)
+            || (chunk?.things?.getChildren?.() || []).find((t) =>
+                t instanceof Storage && (
+                    t.entry === entry
+                    || (Number.isFinite(x) && Math.abs(t.x - x) < 1.5 && Math.abs(t.y - y) < 1.5)
+                )
+            );
+        if (chunk?.meta?.things && entry) {
+            const i = chunk.meta.things.indexOf(entry);
+            if (i >= 0) chunk.meta.things.splice(i, 1);
+        } else if (chunk?.meta?.things && uid) {
+            const i = chunk.meta.things.findIndex((t) => t?.uid === uid);
+            if (i >= 0) chunk.meta.things.splice(i, 1);
+        }
+        if (live) {
+            if (this.storagePanel?.storage === live) this.storagePanel.close();
+            live.destroy();
+        }
+    }
+
+    _netApplyStorageEvent(ev) {
+        if (!ev || this.net?.isLocal) return;
+        this._netApplyStoragePayload(ev, {
+            snapshot: false,
+            cx: ev.cx,
+            cy: ev.cy,
+            uid: ev.uid,
+            rev: ev.rev,
+            removed: !!ev.removed
+        });
+    }
+
+    _netApplyStorages(list) {
+        if (this.net?.isLocal) return;
+        if (!Array.isArray(list)) return;
+        for (const src of list) {
+            if (!src) continue;
+            this._netApplyStoragePayload(src, {
+                snapshot: true,
+                cx: src.cx,
+                cy: src.cy,
+                uid: src.uid,
+                rev: src.rev
+            });
+        }
+    }
+
     /** Unarmed thrust fill for remotes / net mobs. */
     _netFistColor(entry) {
         if (entry?.look && typeof PlayerLook !== "undefined") {
@@ -2210,6 +2409,14 @@ class SceneMain extends SceneBase {
         this.net.sendAction({ type: NetProtocol.Actions.RESYNC });
     }
 
+    _netApplyThingSet(ev) {
+        if (!ev || this.net?.isLocal) return;
+        const tx = Math.floor(Number(ev.tx));
+        const ty = Math.floor(Number(ev.ty));
+        if (!Number.isFinite(tx) || !Number.isFinite(ty)) return;
+        this.setThingOnTile(tx, ty, ev.entry || null, { lootable: !!ev.lootable });
+    }
+
     _netSendMove(force = false) {
         if (!this.isNet || !this.net?.connected || !this.player) return;
         const now = performance.now();
@@ -2313,6 +2520,7 @@ class SceneMain extends SceneBase {
 
     shutdown() {
         this._teardownCharacterAutosave?.();
+        this._unbindNetClose();
         if (this._gamePaused) {
             try { this.net?.setPaused?.(false); } catch (_) {}
             try { this.physics?.world?.resume?.(); } catch (_) {}
@@ -2368,7 +2576,7 @@ class SceneMain extends SceneBase {
         this.weightBarZone = this._makeBarZone(() => {
             const weight = this.player.getInventoryWeight();
             const strength = this.player.strength;
-            return `Carry: ${weight}/${strength} kg${weight > strength ? ' (encumbered)' : ''}`;
+            return `Carry: ${weight}/${strength} kg${weight > strength ? " (encumbered)" : ""}`;
         });
 
         this._lastPain = NaN;
@@ -2772,6 +2980,18 @@ class SceneMain extends SceneBase {
                 return campP.container;
             }
 
+            const storeP = this.storagePanel;
+            if (storeP?.visible && storeP.containsPointer?.(pointer)) {
+                for (let i = hits.length - 1; i >= 0; i--) {
+                    const obj = hits[i];
+                    if (!obj?.active || !obj.input?.enabled) continue;
+                    if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
+                    if (this._isUnderStoragePanel(obj)) return obj;
+                }
+                if (storeP.pointerOnTake?.(pointer)) return storeP.takeRect;
+                return storeP.container;
+            }
+
             // Equipment panel body blocks world/UI behind it
             const panel = this.equipmentPanel;
             if (panel?.visible && panel.body) {
@@ -2859,6 +3079,21 @@ class SceneMain extends SceneBase {
             return false;
         };
 
+        this._isUnderStoragePanel = (obj) => {
+            const panel = this.storagePanel;
+            if (!panel) return false;
+            let cur = obj;
+            while (cur) {
+                if (cur === panel.container || cur === panel.takeBtn ||
+                    cur === panel.takeRect || cur === panel.takeText) return true;
+                if (panel.slotViews?.some(v =>
+                    v.slot === cur || v.icon === cur || v.fill === cur || v.qty === cur
+                )) return true;
+                cur = cur.parentContainer;
+            }
+            return false;
+        };
+
         this._isUnderEquipmentPanel = (obj) => {
             const panel = this.equipmentPanel;
             if (!panel) return false;
@@ -2897,7 +3132,19 @@ class SceneMain extends SceneBase {
 
             const hit = this._pickHoverTarget(pointer);
             // During attacks, ignore world hover for tooltips; side UI still works
-            const top = (blockWorld && hit && !this._isUiTooltipTarget(hit)) ? null : hit;
+            let top = (blockWorld && hit && !this._isUiTooltipTarget(hit)) ? null : hit;
+
+            // Texture/setInteractive resets drop the object from Phaser's hit list for
+            // a frame (or until the next mouse move). If the cursor is still inside
+            // the last hover sprite, keep it so lighting a campfire doesn't hide the tip.
+            if (!top && !blockWorld && this._hoverTarget?.active) {
+                const prev = this._hoverTarget;
+                const b = prev.getBounds?.();
+                if (b) {
+                    const wpt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+                    if (Phaser.Geom.Rectangle.Contains(b, wpt.x, wpt.y)) top = prev;
+                }
+            }
 
             if (top !== this._hoverTarget) {
                 const prev = this._hoverTarget;
@@ -3317,6 +3564,7 @@ class SceneMain extends SceneBase {
         if (!pointer) return false;
         if (this.corpsePanel?.containsPointer?.(pointer)) return true;
         if (this.campfirePanel?.containsPointer?.(pointer)) return true;
+        if (this.storagePanel?.containsPointer?.(pointer)) return true;
         return false;
     }
 
@@ -3454,6 +3702,128 @@ class SceneMain extends SceneBase {
         }
     }
 
+    playerFeetTile(player = this.player) {
+        if (!player) return null;
+        const ts = this.tileSize || 16;
+        const w = player.displayWidth || player.width || ts;
+        return {
+            tx: Math.floor((player.x + w * 0.5) / ts),
+            ty: Math.floor(player.y / ts)
+        };
+    }
+
+    resolveThingDef(raw) {
+        const text = String(raw || "").trim();
+        if (!text) return null;
+        const needle = text.toLowerCase().replace(/-/g, "_").replace(/\s+/g, "_");
+        if (needle === "null" || needle === "none" || needle === "clear") {
+            return { clear: true };
+        }
+        const things = (this.things?.() || []).filter(Boolean);
+        return this.getThing?.(needle)
+            || things.find((t) => (t.id || "").toLowerCase() === needle)
+            || things.find((t) => (t.name || "").toLowerCase().replace(/\s+/g, "_") === needle)
+            || things.find((t) => (t.name || "").toLowerCase() === text.toLowerCase().replace(/_/g, " "))
+            || null;
+    }
+
+    _makeThingEntry(def, x, y) {
+        if (!def?.id) return null;
+        if (def.lootable) {
+            return {
+                lootable: true,
+                entry: {
+                    x, y,
+                    id: def.id,
+                    uid: `lt_${Math.round(x)}_${Math.round(y)}_${def.id}`
+                }
+            };
+        }
+        if (def.campfire) {
+            return {
+                lootable: false,
+                entry: {
+                    id: def.id,
+                    x, y,
+                    uid: `cf_${Math.round(x)}_${Math.round(y)}`,
+                    fuel: [null, null],
+                    cook: null,
+                    catalyst: null,
+                    simmer: [null, null, null, null],
+                    cookProgress: 0,
+                    burnRemaining: 0
+                }
+            };
+        }
+        if (def.storage) {
+            const entry = {
+                id: def.id,
+                x, y,
+                rot: 0,
+                slots: typeof Place !== "undefined"
+                    ? Place.emptySlots(def.storage.slots || 6)
+                    : [null, null, null, null, null, null]
+            };
+            if (typeof Place !== "undefined") Place.ensureStorageEntry(entry, def);
+            return { lootable: false, entry };
+        }
+        return { lootable: false, entry: { id: def.id, x, y } };
+    }
+
+    _spawnThingSprite(chunk, entry, lootable) {
+        if (!chunk?.isLoaded || !entry?.id) return null;
+        let thing;
+        if (lootable) {
+            thing = new LootableThing(this, entry, chunk);
+        } else if (entry.id === "campfire" || entry.id === "unlit_campfire") {
+            thing = new Campfire(this, entry);
+        } else if (Array.isArray(entry.slots) || this.getThing(entry.id)?.storage) {
+            thing = new Storage(this, entry);
+        } else {
+            thing = new Thing(this, entry.x, entry.y, entry.id);
+            thing.entry = entry;
+            if (entry.id === "rock") this.wireRockKnapping?.(thing);
+            else if (entry.id === "sign") {
+                if (entry.spawnHint && this._spawnSignTooltip) {
+                    entry.tooltip = this._spawnSignTooltip();
+                }
+                this.wireThingTooltip?.(thing);
+            }
+        }
+        chunk.things.add(thing);
+        return thing;
+    }
+
+    /**
+     * Debug/admin: replace whatever is on (tx, ty). `entry` null = clear only.
+     * @param {{ lootable?: boolean }} [opts]
+     */
+    setThingOnTile(tx, ty, entry, opts = {}) {
+        const { x, y } = this.tileCenter(tx, ty);
+        const chunk = this.getChunkAtWorld(x, y - 1);
+        if (!chunk) return false;
+        this._clearTileThings(tx, ty);
+        if (!entry?.id) {
+            this.markLightDirty?.();
+            this.updateLightVeil?.();
+            return true;
+        }
+        const lootable = opts.lootable != null
+            ? !!opts.lootable
+            : !!this.getThing(entry.id)?.lootable;
+        if (lootable) {
+            if (!Array.isArray(chunk.meta.lootableThings)) chunk.meta.lootableThings = [];
+            chunk.meta.lootableThings.push(entry);
+        } else {
+            if (!Array.isArray(chunk.meta.things)) chunk.meta.things = [];
+            chunk.meta.things.push(entry);
+        }
+        this._spawnThingSprite(chunk, entry, lootable);
+        this.markLightDirty?.();
+        this.updateLightVeil?.();
+        return true;
+    }
+
     /**
      * Random free tile in [-radius, radius]² (no Thing; walkable ground).
      * @returns {{ tx: number, ty: number, x: number, y: number }|null}
@@ -3579,6 +3949,258 @@ class SceneMain extends SceneBase {
         this.markLightDirty();
         this.updateLightVeil();
         return fire;
+    }
+
+    resetPlaceRot() {
+        this.placeRot = 0;
+    }
+
+    _heldPlaceableDef() {
+        const held = this.player?.getHeldItem?.();
+        if (!held || !(held.quantity > 0)) return null;
+        const itemDef = this.getItem(held.id);
+        const thingId = typeof Place !== "undefined" ? Place.placeThingId(itemDef) : itemDef?.place?.thing;
+        if (!thingId) return null;
+        const thingDef = this.getThing(thingId);
+        if (!thingDef) return null;
+        return { held, itemDef, thingId, thingDef };
+    }
+
+    _placeGhostBlocked() {
+        if (this._gamePaused || this.player?._bodyDead) return true;
+        if (this.combatLog?.isComposing?.()) return true;
+        if (this.knappingPanel?.visible) return true;
+        if (this.craftMenuVisible) return true;
+        if (this.equipmentPanel?.visible) return true;
+        if (this.healthPanel?.visible) return true;
+        if (this.campfirePanel?.visible) return true;
+        if (this.storagePanel?.visible) return true;
+        if (this.corpsePanel?.visible) return true;
+        return false;
+    }
+
+    _tileKeyAt(tx, ty) {
+        const { x, y } = this.tileCenter(tx, ty);
+        const chunk = this.getChunkAtWorld(x, y - 1);
+        if (!chunk?.meta?.tiles) return null;
+        const cs = this.chunkSize;
+        const localX = tx - chunk.x * cs;
+        const localY = ty - chunk.y * cs;
+        if (localX < 0 || localY < 0 || localX >= cs || localY >= cs) return null;
+        return chunk.meta.tiles[localX + localY * cs] || null;
+    }
+
+    _placeListsForTile(tx, ty) {
+        const { x, y } = this.tileCenter(tx, ty);
+        const chunk = this.getChunkAtWorld(x, y - 1);
+        return {
+            tileKey: this._tileKeyAt(tx, ty),
+            things: chunk?.meta?.things || [],
+            lootables: chunk?.meta?.lootableThings || [],
+            chunk
+        };
+    }
+
+    canPlaceAt(tx, ty) {
+        if (!this.player) return false;
+        const { x, y } = this.tileCenter(tx, ty);
+        const range = this.player.interactionRange;
+        if (typeof Place !== "undefined") {
+            if (!Place.inPlaceRange(this.player.x, this.player.y, x, y, this.tileSize, range)) {
+                return false;
+            }
+            const occ = this._placeListsForTile(tx, ty);
+            return Place.canPlaceOnTile({
+                tileKey: occ.tileKey,
+                things: occ.things,
+                lootables: occ.lootables,
+                tx, ty,
+                tileSize: this.tileSize
+            });
+        }
+        return !!this._tileKeyAt(tx, ty);
+    }
+
+    _ensurePlaceGhost() {
+        if (this._placeGhost && this._placeGhost.active) return this._placeGhost;
+        const key = this.textures.exists("wicker_basket_0")
+            ? "wicker_basket_0"
+            : (this.textures.exists("wicker_basket") ? "wicker_basket" : "slot");
+        const g = this.add.image(0, 0, key)
+            .setOrigin(0.5, 1)
+            .setAlpha(0.5)
+            .setVisible(false)
+            .setDepth(0);
+        this.mainLayer.add(g);
+        this._placeGhost = g;
+        return g;
+    }
+
+    _hidePlaceGhost() {
+        if (this._placeGhost) this._placeGhost.setVisible(false);
+        this._placeGhostTile = null;
+        this._placeGhostValid = false;
+    }
+
+    updatePlaceGhost() {
+        const info = this._heldPlaceableDef();
+        if (!info) {
+            this.resetPlaceRot();
+            this._hidePlaceGhost();
+            return;
+        }
+        if (this._placeGhostBlocked()) {
+            this._hidePlaceGhost();
+            return;
+        }
+        const pointer = this.input.activePointer;
+        if (!pointer || this.pointerOverWorldUi?.(pointer)) {
+            this._hidePlaceGhost();
+            return;
+        }
+        const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const { tx, ty } = this.worldToTile(world.x, world.y);
+        const { x, y } = this.tileCenter(tx, ty);
+        const inRange = typeof Place !== "undefined"
+            ? Place.inPlaceRange(this.player.x, this.player.y, x, y, this.tileSize, this.player.interactionRange)
+            : true;
+        if (!inRange) {
+            this._hidePlaceGhost();
+            return;
+        }
+        const valid = this.canPlaceAt(tx, ty);
+        const rot = typeof Place !== "undefined" ? Place.normalizeRot(this.placeRot) : (this.placeRot || 0);
+        const tex = typeof Place !== "undefined"
+            ? Place.rotationTextureKey(info.thingDef.key, rot)
+            : info.thingDef.key;
+        const ghost = this._ensurePlaceGhost();
+        if (this.textures.exists(tex)) ghost.setTexture(tex);
+        else if (this.textures.exists(info.thingDef.key)) ghost.setTexture(info.thingDef.key);
+        ghost.setPosition(x, y);
+        ghost.setDepth(y);
+        ghost.setAlpha(0.5);
+        ghost.setTint(valid ? 0xffffff : 0xff5555);
+        ghost.setVisible(true);
+        this._placeGhostTile = { tx, ty };
+        this._placeGhostValid = valid;
+    }
+
+    _handlePlaceRotate() {
+        if (!this.keyR || !Phaser.Input.Keyboard.JustDown(this.keyR)) return;
+        if (this._placeGhostBlocked()) return;
+        if (!this._heldPlaceableDef()) return;
+        const shift = this.player?.keys?.SHIFT?.isDown;
+        if (typeof Place !== "undefined") {
+            this.placeRot = shift ? Place.rotateCCW(this.placeRot) : Place.rotateCW(this.placeRot);
+        } else {
+            this.placeRot = ((this.placeRot || 0) + (shift ? 270 : 90)) % 360;
+        }
+    }
+
+    tryPlaceHeld() {
+        const info = this._heldPlaceableDef();
+        if (!info) return false;
+        if (this._placeGhostBlocked()) return false;
+        const tile = this._placeGhostTile;
+        if (!tile || !this._placeGhostValid) return false;
+        if (!this.canPlaceAt(tile.tx, tile.ty)) return false;
+        const rot = typeof Place !== "undefined" ? Place.normalizeRot(this.placeRot) : (this.placeRot || 0);
+
+        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+            this._netSendMove?.(true);
+            this.net.sendAction({
+                type: NetProtocol.Actions.PLACE,
+                tx: tile.tx,
+                ty: tile.ty,
+                rot
+            });
+            if (!(info.held.quantity > 1)) this.resetPlaceRot();
+            return true;
+        }
+
+        const placed = this.placeStorage(tile.tx, tile.ty, info.thingId, rot);
+        if (!placed) return false;
+        this.player.loseItem(info.held, 1);
+        if (!(info.held.quantity > 0)) this.resetPlaceRot();
+        return true;
+    }
+
+    placeStorage(tx, ty, thingId, rot = 0) {
+        if (!this.canPlaceAt(tx, ty)) return null;
+        const { x, y } = this.tileCenter(tx, ty);
+        const chunk = this.getChunkAtWorld(x, y - 1);
+        if (!chunk || !chunk.isLoaded) return null;
+        const def = this.getThing(thingId);
+        if (!def) return null;
+        const entry = {
+            id: thingId,
+            x,
+            y,
+            rot: typeof Place !== "undefined" ? Place.normalizeRot(rot) : rot,
+            slots: typeof Place !== "undefined"
+                ? Place.emptySlots(def.storage?.slots || 6)
+                : [null, null, null, null, null, null]
+        };
+        if (typeof Place !== "undefined") Place.ensureStorageEntry(entry, def);
+        chunk.meta.things.push(entry);
+        const spr = new Storage(this, entry);
+        chunk.things.add(spr);
+        return spr;
+    }
+
+    findStorageByUid(uid) {
+        if (!uid) return null;
+        for (const chunk of Object.values(this.chunks || {})) {
+            for (const t of chunk.things?.getChildren?.() || []) {
+                if (t instanceof Storage && t.entry?.uid === uid) return t;
+            }
+        }
+        return null;
+    }
+
+    tryPickupStorage(storage) {
+        if (!storage || !storage.isEmpty?.()) return false;
+        if (!storage.inRange?.()) return false;
+        const entry = storage.entry;
+        const itemId = typeof Place !== "undefined"
+            ? Place.itemIdForThing(entry.id, this.items())
+            : entry.id;
+
+        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+            this._invSwapGuardUntil = performance.now() + 1000;
+            this._netSendMove?.(true);
+            this.net.sendAction({
+                type: NetProtocol.Actions.STORAGE,
+                op: "pickup",
+                uid: entry.uid,
+                x: storage.x,
+                y: storage.y
+            });
+            return true;
+        }
+
+        this._removeStorageThing(storage);
+        const meta = this.getItem(itemId);
+        if (meta) {
+            const left = this.player.gainItem(meta, 1);
+            if (left > 0) {
+                DroppedItem.spawn(this, storage.x, storage.y, meta, left);
+            }
+        }
+        this.hotbar.dirty = true;
+        return true;
+    }
+
+    _removeStorageThing(storage) {
+        if (!storage) return;
+        const entry = storage.entry;
+        const chunk = this.getChunkAtWorld(storage.x, storage.y - 1);
+        if (chunk?.meta?.things && entry) {
+            const i = chunk.meta.things.indexOf(entry);
+            if (i >= 0) chunk.meta.things.splice(i, 1);
+        }
+        if (this.storagePanel?.storage === storage) this.storagePanel.close();
+        storage.destroy();
     }
 
     /** Ground drops within the player's interaction range, nearest first. */
@@ -4522,6 +5144,16 @@ class SceneMain extends SceneBase {
                         || entry.cook !== undefined
                         || entry.catalyst !== undefined
                         || Array.isArray(entry.simmer);
+                    const isStorage = !!(thingMeta?.storage || Array.isArray(entry.slots));
+                    if (!isCamp && !isStorage) continue;
+
+                    if (isStorage && Array.isArray(entry.slots)) {
+                        for (let i = 0; i < entry.slots.length; i++) {
+                            if (!entry.slots[i]) continue;
+                            entry.slots[i] = applyWorldStack(entry.slots[i]);
+                        }
+                    }
+
                     if (!isCamp) continue;
 
                     if (entry.cook) {
@@ -4561,6 +5193,7 @@ class SceneMain extends SceneBase {
             if (this.equipmentPanel?.visible) this.equipmentPanel.refresh();
         }
         if (cookDirty) this.campfirePanel?.refresh();
+        if (this.storagePanel?.visible) this.storagePanel.refresh();
         if (this.tooltip?.visible) this.refreshTooltip();
     }
 
@@ -4582,6 +5215,9 @@ class SceneMain extends SceneBase {
                 if (entry.cook) migrateToSpoilAt(entry.cook, now, getItem);
                 if (entry.catalyst) migrateToSpoilAt(entry.catalyst, now, getItem);
                 for (const s of entry.simmer || []) {
+                    if (s) migrateToSpoilAt(s, now, getItem);
+                }
+                for (const s of entry.slots || []) {
                     if (s) migrateToSpoilAt(s, now, getItem);
                 }
             }
@@ -5159,7 +5795,9 @@ class SceneMain extends SceneBase {
         return [
             "WASD / Arrows — Move",
             "Shift — Sprint",
-            "Space — Use item / Attack",
+            "Space — Use / place / attack",
+            "R — Rotate placement",
+            "Shift+R — Rotate counter-clockwise",
             "Mouse — Aim attacks",
             "Left-click — Pick up / interact",
             "Right-click — Move 1 item",
@@ -5379,6 +6017,7 @@ class SceneMain extends SceneBase {
         if (this.healthPanel?.visible) this.healthPanel.close();
         if (this.corpsePanel?.visible) this.corpsePanel.close();
         if (this.campfirePanel?.visible) this.campfirePanel.close();
+        if (this.storagePanel?.visible) this.storagePanel.close();
         if (this.combatLog?.composing) this.combatLog.closeChat(false);
     }
 
@@ -5388,7 +6027,8 @@ class SceneMain extends SceneBase {
             this.equipmentPanel?.visible ||
             this.healthPanel?.visible ||
             this.corpsePanel?.visible ||
-            this.campfirePanel?.visible
+            this.campfirePanel?.visible ||
+            this.storagePanel?.visible
         );
     }
 
@@ -5615,6 +6255,10 @@ class SceneMain extends SceneBase {
         if (this._leavingGame) return;
         this._leavingGame = true;
         this._netLeaving = true;
+        this._netDisconnectHandled = true;
+        // Drop the close handler before closing the socket so onclose cannot
+        // race into the Disconnected screen after an intentional Leave.
+        this._unbindNetClose();
         this._teardownCharacterAutosave();
         this.closeOpenMenus();
         this._showSavingScreen();
@@ -5633,7 +6277,9 @@ class SceneMain extends SceneBase {
         }
 
         if (this.sys?.isActive?.()) {
-            this.scene.start("SceneMenu");
+            // Phaser keeps the previous SceneMenu data when the 2nd arg is omitted,
+            // so a prior { disconnected: true } would replay on Leave. Always pass {}.
+            this.scene.start("SceneMenu", {});
         }
     }
 
@@ -5718,6 +6364,7 @@ class SceneMain extends SceneBase {
         // World panels hold refs into chunk things/corpses
         if (this.corpsePanel?.visible) this.corpsePanel.close(true);
         if (this.campfirePanel?.visible) this.campfirePanel.close();
+        if (this.storagePanel?.visible) this.storagePanel.close();
         if (this.healthPanel?.isInspecting?.()) this.healthPanel.close();
 
         for (const chunk of Object.values(this.chunks || {})) chunk.unload();
@@ -5883,6 +6530,7 @@ class SceneMain extends SceneBase {
         }
 
         if (this.campfirePanel?.visible) this.campfirePanel.layout();
+        if (this.storagePanel?.visible) this.storagePanel.layout();
         if (this.knappingPanel?.visible) this.knappingPanel.layout();
         this._layoutPauseMenu();
 
@@ -6047,6 +6695,7 @@ class SceneMain extends SceneBase {
                         this.deathOverlay?.setVisible(false);
                         this.healthPanel?.refresh?.();
                         if (this.campfirePanel?.visible) this.campfirePanel.close();
+                        if (this.storagePanel?.visible) this.storagePanel.close();
                         if (this.healthPanel?.visible) {
                             this.healthPanel.close();
                             this.healthBtn?.setTexture("health");
@@ -6080,11 +6729,13 @@ class SceneMain extends SceneBase {
 
         this._handleEscapeKey();
         if (this._leavingGame) {
+            this._hidePlaceGhost();
             this.combatLog?.update?.();
             return;
         }
         // SP pause freezes the sim; dedicated MP menu must keep receiving world updates
         if (this._gamePaused && this._isSingleplayerSession()) {
+            this._hidePlaceGhost();
             this.combatLog?.update?.();
             return;
         }
@@ -6145,6 +6796,7 @@ class SceneMain extends SceneBase {
             if (Phaser.Input.Keyboard.JustDown(this.keyC)) this.toggleCraftMenu();
             if (Phaser.Input.Keyboard.JustDown(this.keyE)) this.toggleEquipmentMenu();
             if (Phaser.Input.Keyboard.JustDown(this.keyH)) this.toggleHealthMenu();
+            this._handlePlaceRotate();
             // Chat open is handled by CombatLog's window keydown listener (avoids
             // JustDown(T) dying after keyboard.enabled toggles miss the T keyup).
         }
@@ -6152,6 +6804,7 @@ class SceneMain extends SceneBase {
         // Update player
         this.knappingPanel?.update?.();
         this.player.update(time, delta);
+        this.updatePlaceGhost();
         if (this.isNet) {
             this._netSendMove();
             this._netUpdateRemotes(delta);
@@ -6194,6 +6847,7 @@ class SceneMain extends SceneBase {
         }
 
         this.campfirePanel?.update();
+        this.storagePanel?.update();
         this.corpsePanel?.update();
         this.updateLightVeil();
 

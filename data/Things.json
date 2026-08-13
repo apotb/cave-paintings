@@ -203,5 +203,15 @@
         "name": "Palm Stump",
         "key": "coconut_tree_stump",
         "hitboxSize": 5
+    },
+    {
+        "id": "wicker_basket",
+        "name": "Wicker Basket",
+        "key": "wicker_basket",
+        "hitboxSize": 5,
+        "storage": {
+            "slots": 6
+        },
+        "rotations": [0, 90, 180, 270]
     }
 ]

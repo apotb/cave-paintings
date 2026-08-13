@@ -633,6 +633,23 @@
         }
     },
     {
+        "id": "wicker_basket",
+        "name": "Wicker Basket",
+        "key": "wicker_basket",
+        "maxStack": 99,
+        "place": {
+            "thing": "wicker_basket"
+        },
+        "tooltip": [
+            "Long-term item storage"
+        ],
+        "recipe": {
+            "stick_frame": 5,
+            "stick": 3,
+            "leaf_cord": 12
+        }
+    },
+    {
         "id": "rot",
         "name": "Rot",
         "key": "rot",

@@ -234,6 +234,7 @@ class CampfirePanel {
     open(campfire) {
         // Only one world UI at a time; side menus (equip/craft/health) can stay open
         if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
+        if (this.scene.storagePanel?.visible) this.scene.storagePanel.close();
 
         if (this.campfire && this.campfire !== campfire) this._notifyCampfire("leave");
         this.campfire = campfire;

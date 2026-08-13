@@ -33,6 +33,10 @@
         LIGHT_FIRE: "light_fire",
         /** Move items between hotbar and a campfire (fuel / cook / utensil). */
         CAMPFIRE: "campfire",
+        /** Place the held placeable item as a world Thing (dedicated MP). */
+        PLACE: "place",
+        /** Move items between hotbar and a storage Thing, or pick up an empty one. */
+        STORAGE: "storage",
         /** Craft a recipe from the crafting menu (dedicated MP). */
         CRAFT: "craft",
         PICKUP: "pickup",

@@ -160,6 +160,7 @@ class CombatLog {
             regen: "/regen",
             seed: "/seed",
             spawn: "/spawn <mob>",
+            set: "/set <thing>|null",
             tick: "/tick [speed]",
             time: "/time [HH] [MM]",
             tp: "/tp <x> <y>"
@@ -298,6 +299,52 @@ class CombatLog {
                 return;
             }
             this.push(`Spawned ${def.name || id}`);
+            return;
+        }
+        if (cmd === "/set") {
+            const usage = "Usage: /set <thing>|null";
+            const rawId = parts.slice(1).join(" ").trim();
+            if (!rawId) {
+                this.pushError(usage);
+                return;
+            }
+            const resolved = this.scene.resolveThingDef?.(rawId);
+            if (!resolved) {
+                this.pushError(`Unknown thing "${rawId}".`);
+                return;
+            }
+            const player = this.scene.player;
+            if (!player) {
+                this.push("No player to set at.");
+                return;
+            }
+            const tile = this.scene.playerFeetTile?.(player);
+            if (!tile) {
+                this.pushError("No tile to set.");
+                return;
+            }
+            if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+                this.scene._netSendMove?.(true);
+                const id = resolved.clear ? "null" : resolved.id;
+                this.scene.net.sendAction({
+                    type: NetProtocol.Actions.CHAT,
+                    text: `/set ${id}`
+                });
+                return;
+            }
+            if (resolved.clear) {
+                this.scene.setThingOnTile(tile.tx, tile.ty, null);
+                this.push("Cleared thing");
+                return;
+            }
+            const { x, y } = this.scene.tileCenter(tile.tx, tile.ty);
+            const made = this.scene._makeThingEntry(resolved, x, y);
+            if (!made?.entry) {
+                this.pushError(`Failed to set ${resolved.name || resolved.id}.`);
+                return;
+            }
+            this.scene.setThingOnTile(tile.tx, tile.ty, made.entry, { lootable: made.lootable });
+            this.push(`Set ${resolved.name || resolved.id}`);
             return;
         }
         if (cmd === "/give") {

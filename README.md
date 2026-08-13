@@ -51,7 +51,8 @@ Hover **?** in the corner for the full list.
 WASD / arrows   Move
 Shift           Sprint
 Mouse           Aim
-Space           Use held item / attack
+Space           Use held item / place / attack
+R / Shift+R     Rotate placement
 Left-click      Pick up / interact
 F               Pick up nearby drops
 Q               Drop (Shift = stack, Ctrl = 10)

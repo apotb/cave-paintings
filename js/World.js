@@ -561,6 +561,11 @@ class Chunk {
             let thing;
             if (meta.id === 'campfire' || meta.id === 'unlit_campfire') {
                 thing = new Campfire(this.scene, meta);
+            } else if (
+                Array.isArray(meta.slots)
+                || this.scene.getThing(meta.id)?.storage
+            ) {
+                thing = new Storage(this.scene, meta);
             } else {
                 thing = new Thing(this.scene, meta.x, meta.y, meta.id);
                 thing.entry = meta;

@@ -1,0 +1,710 @@
+class StoragePanel {
+    constructor(scene) {
+        this.scene = scene;
+        this.visible = false;
+        this.storage = null;
+        this.slotViews = [];
+
+        this.container = scene.add.container(0, 0).setVisible(false).setDepth(100);
+        if (scene._uiCam) scene._uiCam.ignore(this.container);
+
+        this._dragging = false;
+        this._dragFromKey = null;
+        this._dragIcon = null;
+        this._pointerDownPos = null;
+        this._pointerIsDown = false;
+
+        this._buildSlots();
+        this._buildTake();
+
+        scene.input.on("pointermove", (pointer) => {
+            if (this._dragIcon && this._dragging) {
+                this._dragIcon.setPosition(pointer.x, pointer.y);
+            }
+        });
+        scene.input.on("pointerup", (pointer) => this._onPointerUp(pointer));
+    }
+
+    _worldUiScale() {
+        const s = this.scene.uiScale || 1;
+        const zoom = this.scene.worldZoom || 1;
+        return s / zoom;
+    }
+
+    _slotCount() {
+        const entry = this.storage?.entry;
+        const def = this.storage?.meta;
+        if (typeof Place !== "undefined") return Place.storageSlotCount(def, entry) || 6;
+        return Array.isArray(entry?.slots) ? entry.slots.length : 6;
+    }
+
+    _buildSlots() {
+        for (let i = 0; i < 6; i++) {
+            const key = String(i);
+            const slot = this.scene.add.image(0, 0, "slot")
+                .setOrigin(0.5, 0.5)
+                .setInteractive({ cursor: "pointer" });
+            slot.storageKey = key;
+
+            const icon = this.scene.add.image(0, 0, "")
+                .setOrigin(0.5, 0.5)
+                .setVisible(false)
+                .setScale(3);
+
+            const qty = this.scene.add.text(0, 0, "", {
+                fontSize: "14px",
+                fontFamily: "monospace",
+                color: "#ffffff",
+                stroke: "#000000",
+                strokeThickness: 2
+            }).setOrigin(1, 1).setVisible(false);
+
+            slot.on("pointerover", (p) => {
+                this.scene.showTooltip(
+                    () => {
+                        const stack = this._stackFor(key);
+                        if (!stack) return "Storage";
+                        const meta = this.scene.getItem(stack.id);
+                        return this.scene.formatItemTooltip(
+                            meta, stack.quantity, stack.spoilAt, stack
+                        );
+                    },
+                    p.x, p.y, slot
+                );
+            });
+            slot.on("pointerout", () => {
+                if (this.scene._tooltipTarget === slot) this.scene.hideTooltip();
+            });
+
+            slot.on("pointerdown", (pointer) => {
+                if (pointer.rightButtonDown()) {
+                    this._returnStackToHotbar(key, pointer);
+                    return;
+                }
+                this._pointerDownPos = { x: pointer.x, y: pointer.y };
+                this._pointerIsDown = true;
+                this._dragFromKey = key;
+                this._dragging = false;
+            });
+
+            slot.on("pointermove", (pointer) => {
+                if (!this._pointerIsDown || this._dragging) return;
+                if (this._dragFromKey !== key) return;
+                const dist = Phaser.Math.Distance.Between(
+                    this._pointerDownPos.x, this._pointerDownPos.y,
+                    pointer.x, pointer.y
+                );
+                const threshold = Math.round(6 * (this.scene.uiScale || 1));
+                if (dist < threshold) return;
+
+                const stack = this._stackFor(key);
+                if (!stack) return;
+                const meta = this.scene.getItem(stack.id);
+                const sc = this.scene.uiScale || 1;
+                const drag = createStackDragIcon(this.scene, pointer.x, pointer.y, stack, meta, 3 * sc);
+                if (!drag) return;
+
+                this._dragging = true;
+                this.scene.hideTooltip();
+                this._dragIcon = drag;
+            });
+
+            const fill = this.scene.add.image(0, 0, "")
+                .setOrigin(0.5, 0.5)
+                .setVisible(false)
+                .setScale(3);
+
+            this.container.add(slot);
+            this.container.add(icon);
+            this.container.add(fill);
+            this.container.add(qty);
+            const bar = this.scene.add.graphics();
+            this.container.add(bar);
+            const badges = createIngredientBadges(this.scene, (img) => {
+                this.container.add(img);
+            });
+            this.slotViews.push({ key, slot, icon, fill, qty, bar, badges });
+        }
+    }
+
+    _buildTake() {
+        const BG = 0x120e0a;
+        const BG_PRESS = 0x0a0806;
+        const OUTLINE = 0x2a2218;
+        const OUTLINE_HOVER = 0xffffff;
+        const OUTLINE_PRESS = 0xd4a84b;
+
+        this.takeRect = this.scene.add.rectangle(0, 0, 78, 28, BG, 1)
+            .setStrokeStyle(2, OUTLINE)
+            .setInteractive({ useHandCursor: true });
+        this.takeText = this.scene.add.text(0, 0, "Take", {
+            fontFamily: "PrimaryFont",
+            fontSize: "13px",
+            color: "#d4c4a8"
+        }).setOrigin(0.5);
+        this.takeBtn = this.scene.add.container(0, 0, [this.takeRect, this.takeText]);
+
+        this._takeHovering = false;
+        this._takePressing = false;
+        this._takeEnabled = true;
+        this._takeBw = 78;
+        this._takeBh = 28;
+        this._paintTake = () => {
+            const strokeW = 2 / (this.scene.worldZoom || 1);
+            if (!this._takeEnabled) {
+                this.takeRect.setFillStyle(BG, 1);
+                this.takeRect.setStrokeStyle(strokeW, OUTLINE);
+                this.takeText.setColor("#d4c4a8");
+                return;
+            }
+            if (this._takePressing) {
+                this.takeRect.setFillStyle(BG_PRESS, 1);
+                this.takeRect.setStrokeStyle(strokeW, OUTLINE_PRESS);
+            } else if (this._takeHovering) {
+                this.takeRect.setFillStyle(BG, 1);
+                this.takeRect.setStrokeStyle(strokeW, OUTLINE_HOVER);
+            } else {
+                this.takeRect.setFillStyle(BG, 1);
+                this.takeRect.setStrokeStyle(strokeW, OUTLINE);
+            }
+            this.takeText.setColor("#d4c4a8");
+        };
+
+        this.takeRect.on("pointerdown", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            if (pointer.rightButtonDown() || !this._takeEnabled) return;
+            this._takePressing = true;
+            this._paintTake();
+        });
+        this.takeRect.on("pointerup", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            const was = this._takePressing;
+            this._takePressing = false;
+            this._syncTakeHover();
+            this._paintTake();
+            if (was && this._takeHovering && this._takeEnabled) this._tryTake();
+        });
+
+        this.container.add(this.takeBtn);
+    }
+
+    _stackFor(key) {
+        if (!this.storage) return null;
+        const idx = typeof Place !== "undefined"
+            ? Place.parseSlotIndex(key, this._slotCount())
+            : parseInt(key, 10);
+        if (idx < 0) return null;
+        return this.storage.getSlot(idx);
+    }
+
+    _setStack(key, stack) {
+        if (!this.storage) return;
+        const idx = typeof Place !== "undefined"
+            ? Place.parseSlotIndex(key, this._slotCount())
+            : parseInt(key, 10);
+        if (idx < 0) return;
+        this.storage.setSlot(idx, stack);
+    }
+
+    _isDedicated() {
+        return !!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
+    }
+
+    _notifyStorage(op, extra = {}) {
+        if (!this._isDedicated() || !this.storage || typeof NetProtocol === "undefined") return;
+        const entry = this.storage.entry || {};
+        if (!entry.uid && typeof Place !== "undefined") {
+            Place.ensureStorageEntry(entry, this.storage.meta);
+        }
+        if (op !== "attend" && op !== "leave") {
+            this.scene._invSwapGuardUntil = performance.now() + 1000;
+            this.scene._netSendMove?.(true);
+        }
+        this.scene.net.sendAction({
+            type: NetProtocol.Actions.STORAGE,
+            op,
+            uid: entry.uid,
+            x: this.storage.x,
+            y: this.storage.y,
+            ...extra
+        });
+    }
+
+    open(storage) {
+        if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
+        if (this.scene.campfirePanel?.visible) this.scene.campfirePanel.close();
+
+        if (this.storage && this.storage !== storage) this._notifyStorage("leave");
+        this.storage = storage;
+        if (storage?.entry && typeof Place !== "undefined") {
+            Place.ensureStorageEntry(storage.entry, storage.meta);
+        }
+        this.visible = true;
+        this.container.setVisible(true);
+        this.container.setPosition(storage.x, storage.y);
+        this.refresh();
+        this.layout();
+        this._notifyStorage("attend");
+    }
+
+    toggle(storage) {
+        if (this.visible && this.storage === storage) this.close();
+        else this.open(storage);
+    }
+
+    close() {
+        this._notifyStorage("leave");
+        this.visible = false;
+        this.storage = null;
+        this.container.setVisible(false);
+        this._cancelDrag();
+        this.scene.hideTooltip();
+        this.scene._flushPendingYouGear?.();
+        if (this.scene.hotbar) {
+            this.scene.hotbar.dirty = true;
+            this.scene.hotbar.layout?.();
+            this.scene.hotbar.dirty = false;
+        }
+    }
+
+    refresh() {
+        if (!this.storage) return;
+        const ws = this._worldUiScale();
+        const n = this._slotCount();
+
+        for (let i = 0; i < this.slotViews.length; i++) {
+            const view = this.slotViews[i];
+            const showSlot = i < n;
+            view.slot.setVisible(showSlot);
+            if (showSlot) view.slot.setInteractive({ cursor: "pointer" });
+            else view.slot.disableInteractive();
+
+            const stack = showSlot ? this._stackFor(view.key) : null;
+            const meta = stack ? this.scene.getItem(stack.id) : null;
+            syncStackIcon(
+                view.icon, view.fill, stack, meta,
+                id => this.scene.getItem(id), this.scene.textures, 3 * ws
+            );
+            if (stack && stack.quantity > 1) {
+                view.qty.setText(String(stack.quantity)).setVisible(true);
+            } else {
+                view.qty.setVisible(false);
+            }
+            syncIngredientBadges(
+                view.badges,
+                view.qty.x, view.qty.y, ws,
+                stack,
+                id => this.scene.getItem(id),
+                this.scene.textures
+            );
+            const frac = (typeof Durability !== "undefined" && stack)
+                ? Durability.slotBarFraction(stack, meta)
+                : null;
+            drawSlotConditionBar(view.bar, view.slot, showSlot ? frac : null);
+        }
+
+        const empty = !!this.storage.isEmpty?.();
+        this._takeEnabled = empty;
+        this.takeBtn.setVisible(true);
+        this.takeBtn.setAlpha(empty ? 1 : 0.35);
+        if (empty) this._syncTakeHitArea(true);
+        else this.takeRect.disableInteractive();
+        this._syncTakeHover();
+    }
+
+    layout() {
+        if (!this.storage) return;
+        const s = this.scene.uiScale || 1;
+        const ws = this._worldUiScale();
+        const padding = 4 * ws;
+        const slotImg = this.scene.textures.get("slot").getSourceImage();
+        const baseW = slotImg ? slotImg.width : 32;
+        const slotW = baseW * ws;
+        const spacing = slotW + padding;
+        const objH = this.storage.displayHeight || 16;
+        const clear = 2;
+        const n = this._slotCount();
+        const cols = 3;
+        const rows = Math.ceil(n / cols);
+        const bottomRowY = -(objH + clear + slotW / 2);
+
+        const zoom = this.scene.worldZoom || 1;
+        const fontPx = Math.round(14 * s);
+        const strokePx = Math.max(2, Math.round(2 * s));
+
+        for (let i = 0; i < this.slotViews.length; i++) {
+            const view = this.slotViews[i];
+            if (i >= n) continue;
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            const x = (col - (cols - 1) / 2) * spacing;
+            const y = bottomRowY - (rows - 1 - row) * spacing;
+            view.slot.setScale(ws).setPosition(x, y);
+            view.icon.setScale(3 * ws).setPosition(x, y);
+            view.fill.setScale(3 * ws).setPosition(x, y);
+            view.qty.setResolution(zoom * (window.devicePixelRatio || 1));
+            view.qty.setFontSize(`${fontPx}px`);
+            view.qty.setStroke("#000000", strokePx);
+            view.qty.setScale(1 / zoom);
+            view.qty.setPosition(x + slotW / 2 - 4 * ws, y + slotW / 2 - 4 * ws);
+        }
+
+        const btnFontPx = Math.round(13 * s);
+        const bw = 78 * ws;
+        const bh = 28 * ws;
+        this._takeBw = bw;
+        this._takeBh = bh;
+        this.takeRect.setSize(bw, bh);
+        this.takeText.setResolution(zoom * (window.devicePixelRatio || 1));
+        this.takeText.setFontSize(`${btnFontPx}px`);
+        this.takeText.setScale(1 / zoom);
+        this.takeBtn.setPosition(0, clear + bh / 2);
+
+        this.container.setPosition(this.storage.x, this.storage.y);
+        this.refresh();
+    }
+
+    _syncTakeHitArea(enable) {
+        const bw = this._takeBw || 78;
+        const bh = this._takeBh || 28;
+        if (!enable) {
+            this.takeRect.disableInteractive();
+            return;
+        }
+        this.takeRect.setInteractive({ useHandCursor: true });
+        if (this.takeRect.input?.hitArea?.setTo) {
+            this.takeRect.input.hitArea.setTo(0, 0, bw, bh);
+        }
+    }
+
+    pointerOnTake(pointer) {
+        if (!this.visible || !this.takeBtn?.visible || !this.takeRect || !pointer) return false;
+        const pt = this.scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        return Phaser.Geom.Rectangle.Contains(this.takeRect.getBounds(), pt.x, pt.y);
+    }
+
+    _syncTakeHover() {
+        const over = !!(this._takeEnabled && this.pointerOnTake(this.scene.input.activePointer));
+        if (over !== this._takeHovering) {
+            this._takeHovering = over;
+            if (!over) this._takePressing = false;
+        }
+        this._paintTake?.();
+    }
+
+    update() {
+        if (!this.visible || !this.storage) return;
+        if (!this.storage.active || !this.storage.inRange()) {
+            this.close();
+            return;
+        }
+        this._syncTakeHover();
+    }
+
+    getSlotAt(screenX, screenY) {
+        if (!this.visible) return null;
+        const pt = this.scene.cameras.main.getWorldPoint(screenX, screenY);
+        for (const view of this.slotViews) {
+            if (!view.slot.visible) continue;
+            if (Phaser.Geom.Rectangle.Contains(view.slot.getBounds(), pt.x, pt.y)) {
+                return view.key;
+            }
+        }
+        return null;
+    }
+
+    containsPointer(pointer) {
+        if (!this.visible || !this.container?.visible || !pointer) return false;
+        if (this.getSlotAt(pointer.x, pointer.y) != null) return true;
+        if (!this.takeBtn?.visible) return false;
+        return this.pointerOnTake(pointer);
+    }
+
+    tryAddFromHotbar(hotbarIndex, pointer) {
+        const key = this.getSlotAt(pointer.x, pointer.y);
+        if (!key) return false;
+        this._depositFromHotbar(key, hotbarIndex, pointer);
+        return true;
+    }
+
+    tryQuickAdd(hotbarIndex, pointer = null) {
+        if (!this.visible || !this.storage) return false;
+        const inv = this.scene.player.inventory;
+        const stack = inv[hotbarIndex];
+        if (!stack) return false;
+        const n = this._slotCount();
+        for (let pass = 0; pass < 2; pass++) {
+            for (let i = 0; i < n; i++) {
+                const dest = this.storage.getSlot(i);
+                if (pass === 0) {
+                    if (!dest || dest.id !== stack.id) continue;
+                    if (typeof isSpecialStack === "function" && (isSpecialStack(stack) || isSpecialStack(dest))) continue;
+                    const meta = this.scene.getItem(stack.id);
+                    const maxStack = Math.max(1, meta?.maxStack || 1);
+                    if (dest.quantity >= maxStack) continue;
+                    this._depositFromHotbar(String(i), hotbarIndex, pointer);
+                    return true;
+                }
+                if (!dest) {
+                    this._depositFromHotbar(String(i), hotbarIndex, pointer);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    _oneFromStack(stack) {
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        const spoilAt = spoilAtForWorld(stack, now);
+        const one = {
+            id: stack.id,
+            quantity: 1,
+            ...(spoilAt != null ? { spoilAt } : {})
+        };
+        const extras = typeof mealStackExtras === "function" ? mealStackExtras(stack) : null;
+        if (extras) Object.assign(one, extras);
+        return one;
+    }
+
+    _cloneStack(stack) {
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        const spoilAt = spoilAtForWorld(stack, now);
+        const clone = cloneItemStack(stack) || { id: stack.id, quantity: stack.quantity };
+        if (spoilAt != null) clone.spoilAt = spoilAt;
+        delete clone.spoilLeft;
+        return clone;
+    }
+
+    _toInvStack(stack) {
+        const clone = this._cloneStack(stack);
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        migrateToSpoilLeft(clone, now);
+        return clone;
+    }
+
+    _tryInsertStack(stack) {
+        const inv = this.scene.player.inventory;
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        const forInv = stack.spoilLeft != null ? stack : (() => {
+            const c = cloneItemStack(stack) || stack;
+            migrateToSpoilLeft(c, now);
+            return c;
+        })();
+        const empty = inv.findIndex(s => !s);
+        if (empty !== -1) {
+            inv[empty] = forInv;
+            return true;
+        }
+        if (inv.length < this.scene.player.inventorySize) {
+            inv.push(forInv);
+            return true;
+        }
+        if (forInv.customName || forInv.food) return false;
+        const meta = this.scene.getItem(forInv.id);
+        const left = this.scene.player.gainItem(
+            meta, forInv.quantity, spoilLeftForCharacter(forInv, now)
+        );
+        return left < forInv.quantity && left === 0;
+    }
+
+    _depositFromHotbar(key, hotbarIndex, pointer = null) {
+        if (!this.storage) return;
+        const inv = this.scene.player.inventory;
+        const stack = inv[hotbarIndex];
+        if (!stack) return;
+        const meta = this.scene.getItem(stack.id);
+        const dest = this._stackFor(key);
+        const special = typeof isSpecialStack === "function" && isSpecialStack(stack);
+        const want = pointer != null && typeof quickMoveAmount === "function"
+            ? quickMoveAmount(stack.quantity, pointer, this.scene)
+            : stack.quantity;
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        let moved = 0;
+
+        if (!dest) {
+            moved = Math.min(stack.quantity, want);
+            if (!(moved > 0)) return;
+            const piece = this._cloneStack(stack);
+            piece.quantity = moved;
+            this._setStack(key, piece);
+            stack.quantity -= moved;
+            if (stack.quantity <= 0) inv[hotbarIndex] = null;
+        } else if (dest.id === stack.id && !special && !(typeof isSpecialStack === "function" && isSpecialStack(dest))) {
+            const maxStack = Math.max(1, meta?.maxStack || 1);
+            const space = Math.max(0, maxStack - dest.quantity);
+            if (space <= 0) return;
+            moved = Math.min(space, want, stack.quantity);
+            if (!(moved > 0)) return;
+            dest.spoilAt = mergeSpoilAt(
+                dest.quantity, dest.spoilAt,
+                moved, spoilAtForWorld(stack, now)
+            );
+            dest.quantity += moved;
+            stack.quantity -= moved;
+            if (stack.quantity <= 0) inv[hotbarIndex] = null;
+            this._setStack(key, dest);
+        } else {
+            if (want < stack.quantity) return;
+            moved = stack.quantity;
+            this._setStack(key, this._cloneStack(stack));
+            inv[hotbarIndex] = this._toInvStack(dest);
+        }
+
+        this.scene.hotbar.dirty = true;
+        this.refresh();
+        this.scene.refreshTooltip();
+        this._notifyStorage("inv_to_slot", {
+            inv: hotbarIndex,
+            slot: key,
+            amount: moved
+        });
+    }
+
+    _returnStackToHotbar(key, pointer = null) {
+        const stack = this._stackFor(key);
+        if (!stack) return;
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        let moved = stack.quantity;
+
+        if (stack.customName || stack.food) {
+            if (!this._tryInsertStack(this._toInvStack(stack))) return;
+            this._setStack(key, null);
+        } else {
+            const meta = this.scene.getItem(stack.id);
+            if (!meta) return;
+            const want = pointer != null && typeof quickMoveAmount === "function"
+                ? quickMoveAmount(stack.quantity, pointer, this.scene)
+                : stack.quantity;
+            const amount = Math.min(stack.quantity, want);
+            if (!(amount > 0)) return;
+            const remaining = this.scene.player.gainItem(
+                meta, amount, spoilLeftForCharacter(stack, now)
+            );
+            moved = amount - remaining;
+            if (moved <= 0) return;
+            stack.quantity -= moved;
+            if (stack.quantity <= 0) this._setStack(key, null);
+            else this._setStack(key, stack);
+        }
+        this.layout();
+        this.scene.hotbar.dirty = true;
+        this.scene.refreshTooltip();
+        this._notifyStorage("slot_to_inv", { slot: key, inv: -1, amount: moved });
+    }
+
+    _onPointerUp(pointer) {
+        if (!this._dragging) {
+            this._pointerIsDown = false;
+            this._pointerDownPos = null;
+            this._dragFromKey = null;
+            return;
+        }
+
+        const fromKey = this._dragFromKey;
+        const stack = this._stackFor(fromKey);
+        if (stack) {
+            const toHotbar = this.scene.hotbar.getIndexAt(pointer.x, pointer.y);
+            if (toHotbar !== -1) {
+                this._dropSlotToHotbar(fromKey, toHotbar);
+            } else {
+                const toKey = this.getSlotAt(pointer.x, pointer.y);
+                if (toKey && toKey !== fromKey) {
+                    this._moveBetweenSlots(fromKey, toKey);
+                }
+            }
+        }
+
+        this.layout();
+        this._cancelDrag();
+    }
+
+    _dropSlotToHotbar(fromKey, toHotbar) {
+        const stack = this._stackFor(fromKey);
+        if (!stack) return;
+        const inv = this.scene.player.inventory;
+        while (inv.length <= toHotbar) inv.push(null);
+        const dest = inv[toHotbar];
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        let moved = stack.quantity;
+
+        if (!dest) {
+            inv[toHotbar] = this._toInvStack(stack);
+            this._setStack(fromKey, null);
+        } else if (dest.id === stack.id && !stack.customName && !dest.customName
+            && !(typeof isSpecialStack === "function" && (isSpecialStack(stack) || isSpecialStack(dest)))) {
+            const meta = this.scene.getItem(dest.id);
+            const maxStack = Math.max(1, meta?.maxStack || 1);
+            const space = maxStack - dest.quantity;
+            if (space > 0) {
+                moved = Math.min(space, stack.quantity);
+                dest.spoilLeft = mergeSpoilLeft(
+                    dest.quantity, dest.spoilLeft,
+                    moved, spoilLeftForCharacter(stack, now)
+                );
+                delete dest.spoilAt;
+                dest.quantity += moved;
+                stack.quantity -= moved;
+                if (stack.quantity <= 0) this._setStack(fromKey, null);
+                else this._setStack(fromKey, stack);
+            }
+        } else {
+            inv[toHotbar] = this._toInvStack(stack);
+            this._setStack(fromKey, this._cloneStack(dest));
+        }
+
+        this.scene.hotbar.dirty = true;
+        this.scene.refreshTooltip();
+        this._notifyStorage("slot_to_inv", {
+            slot: fromKey,
+            inv: toHotbar,
+            amount: moved
+        });
+    }
+
+    _moveBetweenSlots(fromKey, toKey) {
+        const a = this._stackFor(fromKey);
+        if (!a) return;
+        const b = this._stackFor(toKey);
+        if (!b) {
+            this._setStack(toKey, a);
+            this._setStack(fromKey, null);
+        } else if (a.id === b.id && !a.customName && !b.customName
+            && !(typeof isSpecialStack === "function" && (isSpecialStack(a) || isSpecialStack(b)))) {
+            const meta = this.scene.getItem(a.id);
+            const maxStack = Math.max(1, meta?.maxStack || 1);
+            const space = Math.max(0, maxStack - b.quantity);
+            if (space <= 0) {
+                this._setStack(fromKey, b);
+                this._setStack(toKey, a);
+            } else {
+                const moved = Math.min(space, a.quantity);
+                b.spoilAt = mergeSpoilAt(b.quantity, b.spoilAt, moved, a.spoilAt);
+                b.quantity += moved;
+                a.quantity -= moved;
+                this._setStack(toKey, b);
+                this._setStack(fromKey, a.quantity > 0 ? a : null);
+            }
+        } else {
+            this._setStack(fromKey, b);
+            this._setStack(toKey, a);
+        }
+        this._notifyStorage("slot_to_slot", { from: fromKey, to: toKey });
+    }
+
+    _tryTake() {
+        if (!this.storage || !this.storage.isEmpty()) return;
+        this.scene.tryPickupStorage?.(this.storage);
+    }
+
+    _cancelDrag() {
+        this._dragging = false;
+        this._dragFromKey = null;
+        this._pointerIsDown = false;
+        this._pointerDownPos = null;
+        if (this._dragIcon) {
+            this._dragIcon.destroy();
+            this._dragIcon = null;
+        }
+    }
+}

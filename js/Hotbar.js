@@ -16,6 +16,7 @@ class Hotbar {
     setActiveIndex(index, opts = {}) {
         const notifyNet = opts.notifyNet !== false;
         if (!Number.isInteger(index) || index < 0 || index >= this.size) return;
+        if (index !== this.activeIndex) this.scene.resetPlaceRot?.();
         if (this.slots[this.activeIndex]) this.slots[this.activeIndex].setTexture("slot");
         if (this.slots[index]) this.slots[index].setTexture("active_slot");
         // Clear any other active textures (stale from YOU sync / resize races)
@@ -198,6 +199,13 @@ class Hotbar {
                     }
                     return;
                 }
+                if (this.scene.storagePanel?.visible) {
+                    if (this.scene.storagePanel.tryQuickAdd(slot.index, pointer)) {
+                        this.dirty = true;
+                        this.scene.refreshTooltip();
+                    }
+                    return;
+                }
                 if (this.scene.equipmentPanel?.visible) {
                     const result = this.scene.player.equipFromHotbarAuto(slot.index);
                     if (result.ok) {
@@ -320,6 +328,10 @@ class Hotbar {
 
                 if (!handled && this.scene.campfirePanel?.visible && from !== null) {
                     handled = this.scene.campfirePanel.tryAddFuelFromHotbar(from, pointer);
+                }
+
+                if (!handled && this.scene.storagePanel?.visible && from !== null) {
+                    handled = this.scene.storagePanel.tryAddFromHotbar(from, pointer);
                 }
 
                 if (!handled) {

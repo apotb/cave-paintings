@@ -21,14 +21,18 @@ class SceneNet extends Phaser.Scene {
         this.load.once("filecomplete-json-things", (_key, _type, data) => {
             for (const t of data) {
                 if (!t?.key) continue;
-                const path = `assets/things/${t.key}.png`;
-                if (t.anim) {
-                    this.load.spritesheet(t.key, path, {
-                        frameWidth: t.anim.frameWidth ?? 16,
-                        frameHeight: t.anim.frameHeight ?? 16
-                    });
-                } else {
-                    this.load.image(t.key, path);
+                const loads = (typeof Place !== "undefined" && Place.thingImageLoads)
+                    ? Place.thingImageLoads(t)
+                    : [{ key: t.key, path: `assets/things/${t.key}.png` }];
+                for (const load of loads) {
+                    if (load.spritesheet) {
+                        this.load.spritesheet(load.key, load.path, {
+                            frameWidth: load.frameWidth ?? 16,
+                            frameHeight: load.frameHeight ?? 16
+                        });
+                    } else {
+                        this.load.image(load.key, load.path);
+                    }
                 }
             }
         });
@@ -64,7 +68,7 @@ class SceneNet extends Phaser.Scene {
         for (const item of [
             "apple", "blueberry", "blueberries", "roasted_apple",
             "raw_beef", "roast_beef", "raw_venison", "roasted_venison", "coconut",
-            "flint", "pebble", "deer_hide", "bone", "stick", "log"
+            "flint", "pebble", "deer_hide", "bone", "stick", "log", "wicker_basket"
         ]) {
             this.load.image(item, `assets/items/${item}.png`);
         }
