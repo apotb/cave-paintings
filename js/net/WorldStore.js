@@ -82,7 +82,9 @@ const WorldStore = (() => {
             spawn: { x: 8, y: 16 },
             clock: { gameDay: 1, gameMinutes: 8 * 60, tickSpeed: 1 },
             poses: {},
-            chunks: {}
+            chunks: {},
+            favorite: false,
+            lastPlayedAt: 0
         };
     }
 
@@ -92,7 +94,12 @@ const WorldStore = (() => {
             const tx = db.transaction(STORE, "readonly");
             const req = tx.objectStore(STORE).getAll();
             req.onsuccess = () => {
-                const rows = (req.result || []).slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+                const rows = (req.result || []).slice().sort((a, b) => {
+                    const fa = a.favorite ? 1 : 0;
+                    const fb = b.favorite ? 1 : 0;
+                    if (fb !== fa) return fb - fa;
+                    return (b.updatedAt || 0) - (a.updatedAt || 0);
+                });
                 db.close();
                 resolve(rows);
             };
@@ -133,11 +140,13 @@ const WorldStore = (() => {
         return rows.some((r) => r.id !== exceptId && nameKey(r.name) === key);
     }
 
-    async function put(world) {
+    async function put(world, opts = {}) {
         if (!world?.id) throw new Error("World needs id");
         const row = clone(world);
-        row.updatedAt = Date.now();
+        if (!opts.preserveUpdatedAt) row.updatedAt = Date.now();
+        else row.updatedAt = Number(world.updatedAt) || Date.now();
         row.name = normalizeName(row.name);
+        row.favorite = !!row.favorite;
         if (await nameTaken(row.name, row.id)) {
             throw new Error(`A world named "${row.name}" already exists.`);
         }
@@ -168,6 +177,13 @@ const WorldStore = (() => {
         if (!w) throw new Error("World not found");
         w.name = normalizeName(name);
         return put(w);
+    }
+
+    async function setFavorite(id, favorite) {
+        const w = await get(id);
+        if (!w) throw new Error("World not found");
+        w.favorite = !!favorite;
+        return put(w, { preserveUpdatedAt: true });
     }
 
     async function remove(id) {
@@ -211,7 +227,9 @@ const WorldStore = (() => {
             spawn: raw.spawn || w.spawn,
             clock: raw.clock || w.clock,
             poses: raw.poses && typeof raw.poses === "object" ? clone(raw.poses) : {},
-            chunks: raw.chunks && typeof raw.chunks === "object" ? clone(raw.chunks) : {}
+            chunks: raw.chunks && typeof raw.chunks === "object" ? clone(raw.chunks) : {},
+            favorite: !!raw.favorite,
+            lastPlayedAt: Math.max(0, Number(raw.lastPlayedAt) || 0)
         });
         w.id = uuid();
         w.createdAt = Date.now();
@@ -257,6 +275,7 @@ const WorldStore = (() => {
         put,
         create,
         rename,
+        setFavorite,
         remove,
         exportJson,
         importJson,

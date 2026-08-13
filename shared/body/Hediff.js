@@ -77,6 +77,33 @@
         },
 
         /**
+         * Roll food-poison chance after a successful eat.
+         * First hit → severity 1.0 (initial). Re-poison while already sick restarts
+         * the clock but never eases you out of major: if past initial, jump to peak
+         * major (~0.799) instead of resetting to mild initial.
+         * @returns {{ message: string }|null}
+         */
+        tryFoodPoison(body, food, meta = null, rng = null) {
+            const chance = Number(food?.foodPoisonChance ?? meta?.food?.foodPoisonChance ?? 0);
+            if (!(chance > 0) || !body?.addHediff) return null;
+            const roll = typeof rng === "function" ? rng() : Math.random();
+            if (roll >= chance) return null;
+
+            const existing = body.hediff?.("food_poisoning");
+            const INITIAL_MIN = 0.8;
+            const MAJOR_PEAK = INITIAL_MIN - 0.001;
+            let sev = 1;
+            let message = "You have food poisoning.";
+            if (existing) {
+                const cur = Number(existing.severity) || 0;
+                sev = cur >= INITIAL_MIN ? 1 : Math.max(cur, MAJOR_PEAK);
+                message = "Your food poisoning got worse.";
+            }
+            body.addHediff("food_poisoning", sev);
+            return { message };
+        },
+
+        /**
          * Once per game minute on a living owner with anatomy.
          * @param {Object} owner
          * @param {object|Phaser.Scene} ctxOrScene

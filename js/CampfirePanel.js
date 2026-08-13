@@ -45,12 +45,24 @@ class CampfirePanel {
         return this.campfire?.getCatalystMethod() === 'stick_roast';
     }
 
+    _isSmokeHide() {
+        return this.campfire?.getCatalystMethod() === 'smoke_hide';
+    }
+
     /** Roast food slot (stick). */
     _cookSlotOpen() {
         if (!this.campfire) return false;
         if (this._isShellSimmer()) return false;
         if (this.campfire.getCook()) return true;
-        return this._isStickRoast();
+        return this._isStickRoast() || this._isSmokeHide();
+    }
+
+    /** Roast/smoke slot only takes an item with a recipe for the current tool. */
+    _cookAccepts(stack) {
+        if (!stack || !this.campfire) return false;
+        const method = this.campfire.getCatalystMethod();
+        if (!method) return false;
+        return !!getCookRecipe(id => this.scene.getItem(id), stack.id, method);
     }
 
     /** Four simmer ingredient slots (coconut), or leftovers after vessel spoils. */
@@ -101,7 +113,7 @@ class CampfirePanel {
                         if (key.startsWith('simmer:') && !this._simmerSlotsOpen()) return '';
                         const stack = this._stackFor(key);
                         if (!stack) {
-                            if (key === 'cook') return 'Roast';
+                            if (key === 'cook') return this._isSmokeHide() ? 'Smoke' : 'Roast';
                             if (key.startsWith('simmer:')) return 'Ingredient';
                             if (key === 'catalyst') return 'Cooking tool';
                             return 'Fuel';
@@ -400,7 +412,7 @@ class CampfirePanel {
 
         let advancing = true;
         const simmerBar = this._isShellSimmer()
-            || ((this.campfire.entry.cookProgress || 0) > 0 && this.campfire.entry.simmerBarMinutes != null);
+            || ((this.campfire.entry.cookProgress || 0) > 0 && (this.campfire.entry.simmerBarMinutes || 0) > 0);
 
         if (simmerBar) {
             const filled = this.campfire.simmerFilledCount();
@@ -633,8 +645,8 @@ class CampfirePanel {
             }
         }
 
-        const hasCookRecipe = !!(meta?.cook && Object.values(meta.cook).some(r => r?.result));
-        const preferCook = !!(meta?.food || hasCookRecipe);
+        const hasCookRecipe = this._cookAccepts(stack);
+        const preferCook = hasCookRecipe;
 
         if (preferCook && this._cookSlotOpen() && !this.campfire.getCook()) {
             this._depositQty1FromHotbar('cook', hotbarIndex);
@@ -675,7 +687,7 @@ class CampfirePanel {
             return true;
         }
 
-        if (this._cookSlotOpen() && !this.campfire.getCook()) {
+        if (this._cookSlotOpen() && !this.campfire.getCook() && this._cookAccepts(stack)) {
             this._depositQty1FromHotbar('cook', hotbarIndex);
             return true;
         }
@@ -791,6 +803,7 @@ class CampfirePanel {
         const inv = this.scene.player.inventory;
         const stack = inv[hotbarIndex];
         if (!stack) return;
+        if (key === 'cook' && !this._cookAccepts(stack)) return;
 
         const dest = this._stackFor(key);
         if (dest && dest.id === stack.id) return;
@@ -840,7 +853,8 @@ class CampfirePanel {
         if (forInv.customName || forInv.food) return false;
         const meta = this.scene.getItem(forInv.id);
         const left = this.scene.player.gainItem(
-            meta, forInv.quantity, spoilLeftForCharacter(forInv, now)
+            meta, forInv.quantity, spoilLeftForCharacter(forInv, now),
+            { dryProgress: forInv.dryProgress, soakProgress: forInv.soakProgress }
         );
         return left < forInv.quantity && left === 0;
     }
@@ -878,6 +892,8 @@ class CampfirePanel {
                 dest.quantity, dest.spoilAt,
                 moved, spoilAtForWorld(stack, now)
             );
+            mergeDryInto(dest, dest.quantity, moved, stack.dryProgress);
+            mergeSoakInto(dest, dest.quantity, moved, stack.soakProgress);
             dest.quantity += moved;
             stack.quantity -= moved;
             if (stack.quantity <= 0) inv[hotbarIndex] = null;
@@ -924,7 +940,8 @@ class CampfirePanel {
             const amount = Math.min(stack.quantity, want);
             if (!(amount > 0)) return;
             const remaining = this.scene.player.gainItem(
-                meta, amount, spoilLeftForCharacter(stack, now)
+                meta, amount, spoilLeftForCharacter(stack, now),
+                { dryProgress: stack.dryProgress, soakProgress: stack.soakProgress }
             );
             moved = amount - remaining;
             if (moved <= 0) return;
@@ -988,6 +1005,8 @@ class CampfirePanel {
                     moved, spoilLeftForCharacter(stack, now)
                 );
                 delete dest.spoilAt;
+                mergeDryInto(dest, dest.quantity, moved, stack.dryProgress);
+            mergeSoakInto(dest, dest.quantity, moved, stack.soakProgress);
                 dest.quantity += moved;
                 stack.quantity -= moved;
                 if (stack.quantity <= 0) this._setStack(fromKey, null);
@@ -1079,6 +1098,7 @@ class CampfirePanel {
 
         if (toKey === 'cook') {
             if (!this._cookSlotOpen()) return;
+            if (!this._cookAccepts(a)) return;
             if (b && b.id === a.id) return;
             const one = this._oneFromStack(a);
             if (!b) {
@@ -1107,6 +1127,8 @@ class CampfirePanel {
                     b.quantity, b.spoilAt,
                     a.quantity, a.spoilAt
                 );
+                mergeDryInto(b, b.quantity, a.quantity, a.dryProgress);
+                mergeSoakInto(b, b.quantity, a.quantity, a.soakProgress);
                 b.quantity += a.quantity;
                 this._setStack(toKey, b);
                 this._setStack(fromKey, null);

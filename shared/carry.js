@@ -134,6 +134,7 @@
                     continue;
                 }
                 if (isRecipeMetaKey(k)) continue;
+                if (v && typeof v === "object" && v.hideStage) continue;
                 const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
                 sum += weightOf(k) * qty;
             }
@@ -191,6 +192,7 @@
                     continue;
                 }
                 if (isRecipeMetaKey(k)) continue;
+                if (v && typeof v === "object" && v.hideStage) continue;
                 const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
                 sum += fuelKjOf(k) * qty;
             }

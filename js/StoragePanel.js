@@ -601,7 +601,8 @@ class StoragePanel {
         if (forInv.customName || forInv.food) return false;
         const meta = this.scene.getItem(forInv.id);
         const left = this.scene.player.gainItem(
-            meta, forInv.quantity, spoilLeftForCharacter(forInv, now)
+            meta, forInv.quantity, spoilLeftForCharacter(forInv, now),
+            { dryProgress: forInv.dryProgress, soakProgress: forInv.soakProgress }
         );
         return left < forInv.quantity && left === 0;
     }
@@ -644,6 +645,8 @@ class StoragePanel {
                 dest.quantity, dest.spoilAt,
                 moved, spoilAtForWorld(stack, now)
             );
+            mergeDryInto(dest, dest.quantity, moved, stack.dryProgress);
+            mergeSoakInto(dest, dest.quantity, moved, stack.soakProgress);
             dest.quantity += moved;
             stack.quantity -= moved;
             if (stack.quantity <= 0) inv[hotbarIndex] = null;
@@ -685,7 +688,8 @@ class StoragePanel {
             const amount = Math.min(stack.quantity, want);
             if (!(amount > 0)) return;
             const remaining = this.scene.player.gainItem(
-                meta, amount, spoilLeftForCharacter(stack, now)
+                meta, amount, spoilLeftForCharacter(stack, now),
+                { dryProgress: stack.dryProgress, soakProgress: stack.soakProgress }
             );
             moved = amount - remaining;
             if (moved <= 0) return;
@@ -749,6 +753,8 @@ class StoragePanel {
                     moved, spoilLeftForCharacter(stack, now)
                 );
                 delete dest.spoilAt;
+                mergeDryInto(dest, dest.quantity, moved, stack.dryProgress);
+                mergeSoakInto(dest, dest.quantity, moved, stack.soakProgress);
                 dest.quantity += moved;
                 stack.quantity -= moved;
                 if (stack.quantity <= 0) this._setStack(fromKey, null);
@@ -786,6 +792,8 @@ class StoragePanel {
             } else {
                 const moved = Math.min(space, a.quantity);
                 b.spoilAt = mergeSpoilAt(b.quantity, b.spoilAt, moved, a.spoilAt);
+                mergeDryInto(b, b.quantity, moved, a.dryProgress);
+                mergeSoakInto(b, b.quantity, moved, a.soakProgress);
                 b.quantity += moved;
                 a.quantity -= moved;
                 this._setStack(toKey, b);

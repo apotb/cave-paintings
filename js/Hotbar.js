@@ -363,6 +363,8 @@ class Hotbar {
                                         moved, a.spoilLeft
                                     );
                                     delete b.spoilAt;
+                                    mergeDryInto(b, b.quantity, moved, a.dryProgress);
+                                    mergeSoakInto(b, b.quantity, moved, a.soakProgress);
                                     b.quantity += moved;
                                     a.quantity -= moved;
                                     if (a.quantity <= 0) inv[from] = null;

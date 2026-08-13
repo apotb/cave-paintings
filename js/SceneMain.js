@@ -456,6 +456,7 @@ class SceneMain extends SceneBase {
                 this.player._refreshDownedState?.();
             } catch (_) {}
         }
+        this._netApplyYouVomit(you);
         // Dedicated: server prone flag (immobile / pain shock / unconscious)
         if (this.player && typeof you.prone === "boolean") {
             setCreatureProne(
@@ -751,6 +752,7 @@ class SceneMain extends SceneBase {
                 this.player._malnutritionFed =
                     (Number(this.player.kc) > 0) || (Number(this.player.saturation) > 0);
             }
+            this.tickSoakDrops();
             this.tickSpoilage();
             this.tickCorpseDecay();
             // Dedicated MP: campfire burn/cook is server-authored (events + snapshots).
@@ -879,6 +881,8 @@ class SceneMain extends SceneBase {
         assign("fillTint", d.fillTint);
         assign("durability", d.durability);
         assign("dryProgress", d.dryProgress);
+        assign("soakProgress", d.soakProgress);
+        assign("soakDoneAt", d.soakDoneAt);
         if (d.ingredients) {
             entry.ingredients = Array.isArray(d.ingredients)
                 ? d.ingredients.slice()
@@ -904,6 +908,9 @@ class SceneMain extends SceneBase {
         spr.kind = e.kind;
         spr.fillTint = e.fillTint;
         spr.durability = e.durability;
+        spr.dryProgress = e.dryProgress;
+        spr.soakProgress = e.soakProgress;
+        spr.soakDoneAt = e.soakDoneAt;
         spr.ingredients = e.ingredients;
         spr.stackWeight = e.weight;
         if (e.food) spr.food = { ...e.food };
@@ -1428,6 +1435,9 @@ class SceneMain extends SceneBase {
                 color: ev.color || null
             });
         }
+        if (ev.kind === "vomit") {
+            this._netApplyVomitEvent(ev);
+        }
         if (ev.kind === "bleed") {
             this._netApplyBleedFx(ev);
         }
@@ -1460,6 +1470,46 @@ class SceneMain extends SceneBase {
         if (ev.kind === "thing_set") {
             this._netApplyThingSet(ev);
         }
+    }
+
+    /**
+     * Dedicated MP: server cues vomit lock + spray. Each client paints local stains.
+     */
+    _netApplyVomitEvent(ev) {
+        if (!ev || !this.net?.connected || this.net.isLocal) return;
+        const selfId = this._netPlayerId || this.net?.playerId;
+        if (ev.playerId === selfId && !ev.drip) {
+            const remaining = Number(ev.remainingMs);
+            this.player?.startVomit?.({
+                remainingMs: remaining > 0 ? remaining : undefined,
+                fromServer: true,
+                silentLog: true
+            });
+        }
+        const x = Number(ev.x);
+        const y = Number(ev.y);
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+            this.spawnVomitStain?.(x, y, { facing: ev.facing || "down" });
+        }
+    }
+
+    _netApplyYouVomit(you) {
+        if (!you || !this.player || !this.net?.connected || this.net.isLocal) return;
+        const remaining = Number(you.vomit?.remainingMs);
+        if (remaining > 0) {
+            if (!this.player.isVomiting?.()) {
+                this.player.startVomit?.({
+                    remainingMs: remaining,
+                    fromServer: true,
+                    silentLog: true
+                });
+            } else if (this.player._vomit) {
+                this.player._vomit.fromServer = true;
+                this.player._vomit.remainingMs = remaining;
+            }
+            return;
+        }
+        if (this.player._vomit?.fromServer) this.player._vomit = null;
     }
 
     /**
@@ -1984,16 +2034,17 @@ class SceneMain extends SceneBase {
                 simmer: src.simmer || [null, null, null, null],
                 cookProgress: src.cookProgress || 0,
                 burnRemaining: src.burnRemaining || 0,
-                roastBarMinutes: src.roastBarMinutes || 0,
-                simmerBarMinutes: src.simmerBarMinutes || 0
+                roastBarMinutes: src.roastBarMinutes || 0
             };
+            if ((src.simmerBarMinutes || 0) > 0) entry.simmerBarMinutes = src.simmerBarMinutes;
             chunk.meta.things.push(entry);
         } else if (progressOnly) {
             if (src.id) entry.id = src.id;
             if (src.cookProgress != null) entry.cookProgress = src.cookProgress;
             if (src.burnRemaining != null) entry.burnRemaining = src.burnRemaining;
             if (src.roastBarMinutes != null) entry.roastBarMinutes = src.roastBarMinutes;
-            if (src.simmerBarMinutes != null) entry.simmerBarMinutes = src.simmerBarMinutes;
+            if ((src.simmerBarMinutes || 0) > 0) entry.simmerBarMinutes = src.simmerBarMinutes;
+            else delete entry.simmerBarMinutes;
             if (Number.isFinite(incomingRev)) entry.rev = Math.max(curRev || 0, incomingRev);
             this._netSyncCampfireSprite(chunk, entry, src.id || entry.id, x, y);
             this.campfirePanel?.refreshCookBar?.();
@@ -2012,7 +2063,7 @@ class SceneMain extends SceneBase {
             if (src.burnRemaining != null) entry.burnRemaining = src.burnRemaining;
             if (src.roastBarMinutes != null) entry.roastBarMinutes = src.roastBarMinutes;
             else delete entry.roastBarMinutes;
-            if (src.simmerBarMinutes != null) entry.simmerBarMinutes = src.simmerBarMinutes;
+            if ((src.simmerBarMinutes || 0) > 0) entry.simmerBarMinutes = src.simmerBarMinutes;
             else delete entry.simmerBarMinutes;
         }
         this._netSyncCampfireSprite(chunk, entry, src.id || entry.id, x, y);
@@ -2050,6 +2101,7 @@ class SceneMain extends SceneBase {
             if (id && typeof live.setKind === "function" && live.meta?.id !== id) {
                 live.setKind(id);
             }
+            live.applySmokeVisual?.();
             this._netDedupeCampfireSprites(entry, x, y, live);
             return;
         }
@@ -4513,6 +4565,57 @@ class SceneMain extends SceneBase {
         return this.worldToTile(Number(drop.x) + w * 0.5, Number(drop.y) - 1);
     }
 
+    /** True when a ground drop (sprite or meta entry) sits on a water tile. */
+    _dropIsOnWater(drop) {
+        if (!drop) return false;
+        if (typeof Hide !== "undefined") {
+            const pt = Hide.dropSamplePoint(
+                drop.x ?? drop.entry?.x,
+                drop.y ?? drop.entry?.y,
+                this.tileSize
+            );
+            if (this._isWaterAt(pt.x, pt.y)) return true;
+        }
+        const t = drop.getBounds ? this._dropVisualTile(drop) : null;
+        if (!t) return false;
+        const c = this.tileCenter(t.tx, t.ty);
+        return this._isWaterAt(c.x, c.y - 1);
+    }
+
+    tickSoakDrops() {
+        if (typeof Hide === "undefined") return;
+        // Dedicated MP: soak conversion is server-authored (snapshots).
+        if (this.isNet && this.net?.connected && !this.net.isLocal) return;
+        const now = this.worldMinuteIndex();
+        const getItem = (id) => this.getItem(id);
+        const liveDrops = this.droppedItems?.getChildren?.() || [];
+        for (const chunk of Object.values(this.chunks || {})) {
+            const drops = chunk.meta?.drops;
+            if (!Array.isArray(drops)) continue;
+            for (const entry of drops) {
+                if (!entry) continue;
+                const live = liveDrops.find((d) => d.active && d.entry === entry);
+                const onWater = this._dropIsOnWater(live || entry);
+                const prevId = entry.id;
+                const { converted } = Hide.tickSoakDrop(entry, now, getItem, onWater);
+                if (live) {
+                    live.soakProgress = entry.soakProgress;
+                    live.soakDoneAt = entry.soakDoneAt;
+                    if (converted && entry.id !== prevId) {
+                        const meta = getItem(entry.id);
+                        if (meta) {
+                            live.item = meta;
+                            const iconKey = meta.key || entry.id;
+                            if (iconKey && this.textures.exists(iconKey)) live.setTexture(iconKey);
+                        }
+                    }
+                    live.syncToEntry?.();
+                }
+            }
+        }
+        if (this.tooltip?.visible) this.refreshTooltip();
+    }
+
     _pickDropNearAim(drops, aim, itemId) {
         const list = drops.filter(d => d.item?.id === itemId);
         if (!list.length) return null;
@@ -4803,6 +4906,7 @@ class SceneMain extends SceneBase {
         this.updateTimeTint();
 
         this.player.hungerTick();
+        this.tickSoakDrops();
         this.tickSpoilage();
         this.tickCorpseDecay();
         this.tickCampfires();
@@ -5343,8 +5447,13 @@ class SceneMain extends SceneBase {
             if (Array.isArray(drops)) {
                 for (const entry of drops) {
                     if (!entry) continue;
-                    migrateToSpoilAt(entry, now, getItem);
                     const live = liveDrops.find((d) => d.active && d.entry === entry);
+                    const onWater = this._dropIsOnWater(live || entry);
+                    const def = getItem(entry.id);
+                    if (typeof Hide !== "undefined" && Hide.pausesDropDespawn(entry, def, onWater)) {
+                        continue;
+                    }
+                    migrateToSpoilAt(entry, now, getItem);
                     if (live) {
                         if (entry.spoilAt != null) live.spoilAt = entry.spoilAt;
                         else delete live.spoilAt;
@@ -5523,7 +5632,8 @@ class SceneMain extends SceneBase {
         if (!stacks) return;
         for (const stack of stacks) {
             if (!stack?.id) continue;
-            if (stack.id === "wood_spear") stack.id = "wooden_spear";
+            if (typeof Hide !== "undefined") Hide.migrateStackItemId?.(stack);
+            else if (stack.id === "wood_spear") stack.id = "wooden_spear";
         }
     }
 
@@ -5682,7 +5792,7 @@ class SceneMain extends SceneBase {
             lines.push("Click a corpse to skin it for more resources");
         }
         if (stack?.toolClass === "scraper") {
-            lines.push("Click a drying rack with a hide on it");
+            lines.push("Click a drying rack to scrape a hide");
         }
         if (stack?.toolClass === "awl") {
             lines.push("Use with Skinworking Bench");
@@ -5693,7 +5803,21 @@ class SceneMain extends SceneBase {
 
         // Static tooltips only when not a custom-named meal
         if (!stack?.customName && Array.isArray(item.tooltip)) {
-            for (const line of item.tooltip) lines.push(line);
+            const dryPct = (typeof Hide !== "undefined" && Hide.isFleshedHide(item))
+                ? Hide.dryPercent(stack)
+                : null;
+            const soakPct = (typeof Hide !== "undefined" && Hide.isFleshedHide(item) && stack)
+                ? Hide.soakPercent(stack, this.worldMinuteIndex?.() ?? null)
+                : null;
+            for (const line of item.tooltip) {
+                if (dryPct != null && dryPct > 0 && /dry/i.test(String(line))) {
+                    lines.push(`${line} (${dryPct}% dry)`);
+                } else if (soakPct != null && soakPct > 0 && /water/i.test(String(line))) {
+                    lines.push(`${line} (${soakPct}% soaked)`);
+                } else {
+                    lines.push(line);
+                }
+            }
         }
 
         // Equipment
@@ -6129,10 +6253,11 @@ class SceneMain extends SceneBase {
                     ingredients.push({
                         id: k,
                         qty: +v.qty || 1,
-                        toolClass: v.toolClass || null
+                        toolClass: v.toolClass || null,
+                        hideStage: v.hideStage ? String(v.hideStage) : null
                     });
                 } else {
-                    ingredients.push({ id: k, qty: +v || 1, toolClass: null });
+                    ingredients.push({ id: k, qty: +v || 1, toolClass: null, hideStage: null });
                 }
             }
             const iconKey = (typeof Place !== "undefined" && Place.itemIconKey)
@@ -6152,8 +6277,13 @@ class SceneMain extends SceneBase {
         });
     }
 
-    /** Display name for a craft ingredient (supports knapped tip requirements). */
+    /** Display name for a craft ingredient (supports knapped tip / any-hide requirements). */
     _craftIngredientLabel(ingredient) {
+        if (ingredient.hideStage) {
+            const stage = String(ingredient.hideStage);
+            const label = stage.charAt(0).toUpperCase() + stage.slice(1);
+            return `Any ${label} Hide`;
+        }
         if (ingredient.toolClass === "spear_tip") {
             if (ingredient.id === "flint_tool") return "Flint Spear Tip";
             if (ingredient.id === "stone_tool") return "Stone Spear Tip";
@@ -6399,7 +6529,7 @@ class SceneMain extends SceneBase {
             "Shift+Q — Drop stack",
             "Ctrl+Q — Drop 10",
             "F — Pick up dropped items",
-            "1-0 — Hotbar slots",
+            "1-9 — Hotbar slots",
             "C — Crafting",
             "E — Equipment",
             "H — Health",

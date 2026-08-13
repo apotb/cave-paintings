@@ -261,6 +261,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
             return [
                 { id: "raw_venison", min: 2, max: 4 },
                 { id: "deer_hide", min: 1, max: 1 },
+                { id: "brain", min: 1, max: 1 },
                 { id: "bone", min: 2, max: 4 }
             ];
         }
@@ -295,6 +296,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
                 const add = Math.min(qty, maxStack - slot.quantity);
                 const freshAt = defaultSpoilAt(item, this.scene.worldMinuteIndex?.());
                 slot.spoilAt = mergeSpoilAt(slot.quantity, slot.spoilAt, add, freshAt);
+                mergeDryInto(slot, slot.quantity, add, 0);
                 slot.quantity += add;
                 qty -= add;
                 gained.push({ id: item.id, quantity: add });

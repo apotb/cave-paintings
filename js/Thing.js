@@ -275,11 +275,13 @@ class Campfire extends Thing {
             this.scene.campfirePanel?.toggle(this);
         });
         this.on('destroy', () => {
+            this._destroySmokeVisual();
             if (this.scene.campfirePanel?.campfire === this) {
                 this.scene.campfirePanel.close();
             }
             this.scene.markLightDirty?.();
         });
+        this.applySmokeVisual();
     }
 
     isLit() {
@@ -325,6 +327,7 @@ class Campfire extends Thing {
         this.meta = def;
         this.applyVisual();
         this.setup(def.hitboxSize);
+        this.applySmokeVisual();
         if (!this.input?.enabled) this.setInteractive({ cursor: 'pointer' });
         if (!this.isLit()) this.entry.burnRemaining = 0;
         scene.markLightDirty?.();
@@ -421,6 +424,7 @@ class Campfire extends Thing {
         this.entry.cook = stack;
         if (!stack || stack.id !== prevId) this.entry.cookProgress = 0;
         this.scene.campfirePanel?.refresh();
+        this.applySmokeVisual();
         if (this.scene.tooltip?.visible && this.scene._tooltipTarget === this) {
             this.scene.refreshTooltip();
         }
@@ -441,6 +445,7 @@ class Campfire extends Thing {
         }
         this.scene.campfirePanel?.refresh();
         this.scene.campfirePanel?.layout?.();
+        this.applySmokeVisual();
         if (this.scene.tooltip?.visible && this.scene._tooltipTarget === this) {
             this.scene.refreshTooltip();
         }
@@ -488,23 +493,29 @@ class Campfire extends Thing {
         // Keep ticking simmer while vessel is valid, slots still hold leftovers, or progress is draining
         const simmerActive = method === "shell_simmer"
             || this.hasSimmerContents()
-            || ((this.entry.cookProgress || 0) > 0 && this.entry.simmerBarMinutes != null);
+            || ((this.entry.cookProgress || 0) > 0 && (this.entry.simmerBarMinutes || 0) > 0);
         if (simmerActive) {
             this._tickShellSimmer(lit);
             return;
         }
 
         const cook = this.entry.cook;
-        if (!cook) return;
+        if (!cook) {
+            this.applySmokeVisual();
+            return;
+        }
 
         const recipe = method
             ? getCookRecipe(id => this.scene.getItem(id), cook.id, method)
             : null;
-        const canAdvance = !!(lit && attending && method && recipe);
+        const smoke = method === "smoke_hide";
+        const canAdvance = smoke
+            ? !!(lit && method && recipe)
+            : !!(lit && attending && method && recipe);
 
         if (!canAdvance) {
-            // Drain when the fire is out (walking away only pauses)
-            if ((this.entry.cookProgress || 0) > 0 && !lit) {
+            // Stick-roast drains when the fire is out; smoke pauses.
+            if (!smoke && (this.entry.cookProgress || 0) > 0 && !lit) {
                 this.entry.cookProgress -= 1;
                 if (this.entry.cookProgress <= 0) {
                     this.entry.cookProgress = 0;
@@ -516,12 +527,13 @@ class Campfire extends Thing {
             } else {
                 this.scene.campfirePanel?.refreshCookBar?.();
             }
+            this.applySmokeVisual();
             return;
         }
 
         this.entry.roastBarMinutes = recipe.minutes;
         this.entry.cookProgress = (this.entry.cookProgress || 0) + 1;
-        this._wearRoastCatalyst();
+        if (!smoke) this._wearRoastCatalyst();
         if (this.entry.cookProgress >= recipe.minutes) {
             const resultMeta = this.scene.getItem(recipe.result);
             delete this.entry.roastBarMinutes;
@@ -531,9 +543,11 @@ class Campfire extends Thing {
                 this.entry.cookProgress = 0;
                 this.scene.campfirePanel?.refresh();
             }
+            this.applySmokeVisual();
             return;
         }
         this.scene.campfirePanel?.refresh();
+        this.applySmokeVisual();
     }
 
     _wearRoastCatalyst() {
@@ -553,6 +567,66 @@ class Campfire extends Thing {
         this.scene.combatLog?.push(Durability.breakMessage(name, false));
         this.scene.campfirePanel?.refresh?.();
         if (this.scene.hotbar) this.scene.hotbar.dirty = true;
+    }
+
+    applySmokeVisual() {
+        const method = this.getCatalystMethod();
+        const hangKey = "drying_rack_hanging";
+        if (method === "smoke_hide" && this.scene.textures.exists(hangKey)) {
+            if (!this._smokeRackSpr || this._smokeRackKey !== hangKey) {
+                this._smokeRackSpr?.destroy();
+                this._smokeRackSpr = this.scene.add.image(this.x, this.y, hangKey);
+                this._smokeRackKey = hangKey;
+                this.scene.mainLayer?.add(this._smokeRackSpr);
+            }
+            this._smokeRackSpr.setOrigin(0.5, 1);
+            this._smokeRackSpr.setPosition(this.x, this.y);
+            this._smokeRackSpr.setDepth(this.y + 0.4);
+            this._smokeRackSpr.setVisible(true);
+        } else {
+            this._destroySmokeRack();
+        }
+
+        const cook = this.getCook();
+        const hideMeta = cook ? this.scene.getItem(cook.id) : null;
+        const hideTex = hideMeta?.key || cook?.id;
+        if (method === "smoke_hide" && cook && hideTex && this.scene.textures.exists(hideTex)) {
+            if (!this._smokeHideSpr || this._smokeHideKey !== hideTex) {
+                this._smokeHideSpr?.destroy();
+                this._smokeHideSpr = this.scene.add.image(this.x, this.y, hideTex);
+                this._smokeHideKey = hideTex;
+                this.scene.mainLayer?.add(this._smokeHideSpr);
+            }
+            this._smokeHideSpr.setOrigin(0.5, 0);
+            this._smokeHideSpr.setScale(0.5);
+            const rodY = this.y - (this.height || 16) + 6;
+            this._smokeHideSpr.setPosition(this.x, rodY);
+            this._smokeHideSpr.setDepth(this.y + 0.5);
+            this._smokeHideSpr.setVisible(true);
+        } else {
+            this._destroySmokeHide();
+        }
+    }
+
+    _destroySmokeRack() {
+        if (this._smokeRackSpr) {
+            this._smokeRackSpr.destroy();
+            this._smokeRackSpr = null;
+        }
+        this._smokeRackKey = null;
+    }
+
+    _destroySmokeHide() {
+        if (this._smokeHideSpr) {
+            this._smokeHideSpr.destroy();
+            this._smokeHideSpr = null;
+        }
+        this._smokeHideKey = null;
+    }
+
+    _destroySmokeVisual() {
+        this._destroySmokeRack();
+        this._destroySmokeHide();
     }
 
     isRoastAdvancing() {
@@ -760,6 +834,7 @@ class DryingRack extends Storage {
 
     onInteract(_pointer) {
         if (this.scene.player?.beginFlesh?.(this)) return true;
+        if (this.scene.player?.beginBrain?.(this)) return true;
         if (this.scene.storagePanel?.tryHangHeldHide?.(this)) return true;
         return false;
     }

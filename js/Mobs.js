@@ -630,7 +630,10 @@ class DroppedItem extends Mob {
                 knapQuality: stackExtras?.knapQuality,
                 tooltipExtra: stackExtras?.tooltipExtra,
                 knapIconData: stackExtras?.knapIconData,
-                durability: stackExtras?.durability
+                durability: stackExtras?.durability,
+                dryProgress: stackExtras?.dryProgress,
+                soakProgress: stackExtras?.soakProgress,
+                soakDoneAt: stackExtras?.soakDoneAt
             });
             return null;
         }
@@ -642,13 +645,20 @@ class DroppedItem extends Mob {
         let remaining = quantity;
         let last = null;
 
-        const canMerge = !stackExtras?.customName
-            && !stackExtras?.food
-            && !stackExtras?.ingredients?.length
-            && !stackExtras?.toolClass
-            && stackExtras?.knapDamage == null
-            && !stackExtras?.knapQuality
-            && stackExtras?.durability == null;
+        const soakStamp = stackExtras ? { ...stackExtras } : {};
+        const nowMin = scene.worldMinuteIndex?.() ?? null;
+        if (typeof Hide !== "undefined" && Hide.isFleshedHide(item) && scene._isWaterAt) {
+            const pt = Hide.dropSamplePoint(x, y, scene.tileSize);
+            if (scene._isWaterAt(pt.x, pt.y)) Hide.beginSoak(soakStamp, nowMin);
+        }
+
+        const canMerge = !soakStamp?.customName
+            && !soakStamp?.food
+            && !soakStamp?.ingredients?.length
+            && !soakStamp?.toolClass
+            && soakStamp?.knapDamage == null
+            && !soakStamp?.knapQuality
+            && soakStamp?.durability == null;
 
         if (canMerge && !noMerge) {
             const nearby = scene.droppedItems.getChildren()
@@ -657,6 +667,7 @@ class DroppedItem extends Mob {
                     && !drop.toolClass                     && drop.knapDamage == null
                     && !drop.knapQuality
                     && drop.durability == null
+                    && !(typeof Hide !== "undefined" && Hide.soakMergeBlocked(drop, soakStamp))
                     && drop.quantity < maxStack)
                 .map(drop => ({
                     drop,
@@ -673,8 +684,17 @@ class DroppedItem extends Mob {
                     drop.quantity, drop.spoilAt,
                     add, incomingSpoil
                 );
+                mergeDryInto(drop, drop.quantity, add, soakStamp?.dryProgress);
+                if (typeof Hide !== "undefined") {
+                    Hide.applyMergedSoakProgress(drop, drop.quantity, add, soakStamp?.soakProgress);
+                    const mergedDone = Hide.mergeSoakDoneAt(
+                        drop.quantity, drop.soakDoneAt, add, soakStamp?.soakDoneAt
+                    );
+                    if (mergedDone != null) drop.soakDoneAt = mergedDone;
+                    else delete drop.soakDoneAt;
+                }
                 drop.quantity += add;
-                // Merged stacks refresh despawn timer
+                // Merged stacks refresh despawn timer (soaking piles skip lifeMs in update)
                 drop.lifeMs = DROP_LIFE_MS;
                 drop.syncToEntry();
                 remaining -= add;
@@ -690,7 +710,11 @@ class DroppedItem extends Mob {
             if (!chunk) break;
             if (!chunk.meta.drops) chunk.meta.drops = [];
 
-            const entry = DroppedItem.makeEntry(item, x, y, add, incomingSpoil, stackExtras);
+            const entry = DroppedItem.makeEntry(item, x, y, add, incomingSpoil, soakStamp);
+            if (typeof Hide !== "undefined" && Hide.isFleshedHide(item) && scene._isWaterAt) {
+                const pt = Hide.dropSamplePoint(x, y, scene.tileSize);
+                if (scene._isWaterAt(pt.x, pt.y)) Hide.beginSoak(entry, nowMin);
+            }
             chunk.meta.drops.push(entry);
 
             if (chunk.isLoaded) {
@@ -728,6 +752,8 @@ class DroppedItem extends Mob {
         if (stackExtras?.knapQuality) entry.knapQuality = stackExtras.knapQuality;
         if (stackExtras?.durability != null) entry.durability = stackExtras.durability;
         if (stackExtras?.dryProgress != null) entry.dryProgress = stackExtras.dryProgress;
+        if (stackExtras?.soakProgress != null) entry.soakProgress = stackExtras.soakProgress;
+        if (stackExtras?.soakDoneAt != null) entry.soakDoneAt = stackExtras.soakDoneAt;
         return entry;
     }
 
@@ -737,6 +763,7 @@ class DroppedItem extends Mob {
      * @param {Chunk} chunk
      */
     constructor(scene, entry, chunk) {
+        if (typeof Hide !== "undefined") Hide.migrateStackItemId?.(entry);
         const item = scene.getItem(entry.id);
         const isMeal = !!(entry.ingredients?.length);
         const texKey = isMeal ? COCONUT_SHELL_KEY : dropIconKey(scene, item, entry);
@@ -766,6 +793,8 @@ class DroppedItem extends Mob {
         if (entry.knapQuality) this.knapQuality = entry.knapQuality;
         if (entry.durability != null) this.durability = entry.durability;
         if (entry.dryProgress != null) this.dryProgress = entry.dryProgress;
+        if (entry.soakProgress != null) this.soakProgress = entry.soakProgress;
+        if (entry.soakDoneAt != null) this.soakDoneAt = entry.soakDoneAt;
 
         // Knapped silhouette on the ground drop
         if (this.knapIconData && typeof Knapping !== "undefined") {
@@ -863,6 +892,10 @@ class DroppedItem extends Mob {
         else delete this.entry.durability;
         if (this.dryProgress != null) this.entry.dryProgress = this.dryProgress;
         else delete this.entry.dryProgress;
+        if (this.soakProgress != null) this.entry.soakProgress = this.soakProgress;
+        else delete this.entry.soakProgress;
+        if (this.soakDoneAt != null) this.entry.soakDoneAt = this.soakDoneAt;
+        else delete this.entry.soakDoneAt;
     }
 
     _removeEntry() {
@@ -908,13 +941,39 @@ class DroppedItem extends Mob {
         }
         const speed = Number(this.scene.tickSpeed);
         const scale = Number.isFinite(speed) ? Math.max(0, speed) : 1;
-        this.lifeMs -= delta * scale;
-        if (this.lifeMs <= 0) {
-            this.destroy();
-            return;
+        const onWater = this.scene._dropIsOnWater?.(this);
+        const pauseDespawn = typeof Hide !== "undefined"
+            && Hide.pausesDropDespawn(this.entry || this, this.item, onWater);
+        if (!pauseDespawn) {
+            this.lifeMs -= delta * scale;
+            if (this.lifeMs <= 0) {
+                this.destroy();
+                return;
+            }
         }
         this.reassignChunkIfNeeded();
         if (!this.active) return;
+        if (typeof Hide !== "undefined" && this.entry) {
+            const now = this.scene.worldMinuteIndex?.() ?? null;
+            const prevId = this.entry.id;
+            const water = this.scene._dropIsOnWater?.(this);
+            const { converted } = Hide.tickSoakDrop(
+                this.entry,
+                now,
+                (id) => this.scene.getItem(id),
+                water
+            );
+            this.soakProgress = this.entry.soakProgress;
+            this.soakDoneAt = this.entry.soakDoneAt;
+            if (converted && this.entry.id !== prevId) {
+                const meta = this.scene.getItem(this.entry.id);
+                if (meta) {
+                    this.item = meta;
+                    const iconKey = meta.key || this.entry.id;
+                    if (iconKey && this.scene.textures.exists(iconKey)) this.setTexture(iconKey);
+                }
+            }
+        }
         this.syncToEntry();
     }
 
@@ -961,8 +1020,11 @@ class DroppedItem extends Mob {
                 ...(this.knapIconData ? { knapIconData: this.knapIconData } : {}),
                 ...(this.knapQuality ? { knapQuality: this.knapQuality } : {}),
                 ...(this.durability != null ? { durability: this.durability } : {}),
-                ...(this.dryProgress != null ? { dryProgress: this.dryProgress } : {})
+                ...(this.dryProgress != null ? { dryProgress: this.dryProgress } : {}),
+                ...(this.soakProgress != null ? { soakProgress: this.soakProgress } : {}),
+                ...(this.soakDoneAt != null ? { soakDoneAt: this.soakDoneAt } : {})
             };
+            if (typeof Hide !== "undefined") Hide.pickupSoak(stack, now);
             const inv = player.inventory;
             const empty = inv.findIndex(s => !s);
             if (empty !== -1) {
@@ -986,7 +1048,17 @@ class DroppedItem extends Mob {
             { spoilAt: this.spoilAt, spoilLeft: this.spoilLeft },
             now
         );
-        const remaining = player.gainItem(this.item, this.quantity, spoilLeft);
+        const remaining = player.gainItem(this.item, this.quantity, spoilLeft, {
+            dryProgress: this.dryProgress,
+            soakProgress: (() => {
+                const pickup = {
+                    soakProgress: this.soakProgress,
+                    soakDoneAt: this.soakDoneAt
+                };
+                if (typeof Hide !== "undefined") Hide.pickupSoak(pickup, now);
+                return pickup.soakProgress;
+            })()
+        });
         if (remaining === before) return false;
         this.scene.hotbar.dirty = true;
         if (remaining === 0) this.destroy();
@@ -998,11 +1070,7 @@ class DroppedItem extends Mob {
     }
 
     tooltip(pointer) {
-        // Match hotbar: tipped spears carry knapQuality without toolClass.
-        const stackProxy = (typeof hasStackExtras === "function" ? hasStackExtras(this) : (
-            this.customName || this.food || this.ingredients || this.toolClass
-            || this.knapQuality || this.knapDamage != null || this.knapIconData
-        )) ? {
+        const stackProxy = {
             customName: this.customName,
             food: this.food,
             ingredients: this.ingredients,
@@ -1018,13 +1086,28 @@ class DroppedItem extends Mob {
             knapQuality: this.knapQuality,
             durability: this.durability,
             dryProgress: this.dryProgress,
+            soakProgress: this.soakProgress ?? this.entry?.soakProgress,
+            soakDoneAt: this.soakDoneAt ?? this.entry?.soakDoneAt,
             spoilAt: this.spoilAt,
             spoilLeft: this.spoilLeft
-        } : null;
+        };
         this.scene.showTooltip(
-            () => this.scene.formatItemTooltip(
-                this.item, this.quantity, this.spoilAt, stackProxy
-            ),
+            () => {
+                let text = this.scene.formatItemTooltip(
+                    this.item, this.quantity, this.spoilAt, stackProxy
+                ) || "";
+                if (typeof Hide === "undefined") return text;
+                const onWater = this.scene._dropIsOnWater?.(this);
+                if (!onWater) return text;
+                if (Hide.isFleshedHide(this.item) && Hide.pausesDropDespawn(this.entry || this, this.item, true)) {
+                    const line = "Soaking (won't despawn)";
+                    text = text ? `${text}\n${line}` : line;
+                } else if (Hide.isSoakedHide(this.item)) {
+                    const line = "Soaked (won't despawn)";
+                    text = text ? `${text}\n${line}` : line;
+                }
+                return text;
+            },
             pointer.x,
             pointer.y,
             this

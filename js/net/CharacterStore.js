@@ -75,7 +75,8 @@ const CharacterStore = (() => {
             mhp: 100,
             body: null,
             look: defaultLook(),
-            favorite: false
+            favorite: false,
+            lastPlayedAt: 0
         };
     }
 
@@ -200,6 +201,7 @@ const CharacterStore = (() => {
 
     function stripWorldSpoil(stack) {
         if (!stack || typeof stack !== "object") return;
+        if (typeof Hide !== "undefined") Hide.migrateStackItemId?.(stack);
         // Prefer remaining timer; drop absolute world clocks from character saves.
         if (stack.spoilLeft != null) {
             delete stack.spoilAt;
@@ -264,6 +266,7 @@ const CharacterStore = (() => {
         if (you.look) next.look = normalizeLook(you.look);
         else next.look = normalizeLook(next.look);
         next.updatedAt = Date.now();
+        next.lastPlayedAt = next.updatedAt;
         normalizeCharacterSpoil(next);
         return next;
     }
@@ -298,13 +301,14 @@ const CharacterStore = (() => {
             mhp: raw.mhp ?? c.mhp,
             body: raw.body ? clone(raw.body) : null,
             look: normalizeLook(raw.look),
-            favorite: !!raw.favorite
+            favorite: !!raw.favorite,
+            lastPlayedAt: Math.max(0, Number(raw.lastPlayedAt) || 0)
         });
         // Always new id on import so we don't clobber an existing char
         c.id = uuid();
         c.createdAt = Date.now();
         c.updatedAt = c.createdAt;
-        return c;
+        return normalizeCharacterSpoil(c);
     }
 
     function download(character) {

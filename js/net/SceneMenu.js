@@ -445,7 +445,7 @@ class SceneMenu extends Phaser.Scene {
 
     _formatLastPlayed(ts) {
         const n = Number(ts);
-        if (!Number.isFinite(n) || n <= 0) return "Never";
+        if (!Number.isFinite(n) || n <= 0) return "Never played";
         const ago = Date.now() - n;
         if (ago < 60_000) return "just now";
         try {
@@ -459,6 +459,21 @@ class SceneMenu extends Phaser.Scene {
         } catch {
             return new Date(n).toLocaleString();
         }
+    }
+
+    _lastPlayedTs(row) {
+        if (row && Object.prototype.hasOwnProperty.call(row, "lastPlayedAt")) {
+            const n = Number(row.lastPlayedAt);
+            return Number.isFinite(n) && n > 0 ? n : 0;
+        }
+        const n = Number(row?.updatedAt);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+    }
+
+    _lastPlayedLabel(row) {
+        const ts = this._lastPlayedTs(row);
+        if (!ts) return "Never played";
+        return `Last played ${this._formatLastPlayed(ts)}`;
     }
 
     _formatWorldClock(clock) {
@@ -1104,7 +1119,7 @@ class SceneMenu extends Phaser.Scene {
                 iconNode: spr,
                 title: c.name || "Player",
                 lines: [
-                    `Last played ${this._formatLastPlayed(c.updatedAt)}`
+                    this._lastPlayedLabel(c)
                 ],
                 onActivate: activate,
                 onRename: () => {
@@ -1527,7 +1542,7 @@ class SceneMenu extends Phaser.Scene {
                     return [
                         clock.day,
                         clock.time,
-                        `Last played ${this._formatLastPlayed(world.updatedAt)}`
+                        this._lastPlayedLabel(world)
                     ];
                 })(),
                 onActivate: () => this._startSingleplayer(world),
@@ -1538,6 +1553,15 @@ class SceneMenu extends Phaser.Scene {
                         currentName: world.name || "World",
                         maxLen: 32
                     });
+                },
+                favorited: !!world.favorite,
+                onFavorite: async (on) => {
+                    try {
+                        await WorldStore.setFavorite(world.id, on);
+                        await this._showWorlds();
+                    } catch (e) {
+                        this.status?.setText(String(e.message || e));
+                    }
                 },
                 onExport: () => WorldStore.download(world),
                 onDelete: async () => {

@@ -17,6 +17,7 @@ const CorpseDecay = require("../shared/corpseDecay");
 const GameMath = require("../shared/gameMath");
 const DataStore = require("../shared/DataStore");
 const BodyHealing = require("../shared/body/Healing");
+const Hediffs = require("../shared/body/Hediff");
 const BodyCombat = require("../shared/body/Combat");
 const { Body } = require("../shared/body/Body");
 const Capacities = require("../shared/body/Capacities");
@@ -81,6 +82,9 @@ function itemDefs() {
     const map = new Map();
     for (const it of raw) {
         if (it?.id) map.set(it.id, it);
+    }
+    for (const [from, to] of [["deer_brain", "brain"], ["wood_spear", "wooden_spear"]]) {
+        if (map.has(to) && !map.has(from)) map.set(from, map.get(to));
     }
     _itemDefs = map;
     return map;
@@ -365,6 +369,7 @@ class SimWorld {
             creature._dead = true;
             creature.active = false;
         }
+        creature._vomitRemainingMs = Number(p.vomitRemainingMs) || 0;
         return creature;
     }
 
@@ -379,6 +384,7 @@ class SimWorld {
         p.body = null;
         p.dead = false;
         p.hp = p.mhp;
+        this._clearVomit(p);
     }
 
     static createNew(opts) {
@@ -421,6 +427,11 @@ class SimWorld {
             let drops = meta.drops || [];
             if (Math.abs(cx) <= 1 && Math.abs(cy) <= 1) {
                 drops = drops.filter((d) => d?.id !== "apple");
+            }
+            for (const d of drops) Hide.migrateStackItemId(d);
+            for (const corpse of meta.corpses || []) {
+                if (!Array.isArray(corpse?.loot)) continue;
+                for (const s of corpse.loot) Hide.migrateStackItemId(s);
             }
             const chunk = {
                 cx,
@@ -724,6 +735,7 @@ class SimWorld {
         if (Array.isArray(character.inventory)) {
             p.inventory = character.inventory.slice(0, 40);
             while (p.inventory.length < 5) p.inventory.push(null);
+            for (const s of p.inventory) Hide.migrateStackItemId(s);
         }
         if (character.equipment && typeof character.equipment === "object") {
             p.equipment = {
@@ -789,6 +801,8 @@ class SimWorld {
             /** Latest aim while a swing is busy — autofire must not drop attacks to RTT. */
             pendingAttackAngle: null,
             eatChannel: null,
+            vomitRemainingMs: 0,
+            vomitDripAccMs: 0,
             connected: true,
             viewChunks: INTEREST,
             poseAuth: false,
@@ -865,6 +879,98 @@ class SimWorld {
         }
     }
 
+    _isVomiting(p) {
+        return Number(p?.vomitRemainingMs) > 0;
+    }
+
+    _clearVomit(p) {
+        if (!p) return;
+        p.vomitRemainingMs = 0;
+        p.vomitDripAccMs = 0;
+        const creature = p.creature || this.creatures.get(p.id);
+        if (creature) {
+            creature._vomitRemainingMs = 0;
+            creature._vomitDripAccMs = 0;
+        }
+    }
+
+    _starvePlayer(p, kc) {
+        if (!p) return;
+        const lose = Math.max(0, Number(kc) || 0);
+        if (!(lose > 0)) return;
+        p.saturation = Number(p.saturation) || 0;
+        p.kc = Number(p.kc) || 0;
+        p.saturation -= lose;
+        if (p.saturation < 0) {
+            p.kc = Math.max(0, p.kc + p.saturation);
+            p.saturation = 0;
+        }
+    }
+
+    _vomitOrigin(p) {
+        const creature = p?.creature || this.creatures.get(p?.id);
+        const c = creature?.bodyCenter?.() || { x: p.x, y: p.y };
+        const ts = TS;
+        let dx = 0;
+        let dy = 0;
+        if (p.facing === "right") dx = 1;
+        else if (p.facing === "left") dx = -1;
+        else if (p.facing === "down") dy = 1;
+        else dy = -1;
+        const dist = ts * 0.4;
+        return {
+            x: c.x + dx * dist,
+            y: c.y + dy * dist - (dy === 0 ? ts * 0.15 : 0),
+            facing: p.facing || "down"
+        };
+    }
+
+    _beginPlayerVomit(creature, remainingMs) {
+        const p = this.players.get(creature?.id);
+        if (!p || p.dead) return;
+        this._cancelChannels(p);
+        p.pendingAttackAngle = null;
+        p.moveX = 0;
+        p.moveY = 0;
+        p.sprint = false;
+        p.vomitRemainingMs = Math.max(1, Number(remainingMs) || 8000);
+        p.vomitDripAccMs = 0;
+        this._vomitDrip(p, { start: true });
+        this._youDirty.add(p.id);
+    }
+
+    _vomitDrip(p, opts = {}) {
+        this._starvePlayer(p, 0.04 * (Number(p.stomach) || 1600));
+        const origin = this._vomitOrigin(p);
+        this.pushEvent({
+            kind: "vomit",
+            playerId: p.id,
+            x: origin.x,
+            y: origin.y,
+            facing: origin.facing,
+            remainingMs: Math.max(0, Number(p.vomitRemainingMs) || 0),
+            drip: !opts.start
+        });
+        if (opts.start) {
+            this.pushEvent({ kind: "combat_log", text: "You vomit.", to: p.id });
+        }
+        this._youDirty.add(p.id);
+    }
+
+    _tickPlayerVomit(p, dtMs) {
+        if (!this._isVomiting(p)) return;
+        p.vomitRemainingMs -= dtMs;
+        p.vomitDripAccMs = (Number(p.vomitDripAccMs) || 0) + dtMs;
+        while (p.vomitDripAccMs >= 2500) {
+            p.vomitDripAccMs -= 2500;
+            if (p.vomitRemainingMs > 0) this._vomitDrip(p);
+        }
+        if (!(p.vomitRemainingMs > 0)) {
+            this._clearVomit(p);
+            this._youDirty.add(p.id);
+        }
+    }
+
     pushEvent(ev) {
         this._events.push(ev);
     }
@@ -906,15 +1012,21 @@ class SimWorld {
     setMove(playerId, { x = 0, y = 0, sprint = false, facing = null, px = null, py = null, viewChunks = null } = {}) {
         const p = this.players.get(playerId);
         if (!p || p.dead) return;
-        const len = Math.hypot(x, y);
-        if (!(len > 0)) {
+        if (this._isVomiting(p)) {
             p.moveX = 0;
             p.moveY = 0;
+            p.sprint = false;
         } else {
-            p.moveX = x / len;
-            p.moveY = y / len;
+            const len = Math.hypot(x, y);
+            if (!(len > 0)) {
+                p.moveX = 0;
+                p.moveY = 0;
+            } else {
+                p.moveX = x / len;
+                p.moveY = y / len;
+            }
+            p.sprint = !!sprint && p.kc > 0;
         }
-        p.sprint = !!sprint && p.kc > 0;
         if (facing) p.facing = facing;
         else if (p.moveX !== 0 || p.moveY !== 0) {
             if (Math.abs(p.moveX) > Math.abs(p.moveY)) p.facing = p.moveX > 0 ? "right" : "left";
@@ -1008,6 +1120,10 @@ class SimWorld {
         }
         if (type === Protocol.Actions.RACK_FLESH) {
             this._tryRackFlesh(p, action);
+            return;
+        }
+        if (type === Protocol.Actions.RACK_BRAIN) {
+            this._tryRackBrain(p, action);
             return;
         }
         if (type === Protocol.Actions.CORPSE_DISMISS) {
@@ -1430,6 +1546,8 @@ class SimWorld {
                 );
                 delete s.spoilAt;
             }
+            Hide.applyMergedDryProgress(s, s.quantity || 1, add, extraFields?.dryProgress);
+            Hide.applyMergedSoakProgress(s, s.quantity || 1, add, extraFields?.soakProgress);
             s.quantity = (s.quantity || 1) + add;
             remaining -= add;
         }
@@ -1519,13 +1637,15 @@ class SimWorld {
                 ingredients.push({
                     id: k,
                     qty: Math.max(1, Math.floor(Number(v.qty) || 1)),
-                    toolClass: v.toolClass ? String(v.toolClass) : null
+                    toolClass: v.toolClass ? String(v.toolClass) : null,
+                    hideStage: v.hideStage ? String(v.hideStage) : null
                 });
             } else {
                 ingredients.push({
                     id: k,
                     qty: Math.max(1, Math.floor(Number(v) || 1)),
-                    toolClass: null
+                    toolClass: null,
+                    hideStage: null
                 });
             }
         }
@@ -1541,30 +1661,43 @@ class SimWorld {
         };
     }
 
+    _stackMatchesCraft(s, match) {
+        if (!s || !match) return false;
+        if (match.hideStage) {
+            return Hide.stackIsHideStage(s, match.hideStage, (id) => itemDefs().get(id));
+        }
+        if (!s.id || s.id !== match.id) return false;
+        if (match.toolClass && s.toolClass !== match.toolClass) return false;
+        return true;
+    }
+
     _countMatchingItems(p, match) {
+        const hideStage = match?.hideStage || null;
         const id = match?.id;
         const wantClass = match?.toolClass || null;
-        if (!id || !Array.isArray(p?.inventory)) return 0;
+        if ((!hideStage && !id) || !Array.isArray(p?.inventory)) return 0;
         let sum = 0;
         for (const s of p.inventory) {
-            if (!s || s.id !== id) continue;
-            if (wantClass && s.toolClass !== wantClass) continue;
+            if (!this._stackMatchesCraft(s, hideStage ? { hideStage } : { id, toolClass: wantClass })) continue;
             sum += Math.max(0, Math.floor(Number(s.quantity) || 0));
         }
         return sum;
     }
 
     _loseMatchingItems(p, match) {
-        const id = match?.id;
         let remaining = Math.max(0, Math.floor(Number(match?.qty) || 1));
+        const hideStage = match?.hideStage || null;
+        const id = match?.id;
         const wantClass = match?.toolClass || null;
-        if (!id || !(remaining > 0) || !Array.isArray(p?.inventory)) return { lost: 0, knapQuality: null };
+        if ((!hideStage && !id) || !(remaining > 0) || !Array.isArray(p?.inventory)) {
+            return { lost: 0, knapQuality: null };
+        }
         let lost = 0;
         let knapQuality = null;
         const takeFrom = (requireClass) => {
             for (let i = 0; i < p.inventory.length && remaining > 0; i++) {
                 const s = p.inventory[i];
-                if (!s || s.id !== id) continue;
+                if (!this._stackMatchesCraft(s, hideStage ? { hideStage } : { id })) continue;
                 if (requireClass && s.toolClass !== requireClass) continue;
                 if (!requireClass && wantClass && s.toolClass === wantClass) continue;
                 if (knapQuality == null && s.knapQuality) knapQuality = s.knapQuality;
@@ -1577,8 +1710,9 @@ class SimWorld {
                 if (!(s.quantity > 0)) p.inventory[i] = null;
             }
         };
-        if (wantClass) takeFrom(wantClass);
-        if (!wantClass) takeFrom(null);
+        if (hideStage) takeFrom(null);
+        else if (wantClass) takeFrom(wantClass);
+        else takeFrom(null);
         return { lost, knapQuality };
     }
 
@@ -1780,7 +1914,6 @@ class SimWorld {
             s.customName || s.food || s.ingredients || s.toolClass
             || s.knapIconData || s.knapDamage != null || s.knapQuality
             || s.durability != null
-            || s.dryProgress != null
         ));
     }
 
@@ -1815,6 +1948,14 @@ class SimWorld {
             const n = Math.floor(Number(src.dryProgress) || 0);
             if (n > 0) out.dryProgress = n;
         }
+        if (src.soakProgress != null) {
+            const n = Math.floor(Number(src.soakProgress) || 0);
+            if (n > 0) out.soakProgress = n;
+        }
+        if (src.soakDoneAt != null) {
+            const n = Math.round(Number(src.soakDoneAt));
+            if (Number.isFinite(n)) out.soakDoneAt = n;
+        }
         return Object.keys(out).length ? out : null;
     }
 
@@ -1838,12 +1979,15 @@ class SimWorld {
         if (extras.spoilAt != null) slot.spoilAt = extras.spoilAt;
         if (extras.durability != null) slot.durability = extras.durability;
         if (extras.dryProgress != null) slot.dryProgress = extras.dryProgress;
+        if (extras.soakProgress != null) slot.soakProgress = extras.soakProgress;
+        if (extras.soakDoneAt != null) slot.soakDoneAt = extras.soakDoneAt;
         return slot;
     }
 
     /** Snapshot/public wire shape for a ground drop (includes tip quality, knap fields). */
     _publicDrop(d, c) {
         if (!d) return null;
+        Hide.migrateStackItemId(d);
         const out = {
             uid: d.uid || null,
             id: d.id,
@@ -2030,6 +2174,8 @@ class SimWorld {
                     moved, a.spoilLeft
                 );
                 delete b.spoilAt;
+                Hide.applyMergedDryProgress(b, b.quantity || 1, moved, a.dryProgress);
+                Hide.applyMergedSoakProgress(b, b.quantity || 1, moved, a.soakProgress);
                 b.quantity = (b.quantity || 1) + moved;
                 a.quantity = (a.quantity || 1) - moved;
                 if (!(a.quantity > 0)) inv[from] = null;
@@ -2235,6 +2381,8 @@ class SimWorld {
                 eqQty, equipped.spoilLeft
             );
             delete dest.spoilAt;
+            Hide.applyMergedDryProgress(dest, dest.quantity || 1, eqQty, equipped.dryProgress);
+            Hide.applyMergedSoakProgress(dest, dest.quantity || 1, eqQty, equipped.soakProgress);
             dest.quantity = (dest.quantity || 1) + eqQty;
             this._setEquipStack(p, parsed.key, null);
         } else {
@@ -2300,6 +2448,15 @@ class SimWorld {
         const maxDist2 = TS * TS;
         let last = null;
         const noMerge = !!(opts && opts.noMerge);
+        const soakProbe = {
+            id: drop.id,
+            soakProgress: drop.soakProgress,
+            soakDoneAt: drop.soakDoneAt,
+            x: wx,
+            y: wy
+        };
+        this._stampDropSoak(soakProbe);
+        if (soakProbe.soakDoneAt != null) drop.soakDoneAt = soakProbe.soakDoneAt;
 
         // Same as client DroppedItem.spawn: fill nearby plain piles first
         if (!incomingSpecial && !noMerge) {
@@ -2309,6 +2466,7 @@ class SimWorld {
                 for (const pile of c.drops) {
                     if (!pile || pile.id !== drop.id) continue;
                     if (this._stackIsSpecial(pile)) continue;
+                    if (Hide.soakMergeBlocked(pile, drop)) continue;
                     const qty = Math.max(1, Math.floor(Number(pile.quantity) || 1));
                     if (qty >= maxStack) continue;
                     const dx = (Number(pile.x) || 0) - wx;
@@ -2324,6 +2482,11 @@ class SimWorld {
                 const add = Math.min(maxStack - qty, remaining);
                 if (!(add > 0)) continue;
                 pile.spoilAt = Spoil.mergeSpoilAt(qty, pile.spoilAt, add, drop.spoilAt);
+                Hide.applyMergedDryProgress(pile, qty, add, drop.dryProgress);
+                Hide.applyMergedSoakProgress(pile, qty, add, drop.soakProgress);
+                const mergedDone = Hide.mergeSoakDoneAt(qty, pile.soakDoneAt, add, drop.soakDoneAt);
+                if (mergedDone != null) pile.soakDoneAt = mergedDone;
+                else delete pile.soakDoneAt;
                 pile.quantity = qty + add;
                 // Merged stacks refresh despawn timer (matches client DroppedItem.spawn)
                 pile.lifeMs = DROP_LIFE_MS;
@@ -2349,6 +2512,7 @@ class SimWorld {
             usedUid = true;
             this._applyStackExtras(entry, this._stackExtrasFrom(drop));
             if (drop.spoilAt != null) entry.spoilAt = drop.spoilAt;
+            this._stampDropSoak(entry);
             c.drops.push(entry);
             last = entry;
             remaining -= add;
@@ -2571,6 +2735,7 @@ class SimWorld {
             return [
                 { id: "raw_venison", min: 2, max: 4 },
                 { id: "deer_hide", min: 1, max: 1 },
+                { id: "brain", min: 1, max: 1 },
                 { id: "bone", min: 2, max: 4 }
             ];
         }
@@ -2622,6 +2787,7 @@ class SimWorld {
                     slot.quantity || 1, slot.spoilAt,
                     add, freshAt
                 );
+                Hide.applyMergedDryProgress(slot, slot.quantity || 1, add, 0);
                 slot.quantity = (slot.quantity || 1) + add;
                 qty -= add;
             }
@@ -2662,14 +2828,46 @@ class SimWorld {
         Place.ensureStorageEntry(entry, def);
         const stack = this._storageGetSlot(entry, "0");
         const meta = stack ? itemDefs().get(stack.id) : null;
-        if (!Hide.isRawHide(meta)) return;
+        if (!Hide.canScrape(meta)) return;
         const now = this.worldMinuteIndex();
-        const next = Hide.fleshedStackFrom(stack, (id) => itemDefs().get(id), now);
+        const next = Hide.scrapeStackFrom(stack, (id) => itemDefs().get(id), now);
         if (!next) return;
         this._storageSetSlot(entry, "0", next);
         this._wearHeld(p, 1);
         this._emitStorage(chunk, entry);
         this._youDirty.add(p.id);
+    }
+
+    _tryRackBrain(p, action = {}) {
+        if (!p || p.dead) return;
+        if (Number.isFinite(action.x) && Number.isFinite(action.y)) {
+            p.x = action.x;
+            p.y = action.y;
+            p.poseAuth = true;
+        }
+        const held = this._held(p);
+        const heldDef = held ? itemDefs().get(held.id) : null;
+        if (!held || !Hide.isBrainItem(heldDef)) return;
+        const found = this._findPlayerStorage(p, action);
+        if (!found) return;
+        const { chunk, entry } = found;
+        const def = thingDefs().get(entry.id);
+        if (!Hide.isDryingRack(def, entry)) return;
+        Place.ensureStorageEntry(entry, def);
+        const stack = this._storageGetSlot(entry, "0");
+        const meta = stack ? itemDefs().get(stack.id) : null;
+        if (!Hide.isDehairedHide(meta)) return;
+        const now = this.worldMinuteIndex();
+        const next = Hide.brainedStackFrom(stack, (id) => itemDefs().get(id), now);
+        if (!next) return;
+        this._storageSetSlot(entry, "0", next);
+        const qty = Math.max(1, Math.floor(Number(held.quantity) || 1));
+        held.quantity = qty - 1;
+        const inv = p.inventory;
+        const idx = Math.floor(Number(p.hotbarIndex) || 0);
+        if (!(held.quantity > 0) && Array.isArray(inv) && inv[idx] === held) inv[idx] = null;
+        this._youDirty.add(p.id);
+        this._emitStorage(chunk, entry);
     }
 
     _tryCorpseTake(p, action = {}) {
@@ -2831,6 +3029,8 @@ class SimWorld {
             }
         }
         if (!best || !bestChunk) return;
+        const now = this.worldMinuteIndex();
+        Hide.pickupSoak(best, now);
         const want = best.quantity || 1;
         const left = this._give(p, best.id, want, this._stackExtrasFrom(best));
         if (left >= want) return; // nothing fit — leave drop
@@ -3055,7 +3255,7 @@ class SimWorld {
             cookProgress: entry.cookProgress || 0,
             burnRemaining: entry.burnRemaining || 0,
             roastBarMinutes: entry.roastBarMinutes || 0,
-            simmerBarMinutes: entry.simmerBarMinutes || 0
+            simmerBarMinutes: (entry.simmerBarMinutes > 0) ? entry.simmerBarMinutes : undefined
         };
     }
 
@@ -3244,15 +3444,18 @@ class SimWorld {
         const method = this._campfireMethod(entry);
         const simmerActive = method === "shell_simmer"
             || this._campfireHasSimmer(entry)
-            || ((entry.cookProgress || 0) > 0 && entry.simmerBarMinutes != null);
+            || ((entry.cookProgress || 0) > 0 && (entry.simmerBarMinutes || 0) > 0);
         if (simmerActive) return this._tickShellSimmer(entry, lit);
 
         const cook = entry.cook;
         if (!cook?.id) return false;
         const recipe = method ? itemDefs().get(cook.id)?.cook?.[method] : null;
-        const canAdvance = !!(lit && this._campfireIsAttended(entry) && method && recipe?.result && recipe.minutes > 0);
+        const smoke = method === "smoke_hide";
+        const canAdvance = smoke
+            ? !!(lit && method && recipe?.result && recipe.minutes > 0)
+            : !!(lit && this._campfireIsAttended(entry) && method && recipe?.result && recipe.minutes > 0);
         if (!canAdvance) {
-            if ((entry.cookProgress || 0) > 0 && !lit) {
+            if (!smoke && (entry.cookProgress || 0) > 0 && !lit) {
                 entry.cookProgress -= 1;
                 if (entry.cookProgress <= 0) {
                     entry.cookProgress = 0;
@@ -3263,7 +3466,7 @@ class SimWorld {
         }
         entry.roastBarMinutes = recipe.minutes;
         entry.cookProgress = (entry.cookProgress || 0) + 1;
-        const catBroke = this._wearRoastCatalyst(entry);
+        const catBroke = smoke ? false : this._wearRoastCatalyst(entry);
         if (entry.cookProgress < recipe.minutes) return catBroke;
         const resultMeta = itemDefs().get(recipe.result);
         delete entry.roastBarMinutes;
@@ -3346,6 +3549,34 @@ class SimWorld {
                 if (changed) this._emitStorage(c, entry);
             }
         }
+    }
+
+    _dropIsOnWater(drop) {
+        if (!drop) return false;
+        const pt = Hide.dropSamplePoint(drop.x, drop.y, TS);
+        const { tx, ty } = this._tileOf(pt.x, pt.y);
+        return this._tileKeyAt(tx, ty) === "water";
+    }
+
+    _stampDropSoak(entry) {
+        if (!entry) return;
+        const def = itemDefs().get(entry.id);
+        if (!Hide.isFleshedHide(def) || !this._dropIsOnWater(entry)) return;
+        Hide.beginSoak(entry, this.worldMinuteIndex());
+    }
+
+    _soakChunkDrops(c) {
+        if (!c || !Array.isArray(c.drops)) return;
+        const now = this.worldMinuteIndex();
+        const getItem = (id) => itemDefs().get(id);
+        for (const d of c.drops) {
+            if (!d) continue;
+            Hide.tickSoakDrop(d, now, getItem, this._dropIsOnWater(d));
+        }
+    }
+
+    _tickSoakDrops() {
+        for (const c of this.chunks.values()) this._soakChunkDrops(c);
     }
 
     _nearbyDropPiles(wx, wy, itemId) {
@@ -3565,7 +3796,14 @@ class SimWorld {
         const method = this._campfireMethod(entry);
         if (method === "shell_simmer") return false;
         if (entry?.cook) return true;
-        return method === "stick_roast";
+        return method === "stick_roast" || method === "smoke_hide";
+    }
+
+    _campfireCookAccepts(entry, itemId) {
+        const method = this._campfireMethod(entry);
+        if (!method || !itemId) return false;
+        const recipe = itemDefs().get(itemId)?.cook?.[method];
+        return !!(recipe?.result && recipe.minutes > 0);
     }
 
     _campfireSimmerOpen(entry) {
@@ -3658,6 +3896,8 @@ class SimWorld {
                         moved, left
                     );
                     delete dest.spoilAt;
+                    Hide.applyMergedDryProgress(dest, dest.quantity || 1, moved, extras.dryProgress);
+                    Hide.applyMergedSoakProgress(dest, dest.quantity || 1, moved, extras.soakProgress);
                     dest.quantity = (dest.quantity || 1) + moved;
                     this._youDirty.add(p.id);
                     if (moved >= qty) {
@@ -4028,6 +4268,8 @@ class SimWorld {
                 dest.quantity || 1, dest.spoilAt,
                 piece.quantity, piece.spoilAt
             );
+            Hide.applyMergedDryProgress(dest, dest.quantity || 1, piece.quantity, piece.dryProgress);
+            Hide.applyMergedSoakProgress(dest, dest.quantity || 1, piece.quantity, piece.soakProgress);
             dest.quantity = (dest.quantity || 1) + piece.quantity;
             this._storageSetSlot(entry, slotKey, this._hangIfRack(entry, dest));
             return;
@@ -4094,6 +4336,8 @@ class SimWorld {
             }
             const moved = Math.min(space, a.quantity || 1);
             b.spoilAt = Spoil.mergeSpoilAt(b.quantity || 1, b.spoilAt, moved, a.spoilAt);
+            Hide.applyMergedDryProgress(b, b.quantity || 1, moved, a.dryProgress);
+            Hide.applyMergedSoakProgress(b, b.quantity || 1, moved, a.soakProgress);
             b.quantity = (b.quantity || 1) + moved;
             a.quantity = (a.quantity || 1) - moved;
             this._storageSetSlot(entry, toKey, b);
@@ -4135,6 +4379,8 @@ class SimWorld {
                     dest.quantity || 1, dest.spoilAt,
                     piece.quantity, piece.spoilAt
                 );
+                Hide.applyMergedDryProgress(dest, dest.quantity || 1, piece.quantity, piece.dryProgress);
+                Hide.applyMergedSoakProgress(dest, dest.quantity || 1, piece.quantity, piece.soakProgress);
                 dest.quantity = (dest.quantity || 1) + piece.quantity;
                 this._campfireSetSlot(entry, slotKey, dest);
                 return;
@@ -4160,6 +4406,7 @@ class SimWorld {
 
         if (parsed.kind === "cook") {
             if (!this._campfireCookOpen(entry)) return;
+            if (!this._campfireCookAccepts(entry, held.id)) return;
             if (dest && dest.id === held.id) return;
             const incoming = this._splitInvToWorld(p, invIndex, 1);
             if (!incoming) return;
@@ -4247,6 +4494,7 @@ class SimWorld {
 
         if (toP.kind === "cook") {
             if (!this._campfireCookOpen(entry)) return;
+            if (!this._campfireCookAccepts(entry, a.id)) return;
             if (b && b.id === a.id) return;
             const one = this._cloneStackForWorld({ ...a, quantity: 1 });
             a.quantity = Math.max(0, Math.floor(Number(a.quantity) || 1) - 1);
@@ -4276,6 +4524,8 @@ class SimWorld {
                 b.quantity || 1, b.spoilAt,
                 moved, a.spoilAt
             );
+            Hide.applyMergedDryProgress(b, b.quantity || 1, moved, a.dryProgress);
+            Hide.applyMergedSoakProgress(b, b.quantity || 1, moved, a.soakProgress);
             b.quantity = (b.quantity || 1) + moved;
             a.quantity = (a.quantity || 1) - moved;
             this._campfireSetSlot(entry, toKey, b);
@@ -4319,7 +4569,7 @@ class SimWorld {
     }
 
     _tryUse(p) {
-        if (p.eatChannel) return;
+        if (p.eatChannel || this._isVomiting(p)) return;
         const held = this._held(p);
         if (!held?.id) return;
         const food = this._foodForEat(held);
@@ -4450,6 +4700,7 @@ class SimWorld {
             }
             p.kc += consumed;
             p.saturation += consumed * this._satietyRatio(food, true);
+            this._tryFoodPoison(p, food);
             if (consumed < total) {
                 if (!held.food) held.food = { ...food };
                 if (held.food.kcFull == null) held.food.kcFull = Math.round(total);
@@ -4462,6 +4713,7 @@ class SimWorld {
         } else {
             p.kc += Math.min(total, room);
             p.saturation += total * this._satietyRatio(food, false);
+            this._tryFoodPoison(p, food);
             held.quantity = (held.quantity || 1) - 1;
             if (!(held.quantity > 0)) p.inventory[ch.itemIndex] = null;
         }
@@ -4469,8 +4721,18 @@ class SimWorld {
         this.pushEvent({ kind: "channel", playerId: p.id, channel: "eat", progress: 1, done: true });
     }
 
+    _tryFoodPoison(p, food) {
+        const creature = this._syncPlayerCreature(p) || this._ensurePlayerCreature(p);
+        if (!creature?.anatomy) return;
+        const result = Hediffs.tryFoodPoison(creature.anatomy, food, null, () => this.rng());
+        if (!result) return;
+        p.body = creature.anatomy.toJSON();
+        creature.anatomy._dirty = false;
+        this.pushEvent({ kind: "combat_log", text: result.message, to: p.id });
+    }
+
     _tryAttack(p, angle) {
-        if (p.eatChannel) return;
+        if (p.eatChannel || this._isVomiting(p)) return;
         if (p.dead) return;
         const creature = this._syncPlayerCreature(p) || this._ensurePlayerCreature(p);
         if (!creature || creature.isBodyDead()) return;
@@ -4507,7 +4769,7 @@ class SimWorld {
 
     /** Start a queued autofire swing once the current one ends. */
     _flushPendingAttack(p) {
-        if (!p || p.dead || p.eatChannel) return;
+        if (!p || p.dead || p.eatChannel || this._isVomiting(p)) return;
         if (p.pendingAttackAngle == null) return;
         const creature = p.creature || this.creatures.get(p.id);
         if (!creature || creature.isBodyDead() || creature.isAttacking()) return;
@@ -4564,6 +4826,7 @@ class SimWorld {
         p.hp = 0;
         p._knapSession = null;
         this._cancelChannels(p);
+        this._clearVomit(p);
         p.pendingAttackAngle = null;
         const creature = p.creature || this.creatures.get(p.id);
         if (creature) {
@@ -4628,6 +4891,7 @@ class SimWorld {
         for (const p of this.players.values()) {
             if (!p.connected) continue;
             if (p.attackTimer > 0) p.attackTimer -= dtMs;
+            this._tickPlayerVomit(p, dtMs);
             if (p.eatChannel) {
                 p.eatChannel.remaining -= dtMs;
                 const prog = 1 - p.eatChannel.remaining / p.eatChannel.max;
@@ -4847,6 +5111,7 @@ class SimWorld {
                 mob.anatomy._dirty = false;
             }
         }
+        this._tickSoakDrops();
         this._tickLootableRegrows();
         this._tickCampfires();
         this._tickDryingRacks();
@@ -5267,6 +5532,11 @@ class SimWorld {
                 }
                 let life = Number(d.lifeMs);
                 if (!Number.isFinite(life)) life = DROP_LIFE_MS;
+                const onWater = this._dropIsOnWater(d);
+                const def = itemDefs().get(d.id);
+                if (Hide.pausesDropDespawn(d, def, onWater)) {
+                    continue;
+                }
                 life -= dtMs;
                 if (life <= 0) {
                     c.drops.splice(i, 1);
@@ -5316,6 +5586,7 @@ class SimWorld {
 
     chunkPayload(cx, cy) {
         const c = this._ensureChunk(cx, cy);
+        this._soakChunkDrops(c);
         this._spoilChunkContents(c);
         return {
             x: c.cx,
@@ -5406,7 +5677,12 @@ class SimWorld {
     _spoilChunkContents(c) {
         if (!c) return;
         if (Array.isArray(c.drops)) {
-            for (const d of c.drops) this._spoilStackIfDue(d);
+            for (const d of c.drops) {
+                if (!d) continue;
+                const def = itemDefs().get(d.id);
+                if (Hide.pausesDropDespawn(d, def, this._dropIsOnWater(d))) continue;
+                this._spoilStackIfDue(d);
+            }
         }
         if (Array.isArray(c.corpses)) {
             for (const corpse of c.corpses) {
@@ -5510,6 +5786,7 @@ class SimWorld {
         const campfires = [];
         const storages = [];
         for (const c of this._chunksNear(vx, vy, interest)) {
+            this._soakChunkDrops(c);
             this._spoilChunkContents(c);
             for (const d of c.drops) {
                 drops.push(this._publicDrop(d, c));
@@ -5616,6 +5893,9 @@ class SimWorld {
             look: p.look || Look.normalizeLook(null),
             eatChannel: p.eatChannel
                 ? { progress: 1 - p.eatChannel.remaining / p.eatChannel.max }
+                : null,
+            vomit: this._isVomiting(p)
+                ? { remainingMs: Math.max(0, Number(p.vomitRemainingMs) || 0) }
                 : null
         };
     }

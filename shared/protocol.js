@@ -69,6 +69,8 @@
         CORPSE_SKIN: "corpse_skin",
         /** Finish scraping a raw hide on a drying rack (dedicated MP; server-authored). */
         RACK_FLESH: "rack_flesh",
+        /** Finish rubbing brains into a dehaired hide on a drying rack. */
+        RACK_BRAIN: "rack_brain",
         /** Close an empty corpse loot UI — server despawns the corpse. */
         CORPSE_DISMISS: "corpse_dismiss",
         /** Client LivingMob died — server removes chunk mob + authors corpse for remotes. */

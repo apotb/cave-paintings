@@ -156,6 +156,8 @@ class SimCreature {
         this.attackHitSet = null;
         this.isSprinting = false;
         this._lastHitBy = null;
+        this._vomitRemainingMs = 0;
+        this._vomitDripAccMs = 0;
 
         this.ai = null;
     }
@@ -317,6 +319,28 @@ class SimCreature {
         }
         this.ai?.onDamaged?.(source);
         if (this.kind === "mob") this.ctx?.sim?.alertNearbyMobs?.(this, source);
+    }
+
+    isVomiting() {
+        return Number(this._vomitRemainingMs) > 0;
+    }
+
+    /**
+     * Hediffs.minuteTick calls this on food-poisoning rolls.
+     */
+    startVomit() {
+        if (this.kind !== "player" || this._dead || this.isVomiting()) return;
+        const math = this.ctx?.math;
+        const ms = typeof math?.between === "function"
+            ? math.between(5000, 15000)
+            : 5000 + Math.floor(Math.random() * 10001);
+        this._vomitRemainingMs = ms;
+        this._vomitDripAccMs = 0;
+        this.vx = 0;
+        this.vy = 0;
+        this.setDesiredVel?.(0, 0);
+        this._endAttack?.();
+        this.ctx?.sim?._beginPlayerVomit?.(this, ms);
     }
 
     onBodyFatal(_part = null, _reason = null) {

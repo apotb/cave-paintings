@@ -68,7 +68,7 @@
         "food": {
             "kc": 375,
             "spoil": 12,
-            "foodPoisonChance": 0.2,
+            "foodPoisonChance": 0.33,
             "eatSeconds": 4.0,
             "satietyRatio": 0.12
         },
@@ -102,7 +102,7 @@
         "food": {
             "kc": 300,
             "spoil": 12,
-            "foodPoisonChance": 0.2,
+            "foodPoisonChance": 0.33,
             "eatSeconds": 4.0,
             "satietyRatio": 0.12
         },
@@ -263,7 +263,8 @@
             "spoil": 48
         },
         "tooltip": [
-            "Takes 1d to dry"
+            "Hang to dry into rawhide",
+            "Drop in water to tan"
         ]
     },
     {
@@ -277,8 +278,96 @@
             "stage": "dried"
         },
         "tooltip": [
-            "Sew at a Skinworking Bench",
-            "Ready for tanning"
+            "Sew at a Skinworking Bench"
+        ]
+    },
+    {
+        "id": "deer_hide_soaked",
+        "name": "Soaked Deer Hide",
+        "key": "deer_hide_soaked",
+        "maxStack": 99,
+        "weight": 2.5,
+        "hide": {
+            "animal": "deer",
+            "stage": "soaked"
+        },
+        "food": {
+            "kc": 0,
+            "spoil": 48
+        },
+        "tooltip": [
+            "Hang on a drying rack and scrape the hair off"
+        ]
+    },
+    {
+        "id": "deer_hide_dehaired",
+        "name": "Dehaired Deer Hide",
+        "key": "deer_hide_dehaired",
+        "maxStack": 99,
+        "weight": 2.5,
+        "hide": {
+            "animal": "deer",
+            "stage": "dehaired"
+        },
+        "food": {
+            "kc": 0,
+            "spoil": 48
+        },
+        "tooltip": [
+            "Rub brains into it on a drying rack"
+        ]
+    },
+    {
+        "id": "deer_hide_brained",
+        "name": "Brained Deer Hide",
+        "key": "deer_hide_brained",
+        "maxStack": 99,
+        "weight": 2.5,
+        "hide": {
+            "animal": "deer",
+            "stage": "brained"
+        },
+        "food": {
+            "kc": 0,
+            "spoil": 48
+        },
+        "cook": {
+            "smoke_hide": {
+                "result": "deer_leather",
+                "minutes": 240
+            }
+        },
+        "tooltip": [
+            "Smoke over a fire with a drying rack"
+        ]
+    },
+    {
+        "id": "deer_leather",
+        "name": "Deer Leather",
+        "key": "deer_leather",
+        "maxStack": 99,
+        "weight": 2.5,
+        "hide": {
+            "animal": "deer",
+            "stage": "leather"
+        },
+        "tooltip": [
+            "Soft tanned hide"
+        ]
+    },
+    {
+        "id": "brain",
+        "name": "Brain",
+        "key": "brain",
+        "maxStack": 99,
+        "weight": 0.3,
+        "brain": true,
+        "food": {
+            "kc": 0,
+            "spoil": 12
+        },
+        "tooltip": [
+            "Enough to tan one hide"
         ]
     },
     {
@@ -657,7 +746,10 @@
             }
         },
         "recipe": {
-            "deer_hide_dry": 2,
+            "ANY_HIDE": {
+                "qty": 2,
+                "hideStage": "dried"
+            },
             "leaf_cord": 4,
             "REQUIRE_STATION": "skinworking_bench",
             "CRAFT_SECONDS": 12,
@@ -725,8 +817,12 @@
         "place": {
             "thing": "drying_rack"
         },
+        "cook": {
+            "method": "smoke_hide"
+        },
         "tooltip": [
-            "Process animal hides"
+            "Process animal hides",
+            "Place on a campfire to smoke processed hides"
         ],
         "recipe": {
             "stick": 3,

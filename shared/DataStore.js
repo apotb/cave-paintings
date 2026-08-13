@@ -110,7 +110,11 @@
 
     function getItem(id) {
         if (!id || !store.itemsById) return null;
-        return store.itemsById[id] || null;
+        if (store.itemsById[id]) return store.itemsById[id];
+        const want = (typeof Hide !== "undefined" && Hide.canonicalItemId)
+            ? Hide.canonicalItemId(id)
+            : (id === "deer_brain" ? "brain" : id === "wood_spear" ? "wooden_spear" : id);
+        return store.itemsById[want] || null;
     }
 
     function getMob(id) {

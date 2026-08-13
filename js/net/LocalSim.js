@@ -744,6 +744,9 @@ class LocalSim {
                         tooltipExtra: d.tooltipExtra,
                         knapIconData: d.knapIconData,
                         durability: d.durability,
+                        dryProgress: d.dryProgress,
+                        soakProgress: d.soakProgress,
+                        soakDoneAt: d.soakDoneAt,
                         ingredients: d.ingredients,
                         kind: d.kind,
                         fillTint: d.fillTint,
@@ -823,6 +826,7 @@ class LocalSim {
                     };
                 }
             }
+            this.world.lastPlayedAt = Date.now();
             await WorldStore.put(this.world);
         } catch (e) {
             console.warn("[LocalSim] persist failed", e);

@@ -4,8 +4,6 @@ Lean-to that can be used for sleeping, will speed up time and increase recovery 
 
 Bones
 
-Tanning leather
-
 Random structures -- start with an abandoned camp that has a lean-to, unlit campfire, and some leftover supplies
 
 New burning system -- fires won't heat up immediately, different fuels burn at different temperatures, moisture will actually do something

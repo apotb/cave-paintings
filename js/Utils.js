@@ -316,6 +316,7 @@ function resolveCraftedWeights(items) {
             if (typeof Carry !== "undefined" && Carry.isRecipeMetaKey) {
                 if (Carry.isRecipeMetaKey(k)) continue;
             } else if (k === "REQUIRE_THING") continue;
+            if (v && typeof v === "object" && v.hideStage) continue;
             const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
             sum += weightOf(k) * qty;
         }
@@ -385,6 +386,7 @@ function resolveCraftedFuel(items) {
             if (typeof Carry !== "undefined" && Carry.isRecipeMetaKey) {
                 if (Carry.isRecipeMetaKey(k)) continue;
             } else if (k === "REQUIRE_THING") continue;
+            if (v && typeof v === "object" && v.hideStage) continue;
             const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
             sum += fuelKjOf(k) * qty;
         }
@@ -719,15 +721,32 @@ function makeCoconutMealStack(getItem, ingredientIds, coconutMeta, now = null) {
     return stack;
 }
 
+function mergeDryInto(dest, destCount, addCount, addProgress) {
+    if (typeof Hide !== "undefined" && Hide.applyMergedDryProgress) {
+        Hide.applyMergedDryProgress(dest, destCount, addCount, addProgress);
+    }
+}
+
+function mergeSoakInto(dest, destCount, addCount, addProgress) {
+    if (typeof Hide !== "undefined" && Hide.applyMergedSoakProgress) {
+        Hide.applyMergedSoakProgress(dest, destCount, addCount, addProgress);
+    }
+}
+
 /** Deep-enough clone of an inventory/equipment/loot stack. */
 function cloneItemStack(stack) {
     if (!stack) return null;
-    const out = { id: stack.id, quantity: stack.quantity };
+    const id = (typeof Hide !== "undefined" && Hide.canonicalItemId)
+        ? Hide.canonicalItemId(stack.id)
+        : stack.id;
+    const out = { id, quantity: stack.quantity };
     if (stack.spoilLeft != null) out.spoilLeft = stack.spoilLeft;
     if (stack.spoilAt != null) out.spoilAt = stack.spoilAt;
     if (stack.spoilMinutes != null) out.spoilMinutes = stack.spoilMinutes;
     if (stack.durability != null) out.durability = stack.durability;
     if (stack.dryProgress != null) out.dryProgress = stack.dryProgress;
+    if (stack.soakProgress != null) out.soakProgress = stack.soakProgress;
+    if (stack.soakDoneAt != null) out.soakDoneAt = stack.soakDoneAt;
     const extras = mealStackExtras(stack);
     if (extras) Object.assign(out, extras);
     return out;
@@ -746,6 +765,8 @@ function mealStackExtras(stack) {
         || stack.fillTint != null
         || stack.durability != null
         || stack.dryProgress != null
+        || stack.soakProgress != null
+        || stack.soakDoneAt != null
         || knap
     );
     if (!hasExtras) return null;
@@ -758,6 +779,8 @@ function mealStackExtras(stack) {
         fillTint: stack.fillTint,
         durability: stack.durability,
         dryProgress: stack.dryProgress,
+        soakProgress: stack.soakProgress,
+        soakDoneAt: stack.soakDoneAt,
         ...(knap || {})
     };
 }
@@ -799,7 +822,6 @@ function hasStackExtras(dropOrStack) {
         || dropOrStack?.knapIconData
         || dropOrStack?.knapQuality
         || dropOrStack?.durability != null
-        || dropOrStack?.dryProgress != null
     );
 }
 
@@ -840,7 +862,6 @@ function isSpecialStack(stack) {
         || stack.knapDamage != null
         || stack.knapIconData
         || stack.durability != null
-        || stack.dryProgress != null
     ));
 }
 

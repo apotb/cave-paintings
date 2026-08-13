@@ -167,6 +167,11 @@ class SceneBase extends Phaser.Scene {
             "deer_hide",
             "deer_hide_fleshed",
             "deer_hide_dry",
+            "deer_hide_soaked",
+            "deer_hide_dehaired",
+            "deer_hide_brained",
+            "deer_leather",
+            "brain",
             "bone",
             "stick",
             "log"
@@ -187,7 +192,10 @@ class SceneBase extends Phaser.Scene {
     }
 
     getItem(id) {
-        return this.items().find(i => i?.id === id);
+        const want = (typeof Hide !== "undefined" && Hide.canonicalItemId)
+            ? Hide.canonicalItemId(id)
+            : id;
+        return this.items().find(i => i?.id === want);
     }
 
     things() {
