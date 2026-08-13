@@ -559,21 +559,25 @@ class Chunk {
 
     async makeThings() {
         for (const meta of this.meta.things) {
+            if (typeof this.scene._spawnThingSprite === "function") {
+                this.scene._spawnThingSprite(this, meta, false);
+                continue;
+            }
             let thing;
             if (meta.id === 'campfire' || meta.id === 'unlit_campfire') {
                 thing = new Campfire(this.scene, meta);
+            } else if (this.scene.getThing(meta.id)?.craftStation) {
+                thing = new CraftStation(this.scene, meta);
             } else if (
                 Array.isArray(meta.slots)
                 || this.scene.getThing(meta.id)?.storage
             ) {
                 thing = Storage.create(this.scene, meta);
             } else {
-                thing = new Thing(this.scene, meta.x, meta.y, meta.id);
-                thing.entry = meta;
+                thing = new Thing(this.scene, meta.x, meta.y, meta.id, meta);
                 if (meta.id === "rock") {
                     this.scene.wireRockKnapping?.(thing);
                 } else if (meta.id === "sign") {
-                    thing.entry = meta;
                     if (meta.spawnHint && this.scene._spawnSignTooltip) {
                         meta.tooltip = this.scene._spawnSignTooltip();
                     }

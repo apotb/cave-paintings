@@ -1499,11 +1499,23 @@ class SimWorld {
         if (!meta?.recipe || typeof meta.recipe !== "object") return null;
         const ingredients = [];
         let requireThing = null;
+        let requireStation = null;
+        let requireTool = null;
+        let craftSeconds = 0;
         let quantity = 1;
         for (const [k, v] of Object.entries(meta.recipe)) {
             if (k === "QUANTITY") quantity = Math.max(1, Math.floor(Number(v) || 1));
             else if (k === "REQUIRE_THING") requireThing = String(v || "") || null;
-            else if (v && typeof v === "object") {
+            else if (k === "REQUIRE_STATION") requireStation = String(v || "") || null;
+            else if (k === "CRAFT_SECONDS") craftSeconds = Math.max(0, Number(v) || 0);
+            else if (k === "REQUIRE_TOOL") {
+                requireTool = {
+                    toolClass: v?.toolClass ? String(v.toolClass) : null,
+                    wear: Math.max(0, Number(v?.wear) || 0)
+                };
+            } else if (typeof Carry !== "undefined" && Carry.isRecipeMetaKey && Carry.isRecipeMetaKey(k)) {
+                continue;
+            } else if (v && typeof v === "object") {
                 ingredients.push({
                     id: k,
                     qty: Math.max(1, Math.floor(Number(v.qty) || 1)),
@@ -1518,7 +1530,15 @@ class SimWorld {
             }
         }
         if (!ingredients.length) return null;
-        return { id: meta.id, ingredients, quantity, requireThing };
+        return {
+            id: meta.id,
+            ingredients,
+            quantity,
+            requireThing,
+            requireStation,
+            requireTool,
+            craftSeconds
+        };
     }
 
     _countMatchingItems(p, match) {
@@ -1586,12 +1606,20 @@ class SimWorld {
             if (this._countMatchingItems(p, ing) < ing.qty) return;
         }
         if (recipe.requireThing && !this._hasNearbyThing(p, recipe.requireThing)) return;
+        if (recipe.requireStation && !this._hasNearbyThing(p, recipe.requireStation)) return;
+        if (recipe.requireTool?.toolClass) {
+            const held = this._held(p);
+            if (!held || held.toolClass !== recipe.requireTool.toolClass) return;
+        }
 
         let tipQuality = null;
         for (const ing of recipe.ingredients) {
             const { knapQuality } = this._loseMatchingItems(p, ing);
             if (ing.toolClass === "spear_tip" && knapQuality) tipQuality = knapQuality;
         }
+
+        const wear = Number(recipe.requireTool?.wear) || 0;
+        if (wear > 0) this._wearHeld(p, wear);
 
         const extras = {};
         if (tipQuality && (recipe.id === "stone_spear" || recipe.id === "flint_spear")) {
@@ -3669,6 +3697,10 @@ class SimWorld {
             if (entry.attend) delete entry.attend[p.id];
             return;
         }
+        if (op === "destroy") {
+            this._destroyCampfire(chunk, entry);
+            return;
+        }
         if (op === "inv_to_slot") this._campfireInvToSlot(p, entry, action);
         else if (op === "slot_to_inv") this._campfireSlotToInv(p, entry, action);
         else if (op === "slot_to_slot") this._campfireSlotToSlot(entry, action);
@@ -3677,16 +3709,81 @@ class SimWorld {
         this._youDirty.add(p.id);
     }
 
+    _campfireContentStacks(entry) {
+        const stacks = [];
+        const push = (s) => {
+            if (s?.id && s.quantity > 0) stacks.push(s);
+        };
+        for (const s of entry?.fuel || []) push(s);
+        push(entry?.cook);
+        push(entry?.catalyst);
+        for (const s of entry?.simmer || []) push(s);
+        return stacks;
+    }
+
+    _destroyCampfire(chunk, entry) {
+        if (!chunk || !entry) return;
+        if (entry.id === "campfire") return;
+        const x = Number(entry.x) || 0;
+        const y = Number(entry.y) || 0;
+        for (const stack of this._campfireContentStacks(entry)) {
+            const world = this._cloneStackForWorld(stack);
+            if (world) this._pushDrop(x, y, world);
+        }
+        const i = chunk.things.indexOf(entry);
+        if (i >= 0) chunk.things.splice(i, 1);
+        this._emitCampfireRemoved(chunk, entry);
+    }
+
+    _emitCampfireRemoved(chunk, entry) {
+        if (!chunk || !entry) return;
+        this.pushEvent({
+            kind: "campfire",
+            removed: true,
+            uid: entry.uid,
+            id: entry.id,
+            x: entry.x,
+            y: entry.y,
+            cx: chunk.cx,
+            cy: chunk.cy
+        });
+    }
+
+    _isCraftStationEntry(t) {
+        if (!t) return false;
+        const def = thingDefs().get(t.id);
+        return !!def?.craftStation;
+    }
+
     _isStorageEntry(t) {
         if (!t) return false;
+        if (this._isCraftStationEntry(t)) return false;
         if (Array.isArray(t.slots)) return true;
         const def = thingDefs().get(t.id);
         return !!def?.storage;
     }
 
+    _isPlaceableEntry(t) {
+        return this._isStorageEntry(t) || this._isCraftStationEntry(t);
+    }
+
     _storagePublic(entry, chunk = null) {
         if (!entry) return null;
         const def = thingDefs().get(entry.id);
+        if (def?.craftStation) {
+            Place.ensureCraftStationEntry(entry);
+            return {
+                uid: entry.uid,
+                id: entry.id,
+                x: entry.x,
+                y: entry.y,
+                cx: chunk?.cx,
+                cy: chunk?.cy,
+                rev: Number(entry.rev) || 0,
+                rot: Place.normalizeRot(entry.rot),
+                craftStation: true
+            };
+        }
         Place.ensureStorageEntry(entry, def);
         return {
             uid: entry.uid,
@@ -3777,6 +3874,19 @@ class SimWorld {
         if (!(held.quantity > 0)) p.inventory[invIndex] = null;
         this._youDirty.add(p.id);
 
+        if (thingDef.craftStation) {
+            const entry = {
+                id: thingId,
+                x,
+                y,
+                rot
+            };
+            Place.ensureCraftStationEntry(entry);
+            chunk.things.push(entry);
+            this._emitStorage(chunk, entry);
+            return;
+        }
+
         const entry = {
             id: thingId,
             x,
@@ -3801,7 +3911,7 @@ class SimWorld {
         for (const c of this._chunksNear(p.x, p.y, 1)) {
             if (!Array.isArray(c.things)) continue;
             for (const t of c.things) {
-                if (!this._isStorageEntry(t)) continue;
+                if (!this._isPlaceableEntry(t)) continue;
                 const dx = t.x - p.x;
                 const dy = t.y - p.y;
                 const d2 = dx * dx + dy * dy;
@@ -3843,9 +3953,22 @@ class SimWorld {
         if (!found) return;
         const { chunk, entry } = found;
         const def = thingDefs().get(entry.id);
-        Place.ensureStorageEntry(entry, def);
         const op = String(action.op || "");
         if (op === "attend" || op === "leave") return;
+        if (def?.craftStation) {
+            if (op !== "pickup") return;
+            const itemId = Place.itemIdForThing(entry.id, itemDefs());
+            const leftover = this._give(p, itemId, 1);
+            if (leftover > 0) {
+                this._pushDrop(p.x, p.y, { id: itemId, quantity: leftover });
+            }
+            const i = chunk.things.indexOf(entry);
+            if (i >= 0) chunk.things.splice(i, 1);
+            this._emitStorageRemoved(chunk, entry);
+            this._youDirty.add(p.id);
+            return;
+        }
+        Place.ensureStorageEntry(entry, def);
         if (op === "pickup") {
             if (!Place.isStorageEmpty(entry)) return;
             const itemId = Place.itemIdForThing(entry.id, itemDefs());
@@ -5415,7 +5538,7 @@ class SimWorld {
             }
             for (const t of c.things || []) {
                 if (this._isCampfireEntry(t)) campfires.push(this._campfirePublic(t, c));
-                else if (this._isStorageEntry(t)) storages.push(this._storagePublic(t, c));
+                else if (this._isPlaceableEntry(t)) storages.push(this._storagePublic(t, c));
             }
         }
         const mobs = [];

@@ -583,6 +583,14 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
 /** Ground loot lifetime while its chunk is loaded (5 real minutes). */
 const DROP_LIFE_MS = 5 * 60 * 1000;
 
+function dropIconKey(scene, item, entry) {
+    if (typeof Place !== "undefined" && Place.itemIconKey && scene?.getThing) {
+        const key = Place.itemIconKey(item, (id) => scene.getThing(id));
+        if (key) return key;
+    }
+    return item?.key || entry?.id || "";
+}
+
 /**
  * Ground item. `entry` lives in chunk.meta.drops (persisted like mobs).
  * lifeMs only ticks while the owning chunk is loaded.
@@ -731,7 +739,7 @@ class DroppedItem extends Mob {
     constructor(scene, entry, chunk) {
         const item = scene.getItem(entry.id);
         const isMeal = !!(entry.ingredients?.length);
-        const texKey = isMeal ? COCONUT_SHELL_KEY : (item?.key || entry.id);
+        const texKey = isMeal ? COCONUT_SHELL_KEY : dropIconKey(scene, item, entry);
         super(scene, entry.x, entry.y, texKey);
 
         this.entry = entry;

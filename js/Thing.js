@@ -815,3 +815,27 @@ class DryingRack extends Storage {
         this._hangKey = null;
     }
 }
+
+class CraftStation extends Thing {
+    constructor(scene, entry) {
+        super(scene, entry.x, entry.y, entry.id, entry);
+        if (typeof Place !== "undefined") Place.ensureCraftStationEntry(entry);
+        this.applyVisual();
+        scene.wireCraftStation?.(this);
+    }
+
+    inRange() {
+        const dx = this.x - this.scene.player.x;
+        const dy = this.y - this.scene.player.y;
+        const r = this.scene.tileSize * this.scene.player.interactionRange;
+        return dx * dx + dy * dy <= r * r;
+    }
+
+    tooltipText() {
+        return this.meta?.name || "Craft";
+    }
+
+    isEmpty() {
+        return true;
+    }
+}

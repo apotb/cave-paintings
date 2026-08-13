@@ -277,6 +277,7 @@
             "stage": "dried"
         },
         "tooltip": [
+            "Sew at a Skinworking Bench",
             "Ready for tanning"
         ]
     },
@@ -639,6 +640,34 @@
         }
     },
     {
+        "id": "hide_pouch",
+        "name": "Hide Pouch",
+        "key": "hide_pouch",
+        "maxStack": 1,
+        "weight": 0.8,
+        "weightFixed": true,
+        "equip": {
+            "slot": "waist",
+            "effects": {
+                "strength": 5,
+                "addSlot": [
+                    "hotbar",
+                    "hotbar"
+                ]
+            }
+        },
+        "recipe": {
+            "deer_hide_dry": 2,
+            "leaf_cord": 4,
+            "REQUIRE_STATION": "skinworking_bench",
+            "CRAFT_SECONDS": 12,
+            "REQUIRE_TOOL": {
+                "toolClass": "awl",
+                "wear": 10
+            }
+        }
+    },
+    {
         "id": "leaf_sandals",
         "name": "Leaf Sandals",
         "key": "leaf_sandals",
@@ -702,6 +731,24 @@
         "recipe": {
             "stick": 3,
             "leaf_cord": 2
+        }
+    },
+    {
+        "id": "skinworking_bench",
+        "name": "Skinworking Bench",
+        "key": "skinworking_bench",
+        "maxStack": 99,
+        "place": {
+            "thing": "skinworking_bench"
+        },
+        "tooltip": [
+            "Sew hides with an awl"
+        ],
+        "recipe": {
+            "log": 4,
+            "stick_frame": 1,
+            "leaf_cord": 6,
+            "stick": 8
         }
     },
     {

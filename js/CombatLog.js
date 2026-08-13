@@ -1082,8 +1082,8 @@ class CombatLog {
 
     _layout() {
         const s = this.scene.uiScale || 1;
-        const lineH = Math.round(14 * s);
-        const fontSize = Math.round(11 * s);
+        const lineH = Math.round(18 * s);
+        const fontSize = Math.round(14 * s);
         const wrapW = this._maxTextWidth();
         // 10 message lines; compose/chatting bar is a separate 11th slot underneath
         const budget = this.visibleLineCap;

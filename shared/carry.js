@@ -8,6 +8,18 @@
         root.Carry = factory();
     }
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
+    const RECIPE_META_KEYS = {
+        QUANTITY: true,
+        REQUIRE_THING: true,
+        REQUIRE_STATION: true,
+        CRAFT_SECONDS: true,
+        REQUIRE_TOOL: true
+    };
+
+    function isRecipeMetaKey(k) {
+        return !!RECIPE_META_KEYS[k];
+    }
+
     const BASE_STRENGTH = 15;
 
     function unitWeight(stack, def) {
@@ -121,7 +133,7 @@
                     quantity = +v || 1;
                     continue;
                 }
-                if (k === "REQUIRE_THING") continue;
+                if (isRecipeMetaKey(k)) continue;
                 const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
                 sum += weightOf(k) * qty;
             }
@@ -178,7 +190,7 @@
                     quantity = +v || 1;
                     continue;
                 }
-                if (k === "REQUIRE_THING") continue;
+                if (isRecipeMetaKey(k)) continue;
                 const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
                 sum += fuelKjOf(k) * qty;
             }
@@ -199,6 +211,8 @@
 
     return {
         BASE_STRENGTH,
+        RECIPE_META_KEYS,
+        isRecipeMetaKey,
         unitWeight,
         stackMass,
         wornPieces,

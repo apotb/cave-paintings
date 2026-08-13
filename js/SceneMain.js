@@ -608,7 +608,7 @@ class SceneMain extends SceneBase {
         name.setScale(1 / zoom);
         root.add(name);
 
-        const bubbleFont = Math.round(11 * s);
+        const bubbleFont = Math.round(14 * s);
         const bubble = this.add.text(8, -30, "", {
             fontFamily: "monospace",
             fontSize: `${bubbleFont}px`,
@@ -810,9 +810,12 @@ class SceneMain extends SceneBase {
                     if (d.id && d.id !== spr.entry.id) {
                         spr.entry.id = d.id;
                         const meta = this.getItem(d.id);
-                        if (meta) {
+                            if (meta) {
                             spr.item = meta;
-                            if (meta.key && this.textures.exists(meta.key)) spr.setTexture(meta.key);
+                            const iconKey = (typeof Place !== "undefined" && Place.itemIconKey)
+                                ? Place.itemIconKey(meta, (id) => this.getThing(id))
+                                : meta.key;
+                            if (iconKey && this.textures.exists(iconKey)) spr.setTexture(iconKey);
                         }
                     }
                     if (d.spoilAt != null) {
@@ -1338,7 +1341,7 @@ class SceneMain extends SceneBase {
         }
         if (entry.bubble?.active) {
             entry.bubble
-                .setFontSize(`${Math.round(11 * s)}px`)
+                .setFontSize(`${Math.round(14 * s)}px`)
                 .setStroke("#000000", stroke)
                 .setWordWrapWidth(Math.round(140 * s), true)
                 .setResolution(res)
@@ -1948,6 +1951,10 @@ class SceneMain extends SceneBase {
 
     _netApplyCampfirePayload(src, opts = {}) {
         if (!src || this.net?.isLocal) return;
+        if (src.removed || opts.removed) {
+            this._netRemoveCampfire(src, opts);
+            return;
+        }
         const found = this._netFindCampfire(src, opts);
         let { chunk, entry, x, y } = found;
         if (!Number.isFinite(x) || !Number.isFinite(y)) return;
@@ -2065,6 +2072,14 @@ class SceneMain extends SceneBase {
 
     _netApplyCampfireEvent(ev) {
         if (!ev || this.net?.isLocal) return;
+        if (ev.removed) {
+            this._netRemoveCampfire(ev, {
+                cx: ev.cx,
+                cy: ev.cy,
+                uid: ev.uid
+            });
+            return;
+        }
         const src = ev.entry || ev;
         this._netApplyCampfirePayload(src, {
             snapshot: false,
@@ -2073,6 +2088,29 @@ class SceneMain extends SceneBase {
             uid: ev.uid || src.uid,
             rev: ev.rev
         });
+    }
+
+    _netRemoveCampfire(src, opts = {}) {
+        const found = this._netFindCampfire(src, opts);
+        const chunk = found.chunk;
+        const entry = found.entry;
+        const x = Number.isFinite(found.x) ? found.x : Number(src.x);
+        const y = Number.isFinite(found.y) ? found.y : Number(src.y);
+        const uid = src.uid || opts.uid || entry?.uid;
+        const live = this._netFindCampfireSprite(entry || { uid }, x, y);
+        if (chunk?.meta?.things && entry) {
+            const i = chunk.meta.things.indexOf(entry);
+            if (i >= 0) chunk.meta.things.splice(i, 1);
+        } else if (chunk?.meta?.things && uid) {
+            const i = chunk.meta.things.findIndex((t) => t?.uid === uid);
+            if (i >= 0) chunk.meta.things.splice(i, 1);
+        }
+        if (live) {
+            if (this.campfirePanel?.campfire === live) this.campfirePanel.close();
+            live.destroy();
+        }
+        this.markLightDirty?.();
+        this.updateLightVeil?.();
     }
 
     _netApplyCampfires(list) {
@@ -2112,7 +2150,8 @@ class SceneMain extends SceneBase {
         const match = (t) => {
             if (!t) return false;
             if (uid && t.uid && t.uid === uid) return true;
-            const store = Array.isArray(t.slots) || this.getThing?.(t.id)?.storage;
+            const store = Array.isArray(t.slots) || this.getThing?.(t.id)?.storage
+                || this.getThing?.(t.id)?.craftStation;
             if (!store) return false;
             return Math.abs(Number(t.x) - x) < 1.5 && Math.abs(Number(t.y) - y) < 1.5;
         };
@@ -2166,17 +2205,23 @@ class SceneMain extends SceneBase {
         if (held && opts.snapshot && !newer) return;
 
         if (!entry) {
+            const def = this.getThing(src.id);
+            const isStation = !!(src.craftStation || def?.craftStation);
             entry = {
-                uid: src.uid || opts.uid || `st_${Math.round(x)}_${Math.round(y)}`,
-                id: src.id || "wicker_basket",
+                uid: src.uid || opts.uid || `${isStation ? "cs" : "st"}_${Math.round(x)}_${Math.round(y)}`,
+                id: src.id || (isStation ? "skinworking_bench" : "wicker_basket"),
                 x,
                 y,
                 rot: typeof Place !== "undefined" ? Place.normalizeRot(src.rot) : (src.rot || 0),
-                slots: Array.isArray(src.slots) ? src.slots : [null, null, null, null, null, null],
                 rev: Number.isFinite(incomingRev) ? incomingRev : 0
             };
-            if (typeof Place !== "undefined") {
-                Place.ensureStorageEntry(entry, this.getThing(entry.id));
+            if (isStation) {
+                if (typeof Place !== "undefined") Place.ensureCraftStationEntry(entry);
+            } else {
+                entry.slots = Array.isArray(src.slots) ? src.slots : [null, null, null, null, null, null];
+                if (typeof Place !== "undefined") {
+                    Place.ensureStorageEntry(entry, this.getThing(entry.id));
+                }
             }
             chunk.meta.things.push(entry);
         } else {
@@ -2196,12 +2241,28 @@ class SceneMain extends SceneBase {
 
     _netSyncStorageSprite(chunk, entry, x, y) {
         if (!entry) return;
-        let live = this.findStorageByUid(entry.uid);
+        const isStation = !!(this.getThing(entry.id)?.craftStation);
+        let live = isStation
+            ? this.findCraftStationByUid(entry.uid)
+            : this.findStorageByUid(entry.uid);
         if (!live) {
             for (const t of chunk?.things?.getChildren?.() || []) {
-                if (!(t instanceof Storage)) continue;
+                const matchType = isStation ? (t instanceof CraftStation) : (t instanceof Storage);
+                if (!matchType) continue;
                 if (t.entry === entry) { live = t; break; }
                 if (Math.abs(t.x - x) < 1.5 && Math.abs(t.y - y) < 1.5) { live = t; break; }
+            }
+        }
+        // Chunk load used to spawn a generic Thing (0° / not clickable). Replace it.
+        if (!live) {
+            for (const t of chunk?.things?.getChildren?.() || []) {
+                if (!t?.active) continue;
+                if (t instanceof CraftStation || t instanceof Storage) continue;
+                const sameUid = !!(entry.uid && t.entry?.uid === entry.uid);
+                const samePos = Number.isFinite(x) && Number.isFinite(y)
+                    && Math.abs(t.x - x) < 1.5 && Math.abs(t.y - y) < 1.5
+                    && t.meta?.id === entry.id;
+                if (sameUid || samePos) t.destroy();
             }
         }
         if (live) {
@@ -2211,7 +2272,19 @@ class SceneMain extends SceneBase {
             live.applyVisual?.();
             return;
         }
-        if (chunk?.isLoaded) chunk.things.add(Storage.create(this, entry));
+        if (chunk?.isLoaded) {
+            chunk.things.add(isStation ? new CraftStation(this, entry) : Storage.create(this, entry));
+        }
+    }
+
+    findCraftStationByUid(uid) {
+        if (!uid) return null;
+        for (const chunk of Object.values(this.chunks || {})) {
+            for (const t of chunk.things?.getChildren?.() || []) {
+                if (t instanceof CraftStation && t.entry?.uid === uid) return t;
+            }
+        }
+        return null;
     }
 
     _netRemoveStorage(src, opts = {}) {
@@ -2219,8 +2292,9 @@ class SceneMain extends SceneBase {
         const { chunk, entry, x, y } = found;
         const uid = src.uid || opts.uid || entry?.uid;
         const live = this.findStorageByUid(uid)
+            || this.findCraftStationByUid(uid)
             || (chunk?.things?.getChildren?.() || []).find((t) =>
-                t instanceof Storage && (
+                (t instanceof Storage || t instanceof CraftStation) && (
                     t.entry === entry
                     || (Number.isFinite(x) && Math.abs(t.x - x) < 1.5 && Math.abs(t.y - y) < 1.5)
                 )
@@ -2234,6 +2308,7 @@ class SceneMain extends SceneBase {
         }
         if (live) {
             if (this.storagePanel?.storage === live) this.storagePanel.close();
+            if (this._craftStationThing === live) this.closeCraftMenu();
             live.destroy();
         }
     }
@@ -2981,6 +3056,7 @@ class SceneMain extends SceneBase {
                     if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
                     if (this._isUnderCampfirePanel(obj)) return obj;
                 }
+                if (campP.pointerOnDestroy?.(pointer)) return campP.destroyRect;
                 return campP.container;
             }
 
@@ -2994,6 +3070,16 @@ class SceneMain extends SceneBase {
                 }
                 if (storeP.pointerOnTake?.(pointer)) return storeP.takeRect;
                 return storeP.container;
+            }
+
+            if (this.pointerOnCraftTake?.(pointer)) {
+                for (let i = hits.length - 1; i >= 0; i--) {
+                    const obj = hits[i];
+                    if (!obj?.active || !obj.input?.enabled) continue;
+                    if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
+                    if (this._isUnderCraftTake(obj)) return obj;
+                }
+                return this._craftTakeRect;
             }
 
             // Equipment panel body blocks world/UI behind it
@@ -3074,7 +3160,8 @@ class SceneMain extends SceneBase {
             if (!panel) return false;
             let cur = obj;
             while (cur) {
-                if (cur === panel.container) return true;
+                if (cur === panel.container || cur === panel.destroyBtn ||
+                    cur === panel.destroyRect || cur === panel.destroyText) return true;
                 if (panel.slotViews?.some(v =>
                     v.slot === cur || v.icon === cur || v.fill === cur || v.qty === cur
                 )) return true;
@@ -3093,6 +3180,16 @@ class SceneMain extends SceneBase {
                 if (panel.slotViews?.some(v =>
                     v.slot === cur || v.icon === cur || v.fill === cur || v.qty === cur
                 )) return true;
+                cur = cur.parentContainer;
+            }
+            return false;
+        };
+
+        this._isUnderCraftTake = (obj) => {
+            let cur = obj;
+            while (cur) {
+                if (cur === this._craftTakeBtn || cur === this._craftTakeRect ||
+                    cur === this._craftTakeText) return true;
                 cur = cur.parentContainer;
             }
             return false;
@@ -3560,6 +3657,33 @@ class SceneMain extends SceneBase {
         });
     }
 
+    /** Skinworking bench (and later craft stations): click opens the station recipe list. */
+    wireCraftStation(thing) {
+        if (!thing || !thing.meta?.craftStation) return;
+        thing.setInteractive({ cursor: "pointer" });
+        thing.on("pointerover", (pointer) => {
+            this.showTooltip(
+                () => thing.tooltipText?.() || thing.meta?.name || "Craft",
+                pointer.x,
+                pointer.y,
+                thing
+            );
+        });
+        thing.on("pointerout", () => {
+            if (this._hoverTarget === thing) this._hoverTarget = null;
+            if (this._tooltipTarget === thing) this.hideTooltip();
+        });
+        thing.on("pointerdown", (pointer) => {
+            if (pointer.rightButtonDown()) return;
+            if (this.pointerOverWorldUi?.(pointer)) return;
+            if (!thing.inRange?.()) return;
+            this.toggleCraftStationMenu(thing);
+        });
+        thing.on("destroy", () => {
+            if (this._craftStationThing === thing) this.closeCraftMenu();
+        });
+    }
+
     /**
      * True when the pointer is over world-anchored UI (corpse/campfire panels).
      * World click handlers must bail so rocks/corpses behind the chrome don't fire.
@@ -3569,7 +3693,15 @@ class SceneMain extends SceneBase {
         if (this.corpsePanel?.containsPointer?.(pointer)) return true;
         if (this.campfirePanel?.containsPointer?.(pointer)) return true;
         if (this.storagePanel?.containsPointer?.(pointer)) return true;
+        if (this.pointerOnCraftTake?.(pointer)) return true;
+        if (this._pointerOverCraftMenu?.(pointer)) return true;
         return false;
+    }
+
+    _pointerOverCraftMenu(pointer) {
+        if (!this.craftMenuVisible || !this.craftContainer?.visible || !pointer) return false;
+        if (!this.craftContainer.getBounds) return false;
+        return Phaser.Geom.Rectangle.Contains(this.craftContainer.getBounds(), pointer.x, pointer.y);
     }
 
     _rockKnapTooltipText() {
@@ -3771,6 +3903,11 @@ class SceneMain extends SceneBase {
             if (typeof Place !== "undefined") Place.ensureStorageEntry(entry, def);
             return { lootable: false, entry };
         }
+        if (def.craftStation) {
+            const entry = { id: def.id, x, y, rot: 0 };
+            if (typeof Place !== "undefined") Place.ensureCraftStationEntry(entry);
+            return { lootable: false, entry };
+        }
         return { lootable: false, entry: { id: def.id, x, y } };
     }
 
@@ -3781,11 +3918,12 @@ class SceneMain extends SceneBase {
             thing = new LootableThing(this, entry, chunk);
         } else if (entry.id === "campfire" || entry.id === "unlit_campfire") {
             thing = new Campfire(this, entry);
+        } else if (this.getThing(entry.id)?.craftStation) {
+            thing = new CraftStation(this, entry);
         } else if (Array.isArray(entry.slots) || this.getThing(entry.id)?.storage) {
             thing = Storage.create(this, entry);
         } else {
-            thing = new Thing(this, entry.x, entry.y, entry.id);
-            thing.entry = entry;
+            thing = new Thing(this, entry.x, entry.y, entry.id, entry);
             if (entry.id === "rock") this.wireRockKnapping?.(thing);
             else if (entry.id === "sign") {
                 if (entry.spawnHint && this._spawnSignTooltip) {
@@ -4128,7 +4266,9 @@ class SceneMain extends SceneBase {
             return true;
         }
 
-        const placed = this.placeStorage(tile.tx, tile.ty, info.thingId, rot);
+        const placed = info.thingDef.craftStation
+            ? this.placeCraftStation(tile.tx, tile.ty, info.thingId, rot)
+            : this.placeStorage(tile.tx, tile.ty, info.thingId, rot);
         if (!placed) return false;
         this.player.loseItem(info.held, 1);
         if (!(info.held.quantity > 0)) this.resetPlaceRot();
@@ -4154,6 +4294,26 @@ class SceneMain extends SceneBase {
         if (typeof Place !== "undefined") Place.ensureStorageEntry(entry, def);
         chunk.meta.things.push(entry);
         const spr = Storage.create(this, entry);
+        chunk.things.add(spr);
+        return spr;
+    }
+
+    placeCraftStation(tx, ty, thingId, rot = 0) {
+        if (!this.canPlaceAt(tx, ty)) return null;
+        const { x, y } = this.tileCenter(tx, ty);
+        const chunk = this.getChunkAtWorld(x, y - 1);
+        if (!chunk || !chunk.isLoaded) return null;
+        const def = this.getThing(thingId);
+        if (!def?.craftStation) return null;
+        const entry = {
+            id: thingId,
+            x,
+            y,
+            rot: typeof Place !== "undefined" ? Place.normalizeRot(rot) : rot
+        };
+        if (typeof Place !== "undefined") Place.ensureCraftStationEntry(entry);
+        chunk.meta.things.push(entry);
+        const spr = new CraftStation(this, entry);
         chunk.things.add(spr);
         return spr;
     }
@@ -4201,6 +4361,77 @@ class SceneMain extends SceneBase {
         return true;
     }
 
+    tryPickupCraftStation(station) {
+        if (!station?.meta?.craftStation) return false;
+        if (!station.inRange?.()) return false;
+        this.closeCraftMenu();
+        return this.tryPickupStorage(station);
+    }
+
+    tryDestroyCampfire(campfire) {
+        if (!campfire || campfire.isLit?.()) return false;
+        if (!campfire.inRange?.()) return false;
+        const entry = campfire.entry;
+        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+            this._invSwapGuardUntil = performance.now() + 1000;
+            this._netSendMove?.(true);
+            this.net.sendAction({
+                type: NetProtocol.Actions.CAMPFIRE,
+                op: "destroy",
+                uid: entry?.uid,
+                x: campfire.x,
+                y: campfire.y
+            });
+            this.campfirePanel?.close();
+            return true;
+        }
+        this._dumpCampfireContents(campfire);
+        this._removeCampfireThing(campfire);
+        return true;
+    }
+
+    _campfireContentStacks(entry) {
+        const stacks = [];
+        const push = (s) => {
+            if (s?.id && s.quantity > 0) stacks.push(s);
+        };
+        for (const s of entry?.fuel || []) push(s);
+        push(entry?.cook);
+        push(entry?.catalyst);
+        for (const s of entry?.simmer || []) push(s);
+        return stacks;
+    }
+
+    _dumpCampfireContents(campfire) {
+        const entry = campfire?.entry;
+        if (!entry) return;
+        const now = this.worldMinuteIndex?.() ?? null;
+        const x = campfire.x;
+        const y = campfire.y;
+        for (const stack of this._campfireContentStacks(entry)) {
+            const meta = this.getItem(stack.id);
+            if (!meta) continue;
+            const extras = typeof mealStackExtras === "function" ? mealStackExtras(stack) : null;
+            const spoilAt = typeof spoilAtForWorld === "function"
+                ? spoilAtForWorld(stack, now)
+                : stack.spoilAt;
+            DroppedItem.spawn(this, x, y, meta, stack.quantity, spoilAt, extras);
+        }
+    }
+
+    _removeCampfireThing(campfire) {
+        if (!campfire) return;
+        const entry = campfire.entry;
+        const chunk = this.getChunkAtWorld(campfire.x, campfire.y - 1);
+        if (chunk?.meta?.things && entry) {
+            const i = chunk.meta.things.indexOf(entry);
+            if (i >= 0) chunk.meta.things.splice(i, 1);
+        }
+        if (this.campfirePanel?.campfire === campfire) this.campfirePanel.close();
+        campfire.destroy();
+        this.markLightDirty?.();
+    }
+
     _removeStorageThing(storage) {
         if (!storage) return;
         const entry = storage.entry;
@@ -4210,6 +4441,7 @@ class SceneMain extends SceneBase {
             if (i >= 0) chunk.meta.things.splice(i, 1);
         }
         if (this.storagePanel?.storage === storage) this.storagePanel.close();
+        if (this._craftStationThing === storage) this.closeCraftMenu();
         storage.destroy();
     }
 
@@ -5452,6 +5684,9 @@ class SceneMain extends SceneBase {
         if (stack?.toolClass === "scraper") {
             lines.push("Click a drying rack with a hide on it");
         }
+        if (stack?.toolClass === "awl") {
+            lines.push("Use with Skinworking Bench");
+        }
         if (stack?.toolClass === "chopper" || (typeof Chop !== "undefined" && Chop.chopFraction(stack) > 0)) {
             lines.push("Attack trees to chop them down");
         }
@@ -5497,9 +5732,20 @@ class SceneMain extends SceneBase {
 
     createCraftMenu() {
         this.craftMenuVisible = false;
+        this._craftStationThing = null;
+        this._craftPage = 0;
         this.craftContainer = this.add.container(0, 0).setVisible(false);
         this.uiLayer.add(this.craftContainer);
         this._data = [];
+        this._buildCraftTakeButton();
+        this.input.on("wheel", (pointer, _over, deltaX, deltaY) => {
+            if (!this.craftMenuVisible) return;
+            const p = pointer || this.input.activePointer;
+            if (!this._pointerOverCraftMenu?.(p)) return;
+            const delta = deltaY || deltaX;
+            if (delta < 0) this._shiftCraftPage(-1);
+            else if (delta > 0) this._shiftCraftPage(1);
+        });
         this.scale.on('resize', () => this.positionCraftMenu());
     }
 
@@ -5524,32 +5770,54 @@ class SceneMain extends SceneBase {
         const slotW = baseW * s;
         const slotH = baseH * s;
 
-        const recipes = this.getKnownRecipes();
-        if (!recipes.length) {
-            this._craftMenuData = { cols: 3, rows: 0, gridW: 0, gridH: 0, slotW, slotH, pad };
-            this.positionCraftMenu();
-            return;
+        const stationId = this._craftStationThing?.meta?.id || null;
+        let recipes;
+        if (stationId) {
+            recipes = this.getKnownRecipes(stationId);
+        } else {
+            const nearbyIds = this.nearbyCraftStationIds();
+            this._craftNearbySig = nearbyIds.join(",");
+            recipes = this.getKnownRecipes(null);
+            for (const id of nearbyIds) recipes = recipes.concat(this.getKnownRecipes(id));
         }
-
         const cols = 3;
-        const rows = Math.ceil(recipes.length / cols);
+        const maxRows = 4;
+        const perPage = cols * maxRows;
+        const pages = Math.max(1, Math.ceil(recipes.length / perPage));
+        this._craftPage = Phaser.Math.Clamp(this._craftPage || 0, 0, pages - 1);
+        const start = this._craftPage * perPage;
+        const pageRecipes = recipes.slice(start, start + perPage);
+        const rows = Math.max(1, Math.ceil(pageRecipes.length / cols) || 1);
         const gridW = cols * slotW + (cols - 1) * pad;
-        const gridH = rows * slotH + (rows - 1) * pad;
-        this._craftMenuData = { cols, rows, gridW, gridH, slotW, slotH, pad };
+        const gridH = pageRecipes.length
+            ? rows * slotH + (rows - 1) * pad
+            : slotH;
+        const pagerH = Math.round(28 * s);
+        const pagerGap = Math.round(6 * s);
+        const gridY = pagerH + pagerGap;
+        this._craftMenuData = {
+            cols, rows, gridW,
+            gridH: gridY + gridH,
+            slotW, slotH, pad,
+            pages
+        };
 
-        for (let i = 0; i < recipes.length; i++) {
-            const recipe = recipes[i];
+        this._addCraftPager(gridW, pagerH, s, this._craftPage, pages);
+
+        for (let i = 0; i < pageRecipes.length; i++) {
+            const recipe = pageRecipes[i];
             const col = i % cols;
             const row = Math.floor(i / cols);
             const x = col * (slotW + pad);
-            const y = row * (slotH + pad);
+            const y = gridY + row * (slotH + pad);
 
             // Slot
             const slot = this.add.image(x, y, 'slot').setOrigin(0, 0).setScale(s).setInteractive({ cursor: 'pointer' });
             this.craftContainer.add(slot);
 
             // Icon
-            const icon = this.add.image(x + slotW / 2, y + slotH / 2, recipe.key).setOrigin(0.5, 0.5).setScale(3.0 * s);
+            const iconKey = this._craftRecipeIconKey(recipe);
+            const icon = this.add.image(x + slotW / 2, y + slotH / 2, iconKey).setOrigin(0.5, 0.5).setScale(3.0 * s);
             this.craftContainer.add(icon);
 
             // Quantity
@@ -5564,14 +5832,22 @@ class SceneMain extends SceneBase {
                 lines.push(this.formatItemTooltip(this.getItem(recipe.id), recipe.quantity));
                 lines.push('—');
 
-                // Ingredients list
                 for (const ingredient of recipe.ingredients) {
                     const have = this.player.getNumMatchingItems(ingredient);
                     lines.push(`${this._craftIngredientLabel(ingredient)}: ${have}/${ingredient.qty}`);
                 }
 
-                // Require nearby Thing
-                if (recipe.requireThing) lines.push(`Requires nearby ${this.getThing(recipe.requireThing).name}`);
+                if (recipe.requireThing) {
+                    const thing = this.getThing(recipe.requireThing);
+                    lines.push(`Requires nearby ${thing?.name || recipe.requireThing}`);
+                }
+                if (recipe.requireStation) {
+                    const thing = this.getThing(recipe.requireStation);
+                    lines.push(`Requires ${thing?.name || recipe.requireStation}`);
+                }
+                if (recipe.requireTool?.toolClass) {
+                    lines.push(`Requires held ${this._craftToolClassLabel(recipe.requireTool.toolClass)}`);
+                }
 
                 return lines.join('\n');
             };
@@ -5615,16 +5891,241 @@ class SceneMain extends SceneBase {
         }
 
         this.positionCraftMenu();
+        this._layoutCraftTakeButton();
     }
 
-    getKnownRecipes() {
-        return this.items().filter(m => m?.recipe).map(meta => {
+    _shiftCraftPage(delta) {
+        const pages = Math.max(1, this._craftMenuData?.pages || 1);
+        const next = Phaser.Math.Clamp((this._craftPage || 0) + delta, 0, pages - 1);
+        if (next === (this._craftPage || 0)) return;
+        this.hideTooltip?.();
+        this._craftPage = next;
+        this.refreshCraftMenu();
+    }
+
+    _addCraftPager(gridW, pagerH, s, page, pages) {
+        const y = pagerH / 2;
+        const bw = Math.round(28 * s);
+        const gap = Math.round(52 * s);
+        this._addCraftNavArrow(
+            gridW / 2 - gap, y, bw, pagerH, "<",
+            page > 0, () => this._shiftCraftPage(-1), s
+        );
+        this._addCraftNavArrow(
+            gridW / 2 + gap, y, bw, pagerH, ">",
+            page < pages - 1, () => this._shiftCraftPage(1), s
+        );
+        const label = this.add.text(gridW / 2, y, `${page + 1} / ${pages}`, {
+            fontFamily: "PrimaryFont",
+            fontSize: `${Math.round(13 * s)}px`,
+            color: "#d4c4a8",
+            stroke: "#000000",
+            strokeThickness: Math.max(2, Math.round(2 * s))
+        }).setOrigin(0.5);
+        this.craftContainer.add(label);
+    }
+
+    _addCraftNavArrow(x, y, bw, bh, label, enabled, onClick, s) {
+        const BG = 0x120e0a;
+        const BG_PRESS = 0x0a0806;
+        const OUTLINE = 0x2a2218;
+        const OUTLINE_HOVER = 0xffffff;
+        const OUTLINE_PRESS = 0xd4a84b;
+        const rect = this.add.rectangle(x, y, bw, bh, BG, 1)
+            .setStrokeStyle(2, OUTLINE);
+        const text = this.add.text(x, y, label, {
+            fontFamily: "PrimaryFont",
+            fontSize: `${Math.round(16 * s)}px`,
+            color: "#d4c4a8"
+        }).setOrigin(0.5);
+        this.craftContainer.add(rect);
+        this.craftContainer.add(text);
+        if (!enabled) {
+            rect.setAlpha(0.35);
+            text.setAlpha(0.35);
+            return;
+        }
+        rect.setInteractive({ useHandCursor: true });
+        let hovering = false;
+        let pressing = false;
+        const paint = () => {
+            if (pressing) {
+                rect.setFillStyle(BG_PRESS, 1);
+                rect.setStrokeStyle(2, OUTLINE_PRESS);
+            } else if (hovering) {
+                rect.setFillStyle(BG, 1);
+                rect.setStrokeStyle(2, OUTLINE_HOVER);
+            } else {
+                rect.setFillStyle(BG, 1);
+                rect.setStrokeStyle(2, OUTLINE);
+            }
+        };
+        rect.on("pointerover", () => { hovering = true; paint(); });
+        rect.on("pointerout", () => { hovering = false; pressing = false; paint(); });
+        rect.on("pointerdown", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            if (pointer.rightButtonDown()) return;
+            pressing = true;
+            paint();
+        });
+        rect.on("pointerup", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            const was = pressing;
+            pressing = false;
+            paint();
+            if (was && hovering) onClick();
+        });
+    }
+
+    _craftRecipeIconKey(recipe) {
+        const meta = this.getItem(recipe.id);
+        if (typeof Place !== "undefined" && Place.itemIconKey) {
+            const key = Place.itemIconKey(meta, (id) => this.getThing(id));
+            if (key && this.textures.exists(key)) return key;
+        }
+        if (recipe.key && this.textures.exists(recipe.key)) return recipe.key;
+        return "slot";
+    }
+
+    _buildCraftTakeButton() {
+        const BG = 0x120e0a;
+        const BG_PRESS = 0x0a0806;
+        const OUTLINE = 0x2a2218;
+        const OUTLINE_HOVER = 0xffffff;
+        const OUTLINE_PRESS = 0xd4a84b;
+
+        this._craftTakeRect = this.add.rectangle(0, 0, 78, 28, BG, 1)
+            .setStrokeStyle(2, OUTLINE)
+            .setInteractive({ useHandCursor: true });
+        this._craftTakeText = this.add.text(0, 0, "Take", {
+            fontFamily: "PrimaryFont",
+            fontSize: "13px",
+            color: "#d4c4a8"
+        }).setOrigin(0.5);
+        this._craftTakeBtn = this.add.container(0, 0, [this._craftTakeRect, this._craftTakeText])
+            .setVisible(false)
+            .setDepth(100);
+        this._uiCam?.ignore(this._craftTakeBtn);
+
+        this._craftTakeHovering = false;
+        this._craftTakePressing = false;
+        this._craftTakeBw = 78;
+        this._craftTakeBh = 28;
+        this._paintCraftTake = () => {
+            const strokeW = 2 / (this.worldZoom || 1);
+            const rect = this._craftTakeRect;
+            const text = this._craftTakeText;
+            if (!rect) return;
+            if (this._craftTakePressing) {
+                rect.setFillStyle(BG_PRESS, 1);
+                rect.setStrokeStyle(strokeW, OUTLINE_PRESS);
+            } else if (this._craftTakeHovering) {
+                rect.setFillStyle(BG, 1);
+                rect.setStrokeStyle(strokeW, OUTLINE_HOVER);
+            } else {
+                rect.setFillStyle(BG, 1);
+                rect.setStrokeStyle(strokeW, OUTLINE);
+            }
+            text?.setColor("#d4c4a8");
+        };
+
+        this._craftTakeRect.on("pointerdown", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            if (pointer.rightButtonDown()) return;
+            this._craftTakePressing = true;
+            this._paintCraftTake();
+        });
+        this._craftTakeRect.on("pointerup", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            const was = this._craftTakePressing;
+            this._craftTakePressing = false;
+            this._syncCraftTakeHover();
+            this._paintCraftTake();
+            if (was && this._craftTakeHovering) this._tryPickupCraftStation();
+        });
+    }
+
+    _layoutCraftTakeButton() {
+        const btn = this._craftTakeBtn;
+        const station = this._craftStationThing;
+        if (!btn) return;
+        if (!this.craftMenuVisible || !station?.active) {
+            this._craftTakeRect?.disableInteractive();
+            btn.setVisible(false);
+            this._craftTakeHovering = false;
+            this._craftTakePressing = false;
+            return;
+        }
+        const s = this.uiScale || 1;
+        const zoom = this.worldZoom || 1;
+        const ws = s / zoom;
+        const bw = 78 * ws;
+        const bh = 28 * ws;
+        const clear = 2;
+        this._craftTakeBw = bw;
+        this._craftTakeBh = bh;
+        this._craftTakeRect.setSize(bw, bh);
+        this._craftTakeText.setResolution(zoom * (window.devicePixelRatio || 1));
+        this._craftTakeText.setFontSize(`${Math.round(13 * s)}px`);
+        this._craftTakeText.setScale(1 / zoom);
+        this._craftTakeRect.setInteractive({ useHandCursor: true });
+        if (this._craftTakeRect.input?.hitArea?.setTo) {
+            this._craftTakeRect.input.hitArea.setTo(0, 0, bw, bh);
+        }
+        btn.setPosition(station.x, station.y + clear + bh / 2);
+        btn.setVisible(true);
+        this._paintCraftTake();
+    }
+
+    pointerOnCraftTake(pointer) {
+        if (!this._craftTakeBtn?.visible || !this._craftTakeRect || !pointer) return false;
+        const pt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        return Phaser.Geom.Rectangle.Contains(this._craftTakeRect.getBounds(), pt.x, pt.y);
+    }
+
+    _syncCraftTakeHover() {
+        const over = !!this.pointerOnCraftTake(this.input.activePointer);
+        if (over !== this._craftTakeHovering) {
+            this._craftTakeHovering = over;
+            if (!over) this._craftTakePressing = false;
+        }
+        this._paintCraftTake?.();
+    }
+
+    _tryPickupCraftStation() {
+        const station = this._craftStationThing;
+        if (!station) return;
+        this.tryPickupCraftStation(station);
+    }
+
+    _isRecipeMetaKey(k) {
+        if (typeof Carry !== "undefined" && Carry.isRecipeMetaKey) return Carry.isRecipeMetaKey(k);
+        return k === "QUANTITY" || k === "REQUIRE_THING" || k === "REQUIRE_STATION"
+            || k === "CRAFT_SECONDS" || k === "REQUIRE_TOOL";
+    }
+
+    getKnownRecipes(stationId = null) {
+        return this.items().filter((m) => {
+            if (!m?.recipe) return false;
+            const req = m.recipe.REQUIRE_STATION ? String(m.recipe.REQUIRE_STATION) : null;
+            if (stationId) return req === stationId;
+            return !req;
+        }).map((meta) => {
             const r = meta.recipe, ingredients = [];
-            let requireThing = null, quantity = 1;
+            let requireThing = null, requireStation = null, quantity = 1;
+            let craftSeconds = 0, requireTool = null;
             for (const [k, v] of Object.entries(r)) {
-                if (k === 'QUANTITY') quantity = +v || 1;
-                else if (k === 'REQUIRE_THING') requireThing = String(v);
-                else if (v && typeof v === 'object') {
+                if (k === "QUANTITY") quantity = +v || 1;
+                else if (k === "REQUIRE_THING") requireThing = String(v);
+                else if (k === "REQUIRE_STATION") requireStation = String(v);
+                else if (k === "CRAFT_SECONDS") craftSeconds = Math.max(0, Number(v) || 0);
+                else if (k === "REQUIRE_TOOL") {
+                    requireTool = {
+                        toolClass: v?.toolClass ? String(v.toolClass) : null,
+                        wear: Math.max(0, Number(v?.wear) || 0)
+                    };
+                } else if (this._isRecipeMetaKey(k)) continue;
+                else if (v && typeof v === "object") {
                     ingredients.push({
                         id: k,
                         qty: +v.qty || 1,
@@ -5634,13 +6135,19 @@ class SceneMain extends SceneBase {
                     ingredients.push({ id: k, qty: +v || 1, toolClass: null });
                 }
             }
+            const iconKey = (typeof Place !== "undefined" && Place.itemIconKey)
+                ? Place.itemIconKey(meta, (id) => this.getThing(id))
+                : meta.key;
             return {
                 id: meta.id,
                 name: meta.name,
-                key: meta.key,
+                key: iconKey || meta.key,
                 ingredients,
                 quantity,
-                requireThing
+                requireThing,
+                requireStation,
+                craftSeconds,
+                requireTool
             };
         });
     }
@@ -5652,6 +6159,19 @@ class SceneMain extends SceneBase {
             if (ingredient.id === "stone_tool") return "Stone Spear Tip";
         }
         return this.getItem(ingredient.id)?.name || ingredient.id;
+    }
+
+    _craftToolClassLabel(toolClass) {
+        if (toolClass === "awl") return "Awl";
+        if (toolClass === "scraper") return "Scraper";
+        if (toolClass === "knife") return "Knife";
+        return toolClass || "tool";
+    }
+
+    _heldMatchesCraftTool(requireTool) {
+        if (!requireTool?.toolClass) return true;
+        const held = this.player?.getHeldItem?.();
+        return !!(held && held.toolClass === requireTool.toolClass);
     }
 
     hasNearbyThing(id) {
@@ -5671,6 +6191,51 @@ class SceneMain extends SceneBase {
         return false;
     }
 
+    nearbyCraftStationIds() {
+        const ids = [];
+        const seen = new Set();
+        const r = this.tileSize * this.player.interactionRange;
+        const r2 = r * r;
+        const px = this.player.x;
+        const py = this.player.y;
+        for (const chunk of Object.values(this.chunks || {})) {
+            if (!chunk.isLoaded) continue;
+            for (const thing of chunk.things?.getChildren?.() || []) {
+                const id = thing?.active && thing.meta?.craftStation ? thing.meta.id : null;
+                if (!id || seen.has(id)) continue;
+                const dx = thing.x - px;
+                const dy = thing.y - py;
+                if (dx * dx + dy * dy > r2) continue;
+                seen.add(id);
+                ids.push(id);
+            }
+        }
+        return ids;
+    }
+
+    _findNearbyCraftStation(stationId) {
+        if (!stationId) return null;
+        const clicked = this._craftStationThing;
+        if (clicked?.active && clicked.meta?.id === stationId && clicked.inRange?.()) {
+            return clicked;
+        }
+        const r = this.tileSize * this.player.interactionRange;
+        const r2 = r * r;
+        const px = this.player.x;
+        const py = this.player.y;
+        for (const chunk of Object.values(this.chunks || {})) {
+            if (!chunk.isLoaded) continue;
+            for (const thing of chunk.things?.getChildren?.() || []) {
+                if (!thing?.active || thing.meta?.id !== stationId) continue;
+                if (!thing.meta?.craftStation) continue;
+                const dx = thing.x - px;
+                const dy = thing.y - py;
+                if (dx * dx + dy * dy <= r2) return thing;
+            }
+        }
+        return null;
+    }
+
     canCraft(recipe) {
         if (!recipe.ingredients.every(
             (ingredient) => this.player.getNumMatchingItems(ingredient) >= ingredient.qty
@@ -5680,10 +6245,28 @@ class SceneMain extends SceneBase {
         if (recipe.requireThing && !this.hasNearbyThing(recipe.requireThing)) {
             return false;
         }
+        if (recipe.requireStation && !this._findNearbyCraftStation(recipe.requireStation)) {
+            return false;
+        }
+        if (recipe.requireTool && !this._heldMatchesCraftTool(recipe.requireTool)) {
+            return false;
+        }
         return true;
     }
 
     doCraft(recipe) {
+        if (recipe.craftSeconds > 0) {
+            const station = recipe.requireStation
+                ? this._findNearbyCraftStation(recipe.requireStation)
+                : this._craftStationThing;
+            this.player.beginCraft?.(recipe, station);
+            return;
+        }
+        this._finishCraft(recipe);
+    }
+
+    _finishCraft(recipe) {
+        if (!this.canCraft(recipe)) return;
         // Dedicated MP: server consumes ingredients + grants/drops; YOU/snapshots update UI.
         // Do not mutate locally — that fought deferred YOU sync and spawned ghost ground piles.
         if (this.isNet && this.net?.connected && !this.net.isLocal) {
@@ -5707,6 +6290,9 @@ class SceneMain extends SceneBase {
             }
         }
         for (const ing of recipe.ingredients) this.player.loseMatchingItems(ing);
+
+        const wear = Number(recipe.requireTool?.wear) || 0;
+        if (wear > 0) this.player.wearHeld(wear);
 
         if (tipQuality && (recipe.id === "stone_spear" || recipe.id === "flint_spear")) {
             const stack = makeItemStack(item, recipe.quantity || 1, undefined, this.worldMinuteIndex());
@@ -5733,7 +6319,9 @@ class SceneMain extends SceneBase {
         this.craft.on('pointerover', () => {
             if (!this.craftMenuVisible) this.craft.setTexture('craft_hover');
         });
-        this.craft.on('pointerout', () => this.craft.setTexture(this.craftMenuVisible ? 'craft_open' : 'craft'));
+        this.craft.on('pointerout', () => this.craft.setTexture(
+            this.craftMenuVisible ? 'craft_open' : 'craft'
+        ));
         this.craft.setOrigin(0.5, 0.5).setScale(6 * s);
         this.uiLayer.add(this.craft);
 
@@ -5761,51 +6349,6 @@ class SceneMain extends SceneBase {
         this.equipmentBtn.setOrigin(0.5, 0.5).setScale(6 * s);
         this.uiLayer.add(this.equipmentBtn);
 
-        // NOTE: must not use this.save / this.load — those clobber Phaser scene plugins
-        // (LoaderPlugin is this.load). Overwriting them breaks SceneMain.preload on rejoin.
-        this._savePressed = false;
-        this.saveBtn = this.add.image(this.scale.width - 80 * s, 32 * s, 'save');
-        this.saveBtn.setInteractive({ useHandCursor: true, pixelPerfect: true });
-        this.saveBtn.on('pointerdown', () => {
-            this._savePressed = true;
-            this.saveBtn.setTexture('save_open');
-            this.saveFile();
-            // Download can swallow Phaser pointerup; keep open briefly for press feedback
-            this.time.delayedCall(150, () => {
-                this._releasePressButton('_savePressed', this.saveBtn, 'save');
-            });
-        });
-        this.saveBtn.on('pointerover', (p) => {
-            if (!this._savePressed) this.saveBtn.setTexture('save_hover');
-            this.showTooltip('Save', p.x, p.y, this.saveBtn);
-        });
-        this.saveBtn.on('pointerout', () => {
-            if (!this._savePressed) this.saveBtn.setTexture('save');
-            if (this._tooltipTarget === this.saveBtn) this.hideTooltip();
-        });
-        this.saveBtn.setOrigin(0.5, 0.5).setScale(3 * s);
-        this.uiLayer.add(this.saveBtn);
-
-        this._loadPressed = false;
-        this.loadBtn = this.add.image(this.scale.width - 32 * s, 32 * s, 'load');
-        this.loadBtn.setInteractive({ useHandCursor: true, pixelPerfect: true });
-        this.loadBtn.on('pointerdown', () => {
-            this._loadPressed = true;
-            this.loadBtn.setTexture('load_open');
-            // File dialog can swallow Phaser pointerup; release when dialog settles
-            this.loadFile().finally(() => this._releasePressButton('_loadPressed', this.loadBtn, 'load'));
-        });
-        this.loadBtn.on('pointerover', (p) => {
-            if (!this._loadPressed) this.loadBtn.setTexture('load_hover');
-            this.showTooltip('Load', p.x, p.y, this.loadBtn);
-        });
-        this.loadBtn.on('pointerout', () => {
-            if (!this._loadPressed) this.loadBtn.setTexture('load');
-            if (this._tooltipTarget === this.loadBtn) this.hideTooltip();
-        });
-        this.loadBtn.setOrigin(0.5, 0.5).setScale(3 * s);
-        this.uiLayer.add(this.loadBtn);
-
         // Help (hover for controls; hold-click shows pressed art only)
         this._helpPressed = false;
         this.help = this.add.image(this.scale.width - 32 * s, this.scale.height - 32 * s, 'help');
@@ -5826,19 +6369,17 @@ class SceneMain extends SceneBase {
         this.uiLayer.add(this.help);
 
         this.input.on('pointerup', () => {
-            this._releasePressButton('_savePressed', this.saveBtn, 'save');
-            this._releasePressButton('_loadPressed', this.loadBtn, 'load');
             this._releasePressButton('_helpPressed', this.help, 'help');
         });
     }
 
-    /** Clear a momentary press texture (browser dialogs often skip Phaser pointerup). */
+    /** Clear a momentary press texture. */
     _releasePressButton(flagName, image, key) {
         if (!this[flagName] || !image) return;
         this[flagName] = false;
         const p = this.input.activePointer;
         const over = Phaser.Geom.Rectangle.Contains(image.getBounds(), p.x, p.y);
-        const hoverKey = key === 'help' ? 'help_hover' : `${key}_hover`;
+        const hoverKey = `${key}_hover`;
         image.setTexture(over ? hoverKey : key);
     }
 
@@ -6367,7 +6908,9 @@ class SceneMain extends SceneBase {
     closeCraftMenu() {
         if (!this.craftMenuVisible) return;
         this.craftMenuVisible = false;
+        this._craftStationThing = null;
         this.craftContainer.setVisible(false);
+        this._layoutCraftTakeButton();
         const p = this.input.activePointer;
         const hovering = Phaser.Geom.Rectangle.Contains(this.craft.getBounds(), p.x, p.y);
         this.craft.setTexture(hovering ? 'craft_hover' : 'craft');
@@ -6377,18 +6920,55 @@ class SceneMain extends SceneBase {
 
     toggleCraftMenu() {
         if (this.knappingPanel?.visible) return;
-        if (this.craftMenuVisible) {
+        if (this.craftMenuVisible && !this._craftStationThing) {
             this.closeCraftMenu();
             return;
         }
-        // Side menus exclude each other; world UIs can stay open
+        // Station menu open → switch to hand list
         if (this.equipmentPanel?.visible) this.equipmentPanel.close();
         if (this.healthPanel?.visible) this.healthPanel.close();
+        this._craftStationThing = null;
+        this._craftPage = 0;
         this.craftMenuVisible = true;
         this.refreshCraftMenu();
         this.positionCraftMenu();
         this.craftContainer.setVisible(true);
         this.craft.setTexture('craft_open');
+    }
+
+    toggleCraftStationMenu(thing) {
+        if (!thing || this.knappingPanel?.visible) return;
+        if (this.craftMenuVisible && this._craftStationThing === thing) {
+            this.closeCraftMenu();
+            return;
+        }
+        if (this.equipmentPanel?.visible) this.equipmentPanel.close();
+        if (this.healthPanel?.visible) this.healthPanel.close();
+        this._craftStationThing = thing;
+        this._craftPage = 0;
+        this.craftMenuVisible = true;
+        this.refreshCraftMenu();
+        this.positionCraftMenu();
+        this.craftContainer.setVisible(true);
+        this.craft.setTexture('craft_open');
+    }
+
+    _updateCraftStationMenu() {
+        if (!this.craftMenuVisible) return;
+        if (this._craftStationThing) {
+            const station = this._craftStationThing;
+            if (!station.active || !station.inRange?.()) {
+                this.closeCraftMenu();
+                return;
+            }
+            this._syncCraftTakeHover();
+            return;
+        }
+        const sig = this.nearbyCraftStationIds().join(",");
+        if (sig !== this._craftNearbySig) {
+            this._craftNearbySig = sig;
+            this.refreshCraftMenu();
+        }
     }
 
     toggleEquipmentMenu() {
@@ -6416,6 +6996,7 @@ class SceneMain extends SceneBase {
         if (this.corpsePanel?.visible) this.corpsePanel.close(true);
         if (this.campfirePanel?.visible) this.campfirePanel.close();
         if (this.storagePanel?.visible) this.storagePanel.close();
+        if (this.craftMenuVisible) this.closeCraftMenu();
         if (this.healthPanel?.isInspecting?.()) this.healthPanel.close();
 
         for (const chunk of Object.values(this.chunks || {})) chunk.unload();
@@ -6560,8 +7141,6 @@ class SceneMain extends SceneBase {
             this.healthPanel?.layout?.();
             this.combatLog?.layout?.();
             this.layoutDeathOverlay();
-            this.saveBtn?.setScale(3 * s).setPosition(this.scale.width - 80 * s, 32 * s);
-            this.loadBtn?.setScale(3 * s).setPosition(this.scale.width - 32 * s, 32 * s);
             if (this.help) {
                 this.help.setScale(3 * s).setPosition(
                     this.scale.width - 32 * s,
@@ -6605,174 +7184,6 @@ class SceneMain extends SceneBase {
     animateWater() {
         this._waterSprite.setFrame(this._waterFrame++);
         if (this._waterFrame > 3) this._waterFrame = 0;
-    }
-
-    async saveFile(filename=null) {
-        filename = filename || `save-${Date.now()}.txt`;
-        const data = LZString.compressToBase64(JSON.stringify({
-            chunks: this.chunks,
-            player: this.player,
-            seed: worldSeed,
-            clock: {
-                day: this.gameDay,
-                minutes: this.gameMinutes
-            }
-        }));
-        const blob = new Blob([JSON.stringify(data)], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
-        return Promise.resolve();
-    }
-
-    async loadFile() {
-        return new Promise((resolve, reject) => {
-            this.isPaused = true;
-            const fileInput = document.getElementById("fileLoader");
-            fileInput.value = "";
-            let settled = false;
-            const settle = (fn, value) => {
-                if (settled) return;
-                settled = true;
-                window.removeEventListener('focus', onWindowFocus);
-                fileInput.removeEventListener('cancel', onFileCancel);
-                fn(value);
-            };
-            // Cancel often skips onchange; when focus returns, treat as dismiss
-            const onWindowFocus = () => {
-                window.setTimeout(() => {
-                    if (settled) return;
-                    this.isPaused = false;
-                    settle(resolve, null);
-                }, 250);
-            };
-            const onFileCancel = () => {
-                this.isPaused = false;
-                settle(resolve, null);
-            };
-            fileInput.addEventListener('cancel', onFileCancel, { once: true });
-            fileInput.onchange = (e) => {
-                // Selection started — don't treat focus return as cancel mid-read
-                window.removeEventListener('focus', onWindowFocus);
-                fileInput.removeEventListener('cancel', onFileCancel);
-                const file = e.target.files[0];
-                if (!file) {
-                    this.isPaused = false;
-                    settle(reject, new Error("No file selected"));
-                    return;
-                }
-                const reader = new FileReader();
-                reader.onload = () => {
-                    try {
-                        const data = JSON.parse(LZString.decompressFromBase64(JSON.parse(reader.result)));
-
-                        for (const chunk of Object.values(this.chunks)) chunk.unload();
-                        this.chunks = {};
-                        this._spawnSignPlaced = false;
-                        this._spawnSignBusy = false;
-                        this._playerSpawnPlaced = true; // keep loaded player coords
-                        this._things.clear(true, true);
-                        if (this.mobs) {
-                            for (const mob of this.mobs.getChildren().slice()) {
-                                this.damageables.remove(mob);
-                            }
-                            this.mobs.clear(true, true);
-                        }
-                        if (this.droppedItems) {
-                            this.droppedItems.clear(true, true);
-                        }
-
-                        // Seed
-                        worldSeed = data.seed;
-                        noise.seed(worldSeed);
-
-                        // Chunks
-                        for (const [key, meta] of Object.entries(data.chunks)) {
-                            const drops = meta.drops || [];
-                            this._migrateLegacyItemIds(drops);
-                            for (const corpse of meta.corpses || []) {
-                                this._migrateLegacyItemIds(corpse?.loot);
-                            }
-                            const chunk = new Chunk(this, meta.x, meta.y, {
-                                tiles: meta.tiles,
-                                things: meta.things,
-                                lootableThings: meta.lootableThings,
-                                mobs: meta.mobs || [],
-                                drops,
-                                bloodStains: meta.bloodStains || [],
-                                corpses: meta.corpses || []
-                            });
-                            chunk.isGenerated = !chunk.meta.tiles.every(t => !t);
-                            this.chunks[key] = chunk;
-                        }
-
-                        // Player
-                        this.player.teleport(data.player.x, data.player.y);
-                        this.syncCameraToPlayer();
-                        if (data.player.body) {
-                            this.player.anatomy.loadJSON(data.player.body);
-                            this.player.capacities = new Capacities(this.player.anatomy);
-                            this.player._bodyDead = false;
-                            this.player._refreshDownedState?.();
-                        }
-                        this.player.kc = data.player.kc;
-                        this.player.saturation = data.player.saturation;
-                        this.player.inventory = data.player.inventory;
-                        this._migrateLegacyItemIds(this.player.inventory);
-                        this.player.loadEquipment(data.player.equipment);
-
-                        // Clock before spoil migration
-                        this.gameDay = data.clock?.day ?? 1;
-                        this.gameMinutes = data.clock?.minutes ?? 8 * 60;
-                        this.updateClockText();
-                        this.markLightDirty();
-                        this.updateLightVeil();
-
-                        this.ensureSpoilLeft(this.player.inventory);
-                        this.ensureSpoilLeft([
-                            this.player.equipment.head,
-                            this.player.equipment.torso,
-                            this.player.equipment.legs,
-                            this.player.equipment.feet,
-                            ...this.player.equipment.waist
-                        ]);
-                        this.migrateWorldSpoilAt();
-
-                        // Refresh UI
-                        this.hotbar.dirty = true;
-                        this.deathOverlay?.setVisible(false);
-                        this.healthPanel?.refresh?.();
-                        if (this.campfirePanel?.visible) this.campfirePanel.close();
-                        if (this.storagePanel?.visible) this.storagePanel.close();
-                        if (this.healthPanel?.visible) {
-                            this.healthPanel.close();
-                            this.healthBtn?.setTexture("health");
-                        }
-                        if (this.equipmentPanel?.visible) {
-                            this.equipmentPanel.refresh();
-                            this.equipmentPanel.layout();
-                        }
-
-                        settle(resolve, data);
-                    } catch (err) {
-                        console.error("Failed to parse save file:", err);
-                        settle(reject, err);
-                    } finally {
-                        this.isPaused = false;
-                    }
-                };
-                reader.onerror = () => {
-                    this.isPaused = false;
-                    settle(reject, reader.error || new Error("Failed to read file"));
-                };
-                reader.readAsText(file);
-            };
-            window.addEventListener('focus', onWindowFocus);
-            fileInput.click();
-        });
     }
 
     update(time, delta) {
@@ -6899,6 +7310,7 @@ class SceneMain extends SceneBase {
 
         this.campfirePanel?.update();
         this.storagePanel?.update();
+        this._updateCraftStationMenu();
         this.corpsePanel?.update();
         this.updateLightVeil();
 

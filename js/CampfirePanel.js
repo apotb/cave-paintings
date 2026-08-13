@@ -16,6 +16,7 @@ class CampfirePanel {
         this._pointerIsDown = false;
 
         this._buildSlots();
+        this._buildDestroy();
 
         this.cookBarBg = scene.add.graphics();
         this.cookBarFill = scene.add.graphics();
@@ -175,6 +176,68 @@ class CampfirePanel {
         }
     }
 
+    _buildDestroy() {
+        const BG = 0x120e0a;
+        const BG_PRESS = 0x0a0806;
+        const OUTLINE = 0x2a2218;
+        const OUTLINE_HOVER = 0xffffff;
+        const OUTLINE_PRESS = 0xd4a84b;
+
+        this.destroyRect = this.scene.add.rectangle(0, 0, 90, 28, BG, 1)
+            .setStrokeStyle(2, OUTLINE)
+            .setInteractive({ useHandCursor: true });
+        this.destroyText = this.scene.add.text(0, 0, "Destroy", {
+            fontFamily: "PrimaryFont",
+            fontSize: "13px",
+            color: "#d4c4a8"
+        }).setOrigin(0.5);
+        this.destroyBtn = this.scene.add.container(0, 0, [this.destroyRect, this.destroyText]);
+
+        this._destroyHovering = false;
+        this._destroyPressing = false;
+        this._destroyEnabled = false;
+        this._destroyBw = 90;
+        this._destroyBh = 28;
+        this._paintDestroy = () => {
+            const strokeW = 2 / (this.scene.worldZoom || 1);
+            if (!this._destroyEnabled) {
+                this.destroyRect.setFillStyle(BG, 1);
+                this.destroyRect.setStrokeStyle(strokeW, OUTLINE);
+                this.destroyText.setColor("#d4c4a8");
+                return;
+            }
+            if (this._destroyPressing) {
+                this.destroyRect.setFillStyle(BG_PRESS, 1);
+                this.destroyRect.setStrokeStyle(strokeW, OUTLINE_PRESS);
+            } else if (this._destroyHovering) {
+                this.destroyRect.setFillStyle(BG, 1);
+                this.destroyRect.setStrokeStyle(strokeW, OUTLINE_HOVER);
+            } else {
+                this.destroyRect.setFillStyle(BG, 1);
+                this.destroyRect.setStrokeStyle(strokeW, OUTLINE);
+            }
+            this.destroyText.setColor("#d4c4a8");
+        };
+
+        this.destroyRect.on("pointerdown", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            if (pointer.rightButtonDown() || !this._destroyEnabled) return;
+            this._destroyPressing = true;
+            this._paintDestroy();
+        });
+        this.destroyRect.on("pointerup", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            const was = this._destroyPressing;
+            this._destroyPressing = false;
+            this._syncDestroyHover();
+            this._paintDestroy();
+            if (was && this._destroyHovering && this._destroyEnabled) this._tryDestroy();
+        });
+
+        this.container.add(this.destroyBtn);
+        this.destroyBtn.setVisible(false);
+    }
+
     _stackFor(key) {
         if (!this.campfire) return null;
         if (key === 'cook') return this.campfire.getCook();
@@ -259,6 +322,9 @@ class CampfirePanel {
         this.visible = false;
         this.campfire = null;
         this.container.setVisible(false);
+        this.destroyBtn?.setVisible(false);
+        this.destroyRect?.disableInteractive();
+        this._destroyEnabled = false;
         this.cookBarBg.clear();
         this.cookBarFill.clear();
         this._cancelDrag();
@@ -314,6 +380,13 @@ class CampfirePanel {
                 : null;
             drawSlotConditionBar(view.bar, view.slot, showSlot ? frac : null);
         }
+
+        const canDestroy = !this.campfire.isLit?.();
+        this._destroyEnabled = canDestroy;
+        this.destroyBtn?.setVisible(canDestroy);
+        if (canDestroy) this._syncDestroyHitArea(true);
+        else this.destroyRect?.disableInteractive();
+        this._syncDestroyHover();
         this.refreshCookBar();
     }
 
@@ -433,8 +506,53 @@ class CampfirePanel {
             view.qty.setScale(1 / zoom);
             view.qty.setPosition(p.x + slotW / 2 - 4 * ws, p.y + slotW / 2 - 4 * ws);
         }
+
+        const btnFontPx = Math.round(13 * s);
+        const bw = 90 * ws;
+        const bh = 28 * ws;
+        this._destroyBw = bw;
+        this._destroyBh = bh;
+        this.destroyRect.setSize(bw, bh);
+        this.destroyText.setResolution(zoom * (window.devicePixelRatio || 1));
+        this.destroyText.setFontSize(`${btnFontPx}px`);
+        this.destroyText.setScale(1 / zoom);
+        this.destroyBtn.setPosition(0, fuelY + slotW / 2 + padding + bh / 2);
+
         this.container.setPosition(this.campfire.x, this.campfire.y);
         this.refresh();
+    }
+
+    _syncDestroyHitArea(enable) {
+        const bw = this._destroyBw || 90;
+        const bh = this._destroyBh || 28;
+        if (!enable) {
+            this.destroyRect?.disableInteractive();
+            return;
+        }
+        this.destroyRect.setInteractive({ useHandCursor: true });
+        if (this.destroyRect.input?.hitArea?.setTo) {
+            this.destroyRect.input.hitArea.setTo(0, 0, bw, bh);
+        }
+    }
+
+    pointerOnDestroy(pointer) {
+        if (!this.visible || !this.destroyBtn?.visible || !this.destroyRect || !pointer) return false;
+        const pt = this.scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        return Phaser.Geom.Rectangle.Contains(this.destroyRect.getBounds(), pt.x, pt.y);
+    }
+
+    _syncDestroyHover() {
+        const over = !!(this._destroyEnabled && this.pointerOnDestroy(this.scene.input.activePointer));
+        if (over !== this._destroyHovering) {
+            this._destroyHovering = over;
+            if (!over) this._destroyPressing = false;
+        }
+        this._paintDestroy?.();
+    }
+
+    _tryDestroy() {
+        if (!this._destroyEnabled || !this.campfire) return;
+        this.scene.tryDestroyCampfire?.(this.campfire);
     }
 
     update() {
@@ -443,6 +561,7 @@ class CampfirePanel {
             this.close();
             return;
         }
+        this._syncDestroyHover();
         // Keep simmer/roast bar in sync while draining or cooking
         this.refreshCookBar();
     }
@@ -1022,6 +1141,8 @@ class CampfirePanel {
     /** True if screen pointer is over campfire slot chrome (not the empty center over the fire). */
     containsPointer(pointer) {
         if (!this.visible || !this.container?.visible || !pointer) return false;
-        return this.getSlotAt(pointer.x, pointer.y) != null;
+        if (this.getSlotAt(pointer.x, pointer.y) != null) return true;
+        if (!this.destroyBtn?.visible) return false;
+        return this.pointerOnDestroy(pointer);
     }
 }

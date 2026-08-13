@@ -89,7 +89,7 @@ class EquipmentPanel {
         const btn = this.scene.equipmentBtn;
         if (!btn) return;
 
-        const bodyScale = 3 * s;
+        const bodyScale = 2 * s;
         this.body.setScale(bodyScale);
         const bw = this.body.displayWidth;
         const bh = this.body.displayHeight;

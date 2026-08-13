@@ -313,7 +313,9 @@ function resolveCraftedWeights(items) {
                 quantity = +v || 1;
                 continue;
             }
-            if (k === "REQUIRE_THING") continue;
+            if (typeof Carry !== "undefined" && Carry.isRecipeMetaKey) {
+                if (Carry.isRecipeMetaKey(k)) continue;
+            } else if (k === "REQUIRE_THING") continue;
             const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
             sum += weightOf(k) * qty;
         }
@@ -380,7 +382,9 @@ function resolveCraftedFuel(items) {
                 quantity = +v || 1;
                 continue;
             }
-            if (k === "REQUIRE_THING") continue;
+            if (typeof Carry !== "undefined" && Carry.isRecipeMetaKey) {
+                if (Carry.isRecipeMetaKey(k)) continue;
+            } else if (k === "REQUIRE_THING") continue;
             const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
             sum += fuelKjOf(k) * qty;
         }
@@ -544,6 +548,14 @@ function mealFillTint(stack, getItem) {
     return null;
 }
 
+function stackIconKey(meta, stack, scene) {
+    if (typeof Place !== "undefined" && Place.itemIconKey && scene?.getThing) {
+        const key = Place.itemIconKey(meta, (id) => scene.getThing(id));
+        if (key) return key;
+    }
+    return meta?.key || stack?.id || "";
+}
+
 /**
  * Draw stack icon; meals use shell + tinted fill overlay.
  * @param {Phaser.GameObjects.Image} base
@@ -566,7 +578,7 @@ function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
         return;
     }
     // Knapped tools: silhouette cut from the pebble/flint sprite
-    let key = meta?.key || stack.id;
+    let key = stackIconKey(meta, stack, base.scene);
     if (stack.knapIconData && typeof Knapping !== "undefined") {
         const scene = base.scene;
         const knapKey = Knapping.ensureToolTexture(scene, stack);
@@ -592,7 +604,7 @@ function createStackDragIcon(scene, x, y, stack, meta, scale) {
         scene.uiLayer.add(cont);
         return cont;
     }
-    let key = meta?.key || stack.id;
+    let key = stackIconKey(meta, stack, scene);
     if (stack?.knapIconData && typeof Knapping !== "undefined") {
         const knapKey = Knapping.ensureToolTexture(scene, stack);
         if (knapKey) key = knapKey;
@@ -796,9 +808,14 @@ function knapQualityMult(quality) {
     return { crude: 0.65, rough: 0.95, fine: 1.35 }[quality] || 1;
 }
 
-/** Quality band → channel duration (skin / flesh). Rough is baseline. */
+/** Quality band → channel duration (skin / flesh / station craft). Rough is baseline. */
 function knapQualityDurationScale(quality) {
     return { crude: 1.25, rough: 1.0, fine: 0.8 }[quality] || 1;
+}
+
+/** Flint punches faster than pebble (inverse of the 1.25 combat/chop mult). */
+function knapMaterialDurationScale(material) {
+    return material === "flint" ? 0.8 : 1;
 }
 
 /** Clone weapon meta with tip-quality scaled point damage (tipped spears). */

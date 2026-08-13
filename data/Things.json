@@ -226,5 +226,13 @@
             "slotLabel": "Hide",
             "maxPerSlot": 1
         }
+    },
+    {
+        "id": "skinworking_bench",
+        "name": "Skinworking Bench",
+        "key": "skinworking_bench",
+        "hitboxSize": 5,
+        "craftStation": true,
+        "rotations": [0, 90, 180, 270]
     }
 ]

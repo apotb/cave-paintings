@@ -69,7 +69,7 @@ class SceneNet extends Phaser.Scene {
             "apple", "blueberry", "blueberries", "roasted_apple",
             "raw_beef", "roast_beef", "raw_venison", "roasted_venison", "coconut",
             "flint", "pebble", "deer_hide", "deer_hide_fleshed", "deer_hide_dry",
-            "bone", "stick", "log", "wicker_basket"
+            "bone", "stick", "log", "hide_pouch"
         ]) {
             this.load.image(item, `assets/items/${item}.png`);
         }

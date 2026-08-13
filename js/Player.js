@@ -30,6 +30,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._skinChannel = null;
         /** Scraper fleshing channel on a drying rack (same bar as tend/skin). */
         this._fleshChannel = null;
+        /** Station craft channel (awl at a skinworking bench). */
+        this._craftChannel = null;
         /** Eating channel (same bar as tend/skin). */
         this._eatChannel = null;
         this._chopBar = null;
@@ -131,7 +133,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const scene = this.scene;
         const s = scene.uiScale || 1;
         const zoom = scene.worldZoom || scene.cameras?.main?.zoom || 1;
-        const fontPx = Math.round(11 * s);
+        const fontPx = Math.round(14 * s);
         const root = this.ensureFxRoot();
         if (!this.chatBubble) {
             this.chatBubble = scene.add.text(0, 0, "", {
@@ -166,7 +168,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const scene = this.scene;
         const s = scene.uiScale || 1;
         const zoom = scene.worldZoom || scene.cameras?.main?.zoom || 1;
-        const fontPx = Math.round(11 * s);
+        const fontPx = Math.round(14 * s);
         bubble
             .setResolution(zoom * (window.devicePixelRatio || 1))
             .setFontSize(`${fontPx}px`)
@@ -416,6 +418,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._tendChannel = null;
         this._skinChannel = null;
         this._fleshChannel = null;
+        this._craftChannel = null;
         this._eatChannel = null;
         this._vomit = null;
         setCreatureProne(this, false);
@@ -747,13 +750,18 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             const cap = this.getWaistCapacity();
             if (cap <= 0) return { ok: false, reason: 'no_waist' };
             let empty = -1;
+            let different = -1;
             for (let i = 0; i < cap; i++) {
-                if (!this.equipment.waist[i]) {
-                    empty = i;
-                    break;
+                const worn = this.equipment.waist[i];
+                if (!worn) {
+                    if (empty === -1) empty = i;
+                } else if (worn.id !== stack.id && different === -1) {
+                    different = i;
                 }
             }
-            slotKey = `waist:${empty !== -1 ? empty : 0}`;
+            const idx = empty !== -1 ? empty : different;
+            if (idx === -1) return { ok: false, reason: 'same' };
+            slotKey = `waist:${idx}`;
         } else {
             slotKey = want;
         }
@@ -1053,7 +1061,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this.isVomiting()) return false;
         if (this.isIncapacitated()) return false;
         if (this._eatChannel) this._cancelEat();
-        if (this._tendChannel || this._skinChannel || this._fleshChannel) return false;
+        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._craftChannel) return false;
 
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
@@ -1770,7 +1778,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     /** Hold Space to keep attacking (weapon or unarmed). */
     tryWeaponAutofire() {
-        if (this.isAttacking() || this._tendChannel || this._skinChannel || this._fleshChannel || this._eatChannel || this._bodyDead) return;
+        if (this.isAttacking() || this._tendChannel || this._skinChannel || this._fleshChannel || this._craftChannel || this._eatChannel || this._bodyDead) return;
         if (this.isVomiting() || this.isIncapacitated()) return;
         const item = this.getHeldItem();
         if (!item) {
@@ -1822,7 +1830,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     beginTend() {
         if (this._eatChannel) this._cancelEat();
-        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._bodyDead || this.isAttacking()) return false;
+        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._craftChannel || this._bodyDead || this.isAttacking()) return false;
         if (this.isVomiting()) return false;
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
@@ -1871,7 +1879,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      */
     beginSkin(corpse) {
         if (this._eatChannel) this._cancelEat();
-        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._bodyDead || this.isAttacking()) return false;
+        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._craftChannel || this._bodyDead || this.isAttacking()) return false;
         if (this.isVomiting()) return false;
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
@@ -1954,7 +1962,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      */
     beginFlesh(rack) {
         if (this._eatChannel) this._cancelEat();
-        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._bodyDead || this.isAttacking()) {
+        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._craftChannel || this._bodyDead || this.isAttacking()) {
             return false;
         }
         if (this.isVomiting()) return false;
@@ -2034,6 +2042,80 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
         this._fleshChannel = null;
         this.scene.hideChannelBar?.();
+    }
+
+    /**
+     * Timed station craft with a held tool (awl). Cancel if you swap / walk away.
+     */
+    beginCraft(recipe, station) {
+        if (this._eatChannel) this._cancelEat();
+        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._craftChannel || this._bodyDead || this.isAttacking()) {
+            return false;
+        }
+        if (this.isVomiting()) return false;
+        this.capacities = new Capacities(this.anatomy);
+        if (!this.capacities.canManipulate()) return false;
+        if (this.isIncapacitated()) return false;
+        if (!station?.active || !station.inRange?.()) return false;
+        if (!this.scene.canCraft?.(recipe)) return false;
+        const item = this.getHeldItem();
+        const wantClass = recipe.requireTool?.toolClass;
+        if (wantClass && (!item || item.toolClass !== wantClass)) return false;
+
+        const seconds = Math.max(0.1, Number(recipe.craftSeconds) || 1);
+        const scale = this.capacities.manipulationDurationScale();
+        const quality = typeof knapQualityDurationScale === "function"
+            ? knapQualityDurationScale(item?.knapQuality)
+            : 1;
+        const material = typeof knapMaterialDurationScale === "function"
+            ? knapMaterialDurationScale(item?.knapMaterial)
+            : 1;
+        const max = seconds * 1000 * scale * quality * material;
+        this._craftChannel = {
+            remaining: max,
+            max,
+            slot: this.scene.hotbar.activeIndex,
+            station,
+            recipe,
+            toolClass: wantClass || null
+        };
+        this.scene.showChannelBar?.(0);
+        return true;
+    }
+
+    _cancelCraft() {
+        if (!this._craftChannel) return;
+        this._craftChannel = null;
+        this.scene.hideChannelBar?.();
+    }
+
+    _tickCraft(delta) {
+        if (!this._craftChannel) return;
+        const slot = this.scene.hotbar.activeIndex;
+        const held = this.getHeldItem();
+        const station = this._craftChannel.station;
+        const recipe = this._craftChannel.recipe;
+        const wantClass = this._craftChannel.toolClass;
+        if (
+            slot !== this._craftChannel.slot
+            || (wantClass && (!held || held.toolClass !== wantClass))
+            || !station?.active
+            || !station.inRange?.()
+        ) {
+            this._cancelCraft();
+            return;
+        }
+        this._craftChannel.remaining -= delta;
+        const prog = 1 - this._craftChannel.remaining / this._craftChannel.max;
+        this.scene.showChannelBar?.(Phaser.Math.Clamp(prog, 0, 1));
+        if (this._craftChannel.remaining > 0) return;
+
+        this._craftChannel = null;
+        this.scene.hideChannelBar?.();
+        this.scene._finishCraft?.(recipe);
+        this.scene.hotbar && (this.scene.hotbar.dirty = true);
+        this.scene.refreshCraftMenu?.();
+        this.scene.refreshTooltip?.();
     }
 
     _tickTend(delta) {
@@ -2126,7 +2208,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     beginEat(item, opts = {}) {
-        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._eatChannel || this._bodyDead || this.isAttacking()) {
+        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._craftChannel || this._eatChannel || this._bodyDead || this.isAttacking()) {
             return false;
         }
         if (this.isVomiting() || this.isIncapacitated()) return false;
@@ -2363,6 +2445,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (this._tendChannel) this._tickTend(dtChat);
             if (this._skinChannel) this._tickSkin(dtChat);
             if (this._fleshChannel) this._tickFlesh(dtChat);
+            if (this._craftChannel) this._tickCraft(dtChat);
             if (this._eatChannel) this._tickEat(dtChat);
             this._tickChopBar();
             this._tickVomit(dtChat);
@@ -2377,6 +2460,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (this._tendChannel) this._tickTend(dtPause);
             if (this._skinChannel) this._tickSkin(dtPause);
             if (this._fleshChannel) this._tickFlesh(dtPause);
+            if (this._craftChannel) this._tickCraft(dtPause);
             if (this._eatChannel) this._tickEat(dtPause);
             this._tickChopBar();
             this._tickVomit(dtPause);
@@ -2399,6 +2483,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this._tendChannel) this._tickTend(dt);
         if (this._skinChannel) this._tickSkin(dt);
         if (this._fleshChannel) this._tickFlesh(dt);
+        if (this._craftChannel) this._tickCraft(dt);
         if (this._eatChannel) this._tickEat(dt);
         this._tickChopBar();
         this._tickVomit(dt);
@@ -2427,7 +2512,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const encumbrance = this.getEncumbrance();
         const moving = x !== 0 || y !== 0;
         const attacking = this.isAttacking();
-        const tending = !!this._tendChannel || !!this._eatChannel || !!this._fleshChannel;
+        const tending = !!this._tendChannel || !!this._eatChannel || !!this._fleshChannel || !!this._craftChannel;
         const livingLegs = this.anatomy.livingLegs();
         const canSprint = livingLegs >= 2
             && !prone
@@ -2546,7 +2631,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 this.keys.SPACE.isDown &&
                 !this._tendChannel &&
                 !this._eatChannel &&
-                !this._fleshChannel
+                !this._fleshChannel &&
+                !this._craftChannel
             ) {
                 // Hold Space: keep eating through a food stack (same idea as weapon autofire)
                 const held = this.getHeldItem();

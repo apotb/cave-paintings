@@ -31,7 +31,7 @@
         USE: "use",
         /** Light a campfire from a firestarter (15 sticks + 10 leaves, or relight). */
         LIGHT_FIRE: "light_fire",
-        /** Move items between hotbar and a campfire (fuel / cook / utensil). */
+        /** Move items between hotbar and a campfire (fuel / cook / utensil), or destroy an unlit one. */
         CAMPFIRE: "campfire",
         /** Place the held placeable item as a world Thing (dedicated MP). */
         PLACE: "place",

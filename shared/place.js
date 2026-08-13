@@ -74,6 +74,34 @@
         return Array.isArray(thingDef?.rotations) && thingDef.rotations.length > 0;
     }
 
+    function isCraftStation(thingDef) {
+        return !!thingDef?.craftStation;
+    }
+
+    /**
+     * Inventory / craft / hotbar texture for an item.
+     * Rotated placeables use the 0° world sprite (`${thingKey}_0`).
+     */
+    function itemIconKey(itemDef, getThing) {
+        const fallback = itemDef?.key || itemDef?.id || "";
+        const thingId = placeThingId(itemDef);
+        if (!thingId) return fallback;
+        const thingDef = typeof getThing === "function" ? getThing(thingId) : getThing;
+        if (canRotate(thingDef) && thingDef.key) {
+            return rotationTextureKey(thingDef.key, 0);
+        }
+        return fallback;
+    }
+
+    function ensureCraftStationEntry(entry) {
+        if (!entry) return entry;
+        entry.rot = normalizeRot(entry.rot);
+        if (!entry.uid) {
+            entry.uid = `cs_${Math.round(Number(entry.x) || 0)}_${Math.round(Number(entry.y) || 0)}`;
+        }
+        return entry;
+    }
+
     function inPlaceRange(px, py, wx, wy, tileSize, interactionRange) {
         const r = Number(tileSize) * Number(interactionRange);
         if (!(r > 0)) return false;
@@ -179,6 +207,9 @@
         rotationTextureKey,
         thingImageLoads,
         canRotate,
+        isCraftStation,
+        itemIconKey,
+        ensureCraftStationEntry,
         inPlaceRange,
         entryOnTile,
         canPlaceOnTile,

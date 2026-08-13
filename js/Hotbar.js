@@ -408,6 +408,7 @@ class Hotbar {
             const hp = this.scene.healthPanel;
             const p = this.scene.input.activePointer;
             if (hp?.visible && hp._pointerInInjView?.(p.x, p.y)) return;
+            if (this.scene.craftMenuVisible && this.scene._pointerOverCraftMenu?.(p)) return;
             // Shift+wheel is often reported as deltaX (browser "horizontal scroll")
             const delta = deltaY || deltaX;
             if (delta < 0) this.prevSlot();

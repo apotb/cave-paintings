@@ -842,6 +842,8 @@ const Knapping = {
             stack.tooltipExtra = "Mr. Stabby";
         } else if (result.toolClass === "chopper") {
             stack.tooltipExtra = "Slow but heavy";
+        } else if (result.toolClass === "awl") {
+            stack.tooltipExtra = "For sewing hides";
         }
         if (result.quality) stack.knapQuality = result.quality;
         try {
