@@ -8,6 +8,7 @@ const Protocol = require("../shared/protocol");
 const Look = require("../shared/look");
 const { mulberry32, hash2D, uuid } = require("../shared/rng");
 const Spoil = require("../shared/spoil");
+const Durability = require("../shared/durability");
 const CorpseDecay = require("../shared/corpseDecay");
 const GameMath = require("../shared/gameMath");
 const DataStore = require("../shared/DataStore");
@@ -1405,10 +1406,37 @@ class SimWorld {
         return p.inventory[p.hotbarIndex] || null;
     }
 
+    _wearPlayerHeld(playerId, amount) {
+        const p = this.players.get(playerId);
+        if (!p) return { broke: false };
+        return this._wearHeld(p, amount);
+    }
+
+    _wearHeld(p, amount) {
+        if (!p || !Array.isArray(p.inventory)) return { broke: false };
+        const result = Durability.wearInventorySlot(
+            p.inventory,
+            p.hotbarIndex | 0,
+            amount,
+            (id) => itemDefs().get(id)
+        );
+        if (result.leftover) this._insertUniqueStack(p, result.leftover);
+        if (result.broke) {
+            this.pushEvent({
+                kind: "combat_log",
+                text: Durability.breakMessage(result.name, true),
+                to: p.id
+            });
+        }
+        this._youDirty.add(p.id);
+        return result;
+    }
+
     _stackIsSpecial(s) {
         return !!(s && (
             s.customName || s.food || s.ingredients || s.toolClass
             || s.knapIconData || s.knapDamage != null || s.knapQuality
+            || s.durability != null
         ));
     }
 
@@ -1431,6 +1459,10 @@ class SimWorld {
         if (src.knapIconData) out.knapIconData = src.knapIconData;
         if (src.spoilLeft != null) out.spoilLeft = src.spoilLeft;
         if (src.spoilAt != null) out.spoilAt = src.spoilAt;
+        if (src.durability != null) {
+            const n = Number(src.durability);
+            if (Number.isFinite(n) && n >= 0) out.durability = Math.min(10000, n);
+        }
         return Object.keys(out).length ? out : null;
     }
 
@@ -1452,6 +1484,7 @@ class SimWorld {
         if (extras.knapIconData) slot.knapIconData = extras.knapIconData;
         if (extras.spoilLeft != null) slot.spoilLeft = extras.spoilLeft;
         if (extras.spoilAt != null) slot.spoilAt = extras.spoilAt;
+        if (extras.durability != null) slot.durability = extras.durability;
         return slot;
     }
 
@@ -1567,7 +1600,15 @@ class SimWorld {
             if (!material) return;
             held.quantity = (held.quantity || 1) - 1;
             if (held.quantity <= 0) inv[slot] = null;
-            p._knapSession = { slot, id: held.id, material, rework: !!rework };
+            p._knapSession = {
+                slot,
+                id: held.id,
+                material,
+                rework: !!rework,
+                durability: held.durability,
+                knapQuality: held.knapQuality || null,
+                toolClass: held.toolClass || null
+            };
             this._youDirty.add(p.id);
             return;
         }
@@ -1595,6 +1636,19 @@ class SimWorld {
             const stack = this._sanitizeKnapStack(action.stack, session.material);
             p._knapSession = null;
             if (!stack) return;
+            if (session.rework && session.durability != null) {
+                Durability.carryDurabilityAfterRework(
+                    {
+                        durability: session.durability,
+                        knapQuality: session.knapQuality,
+                        toolClass: session.toolClass,
+                        id: session.id
+                    },
+                    stack,
+                    itemDefs().get(session.id),
+                    itemDefs().get(stack.id)
+                );
+            }
             this._insertUniqueStack(p, stack, session.slot);
         }
     }
@@ -2224,6 +2278,7 @@ class SimWorld {
             }
         }
         entry.skinned = true;
+        this._wearHeld(p, 1);
         this.pushEvent({
             kind: "corpse",
             op: "skin",
@@ -2826,7 +2881,8 @@ class SimWorld {
         }
         entry.roastBarMinutes = recipe.minutes;
         entry.cookProgress = (entry.cookProgress || 0) + 1;
-        if (entry.cookProgress < recipe.minutes) return false;
+        const catBroke = this._wearRoastCatalyst(entry);
+        if (entry.cookProgress < recipe.minutes) return catBroke;
         const resultMeta = itemDefs().get(recipe.result);
         delete entry.roastBarMinutes;
         if (!resultMeta) {
@@ -2840,6 +2896,32 @@ class SimWorld {
             this.worldMinuteIndex()
         );
         entry.cookProgress = 0;
+        return true;
+    }
+
+    _wearRoastCatalyst(entry) {
+        const stack = entry?.catalyst;
+        if (!stack) return false;
+        const def = itemDefs().get(stack.id);
+        const result = Durability.applyDurabilityUse(
+            stack,
+            Durability.COOK_WEAR_PER_MINUTE,
+            def
+        );
+        if (!result.broke) return stack.durability != null;
+        const name = Durability.stackDisplayName(stack, def);
+        entry.catalyst = null;
+        const attend = entry.attend;
+        if (attend && typeof attend === "object") {
+            for (const id of Object.keys(attend)) {
+                if (!this.players.has(id)) continue;
+                this.pushEvent({
+                    kind: "combat_log",
+                    text: Durability.breakMessage(name, false),
+                    to: id
+                });
+            }
+        }
         return true;
     }
 
@@ -2988,6 +3070,7 @@ class SimWorld {
         if (best) {
             if (!this._campfireEnsureBurning(best.entry)) return;
             this._emitCampfire(best.chunk, best.entry);
+            this._wearHeld(p, 1);
             return;
         }
 
@@ -3027,6 +3110,7 @@ class SimWorld {
         this._campfireEnsureBurning(entry);
         chunk.things.push(entry);
         this._emitCampfire(chunk, entry);
+        this._wearHeld(p, 1);
     }
 
     _parseCampfireSlot(key) {

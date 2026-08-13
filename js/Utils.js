@@ -706,6 +706,7 @@ function cloneItemStack(stack) {
     if (stack.spoilLeft != null) out.spoilLeft = stack.spoilLeft;
     if (stack.spoilAt != null) out.spoilAt = stack.spoilAt;
     if (stack.spoilMinutes != null) out.spoilMinutes = stack.spoilMinutes;
+    if (stack.durability != null) out.durability = stack.durability;
     const extras = mealStackExtras(stack);
     if (extras) Object.assign(out, extras);
     return out;
@@ -722,6 +723,7 @@ function mealStackExtras(stack) {
         || (stack.weight != null && !knap)
         || stack.kind
         || stack.fillTint != null
+        || stack.durability != null
         || knap
     );
     if (!hasExtras) return null;
@@ -733,6 +735,7 @@ function mealStackExtras(stack) {
         weight: knap ? undefined : stack.weight,
         kind: stack.kind,
         fillTint: stack.fillTint,
+        durability: stack.durability,
         ...(knap || {})
     };
 }
@@ -773,6 +776,7 @@ function hasStackExtras(dropOrStack) {
         || dropOrStack?.knapDamage != null
         || dropOrStack?.knapIconData
         || dropOrStack?.knapQuality
+        || dropOrStack?.durability != null
     );
 }
 
@@ -802,7 +806,35 @@ function isSpecialStack(stack) {
         || stack.toolClass
         || stack.knapDamage != null
         || stack.knapIconData
+        || stack.durability != null
     ));
+}
+
+/**
+ * Bottom-of-slot remaining bar (durability or meal leftover). Hidden at 100%.
+ * Uses the slot's own origin so hotbar (0,1), campfire (0.5,0.5), and corpse (0,0) all work.
+ */
+function drawSlotConditionBar(gfx, slot, frac) {
+    if (!gfx) return;
+    gfx.clear();
+    if (!slot?.visible || frac == null || !(frac < 1)) return;
+    const t = Math.max(0, Math.min(1, frac));
+    const slotW = slot.displayWidth;
+    const slotH = slot.displayHeight;
+    if (!(slotW > 0) || !(slotH > 0)) return;
+    const src = slot.width || 64;
+    const px = slotW / src;
+    const barH = Math.max(1, 4 * px);
+    const inset = 4 * px;
+    const x = slot.x - slotW * (slot.originX ?? 0) + inset;
+    const y = slot.y - slotH * (slot.originY ?? 0) + slotH - barH;
+    const maxW = slotW - inset * 2;
+    const color = (typeof Durability !== "undefined" && Durability.rampBarFillColor)
+        ? Durability.rampBarFillColor(t)
+        : 0x3CB043;
+    if (maxW <= 0) return;
+    gfx.fillStyle(color, 1);
+    gfx.fillRect(x, y, maxW * t, barH);
 }
 
 /**

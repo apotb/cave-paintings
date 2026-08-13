@@ -166,10 +166,12 @@ class CampfirePanel {
             this.container.add(icon);
             this.container.add(fill);
             this.container.add(qty);
+            const bar = this.scene.add.graphics();
+            this.container.add(bar);
             const badges = createIngredientBadges(this.scene, (img) => {
                 this.container.add(img);
             });
-            this.slotViews.push({ key, slot, icon, fill, qty, badges });
+            this.slotViews.push({ key, slot, icon, fill, qty, bar, badges });
         }
     }
 
@@ -306,6 +308,10 @@ class CampfirePanel {
                 id => this.scene.getItem(id),
                 this.scene.textures
             );
+            const frac = (typeof Durability !== "undefined" && stack)
+                ? Durability.slotBarFraction(stack, meta)
+                : null;
+            drawSlotConditionBar(view.bar, view.slot, showSlot ? frac : null);
         }
         this.refreshCookBar();
     }

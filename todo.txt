@@ -24,10 +24,6 @@ Infection
 
 Clothing and armor
 
-Durability -- weapons and tools have durability when they are used, either for their intended purpose or for attacking. Show it as a bar going from 100% to 0%, it will be on the bottom of that icon slot like how the cooking progress bar is positioned. The progress bar will use the same color coding as the tending/eating bar. 100% durability will not show the bar.
-
-When durability is added, also make meals have the same bar that shows what percent of them has been eaten, 100% will not be shown just like durability
-
 Recruiting wandering humans to join your faction -- when you have at least 2 people in your faction, you'll be able to see the status of all your characters on the right, your character is special and will always be first and have a little crown icon, the rest will be listed and you can see an overview of them and be able to switch who you're controlling by clicking them. You can also move forward with . and back with , and using ctrl + 1 would pick the 1st guy, ctrl + 2 would pick the 2nd guy, and so on
 
 Sternum and Ribcage status overlay sprites

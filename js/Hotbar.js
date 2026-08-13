@@ -64,11 +64,13 @@ class Hotbar {
             this.icons[i].destroy();
             this.fillIcons[i].destroy();
             this.quantity[i].destroy();
+            this.bars[i]?.destroy();
             destroyIngredientBadges(this.ingredientBadges[i]);
             this.slots.pop();
             this.icons.pop();
             this.fillIcons.pop();
             this.quantity.pop();
+            this.bars.pop();
             this.ingredientBadges.pop();
         }
 
@@ -146,6 +148,10 @@ class Hotbar {
                 id => this.scene.getItem(id),
                 this.scene.textures
             );
+            const frac = (typeof Durability !== "undefined" && stack)
+                ? Durability.slotBarFraction(stack, meta)
+                : null;
+            drawSlotConditionBar(this.bars[i], slot, frac);
         });
 
         this.dragDistanceThreshold = Math.round(6 * s);
@@ -251,6 +257,10 @@ class Hotbar {
         this.scene.uiLayer.add(fill);
         this.fillIcons.push(fill);
 
+        const bar = this.scene.add.graphics();
+        this.scene.uiLayer.add(bar);
+        this.bars.push(bar);
+
         const quantity = this.scene.add.text(0, 0, "", {
             fontSize: "14px",
             fontFamily: "PrimaryFont",
@@ -275,6 +285,7 @@ class Hotbar {
         this.icons = [];
         this.fillIcons = [];
         this.quantity = [];
+        this.bars = [];
         this.ingredientBadges = [];
 
         for (let i = 0; i < this.size; i++) {
@@ -413,6 +424,7 @@ class Hotbar {
                 qty.setVisible(false);
                 syncIngredientBadges(badges, qty.x, qty.y, s, null,
                     id => this.scene.getItem(id), this.scene.textures);
+                drawSlotConditionBar(this.bars[i], this.slots[i], null);
                 continue;
             }
 
@@ -424,6 +436,12 @@ class Hotbar {
 
             syncIngredientBadges(badges, qty.x, qty.y, s, stack,
                 id => this.scene.getItem(id), this.scene.textures);
+
+            const bar = this.bars[i];
+            const frac = (typeof Durability !== "undefined" && stack)
+                ? Durability.slotBarFraction(stack, meta)
+                : null;
+            drawSlotConditionBar(bar, this.slots[i], frac);
         }
     }
 }

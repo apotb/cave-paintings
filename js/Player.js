@@ -289,6 +289,41 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return !!this.capacities?.isImmobile?.();
     }
 
+    /**
+     * Apply durability wear to the held hotbar stack (SP / LocalSim).
+     * Dedicated MP: server owns this.
+     */
+    wearHeld(amount) {
+        if (!(amount > 0)) return false;
+        if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) return false;
+        if (typeof Durability === "undefined") return false;
+        const idx = this.scene.hotbar?.activeIndex ?? 0;
+        const result = Durability.wearInventorySlot(
+            this.inventory,
+            idx,
+            amount,
+            (id) => this.scene.getItem(id)
+        );
+        if (result.leftover) {
+            if (!this.gainStack(result.leftover)) {
+                const meta = this.scene.getItem(result.leftover.id);
+                if (meta) {
+                    const now = this.scene.worldMinuteIndex?.() ?? null;
+                    DroppedItem.spawn(
+                        this.scene, this.x, this.y, meta, result.leftover.quantity,
+                        spoilAtForWorld(result.leftover, now),
+                        typeof mealStackExtras === "function" ? mealStackExtras(result.leftover) : null
+                    );
+                }
+            }
+        }
+        if (this.scene.hotbar) this.scene.hotbar.dirty = true;
+        if (result.broke) {
+            this.scene.combatLog?.push(Durability.breakMessage(result.name, true));
+        }
+        return result.broke;
+    }
+
     getHeldWeaponMeta() {
         const stack = this.getHeldItem();
         if (!stack) return null;
@@ -1351,6 +1386,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
             this.attackHitSet.add(target);
             BodyCombat.applyHit(this, target, attack);
+            if (!attack.unarmed) this.wearHeld(1);
         }
     }
 
@@ -1781,6 +1817,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             });
         } else {
             corpse.applySkin?.();
+            this.wearHeld(1);
         }
         this._skinChannel = null;
         this.scene.hideChannelBar?.();

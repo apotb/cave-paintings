@@ -739,6 +739,7 @@ class LocalSim {
                         knapQuality: d.knapQuality,
                         tooltipExtra: d.tooltipExtra,
                         knapIconData: d.knapIconData,
+                        durability: d.durability,
                         ingredients: d.ingredients,
                         kind: d.kind,
                         fillTint: d.fillTint,

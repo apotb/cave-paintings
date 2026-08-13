@@ -621,7 +621,8 @@ class DroppedItem extends Mob {
                 knapMaterial: stackExtras?.knapMaterial,
                 knapQuality: stackExtras?.knapQuality,
                 tooltipExtra: stackExtras?.tooltipExtra,
-                knapIconData: stackExtras?.knapIconData
+                knapIconData: stackExtras?.knapIconData,
+                durability: stackExtras?.durability
             });
             return null;
         }
@@ -638,14 +639,16 @@ class DroppedItem extends Mob {
             && !stackExtras?.ingredients?.length
             && !stackExtras?.toolClass
             && stackExtras?.knapDamage == null
-            && !stackExtras?.knapQuality;
+            && !stackExtras?.knapQuality
+            && stackExtras?.durability == null;
 
         if (canMerge) {
             const nearby = scene.droppedItems.getChildren()
                 .filter(drop => drop.active && drop.item?.id === item.id
                     && !drop.customName && !drop.food && !drop.ingredients
-                    && !drop.toolClass && drop.knapDamage == null
+                    && !drop.toolClass                     && drop.knapDamage == null
                     && !drop.knapQuality
+                    && drop.durability == null
                     && drop.quantity < maxStack)
                 .map(drop => ({
                     drop,
@@ -715,6 +718,7 @@ class DroppedItem extends Mob {
         if (stackExtras?.tooltipExtra) entry.tooltipExtra = stackExtras.tooltipExtra;
         if (stackExtras?.knapIconData) entry.knapIconData = stackExtras.knapIconData;
         if (stackExtras?.knapQuality) entry.knapQuality = stackExtras.knapQuality;
+        if (stackExtras?.durability != null) entry.durability = stackExtras.durability;
         return entry;
     }
 
@@ -751,6 +755,7 @@ class DroppedItem extends Mob {
         if (entry.tooltipExtra) this.tooltipExtra = entry.tooltipExtra;
         if (entry.knapIconData) this.knapIconData = entry.knapIconData;
         if (entry.knapQuality) this.knapQuality = entry.knapQuality;
+        if (entry.durability != null) this.durability = entry.durability;
 
         // Knapped silhouette on the ground drop
         if (this.knapIconData && typeof Knapping !== "undefined") {
@@ -844,6 +849,8 @@ class DroppedItem extends Mob {
         if (this.tooltipExtra) this.entry.tooltipExtra = this.tooltipExtra;
         if (this.knapIconData) this.entry.knapIconData = this.knapIconData;
         if (this.knapQuality) this.entry.knapQuality = this.knapQuality;
+        if (this.durability != null) this.entry.durability = this.durability;
+        else delete this.entry.durability;
     }
 
     _removeEntry() {
@@ -940,7 +947,8 @@ class DroppedItem extends Mob {
                 ...(this.knapMaterial ? { knapMaterial: this.knapMaterial } : {}),
                 ...(this.tooltipExtra ? { tooltipExtra: this.tooltipExtra } : {}),
                 ...(this.knapIconData ? { knapIconData: this.knapIconData } : {}),
-                ...(this.knapQuality ? { knapQuality: this.knapQuality } : {})
+                ...(this.knapQuality ? { knapQuality: this.knapQuality } : {}),
+                ...(this.durability != null ? { durability: this.durability } : {})
             };
             const inv = player.inventory;
             const empty = inv.findIndex(s => !s);
@@ -995,6 +1003,7 @@ class DroppedItem extends Mob {
             knapIconData: this.knapIconData,
             tooltipExtra: this.tooltipExtra,
             knapQuality: this.knapQuality,
+            durability: this.durability,
             spoilAt: this.spoilAt,
             spoilLeft: this.spoilLeft
         } : null;

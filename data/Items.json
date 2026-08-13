@@ -214,6 +214,7 @@
         "key": "pebble",
         "maxStack": 1,
         "weight": 0.3,
+        "durability": 150,
         "tooltip": [
             "Knapped from a pebble"
         ]
@@ -224,6 +225,7 @@
         "key": "flint",
         "maxStack": 1,
         "weight": 0.3,
+        "durability": 200,
         "tooltip": [
             "Knapped from flint"
         ]
@@ -281,7 +283,8 @@
         "id": "sharp_stick",
         "name": "Sharp Stick",
         "key": "sharp_stick",
-        "maxStack": 99,
+        "maxStack": 1,
+        "durability": 50,
         "use": "light_fire",
         "weapon": {
             "type": "melee",
@@ -343,6 +346,7 @@
         "name": "Wooden Spear",
         "key": "wooden_spear",
         "maxStack": 1,
+        "durability": 100,
         "weapon": {
             "type": "melee",
             "range": 12,
@@ -410,6 +414,7 @@
         "name": "Stone Spear",
         "key": "stone_spear",
         "maxStack": 1,
+        "durability": 120,
         "weapon": {
             "type": "melee",
             "range": 12,
@@ -474,6 +479,7 @@
         "name": "Flint Spear",
         "key": "flint_spear",
         "maxStack": 1,
+        "durability": 150,
         "weapon": {
             "type": "melee",
             "range": 12,

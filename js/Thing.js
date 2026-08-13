@@ -403,7 +403,11 @@ class Campfire extends Thing {
         const prevMethod = this.getCatalystMethod();
         this.entry.catalyst = stack;
         const nextMethod = this.getCatalystMethod();
-        if (prevMethod !== nextMethod) this.entry.cookProgress = 0;
+        // Only wipe progress when switching between different cook methods
+        // (stick roast ↔ shell simmer). Removing/replacing the same tool pauses.
+        if (prevMethod && nextMethod && prevMethod !== nextMethod) {
+            this.entry.cookProgress = 0;
+        }
         this.scene.campfirePanel?.refresh();
         this.scene.campfirePanel?.layout?.();
         if (this.scene.tooltip?.visible && this.scene._tooltipTarget === this) {
@@ -486,6 +490,7 @@ class Campfire extends Thing {
 
         this.entry.roastBarMinutes = recipe.minutes;
         this.entry.cookProgress = (this.entry.cookProgress || 0) + 1;
+        this._wearRoastCatalyst();
         if (this.entry.cookProgress >= recipe.minutes) {
             const resultMeta = this.scene.getItem(recipe.result);
             delete this.entry.roastBarMinutes;
@@ -498,6 +503,25 @@ class Campfire extends Thing {
             return;
         }
         this.scene.campfirePanel?.refresh();
+    }
+
+    _wearRoastCatalyst() {
+        if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) return;
+        if (typeof Durability === "undefined") return;
+        const stack = this.entry.catalyst;
+        if (!stack) return;
+        const def = this.scene.getItem(stack.id);
+        const result = Durability.applyDurabilityUse(
+            stack,
+            Durability.COOK_WEAR_PER_MINUTE,
+            def
+        );
+        if (!result.broke) return;
+        const name = Durability.stackDisplayName(stack, def);
+        this.entry.catalyst = null;
+        this.scene.combatLog?.push(Durability.breakMessage(name, false));
+        this.scene.campfirePanel?.refresh?.();
+        if (this.scene.hotbar) this.scene.hotbar.dirty = true;
     }
 
     isRoastAdvancing() {

@@ -855,6 +855,7 @@ class SceneMain extends SceneBase {
         assign("knapIconData", d.knapIconData);
         assign("kind", d.kind);
         assign("fillTint", d.fillTint);
+        assign("durability", d.durability);
         if (d.ingredients) {
             entry.ingredients = Array.isArray(d.ingredients)
                 ? d.ingredients.slice()
@@ -879,6 +880,7 @@ class SceneMain extends SceneBase {
         spr.knapIconData = e.knapIconData;
         spr.kind = e.kind;
         spr.fillTint = e.fillTint;
+        spr.durability = e.durability;
         spr.ingredients = e.ingredients;
         spr.stackWeight = e.weight;
         if (e.food) spr.food = { ...e.food };
@@ -2380,24 +2382,10 @@ class SceneMain extends SceneBase {
 
     /** Smooth tend-bar fill color through the progress thresholds. */
     _channelBarFillColor(frac) {
-        const t = Phaser.Math.Clamp(frac, 0, 1);
-        const red = 0xD24A43;
-        const orange = 0xE67A00;
-        const yellow = 0xE6C200;
-        const green = 0x3CB043;
-        const lerp = (a, b, u) => {
-            const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
-            const br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
-            const r = Math.round(ar + (br - ar) * u);
-            const g = Math.round(ag + (bg - ag) * u);
-            const bl = Math.round(ab + (bb - ab) * u);
-            return (r << 16) | (g << 8) | bl;
-        };
-        if (t < 0.25) return red;
-        if (t < 0.5) return lerp(red, orange, (t - 0.25) / 0.25);
-        if (t < 0.75) return lerp(orange, yellow, (t - 0.5) / 0.25);
-        if (t < 0.9) return lerp(yellow, green, (t - 0.75) / 0.15);
-        return green;
+        if (typeof Durability !== "undefined" && Durability.rampBarFillColor) {
+            return Durability.rampBarFillColor(frac);
+        }
+        return 0x3CB043;
     }
 
     _drawBar(gfx, x, y, w, h, frac, borderColor, bgColor, fillColor, border=1) {
@@ -3586,6 +3574,7 @@ class SceneMain extends SceneBase {
             best.setKind('campfire');
             best.ensureBurning();
             this.updateLightVeil();
+            this.player?.wearHeld?.(1);
             return true;
         }
 
@@ -3607,6 +3596,7 @@ class SceneMain extends SceneBase {
             makeItemStack(stick, 15, undefined, this.worldMinuteIndex())
         );
         if (fire) fire.ensureBurning();
+        if (fire) this.player?.wearHeld?.(1);
         return !!fire;
     }
 
@@ -4433,7 +4423,25 @@ class SceneMain extends SceneBase {
     formatItemTooltip(item, quantity, spoilAt, stack = null) {
         const lines = [];
         const displayName = stack?.customName || item.name;
-        const name = quantity > 1 ? `${displayName} x${quantity}` : displayName;
+        let name = quantity > 1 ? `${displayName} x${quantity}` : displayName;
+        const food = stack?.food || item.food;
+        let namePct = null;
+        if (typeof Durability !== "undefined" && stack) {
+            const max = Durability.maxDurability(stack, item);
+            if (max > 0) {
+                const pct = Math.round(Durability.durabilityFraction(stack, item) * 100);
+                if (pct < 100) namePct = pct;
+            }
+        }
+        if (namePct == null && food) {
+            const kc = Number(food.kc ?? 0);
+            const full = Number(food.kcFull ?? kc);
+            if (kc > 0 && full > 0) {
+                const pct = Math.round((kc / full) * 100);
+                if (pct < 100) namePct = pct;
+            }
+        }
+        if (namePct != null) name = `${name} (${namePct}%)`;
         lines.push(name);
 
         // Tip / tipped-spear quality on line 2 (knives still bake quality into the name)
@@ -4460,14 +4468,10 @@ class SceneMain extends SceneBase {
         }
 
         // Food (stack.food overrides meta for dynamic meals). 0 kcal = spoils only, not edible.
-        const food = stack?.food || item.food;
         if (food) {
             const kc = Math.round(Number(food.kc ?? 0));
             if (kc > 0) {
-                const full = Math.round(Number(food.kcFull ?? kc));
-                const pct = full > 0 ? Math.round((kc / full) * 100) : 100;
-                if (pct < 100) lines.push(`Food: ${kc} kcal (${pct}%)`);
-                else lines.push(`Food: ${kc} kcal`);
+                lines.push(`Food: ${kc} kcal`);
                 const satR = Number(food.satietyRatio ?? item.food?.satietyRatio);
                 if (Number.isFinite(satR) && satR >= 0) {
                     const shown = Number.isInteger(satR)

@@ -208,11 +208,17 @@ class KnappingPanel {
             this.textureKey = meta?.key || this.material;
             this.grid = grid;
             this.pixels = pixels;
+            this._reworkDurability = held.durability;
+            this._reworkQuality = held.knapQuality || null;
+            this._reworkToolClass = held.toolClass || null;
         } else {
             const knap = meta?.knapping;
             if (!knap?.material) return false;
 
             this._rework = false;
+            this._reworkDurability = undefined;
+            this._reworkQuality = null;
+            this._reworkToolClass = null;
             this.blankItemId = held.id;
             this.blankSlotIndex = slotIndex;
             this.material = knap.material === "flint" ? "flint" : "pebble";
@@ -444,6 +450,19 @@ class KnappingPanel {
                 pixels: this.pixels,
                 scene: this.scene
             });
+        }
+        if (this._rework && typeof Durability !== "undefined") {
+            Durability.carryDurabilityAfterRework(
+                {
+                    durability: this._reworkDurability,
+                    knapQuality: this._reworkQuality,
+                    toolClass: this._reworkToolClass,
+                    id: this.blankItemId
+                },
+                stack,
+                this.scene.getItem(this.blankItemId),
+                this.scene.getItem(stack.id)
+            );
         }
         this._finished = true;
         const verb = this._rework ? "reshaped" : "knapped";

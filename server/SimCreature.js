@@ -472,6 +472,9 @@ class SimCreature {
 
             this.attackHitSet.add(target);
             BodyCombat.applyHit(this, target, attack);
+            if (!attack.unarmed && this.kind === "player") {
+                this.ctx.sim?._wearPlayerHeld?.(this.id, 1);
+            }
             // Fatal part destroy is deferred via microtask — flush so SimWorld
             // sees isBodyDead() in the same tick and can spawn the corpse.
             target.anatomy?.flushPendingFatal?.();

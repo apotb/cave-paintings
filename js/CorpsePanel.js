@@ -138,6 +138,7 @@ class CorpsePanel {
             view.icon.destroy();
             view.fill.destroy();
             view.qty.destroy();
+            view.bar?.destroy();
             destroyIngredientBadges(view.badges);
         }
         this.slotViews = [];
@@ -229,7 +230,9 @@ class CorpsePanel {
         this.slotsLayer.add(icon);
         this.slotsLayer.add(fill);
         this.slotsLayer.add(qty);
-        this.slotViews.push({ index, slot, icon, fill, qty, badges });
+        const bar = this.scene.add.graphics();
+        this.slotsLayer.add(bar);
+        this.slotViews.push({ index, slot, icon, fill, qty, bar, badges });
     }
 
     _worldUiScale() {
@@ -289,6 +292,12 @@ class CorpsePanel {
                 id => this.scene.getItem(id),
                 this.scene.textures
             );
+            const stack = this.session[i];
+            const meta = stack ? this.scene.getItem(stack.id) : null;
+            const frac = (typeof Durability !== "undefined" && stack)
+                ? Durability.slotBarFraction(stack, meta)
+                : null;
+            drawSlotConditionBar(view.bar, view.slot, frac);
         }
     }
 
@@ -314,6 +323,10 @@ class CorpsePanel {
                 id => this.scene.getItem(id),
                 this.scene.textures
             );
+            const frac = (typeof Durability !== "undefined" && stack)
+                ? Durability.slotBarFraction(stack, meta)
+                : null;
+            drawSlotConditionBar(view.bar, view.slot, frac);
         }
         this.layout();
     }
