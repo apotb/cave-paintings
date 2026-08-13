@@ -28,6 +28,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._tendChannel = null; // { remaining, max, slot }
         /** Knife skinning channel on a corpse (same bar as tend). */
         this._skinChannel = null;
+        /** Scraper fleshing channel on a drying rack (same bar as tend/skin). */
+        this._fleshChannel = null;
         /** Eating channel (same bar as tend/skin). */
         this._eatChannel = null;
         this._chopBar = null;
@@ -413,6 +415,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._downed = false;
         this._tendChannel = null;
         this._skinChannel = null;
+        this._fleshChannel = null;
         this._eatChannel = null;
         this._vomit = null;
         setCreatureProne(this, false);
@@ -529,7 +532,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             loot,
             body: this.anatomy?.toJSON?.(),
             bodyPlan: this.anatomy?.planId || "human",
-            mobId: "human"
+            mobId: "human",
+            playerCorpse: true
         });
     }
 
@@ -1049,7 +1053,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this.isVomiting()) return false;
         if (this.isIncapacitated()) return false;
         if (this._eatChannel) this._cancelEat();
-        if (this._tendChannel || this._skinChannel) return false;
+        if (this._tendChannel || this._skinChannel || this._fleshChannel) return false;
 
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
@@ -1766,7 +1770,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     /** Hold Space to keep attacking (weapon or unarmed). */
     tryWeaponAutofire() {
-        if (this.isAttacking() || this._tendChannel || this._skinChannel || this._eatChannel || this._bodyDead) return;
+        if (this.isAttacking() || this._tendChannel || this._skinChannel || this._fleshChannel || this._eatChannel || this._bodyDead) return;
         if (this.isVomiting() || this.isIncapacitated()) return;
         const item = this.getHeldItem();
         if (!item) {
@@ -1792,7 +1796,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const weaponMeta = this.getHeldWeaponMeta();
         if (weaponMeta?.weapon?.type === "melee") {
             this.startMeleeAttack(weaponMeta);
-        } else if (!meta?.food && !meta?.use && !meta?.knapping) {
+        } else {
             this.startMeleeAttack(null);
         }
     }
@@ -1818,7 +1822,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     beginTend() {
         if (this._eatChannel) this._cancelEat();
-        if (this._tendChannel || this._skinChannel || this._bodyDead || this.isAttacking()) return false;
+        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._bodyDead || this.isAttacking()) return false;
         if (this.isVomiting()) return false;
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
@@ -1867,7 +1871,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      */
     beginSkin(corpse) {
         if (this._eatChannel) this._cancelEat();
-        if (this._tendChannel || this._skinChannel || this._bodyDead || this.isAttacking()) return false;
+        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._bodyDead || this.isAttacking()) return false;
         if (this.isVomiting()) return false;
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
@@ -1883,7 +1887,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const seconds = 5;
         // Manipulation slows/speeds skinning the same way Eating slows/speeds food.
         const scale = this.capacities.manipulationDurationScale();
-        const max = seconds * 1000 * scale;
+        const quality = typeof knapQualityDurationScale === "function"
+            ? knapQualityDurationScale(item.knapQuality)
+            : 1;
+        const max = seconds * 1000 * scale * quality;
         this._skinChannel = {
             remaining: max,
             max,
@@ -1940,6 +1947,93 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.scene.hideChannelBar?.();
         // Loot + health inspect (same as clicking the corpse after skinning)
         this.scene.corpsePanel?.open?.(corpse);
+    }
+
+    /**
+     * Start fleshing a raw hide on a drying rack with a held scraper.
+     */
+    beginFlesh(rack) {
+        if (this._eatChannel) this._cancelEat();
+        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._bodyDead || this.isAttacking()) {
+            return false;
+        }
+        if (this.isVomiting()) return false;
+        this.capacities = new Capacities(this.anatomy);
+        if (!this.capacities.canManipulate()) return false;
+        if (this.isIncapacitated()) return false;
+        if (!rack?.entry || !rack.inRange?.()) return false;
+        const item = this.getHeldItem();
+        if (!item || item.toolClass !== "scraper") return false;
+        if (typeof Hide === "undefined") return false;
+        const stack = rack.getSlot?.(0);
+        const meta = stack ? this.scene.getItem(stack.id) : null;
+        if (!Hide.isRawHide(meta)) return false;
+
+        if (this.scene.storagePanel?.visible) this.scene.storagePanel.close();
+
+        const seconds = Hide.FLESH_SECONDS || 10;
+        const scale = this.capacities.manipulationDurationScale();
+        const quality = typeof knapQualityDurationScale === "function"
+            ? knapQualityDurationScale(item.knapQuality)
+            : 1;
+        const max = seconds * 1000 * scale * quality;
+        this._fleshChannel = {
+            remaining: max,
+            max,
+            slot: this.scene.hotbar.activeIndex,
+            rack,
+            itemId: item.id
+        };
+        this.scene.showChannelBar?.(0);
+        return true;
+    }
+
+    _cancelFlesh() {
+        if (!this._fleshChannel) return;
+        this._fleshChannel = null;
+        this.scene.hideChannelBar?.();
+    }
+
+    _tickFlesh(delta) {
+        if (!this._fleshChannel) return;
+        const slot = this.scene.hotbar.activeIndex;
+        const held = this.getHeldItem();
+        const rack = this._fleshChannel.rack;
+        const stack = rack?.getSlot?.(0);
+        const meta = stack ? this.scene.getItem(stack.id) : null;
+        if (
+            slot !== this._fleshChannel.slot
+            || !held
+            || held.toolClass !== "scraper"
+            || !rack?.active
+            || !rack.inRange?.()
+            || typeof Hide === "undefined"
+            || !Hide.isRawHide(meta)
+        ) {
+            this._cancelFlesh();
+            return;
+        }
+        this._fleshChannel.remaining -= delta;
+        const prog = 1 - this._fleshChannel.remaining / this._fleshChannel.max;
+        this.scene.showChannelBar?.(Phaser.Math.Clamp(prog, 0, 1));
+        if (this._fleshChannel.remaining > 0) return;
+
+        if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            this.scene._netSendMove?.(true);
+            this.scene.net.sendAction({
+                type: NetProtocol.Actions.RACK_FLESH,
+                uid: rack.entry?.uid,
+                x: this.x,
+                y: this.y
+            });
+        } else {
+            const now = this.scene.worldMinuteIndex?.() ?? null;
+            const next = Hide.fleshedStackFrom(stack, (id) => this.scene.getItem(id), now);
+            if (next) rack.setSlot(0, next);
+            this.wearHeld(1);
+        }
+        this._fleshChannel = null;
+        this.scene.hideChannelBar?.();
     }
 
     _tickTend(delta) {
@@ -2032,7 +2126,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     beginEat(item, opts = {}) {
-        if (this._tendChannel || this._skinChannel || this._eatChannel || this._bodyDead || this.isAttacking()) {
+        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._eatChannel || this._bodyDead || this.isAttacking()) {
             return false;
         }
         if (this.isVomiting() || this.isIncapacitated()) return false;
@@ -2268,6 +2362,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             const dtChat = delta || (this.scene.game.loop.delta || 16);
             if (this._tendChannel) this._tickTend(dtChat);
             if (this._skinChannel) this._tickSkin(dtChat);
+            if (this._fleshChannel) this._tickFlesh(dtChat);
             if (this._eatChannel) this._tickEat(dtChat);
             this._tickChopBar();
             this._tickVomit(dtChat);
@@ -2281,6 +2376,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             const dtPause = delta || (this.scene.game.loop.delta || 16);
             if (this._tendChannel) this._tickTend(dtPause);
             if (this._skinChannel) this._tickSkin(dtPause);
+            if (this._fleshChannel) this._tickFlesh(dtPause);
             if (this._eatChannel) this._tickEat(dtPause);
             this._tickChopBar();
             this._tickVomit(dtPause);
@@ -2302,6 +2398,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const dt = delta || (this.scene.game.loop.delta || 16);
         if (this._tendChannel) this._tickTend(dt);
         if (this._skinChannel) this._tickSkin(dt);
+        if (this._fleshChannel) this._tickFlesh(dt);
         if (this._eatChannel) this._tickEat(dt);
         this._tickChopBar();
         this._tickVomit(dt);
@@ -2330,7 +2427,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const encumbrance = this.getEncumbrance();
         const moving = x !== 0 || y !== 0;
         const attacking = this.isAttacking();
-        const tending = !!this._tendChannel || !!this._eatChannel;
+        const tending = !!this._tendChannel || !!this._eatChannel || !!this._fleshChannel;
         const livingLegs = this.anatomy.livingLegs();
         const canSprint = livingLegs >= 2
             && !prone
@@ -2439,21 +2536,17 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 this._blockSpaceAutofire = false;
             }
             if (Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) {
-                const held = this.getHeldItem();
-                const heldMeta = held ? this.scene.getItem(held.id) : null;
                 const used = this.useHeldItem();
-                // Eating / lighting / bandaging: don't punch while Space is still held.
+                // Eating / lighting / bandaging / placing: don't punch while Space is still held.
                 // Melee weapons that also have `use` (sharp stick) only block when they used.
-                if (
-                    used === "use"
-                    || (held && (heldMeta?.food || held?.food || heldMeta?.bandage))
-                ) {
+                if (used === "use") {
                     this._blockSpaceAutofire = true;
                 }
             } else if (
                 this.keys.SPACE.isDown &&
                 !this._tendChannel &&
-                !this._eatChannel
+                !this._eatChannel &&
+                !this._fleshChannel
             ) {
                 // Hold Space: keep eating through a food stack (same idea as weapon autofire)
                 const held = this.getHeldItem();

@@ -17,6 +17,11 @@ class StoragePanel {
         this._buildSlots();
         this._buildTake();
 
+        this.dryBarBg = scene.add.graphics();
+        this.dryBarFill = scene.add.graphics();
+        this.container.add(this.dryBarBg);
+        this.container.add(this.dryBarFill);
+
         scene.input.on("pointermove", (pointer) => {
             if (this._dragIcon && this._dragging) {
                 this._dragIcon.setPosition(pointer.x, pointer.y);
@@ -36,6 +41,60 @@ class StoragePanel {
         const def = this.storage?.meta;
         if (typeof Place !== "undefined") return Place.storageSlotCount(def, entry) || 6;
         return Array.isArray(entry?.slots) ? entry.slots.length : 6;
+    }
+
+    _isDryingRack() {
+        if (typeof Hide === "undefined") return false;
+        return Hide.isDryingRack(this.storage?.meta, this.storage?.entry);
+    }
+
+    _acceptsStack(stack) {
+        if (!stack) return false;
+        const meta = this.scene.getItem(stack.id);
+        const def = this.storage?.meta;
+        if (typeof Hide !== "undefined") return Hide.slotAccepts(def, meta);
+        return true;
+    }
+
+    _slotMax() {
+        if (typeof Hide === "undefined") return 0;
+        return Hide.slotMax(this.storage?.meta) || 0;
+    }
+
+    _prepareOutgoing(stack) {
+        const piece = this._cloneStack(stack);
+        if (!this._isDryingRack() || typeof Hide === "undefined") return piece;
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        return Hide.hangStack(piece, now, (id) => this.scene.getItem(id));
+    }
+
+    tryHangHeldHide(storage) {
+        if (!storage || typeof Hide === "undefined") return false;
+        if (!Hide.isDryingRack(storage.meta, storage.entry)) return false;
+        if (!storage.inRange?.()) return false;
+        const dest = storage.getSlot(0);
+        if (dest && dest.quantity > 0) return false;
+        const idx = this.scene.hotbar?.activeIndex;
+        if (!Number.isInteger(idx) || idx < 0) return false;
+        const held = this.scene.player?.inventory?.[idx];
+        if (!held) return false;
+        const meta = this.scene.getItem(held.id);
+        if (!Hide.isHide(meta)) return false;
+        const prev = this.storage;
+        const was = this.visible;
+        this.storage = storage;
+        this._depositFromHotbar("0", idx, null, 1);
+        const hung = !!(storage.getSlot(0)?.quantity > 0);
+        if (!was) {
+            this.storage = prev;
+            if (!prev) {
+                this.visible = false;
+                this.container.setVisible(false);
+            }
+        } else {
+            this.refresh();
+        }
+        return hung;
     }
 
     _buildSlots() {
@@ -63,10 +122,16 @@ class StoragePanel {
                 this.scene.showTooltip(
                     () => {
                         const stack = this._stackFor(key);
-                        if (!stack) return "Storage";
+                        if (!stack) {
+                            const label = this.storage?.meta?.storage?.slotLabel;
+                            return label || "Storage";
+                        }
                         const meta = this.scene.getItem(stack.id);
+                        const spoilPaused = typeof Hide !== "undefined"
+                            && Hide.isDryingRack(this.storage?.meta, this.storage?.entry)
+                            && Hide.isHide(meta);
                         return this.scene.formatItemTooltip(
-                            meta, stack.quantity, stack.spoilAt, stack
+                            meta, stack.quantity, stack.spoilAt, stack, { spoilPaused }
                         );
                     },
                     p.x, p.y, slot
@@ -310,6 +375,38 @@ class StoragePanel {
         if (empty) this._syncTakeHitArea(true);
         else this.takeRect.disableInteractive();
         this._syncTakeHover();
+        this.refreshDryBar();
+    }
+
+    refreshDryBar() {
+        this.dryBarBg?.clear();
+        this.dryBarFill?.clear();
+        if (!this.storage || typeof Hide === "undefined") return;
+        const def = this.storage.meta;
+        if (!Hide.isDryingRack(def, this.storage.entry)) return;
+        const stack = this.storage.getSlot(0);
+        const meta = stack ? this.scene.getItem(stack.id) : null;
+        if (!Hide.isFleshedHide(meta)) return;
+        const view = this.slotViews[0];
+        if (!view?.slot?.visible) return;
+        const minutes = Hide.DRY_MINUTES || 1440;
+        const prog = Hide.dryProgressOf(stack);
+        if (!(minutes > 0)) return;
+
+        const src = 64;
+        const slotW = view.slot.displayWidth;
+        const slotH = view.slot.displayHeight;
+        const px = slotW / src;
+        const barH = 4 * px;
+        const inset = 4 * px;
+        const x = view.slot.x - slotW / 2 + inset;
+        const y = view.slot.y + slotH / 2 - barH;
+        const maxW = slotW - inset * 2;
+        const progress = Phaser.Math.Clamp(prog / minutes, 0, 1);
+        if (progress > 0) {
+            this.dryBarFill.fillStyle(0xe8a040, 1);
+            this.dryBarFill.fillRect(x, y, maxW * progress, barH);
+        }
     }
 
     layout() {
@@ -324,7 +421,7 @@ class StoragePanel {
         const objH = this.storage.displayHeight || 16;
         const clear = 2;
         const n = this._slotCount();
-        const cols = 3;
+        const cols = Math.min(3, Math.max(1, n));
         const rows = Math.ceil(n / cols);
         const bottomRowY = -(objH + clear + slotW / 2);
 
@@ -432,6 +529,7 @@ class StoragePanel {
         const inv = this.scene.player.inventory;
         const stack = inv[hotbarIndex];
         if (!stack) return false;
+        if (!this._acceptsStack(stack)) return false;
         const n = this._slotCount();
         for (let pass = 0; pass < 2; pass++) {
             for (let i = 0; i < n; i++) {
@@ -508,33 +606,39 @@ class StoragePanel {
         return left < forInv.quantity && left === 0;
     }
 
-    _depositFromHotbar(key, hotbarIndex, pointer = null) {
+    _depositFromHotbar(key, hotbarIndex, pointer = null, amountCap = null) {
         if (!this.storage) return;
         const inv = this.scene.player.inventory;
         const stack = inv[hotbarIndex];
         if (!stack) return;
+        if (!this._acceptsStack(stack)) return;
         const meta = this.scene.getItem(stack.id);
         const dest = this._stackFor(key);
         const special = typeof isSpecialStack === "function" && isSpecialStack(stack);
         const want = pointer != null && typeof quickMoveAmount === "function"
             ? quickMoveAmount(stack.quantity, pointer, this.scene)
             : stack.quantity;
+        const slotMax = this._slotMax();
         const now = this.scene.worldMinuteIndex?.() ?? null;
         let moved = 0;
 
         if (!dest) {
             moved = Math.min(stack.quantity, want);
+            if (amountCap != null) moved = Math.min(moved, amountCap);
+            if (slotMax > 0) moved = Math.min(moved, slotMax);
             if (!(moved > 0)) return;
-            const piece = this._cloneStack(stack);
+            const piece = this._prepareOutgoing(stack);
             piece.quantity = moved;
             this._setStack(key, piece);
             stack.quantity -= moved;
             if (stack.quantity <= 0) inv[hotbarIndex] = null;
         } else if (dest.id === stack.id && !special && !(typeof isSpecialStack === "function" && isSpecialStack(dest))) {
             const maxStack = Math.max(1, meta?.maxStack || 1);
-            const space = Math.max(0, maxStack - dest.quantity);
+            let space = Math.max(0, maxStack - dest.quantity);
+            if (slotMax > 0) space = Math.min(space, Math.max(0, slotMax - dest.quantity));
             if (space <= 0) return;
             moved = Math.min(space, want, stack.quantity);
+            if (amountCap != null) moved = Math.min(moved, amountCap);
             if (!(moved > 0)) return;
             dest.spoilAt = mergeSpoilAt(
                 dest.quantity, dest.spoilAt,
@@ -545,9 +649,11 @@ class StoragePanel {
             if (stack.quantity <= 0) inv[hotbarIndex] = null;
             this._setStack(key, dest);
         } else {
+            if (!this._acceptsStack(stack)) return;
             if (want < stack.quantity) return;
+            if (slotMax > 0 && stack.quantity > slotMax) return;
             moved = stack.quantity;
-            this._setStack(key, this._cloneStack(stack));
+            this._setStack(key, this._prepareOutgoing(stack));
             inv[hotbarIndex] = this._toInvStack(dest);
         }
 

@@ -88,6 +88,7 @@ class Chunk {
             bodyPlan: e.bodyPlan || e.body?.planId || "human",
             mobId: e.mobId || null,
             skinned: !!e.skinned,
+            playerCorpse: !!e.playerCorpse,
             diedAt: e.diedAt != null ? e.diedAt : undefined,
             stage: e.stage || "corpse"
         }));
@@ -565,7 +566,7 @@ class Chunk {
                 Array.isArray(meta.slots)
                 || this.scene.getThing(meta.id)?.storage
             ) {
-                thing = new Storage(this.scene, meta);
+                thing = Storage.create(this.scene, meta);
             } else {
                 thing = new Thing(this.scene, meta.x, meta.y, meta.id);
                 thing.entry = meta;

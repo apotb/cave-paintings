@@ -171,6 +171,8 @@ class SceneBase extends Phaser.Scene {
             "pebble",
             "flint",
             "deer_hide",
+            "deer_hide_fleshed",
+            "deer_hide_dry",
             "bone",
             "stick",
             "log"

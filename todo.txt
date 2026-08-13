@@ -2,9 +2,7 @@ Lean-to that can be used for sleeping, will speed up time and increase recovery 
 
 "Back" equipment slot -- first item will be a backpack that adds 3 extra slots, but they will appear above your hotbar, so if you want to access them you'll have to manually drag them down into your hotbar
 
-Animal hides system -- drying rack you can place a hide on, use Scraper to turn it into a skinned hide, gateway before curing
-
-Awls -- related to hides system, maybe make the Leaf Pouch recipe require one?
+Awls -- related to hides system
 
 Bones
 
@@ -18,7 +16,11 @@ Infection
 
 Clothing and armor
 
-Recruiting wandering humans to join your faction -- when you have at least 2 people in your faction, you'll be able to see the status of all your characters on the right, your character is special and will always be first and have a little crown icon, the rest will be listed and you can see an overview of them and be able to switch who you're controlling by clicking them. You can also move forward with . and back with , and using ctrl + 1 would pick the 1st guy, ctrl + 2 would pick the 2nd guy, and so on
+Fix melee slots not working in multiplayer
+
+Recruiting wandering humans to join your party -- when you have at least 2 people in your party, you'll be able to see the status of all your characters on the right, your character is special and will always be first and have a little crown icon, the rest will be listed and you can see an overview of them and be able to switch who you're controlling by clicking them. You can also move forward with . and back with , and using ctrl + 1 would pick the 1st guy, ctrl + 2 would pick the 2nd guy, and so on. By default everyone will follow the person you are controlling. We'll implement stuff like orders and automation later on. Your party members should try to attack mobs that either you attack or they attack you. They'll use the same melee_slots behavior as enemies that attack the player.
+
+Tanning and leatherworking
 
 Sternum and Ribcage status overlay sprites
 

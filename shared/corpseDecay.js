@@ -53,6 +53,14 @@
         return entry.diedAt;
     }
 
+    /** Player bodies keep inventory; wildlife still dumps/discards. */
+    function isPlayerCorpse(entry) {
+        if (!entry) return false;
+        if (entry.playerCorpse) return true;
+        if (entry.look && typeof entry.look === "object") return true;
+        return String(entry.mobId || "") === "human";
+    }
+
     /**
      * Meat/food and hides vanish on conversion; everything else is dumped.
      * @param {object|null} item  item def (may include food)
@@ -61,7 +69,8 @@
     function isDiscardedOnCarcass(item, stack) {
         const id = String(stack?.id || item?.id || "");
         if (!id) return false;
-        if (/_hide$/.test(id) || id === "hide") return true;
+        if (item?.hide || stack?.hide) return true;
+        if (/_hide$/.test(id) || /_hide_/.test(id) || id === "hide") return true;
         if (item?.food || stack?.food) return true;
         return false;
     }
@@ -90,6 +99,28 @@
         const u = Number.isFinite(t) ? Math.max(0, t) : Math.random();
         const span = hi - lo + 1;
         return lo + Math.min(span - 1, Math.floor(u * span));
+    }
+
+    /**
+     * Convert a corpse entry to a carcass in place.
+     * Player loot stays on the body; animal meat/hides are discarded and
+     * remaining items are returned for world-pile dumps.
+     * @returns {{ dump: object[] }}
+     */
+    function applyCarcassConversion(entry, opts) {
+        if (!entry) return { dump: [] };
+        const dump = [];
+        let kept = [];
+        if (isPlayerCorpse(entry)) {
+            kept = (entry.loot || []).filter(Boolean);
+        } else {
+            dump.push(...lootToDumpOnCarcass(entry.loot, opts?.getItem));
+        }
+        const extra = buildCarcassLoot(entry.mobId, opts);
+        entry.loot = kept.concat(extra);
+        entry.stage = "carcass";
+        entry.skinned = true;
+        return { dump };
     }
 
     /**
@@ -122,8 +153,10 @@
         carcassLootTable,
         stageFor,
         ensureDiedAt,
+        isPlayerCorpse,
         isDiscardedOnCarcass,
         lootToDumpOnCarcass,
+        applyCarcassConversion,
         rollQty,
         buildCarcassLoot
     };

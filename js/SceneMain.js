@@ -756,6 +756,7 @@ class SceneMain extends SceneBase {
             // Dedicated MP: campfire burn/cook is server-authored (events + snapshots).
             if (!(this.isNet && this.net?.connected && !this.net.isLocal)) {
                 this.tickCampfires();
+                this.tickDryingRacks();
                 this.tickLootableRegrows();
             }
             this.tickBodySystems();
@@ -874,6 +875,7 @@ class SceneMain extends SceneBase {
         assign("kind", d.kind);
         assign("fillTint", d.fillTint);
         assign("durability", d.durability);
+        assign("dryProgress", d.dryProgress);
         if (d.ingredients) {
             entry.ingredients = Array.isArray(d.ingredients)
                 ? d.ingredients.slice()
@@ -946,6 +948,7 @@ class SceneMain extends SceneBase {
                 skinned: !!c.skinned,
                 diedAt: c.diedAt,
                 stage: c.stage === "carcass" ? "carcass" : "corpse",
+                playerCorpse: !!c.playerCorpse,
                 netSync: true
             };
             if (opts.pending) {
@@ -987,6 +990,7 @@ class SceneMain extends SceneBase {
             spr.entry.body = c.body != null ? c.body : spr.entry.body;
             spr.entry.bodyPlan = c.bodyPlan || spr.entry.bodyPlan || "human";
             spr.entry.mobId = c.mobId != null ? c.mobId : spr.entry.mobId;
+            spr.entry.playerCorpse = !!(c.playerCorpse || spr.entry.playerCorpse);
             spr.entry.loot = loot;
             if (c.diedAt != null) spr.entry.diedAt = c.diedAt;
             if (c.stage) spr.entry.stage = c.stage;
@@ -2207,7 +2211,7 @@ class SceneMain extends SceneBase {
             live.applyVisual?.();
             return;
         }
-        if (chunk?.isLoaded) chunk.things.add(new Storage(this, entry));
+        if (chunk?.isLoaded) chunk.things.add(Storage.create(this, entry));
     }
 
     _netRemoveStorage(src, opts = {}) {
@@ -3778,7 +3782,7 @@ class SceneMain extends SceneBase {
         } else if (entry.id === "campfire" || entry.id === "unlit_campfire") {
             thing = new Campfire(this, entry);
         } else if (Array.isArray(entry.slots) || this.getThing(entry.id)?.storage) {
-            thing = new Storage(this, entry);
+            thing = Storage.create(this, entry);
         } else {
             thing = new Thing(this, entry.x, entry.y, entry.id);
             thing.entry = entry;
@@ -4070,11 +4074,15 @@ class SceneMain extends SceneBase {
         }
         const valid = this.canPlaceAt(tx, ty);
         const rot = typeof Place !== "undefined" ? Place.normalizeRot(this.placeRot) : (this.placeRot || 0);
-        const tex = typeof Place !== "undefined"
+        const hangKey = (typeof Hide !== "undefined" && Hide.isDryingRack(info.thingDef))
+            ? Hide.hangingTextureKey(info.thingDef)
+            : null;
+        const rotTex = typeof Place !== "undefined"
             ? Place.rotationTextureKey(info.thingDef.key, rot)
             : info.thingDef.key;
         const ghost = this._ensurePlaceGhost();
-        if (this.textures.exists(tex)) ghost.setTexture(tex);
+        if (hangKey && this.textures.exists(hangKey)) ghost.setTexture(hangKey);
+        else if (this.textures.exists(rotTex)) ghost.setTexture(rotTex);
         else if (this.textures.exists(info.thingDef.key)) ghost.setTexture(info.thingDef.key);
         ghost.setPosition(x, y);
         ghost.setDepth(y);
@@ -4089,6 +4097,8 @@ class SceneMain extends SceneBase {
         if (!this.keyR || !Phaser.Input.Keyboard.JustDown(this.keyR)) return;
         if (this._placeGhostBlocked()) return;
         if (!this._heldPlaceableDef()) return;
+        const info = this._heldPlaceableDef();
+        if (typeof Place !== "undefined" && !Place.canRotate(info?.thingDef)) return;
         const shift = this.player?.keys?.SHIFT?.isDown;
         if (typeof Place !== "undefined") {
             this.placeRot = shift ? Place.rotateCCW(this.placeRot) : Place.rotateCW(this.placeRot);
@@ -4143,7 +4153,7 @@ class SceneMain extends SceneBase {
         };
         if (typeof Place !== "undefined") Place.ensureStorageEntry(entry, def);
         chunk.meta.things.push(entry);
-        const spr = new Storage(this, entry);
+        const spr = Storage.create(this, entry);
         chunk.things.add(spr);
         return spr;
     }
@@ -4431,6 +4441,36 @@ class SceneMain extends SceneBase {
         if (lightChanged) this.updateLightVeil();
     }
 
+    tickDryingRacks() {
+        if (typeof Hide === "undefined") return;
+        const getItem = (id) => this.getItem(id);
+        for (const chunk of Object.values(this.chunks || {})) {
+            const things = chunk.meta?.things;
+            if (!Array.isArray(things)) continue;
+            for (const entry of things) {
+                if (!entry) continue;
+                const def = this.getThing(entry.id);
+                if (!Hide.isDryingRack(def, entry)) continue;
+                const { changed } = Hide.tickRackEntry(entry, getItem);
+                if (!changed) continue;
+                const live = this.findStorageByUid(entry.uid)
+                    || (chunk.things?.getChildren?.() || []).find((t) =>
+                        t instanceof Storage && (
+                            t.entry === entry
+                            || (Math.abs(t.x - entry.x) < 1.5 && Math.abs(t.y - entry.y) < 1.5)
+                        )
+                    );
+                live?.applyVisual?.();
+                if (this.storagePanel?.visible && this.storagePanel.storage?.entry === entry) {
+                    this.storagePanel.refresh();
+                }
+                if (this.tooltip?.visible && this._tooltipTarget === live) {
+                    this.refreshTooltip();
+                }
+            }
+        }
+    }
+
     updateClockText() {
         if (!this.clockText?.active || !this.clockText.scene) return;
         const h = Math.floor(this.gameMinutes / 60);
@@ -4534,6 +4574,7 @@ class SceneMain extends SceneBase {
         this.tickSpoilage();
         this.tickCorpseDecay();
         this.tickCampfires();
+        this.tickDryingRacks();
         this.tickLootableRegrows();
         this.tickBodySystems();
         this.tickBloodStains();
@@ -4951,7 +4992,12 @@ class SceneMain extends SceneBase {
         const Decay = typeof CorpseDecay !== "undefined" ? CorpseDecay : null;
         if (!Decay || !entry) return;
         const getItem = (id) => this.getItem(id);
-        const dump = Decay.lootToDumpOnCarcass(entry.loot, getItem);
+        const { dump } = Decay.applyCarcassConversion(entry, {
+            getItem,
+            now,
+            rng: () => Math.random(),
+            makeStack: (item, qty, at) => makeWorldItemStack(item, qty, undefined, at)
+        });
         for (const stack of dump) {
             const meta = getItem(stack.id);
             if (!meta) continue;
@@ -4961,14 +5007,6 @@ class SceneMain extends SceneBase {
                 : stack.spoilAt;
             DroppedItem.spawn(this, entry.x, entry.y, meta, stack.quantity, spoilAt, extras);
         }
-        entry.loot = Decay.buildCarcassLoot(entry.mobId, {
-            getItem,
-            now,
-            rng: () => Math.random(),
-            makeStack: (item, qty, at) => makeWorldItemStack(item, qty, undefined, at)
-        });
-        entry.stage = "carcass";
-        entry.skinned = true;
 
         const spr = this._liveCorpseSprite(chunk, entry);
         if (spr) {
@@ -5148,9 +5186,13 @@ class SceneMain extends SceneBase {
                     if (!isCamp && !isStorage) continue;
 
                     if (isStorage && Array.isArray(entry.slots)) {
-                        for (let i = 0; i < entry.slots.length; i++) {
-                            if (!entry.slots[i]) continue;
-                            entry.slots[i] = applyWorldStack(entry.slots[i]);
+                        const skipSpoil = typeof Hide !== "undefined"
+                            && Hide.isDryingRack(thingMeta, entry);
+                        if (!skipSpoil) {
+                            for (let i = 0; i < entry.slots.length; i++) {
+                                if (!entry.slots[i]) continue;
+                                entry.slots[i] = applyWorldStack(entry.slots[i]);
+                            }
                         }
                     }
 
@@ -5218,7 +5260,9 @@ class SceneMain extends SceneBase {
                     if (s) migrateToSpoilAt(s, now, getItem);
                 }
                 for (const s of entry.slots || []) {
-                    if (s) migrateToSpoilAt(s, now, getItem);
+                    if (!s) continue;
+                    const skip = typeof Hide !== "undefined" && Hide.isDryingRack(this.getThing?.(entry.id), entry);
+                    if (!skip) migrateToSpoilAt(s, now, getItem);
                 }
             }
         }
@@ -5251,7 +5295,7 @@ class SceneMain extends SceneBase {
         }
     }
 
-    formatItemTooltip(item, quantity, spoilAt, stack = null) {
+    formatItemTooltip(item, quantity, spoilAt, stack = null, opts = null) {
         const lines = [];
         const displayName = stack?.customName || item.name;
         let name = quantity > 1 ? `${displayName} x${quantity}` : displayName;
@@ -5312,25 +5356,29 @@ class SceneMain extends SceneBase {
                 }
             }
 
-            const now = this.worldMinuteIndex?.() ?? null;
-            let mins = null;
-            if (stack?.spoilLeft != null) {
-                mins = Math.max(0, Math.round(stack.spoilLeft));
-            } else if (stack?.spoilAt != null && now != null) {
-                mins = remainingSpoilMinutes(stack.spoilAt, now);
-            } else if (spoilAt != null && now != null) {
-                // 3rd arg may be spoilLeft (remaining) or spoilAt (absolute)
-                const asRemaining = Math.round(spoilAt);
-                const asAbsolute = remainingSpoilMinutes(spoilAt, now);
-                // Absolute timestamps are worldMinuteIndex-scale; remaining timers are durations.
-                mins = (spoilAt >= now) ? asAbsolute : Math.max(0, asRemaining);
-            } else if (food.spoil != null) {
-                mins = Math.round(food.spoil * 60);
+            if (opts?.spoilPaused) {
+                lines.push("Spoils: paused");
             } else {
-                mins = spoilDurationMinutes(item);
-            }
-            if (mins != null) {
-                lines.push(`Spoils in: ${formatHours(Math.floor(mins / 60))}`);
+                const now = this.worldMinuteIndex?.() ?? null;
+                let mins = null;
+                if (stack?.spoilLeft != null) {
+                    mins = Math.max(0, Math.round(stack.spoilLeft));
+                } else if (stack?.spoilAt != null && now != null) {
+                    mins = remainingSpoilMinutes(stack.spoilAt, now);
+                } else if (spoilAt != null && now != null) {
+                    // 3rd arg may be spoilLeft (remaining) or spoilAt (absolute)
+                    const asRemaining = Math.round(spoilAt);
+                    const asAbsolute = remainingSpoilMinutes(spoilAt, now);
+                    // Absolute timestamps are worldMinuteIndex-scale; remaining timers are durations.
+                    mins = (spoilAt >= now) ? asAbsolute : Math.max(0, asRemaining);
+                } else if (food.spoil != null) {
+                    mins = Math.round(food.spoil * 60);
+                } else {
+                    mins = spoilDurationMinutes(item);
+                }
+                if (mins != null) {
+                    lines.push(`Spoils in: ${formatHours(Math.floor(mins / 60))}`);
+                }
             }
         }
 
@@ -5400,6 +5448,9 @@ class SceneMain extends SceneBase {
         }
         if (stack?.toolClass === "knife") {
             lines.push("Click a corpse to skin it for more resources");
+        }
+        if (stack?.toolClass === "scraper") {
+            lines.push("Click a drying rack with a hide on it");
         }
         if (stack?.toolClass === "chopper" || (typeof Chop !== "undefined" && Chop.chopFraction(stack) > 0)) {
             lines.push("Attack trees to chop them down");

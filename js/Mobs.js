@@ -719,6 +719,7 @@ class DroppedItem extends Mob {
         if (stackExtras?.knapIconData) entry.knapIconData = stackExtras.knapIconData;
         if (stackExtras?.knapQuality) entry.knapQuality = stackExtras.knapQuality;
         if (stackExtras?.durability != null) entry.durability = stackExtras.durability;
+        if (stackExtras?.dryProgress != null) entry.dryProgress = stackExtras.dryProgress;
         return entry;
     }
 
@@ -756,6 +757,7 @@ class DroppedItem extends Mob {
         if (entry.knapIconData) this.knapIconData = entry.knapIconData;
         if (entry.knapQuality) this.knapQuality = entry.knapQuality;
         if (entry.durability != null) this.durability = entry.durability;
+        if (entry.dryProgress != null) this.dryProgress = entry.dryProgress;
 
         // Knapped silhouette on the ground drop
         if (this.knapIconData && typeof Knapping !== "undefined") {
@@ -851,6 +853,8 @@ class DroppedItem extends Mob {
         if (this.knapQuality) this.entry.knapQuality = this.knapQuality;
         if (this.durability != null) this.entry.durability = this.durability;
         else delete this.entry.durability;
+        if (this.dryProgress != null) this.entry.dryProgress = this.dryProgress;
+        else delete this.entry.dryProgress;
     }
 
     _removeEntry() {
@@ -948,7 +952,8 @@ class DroppedItem extends Mob {
                 ...(this.tooltipExtra ? { tooltipExtra: this.tooltipExtra } : {}),
                 ...(this.knapIconData ? { knapIconData: this.knapIconData } : {}),
                 ...(this.knapQuality ? { knapQuality: this.knapQuality } : {}),
-                ...(this.durability != null ? { durability: this.durability } : {})
+                ...(this.durability != null ? { durability: this.durability } : {}),
+                ...(this.dryProgress != null ? { dryProgress: this.dryProgress } : {})
             };
             const inv = player.inventory;
             const empty = inv.findIndex(s => !s);
@@ -1004,6 +1009,7 @@ class DroppedItem extends Mob {
             tooltipExtra: this.tooltipExtra,
             knapQuality: this.knapQuality,
             durability: this.durability,
+            dryProgress: this.dryProgress,
             spoilAt: this.spoilAt,
             spoilLeft: this.spoilLeft
         } : null;

@@ -661,6 +661,7 @@ class Storage extends Thing {
             if (pointer.rightButtonDown()) return;
             if (this.scene.pointerOverWorldUi?.(pointer)) return;
             if (!this.inRange()) return;
+            if (this.onInteract(pointer)) return;
             this.scene.storagePanel?.toggle(this);
         });
         this.on("destroy", () => {
@@ -691,7 +692,9 @@ class Storage extends Thing {
     }
 
     getSlot(index) {
-        return this.entry.slots[index] || null;
+        const slots = this.entry?.slots;
+        if (!Array.isArray(slots)) return null;
+        return slots[index] || null;
     }
 
     setSlot(index, stack) {
@@ -705,5 +708,110 @@ class Storage extends Thing {
     isEmpty() {
         if (typeof Place !== "undefined") return Place.isStorageEmpty(this.entry);
         return (this.entry.slots || []).every((s) => !s || !(s.quantity > 0));
+    }
+
+    onInteract(_pointer) {
+        return false;
+    }
+
+    static create(scene, entry) {
+        const def = scene.getThing(entry?.id);
+        if (typeof Hide !== "undefined" && Hide.isDryingRack(def, entry)) {
+            return new DryingRack(scene, entry);
+        }
+        return new Storage(scene, entry);
+    }
+}
+
+class DryingRack extends Storage {
+    constructor(scene, entry) {
+        super(scene, entry);
+        this.on("destroy", () => this._destroyHang());
+    }
+
+    hangingKey() {
+        if (typeof Hide !== "undefined") return Hide.hangingTextureKey(this.meta);
+        return `${this.meta?.key || "drying_rack"}_hanging`;
+    }
+
+    hangingStack() {
+        const stack = this.getSlot(0);
+        if (!stack || !(stack.quantity > 0)) return null;
+        return stack;
+    }
+
+    applyVisual() {
+        const stack = this.hangingStack();
+        const hangKey = this.hangingKey();
+        if (stack) {
+            if (this.anims?.isPlaying) this.stop();
+            if (this.scene.textures.exists(hangKey)) this.setTexture(hangKey);
+            else super.applyVisual();
+        } else {
+            super.applyVisual();
+        }
+        this._syncHang(stack);
+    }
+
+    setSlot(index, stack) {
+        super.setSlot(index, stack);
+        this.applyVisual();
+    }
+
+    onInteract(_pointer) {
+        if (this.scene.player?.beginFlesh?.(this)) return true;
+        if (this.scene.storagePanel?.tryHangHeldHide?.(this)) return true;
+        return false;
+    }
+
+    tooltipText() {
+        const name = this.meta?.name || "Drying Rack";
+        const stack = this.hangingStack();
+        if (!stack) return `${name} (empty)`;
+        const meta = this.scene.getItem(stack.id);
+        const hideName = meta?.name || stack.id;
+        if (typeof Hide !== "undefined" && Hide.isFleshedHide(meta)) {
+            const prog = Hide.dryProgressOf(stack);
+            const max = Hide.DRY_MINUTES || 1440;
+            const pct = Math.max(0, Math.min(100, Math.floor((prog / max) * 100)));
+            return `${name} (${hideName}, ${pct}% dry)`;
+        }
+        return `${name} (${hideName})`;
+    }
+
+    _syncHang(stack) {
+        if (!stack) {
+            this._destroyHang();
+            return;
+        }
+        const meta = this.scene.getItem(stack.id);
+        const tex = meta?.key || stack.id;
+        if (!tex || !this.scene.textures.exists(tex)) {
+            this._destroyHang();
+            return;
+        }
+        // Recreate when the hide stage changes — Layer images can keep the
+        // previous GPU texture after setTexture (truecolor raw vs paletted later stages).
+        if (!this._hangSpr || this._hangKey !== tex) {
+            this._destroyHang();
+            this._hangSpr = this.scene.add.image(this.x, this.y, tex);
+            this._hangKey = tex;
+            this.scene.mainLayer?.add(this._hangSpr);
+        }
+        // Top of the hide sits on the rod so the pelt hangs below it (not centered on it).
+        this._hangSpr.setOrigin(0.5, 0);
+        this._hangSpr.setScale(0.5);
+        const rodY = this.y - (this.height || 16) + 6;
+        this._hangSpr.setPosition(this.x, rodY);
+        this._hangSpr.setDepth(this.y + 0.5);
+        this._hangSpr.setVisible(true);
+    }
+
+    _destroyHang() {
+        if (this._hangSpr) {
+            this._hangSpr.destroy();
+            this._hangSpr = null;
+        }
+        this._hangKey = null;
     }
 }

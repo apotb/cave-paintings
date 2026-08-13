@@ -236,10 +236,49 @@
         "key": "deer_hide",
         "maxStack": 99,
         "weight": 2.5,
+        "hide": {
+            "animal": "deer",
+            "stage": "raw"
+        },
         "food": {
             "kc": 0,
             "spoil": 96
-        }
+        },
+        "tooltip": [
+            "Hang on a drying rack and scrape it"
+        ]
+    },
+    {
+        "id": "deer_hide_fleshed",
+        "name": "Fleshed Deer Hide",
+        "key": "deer_hide_fleshed",
+        "maxStack": 99,
+        "weight": 2.5,
+        "hide": {
+            "animal": "deer",
+            "stage": "fleshed"
+        },
+        "food": {
+            "kc": 0,
+            "spoil": 48
+        },
+        "tooltip": [
+            "Takes 1d to dry"
+        ]
+    },
+    {
+        "id": "deer_hide_dry",
+        "name": "Dried Deer Hide",
+        "key": "deer_hide_dry",
+        "maxStack": 99,
+        "weight": 2.5,
+        "hide": {
+            "animal": "deer",
+            "stage": "dried"
+        },
+        "tooltip": [
+            "Ready for tanning"
+        ]
     },
     {
         "id": "bone",
@@ -647,6 +686,22 @@
             "stick_frame": 5,
             "stick": 3,
             "leaf_cord": 12
+        }
+    },
+    {
+        "id": "drying_rack",
+        "name": "Drying Rack",
+        "key": "drying_rack_hanging",
+        "maxStack": 99,
+        "place": {
+            "thing": "drying_rack"
+        },
+        "tooltip": [
+            "Process animal hides"
+        ],
+        "recipe": {
+            "stick": 3,
+            "leaf_cord": 2
         }
     },
     {

@@ -73,6 +73,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
             bodyPlan: opts.bodyPlan || opts.body?.planId || "human",
             mobId: opts.mobId || null,
             skinned: !!opts.skinned || stage === "carcass",
+            playerCorpse: !!opts.playerCorpse,
             diedAt,
             stage
         };

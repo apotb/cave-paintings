@@ -11,6 +11,7 @@ const Spoil = require("../shared/spoil");
 const Durability = require("../shared/durability");
 const Chop = require("../shared/chop");
 const Place = require("../shared/place");
+const Hide = require("../shared/hide");
 const Carry = require("../shared/carry");
 const CorpseDecay = require("../shared/corpseDecay");
 const GameMath = require("../shared/gameMath");
@@ -1005,6 +1006,10 @@ class SimWorld {
             this._tryCorpseSkin(p, action);
             return;
         }
+        if (type === Protocol.Actions.RACK_FLESH) {
+            this._tryRackFlesh(p, action);
+            return;
+        }
         if (type === Protocol.Actions.CORPSE_DISMISS) {
             this._tryCorpseDismiss(p, action);
             return;
@@ -1747,6 +1752,7 @@ class SimWorld {
             s.customName || s.food || s.ingredients || s.toolClass
             || s.knapIconData || s.knapDamage != null || s.knapQuality
             || s.durability != null
+            || s.dryProgress != null
         ));
     }
 
@@ -1777,6 +1783,10 @@ class SimWorld {
             const n = Number(src.durability);
             if (Number.isFinite(n) && n >= 0) out.durability = Math.min(10000, n);
         }
+        if (src.dryProgress != null) {
+            const n = Math.floor(Number(src.dryProgress) || 0);
+            if (n > 0) out.dryProgress = n;
+        }
         return Object.keys(out).length ? out : null;
     }
 
@@ -1799,6 +1809,7 @@ class SimWorld {
         if (extras.spoilLeft != null) slot.spoilLeft = extras.spoilLeft;
         if (extras.spoilAt != null) slot.spoilAt = extras.spoilAt;
         if (extras.durability != null) slot.durability = extras.durability;
+        if (extras.dryProgress != null) slot.dryProgress = extras.dryProgress;
         return slot;
     }
 
@@ -2352,6 +2363,7 @@ class SimWorld {
             bodyPlan: opts.bodyPlan || "human",
             mobId: opts.mobId || null,
             skinned: !!opts.skinned || opts.stage === "carcass",
+            playerCorpse: !!opts.playerCorpse,
             diedAt: opts.diedAt != null && Number.isFinite(Number(opts.diedAt))
                 ? Math.round(Number(opts.diedAt))
                 : this.worldMinuteIndex(),
@@ -2603,6 +2615,33 @@ class SimWorld {
                 loot: entry.loot
             }
         });
+    }
+
+    _tryRackFlesh(p, action = {}) {
+        if (!p || p.dead) return;
+        if (Number.isFinite(action.x) && Number.isFinite(action.y)) {
+            p.x = action.x;
+            p.y = action.y;
+            p.poseAuth = true;
+        }
+        const held = this._held(p);
+        if (!held || held.toolClass !== "scraper") return;
+        const found = this._findPlayerStorage(p, action);
+        if (!found) return;
+        const { chunk, entry } = found;
+        const def = thingDefs().get(entry.id);
+        if (!Hide.isDryingRack(def, entry)) return;
+        Place.ensureStorageEntry(entry, def);
+        const stack = this._storageGetSlot(entry, "0");
+        const meta = stack ? itemDefs().get(stack.id) : null;
+        if (!Hide.isRawHide(meta)) return;
+        const now = this.worldMinuteIndex();
+        const next = Hide.fleshedStackFrom(stack, (id) => itemDefs().get(id), now);
+        if (!next) return;
+        this._storageSetSlot(entry, "0", next);
+        this._wearHeld(p, 1);
+        this._emitStorage(chunk, entry);
+        this._youDirty.add(p.id);
     }
 
     _tryCorpseTake(p, action = {}) {
@@ -3267,6 +3306,20 @@ class SimWorld {
         }
     }
 
+    _tickDryingRacks() {
+        const getItem = (id) => itemDefs().get(id);
+        for (const c of this.chunks.values()) {
+            if (!Array.isArray(c.things)) continue;
+            for (const entry of c.things) {
+                const def = thingDefs().get(entry?.id);
+                if (!Hide.isDryingRack(def, entry)) continue;
+                Place.ensureStorageEntry(entry, def);
+                const { changed } = Hide.tickRackEntry(entry, getItem);
+                if (changed) this._emitStorage(c, entry);
+            }
+        }
+    }
+
     _nearbyDropPiles(wx, wy, itemId) {
         const range2 = (TS * HARVEST_RANGE_TILES) * (TS * HARVEST_RANGE_TILES);
         const out = [];
@@ -3814,6 +3867,13 @@ class SimWorld {
         this._youDirty.add(p.id);
     }
 
+    _hangIfRack(entry, stack) {
+        if (!stack) return stack;
+        const def = thingDefs().get(entry?.id);
+        if (!Hide.isDryingRack(def, entry)) return stack;
+        return Hide.hangStack(stack, this.worldMinuteIndex(), (id) => itemDefs().get(id));
+    }
+
     _storageInvToSlot(p, entry, action) {
         const slotKey = String(action.slot ?? "");
         const dest = this._storageGetSlot(entry, slotKey);
@@ -3821,17 +3881,22 @@ class SimWorld {
         const invIndex = Math.floor(Number(action.inv));
         const held = p.inventory?.[invIndex];
         if (!held?.id) return;
-        const amount = Math.max(1, Math.floor(Number(action.amount) || held.quantity || 1));
+        const thingDef = thingDefs().get(entry.id);
         const meta = itemDefs().get(held.id);
+        if (!Hide.slotAccepts(thingDef, meta)) return;
+        let amount = Math.max(1, Math.floor(Number(action.amount) || held.quantity || 1));
+        const slotMax = Hide.slotMax(thingDef);
+        if (slotMax > 0) amount = Math.min(amount, slotMax);
         const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
 
         if (!dest) {
             const piece = this._splitInvToWorld(p, invIndex, amount);
-            if (piece) this._storageSetSlot(entry, slotKey, piece);
+            if (piece) this._storageSetSlot(entry, slotKey, this._hangIfRack(entry, piece));
             return;
         }
         if (dest.id === held.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(held)) {
-            const space = Math.max(0, maxStack - (dest.quantity || 1));
+            let space = Math.max(0, maxStack - (dest.quantity || 1));
+            if (slotMax > 0) space = Math.min(space, Math.max(0, slotMax - (dest.quantity || 1)));
             const take = Math.min(space, amount, held.quantity || 1);
             if (!(take > 0)) return;
             const piece = this._splitInvToWorld(p, invIndex, take);
@@ -3841,10 +3906,11 @@ class SimWorld {
                 piece.quantity, piece.spoilAt
             );
             dest.quantity = (dest.quantity || 1) + piece.quantity;
-            this._storageSetSlot(entry, slotKey, dest);
+            this._storageSetSlot(entry, slotKey, this._hangIfRack(entry, dest));
             return;
         }
         if (amount < (held.quantity || 1)) return;
+        if (slotMax > 0 && (held.quantity || 1) > slotMax) return;
         const incoming = this._splitInvToWorld(p, invIndex, held.quantity);
         if (!incoming) return;
         if (!this._returnWorldToInv(p, dest, invIndex)) {
@@ -3852,7 +3918,7 @@ class SimWorld {
             this._youDirty.add(p.id);
             return;
         }
-        this._storageSetSlot(entry, slotKey, incoming);
+        this._storageSetSlot(entry, slotKey, this._hangIfRack(entry, incoming));
     }
 
     _worldStackToInv(worldStack) {
@@ -4412,7 +4478,8 @@ class SimWorld {
                 loot: loot.filter(Boolean),
                 body: p.body || creature?.anatomy?.toJSON?.() || null,
                 bodyPlan: "human",
-                mobId: "human"
+                mobId: "human",
+                playerCorpse: true
             });
         }
         // Empty gear so YOU cannot restore dumped loot after death.
@@ -4659,25 +4726,22 @@ class SimWorld {
         }
         this._tickLootableRegrows();
         this._tickCampfires();
+        this._tickDryingRacks();
         this._tickCorpseDecay();
     }
 
     _convertCorpseToCarcass(entry, now) {
         if (!entry) return;
-        const getItem = (id) => itemDefs().get(id);
-        const dump = CorpseDecay.lootToDumpOnCarcass(entry.loot, getItem);
-        for (const stack of dump) {
-            const world = this._cloneStackForWorld(stack);
-            if (world) this._pushDrop(entry.x, entry.y, world);
-        }
-        entry.loot = CorpseDecay.buildCarcassLoot(entry.mobId, {
-            getItem,
+        const { dump } = CorpseDecay.applyCarcassConversion(entry, {
+            getItem: (id) => itemDefs().get(id),
             now,
             rng: () => this.rng(),
             makeStack: (item, qty, at) => Spoil.makeWorldItemStack(item, qty, undefined, at)
         });
-        entry.stage = "carcass";
-        entry.skinned = true;
+        for (const stack of dump) {
+            const world = this._cloneStackForWorld(stack);
+            if (world) this._pushDrop(entry.x, entry.y, world);
+        }
         this.pushEvent({
             kind: "corpse",
             op: "carcass",
@@ -5244,8 +5308,11 @@ class SimWorld {
                     }
                 }
                 if (Array.isArray(t?.slots)) {
-                    for (let i = 0; i < t.slots.length; i++) {
-                        if (t.slots[i]) this._spoilStackIfDue(t.slots[i]);
+                    const def = thingDefs().get(t.id);
+                    if (!Hide.isDryingRack(def, t)) {
+                        for (let i = 0; i < t.slots.length; i++) {
+                            if (t.slots[i]) this._spoilStackIfDue(t.slots[i]);
+                        }
                     }
                 }
             }
@@ -5339,6 +5406,7 @@ class SimWorld {
                     bodyPlan: corpse.bodyPlan || "human",
                     mobId: corpse.mobId || null,
                     skinned: !!corpse.skinned,
+                    playerCorpse: !!corpse.playerCorpse,
                     diedAt: corpse.diedAt,
                     stage: corpse.stage || "corpse",
                     cx: c.cx,

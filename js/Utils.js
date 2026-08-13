@@ -715,6 +715,7 @@ function cloneItemStack(stack) {
     if (stack.spoilAt != null) out.spoilAt = stack.spoilAt;
     if (stack.spoilMinutes != null) out.spoilMinutes = stack.spoilMinutes;
     if (stack.durability != null) out.durability = stack.durability;
+    if (stack.dryProgress != null) out.dryProgress = stack.dryProgress;
     const extras = mealStackExtras(stack);
     if (extras) Object.assign(out, extras);
     return out;
@@ -732,6 +733,7 @@ function mealStackExtras(stack) {
         || stack.kind
         || stack.fillTint != null
         || stack.durability != null
+        || stack.dryProgress != null
         || knap
     );
     if (!hasExtras) return null;
@@ -739,12 +741,11 @@ function mealStackExtras(stack) {
         customName: stack.customName,
         food: stack.food ? { ...stack.food } : undefined,
         ingredients: stack.ingredients ? stack.ingredients.slice() : undefined,
-        // Knapped tools use stone_tool/flint_tool weight — don't carry stale overrides
-        // Skip 0 / Phaser Arcade body weight so logs don't become weightless
         weight: knap ? undefined : (Number(stack.weight) > 0 ? stack.weight : undefined),
         kind: stack.kind,
         fillTint: stack.fillTint,
         durability: stack.durability,
+        dryProgress: stack.dryProgress,
         ...(knap || {})
     };
 }
@@ -786,12 +787,18 @@ function hasStackExtras(dropOrStack) {
         || dropOrStack?.knapIconData
         || dropOrStack?.knapQuality
         || dropOrStack?.durability != null
+        || dropOrStack?.dryProgress != null
     );
 }
 
 /** Quality band → damage multiplier (matches knapped tool bands). */
 function knapQualityMult(quality) {
     return { crude: 0.65, rough: 0.95, fine: 1.35 }[quality] || 1;
+}
+
+/** Quality band → channel duration (skin / flesh). Rough is baseline. */
+function knapQualityDurationScale(quality) {
+    return { crude: 1.25, rough: 1.0, fine: 0.8 }[quality] || 1;
 }
 
 /** Clone weapon meta with tip-quality scaled point damage (tipped spears). */
@@ -816,6 +823,7 @@ function isSpecialStack(stack) {
         || stack.knapDamage != null
         || stack.knapIconData
         || stack.durability != null
+        || stack.dryProgress != null
     ));
 }
 

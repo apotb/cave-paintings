@@ -67,6 +67,8 @@
         CORPSE_TAKE: "corpse_take",
         /** Finish knife-skinning a corpse (dedicated MP; server-authored). */
         CORPSE_SKIN: "corpse_skin",
+        /** Finish scraping a raw hide on a drying rack (dedicated MP; server-authored). */
+        RACK_FLESH: "rack_flesh",
         /** Close an empty corpse loot UI — server despawns the corpse. */
         CORPSE_DISMISS: "corpse_dismiss",
         /** Client LivingMob died — server removes chunk mob + authors corpse for remotes. */

@@ -213,5 +213,18 @@
             "slots": 6
         },
         "rotations": [0, 90, 180, 270]
+    },
+    {
+        "id": "drying_rack",
+        "name": "Drying Rack",
+        "key": "drying_rack",
+        "hitboxSize": 5,
+        "dryingRack": true,
+        "storage": {
+            "slots": 1,
+            "accept": "hide",
+            "slotLabel": "Hide",
+            "maxPerSlot": 1
+        }
     }
 ]

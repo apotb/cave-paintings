@@ -62,7 +62,16 @@
                 frameHeight: t.anim.frameHeight ?? 16
             }];
         }
-        return [{ key: t.key, path: `assets/things/${t.key}.png` }];
+        const loads = [{ key: t.key, path: `assets/things/${t.key}.png` }];
+        if (t.dryingRack) {
+            const hangKey = t.hangingKey || `${t.key}_hanging`;
+            loads.push({ key: hangKey, path: `assets/things/${hangKey}.png` });
+        }
+        return loads;
+    }
+
+    function canRotate(thingDef) {
+        return Array.isArray(thingDef?.rotations) && thingDef.rotations.length > 0;
     }
 
     function inPlaceRange(px, py, wx, wy, tileSize, interactionRange) {
@@ -169,6 +178,7 @@
         rotateCCW,
         rotationTextureKey,
         thingImageLoads,
+        canRotate,
         inPlaceRange,
         entryOnTile,
         canPlaceOnTile,
