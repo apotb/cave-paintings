@@ -52,18 +52,18 @@ class HealthPanel {
         this.root.setScrollFactor(0).setDepth(9000).setVisible(false);
         scene.uiLayer.add(this.root);
 
-        this.bg = scene.add.rectangle(0, 0, 370, 380, 0x1a1410, 0.92)
+        this.bg = scene.add.rectangle(0, 0, 300, 380, 0x1a1410, 0.92)
             .setOrigin(0.5)
             .setStrokeStyle(2, 0x6b5344);
         // Capture pointer so world/tooltips behind the panel don't receive hover
         this.bg.setInteractive({ cursor: "default" });
         this.root.add(this.bg);
 
-        this.title = scene.add.text(0, -170, "Health", {
-            fontFamily: "monospace",
+        this.title = crispUiText(scene.add.text(0, -170, "Health", {
+            fontFamily: PIXEL_UI_FONT,
             fontSize: "16px",
             color: "#f0e6d8"
-        }).setOrigin(0.5);
+        }).setOrigin(0.5));
         this.root.add(this.title);
 
         this.doll = scene.add.image(-90, 0, "status2").setOrigin(0.5);
@@ -80,11 +80,11 @@ class HealthPanel {
         /** @type {Phaser.GameObjects.Text[]} */
         this._capRows = [];
 
-        this.injHeader = scene.add.text(0, 0, "Injuries:", {
-            fontFamily: "monospace",
-            fontSize: "11px",
+        this.injHeader = crispUiText(scene.add.text(0, 0, "Injuries:", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "8px",
             color: "#ddd0c0"
-        }).setOrigin(0, 0);
+        }).setOrigin(0, 0));
         this.root.add(this.injHeader);
 
         // Scrollable injuries list (stats above stay fixed)
@@ -258,7 +258,7 @@ class HealthPanel {
         const body = this._inspectBody || this.scene.player?.anatomy;
         const showDoll = this._showsDoll(body);
         // No diagram → drop the doll column; keep roughly the old stats-column width
-        const panelW = (showDoll ? 370 : 200) * s;
+        const panelW = (showDoll ? 300 : 180) * s;
         const panelH = 380 * s;
         const pad = 12 * s;
         const gap = 8 * s;
@@ -279,7 +279,7 @@ class HealthPanel {
         );
         this.root.setPosition(Math.round(left + panelW / 2), Math.round(top + panelH / 2));
 
-        this.title.setFontSize(Math.round(16 * s)).setPosition(0, -panelH / 2 + 18 * s);
+        this.title.setFontSize(pixelUiFontSize(16, s)).setPosition(0, -panelH / 2 + 18 * s);
 
         this.doll.setVisible(showDoll);
         this.overlayLayer.setVisible(showDoll);
@@ -293,7 +293,7 @@ class HealthPanel {
             // Fit doll in panel height with a little margin; sit left, vertically centered under title
             const maxDollH = contentBottom - titleBottom - 4 * s;
             const srcH = this.doll.height || 178;
-            const dollScale = Math.min(2.0 * s, maxDollH / srcH);
+            const dollScale = Math.min(1.65 * s, maxDollH / srcH);
             this.doll.setScale(dollScale);
             const dollW = this.doll.displayWidth;
             const dollX = -panelW / 2 + pad + dollW / 2;
@@ -313,8 +313,8 @@ class HealthPanel {
             wrapW = Math.max(80 * s, panelW - pad * 2 - scrollBarW);
         }
         const listTop = titleBottom + 2 * s;
-        const fontSize = Math.round(10 * s);
-        const lineH = Math.round(13 * s);
+        const fontSize = pixelUiFontSize(8, s);
+        const lineH = fontSize + PIXEL_FONT_CELL;
 
         this.capLayer.setPosition(listX, listTop);
         for (let i = 0; i < this._capRows.length; i++) {
@@ -412,11 +412,11 @@ class HealthPanel {
             const bg = this.scene.add.rectangle(0, 0, 10, 10, 0x3a0808, 1)
                 .setOrigin(0, 0)
                 .setVisible(false);
-            const text = this.scene.add.text(0, 0, "", {
-                fontFamily: "monospace",
-                fontSize: "11px",
+            const text = crispUiText(this.scene.add.text(0, 0, "", {
+                fontFamily: PIXEL_UI_FONT,
+                fontSize: "8px",
                 color: "#ddd0c0"
-            }).setOrigin(0, 0);
+            }).setOrigin(0, 0));
             text.setInteractive({ useHandCursor: false });
             const row = { bg, text, bleeding: false, destroyed: false, tip: null };
             text.on("pointerover", (p) => {
@@ -451,11 +451,11 @@ class HealthPanel {
 
     _ensureCapRows(count) {
         while (this._capRows.length < count) {
-            const row = this.scene.add.text(0, 0, "", {
-                fontFamily: "monospace",
-                fontSize: "11px",
+            const row = crispUiText(this.scene.add.text(0, 0, "", {
+                fontFamily: PIXEL_UI_FONT,
+                fontSize: "8px",
                 color: "#ddd0c0"
-            }).setOrigin(0, 0);
+            }).setOrigin(0, 0));
             row.setInteractive({ useHandCursor: false });
             row.on("pointerover", (p) => {
                 this.scene.showTooltip(() => {

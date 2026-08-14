@@ -76,14 +76,43 @@
             return 1 / (mtb * this.MINUTES_PER_DAY);
         },
 
+        /** Combat-log “You” vs pawn name (controlled pawn only). */
+        _logIsYou(owner, ctx) {
+            if (!owner) return true;
+            if (typeof owner.isControlled === "function") return !!owner.isControlled();
+            const host = ctx || owner.ctx || owner.scene;
+            if (typeof host?.isControlled === "function") return !!host.isControlled(owner);
+            if (host?.player) return host.player === owner;
+            return false;
+        },
+
+        _logName(owner) {
+            if (!owner) return "Someone";
+            if (typeof owner.displayName === "function") {
+                const n = owner.displayName();
+                if (n) return n;
+            }
+            return owner.pawnName || owner.name || "Someone";
+        },
+
+        foodPoisonMessage(owner, worse, ctx) {
+            if (this._logIsYou(owner, ctx)) {
+                return worse ? "Your food poisoning got worse" : "You have food poisoning";
+            }
+            const name = this._logName(owner);
+            return worse
+                ? `${name}'s food poisoning got worse`
+                : `${name} has food poisoning`;
+        },
+
         /**
          * Roll food-poison chance after a successful eat.
          * First hit → severity 1.0 (initial). Re-poison while already sick restarts
          * the clock but never eases you out of major: if past initial, jump to peak
          * major (~0.799) instead of resetting to mild initial.
-         * @returns {{ message: string }|null}
+         * @returns {{ message: string, worse: boolean }|null}
          */
-        tryFoodPoison(body, food, meta = null, rng = null) {
+        tryFoodPoison(body, food, meta = null, rng = null, who = null) {
             const chance = Number(food?.foodPoisonChance ?? meta?.food?.foodPoisonChance ?? 0);
             if (!(chance > 0) || !body?.addHediff) return null;
             const roll = typeof rng === "function" ? rng() : Math.random();
@@ -93,14 +122,13 @@
             const INITIAL_MIN = 0.8;
             const MAJOR_PEAK = INITIAL_MIN - 0.001;
             let sev = 1;
-            let message = "You have food poisoning.";
+            const worse = !!existing;
             if (existing) {
                 const cur = Number(existing.severity) || 0;
                 sev = cur >= INITIAL_MIN ? 1 : Math.max(cur, MAJOR_PEAK);
-                message = "Your food poisoning got worse.";
             }
             body.addHediff("food_poisoning", sev);
-            return { message };
+            return { message: this.foodPoisonMessage(who, worse), worse };
         },
 
         /**
@@ -147,7 +175,7 @@
                 if (!h) {
                     h = body.addHediff("malnutrition", 0);
                     if (!h) return;
-                    log?.push?.("You are malnourished.", { owner });
+                    log?.push?.("You are malnourished", { owner });
                 }
                 const prev = this.stageFor(h, ctx)?.label;
                 h.severity = Math.min(1, (Number(h.severity) || 0) + gainPerMin);
@@ -169,7 +197,7 @@
             h.severity = (Number(h.severity) || 0) - recoverPerMin;
             if (h.severity <= 0) {
                 body.removeHediff("malnutrition");
-                log?.push?.("You are no longer malnourished.", { owner });
+                log?.push?.("You are no longer malnourished", { owner });
                 return;
             }
             body.markDirty?.();
@@ -198,7 +226,10 @@
                 if ((Number(h.severity) || 0) <= 0) {
                     body.removeHediff(h.id);
                     if (h.id === "food_poisoning") {
-                        log?.push?.("You recovered from food poisoning.", { owner });
+                        const recovered = this._logIsYou(owner, ctx)
+                            ? "You recovered from food poisoning"
+                            : `${this._logName(owner)} recovered from food poisoning`;
+                        log?.push?.(recovered);
                     }
                     continue;
                 }

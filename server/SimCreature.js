@@ -10,6 +10,7 @@ const { Body } = require("../shared/body/Body");
 const Capacities = require("../shared/body/Capacities");
 const BodyCombat = require("../shared/body/Combat");
 const MeleeMath = require("../shared/melee");
+const Party = require("../shared/party");
 
 const TILE = 16;
 
@@ -113,6 +114,7 @@ class SimCreature {
         this.facing = opts.facing || "down";
         this.width = Number(opts.width) || 16;
         this.height = Number(opts.height) || 16;
+        this.hitboxSize = Number(opts.hitboxSize) || Number(opts.def?.hitboxSize) || 8;
         this.vx = 0;
         this.vy = 0;
         this._desiredVx = 0;
@@ -310,6 +312,8 @@ class SimCreature {
 
     onBodyDamaged(source, _result) {
         if (source && source !== this) this._lastHitBy = source;
+        this.ctx?.sim?._notePvpHit?.(source, this);
+        this.ctx?.sim?._noteHuntHit?.(source, this);
         this.capacities = new Capacities(this.anatomy);
         this._prone = this.isImmobile() || this.isIncapacitated();
         if (this._dead) return;
@@ -319,6 +323,18 @@ class SimCreature {
         }
         this.ai?.onDamaged?.(source);
         if (this.kind === "mob") this.ctx?.sim?.alertNearbyMobs?.(this, source);
+        if (this.role === "wanderer" && this.ctx?.sim?.wanderers) {
+            const w = this.ctx.sim.wanderers.get(this.id);
+            if (w) {
+                w.hostile = true;
+                w.recruitLocked = true;
+            }
+            const partyHit = source
+                && source !== this
+                && source.role !== "wanderer"
+                && (source.kind === "player" || source.isPlayer);
+            if (partyHit) this.ctx.sim.alertNearbyWanderers?.(this, source);
+        }
     }
 
     isVomiting() {
@@ -495,8 +511,7 @@ class SimCreature {
         for (const target of list) {
             if (!target || target === this || target.isBodyDead?.()) continue;
             if (this.attackHitSet.has(target)) continue;
-            // Mobs only hit players unless explicitly allowed
-            if (this.kind === "mob" && target.kind !== "player") continue;
+            if (Party?.sameFaction?.(this, target)) continue;
             if (!MeleeMath.meleeSegmentHitsTarget(seg.a, seg.b, radius, target)) continue;
 
             this.attackHitSet.add(target);
@@ -604,7 +619,10 @@ class SimCreature {
 
     refreshCapacities() {
         this.capacities = new Capacities(this.anatomy);
-        this._prone = this.isImmobile() || this.isIncapacitated();
+        if (!this._dead && this.capacities.isDeadFromCapacities()) {
+            this.onBodyFatal(null, "capacity");
+        }
+        this._prone = !this._dead && (this.isImmobile() || this.isIncapacitated());
         return this.capacities;
     }
 }
@@ -620,6 +638,7 @@ function createPlayerCreature(p, dataStore, extras = {}) {
         facing: p.facing || "down",
         width: 16,
         height: 16,
+        hitboxSize: 8,
         planId: "human",
         bodyJson: p.body || null,
         inventory: p.inventory || null,
@@ -628,8 +647,13 @@ function createPlayerCreature(p, dataStore, extras = {}) {
         dataStore: data,
         ctx: extras
     });
-    creature.look = p.look || null;
-    return creature;
+        creature.look = p.look || null;
+        creature.ownerId = p.ownerId || p.id || extras.ownerId;
+        creature.role = p.role || extras.role || "leader";
+        creature.faction = creature.role === "wanderer"
+            ? Party.FACTION_WANDERERS
+            : Party.partyFactionId(creature.ownerId);
+        return creature;
 }
 
 function createMobCreature(entry, def, dataStore, extras = {}) {
@@ -655,6 +679,7 @@ function createMobCreature(entry, def, dataStore, extras = {}) {
         dataStore: data,
         ctx: extras
     });
+    creature.faction = Party.FACTION_WILDLIFE;
     return creature;
 }
 

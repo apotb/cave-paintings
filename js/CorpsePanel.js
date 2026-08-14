@@ -164,8 +164,8 @@ class CorpsePanel {
         const icon = this.scene.add.image(0, 0, "").setOrigin(0.5, 0.5).setVisible(false);
         const fill = this.scene.add.image(0, 0, "").setOrigin(0.5, 0.5).setVisible(false);
         const qty = this.scene.add.text(0, 0, "", {
-            fontSize: "14px",
-            fontFamily: "PrimaryFont",
+            fontSize: `${pixelUiFontSize(16, 1)}px`,
+            fontFamily: PIXEL_UI_FONT,
             align: "right",
             color: "#ffffff",
             stroke: "#000000",
@@ -267,7 +267,7 @@ class CorpsePanel {
 
         const s = this.scene.uiScale || 1;
         const zoom = this.scene.worldZoom || 1;
-        const fontPx = Math.round(14 * s);
+        const fontPx = pixelUiFontSize(16, s);
         const strokePx = Math.max(2, Math.round(2 * s));
         for (let i = 0; i < n; i++) {
             const view = this.slotViews[i];

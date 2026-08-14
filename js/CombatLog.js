@@ -92,9 +92,13 @@ class CombatLog {
         window.removeEventListener("keydown", this._boundKey, true);
         window.removeEventListener("wheel", this._boundWheel, true);
         this.composing = false;
-        if (this.scene?.textures?.exists(CombatLog.TEX_KEY)) {
-            this.scene.textures.remove(CombatLog.TEX_KEY);
-        }
+        try { this._logImage?.destroy?.(); } catch (_) {}
+        this._logImage = null;
+        try {
+            if (this.scene?.textures?.exists(CombatLog.TEX_KEY)) {
+                this.scene.textures.remove(CombatLog.TEX_KEY);
+            }
+        } catch (_) {}
         this._logTexture = null;
         this._canvas = null;
         this._ctx = null;
@@ -152,7 +156,7 @@ class CombatLog {
         const parts = String(raw).trim().split(/\s+/);
         const cmd = (parts[0] || "").toLowerCase();
         const helpSyntax = {
-            debug: "/debug blood|chunks|combat_log|fps|location|melee_slots [show|hide]",
+            debug: "/debug blood|chunks|combat_log|fps|location [show|hide]",
             give: "/give <item> [qty]",
             heal: "/heal",
             help: "/help [command]",
@@ -163,7 +167,9 @@ class CombatLog {
             set: "/set <thing>|null",
             tick: "/tick [speed]",
             time: "/time [HH] [MM]",
-            tp: "/tp <x> <y>"
+            tp: "/tp <x> <y>",
+            party: "/party",
+            wanderer: "/wanderer"
         };
         if (cmd === "/help") {
             const topic = (parts[1] || "").toLowerCase().replace(/^\//, "");
@@ -196,7 +202,8 @@ class CombatLog {
             if (this.scene.isNet && this.scene.net?.connected) {
                 this.scene.net.sendAction({
                     type: NetProtocol.Actions.CHAT,
-                    text: "/heal"
+                    text: "/heal",
+                    pawnId: player.pawnId
                 });
             }
             player.anatomy?.fullHeal?.();
@@ -216,6 +223,28 @@ class CombatLog {
             this.scene.hideChannelBar?.();
             this.scene.healthPanel?.refresh?.();
             this.push("Fully healed.");
+            return;
+        }
+        if (cmd === "/party") {
+            if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+                this.scene.net.sendAction({
+                    type: NetProtocol.Actions.CHAT,
+                    text: "/party"
+                });
+                return;
+            }
+            this.scene.partySys?.debugAddCompanion?.();
+            return;
+        }
+        if (cmd === "/wanderer") {
+            if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+                this.scene.net.sendAction({
+                    type: NetProtocol.Actions.CHAT,
+                    text: "/wanderer"
+                });
+                return;
+            }
+            this.scene.partySys?.debugSpawnWanderer?.();
             return;
         }
         if (cmd === "/kms") {
@@ -400,23 +429,9 @@ class CombatLog {
             return;
         }
         if (cmd === "/debug") {
-            const usage = "Usage: /debug blood|chunks|combat_log|fps|location|melee_slots [show|hide]";
+            const usage = "Usage: /debug blood|chunks|combat_log|fps|location [show|hide]";
             const topic = (parts[1] || "").toLowerCase();
             const action = (parts[2] || "").toLowerCase();
-            if (topic === "melee_slots" || topic === "melee-slots") {
-                if (action && action !== "show" && action !== "hide") {
-                    this.pushError(usage);
-                    return;
-                }
-                const on = action === "show"
-                    ? true
-                    : action === "hide"
-                        ? false
-                        : !this.scene.meleeSlots?.debug;
-                this.scene.meleeSlots?.setDebug?.(on);
-                this.push(on ? "Debug: melee_slots shown" : "Debug: melee_slots hidden");
-                return;
-            }
             if (topic === "fps") {
                 if (action && action !== "show" && action !== "hide") {
                     this.pushError(usage);
@@ -774,12 +789,22 @@ class CombatLog {
 
     /** Compose row pieces (same wrap/font path as log lines). */
     _composeRows(wrapW, fontSize) {
-        const blink = Math.floor((this.scene.time?.now || 0) / 500) % 2 === 0 ? "_" : " ";
-        return this._wrapSegments(
-            [{ text: `${this.draft}${blink}`, color: "#ffffff" }],
+        const color = "#ffffff";
+        const base = this._wrapSegments(
+            [{ text: this.draft, color }],
             wrapW,
             fontSize
         );
+        const showBlink = Math.floor((this.scene.time?.now || 0) / 500) % 2 === 0;
+        if (!showBlink) return base;
+        const withCursor = this._wrapSegments(
+            [{ text: `${this.draft}_`, color }],
+            wrapW,
+            fontSize
+        );
+        // "_" is wider than the off-state (a trimmed trailing space). Skip it
+        // rather than letting the caret wrap the draft onto another line.
+        return withCursor.length > base.length ? base : withCursor;
     }
 
     push(msg, opts = null) {
@@ -824,8 +849,10 @@ class CombatLog {
             this.scene.textures.remove(CombatLog.TEX_KEY);
         }
         this._logTexture = this.scene.textures.addCanvas(CombatLog.TEX_KEY, this._canvas);
+        this._logTexture.setFilter(Phaser.Textures.FilterMode.NEAREST);
         // Prefer Phaser's context (same canvas); keeps GL uploads in sync
         this._ctx = this._logTexture.context || this._canvas.getContext("2d");
+        if (this._ctx) this._ctx.imageSmoothingEnabled = false;
         this._canvasW = 4;
         this._canvasH = 4;
         if (this._logImage) this._logImage.setTexture(CombatLog.TEX_KEY);
@@ -834,9 +861,10 @@ class CombatLog {
 
     _setFont(fontSize) {
         const ctx = this._ensureCtx();
-        ctx.font = `${fontSize}px monospace`;
+        ctx.font = `${fontSize}px ${PIXEL_UI_FONT}, monospace`;
         ctx.textBaseline = "alphabetic";
         ctx.textAlign = "left";
+        ctx.imageSmoothingEnabled = false;
     }
 
     _measureChunk(str, fontSize) {
@@ -852,7 +880,7 @@ class CombatLog {
         this._setFont(fontSize);
         const w = this._ctx.measureText(" ").width;
         this._spaceFontSize = fontSize;
-        this._spaceWidthCache = Math.max(1, w || this._ctx.measureText("x").width * 0.5);
+        this._spaceWidthCache = Math.max(1, Math.round(w || this._ctx.measureText("x").width * 0.5));
         return this._spaceWidthCache;
     }
 
@@ -987,6 +1015,7 @@ class CombatLog {
             this._canvasW = cw;
             this._canvasH = ch;
             this._logTexture.setSize(cw, ch);
+            if (this._ctx) this._ctx.imageSmoothingEnabled = false;
         }
         this._logImage.setTexture(CombatLog.TEX_KEY);
         this._logImage.setOrigin(0, 1);
@@ -995,14 +1024,16 @@ class CombatLog {
     }
 
     _drawStrokedText(ctx, text, x, y, color, alpha) {
+        const px = Math.round(x);
+        const py = Math.round(y);
         ctx.globalAlpha = alpha;
-        ctx.lineWidth = CombatLog.STROKE;
-        ctx.strokeStyle = "#000000";
-        ctx.lineJoin = "round";
-        ctx.miterLimit = 2;
-        ctx.strokeText(text, x, y);
+        ctx.fillStyle = "#000000";
+        ctx.fillText(text, px - 1, py);
+        ctx.fillText(text, px + 1, py);
+        ctx.fillText(text, px, py - 1);
+        ctx.fillText(text, px, py + 1);
         ctx.fillStyle = color || CombatLog.COLOR_DEFAULT;
-        ctx.fillText(text, x, y);
+        ctx.fillText(text, px, py);
     }
 
     /**
@@ -1033,13 +1064,14 @@ class CombatLog {
         const ctx = this._ctx;
         // setSize clears the canvas and resets font state
         ctx.clearRect(0, 0, canvasW, canvasH);
+        ctx.imageSmoothingEnabled = false;
         this._setFont(fontSize);
 
         const ascent = Math.round(fontSize * 0.85);
         const spaceW = this._spaceWidth(fontSize);
 
         const drawRow = (pieces, fromBottom, alpha) => {
-            const baseline = canvasH - pad - fromBottom - (lineH - ascent);
+            const baseline = Math.round(canvasH - pad - fromBottom - (lineH - ascent));
             let x = pad;
             for (let p = 0; p < pieces.length; p++) {
                 if (p > 0) x += spaceW;
@@ -1052,7 +1084,7 @@ class CombatLog {
                     piece.color || CombatLog.COLOR_DEFAULT,
                     alpha
                 );
-                x += this._measureChunk(piece.text, fontSize);
+                x += Math.round(this._measureChunk(piece.text, fontSize));
             }
         };
 
@@ -1082,12 +1114,12 @@ class CombatLog {
 
     _layout() {
         const s = this.scene.uiScale || 1;
-        const lineH = Math.round(18 * s);
-        const fontSize = Math.round(14 * s);
+        const fontSize = pixelUiFontSize(16, s);
+        const lineH = fontSize + PIXEL_FONT_CELL;
         const wrapW = this._maxTextWidth();
         // 10 message lines; compose/chatting bar is a separate 11th slot underneath
         const budget = this.visibleLineCap;
-        this.container.setPosition(12, this.scene.scale.height - 16);
+        this.container.setPosition(12, Math.round(this.scene.scale.height - 16));
 
         if (!this.composing) this.scrollOffset = 0;
 

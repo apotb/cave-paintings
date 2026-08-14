@@ -76,12 +76,45 @@ const CharacterStore = (() => {
             body: null,
             look: defaultLook(),
             favorite: false,
-            lastPlayedAt: 0
+            lastPlayedAt: 0,
+            party: [],
+            controlId: null,
+            leaderDead: false
         };
     }
 
     function clone(obj) {
-        return JSON.parse(JSON.stringify(obj));
+        try {
+            return JSON.parse(JSON.stringify(obj));
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function cloneStack(s) {
+        if (!s) return null;
+        if (typeof cloneItemStack === "function") return cloneItemStack(s);
+        const c = clone(s);
+        if (c) return c;
+        return { id: s.id, quantity: s.quantity || 1 };
+    }
+
+    function cloneInv(inv) {
+        if (!Array.isArray(inv)) return emptyInv(5);
+        return inv.map(cloneStack);
+    }
+
+    function cloneEquipment(eq) {
+        if (!eq || typeof eq !== "object") {
+            return { head: null, torso: null, legs: null, feet: null, waist: [] };
+        }
+        return {
+            head: cloneStack(eq.head),
+            torso: cloneStack(eq.torso),
+            legs: cloneStack(eq.legs),
+            feet: cloneStack(eq.feet),
+            waist: Array.isArray(eq.waist) ? eq.waist.map(cloneStack) : []
+        };
     }
 
     async function withStore(mode, fn) {
@@ -161,7 +194,17 @@ const CharacterStore = (() => {
 
     async function put(character, opts = {}) {
         if (!character?.id) throw new Error("Character needs id");
-        const row = clone(character);
+        const row = clone(character) || { ...character };
+        row.inventory = cloneInv(character.inventory);
+        row.equipment = cloneEquipment(character.equipment);
+        if (Array.isArray(character.party)) {
+            row.party = character.party.map((m) => {
+                const cm = clone(m) || { ...m };
+                if (Array.isArray(m?.inventory)) cm.inventory = cloneInv(m.inventory);
+                if (m?.equipment) cm.equipment = cloneEquipment(m.equipment);
+                return cm;
+            });
+        }
         if (!opts.preserveUpdatedAt) row.updatedAt = Date.now();
         else row.updatedAt = Number(character.updatedAt) || Date.now();
         row.name = normalizeName(row.name);
@@ -237,13 +280,23 @@ const CharacterStore = (() => {
             kc: character.kc,
             saturation: character.saturation,
             stomach: character.stomach,
-            inventory: clone(character.inventory || emptyInv(5)),
-            equipment: clone(character.equipment || {}),
+            inventory: cloneInv(character.inventory),
+            equipment: cloneEquipment(character.equipment),
             hotbarIndex: character.hotbarIndex || 0,
             hp: character.hp,
             mhp: character.mhp,
-            body: character.body ? clone(character.body) : null,
-            look: normalizeLook(character.look)
+            body: character.body ? (clone(character.body) || character.body) : null,
+            look: normalizeLook(character.look),
+            party: Array.isArray(character.party)
+                ? character.party.map((m) => {
+                    const cm = clone(m) || { ...m };
+                    if (Array.isArray(m?.inventory)) cm.inventory = cloneInv(m.inventory);
+                    if (m?.equipment) cm.equipment = cloneEquipment(m.equipment);
+                    return cm;
+                })
+                : [],
+            controlId: character.controlId || character.id,
+            leaderDead: !!character.leaderDead
         };
         normalizeCharacterSpoil(snap);
         return snap;
@@ -252,19 +305,29 @@ const CharacterStore = (() => {
     /** Merge authoritative YOU payload into a character record. */
     function applyYou(character, you) {
         if (!character || !you) return character;
-        const next = clone(character);
+        const next = clone(character) || { ...character };
         if (typeof you.name === "string" && you.name) next.name = you.name.slice(0, 24);
         if (typeof you.kc === "number") next.kc = you.kc;
         if (typeof you.saturation === "number") next.saturation = you.saturation;
         if (typeof you.stomach === "number") next.stomach = you.stomach;
-        if (Array.isArray(you.inventory)) next.inventory = clone(you.inventory);
-        if (you.equipment) next.equipment = clone(you.equipment);
+        if (Array.isArray(you.inventory)) next.inventory = cloneInv(you.inventory);
+        if (you.equipment) next.equipment = cloneEquipment(you.equipment);
         if (typeof you.hotbarIndex === "number") next.hotbarIndex = you.hotbarIndex;
         if (typeof you.hp === "number") next.hp = you.hp;
         if (typeof you.mhp === "number") next.mhp = you.mhp;
-        if (you.body !== undefined) next.body = you.body ? clone(you.body) : null;
+        if (you.body !== undefined) next.body = you.body ? (clone(you.body) || null) : null;
         if (you.look) next.look = normalizeLook(you.look);
         else next.look = normalizeLook(next.look);
+        if (Array.isArray(you.party)) {
+            next.party = you.party.map((m) => {
+                const cm = clone(m) || { id: m?.id, name: m?.name };
+                if (Array.isArray(m?.inventory)) cm.inventory = cloneInv(m.inventory);
+                if (m?.equipment) cm.equipment = cloneEquipment(m.equipment);
+                return cm;
+            });
+        }
+        if (you.controlId) next.controlId = you.controlId;
+        if (typeof you.leaderDead === "boolean") next.leaderDead = you.leaderDead;
         next.updatedAt = Date.now();
         next.lastPlayedAt = next.updatedAt;
         normalizeCharacterSpoil(next);
@@ -302,7 +365,10 @@ const CharacterStore = (() => {
             body: raw.body ? clone(raw.body) : null,
             look: normalizeLook(raw.look),
             favorite: !!raw.favorite,
-            lastPlayedAt: Math.max(0, Number(raw.lastPlayedAt) || 0)
+            lastPlayedAt: Math.max(0, Number(raw.lastPlayedAt) || 0),
+            party: Array.isArray(raw.party) ? clone(raw.party) : [],
+            controlId: raw.controlId || null,
+            leaderDead: !!raw.leaderDead
         });
         // Always new id on import so we don't clobber an existing char
         c.id = uuid();

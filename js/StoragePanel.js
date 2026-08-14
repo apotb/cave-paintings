@@ -111,8 +111,8 @@ class StoragePanel {
                 .setScale(3);
 
             const qty = this.scene.add.text(0, 0, "", {
-                fontSize: "14px",
-                fontFamily: "monospace",
+                fontSize: `${pixelUiFontSize(16, 1)}px`,
+                fontFamily: PIXEL_UI_FONT,
                 color: "#ffffff",
                 stroke: "#000000",
                 strokeThickness: 2
@@ -203,8 +203,8 @@ class StoragePanel {
             .setStrokeStyle(2, OUTLINE)
             .setInteractive({ useHandCursor: true });
         this.takeText = this.scene.add.text(0, 0, "Take", {
-            fontFamily: "PrimaryFont",
-            fontSize: "13px",
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "16px",
             color: "#d4c4a8"
         }).setOrigin(0.5);
         this.takeBtn = this.scene.add.container(0, 0, [this.takeRect, this.takeText]);
@@ -291,6 +291,7 @@ class StoragePanel {
             uid: entry.uid,
             x: this.storage.x,
             y: this.storage.y,
+            pawnId: this.scene.player?.pawnId,
             ...extra
         });
     }
@@ -426,7 +427,7 @@ class StoragePanel {
         const bottomRowY = -(objH + clear + slotW / 2);
 
         const zoom = this.scene.worldZoom || 1;
-        const fontPx = Math.round(14 * s);
+        const fontPx = pixelUiFontSize(16, s);
         const strokePx = Math.max(2, Math.round(2 * s));
 
         for (let i = 0; i < this.slotViews.length; i++) {
@@ -446,7 +447,7 @@ class StoragePanel {
             view.qty.setPosition(x + slotW / 2 - 4 * ws, y + slotW / 2 - 4 * ws);
         }
 
-        const btnFontPx = Math.round(13 * s);
+        const btnFontPx = pixelUiFontSize(16, s);
         const bw = 78 * ws;
         const bh = 28 * ws;
         this._takeBw = bw;

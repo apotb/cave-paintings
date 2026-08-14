@@ -7,11 +7,13 @@
     if (typeof module === "object" && module.exports) {
         const GameMath = require("../gameMath");
         const BodyCombat = require("../body/Combat");
-        module.exports = factory(GameMath, BodyCombat);
+        const Party = require("../party");
+        const MeleeMath = require("../melee");
+        module.exports = factory(GameMath, BodyCombat, Party, MeleeMath);
     } else {
-        root.HeadlessAI = factory(root.GameMath, root.BodyCombat);
+        root.HeadlessAI = factory(root.GameMath, root.BodyCombat, root.Party, root.MeleeMath);
     }
-})(typeof globalThis !== "undefined" ? globalThis : this, function (GameMath, BodyCombat) {
+})(typeof globalThis !== "undefined" ? globalThis : this, function (GameMath, BodyCombat, Party, MeleeMath) {
     const TILE = 16;
 
     function clamp(v, a, b) {
@@ -247,7 +249,7 @@
 
     /**
      * Neutral: wander until damaged by a player (or a same-species packmate is),
-     * then chase + melee. Simplified vs client (no MeleeSlots / obstacle steering).
+     * then sprint in and plant in fist range.
      */
     class NeutralAnimalAI extends DoofusAI {
         constructor(mob) {
@@ -257,8 +259,8 @@
             this.LEASH_TILES = 10;
             this.GIVE_UP_MS = 9000;
             this.MELEE_RESUME_PAD = 10;
-            this.ANCHOR_ARRIVE = 6;
             this._meleeHold = false;
+            this._aiWorldRef = null;
             this._deaggroTimer = 0;
             this._deaggroDelay = GameMath.between(200, 2200);
             this._leashBonus = GameMath.floatBetween(0, 2);
@@ -281,6 +283,8 @@
                 this.mob.hostile = true;
                 this.timeSinceHitPlayer = 0;
                 this._deaggroTimer = 0;
+                Party?.setWildAggroOwner?.(this.mob, source);
+                if (!this.aggroOwnerId) this.aggroOwnerId = Party?.ownerIdOf?.(source) || null;
             }
             this._atkCache = null;
             this._atkCacheMs = 0;
@@ -305,6 +309,8 @@
                 if (this._deaggroTimer >= this._deaggroDelay) {
                     this.hostile = false;
                     this.mob.hostile = false;
+                    this.aggroOwnerId = null;
+                    Party?.clearWildAggroOwner?.(this.mob);
                     this._clearCombatMove();
                     this._beginIdle();
                     this._deaggroDelay = GameMath.between(200, 2200);
@@ -319,16 +325,23 @@
         }
 
         _findPlayer(world) {
+            if (world?.getDuelTarget) {
+                const duel = world.getDuelTarget(this.mob);
+                if (duel && !duel.isBodyDead?.()) return duel;
+            }
             if (world?.getNearestPlayer) return world.getNearestPlayer(this.mob);
             if (this.mob.targetId && world?.getCreature) {
                 const t = world.getCreature(this.mob.targetId);
                 if (t && t.kind === "player" && !t.isBodyDead?.()) return t;
             }
             if (world?.players) {
+                const prefer = this.aggroOwnerId
+                    || Party?.wildAggroOwnerId?.(this.mob);
                 let best = null;
                 let bestD = Infinity;
                 for (const p of world.players) {
                     if (!p || p.isBodyDead?.()) continue;
+                    if (prefer && Party?.ownerIdOf?.(p) !== prefer) continue;
                     const d = Math.hypot(p.x - this.mob.x, p.y - this.mob.y);
                     if (d < bestD) {
                         bestD = d;
@@ -356,6 +369,7 @@
 
         update(delta, world = null) {
             const mob = this.mob;
+            this._aiWorldRef = world || this._aiWorldRef;
             if (!mob || mob.isBodyDead?.() || !mob.active) return;
 
             if (!mob.capacities && mob.refreshCapacities) mob.refreshCapacities();
@@ -414,10 +428,8 @@
             const toPlayerX = pc.x - mc.x;
             const toPlayerY = pc.y - mc.y;
             const distPlayer = Math.hypot(toPlayerX, toPlayerY) || 1;
-            const fnx = toPlayerX / distPlayer;
-            const fny = toPlayerY / distPlayer;
-            if (Math.abs(fnx) > Math.abs(fny)) mob.facing = fnx > 0 ? "right" : "left";
-            else mob.facing = fny > 0 ? "down" : "up";
+            if (Math.abs(toPlayerX) > Math.abs(toPlayerY)) mob.facing = toPlayerX > 0 ? "right" : "left";
+            else mob.facing = toPlayerY > 0 ? "down" : "up";
 
             this._atkCacheMs -= delta;
             if (!this._atkCache || this._atkCacheMs <= 0) {
@@ -425,15 +437,23 @@
                 this._atkCacheMs = 250;
             }
             const atk = this._atkCache;
-            const reach = atk?.range || 4;
+            const reach = Number(atk?.range) || 4;
+            // Server pawns don't collide, so plant/strike a bit farther than the
+            // 4px fist length or they run in and never start a swing.
+            const strikeR = Math.max(reach, 12);
             const swinging = !!mob.isAttacking?.();
             const edgeDist = this._distToHurtbox(mc.x, mc.y, player);
-            const inReach = edgeDist <= reach;
+            const inReach = edgeDist <= strikeR;
 
             if (inReach) this._meleeHold = true;
-            else if (edgeDist > reach + this.MELEE_RESUME_PAD) this._meleeHold = false;
+            else if (edgeDist > strikeR + this.MELEE_RESUME_PAD) this._meleeHold = false;
 
-            if (!swinging && atk && inReach && mob.capacities?.canManipulate?.()) {
+            if (
+                !swinging &&
+                atk &&
+                inReach &&
+                mob.capacities?.canManipulate?.()
+            ) {
                 mob.tryMeleeAttack?.(player, atk);
             }
 
@@ -444,16 +464,38 @@
             const moveMul = Math.max(0.05, Math.min(1.5, mob.capacities?.moving?.() ?? 1));
             const walk = base * TILE * moveMul;
 
-            if (this._meleeHold) {
+            if (this._meleeHold || swinging) {
                 mob.isSprinting = false;
                 mob.setDesiredVel(0, 0);
                 return;
             }
 
-            const canSprint = livingLegs >= legsNeeded && !swinging;
+            const stand = Party?.duelStandPoint
+                ? Party.duelStandPoint(mob, player, world?.getDuelMap?.(), {
+                    standPx: Math.max(8, strikeR - 2)
+                })
+                : pc;
+            const dx = stand.x - mc.x;
+            const dy = stand.y - mc.y;
+            const len = Math.hypot(dx, dy) || 1;
+            let nx = dx / len;
+            let ny = dy / len;
+            const rep = Party?.duelRepulse
+                ? Party.duelRepulse(mob, world?.getDuelEntities?.())
+                : null;
+            if (rep && (rep.rx || rep.ry)) {
+                nx += rep.rx * 0.7;
+                ny += rep.ry * 0.7;
+                const nlen = Math.hypot(nx, ny) || 1;
+                nx /= nlen;
+                ny /= nlen;
+            }
+
+            const near = edgeDist <= Math.max(reach + 8, 14);
+            const canSprint = livingLegs >= legsNeeded && !swinging && !near;
             mob.isSprinting = canSprint;
             const speed = walk * (canSprint ? sprintFactor : 1);
-            mob.setDesiredVel(fnx * speed, fny * speed);
+            mob.setDesiredVel(nx * speed, ny * speed);
         }
     }
 
@@ -482,10 +524,701 @@
             if (distTiles > sight) return;
             this.hostile = true;
             this.mob.hostile = true;
+            Party?.setWildAggroOwner?.(this.mob, player);
+            if (!this.aggroOwnerId) this.aggroOwnerId = Party?.ownerIdOf?.(player) || null;
             this.timeSinceHitPlayer = 0;
             this._deaggroTimer = 0;
             this._atkCache = null;
             this._atkCacheMs = 0;
+        }
+    }
+
+    /**
+     * Dedicated-server follow / melee-assist for uncontrolled party pawns.
+     * Client puppets poses from the snapshot; this owns hitboxes.
+     */
+    class PartyAI {
+        constructor(mob) {
+            this.mob = mob;
+            this.assistTarget = null;
+            this._holdFollow = true;
+            this._prevFx = null;
+            this._prevFy = null;
+            this._atkCache = null;
+            this._atkCacheMs = 0;
+            this._meleeHold = false;
+            this._avoidSide = Math.random() < 0.5 ? -1 : 1;
+            this._noProgressMs = 0;
+            this._lastPx = null;
+            this._lastPy = null;
+            this._escapeKey = null;
+            this._path = null;
+            this._pathMs = 0;
+            this._pathGoalX = null;
+            this._pathGoalY = null;
+            this._unstick = null;
+            this._openSticky = null;
+            this.LEASH_TILES = (Party && Party.COMBAT_LEASH) || 10;
+            this.MELEE_RESUME_PAD = 3;
+        }
+
+        update(delta, world) {
+            const mob = this.mob;
+            this._world = world;
+            if (!mob || mob.isBodyDead?.()) {
+                this._clearCombat();
+                mob?.setDesiredVel?.(0, 0);
+                return;
+            }
+            if (world?.isControlled?.(mob)) {
+                this._clearCombat();
+                mob.setDesiredVel?.(0, 0);
+                return;
+            }
+            if (mob.isIncapacitated?.() || mob.isImmobile?.() || mob.isVomiting?.()) {
+                this._clearCombat();
+                mob.setDesiredVel?.(0, 0);
+                return;
+            }
+            if (world?.leaderDead?.(mob)) {
+                this._clearCombat();
+                mob.setDesiredVel?.(0, 0);
+                return;
+            }
+            const follow = world?.getFollowTarget?.(mob);
+            if (!follow || follow.isBodyDead?.()) {
+                this._clearCombat();
+                mob.setDesiredVel?.(0, 0);
+                return;
+            }
+
+            const next = world?.getAssistTarget?.(mob) || null;
+            const ok = next && this._assistStillOk(next, follow, world);
+            if (ok) {
+                if (next !== this.assistTarget) {
+                    this.assistTarget = next;
+                    this._path = null;
+                    this._unstick = null;
+                    this._escapeKey = null;
+                    this._noProgressMs = 0;
+                }
+            } else {
+                this._clearCombat();
+            }
+            if (this.assistTarget) {
+                this._tickCombat(delta, world, follow);
+                return;
+            }
+            if (mob._tending) {
+                mob.setDesiredVel?.(0, 0);
+                return;
+            }
+            this._tickFollow(follow, delta);
+        }
+
+        _clearCombat() {
+            this.assistTarget = null;
+            this._meleeHold = false;
+        }
+
+        _tickFollow(follow, delta) {
+            const mob = this.mob;
+            const P = Party || {};
+            const dist = Math.hypot(mob.x - follow.x, mob.y - follow.y);
+            const idleR = (P.FOLLOW_IDLE ?? 2.6) * TILE;
+            const catchR = (P.FOLLOW_CATCH ?? 4.8) * TILE;
+            const overlapping = !!this._overlappingThing(this._world);
+
+            // Park in catch range even if a padded tree AABB clips the
+            // hitbox. Walking the exit dir here was the tiny pacing circle.
+            const closeEnough = dist <= idleR
+                || (this._holdFollow && dist < catchR)
+                || (overlapping && dist < catchR)
+                || (this._noProgressMs > 280 && dist < catchR);
+            if (closeEnough) {
+                this._holdFollow = true;
+                this._idle();
+                return;
+            }
+            this._holdFollow = false;
+
+            const sprint = dist > TILE * 6;
+            this._walkToward(follow.x, follow.y, sprint, this._world, delta);
+        }
+
+        _leaderMoving(follow) {
+            const vx = follow.vx || follow.moveX || 0;
+            const vy = follow.vy || follow.moveY || 0;
+            if (Math.hypot(vx, vy) > 8) {
+                this._prevFx = follow.x;
+                this._prevFy = follow.y;
+                return true;
+            }
+            const moved = this._prevFx != null
+                && Math.hypot(follow.x - this._prevFx, follow.y - this._prevFy) > 0.7;
+            this._prevFx = follow.x;
+            this._prevFy = follow.y;
+            return moved;
+        }
+
+        _idle() {
+            this.mob.setDesiredVel?.(0, 0);
+            this._noProgressMs = 0;
+            this._escapeKey = null;
+            this._path = null;
+            this._pathMs = 0;
+            this._unstick = null;
+            this._openSticky = null;
+        }
+
+        _tickCombat(delta, world, follow) {
+            const mob = this.mob;
+            const target = this.assistTarget;
+            if (!target) return;
+            this._world = world;
+            const P = Party || {};
+            const leash = (P.COMBAT_LEASH ?? 10) * TILE;
+            const dCtrl = Math.hypot(target.x - follow.x, target.y - follow.y);
+            const dSelf = Math.hypot(target.x - mob.x, target.y - mob.y);
+            if (dCtrl > leash && dSelf > TILE * 3 && !world?.isPvpTarget?.(mob, target)) {
+                this._clearCombat();
+                mob.setDesiredVel?.(0, 0);
+                return;
+            }
+
+            this._pickBestWeapon(world);
+            const mc = mob.bodyCenter?.() || { x: mob.x, y: mob.y };
+            const pc = target.bodyCenter?.() || { x: target.x, y: target.y };
+            const toX = pc.x - mc.x;
+            const toY = pc.y - mc.y;
+            const distT = Math.hypot(toX, toY) || 1;
+            this._face(toX, toY);
+
+            this._atkCacheMs -= delta;
+            if (!this._atkCache || this._atkCacheMs <= 0) {
+                this._atkCache = BodyCombat.pickAttack(mob);
+                this._atkCacheMs = 250;
+            }
+            const atk = this._atkCache;
+            const reach = Number(atk?.range) || 4;
+            const swinging = !!mob.isAttacking?.();
+            const aim = Math.atan2(toY, toX);
+            const edgeDist = this._distToHurtbox(mc.x, mc.y, target);
+            const inReach = edgeDist <= reach;
+            const canLand = inReach && this._canLandMelee(mc, target, reach, aim, atk);
+
+            const stand = Party?.duelStandPoint
+                ? Party.duelStandPoint(mob, target, world?.getDuelMap?.(), {
+                    standPx: Math.max(16, reach + 6),
+                    occupy: world?.getFollowTarget?.(mob) || world?.getNearestPlayer?.(mob),
+                    entities: world?.getDuelEntities?.()
+                })
+                : { x: pc.x, y: pc.y, flanking: false };
+            const arrive = (Party && Party.DUEL_STAND_ARRIVE_PX) || 8;
+            const standDist = Math.hypot(stand.x - mc.x, stand.y - mc.y);
+            const atStand = !stand.flanking || standDist <= arrive;
+
+            if (canLand && atStand) this._meleeHold = true;
+            else if (!atStand || edgeDist > reach + this.MELEE_RESUME_PAD) this._meleeHold = false;
+
+            if (
+                !swinging &&
+                atk &&
+                canLand &&
+                atStand &&
+                mob.capacities?.canManipulate?.()
+            ) {
+                mob.tryMeleeAttack?.(target, atk);
+            }
+
+            if (this._meleeHold || swinging) {
+                mob.setDesiredVel?.(0, 0);
+                return;
+            }
+
+            this._walkCombatToward(
+                stand.x,
+                stand.y,
+                distT > TILE * 2.5 && !canLand,
+                world
+            );
+        }
+
+        _assistStillOk(target, follow, world) {
+            if (!target || target.isBodyDead?.()) return false;
+            const P = Party || {};
+            const leash = (P.COMBAT_LEASH ?? 10) * TILE;
+            const dCtrl = Math.hypot(target.x - follow.x, target.y - follow.y);
+            const dSelf = Math.hypot(target.x - this.mob.x, target.y - this.mob.y);
+            if (dCtrl > leash && dSelf > TILE * 3 && !world?.isPvpTarget?.(this.mob, target)) {
+                return false;
+            }
+            return true;
+        }
+
+        _walkCombatToward(tx, ty, sprint, world) {
+            this._path = null;
+            this._unstick = null;
+            this._escapeKey = null;
+            const mob = this.mob;
+            const from = mob.bodyCenter?.() || { x: mob.x, y: mob.y };
+            let dx = tx - from.x;
+            let dy = ty - from.y;
+            const dist = Math.hypot(dx, dy);
+            const rep = Party?.duelRepulse
+                ? Party.duelRepulse(mob, world?.getDuelEntities?.())
+                : null;
+            const rlen = rep ? Math.hypot(rep.rx || 0, rep.ry || 0) : 0;
+            if (dist < 4 && rlen < 0.2) {
+                mob.setDesiredVel?.(0, 0);
+                return;
+            }
+            const span = dist || 1;
+            let nx = dx / span;
+            let ny = dy / span;
+            if (rlen > 0) {
+                nx += rep.rx * 0.7;
+                ny += rep.ry * 0.7;
+                const nlen = Math.hypot(nx, ny) || 1;
+                nx /= nlen;
+                ny /= nlen;
+            }
+            if (this._agentBlocked(from.x + nx * 8, from.y + ny * 8, world)) {
+                const sx = Math.sign(dx) || 0;
+                const sy = Math.sign(dy) || 0;
+                if (sx && !this._agentBlocked(from.x + sx * 8, from.y, world) && Math.abs(dx) > 2) {
+                    nx = sx;
+                    ny = 0;
+                } else if (sy && !this._agentBlocked(from.x, from.y + sy * 8, world) && Math.abs(dy) > 2) {
+                    nx = 0;
+                    ny = sy;
+                }
+            }
+            this._walk(nx, ny, sprint);
+        }
+
+        _distToHurtbox(x, y, target) {
+            if (MeleeMath?.meleeEdgeDist) return MeleeMath.meleeEdgeDist(x, y, target);
+            const c = target.bodyCenter?.() || { x: target.x, y: target.y };
+            const hs = Number(target.hitboxSize) || 8;
+            const d = Math.hypot(c.x - x, c.y - y);
+            return Math.max(0, d - hs * 0.5);
+        }
+
+        _canLandMelee(mc, target, reach, angle, atk) {
+            if (MeleeMath?.meleeSwingWouldHit) {
+                return MeleeMath.meleeSwingWouldHit(mc.x, mc.y, angle, reach, target, {
+                    radius: atk?.unarmed === false ? 3 : 4
+                });
+            }
+            return this._distToHurtbox(mc.x, mc.y, target) <= reach;
+        }
+
+        _pickBestWeapon(world) {
+            const mob = this.mob;
+            const getItem = world?.getItem;
+            if (!mob?.inventory || typeof Party?.bestMeleeSlot !== "function") return;
+            const slot = Party.bestMeleeSlot(mob.inventory, getItem, mob.hotbarIndex || 0);
+            if (slot !== mob.hotbarIndex) {
+                mob.hotbarIndex = slot;
+                this._atkCache = null;
+            }
+        }
+
+        _walkToward(tx, ty, sprint, world, delta) {
+            const mob = this.mob;
+            const dt = Number(delta) > 0 ? delta : 16;
+            const from = mob.bodyCenter?.() || { x: mob.x, y: mob.y };
+            const want = {
+                x: tx + (from.x - mob.x),
+                y: ty + (from.y - mob.y)
+            };
+            this._solids = world?.thingRectsNear?.(from.x, from.y, TILE * 13) || [];
+            if (this._lastPx == null) {
+                this._lastPx = from.x;
+                this._lastPy = from.y;
+            }
+            const moved = Math.hypot(from.x - this._lastPx, from.y - this._lastPy);
+            if (moved > 5) {
+                this._lastPx = from.x;
+                this._lastPy = from.y;
+                this._noProgressMs = 0;
+            } else {
+                this._noProgressMs += dt;
+            }
+
+            const overlap = this._overlappingThing(world);
+            if (overlap) {
+                this._path = null;
+                const around = this._exitDir(overlap, from);
+                this._walk(around.nx, around.ny, sprint);
+                return;
+            }
+            this._escapeKey = null;
+
+            const open = this._openPoint(want.x, want.y, world);
+            const los = this._losClear(from.x, from.y, open.x, open.y, world);
+            const goalDrift = this._pathGoalX == null
+                || Math.hypot(open.x - this._pathGoalX, open.y - this._pathGoalY) > 28;
+            const stalled = this._noProgressMs > 140;
+            if (los && !stalled && !this._unstick) {
+                this._path = null;
+                this._pathMs = 0;
+            } else if (!los && (!this._path || !this._path.length || goalDrift || stalled || this._pathMs > 800)) {
+                this._path = this._planPath(open.x, open.y, world);
+                this._pathGoalX = open.x;
+                this._pathGoalY = open.y;
+                this._pathMs = 0;
+                if (stalled) this._noProgressMs = 0;
+            } else {
+                this._pathMs += dt;
+            }
+
+            if (this._path && this._path.length) {
+                while (
+                    this._path.length
+                    && Math.hypot(from.x - this._path[0].x, from.y - this._path[0].y) < 10
+                ) {
+                    this._path.shift();
+                }
+            }
+            let gx = open.x;
+            let gy = open.y;
+            if (this._path && this._path.length) {
+                gx = this._path[0].x;
+                gy = this._path[0].y;
+            } else if (!los) {
+                const corner = this._escapeCorner(open.x, open.y, world);
+                if (corner) {
+                    gx = corner.x;
+                    gy = corner.y;
+                }
+            }
+            let dx = gx - from.x;
+            let dy = gy - from.y;
+            let dist = Math.hypot(dx, dy) || 1;
+            if (this._unstick && Math.hypot(from.x - this._unstick.x, from.y - this._unstick.y) < 10) {
+                this._unstick = null;
+            }
+            if (stalled || this._unstick) {
+                const corner = this._unstick || this._escapeCorner(open.x, open.y, world);
+                if (corner) {
+                    dx = corner.x - from.x;
+                    dy = corner.y - from.y;
+                    dist = Math.hypot(dx, dy) || 1;
+                } else if (stalled) {
+                    this.mob.setDesiredVel?.(0, 0);
+                    return;
+                }
+            }
+            if (dist < 2) {
+                this.mob.setDesiredVel?.(0, 0);
+                return;
+            }
+            this._walk(dx / dist, dy / dist, sprint);
+        }
+
+        _clearance() {
+            const hs = Number(this.mob?.hitboxSize) || 8;
+            return Math.max(6, hs * 0.5 + 4);
+        }
+
+        _bodyRect() {
+            const mob = this.mob;
+            const hs = Number(mob.hitboxSize) || 8;
+            const w = Number(mob.width) || 16;
+            const h = Number(mob.height) || 16;
+            const left = mob.x + (w - hs) * 0.5;
+            const top = mob.y - h + hs;
+            return { left, right: left + hs, top, bottom: top + hs };
+        }
+
+        _aabbHits(ax, ay, half, solids) {
+            const left = ax - half;
+            const right = ax + half;
+            const top = ay - half;
+            const bottom = ay + half;
+            for (let i = 0; i < (solids || []).length; i++) {
+                const tb = solids[i];
+                if (right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom) {
+                    return tb;
+                }
+            }
+            return null;
+        }
+
+        _pointBlocked(x, y, world = this._world) {
+            if (world?.tileBlocked?.(x, y)) return true;
+            if (!world?.tileBlocked && world?.isBlocked?.(x, y)) return true;
+            const solids = this._solids || world?.thingRectsNear?.(x, y, TILE * 8) || [];
+            return !!this._aabbHits(x, y, this._clearance(), solids);
+        }
+
+        _agentBlocked(x, y, world) {
+            return this._pointBlocked(x, y, world);
+        }
+
+        _overlappingThing(world = this._world) {
+            const body = this._bodyRect();
+            const solids = this._solids
+                || world?.thingRectsNear?.(this.mob.x, this.mob.y, 48)
+                || [];
+            for (let i = 0; i < solids.length; i++) {
+                const tb = solids[i];
+                if (body.right > tb.left && body.left < tb.right
+                    && body.bottom > tb.top && body.top < tb.bottom) {
+                    return tb;
+                }
+            }
+            return null;
+        }
+
+        _touchingThing(world = this._world) {
+            const body = this._bodyRect();
+            const pad = 3;
+            const solids = this._solids
+                || world?.thingRectsNear?.(this.mob.x, this.mob.y, 48)
+                || [];
+            let best = null;
+            let bestD = Infinity;
+            const cx = (body.left + body.right) * 0.5;
+            const cy = (body.top + body.bottom) * 0.5;
+            for (let i = 0; i < solids.length; i++) {
+                const tb = solids[i];
+                if (!(body.right + pad > tb.left && body.left - pad < tb.right
+                    && body.bottom + pad > tb.top && body.top - pad < tb.bottom)) {
+                    continue;
+                }
+                const tcx = (tb.left + tb.right) * 0.5;
+                const tcy = (tb.top + tb.bottom) * 0.5;
+                const d = Math.hypot(cx - tcx, cy - tcy);
+                if (d < bestD) {
+                    bestD = d;
+                    best = tb;
+                }
+            }
+            return best;
+        }
+
+        _exitDir(thing, from) {
+            if (!thing) return { nx: this._avoidSide || 1, ny: 0 };
+            const t = thing.t || thing;
+            const id = t.uid || `${t.id}:${t.x}:${t.y}`;
+            const exits = [
+                { nx: -1, ny: 0, d: from.x - thing.left, key: "l" },
+                { nx: 1, ny: 0, d: thing.right - from.x, key: "r" },
+                { nx: 0, ny: -1, d: from.y - thing.top, key: "u" },
+                { nx: 0, ny: 1, d: thing.bottom - from.y, key: "d" }
+            ];
+            exits.sort((a, b) => a.d - b.d);
+            if (this._escapeKey && this._escapeKey.startsWith(`${id}:`)) {
+                const keep = exits.find((e) => this._escapeKey === `${id}:${e.key}`);
+                if (keep) return keep;
+            }
+            const pick = exits[0];
+            this._escapeKey = `${id}:${pick.key}`;
+            this._avoidSide = pick.nx !== 0 ? pick.nx : (pick.ny || 1);
+            return pick;
+        }
+
+        _openPoint(x, y, world) {
+            if (!this._pointBlocked(x, y, world)) {
+                this._openSticky = null;
+                return { x, y };
+            }
+            const sticky = this._openSticky;
+            if (
+                sticky
+                && Math.hypot(sticky.tx - x, sticky.ty - y) < 14
+                && !this._pointBlocked(sticky.x, sticky.y, world)
+            ) {
+                return { x: sticky.x, y: sticky.y };
+            }
+            const step = TILE * 0.55;
+            const bias = this._avoidSide >= 0 ? 0.2 : -0.2;
+            for (let r = 1; r <= 6; r++) {
+                for (let a = 0; a < 8; a++) {
+                    const ang = (a / 8) * Math.PI * 2 + bias;
+                    const px = x + Math.cos(ang) * step * r;
+                    const py = y + Math.sin(ang) * step * r;
+                    if (!this._pointBlocked(px, py, world)) {
+                        this._openSticky = { x: px, y: py, tx: x, ty: y };
+                        return { x: px, y: py };
+                    }
+                }
+            }
+            return { x, y };
+        }
+
+        _escapeCorner(destX, destY, world) {
+            const mob = this.mob;
+            const from = mob.bodyCenter?.() || { x: mob.x, y: mob.y };
+            if (this._unstick) {
+                const u = this._unstick;
+                if (Math.hypot(from.x - u.x, from.y - u.y) >= 10
+                    && !this._pointBlocked(u.x, u.y, world)) {
+                    return u;
+                }
+            }
+            const thing = this._overlappingThing(world) || this._touchingThing(world);
+            const pad = this._clearance() + 6;
+            const corners = [];
+            if (thing) {
+                corners.push(
+                    { x: thing.left - pad, y: thing.top - pad },
+                    { x: thing.right + pad, y: thing.top - pad },
+                    { x: thing.left - pad, y: thing.bottom + pad },
+                    { x: thing.right + pad, y: thing.bottom + pad }
+                );
+            } else {
+                const side = this._avoidSide || 1;
+                corners.push(
+                    { x: from.x + side * TILE, y: from.y },
+                    { x: from.x, y: from.y + side * TILE },
+                    { x: from.x - side * TILE, y: from.y },
+                    { x: from.x, y: from.y - side * TILE }
+                );
+            }
+            let best = null;
+            let bestCost = Infinity;
+            for (const c of corners) {
+                if (this._pointBlocked(c.x, c.y, world)) continue;
+                const cost =
+                    Math.hypot(c.x - from.x, c.y - from.y)
+                    + Math.hypot(c.x - destX, c.y - destY) * 0.7;
+                if (cost < bestCost) {
+                    bestCost = cost;
+                    best = c;
+                }
+            }
+            if (best) this._unstick = best;
+            return best;
+        }
+
+        _losClear(x0, y0, x1, y1, world) {
+            const dx = x1 - x0;
+            const dy = y1 - y0;
+            const dist = Math.hypot(dx, dy);
+            if (!(dist > 4)) return true;
+            const steps = Math.min(16, Math.max(2, Math.ceil(dist / 10)));
+            for (let i = 1; i <= steps; i++) {
+                const f = i / steps;
+                if (this._pointBlocked(x0 + dx * f, y0 + dy * f, world)) return false;
+            }
+            return true;
+        }
+
+        _planPath(destX, destY, world) {
+            const mob = this.mob;
+            const from = mob.bodyCenter?.() || { x: mob.x, y: mob.y };
+            const cell = TILE;
+            const sx = Math.round(from.x / cell);
+            const sy = Math.round(from.y / cell);
+            const gx = Math.round(destX / cell);
+            const gy = Math.round(destY / cell);
+            if (sx === gx && sy === gy) return [{ x: destX, y: destY }];
+            const keyOf = (cx, cy) => `${cx},${cy}`;
+            const came = new Map();
+            came.set(keyOf(sx, sy), null);
+            const q = [[sx, sy]];
+            let found = null;
+            let best = [sx, sy];
+            let bestH = Math.abs(gx - sx) + Math.abs(gy - sy);
+            const maxR = 12;
+            const dirs = [
+                [1, 0], [-1, 0], [0, 1], [0, -1],
+                [1, 1], [1, -1], [-1, 1], [-1, -1]
+            ];
+            let steps = 0;
+            while (q.length && steps < 280) {
+                const cur = q.shift();
+                const cx = cur[0];
+                const cy = cur[1];
+                steps++;
+                const h = Math.abs(gx - cx) + Math.abs(gy - cy);
+                if (h < bestH) {
+                    bestH = h;
+                    best = cur;
+                }
+                if (cx === gx && cy === gy) {
+                    found = cur;
+                    break;
+                }
+                for (let d = 0; d < dirs.length; d++) {
+                    const nx = cx + dirs[d][0];
+                    const ny = cy + dirs[d][1];
+                    if (Math.abs(nx - sx) > maxR || Math.abs(ny - sy) > maxR) continue;
+                    const k = keyOf(nx, ny);
+                    if (came.has(k)) continue;
+                    const goalCell = nx === gx && ny === gy;
+                    if (!goalCell && this._pointBlocked(nx * cell, ny * cell, world)) continue;
+                    const dx = dirs[d][0];
+                    const dy = dirs[d][1];
+                    if (dx && dy) {
+                        if (this._pointBlocked((cx + dx) * cell, cy * cell, world)
+                            || this._pointBlocked(cx * cell, (cy + dy) * cell, world)) {
+                            continue;
+                        }
+                    }
+                    came.set(k, cur);
+                    q.push([nx, ny]);
+                }
+            }
+            const end = found || best;
+            if (!end || (end[0] === sx && end[1] === sy)) return null;
+            const cells = [];
+            let cur = end;
+            const seen = new Set();
+            while (cur && !seen.has(keyOf(cur[0], cur[1]))) {
+                seen.add(keyOf(cur[0], cur[1]));
+                cells.push(cur);
+                cur = came.get(keyOf(cur[0], cur[1]));
+            }
+            cells.reverse();
+            const pts = [];
+            for (let i = 1; i < cells.length; i++) {
+                pts.push({ x: cells[i][0] * cell, y: cells[i][1] * cell });
+            }
+            if (found) pts.push({ x: destX, y: destY });
+            return this._stringPull(pts, world);
+        }
+
+        _stringPull(pts, world) {
+            if (!pts || pts.length <= 1) return pts;
+            const mob = this.mob;
+            const from = mob.bodyCenter?.() || { x: mob.x, y: mob.y };
+            const out = [];
+            let ax = from.x;
+            let ay = from.y;
+            let i = 0;
+            while (i < pts.length) {
+                let j = pts.length - 1;
+                while (j > i && !this._losClear(ax, ay, pts[j].x, pts[j].y, world)) j--;
+                out.push(pts[j]);
+                ax = pts[j].x;
+                ay = pts[j].y;
+                i = j + 1;
+            }
+            return out;
+        }
+
+        _walk(nx, ny, sprint) {
+            const mob = this.mob;
+            const moveMul = mob.capacities?.moving
+                ? Math.max(0.05, Math.min(1.5, mob.capacities.moving()))
+                : 1;
+            let mul = 1;
+            if (mob.isAttacking?.()) mul *= 0.5;
+            const tiles = 3.5 * (sprint && (Number(mob.kc) > 0) ? 1.5 : 1);
+            const speed = tiles * TILE * moveMul * mul;
+            mob.setDesiredVel?.(nx * speed, ny * speed);
+            this._face(nx, ny);
+        }
+
+        _face(x, y) {
+            const mob = this.mob;
+            if (Math.abs(x) > Math.abs(y)) mob.facing = x > 0 ? "right" : "left";
+            else if (y !== 0) mob.facing = y > 0 ? "down" : "up";
         }
     }
 
@@ -510,6 +1243,7 @@
         ScaredAnimalAI,
         NeutralAnimalAI,
         AggressiveAnimalAI,
+        PartyAI,
         MobAI,
         createAI
     };

@@ -14,10 +14,6 @@ Infection
 
 Clothing and armor
 
-Fix melee slots not working in multiplayer
-
-Recruiting wandering humans to join your party -- when you have at least 2 people in your party, you'll be able to see the status of all your characters on the right, your character is special and will always be first and have a little crown icon, the rest will be listed and you can see an overview of them and be able to switch who you're controlling by clicking them. You can also move forward with . and back with , and using ctrl + 1 would pick the 1st guy, ctrl + 2 would pick the 2nd guy, and so on. By default everyone will follow the person you are controlling. We'll implement stuff like orders and automation later on. Your party members should try to attack mobs that either you attack or they attack you. They'll use the same melee_slots behavior as enemies that attack the player.
-
 Rock types -- more than pebble vs flint (obsidian, quartz, basalt, sandstone). Different knap feel / quality, some better for blades, some blunt for plant stuff. Later gate for tools a pebble shouldn't make.
 
 Hand-axe and cleaver -- later knapped tools, not day-one. Choppers stay the way you get wood. Hand-axe = biface, general-purpose; cleaver = big-game processing. Needs better stone and a harder silhouette so they don't fall out of a messy pebble.
@@ -27,3 +23,9 @@ Mode 3 blades -- prepared-core / long flakes (at least twice as long as wide). F
 Fishing
 
 Burials / ritual -- early spiritualism, much later
+
+Better party management Kenshi-esque -- choose which severity of injuries to tend, make certain party members bodyguards that will only attack enemies near you, etc
+
+Settling Stone -- allows you to create a real settlement that will allow for a lot of new mechanics. When placed, it will allow you to name your settlement, and while you're in its UI you'll be able to see the range of your settlement. You'll also have a button on-screen while you're within the settlement's range to switch between the settlement UI and regular UI at any time. You'll be able to drop off party members at the settlement, or pick up new ones. While at the settlement, your people will rest, eat, and do automated tasks. You can automate tasks such as leatherworking, cooking, or farming.
+
+Research Table

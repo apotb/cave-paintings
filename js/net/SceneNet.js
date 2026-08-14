@@ -70,7 +70,7 @@ class SceneNet extends Phaser.Scene {
             "raw_beef", "roast_beef", "raw_venison", "roasted_venison", "coconut",
             "flint", "pebble", "deer_hide", "deer_hide_fleshed", "deer_hide_dry",
             "deer_hide_soaked", "deer_hide_dehaired", "deer_hide_brained", "deer_leather",
-            "brain", "bone", "stick", "log", "hide_pouch"
+            "brain", "bone", "stick", "log", "hide_pouch", "leather_pouch"
         ]) {
             this.load.image(item, `assets/items/${item}.png`);
         }
@@ -133,24 +133,24 @@ class SceneNet extends Phaser.Scene {
         this.keys = this.input.keyboard.addKeys("W,A,S,D,SHIFT,SPACE,E,Q,F,ONE,TWO,THREE,FOUR,FIVE");
         this.chatOpen = false;
 
-        this.hud = this.add.text(12, 12, "", {
-            fontFamily: "monospace",
-            fontSize: "12px",
+        this.hud = crispUiText(this.add.text(12, 12, "", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "16px",
             color: "#ffffff",
             backgroundColor: "#00000088",
             padding: { x: 6, y: 4 }
-        }).setScrollFactor(0).setDepth(200);
+        })).setScrollFactor(0).setDepth(200);
         this.uiLayer.add(this.hud);
 
         this.logLines = [];
-        this.logText = this.add.text(12, this.scale.height - 120, "", {
-            fontFamily: "monospace",
-            fontSize: "12px",
+        this.logText = crispUiText(this.add.text(12, this.scale.height - 120, "", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "16px",
             color: "#e0d0c0",
             backgroundColor: "#00000066",
             padding: { x: 6, y: 4 },
             wordWrap: { width: 420 }
-        }).setScrollFactor(0).setDepth(200).setOrigin(0, 1);
+        })).setScrollFactor(0).setDepth(200).setOrigin(0, 1);
         this.uiLayer.add(this.logText);
 
         this.channelBar = this.add.graphics().setScrollFactor(0).setDepth(201);
@@ -378,8 +378,8 @@ class SceneNet extends Phaser.Scene {
                 spr.setTint(0xa0c0ff);
                 this.mainLayer.add(spr);
                 const label = this.add.text(rp.x, rp.y - 18, rp.name || "?", {
-                    fontFamily: "monospace",
-                    fontSize: "10px",
+                    fontFamily: PIXEL_UI_FONT,
+                    fontSize: "8px",
                     color: "#cde"
                 }).setOrigin(0.5, 1);
                 this.mainLayer.add(label);
@@ -584,13 +584,13 @@ class SceneNet extends Phaser.Scene {
                 "raw_venison", "roasted_venison", "cracked_coconut", "coconut_meal"
             ]);
             if (held && (held.food?.kc > 0 || foodIds.has(held.id))) {
-                this.net.sendAction({ type: NetProtocol.Actions.USE });
+                this.net.sendAction({ type: NetProtocol.Actions.USE, pawnId: this.pawn?.pawnId });
             } else {
-                this.net.sendAction({ type: NetProtocol.Actions.ATTACK, angle });
+                this.net.sendAction({ type: NetProtocol.Actions.ATTACK, angle, pawnId: this.pawn?.pawnId });
             }
         }
         if (Phaser.Input.Keyboard.JustDown(this.keys.E) || Phaser.Input.Keyboard.JustDown(this.keys.F)) {
-            this.net.sendAction({ type: NetProtocol.Actions.PICKUP });
+            this.net.sendAction({ type: NetProtocol.Actions.PICKUP, pawnId: this.pawn?.pawnId || this.player?.pawnId });
         }
         if (Phaser.Input.Keyboard.JustDown(this.keys.Q)) {
             this.net.sendAction({
@@ -598,6 +598,7 @@ class SceneNet extends Phaser.Scene {
                 amount: this.keys.SHIFT.isDown ? 99 : 1,
                 x: this.player?.x,
                 y: this.player?.y,
+                pawnId: this.player?.pawnId,
                 stack: this.player?.getHeldItem?.()
                     ? {
                         id: this.player.getHeldItem().id,
@@ -609,7 +610,11 @@ class SceneNet extends Phaser.Scene {
         const hotKeys = [this.keys.ONE, this.keys.TWO, this.keys.THREE, this.keys.FOUR, this.keys.FIVE];
         for (let i = 0; i < hotKeys.length; i++) {
             if (Phaser.Input.Keyboard.JustDown(hotKeys[i])) {
-                this.net.sendAction({ type: NetProtocol.Actions.HOTBAR, index: i });
+                this.net.sendAction({
+                    type: NetProtocol.Actions.HOTBAR,
+                    index: i,
+                    pawnId: this.player?.pawnId
+                });
             }
         }
 

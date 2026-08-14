@@ -188,6 +188,40 @@ function roundUpToEven(num) {
     return (x % 2 === 0) ? x : x + 1;
 }
 
+/** Yoster (PrimaryFont) is an 8px-cell pixel face — other sizes warp stems. */
+const PIXEL_UI_FONT = "PrimaryFont";
+const PIXEL_FONT_CELL = 8;
+
+function pixelUiFontSize(basePx, scale) {
+    const cell = PIXEL_FONT_CELL;
+    const raw = Math.max(cell, (Number(basePx) || cell) * (Number(scale) || 1));
+    return Math.max(cell, Math.round(raw / cell) * cell);
+}
+
+function crispUiText(text) {
+    if (!text) return text;
+    text.setFontFamily?.(PIXEL_UI_FONT);
+    if (text.context) text.context.imageSmoothingEnabled = false;
+    try { text.setResolution?.(1); } catch (_) {}
+    const tex = text.texture;
+    if (tex?.setFilter && typeof Phaser !== "undefined") {
+        tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
+    }
+    return text;
+}
+
+/** Place UI text so the glyph quad’s top-left sits on whole pixels. */
+function placeUiText(text, x, y, originX = 0, originY = 0) {
+    if (!text) return text;
+    text.setOrigin(originX, originY);
+    const w = text.width || 0;
+    const h = text.height || 0;
+    const left = Math.round(x - w * originX);
+    const top = Math.round(y - h * originY);
+    text.setPosition(left + w * originX, top + h * originY);
+    return text;
+}
+
 /**
  * Mulberry32 pseudorandom number generator
  * @param  {Number} a  The seed value (32-bit integer)

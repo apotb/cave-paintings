@@ -78,6 +78,8 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         this.entry = entry;
         this.chunk = chunk;
         this.def = def || { id: entry.id, key, speed: 1, hitboxSize: 8 };
+        this.uid = entry.uid || null;
+        this.pawnId = entry.uid || null;
         this.facing = "down";
         this._dead = false;
         // Home leash for wander (legacy saves: seed from current position)
@@ -102,6 +104,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         if (!scene.mobs) scene.mobs = scene.physics.add.group();
         scene.mobs.add(this);
         scene.damageables?.add(this);
+        this.faction = (typeof Party !== "undefined" && Party.FACTION_WILDLIFE) || "Wildlife";
         chunk.mobs.add(this);
 
         const AiClass = typeof MobAI !== "undefined" ? MobAI[this.def.ai] : null;
@@ -123,8 +126,6 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
 
         this.on("destroy", () => {
             this._endAttack();
-            this.ai?._releaseSlot?.();
-            scene.meleeSlots?.release?.(this);
             if (scene._hoverTarget === this) scene._hoverTarget = null;
             if (scene._tooltipTarget === this) scene.hideTooltip();
             this.unarmedSprite?.destroy();
@@ -143,7 +144,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
 
         this.createAnimations();
         this.playAnim(`idle-${this.facing}`);
-        this.setDepth(this.y);
+        this.setDepth(this.y | 0);
     }
 
     /**
@@ -337,13 +338,11 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
 
         const group = this.scene.damageables;
         if (!group) return;
-        const player = this.scene.player;
         for (const target of group.getChildren()) {
             if (!target || !target.active || target === this) continue;
             if (this.attackHitSet.has(target)) continue;
             if (target.isBodyDead?.()) continue;
-            // Mobs only hit the player (no friendly fire on other living mobs)
-            if (target !== player) continue;
+            if (typeof Party !== "undefined" && Party.sameFaction?.(this, target)) continue;
             if (!meleeSegmentHitsTarget(seg.a, seg.b, 4, target)) continue;
 
             this.attackHitSet.add(target);
@@ -552,6 +551,10 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
     update(_time, delta) {
         if (!this.active || this._dead) return;
         this.capacities = new Capacities(this.anatomy);
+        if (this.capacities.isDeadFromCapacities()) {
+            this.onBodyFatal();
+            return;
+        }
         const prone = this.isImmobile() || this.isIncapacitated();
 
         // Preserve prior velocity so ice can ease toward the AI's new intent
@@ -573,7 +576,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         this._iceVy = startVy;
         applyEntityVelocity(this, wantVx, wantVy, delta, this.scene);
 
-        this.setDepth(this.y);
+        this.setDepth(this.y | 0);
         this.reassignChunkIfNeeded();
         if (!this.active) return;
         this.syncToEntry();
@@ -1030,12 +1033,14 @@ class DroppedItem extends Mob {
             if (empty !== -1) {
                 inv[empty] = stack;
                 this.scene.hotbar.dirty = true;
+                this.scene._scheduleCharacterSave?.();
                 this.destroy();
                 return true;
             }
             if (inv.length < player.inventorySize) {
                 inv.push(stack);
                 this.scene.hotbar.dirty = true;
+                this.scene._scheduleCharacterSave?.();
                 this.destroy();
                 return true;
             }

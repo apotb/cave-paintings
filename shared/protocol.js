@@ -77,7 +77,13 @@
         MOB_DEATH: "mob_death",
         COMMAND: "command",
         CANCEL_CHANNEL: "cancel_channel",
-        RESYNC: "resync"
+        RESYNC: "resync",
+        RECRUIT: "recruit",
+        SWITCH_CONTROL: "switch_control",
+        PARTY_EAT: "party_eat",
+        /** Finish force-feeding a downed party member (dedicated MP). */
+        FEED: "feed",
+        GIVE_ITEM: "give_item"
     };
 
     function msg(type, payload = {}) {

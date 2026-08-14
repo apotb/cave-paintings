@@ -1,7 +1,6 @@
 /**
  * Neutral animal: wanders until damaged by the player (or a same-species packmate is),
- * then sprints in, claims a melee orbit slot (with queue behind), reshuffles,
- * and plants when at the anchor. Staggered give-up if far or idle too long.
+ * then sprints in and plants when in fist range. Staggered give-up if far or idle too long.
  */
 class NeutralAnimalAI extends DoofusAI {
     constructor(mob) {
@@ -11,14 +10,7 @@ class NeutralAnimalAI extends DoofusAI {
         this.LEASH_TILES = 10;
         this.GIVE_UP_MS = 9000;
         this.MELEE_RESUME_PAD = 10;
-        // Arrive/resume hysteresis — a single threshold flickers walk↔idle every frame
-        this.ANCHOR_ARRIVE = 6;
-        this.ANCHOR_RESUME = 14;
-        this.RESHUFFLE_MS = 700;
         this._meleeHold = false;
-        this._slotHold = false;
-        this._slotClaim = null;
-        this._reshuffleTimer = 0;
         this._deaggroTimer = 0;
         // Per-mob stagger so packs don't all calm down on the same frame
         this._deaggroDelay = Phaser.Math.Between(200, 2200);
@@ -40,8 +32,9 @@ class NeutralAnimalAI extends DoofusAI {
             ).toLowerCase();
             if (!mine || !theirs || mine !== theirs) return;
         }
-        if (source && source === this.mob.scene?.player) {
+        if (source && (source === this.mob.scene?.player || this.mob.scene?.party?.includes(source))) {
             this.hostile = true;
+            this._combatTarget = source;
             this.timeSinceHitPlayer = 0;
             this._deaggroTimer = 0;
         }
@@ -54,20 +47,8 @@ class NeutralAnimalAI extends DoofusAI {
         this._deaggroTimer = 0;
     }
 
-    _slots() {
-        return this.mob.scene?.meleeSlots || null;
-    }
-
-    _releaseSlot() {
-        const slots = this._slots();
-        if (slots && this.mob) slots.release(this.mob);
-        this._slotClaim = null;
-    }
-
     _clearCombatMove() {
         this._meleeHold = false;
-        this._slotHold = false;
-        this._releaseSlot();
         this._deaggroTimer = 0;
         this.mob.isSprinting = false;
         this.mob.anims.timeScale = 1;
@@ -119,7 +100,11 @@ class NeutralAnimalAI extends DoofusAI {
             return;
         }
 
-        const player = mob.scene.player;
+        const sys = this.mob.scene?.partySys;
+        const player = sys?.duelTargetFor?.(mob)
+            || sys?.nearestParty?.(mob.x, mob.y)
+            || mob.scene.player;
+        this._combatTarget = player;
         if (!player || player.isBodyDead?.()) {
             this.hostile = false;
             this._clearCombatMove();
@@ -168,37 +153,10 @@ class NeutralAnimalAI extends DoofusAI {
         const edgeDist = this._distToHurtbox(mc.x, mc.y, player);
         const inReach = edgeDist <= reach;
 
-        const slots = this._slots();
-        const releaseR = slots?.releaseRadius(reach) ?? 72;
-
-        // Claim for the whole leash-in ring (not only when already on top of the player)
-        // so approach aims at an orbit point instead of ramming the body center.
-        if (distPlayer > releaseR) {
-            this._releaseSlot();
-            this._slotHold = false;
-        } else if (slots) {
-            this._reshuffleTimer -= delta;
-            if (!this._slotClaim) {
-                this._slotClaim = slots.claim(mob, reach);
-                this._reshuffleTimer = this.RESHUFFLE_MS;
-            } else if (this._reshuffleTimer <= 0) {
-                this._slotClaim = slots.reshuffle(mob, reach) || slots.findClaim(mob);
-                this._reshuffleTimer = this.RESHUFFLE_MS;
-            } else {
-                // Keep queueIndex fresh after promotions in front
-                this._slotClaim = slots.findClaim(mob) || this._slotClaim;
-            }
-        }
-
         if (inReach) this._meleeHold = true;
         else if (edgeDist > reach + this.MELEE_RESUME_PAD) this._meleeHold = false;
 
-        // Only primary ring (queueIndex 0) swings; queue waits for a spot
-        const isPrimary = !this._slotClaim || this._slotClaim.queueIndex === 0;
-        // Same gate as the player: tryMeleeAttack refuses while attackTimer > 0
-        // (duration from meleeAttackDurationMs). No extra AI cooldown on top.
         if (
-            isPrimary &&
             !swinging &&
             atk &&
             inReach &&
@@ -215,42 +173,7 @@ class NeutralAnimalAI extends DoofusAI {
         const terrain = mob.scene.terrainSpeedMult?.(mob.x, mob.y - 1) ?? 1;
         const walk = base * ts * moveMul * terrain;
 
-        let tx = pc.x;
-        let ty = pc.y;
-        let distAnchor = distPlayer;
-        let hasAnchor = false;
-        if (this._slotClaim && slots) {
-            const anchor = slots.anchor(
-                this._slotClaim.slotIndex,
-                this._slotClaim.queueIndex,
-                reach
-            );
-            if (anchor) {
-                tx = anchor.x;
-                ty = anchor.y;
-                distAnchor = Math.hypot(anchor.x - mc.x, anchor.y - mc.y);
-                hasAnchor = true;
-                if (distAnchor <= this.ANCHOR_ARRIVE) this._slotHold = true;
-                else if (distAnchor > this.ANCHOR_RESUME) this._slotHold = false;
-            }
-        } else {
-            this._slotHold = false;
-        }
-
-        // Primaries only plant in fist range (slots are spacing, not a stop-out-of-range).
-        // Queue holds at their waiting mark until promoted.
-        // If a primary reached the orbit but still can't hit, step in toward the player.
-        if (isPrimary && hasAnchor && this._slotHold && !this._meleeHold) {
-            tx = pc.x;
-            ty = pc.y;
-            this._slotHold = false;
-        }
-
-        const plant =
-            (isPrimary && this._meleeHold) ||
-            (!isPrimary && hasAnchor && this._slotHold);
-
-        if (plant) {
+        if (this._meleeHold || swinging) {
             mob.isSprinting = false;
             mob.setVelocity(0, 0);
             mob.anims.timeScale = 1;
@@ -258,21 +181,34 @@ class NeutralAnimalAI extends DoofusAI {
             return;
         }
 
-        const dx = tx - mc.x;
-        const dy = ty - mc.y;
+        const stand = typeof Party !== "undefined" && Party.duelStandPoint
+            ? Party.duelStandPoint(mob, player, sys?._duelMap, {
+                standPx: Math.max(10, reach)
+            })
+            : pc;
+        const dx = stand.x - mc.x;
+        const dy = stand.y - mc.y;
         const len = Math.hypot(dx, dy) || 1;
         let nx = dx / len;
         let ny = dy / len;
+        const rep = typeof Party !== "undefined" && Party.duelRepulse
+            ? Party.duelRepulse(mob, sys?._duelEntities)
+            : null;
+        if (rep && (rep.rx || rep.ry)) {
+            nx += rep.rx * 0.7;
+            ny += rep.ry * 0.7;
+            const nlen = Math.hypot(nx, ny) || 1;
+            nx /= nlen;
+            ny /= nlen;
+        }
 
         // Skirt static things (trees/rocks) instead of bee-lining into trunks
         const steered = this._steerAroundObstacles(mob, nx, ny, delta);
         nx = steered.nx;
         ny = steered.ny;
 
-        // Sprint until near the slot; ease to walk on final approach
-        const slotR = slots?.radiusFor(reach) ?? 10;
-        const nearSlot = hasAnchor && distAnchor <= Math.max(slotR, this.ANCHOR_RESUME);
-        const canSprint = livingLegs >= legsNeeded && !swinging && !nearSlot;
+        const near = edgeDist <= Math.max(reach + 8, 14);
+        const canSprint = livingLegs >= legsNeeded && !swinging && !near;
         mob.isSprinting = canSprint;
         const speed = walk * (canSprint ? sprintFactor : 1);
         mob.setVelocity(nx * speed, ny * speed);

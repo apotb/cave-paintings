@@ -34,19 +34,19 @@ class KnappingPanel {
             .setOrigin(0.5)
             .setStrokeStyle(2, 0x6a5a45);
 
-        this.title = scene.add.text(0, -147, "Knapping", {
-            fontFamily: "monospace",
-            fontSize: "22px",
+        this.title = crispUiText(scene.add.text(0, -147, "Knapping", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "24px",
             color: "#e8e0d0"
-        }).setOrigin(0.5);
+        }).setOrigin(0.5));
 
-        this.preview = scene.add.text(0, 118, "", {
-            fontFamily: "monospace",
-            fontSize: "14px",
+        this.preview = crispUiText(scene.add.text(0, 118, "", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "16px",
             color: "#c8b090",
             align: "center",
             wordWrap: { width: 380 }
-        }).setOrigin(0.5);
+        }).setOrigin(0.5));
 
         // Dark well + upscaled source-texture preview (chips carve real pixels)
         const gridSize = this.cellPx * Knapping.SIZE;
@@ -135,11 +135,11 @@ class KnappingPanel {
     }
 
     _makeBtn(x, y, text, fn) {
-        const label = this.scene.add.text(x, y, `[ ${text} ]`, {
-            fontFamily: "monospace",
+        const label = crispUiText(this.scene.add.text(x, y, `[ ${text} ]`, {
+            fontFamily: PIXEL_UI_FONT,
             fontSize: "16px",
             color: "#e8e0d0"
-        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true }));
         label.on("pointerover", () => label.setColor("#ffffff"));
         label.on("pointerout", () => label.setColor("#e8e0d0"));
         label.on("pointerdown", (pointer, _lx, _ly, event) => {
@@ -160,6 +160,10 @@ class KnappingPanel {
         this.container.setPosition(cx, cy);
         this.backdrop.setSize(cam.width + 40, cam.height + 40);
         const s = this.scene.uiScale || 1;
+        this.title.setFontSize(pixelUiFontSize(24, s));
+        this.preview.setFontSize(pixelUiFontSize(16, s));
+        this.btnRotate?.label.setFontSize(pixelUiFontSize(16, s));
+        this.btnFinish?.label.setFontSize(pixelUiFontSize(16, s));
         // Screen-space top-right of the 420×354 panel
         this.helpBtn
             ?.setScale(3 * s)
@@ -260,6 +264,7 @@ class KnappingPanel {
             op,
             slot: this.blankSlotIndex,
             id: this.blankItemId,
+            pawnId: this.scene.player?.pawnId,
             ...extra
         });
     }

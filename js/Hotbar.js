@@ -31,12 +31,13 @@ class Hotbar {
         if (notifyNet && this.scene.isNet && this.scene.net?.connected) {
             this.scene.net.sendAction({
                 type: NetProtocol.Actions.HOTBAR,
-                index
+                index,
+                pawnId: this.scene.player?.pawnId
             });
         }
     }
 
-    /** Dedicated MP: server owns inventory — local swap would be stomped by YOU. */
+    /** Dedicated MP: tell the server; local inventory is already swapped (optimistic). */
     _notifyInvSwap(from, to) {
         if (!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal)) return;
         if (typeof NetProtocol === "undefined" || !NetProtocol.Actions?.INV_SWAP) return;
@@ -44,8 +45,57 @@ class Hotbar {
         this.scene.net.sendAction({
             type: NetProtocol.Actions.INV_SWAP,
             from,
-            to
+            to,
+            pawnId: this.scene.player?.pawnId
         });
+    }
+
+    /** Swap or merge two hotbar slots, then notify dedicated MP. */
+    _applyInvSwap(from, to) {
+        const inv = this.scene.player.inventory;
+        while (inv.length < this.size) inv.push(null);
+        const a = inv[from] ?? null;
+        const b = inv[to] ?? null;
+        if (!a) return false;
+
+        const aSpecial = typeof isSpecialStack === "function"
+            ? isSpecialStack(a)
+            : !!(a.customName || a.food || a.ingredients || a.toolClass);
+        const bSpecial = typeof isSpecialStack === "function"
+            ? isSpecialStack(b)
+            : !!(b && (b.customName || b.food || b.ingredients || b.toolClass));
+        if (b && a.id === b.id && !aSpecial && !bSpecial) {
+            const meta = this.scene.getItem(a.id);
+            const maxStack = Math.max(1, meta?.maxStack || 1);
+            const space = Math.max(0, maxStack - b.quantity);
+
+            if (space > 0) {
+                const moved = Math.min(space, a.quantity);
+                b.spoilLeft = mergeSpoilLeft(
+                    b.quantity, b.spoilLeft,
+                    moved, a.spoilLeft
+                );
+                delete b.spoilAt;
+                mergeDryInto(b, b.quantity, moved, a.dryProgress);
+                mergeSoakInto(b, b.quantity, moved, a.soakProgress);
+                b.quantity += moved;
+                a.quantity -= moved;
+                if (a.quantity <= 0) inv[from] = null;
+            } else {
+                inv[from] = b;
+                inv[to] = a;
+            }
+        } else {
+            inv[to] = a;
+            inv[from] = b || null;
+        }
+
+        this._notifyInvSwap(from, to);
+        this.changeSlot(to);
+        this.dirty = true;
+        this.update();
+        this.scene.refreshTooltip();
+        return true;
     }
 
     /** Grow/shrink visible hotbar to match player.inventorySize. */
@@ -134,7 +184,7 @@ class Hotbar {
             fill.setScale(3.0 * s).setPosition(cx, cy);
 
             const quantity = this.quantity[i];
-            quantity.setFontSize(`${Math.round(14 * s)}px`);
+            quantity.setFontSize(`${pixelUiFontSize(16, s)}px`);
             quantity.setStroke('#000', Math.max(2, Math.round(2 * s)));
             quantity.setPosition(slot.x + slotW - 4 * s, slot.y - 4 * s);
 
@@ -269,13 +319,13 @@ class Hotbar {
         this.scene.uiLayer.add(bar);
         this.bars.push(bar);
 
-        const quantity = this.scene.add.text(0, 0, "", {
-            fontSize: "14px",
-            fontFamily: "PrimaryFont",
+        const quantity = crispUiText(this.scene.add.text(0, 0, "", {
+            fontSize: `${pixelUiFontSize(16, 1)}px`,
+            fontFamily: PIXEL_UI_FONT,
             align: "right",
             stroke: "#000",
             strokeThickness: 2
-        }).setOrigin(1, 1).setVisible(false);
+        }).setOrigin(1, 1).setVisible(false));
         this.scene.uiLayer.add(quantity);
         this.quantity.push(quantity);
 
@@ -326,6 +376,26 @@ class Hotbar {
                     handled = this.scene.equipmentPanel.tryEquipFromHotbar(from, pointer);
                 }
 
+                if (!handled && this.scene.partyPanel?.visible && from !== null) {
+                    const target = this.scene.partyPanel.pawnAtPointer(pointer);
+                    if (target && target !== this.scene.player) {
+                        handled = !!this.scene.partySys?.tryGive?.(this.scene.player, from, target);
+                    }
+                }
+
+                if (!handled && from !== null) {
+                    const world = this.scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+                    const party = this.scene.party || [];
+                    for (const p of party) {
+                        if (!p || p === this.scene.player || p.isBodyDead?.()) continue;
+                        const hs = (p.hitboxSize || 8) + 6;
+                        if (Math.abs(p.x - world.x) < hs && Math.abs(p.y - world.y) < hs * 2) {
+                            handled = !!this.scene.partySys?.tryGive?.(this.scene.player, from, p);
+                            if (handled) break;
+                        }
+                    }
+                }
+
                 if (!handled && this.scene.campfirePanel?.visible && from !== null) {
                     handled = this.scene.campfirePanel.tryAddFuelFromHotbar(from, pointer);
                 }
@@ -336,52 +406,8 @@ class Hotbar {
 
                 if (!handled) {
                     const to = this.getIndexAt(pointer.x, pointer.y);
-
                     if (to !== -1 && from !== null && to !== from) {
-                        const inv = this.scene.player.inventory;
-                        while (inv.length < this.size) inv.push(null);
-
-                        const a = inv[from] ?? null;
-                        const b = inv[to]   ?? null;
-
-                        if (a) {
-                            const aSpecial = typeof isSpecialStack === "function"
-                                ? isSpecialStack(a)
-                                : !!(a.customName || a.food || a.ingredients || a.toolClass);
-                            const bSpecial = typeof isSpecialStack === "function"
-                                ? isSpecialStack(b)
-                                : !!(b && (b.customName || b.food || b.ingredients || b.toolClass));
-                            if (b && a.id === b.id && !aSpecial && !bSpecial) {
-                                const meta = this.scene.getItem(a.id);
-                                const maxStack = Math.max(1, meta?.maxStack || 1);
-                                const space = Math.max(0, maxStack - b.quantity);
-
-                                if (space > 0) {
-                                    const moved = Math.min(space, a.quantity);
-                                    b.spoilLeft = mergeSpoilLeft(
-                                        b.quantity, b.spoilLeft,
-                                        moved, a.spoilLeft
-                                    );
-                                    delete b.spoilAt;
-                                    mergeDryInto(b, b.quantity, moved, a.dryProgress);
-                                    mergeSoakInto(b, b.quantity, moved, a.soakProgress);
-                                    b.quantity += moved;
-                                    a.quantity -= moved;
-                                    if (a.quantity <= 0) inv[from] = null;
-                                } else {
-                                    inv[from] = b;
-                                    inv[to]   = a;
-                                }
-                            } else {
-                                inv[to]   = a;
-                                inv[from] = b || null;
-                            }
-
-                            this._notifyInvSwap(from, to);
-                            this.changeSlot(to);
-                            this.dirty = true;
-                            this.scene.refreshTooltip();
-                        }
+                        this._applyInvSwap(from, to);
                     }
                 } else {
                     this.dirty = true;

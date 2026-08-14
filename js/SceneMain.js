@@ -4,6 +4,8 @@ class SceneMain extends SceneBase {
     }
 
     init(data = {}) {
+        this._unbindSceneListeners();
+        this._playReady = false;
         this.net = data.net || null;
         this.welcome = data.welcome || null;
         this.displayName = data.displayName || null;
@@ -25,6 +27,9 @@ class SceneMain extends SceneBase {
         this._charSaveTimer = null;
         this._charSaveBusy = false;
         this._charSavePromise = null;
+        this._charSaveSoon = false;
+        this._charSaveSoonEvent = null;
+        this._charSaveFrozen = false;
         this._lastYou = this.welcome?.you || null;
         this._onVisSave = null;
         this._gamePaused = false;
@@ -48,8 +53,33 @@ class SceneMain extends SceneBase {
         this.knappingPanel = null;
         this.deathOverlay = null;
         this.player = null;
+        this.leader = null;
+        this.party = [];
+        this.partySys = null;
+        this.partyPanel = null;
         this.chunks = null;
         this.droppedItems = null;
+        this.cursors = null;
+        this.keys = null;
+        this.key1 = this.key2 = this.key3 = this.key4 = this.key5 = null;
+        this.key6 = this.key7 = this.key8 = this.key9 = this.key0 = null;
+        this.keyC = this.keyE = this.keyH = this.keyT = this.keyR = this.keyEsc = null;
+        this.tooltip = null;
+        this.tooltipText = null;
+        this.painBar = this.kcBar = this.weightBar = this.barIcons = null;
+        this.channelBar = this.treeChopBar = null;
+        this.craft = this.healthBtn = this.equipmentBtn = this.help = null;
+        this.fpsText = this.locXText = this.locYText = null;
+        this._waterSprite = null;
+        this.groundLayer = this.mainLayer = this.uiLayer = this.worldHudLayer = null;
+        this._hoverTarget = null;
+        this._tooltipTarget = null;
+        this._things = null;
+        this.mobs = null;
+        this.damageables = null;
+        this._chunkRtPool = null;
+        this._chunkPaintQ = null;
+        this._paintBusy = false;
     }
 
     create() {
@@ -67,20 +97,30 @@ class SceneMain extends SceneBase {
         this.groundLayer = this.add.layer().setDepth(0);
         this.mainLayer = this.add.layer().setDepth(1);
         this.uiLayer = this.add.layer().setDepth(2);
+        // Above the night veil (lightGfx depth 50). UI cam ignores this layer so
+        // world-locked HUD is not also drawn unzoomed at raw world coordinates.
+        this.worldHudLayer = this.add.layer().setDepth(51);
 
         // Chunks
         this.chunkSize = 8;
         this.tileSize = 16;
         this.worldZoom = 3;
         this.chunks = {};
+        this._chunkRtPool = [];
+        this._chunkPaintQ = [];
+        this._paintBusy = false;
         this.chunkDebug = false;
         this.updateChunkDistances();
         this.updateUiScale();
-        this.scale.on("resize", () => {
+        this._onGameResize = () => {
+            if (!this._playReady || this._leavingGame) return;
             this.updateChunkDistances();
             this.updateUiScale();
             this.applyUiScale();
-        });
+            this.hideTooltip?.();
+            this.positionCraftMenu?.();
+        };
+        this.scale.on("resize", this._onGameResize);
 
         // Water
         this._waterSprite = this.add.tileSprite(
@@ -101,7 +141,6 @@ class SceneMain extends SceneBase {
         // Combat targets (player, animals/monsters)
         this.damageables = this.add.group();
         this.mobs = this.physics.add.group();
-        this.meleeSlots = new MeleeSlots(this);
 
         // Shared body defs must see Phaser JSON cache before Body() runs.
         // (Phaser.Scene.data is a DataManager — do not confuse with DataStore.)
@@ -110,8 +149,10 @@ class SceneMain extends SceneBase {
         }
 
         // Player
+        this.partySys = new PartySystem(this);
+        this.partySys.bindSceneKeys();
         this.player = new Player(this, 0, 0, this.character?.look);
-        this.damageables.add(this.player);
+        this.partySys.attachLeader(this.player);
         /** One-time spawn setup: sign at (0,0), player in random free tile nearby. */
         this._spawnSignPlaced = false;
         this._spawnSignBusy = false;
@@ -155,7 +196,7 @@ class SceneMain extends SceneBase {
             .setScroll(0, 0)
             .setZoom(1)
             .setRoundPixels(false);
-        let cameras = [this.groundLayer, this.mainLayer];
+        let cameras = [this.groundLayer, this.mainLayer, this.worldHudLayer];
         if (this.physics.world.debug) cameras.push(this.physics.world.debugGraphic);
         this._uiCam.ignore(cameras);
         this.createLightVeil();
@@ -176,6 +217,7 @@ class SceneMain extends SceneBase {
         this.healthPanel = new HealthPanel(this);
         this.knappingPanel = new KnappingPanel(this);
         this.createDeathOverlay();
+        this.partyPanel = new PartyPanel(this);
         this.applyUiScale();
 
         // Inputs
@@ -203,6 +245,7 @@ class SceneMain extends SceneBase {
             || "Player";
 
         if (this.isNet) this._setupNetPlay();
+        this._playReady = true;
     }
 
     /** Session play (WebSocket MP or LocalSim SP): sync via protocol, character owned client-side. */
@@ -221,6 +264,7 @@ class SceneMain extends SceneBase {
         this._netForceYouInv = true;
         if (you.inventory || you.kc != null || you.equipment) this._netApplyYou(you);
         this._netForceYouInv = false;
+        this.partySys?.applyJoinParty?.(you, this.character, { join: true });
 
         this.net.on(NetProtocol.Types.SNAPSHOT, (payload) => this._netApplySnapshot(payload));
         this.net.on(NetProtocol.Types.EVENT, (payload) => this._netApplyEvent(payload));
@@ -269,10 +313,11 @@ class SceneMain extends SceneBase {
     }
 
     _playerCharacterPartial() {
-        const pl = this.player;
+        const pl = this.leader || this.player;
         if (!pl) return null;
+        const extra = this.partySys?.serializeParty?.() || {};
         return {
-            name: this.playerName || pl.name,
+            name: this.playerName || pl.pawnName || pl.name,
             inventory: pl.inventory,
             equipment: pl.equipment,
             hotbarIndex: pl.hotbarIndex,
@@ -285,51 +330,125 @@ class SceneMain extends SceneBase {
             look: pl.look || this.character?.look || null,
             facing: pl.facing,
             x: pl.x,
-            y: pl.y
+            y: pl.y,
+            controlId: extra.controlId || this.player?.pawnId,
+            leaderDead: !!extra.leaderDead,
+            party: extra.party || []
         };
     }
 
     _scheduleCharacterSave(you) {
         if (you) this._lastYou = you;
         // Debounce burst YOU updates
-        if (this._charSaveSoon) return;
+        if (this._charSaveSoon || this._charSaveFrozen || this._leavingGame) return;
         this._charSaveSoon = true;
-        this.time?.delayedCall?.(400, () => {
+        this._charSaveSoonEvent = this.time?.delayedCall?.(400, () => {
             this._charSaveSoon = false;
+            this._charSaveSoonEvent = null;
+            if (this._charSaveFrozen || this._leavingGame) return;
             this._saveCharacterNow();
         });
     }
 
-    async _saveCharacterNow(youOverride = null) {
+    _cloneSaveStack(s) {
+        if (!s) return null;
+        if (typeof cloneItemStack === "function") return cloneItemStack(s);
+        try {
+            return JSON.parse(JSON.stringify(s));
+        } catch (_) {
+            return { id: s.id, quantity: s.quantity || 1 };
+        }
+    }
+
+    /** Live gear snapshot for IndexedDB — what is on the hotbar, not a stale YOU. */
+    _characterSavePartial() {
+        this._flushPendingYouGear?.();
+        const raw = this._playerCharacterPartial();
+        if (!raw) return null;
+        const eq = raw.equipment;
+        const cloneEq = (equipment) => {
+            if (!equipment || typeof equipment !== "object") return equipment;
+            return {
+                head: this._cloneSaveStack(equipment.head),
+                torso: this._cloneSaveStack(equipment.torso),
+                legs: this._cloneSaveStack(equipment.legs),
+                feet: this._cloneSaveStack(equipment.feet),
+                waist: Array.isArray(equipment.waist)
+                    ? equipment.waist.map((s) => this._cloneSaveStack(s))
+                    : []
+            };
+        };
+        const cloneParty = (members) => {
+            if (!Array.isArray(members)) return members;
+            return members.map((m) => ({
+                id: m.id,
+                name: m.name,
+                look: m.look,
+                kc: m.kc,
+                saturation: m.saturation,
+                stomach: m.stomach,
+                inventory: Array.isArray(m.inventory)
+                    ? m.inventory.map((s) => this._cloneSaveStack(s))
+                    : m.inventory,
+                equipment: cloneEq(m.equipment),
+                hotbarIndex: m.hotbarIndex,
+                body: m.body,
+                hp: m.hp,
+                mhp: m.mhp,
+                facing: m.facing,
+                x: m.x,
+                y: m.y
+            }));
+        };
+        return {
+            ...raw,
+            inventory: Array.isArray(raw.inventory)
+                ? raw.inventory.map((s) => this._cloneSaveStack(s))
+                : raw.inventory,
+            equipment: cloneEq(eq),
+            party: cloneParty(raw.party)
+        };
+    }
+
+    _inventoryFilledCount(inv) {
+        return Array.isArray(inv) ? inv.filter(Boolean).length : -1;
+    }
+
+    async _saveCharacterNow(youOverride = null, opts = {}) {
         if (!this.characterId || typeof CharacterStore === "undefined") return;
+        if (this._charSaveFrozen) return;
+        if (this._leavingGame && !opts.final) return;
         // Wait for any in-flight save so leave/quit never skips a write.
         while (this._charSavePromise) {
             await this._charSavePromise;
+            if (this._charSaveFrozen) return;
+            if (this._leavingGame && !opts.final) return;
         }
         this._charSaveBusy = true;
         this._charSavePromise = (async () => {
             try {
+                const live = this._characterSavePartial();
                 // SP: client inventory is authoritative — push into LocalSim pawn first
-                if (this.net?.isLocal) {
-                    const partial = this._playerCharacterPartial();
-                    if (partial) this.net.syncPawnFromClient?.(partial);
-                }
+                if (this.net?.isLocal && live) this.net.syncPawnFromClient?.(live);
                 let base = this.character;
                 if (!base) base = await CharacterStore.get(this.characterId);
                 if (!base) {
                     base = CharacterStore.defaultCharacter(this.playerName || "Player");
                     base.id = this.characterId;
                 }
-                const you = youOverride || this._lastYou || (this.net?.isLocal
-                    ? this._playerCharacterPartial()
-                    : null);
-                const next = you ? CharacterStore.applyYou(base, you) : base;
-                // Always fold current client gear for local sessions
-                if (this.net?.isLocal) {
-                    const pl = this._playerCharacterPartial();
-                    if (pl) Object.assign(next, CharacterStore.applyYou(next, pl));
-                }
+                const you = youOverride || this._lastYou;
+                const pawn = this.leader || this.player;
+                const pawnHere = !!(pawn && pawn.scene === this);
+                const liveCount = this._inventoryFilledCount(live?.inventory);
+                const youCount = this._inventoryFilledCount(you?.inventory);
+                // Prefer the hotbar on screen. `_lastYou` is often a stale pawn/YOU
+                // from join or hotbar-select and used to revert /give and pickups.
+                const useLive = !!(live && Array.isArray(live.inventory)
+                    && (pawnHere || liveCount >= youCount));
+                const payload = useLive ? live : you;
+                const next = payload ? CharacterStore.applyYou(base, payload) : base;
                 this.character = await CharacterStore.put(next);
+                if (useLive) this._lastYou = { ...(this._lastYou || {}), ...live };
             } catch (e) {
                 console.warn("[character save]", e);
             } finally {
@@ -376,6 +495,11 @@ class SceneMain extends SceneBase {
             this._charSaveTimer.remove?.(false);
             this._charSaveTimer = null;
         }
+        if (this._charSaveSoonEvent) {
+            this._charSaveSoonEvent.remove?.(false);
+            this._charSaveSoonEvent = null;
+        }
+        this._charSaveSoon = false;
         if (this._onVisSave) {
             document.removeEventListener("visibilitychange", this._onVisSave);
             this._onVisSave = null;
@@ -384,37 +508,41 @@ class SceneMain extends SceneBase {
 
     _netApplyYou(you) {
         if (!you || !this.isNet || !this.player) return;
+        const youPawn = (this.party || []).find((p) => p.pawnId === you.id)
+            || this.leader
+            || this.player;
+        const hud = youPawn === this.player;
         // LocalSim SP: after join, inventory is client-authored — don't stomp with pawn YOU
         // (vitals still apply; hunger is owned by LocalSim's clock).
         // Dedicated MP: while dead, client already dumped gear into a corpse — never
         // re-apply stale server inventory (that was the /kms dupe).
-        const applyGear = (!this.net?.isLocal || this._netForceYouInv) && !this.player._bodyDead;
-        if (this.player._bodyDead) {
+        const applyGear = (!this.net?.isLocal || this._netForceYouInv) && !youPawn._bodyDead;
+        if (youPawn._bodyDead) {
             this._lastYou = {
                 ...you,
-                inventory: this.player.inventory,
-                equipment: this.player.equipment,
+                inventory: youPawn.inventory,
+                equipment: youPawn.equipment,
                 dead: true
             };
         } else {
             this._lastYou = you;
         }
-        // Dedicated: honor server death (anatomy / PvP)
+        // Dedicated: honor server death (anatomy / PvP) for the crowned leader
         if (
             you.dead
-            && !this.player._bodyDead
+            && !youPawn._bodyDead
             && this.net?.connected
             && !this.net.isLocal
             && !this.deathOverlay?.visible
         ) {
-            this.player._bodyDead = true;
-            this.player.setVelocity(0, 0);
+            youPawn._bodyDead = true;
+            youPawn.setVelocity(0, 0);
             // Server already authored the corpse — don't dump a second empty one.
             this.onPlayerDied(null, { spawnCorpse: false });
             return;
         }
         if (this._netAwaitPoseFromYou && typeof you.x === "number" && typeof you.y === "number") {
-            this.player.teleport(you.x, you.y);
+            youPawn.teleport(you.x, you.y);
             this.syncCameraToPlayer();
             this._netAwaitPoseFromYou = false;
             this._netSendMove(true);
@@ -425,6 +553,7 @@ class SceneMain extends SceneBase {
         // Do NOT drop YOU forever while `_invSwapGuardUntil` is set — that caused /give,
         // pickup, and eat qty to only appear after relog.
         if (applyGear && (Array.isArray(you.inventory) || you.equipment)) {
+            this._pendingYouTarget = youPawn;
             this._pendingYouGear = {
                 inventory: Array.isArray(you.inventory) ? you.inventory : null,
                 equipment: you.equipment || null,
@@ -432,37 +561,41 @@ class SceneMain extends SceneBase {
             };
             this._flushPendingYouGear();
         }
-        if (typeof you.kc === "number") this.player.kc = you.kc;
-        if (typeof you.saturation === "number") this.player.saturation = you.saturation;
-        if (typeof you.stomach === "number") this.player.stomach = you.stomach;
-        if (you.eatChannel && typeof you.eatChannel.progress === "number"
+        if (typeof you.kc === "number") youPawn.kc = you.kc;
+        if (typeof you.saturation === "number") youPawn.saturation = you.saturation;
+        if (typeof you.stomach === "number") youPawn.stomach = you.stomach;
+        if (hud && you.eatChannel && typeof you.eatChannel.progress === "number"
             && this.net?.connected && !this.net.isLocal
-            && this.player._eatChannel) {
+            && youPawn._eatChannel) {
             // Only while local eat channel is active — ignore stale YOU after cancel
             this.showChannelBar?.(Phaser.Math.Clamp(you.eatChannel.progress, 0, 1));
         } else if (
-            this.net?.connected && !this.net.isLocal
+            hud
+            && this.net?.connected && !this.net.isLocal
             && !you.eatChannel
-            && !this.player._eatChannel
-            && !this.player._tendChannel
-            && !this.player._skinChannel
+            && !youPawn._eatChannel
+            && !youPawn._tendChannel
+            && !youPawn._skinChannel
         ) {
             this.hideChannelBar?.();
         }
-        if (applyGear && you.body && this.player.anatomy?.loadJSON) {
+        if (applyGear && you.body && youPawn.anatomy?.loadJSON) {
             try {
-                this.player.anatomy.loadJSON(you.body);
-                this.player.capacities = new Capacities(this.player.anatomy);
-                this.player._refreshDownedState?.();
+                youPawn.anatomy.loadJSON(you.body);
+                youPawn.capacities = new Capacities(youPawn.anatomy);
+                youPawn._refreshDownedState?.();
             } catch (_) {}
         }
-        this._netApplyYouVomit(you);
+        this._netApplyYouVomit(you, youPawn);
         // Dedicated: server prone flag (immobile / pain shock / unconscious)
-        if (this.player && typeof you.prone === "boolean") {
+        if (youPawn && typeof you.prone === "boolean") {
             setCreatureProne(
-                this.player,
-                !!you.prone && !this.player._bodyDead && !you.dead
+                youPawn,
+                !!you.prone && !youPawn._bodyDead && !you.dead
             );
+        }
+        if (you.party || you.controlId) {
+            this.partySys?.applyJoinParty?.(you, this.character);
         }
     }
 
@@ -482,10 +615,21 @@ class SceneMain extends SceneBase {
      */
     _flushPendingYouGear() {
         const pending = this._pendingYouGear;
-        if (!pending || !this.player || this.player._bodyDead) return;
+        const target = this._pendingYouTarget || this.leader || this.player;
+        if (!pending || !target || target._bodyDead) return;
         // LocalSim: inventory is client-authored after join
         if (this.net?.isLocal && !this._netForceYouInv) return;
-        if (this._inventoryUiOwnsGear()) return;
+        if (target === this.player && this._inventoryUiOwnsGear()) return;
+        // Keep the latest YOU stashed during an optimistic hotbar/equip edit so a
+        // stale packet cannot snap icons back. Update flushes once the guard ends.
+        if (
+            target === this.player
+            && this.net?.connected
+            && !this.net.isLocal
+            && performance.now() < (this._invSwapGuardUntil || 0)
+        ) {
+            return;
+        }
 
         const cloneStack = (s) => {
             if (!s) return null;
@@ -497,20 +641,43 @@ class SceneMain extends SceneBase {
             }
         };
 
+        // Equipment first so pouch/hotbar grants resize inventorySize before
+        // we slice the incoming hotbar (gifted pouches used to stay visually
+        // equipped with no extra slots until unequip/re-equip).
+        if (pending.equipment && target.equipment) {
+            const eq = pending.equipment;
+            target.equipment = {
+                head: cloneStack(eq.head),
+                torso: cloneStack(eq.torso),
+                legs: cloneStack(eq.legs),
+                feet: cloneStack(eq.feet),
+                waist: Array.isArray(eq.waist) ? eq.waist.map(cloneStack) : []
+            };
+            target.syncWaistSlots?.();
+            target.recomputeEquipmentEffects?.();
+            if (target === this.player && this.equipmentPanel?.visible) {
+                this.equipmentPanel.refresh();
+                this.equipmentPanel.layout();
+            }
+        }
+
         if (Array.isArray(pending.inventory)) {
-            const size = this.player.inventorySize || 5;
+            const size = target.inventorySize || 5;
             const inv = pending.inventory.slice(0, size).map(cloneStack);
             while (inv.length < size) inv.push(null);
-            this.player.inventory = inv;
+            target.inventory = inv;
             if (typeof pending.hotbarIndex === "number") {
                 const hi = Math.max(0, Math.min(
-                    (this.hotbar?.size || this.player.inventorySize || 5) - 1,
+                    (this.hotbar?.size || target.inventorySize || 5) - 1,
                     Math.floor(pending.hotbarIndex)
                 ));
-                this.player.hotbarIndex = hi;
-                this.hotbar?.setActiveIndex?.(hi, { notifyNet: false });
+                target.hotbarIndex = hi;
+                if (target === this.player) {
+                    this.hotbar?.setActiveIndex?.(hi, { notifyNet: false });
+                }
             }
-            if (this.hotbar) {
+            if (target === this.player && this.hotbar) {
+                this.hotbar.setSize?.(target.inventorySize || size);
                 this.hotbar.dirty = true;
                 // layout() resyncs icon positions + textures (update alone can miss when
                 // called from a net handler while the campfire world UI is open)
@@ -519,24 +686,8 @@ class SceneMain extends SceneBase {
             }
         }
 
-        if (pending.equipment && this.player.equipment) {
-            const eq = pending.equipment;
-            this.player.equipment = {
-                head: cloneStack(eq.head),
-                torso: cloneStack(eq.torso),
-                legs: cloneStack(eq.legs),
-                feet: cloneStack(eq.feet),
-                waist: Array.isArray(eq.waist) ? eq.waist.map(cloneStack) : []
-            };
-            this.player.syncWaistSlots?.();
-            this.player.recomputeEquipmentEffects?.();
-            if (this.equipmentPanel?.visible) {
-                this.equipmentPanel.refresh();
-                this.equipmentPanel.layout();
-            }
-        }
-
         this._pendingYouGear = null;
+        this._pendingYouTarget = null;
         if (this.craftMenuVisible) this.refreshCraftMenu?.();
     }
 
@@ -563,7 +714,8 @@ class SceneMain extends SceneBase {
                 mobs: meta.mobs || [],
                 drops: meta.drops || [],
                 bloodStains: mergeBlood(meta.bloodStains, prevBlood),
-                corpses: meta.corpses || []
+                corpses: meta.corpses || [],
+                wanderers: meta.wanderers || []
             };
             existing.isGenerated = !!(meta.tiles && meta.tiles.some((t) => !!t));
             return;
@@ -576,10 +728,26 @@ class SceneMain extends SceneBase {
             mobs: meta.mobs || [],
             drops: meta.drops || [],
             bloodStains: meta.bloodStains || [],
-            corpses: meta.corpses || []
+            corpses: meta.corpses || [],
+            wanderers: meta.wanderers || []
         });
         chunk.isGenerated = !!(meta.tiles && meta.tiles.some((t) => !!t));
         this.chunks[key] = chunk;
+    }
+
+    _netRemoteKey(playerId, pawnId = null) {
+        if (pawnId && playerId && pawnId !== playerId) return `${playerId}:${pawnId}`;
+        return playerId;
+    }
+
+    _netRemoveRemotesForOwner(ownerId) {
+        if (!ownerId || !this.remotePlayers) return;
+        for (const [id, entry] of [...this.remotePlayers]) {
+            if (id === ownerId || entry.ownerId === ownerId) {
+                entry.root?.destroy?.(true);
+                this.remotePlayers.delete(id);
+            }
+        }
     }
 
     _netMakeRemote(rp) {
@@ -595,10 +763,10 @@ class SceneMain extends SceneBase {
         const spr = this.add.sprite(0, 0, lookKey, 1).setOrigin(0, 1);
         root.add(spr);
 
-        const nameFont = Math.round(10 * s);
+        const nameFont = pixelUiFontSize(8, s);
         const nameStroke = Math.max(2, Math.round(3 * s));
         const name = this.add.text(8, -18, rp.name || "?", {
-            fontFamily: "monospace",
+            fontFamily: PIXEL_UI_FONT,
             fontSize: `${nameFont}px`,
             color: "#ffffff",
             stroke: "#000000",
@@ -609,9 +777,9 @@ class SceneMain extends SceneBase {
         name.setScale(1 / zoom);
         root.add(name);
 
-        const bubbleFont = Math.round(14 * s);
+        const bubbleFont = pixelUiFontSize(16, s);
         const bubble = this.add.text(8, -30, "", {
-            fontFamily: "monospace",
+            fontFamily: PIXEL_UI_FONT,
             fontSize: `${bubbleFont}px`,
             color: "#ffffff",
             stroke: "#000000",
@@ -643,9 +811,19 @@ class SceneMain extends SceneBase {
             bubbleUntil: 0,
             x: rp.x,
             y: rp.y,
+            fromX: rp.x,
+            fromY: rp.y,
             tx: rp.x,
             ty: rp.y,
+            snapAt: performance.now(),
+            snapDt: 1000 / (NetProtocol.SNAPSHOT_HZ || 15),
             facing: rp.facing || "down",
+            vx: rp.vx || 0,
+            vy: rp.vy || 0,
+            serverMoving: !!rp.moving,
+            moving: !!rp.moving,
+            stillMs: 0,
+            animKey: null,
             displayName: rp.name || "?",
             attackTimer: 0,
             attackMax: 0,
@@ -656,21 +834,41 @@ class SceneMain extends SceneBase {
         };
     }
 
+    _netStampRemotePose(entry, pose) {
+        if (!entry || !pose) return;
+        entry.fromX = entry.x;
+        entry.fromY = entry.y;
+        const prevTx = Number.isFinite(entry.tx) ? entry.tx : entry.x;
+        const prevTy = Number.isFinite(entry.ty) ? entry.ty : entry.y;
+        entry.snapDist = Math.hypot(pose.x - prevTx, pose.y - prevTy);
+        entry.tx = pose.x;
+        entry.ty = pose.y;
+        entry.snapAt = performance.now();
+        entry.snapDt = 1000 / (NetProtocol.SNAPSHOT_HZ || 15);
+        if (typeof pose.moving === "boolean") entry.serverMoving = pose.moving;
+        if (Number.isFinite(pose.vx)) entry.vx = pose.vx;
+        if (Number.isFinite(pose.vy)) entry.vy = pose.vy;
+    }
+
     _netApplySnapshot(snap) {
         if (!snap || !this.isNet) return;
         if (snap.clock) this._netApplyClock(snap.clock);
         const selfId = this._netPlayerId || this.net?.playerId;
         const seen = new Set();
         for (const rp of snap.players || []) {
-            if (!rp?.id || rp.id === selfId) continue;
+            if (!rp?.id) continue;
+            if (rp.id === selfId) {
+                this.partySys?.applyNetPoses?.(rp);
+                continue;
+            }
             seen.add(rp.id);
             let entry = this.remotePlayers.get(rp.id);
             if (!entry) {
                 entry = this._netMakeRemote(rp);
                 this.remotePlayers.set(rp.id, entry);
+            } else {
+                this._netStampRemotePose(entry, rp);
             }
-            entry.tx = rp.x;
-            entry.ty = rp.y;
             entry.facing = rp.facing || "down";
             entry.displayName = rp.name || entry.displayName || "?";
             entry.name.setText(entry.displayName);
@@ -683,6 +881,14 @@ class SceneMain extends SceneBase {
                 }
                 entry.look = rp.look;
             }
+            entry.ownerId = rp.id;
+            entry.pawnId = rp.id;
+            entry.dead = !!rp.dead;
+            const nColor = this.partySys?.nameColorFor?.({
+                ownerId: rp.id,
+                hostile: !!rp.hostile
+            }) || "#ffffff";
+            entry.name.setColor(nColor);
             entry.spr.setAlpha(1);
             entry.prone = !!(rp.prone || rp.dead);
             // Dead players leave a corpse — no translucent ghost puppet
@@ -699,6 +905,55 @@ class SceneMain extends SceneBase {
                     if (rp.attackArt) entry.attackArt = rp.attackArt;
                 }
             }
+            for (const mem of rp.party || []) {
+                if (!mem?.id) continue;
+                const mid = `${rp.id}:${mem.id}`;
+                seen.add(mid);
+                let mEntry = this.remotePlayers.get(mid);
+                if (!mEntry) {
+                    mEntry = this._netMakeRemote({
+                        ...mem,
+                        name: mem.name,
+                        look: mem.look,
+                        x: mem.x,
+                        y: mem.y,
+                        facing: mem.facing
+                    });
+                    this.remotePlayers.set(mid, mEntry);
+                } else {
+                    this._netStampRemotePose(mEntry, mem);
+                }
+                mEntry.facing = mem.facing || "down";
+                mEntry.displayName = mem.name || mEntry.displayName;
+                mEntry.name.setText(mEntry.displayName);
+                mEntry.ownerId = rp.id;
+                mEntry.pawnId = mem.id;
+                mEntry.dead = !!mem.dead;
+                mEntry.name.setColor(this.partySys?.nameColorFor?.({
+                    ownerId: rp.id,
+                    hostile: !!mem.hostile
+                }) || "#ffffff");
+                mEntry.prone = !!(mem.prone || mem.dead);
+                mEntry.root.setVisible(!mem.dead);
+                if (mem.look && typeof Look !== "undefined" && !Look.looksEqual(mEntry.look, mem.look)) {
+                    if (typeof PlayerLook !== "undefined") {
+                        PlayerLook.apply(mEntry.spr, mem.look);
+                        mEntry.tex = mEntry.spr.texture?.key;
+                    }
+                    mEntry.look = mem.look;
+                }
+                if (mem.dead) {
+                    if (mEntry.fist) mEntry.fist.setVisible(false);
+                    if (mEntry.weapon) mEntry.weapon.setVisible(false);
+                } else if (mem.attacking && Number.isFinite(mem.attackAngle)) {
+                    if (!(mEntry.attackTimer > 0)) {
+                        this._netStartRemoteAttack(mEntry, mem.attackAngle, mem.facing, mem.attackArt);
+                    } else {
+                        mEntry.attackAngle = mem.attackAngle;
+                        if (mem.attackArt) mEntry.attackArt = mem.attackArt;
+                    }
+                }
+            }
         }
         for (const [id, entry] of this.remotePlayers) {
             if (!seen.has(id)) {
@@ -711,6 +966,70 @@ class SceneMain extends SceneBase {
         this._netApplyCorpses(snap.corpses || []);
         this._netApplyCampfires(snap.campfires || []);
         this._netApplyStorages(snap.storages || []);
+        this._netApplyWanderers(snap.wanderers || []);
+    }
+
+    _netApplyWanderers(list) {
+        if (this.net?.isLocal) return;
+        const sys = this.partySys;
+        if (!sys) return;
+        const seen = new Set();
+        for (const w of list || []) {
+            if (!w?.id) continue;
+            seen.add(w.id);
+            let pawn = sys.wanderers.find((p) => p.pawnId === w.id);
+            if (!pawn) {
+                pawn = sys.spawnWanderer({
+                    id: w.id,
+                    name: w.name,
+                    look: w.look,
+                    x: w.x,
+                    y: w.y,
+                    facing: w.facing,
+                    heading: w.heading,
+                    inventory: w.inventory,
+                    hostile: w.hostile,
+                    recruitLocked: w.recruitLocked,
+                    refusedBy: w.refusedBy
+                });
+                pawn._netFromX = w.x;
+                pawn._netFromY = w.y;
+                pawn._netTx = w.x;
+                pawn._netTy = w.y;
+                pawn._netSnapAt = performance.now();
+            } else {
+                if (pawn._netTx == null) {
+                    pawn.x = w.x;
+                    pawn.y = w.y;
+                }
+                const prevTx = Number.isFinite(pawn._netTx) ? pawn._netTx : pawn.x;
+                const prevTy = Number.isFinite(pawn._netTy) ? pawn._netTy : pawn.y;
+                pawn._netSnapDist = Math.hypot(w.x - prevTx, w.y - prevTy);
+                pawn._netFromX = pawn.x;
+                pawn._netFromY = pawn.y;
+                pawn._netTx = w.x;
+                pawn._netTy = w.y;
+                pawn._netSnapAt = performance.now();
+                pawn._netSnapDt = 1000 / ((typeof NetProtocol !== "undefined" && NetProtocol.SNAPSHOT_HZ) || 15);
+                if (typeof w.moving === "boolean") pawn._netMoving = w.moving;
+                pawn.facing = w.facing || pawn.facing;
+                pawn.heading = w.heading || pawn.heading;
+                pawn.hostile = !!w.hostile;
+                pawn.recruitLocked = !!w.recruitLocked;
+                pawn.refusedBy = new Set(w.refusedBy || []);
+                if (w.attacking && Number.isFinite(w.attackAngle) && !pawn.isAttacking?.()) {
+                    pawn.startMeleeAttack?.(null, {
+                        silentNet: true,
+                        angle: w.attackAngle
+                    });
+                }
+            }
+        }
+        sys.wanderers = sys.wanderers.filter((p) => {
+            if (seen.has(p.pawnId)) return true;
+            p.destroy?.();
+            return false;
+        });
     }
 
     /**
@@ -746,11 +1065,17 @@ class SceneMain extends SceneBase {
             // Net sessions: hunger drain is owned by LocalSim / dedicated server (YOU).
             if (!(this.isNet && this.net?.connected)) {
                 this.player?.hungerTick?.();
+                for (const p of this.party || []) {
+                    if (p && p !== this.player && !p.isBodyDead?.()) p.hungerTick?.();
+                }
             } else if (this.net?.isLocal && this.player) {
                 // LocalSim skips hungerTick; still refresh the fed snapshot each minute
                 // so malnutrition (and /heal's sticky flag) advances correctly.
-                this.player._malnutritionFed =
-                    (Number(this.player.kc) > 0) || (Number(this.player.saturation) > 0);
+                for (const p of this.party || [this.player]) {
+                    if (!p || p.isBodyDead?.()) continue;
+                    p._malnutritionFed =
+                        (Number(p.kc) > 0) || (Number(p.saturation) > 0);
+                }
             }
             this.tickSoakDrops();
             this.tickSpoilage();
@@ -1153,7 +1478,10 @@ class SceneMain extends SceneBase {
             attackTimer: 0,
             attackMax: 0,
             attackAngle: 0,
-            look: m.look || null
+            look: m.look || null,
+            panic: !!m.panic,
+            hostile: !!m.hostile,
+            prone: !!m.prone
         };
     }
 
@@ -1193,6 +1521,7 @@ class SceneMain extends SceneBase {
             if (Number.isFinite(m.vy)) entry.vy = m.vy;
             if (typeof m.moving === "boolean") entry.serverMoving = m.moving;
             entry.panic = !!m.panic;
+            entry.hostile = !!m.hostile;
             entry.state = m.state || entry.state;
             entry.prone = !!m.prone;
             if (m.look) entry.look = m.look;
@@ -1238,7 +1567,7 @@ class SceneMain extends SceneBase {
             }
 
             entry.root.setPosition(entry.x, entry.y);
-            entry.root.setDepth(entry.y);
+            entry.root.setDepth(entry.y | 0);
 
             if (entry.attackTimer > 0) {
                 entry.attackTimer = Math.max(0, entry.attackTimer - (delta || 16));
@@ -1341,14 +1670,14 @@ class SceneMain extends SceneBase {
         const stroke = Math.max(2, Math.round(3 * s));
         if (entry.name?.active) {
             entry.name
-                .setFontSize(`${Math.round(10 * s)}px`)
+                .setFontSize(`${pixelUiFontSize(8, s)}px`)
                 .setStroke("#000000", stroke)
                 .setResolution(res)
                 .setScale(1 / zoom);
         }
         if (entry.bubble?.active) {
             entry.bubble
-                .setFontSize(`${Math.round(14 * s)}px`)
+                .setFontSize(`${pixelUiFontSize(16, s)}px`)
                 .setStroke("#000000", stroke)
                 .setWordWrapWidth(Math.round(140 * s), true)
                 .setResolution(res)
@@ -1366,8 +1695,8 @@ class SceneMain extends SceneBase {
         if (ev.kind === "chat" && ev.text) {
             const selfId = this._netPlayerId || this.net?.playerId;
             const text = String(ev.text);
-            const isJoin = / joined\.$/.test(text);
-            const isLeave = / left\.$/.test(text);
+            const isJoin = / joined\.?$/.test(text);
+            const isLeave = / left\.?$/.test(text);
             const isPlayerChat = !!(ev.from || /^<.+>\s/.test(text));
             const yellow = isJoin || isLeave || isPlayerChat;
             this.combatLog?.push?.(text, yellow ? { color: CombatLog.COLOR_CHAT } : null);
@@ -1375,53 +1704,104 @@ class SceneMain extends SceneBase {
                 this._netShowRemoteBubble(ev.from, text);
             }
         }
-        if (ev.kind === "death" && ev.text) {
+        if (ev.kind === "death") {
             const selfId = this._netPlayerId || this.net?.playerId;
-            const msg = String(ev.text).replace(/\.+$/, "");
-            if (ev.playerId === selfId) {
-                this._pendingDeathText = msg;
-                if (this.player?._bodyDead || this.deathOverlay?.visible) {
-                    this._applyDeathMessage(msg);
+            if (ev.text) {
+                const msg = String(ev.text).replace(/\.+$/, "");
+                if (ev.playerId === selfId) {
+                    this._pendingDeathText = msg;
+                    if (this.player?._bodyDead || this.deathOverlay?.visible) {
+                        this._applyDeathMessage(msg);
+                    }
                 }
+            }
+            if (ev.playerId) {
+                if (ev.playerId === selfId) this.partySys?.clearPvpAggro?.();
+                else this.partySys?.clearPvpAggro?.(ev.playerId);
             }
         }
         if (ev.kind === "channel" && ev.channel === "eat") {
             const selfId = this._netPlayerId || this.net?.playerId;
             if (ev.playerId === selfId && this.net?.connected && !this.net.isLocal) {
+                const pawn = ev.pawnId
+                    ? (this.party || []).find((p) => p.pawnId === ev.pawnId)
+                    : this.player;
+                const hud = !pawn || pawn === this.player;
                 if (ev.done || ev.cancelled) {
-                    this.player._eatChannel = null;
-                    this.hideChannelBar?.();
-                } else if (typeof ev.progress === "number" && this.player._eatChannel) {
-                    // Drop in-flight progress after local/server cancel
+                    if (pawn) pawn._eatChannel = null;
+                    else this.player._eatChannel = null;
+                    if (hud) this.hideChannelBar?.();
+                } else if (typeof ev.progress === "number" && hud && this.player._eatChannel) {
                     this.showChannelBar?.(Phaser.Math.Clamp(ev.progress, 0, 1));
                 }
             }
         }
+        if (ev.kind === "party_death") {
+            const pawn = (this.party || []).find((p) => p.pawnId === ev.pawnId);
+            if (pawn) this.partySys?.onMemberDied?.(pawn, null, { spawn: false });
+        }
         if (ev.kind === "player_left") {
-            const e = this.remotePlayers.get(ev.playerId);
-            if (e) {
-                e.root.destroy(true);
-                this.remotePlayers.delete(ev.playerId);
-            }
+            this.partySys?.clearPvpAggro?.(ev.playerId);
+            this._netRemoveRemotesForOwner(ev.playerId);
         }
         if (ev.kind === "attack") {
             const selfId = this._netPlayerId || this.net?.playerId;
-            if (ev.playerId && ev.playerId === selfId) return;
-            if (ev.playerId) {
-                let entry = this.remotePlayers.get(ev.playerId);
+            if (ev.playerId && ev.playerId !== selfId) {
+                const key = this._netRemoteKey(ev.playerId, ev.pawnId);
+                let entry = this.remotePlayers.get(key);
                 if (!entry) {
-                    // Remote may not exist yet — create a stub from the event pose
                     entry = this._netMakeRemote({
-                        id: ev.playerId,
+                        id: key,
                         name: "?",
                         x: ev.x ?? 0,
                         y: ev.y ?? 0,
                         facing: ev.facing || "down"
                     });
-                    this.remotePlayers.set(ev.playerId, entry);
+                    this.remotePlayers.set(key, entry);
+                    entry.ownerId = ev.playerId;
+                    entry.pawnId = ev.pawnId || ev.playerId;
                 }
                 this._netStartRemoteAttack(entry, Number(ev.angle) || 0, ev.facing, ev.art);
-            } else if (ev.uid && this.netMobs) {
+            } else if (
+                ev.playerId === selfId
+                && ev.pawnId
+                && ev.pawnId !== this.player?.pawnId
+                && !this.net?.isLocal
+            ) {
+                // Dedicated puppets: start the swing at the server pose.
+                // LocalSim SP already plays companion attacks in PartyAI — echoing
+                // `_pawn` x/y here snapped them onto the focused member.
+                const pawn = (this.party || []).find((p) => p.pawnId === ev.pawnId);
+                if (pawn) {
+                    if (Number.isFinite(ev.x) && Number.isFinite(ev.y)) {
+                        pawn.x = ev.x;
+                        pawn.y = ev.y;
+                        pawn._netTx = ev.x;
+                        pawn._netTy = ev.y;
+                    }
+                    pawn.startMeleeAttack?.(null, {
+                        silentNet: true,
+                        angle: Number(ev.angle) || 0,
+                        art: ev.art || null
+                    });
+                }
+            } else if (ev.wandererId || (ev.uid && this.partySys?.wanderers?.some?.((p) => p.pawnId === ev.uid))) {
+                const wid = ev.wandererId || ev.uid;
+                const pawn = this.partySys?.wanderers?.find?.((p) => p.pawnId === wid);
+                if (pawn) {
+                    if (Number.isFinite(ev.x) && Number.isFinite(ev.y)) {
+                        pawn.x = ev.x;
+                        pawn.y = ev.y;
+                        pawn._netTx = ev.x;
+                        pawn._netTy = ev.y;
+                    }
+                    pawn.startMeleeAttack?.(null, {
+                        silentNet: true,
+                        angle: Number(ev.angle) || 0,
+                        art: ev.art || null
+                    });
+                }
+            } else if (!ev.playerId && ev.uid && this.netMobs) {
                 const puppet = this.netMobs.get(ev.uid);
                 if (puppet) {
                     this._netStartRemoteAttack(puppet, Number(ev.angle) || 0, ev.facing, ev.art);
@@ -1434,6 +1814,20 @@ class SceneMain extends SceneBase {
                 segments: ev.segments || null,
                 color: ev.color || null
             });
+        }
+        if (ev.kind === "pvp_hit") {
+            this.partySys?.onPvpHit?.(ev);
+        }
+        if (ev.kind === "pvp_clear") {
+            const selfId = this._netPlayerId || this.net?.playerId;
+            if (ev.ownerId && ev.ownerId !== selfId) {
+                this.partySys?.clearPvpAggro?.(ev.ownerId);
+            } else if (ev.ownerId === selfId) {
+                this.partySys?.clearPvpAggro?.();
+            }
+        }
+        if (ev.kind === "recruit") {
+            this.partySys?.onRecruitResult?.(ev);
         }
         if (ev.kind === "vomit") {
             this._netApplyVomitEvent(ev);
@@ -1493,23 +1887,24 @@ class SceneMain extends SceneBase {
         }
     }
 
-    _netApplyYouVomit(you) {
-        if (!you || !this.player || !this.net?.connected || this.net.isLocal) return;
+    _netApplyYouVomit(you, pawn = null) {
+        const target = pawn || this.leader || this.player;
+        if (!you || !target || !this.net?.connected || this.net.isLocal) return;
         const remaining = Number(you.vomit?.remainingMs);
         if (remaining > 0) {
-            if (!this.player.isVomiting?.()) {
-                this.player.startVomit?.({
+            if (!target.isVomiting?.()) {
+                target.startVomit?.({
                     remainingMs: remaining,
                     fromServer: true,
                     silentLog: true
                 });
-            } else if (this.player._vomit) {
-                this.player._vomit.fromServer = true;
-                this.player._vomit.remainingMs = remaining;
+            } else if (target._vomit) {
+                target._vomit.fromServer = true;
+                target._vomit.remainingMs = remaining;
             }
             return;
         }
-        if (this.player._vomit?.fromServer) this.player._vomit = null;
+        if (target._vomit?.fromServer) target._vomit = null;
     }
 
     /**
@@ -2563,10 +2958,10 @@ class SceneMain extends SceneBase {
             && !p.isImmobile?.()
             && !p.isVomiting?.()
         ) {
-            const left = p.cursors.left.isDown || p.keys.A.isDown;
-            const right = p.cursors.right.isDown || p.keys.D.isDown;
-            const up = p.cursors.up.isDown || p.keys.W.isDown;
-            const down = p.cursors.down.isDown || p.keys.S.isDown;
+            const left = (p.cursors || this.cursors)?.left?.isDown || (p.keys || this.keys)?.A?.isDown;
+            const right = (p.cursors || this.cursors)?.right?.isDown || (p.keys || this.keys)?.D?.isDown;
+            const up = (p.cursors || this.cursors)?.up?.isDown || (p.keys || this.keys)?.W?.isDown;
+            const down = (p.cursors || this.cursors)?.down?.isDown || (p.keys || this.keys)?.S?.isDown;
             x = (right ? 1 : 0) - (left ? 1 : 0);
             y = (down ? 1 : 0) - (up ? 1 : 0);
         }
@@ -2577,39 +2972,80 @@ class SceneMain extends SceneBase {
             facing: p.facing || "down",
             px: p.x,
             py: p.y,
+            pawnId: p.pawnId || this._netPlayerId,
+            partyPoses: (this.party || [])
+                .filter((m) => m && m !== p && !m.isBodyDead?.())
+                .map((m) => ({
+                    id: m.pawnId,
+                    x: m.x,
+                    y: m.y,
+                    facing: m.facing || "down",
+                    sprint: !!m.isSprinting,
+                    attacking: !!m.isAttacking?.(),
+                    attackAngle: m.attackAngle ?? null,
+                    tending: !!(m._tendChannel && !m._tendChannel.corpse)
+                        || !!this.partySys?._isTendLocked?.(m)
+                })),
             viewChunks: this.genDistance || this.cullDistance || this.renderDistance || 6
         });
     }
 
     _netUpdateRemotes(delta) {
-        const t = Math.min(1, (delta || 16) / 1000 * 14);
         const now = this.time?.now || 0;
         for (const entry of this.remotePlayers.values()) {
-            entry.x = Phaser.Math.Linear(entry.x, entry.tx, t);
-            entry.y = Phaser.Math.Linear(entry.y, entry.ty, t);
+            const fromX = Number.isFinite(entry.fromX) ? entry.fromX : entry.x;
+            const fromY = Number.isFinite(entry.fromY) ? entry.fromY : entry.y;
+            const err = Math.hypot((entry.tx - fromX), (entry.ty - fromY));
+            if (err > 72 || !Number.isFinite(entry.snapAt)) {
+                entry.x = entry.tx;
+                entry.y = entry.ty;
+            } else {
+                const snapDt = entry.snapDt || (1000 / 15);
+                const age = performance.now() - entry.snapAt;
+                let u = snapDt > 0 ? age / snapDt : 1;
+                if (u > 1) u = 1;
+                entry.x = fromX + (entry.tx - fromX) * u;
+                entry.y = fromY + (entry.ty - fromY) * u;
+            }
             entry.root.setPosition(entry.x, entry.y);
             // Same Y-sort as local Player / Things / net mobs (not y+40 — that floats above trees)
-            entry.root.setDepth(entry.y);
+            entry.root.setDepth(entry.y | 0);
             const attacking = entry.attackTimer > 0;
             const prone = !!entry.prone;
             if (typeof setPuppetProne === "function") {
                 setPuppetProne(entry.spr, prone);
             }
-            const moving = !attacking && !prone && Math.hypot(entry.tx - entry.x, entry.ty - entry.y) > 0.35;
-            if (moving) {
-                const dx = entry.tx - entry.x;
-                const dy = entry.ty - entry.y;
-                entry.facing = Math.abs(dx) > Math.abs(dy)
-                    ? (dx > 0 ? "right" : "left")
-                    : (dy > 0 ? "down" : "up");
+            const snapDist = Number.isFinite(entry.snapDist) ? entry.snapDist : err;
+            const wantWalk = !attacking && !prone
+                && (entry.serverMoving === true || snapDist > 1);
+            if (wantWalk) {
+                entry.moving = true;
+                entry.stillMs = 0;
+            } else {
+                entry.stillMs = (entry.stillMs || 0) + (delta || 16);
+                if (entry.stillMs > 100) entry.moving = false;
+            }
+            if (prone) {
+                entry.facing = "right";
+            } else if (entry.moving) {
+                const dx = entry.tx - fromX;
+                const dy = entry.ty - fromY;
+                if (Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2) {
+                    entry.facing = Math.abs(dx) > Math.abs(dy)
+                        ? (dx > 0 ? "right" : "left")
+                        : (dy > 0 ? "down" : "up");
+                }
             }
             if (!prone) {
                 const facing = entry.facing || "down";
+                const key = `${entry.tex || entry.spr?.texture?.key}-${entry.moving ? "walk" : "idle"}-${facing}`;
                 if (typeof PlayerLook !== "undefined") {
-                    PlayerLook.play(entry.spr, facing, moving);
+                    PlayerLook.play(entry.spr, facing, !!entry.moving);
                 } else {
-                    const key = moving ? `walk-${facing}` : `idle-${facing}`;
-                    if (this.anims.exists(key)) entry.spr.play(key, true);
+                    if (key !== entry.animKey && this.anims.exists(key)) {
+                        entry.animKey = key;
+                        entry.spr.play(key, true);
+                    }
                 }
             }
 
@@ -2646,15 +3082,37 @@ class SceneMain extends SceneBase {
                 }
             }
             this._netLayoutRemoteLabels(entry);
+            if (entry.name?.setColor) {
+                entry.name.setColor(this.partySys?.nameColorFor?.({
+                    ownerId: entry.ownerId,
+                    hostile: !!entry.hostile,
+                    role: entry.role
+                }) || "#ffffff");
+            }
         }
     }
 
+    _unbindSceneListeners() {
+        if (this._onGameResize && this.scale) {
+            this.scale.off("resize", this._onGameResize);
+        }
+        this._onGameResize = null;
+        if (this._onPreUpdate) this.events?.off("preupdate", this._onPreUpdate);
+        if (this._onPostUpdate) this.events?.off("postupdate", this._onPostUpdate);
+        this._onPreUpdate = null;
+        this._onPostUpdate = null;
+        this._playReady = false;
+    }
+
     shutdown() {
+        this._playReady = false;
+        this._unbindSceneListeners();
         this._teardownCharacterAutosave?.();
         this._unbindNetClose();
         if (this._gamePaused) {
             try { this.net?.setPaused?.(false); } catch (_) {}
             try { this.physics?.world?.resume?.(); } catch (_) {}
+            try { this.anims?.resumeAll?.(); } catch (_) {}
             this._gamePaused = false;
         }
         // Leave already saved + closed LocalSim; don't kick off another async close.
@@ -2736,6 +3194,7 @@ class SceneMain extends SceneBase {
     }
 
     drawBars() {
+        if (this._leavingGame || !this.painBar?.active || !this.player) return;
         const s = this.uiScale || 1;
         const x = Math.round(24 * s);
         const y = Math.round(8 * s);
@@ -2805,23 +3264,27 @@ class SceneMain extends SceneBase {
     }
 
     /**
-     * Graphics above the time-of-day veil. Not parented into a Layer — Layers
-     * sit under lightGfx — and ignored by the UI cam so they stay world-locked.
+     * World HUD above the time-of-day veil. Parent into worldHudLayer (depth 51)
+     * so the UI camera never draws a second unzoomed copy at world x/y.
      */
+    _liftAboveVeil(obj, depth = 51) {
+        if (!obj) return obj;
+        if (obj.parentContainer) obj.parentContainer.remove(obj);
+        const layer = this.worldHudLayer;
+        if (layer) {
+            if (obj.displayList !== layer) layer.add(obj);
+        } else {
+            this.add.existing(obj);
+            this._uiCam?.ignore(obj);
+        }
+        obj.setDepth(depth);
+        return obj;
+    }
+
     _ensureWorldHudBar(existing) {
         const depth = 51;
-        if (existing?.active) {
-            if (existing.parentContainer) {
-                existing.parentContainer.remove(existing);
-                this.add.existing(existing);
-            }
-            existing.setDepth(depth);
-            this._uiCam?.ignore(existing);
-            return existing;
-        }
-        const g = this.add.graphics().setDepth(depth).setVisible(false);
-        this._uiCam?.ignore(g);
-        return g;
+        if (existing?.active) return this._liftAboveVeil(existing, depth);
+        return this._liftAboveVeil(this.add.graphics().setVisible(false), depth);
     }
 
     /**
@@ -2946,14 +3409,14 @@ class SceneMain extends SceneBase {
 
         this.tooltip = this.add.container(0, 0).setDepth(40000).setVisible(false);
         this.tooltipBg = this.add.graphics();
-        this.tooltipText = this.add.text(0, 0, "", {
-            fontFamily: "PrimaryFont",
-            fontSize: "18px",
+        this.tooltipText = crispUiText(this.add.text(0, 0, "", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: `${pixelUiFontSize(16, 1)}px`,
             color: "#ffffff",
             stroke: "#000000",
             strokeThickness: 2,
             padding: { left: this._tooltipPadding, right: this._tooltipPadding, top: this._tooltipPadding, bottom: this._tooltipPadding }
-        });
+        }));
         this.tooltip.add([this.tooltipBg, this.tooltipText]);
         this.uiLayer.add(this.tooltip);
 
@@ -2987,7 +3450,8 @@ class SceneMain extends SceneBase {
                     cur === this.healthPanel?.root ||
                     cur === this.knappingPanel?.container ||
                     cur === this.knappingPanel?.helpBtn ||
-                    cur === this.deathOverlay
+                    cur === this.deathOverlay ||
+                    cur === this.partyPanel?.root
                 ) {
                     return true;
                 }
@@ -3151,10 +3615,19 @@ class SceneMain extends SceneBase {
                 }
             }
 
+            const downedAlly = this.partySys?.downedAllyUnderPointer?.(pointer);
+            if (downedAlly) return downedAlly;
+
             for (let i = hits.length - 1; i >= 0; i--) {
                 const obj = hits[i];
                 if (!obj?.active || !obj.input?.enabled) continue;
                 if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
+                // Dead party sprites stay click-through for loot; downed allies
+                // must still hover so the name / "Downed" tip can show.
+                if (
+                    this.party?.includes(obj)
+                    && (obj.isBodyDead?.() || obj._bodyDead)
+                ) continue;
                 return obj;
             }
             return null;
@@ -3311,7 +3784,7 @@ class SceneMain extends SceneBase {
 
                 if (top) top.emit("pointerover", pointer);
                 else this.hideWorldTooltip();
-            } else if (top && this.tooltip.visible) {
+            } else if (top && this.tooltip?.visible && this.tooltip.scene) {
                 this.positionTooltip(pointer.x, pointer.y);
             }
 
@@ -3330,42 +3803,46 @@ class SceneMain extends SceneBase {
         };
 
         this.input.on("pointermove", (pointer) => {
-            if (this.tooltip.visible) this.positionTooltip(pointer.x, pointer.y);
+            if (!this._playReady || this._leavingGame) return;
+            if (this.tooltip?.visible) this.positionTooltip(pointer.x, pointer.y);
         });
         // Snap player for draw only; restore true pose before the next physics step
         // so diagonal speed stays normalized (square-grid body snaps are √2-fast).
-        this.events.on("preupdate", () => this.restorePlayerPhysicsPos());
-        this.events.on("postupdate", () => {
+        this._onPreUpdate = () => {
+            if (!this._playReady || this._leavingGame) return;
+            this.restorePlayerPhysicsPos();
+        };
+        this._onPostUpdate = () => {
+            if (!this._playReady || this._leavingGame) return;
             this.syncPointerHover();
             // After physics: snap player+camera for this frame's render
             this.syncCameraToPlayer();
-            this.player?.syncFxRoot?.();
             this.player?._syncChatBubble?.();
             if (this._channelBarProgress != null) this._drawChannelBar();
             if (this._chopBarFrac != null) this._drawTreeChopBar();
-            this.meleeSlots?.drawDebug?.();
             this.drawChunkDebug();
-        });
-        this.scale.on("resize", () => this.hideTooltip());
+        };
+        this.events.on("preupdate", this._onPreUpdate);
+        this.events.on("postupdate", this._onPostUpdate);
     }
 
     createClockDisplay() {
         this.clockText = this.add.text(0, 0, "", {
             fontSize: "16px",
-            fontFamily: "monospace",
+            fontFamily: PIXEL_UI_FONT,
             color: "#ffffff",
             stroke: "#000000",
-            strokeThickness: 3
+            strokeThickness: 2
         }).setOrigin(0.5, 0).setDepth(9998);
         this.uiLayer.add(this.clockText);
         this.updateClockText();
 
         this.fpsText = this.add.text(0, 0, "", {
-            fontSize: "12px",
-            fontFamily: "monospace",
+            fontSize: "16px",
+            fontFamily: PIXEL_UI_FONT,
             color: "#a8e6a0",
             stroke: "#000000",
-            strokeThickness: 3
+            strokeThickness: 2
         }).setOrigin(0.5, 0).setDepth(9998).setScrollFactor(0);
         this.uiLayer.add(this.fpsText);
         this._fpsVisible = true;
@@ -3376,10 +3853,10 @@ class SceneMain extends SceneBase {
 
         // /debug location — blue X + red Y above hotbar center
         const locStyle = {
-            fontSize: "14px",
-            fontFamily: "monospace",
+            fontSize: "16px",
+            fontFamily: PIXEL_UI_FONT,
             stroke: "#000000",
-            strokeThickness: 3
+            strokeThickness: 2
         };
         this.locXText = this.add.text(0, 0, "", { ...locStyle, color: "#4da6ff" })
             .setOrigin(1, 1).setDepth(9998).setScrollFactor(0).setVisible(false);
@@ -3462,18 +3939,14 @@ class SceneMain extends SceneBase {
             ? slot0.y - slotW
             : this.scale.height - Math.round(48 * s);
         const y = slotTop - Math.round(4 * s);
-        const font = `${Math.round(14 * s)}px`;
-        const stroke = Math.max(2, Math.round(3 * s));
-        this.locXText
-            .setFontSize(font)
-            .setStroke("#000000", stroke)
-            .setOrigin(1, 1)
-            .setPosition(cx, y);
-        this.locYText
-            .setFontSize(font)
-            .setStroke("#000000", stroke)
-            .setOrigin(0, 1)
-            .setPosition(cx, y);
+        const fs = pixelUiFontSize(16, s);
+        const stroke = Math.max(2, Math.round(fs / 8));
+        crispUiText(this.locXText);
+        crispUiText(this.locYText);
+        this.locXText.setFontSize(`${fs}px`).setStroke("#000000", stroke);
+        this.locYText.setFontSize(`${fs}px`).setStroke("#000000", stroke);
+        placeUiText(this.locXText, cx, y, 1, 1);
+        placeUiText(this.locYText, cx, y, 0, 1);
     }
 
     updateFpsMeter(delta) {
@@ -3508,6 +3981,13 @@ class SceneMain extends SceneBase {
         } else {
             this.fpsText.setText(`${avg} fps (min ${min})`);
         }
+        crispUiText(this.fpsText);
+        const s = this.uiScale || 1;
+        const pad = Math.round(8 * s);
+        const clockBottom = this.clockText
+            ? pad + Math.round(this.clockText.height || pixelUiFontSize(16, s))
+            : pad;
+        placeUiText(this.fpsText, this.scale.width / 2, clockBottom + Math.round(2 * s), 0.5, 0);
     }
 
     createLightVeil() {
@@ -3612,23 +4092,41 @@ class SceneMain extends SceneBase {
         this.lightGfx.clear();
         if (skyDark < 0.01 && skyWash < 0.01) return;
 
-        for (let ty = y0; ty < y1; ty++) {
-            for (let tx = x0; tx < x1; tx++) {
-                const block = this.blockLight.get(`${tx},${ty}`) || 0;
-                const light = 1 - Math.min(15, block) / 15;
-                const dark = skyDark * light;
-                const wash = skyWash * light;
-                // Night: black veil. Dawn/golden: deep warm tint (pale washes bleach the art).
-                if (dark >= 0.02) {
-                    this.lightGfx.fillStyle(0x060a14, Math.min(0.96, dark));
-                    this.lightGfx.fillRect(tx * ts, ty * ts, ts, ts);
-                }
-                if (wash >= 0.02) {
-                    this.lightGfx.fillStyle(
-                        Phaser.Display.Color.GetColor(r, g, b),
-                        Math.min(0.28, wash)
-                    );
-                    this.lightGfx.fillRect(tx * ts, ty * ts, ts, ts);
+        const wx = x0 * ts;
+        const wy = y0 * ts;
+        const ww = (x1 - x0) * ts;
+        const wh = (y1 - y0) * ts;
+        const washColor = Phaser.Display.Color.GetColor(r, g, b);
+
+        const fillSky = (dark, wash) => {
+            if (dark >= 0.02) {
+                this.lightGfx.fillStyle(0x060a14, Math.min(0.96, dark));
+                this.lightGfx.fillRect(wx, wy, ww, wh);
+            }
+            if (wash >= 0.02) {
+                this.lightGfx.fillStyle(washColor, Math.min(0.28, wash));
+                this.lightGfx.fillRect(wx, wy, ww, wh);
+            }
+        };
+
+        // No campfire light: one overlay instead of hundreds of tile rects (walking hitch).
+        if (!this.blockLight.size) {
+            fillSky(skyDark, skyWash);
+        } else {
+            for (let ty = y0; ty < y1; ty++) {
+                for (let tx = x0; tx < x1; tx++) {
+                    const block = this.blockLight.get(`${tx},${ty}`) || 0;
+                    const light = 1 - Math.min(15, block) / 15;
+                    const dark = skyDark * light;
+                    const wash = skyWash * light;
+                    if (dark >= 0.02) {
+                        this.lightGfx.fillStyle(0x060a14, Math.min(0.96, dark));
+                        this.lightGfx.fillRect(tx * ts, ty * ts, ts, ts);
+                    }
+                    if (wash >= 0.02) {
+                        this.lightGfx.fillStyle(washColor, Math.min(0.28, wash));
+                        this.lightGfx.fillRect(tx * ts, ty * ts, ts, ts);
+                    }
                 }
             }
         }
@@ -3747,6 +4245,7 @@ class SceneMain extends SceneBase {
         if (this.storagePanel?.containsPointer?.(pointer)) return true;
         if (this.pointerOnCraftTake?.(pointer)) return true;
         if (this._pointerOverCraftMenu?.(pointer)) return true;
+        if (this.partyPanel?.containsPointer?.(pointer)) return true;
         return false;
     }
 
@@ -4312,7 +4811,8 @@ class SceneMain extends SceneBase {
                 type: NetProtocol.Actions.PLACE,
                 tx: tile.tx,
                 ty: tile.ty,
-                rot
+                rot,
+                pawnId: this.player?.pawnId
             });
             if (!(info.held.quantity > 1)) this.resetPlaceRot();
             return true;
@@ -4813,6 +5313,9 @@ class SceneMain extends SceneBase {
         const hh = String(h).padStart(2, "0");
         const mm = String(m).padStart(2, "0");
         this.clockText.setText(`Day ${this.gameDay}  ${hh}:${mm}`);
+        crispUiText(this.clockText);
+        const s = this.uiScale || 1;
+        placeUiText(this.clockText, this.scale.width / 2, Math.round(8 * s), 0.5, 0);
     }
 
     /**
@@ -4906,6 +5409,9 @@ class SceneMain extends SceneBase {
         this.updateTimeTint();
 
         this.player.hungerTick();
+        for (const p of this.party || []) {
+            if (p && p !== this.player && !p.isBodyDead?.()) p.hungerTick?.();
+        }
         this.tickSoakDrops();
         this.tickSpoilage();
         this.tickCorpseDecay();
@@ -4925,6 +5431,14 @@ class SceneMain extends SceneBase {
         }
         if (this.player && !this.player.isBodyDead?.()) {
             BodyHealing.minuteTick(this.player, this);
+        }
+        for (const p of this.party || []) {
+            if (p && p !== this.player && p.active && !p.isBodyDead?.()) {
+                BodyHealing.minuteTick(p, this);
+            }
+        }
+        for (const w of this.partySys?.wanderers || []) {
+            if (w?.active && !w.isBodyDead?.()) BodyHealing.minuteTick(w, this);
         }
         for (const mob of this.mobs?.getChildren?.() || []) {
             if (mob?.active && !mob.isBodyDead?.()) BodyHealing.minuteTick(mob, this);
@@ -5427,17 +5941,25 @@ class SceneMain extends SceneBase {
         };
 
         if (!skipPlayerSpoil) {
-        const inv = this.player.inventory;
-        for (let i = 0; i < inv.length; i++) {
-                if (inv[i]) inv[i] = applyCharacterStack(inv[i]);
-        }
-
-        const eq = this.player.equipment;
-        for (const key of ["head", "torso", "legs", "feet"]) {
-                if (eq[key]) eq[key] = applyCharacterStack(eq[key]);
-        }
-        for (let i = 0; i < eq.waist.length; i++) {
-                if (eq.waist[i]) eq.waist[i] = applyCharacterStack(eq.waist[i]);
+            const pawns = (this.party && this.party.length) ? this.party : [this.player];
+            for (const pawn of pawns) {
+                if (!pawn || pawn.isBodyDead?.()) continue;
+                const inv = pawn.inventory;
+                if (Array.isArray(inv)) {
+                    for (let i = 0; i < inv.length; i++) {
+                        if (inv[i]) inv[i] = applyCharacterStack(inv[i]);
+                    }
+                }
+                const eq = pawn.equipment;
+                if (!eq) continue;
+                for (const key of ["head", "torso", "legs", "feet"]) {
+                    if (eq[key]) eq[key] = applyCharacterStack(eq[key]);
+                }
+                if (Array.isArray(eq.waist)) {
+                    for (let i = 0; i < eq.waist.length; i++) {
+                        if (eq.waist[i]) eq.waist[i] = applyCharacterStack(eq.waist[i]);
+                    }
+                }
             }
         }
 
@@ -5870,7 +6392,6 @@ class SceneMain extends SceneBase {
             if (delta < 0) this._shiftCraftPage(-1);
             else if (delta > 0) this._shiftCraftPage(1);
         });
-        this.scale.on('resize', () => this.positionCraftMenu());
     }
 
     positionCraftMenu() {
@@ -5945,9 +6466,9 @@ class SceneMain extends SceneBase {
             this.craftContainer.add(icon);
 
             // Quantity
-            const quantity = this.add.text(x + slotW - 4 * s, y + slotH - 4 * s, recipe.quantity > 1 ? String(recipe.quantity) : '', {
-                fontSize: `${Math.round(14 * s)}px`, fontFamily: 'monospace', stroke: '#000', strokeThickness: 2, align: 'right'
-            }).setOrigin(1, 1).setVisible(recipe.quantity > 1);
+            const quantity = crispUiText(this.add.text(x + slotW - 4 * s, y + slotH - 4 * s, recipe.quantity > 1 ? String(recipe.quantity) : '', {
+                fontSize: `${pixelUiFontSize(16, s)}px`, fontFamily: PIXEL_UI_FONT, stroke: '#000', strokeThickness: 2, align: 'right'
+            }).setOrigin(1, 1).setVisible(recipe.quantity > 1));
             this.craftContainer.add(quantity);
 
             // Tooltip
@@ -6039,13 +6560,13 @@ class SceneMain extends SceneBase {
             gridW / 2 + gap, y, bw, pagerH, ">",
             page < pages - 1, () => this._shiftCraftPage(1), s
         );
-        const label = this.add.text(gridW / 2, y, `${page + 1} / ${pages}`, {
-            fontFamily: "PrimaryFont",
-            fontSize: `${Math.round(13 * s)}px`,
+        const label = crispUiText(this.add.text(gridW / 2, y, `${page + 1} / ${pages}`, {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: `${pixelUiFontSize(16, s)}px`,
             color: "#d4c4a8",
             stroke: "#000000",
             strokeThickness: Math.max(2, Math.round(2 * s))
-        }).setOrigin(0.5);
+        }).setOrigin(0.5));
         this.craftContainer.add(label);
     }
 
@@ -6057,11 +6578,11 @@ class SceneMain extends SceneBase {
         const OUTLINE_PRESS = 0xd4a84b;
         const rect = this.add.rectangle(x, y, bw, bh, BG, 1)
             .setStrokeStyle(2, OUTLINE);
-        const text = this.add.text(x, y, label, {
-            fontFamily: "PrimaryFont",
-            fontSize: `${Math.round(16 * s)}px`,
+        const text = crispUiText(this.add.text(x, y, label, {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: `${pixelUiFontSize(16, s)}px`,
             color: "#d4c4a8"
-        }).setOrigin(0.5);
+        }).setOrigin(0.5));
         this.craftContainer.add(rect);
         this.craftContainer.add(text);
         if (!enabled) {
@@ -6122,8 +6643,8 @@ class SceneMain extends SceneBase {
             .setStrokeStyle(2, OUTLINE)
             .setInteractive({ useHandCursor: true });
         this._craftTakeText = this.add.text(0, 0, "Take", {
-            fontFamily: "PrimaryFont",
-            fontSize: "13px",
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "16px",
             color: "#d4c4a8"
         }).setOrigin(0.5);
         this._craftTakeBtn = this.add.container(0, 0, [this._craftTakeRect, this._craftTakeText])
@@ -6190,7 +6711,7 @@ class SceneMain extends SceneBase {
         this._craftTakeBh = bh;
         this._craftTakeRect.setSize(bw, bh);
         this._craftTakeText.setResolution(zoom * (window.devicePixelRatio || 1));
-        this._craftTakeText.setFontSize(`${Math.round(13 * s)}px`);
+        this._craftTakeText.setFontSize(`${pixelUiFontSize(16, s)}px`);
         this._craftTakeText.setScale(1 / zoom);
         this._craftTakeRect.setInteractive({ useHandCursor: true });
         if (this._craftTakeRect.input?.hitArea?.setTo) {
@@ -6281,6 +6802,7 @@ class SceneMain extends SceneBase {
     _craftIngredientLabel(ingredient) {
         if (ingredient.hideStage) {
             const stage = String(ingredient.hideStage);
+            if (stage === "leather") return "Any Leather";
             const label = stage.charAt(0).toUpperCase() + stage.slice(1);
             return `Any ${label} Hide`;
         }
@@ -6403,7 +6925,8 @@ class SceneMain extends SceneBase {
             this._netSendMove?.(true);
             this.net.sendAction({
                 type: NetProtocol.Actions.CRAFT,
-                id: recipe.id
+                id: recipe.id,
+                pawnId: this.player?.pawnId
             });
             return;
         }
@@ -6533,7 +7056,9 @@ class SceneMain extends SceneBase {
             "C — Crafting",
             "E — Equipment",
             "H — Health",
-            "T — Chat"
+            "T — Chat",
+            ". / , — Next / previous party member",
+            "Ctrl+1–6 — Select party member"
         ].join("\n");
     }
 
@@ -6541,22 +7066,22 @@ class SceneMain extends SceneBase {
         this.deathOverlay = this.add.container(0, 0).setScrollFactor(0).setDepth(20000).setVisible(false);
         this.uiLayer.add(this.deathOverlay);
         this.deathBg = this.add.rectangle(0, 0, 400, 200, 0x000000, 0.75).setOrigin(0.5);
-        this.deathTitle = this.add.text(0, -50, "You died", {
-            fontFamily: "monospace",
-            fontSize: "36px",
+        this.deathTitle = crispUiText(this.add.text(0, -50, "You died", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "32px",
             color: "#ff6666",
             align: "center"
-        }).setOrigin(0.5);
-        this.deathRespawn = this.add.text(0, 20, "[ Respawn ]", {
-            fontFamily: "monospace",
-            fontSize: "20px",
+        }).setOrigin(0.5));
+        this.deathRespawn = crispUiText(this.add.text(0, 20, "[ Respawn ]", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "16px",
             color: "#e8e0d0"
-        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-        this.deathRespawnHere = this.add.text(0, 55, "[ Respawn Here (dev) ]", {
-            fontFamily: "monospace",
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true }));
+        this.deathRespawnHere = crispUiText(this.add.text(0, 55, "[ Respawn Here (dev) ]", {
+            fontFamily: PIXEL_UI_FONT,
             fontSize: "16px",
             color: "#aaa090"
-        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true }));
         this.deathOverlay.add([this.deathBg, this.deathTitle, this.deathRespawn, this.deathRespawnHere]);
         this.deathRespawn.on("pointerdown", () => this.respawnPlayer(false));
         this.deathRespawnHere.on("pointerdown", () => this.respawnPlayer(true));
@@ -6597,19 +7122,22 @@ class SceneMain extends SceneBase {
     }
 
     onPlayerDied(killer, opts = {}) {
-        this._deathPos = { x: this.player.x, y: this.player.y };
-        this.player._tendChannel = null;
-        this.player._skinChannel = null;
-        this.player._eatChannel = null;
-        this.hideChannelBar?.();
+        const leader = this.leader || this.player;
+        this.partySys.leaderDead = true;
+        this.partySys.clearPvpAggro?.();
+        this._deathPos = { x: leader.x, y: leader.y };
+        leader._tendChannel = null;
+        leader._skinChannel = null;
+        leader._eatChannel = null;
+        if (this.player === leader) this.hideChannelBar?.();
         this.corpsePanel?.close?.(true);
         const dedicated = !!(this.isNet && this.net?.connected && !this.net.isLocal);
         const spawnCorpse = opts.spawnCorpse !== false;
         // Dedicated: spawn a pending local corpse with a shared id so you can
         // see/loot it immediately; server adopts that id on DIE.
         const deathCorpse = spawnCorpse
-            ? this.player.createDeathCorpse({ spawn: true })
-            : this.player.createDeathCorpse({ spawn: false });
+            ? leader.createDeathCorpse({ spawn: true })
+            : leader.createDeathCorpse({ spawn: false });
         if (dedicated && deathCorpse?.entry) {
             deathCorpse.entry.netSync = true;
             deathCorpse.entry.pendingServer = true;
@@ -6617,16 +7145,17 @@ class SceneMain extends SceneBase {
             if (!this.netCorpses) this.netCorpses = new Map();
             this.netCorpses.set(deathCorpse.entry.id, deathCorpse);
         }
-        this.player.setVisible(false);
-        if (this.player.body) this.player.body.enable = false;
-        this.player.setVelocity(0, 0);
+        leader.setVisible(false);
+        if (leader.body) leader.body.enable = false;
+        leader.setVelocity(0, 0);
         // Keep character autosave + server session aligned with emptied gear
         if (this._lastYou) {
             this._lastYou = {
                 ...this._lastYou,
-                inventory: this.player.inventory,
-                equipment: this.player.equipment,
-                dead: true
+                inventory: leader.inventory,
+                equipment: leader.equipment,
+                dead: true,
+                leaderDead: true
             };
         }
         if (this.isNet && this.net?.connected) {
@@ -6637,7 +7166,8 @@ class SceneMain extends SceneBase {
                     type: NetProtocol.Actions.DIE,
                     corpseId: deathCorpse?.entry?.id || null,
                     x: deathCorpse?.x,
-                    y: deathCorpse?.y
+                    y: deathCorpse?.y,
+                    pawnId: leader.pawnId
                 });
             }
         }
@@ -6647,29 +7177,33 @@ class SceneMain extends SceneBase {
         this._pendingDeathText = null;
         this._applyDeathMessage(msg);
         if (!dedicated) this.combatLog?.push(msg);
-        this.deathOverlay?.setVisible(true);
+        const showOverlay = this.player === leader || !this.partySys?.living?.()?.length;
+        this.deathOverlay?.setVisible(showOverlay);
         this.layoutDeathOverlay();
+        this.partyPanel?.refresh?.();
     }
 
     layoutDeathOverlay() {
         if (!this.deathOverlay) return;
         const s = this.uiScale || 1;
         this.deathOverlay.setPosition(this.scale.width / 2, this.scale.height / 2);
-        this.deathTitle.setFontSize(Math.round(36 * s));
+        this.deathTitle.setFontSize(pixelUiFontSize(32, s));
         this.deathTitle.setWordWrapWidth(Math.round(380 * s));
         this.deathTitle.setAlign("center");
-        this.deathRespawn.setFontSize(Math.round(20 * s));
-        this.deathRespawnHere.setFontSize(Math.round(16 * s));
+        this.deathRespawn.setFontSize(pixelUiFontSize(16, s));
+        this.deathRespawnHere.setFontSize(pixelUiFontSize(16, s));
         this.deathBg.setSize(420 * s, 220 * s);
     }
 
-    /** Put the player back on the continuous physics pose before the next step. */
+    /** Put pawns back on the continuous physics pose before the next step. */
     restorePlayerPhysicsPos() {
-        const player = this.player;
-        if (!player?.active || player._physX == null) return;
-        if (player.x !== player._physX || player.y !== player._physY) {
-            player.setPosition(player._physX, player._physY);
-        }
+        const restore = (p) => {
+            if (!p?.active || p._physX == null) return;
+            if (p.x !== p._physX || p.y !== p._physY) p.setPosition(p._physX, p._physY);
+        };
+        for (const p of this.party || []) restore(p);
+        if (this.player && !(this.party || []).includes(this.player)) restore(this.player);
+        for (const w of this.partySys?.wanderers || []) restore(w);
     }
 
     /**
@@ -6684,16 +7218,21 @@ class SceneMain extends SceneBase {
         const cam = this.cameras?.main;
         if (!player?.active || !cam) return;
         const z = this.worldZoom || cam.zoom || 1;
-        player._physX = player.x;
-        player._physY = player.y;
-        const x = Math.round(player.x * z) / z;
-        const y = Math.round(player.y * z) / z;
-        if (player.x !== x || player.y !== y) {
-            player.setPosition(x, y);
-        }
+        const snap = (p) => {
+            if (!p?.active) return;
+            p._physX = p.x;
+            p._physY = p.y;
+            const x = Math.round(p.x * z) / z;
+            const y = Math.round(p.y * z) / z;
+            if (p.x !== x || p.y !== y) p.setPosition(x, y);
+            p.syncFxRoot?.();
+        };
+        for (const p of this.party || []) snap(p);
+        if (!(this.party || []).includes(player)) snap(player);
+        for (const w of this.partySys?.wanderers || []) snap(w);
         const c = typeof player.bodyCenter === "function"
             ? player.bodyCenter()
-            : { x, y };
+            : { x: player.x, y: player.y };
         cam.centerOn(
             Math.round(c.x * z) / z,
             Math.round(c.y * z) / z
@@ -6714,7 +7253,10 @@ class SceneMain extends SceneBase {
                 y = pick.y;
             }
         }
-        this.player.respawnFresh(x, y);
+        const leader = this.leader || this.player;
+        leader.respawnFresh(x, y);
+        if (this.partySys) this.partySys.leaderDead = false;
+        if (this.player !== leader) this.partySys?.switchControl?.(leader, { silentNet: true });
         this._pendingDeathText = null;
         this.deathOverlay?.setVisible(false);
         this.closeOpenMenus();
@@ -6764,14 +7306,14 @@ class SceneMain extends SceneBase {
         const OUTLINE = 0x2a2218;
         const OUTLINE_HOVER = 0xffffff;
         const OUTLINE_PRESS = 0xd4a84b;
-        const text = this.add.text(0, 0, label, {
-            fontFamily: "PrimaryFont",
-            fontSize: "18px",
+        const text = crispUiText(this.add.text(0, 0, label, {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "24px",
             color: "#d4c4a8"
-        }).setOrigin(0.5);
-        // Fixed size so label updates don't rebuild the hit area / wipe listeners
-        const bw = 260;
-        const bh = 44;
+        }).setOrigin(0.5));
+        // Same box as title-screen Singleplayer / Multiplayer
+        const bw = 240;
+        const bh = 52;
         const rect = this.add.rectangle(0, 0, bw, bh, BG, 1)
             .setStrokeStyle(2, OUTLINE)
             .setInteractive({ useHandCursor: true });
@@ -6866,21 +7408,22 @@ class SceneMain extends SceneBase {
         if (this._isSingleplayerSession()) {
             this.net?.setPaused?.(true);
             this.physics?.world?.pause?.();
+            this.anims?.pauseAll?.();
         }
 
         const w = this.scale.width;
         const h = this.scale.height;
         const dim = this.add.rectangle(w / 2, h / 2, w + 4, h + 4, 0x000000, 0.55)
             .setInteractive();
-        const title = this.add.text(w / 2, h * 0.36,
+        const title = crispUiText(this.add.text(w / 2, h * 0.36,
             this._isSingleplayerSession() ? "Paused" : "Menu", {
-                fontFamily: "PrimaryFont",
+                fontFamily: PIXEL_UI_FONT,
                 fontSize: "32px",
                 color: "#e8dcc8"
-            }).setOrigin(0.5);
+            }).setOrigin(0.5));
         const quitLabel = this._isSingleplayerSession() ? "Save and Quit" : "Leave Game";
         const y0 = h * 0.46;
-        const gap = 52;
+        const gap = 60;
         const resume = this._pauseMenuButton(w / 2, y0, "Resume", () => this._closePauseMenu());
         const guiScale = this._pauseMenuButton(
             w / 2,
@@ -6910,6 +7453,7 @@ class SceneMain extends SceneBase {
         if (this._isSingleplayerSession()) {
             this.net?.setPaused?.(false);
             this.physics?.world?.resume?.();
+            this.anims?.resumeAll?.();
         }
         const ui = this._pauseUi;
         this._pauseUi = null;
@@ -6933,7 +7477,7 @@ class SceneMain extends SceneBase {
         const h = this.scale.height;
         const { dim, title, resume, guiScale, quit } = this._pauseUi;
         const y0 = h * 0.46;
-        const gap = 52;
+        const gap = 60;
         dim.setPosition(w / 2, h / 2).setSize(w + 4, h + 4);
         title.setPosition(w / 2, h * 0.36);
         resume?.setPosition(w / 2, y0);
@@ -6954,6 +7498,7 @@ class SceneMain extends SceneBase {
         if (this._isSingleplayerSession()) {
             try { this.net?.setPaused?.(true); } catch (_) {}
             try { this.physics?.world?.pause?.(); } catch (_) {}
+            try { this.anims?.pauseAll?.(); } catch (_) {}
         }
         try { this.cameras?.main?.setBackgroundColor?.("#1a1510"); } catch (_) {}
 
@@ -6961,11 +7506,11 @@ class SceneMain extends SceneBase {
         const h = this.scale.height;
         const bg = this.add.rectangle(w / 2, h / 2, w + 4, h + 4, 0x1a1510, 1)
             .setInteractive();
-        const text = this.add.text(w / 2, h / 2, "Saving...", {
-            fontFamily: "monospace",
-            fontSize: "28px",
+        const text = crispUiText(this.add.text(w / 2, h / 2, "Saving...", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "32px",
             color: "#e8dcc8"
-        }).setOrigin(0.5);
+        }).setOrigin(0.5));
         this.uiLayer.add(bg);
         this.uiLayer.add(text);
         this.uiLayer.bringToTop(bg);
@@ -6986,7 +7531,8 @@ class SceneMain extends SceneBase {
         this._showSavingScreen();
 
         try {
-            await this._saveCharacterNow();
+            await this._saveCharacterNow(null, { final: true });
+            this._charSaveFrozen = true;
             if (this.net?.isLocal) {
                 await this.net.close();
             } else if (this.net) {
@@ -7147,15 +7693,87 @@ class SceneMain extends SceneBase {
             for (const c of this.corpses.getChildren().slice()) c.destroy();
             this.corpses.clear(true, true);
         }
-        if (this.meleeSlots?.slots) {
-            for (const s of this.meleeSlots.slots) s.owners = [];
-        }
         this.markLightDirty?.();
         return n;
     }
 
     chunkPx() {
         return this.chunkSize * this.tileSize;
+    }
+
+    allocChunkRt(wx, wy) {
+        const w = this.chunkPx();
+        this._chunkRtPool = this._chunkRtPool || [];
+        let rt = null;
+        while (this._chunkRtPool.length) {
+            const cand = this._chunkRtPool.pop();
+            if (cand?.active && cand.scene) {
+                rt = cand;
+                break;
+            }
+            try { cand?.destroy?.(); } catch (_) {}
+        }
+        if (!rt) {
+            rt = this.make.renderTexture({
+                x: wx,
+                y: wy,
+                width: w,
+                height: w,
+                add: false
+            }).setOrigin(0).setDepth(0).setVisible(false);
+        } else {
+            rt.setPosition(wx, wy).setVisible(false);
+            rt.clear();
+        }
+        return rt;
+    }
+
+    recycleChunkRt(rt) {
+        if (!rt) return;
+        this.groundLayer?.remove?.(rt);
+        rt.setVisible(false);
+        try { rt.clear(); } catch (_) {}
+        this._chunkRtPool = this._chunkRtPool || [];
+        this._chunkRtPool.push(rt);
+    }
+
+    enqueueChunkPaint(chunk) {
+        return new Promise((resolve) => {
+            this._chunkPaintQ = this._chunkPaintQ || [];
+            this._chunkPaintQ.push({ chunk, resolve });
+        });
+    }
+
+    dropChunkPaint(chunk) {
+        const q = this._chunkPaintQ;
+        if (!q?.length) return;
+        this._chunkPaintQ = q.filter((job) => {
+            if (job.chunk !== chunk) return true;
+            job.resolve();
+            return false;
+        });
+    }
+
+    _pumpChunkPaint() {
+        if (this._paintBusy) return;
+        const q = this._chunkPaintQ;
+        if (!q?.length) return;
+        while (q.length) {
+            const job = q.shift();
+            const chunk = job?.chunk;
+            if (!chunk?.isLoaded || chunk.scene !== this) {
+                job.resolve();
+                continue;
+            }
+            this._paintBusy = true;
+            Promise.resolve(chunk._paintGround())
+                .then(() => job.resolve())
+                .catch(() => job.resolve())
+                .then(() => {
+                    this._paintBusy = false;
+                });
+            break;
+        }
     }
 
     /** Debug: draw chunk border grid over the camera view. */
@@ -7226,6 +7844,7 @@ class SceneMain extends SceneBase {
     }
 
     applyUiScale() {
+        if (this._leavingGame || !this.uiLayer) return;
         const s = this.uiScale || 1;
 
         if (this._uiCam) this._uiCam.setSize(this.scale.width, this.scale.height);
@@ -7236,27 +7855,30 @@ class SceneMain extends SceneBase {
 
         if (this.tooltipText) {
             this._tooltipPadding = Math.round(6 * s);
-            this.tooltipText.setFontSize(`${Math.round(18 * s)}px`);
+            this.tooltipText.setFontSize(`${pixelUiFontSize(16, s)}px`);
             this.tooltipText.setPadding(this._tooltipPadding);
             this.tooltipText.setStroke('#000000', Math.max(2, Math.round(2 * s)));
         }
 
-        const pad = 8 * s;
+        const pad = Math.round(8 * s);
         const cx = this.scale.width / 2;
         if (this.clockText) {
-            this.clockText.setFontSize(`${Math.round(16 * s)}px`);
-            this.clockText.setStroke("#000000", Math.max(2, Math.round(3 * s)));
-            this.clockText.setOrigin(0.5, 0).setPosition(cx, pad);
+            const fs = pixelUiFontSize(16, s);
+            crispUiText(this.clockText);
+            this.clockText.setFontSize(`${fs}px`);
+            this.clockText.setStroke("#000000", Math.max(2, Math.round(fs / 8)));
+            placeUiText(this.clockText, cx, pad, 0.5, 0);
         }
         if (this.fpsText) {
+            const fs = pixelUiFontSize(16, s);
             const clockBottom = this.clockText
-                ? pad + (this.clockText.height || Math.round(16 * s))
+                ? pad + Math.round(this.clockText.height || fs)
                 : pad;
+            crispUiText(this.fpsText);
             this.fpsText
-                .setFontSize(`${Math.round(12 * s)}px`)
-                .setStroke("#000000", Math.max(2, Math.round(3 * s)))
-                .setOrigin(0.5, 0)
-                .setPosition(cx, clockBottom + Math.round(2 * s));
+                .setFontSize(`${fs}px`)
+                .setStroke("#000000", Math.max(2, Math.round(fs / 8)));
+            placeUiText(this.fpsText, cx, clockBottom + Math.round(2 * s), 0.5, 0);
         }
         this._layoutLocationDebug?.();
 
@@ -7277,6 +7899,7 @@ class SceneMain extends SceneBase {
                     this.scale.height - 32 * s
                 );
             }
+            this.partyPanel?.layout?.();
         }
 
         if (this.craftMenuVisible) this.refreshCraftMenu();
@@ -7295,6 +7918,16 @@ class SceneMain extends SceneBase {
         this._layoutPauseMenu();
 
         this.player?.applyChatBubbleScale?.();
+        for (const p of this.party || []) {
+            if (p && p !== this.player) {
+                p.applyNameLabelScale?.();
+                p.applyChatBubbleScale?.();
+            }
+        }
+        for (const w of this.partySys?.wanderers || []) {
+            w.applyNameLabelScale?.();
+            w.applyChatBubbleScale?.();
+        }
         if (this.remotePlayers?.size) {
             for (const entry of this.remotePlayers.values()) {
                 this._netApplyRemoteLabelScale(entry);
@@ -7312,6 +7945,7 @@ class SceneMain extends SceneBase {
     }
 
     animateWater() {
+        if (!this._waterSprite?.active || !this._waterSprite.scene) return;
         this._waterSprite.setFrame(this._waterFrame++);
         if (this._waterFrame > 3) this._waterFrame = 0;
     }
@@ -7332,42 +7966,56 @@ class SceneMain extends SceneBase {
             return;
         }
 
-        // Calculate player chunk
-        let snappedChunkX = Math.round(this.player.posX() / this.chunkSize);
-        let snappedChunkY = Math.round(this.player.posY() / this.chunkSize);
-
-        // Prefetch chunks beyond the viewport so generation finishes before you see the edge
+        // Calculate player chunk (union of all party pawns so scouts stay simulated)
+        const anchors = (this.party && this.party.length)
+            ? this.party.filter((p) => p?.active)
+            : (this.player ? [this.player] : []);
+        const snapped = anchors.map((p) => ({
+            x: Math.floor(p.posX() / this.chunkSize),
+            y: Math.floor(p.posY() / this.chunkSize)
+        }));
+        if (!snapped.length && this.player) {
+            snapped.push({
+                x: Math.floor(this.player.posX() / this.chunkSize),
+                y: Math.floor(this.player.posY() / this.chunkSize)
+            });
+        }
         const genR = this.genDistance || this.cullDistance || this.renderDistance;
-        for (let x = snappedChunkX - genR; x <= snappedChunkX + genR; x++) {
-            for (let y = snappedChunkY - genR; y <= snappedChunkY + genR; y++) {
-                const key = this.getKey(x, y);
-                if (!this.chunks[key]) {
-                    // Multiplayer: only accept server CHUNK payloads (avoids Thing desync)
-                    if (this.isNet) continue;
-                    this.chunks[key] = new Chunk(this, x, y);
+        for (const a of snapped) {
+            for (let x = a.x - genR; x <= a.x + genR; x++) {
+                for (let y = a.y - genR; y <= a.y + genR; y++) {
+                    const key = this.getKey(x, y);
+                    if (!this.chunks[key]) {
+                        if (this.isNet) continue;
+                        this.chunks[key] = new Chunk(this, x, y);
+                    }
                 }
             }
         }
 
         // Load/unload chunks (iterate known chunks so a shrink on resize unloads correctly)
         let startedLoads = 0;
+        let startedUnloads = 0;
         for (const chunk of Object.values(this.chunks)) {
-            const dist = Phaser.Math.Distance.Between(
-                snappedChunkX,
-                snappedChunkY,
-                chunk.x,
-                chunk.y
-            );
+            const dist = snapped.reduce((min, a) => Math.min(
+                min,
+                Phaser.Math.Distance.Between(a.x, a.y, chunk.x, chunk.y)
+            ), Infinity);
             if (dist <= genR) {
                 if (!chunk.isLoaded) {
                     if (startedLoads >= 1) continue;
                     startedLoads++;
                 }
                 chunk.load();
-            } else {
+            } else if (chunk.isLoaded) {
+                // Same budget as load: tearing down a column of RTs/sprites in one
+                // frame is the walking hitch (destroy is sync + GPU).
+                if (startedUnloads >= 1) continue;
+                startedUnloads++;
                 chunk.unload();
             }
         }
+        this._pumpChunkPaint();
 
         if (!this._spawnSignPlaced || !this._playerSpawnPlaced) this.ensureSpawnSign();
 
@@ -7375,12 +8023,15 @@ class SceneMain extends SceneBase {
         const chatting = !!this.combatLog?.isComposing?.();
         const knapping = !!this.knappingPanel?.visible;
         if (!chatting && !knapping && !this._gamePaused) {
-            if (this.key1.isDown && this.hotbar.size >= 1) this.hotbar.changeSlot(0);
-            if (this.key2.isDown && this.hotbar.size >= 2) this.hotbar.changeSlot(1);
-            if (this.key3.isDown && this.hotbar.size >= 3) this.hotbar.changeSlot(2);
-            if (this.key4.isDown && this.hotbar.size >= 4) this.hotbar.changeSlot(3);
-            if (this.key5.isDown && this.hotbar.size >= 5) this.hotbar.changeSlot(4);
-            if (this.key6.isDown && this.hotbar.size >= 6) this.hotbar.changeSlot(5);
+            const ctrl = !!this.keys?.CTRL?.isDown;
+            if (!ctrl) {
+                if (this.key1.isDown && this.hotbar.size >= 1) this.hotbar.changeSlot(0);
+                if (this.key2.isDown && this.hotbar.size >= 2) this.hotbar.changeSlot(1);
+                if (this.key3.isDown && this.hotbar.size >= 3) this.hotbar.changeSlot(2);
+                if (this.key4.isDown && this.hotbar.size >= 4) this.hotbar.changeSlot(3);
+                if (this.key5.isDown && this.hotbar.size >= 5) this.hotbar.changeSlot(4);
+                if (this.key6.isDown && this.hotbar.size >= 6) this.hotbar.changeSlot(5);
+            }
             if (this.key7.isDown && this.hotbar.size >= 7) this.hotbar.changeSlot(6);
             if (this.key8.isDown && this.hotbar.size >= 8) this.hotbar.changeSlot(7);
             if (this.key9.isDown && this.hotbar.size >= 9) this.hotbar.changeSlot(8);
@@ -7393,9 +8044,10 @@ class SceneMain extends SceneBase {
             // JustDown(T) dying after keyboard.enabled toggles miss the T keyup).
         }
 
-        // Update player
+        // Update party (controlled + companions + wanderers)
         this.knappingPanel?.update?.();
-        this.player.update(time, delta);
+        if (this.partySys) this.partySys.update(time, delta);
+        else this.player.update(time, delta);
         this.updatePlaceGhost();
         if (this.isNet) {
             this._netSendMove();

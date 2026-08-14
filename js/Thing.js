@@ -127,6 +127,7 @@ class LootableThing extends Thing {
 
         this.on("pointerdown", (pointer) => {
             if (this.scene.pointerOverWorldUi?.(pointer)) return;
+            if (this.scene.partySys?.pointerBlocksLoot?.(pointer)) return;
             if (this.canPickup()) this.pickUp();
         });
         this.on("pointerover", (pointer) => {
@@ -190,7 +191,8 @@ class LootableThing extends Thing {
                 uid: this.entry?.uid || null,
                 id: this.meta?.id || this.entry?.id || null,
                 x: this.x,
-                y: this.y
+                y: this.y,
+                pawnId: this.scene.player?.pawnId
             });
             return;
         }

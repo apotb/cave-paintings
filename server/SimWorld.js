@@ -13,6 +13,8 @@ const Chop = require("../shared/chop");
 const Place = require("../shared/place");
 const Hide = require("../shared/hide");
 const Carry = require("../shared/carry");
+const Party = require("../shared/party");
+const CavemanNames = require("../shared/cavemanNames");
 const CorpseDecay = require("../shared/corpseDecay");
 const GameMath = require("../shared/gameMath");
 const DataStore = require("../shared/DataStore");
@@ -21,7 +23,7 @@ const Hediffs = require("../shared/body/Hediff");
 const BodyCombat = require("../shared/body/Combat");
 const { Body } = require("../shared/body/Body");
 const Capacities = require("../shared/body/Capacities");
-const { createAI } = require("../shared/ai/headless");
+const { createAI, PartyAI } = require("../shared/ai/headless");
 const {
     createPlayerCreature,
     createMobCreature
@@ -124,6 +126,12 @@ class SimWorld {
         this.mobs = new Map();
         /** @type {Map<string, import("./SimCreature").SimCreature>} playerId -> creature */
         this.creatures = new Map();
+        /** @type {Map<string, object>} wandererId -> passerby */
+        this.wanderers = new Map();
+        this._directorCd = 0;
+        this._duelMap = new Map();
+        this._duelIds = new Map();
+        this._duelEntities = [];
         /** @type {Record<string, { x: number, y: number, facing?: string }>} */
         this.poses = {};
         this.spawn = { x: TS * 2, y: TS * 2 };
@@ -175,6 +183,37 @@ class SimWorld {
     }
 
     /**
+     * Hitting one passerby pulls nearby unrecruited wanderers onto the party.
+     * One hop only — matches client PartySystem.alertNearbyWanderers.
+     */
+    alertNearbyWanderers(victim, source) {
+        if (!victim || !source) return;
+        const tiles = Party.WANDERER_ALERT_TILES || 10;
+        const rangeSq = (TS * tiles) * (TS * tiles);
+        const vx = victim.x;
+        const vy = victim.y;
+        const vid = victim.id;
+        for (const w of this.wanderers.values()) {
+            if (!w || w.id === vid || w.dead) continue;
+            const dx = w.x - vx;
+            const dy = w.y - vy;
+            if (dx * dx + dy * dy > rangeSq) continue;
+            w.hostile = true;
+            w.recruitLocked = true;
+            Party.setWildAggroOwner?.(w, source);
+            const c = this._ensureWandererCreature(w);
+            if (!c) continue;
+            if (!c.ai) createAI(c, "neutralAnimal");
+            Party.setWildAggroOwner?.(c, source);
+            if (c.ai) {
+                c.ai.hostile = true;
+                c.ai.onDamaged?.(source);
+            }
+            c.hostile = true;
+        }
+    }
+
+    /**
      * Hitting one animal triggers nearby AIs (scared flee, same-species pack aggro).
      * One hop only — matches client LivingMob.alertNearbyMobs.
      */
@@ -214,14 +253,32 @@ class SimWorld {
         });
     }
 
-    /** Player ids that should see a combat-log line. */
+    /** Session player id that should receive events for this pawn/creature. */
     _playerIdOf(entity) {
         if (!entity) return null;
-        const id = entity.id || entity.playerId || null;
-        if (!id) return null;
-        if (entity.kind === "player") return id;
-        if (this.players.has(id)) return id;
-        return null;
+        if (typeof entity === "string") {
+            if (this.players.has(entity)) return entity;
+            return this._sessionOfPawn({ id: entity })?.id || null;
+        }
+        const session = this._sessionOfPawn(entity);
+        if (session) return session.id;
+        const ownerId = entity.ownerId || entity.leaderId || entity.playerId;
+        if (ownerId && this.players.has(ownerId)) return ownerId;
+        const id = entity.id || entity.pawnId || null;
+        return id && this.players.has(id) ? id : null;
+    }
+
+    _viewerControlId(viewerId) {
+        const p = this.players.get(viewerId);
+        return (p && (p.controlId || p.id)) || viewerId;
+    }
+
+    /** True if `entity` is the pawn this viewer is currently controlling. */
+    _isViewerActingPawn(entity, viewerId) {
+        if (!entity || !viewerId) return false;
+        const cid = this._viewerControlId(viewerId);
+        const pid = entity.pawnId || entity.id;
+        return !!cid && pid === cid;
     }
 
     _combatLogRecipients(opts = {}) {
@@ -229,7 +286,8 @@ class SimWorld {
         const add = (v) => {
             if (!v) return;
             if (typeof v === "string") {
-                if (this.players.has(v)) ids.add(v);
+                const id = this._playerIdOf(v);
+                if (id) ids.add(id);
                 return;
             }
             if (Array.isArray(v)) {
@@ -259,8 +317,8 @@ class SimWorld {
         const YOU = "#6ecf6e";
         const ENEMY = "#ef5a5a";
         const WEAPON = "#f0a040";
-        const isYou = this._playerIdOf(attacker) === viewerId;
-        const vicIsYou = this._playerIdOf(target) === viewerId;
+        const isYou = this._isViewerActingPawn(attacker, viewerId);
+        const vicIsYou = this._isViewerActingPawn(target, viewerId);
 
         if (opts.destroyed) {
             const who = vicIsYou
@@ -299,10 +357,13 @@ class SimWorld {
         const self = this;
         return {
             getNearestPlayer(mob) {
+                const prefer = Party.wildAggroOwnerId?.(mob);
                 let best = null;
                 let bestD = Infinity;
                 for (const c of self.creatures.values()) {
                     if (!c || c.kind !== "player" || c.isBodyDead()) continue;
+                    if (c === mob || c.role === "wanderer") continue;
+                    if (prefer && Party.ownerIdOf(c) !== prefer) continue;
                     const d = Math.hypot(c.x - mob.x, c.y - mob.y);
                     if (d < bestD) {
                         bestD = d;
@@ -311,13 +372,125 @@ class SimWorld {
                 }
                 return best;
             },
+            getDuelTarget(mob) {
+                if (!mob || !self._duelMap) return null;
+                const id = Party.pawnIdOf(mob) || mob.id;
+                const t = self._duelMap.get(id);
+                return t && !t.isBodyDead?.() ? t : null;
+            },
+            getDuelMap() {
+                return self._duelMap;
+            },
+            getDuelEntities() {
+                return self._duelEntities || [];
+            },
             get players() {
                 return [...self.creatures.values()].filter(
                     (c) => c && c.kind === "player" && !c.isBodyDead()
                 );
             },
-            isBlocked: (x, y) => self.isBlocked(x, y)
+            isBlocked: (x, y) => self.isBlocked(x, y),
+            tileBlocked: (x, y) => self._tileBlocked(x, y),
+            solidThingAt: (x, y) => self._solidThingAt(x, y),
+            thingRectsNear: (x, y, radius) => self._thingRectsNear(x, y, radius),
+            getItem: (id) => itemDefs().get(id),
+            isControlled(mob) {
+                if (!mob) return false;
+                for (const p of self.players.values()) {
+                    if (!p.connected) continue;
+                    if ((p.controlId || p.id) === mob.id) return true;
+                }
+                return false;
+            },
+            leaderDead(mob) {
+                const owner = self.players.get(mob?.ownerId);
+                if (!owner) return true;
+                const cid = owner.controlId || owner.id;
+                if (cid !== owner.id) return false;
+                return !!owner.dead;
+            },
+            getFollowTarget(mob) {
+                const owner = self.players.get(mob?.ownerId);
+                if (!owner || !owner.connected) return null;
+                const cid = owner.controlId || owner.id;
+                if (cid === owner.id) {
+                    return owner.creature || self.creatures.get(owner.id);
+                }
+                const mem = (owner.party || []).find((m) => m.id === cid);
+                return mem?.creature || self.creatures.get(cid) || owner.creature;
+            },
+            isPvpTarget(mob, target) {
+                const owner = self.players.get(mob?.ownerId);
+                const tid = target?.ownerId;
+                if (!owner?.pvpAggro || !tid || !owner.pvpAggro.has(tid)) return false;
+                const other = self.players.get(tid);
+                return !other?.dead;
+            },
+            getAssistTarget(mob) {
+                const duel = this.getDuelTarget(mob);
+                if (duel) return duel;
+                const owner = self.players.get(mob?.ownerId);
+                return self._chaseTarget(owner);
+            }
         };
+    }
+
+    _rebuildDuelAssignments() {
+        const entries = [];
+        const seen = new Set();
+        const add = (entity, extra = {}) => {
+            if (!entity || entity.isBodyDead?.()) return;
+            const id = Party.pawnIdOf(entity) || entity.id;
+            if (!id || seen.has(id)) return;
+            seen.add(id);
+            entries.push({ entity, ...extra });
+        };
+        for (const p of this.players.values()) {
+            if (!p.connected) continue;
+            const controlId = p.controlId || p.id;
+            const chase = this._chaseTarget(p);
+            if (!p.dead) {
+                const c = p.creature || this.creatures.get(p.id) || this._ensurePlayerCreature(p);
+                if (c && !c.isBodyDead()) {
+                    add(c, {
+                        occupyOnly: controlId === p.id,
+                        preferredTarget: controlId === p.id ? chase : null
+                    });
+                }
+            }
+            for (const m of p.party || []) {
+                if (m.dead) continue;
+                const cc = m.creature || this.creatures.get(m.id) || this._ensureCompanionCreature(p, m);
+                if (!cc || cc.isBodyDead()) continue;
+                add(cc, {
+                    occupyOnly: m.id === controlId,
+                    preferredTarget: m.id === controlId ? chase : null
+                });
+            }
+            if (chase) add(chase);
+        }
+        for (const w of this.wanderers.values()) {
+            if (!w?.hostile || w.dead) continue;
+            const c = this._ensureWandererCreature(w);
+            add(c);
+        }
+        for (const mob of this.mobs.values()) {
+            if (!mob || mob.isBodyDead()) continue;
+            if (!(mob.ai?.hostile || mob.hostile || (mob.ai?.panicMs || 0) > 0)) continue;
+            add(mob);
+        }
+        const map = Party.assignDuels(entries, this._duelIds, {
+            tileSize: TS,
+            canFight: (a, b) => this._playerCanFight(a, b)
+        });
+        this._duelMap = map;
+        const ids = new Map();
+        for (const [id, ent] of map) {
+            const tid = Party.pawnIdOf(ent) || ent.id;
+            if (tid) ids.set(id, tid);
+        }
+        this._duelIds = ids;
+        this._duelEntities = entries.map((e) => e.entity);
     }
 
     _ensurePlayerCreature(p) {
@@ -353,6 +526,7 @@ class SimWorld {
         creature.facing = p.facing || creature.facing;
         creature._dead = !!p.dead;
         creature.active = !p.dead;
+        creature.ownerId = p.id;
         return creature;
     }
 
@@ -374,17 +548,28 @@ class SimWorld {
     }
 
     _resetPlayerAnatomy(p) {
-        const creature = this._ensurePlayerCreature(p);
+        this._resetPawnAnatomy(p, p);
+    }
+
+    /** Fresh body for the leader or a companion (used by /heal). */
+    _resetPawnAnatomy(session, pawn) {
+        if (!session || !pawn) return;
+        const isLeader = pawn === session || pawn.id === session.id;
+        const creature = isLeader
+            ? this._ensurePlayerCreature(session)
+            : this._ensureCompanionCreature(session, pawn);
         if (!creature) return;
         creature.anatomy = new Body(creature.ctx, "human", creature);
         creature.capacities = new Capacities(creature.anatomy);
         creature._dead = false;
         creature.active = true;
+        creature._prone = false;
         creature._corpsePayload = null;
-        p.body = null;
-        p.dead = false;
-        p.hp = p.mhp;
-        this._clearVomit(p);
+        pawn.body = creature.anatomy.toJSON();
+        pawn.dead = false;
+        pawn.prone = false;
+        pawn.hp = pawn.mhp;
+        this._clearVomit(pawn);
     }
 
     static createNew(opts) {
@@ -448,6 +633,13 @@ class SimWorld {
             w.chunks.set(key, chunk);
             w._ensureLootableUids(chunk);
             w._registerChunkMobs(chunk);
+        }
+        for (const snap of data.wanderers || []) {
+            if (!snap?.id || !snap.hostile) continue;
+            w.wanderers.set(snap.id, {
+                ...snap,
+                refusedBy: Array.isArray(snap.refusedBy) ? snap.refusedBy : []
+            });
         }
         return w;
     }
@@ -608,6 +800,9 @@ class SimWorld {
             spawn: this.spawn,
             clock: { gameDay: this.gameDay, gameMinutes: this.gameMinutes, tickSpeed: this.tickSpeed },
             poses: this.poses || {},
+            wanderers: [...this.wanderers.values()]
+                .filter((w) => w && w.hostile && !w.dead)
+                .map((w) => this._publicWanderer(w)),
             chunks
         };
     }
@@ -663,7 +858,7 @@ class SimWorld {
         this._ensurePlayerCreature(p);
         this._interestLoad(p.x, p.y, this.interestRadius(p));
         this._youDirty.add(playerId);
-        this.pushEvent({ kind: "chat", text: `${p.name} joined.`, system: true });
+        this.pushEvent({ kind: "chat", text: `${p.name} joined`, system: true });
         return p;
     }
 
@@ -698,6 +893,14 @@ class SimWorld {
                 y: p.y,
                 facing: p.facing || "down"
             };
+            for (const m of p.party || []) {
+                if (!m?.id || !Number.isFinite(m.x)) continue;
+                this.poses[m.id] = {
+                    x: m.x,
+                    y: m.y,
+                    facing: m.facing || "down"
+                };
+            }
         }
     }
 
@@ -725,6 +928,14 @@ class SimWorld {
             y: p.y,
             facing: p.facing || "down"
         };
+        for (const m of p.party || []) {
+            if (!m?.id || !Number.isFinite(m.x)) continue;
+            this.poses[m.id] = {
+                x: m.x,
+                y: m.y,
+                facing: m.facing || "down"
+            };
+        }
     }
 
     _applyCharacterSnapshot(p, character) {
@@ -758,10 +969,15 @@ class SimWorld {
             p.look = Look.normalizeLook(character.look);
             if (p.creature) p.creature.look = p.look;
         }
+        if (Array.isArray(character.party)) {
+            p.party = character.party.map((m) => this._companionFromSnap(p, m));
+        }
+        if (character.controlId) p.controlId = character.controlId;
         if (p.hp <= 0) {
             p.dead = true;
         }
         this._migratePlayerSpoilLeft(p);
+        for (const m of p.party || []) this._migratePlayerSpoilLeft(m);
         this._ensureEquipment(p);
         this._syncPlayerInvSize(p);
         this._enforceCarryCap(p);
@@ -807,8 +1023,822 @@ class SimWorld {
             viewChunks: INTEREST,
             poseAuth: false,
             lastInputMs: 0,
-            look: Look.normalizeLook(null)
+            look: Look.normalizeLook(null),
+            party: [],
+            controlId: id,
+            ownerId: id
         };
+    }
+
+    _companionFromSnap(owner, m) {
+        const id = m.id || uuid();
+        const rec = {
+            id,
+            name: m.name || CavemanNames.generate(),
+            x: Number.isFinite(m.x) ? m.x : owner.x + 16,
+            y: Number.isFinite(m.y) ? m.y : owner.y,
+            facing: m.facing || "down",
+            kc: m.kc ?? 800,
+            saturation: m.saturation ?? 0,
+            stomach: m.stomach ?? 1600,
+            inventory: Array.isArray(m.inventory) ? m.inventory : emptyInv(5),
+            equipment: m.equipment || { head: null, torso: null, legs: null, feet: null, waist: [] },
+            hotbarIndex: m.hotbarIndex || 0,
+            hp: m.hp ?? 100,
+            mhp: m.mhp ?? 100,
+            body: m.body || null,
+            look: Look.normalizeLook(m.look),
+            dead: false,
+            ownerId: owner.id,
+            leaderId: owner.id,
+            role: "companion"
+        };
+        this._restoreLogoutPose(rec);
+        this._ensureCompanionCreature(owner, rec);
+        return rec;
+    }
+
+    _ensureCompanionCreature(owner, rec) {
+        if (!rec) return null;
+        let creature = this.creatures.get(rec.id);
+        if (!creature) {
+            creature = createPlayerCreature(
+                {
+                    id: rec.id,
+                    name: rec.name,
+                    x: rec.x,
+                    y: rec.y,
+                    facing: rec.facing,
+                    inventory: rec.inventory,
+                    equipment: rec.equipment,
+                    hotbarIndex: rec.hotbarIndex,
+                    body: rec.body,
+                    look: rec.look
+                },
+                this.dataStore,
+                this._creatureCtx()
+            );
+            creature.ownerId = owner.id;
+            creature.leaderId = owner.id;
+            creature.role = "companion";
+            creature.faction = Party.partyFactionId(owner.id);
+            this.creatures.set(rec.id, creature);
+        }
+        rec.creature = creature;
+        creature.x = rec.x;
+        creature.y = rec.y;
+        creature.inventory = rec.inventory;
+        creature.equipment = rec.equipment;
+        creature.hotbarIndex = rec.hotbarIndex ?? 0;
+        creature.ownerId = owner.id;
+        creature.leaderId = owner.id;
+        creature.role = "companion";
+        creature.faction = Party.partyFactionId(owner.id);
+        return creature;
+    }
+
+    _ownedPawns(p) {
+        if (!p) return [];
+        return [p, ...(p.party || [])].filter(Boolean);
+    }
+
+    /** Pawn that should perform an action (controlled companion, else leader). */
+    _actionPawn(p, action = {}) {
+        if (!p) return null;
+        const id = action?.pawnId || p.controlId || p.id;
+        if (id && id !== p.id) {
+            const mem = (p.party || []).find((m) => m.id === id);
+            if (mem && !mem.dead) return mem;
+        }
+        return p;
+    }
+
+    _pawnVomiting(pawn) {
+        if (this._isVomiting(pawn)) return true;
+        const c = pawn?.creature || this.creatures.get(pawn?.id);
+        return Number(c?._vomitRemainingMs) > 0;
+    }
+
+    _handleRecruit(p, action) {
+        const wid = action.wandererId;
+        const w = this.wanderers.get(wid);
+        if (!w || w.hostile || w.recruitLocked) return;
+        if ((p.party || []).length + 1 >= Party.CAP) return;
+        const refused = w.refusedBy || [];
+        if (refused.includes(p.id)) return;
+        const control = (p.party || []).find((m) => m.id === p.controlId) || p;
+        if (!Party.inInteractRange(control, w, TS)) return;
+        const held = control.inventory?.[control.hotbarIndex];
+        const meta = held ? itemDefs().get(held.id) : null;
+        const food = held?.food || meta?.food;
+        const holdingFood = !!(food && Number(food.kc ?? 0) > 0);
+        const chance = Party.recruitChance(holdingFood);
+        if (holdingFood) this._consumeOfferedFood(control);
+        if (this.rng() >= chance) {
+            w.refusedBy = [...refused, p.id];
+            this.pushEvent({
+                kind: "recruit",
+                wandererId: wid,
+                accepted: false,
+                name: w.name,
+                to: p.id
+            });
+            return;
+        }
+        const rec = this._companionFromSnap(p, {
+            id: w.id,
+            name: w.name,
+            look: w.look,
+            x: w.x,
+            y: w.y,
+            facing: w.facing,
+            inventory: w.inventory,
+            kc: Party.rollRoughKc(() => this.rng()),
+            body: w.body || null
+        });
+        if (!p.party) p.party = [];
+        p.party.push(rec);
+        const inj = Party.rollRoughInjury(() => this.rng());
+        if (inj && rec.creature?.anatomy?.part) {
+            const part = rec.creature.anatomy.part(inj.partName);
+            if (part && !part.isDead?.()) {
+                part.injure(inj);
+                rec.body = rec.creature.anatomy.toJSON();
+            }
+        }
+        this.wanderers.delete(wid);
+        this._youDirty.add(p.id);
+        this.pushEvent({
+            kind: "recruit",
+            wandererId: wid,
+            accepted: true,
+            name: rec.name,
+            to: p.id
+        });
+    }
+
+    /** Spend one held food (or leftover meal) as a recruit gift. */
+    _consumeOfferedFood(pawn) {
+        if (!pawn?.inventory) return;
+        const slot = pawn.hotbarIndex ?? 0;
+        const held = pawn.inventory[slot];
+        if (!held) return;
+        const meta = itemDefs().get(held.id);
+        const food = held.food || meta?.food;
+        if (!(Number(food?.kc ?? 0) > 0)) return;
+        held.quantity = (held.quantity || 1) - 1;
+        if (!(held.quantity > 0)) pawn.inventory[slot] = null;
+        this._youDirty.add(pawn.ownerId || pawn.id);
+    }
+
+    _handleGiveItem(p, action) {
+        const from = this._ownedPawns(p).find((m) => m.id === (action.fromPawnId || p.controlId || p.id)) || p;
+        const to = this._ownedPawns(p).find((m) => m.id === action.toPawnId);
+        if (!from || !to || from === to) return;
+        const slot = Number(action.fromSlot);
+        const stack = from.inventory?.[slot];
+        if (!stack) return;
+        const dist = Math.hypot(from.x - to.x, from.y - to.y) / TS;
+        if (dist > Party.INTERACT_TILES + 0.2) return;
+        const qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
+        const extras = this._stackExtrasFrom(stack);
+        from.inventory[slot] = null;
+        this._ensureEquipment(to);
+        const equipKey = this._emptyEquipSlotForItem(to, stack.id);
+        let remaining = qty;
+        if (equipKey) {
+            this._setEquipStack(to, equipKey, this._cloneGearStack(stack, 1));
+            this._syncWaistSlots(to);
+            this._syncPlayerInvSize(to);
+            remaining = qty - 1;
+        }
+        if (remaining > 0) {
+            const left = this._give(to, stack.id, remaining, extras);
+            if (left > 0) {
+                stack.quantity = left;
+                from.inventory[slot] = stack;
+            }
+        }
+        this._youDirty.add(p.id);
+    }
+
+    _handlePartyEat(p, action) {
+        const eater = this._ownedPawns(p).find((m) => m.id === action.eaterId);
+        const from = this._ownedPawns(p).find((m) => m.id === action.fromPawnId) || eater;
+        if (!eater || !from) return;
+        const slot = Number(action.slot);
+        const stack = from.inventory?.[slot];
+        if (!stack) return;
+        const meta = itemDefs().get(stack.id);
+        const food = stack.food || meta?.food;
+        if (!(Number(food?.kc ?? 0) > 0)) return;
+        eater.eatChannel = {
+            remaining: 2000,
+            max: 2000,
+            slot,
+            fromId: from.id,
+            itemId: stack.id,
+            itemIndex: slot
+        };
+        this._youDirty.add(p.id);
+    }
+
+    _handleFeed(p, action) {
+        const owned = this._ownedPawns(p);
+        const feeder = owned.find((m) => m.id === (action.fromPawnId || p.controlId || p.id)) || p;
+        const patient = owned.find((m) => m.id === action.patientId);
+        if (!feeder || !patient || feeder === patient) return;
+        if (patient.dead) return;
+        const dist = Math.hypot(feeder.x - patient.x, feeder.y - patient.y) / TS;
+        if (dist > Party.INTERACT_TILES + 0.2) return;
+        const slot = Number(action.slot);
+        const held = feeder.inventory?.[slot];
+        const wantId = action.itemId ? String(action.itemId) : null;
+        if (!held?.id || (wantId && held.id !== wantId)) return;
+        const food = this._foodForEat(held);
+        const total = Number(food.kc) || 0;
+        if (!(total > 0)) return;
+        const room = Math.max(0, (Number(patient.stomach) || 0) - (Number(patient.kc) || 0));
+        const isMeal = this._isPartialFood(held);
+        if (isMeal) {
+            const consumed = Math.min(total, room);
+            if (!(consumed > 0)) return;
+            patient.kc += consumed;
+            patient.saturation += consumed * this._satietyRatio(food, true);
+            this._tryFoodPoison(patient, food);
+            if (consumed < total) {
+                if (!held.food) held.food = { ...food };
+                if (held.food.kcFull == null) held.food.kcFull = Math.round(total);
+                held.food.kc = Math.max(0, Math.round(total - consumed));
+                if (!(held.food.kc > 0)) feeder.inventory[slot] = null;
+            } else {
+                held.quantity = (held.quantity || 1) - 1;
+                if (!(held.quantity > 0)) feeder.inventory[slot] = null;
+            }
+        } else {
+            patient.kc += Math.min(total, room);
+            patient.saturation += total * this._satietyRatio(food, false);
+            this._tryFoodPoison(patient, food);
+            held.quantity = (held.quantity || 1) - 1;
+            if (!(held.quantity > 0)) feeder.inventory[slot] = null;
+        }
+        this._youDirty.add(p.id);
+    }
+
+    _publicWanderer(w) {
+        if (!w) return null;
+        const c = w.creature;
+        const attacking = !!(c?.attackTimer > 0 || w.attackTimer > 0);
+        return {
+            id: w.id,
+            name: w.name,
+            look: w.look,
+            x: w.x,
+            y: w.y,
+            facing: w.facing,
+            heading: w.heading,
+            inventory: w.inventory,
+            hostile: !!w.hostile,
+            recruitLocked: !!w.recruitLocked,
+            refusedBy: w.refusedBy || [],
+            body: w.body || c?.anatomy?.toJSON?.() || null,
+            attacking,
+            attackAngle: attacking ? (c?.attackAngle ?? w.attackAngle ?? null) : null,
+            attackArt: attacking ? (c?.attackArt || w.attackArt || null) : null
+        };
+    }
+
+    _wandererTimeScale() {
+        const s = Number(this.tickSpeed);
+        if (!Number.isFinite(s) || s <= 0) return 0;
+        // Cap so /tick 600 doesn't teleport them through a chunk per frame.
+        return Math.min(8, s);
+    }
+
+    _tickWandererDirector(dtMs) {
+        const speed = Number.isFinite(this.tickSpeed) && this.tickSpeed >= 0 ? this.tickSpeed : 1;
+        this._cullDistantWanderers();
+        this._rebuildDuelAssignments();
+        const moveScale = this._wandererTimeScale();
+        const moveDt = dtMs * moveScale;
+        for (const w of [...this.wanderers.values()]) {
+            if (!w || w.dead) continue;
+            this._ensureWandererCreature(w);
+            if (w.hostile) this._stepHostileWanderer(w, moveDt);
+            else this._stepWanderer(w, moveDt);
+            if (w.creature) {
+                w.creature.x = w.x;
+                w.creature.y = w.y;
+            }
+        }
+        this._directorCd -= (dtMs / 1000) * speed;
+        if (this._directorCd > 0) return;
+        const clusters = this._playerClusters();
+        for (const group of clusters) {
+            const anchor = group[0];
+            if (!anchor) continue;
+            const nearby = [...this.wanderers.values()].some((w) =>
+                w && !w.hostile && !w.dead
+                && Math.hypot(w.x - anchor.x, w.y - anchor.y) < 36 * TS
+            );
+            if (nearby) continue;
+            if (!this._spawnWandererNear(anchor)) {
+                this._directorCd = 3;
+                continue;
+            }
+            this._directorCd = Party.directorCooldown((anchor.party?.length || 0) + 1, () => this.rng());
+            return;
+        }
+    }
+
+    /** Drop passersby who have walked out of play so they don't occupy the spawn slot. */
+    _cullDistantWanderers() {
+        const players = [...this.players.values()].filter((p) => p.connected && !p.dead);
+        if (!players.length) return;
+        const maxD = 36 * TS;
+        for (const w of [...this.wanderers.values()]) {
+            if (!w || w.dead || w.hostile) continue;
+            const near = players.some((p) => Math.hypot(w.x - p.x, w.y - p.y) < maxD);
+            if (near) continue;
+            this.wanderers.delete(w.id);
+            this.creatures.delete(w.id);
+        }
+    }
+
+    _playerClusters() {
+        const players = [...this.players.values()].filter((p) => p.connected && !p.dead);
+        const used = new Set();
+        const clusters = [];
+        const R = 48 * TS;
+        for (const p of players) {
+            if (used.has(p.id)) continue;
+            const group = [p];
+            used.add(p.id);
+            for (const q of players) {
+                if (used.has(q.id)) continue;
+                if (Math.hypot(q.x - p.x, q.y - p.y) < R) {
+                    group.push(q);
+                    used.add(q.id);
+                }
+            }
+            clusters.push(group);
+        }
+        return clusters;
+    }
+
+    _ensureWandererCreature(w) {
+        if (!w?.id) return null;
+        let creature = this.creatures.get(w.id);
+        if (!creature) {
+            creature = createPlayerCreature(
+                {
+                    id: w.id,
+                    name: w.name,
+                    x: w.x,
+                    y: w.y,
+                    facing: w.facing,
+                    inventory: w.inventory,
+                    look: w.look,
+                    body: w.body || null
+                },
+                this.dataStore,
+                this._creatureCtx()
+            );
+        creature.ownerId = null;
+        creature.role = "wanderer";
+        creature.faction = Party.FACTION_WANDERERS;
+        if (w.aggroOwnerId && !creature.aggroOwnerId) creature.aggroOwnerId = w.aggroOwnerId;
+            this.creatures.set(w.id, creature);
+        }
+        w.creature = creature;
+        creature.x = w.x;
+        creature.y = w.y;
+        creature.inventory = w.inventory;
+        if (w.hostile && !creature.ai) {
+            createAI(creature, "neutralAnimal");
+            if (creature.ai) creature.ai.hostile = true;
+        }
+        return creature;
+    }
+
+    _stepHostileWanderer(w, dtMs) {
+        const world = this._aiWorld();
+        const c = this._ensureWandererCreature(w);
+        if (w.hostile && c && !c.ai) {
+            createAI(c, "neutralAnimal");
+            if (c.ai) c.ai.hostile = true;
+        }
+        if (!c?.ai) {
+            this._stepWanderer(w, dtMs);
+            return;
+        }
+        c.x = w.x;
+        c.y = w.y;
+        c.ai.hostile = true;
+        c.refreshCapacities?.();
+        const wasSwinging = !!c.isAttacking?.();
+        c.ai.update?.(dtMs, world);
+        if (!c.ai.hostile) {
+            w.hostile = false;
+            Party.clearWildAggroOwner?.(w);
+            Party.clearWildAggroOwner?.(c);
+            this._stepWanderer(w, dtMs);
+            return;
+        }
+        c.applyDesiredVel(dtMs);
+        const dt = dtMs / 1000;
+        const nx = w.x + (c.vx || 0) * dt;
+        const ny = w.y + (c.vy || 0) * dt;
+        if (!this.isBlocked(nx, w.y)) w.x = nx;
+        if (!this.isBlocked(w.x, ny)) w.y = ny;
+        c.x = w.x;
+        c.y = w.y;
+        w.facing = c.facing || w.facing;
+        const vx = c.vx || 0;
+        const vy = c.vy || 0;
+        if (Math.hypot(vx, vy) > 4) {
+            w.heading = { x: vx, y: vy };
+        }
+        w.attackTimer = c.attackTimer;
+        w.attackMax = c.attackMax;
+        w.attackAngle = c.attackAngle;
+        w.attackArt = c.attackTimer > 0 ? (c.attackArt || null) : null;
+        if (!wasSwinging && c.isAttacking?.()) {
+            this.pushEvent({
+                kind: "attack",
+                wandererId: w.id,
+                uid: w.id,
+                x: w.x,
+                y: w.y,
+                angle: c.attackAngle,
+                facing: c.facing || w.facing,
+                art: c.attackArt || {
+                    unarmed: true,
+                    range: 4,
+                    max: c.attackMax || 833
+                }
+            });
+        }
+    }
+
+    _spawnWandererNear(p, opts = {}) {
+        const dirs = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }];
+        for (let i = dirs.length - 1; i > 0; i--) {
+            const j = Math.floor(this.rng() * (i + 1));
+            const tmp = dirs[i];
+            dirs[i] = dirs[j];
+            dirs[j] = tmp;
+        }
+        let x = 0;
+        let y = 0;
+        let inward = dirs[0];
+        let found = false;
+        const dist0 = Party.wandererApproachDist
+            ? Party.wandererApproachDist(TS, 40 * TS, 24 * TS)
+            : 26 * TS;
+        for (const dir of dirs) {
+            for (let n = 0; n < 10 && !found; n++) {
+                // Past a typical zoom-3 view so they walk in from offscreen.
+                const dist = dist0 + n * TS;
+                const jitter = (this.rng() - 0.5) * TS * 4;
+                const px = p.x + dir.x * dist + (dir.x === 0 ? jitter : 0);
+                const py = p.y + dir.y * dist + (dir.y === 0 ? jitter : 0);
+                this._interestLoad(px, py, 2);
+                if (this.isBlocked(px, py)) continue;
+                x = px;
+                y = py;
+                inward = { x: -dir.x, y: -dir.y };
+                found = true;
+            }
+        }
+        if (!found) return false;
+        const partyN = (p.party?.length || 0) + 1;
+        const pack = Party.wandererPackSize(partyN, () => this.rng());
+        const full = Party.isPartyFull(partyN);
+        const line = Party.wandererPackOffsets(pack, inward, TS * 1.35);
+        let spawned = 0;
+        for (const off of line) {
+            let sx = x + off.x;
+            let sy = y + off.y;
+            this._interestLoad(sx, sy, 1);
+            if (this.isBlocked(sx, sy)) {
+                sx = x;
+                sy = y;
+                if (this.isBlocked(sx, sy)) continue;
+            }
+            const inventory = Party.rollWandererInventory(() => this.rng(), { fullParty: full });
+            const id = uuid();
+            const h = inward;
+            this.wanderers.set(id, {
+                id,
+                name: CavemanNames.generate(() => this.rng()),
+                look: Look.randomLook(),
+                x: sx,
+                y: sy,
+                facing: h.x > 0 ? "right" : h.x < 0 ? "left" : h.y > 0 ? "down" : "up",
+                heading: h,
+                inventory,
+                hostile: false,
+                recruitLocked: false,
+                refusedBy: [],
+                _avoidSide: this.rng() < 0.5 ? -1 : 1
+            });
+            spawned++;
+        }
+        return spawned;
+    }
+
+    _stepWanderer(w, dtMs) {
+        const speed = SPEED * (Party.WANDER_WALK_MULT || 0.28);
+        this._moveWanderer(w, speed, dtMs);
+    }
+
+    /**
+     * Walk the lasting heading. Skirt / unstick is per-step only — committing a
+     * new cardinal on every Thing graze was the MP bounce.
+     */
+    _moveWanderer(w, speedPx, dtMs) {
+        const dt = dtMs / 1000;
+        if (!w.heading || !(Math.abs(w.heading.x) + Math.abs(w.heading.y) > 0)) {
+            w.heading = { x: 1, y: 0 };
+        }
+        if (!w._avoidSide) w._avoidSide = this.rng() < 0.5 ? -1 : 1;
+        const hlen = Math.hypot(w.heading.x, w.heading.y) || 1;
+        const hx = w.heading.x / hlen;
+        const hy = w.heading.y / hlen;
+        const steered = this._steerWanderer(w, hx, hy);
+        const overlapping = !!this._solidThingOverlapping(w);
+        const blocked = (x, y) => overlapping
+            ? this._tileBlocked(x, y)
+            : this._wandererPoseBlocked(w, x, y);
+        const stepX = steered.nx * speedPx * dt;
+        const stepY = steered.ny * speedPx * dt;
+        let moved = false;
+        if (Math.abs(stepX) > 0.01 && !blocked(w.x + stepX, w.y)) {
+            w.x += stepX;
+            moved = true;
+        }
+        if (Math.abs(stepY) > 0.01 && !blocked(w.x, w.y + stepY)) {
+            w.y += stepY;
+            moved = true;
+        }
+        if (!moved) {
+            w._stuckMs = (w._stuckMs || 0) + dtMs;
+            if (w._stuckMs > 520) {
+                w._avoidSide *= -1;
+                w._stuckMs = 0;
+            }
+        } else {
+            w._stuckMs = 0;
+        }
+        const faceX = moved && Math.abs(stepX) >= Math.abs(stepY) ? stepX : hx;
+        const faceY = moved && Math.abs(stepY) > Math.abs(stepX) ? stepY : hy;
+        if (Math.abs(faceX) >= Math.abs(faceY)) w.facing = faceX >= 0 ? "right" : "left";
+        else w.facing = faceY >= 0 ? "down" : "up";
+    }
+
+    _wandererPoseBlocked(w, x, y) {
+        if (this._tileBlocked(x, y)) return true;
+        const c = w.creature;
+        if (c && c.width) {
+            const body = this._creatureBodyAt(c, x, y);
+            return !!this._aabbHitsThing(body.left, body.right, body.top, body.bottom, x, y);
+        }
+        return this.isBlocked(x, y);
+    }
+
+    _wandererProbeBlocked(w, nx, ny, dist = TS * 0.75) {
+        return this._wandererPoseBlocked(w, w.x + nx * dist, w.y + ny * dist);
+    }
+
+    _steerWanderer(w, nx, ny) {
+        const overlap = this._solidThingOverlapping(w);
+        if (overlap) return this._wandererStickyExit(w, overlap, nx, ny);
+        w._escapeThingKey = null;
+        w._escapeH = null;
+        if (!this._wandererProbeBlocked(w, nx, ny)) return { nx, ny };
+        const left = { nx: -ny, ny: nx };
+        const right = { nx: ny, ny: -nx };
+        const order = w._avoidSide >= 0 ? [right, left] : [left, right];
+        for (const d of order) {
+            const len = Math.hypot(d.nx, d.ny) || 1;
+            const cx = d.nx / len;
+            const cy = d.ny / len;
+            if (this._wandererProbeBlocked(w, cx, cy)) continue;
+            if (this._wandererPoseBlocked(w, w.x + cx * 3, w.y + cy * 3)) continue;
+            w._avoidSide = d === right ? 1 : -1;
+            return { nx: cx, ny: cy };
+        }
+        return { nx, ny };
+    }
+
+    _wandererStickyExit(w, hit, hx, hy) {
+        const t = hit.t;
+        const key = t ? (t.uid || `${t.id}:${t.x}:${t.y}`) : "thing";
+        if (w._escapeThingKey === key && w._escapeH) return w._escapeH;
+        const side = w._avoidSide >= 0 ? 1 : -1;
+        const perp = Math.abs(hx) >= Math.abs(hy)
+            ? { nx: 0, ny: side }
+            : { nx: side, ny: 0 };
+        const candidates = [
+            perp,
+            { nx: -perp.nx, ny: -perp.ny },
+            { nx: hx, ny: hy }
+        ];
+        for (let i = 0; i < candidates.length; i++) {
+            const c = candidates[i];
+            if (!(Math.abs(c.nx) + Math.abs(c.ny) > 0)) continue;
+            const len = Math.hypot(c.nx, c.ny) || 1;
+            const u = { nx: c.nx / len, ny: c.ny / len };
+            if (this._wandererProbeBlocked(w, u.nx, u.ny)) continue;
+            w._escapeThingKey = key;
+            w._escapeH = u;
+            if (i === 1) w._avoidSide *= -1;
+            return u;
+        }
+        const exits = [
+            { d: w.x - hit.left, nx: -1, ny: 0 },
+            { d: hit.right - w.x, nx: 1, ny: 0 },
+            { d: w.y - hit.top, nx: 0, ny: -1 },
+            { d: hit.bottom - w.y, nx: 0, ny: 1 }
+        ];
+        exits.sort((a, b) => a.d - b.d);
+        const pick = { nx: exits[0].nx, ny: exits[0].ny };
+        w._escapeThingKey = key;
+        w._escapeH = pick;
+        return pick;
+    }
+
+    /**
+     * Client Thing origin is (0.5, 1): hs×hs body sits on the feet, not
+     * centered on (x, y). 1px pad matches Arcade body slop.
+     */
+    _thingRect(t) {
+        if (!t || t.gone) return null;
+        const def = thingDefs().get(t.id);
+        const hs = Number(def?.hitboxSize);
+        if (!(hs > 0)) return null;
+        const pad = 1;
+        const hx = hs * 0.5;
+        return {
+            t,
+            left: t.x - hx - pad,
+            right: t.x + hx + pad,
+            top: t.y - hs - pad,
+            bottom: t.y + pad,
+            r: hx + pad
+        };
+    }
+
+    _tileBlocked(wx, wy) {
+        const { cx, cy } = worldToChunk(wx, wy);
+        const c = this._ensureChunk(cx, cy);
+        const lx = Math.floor((wx - cx * CHUNK_PX) / TS);
+        const ly = Math.floor((wy - cy * CHUNK_PX) / TS);
+        if (lx < 0 || ly < 0 || lx >= CS || ly >= CS) return true;
+        const tile = c.tiles[lx + ly * CS];
+        return !!(tile && BLOCKED.has(tile));
+    }
+
+    _creatureBodyAt(creature, x, y) {
+        const hs = Number(creature?.hitboxSize) || 8;
+        const w = Number(creature?.width) || 16;
+        const h = Number(creature?.height) || 16;
+        const left = x + (w - hs) * 0.5;
+        const top = y - h + hs;
+        return { left, right: left + hs, top, bottom: top + hs };
+    }
+
+    _thingRectsNear(wx, wy, radius = 64) {
+        const r = Number(radius) || 64;
+        const { cx, cy } = worldToChunk(wx, wy);
+        const chunkR = Math.max(1, Math.ceil(r / CHUNK_PX));
+        const out = [];
+        for (let dx = -chunkR; dx <= chunkR; dx++) {
+            for (let dy = -chunkR; dy <= chunkR; dy++) {
+                const c = this.chunks.get(chunkKey(cx + dx, cy + dy));
+                if (!c) continue;
+                for (const list of [c.things, c.lootableThings]) {
+                    for (const t of list || []) {
+                        const rect = this._thingRect(t);
+                        if (!rect) continue;
+                        const tcx = (rect.left + rect.right) * 0.5;
+                        const tcy = (rect.top + rect.bottom) * 0.5;
+                        if (Math.abs(tcx - wx) > r || Math.abs(tcy - wy) > r) continue;
+                        out.push(rect);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    _aabbHitsThing(left, right, top, bottom, nearX, nearY, cull = 64) {
+        const rects = this._thingRectsNear(nearX, nearY, cull);
+        for (let i = 0; i < rects.length; i++) {
+            const tb = rects[i];
+            if (right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom) {
+                return tb;
+            }
+        }
+        return null;
+    }
+
+    _partyPoseBlocked(creature, x, y) {
+        if (this._tileBlocked(x, y)) return true;
+        const body = this._creatureBodyAt(creature, x, y);
+        return !!this._aabbHitsThing(body.left, body.right, body.top, body.bottom, x, y);
+    }
+
+    _solidThingAt(wx, wy) {
+        const rects = this._thingRectsNear(wx, wy, 48);
+        let best = null;
+        let bestD = Infinity;
+        for (let i = 0; i < rects.length; i++) {
+            const rect = rects[i];
+            if (wx <= rect.left || wx >= rect.right || wy <= rect.top || wy >= rect.bottom) {
+                continue;
+            }
+            const tcx = (rect.left + rect.right) * 0.5;
+            const tcy = (rect.top + rect.bottom) * 0.5;
+            const d = Math.hypot(tcx - wx, tcy - wy);
+            if (d < bestD) {
+                bestD = d;
+                best = rect;
+            }
+        }
+        return best;
+    }
+
+    _solidThingOverlapping(entity) {
+        if (!entity) return null;
+        const x = Number(entity.x) || 0;
+        const y = Number(entity.y) || 0;
+        const creature = entity.creature && entity.creature.width
+            ? entity.creature
+            : (entity.width ? entity : null);
+        if (creature) {
+            const body = this._creatureBodyAt(creature, x, y);
+            return this._aabbHitsThing(body.left, body.right, body.top, body.bottom, x, y);
+        }
+        return this._solidThingAt(x, y);
+    }
+
+    _escapeOverlappingThing(w) {
+        const hit = this._solidThingOverlapping(w) || this._solidThingAt(w.x, w.y);
+        if (!hit) {
+            w._escapeThingKey = null;
+            return false;
+        }
+        const t = hit.t;
+        const key = t.uid || `${t.id}:${t.x}:${t.y}`;
+        const exits = [
+            { d: w.x - hit.left, h: { x: -1, y: 0 } },
+            { d: hit.right - w.x, h: { x: 1, y: 0 } },
+            { d: w.y - hit.top, h: { x: 0, y: -1 } },
+            { d: hit.bottom - w.y, h: { x: 0, y: 1 } }
+        ];
+        exits.sort((a, b) => a.d - b.d);
+        if (w._escapeThingKey === key && w.heading) {
+            const keep = exits.find((e) => e.h.x === w.heading.x && e.h.y === w.heading.y);
+            if (keep) {
+                w.heading = keep.h;
+                return true;
+            }
+        }
+        w._escapeThingKey = key;
+        w.heading = exits[0].h;
+        w._avoidSide = exits[0].h.x !== 0 ? exits[0].h.x : (w._avoidSide || 1);
+        return true;
+    }
+
+    _finishWandererDeath(w, killer) {
+        if (!w || w.dead) return;
+        w.dead = true;
+        const creature = w.creature || this.creatures.get(w.id);
+        const loot = [];
+        for (const s of w.inventory || []) {
+            if (s) loot.push(this._cloneStackForWorld(s));
+        }
+        this._pushCorpse({
+            x: w.x,
+            y: w.y - 8,
+            key: "human",
+            look: w.look || null,
+            frame: 7,
+            name: w.name || "Wanderer",
+            loot: loot.filter(Boolean),
+            body: w.body || creature?.anatomy?.toJSON?.() || null,
+            bodyPlan: "human",
+            mobId: "human",
+            playerCorpse: false
+        });
+        this.wanderers.delete(w.id);
+        this.creatures.delete(w.id);
+        if (creature) {
+            creature._dead = true;
+            creature.active = false;
+        }
     }
 
     _pawnFromSave(saved, displayName) {
@@ -848,10 +1878,14 @@ class SimWorld {
         this._saveLogoutPose(p);
         const finalYou = this.youPayload(playerId);
         this._clearPlayerCampfireAttend(playerId);
+        this._clearPvpOwner(p.id);
         this.players.delete(playerId);
         this.creatures.delete(playerId);
+        for (const m of p.party || []) {
+            this.creatures.delete(m.id);
+        }
         if (p.creature) p.creature = null;
-        this.pushEvent({ kind: "chat", text: `${p.name} left.`, system: true });
+        this.pushEvent({ kind: "chat", text: `${p.name} left`, system: true });
         // Persist pose immediately so rejoin works before the next autosave.
         try {
             this.saveAll();
@@ -862,20 +1896,23 @@ class SimWorld {
     }
 
     _cancelChannels(p) {
+        if (!p) return;
         const wasEating = !!p.eatChannel;
         p.eatChannel = null;
         p.attackTimer = 0;
         p.attackArt = null;
         if (wasEating) {
+            const session = this._sessionOfPawn(p);
             this.pushEvent({
                 kind: "channel",
-                playerId: p.id,
+                playerId: session?.id || p.id,
+                pawnId: p.id,
                 channel: "eat",
                 progress: 0,
                 done: true,
                 cancelled: true
             });
-            this._youDirty.add(p.id);
+            this._dirtyPawnOwner(p);
         }
     }
 
@@ -926,17 +1963,20 @@ class SimWorld {
     }
 
     _beginPlayerVomit(creature, remainingMs) {
-        const p = this.players.get(creature?.id);
-        if (!p || p.dead) return;
-        this._cancelChannels(p);
-        p.pendingAttackAngle = null;
-        p.moveX = 0;
-        p.moveY = 0;
-        p.sprint = false;
-        p.vomitRemainingMs = Math.max(1, Number(remainingMs) || 8000);
-        p.vomitDripAccMs = 0;
-        this._vomitDrip(p, { start: true });
-        this._youDirty.add(p.id);
+        const pawn = this._findOwnedPawn(creature?.id);
+        if (!pawn || pawn.dead) return;
+        pawn.eatChannel = null;
+        pawn.pendingAttackAngle = null;
+        pawn.vomitRemainingMs = Math.max(1, Number(remainingMs) || 8000);
+        pawn.vomitDripAccMs = 0;
+        const session = this._sessionOfPawn(pawn);
+        if (session && pawn === session) {
+            session.moveX = 0;
+            session.moveY = 0;
+            session.sprint = false;
+        }
+        this._vomitDrip(pawn, { start: true });
+        this._dirtyPawnOwner(pawn);
     }
 
     _vomitDrip(p, opts = {}) {
@@ -944,7 +1984,8 @@ class SimWorld {
         const origin = this._vomitOrigin(p);
         this.pushEvent({
             kind: "vomit",
-            playerId: p.id,
+            playerId: this._sessionOfPawn(p)?.id || p.id,
+            pawnId: p.id,
             x: origin.x,
             y: origin.y,
             facing: origin.facing,
@@ -952,9 +1993,13 @@ class SimWorld {
             drip: !opts.start
         });
         if (opts.start) {
-            this.pushEvent({ kind: "combat_log", text: "You vomit.", to: p.id });
+            this.pushEvent({
+                kind: "combat_log",
+                text: "You vomit.",
+                to: this._sessionOfPawn(p)?.id || p.id
+            });
         }
-        this._youDirty.add(p.id);
+        this._dirtyPawnOwner(p);
     }
 
     _tickPlayerVomit(p, dtMs) {
@@ -973,6 +2018,114 @@ class SimWorld {
 
     pushEvent(ev) {
         this._events.push(ev);
+    }
+
+    /**
+     * Hitting wildlife / passersby so party AI chases fleeing prey, not only
+     * hostiles already in the duel pool.
+     */
+    _noteHuntHit(attacker, victim) {
+        if (!attacker || !victim || attacker === victim) return;
+        if (victim.kind !== "mob" && victim.role !== "wanderer") return;
+        if (Party.sameFaction?.(attacker, victim)) return;
+        const session = this.players.get(attacker.ownerId)
+            || this._sessionOfPawn(attacker)
+            || this.players.get(attacker.id);
+        if (!session) return;
+        session.lastHitMob = victim;
+        session.lastHitAt = Date.now();
+        Party.setWildAggroOwner?.(victim, attacker);
+        const rec = this.wanderers.get(victim.id) || this.mobs.get(victim.id);
+        if (rec && rec !== victim) Party.setWildAggroOwner?.(rec, attacker);
+    }
+
+    _chaseTarget(p) {
+        const hit = p?.lastHitMob;
+        if (!hit) return null;
+        if (hit.isBodyDead?.() || hit._dead || hit.dead) {
+            p.lastHitMob = null;
+            return null;
+        }
+        if (Date.now() - (Number(p.lastHitAt) || 0) > 8000) {
+            p.lastHitMob = null;
+            return null;
+        }
+        return hit;
+    }
+
+    /**
+     * Hitting another session's pawn (leader or companion) aggroes both parties.
+     */
+    _notePvpHit(attacker, victim) {
+        const aOwner = attacker?.ownerId;
+        const vOwner = victim?.ownerId;
+        if (!aOwner || !vOwner || aOwner === vOwner) return;
+        if (!this.players.has(aOwner) || !this.players.has(vOwner)) return;
+        const aP = this.players.get(aOwner);
+        const vP = this.players.get(vOwner);
+        if (aP?.dead || vP?.dead) return;
+        const ev = {
+            kind: "pvp_hit",
+            attackerOwnerId: aOwner,
+            attackerId: attacker.id,
+            victimOwnerId: vOwner,
+            victimId: victim.id
+        };
+        this.pushEvent({ ...ev, to: aOwner });
+        this.pushEvent({ ...ev, to: vOwner });
+        if (aP) {
+            if (!aP.pvpAggro) aP.pvpAggro = new Set();
+            aP.pvpAggro.add(vOwner);
+        }
+        if (vP) {
+            if (!vP.pvpAggro) vP.pvpAggro = new Set();
+            vP.pvpAggro.add(aOwner);
+        }
+    }
+
+    /** Drop PvP flags for this owner on every session so death/logout ends the scrap. */
+    _clearPvpOwner(ownerId) {
+        if (!ownerId) return;
+        const self = this.players.get(ownerId);
+        if (self?.pvpAggro) self.pvpAggro.clear();
+        if (self) self.lastHitMob = null;
+        for (const other of this.players.values()) {
+            if (other === self) continue;
+            if (other.pvpAggro) other.pvpAggro.delete(ownerId);
+            const hit = other.lastHitMob;
+            if (hit && (hit.ownerId === ownerId || hit.id === ownerId)) {
+                other.lastHitMob = null;
+            }
+        }
+        this.pushEvent({ kind: "pvp_clear", ownerId });
+    }
+
+    /**
+     * Player parties only fight each other after a PvP hit.
+     * Wildlife / wanderers only auto-duel the party that pulled them — a
+     * neighboring tribe does not pile into someone else's hunt.
+     */
+    _playerCanFight(a, b) {
+        const oa = Party.ownerIdOf(a);
+        const ob = Party.ownerIdOf(b);
+        const aSess = !!(oa && this.players.has(oa));
+        const bSess = !!(ob && this.players.has(ob));
+        if (aSess && bSess) {
+            if (oa === ob) return false;
+            const pa = this.players.get(oa);
+            const pb = this.players.get(ob);
+            if (pa?.dead || pb?.dead) return false;
+            return !!(pa?.pvpAggro?.has(ob) || pb?.pvpAggro?.has(oa));
+        }
+        if (aSess && !bSess) return this._ownerEngagedWithWild(oa, b);
+        if (bSess && !aSess) return this._ownerEngagedWithWild(ob, a);
+        return true;
+    }
+
+    _ownerEngagedWithWild(ownerId, wild) {
+        const p = this.players.get(ownerId);
+        if (!p || p.dead) return false;
+        return !!Party.ownerEngagedWithWild?.(ownerId, wild, { lastHitMob: p.lastHitMob });
     }
 
     /**
@@ -1009,14 +2162,20 @@ class SimWorld {
         return ids;
     }
 
-    setMove(playerId, { x = 0, y = 0, sprint = false, facing = null, px = null, py = null, viewChunks = null } = {}) {
+    setMove(playerId, { x = 0, y = 0, sprint = false, facing = null, px = null, py = null, viewChunks = null, pawnId = null, partyPoses = null } = {}) {
         const p = this.players.get(playerId);
-        if (!p || p.dead) return;
-        if (this._isVomiting(p)) {
+        if (!p) return;
+        if (pawnId === p.id || (p.party || []).some((m) => m.id === pawnId && !m.dead)) {
+            p.controlId = pawnId;
+        }
+        const control = this._actionPawn(p, { pawnId: p.controlId });
+        if (!control || control.dead) return;
+        const leaderLocked = !!p.dead && control !== p;
+        if (this._pawnVomiting(control)) {
             p.moveX = 0;
             p.moveY = 0;
             p.sprint = false;
-        } else {
+        } else if (!leaderLocked) {
             const len = Math.hypot(x, y);
             if (!(len > 0)) {
                 p.moveX = 0;
@@ -1025,20 +2184,36 @@ class SimWorld {
                 p.moveX = x / len;
                 p.moveY = y / len;
             }
-            p.sprint = !!sprint && p.kc > 0;
+            p.sprint = !!sprint && (Number(control.kc) > 0);
         }
-        if (facing) p.facing = facing;
-        else if (p.moveX !== 0 || p.moveY !== 0) {
-            if (Math.abs(p.moveX) > Math.abs(p.moveY)) p.facing = p.moveX > 0 ? "right" : "left";
-            else p.facing = p.moveY > 0 ? "down" : "up";
-        }
-        // Presence mode: trust client world pose so remotes match what each player sees
+        if (facing) control.facing = facing;
         if (Number.isFinite(px) && Number.isFinite(py)) {
-            p.x = px;
-            p.y = py;
-            p.poseAuth = true;
+            control.x = px;
+            control.y = py;
+            if (control === p) p.poseAuth = true;
+            const cc = control.creature || this.creatures.get(control.id);
+            if (cc) {
+                cc.x = control.x;
+                cc.y = control.y;
+                cc.facing = control.facing || cc.facing;
+            }
         }
-        // Client render/cull radius in chunks — keep server gen ahead of the viewport
+        // Uncontrolled party poses are server-authored (PartyAI). Ignore client
+        // copies so other players see the same hitboxes the sim uses — except a
+        // tend lock so they finish bandaging before follow pulls them.
+        const tendLock = new Set();
+        if (Array.isArray(partyPoses)) {
+            for (const pose of partyPoses) {
+                if (pose?.id && pose.tending) tendLock.add(pose.id);
+            }
+        }
+        for (const m of p.party || []) {
+            if (!m) continue;
+            m.tending = tendLock.has(m.id);
+            const cc = m.creature || this.creatures.get(m.id);
+            if (cc) cc._tending = !!m.tending;
+        }
+        if (p.creature) p.creature._tending = false;
         if (Number.isFinite(viewChunks)) {
             const v = Math.floor(Number(viewChunks));
             if (v >= 1 && v <= 24) p.viewChunks = v;
@@ -1062,7 +2237,7 @@ class SimWorld {
             if (!text) return;
             if (text.startsWith("/")) {
                 console.log(`[cmd] ${p.name}: ${text}`);
-                this._runCommand(p, text);
+                this._runCommand(p, text, action);
                 return;
             }
             this.pushEvent({ kind: "chat", text: `<${p.name}> ${text}`, from: p.id });
@@ -1072,18 +2247,62 @@ class SimWorld {
             this._kill(p, null, action);
             return;
         }
-        if (p.dead) {
-            if (type === Protocol.Actions.RESPAWN) this.respawn(p);
+        if (p.dead && type === Protocol.Actions.RESPAWN) {
+            this.respawn(p);
             return;
         }
+        if (p.dead && type !== Protocol.Actions.SWITCH_CONTROL) {
+            const actor = this._actionPawn(p, action);
+            if (!actor || actor === p || actor.dead) return;
+        }
         if (type === Protocol.Actions.CANCEL_CHANNEL) {
-            this._cancelChannels(p);
+            this._cancelChannels(this._actionPawn(p, action));
             return;
         }
         if (type === Protocol.Actions.HOTBAR) {
+            const pawn = this._actionPawn(p, action);
             const i = Number(action.index);
-            if (Number.isInteger(i) && i >= 0 && i < p.inventory.length) p.hotbarIndex = i;
+            if (pawn && Number.isInteger(i) && i >= 0 && i < (pawn.inventory?.length || 0)) {
+                if (pawn.eatChannel && pawn.eatChannel.itemIndex !== i) {
+                    pawn.eatChannel = null;
+                    this.pushEvent({
+                        kind: "channel",
+                        playerId: p.id,
+                        pawnId: pawn.id,
+                        channel: "eat",
+                        progress: 0,
+                        done: true,
+                        cancelled: true
+                    });
+                }
+                pawn.hotbarIndex = i;
+                if (pawn.creature) pawn.creature.hotbarIndex = i;
+            }
             this._youDirty.add(p.id);
+            return;
+        }
+        if (type === Protocol.Actions.SWITCH_CONTROL) {
+            const id = action.pawnId;
+            if (id === p.id || (p.party || []).some((m) => m.id === id)) {
+                p.controlId = id;
+                this._youDirty.add(p.id);
+            }
+            return;
+        }
+        if (type === Protocol.Actions.RECRUIT) {
+            this._handleRecruit(p, action);
+            return;
+        }
+        if (type === Protocol.Actions.GIVE_ITEM) {
+            this._handleGiveItem(p, action);
+            return;
+        }
+        if (type === Protocol.Actions.PARTY_EAT) {
+            this._handlePartyEat(p, action);
+            return;
+        }
+        if (type === Protocol.Actions.FEED) {
+            this._handleFeed(p, action);
             return;
         }
         if (type === Protocol.Actions.INV_SWAP) {
@@ -1107,7 +2326,7 @@ class SimWorld {
             return;
         }
         if (type === Protocol.Actions.PICKUP) {
-            this._tryPickup(p, action.dropId || null);
+            this._tryPickup(p, action);
             return;
         }
         if (type === Protocol.Actions.CORPSE_TAKE) {
@@ -1151,7 +2370,7 @@ class SimWorld {
             return;
         }
         if (type === Protocol.Actions.USE) {
-            this._tryUse(p);
+            this._tryUse(p, action);
             return;
         }
         if (type === Protocol.Actions.TEND) {
@@ -1179,23 +2398,57 @@ class SimWorld {
             return;
         }
         if (type === Protocol.Actions.ATTACK) {
-            this._tryAttack(p, Number(action.angle) || 0);
+            this._tryAttack(p, Number(action.angle) || 0, action.pawnId);
             return;
         }
         if (type === Protocol.Actions.COMMAND) {
-            this._runCommand(p, String(action.text || ""));
+            this._runCommand(p, String(action.text || ""), action);
         }
     }
 
-    _runCommand(p, text) {
+    _runCommand(p, text, action = {}) {
         const parts = text.trim().split(/\s+/);
         const cmd = (parts[0] || "").toLowerCase();
         if (cmd === "/heal" || cmd === "/h") {
-            p.hp = p.mhp;
-            p.dead = false;
-            p.kc = p.stomach;
-            this._resetPlayerAnatomy(p);
+            const pawn = this._actionPawn(p, action) || p;
+            pawn.hp = pawn.mhp;
+            pawn.dead = false;
+            pawn.kc = pawn.stomach;
+            this._resetPawnAnatomy(p, pawn);
             this._youDirty.add(p.id);
+            return;
+        }
+        if (cmd === "/party") {
+            if ((p.party || []).length + 1 >= Party.CAP) {
+                this.announceCmd("Party is full.", { to: p.id });
+                return;
+            }
+            const rec = this._companionFromSnap(p, {
+                name: CavemanNames.generate(() => this.rng()),
+                look: Look.randomLook(),
+                x: p.x + 16,
+                y: p.y,
+                kc: Party.rollRoughKc(() => this.rng())
+            });
+            if (!p.party) p.party = [];
+            p.party.push(rec);
+            this._youDirty.add(p.id);
+            this.announceCmd(`${rec.name} joins you.`, { to: p.id });
+            return;
+        }
+        if (cmd === "/wanderer") {
+            const n = this._spawnWandererNear(p) || 0;
+            if (n > 0) {
+                this._directorCd = Party.directorCooldown((p.party?.length || 0) + 1, () => this.rng());
+            }
+            this.announceCmd(
+                n > 1
+                    ? `${n} wanderers approach.`
+                    : n === 1
+                        ? "A wanderer approaches."
+                        : "No room to spawn a wanderer.",
+                { to: p.id }
+            );
             return;
         }
         if (cmd === "/give") {
@@ -1224,9 +2477,10 @@ class SimWorld {
             }
             const spoilLeft = Spoil.defaultSpoilLeft(meta);
             const extras = spoilLeft != null ? { spoilLeft } : null;
-            const left = this._give(p, meta.id, qty, extras);
+            const pawn = this._actionPawn(p) || p;
+            const left = this._give(pawn, meta.id, qty, extras);
             if (left > 0) {
-                this._pushDrop(p.x, p.y, { id: meta.id, quantity: left });
+                this._pushDrop(pawn.x, pawn.y, { id: meta.id, quantity: left });
             }
             const label = meta.name || meta.id;
             const out = left > 0
@@ -1275,7 +2529,7 @@ class SimWorld {
             }
             this.tickSpeed = m;
             this._minuteAcc = 0;
-            this.announceCmd(`${p.name} set tick speed to ${m}×.`);
+            this.announceCmd(`${p.name} set tick speed to ${m}×`);
             return;
         }
         if (cmd === "/time") {
@@ -1562,7 +2816,7 @@ class SimWorld {
             remaining -= add;
         }
         this._enforceCarryCap(p);
-        if (remaining < tookStart) this._youDirty.add(p.id);
+        if (remaining < tookStart) this._dirtyPawnOwner(p);
         return remaining;
     }
 
@@ -1731,7 +2985,8 @@ class SimWorld {
         return false;
     }
 
-    _tryCraft(p, action = {}) {
+    _tryCraft(session, action = {}) {
+        const p = this._actionPawn(session, action);
         if (!p || p.dead) return;
         const id = String(action.id || "").slice(0, 64);
         const recipe = this._parseRecipe(id);
@@ -1767,17 +3022,18 @@ class SimWorld {
                 ...(extras.knapQuality ? { knapQuality: extras.knapQuality } : {})
             });
         }
-        this._youDirty.add(p.id);
+        this._dirtyPawnOwner(p);
     }
 
     _held(p) {
+        if (!p?.inventory) return null;
         return p.inventory[p.hotbarIndex] || null;
     }
 
-    _wearPlayerHeld(playerId, amount) {
-        const p = this.players.get(playerId);
-        if (!p) return { broke: false };
-        return this._wearHeld(p, amount);
+    _wearPlayerHeld(creatureId, amount) {
+        const pawn = this._findOwnedPawn(creatureId);
+        if (!pawn) return { broke: false };
+        return this._wearHeld(pawn, amount);
     }
 
     _wearHeld(p, amount) {
@@ -1793,10 +3049,10 @@ class SimWorld {
             this.pushEvent({
                 kind: "combat_log",
                 text: Durability.breakMessage(result.name, true),
-                to: p.id
+                to: this._sessionOfPawn(p)?.id || p.id
             });
         }
-        this._youDirty.add(p.id);
+        this._dirtyPawnOwner(p);
         return result;
     }
 
@@ -2075,7 +3331,8 @@ class SimWorld {
         return null;
     }
 
-    _tryKnap(p, action = {}) {
+    _tryKnap(session, action = {}) {
+        const p = this._actionPawn(session, action);
         if (!p || p.dead) return;
         const op = String(action.op || "");
         const slot = Math.floor(Number(action.slot));
@@ -2151,7 +3408,8 @@ class SimWorld {
     }
 
     /** Swap or merge two hotbar slots (client drag-drop). */
-    _tryInvSwap(p, action = {}) {
+    _tryInvSwap(session, action = {}) {
+        const p = this._actionPawn(session, action);
         if (!p || p.dead) return;
         const from = Math.floor(Number(action.from));
         const to = Math.floor(Number(action.to));
@@ -2189,7 +3447,7 @@ class SimWorld {
         }
         p.hotbarIndex = to;
         if (p.creature) p.creature.hotbarIndex = to;
-        this._youDirty.add(p.id);
+        this._dirtyPawnOwner(p);
     }
 
     _ensureEquipment(p) {
@@ -2317,7 +3575,8 @@ class SimWorld {
         return null;
     }
 
-    _tryEquip(p, action = {}) {
+    _tryEquip(session, action = {}) {
+        const p = this._actionPawn(session, action);
         if (!p || p.dead) return;
         const from = Math.floor(Number(action.from));
         const parsed = this._parseEquipSlot(action.slot);
@@ -2353,10 +3612,11 @@ class SimWorld {
         }
         this._syncWaistSlots(p);
         this._syncPlayerInvSize(p);
-        this._youDirty.add(p.id);
+        this._dirtyPawnOwner(p);
     }
 
-    _tryUnequip(p, action = {}) {
+    _tryUnequip(session, action = {}) {
+        const p = this._actionPawn(session, action);
         if (!p || p.dead) return;
         const parsed = this._parseEquipSlot(action.slot);
         const to = Math.floor(Number(action.to));
@@ -2401,10 +3661,11 @@ class SimWorld {
         }
         this._syncWaistSlots(p);
         this._syncPlayerInvSize(p);
-        this._youDirty.add(p.id);
+        this._dirtyPawnOwner(p);
     }
 
-    _tryEquipSwap(p, action = {}) {
+    _tryEquipSwap(session, action = {}) {
+        const p = this._actionPawn(session, action);
         if (!p || p.dead) return;
         const from = this._parseEquipSlot(action.from);
         const to = this._parseEquipSlot(action.to);
@@ -2424,7 +3685,7 @@ class SimWorld {
         this._setEquipStack(p, to.key, a);
         this._syncWaistSlots(p);
         this._syncPlayerInvSize(p);
-        this._youDirty.add(p.id);
+        this._dirtyPawnOwner(p);
     }
 
     _cloneGearStack(stack, qty = null) {
@@ -2729,21 +3990,24 @@ class SimWorld {
         }
     }
 
-    _skinLootTable(mobId) {
+    _skinLootTable(mobId, bodyJson) {
         const id = String(mobId || "");
         if (id === "deer") {
-            return [
+            const loot = [
                 { id: "raw_venison", min: 2, max: 4 },
                 { id: "deer_hide", min: 1, max: 1 },
                 { id: "brain", min: 1, max: 1 },
                 { id: "bone", min: 2, max: 4 }
             ];
+            return Body.isBrainDestroyed?.(bodyJson) ? loot.filter((d) => d.id !== "brain") : loot;
         }
         if (id === "human") {
-            return [
+            const loot = [
                 { id: "raw_beef", min: 2, max: 4 },
+                { id: "brain", min: 1, max: 1 },
                 { id: "bone", min: 1, max: 2 }
             ];
+            return Body.isBrainDestroyed?.(bodyJson) ? loot.filter((d) => d.id !== "brain") : loot;
         }
         return [{ id: "bone", min: 1, max: 2 }];
     }
@@ -2768,7 +4032,7 @@ class SimWorld {
 
         if (!Array.isArray(entry.loot)) entry.loot = [];
         const now = this.worldMinuteIndex();
-        for (const drop of this._skinLootTable(entry.mobId)) {
+        for (const drop of this._skinLootTable(entry.mobId, entry.body)) {
             const meta = itemDefs().get(drop.id);
             if (!meta) continue;
             const lo = Math.max(0, Math.floor(Number(drop.min ?? 1) || 0));
@@ -3005,7 +4269,10 @@ class SimWorld {
         this._pushDrop(x, y, drop);
     }
 
-    _tryPickup(p, dropId = null) {
+    _tryPickup(session, action = {}) {
+        const p = this._actionPawn(session, action);
+        if (!p || p.dead) return;
+        const dropId = action.dropId || (typeof action === "string" ? action : null);
         const r = TS * (dropId ? 3 : 1.5);
         const r2 = r * r;
         let best = null;
@@ -3036,10 +4303,11 @@ class SimWorld {
         if (left >= want) return; // nothing fit — leave drop
         if (left > 0) best.quantity = left;
         else bestChunk.drops.splice(bestIdx, 1);
-        this._youDirty.add(p.id);
+        this._dirtyPawnOwner(p);
         this.pushEvent({
             kind: "pickup",
-            playerId: p.id,
+            playerId: this._sessionOfPawn(p)?.id || p.id,
+            pawnId: p.id,
             itemId: best.id,
             dropId: best.uid,
             remaining: left
@@ -3051,7 +4319,9 @@ class SimWorld {
      * @param {object} p
      * @param {{ x?: number, y?: number }} action  optional click world pose
      */
-    _tryHarvest(p, action = {}) {
+    _tryHarvest(session, action = {}) {
+        const p = this._actionPawn(session, action);
+        if (!p || p.dead) return;
         const range = TS * HARVEST_RANGE_TILES;
         const range2 = range * range;
         const wantUid = action.uid ? String(action.uid) : null;
@@ -3174,7 +4444,9 @@ class SimWorld {
         });
     }
 
-    _tryDrop(p, action = {}) {
+    _tryDrop(session, action = {}) {
+        const p = this._actionPawn(session, action);
+        if (!p || p.dead) return;
         const amount = Math.max(1, Math.floor(Number(action.amount) || 1));
         const held = this._held(p);
         if (!held?.id) return;
@@ -3186,13 +4458,17 @@ class SimWorld {
         held.quantity = (held.quantity || 1) - qty;
         if (held.quantity <= 0) p.inventory[p.hotbarIndex] = null;
 
-        if (Number.isFinite(action.x) && Number.isFinite(action.y)) {
-            p.x = action.x;
-            p.y = action.y;
-            p.poseAuth = true;
+        const dx = Number.isFinite(action.x) ? Number(action.x) : p.x;
+        const dy = Number.isFinite(action.y) ? Number(action.y) : p.y;
+        p.x = dx;
+        p.y = dy;
+        const creature = p.creature || this.creatures.get(p.id);
+        if (creature) {
+            creature.x = dx;
+            creature.y = dy;
         }
-        if (worldStack) this._pushDrop(p.x, p.y, worldStack);
-        this._youDirty.add(p.id);
+        if (worldStack) this._pushDrop(dx, dy, worldStack);
+        this._dirtyPawnOwner(p);
     }
 
     _tileOf(wx, wy) {
@@ -3668,7 +4944,8 @@ class SimWorld {
         return best?.drop;
     }
 
-    _tryLightFire(p, action = {}) {
+    _tryLightFire(session, action = {}) {
+        const p = this._actionPawn(session, action);
         if (!p || p.dead) return;
         const held = this._held(p);
         const meta = held?.id ? itemDefs().get(held.id) : null;
@@ -3919,7 +5196,8 @@ class SimWorld {
         return leftover < (worldStack.quantity || qty);
     }
 
-    _tryCampfire(p, action = {}) {
+    _tryCampfire(session, action = {}) {
+        const p = this._actionPawn(session, action);
         if (!p || p.dead) return;
         const found = this._findPlayerCampfire(p, action);
         if (!found) return;
@@ -4081,7 +5359,8 @@ class SimWorld {
         return c.tiles[lx + ly * CS] || null;
     }
 
-    _tryPlace(p, action = {}) {
+    _tryPlace(session, action = {}) {
+        const p = this._actionPawn(session, action);
         if (!p || p.dead) return;
         const invIndex = Math.floor(Number(p.hotbarIndex) || 0);
         const held = p.inventory?.[invIndex];
@@ -4112,7 +5391,7 @@ class SimWorld {
 
         held.quantity = Math.max(0, Math.floor(Number(held.quantity) || 1) - 1);
         if (!(held.quantity > 0)) p.inventory[invIndex] = null;
-        this._youDirty.add(p.id);
+        this._dirtyPawnOwner(p);
 
         if (thingDef.craftStation) {
             const entry = {
@@ -4187,7 +5466,8 @@ class SimWorld {
         entry.slots[idx] = stack || null;
     }
 
-    _tryStorage(p, action = {}) {
+    _tryStorage(session, action = {}) {
+        const p = this._actionPawn(session, action);
         if (!p || p.dead) return;
         const found = this._findPlayerStorage(p, action);
         if (!found) return;
@@ -4205,7 +5485,7 @@ class SimWorld {
             const i = chunk.things.indexOf(entry);
             if (i >= 0) chunk.things.splice(i, 1);
             this._emitStorageRemoved(chunk, entry);
-            this._youDirty.add(p.id);
+            this._dirtyPawnOwner(p);
             return;
         }
         Place.ensureStorageEntry(entry, def);
@@ -4219,7 +5499,7 @@ class SimWorld {
             const i = chunk.things.indexOf(entry);
             if (i >= 0) chunk.things.splice(i, 1);
             this._emitStorageRemoved(chunk, entry);
-            this._youDirty.add(p.id);
+            this._dirtyPawnOwner(p);
             return;
         }
         if (op === "inv_to_slot") this._storageInvToSlot(p, entry, action);
@@ -4568,8 +5848,10 @@ class SimWorld {
         }
     }
 
-    _tryUse(p) {
-        if (p.eatChannel || this._isVomiting(p)) return;
+    _tryUse(session, action = {}) {
+        const p = this._actionPawn(session, action);
+        if (!p || p.dead) return;
+        if (p.eatChannel || this._pawnVomiting(p)) return;
         const held = this._held(p);
         if (!held?.id) return;
         const food = this._foodForEat(held);
@@ -4586,8 +5868,14 @@ class SimWorld {
             food: { ...food },
             isMeal
         };
-        this.pushEvent({ kind: "channel", playerId: p.id, channel: "eat", progress: 0 });
-        this._youDirty.add(p.id);
+        this.pushEvent({
+            kind: "channel",
+            playerId: this._sessionOfPawn(p)?.id || p.id,
+            pawnId: p.id,
+            channel: "eat",
+            progress: 0
+        });
+        this._dirtyPawnOwner(p);
     }
 
     /**
@@ -4595,28 +5883,42 @@ class SimWorld {
      */
     _tryTend(p, action = {}) {
         if (!p || p.dead) return;
-        const creature = this._syncPlayerCreature(p) || this._ensurePlayerCreature(p);
-        if (!creature?.anatomy) return;
-
-        const held = this._held(p);
+        const owned = this._ownedPawns(p);
+        const tender = (action.pawnId && owned.find((m) => m.id === action.pawnId)) || p;
+        const patientPawn = (action.patientId && owned.find((m) => m.id === action.patientId)) || tender;
+        const from = (action.fromPawnId && owned.find((m) => m.id === action.fromPawnId)) || tender;
+        const slot = Number.isInteger(Number(action.slot))
+            ? Number(action.slot)
+            : (from.hotbarIndex ?? tender.hotbarIndex ?? 0);
+        const you = tender.id === p.controlId || tender.id === p.id;
+        const held = from.inventory?.[slot];
         const wantId = action.itemId ? String(action.itemId) : null;
         if (!held?.id || (wantId && held.id !== wantId)) {
+            if (you) {
             this.pushEvent({
                 kind: "combat_log",
-                text: "You need a bandage in hand to finish tending.",
+                    text: "You need a bandage to finish tending",
                 to: p.id
             });
+            }
             return;
         }
         const meta = itemDefs().get(held.id);
         if (!meta?.bandage) {
+            if (you) {
             this.pushEvent({
                 kind: "combat_log",
-                text: "You need a bandage in hand to finish tending.",
+                    text: "You need a bandage to finish tending",
                 to: p.id
             });
+            }
             return;
         }
+
+        const patientCreature = patientPawn.id === p.id
+            ? (this._syncPlayerCreature(p) || this._ensurePlayerCreature(p))
+            : this._ensureCompanionCreature(p, patientPawn);
+        if (!patientCreature?.anatomy) return;
 
         const hint = {
             partName: action.partName ? String(action.partName) : null,
@@ -4632,14 +5934,16 @@ class SimWorld {
                 ? String(action.destroyedPartName)
                 : null
         };
-        let target = BodyHealing.resolveTendTarget?.(creature.anatomy, hint) || null;
-        if (!target) target = BodyHealing.pickTendTarget(creature.anatomy);
+        let target = BodyHealing.resolveTendTarget?.(patientCreature.anatomy, hint) || null;
+        if (!target) target = BodyHealing.pickTendTarget(patientCreature.anatomy);
         if (!target) {
+            if (you) {
             this.pushEvent({
                 kind: "combat_log",
-                text: "The wound healed before you finished.",
+                    text: "The wound healed before you finished",
                 to: p.id
             });
+            }
             this._youDirty.add(p.id);
             return;
         }
@@ -4648,27 +5952,36 @@ class SimWorld {
             Number(meta.bandage.tendQuality) || 0.4,
             Number(meta.bandage.tendQualityMax) || 0.7
         );
-        BodyHealing.applyTend(creature.anatomy, target, quality);
+        BodyHealing.applyTend(patientCreature.anatomy, target, quality);
 
         held.quantity = Math.max(0, Math.floor(Number(held.quantity) || 1) - 1);
-        if (!(held.quantity > 0)) p.inventory[p.hotbarIndex] = null;
+        if (!(held.quantity > 0)) from.inventory[slot] = null;
 
-        p.body = creature.anatomy.toJSON();
-        creature.anatomy._dirty = false;
+        patientPawn.body = patientCreature.anatomy.toJSON();
+        patientCreature.anatomy._dirty = false;
         this._youDirty.add(p.id);
 
+        if (!you) return;
+
         const qPct = Math.round(quality * 100);
-        let text = `You finished bandaging (${qPct}%).`;
+        const who = "You";
+        const other = patientPawn.id !== tender.id;
+        const poss = other
+            ? `${patientPawn.name || "their"}`
+            : "your";
+        let text = `${who} finished bandaging (${qPct}%)`;
         if (target.part) {
-            text = `You bandaged your ${target.part.name} (${qPct}%).`;
+            text = other
+                ? `${who} bandaged ${poss}'s ${target.part.name} (${qPct}%)`
+                : `${who} bandaged ${poss} ${target.part.name} (${qPct}%)`;
         } else if (target.destroyed) {
             const name = target.destroyed.partName;
-            const part = name ? creature.anatomy.part?.(name) : null;
+            const part = name ? patientCreature.anatomy.part?.(name) : null;
             text = BodyHealing.isStumpPart?.(part)
-                ? `You bandaged a stump (${qPct}%).`
+                ? `${who} bandaged a stump (${qPct}%)`
                 : name
-                    ? `You packed the wound (${qPct}%).`
-                    : `You finished bandaging (${qPct}%).`;
+                    ? `${who} packed the wound (${qPct}%)`
+                    : `${who} finished bandaging (${qPct}%)`;
         }
         this.pushEvent({ kind: "combat_log", text, to: p.id });
     }
@@ -4683,7 +5996,9 @@ class SimWorld {
         const ch = p.eatChannel;
         p.eatChannel = null;
         if (!ch) return;
-        const held = p.inventory[ch.itemIndex];
+        const from = (ch.fromId && this._findOwnedPawn(ch.fromId)) || p;
+        const idx = ch.slot ?? ch.itemIndex ?? from.hotbarIndex ?? 0;
+        const held = from.inventory?.[idx];
         if (!held) return;
         const food = this._foodForEat(held);
         const total = Number(food.kc) || 0;
@@ -4694,8 +6009,7 @@ class SimWorld {
         if (isMeal) {
             const consumed = Math.min(total, room);
             if (!(consumed > 0)) {
-                this._youDirty.add(p.id);
-                this.pushEvent({ kind: "channel", playerId: p.id, channel: "eat", progress: 1, done: true });
+                this._dirtyPawnOwner(p);
                 return;
             }
             p.kc += consumed;
@@ -4705,43 +6019,100 @@ class SimWorld {
                 if (!held.food) held.food = { ...food };
                 if (held.food.kcFull == null) held.food.kcFull = Math.round(total);
                 held.food.kc = Math.max(0, Math.round(total - consumed));
-                if (!(held.food.kc > 0)) p.inventory[ch.itemIndex] = null;
+                if (!(held.food.kc > 0)) from.inventory[idx] = null;
             } else {
                 held.quantity = (held.quantity || 1) - 1;
-                if (!(held.quantity > 0)) p.inventory[ch.itemIndex] = null;
+                if (!(held.quantity > 0)) from.inventory[idx] = null;
             }
         } else {
             p.kc += Math.min(total, room);
             p.saturation += total * this._satietyRatio(food, false);
             this._tryFoodPoison(p, food);
             held.quantity = (held.quantity || 1) - 1;
-            if (!(held.quantity > 0)) p.inventory[ch.itemIndex] = null;
+            if (!(held.quantity > 0)) from.inventory[idx] = null;
         }
-        this._youDirty.add(p.id);
-        this.pushEvent({ kind: "channel", playerId: p.id, channel: "eat", progress: 1, done: true });
+        this._dirtyPawnOwner(p);
+        const session = this._sessionOfPawn(p);
+        this.pushEvent({
+            kind: "channel",
+            playerId: session?.id || p.id,
+            channel: "eat",
+            progress: 1,
+            done: true
+        });
+    }
+
+    _findOwnedPawn(id) {
+        if (!id) return null;
+        for (const pl of this.players.values()) {
+            if (pl.id === id) return pl;
+            const m = (pl.party || []).find((x) => x.id === id);
+            if (m) return m;
+        }
+        return null;
+    }
+
+    _sessionOfPawn(pawn) {
+        if (!pawn) return null;
+        if (this.players.has(pawn.id)) return this.players.get(pawn.id);
+        for (const pl of this.players.values()) {
+            if ((pl.party || []).some((m) => m.id === pawn.id)) return pl;
+        }
+        return null;
+    }
+
+    _dirtyPawnOwner(pawn) {
+        const session = this._sessionOfPawn(pawn);
+        if (session) this._youDirty.add(session.id);
     }
 
     _tryFoodPoison(p, food) {
-        const creature = this._syncPlayerCreature(p) || this._ensurePlayerCreature(p);
+        let creature = p.creature || this.creatures.get(p.id);
+        if (!creature) {
+            const session = this._sessionOfPawn(p);
+            creature = session
+                ? (this._syncPlayerCreature(session) || this._ensurePlayerCreature(session))
+                : null;
+        }
         if (!creature?.anatomy) return;
-        const result = Hediffs.tryFoodPoison(creature.anatomy, food, null, () => this.rng());
+        const session = this._sessionOfPawn(p);
+        const you = !!(session && (session.controlId || session.id) === p.id);
+        const result = Hediffs.tryFoodPoison(
+            creature.anatomy,
+            food,
+            null,
+            () => this.rng(),
+            {
+                isControlled: () => you,
+                displayName: () => p.name || creature.displayName?.() || "Someone"
+            }
+        );
         if (!result) return;
         p.body = creature.anatomy.toJSON();
         creature.anatomy._dirty = false;
-        this.pushEvent({ kind: "combat_log", text: result.message, to: p.id });
+        this.pushEvent({ kind: "combat_log", text: result.message, to: session?.id || p.id });
     }
 
-    _tryAttack(p, angle) {
-        if (p.eatChannel || this._isVomiting(p)) return;
-        if (p.dead) return;
-        const creature = this._syncPlayerCreature(p) || this._ensurePlayerCreature(p);
+    _pawnRecordForCreature(p, creature) {
+        if (!p || !creature) return null;
+        if (creature === p.creature || creature.id === p.id) return p;
+        return (p.party || []).find((m) => m.id === creature.id) || null;
+    }
+
+    _tryAttack(p, angle, pawnId = null) {
+        const actor = this._actionPawn(p, { pawnId });
+        if (!actor || actor.dead) return;
+        if (actor.eatChannel || this._pawnVomiting(actor)) return;
+        let creature = actor === p
+            ? (this._syncPlayerCreature(p) || this._ensurePlayerCreature(p))
+            : this._ensureCompanionCreature(p, actor);
         if (!creature || creature.isBodyDead()) return;
         let ang = Number(angle);
         if (!Number.isFinite(ang)) ang = 0;
         // Client autofire often arrives a few ms before the server swing ends (RTT).
-        // Queue one pending strike instead of dropping the input.
+        // Queue one pending strike on THIS pawn instead of dropping the input.
         if (creature.isAttacking()) {
-            p.pendingAttackAngle = ang;
+            creature.pendingAttackAngle = ang;
             return;
         }
         this._beginPlayerAttack(p, creature, ang);
@@ -4749,32 +6120,47 @@ class SimWorld {
 
     _beginPlayerAttack(p, creature, angle) {
         if (!creature?.startMeleeAttack?.(angle)) return false;
+        creature.pendingAttackAngle = null;
+        const rec = this._pawnRecordForCreature(p, creature);
+        const art = creature.attackArt || { unarmed: true, range: 4, max: creature.attackMax };
+        if (rec === p) {
         p.pendingAttackAngle = null;
         p.attackTimer = creature.attackTimer;
         p.attackMax = creature.attackMax;
         p.attackAngle = creature.attackAngle;
         p.facing = creature.facing;
-        p.attackArt = creature.attackArt || { unarmed: true, range: 4, max: p.attackMax };
+            p.attackArt = art;
+        } else if (rec) {
+            rec.attackTimer = creature.attackTimer;
+            rec.attackMax = creature.attackMax;
+            rec.attackAngle = creature.attackAngle;
+            rec.facing = creature.facing || rec.facing;
+            rec.attackArt = art;
+        }
+        const pose = rec || p;
         this.pushEvent({
             kind: "attack",
             playerId: p.id,
-            x: p.x,
-            y: p.y,
+            pawnId: creature.id,
+            x: pose.x,
+            y: pose.y,
             angle,
-            facing: p.facing,
-            art: p.attackArt
+            facing: creature.facing || pose.facing,
+            art
         });
         return true;
     }
 
     /** Start a queued autofire swing once the current one ends. */
-    _flushPendingAttack(p) {
-        if (!p || p.dead || p.eatChannel || this._isVomiting(p)) return;
-        if (p.pendingAttackAngle == null) return;
-        const creature = p.creature || this.creatures.get(p.id);
-        if (!creature || creature.isBodyDead() || creature.isAttacking()) return;
-        const ang = p.pendingAttackAngle;
-        p.pendingAttackAngle = null;
+    _flushPendingAttack(p, creature) {
+        if (!p || !creature) return;
+        const rec = this._pawnRecordForCreature(p, creature);
+        if (!rec || rec.dead) return;
+        if (rec === p && (p.dead || p.eatChannel || this._isVomiting(p))) return;
+        if (creature.pendingAttackAngle == null) return;
+        if (creature.isBodyDead() || creature.isAttacking()) return;
+        const ang = creature.pendingAttackAngle;
+        creature.pendingAttackAngle = null;
         this._beginPlayerAttack(p, creature, ang);
     }
 
@@ -4830,6 +6216,7 @@ class SimWorld {
         p.pendingAttackAngle = null;
         const creature = p.creature || this.creatures.get(p.id);
         if (creature) {
+            creature.pendingAttackAngle = null;
             creature._dead = true;
             creature.active = false;
             creature._endAttack?.();
@@ -4879,10 +6266,100 @@ class SimWorld {
         }
         this._youDirty.add(p.id);
         if (alreadyDead) return;
+        for (const m of p.party || []) {
+            const cc = m.creature || this.creatures.get(m.id);
+            if (cc) {
+                cc.pendingAttackAngle = null;
+                cc._endAttack?.();
+            }
+            m.attackTimer = 0;
+            m.attackArt = null;
+        }
         const killerName = this._killerLabel(killer);
         const msg = Protocol.deathMessage(p.name, killerName);
         this.pushEvent({ kind: "death", playerId: p.id, text: msg });
+        this._clearPvpOwner(p.id);
         this.pushEvent({ kind: "chat", text: msg, system: true });
+    }
+
+    _killCompanion(owner, mem, killer) {
+        if (!owner || !mem || mem.dead) return;
+        mem.dead = true;
+        mem.hp = 0;
+        mem.eatChannel = null;
+        mem.attackTimer = 0;
+        mem.attackArt = null;
+        const creature = mem.creature || this.creatures.get(mem.id);
+        if (creature) {
+            creature.pendingAttackAngle = null;
+            creature._dead = true;
+            creature.active = false;
+            creature._endAttack?.();
+            if (creature.anatomy) mem.body = creature.anatomy.toJSON();
+        }
+        const loot = [];
+        for (const key of ["head", "torso", "legs", "feet"]) {
+            const s = mem.equipment?.[key];
+            if (s) loot.push(this._cloneStackForWorld(s));
+        }
+        for (const s of mem.equipment?.waist || []) {
+            if (s) loot.push(this._cloneStackForWorld(s));
+        }
+        for (const s of mem.inventory || []) {
+            if (s) loot.push(this._cloneStackForWorld(s));
+        }
+        const c = creature?.bodyCenter?.() || { x: mem.x, y: mem.y - 8 };
+        this._pushCorpse({
+            x: c.x,
+            y: c.y,
+            key: "human",
+            look: mem.look || null,
+            frame: 7,
+            name: mem.name || "Companion",
+            loot: loot.filter(Boolean),
+            body: mem.body || creature?.anatomy?.toJSON?.() || null,
+            bodyPlan: "human",
+            mobId: "human",
+            playerCorpse: true
+        });
+        mem.inventory = emptyInv(5);
+        mem.equipment = { head: null, torso: null, legs: null, feet: null, waist: [] };
+        mem.hotbarIndex = 0;
+        this.creatures.delete(mem.id);
+        mem.creature = null;
+        const killerName = this._killerLabel(killer);
+        const msg = Protocol.deathMessage(mem.name, killerName);
+        this.pushEvent({
+            kind: "party_death",
+            playerId: owner.id,
+            pawnId: mem.id,
+            text: msg
+        });
+        this.pushEvent({ kind: "chat", text: msg, system: true });
+        this._youDirty.add(owner.id);
+    }
+
+    _reapDeadCompanions() {
+        for (const p of this.players.values()) {
+            if (!p.connected) continue;
+            const remain = [];
+            let changed = false;
+            for (const m of p.party || []) {
+                const cc = m.creature || this.creatures.get(m.id);
+                if (m.dead || cc?.isBodyDead?.()) {
+                    this._killCompanion(p, m, cc?._lastHitBy || null);
+                    changed = true;
+                    continue;
+                }
+                remain.push(m);
+            }
+            if (!changed) continue;
+            p.party = remain;
+            if (p.controlId !== p.id && !remain.some((m) => m.id === p.controlId)) {
+                p.controlId = p.id;
+            }
+            this._youDirty.add(p.id);
+        }
     }
 
     /** @param {number} dtMs */
@@ -4903,25 +6380,28 @@ class SimWorld {
                 });
                 if (p.eatChannel.remaining <= 0) this._finishEat(p);
             }
+            for (const m of p.party || []) {
+                if (!m?.eatChannel) continue;
+                m.eatChannel.remaining -= dtMs;
+                if (m.eatChannel.remaining <= 0) this._finishEat(m);
+            }
+            for (const m of p.party || []) {
+                if (m && this._isVomiting(m)) this._tickPlayerVomit(m, dtMs);
+            }
             if (p.dead) {
-                // Keep chunks around the corpse in interest so the owner still sees it
                 this._interestLoad(p.x, p.y, this.interestRadius(p));
+                for (const m of p.party || []) {
+                    if (Number.isFinite(m.x)) this._interestLoad(m.x, m.y, this.interestRadius(p));
+            }
                 continue;
             }
-            // Client-authored pose (SceneMain presence) — don't double-integrate
-            if (p.poseAuth) {
-                this._interestLoad(p.x, p.y, this.interestRadius(p));
-                continue;
-            }
-            let speed = SPEED * (p.sprint ? SPRINT : 1);
-            if (p.eatChannel) speed *= 0.5;
-            const nx = p.x + p.moveX * speed * dt;
-            const ny = p.y + p.moveY * speed * dt;
-            if (!this.isBlocked(nx, p.y)) p.x = nx;
-            if (!this.isBlocked(p.x, ny)) p.y = ny;
             this._interestLoad(p.x, p.y, this.interestRadius(p));
+            for (const m of p.party || []) {
+                if (Number.isFinite(m.x)) this._interestLoad(m.x, m.y, this.interestRadius(p));
+            }
         }
 
+        this._tickWandererDirector(dtMs);
         this._tickCreatures(dtMs, dt);
         // Scale with /tick like the world clock (paused at 0×)
         this._tickDropDespawn(dtMs * (Number(this.tickSpeed) || 0));
@@ -4930,6 +6410,87 @@ class SimWorld {
         while (this._minuteAcc >= 1000) {
             this._minuteAcc -= 1000;
             this._worldMinute();
+        }
+    }
+
+    _tickPartyAI(dtMs, world) {
+        const dt = dtMs / 1000;
+        for (const p of this.players.values()) {
+            if (!p.connected) continue;
+            const controlId = p.controlId || p.id;
+            const rows = [];
+            if (!p.dead) {
+                const c = p.creature || this._ensurePlayerCreature(p);
+                if (c && !c.isBodyDead()) rows.push({ rec: p, creature: c });
+            }
+            for (const m of p.party || []) {
+                if (m.dead) continue;
+                const cc = this._ensureCompanionCreature(p, m);
+                if (cc && !cc.isBodyDead()) rows.push({ rec: m, creature: cc });
+            }
+            const uncontrolled = rows.filter((row) => row.rec.id !== controlId);
+            for (const row of uncontrolled) {
+                const cc = row.creature;
+                const rec = row.rec;
+                cc.x = rec.x;
+                cc.y = rec.y;
+                cc.facing = rec.facing || cc.facing;
+                cc.inventory = rec.inventory;
+                cc.equipment = rec.equipment;
+                cc.hotbarIndex = rec.hotbarIndex ?? 0;
+                cc.kc = rec.kc;
+                if (!(cc.ai instanceof PartyAI)) cc.ai = new PartyAI(cc);
+                const wasSwinging = !!cc.isAttacking?.();
+                cc.refreshCapacities?.();
+                cc.ai.update(dtMs, world);
+                rec.hotbarIndex = cc.hotbarIndex ?? rec.hotbarIndex;
+                cc.applyDesiredVel(dtMs);
+                const ox = rec.x;
+                const oy = rec.y;
+                const nx = cc.x + (cc.vx || 0) * dt;
+                const ny = cc.y + (cc.vy || 0) * dt;
+                if (!this._partyPoseBlocked(cc, nx, cc.y)) cc.x = nx;
+                if (!this._partyPoseBlocked(cc, cc.x, ny)) cc.y = ny;
+                rec.x = cc.x;
+                rec.y = cc.y;
+                rec.vx = cc.vx || 0;
+                rec.vy = cc.vy || 0;
+                rec.facing = cc.facing || rec.facing;
+                if (
+                    Math.hypot(rec.x - ox, rec.y - oy) < 0.2
+                    && (Math.abs(cc.vx) > 4 || Math.abs(cc.vy) > 4)
+                ) {
+                    rec.heading = rec.heading || {
+                        x: Math.abs(cc.vx) >= Math.abs(cc.vy) ? Math.sign(cc.vx) || 0 : 0,
+                        y: Math.abs(cc.vy) > Math.abs(cc.vx) ? Math.sign(cc.vy) || 0 : 0
+                    };
+                    if (this._escapeOverlappingThing(rec)) {
+                        const step = 3.5 * TS * dt;
+                        const hx = rec.heading.x || 0;
+                        const hy = rec.heading.y || 0;
+                        if (hx && !this.isBlocked(rec.x + hx * step, rec.y)) rec.x += hx * step;
+                        if (hy && !this.isBlocked(rec.x, rec.y + hy * step)) rec.y += hy * step;
+                        cc.x = rec.x;
+                        cc.y = rec.y;
+                    }
+                }
+                if (!wasSwinging && cc.isAttacking?.()) {
+                    this.pushEvent({
+                        kind: "attack",
+                        playerId: p.id,
+                        pawnId: cc.id,
+                        x: rec.x,
+                        y: rec.y,
+                        angle: cc.attackAngle,
+                        facing: cc.facing || rec.facing,
+                        art: cc.attackArt || {
+                            unarmed: true,
+                            range: 4,
+                            max: cc.attackMax || 833
+                        }
+                    });
+                }
+            }
         }
     }
 
@@ -4944,6 +6505,14 @@ class SimWorld {
             const creature = this._syncPlayerCreature(p) || this._ensurePlayerCreature(p);
             if (!creature) continue;
             if (!p.dead && !creature.isBodyDead()) playerCreatures.push(creature);
+            for (const m of p.party || []) {
+                const cc = this._ensureCompanionCreature(p, m);
+                if (cc && !m.dead && !cc.isBodyDead()) playerCreatures.push(cc);
+            }
+        }
+        for (const w of this.wanderers.values()) {
+            const wc = this._ensureWandererCreature(w);
+            if (wc && !w.dead && !wc.isBodyDead()) playerCreatures.push(wc);
         }
 
         const liveMobs = [];
@@ -4954,26 +6523,76 @@ class SimWorld {
 
         const meleeTargets = [...playerCreatures, ...liveMobs];
 
+        this._rebuildDuelAssignments();
+        this._tickPartyAI(dtMs, aiWorld);
+
         for (const p of this.players.values()) {
-            if (!p.connected || p.dead) continue;
+            if (!p.connected) continue;
+            if (!p.dead) {
             const creature = p.creature;
-            if (!creature || creature.isBodyDead()) continue;
+                if (creature && !creature.isBodyDead()) {
             creature.refreshCapacities?.();
             p.prone = !p.dead && !!creature._prone;
+            if (p.prone) creature.facing = "right";
             creature.tickMelee(dtMs, meleeTargets);
             p.attackTimer = creature.attackTimer;
             p.attackMax = creature.attackMax;
             p.attackAngle = creature.attackAngle;
-            p.facing = creature.facing || p.facing;
+            p.facing = p.prone ? "right" : (creature.facing || p.facing);
             p.attackArt = creature.attackTimer > 0 ? (creature.attackArt || null) : null;
-            // Autofire: honor swing that arrived during the previous cooldown
-            if (!creature.isAttacking()) this._flushPendingAttack(p);
+                    if (!creature.isAttacking()) this._flushPendingAttack(p, creature);
             if (creature.anatomy?._dirty) {
                 p.body = creature.anatomy.toJSON();
                 creature.anatomy._dirty = false;
                 creature.refreshCapacities?.();
                 p.prone = !p.dead && !!creature._prone;
                 this._youDirty.add(p.id);
+                    }
+                }
+            }
+            for (const m of p.party || []) {
+                const cc = m.creature || this.creatures.get(m.id);
+                if (!cc || m.dead || cc.isBodyDead()) continue;
+                cc.x = m.x;
+                cc.y = m.y;
+                cc.refreshCapacities?.();
+                cc.tickMelee(dtMs, meleeTargets);
+                m.attackTimer = cc.attackTimer;
+                m.attackMax = cc.attackMax;
+                m.attackAngle = cc.attackAngle;
+                m.prone = !m.dead && !!cc._prone;
+                if (m.prone) {
+                    cc.facing = "right";
+                    m.facing = "right";
+                } else {
+                    m.facing = cc.facing || m.facing;
+                }
+                m.attackArt = cc.attackTimer > 0 ? (cc.attackArt || null) : null;
+                if (!cc.isAttacking()) this._flushPendingAttack(p, cc);
+                if (cc.anatomy?._dirty) {
+                    m.body = cc.anatomy.toJSON();
+                    cc.anatomy._dirty = false;
+                    this._youDirty.add(p.id);
+                }
+            }
+        }
+
+        for (const w of [...this.wanderers.values()]) {
+            const wc = w.creature || this.creatures.get(w.id);
+            if (!wc) continue;
+            if (wc.isBodyDead()) {
+                this._finishWandererDeath(w, wc._lastHitBy || null);
+                continue;
+            }
+            wc.tickMelee(dtMs, meleeTargets);
+            w.attackTimer = wc.attackTimer;
+            w.attackMax = wc.attackMax;
+            w.attackAngle = wc.attackAngle;
+            w.facing = wc.facing || w.facing;
+            w.attackArt = wc.attackTimer > 0 ? (wc.attackArt || null) : null;
+            if (wc.anatomy?._dirty) {
+                w.body = wc.anatomy.toJSON();
+                wc.anatomy._dirty = false;
             }
         }
 
@@ -4983,7 +6602,7 @@ class SimWorld {
                 this._finishMobDeath(mob, mob._lastHitBy || null);
                 continue;
             }
-            const nearest = aiWorld.getNearestPlayer(mob);
+            const nearest = aiWorld.getDuelTarget(mob) || aiWorld.getNearestPlayer(mob);
             mob.ctx.player = nearest || null;
             mob.refreshCapacities?.();
             const wasSwinging = !!mob.isAttacking?.();
@@ -5042,7 +6661,7 @@ class SimWorld {
                     mob.entry.body = mob.anatomy.toJSON();
                 }
             }
-            mob.tickMelee(dtMs, playerCreatures);
+            mob.tickMelee(dtMs, meleeTargets);
 
             if (mob.isBodyDead()) {
                 this._finishMobDeath(mob, mob._lastHitBy || null);
@@ -5050,6 +6669,7 @@ class SimWorld {
         }
 
         this._reapDeadPlayers();
+        this._reapDeadCompanions();
         // Sync capacity deaths are handled above; fatal-part microtasks may still
         // be pending until after this call returns — next tick's reap catches them.
         this._reapDeadMobs();
@@ -5062,7 +6682,8 @@ class SimWorld {
             this.gameDay += 1;
         }
         for (const p of this.players.values()) {
-            if (!p.connected || p.dead) continue;
+            if (!p.connected) continue;
+            if (!p.dead) {
             const creature = p.creature || this.creatures.get(p.id);
             // Snapshot before drain — same as Player.hungerTick (fed minute still recovers)
             const fed = (Number(p.kc) > 0) || (Number(p.saturation) > 0);
@@ -5089,11 +6710,32 @@ class SimWorld {
                 if (creature.isBodyDead()) {
                     p.body = creature.anatomy?.toJSON?.() || p.body;
                     this._kill(p, null);
-                    continue;
                 }
             }
             this._youDirty.add(p.id);
         }
+            for (const mem of p.party || []) {
+                if (mem.dead) continue;
+                this._tickPlayerSpoilLeft(mem);
+                const mFed = (Number(mem.kc) > 0) || (Number(mem.saturation) > 0);
+                let mTick = 2000 / (24 * 60);
+                mem.saturation = (Number(mem.saturation) || 0) - mTick;
+                if (mem.saturation < 0) {
+                    mem.kc = Math.max(0, (Number(mem.kc) || 0) + mem.saturation);
+                    mem.saturation = 0;
+                }
+                const mc = mem.creature || this.creatures.get(mem.id);
+                if (mc && !mc.isBodyDead() && BodyHealing?.minuteTick) {
+                    mc._malnutritionFed = mFed;
+                    mc.kc = mem.kc;
+                    BodyHealing.minuteTick(mc, mc.ctx);
+                    if (mc.isBodyDead()) {
+                        mem.body = mc.anatomy?.toJSON?.() || mem.body;
+                    }
+                }
+            }
+        }
+        this._reapDeadCompanions();
         for (const mob of [...this.mobs.values()]) {
             if (!mob) continue;
             // Already marked dead (e.g. fatal microtask) — finish before healing skip
@@ -5478,25 +7120,29 @@ class SimWorld {
     }
 
     isBlocked(wx, wy, opts = {}) {
-        const { cx, cy } = worldToChunk(wx, wy);
-        const c = this._ensureChunk(cx, cy);
-        const lx = Math.floor((wx - cx * CHUNK_PX) / TS);
-        const ly = Math.floor((wy - cy * CHUNK_PX) / TS);
-        if (lx < 0 || ly < 0 || lx >= CS || ly >= CS) return true;
-        const tile = c.tiles[lx + ly * CS];
-        if (tile && BLOCKED.has(tile)) return true;
+        if (this._tileBlocked(wx, wy)) return true;
 
         // Match client Thing.setup: only hitboxSize > 0 is solid (bushes/debris are not).
-        const defs = thingDefs();
+        const { cx, cy } = worldToChunk(wx, wy);
+        const c = this.chunks.get(chunkKey(cx, cy));
+        if (!c) return false;
         const solidAt = (list) => {
             for (const t of list || []) {
                 if (!t || t.gone) continue;
-                const def = defs.get(t.id);
-                const hs = Number(def?.hitboxSize);
-                if (!(hs > 0)) continue;
-                // Client body is hs×hs at the feet; half-extent + 1px pad.
-                const r = opts.thingR != null ? opts.thingR : hs * 0.5 + 1;
-                if (Math.abs(t.x - wx) < r && Math.abs(t.y - wy) < r) return true;
+                if (opts.thingR != null) {
+                    const def = thingDefs().get(t.id);
+                    const hs = Number(def?.hitboxSize);
+                    if (!(hs > 0)) continue;
+                    if (Math.abs(t.x - wx) < opts.thingR && Math.abs(t.y - wy) < opts.thingR) {
+                        return true;
+                    }
+                    continue;
+                }
+                const rect = this._thingRect(t);
+                if (!rect) continue;
+                if (wx > rect.left && wx < rect.right && wy > rect.top && wy < rect.bottom) {
+                    return true;
+                }
             }
             return false;
         };
@@ -5749,6 +7395,14 @@ class SimWorld {
         return keys;
     }
 
+    _poseMotion(rec) {
+        const vx = Number(rec?.vx) || Number(rec?.creature?.vx) || 0;
+        const vy = Number(rec?.vy) || Number(rec?.creature?.vy) || 0;
+        const moving = Math.hypot(vx, vy) > 2
+            || Math.hypot(rec?.moveX || 0, rec?.moveY || 0) > 0.01;
+        return { vx, vy, moving };
+    }
+
     snapshotFor(viewerId) {
         const viewer = this.players.get(viewerId);
         if (!viewer) return null;
@@ -5756,12 +7410,16 @@ class SimWorld {
         const players = [];
         for (const p of this.players.values()) {
             if (!p.connected) continue;
+            const motion = this._poseMotion(p);
             players.push({
                 id: p.id,
                 name: p.name,
                 x: p.x,
                 y: p.y,
                 facing: p.facing,
+                vx: motion.vx,
+                vy: motion.vy,
+                moving: motion.moving,
                 sprint: p.sprint,
                 dead: p.dead,
                 prone: !!(p.dead || p.prone),
@@ -5772,7 +7430,26 @@ class SimWorld {
                     ? 1 - p.attackTimer / p.attackMax
                     : 0,
                 attackArt: p.attackTimer > 0 ? (p.attackArt || null) : null,
-                look: p.look || Look.normalizeLook(null)
+                look: p.look || Look.normalizeLook(null),
+                party: (p.party || []).map((m) => {
+                    const mm = this._poseMotion(m);
+                    return {
+                        id: m.id,
+                        name: m.name,
+                        x: m.x,
+                        y: m.y,
+                        facing: m.facing,
+                        vx: mm.vx,
+                        vy: mm.vy,
+                        moving: mm.moving,
+                        dead: !!m.dead,
+                        prone: !!(m.dead || m.prone || m.creature?._prone),
+                        look: m.look || Look.normalizeLook(null),
+                        attacking: (m.attackTimer || 0) > 0,
+                        attackAngle: m.attackAngle ?? null,
+                        attackArt: (m.attackTimer || 0) > 0 ? (m.attackArt || null) : null
+                    };
+                })
             });
         }
         // Non-finite pose would make _chunksNear return [] and clients would
@@ -5851,7 +7528,7 @@ class SimWorld {
             }
             mobs.push(row);
         }
-        return {
+        const out = {
             clock: { gameDay: this.gameDay, gameMinutes: this.gameMinutes, tickSpeed: this.tickSpeed },
             players,
             drops,
@@ -5859,15 +7536,20 @@ class SimWorld {
             campfires,
             storages,
             mobs,
+            wanderers: [...this.wanderers.values()].map((w) => this._publicWanderer(w)),
             chunkCursor: { cx, cy },
             youId: viewerId
         };
+        return out;
     }
 
     youPayload(playerId) {
         const p = this.players.get(playerId);
         if (!p) return null;
         this._spoilPlayerGear(p);
+        for (const m of p.party || []) {
+            if (!m?.dead) this._spoilPlayerGear(m);
+        }
         const creature = p.creature || this.creatures.get(p.id);
         const body =
             (creature?.anatomy && creature.anatomy.toJSON()) ||
@@ -5896,7 +7578,27 @@ class SimWorld {
                 : null,
             vomit: this._isVomiting(p)
                 ? { remainingMs: Math.max(0, Number(p.vomitRemainingMs) || 0) }
-                : null
+                : null,
+            party: (p.party || []).map((m) => ({
+                id: m.id,
+                name: m.name,
+                look: m.look,
+                kc: m.kc,
+                saturation: m.saturation,
+                stomach: m.stomach,
+                inventory: m.inventory,
+                equipment: m.equipment,
+                hotbarIndex: m.hotbarIndex,
+                body: m.body || m.creature?.anatomy?.toJSON?.() || null,
+                hp: m.hp,
+                mhp: m.mhp,
+                x: m.x,
+                y: m.y,
+                facing: m.facing,
+                dead: !!m.dead,
+                prone: !!(m.dead || m.prone || m.creature?._prone),
+            })),
+            controlId: p.controlId || p.id
         };
     }
 }

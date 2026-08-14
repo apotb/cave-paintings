@@ -97,8 +97,8 @@ class CampfirePanel {
                 .setScale(3);
 
             const qty = this.scene.add.text(0, 0, '', {
-                fontSize: '14px',
-                fontFamily: 'monospace',
+                fontSize: `${pixelUiFontSize(16, 1)}px`,
+                fontFamily: PIXEL_UI_FONT,
                 color: '#ffffff',
                 stroke: '#000000',
                 strokeThickness: 2
@@ -199,8 +199,8 @@ class CampfirePanel {
             .setStrokeStyle(2, OUTLINE)
             .setInteractive({ useHandCursor: true });
         this.destroyText = this.scene.add.text(0, 0, "Destroy", {
-            fontFamily: "PrimaryFont",
-            fontSize: "13px",
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "16px",
             color: "#d4c4a8"
         }).setOrigin(0.5);
         this.destroyBtn = this.scene.add.container(0, 0, [this.destroyRect, this.destroyText]);
@@ -302,6 +302,7 @@ class CampfirePanel {
             uid: entry.uid,
             x: this.campfire.x,
             y: this.campfire.y,
+            pawnId: this.scene.player?.pawnId,
             ...extra
         });
     }
@@ -504,7 +505,7 @@ class CampfirePanel {
         };
 
         const zoom = this.scene.worldZoom || 1;
-        const fontPx = Math.round(14 * s);
+        const fontPx = pixelUiFontSize(16, s);
         const strokePx = Math.max(2, Math.round(2 * s));
         for (const view of this.slotViews) {
             const p = positions[view.key];
@@ -519,7 +520,7 @@ class CampfirePanel {
             view.qty.setPosition(p.x + slotW / 2 - 4 * ws, p.y + slotW / 2 - 4 * ws);
         }
 
-        const btnFontPx = Math.round(13 * s);
+        const btnFontPx = pixelUiFontSize(16, s);
         const bw = 90 * ws;
         const bh = 28 * ws;
         this._destroyBw = bw;

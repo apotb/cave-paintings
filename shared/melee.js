@@ -15,6 +15,8 @@
         root.meleeSegmentHitsTarget = M.meleeSegmentHitsTarget;
         root.unarmedHitSegmentAt = M.unarmedHitSegmentAt;
         root.placeUnarmedThrustPoint = M.placeUnarmedThrustPoint;
+        root.meleeEdgeDist = M.meleeEdgeDist;
+        root.meleeSwingWouldHit = M.meleeSwingWouldHit;
     }
 })(typeof globalThis !== "undefined" ? globalThis : this, function (GameMath) {
     const clamp = GameMath?.clamp || ((v, a, b) => Math.max(a, Math.min(b, v)));
@@ -119,6 +121,42 @@
         return Math.max((8 / REF_FPS) * 1000, ms);
     }
 
+    /** Distance from a point to a target's hurtbox (0 if inside). */
+    function meleeEdgeDist(ax, ay, target) {
+        if (!target) return Infinity;
+        const box = typeof target.hurtbox === "function" ? target.hurtbox(0) : null;
+        if (box) {
+            const cx = clamp(ax, box.left, box.right);
+            const cy = clamp(ay, box.top, box.bottom);
+            return Math.hypot(ax - cx, ay - cy);
+        }
+        const pc =
+            typeof target.bodyCenter === "function"
+                ? target.bodyCenter()
+                : { x: target.x, y: target.y };
+        const hs = Number(target.hitboxSize) || 8;
+        return Math.max(0, Math.hypot(pc.x - ax, pc.y - ay) - hs * 0.5);
+    }
+
+    /**
+     * True if a thrust at peak (and hit-window samples) would overlap `target`.
+     * Same segment math as SimCreature._meleeHitCheck.
+     */
+    function meleeSwingWouldHit(ax, ay, angle, range, target, opts = {}) {
+        if (!target) return false;
+        const r = Number(range) || 4;
+        const radius = Number.isFinite(opts.radius) ? opts.radius : 4;
+        const hitStart = Number(opts.hitStart ?? 0.25);
+        const peak = 0.4;
+        const samples = [peak];
+        if (Number.isFinite(hitStart) && hitStart < peak) samples.unshift(hitStart);
+        for (const p of samples) {
+            const seg = unarmedHitSegmentAt(ax, ay, angle, r, p);
+            if (meleeSegmentHitsTarget(seg.a, seg.b, radius, target)) return true;
+        }
+        return false;
+    }
+
     /** Unarmed / melee segment vs a damageable target. */
     function meleeSegmentHitsTarget(a, b, radius, target) {
         if (typeof target.hurtbox === "function") {
@@ -150,6 +188,8 @@
         unarmedHitSegment,
         unarmedHitSegmentAt,
         meleeAttackDurationMs,
+        meleeEdgeDist,
+        meleeSwingWouldHit,
         meleeSegmentHitsTarget,
         meleeSegmentHitsRect,
         meleeSegmentsIntersect,

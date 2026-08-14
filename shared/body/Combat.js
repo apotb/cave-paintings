@@ -7,14 +7,16 @@
         const GameMath = require("../gameMath");
         const DataStore = require("../DataStore");
         const BodyHealing = require("./Healing");
-        module.exports = factory(GameMath, DataStore, BodyHealing);
+        const Party = require("../party");
+        module.exports = factory(GameMath, DataStore, BodyHealing, Party);
     } else {
-        root.BodyCombat = factory(root.GameMath, root.DataStore, root.BodyHealing);
+        root.BodyCombat = factory(root.GameMath, root.DataStore, root.BodyHealing, root.Party);
     }
 })(typeof globalThis !== "undefined" ? globalThis : this, function (
     GameMath,
     DataStore,
-    BodyHealing
+    BodyHealing,
+    Party
 ) {
     function mathOf(ownerOrCtx) {
         return (
@@ -44,6 +46,14 @@
             };
         }
         return { you: "#7ec8ff", enemy: "#ff9a7a", weapon: "#ffe08a" };
+    }
+
+    /** Fatal part destroy is deferred via microtask — flush so death lands now. */
+    function finishFatal(target, part) {
+        if (!target) return;
+        target.anatomy?.flushPendingFatal?.();
+        if (target.isBodyDead?.()) return;
+        if (target.anatomy?.core?.isDead?.()) target.onBodyFatal?.(part);
     }
 
     const BodyCombat = {
@@ -189,6 +199,15 @@
 
         applyHit(attacker, target, attack, opts = null) {
             if (!target?.anatomy || !attack) return null;
+            if (attacker && attacker !== target && Party?.sameFaction?.(attacker, target)) {
+                return null;
+            }
+            // Destroyed core is fatal, but isCutOff skips it so later rolls still
+            // land on a dead torso and never kill. Finish death instead of stacking.
+            if (target.anatomy.core?.isDead?.()) {
+                finishFatal(target, target.anatomy.core);
+                return null;
+            }
             const host = hostOf(target);
             const math = mathOf(target);
             const defs = injuryDefs(host);
@@ -321,6 +340,7 @@
             }
 
             target.onBodyDamaged?.(attacker, result);
+            if (result.destroyed) finishFatal(target, victimPart);
             return result;
         }
     };

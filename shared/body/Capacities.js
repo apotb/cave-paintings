@@ -36,12 +36,21 @@
         /** @param {Body} body */
         constructor(body) {
             this.body = body;
+            this._c = Object.create(null);
+        }
+
+        _once(key, compute) {
+            const c = this._c;
+            if (c[key] !== undefined) return c[key];
+            return (c[key] = compute());
         }
 
         eff(name) {
+            const k = "e:" + name;
+            const c = this._c;
+            if (c[k] !== undefined) return c[k];
             const p = this.body.part(name);
-            if (!p) return 1;
-            return p.efficiency();
+            return (c[k] = p ? p.efficiency() : 1);
         }
 
         hasPart(name) {
@@ -99,6 +108,7 @@
         }
 
         pain() {
+            if (this._c.pain !== undefined) return this._c.pain;
             const math = mathOf(this.body);
             let pain = 0;
             for (const part of Object.values(this.body.parts())) {
@@ -121,7 +131,7 @@
                 }
             }
             pain += this._hediffPainOffset();
-            return math.clamp(pain, 0, 1);
+            return (this._c.pain = math.clamp(pain, 0, 1));
         }
 
         _hediffPainOffset() {
@@ -170,38 +180,45 @@
         }
 
         bloodPumping() {
-            const math = mathOf(this.body);
-            return math.clamp(this.eff("Heart"), 0, 1.9);
+            return this._once("bloodPumping", () =>
+                mathOf(this.body).clamp(this.eff("Heart"), 0, 1.9)
+            );
         }
 
         breathing() {
-            const math = mathOf(this.body);
-            const lungs = (this.eff("Left Lung") + this.eff("Right Lung")) * 0.5;
-            return math.clamp(
-                lungs * this.eff("Neck") * this.eff("Ribcage") * this.eff("Sternum"),
-                0,
-                1.2
-            );
+            return this._once("breathing", () => {
+                const math = mathOf(this.body);
+                const lungs = (this.eff("Left Lung") + this.eff("Right Lung")) * 0.5;
+                return math.clamp(
+                    lungs * this.eff("Neck") * this.eff("Ribcage") * this.eff("Sternum"),
+                    0,
+                    1.2
+                );
+            });
         }
 
         bloodFiltration() {
-            const math = mathOf(this.body);
-            const base = math.clamp(
-                (this.eff("Left Kidney") + this.eff("Right Kidney")) *
-                    0.5 *
-                    this.eff("Liver"),
-                0,
-                1
-            );
-            return this._applyHediffCap("bloodFiltration", base, 1);
+            return this._once("bloodFiltration", () => {
+                const math = mathOf(this.body);
+                const base = math.clamp(
+                    (this.eff("Left Kidney") + this.eff("Right Kidney")) *
+                        0.5 *
+                        this.eff("Liver"),
+                    0,
+                    1
+                );
+                return this._applyHediffCap("bloodFiltration", base, 1);
+            });
         }
 
         digestion() {
-            const math = mathOf(this.body);
-            return math.clamp(this.eff("Stomach") * 0.5 + this.eff("Liver") * 0.5, 0, 1);
+            return this._once("digestion", () =>
+                mathOf(this.body).clamp(this.eff("Stomach") * 0.5 + this.eff("Liver") * 0.5, 0, 1)
+            );
         }
 
         consciousness() {
+            if (this._c.consciousness !== undefined) return this._c.consciousness;
             const math = mathOf(this.body);
             const brain = this.eff("Brain");
             const bp = this.bloodPumping();
@@ -230,10 +247,14 @@
             else if (bl >= 0.5) c -= 0.2;
             else if (bl >= 0.3) c -= 0.1;
 
-            return this._applyHediffCap("consciousness", c, 1);
+            return (this._c.consciousness = this._applyHediffCap("consciousness", c, 1));
         }
 
         legEfficiency() {
+            return this._once("legEfficiency", () => this._legEfficiency());
+        }
+
+        _legEfficiency() {
             if (this.isQuadrupedHoofed()) {
                 const limbs = [
                     ["Left Front Leg", "Left Front Hoof"],
@@ -282,22 +303,26 @@
         }
 
         moving() {
-            const math = mathOf(this.body);
-            const cons = this.consciousness();
-            const consF = cons < 1 ? cons : 1;
-            const bp = this.bloodPumping();
-            const br = this.breathing();
-            const bpF = 1 + (bp - 1) * 0.2;
-            const brF = 1 + (br - 1) * 0.2;
-            const base = math.clamp(consF * bpF * brF * this.legEfficiency(), 0, 2);
-            return this._applyHediffCap("moving", base, 2);
+            return this._once("moving", () => {
+                const math = mathOf(this.body);
+                const cons = this.consciousness();
+                const consF = cons < 1 ? cons : 1;
+                const bp = this.bloodPumping();
+                const br = this.breathing();
+                const bpF = 1 + (bp - 1) * 0.2;
+                const brF = 1 + (br - 1) * 0.2;
+                const base = math.clamp(consF * bpF * brF * this.legEfficiency(), 0, 2);
+                return this._applyHediffCap("moving", base, 2);
+            });
         }
 
         manipulation() {
-            const math = mathOf(this.body);
-            const cons = this.consciousness();
-            const base = math.clamp(cons * this.armEfficiency(), 0, 2);
-            return this._applyHediffCap("manipulation", base, 2);
+            return this._once("manipulation", () => {
+                const math = mathOf(this.body);
+                const cons = this.consciousness();
+                const base = math.clamp(cons * this.armEfficiency(), 0, 2);
+                return this._applyHediffCap("manipulation", base, 2);
+            });
         }
 
         sight() {
@@ -694,6 +719,9 @@
         }
 
         isDeadFromCapacities() {
+            // Core (Torso) is skipped by isCutOff so organs still "work" after it
+            // dies — harvest / corpse loot. Destroying it must still be fatal.
+            if (this.body?.core?.isDead?.() || this.body?.core?.dead) return true;
             return (
                 this.consciousness() <= 0 ||
                 this.breathing() <= 0 ||

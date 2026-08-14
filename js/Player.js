@@ -69,19 +69,25 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.sprintFactor = 1.5;
         this.interactionRange = 4.0;
 
-        // Input
-        this.cursors = scene.input.keyboard.createCursorKeys();
-        this.keys = scene.input.keyboard.addKeys({
-            W: Phaser.Input.Keyboard.KeyCodes.W,
-            A: Phaser.Input.Keyboard.KeyCodes.A,
-            S: Phaser.Input.Keyboard.KeyCodes.S,
-            D: Phaser.Input.Keyboard.KeyCodes.D,
-            Q: Phaser.Input.Keyboard.KeyCodes.Q,
-            F: Phaser.Input.Keyboard.KeyCodes.F,
-            SPACE: Phaser.Input.Keyboard.KeyCodes.SPACE,
-            SHIFT: Phaser.Input.Keyboard.KeyCodes.SHIFT,
-            CTRL: Phaser.Input.Keyboard.KeyCodes.CTRL
-        });
+        // Party identity (scene binds WASD once; companions share those keys)
+        this.pawnId = null;
+        this.ownerId = null;
+        this.leaderId = null;
+        this.role = "leader";
+        this.pawnName = null;
+        this.hotbarIndex = 0;
+        this.partyAI = null;
+        this.wandererAI = null;
+        this.hostile = false;
+        this.recruitLocked = false;
+        this.refusedBy = null;
+        this.heading = null;
+        this._nameLabel = null;
+        this._nameCrown = null;
+
+        // Input — always the scene-level bindings (never per-companion)
+        this.cursors = scene.cursors;
+        this.keys = scene.keys;
         /** Hold F pickup radius in tiles (standing on / very near the drop). */
         this.pickupRange = 0.55;
 
@@ -106,9 +112,16 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.chatBubble = null;
         this.chatBubbleUntil = 0;
         this.on("destroy", () => {
+            this._nameLabel?.destroy();
+            this._nameCrown?.destroy();
             this.fxRoot?.destroy(true);
             this.fxRoot = null;
             this.chatBubble = null;
+            this._nameLabel = null;
+            this._nameCrown = null;
+            this._recruitTip = null;
+            this._ownChannelBar?.destroy();
+            this._ownChannelBar = null;
         });
     }
 
@@ -123,10 +136,14 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     /** Call after movement each frame — copies exact sprite position. */
     syncFxRoot() {
         const root = this.fxRoot;
-        if (!root?.active) return;
-        root.setPosition(this.x, this.y);
-        root.setRotation(0);
-        root.setDepth(this.y + 40);
+        if (root?.active) {
+            root.setPosition(this.x, this.y);
+            root.setRotation(0);
+            root.setDepth((this.y | 0) + 40);
+        }
+        // Party nametags live above the night veil, so they are not children of
+        // fxRoot and need their own world-space snap after the render pixel lock.
+        this._syncNameHudPos();
     }
 
     /** Show `msg` above the player for `durationMs` (matches public chat fade). */
@@ -135,11 +152,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const scene = this.scene;
         const s = scene.uiScale || 1;
         const zoom = scene.worldZoom || scene.cameras?.main?.zoom || 1;
-        const fontPx = Math.round(14 * s);
+        const fontPx = pixelUiFontSize(16, s);
         const root = this.ensureFxRoot();
         if (!this.chatBubble) {
             this.chatBubble = scene.add.text(0, 0, "", {
-                fontFamily: "monospace",
+                fontFamily: PIXEL_UI_FONT,
                 fontSize: `${fontPx}px`,
                 color: "#ffffff",
                 stroke: "#000000",
@@ -170,7 +187,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const scene = this.scene;
         const s = scene.uiScale || 1;
         const zoom = scene.worldZoom || scene.cameras?.main?.zoom || 1;
-        const fontPx = Math.round(14 * s);
+        const fontPx = pixelUiFontSize(16, s);
         bubble
             .setResolution(zoom * (window.devicePixelRatio || 1))
             .setFontSize(`${fontPx}px`)
@@ -178,6 +195,26 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             .setWordWrapWidth(Math.round(140 * s), true)
             .setScale(1 / zoom);
         this._syncChatBubble();
+    }
+
+    /** Re-apply GUI / world zoom to the nametag (scale changes without recreating). */
+    applyNameLabelScale() {
+        const label = this._nameLabel;
+        if (!label?.active) return;
+        const scene = this.scene;
+        const zoom = scene.worldZoom || 3;
+        const s = scene.uiScale || 1;
+        const dpr = window.devicePixelRatio || 1;
+        const key = `${s}:${zoom}:${dpr}`;
+        if (this._nameLabelScaleKey === key) return;
+        this._nameLabelScaleKey = key;
+        const font = pixelUiFontSize(8, s);
+        const stroke = Math.max(2, Math.round(3 * s));
+        label
+            .setFontSize(`${font}px`)
+            .setStroke("#000000", stroke)
+            .setResolution(zoom * dpr)
+            .setScale(1 / zoom);
     }
 
     /**
@@ -195,13 +232,23 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.ensureFxRoot();
         this.syncFxRoot();
 
-        let lx, ly;
-        if (this._prone) {
-            lx = 0;
-            ly = -Math.round(Math.max(this.width, this.height) * 0.5 + 4);
+        const label = this._nameLabel;
+        const zoom = this.scene.worldZoom || 3;
+        const nameH = Math.ceil(
+            (label?.height || 12) * (label?.scaleY || 1 / zoom)
+        );
+        // Local offset only — party nametags may be world-positioned above the
+        // veil, so do not read label.x / crown.y (those become world coords).
+        const a = this._nameAnchorLocal();
+        let lx = a.x;
+        let ly = a.y;
+        const crown = this._nameCrown;
+        if (crown?.active && crown.visible) {
+            const s = this.scene.uiScale || 1;
+            const glyphH = Math.ceil(10 * s / zoom) + 1;
+            ly = a.y - glyphH - Math.ceil(crown.displayHeight || 0) - 1;
         } else {
-            lx = Math.round(this.width * 0.5);
-            ly = -Math.round(this.height + 4);
+            ly -= nameH + 2;
         }
 
         const fadeMs = 2000;
@@ -210,6 +257,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             ? Phaser.Math.Clamp(remaining / fadeMs, 0, 1)
             : 1;
         bubble.setPosition(lx, ly).setVisible(true).setAlpha(alpha);
+        this.fxRoot?.bringToTop?.(bubble);
     }
 
     toJSON() {
@@ -226,7 +274,238 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     displayName() {
-        return this.scene.playerName || "Player";
+        if (this.pawnName) return this.pawnName;
+        if (this.role === "leader") return this.scene.playerName || "Player";
+        if (this.role === "wanderer") return "Wanderer";
+        return this.scene.playerName || "Someone";
+    }
+
+    isControlled() {
+        return this.scene?.player === this;
+    }
+
+    playAnim(key) {
+        if (!key) return;
+        const walk = key.startsWith("walk-");
+        const facing = key.replace(/^(walk|idle)-/, "") || this.facing || "down";
+        if (typeof PlayerLook !== "undefined") PlayerLook.play(this, facing, walk);
+    }
+
+    /**
+     * AI melee: aim at `target` instead of the mouse.
+     */
+    tryMeleeAttack(target, attack = null) {
+        if (!target || this.isAttacking() || this._bodyDead) return false;
+        if (this.isVomiting() || this.isIncapacitated()) return false;
+        this.capacities = new Capacities(this.anatomy);
+        if (!this.capacities.canManipulate()) return false;
+        const c = this.bodyCenter();
+        const tc = typeof target.bodyCenter === "function"
+            ? target.bodyCenter()
+            : { x: target.x, y: target.y };
+        const angle = Math.atan2(tc.y - c.y, tc.x - c.x);
+        const atk = attack || this._pickMeleeAttack(angle);
+        if (!atk) return false;
+        const meta = this.getHeldWeaponMeta();
+        const scale = this.capacities.actionDurationScale();
+        const durationMs = meleeAttackDurationMs(atk.cooldown || 2, scale);
+        this.currentAttack = atk;
+        const useWeaponArt = !!(meta?.key && meta?.weapon?.type === "melee" && !atk.unarmed);
+        this.attackWeapon = useWeaponArt
+            ? meta.weapon
+            : { type: "melee", range: atk.range || 4, hitStart: 0.25, hitEnd: 0.75 };
+        this.attackMax = durationMs;
+        this.attackTimer = this.attackMax;
+        this.attackAngle = Number.isFinite(angle) ? angle : 0;
+        this.attackHitSet = new Set();
+        this._attackWoreHeld = false;
+        this._attackChoppedTree = false;
+        this.facing = this.facingFromAngle(this.attackAngle);
+        if (this.scene.isNet && this.scene.net?.connected) {
+            this.scene._netSendMove?.(true);
+            this._sendNetAttack(this.attackAngle);
+        }
+        if (useWeaponArt) {
+            const key = meta.key || meta.id;
+            if (!this.weaponSprite) {
+                this.weaponSprite = this.scene.add.image(0, 0, key)
+                    .setOrigin(0.2, 0.8)
+                    .setVisible(false);
+            } else if (this.scene.textures.exists(key)) {
+                this.weaponSprite.setTexture(key);
+            }
+            this._attachAttackSprite(this.weaponSprite);
+            this.weaponSprite.setOrigin(0.2, 0.8).setScale(1).setVisible(true).setDepth(1);
+            this.unarmedSprite?.setVisible(false);
+            if (meta.weapon?.knapSilhouette) {
+                this._knapTipCell = this._knapExtremeCellAlongAim(this.attackAngle, true);
+                this._knapGripCell = this._knapExtremeCellAlongAim(this.attackAngle, false);
+            } else {
+                this._knapTipCell = null;
+                this._knapGripCell = null;
+            }
+            this._updateWeaponSprite(0);
+        } else {
+            const fistColor = this.fistColor();
+            if (!this.unarmedSprite) {
+                this.unarmedSprite = this.scene.add.rectangle(0, 0, 4, 10, fistColor, 1)
+                    .setOrigin(0.5, 1);
+            } else {
+                this.unarmedSprite.setFillStyle(fistColor, 1);
+            }
+            this._attachAttackSprite(this.unarmedSprite);
+            this.unarmedSprite.setVisible(true);
+            this.weaponSprite?.setVisible(false);
+            this._updateUnarmedSprite(0);
+        }
+        return true;
+    }
+
+    /** Head-local nametag offset (fxRoot space). Fixed 16×16 body — walk frames can change this.width and bounce the tag. */
+    _nameAnchorLocal() {
+        if (this._prone) return { x: 0, y: -Math.round(16 * 0.5 + 4) };
+        return { x: 8, y: -20 };
+    }
+
+    /** Local party names stay readable at night; wanderers / other players stay under the veil. */
+    _isLocalPartyNametag() {
+        const scene = this.scene;
+        return !!(scene && (scene.leader === this || scene.party?.includes?.(this)));
+    }
+
+    _bindNameHud(obj) {
+        if (!obj?.active) return;
+        if (this._isLocalPartyNametag()) {
+            this.scene._liftAboveVeil?.(obj);
+            return;
+        }
+        const root = this.ensureFxRoot();
+        if (obj.parentContainer !== root) {
+            if (obj.parentContainer) obj.parentContainer.remove(obj);
+            root.add(obj);
+        }
+    }
+
+    _syncNameHudPos() {
+        const label = this._nameLabel;
+        const crown = this._nameCrown;
+        if (!label?.active && !crown?.active) return;
+        const a = this._nameAnchorLocal();
+        const above = this._isLocalPartyNametag();
+        if (label?.active) {
+            this._bindNameHud(label);
+            if (above) label.setPosition(this.x + a.x, this.y + a.y);
+            else label.setPosition(a.x, a.y);
+        }
+        if (crown?.active) {
+            this._bindNameHud(crown);
+            const zoom = this.scene.worldZoom || 3;
+            const s = this.scene.uiScale || 1;
+            const glyphH = Math.ceil(10 * s / zoom) + 1;
+            if (above) crown.setPosition(this.x + a.x, this.y + a.y - glyphH);
+            else crown.setPosition(a.x, a.y - glyphH);
+        }
+    }
+
+    ensureNameLabel() {
+        if (this._nameLabel?.active) return this._nameLabel;
+        this._nameLabelScaleKey = null;
+        const scene = this.scene;
+        const zoom = scene.worldZoom || 3;
+        const s = scene.uiScale || 1;
+        const font = pixelUiFontSize(8, s);
+        const stroke = Math.max(2, Math.round(3 * s));
+        const color = scene.partySys?.nameColorFor?.(this) || "#ffffff";
+        this._nameLabel = scene.add.text(8, -18, this.displayName(), {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: `${font}px`,
+            color,
+            stroke: "#000000",
+            strokeThickness: stroke,
+            align: "center"
+        }).setOrigin(0.5, 1);
+        this._nameLabel.setResolution(zoom * (window.devicePixelRatio || 1));
+        this._nameLabel.setScale(1 / zoom);
+        this._bindNameHud(this._nameLabel);
+        return this._nameLabel;
+    }
+
+    syncNameLabel() {
+        const label = this.ensureNameLabel();
+        if (!label) return;
+        this.applyNameLabelScale();
+        const controlled = this.isControlled();
+        const hide = controlled || this._bodyDead;
+        label.setVisible(!hide);
+        if (hide) {
+            this._nameCrown?.setVisible(false);
+            return;
+        }
+        const name = this.displayName();
+        if (label.text !== name) label.setText(name);
+        const color = this.scene.partySys?.nameColorFor?.(this) || "#ffffff";
+        if (label.style?.color !== color) label.setColor(color);
+        this._recruitTip?.setVisible(false);
+        this._syncNameCrown();
+        this._syncNameHudPos();
+    }
+
+    ensureNameCrown() {
+        if (this._nameCrown?.active) return this._nameCrown;
+        if (!this.scene.textures.exists("leader")) return null;
+        this._nameCrown = this.scene.add.image(8, -20, "leader")
+            .setOrigin(0.5, 1)
+            .setVisible(false);
+        this._bindNameHud(this._nameCrown);
+        return this._nameCrown;
+    }
+
+    /** Crown over the leader nametag while you are controlling someone else. */
+    _syncNameCrown() {
+        const scene = this.scene;
+        const show = this === scene.leader && !this.isControlled() && !this._bodyDead;
+        if (!show) {
+            this._nameCrown?.setVisible(false);
+            return;
+        }
+        const crown = this.ensureNameCrown();
+        if (!crown) return;
+        const zoom = scene.worldZoom || 3;
+        const s = scene.uiScale || 1;
+        const scale = s / zoom;
+        if (crown.scaleX !== scale) crown.setScale(scale);
+        crown.setVisible(true);
+    }
+
+    syncPawnChannelBar() {
+        const ch = this._eatChannel || this._tendChannel || this._skinChannel
+            || this._fleshChannel || this._brainChannel || this._craftChannel;
+        if (this.isControlled()) {
+            this._ownChannelBar?.setVisible(false);
+            return;
+        }
+        if (!ch) {
+            this._ownChannelBar?.clear();
+            this._ownChannelBar?.setVisible(false);
+            return;
+        }
+        const frac = Phaser.Math.Clamp(1 - ch.remaining / ch.max, 0, 1);
+        this._ownChannelBar = this.scene._ensureWorldHudBar?.(this._ownChannelBar)
+            || this._ownChannelBar
+            || this.scene.add.graphics();
+        const zoom = this.scene.worldZoom || 3;
+        const w = 40;
+        const h = 5;
+        const lx = this._prone ? 0 : Math.round(this.width * 0.5);
+        const ly = this._prone
+            ? -Math.round(Math.max(this.width, this.height) * 0.5 + 2)
+            : -Math.round(this.height + 2);
+        const color = this.scene._channelBarFillColor?.(frac) || 0x80e080;
+        const g = this._ownChannelBar;
+        g.clear().setVisible(true);
+        g.setScale(1 / zoom);
+        g.setPosition(this.x + lx, this.y + ly);
+        this.scene._drawBar?.(g, -Math.floor(w / 2), -h, w, h, frac, 0x000000, 0x222222, color, 2);
     }
 
     isBodyDead() {
@@ -257,7 +536,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         };
         this.setVelocity(0, 0);
         if (this.isAttacking()) this._endAttack?.();
-        if (!opts.silentLog) this.scene.combatLog?.push("You vomit.");
+        if (!opts.silentLog) {
+            const you = this.isControlled?.();
+            this.scene.combatLog?.push(you ? "You vomit." : `${this.displayName()} vomits.`);
+        }
         if (!this._vomit.fromServer) this._vomitDrip();
     }
 
@@ -312,7 +594,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!(amount > 0)) return false;
         if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) return false;
         if (typeof Durability === "undefined") return false;
-        const idx = this.scene.hotbar?.activeIndex ?? 0;
+        const idx = this.isControlled?.()
+            ? (this.scene.hotbar?.activeIndex ?? this.hotbarIndex ?? 0)
+            : (this.hotbarIndex ?? 0);
         const result = Durability.wearInventorySlot(
             this.inventory,
             idx,
@@ -394,6 +678,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             : null;
         this._hitKiller = null;
         this._hitKillerAt = 0;
+        if (this.role === "wanderer" || this.role === "companion") {
+            this.scene.partySys?.onMemberDied?.(this, killer);
+            return;
+        }
         this.scene.onPlayerDied?.(killer);
     }
 
@@ -401,6 +689,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (_attacker) {
             this._hitKiller = _attacker;
             this._hitKillerAt = this.scene?.time?.now ?? 0;
+            if (this.role === "wanderer") {
+                this.wandererAI?.onDamaged?.(_attacker);
+                this.hostile = true;
+                this.recruitLocked = true;
+                this.scene.partySys?.alertNearbyWanderers?.(this, _attacker);
+            }
+            if (this.scene?.party?.includes(this) || this === this.scene?.leader) {
+                this.scene.partySys?.markPvpHit?.(_attacker);
+            }
         }
         this.capacities = new Capacities(this.anatomy);
         this._refreshDownedState();
@@ -409,7 +706,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     _refreshDownedState() {
         if (this._bodyDead) return;
-        this.capacities = new Capacities(this.anatomy);
+        if (!this.capacities || this.capacities.body !== this.anatomy) {
+            this.capacities = new Capacities(this.anatomy);
+        }
         if (this.capacities.isDeadFromCapacities()) {
             this.onBodyFatal(null, "capacity");
             return;
@@ -531,14 +830,18 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         for (let i = 0; i < this.baseInventorySize; i++) this.inventory.push(null);
         this.inventorySize = this.baseInventorySize;
         this.recomputeEquipmentEffects();
-        this.scene.hotbar?.setSize?.(this.inventorySize);
-        this.scene.hotbar.dirty = true;
-        this.scene.equipmentPanel?.refresh?.();
+        if (this.isControlled?.()) {
+            this.scene.hotbar?.setSize?.(this.inventorySize);
+            this.scene.hotbar.dirty = true;
+            this.scene.equipmentPanel?.refresh?.();
+        }
 
         // bodyCenter() respects standing (origin 0,1) and prone (origin 0.5,0.5)
         const c = this.bodyCenter();
+        const corpseName = this.displayName() || this.pawnName || "Someone";
+        const playerCorpse = this.role !== "wanderer";
         if (!spawn) {
-            return { x: c.x, y: c.y, loot, name: this.scene.playerName || "Player" };
+            return { x: c.x, y: c.y, loot, name: corpseName };
         }
         return Corpse.spawn(this.scene, {
             x: c.x,
@@ -546,12 +849,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             key: this.texture?.key || "human",
             look: this.look || null,
             frame: 7,
-            name: this.scene.playerName || "Player",
+            name: corpseName,
             loot,
             body: this.anatomy?.toJSON?.(),
             bodyPlan: this.anatomy?.planId || "human",
             mobId: "human",
-            playerCorpse: true
+            playerCorpse
         });
     }
 
@@ -651,7 +954,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this.inventory.length = size;
         }
 
-        if (this.scene.hotbar) {
+        if (this.scene.hotbar && this.isControlled?.()) {
             this.scene.hotbar.setSize(size);
             this.scene.hotbar.dirty = true;
         }
@@ -852,7 +1155,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.scene.hotbar.dirty = true;
         this._notifyNetGear(typeof NetProtocol !== "undefined" ? NetProtocol.Actions.EQUIP : "equip", {
             from: hotbarIndex,
-            slot: slotKey
+            slot: slotKey,
+            pawnId: this.pawnId
         });
         return { ok: true };
     }
@@ -863,7 +1167,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!(scene.isNet && scene.net?.connected && !scene.net.isLocal)) return;
         if (!type) return;
         scene._invSwapGuardUntil = performance.now() + 500;
-        scene.net.sendAction({ type, ...payload });
+        scene.net.sendAction({ type, pawnId: this.pawnId, ...payload });
     }
 
     /**
@@ -1073,7 +1377,37 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return BodyCombat.pickAttack(this);
     }
 
-    startMeleeAttack(meta = null) {
+    /** Rebuild held-weapon meta from a server attack-art payload. */
+    _weaponMetaFromNetArt(art) {
+        if (!art || art.unarmed || !(art.key || art.itemId)) return null;
+        const scene = this.scene;
+        let key = art.key || art.itemId;
+        if (
+            art.knapIconData
+            && typeof Knapping !== "undefined"
+            && typeof Knapping.ensureToolTexture === "function"
+        ) {
+            try {
+                key = Knapping.ensureToolTexture(scene, {
+                    id: art.itemId || "knap",
+                    knapIconData: art.knapIconData,
+                    knapIcon: art.key
+                }) || key;
+            } catch (_) { /* fall through */ }
+        }
+        if (!key || !scene.textures?.exists?.(key)) return null;
+        return {
+            key,
+            id: art.itemId || key,
+            weapon: {
+                type: "melee",
+                range: Number(art.range) || 12,
+                knapSilhouette: !!art.knapSilhouette
+            }
+        };
+    }
+
+    startMeleeAttack(meta = null, opts = {}) {
         if (this.isAttacking() || this._bodyDead) return false;
         if (this.isVomiting()) return false;
         if (this.isIncapacitated()) return false;
@@ -1086,7 +1420,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const pointer = this.scene.input.activePointer;
         const world = this.scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
         const c = this.bodyCenter();
-        let angle = Math.atan2(world.y - c.y, world.x - c.x);
+        let angle = Number.isFinite(opts.angle)
+            ? opts.angle
+            : Math.atan2(world.y - c.y, world.x - c.x);
         if (!Number.isFinite(angle)) angle = 0;
 
         const attack = this._pickMeleeAttack(angle);
@@ -1096,13 +1432,25 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const durationMs = meleeAttackDurationMs(attack.cooldown || 2, scale);
 
         this.currentAttack = attack;
-        // Offhand fist / pure unarmed: short reach — never inherit spear range/art
-        const useWeaponArt = !!(meta?.key && meta?.weapon?.type === "melee" && !attack.unarmed);
+        const art = opts.art && typeof opts.art === "object" ? opts.art : null;
+        let held = meta || this.getHeldWeaponMeta();
+        if (art) {
+            if (art.unarmed) held = null;
+            else held = this._weaponMetaFromNetArt(art) || held;
+        }
+        // Offhand fist / pure unarmed: short reach — never inherit spear range/art.
+        // Server puppets may have a stale local pick; trust attack-art when present.
+        const artWeapon = !!(art && !art.unarmed && held?.weapon?.type === "melee");
+        const useWeaponArt = !!(held?.key && held?.weapon?.type === "melee" && (artWeapon || !attack.unarmed));
         this.attackWeapon = useWeaponArt
-            ? meta.weapon
+            ? held.weapon
             : { type: "melee", range: attack.range || 4, hitStart: 0.25, hitEnd: 0.75 };
         this.attackMax = durationMs;
         this.attackTimer = this.attackMax;
+        if (Number(art?.max) > 0) {
+            this.attackMax = Number(art.max);
+            this.attackTimer = this.attackMax;
+        }
         this.attackAngle = angle;
         this.attackHitSet = new Set();
         this._attackWoreHeld = false;
@@ -1110,14 +1458,14 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.facing = this.facingFromAngle(angle);
         this.scene.hideWorldTooltip?.();
 
-        if (this.scene.isNet && this.scene.net?.connected) {
+        if (!opts.silentNet && this.scene.isNet && this.scene.net?.connected) {
             // Keep server pose current so hitboxes match what you see
             this.scene._netSendMove?.(true);
             this._sendNetAttack(angle);
         }
 
         if (useWeaponArt) {
-            const key = meta.key || meta.id;
+            const key = held.key || held.id;
             if (!this.weaponSprite) {
                 this.weaponSprite = this.scene.add.image(0, 0, key)
                     .setOrigin(0.2, 0.8)
@@ -1129,7 +1477,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this.weaponSprite.setOrigin(0.2, 0.8).setScale(1).setVisible(true).setDepth(1);
             this.unarmedSprite?.setVisible(false);
             // Grip near body, tip forward — never re-pick from world pos (jitter while moving)
-            if (useWeaponArt && meta.weapon?.knapSilhouette) {
+            if (held.weapon?.knapSilhouette) {
                 this._knapTipCell = this._knapExtremeCellAlongAim(angle, true);
                 this._knapGripCell = this._knapExtremeCellAlongAim(angle, false);
             } else {
@@ -1426,11 +1774,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 if (!target || !target.active || target === this) continue;
                 if (this.attackHitSet.has(target)) continue;
                 if (target.isBodyDead?.()) continue;
+                if (typeof Party !== "undefined" && Party.sameFaction?.(this, target)) continue;
 
                 if (!meleeSegmentHitsTarget(seg.a, seg.b, radius, target)) continue;
 
                 this.attackHitSet.add(target);
                 BodyCombat.applyHit(this, target, attack);
+                this.scene.partySys?.notePlayerHit?.(target);
                 if (!attack.unarmed) {
                     this.wearHeld(1);
                     this._attackWoreHeld = true;
@@ -1556,7 +1906,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      */
     _tryFoodPoison(food, meta = null) {
         const result = typeof Hediffs !== "undefined"
-            ? Hediffs.tryFoodPoison?.(this.anatomy, food, meta)
+            ? Hediffs.tryFoodPoison?.(this.anatomy, food, meta, null, this)
             : null;
         if (!result) return;
         this.capacities = new Capacities(this.anatomy);
@@ -1692,7 +2042,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this.inventory.push(stack);
             remaining -= toAdd;
         }
-        if (remaining !== amount) this.scene.hotbar.dirty = true;
+        if (remaining !== amount) {
+            this.scene.hotbar.dirty = true;
+            this.scene._scheduleCharacterSave?.();
+        }
         return remaining;
     }
 
@@ -1788,7 +2141,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     getHeldItem() {
-        return this.inventory[this.scene.hotbar.activeIndex] || null;
+        const idx = this.isControlled?.()
+            ? (this.scene.hotbar?.activeIndex ?? this.hotbarIndex ?? 0)
+            : (this.hotbarIndex ?? 0);
+        return this.inventory[idx] || null;
     }
 
     useHeldItem() {
@@ -1845,24 +2201,32 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!Number.isFinite(ang)) ang = this._aimAngle();
         this.scene.net.sendAction({
             type: NetProtocol.Actions.ATTACK,
-            angle: ang
+            angle: ang,
+            pawnId: this.pawnId
         });
     }
 
-    beginTend() {
+    beginTend(patient = null, opts = {}) {
         if (this._eatChannel) this._cancelEat();
         if (this._tendChannel || this._skinChannel || this._fleshChannel || this._brainChannel || this._craftChannel || this._bodyDead || this.isAttacking()) return false;
         if (this.isVomiting()) return false;
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
         if (this.isIncapacitated()) return false;
-        const item = this.getHeldItem();
+        const sourcePawn = opts.sourcePawn || this;
+        const slot = opts.slot != null
+            ? opts.slot
+            : (this.isControlled?.()
+                ? this.scene.hotbar.activeIndex
+                : (this.hotbarIndex ?? 0));
+        const item = sourcePawn.inventory?.[slot] || this.getHeldItem();
         if (!item) return false;
         const meta = this.scene.getItem(item.id);
         if (!meta?.bandage) return false;
-        const target = BodyHealing.pickTendTarget(this.anatomy);
+        const who = patient && patient.anatomy ? patient : this;
+        const target = BodyHealing.pickTendTarget(who.anatomy);
         if (!target) {
-            this.scene.combatLog?.push("Nothing to bandage.");
+            if (!opts.silent) this.scene.combatLog?.push("Nothing to bandage");
             return false;
         }
         const seconds = Number(meta.bandage.channelSeconds) || 5;
@@ -1872,7 +2236,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._tendChannel = {
             remaining: max,
             max,
-            slot: this.scene.hotbar.activeIndex,
+            slot,
+            sourcePawn,
+            patient: who,
             // Locked at start so natural healing mid-channel doesn't retarget/cancel
             target,
             // Serializable hint — MP YOU body reloads replace injury object identity
@@ -1891,7 +2257,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             qualityMax: Number(meta.bandage.tendQualityMax) || 0.7,
             itemId: item.id
         };
-        this.scene.showChannelBar?.(0);
+        if (this.isControlled?.()) this.scene.showChannelBar?.(0);
+        else {
+            this.setVelocity?.(0, 0);
+            this.isSprinting = false;
+        }
         return true;
     }
 
@@ -1923,7 +2293,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._skinChannel = {
             remaining: max,
             max,
-            slot: this.scene.hotbar.activeIndex,
+            slot: this.isControlled?.()
+                ? this.scene.hotbar.activeIndex
+                : (this.hotbarIndex ?? 0),
             corpse,
             itemId: item.id
         };
@@ -1974,8 +2346,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
         this._skinChannel = null;
         this.scene.hideChannelBar?.();
-        // Loot + health inspect (same as clicking the corpse after skinning)
-        this.scene.corpsePanel?.open?.(corpse);
+        if (this.isControlled?.()) this.scene.corpsePanel?.open?.(corpse);
     }
 
     /**
@@ -2226,21 +2597,49 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.scene.refreshTooltip?.();
     }
 
+    _cancelTend() {
+        if (!this._tendChannel) return;
+        this._tendChannel = null;
+        if (this.isControlled?.()) this.scene.hideChannelBar?.();
+    }
+
     _tickTend(delta) {
         if (!this._tendChannel) return;
-        const slot = this.scene.hotbar.activeIndex;
-        if (slot !== this._tendChannel.slot) {
-            this._tendChannel = null;
-            this.scene.hideChannelBar?.();
+        const ch = this._tendChannel;
+        // Skinning reused this channel historically; don't treat a knife job as a bandage.
+        if (ch.corpse) return;
+        if (this.isAttacking?.()) {
+            this._cancelTend();
             return;
         }
-        this._tendChannel.remaining -= delta;
-        const prog = 1 - this._tendChannel.remaining / this._tendChannel.max;
-        this.scene.showChannelBar?.(Phaser.Math.Clamp(prog, 0, 1));
-        if (this._tendChannel.remaining > 0) return;
+        const src = ch.sourcePawn || this;
+        const slot = this.isControlled?.() && src === this
+            ? this.scene.hotbar.activeIndex
+            : (ch.slot ?? this.hotbarIndex ?? 0);
+        if (this.isControlled?.() && src === this && slot !== ch.slot) {
+            this._cancelTend();
+            return;
+        }
+        const held = src.inventory?.[slot];
+        if (!held || held.id !== ch.itemId) {
+            this._cancelTend();
+            return;
+        }
+        const patient = ch.patient || this;
+        if (patient !== this && patient?.active) {
+            const P = typeof Party !== "undefined" ? Party : null;
+            if (P && !P.inInteractRange(this, patient, this.scene.tileSize)) {
+                this._cancelTend();
+                return;
+            }
+        }
+        ch.remaining -= delta;
+        const prog = 1 - ch.remaining / ch.max;
+        if (this.isControlled?.()) this.scene.showChannelBar?.(Phaser.Math.Clamp(prog, 0, 1));
+        if (ch.remaining > 0) return;
 
-        const ch = this._tendChannel;
         const hint = ch.targetHint || ch.target;
+        const body = patient.anatomy || this.anatomy;
 
         // Dedicated MP: server applies tend + consumes bandage (YOU syncs body/inv).
         if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
@@ -2248,6 +2647,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this.scene.net.sendAction({
                 type: NetProtocol.Actions.TEND,
                 itemId: ch.itemId,
+                pawnId: this.pawnId || null,
+                patientId: patient.pawnId || null,
+                fromPawnId: src.pawnId || null,
+                slot,
                 partName: hint?.partName || hint?.part?.name || null,
                 injuryIndex: hint?.injuryIndex,
                 injuryId: hint?.injuryId ?? hint?.inj?.id,
@@ -2256,17 +2659,19 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 destroyedPartName: hint?.destroyedPartName || hint?.destroyed?.partName || null
             });
             this._tendChannel = null;
-            this.scene.hideChannelBar?.();
+            if (this.isControlled?.()) this.scene.hideChannelBar?.();
             return;
         }
 
-        const target = BodyHealing.resolveTendTarget?.(this.anatomy, hint)
-            || (BodyHealing.isTendTargetValid(this.anatomy, ch.target) ? ch.target : null);
+        const target = BodyHealing.resolveTendTarget?.(body, hint)
+            || (BodyHealing.isTendTargetValid(body, ch.target) ? ch.target : null);
         if (!target) {
             // Wound closed on its own — finish the channel, keep the bandage
-            this.scene.combatLog?.push("The wound healed before you finished.");
+            if (this.isControlled?.()) {
+                this.scene.combatLog?.push("The wound healed before you finished");
+            }
             this._tendChannel = null;
-            this.scene.hideChannelBar?.();
+            if (this.isControlled?.()) this.scene.hideChannelBar?.();
             this.scene.healthPanel?.refresh?.();
             return;
         }
@@ -2275,24 +2680,30 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             ch.qualityBase,
             ch.qualityMax
         );
-        BodyHealing.applyTend(this.anatomy, target, quality);
-        this.loseAnyItem(ch.itemId, 1);
+        BodyHealing.applyTend(body, target, quality);
+        if (typeof src.loseItemAt === "function") src.loseItemAt(ch.slot, 1);
+        else this.loseAnyItem(ch.itemId, 1);
         const qPct = Math.round(quality * 100);
-        let tendMsg = `You finished bandaging (${qPct}%).`;
-        if (target?.part) {
-            tendMsg = `You bandaged your ${target.part.name} (${qPct}%).`;
-        } else if (target?.destroyed) {
-            const name = target.destroyed.partName;
-            const part = name ? this.anatomy?.part?.(name) : null;
-            tendMsg = (typeof BodyHealing !== "undefined" && BodyHealing.isStumpPart(part))
-                ? `You bandaged a stump (${qPct}%).`
-                : name
-                    ? `You packed the wound (${qPct}%).`
-                    : `You finished bandaging (${qPct}%).`;
+        if (this.isControlled?.()) {
+            const who = "You";
+            const other = patient !== this;
+            const poss = other ? `${patient.displayName()}'s` : "your";
+            let tendMsg = `${who} finished bandaging (${qPct}%)`;
+            if (target?.part) {
+                tendMsg = `${who} bandaged ${poss} ${target.part.name} (${qPct}%)`;
+            } else if (target?.destroyed) {
+                const name = target.destroyed.partName;
+                const part = name ? body?.part?.(name) : null;
+                tendMsg = (typeof BodyHealing !== "undefined" && BodyHealing.isStumpPart(part))
+                    ? `${who} bandaged a stump (${qPct}%)`
+                    : name
+                        ? `${who} packed the wound (${qPct}%)`
+                        : `${who} finished bandaging (${qPct}%)`;
+            }
+            this.scene.combatLog?.push(tendMsg);
         }
-        this.scene.combatLog?.push(tendMsg);
         this._tendChannel = null;
-        this.scene.hideChannelBar?.();
+        if (this.isControlled?.()) this.scene.hideChannelBar?.();
         this.scene.healthPanel?.refresh?.();
         this.scene.hotbar.dirty = true;
     }
@@ -2316,40 +2727,55 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     beginEat(item, opts = {}) {
+        const patient = opts.patient && opts.patient !== this ? opts.patient : null;
+        if (patient) {
+            if (this._eatChannel) this._cancelEat();
+            if (this._tendChannel && !this._tendChannel.corpse) this._cancelTend?.();
+        }
         if (this._tendChannel || this._skinChannel || this._fleshChannel || this._brainChannel || this._craftChannel || this._eatChannel || this._bodyDead || this.isAttacking()) {
             return false;
         }
         if (this.isVomiting() || this.isIncapacitated()) return false;
+        if (patient && (patient.isBodyDead?.() || !patient.active)) return false;
         const meta = this.scene.getItem(item.id);
         const food = item.food || meta?.food;
         const total = Number(food?.kc ?? 0);
         if (!(total > 0)) return false;
         const isMeal = this._isPartialFood(item);
-        const room = this.stomach - this.kc;
+        const who = patient || this;
+        const room = who.stomach - who.kc;
         if (isMeal && !(room > 0)) return false;
 
-        // Dedicated MP: server owns hunger + food stacks — ask it to run the eat channel.
+        // Dedicated MP: server owns hunger + food stacks — ask it to run the eat channel
+        // unless this is a companion PARTY_EAT / force-feed (explicit source pawn/slot).
+        const partyEat = !!(opts.sourcePawn || opts.slot != null || patient);
         const serverAuth = !!opts.serverAuth
-            || (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
-        if (serverAuth && this.scene.net?.connected) {
+            || (!partyEat && this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
+        if (serverAuth && this.scene.net?.connected && !partyEat) {
             this.scene._netSendMove?.(true);
-            this.scene.net.sendAction({ type: NetProtocol.Actions.USE });
+            this.scene.net.sendAction({ type: NetProtocol.Actions.USE, pawnId: this.pawnId });
         }
 
         this.capacities = new Capacities(this.anatomy);
         const seconds = this._eatSecondsFor(food, isMeal);
         const scale = this.capacities.eatingDurationScale();
         const max = seconds * 1000 * scale;
+        const sourcePawn = opts.sourcePawn || this;
+        const slot = opts.slot != null
+            ? opts.slot
+            : (this.isControlled?.() ? this.scene.hotbar.activeIndex : (this.hotbarIndex ?? 0));
         this._eatChannel = {
             remaining: max,
             max,
-            slot: this.scene.hotbar.activeIndex,
+            slot,
+            sourcePawn,
+            patient,
             item,
             itemId: item.id,
             isMeal,
             serverAuth
         };
-        this.scene.showChannelBar?.(0);
+        if (this.isControlled?.()) this.scene.showChannelBar?.(0);
         return true;
     }
 
@@ -2357,7 +2783,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!this._eatChannel) return;
         const serverAuth = !!this._eatChannel.serverAuth;
         this._eatChannel = null;
-        this.scene.hideChannelBar?.();
+        if (this.isControlled?.()) this.scene.hideChannelBar?.();
         if (serverAuth && this.scene.net?.connected && !this.scene.net.isLocal) {
             this.scene.net.sendAction({ type: NetProtocol.Actions.CANCEL_CHANNEL });
         }
@@ -2365,21 +2791,40 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     _tickEat(delta) {
         if (!this._eatChannel) return;
-        if (this.isVomiting() || this.isIncapacitated() || this._bodyDead) {
+        if (this.isVomiting() || this._bodyDead) {
+            this._cancelEat();
+            return;
+        }
+        const patient = this._eatChannel.patient;
+        if (patient) {
+            if (patient.isBodyDead?.() || !patient.active) {
+                this._cancelEat();
+                return;
+            }
+            const P = typeof Party !== "undefined" ? Party : null;
+            if (P && !P.inInteractRange(this, patient, this.scene.tileSize)) {
+                this._cancelEat();
+                return;
+            }
+        } else if (this.isIncapacitated()) {
             this._cancelEat();
             return;
         }
 
         // Dedicated MP: server owns channel progress + nutrition (EVENT/YOU).
         // Don't compare stack object identity — YOU replaces inventory arrays every sync.
-        if (this._eatChannel.serverAuth) {
-            const slot = this.scene.hotbar.activeIndex;
+        const src = this._eatChannel.sourcePawn || this;
+        const fromSelf = src === this;
+        const slot = this.isControlled?.() && fromSelf
+            ? this.scene.hotbar.activeIndex
+            : (this._eatChannel.slot ?? this.hotbarIndex ?? 0);
+        if (this.isControlled?.() && fromSelf && slot !== this._eatChannel.slot) {
+            this._cancelEat();
+            return;
+        }
+        if (this._eatChannel.serverAuth && fromSelf) {
             const held = this.getHeldItem();
-            if (
-                slot !== this._eatChannel.slot
-                || !held
-                || held.id !== this._eatChannel.itemId
-            ) {
+            if (!held || held.id !== this._eatChannel.itemId) {
                 this._cancelEat();
                 return;
             }
@@ -2387,16 +2832,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             return;
         }
 
-        const slot = this.scene.hotbar.activeIndex;
-        const held = this.getHeldItem();
+        const held = src.inventory?.[slot] || null;
         if (
-            slot !== this._eatChannel.slot
-            || held !== this._eatChannel.item
-            || !held
+            !held
+            || held.id !== this._eatChannel.itemId
         ) {
             this._cancelEat();
             return;
         }
+        this._eatChannel.item = held;
         const meta = this.scene.getItem(held.id);
         const food = held.food || meta?.food;
         if (!(Number(food?.kc ?? 0) > 0)) {
@@ -2406,7 +2850,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         this._eatChannel.remaining -= delta;
         const prog = 1 - this._eatChannel.remaining / this._eatChannel.max;
-        this.scene.showChannelBar?.(Phaser.Math.Clamp(prog, 0, 1));
+        if (this.isControlled?.()) this.scene.showChannelBar?.(Phaser.Math.Clamp(prog, 0, 1));
         if (this._eatChannel.remaining > 0) return;
 
         this.finishEat(held);
@@ -2419,40 +2863,57 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      */
     finishEat(item) {
         const serverAuth = !!this._eatChannel?.serverAuth;
+        const sourcePawn = this._eatChannel?.sourcePawn || this;
+        const patient = this._eatChannel?.patient || null;
+        const slot = this._eatChannel?.slot;
         this._eatChannel = null;
-        this.scene.hideChannelBar?.();
+        if (this.isControlled?.()) this.scene.hideChannelBar?.();
+        const dedicated = this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal;
+        if (dedicated && patient) {
+            this.scene._netSendMove?.(true);
+            this.scene.net.sendAction({
+                type: NetProtocol.Actions.FEED,
+                patientId: patient.pawnId || null,
+                fromPawnId: sourcePawn.pawnId || this.pawnId || null,
+                slot,
+                itemId: item?.id
+            });
+            return;
+        }
         // Dedicated MP: server already applied nutrition + consumed the stack (YOU syncs).
         if (serverAuth) return;
+        const who = patient || this;
         const meta = this.scene.getItem(item.id);
         const food = item.food || meta?.food;
         const total = Number(food?.kc ?? 0);
         if (!(total > 0)) return;
 
         const isMeal = this._isPartialFood(item);
-        const room = Math.max(0, this.stomach - this.kc);
+        const room = Math.max(0, who.stomach - who.kc);
 
         if (isMeal) {
             const consumed = Math.min(total, room);
             if (!(consumed > 0)) return;
-            this.kc += consumed;
-            this.saturation += consumed * this._satietyRatio(food, meta, true);
-            this._tryFoodPoison(food, meta);
+            who.kc += consumed;
+            who.saturation += consumed * this._satietyRatio(food, meta, true);
+            who._tryFoodPoison?.(food, meta);
             if (consumed >= total) {
-                this.loseItem(item);
+                sourcePawn.loseItem(item);
             } else {
                 if (!item.food) item.food = { ...(meta?.food || {}) };
                 if (item.food.kcFull == null) item.food.kcFull = Math.round(total);
                 item.food.kc = Math.max(0, Math.round(total - consumed));
-                if (item.food.kc <= 0) this.loseItem(item);
+                if (item.food.kc <= 0) sourcePawn.loseItem(item);
             }
         } else {
             // Full satiety even if stomach was already full (overflow discarded)
-            this.kc += Math.min(total, room);
-            this.saturation += total * this._satietyRatio(food, meta, false);
-            this._tryFoodPoison(food, meta);
-            this.loseItem(item);
+            who.kc += Math.min(total, room);
+            who.saturation += total * this._satietyRatio(food, meta, false);
+            who._tryFoodPoison?.(food, meta);
+            sourcePawn.loseItem(item);
         }
         this.scene.hotbar.dirty = true;
+        this.scene.partyPanel?.refresh?.();
     }
 
     useItem(item) {
@@ -2540,56 +3001,120 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
+    /**
+     * Dedicated MP: uncontrolled party members follow server poses.
+     * Linear interp across the snapshot interval (same as net mobs) so they
+     * don't idle-then-step every 15 Hz tick.
+     */
+    _puppetFromNet(delta) {
+        const tx = this._netTx;
+        const ty = this._netTy;
+        this.setVelocity?.(0, 0);
+        this.isSprinting = false;
+        if (!Number.isFinite(tx) || !Number.isFinite(ty)) return;
+        const downed = !!(
+            this._netProne
+            || this._downed
+            || this._prone
+            || this.isImmobile?.()
+            || this.isIncapacitated?.()
+        );
+        if (downed) {
+            this.facing = "right";
+            const w = this.width || 16;
+            const h = this.height || 16;
+            if (this._prone) {
+                this.x = tx + w * 0.5;
+                this.y = ty - h * 0.5;
+            } else {
+                this.x = tx;
+                this.y = ty;
+            }
+            this._puppetMoving = false;
+            if (typeof setCreatureProne === "function") setCreatureProne(this, true);
+            else {
+                this.anims?.stop?.();
+                if (this.texture?.frameTotal > 7) this.setFrame(7);
+            }
+            return;
+        }
+        const fromX = Number.isFinite(this._netFromX) ? this._netFromX : this.x;
+        const fromY = Number.isFinite(this._netFromY) ? this._netFromY : this.y;
+        const err = Math.hypot(tx - fromX, ty - fromY);
+        if (this.isAttacking()) {
+            this.x = tx;
+            this.y = ty;
+        } else if (err > 72 || !Number.isFinite(this._netSnapAt)) {
+            this.x = tx;
+            this.y = ty;
+        } else {
+            const snapDt = this._netSnapDt || (1000 / 15);
+            const age = performance.now() - this._netSnapAt;
+            let u = snapDt > 0 ? age / snapDt : 1;
+            if (u > 1) u = 1;
+            this.x = fromX + (tx - fromX) * u;
+            this.y = fromY + (ty - fromY) * u;
+        }
+        // Walk/idle from the snapshot's server-to-server travel (constant for
+        // the whole 15 Hz interval). Per-frame pixel delta flickers because
+        // render snapping moves 1px some frames and 0 the next.
+        const snapDist = Number.isFinite(this._netSnapDist) ? this._netSnapDist : err;
+        const wantWalk = !this.isAttacking()
+            && (this._netMoving === true || snapDist > 1);
+        if (wantWalk) {
+            this._puppetMoving = true;
+            this._puppetStillMs = 0;
+        } else {
+            this._puppetStillMs = (this._puppetStillMs || 0) + (delta || 16);
+            if (this._puppetStillMs > 100) this._puppetMoving = false;
+        }
+        const moving = !!this._puppetMoving;
+        if (moving) {
+            const dx = tx - fromX;
+            const dy = ty - fromY;
+            if (Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2) {
+                if (Math.abs(dx) > Math.abs(dy)) this.facing = dx > 0 ? "right" : "left";
+                else this.facing = dy > 0 ? "down" : "up";
+            }
+        } else if (this._netFacing) {
+            this.facing = this._netFacing;
+        }
+        if (this.anims) this.anims.timeScale = 1;
+        if (typeof PlayerLook !== "undefined") {
+            PlayerLook.play(this, this.facing || "down", moving);
+        }
+    }
+
     update(time, delta) {
         if (this._bodyDead) {
             this.setVelocity(0, 0);
             return;
         }
+        if (this.role === "wanderer") return;
 
-        // Chat compose: freeze controls (tend channel can still finish)
-        if (this.scene.combatLog?.isComposing?.()) {
-            this.setVelocity(0, 0);
-            const dtChat = delta || (this.scene.game.loop.delta || 16);
-            if (this._tendChannel) this._tickTend(dtChat);
-            if (this._skinChannel) this._tickSkin(dtChat);
-            if (this._fleshChannel) this._tickFlesh(dtChat);
-            if (this._brainChannel) this._tickBrain(dtChat);
-            if (this._craftChannel) this._tickCraft(dtChat);
-            if (this._eatChannel) this._tickEat(dtChat);
-            this._tickChopBar();
-            this._tickVomit(dtChat);
-            return;
-        }
+        const dt = delta || (this.scene.game.loop.delta || 16);
+        const paused = !!this.scene._gamePaused;
+        const composing = !!this.scene.combatLog?.isComposing?.();
+        const knapping = !!this.scene.knappingPanel?.visible;
+        const controlled = this.isControlled?.();
 
-        // Escape menu open — freeze local controls (MP world keeps updating behind the menu)
-        if (this.scene._gamePaused) {
+        // SP pause freezes everyone; channels still finish if we got here in MP.
+        if (paused) {
             this.setVelocity(0, 0);
             this.isSprinting = false;
-            const dtPause = delta || (this.scene.game.loop.delta || 16);
-            if (this._tendChannel) this._tickTend(dtPause);
-            if (this._skinChannel) this._tickSkin(dtPause);
-            if (this._fleshChannel) this._tickFlesh(dtPause);
-            if (this._brainChannel) this._tickBrain(dtPause);
-            if (this._craftChannel) this._tickCraft(dtPause);
-            if (this._eatChannel) this._tickEat(dtPause);
+            if (this._tendChannel) this._tickTend(dt);
+            if (this._skinChannel) this._tickSkin(dt);
+            if (this._fleshChannel) this._tickFlesh(dt);
+            if (this._brainChannel) this._tickBrain(dt);
+            if (this._craftChannel) this._tickCraft(dt);
+            if (this._eatChannel) this._tickEat(dt);
             this._tickChopBar();
-            this._tickVomit(dtPause);
-            this.setDepth(this.y);
+            this._tickVomit(dt);
+            this.setDepth(this.y | 0);
             this.syncFxRoot?.();
             return;
         }
 
-        this.capacities = new Capacities(this.anatomy);
-        this._refreshDownedState();
-        if (this._bodyDead) return;
-
-        // Frozen while knapping GUI is open
-        if (this.scene.knappingPanel?.visible) {
-            this.setVelocity(0, 0);
-            return;
-        }
-
-        const dt = delta || (this.scene.game.loop.delta || 16);
         if (this._tendChannel) this._tickTend(dt);
         if (this._skinChannel) this._tickSkin(dt);
         if (this._fleshChannel) this._tickFlesh(dt);
@@ -2599,6 +3124,62 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._tickChopBar();
         this._tickVomit(dt);
 
+        this.capacities = new Capacities(this.anatomy);
+        this._refreshDownedState();
+        if (this._bodyDead) return;
+
+        if (!controlled) {
+            const dedicated = !!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
+            if (dedicated) {
+                const tendLock = !!(this._tendChannel && !this._tendChannel.corpse)
+                    || !!this.scene.partySys?._isBeingTended?.(this);
+                const prone = !!(
+                    this._netProne
+                    || this._downed
+                    || this.isImmobile?.()
+                    || this.isIncapacitated?.()
+                );
+                if (tendLock) this.setVelocity?.(0, 0);
+                else this._puppetFromNet(dt);
+                if (typeof setCreatureProne === "function") {
+                    setCreatureProne(this, prone && !this._bodyDead);
+                }
+                if (this.isAttacking()) {
+                    const progress = this._attackProgress();
+                    if (this.weaponSprite?.visible) this._updateWeaponSprite(progress);
+                    if (this.unarmedSprite?.visible) this._updateUnarmedSprite(progress);
+                    this.attackTimer -= dt;
+                    if (this.attackTimer <= 0) this._endAttack();
+                }
+                this.setDepth(this.y | 0);
+                this.syncFxRoot?.();
+                this.syncNameLabel?.();
+                this._syncChatBubble?.();
+                return;
+            }
+            if (this.isAttacking()) {
+                const progress = this._attackProgress();
+                if (this.weaponSprite?.visible) this._updateWeaponSprite(progress);
+                if (this.unarmedSprite?.visible) this._updateUnarmedSprite(progress);
+                this._meleeHitCheck(progress);
+                this.attackTimer -= dt;
+                if (this.attackTimer <= 0) this._endAttack();
+            }
+            this.partyAI?.update(dt);
+            this.setDepth(this.y | 0);
+            this.syncFxRoot?.();
+            this.syncNameLabel?.();
+            this._syncChatBubble?.();
+            return;
+        }
+
+        if (composing || knapping) {
+            this.setVelocity(0, 0);
+            this.setDepth(this.y | 0);
+            this.syncFxRoot?.();
+            return;
+        }
+
         const incapacitated = this.isIncapacitated();
         const immobile = this.isImmobile();
         const vomiting = this.isVomiting();
@@ -2607,7 +3188,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         // Movement — no crawling; immobile / incapacitated / vomiting stay put
         let x = 0, y = 0;
-        if (!prone && !vomiting) {
+        if (!prone && !vomiting && this.cursors && this.keys) {
             const left  = this.cursors.left.isDown  || this.keys.A.isDown;
             const right = this.cursors.right.isDown || this.keys.D.isDown;
             const up    = this.cursors.up.isDown    || this.keys.W.isDown;
@@ -2636,7 +3217,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             && !tending
             && !vomiting
             && moving
-            && this.keys.SHIFT.isDown
+            && this.keys?.SHIFT?.isDown
             && canSprint;
 
         let moveMul = this.capacities.moving();
@@ -2654,7 +3235,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const wantVx = (prone || vomiting) ? 0 : x * speed;
         const wantVy = (prone || vomiting) ? 0 : y * speed;
         applyEntityVelocity(this, wantVx, wantVy, delta, this.scene);
-        this.setDepth(this.y);
+        this.setDepth(this.y | 0);
 
         const sliding = Math.hypot(this._iceVx ?? 0, this._iceVy ?? 0) > 12
             && !!this.scene._isIceAt?.(this.x, this.y - 1);
@@ -2703,6 +3284,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                         amount,
                         x: this.x,
                         y: this.y,
+                        pawnId: this.pawnId,
                         stack: {
                             id: heldItem.id,
                             quantity: heldItem.quantity,
@@ -2757,6 +3339,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 }
             }
         }
+        this.syncFxRoot?.();
+        this.syncNameLabel?.();
+        this._syncChatBubble?.();
     }
 
     /** Pick up dropped items within pickupRange (nearest first). */
@@ -2768,7 +3353,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this._netPickupAt = now;
             const group = this.scene.droppedItems;
             if (!group) {
-                this.scene.net.sendAction({ type: NetProtocol.Actions.PICKUP });
+                this.scene.net.sendAction({ type: NetProtocol.Actions.PICKUP, pawnId: this.pawnId });
                 return;
             }
             const r = this.scene.tileSize * this.pickupRange;
@@ -2783,7 +3368,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 .sort((a, b) => a.d2 - b.d2)[0];
             this.scene.net.sendAction({
                 type: NetProtocol.Actions.PICKUP,
-                dropId: nearest?.drop?.entry?.uid || null
+                dropId: nearest?.drop?.entry?.uid || null,
+                pawnId: this.pawnId
             });
             return;
         }

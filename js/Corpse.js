@@ -159,8 +159,6 @@ class Corpse extends Phaser.GameObjects.Sprite {
         if (!scene.corpses) scene.corpses = scene.add.group();
         scene.corpses.add(this);
 
-        // Axis-aligned texture hitboxes break after -90° rotation — use a center circle.
-        this._setCorpseHitArea();
         this.on("pointerover", (pointer) => {
             scene.showTooltip(() => this.tooltipText(), pointer.x, pointer.y, this);
         });
@@ -173,7 +171,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
             if (!this.inRange()) return;
             const player = scene.player;
             const held = player?.getHeldItem?.();
-            // Knife + unskinned corpse (not carcass) → skin channel; otherwise loot panel
+            // Knife + unskinned corpse (not carcass) → skin, then loot opens
             if (
                 held?.toolClass === "knife"
                 && !this.entry?.skinned
@@ -195,16 +193,18 @@ class Corpse extends Phaser.GameObjects.Sprite {
         });
     }
 
-    /** Stable click/hover target around the laid-out body (rotation-safe). */
+    /** Click/hover only on the frame (and opaque pixels), not a padded circle. */
     _setCorpseHitArea() {
-        // Hit shapes are in texture/local space (top-left origin), not sprite origin.
-        const w = Math.max(1, this.width || this.displayWidth || 16);
-        const h = Math.max(1, this.height || this.displayHeight || 16);
-        const r = Math.max(14, Math.hypot(w, h) * 0.55);
-        this.setInteractive(
-            new Phaser.Geom.Circle(w * 0.5, h * 0.5, r),
-            Phaser.Geom.Circle.Contains
-        );
+        const fr = this.frame;
+        const w = Math.max(1, fr?.cutWidth || fr?.width || this.width || 16);
+        const h = Math.max(1, fr?.cutHeight || fr?.height || this.height || 16);
+        this.setInteractive({
+            hitArea: new Phaser.Geom.Rectangle(0, 0, w, h),
+            hitAreaCallback: Phaser.Geom.Rectangle.Contains,
+            pixelPerfect: true,
+            alphaTolerance: 1,
+            cursor: "pointer"
+        });
         if (this.input) {
             this.input.cursor = "pointer";
             this.input.enabled = true;
@@ -241,6 +241,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
             }
             this.setTint(Corpse.TINT_CORPSE);
         }
+        this._setCorpseHitArea();
     }
 
     tooltipText() {
@@ -258,18 +259,23 @@ class Corpse extends Phaser.GameObjects.Sprite {
     skinLootTable() {
         const id = this.entry?.mobId || "";
         if (id === "deer") {
-            return [
+            const loot = [
                 { id: "raw_venison", min: 2, max: 4 },
                 { id: "deer_hide", min: 1, max: 1 },
                 { id: "brain", min: 1, max: 1 },
                 { id: "bone", min: 2, max: 4 }
             ];
+            const destroyed = typeof Body !== "undefined" && Body.isBrainDestroyed?.(this.entry?.body);
+            return destroyed ? loot.filter((d) => d.id !== "brain") : loot;
         }
         if (id === "human") {
-            return [
+            const loot = [
                 { id: "raw_beef", min: 2, max: 4 },
+                { id: "brain", min: 1, max: 1 },
                 { id: "bone", min: 1, max: 2 }
             ];
+            const destroyed = typeof Body !== "undefined" && Body.isBrainDestroyed?.(this.entry?.body);
+            return destroyed ? loot.filter((d) => d.id !== "brain") : loot;
         }
         return [{ id: "bone", min: 1, max: 2 }];
     }

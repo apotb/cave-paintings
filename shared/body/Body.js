@@ -11,6 +11,7 @@
         const api = factory(root.GameMath, root.DataStore, root.Hediffs);
         root.BodyPart = api.BodyPart;
         root.Body = api.Body;
+        root.isBrainDestroyed = api.isBrainDestroyed;
     }
 })(typeof globalThis !== "undefined" ? globalThis : this, function (GameMath, DataStore, Hediffs) {
     function resolveMath(ctx) {
@@ -399,7 +400,13 @@
             this.rebuildIndex();
             this.markDirty();
             const fatals = this.plan.fatalParts || ["Brain", "Heart", "Torso", "Head", "Neck"];
-            const isFatal = fatals.includes(part.baseId) || fatals.includes(part.name);
+            const coreId = this.plan.core || "Torso";
+            const isCore = part === this.core || part.baseId === coreId || part.name === coreId;
+            const isFatal =
+                isCore ||
+                !!part.def?.fatal ||
+                fatals.includes(part.baseId) ||
+                fatals.includes(part.name);
             if (!isFatal) {
                 const mult = Number(part.def?.bleedMult) || 1;
                 this.destroyedBleed.push({
@@ -523,5 +530,28 @@
         }
     }
 
-    return { BodyPart, Body, normalizeCtx };
+    /**
+     * True if the Brain part is destroyed or cut off (head/skull gone).
+     * Missing body JSON is treated as intact so old corpses still drop a brain.
+     */
+    function isBrainDestroyed(bodyJson) {
+        const core = bodyJson?.core;
+        if (!core) return false;
+        let destroyed = false;
+        const walk = (node, cutOff) => {
+            if (!node || destroyed) return;
+            const limbs = node.limbs || {};
+            for (const [name, child] of Object.entries(limbs)) {
+                if (!child) continue;
+                if (name === "Brain" && (child.dead || cutOff)) destroyed = true;
+                walk(child, cutOff || !!child.dead);
+            }
+        };
+        walk(core, false);
+        return destroyed;
+    }
+
+    Body.isBrainDestroyed = isBrainDestroyed;
+
+    return { BodyPart, Body, normalizeCtx, isBrainDestroyed };
 });

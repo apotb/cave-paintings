@@ -14,6 +14,10 @@ class SceneBase extends Phaser.Scene {
         if (this.sys?.load && this.load !== this.sys.load) {
             this.load = this.sys.load;
         }
+        // Second Play → Leave → Play: textures/json already live in the game caches.
+        if (this.cache?.json?.exists?.("items") && this.textures?.exists("grass") && this.textures?.exists("slot")) {
+            return;
+        }
         // Data
         this.load.json("items", "data/Items.json");
         this.load.json("things", "data/Things.json");
@@ -83,7 +87,8 @@ class SceneBase extends Phaser.Scene {
             "health",
             "health_hover",
             "health_open",
-            "status2"
+            "status2",
+            "leader"
         ];
         for (const ui of uis) {
             this.loadImage(ui, 'ui');
@@ -159,6 +164,7 @@ class SceneBase extends Phaser.Scene {
             "leaf_sandals",
             "leaf_pouch",
             "hide_pouch",
+            "leather_pouch",
             "cracked_coconut",
             "cracked_coconut_overlay",
             "rot",

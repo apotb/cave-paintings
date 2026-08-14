@@ -42,6 +42,9 @@ class SceneMenu extends Phaser.Scene {
         this._ensurePlayerAnims();
         // Don't let the canvas steal tab/focus from HTML fields
         if (this.game?.canvas) this.game.canvas.tabIndex = -1;
+        if (this._onMenuKeydown) {
+            document.removeEventListener("keydown", this._onMenuKeydown, true);
+        }
         this._onMenuKeydown = (e) => this._handleMenuEscape(e);
         document.addEventListener("keydown", this._onMenuKeydown, true);
         this._onResize = () => {
@@ -61,7 +64,7 @@ class SceneMenu extends Phaser.Scene {
             return;
         }
         try {
-            await document.fonts.load('36px "PrimaryFont"');
+            await document.fonts.load('32px "PrimaryFont"');
             await document.fonts.ready;
         } catch (_) {}
         this._primaryFontReady = true;
@@ -170,11 +173,55 @@ class SceneMenu extends Phaser.Scene {
     _handleMenuEscape(e) {
         if (e.key !== "Escape" && e.code !== "Escape") return;
         if (e.repeat) return;
+        if (this._escapeLock) return;
         if (!this.sys?.isActive?.()) return;
-        if (typeof this._backAction !== "function") return;
+        if (this._phase === "root") return;
         e.preventDefault();
         e.stopPropagation();
-        this._backAction();
+        e.stopImmediatePropagation?.();
+        this._escapeLock = true;
+        try {
+            this._menuBack();
+        } finally {
+            queueMicrotask(() => { this._escapeLock = false; });
+        }
+    }
+
+    /** One screen back from the current menu phase (not “last Back button”). */
+    _menuBack() {
+        switch (this._phase) {
+            case "mpHelp":
+                this._showMpHost();
+                return;
+            case "mpHost":
+                this._showRoot();
+                return;
+            case "disconnected":
+                this._beginMp();
+                return;
+            case "mpPassword":
+                this._showCharacters({ next: "join" });
+                return;
+            case "characters":
+                if (this._charNext === "join") this._showMpHost();
+                else this._showRoot();
+                return;
+            case "createCharacter":
+                this._showCharacters({ next: this._charNext });
+                return;
+            case "worlds":
+                this._showCharacters({ next: "worlds" });
+                return;
+            case "createWorld":
+                this._showWorlds();
+                return;
+            case "rename":
+                if (this._renameKind === "world") this._showWorlds();
+                else this._showCharacters({ next: this._charNext });
+                return;
+            default:
+                if (typeof this._backAction === "function") this._backAction();
+        }
     }
 
     /** Rebuild the current menu screen after a window resize. */
@@ -281,7 +328,11 @@ class SceneMenu extends Phaser.Scene {
     }
 
     _track(...nodes) {
-        for (const n of nodes) if (n) this._dom.push(n);
+        for (const n of nodes) {
+            if (!n) continue;
+            if (typeof n.setFontFamily === "function") crispUiText(n);
+            this._dom.push(n);
+        }
         return nodes[0];
     }
 
@@ -289,16 +340,16 @@ class SceneMenu extends Phaser.Scene {
         const w = this.scale.width;
         const h = this.scale.height;
         const label = this._track(this.add.text(w / 2, h * yFrac, text, {
-            fontFamily: "PrimaryFont",
-            fontSize: "36px",
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "32px",
             color: "#e8dcc8"
         }).setOrigin(0.5));
         // If we somehow drew early, swap metrics once the face is ready
         if (!this._primaryFontReady) {
             this._ensurePrimaryFont().then(() => {
                 if (!label?.active) return;
-                label.setStyle({ fontFamily: "PrimaryFont", fontSize: "36px", color: "#e8dcc8" });
-                label.setFontFamily("PrimaryFont");
+                label.setStyle({ fontFamily: PIXEL_UI_FONT, fontSize: "32px", color: "#e8dcc8" });
+                label.setFontFamily(PIXEL_UI_FONT);
                 label.updateText?.();
             });
         }
@@ -309,8 +360,8 @@ class SceneMenu extends Phaser.Scene {
         const w = this.scale.width;
         const h = this.scale.height;
         this.status = this._track(this.add.text(w / 2, h * yFrac, "", {
-            fontFamily: "monospace",
-            fontSize: "13px",
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "16px",
             color: "#c0b0a0",
             align: "center",
             wordWrap: { width: Math.min(520, w - 40) }
@@ -337,9 +388,9 @@ class SceneMenu extends Phaser.Scene {
      */
     _buttonSizePreset(size) {
         const presets = {
-            large: { fontSize: "22px", width: 240, height: 52 },
+            large: { fontSize: "24px", width: 240, height: 52 },
             medium: { fontSize: "16px", width: 132, height: 38 },
-            small: { fontSize: "13px", width: 78, height: 28 }
+            small: { fontSize: "16px", width: 78, height: 28 }
         };
         if (size === "large" || size === "lg" || size === "hero") return presets.large;
         if (size === "small" || size === "sm" || size === "compact") return presets.small;
@@ -364,11 +415,11 @@ class SceneMenu extends Phaser.Scene {
         const bw = Math.max(1, Math.round(Number(opts.width ?? opts.minWidth ?? preset.width) || preset.width));
         const bh = Math.max(1, Math.round(Number(opts.height ?? opts.minHeight ?? preset.height) || preset.height));
 
-        const text = this.add.text(0, 0, label, {
-            fontFamily: "PrimaryFont",
+        const text = crispUiText(this.add.text(0, 0, label, {
+            fontFamily: PIXEL_UI_FONT,
             fontSize,
             color: "#d4c4a8"
-        }).setOrigin(0.5);
+        }).setOrigin(0.5));
 
         const rect = this.add.rectangle(0, 0, bw, bh, BG, 1)
             .setStrokeStyle(2, OUTLINE)
@@ -474,6 +525,12 @@ class SceneMenu extends Phaser.Scene {
         const ts = this._lastPlayedTs(row);
         if (!ts) return "Never played";
         return `Last played ${this._formatLastPlayed(ts)}`;
+    }
+
+    _partyMembersLabel(character) {
+        const n = Array.isArray(character?.party) ? character.party.length : 0;
+        if (!(n > 0)) return "";
+        return n === 1 ? "1 party member" : `${n} party members`;
     }
 
     _formatWorldClock(clock) {
@@ -597,18 +654,17 @@ class SceneMenu extends Phaser.Scene {
         const textLeft = left + pad + iconSlot + 10;
         const textRight = left + width - pad - sideBtnW - 10;
         const titleText = this.add.text(textLeft, top + 10, title || "", {
-            fontFamily: "PrimaryFont",
-            fontSize: "18px",
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "16px",
             color: "#e8dcc8"
         }).setOrigin(0, 0);
         this._track(titleText);
 
-        const info = this.add.text(textLeft, top + 34, (lines || []).join(" / "), {
-            fontFamily: "PrimaryFont",
-            fontSize: "13px",
-            color: "#a89880",
-            wordWrap: { width: Math.max(120, textRight - textLeft) }
-        }).setOrigin(0, 0);
+        const info = crispUiText(this.add.text(textLeft, top + 34, (lines || []).join(" / "), {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "12px",
+            color: "#a89880"
+        }).setOrigin(0, 0));
         this._track(info);
 
         const playBtn = this._button(0, 0, "Play", () => onActivate?.(), {
@@ -636,8 +692,8 @@ class SceneMenu extends Phaser.Scene {
             deleteBtn.btnText?.setText("Delete?");
         }
 
-        // Bottom-left actions — 8px under info; Export/Delete stay 6px apart
-        const btnY = info.y + info.height + 8 + playBtn.btnHeight / 2;
+        // Bottom-left actions — 8px under a one-line info row
+        const btnY = top + 34 + 12 + 8 + playBtn.btnHeight / 2;
         playBtn.x = textLeft + playBtn.btnWidth / 2;
         playBtn.y = btnY;
         renameBtn.x = playBtn.x + playBtn.btnWidth / 2 + 8 + renameBtn.btnWidth / 2;
@@ -735,11 +791,11 @@ class SceneMenu extends Phaser.Scene {
         const hit = this.add.circle(x, y, r, 0x2a2218, 1)
             .setStrokeStyle(2, 0x6a5a4a)
             .setInteractive({ useHandCursor: true });
-        const label = this.add.text(x, y, glyph, {
-            fontFamily: "monospace",
-            fontSize: "20px",
+        const label = crispUiText(this.add.text(x, y, glyph, {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "16px",
             color: "#d4c4a8"
-        }).setOrigin(0.5);
+        }).setOrigin(0.5));
         hit.on("pointerover", () => {
             hit.setStrokeStyle(2, 0xc4b498);
             label.setColor("#fff0d0");
@@ -767,8 +823,8 @@ class SceneMenu extends Phaser.Scene {
             `top:${y}px`,
             `width:${width}px`,
             "padding:8px",
-            "font-family:monospace",
-            "font-size:14px",
+            "font-family:PrimaryFont, monospace",
+            "font-size:16px",
             "background:#2a2218",
             "color:#e8dcc8",
             "border:1px solid #6a5a4a",
@@ -857,8 +913,8 @@ class SceneMenu extends Phaser.Scene {
         const padX = 4;
         const padY = 1;
         const measure = this.add.text(0, 0, command, {
-            fontFamily: style.fontFamily || "monospace",
-            fontSize: style.fontSize || "15px",
+            fontFamily: style.fontFamily || PIXEL_UI_FONT,
+            fontSize: style.fontSize || "16px",
             color: "#ffffff"
         }).setOrigin(0, 0).setVisible(false);
         const cmdW = measure.width;
@@ -869,8 +925,8 @@ class SceneMenu extends Phaser.Scene {
         const bg = this.add.rectangle(cmdX, y - padY, cmdW + padX * 2, cmdH + padY * 2, 0x000000, 1)
             .setOrigin(0, 0);
         const cmdT = this.add.text(cmdX + padX, y, command, {
-            fontFamily: style.fontFamily || "monospace",
-            fontSize: style.fontSize || "15px",
+            fontFamily: style.fontFamily || PIXEL_UI_FONT,
+            fontSize: style.fontSize || "16px",
             color: "#ffffff"
         }).setOrigin(0, 0);
         cmdT.setDepth((bg.depth || 0) + 1);
@@ -879,8 +935,8 @@ class SceneMenu extends Phaser.Scene {
         const afterX = cmdX + bg.width;
         const firstW = Math.max(40, x + wrap - afterX);
         const probe = this.add.text(0, 0, after, {
-            fontFamily: style.fontFamily || "monospace",
-            fontSize: style.fontSize || "15px",
+            fontFamily: style.fontFamily || PIXEL_UI_FONT,
+            fontSize: style.fontSize || "16px",
             color: style.color || "#c0b0a0"
         }).setOrigin(0, 0).setVisible(false);
 
@@ -942,8 +998,8 @@ class SceneMenu extends Phaser.Scene {
         const wrap = Math.min(520, w - 48);
         const left = w / 2 - wrap / 2;
         const style = {
-            fontFamily: "monospace",
-            fontSize: "15px",
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "16px",
             color: "#c0b0a0",
             align: "left",
             lineSpacing: 6,
@@ -967,8 +1023,8 @@ class SceneMenu extends Phaser.Scene {
         })();
         const linkIndent = numW + 12;
         const link = this._track(this.add.text(left + linkIndent, y, repoUrl, {
-            fontFamily: "monospace",
-            fontSize: "15px",
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "16px",
             color: "#d4a84b",
             wordWrap: { width: Math.max(40, wrap - linkIndent) }
         }).setOrigin(0, 0).setInteractive({ useHandCursor: true }));
@@ -1119,8 +1175,9 @@ class SceneMenu extends Phaser.Scene {
                 iconNode: spr,
                 title: c.name || "Player",
                 lines: [
+                    this._partyMembersLabel(c),
                     this._lastPlayedLabel(c)
-                ],
+                ].filter(Boolean),
                 onActivate: activate,
                 onRename: () => {
                     this._showRename({
@@ -1441,11 +1498,11 @@ class SceneMenu extends Phaser.Scene {
             const rect = this.add.rectangle(cx, rowY, swatchW, 22, this._createLook[part] >>> 0, 1)
                 .setStrokeStyle(2, 0x6a5a4a)
                 .setInteractive({ useHandCursor: true });
-            const label = this.add.text(cx, rowY + 18, labels[part] || part, {
-                fontFamily: "monospace",
-                fontSize: "10px",
+            const label = crispUiText(this.add.text(cx, rowY + 18, labels[part] || part, {
+                fontFamily: PIXEL_UI_FONT,
+                fontSize: "8px",
                 color: "#c0b0a0"
-            }).setOrigin(0.5, 0);
+            }).setOrigin(0.5, 0));
             rect.on("pointerdown", () => {
                 this._createLookPart = part;
                 this._paintCreateSwatches();
@@ -1475,16 +1532,36 @@ class SceneMenu extends Phaser.Scene {
         this._button(w / 2 - copyGap, copyY, "Copy", () => this._copyCreateColor(), { size: "small" });
         this._button(w / 2 + copyGap, copyY, "Paste", () => this._pasteCreateColor(), { size: "small" });
 
-        const nameVal = drafts?.name != null ? drafts.name : "Player";
+        const nameVal = drafts?.name != null ? drafts.name : "";
         const nameY = footY + nameYOff;
-        this.nameInput = this._domInput(w / 2 - 140, nameY, 280, "", nameVal);
+        const formLeft = w / 2 - 140;
+        const formW = 280;
+        const nameDiceSize = 32;
+        const nameDiceGap = 8;
+        const nameW = Math.max(120, formW - nameDiceGap - nameDiceSize);
+        this.nameInput = this._domInput(formLeft, nameY, nameW, "Name", nameVal);
         this.nameInput.maxLength = 24;
         this._clearStatusOnInput(this.nameInput);
+        const nameInputH = this.nameInput.offsetHeight || nameH;
+        this._diceButton(
+            formLeft + formW - nameDiceSize / 2,
+            nameY + nameInputH / 2,
+            () => {
+                const gen = typeof CavemanNames !== "undefined" ? CavemanNames.generate() : "Og";
+                if (this.nameInput) this.nameInput.value = gen;
+            },
+            nameDiceSize
+        );
         if (!relayout) this.nameInput.focus();
 
         this._button(w / 2, btnY, "Create", async () => {
             try {
-                const name = (this.nameInput?.value || "Player").trim() || "Player";
+                const name = (this.nameInput?.value || "").trim();
+                if (!name) {
+                    this.status?.setText("Enter a name.");
+                    this.nameInput?.focus();
+                    return;
+                }
                 const c = await CharacterStore.create(name, this._createLookNormalized());
                 this._selectedCharacter = c;
                 await this._showCharacters({ next: this._charNext });
@@ -1851,11 +1928,12 @@ class SceneMenu extends Phaser.Scene {
         const net = new NetClient();
         this._mpJoinNet = net;
         const url = NetClient.wsUrlFromHostPort(host);
-        const snap = CharacterStore.toJoinSnapshot(character);
         try {
+            const freshChar = await CharacterStore.get(character.id) || character;
+            const snap = CharacterStore.toJoinSnapshot(freshChar);
             const welcome = await net.connect(url, {
-                characterId: character.id,
-                displayName: character.name,
+                characterId: freshChar.id,
+                displayName: freshChar.name,
                 password,
                 character: snap
             });
@@ -1868,9 +1946,9 @@ class SceneMenu extends Phaser.Scene {
             this.scene.start("SceneMain", {
                 net,
                 welcome,
-                displayName: character.name,
-                characterId: character.id,
-                character,
+                displayName: freshChar.name,
+                characterId: freshChar.id,
+                character: freshChar,
                 worldName: welcome?.worldName,
                 joinHost: host
             });

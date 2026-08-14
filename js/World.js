@@ -101,7 +101,8 @@ class Chunk {
             mobs: this.meta.mobs,
             drops: this.meta.drops,
             bloodStains,
-            corpses
+            corpses,
+            wanderers: this.meta.wanderers || []
         };
     }
 
@@ -117,9 +118,11 @@ class Chunk {
         if (!this.isLoaded) return;
         this.isLoaded = false;
         if (this.rt) {
-            this.rt.destroy();
+            if (typeof this.scene.recycleChunkRt === "function") this.scene.recycleChunkRt(this.rt);
+            else this.rt.destroy();
             this.rt = null;
         }
+        this.scene.dropChunkPaint?.(this);
         this.things.children.each(thing => thing.destroy());
         this._clearBloodSprites();
         this.flushMobs();
@@ -157,6 +160,7 @@ class Chunk {
         await this.makeThings();
         await this.makeBloodStains();
         await this.makeMobs();
+        this.scene.partySys?.loadChunkWanderers?.(this);
         await this.makeDrops();
         await this.makeCorpses();
     }
@@ -217,7 +221,6 @@ class Chunk {
                 }
                 if (i >= 0) this.scene.time.delayedCall(0, slice);
                 else {
-                    // Same RNG stream as tiles — pebbles then one-time natural mobs
                     this.populatePebbles(rand);
                     this.populateNaturalMobs(rand);
                     this.isGenerated = true;
@@ -522,22 +525,36 @@ class Chunk {
     }
 
     async render() {
-        this.rt = this.scene.make.renderTexture({
-            x: this.x * this.px(),
-            y: this.y * this.px(),
-            width: this.px(),
-            height: this.px(),
-            add: false
-        }).setOrigin(0).setDepth(0).setVisible(false);
+        if (typeof this.scene.enqueueChunkPaint === "function") {
+            await this.scene.enqueueChunkPaint(this);
+            return;
+        }
+        await this._paintGround();
+    }
+
+    _paintGround() {
+        if (!this.isLoaded) return Promise.resolve();
+        this.rt = typeof this.scene.allocChunkRt === "function"
+            ? this.scene.allocChunkRt(this.x * this.px(), this.y * this.px())
+            : this.scene.make.renderTexture({
+                x: this.x * this.px(),
+                y: this.y * this.px(),
+                width: this.px(),
+                height: this.px(),
+                add: false
+            }).setOrigin(0).setDepth(0).setVisible(false);
 
         const cs = this.scene.chunkSize;
         const ts = this.scene.tileSize;
 
-        const BUDGET_MS = 0.001;
+        const BUDGET_MS = 1;
         let i = cs * cs - 1;
         return new Promise(resolve => {
             const slice = () => {
-                if (!this.rt) return;
+                if (!this.rt || !this.isLoaded) {
+                    resolve();
+                    return;
+                }
                 const start = performance.now();
                 while (i >= 0 && (performance.now() - start) < BUDGET_MS) {
                     const x = i % cs, y = (i / cs) | 0;
@@ -553,7 +570,6 @@ class Chunk {
                 }
             };
             slice();
-
         });
     }
 

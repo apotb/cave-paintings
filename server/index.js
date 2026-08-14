@@ -320,7 +320,7 @@ class GameServer {
             // (join/leave excluded — those use [+]/[-]). announceCmd already printed.
             if (ev.kind === "chat" && ev.system && ev.text && !ev.cmd) {
                 const text = String(ev.text);
-                if (!/\s(?:joined|left)\.$/.test(text)) {
+                if (!/\s(?:joined|left)\.?$/.test(text)) {
                     const toName = ev.to
                         ? (this.sim.players.get(ev.to)?.name || String(ev.to).slice(0, 8))
                         : null;
@@ -459,7 +459,7 @@ class GameServer {
         if (!Number.isFinite(m) || m < 0) return null;
         this.sim.tickSpeed = m;
         this.sim._minuteAcc = 0;
-        const text = `Server set tick speed to ${m}×.`;
+        const text = `Server set tick speed to ${m}×`;
         this.broadcast(Protocol.Types.EVENT, {
             kind: "chat",
             text,

@@ -181,6 +181,14 @@ const PlayerLook = (() => {
         const dir = facing || "down";
         const key = `${tex}-${moving ? "walk" : "idle"}-${dir}`;
         const anims = sprite.scene?.anims;
+        // Idle is a one-shot clip; play() every frame restarts it. Walk/idle
+        // flicker also restarts the walk yoyo from frame 0.
+        if (sprite.anims?.currentAnim?.key === key) {
+            if (moving && sprite.anims.isPlaying === false && anims?.exists(key)) {
+                sprite.play(key, true);
+            }
+            return;
+        }
         if (anims?.exists(key)) sprite.play(key, true);
         else {
             const idleFrame = { down: 1, left: 4, right: 7, up: 10 }[dir] ?? 1;

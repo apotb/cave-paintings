@@ -17,6 +17,8 @@ class LocalSim {
         this.character = opts.character;
         this.scene = null;
         this._pawn = null;
+        this._party = [];
+        this._controlId = null;
         this._knownChunks = new Set();
         this._inflightChunks = new Set();
         this._interestBusy = false;
@@ -77,6 +79,14 @@ class LocalSim {
     /** SceneMain calls this after create so we can generate chunks with Chunk APIs. */
     attachScene(scene) {
         this.scene = scene;
+        const snaps = this.world?.wanderers;
+        if (Array.isArray(snaps) && snaps.length && scene.partySys) {
+            for (const w of snaps) {
+                if (!scene.partySys.wanderers.some((p) => p.pawnId === w.id)) {
+                    scene.partySys.spawnWanderer(w);
+                }
+            }
+        }
         this._kickInterest(true);
     }
 
@@ -145,6 +155,10 @@ class LocalSim {
             viewChunks: 6,
             poseAuth: true
         };
+        this._party = Array.isArray(char.party)
+            ? JSON.parse(JSON.stringify(char.party))
+            : [];
+        this._controlId = char.controlId || char.id;
 
         if (!this.world.clock) {
             this.world.clock = { gameDay: 1, gameMinutes: 8 * 60, tickSpeed: 1 };
@@ -218,6 +232,8 @@ class LocalSim {
             p.moveX = 0;
             p.moveY = 0;
         }
+        if (move.pawnId) this._controlId = move.pawnId;
+        if (Array.isArray(move.partyPoses)) this._applyPartyPoses(move.partyPoses);
         this._kickInterest(false);
     }
 
@@ -225,6 +241,21 @@ class LocalSim {
         if (!this.connected || !this._pawn) return;
         const type = action?.type;
         const p = this._pawn;
+        if (type === NetProtocol.Actions.SWITCH_CONTROL) {
+            if (action.pawnId) this._controlId = action.pawnId;
+            this._dispatch(NetProtocol.Types.YOU, this._youPayload());
+            return;
+        }
+        if (type === NetProtocol.Actions.RECRUIT) {
+            this._pullFromScene();
+            this._dispatch(NetProtocol.Types.YOU, this._youPayload());
+            return;
+        }
+        if (type === NetProtocol.Actions.PARTY_EAT || type === NetProtocol.Actions.GIVE_ITEM || type === NetProtocol.Actions.FEED) {
+            this._pullFromScene();
+            this._dispatch(NetProtocol.Types.YOU, this._youPayload());
+            return;
+        }
         if (type === NetProtocol.Actions.RESYNC) {
             this._knownChunks.clear();
             this._inflightChunks.clear();
@@ -232,12 +263,14 @@ class LocalSim {
             this._interestCy = null;
             this._interestR = null;
             this._kickInterest(true);
+            this._pullFromScene();
             this._dispatch(NetProtocol.Types.YOU, this._youPayload());
             return;
         }
         if (type === NetProtocol.Actions.HOTBAR) {
             const i = Number(action.index);
             if (Number.isInteger(i) && i >= 0 && i < p.inventory.length) p.hotbarIndex = i;
+            this._pullFromScene();
             this._dispatch(NetProtocol.Types.YOU, this._youPayload());
             return;
         }
@@ -272,15 +305,20 @@ class LocalSim {
             return;
         }
         if (type === NetProtocol.Actions.ATTACK) {
+            const pawnId = action.pawnId || p.id;
+            // SP companions already swing locally. Don't echo an attack event —
+            // `_pawn` is the focused character, so x/y would teleport the member.
+            if (pawnId && pawnId !== p.id) return;
             p.attackTimer = 833;
             p.attackAngle = Number(action.angle) || 0;
             p.attackArt = this._attackArtForPlayer(p);
             this._dispatch(NetProtocol.Types.EVENT, {
                 kind: "attack",
                 playerId: p.id,
+                pawnId,
                 x: p.x,
                 y: p.y,
-                angle: p.attackAngle,
+                angle: Number(action.angle) || 0,
                 facing: p.facing,
                 art: p.attackArt
             });
@@ -319,10 +357,11 @@ class LocalSim {
         };
 
         if (cmd === "/heal" || cmd === "/h") {
-            p.hp = p.mhp;
-            p.dead = false;
-            p.kc = p.stomach;
-            p.body = null;
+            const pawn = this._controlledPawn() || p;
+            pawn.hp = pawn.mhp;
+            pawn.dead = false;
+            pawn.kc = pawn.stomach;
+            pawn.body = null;
             this._dispatch(NetProtocol.Types.YOU, this._youPayload());
             return;
         }
@@ -349,7 +388,7 @@ class LocalSim {
             this.world.clock.tickSpeed = m;
             this._minuteAcc = 0;
             this._sendSnapshot();
-            chat(`${p.name} set tick speed to ${m}×.`);
+            chat(`${p.name} set tick speed to ${m}×`);
             return;
         }
 
@@ -483,7 +522,7 @@ class LocalSim {
     }
 
     _pullFromScene() {
-        const pl = this.scene?.player;
+        const pl = this.scene?.leader || this.scene?.player;
         if (!pl || !this._pawn) return;
         this.syncPawnFromClient({
             inventory: pl.inventory,
@@ -499,6 +538,61 @@ class LocalSim {
             y: pl.y,
             facing: pl.facing
         });
+        this._party = [];
+        for (const m of this.scene?.party || []) {
+            if (!m || m === pl || m.isBodyDead?.()) continue;
+            this._party.push({
+                id: m.pawnId,
+                name: m.pawnName,
+                look: m.look,
+                kc: m.kc,
+                saturation: m.saturation,
+                stomach: m.stomach,
+                inventory: m.inventory,
+                equipment: m.equipment,
+                hotbarIndex: m.hotbarIndex,
+                body: m.anatomy?.toJSON?.() ?? null,
+                hp: m.hp,
+                mhp: m.mhp,
+                x: m.x,
+                y: m.y,
+                facing: m.facing
+            });
+        }
+        this._controlId = this.scene?.player?.pawnId || this._pawn.id;
+    }
+
+    _allPawns() {
+        return [this._pawn, ...(this._party || [])].filter(Boolean);
+    }
+
+    _controlledPawn() {
+        const id = this._controlId || this.scene?.player?.pawnId || this._pawn?.id;
+        if (id && this._pawn && id !== this._pawn.id) {
+            const mem = (this._party || []).find((m) => m.id === id);
+            if (mem) return mem;
+        }
+        return this._pawn;
+    }
+
+    _scenePawn(id) {
+        return (this.scene?.party || []).find((p) => p.pawnId === id) || null;
+    }
+
+    _applyPartyPoses(poses) {
+        if (!Array.isArray(poses)) return;
+        if (!this._party) this._party = [];
+        for (const pose of poses) {
+            if (!pose?.id) continue;
+            let rec = this._party.find((p) => p.id === pose.id);
+            if (!rec) {
+                rec = { id: pose.id };
+                this._party.push(rec);
+            }
+            if (Number.isFinite(pose.x)) rec.x = pose.x;
+            if (Number.isFinite(pose.y)) rec.y = pose.y;
+            if (pose.facing) rec.facing = pose.facing;
+        }
     }
 
     /** Persist current pawn pose on the world (first spawn / logout). */
@@ -507,16 +601,30 @@ class LocalSim {
     }
 
     _saveLogoutPose() {
-        const p = this._pawn;
-        if (!p || !this.world) return;
+        if (!this.world) return;
         if (!this.world.poses || typeof this.world.poses !== "object") {
             this.world.poses = {};
         }
-        this.world.poses[p.id] = {
-            x: p.x,
-            y: p.y,
-            facing: p.facing || "down"
-        };
+        const extra = this.scene?.partySys?.posesMap?.() || {};
+        for (const [id, pose] of Object.entries(extra)) {
+            this.world.poses[id] = pose;
+        }
+        const p = this._pawn;
+        if (p && Number.isFinite(p.x)) {
+            this.world.poses[p.id] = {
+                x: p.x,
+                y: p.y,
+                facing: p.facing || "down"
+            };
+        }
+        const sys = this.scene?.partySys;
+        if (sys?.wanderers?.length) {
+            this.world.wanderers = sys.wanderers
+                .filter((w) => w?.active && !w.isBodyDead?.())
+                .map((w) => sys.serializeWanderer(w));
+        } else {
+            this.world.wanderers = [];
+        }
     }
 
     _youPayload() {
@@ -538,7 +646,10 @@ class LocalSim {
             hp: p.hp,
             mhp: p.mhp,
             dead: p.dead,
-            look: p.look || null
+            look: p.look || null,
+            party: this._party || [],
+            controlId: this._controlId || p.id,
+            leaderDead: !!this.scene?.partySys?.leaderDead
         };
     }
 
@@ -548,6 +659,24 @@ class LocalSim {
         return Math.max(floor, Math.min(24, view + 1));
     }
 
+    _interestKeys() {
+        const ts = NetProtocol.TILE_SIZE || 16;
+        const cs = NetProtocol.CHUNK_SIZE || 8;
+        const px = cs * ts;
+        const r = this._interestRadius();
+        const keys = new Set();
+        const pts = [this._pawn, ...(this._party || [])];
+        for (const p of pts) {
+            if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+            const cx = Math.floor(p.x / px);
+            const cy = Math.floor(p.y / px);
+            for (let x = cx - r; x <= cx + r; x++) {
+                for (let y = cy - r; y <= cy + r; y++) keys.add(`${x},${y}`);
+            }
+        }
+        return keys;
+    }
+
     _kickInterest(force) {
         if (force) this._interestForce = true;
         if (this._interestBusy) {
@@ -555,18 +684,6 @@ class LocalSim {
             return;
         }
         if (!this._pawn) return;
-        const ts = NetProtocol.TILE_SIZE || 16;
-        const cs = NetProtocol.CHUNK_SIZE || 8;
-        const px = cs * ts;
-        const cx = Math.floor(this._pawn.x / px);
-        const cy = Math.floor(this._pawn.y / px);
-        const r = this._interestRadius();
-        if (!this._interestForce
-            && cx === this._interestCx
-            && cy === this._interestCy
-            && r === this._interestR) {
-            return;
-        }
         this._syncInterest(!!this._interestForce);
     }
 
@@ -586,30 +703,20 @@ class LocalSim {
         }
         this._interestBusy = true;
         this._interestForce = false;
-        const ts = NetProtocol.TILE_SIZE || 16;
-        const cs = NetProtocol.CHUNK_SIZE || 8;
-        const px = cs * ts;
-        const cx0 = Math.floor(this._pawn.x / px);
-        const cy0 = Math.floor(this._pawn.y / px);
-        const r = this._interestRadius();
-        this._interestCx = cx0;
-        this._interestCy = cy0;
-        this._interestR = r;
+        const keys = this._interestKeys();
         try {
-            for (let cx = cx0 - r; cx <= cx0 + r; cx++) {
-                for (let cy = cy0 - r; cy <= cy0 + r; cy++) {
-                    const key = `${cx},${cy}`;
-                    if (!force && this._knownChunks.has(key)) continue;
-                    if (this._inflightChunks.has(key)) continue;
-                    this._inflightChunks.add(key);
-                    const existed = !!(this.world.chunks?.[key]?.tiles);
-                    const payload = await this._ensureChunkPayload(cx, cy);
-                    this._inflightChunks.delete(key);
-                    if (!payload) continue;
-                    this._knownChunks.add(key);
-                    this._dispatch(NetProtocol.Types.CHUNK, payload);
-                    if (!existed) await this._yieldFrame();
-                }
+            for (const key of keys) {
+                const [cx, cy] = key.split(",").map(Number);
+                if (!force && this._knownChunks.has(key)) continue;
+                if (this._inflightChunks.has(key)) continue;
+                this._inflightChunks.add(key);
+                const existed = !!(this.world.chunks?.[key]?.tiles);
+                const payload = await this._ensureChunkPayload(cx, cy);
+                this._inflightChunks.delete(key);
+                if (!payload) continue;
+                this._knownChunks.add(key);
+                this._dispatch(NetProtocol.Types.CHUNK, payload);
+                if (!existed) await this._yieldFrame();
             }
         } finally {
             this._interestBusy = false;
@@ -685,25 +792,27 @@ class LocalSim {
                 clock.gameDay = (clock.gameDay || 1) + 1;
             }
             // Light hunger tick (pull client vitals first so eating isn't overwritten)
-            if (this._pawn && !this._pawn.dead) {
-                this._pullFromScene();
-                const fed =
-                    (Number(this._pawn.kc) > 0) || (Number(this._pawn.saturation) > 0);
+            this._pullFromScene();
+            const pawns = this._allPawns();
+            for (const pawn of pawns) {
+                if (!pawn || pawn.dead) continue;
+                const fed = (Number(pawn.kc) > 0) || (Number(pawn.saturation) > 0);
                 let tick = 2000 / (24 * 60);
-                const caps = this.scene?.player?.capacities;
+                const scenePawn = this._scenePawn(pawn.id);
+                const caps = scenePawn?.capacities;
                 if (caps?.hungerRateFactor) tick *= caps.hungerRateFactor() || 1;
-                this._pawn.saturation -= tick;
-                if (this._pawn.saturation < 0) {
-                    this._pawn.kc = Math.max(0, this._pawn.kc + this._pawn.saturation);
-                    this._pawn.saturation = 0;
+                pawn.saturation -= tick;
+                if (pawn.saturation < 0) {
+                    pawn.kc = Math.max(0, pawn.kc + pawn.saturation);
+                    pawn.saturation = 0;
                 }
-                // Don't pull again — hunger just mutated the pawn
-                this._dispatch(NetProtocol.Types.YOU, this._youPayload());
-                // Hint client fed-state for the minute that just drained (optional; SceneMain also sets)
-                if (this.scene?.player) {
-                    this.scene.player._malnutritionFed = fed;
+                if (scenePawn) {
+                    scenePawn.kc = pawn.kc;
+                    scenePawn.saturation = pawn.saturation;
+                    scenePawn._malnutritionFed = fed;
                 }
             }
+            this._dispatch(NetProtocol.Types.YOU, this._youPayload());
         }
         this._snapAcc += dtMs;
         if (this._snapAcc >= 1000 / (NetProtocol.SNAPSHOT_HZ || 15)) {
@@ -822,7 +931,8 @@ class LocalSim {
                         drops: chunk.meta.drops || [],
                         mobs: chunk.meta.mobs || [],
                         corpses: chunk.meta.corpses || [],
-                        bloodStains: chunk.meta.bloodStains || []
+                        bloodStains: chunk.meta.bloodStains || [],
+                        wanderers: chunk.meta.wanderers || []
                     };
                 }
             }
@@ -890,6 +1000,11 @@ class LocalSim {
         if (typeof partial.x === "number") p.x = partial.x;
         if (typeof partial.y === "number") p.y = partial.y;
         if (typeof partial.facing === "string" && partial.facing) p.facing = partial.facing;
+        if (Array.isArray(partial.party)) this._party = partial.party;
+        if (partial.controlId) this._controlId = partial.controlId;
+        if (typeof partial.leaderDead === "boolean" && this.scene?.partySys) {
+            this.scene.partySys.leaderDead = partial.leaderDead;
+        }
     }
 
     async close() {

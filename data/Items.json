@@ -740,7 +740,6 @@
             "effects": {
                 "strength": 5,
                 "addSlot": [
-                    "hotbar",
                     "hotbar"
                 ]
             }
@@ -749,6 +748,37 @@
             "ANY_HIDE": {
                 "qty": 2,
                 "hideStage": "dried"
+            },
+            "leaf_cord": 4,
+            "REQUIRE_STATION": "skinworking_bench",
+            "CRAFT_SECONDS": 12,
+            "REQUIRE_TOOL": {
+                "toolClass": "awl",
+                "wear": 10
+            }
+        }
+    },
+    {
+        "id": "leather_pouch",
+        "name": "Leather Pouch",
+        "key": "leather_pouch",
+        "maxStack": 1,
+        "weight": 1,
+        "weightFixed": true,
+        "equip": {
+            "slot": "waist",
+            "effects": {
+                "strength": 7.5,
+                "addSlot": [
+                    "hotbar",
+                    "hotbar"
+                ]
+            }
+        },
+        "recipe": {
+            "ANY_LEATHER": {
+                "qty": 2,
+                "hideStage": "leather"
             },
             "leaf_cord": 4,
             "REQUIRE_STATION": "skinworking_bench",
@@ -770,7 +800,7 @@
         "equip": {
             "slot": "feet",
             "effects": {
-                "speed": 0.05
+                "speed": 0.1
             }
         },
         "recipe": {
