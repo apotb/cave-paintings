@@ -83,6 +83,15 @@
             const host = ctx || owner.ctx || owner.scene;
             if (typeof host?.isControlled === "function") return !!host.isControlled(owner);
             if (host?.player) return host.player === owner;
+            const sim = host?.sim;
+            if (sim?.players) {
+                const pid = owner.id || owner.pawnId;
+                for (const p of sim.players.values()) {
+                    if (!p.connected) continue;
+                    if ((p.controlId || p.id) === pid) return true;
+                }
+                return false;
+            }
             return false;
         },
 
@@ -103,6 +112,31 @@
             return worse
                 ? `${name}'s food poisoning got worse`
                 : `${name} has food poisoning`;
+        },
+
+        malnutritionOnsetMessage(owner, ctx) {
+            return this._logIsYou(owner, ctx)
+                ? "You are malnourished"
+                : `${this._logName(owner)} is malnourished`;
+        },
+
+        malnutritionRecoveredMessage(owner, ctx) {
+            return this._logIsYou(owner, ctx)
+                ? "You are no longer malnourished"
+                : `${this._logName(owner)} is no longer malnourished`;
+        },
+
+        malnutritionStageMessage(owner, stageLabel, ctx) {
+            if (this._logIsYou(owner, ctx)) {
+                return `Your malnutrition is now ${stageLabel}.`;
+            }
+            return `${this._logName(owner)}'s malnutrition is now ${stageLabel}.`;
+        },
+
+        malnutritionStarvedMessage(owner, ctx) {
+            return this._logIsYou(owner, ctx)
+                ? "You starved to death."
+                : `${this._logName(owner)} starved to death.`;
         },
 
         /**
@@ -175,18 +209,18 @@
                 if (!h) {
                     h = body.addHediff("malnutrition", 0);
                     if (!h) return;
-                    log?.push?.("You are malnourished", { owner });
+                    log?.push?.(this.malnutritionOnsetMessage(owner, ctx), { owner });
                 }
                 const prev = this.stageFor(h, ctx)?.label;
                 h.severity = Math.min(1, (Number(h.severity) || 0) + gainPerMin);
                 body.markDirty?.();
                 const next = this.stageFor(h, ctx)?.label;
                 if (next && next !== prev && prev) {
-                    log?.push?.(`Malnutrition is now ${next}.`, { owner });
+                    log?.push?.(this.malnutritionStageMessage(owner, next, ctx), { owner });
                 }
                 const lethal = def.lethalSeverity != null ? Number(def.lethalSeverity) : 1;
                 if ((Number(h.severity) || 0) >= lethal - 1e-9) {
-                    log?.push?.("You starved to death.", { owner });
+                    log?.push?.(this.malnutritionStarvedMessage(owner, ctx), { owner });
                     owner.onBodyFatal?.(null, "starvation");
                 }
                 return;
@@ -197,13 +231,13 @@
             h.severity = (Number(h.severity) || 0) - recoverPerMin;
             if (h.severity <= 0) {
                 body.removeHediff("malnutrition");
-                log?.push?.("You are no longer malnourished", { owner });
+                log?.push?.(this.malnutritionRecoveredMessage(owner, ctx), { owner });
                 return;
             }
             body.markDirty?.();
             const next = this.stageFor(h, ctx)?.label;
             if (next && next !== prev) {
-                log?.push?.(`Malnutrition is now ${next}.`, { owner });
+                log?.push?.(this.malnutritionStageMessage(owner, next, ctx), { owner });
             }
         },
 

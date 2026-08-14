@@ -399,7 +399,8 @@
         "bandage": {
             "tendQuality": 0.4,
             "tendQualityMax": 0.7,
-            "channelSeconds": 5
+            "channelSeconds": 5,
+            "batchSeverity": 20
         },
         "tooltip": [
             "Press Space to bandage"
@@ -875,6 +876,25 @@
             "stick_frame": 1,
             "leaf_cord": 6,
             "stick": 8
+        }
+    },
+    {
+        "id": "lean_to",
+        "name": "Lean-to",
+        "key": "lean_to",
+        "maxStack": 99,
+        "place": {
+            "thing": "lean_to"
+        },
+        "tooltip": [
+            "Fits up to 2 people",
+            "Sleep to pass the time and increase healing rate"
+        ],
+        "recipe": {
+            "log": 6,
+            "stick": 10,
+            "leaf_cord": 8,
+            "leaf": 20
         }
     },
     {

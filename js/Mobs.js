@@ -588,7 +588,11 @@ const DROP_LIFE_MS = 5 * 60 * 1000;
 
 function dropIconKey(scene, item, entry) {
     if (typeof Place !== "undefined" && Place.itemIconKey && scene?.getThing) {
-        const key = Place.itemIconKey(item, (id) => scene.getThing(id));
+        const key = Place.itemIconKey(
+            item,
+            (id) => scene.getThing(id),
+            (k) => scene.textures?.exists?.(k)
+        );
         if (key) return key;
     }
     return item?.key || entry?.id || "";

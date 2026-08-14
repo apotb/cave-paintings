@@ -304,8 +304,8 @@ class LocalSim {
             // Client handles local pickup for SP drops.
             return;
         }
-        if (type === NetProtocol.Actions.PLACE || type === NetProtocol.Actions.STORAGE) {
-            // SP buildings are client-authored into chunk.meta; ignore.
+        if (type === NetProtocol.Actions.PLACE || type === NetProtocol.Actions.STORAGE || type === NetProtocol.Actions.SLEEP) {
+            // SP buildings / rest are client-authored into chunk.meta; ignore.
             return;
         }
         if (type === NetProtocol.Actions.ATTACK) {
@@ -371,7 +371,16 @@ class LocalSim {
         }
 
         if (cmd === "/regen") {
+            const now = Date.now();
+            const armed = Number(this._regenArmedAt) || 0;
+            if (!(armed > 0) || now - armed > 10000) {
+                this._regenArmedAt = now;
+                chat("Type /regen again within 10 seconds to regenerate the world.");
+                return;
+            }
+            this._regenArmedAt = 0;
             this._regenWorld(p);
+            chat("World regenerated.");
             return;
         }
 
@@ -389,6 +398,7 @@ class LocalSim {
                 chat("Usage: /tick [speed]  (1 = normal, 60 ≈ 1 game hour/sec, 0 = pause)");
                 return;
             }
+            this.world.clock.baseTickSpeed = m;
             this.world.clock.tickSpeed = m;
             this._minuteAcc = 0;
             this._sendSnapshot();
@@ -405,7 +415,7 @@ class LocalSim {
                 const h = Math.floor((clock.gameMinutes || 0) / 60);
                 const m = (clock.gameMinutes || 0) % 60;
                 chat(
-                    `Day ${clock.gameDay || 1}  ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")} (${clock.tickSpeed ?? 1}×)`
+                    `Day ${clock.gameDay || 1}  ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
                 );
                 return;
             }
@@ -614,11 +624,15 @@ class LocalSim {
             this.world.poses[id] = pose;
         }
         const p = this._pawn;
+        const pl = this.scene?.leader || this.scene?.player;
         if (p && Number.isFinite(p.x)) {
+            const fromMap = extra[p.id];
             this.world.poses[p.id] = {
                 x: p.x,
                 y: p.y,
-                facing: p.facing || "down"
+                facing: p.facing || "down",
+                resting: !!(fromMap?.resting ?? pl?._resting),
+                lastSleep: fromMap?.lastSleep || pl?.lastSleep || null
             };
         }
         const sys = this.scene?.partySys;
@@ -805,6 +819,9 @@ class LocalSim {
                 const scenePawn = this._scenePawn(pawn.id);
                 const caps = scenePawn?.capacities;
                 if (caps?.hungerRateFactor) tick *= caps.hungerRateFactor() || 1;
+                if (typeof Sleep !== "undefined") {
+                    tick *= Sleep.hungerMult?.(scenePawn?._resting) ?? 1;
+                }
                 pawn.saturation -= tick;
                 if (pawn.saturation < 0) {
                     pawn.kc = Math.max(0, pawn.kc + pawn.saturation);

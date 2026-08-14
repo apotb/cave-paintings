@@ -296,7 +296,9 @@ const CharacterStore = (() => {
                 })
                 : [],
             controlId: character.controlId || character.id,
-            leaderDead: !!character.leaderDead
+            leaderDead: !!character.leaderDead,
+            lastSleep: character.lastSleep || null,
+            resting: !!character.resting
         };
         normalizeCharacterSpoil(snap);
         return snap;
@@ -328,6 +330,13 @@ const CharacterStore = (() => {
         }
         if (you.controlId) next.controlId = you.controlId;
         if (typeof you.leaderDead === "boolean") next.leaderDead = you.leaderDead;
+        // Leader rest lives on the character root; party[] is cloned wholesale so
+        // companions already keep lastSleep/resting. Forgetting these fields made
+        // the controlled pawn stand up on MP relog while other members stayed in bed.
+        if (Object.prototype.hasOwnProperty.call(you, "lastSleep")) {
+            next.lastSleep = you.lastSleep || null;
+        }
+        if (typeof you.resting === "boolean") next.resting = !!you.resting;
         next.updatedAt = Date.now();
         next.lastPlayedAt = next.updatedAt;
         normalizeCharacterSpoil(next);
@@ -368,7 +377,9 @@ const CharacterStore = (() => {
             lastPlayedAt: Math.max(0, Number(raw.lastPlayedAt) || 0),
             party: Array.isArray(raw.party) ? clone(raw.party) : [],
             controlId: raw.controlId || null,
-            leaderDead: !!raw.leaderDead
+            leaderDead: !!raw.leaderDead,
+            lastSleep: raw.lastSleep || null,
+            resting: !!raw.resting
         });
         // Always new id on import so we don't clobber an existing char
         c.id = uuid();

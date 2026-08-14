@@ -168,6 +168,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
         });
         this.on("pointerdown", (pointer) => {
             if (scene.pointerOverWorldUi?.(pointer)) return;
+            if (scene.restBlocksWorldUi?.()) return;
             if (!this.inRange()) return;
             const player = scene.player;
             const held = player?.getHeldItem?.();

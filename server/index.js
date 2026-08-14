@@ -278,7 +278,14 @@ class GameServer {
             characterId: playerId,
             seed: this.sim.seed,
             worldName: this.worldName,
-            clock: { gameDay: this.sim.gameDay, gameMinutes: this.sim.gameMinutes, tickSpeed: this.sim.tickSpeed },
+            clock: {
+                gameDay: this.sim.gameDay,
+                gameMinutes: this.sim.gameMinutes,
+                tickSpeed: this.sim.tickSpeed,
+                baseTickSpeed: Number.isFinite(this.sim.baseTickSpeed)
+                    ? this.sim.baseTickSpeed
+                    : this.sim.tickSpeed
+            },
             spawn: this.sim.spawn,
             motd: this.props.motd || "",
             you: this.sim.youPayload(playerId),

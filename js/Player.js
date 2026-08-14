@@ -77,6 +77,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.pawnName = null;
         this.hotbarIndex = 0;
         this.partyAI = null;
+        this._resting = false;
+        this._restWalk = null;
+        this.lastSleep = null;
+        this._wokeFromRest = false;
         this.wandererAI = null;
         this.hostile = false;
         this.recruitLocked = false;
@@ -114,6 +118,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.on("destroy", () => {
             this._nameLabel?.destroy();
             this._nameCrown?.destroy();
+            this.chatBubble?.destroy();
             this.fxRoot?.destroy(true);
             this.fxRoot = null;
             this.chatBubble = null;
@@ -122,6 +127,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this._recruitTip = null;
             this._ownChannelBar?.destroy();
             this._ownChannelBar = null;
+            if (typeof clearSleepFx === "function") clearSleepFx(this);
+            else if (typeof clearSleepZzz === "function") clearSleepZzz(this);
         });
     }
 
@@ -146,6 +153,17 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._syncNameHudPos();
     }
 
+    syncSortDepth() {
+        if (this._resting) {
+            const lean = this.scene?.findLeanToByUid?.(this.lastSleep?.uid);
+            this.setDepth(typeof sleepSortDepth === "function"
+                ? sleepSortDepth(this, lean, this.lastSleep?.slot)
+                : ((lean?.y || this.y) + 1));
+            return;
+        }
+        this.setDepth(this.y | 0);
+    }
+
     /** Show `msg` above the player for `durationMs` (matches public chat fade). */
     showChatBubble(msg, durationMs = 10000) {
         if (!msg) return;
@@ -153,7 +171,6 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const s = scene.uiScale || 1;
         const zoom = scene.worldZoom || scene.cameras?.main?.zoom || 1;
         const fontPx = pixelUiFontSize(16, s);
-        const root = this.ensureFxRoot();
         if (!this.chatBubble) {
             this.chatBubble = scene.add.text(0, 0, "", {
                 fontFamily: PIXEL_UI_FONT,
@@ -164,8 +181,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 align: "center",
                 wordWrap: { width: Math.round(140 * s), useAdvancedWrap: true }
             }).setOrigin(0.5, 1);
-            root.add(this.chatBubble);
         }
+        this._bindChatHud(this.chatBubble);
         this.chatBubble
             .setResolution(zoom * (window.devicePixelRatio || 1))
             .setFontSize(`${fontPx}px`)
@@ -232,21 +249,21 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.ensureFxRoot();
         this.syncFxRoot();
 
+        this._bindChatHud(bubble);
+
         const label = this._nameLabel;
         const zoom = this.scene.worldZoom || 3;
         const nameH = Math.ceil(
             (label?.height || 12) * (label?.scaleY || 1 / zoom)
         );
-        // Local offset only — party nametags may be world-positioned above the
-        // veil, so do not read label.x / crown.y (those become world coords).
         const a = this._nameAnchorLocal();
-        let lx = a.x;
-        let ly = a.y;
+        let lx = this.x + a.x;
+        let ly = this.y + a.y;
         const crown = this._nameCrown;
         if (crown?.active && crown.visible) {
             const s = this.scene.uiScale || 1;
             const glyphH = Math.ceil(10 * s / zoom) + 1;
-            ly = a.y - glyphH - Math.ceil(crown.displayHeight || 0) - 1;
+            ly = this.y + a.y - glyphH - Math.ceil(crown.displayHeight || 0) - 1;
         } else {
             ly -= nameH + 2;
         }
@@ -257,7 +274,6 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             ? Phaser.Math.Clamp(remaining / fadeMs, 0, 1)
             : 1;
         bubble.setPosition(lx, ly).setVisible(true).setAlpha(alpha);
-        this.fxRoot?.bringToTop?.(bubble);
     }
 
     toJSON() {
@@ -361,29 +377,20 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return true;
     }
 
-    /** Head-local nametag offset (fxRoot space). Fixed 16×16 body — walk frames can change this.width and bounce the tag. */
+    /** Head-local nametag offset (fxRoot / world-HUD space). Fixed 16×16 body — walk frames can change this.width and bounce the tag. */
     _nameAnchorLocal() {
         if (this._prone) return { x: 0, y: -Math.round(16 * 0.5 + 4) };
         return { x: 8, y: -20 };
     }
 
-    /** Local party names stay readable at night; wanderers / other players stay under the veil. */
-    _isLocalPartyNametag() {
-        const scene = this.scene;
-        return !!(scene && (scene.leader === this || scene.party?.includes?.(this)));
-    }
-
     _bindNameHud(obj) {
         if (!obj?.active) return;
-        if (this._isLocalPartyNametag()) {
-            this.scene._liftAboveVeil?.(obj);
-            return;
-        }
-        const root = this.ensureFxRoot();
-        if (obj.parentContainer !== root) {
-            if (obj.parentContainer) obj.parentContainer.remove(obj);
-            root.add(obj);
-        }
+        this.scene._liftAboveVeil?.(obj, 60);
+    }
+
+    _bindChatHud(obj) {
+        if (!obj?.active) return;
+        this.scene._liftAboveVeil?.(obj, 61);
     }
 
     _syncNameHudPos() {
@@ -391,19 +398,16 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const crown = this._nameCrown;
         if (!label?.active && !crown?.active) return;
         const a = this._nameAnchorLocal();
-        const above = this._isLocalPartyNametag();
         if (label?.active) {
             this._bindNameHud(label);
-            if (above) label.setPosition(this.x + a.x, this.y + a.y);
-            else label.setPosition(a.x, a.y);
+            label.setPosition(this.x + a.x, this.y + a.y);
         }
         if (crown?.active) {
             this._bindNameHud(crown);
             const zoom = this.scene.worldZoom || 3;
             const s = this.scene.uiScale || 1;
             const glyphH = Math.ceil(10 * s / zoom) + 1;
-            if (above) crown.setPosition(this.x + a.x, this.y + a.y - glyphH);
-            else crown.setPosition(a.x, a.y - glyphH);
+            crown.setPosition(this.x + a.x, this.y + a.y - glyphH);
         }
     }
 
@@ -672,6 +676,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this._bodyDead) return;
         this._bodyDead = true;
         this.setVelocity(0, 0);
+        if (this._resting || this._restWalk) this.scene?._wakePawn?.(this);
         const environmental = _reason === "bloodLoss" || _reason === "starvation";
         const killer = !environmental && this._hitKiller
             ? this._hitKiller
@@ -702,6 +707,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.capacities = new Capacities(this.anatomy);
         this._refreshDownedState();
         this.scene.healthPanel?.refresh?.();
+        if (!(_result?.damage > 0)) return;
+        this.scene?._onSleepCombatHit?.(this, _attacker);
+        if (this._restWalk) {
+            this._restWalk = null;
+            this.scene?._intendedSleep?.().delete(this.pawnId);
+        }
     }
 
     _refreshDownedState() {
@@ -1409,6 +1420,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     startMeleeAttack(meta = null, opts = {}) {
         if (this.isAttacking() || this._bodyDead) return false;
+        if (this._resting) return false;
         if (this.isVomiting()) return false;
         if (this.isIncapacitated()) return false;
         if (this._eatChannel) this._cancelEat();
@@ -1933,6 +1945,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         tick *= this.getEncumbrance().hungerRate;
         this.capacities = this.capacities || new Capacities(this.anatomy);
         tick *= this.capacities.hungerRateFactor?.() || 1;
+        if (typeof Sleep !== "undefined") tick *= Sleep.hungerMult?.(this._resting) ?? 1;
         this.starve(tick);
         // Malnutrition hediff rises/falls in Hediffs.minuteTick
     }
@@ -2207,6 +2220,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     beginTend(patient = null, opts = {}) {
+        if (this._resting) return false;
         if (this._eatChannel) this._cancelEat();
         if (this._tendChannel || this._skinChannel || this._fleshChannel || this._brainChannel || this._craftChannel || this._bodyDead || this.isAttacking()) return false;
         if (this.isVomiting()) return false;
@@ -2232,14 +2246,19 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 skip = (spec) => sys._woundIsReserved(reserved, who, spec);
             }
         }
-        let target = opts.target && (opts.target.inj || opts.target.destroyed)
-            ? opts.target
-            : null;
-        if (target && skip?.(target)) target = null;
-        if (!target) {
-            target = BodyHealing.pickTendTarget(who.anatomy, skip ? { skip } : undefined);
+        const budget = Number(meta.bandage.batchSeverity);
+        const pickOpts = skip
+            ? { skip, batchSeverity: budget }
+            : { batchSeverity: budget };
+        let targets = BodyHealing.pickTendTargets?.(who.anatomy, pickOpts)
+            || [];
+        if (!targets.length) {
+            const one = opts.target && (opts.target.inj || opts.target.destroyed) && !skip?.(opts.target)
+                ? opts.target
+                : BodyHealing.pickTendTarget(who.anatomy, skip ? { skip } : undefined);
+            if (one) targets = [one];
         }
-        if (!target) {
+        if (!targets.length) {
             if (!opts.silent) {
                 const claimed = skip && BodyHealing.pickTendTarget(who.anatomy);
                 this.scene.combatLog?.push(
@@ -2248,6 +2267,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             }
             return false;
         }
+        const target = targets[0];
+        const targetHints = targets.map((t) => BodyHealing.tendTargetHint?.(t)).filter(Boolean);
         const seconds = Number(meta.bandage.channelSeconds) || 5;
         // Manipulation slows/speeds tending the same way Eating slows/speeds food.
         const scale = this.capacities.manipulationDurationScale();
@@ -2260,17 +2281,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             patient: who,
             // Locked at start so natural healing mid-channel doesn't retarget/cancel
             target,
-            // Serializable hint — MP YOU body reloads replace injury object identity
-            targetHint: {
-                partName: target.part?.name || null,
-                injuryIndex: target.part && target.inj
-                    ? target.part.injuries.indexOf(target.inj)
-                    : -1,
-                injuryId: target.inj?.id,
-                injuryName: target.inj?.name,
-                injurySeverity: target.inj?.severity,
-                destroyedPartName: target.destroyed?.partName || null
-            },
+            targets,
+            targetHint: targetHints[0] || null,
+            targetHints,
             // Base + max from item; actual quality rolled when the channel finishes
             qualityBase: Number(meta.bandage.tendQuality) || 0.4,
             qualityMax: Number(meta.bandage.tendQualityMax) || 0.7,
@@ -2657,11 +2670,22 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this.isControlled?.()) this.scene.showChannelBar?.(Phaser.Math.Clamp(prog, 0, 1));
         if (ch.remaining > 0) return;
 
-        const hint = ch.targetHint || ch.target;
+        const hints = Array.isArray(ch.targetHints) && ch.targetHints.length
+            ? ch.targetHints
+            : [ch.targetHint || ch.target];
         const body = patient.anatomy || this.anatomy;
+        const hintPayload = (h) => ({
+            partName: h?.partName || h?.part?.name || null,
+            injuryIndex: h?.injuryIndex,
+            injuryId: h?.injuryId ?? h?.inj?.id,
+            injuryName: h?.injuryName || h?.inj?.name || null,
+            injurySeverity: h?.injurySeverity ?? h?.inj?.severity,
+            destroyedPartName: h?.destroyedPartName || h?.destroyed?.partName || null
+        });
 
         // Dedicated MP: server applies tend + consumes bandage (YOU syncs body/inv).
         if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            const first = hintPayload(hints[0] || {});
             this.scene._netSendMove?.(true);
             this.scene.net.sendAction({
                 type: NetProtocol.Actions.TEND,
@@ -2670,21 +2694,21 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 patientId: patient.pawnId || null,
                 fromPawnId: src.pawnId || null,
                 slot,
-                partName: hint?.partName || hint?.part?.name || null,
-                injuryIndex: hint?.injuryIndex,
-                injuryId: hint?.injuryId ?? hint?.inj?.id,
-                injuryName: hint?.injuryName || hint?.inj?.name || null,
-                injurySeverity: hint?.injurySeverity ?? hint?.inj?.severity,
-                destroyedPartName: hint?.destroyedPartName || hint?.destroyed?.partName || null
+                ...first,
+                targets: hints.map(hintPayload)
             });
             this._tendChannel = null;
             if (this.isControlled?.()) this.scene.hideChannelBar?.();
             return;
         }
 
-        const target = BodyHealing.resolveTendTarget?.(body, hint)
-            || (BodyHealing.isTendTargetValid(body, ch.target) ? ch.target : null);
-        if (!target) {
+        const applied = [];
+        for (const hint of hints) {
+            const resolved = BodyHealing.resolveTendTarget?.(body, hint)
+                || (BodyHealing.isTendTargetValid(body, hint) ? hint : null);
+            if (resolved) applied.push(resolved);
+        }
+        if (!applied.length) {
             // Wound closed on its own — finish the channel, keep the bandage
             const healer = this.isControlled?.() ? "you" : this.displayName();
             this.scene.combatLog?.push(`The wound healed before ${healer} finished`);
@@ -2698,24 +2722,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             ch.qualityBase,
             ch.qualityMax
         );
-        BodyHealing.applyTend(body, target, quality);
+        for (const t of applied) BodyHealing.applyTend(body, t, quality);
         if (typeof src.loseItemAt === "function") src.loseItemAt(ch.slot, 1);
         else this.loseAnyItem(ch.itemId, 1);
-        const qPct = Math.round(quality * 100);
         const who = this.isControlled?.() ? "You" : this.displayName();
         const poss = patient.isControlled?.() ? "your" : `${patient.displayName()}'s`;
-        let tendMsg = `${who} finished bandaging (${qPct}%)`;
-        if (target?.part) {
-            tendMsg = `${who} bandaged ${poss} ${target.part.name} (${qPct}%)`;
-        } else if (target?.destroyed) {
-            const name = target.destroyed.partName;
-            const part = name ? body?.part?.(name) : null;
-            tendMsg = (typeof BodyHealing !== "undefined" && BodyHealing.isStumpPart(part))
-                ? `${who} bandaged a stump (${qPct}%)`
-                : name
-                    ? `${who} packed the wound (${qPct}%)`
-                    : `${who} finished bandaging (${qPct}%)`;
-        }
+        const tendMsg = BodyHealing.tendLogLine?.(who, poss, quality, applied, body)
+            || `${who} finished bandaging (${Math.round(quality * 100)}%)`;
         this.scene.combatLog?.push(tendMsg);
         this._tendChannel = null;
         if (this.isControlled?.()) this.scene.hideChannelBar?.();
@@ -3033,6 +3046,17 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             || this.isImmobile?.()
             || this.isIncapacitated?.()
         );
+        if (this._resting) {
+            this.setVelocity?.(0, 0);
+            this._iceVx = 0;
+            this._iceVy = 0;
+            if (Number.isFinite(tx) && Number.isFinite(ty)) {
+                this.x = tx;
+                this.y = ty;
+            }
+            setCreatureRest?.(this, true, this.lastSleep?.rot);
+            return;
+        }
         if (downed) {
             this.facing = "right";
             // Server pose is feet-anchored. Apply it first, then origin shift.
@@ -3128,7 +3152,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (this._eatChannel) this._tickEat(dt);
             this._tickChopBar();
             this._tickVomit(dt);
-            this.setDepth(this.y | 0);
+            this.syncSortDepth();
             this.syncFxRoot?.();
             return;
         }
@@ -3159,7 +3183,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 );
                 if (tendLock) this.setVelocity?.(0, 0);
                 else this._puppetFromNet(dt);
-                if (typeof setCreatureProne === "function") {
+                if (this._resting) {
+                    if (typeof pinRestingCreature === "function") pinRestingCreature(this, this.scene);
+                    else setCreatureRest?.(this, true, this.lastSleep?.rot);
+                } else if (typeof setCreatureProne === "function") {
                     setCreatureProne(this, prone && !this._bodyDead);
                 }
                 if (this.isAttacking()) {
@@ -3169,7 +3196,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                     this.attackTimer -= dt;
                     if (this.attackTimer <= 0) this._endAttack();
                 }
-                this.setDepth(this.y | 0);
+                this.syncSortDepth();
                 this.syncFxRoot?.();
                 this.syncNameLabel?.();
                 this._syncChatBubble?.();
@@ -3184,7 +3211,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 if (this.attackTimer <= 0) this._endAttack();
             }
             this.partyAI?.update(dt);
-            this.setDepth(this.y | 0);
+            if (this.body && !this._resting) {
+                const canWalk = !this.isIncapacitated() && !this.isImmobile() && !this.isVomiting();
+                this.body.moves = canWalk;
+            }
+            if (this._resting && typeof pinRestingCreature === "function") {
+                pinRestingCreature(this, this.scene);
+            } else {
+                this.syncSortDepth();
+            }
             this.syncFxRoot?.();
             this.syncNameLabel?.();
             this._syncChatBubble?.();
@@ -3193,7 +3228,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         if (composing || knapping) {
             this.setVelocity(0, 0);
-            this.setDepth(this.y | 0);
+            this.syncSortDepth();
             this.syncFxRoot?.();
             return;
         }
@@ -3201,7 +3236,16 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const incapacitated = this.isIncapacitated();
         const immobile = this.isImmobile();
         const vomiting = this.isVomiting();
-        const prone = immobile || incapacitated;
+        if (this._resting && this.cursors && this.keys) {
+            const movingKeys = this.cursors.left.isDown || this.keys.A.isDown
+                || this.cursors.right.isDown || this.keys.D.isDown
+                || this.cursors.up.isDown || this.keys.W.isDown
+                || this.cursors.down.isDown || this.keys.S.isDown;
+            if (movingKeys) this.scene._tryWakePlayer?.();
+        }
+        const resting = !!this._resting;
+        const restWalk = !!this._restWalk;
+        const prone = immobile || incapacitated || resting;
         if (this.body) {
             this.body.moves = !prone && !vomiting;
             if (prone || vomiting) {
@@ -3210,11 +3254,59 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 this._iceVy = 0;
             }
         }
-        setCreatureProne(this, prone);
+        if (resting) {
+            if (typeof pinRestingCreature === "function") pinRestingCreature(this, this.scene);
+            else setCreatureRest(this, true, this.lastSleep?.rot);
+        } else setCreatureProne(this, prone);
+
+        if (restWalk && this.cursors && this.keys) {
+            const movingKeys = this.cursors.left.isDown || this.keys.A.isDown
+                || this.cursors.right.isDown || this.keys.D.isDown
+                || this.cursors.up.isDown || this.keys.W.isDown
+                || this.cursors.down.isDown || this.keys.S.isDown;
+            if (movingKeys) {
+                this._restWalk = null;
+                this.scene._intendedSleep?.().delete(this.pawnId);
+            }
+        }
+
+        if (this._restWalk && !this._resting) {
+            const spec = this._restWalk;
+            const lean = this.scene.findLeanToByUid?.(spec.uid);
+            const entry = lean?.entry;
+            const def = entry ? this.scene.getThing(entry.id) : null;
+            if (!entry || typeof Sleep === "undefined") {
+                this._restWalk = null;
+            } else {
+                const pos = Sleep.sleeperWorldPos(entry, spec.slot, this.scene.tileSize, def);
+                const d = Math.hypot(this.x - pos.x, this.y - pos.y);
+                const arrive = Sleep.ARRIVE_PX || 16;
+                if (d < arrive) {
+                    this.scene._occupySlot?.(this, entry, spec.slot);
+                } else {
+                    const len = d || 1;
+                    const speed = this.speed * this.scene.tileSize
+                        * Math.max(0.05, Math.min(1.5, this.capacities?.moving?.() || 1));
+                    applyEntityVelocity(
+                        this,
+                        ((pos.x - this.x) / len) * speed,
+                        ((pos.y - this.y) / len) * speed,
+                        delta,
+                        this.scene
+                    );
+                    this.syncSortDepth();
+                    this.syncFxRoot?.();
+                    this.syncNameLabel?.();
+                    return;
+                }
+            }
+        }
 
         // Movement — no crawling; immobile / incapacitated / vomiting stay put
+        const skipMove = !!this._skipMove;
+        this._skipMove = false;
         let x = 0, y = 0;
-        if (!prone && !vomiting && this.cursors && this.keys) {
+        if (!prone && !vomiting && !restWalk && !skipMove && this.cursors && this.keys) {
             const left  = this.cursors.left.isDown  || this.keys.A.isDown;
             const right = this.cursors.right.isDown || this.keys.D.isDown;
             const up    = this.cursors.up.isDown    || this.keys.W.isDown;
@@ -3261,7 +3353,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const wantVx = (prone || vomiting) ? 0 : x * speed;
         const wantVy = (prone || vomiting) ? 0 : y * speed;
         applyEntityVelocity(this, wantVx, wantVy, delta, this.scene);
-        this.setDepth(this.y | 0);
+        this.syncSortDepth();
 
         const sliding = Math.hypot(this._iceVx ?? 0, this._iceVy ?? 0) > 12
             && !!this.scene._isIceAt?.(this.x, this.y - 1);

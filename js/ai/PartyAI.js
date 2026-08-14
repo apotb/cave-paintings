@@ -22,6 +22,7 @@ class PartyAI {
         this._holdFollow = true;
         this._prevFx = null;
         this._prevFy = null;
+        this.eatSeek = null;
         this.LEASH_TILES = (typeof Party !== "undefined" && Party.COMBAT_LEASH) || 10;
         this.MELEE_RESUME_PAD = 3;
     }
@@ -29,6 +30,7 @@ class PartyAI {
     clearCombat() {
         this.assistTarget = null;
         this._clearCombatMove();
+        this.eatSeek = null;
     }
 
     _clearCombatMove() {
@@ -71,16 +73,35 @@ class PartyAI {
         pawn._refreshDownedState?.();
         if (pawn._bodyDead) return;
 
+        if (pawn._resting) {
+            this.setAssist(null);
+            pawn.setVelocity(0, 0);
+            if (typeof pinRestingCreature === "function") pinRestingCreature(pawn, scene);
+            else {
+                const spec = pawn.lastSleep;
+                setCreatureRest?.(pawn, true, spec?.rot);
+                pawn.syncSortDepth?.();
+            }
+            return;
+        }
+
         if (pawn.isIncapacitated?.() || pawn.isImmobile?.() || pawn.isVomiting?.()) {
             this._clearCombatMove();
             pawn.setVelocity(0, 0);
+            if (pawn.body) pawn.body.moves = false;
             setCreatureProne?.(pawn, true);
             return;
         }
+        if (pawn.body && !pawn._resting) pawn.body.moves = true;
         setCreatureProne?.(pawn, false);
 
         const controlled = scene?.player;
         const ts = scene?.tileSize || 16;
+
+        if (pawn._restWalk) {
+            this.setAssist(null);
+            return;
+        }
 
         this._refreshAssist(scene, controlled, ts);
         if (this.assistTarget && !this.assistTarget.active) this.setAssist(null);
@@ -93,6 +114,20 @@ class PartyAI {
             return;
         }
 
+        if (pawn._wokeFromRest) {
+            if (scene.partySys?._shouldDelaySleep?.(pawn)) {
+                if (this._shouldHoldForTend(pawn)) {
+                    pawn.setVelocity(0, 0);
+                    pawn.isSprinting = false;
+                    this._playIdle(pawn);
+                    return;
+                }
+            } else {
+                scene._tryReturnToBed?.(pawn);
+                return;
+            }
+        }
+
         if (this._shouldHoldForTend(pawn)) {
             pawn.setVelocity(0, 0);
             pawn.isSprinting = false;
@@ -100,7 +135,39 @@ class PartyAI {
             return;
         }
 
+        if (this._tickEatSeek(delta, ts)) return;
+
         this._tickFollow(delta, ts, controlled);
+    }
+
+    setEatSeek(target) {
+        this.eatSeek = target && !target.isBodyDead?.() ? target : null;
+    }
+
+    _tickEatSeek(delta, ts) {
+        const pawn = this.pawn;
+        const target = this.eatSeek;
+        if (!target || target.isBodyDead?.() || !target.active) {
+            this.eatSeek = null;
+            return false;
+        }
+        if (pawn._eatChannel) {
+            pawn.setVelocity(0, 0);
+            pawn.isSprinting = false;
+            this._playIdle(pawn);
+            return true;
+        }
+        const P = typeof Party !== "undefined" ? Party : null;
+        if (P?.inInteractRange?.(pawn, target, ts)) {
+            pawn.setVelocity(0, 0);
+            pawn.isSprinting = false;
+            this._playIdle(pawn);
+            return true;
+        }
+        const dist = Math.hypot((pawn.x || 0) - (target.x || 0), (pawn.y || 0) - (target.y || 0));
+        const sprint = dist > ts * 6;
+        this._walkToward(pawn, target.x, target.y, ts, sprint, delta);
+        return true;
     }
 
     _shouldHoldForTend(pawn) {
@@ -130,8 +197,13 @@ class PartyAI {
             return pvp || dCtrl <= leash || dSelf <= 3;
         };
 
-        const next = scene?.partySys?.duelTargetFor?.(this.pawn)
-            || scene?.partySys?._resolveAssistTarget?.(scene.partySys.lastHitMob);
+        const sys = scene?.partySys;
+        let hunted = null;
+        const now = scene?.time?.now || 0;
+        if (sys?.lastHitMob && now - (sys.lastHitAt || 0) < 8000) {
+            hunted = sys._resolveAssistTarget?.(sys.lastHitMob);
+        }
+        const next = sys?.duelTargetFor?.(this.pawn) || hunted;
         if (next && inLeash(next)) {
             if (next !== this.assistTarget) this.setAssist(next);
             return;
@@ -146,23 +218,26 @@ class PartyAI {
         if (!controlled || controlled.isBodyDead?.()) {
             pawn.setVelocity(0, 0);
             this._playIdle(pawn);
+            pawn.scene?._tryInjuredRest?.(pawn);
             return;
         }
 
         const distPlayer = Math.hypot(pawn.x - controlled.x, pawn.y - controlled.y);
         const idleR = (P?.FOLLOW_IDLE ?? 2.6) * ts;
         const catchR = (P?.FOLLOW_CATCH ?? 4.8) * ts;
+        const overlap = this._overlappingThing(pawn);
+        if (overlap) nudgePawnOutOfThing?.(pawn, overlap);
         const overlapping = !!this._overlappingThing(pawn);
+        const jammedOnThing = overlapping || this._anyArcadeHit(pawn.body);
         const closeEnough = distPlayer <= idleR
-            || (this._holdFollow && distPlayer < catchR)
-            || (overlapping && distPlayer < catchR)
-            || (this._noProgressMs > 280 && distPlayer < catchR);
+            || (this._holdFollow && distPlayer < catchR && !jammedOnThing)
+            || (this._noProgressMs > 280 && distPlayer < catchR && !jammedOnThing);
 
-        if (closeEnough) {
+        if (closeEnough && !overlapping) {
             this._holdFollow = true;
-            const jammed = overlapping || this._noProgressMs > 200;
-            if (!jammed && this._unstickFromMates(pawn, controlled, ts, idleR)) return;
+            if (this._unstickFromMates(pawn, controlled, ts, idleR)) return;
             this._idleFollow(pawn);
+            if (!this._leaderMoving(controlled)) pawn.scene?._tryInjuredRest?.(pawn);
             return;
         }
         this._holdFollow = false;
@@ -280,28 +355,43 @@ class PartyAI {
         };
         const open = this._openPoint(want.x, want.y, ts, pawn);
         const overlap = this._overlappingThing(pawn);
-        if (overlap) {
+        if (overlap && !this._keepPathOnOverlap) {
             this._path = null;
-            const around = this._exitDir(pawn, overlap);
-            pawn.isSprinting = !!sprint && pawn.kc > 0 && !pawn.getEncumbrance?.().cannotSprint;
-            this._applyWalk(pawn, around.nx, around.ny, pawn.isSprinting);
-            return;
+            nudgePawnOutOfThing?.(pawn, overlap);
+            if (this._overlappingThing(pawn)) {
+                const around = this._exitDir(pawn, overlap);
+                pawn.isSprinting = !!sprint && pawn.kc > 0 && !pawn.getEncumbrance?.().cannotSprint;
+                this._applyWalk(pawn, around.nx, around.ny, pawn.isSprinting);
+                return;
+            }
         }
         this._escapeKey = null;
 
-        const los = this._losPoints(from.x, from.y, open.x, open.y, pawn);
+        const stalled = this._noProgressMs > 140;
+        const look = Math.max(8, this._clearance(pawn) + 4);
+        const odx = open.x - from.x;
+        const ody = open.y - from.y;
+        const olen = Math.hypot(odx, ody) || 1;
+        const blockedAhead = olen > 4 && !this._losPoints(
+            from.x,
+            from.y,
+            from.x + (odx / olen) * look,
+            from.y + (ody / olen) * look,
+            pawn
+        );
+        const los = !stalled && !this._unstick && !blockedAhead
+            && this._losPoints(from.x, from.y, open.x, open.y, pawn);
         const goalDrift = this._pathGoalX == null
             || Math.hypot(open.x - this._pathGoalX, open.y - this._pathGoalY) > 28;
-        const stalled = this._noProgressMs > 140;
-        if (los && !stalled && !this._unstick) {
+        if (los) {
             this._path = null;
             this._pathMs = 0;
-        } else if (!los && (!this._path || !this._path.length || goalDrift || stalled || this._pathMs > 800)) {
+        } else if (!this._path || !this._path.length || goalDrift || stalled
+            || this._pathMs > (this._pathRefreshMs || 800)) {
             this._path = this._planPath(pawn, open.x, open.y, ts);
             this._pathGoalX = open.x;
             this._pathGoalY = open.y;
             this._pathMs = 0;
-            if (stalled) this._noProgressMs = 0;
         } else {
             this._pathMs += delta;
         }
@@ -352,12 +442,58 @@ class PartyAI {
             }
         }
 
+        if (stalled) {
+            const slid = slidePawnAroundThings?.(
+                pawn, nx, ny, 4, this._noProgressMs > 400, this._avoidSide
+            );
+            if (slid) {
+                nx = slid.nx;
+                ny = slid.ny;
+                this._avoidSide = nx !== 0 ? Math.sign(nx) : (ny || 1);
+            } else {
+                const free = findFreePawnPose?.(pawn, 80);
+                if (free) {
+                    teleportPawnPose?.(pawn, free.x, free.y);
+                    this._noProgressMs = 0;
+                    this._path = null;
+                    this._unstick = null;
+                }
+            }
+        }
+
         pawn.isSprinting = !!sprint && pawn.kc > 0 && !pawn.getEncumbrance?.().cannotSprint;
         this._applyWalk(pawn, nx, ny, pawn.isSprinting);
     }
 
     _clearance(pawn) {
-        return Math.max(6, (pawn?.hitboxSize || 8) * 0.5 + 4);
+        const body = pawn?.body;
+        if (body && body.right > body.left) {
+            const hw = (body.right - body.left) * 0.5;
+            const hh = (body.bottom - body.top) * 0.5;
+            return Math.max(hw, hh) + 3;
+        }
+        return Math.max(6, (pawn?.hitboxSize || 8) * 0.5 + 3);
+    }
+
+    _cellCenter(cx, cy, cell) {
+        return { x: cx * cell + cell * 0.5, y: cy * cell + cell * 0.5 };
+    }
+
+    _anyArcadeHit(body) {
+        if (!body) return false;
+        const b = body.blocked;
+        const t = body.touching;
+        return !!(b?.left || b?.right || b?.up || b?.down
+            || t?.left || t?.right || t?.up || t?.down);
+    }
+
+    _arcadeJammed(body) {
+        if (!body) return false;
+        const b = body.blocked;
+        const t = body.touching;
+        const xHit = !!(b?.left || b?.right || t?.left || t?.right);
+        const yHit = !!(b?.up || b?.down || t?.up || t?.down);
+        return xHit && yHit;
     }
 
     _blockedInDir(body, nx, ny) {
@@ -382,7 +518,7 @@ class PartyAI {
         for (let i = 0; i < things.length; i++) {
             const t = things[i];
             const tb = t?.body;
-            if (!tb || !tb.enable) continue;
+            if (!tb || !tb.enable || pawnIgnoresThing?.(pawn, t)) continue;
             if (!(body.right + pad > tb.left && body.left - pad < tb.right
                 && body.bottom + pad > tb.top && body.top - pad < tb.bottom)) {
                 continue;
@@ -451,8 +587,9 @@ class PartyAI {
         const out = [];
         const things = scene._things.getChildren();
         for (let i = 0; i < things.length; i++) {
-            const tb = things[i]?.body;
-            if (!tb || !tb.enable) continue;
+            const t = things[i];
+            const tb = t?.body;
+            if (!tb || !tb.enable || pawnIgnoresThing?.(pawn, t)) continue;
             const tcx = (tb.left + tb.right) * 0.5;
             const tcy = (tb.top + tb.bottom) * 0.5;
             if (Math.abs(tcx - cx) > radius || Math.abs(tcy - cy) > radius) continue;
@@ -478,10 +615,10 @@ class PartyAI {
             }
             return false;
         };
-        const sx = Math.round(from.x / cell);
-        const sy = Math.round(from.y / cell);
-        const gx = Math.round(destX / cell);
-        const gy = Math.round(destY / cell);
+        const sx = Math.floor(from.x / cell);
+        const sy = Math.floor(from.y / cell);
+        const gx = Math.floor(destX / cell);
+        const gy = Math.floor(destY / cell);
         if (sx === gx && sy === gy) return [{ x: destX, y: destY }];
 
         const keyOf = (cx, cy) => `${cx},${cy}`;
@@ -491,7 +628,7 @@ class PartyAI {
         let found = null;
         let best = [sx, sy];
         let bestH = Math.abs(gx - sx) + Math.abs(gy - sy);
-        const maxR = 12;
+        const maxR = this._pathRange || 12;
         const dirs = [
             [1, 0], [-1, 0], [0, 1], [0, -1],
             [1, 1], [1, -1], [-1, 1], [-1, -1]
@@ -518,12 +655,14 @@ class PartyAI {
                 const k = keyOf(nx, ny);
                 if (came.has(k)) continue;
                 const goalCell = nx === gx && ny === gy;
-                if (!goalCell && blockedAt(nx * cell, ny * cell)) continue;
+                const pos = this._cellCenter(nx, ny, cell);
+                if (!goalCell && blockedAt(pos.x, pos.y)) continue;
                 const dx = dirs[d][0];
                 const dy = dirs[d][1];
                 if (dx && dy) {
-                    if (blockedAt((cx + dx) * cell, cy * cell)
-                        || blockedAt(cx * cell, (cy + dy) * cell)) {
+                    const sideX = this._cellCenter(cx + dx, cy, cell);
+                    const sideY = this._cellCenter(cx, cy + dy, cell);
+                    if (blockedAt(sideX.x, sideX.y) || blockedAt(sideY.x, sideY.y)) {
                         continue;
                     }
                 }
@@ -544,7 +683,8 @@ class PartyAI {
         cells.reverse();
         const pts = [];
         for (let i = 1; i < cells.length; i++) {
-            pts.push({ x: cells[i][0] * cell, y: cells[i][1] * cell });
+            const p = this._cellCenter(cells[i][0], cells[i][1], cell);
+            pts.push(p);
         }
         if (found) pts.push({ x: destX, y: destY });
         return this._stringPull(pawn, pts);
@@ -575,11 +715,14 @@ class PartyAI {
         const dy = y1 - y0;
         const dist = Math.hypot(dx, dy);
         if (!(dist > 4)) return true;
-        const steps = Math.min(16, Math.max(2, Math.ceil(dist / 10)));
         const half = this._clearance(pawn);
-        const solids = this._nearbyBodies(pawn, dist + 48);
+        const stepPx = Math.max(3, half * 0.5);
+        const ts = pawn?.scene?.tileSize || 16;
+        const maxDist = Math.min(dist, ts * 14);
+        const steps = Math.max(2, Math.ceil(maxDist / stepPx));
+        const solids = this._nearbyBodies(pawn, maxDist + 48);
         for (let i = 1; i <= steps; i++) {
-            const f = i / steps;
+            const f = ((maxDist * i) / steps) / dist;
             const ax = x0 + dx * f;
             const ay = y0 + dy * f;
             for (let s = 0; s < solids.length; s++) {
@@ -717,7 +860,17 @@ class PartyAI {
             nx /= nlen;
             ny /= nlen;
         }
-        if (this._blockedInDir(pawn.body, nx, ny)) {
+        const overlap = this._overlappingThing(pawn);
+        if (overlap) {
+            nudgePawnOutOfThing?.(pawn, overlap);
+            if (this._overlappingThing(pawn)) {
+                const around = this._exitDir(pawn, overlap);
+                pawn.isSprinting = !!sprint && pawn.kc > 0 && !pawn.getEncumbrance?.().cannotSprint;
+                this._applyWalk(pawn, around.nx, around.ny, pawn.isSprinting);
+                return;
+            }
+        }
+        if (this._blockedInDir(pawn.body, nx, ny) || this._arcadeJammed(pawn.body)) {
             const sx = Math.sign(dx) || 0;
             const sy = Math.sign(dy) || 0;
             if (sx && !this._blockedInDir(pawn.body, sx, 0) && Math.abs(dx) > 2) {
@@ -726,6 +879,13 @@ class PartyAI {
             } else if (sy && !this._blockedInDir(pawn.body, 0, sy) && Math.abs(dy) > 2) {
                 nx = 0;
                 ny = sy;
+            } else {
+                const slid = slidePawnAroundThings?.(pawn, nx, ny, 4, false, this._avoidSide);
+                if (slid) {
+                    nx = slid.nx;
+                    ny = slid.ny;
+                    this._avoidSide = nx !== 0 ? Math.sign(nx) : (ny || 1);
+                }
             }
         }
         pawn.isSprinting = !!sprint && pawn.kc > 0 && !pawn.getEncumbrance?.().cannotSprint;
@@ -792,11 +952,20 @@ class PartyAI {
             { nx: 0, ny: -1, d: cy - tb.top, key: "u" },
             { nx: 0, ny: 1, d: tb.bottom - cy, key: "d" }
         ];
-        exits.sort((a, b) => a.d - b.d);
+        exits.sort((a, b) => b.d - a.d);
         const id = thing.uid || `${thing.x}:${thing.y}`;
         if (this._escapeKey && this._escapeKey.startsWith(`${id}:`)) {
             const keep = exits.find((e) => this._escapeKey === `${id}:${e.key}`);
-            if (keep) return keep;
+            if (keep && !pawnPoseBlocked?.(mob, mob.x + keep.nx * 8, mob.y + keep.ny * 8, 2)) {
+                return keep;
+            }
+        }
+        for (let i = 0; i < exits.length; i++) {
+            const e = exits[i];
+            if (pawnPoseBlocked?.(mob, mob.x + e.nx * 8, mob.y + e.ny * 8, 2)) continue;
+            this._escapeKey = `${id}:${e.key}`;
+            this._avoidSide = e.nx !== 0 ? e.nx : (e.ny || 1);
+            return e;
         }
         const pick = exits[0];
         this._escapeKey = `${id}:${pick.key}`;
@@ -812,7 +981,7 @@ class PartyAI {
         for (let i = 0; i < things.length; i++) {
             const t = things[i];
             const tb = t?.body;
-            if (!tb || !tb.enable) continue;
+            if (!tb || !tb.enable || pawnIgnoresThing?.(mob, t)) continue;
             if (body.right > tb.left && body.left < tb.right && body.bottom > tb.top && body.top < tb.bottom) {
                 return t;
             }
@@ -837,7 +1006,7 @@ class PartyAI {
         for (let i = 0; i < things.length; i++) {
             const t = things[i];
             const tb = t?.body;
-            if (!tb || !tb.enable) continue;
+            if (!tb || !tb.enable || pawnIgnoresThing?.(this.pawn, t)) continue;
             const tcx = (tb.left + tb.right) * 0.5;
             const tcy = (tb.top + tb.bottom) * 0.5;
             if (Math.abs(tcx - ax) > cull || Math.abs(tcy - ay) > cull) continue;

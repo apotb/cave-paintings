@@ -38,14 +38,32 @@
     const RECRUIT_FOOD = 0.75;
 
     const COOLDOWN_ROOM = [60, 120];
-    /** Full-party packs: ~1/4 as often as a lone passerby. */
-    const COOLDOWN_FULL = [240, 480];
+    /** Full-party packs of 2–6: twice as long as the previous full-party wait. */
+    const COOLDOWN_FULL = [480, 960];
 
     const AUTO_EAT_BELOW = 1000;
     const AUTO_EAT_UNTIL = 1400;
 
     /** Neutral passerby stroll vs player walk (3.5 tiles/s). Combat chase stays full speed. */
     const WANDER_WALK_MULT = 0.28;
+    /** Walk clips are authored for this tiles/s at anim timeScale 1. */
+    const WALK_ANIM_TILES_PER_SEC = 3.5;
+    /** Passerby sim vs /tick. Cap so they don't teleport a chunk per frame. */
+    function wandererTimeScale(tickSpeed) {
+        const s = Number(tickSpeed);
+        if (!Number.isFinite(s) || s <= 0) return 0;
+        return Math.min(8, s);
+    }
+    /** Map travel speed onto the human walk clip. */
+    function walkAnimTimeScale(tilesPerSec, refTilesPerSec) {
+        const ref = Number(refTilesPerSec) > 0 ? Number(refTilesPerSec) : WALK_ANIM_TILES_PER_SEC;
+        const t = Number(tilesPerSec);
+        if (!Number.isFinite(t) || t <= 0) return 1;
+        const scale = t / ref;
+        if (scale < 0.15) return 0.15;
+        if (scale > 8) return 8;
+        return scale;
+    }
     /** Hitting one passerby pulls others in this radius (covers a 6-pack line). */
     const WANDERER_ALERT_TILES = 10;
 
@@ -191,6 +209,63 @@
     function inInteractRange(a, b, tileSize = 16) {
         const range = Number(a?.interactionRange) || INTERACT_TILES;
         return distTiles(a, b, tileSize) <= range + 0.05;
+    }
+
+    /**
+     * Best auto-eat stack in the party. In-range meals win; otherwise anything
+     * within seek range (so a hungry companion can walk in).
+     * @returns {{ pawn, slot, stack, dist, inRange, poison }|null}
+     */
+    function pickAutoEat(eater, members, opts = {}) {
+        if (!eater) return null;
+        const ts = Number(opts.tileSize) || 16;
+        const interact = (Number(opts.interactTiles) || INTERACT_TILES) * ts;
+        const seek = (Number(opts.seekTiles) || FOLLOW_DETACH) * ts;
+        const skipId = opts.skipHeld?.id;
+        const skipSlot = opts.skipHeld?.slot;
+        const getFood = opts.getFood;
+        const allowPoison = !!opts.allowPoison;
+        const ex = Number(eater.x) || 0;
+        const ey = Number(eater.y) || 0;
+        const eaterId = eater.id || eater.pawnId;
+        const candidates = [];
+        for (const p of members || []) {
+            if (!p || p.dead || p.isBodyDead?.()) continue;
+            const d = Math.hypot((Number(p.x) || 0) - ex, (Number(p.y) || 0) - ey);
+            const pid = p.id || p.pawnId;
+            const isSelf = p === eater || (eaterId && pid === eaterId);
+            if (!isSelf && d > seek) continue;
+            const inv = p.inventory || [];
+            for (let i = 0; i < inv.length; i++) {
+                const stack = inv[i];
+                if (!stack) continue;
+                if (skipId != null && pid === skipId && i === skipSlot) continue;
+                const food = typeof getFood === "function"
+                    ? getFood(stack)
+                    : (stack.food || null);
+                if (!(Number(food?.kc ?? 0) > 0)) continue;
+                const poison = Number(food?.foodPoisonChance ?? 0) > 0;
+                if (poison && !allowPoison) continue;
+                const spoil = Number(stack.spoilAt ?? stack.spoilLeft ?? Infinity);
+                candidates.push({
+                    pawn: p,
+                    slot: i,
+                    stack,
+                    spoil,
+                    own: isSelf,
+                    poison,
+                    dist: d,
+                    inRange: isSelf || d <= interact + 0.05
+                });
+            }
+        }
+        candidates.sort((a, b) => {
+            if (a.inRange !== b.inRange) return a.inRange ? -1 : 1;
+            if (a.spoil !== b.spoil) return a.spoil - b.spoil;
+            if (a.own !== b.own) return a.own ? -1 : 1;
+            return a.dist - b.dist;
+        });
+        return candidates[0] || null;
     }
 
     function nearestLiving(list, x, y) {
@@ -729,6 +804,9 @@
         AUTO_EAT_BELOW,
         AUTO_EAT_UNTIL,
         WANDER_WALK_MULT,
+        WALK_ANIM_TILES_PER_SEC,
+        wandererTimeScale,
+        walkAnimTimeScale,
         WANDERER_ALERT_TILES,
         GEAR_TABLE,
         GEAR_TABLE_FULL,
@@ -753,6 +831,7 @@
         livingParty,
         distTiles,
         inInteractRange,
+        pickAutoEat,
         nearestLiving,
         followBehind,
         followBlobPoint,

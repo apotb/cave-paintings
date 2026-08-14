@@ -171,6 +171,7 @@ class SceneMain extends SceneBase {
         this.gameDay = 1;
         this.gameMinutes = 8 * 60;
         this.tickSpeed = 1;
+        this._baseTickSpeed = 1;
         this._worldMinuteEvent = null;
         // Don't apply welcome clock yet — clockText / lightGfx are created below.
         if (!this.isNet) {
@@ -184,7 +185,12 @@ class SceneMain extends SceneBase {
 
         // Collisions
         this._things = this.physics.add.staticGroup();
-        this.physics.add.collider(this.player, this._things);
+        this.physics.add.collider(
+            this.player,
+            this._things,
+            null,
+            (a, b) => (typeof Sleep === "undefined" || !Sleep.collideProcess) ? true : Sleep.collideProcess(a, b)
+        );
         // Overlap only — collider was body-checking / shoving the player during melee
         this.physics.add.overlap(this.player, this.mobs);
         this.physics.add.collider(this.mobs, this._things);
@@ -215,6 +221,7 @@ class SceneMain extends SceneBase {
         this.createButtons();
         this.equipmentPanel = new EquipmentPanel(this);
         this.campfirePanel = new CampfirePanel(this);
+        this.leanToPanel = new LeanToPanel(this);
         this.storagePanel = new StoragePanel(this);
         this.corpsePanel = new CorpsePanel(this);
         this.healthPanel = new HealthPanel(this);
@@ -270,6 +277,7 @@ class SceneMain extends SceneBase {
         if (you.inventory || you.kc != null || you.equipment) this._netApplyYou(you);
         this._netForceYouInv = false;
         this.partySys?.applyJoinParty?.(you, this.character, { join: true });
+        this._restorePartySleep?.();
 
         this.net.clearHandlers?.();
         this.net.on(NetProtocol.Types.SNAPSHOT, (payload) => this._netApplySnapshot(payload));
@@ -339,7 +347,9 @@ class SceneMain extends SceneBase {
             y: pl.y,
             controlId: extra.controlId || this.player?.pawnId,
             leaderDead: !!extra.leaderDead,
-            party: extra.party || []
+            party: extra.party || [],
+            lastSleep: pl.lastSleep || null,
+            resting: !!pl._resting
         };
     }
 
@@ -403,7 +413,9 @@ class SceneMain extends SceneBase {
                 mhp: m.mhp,
                 facing: m.facing,
                 x: m.x,
-                y: m.y
+                y: m.y,
+                lastSleep: m.lastSleep || null,
+                resting: !!m.resting
             }));
         };
         return {
@@ -593,8 +605,19 @@ class SceneMain extends SceneBase {
             } catch (_) {}
         }
         this._netApplyYouVomit(you, youPawn);
-        // Dedicated: server prone flag (immobile / pain shock / unconscious)
-        if (youPawn && typeof you.prone === "boolean") {
+        // Dedicated: server rest is per-world. Character `resting` is global, so
+        // YOU.resting=false must stand you up when this world has no bed.
+        if (youPawn && typeof you.resting === "boolean") {
+            if (you.resting) {
+                youPawn._resting = true;
+                if (you.lastSleep) youPawn.lastSleep = you.lastSleep;
+                if (typeof pinRestingCreature === "function") pinRestingCreature(youPawn, this);
+                else setCreatureRest?.(youPawn, true, you.lastSleep?.rot ?? you.restRot);
+            } else if (youPawn._resting) {
+                setCreatureRest?.(youPawn, false);
+                youPawn._resting = false;
+            }
+        } else if (youPawn && typeof you.prone === "boolean" && !youPawn._resting) {
             setCreatureProne(
                 youPawn,
                 !!you.prone && !youPawn._bodyDead && !you.dead
@@ -750,7 +773,9 @@ class SceneMain extends SceneBase {
         if (!ownerId || !this.remotePlayers) return;
         for (const [id, entry] of [...this.remotePlayers]) {
             if (id === ownerId || entry.ownerId === ownerId) {
-                entry.root?.destroy?.(true);
+                if (typeof clearSleepFx === "function") clearSleepFx(entry);
+                else if (typeof clearSleepZzz === "function") clearSleepZzz(entry);
+                this._netDestroyRemote(entry);
                 this.remotePlayers.delete(id);
             }
         }
@@ -781,7 +806,7 @@ class SceneMain extends SceneBase {
         }).setOrigin(0.5, 1);
         name.setResolution(zoom * (window.devicePixelRatio || 1));
         name.setScale(1 / zoom);
-        root.add(name);
+        this._liftAboveVeil(name, 60);
 
         const bubbleFont = pixelUiFontSize(16, s);
         const bubble = this.add.text(8, -30, "", {
@@ -795,7 +820,7 @@ class SceneMain extends SceneBase {
         }).setOrigin(0.5, 1).setVisible(false);
         bubble.setResolution(zoom * (window.devicePixelRatio || 1));
         bubble.setScale(1 / zoom);
-        root.add(bubble);
+        this._liftAboveVeil(bubble, 61);
 
         if (typeof PlayerLook !== "undefined") PlayerLook.play(spr, rp.facing || "down", false);
         else if (this.anims.exists("idle-down")) spr.play("idle-down", true);
@@ -897,8 +922,14 @@ class SceneMain extends SceneBase {
             entry.name.setColor(nColor);
             entry.spr.setAlpha(1);
             entry.prone = !!(rp.prone || rp.dead);
+            entry.resting = !!rp.resting;
+            entry.injured = !!rp.injured;
+            entry.restRot = rp.restRot ?? rp.lastSleep?.rot;
+            entry.lastSleep = rp.lastSleep || null;
             // Dead players leave a corpse — no translucent ghost puppet
             entry.root.setVisible(!rp.dead);
+            entry.name?.setVisible(!rp.dead);
+            if (rp.dead) entry.bubble?.setVisible(false);
             if (rp.dead) {
                 if (entry.fist) entry.fist.setVisible(false);
                 if (entry.weapon) entry.weapon.setVisible(false);
@@ -940,7 +971,13 @@ class SceneMain extends SceneBase {
                     hostile: !!mem.hostile
                 }) || "#ffffff");
                 mEntry.prone = !!(mem.prone || mem.dead);
+                mEntry.resting = !!mem.resting;
+                mEntry.injured = !!mem.injured;
+                mEntry.restRot = mem.restRot ?? mem.lastSleep?.rot;
+                mEntry.lastSleep = mem.lastSleep || null;
                 mEntry.root.setVisible(!mem.dead);
+                mEntry.name?.setVisible(!mem.dead);
+                if (mem.dead) mEntry.bubble?.setVisible(false);
                 if (mem.look && typeof Look !== "undefined" && !Look.looksEqual(mEntry.look, mem.look)) {
                     if (typeof PlayerLook !== "undefined") {
                         PlayerLook.apply(mEntry.spr, mem.look);
@@ -963,7 +1000,9 @@ class SceneMain extends SceneBase {
         }
         for (const [id, entry] of this.remotePlayers) {
             if (!seen.has(id)) {
-                entry.root.destroy(true);
+                if (typeof clearSleepFx === "function") clearSleepFx(entry);
+                else if (typeof clearSleepZzz === "function") clearSleepZzz(entry);
+                this._netDestroyRemote(entry);
                 this.remotePlayers.delete(id);
             }
         }
@@ -1066,10 +1105,15 @@ class SceneMain extends SceneBase {
 
         if (clock.tickSpeed != null && Number.isFinite(Number(clock.tickSpeed))) {
             this.tickSpeed = Math.max(0, Number(clock.tickSpeed));
+            if (clock.baseTickSpeed != null && Number.isFinite(Number(clock.baseTickSpeed))) {
+                this._baseTickSpeed = Math.max(0, Number(clock.baseTickSpeed));
+            }
         }
 
         this.updateClockText();
         if (this.lightGfx && this.worldMinuteIndex() !== prevIdx) this.updateTimeTint();
+
+        if (this.net?.isLocal) this.applyRestClock?.();
 
         if (opts.catchUp === false) return;
 
@@ -1157,7 +1201,7 @@ class SceneMain extends SceneBase {
                             if (meta) {
                             spr.item = meta;
                             const iconKey = (typeof Place !== "undefined" && Place.itemIconKey)
-                                ? Place.itemIconKey(meta, (id) => this.getThing(id))
+                                ? Place.itemIconKey(meta, (id) => this.getThing(id), (k) => this.textures.exists(k))
                                 : meta.key;
                             if (iconKey && this.textures.exists(iconKey)) spr.setTexture(iconKey);
                         }
@@ -1619,8 +1663,15 @@ class SceneMain extends SceneBase {
             const tex = entry.tex;
             if (!tex || !entry.spr?.play) continue;
             if (typeof setPuppetProne === "function") {
-                // Mobs: container is feet-anchored; shift sprite to body center while prone
-                setPuppetProne(entry.spr, !!entry.prone, { feetAnchored: true });
+                if (entry.resting) {
+                    setPuppetProne(entry.spr, true, {
+                        feetAnchored: true,
+                        resting: true,
+                        restRot: entry.restRot
+                    });
+                } else {
+                    setPuppetProne(entry.spr, !!entry.prone, { feetAnchored: true });
+                }
             }
             if (entry.prone) {
                 entry.animKey = null;
@@ -1657,24 +1708,42 @@ class SceneMain extends SceneBase {
         this._netLayoutRemoteLabels(entry);
     }
 
+    _netDestroyRemote(entry) {
+        if (!entry) return;
+        entry.name?.destroy?.();
+        entry.bubble?.destroy?.();
+        entry.root?.destroy?.(true);
+    }
+
     _netLayoutRemoteLabels(entry) {
         const spr = entry.spr;
         const nameH = Math.ceil((entry.name.height || 12) * (entry.name.scaleY || 1));
+        const resting = !!(entry.resting || spr?._resting);
         const prone = !!(entry.prone || spr?._prone);
         let nameX;
         let nameY;
-        if (prone) {
-            // Container is feet-anchored; sprite is shifted to body center
+        if (resting) {
+            // Container is sleeper body center; sprite sits at local 0,0.
+            nameX = 0;
+            nameY = -Math.round(16 * 0.5 + 4);
+        } else if (prone) {
+            // Container is feet-anchored; sprite is shifted to body center.
             nameX = Math.round((spr.width || 16) * 0.5);
             nameY = -Math.round(Math.max(spr.width || 16, spr.height || 16) * 0.5 + 4);
         } else {
             nameX = Math.round((spr.width || 16) * 0.5);
             nameY = -Math.round((spr.height || 16) + 4);
         }
-        entry.name.setPosition(nameX, nameY);
-        const bubbleOn = entry.bubble.visible && (this.time?.now || 0) < entry.bubbleUntil;
-        if (bubbleOn) {
-            entry.bubble.setPosition(nameX, nameY - nameH - 2);
+        const wx = entry.x + nameX;
+        const wy = entry.y + nameY;
+        if (entry.name?.active) {
+            this._liftAboveVeil(entry.name, 60);
+            entry.name.setPosition(wx, wy);
+        }
+        const bubbleOn = entry.bubble?.visible && (this.time?.now || 0) < entry.bubbleUntil;
+        if (entry.bubble?.active) {
+            this._liftAboveVeil(entry.bubble, 61);
+            if (bubbleOn) entry.bubble.setPosition(wx, wy - nameH - 2);
         }
     }
 
@@ -2512,6 +2581,8 @@ class SceneMain extends SceneBase {
             if (live.entry !== entry) live.entry = entry;
             if (id && typeof live.setKind === "function" && live.meta?.id !== id) {
                 live.setKind(id);
+            } else {
+                live.applyVisual?.();
             }
             live.applySmokeVisual?.();
             this._netDedupeCampfireSprites(entry, x, y, live);
@@ -2615,7 +2686,9 @@ class SceneMain extends SceneBase {
             if (!t) return false;
             if (uid && t.uid && t.uid === uid) return true;
             const store = Array.isArray(t.slots) || this.getThing?.(t.id)?.storage
-                || this.getThing?.(t.id)?.craftStation;
+                || this.getThing?.(t.id)?.craftStation
+                || this.getThing?.(t.id)?.sleep
+                || Array.isArray(t.occupants);
             if (!store) return false;
             return Math.abs(Number(t.x) - x) < 1.5 && Math.abs(Number(t.y) - y) < 1.5;
         };
@@ -2671,15 +2744,19 @@ class SceneMain extends SceneBase {
         if (!entry) {
             const def = this.getThing(src.id);
             const isStation = !!(src.craftStation || def?.craftStation);
+            const isSleep = !!(src.sleep || def?.sleep || Array.isArray(src.occupants));
             entry = {
-                uid: src.uid || opts.uid || `${isStation ? "cs" : "st"}_${Math.round(x)}_${Math.round(y)}`,
-                id: src.id || (isStation ? "skinworking_bench" : "wicker_basket"),
+                uid: src.uid || opts.uid || `${isSleep ? "sl" : isStation ? "cs" : "st"}_${Math.round(x)}_${Math.round(y)}`,
+                id: src.id || (isSleep ? "lean_to" : isStation ? "skinworking_bench" : "wicker_basket"),
                 x,
                 y,
                 rot: typeof Place !== "undefined" ? Place.normalizeRot(src.rot) : (src.rot || 0),
                 rev: Number.isFinite(incomingRev) ? incomingRev : 0
             };
-            if (isStation) {
+            if (isSleep) {
+                if (Array.isArray(src.occupants)) entry.occupants = src.occupants;
+                if (typeof Place !== "undefined") Place.ensureSleepEntry(entry, def);
+            } else if (isStation) {
                 if (typeof Place !== "undefined") Place.ensureCraftStationEntry(entry);
             } else {
                 entry.slots = Array.isArray(src.slots) ? src.slots : [null, null, null, null, null, null];
@@ -2698,20 +2775,29 @@ class SceneMain extends SceneBase {
                 entry.rot = typeof Place !== "undefined" ? Place.normalizeRot(src.rot) : src.rot;
             }
             if (Array.isArray(src.slots)) entry.slots = src.slots;
+            if (Array.isArray(src.occupants)) entry.occupants = src.occupants;
         }
         this._netSyncStorageSprite(chunk, entry, x, y);
         this.storagePanel?.refresh?.();
+        this.leanToPanel?.refresh?.();
+        this._reconcileSleepOccupants?.(entry);
     }
 
     _netSyncStorageSprite(chunk, entry, x, y) {
         if (!entry) return;
-        const isStation = !!(this.getThing(entry.id)?.craftStation);
-        let live = isStation
+        const def = this.getThing(entry.id);
+        const isStation = !!(def?.craftStation);
+        const isSleep = !!(def?.sleep || Array.isArray(entry.occupants));
+        let live = isSleep
+            ? this.findLeanToByUid(entry.uid)
+            : isStation
             ? this.findCraftStationByUid(entry.uid)
             : this.findStorageByUid(entry.uid);
         if (!live) {
             for (const t of chunk?.things?.getChildren?.() || []) {
-                const matchType = isStation ? (t instanceof CraftStation) : (t instanceof Storage);
+                const matchType = isSleep
+                    ? (t instanceof LeanTo)
+                    : isStation ? (t instanceof CraftStation) : (t instanceof Storage);
                 if (!matchType) continue;
                 if (t.entry === entry) { live = t; break; }
                 if (Math.abs(t.x - x) < 1.5 && Math.abs(t.y - y) < 1.5) { live = t; break; }
@@ -2721,7 +2807,7 @@ class SceneMain extends SceneBase {
         if (!live) {
             for (const t of chunk?.things?.getChildren?.() || []) {
                 if (!t?.active) continue;
-                if (t instanceof CraftStation || t instanceof Storage) continue;
+                if (t instanceof CraftStation || t instanceof Storage || t instanceof LeanTo) continue;
                 const sameUid = !!(entry.uid && t.entry?.uid === entry.uid);
                 const samePos = Number.isFinite(x) && Number.isFinite(y)
                     && Math.abs(t.x - x) < 1.5 && Math.abs(t.y - y) < 1.5
@@ -2731,13 +2817,18 @@ class SceneMain extends SceneBase {
         }
         if (live) {
             if (live.entry !== entry) live.entry = entry;
-            live.x = x;
-            live.y = y;
+            if (!isSleep) {
+                live.x = x;
+                live.y = y;
+            }
             live.applyVisual?.();
             return;
         }
         if (chunk?.isLoaded) {
-            chunk.things.add(isStation ? new CraftStation(this, entry) : Storage.create(this, entry));
+            const spr = isSleep
+                ? new LeanTo(this, entry)
+                : isStation ? new CraftStation(this, entry) : Storage.create(this, entry);
+            chunk.things.add(spr);
         }
     }
 
@@ -2757,8 +2848,9 @@ class SceneMain extends SceneBase {
         const uid = src.uid || opts.uid || entry?.uid;
         const live = this.findStorageByUid(uid)
             || this.findCraftStationByUid(uid)
+            || this.findLeanToByUid(uid)
             || (chunk?.things?.getChildren?.() || []).find((t) =>
-                (t instanceof Storage || t instanceof CraftStation) && (
+                (t instanceof Storage || t instanceof CraftStation || t instanceof LeanTo) && (
                     t.entry === entry
                     || (Number.isFinite(x) && Math.abs(t.x - x) < 1.5 && Math.abs(t.y - y) < 1.5)
                 )
@@ -2773,6 +2865,7 @@ class SceneMain extends SceneBase {
         if (live) {
             if (this.storagePanel?.storage === live) this.storagePanel.close();
             if (this._craftStationThing === live) this.closeCraftMenu();
+            if (this.leanToPanel?.leanTo === live) this.leanToPanel.close();
             live.destroy();
         }
     }
@@ -2969,7 +3062,8 @@ class SceneMain extends SceneBase {
         const p = this.player;
         let x = 0;
         let y = 0;
-        const downed = !!(p.isIncapacitated?.() || p.isImmobile?.() || p._prone || p._downed);
+        const downed = !!(p.isIncapacitated?.() || p.isImmobile?.() || p._downed
+            || (p._prone && !p._resting));
         if (
             !this._gamePaused
             && !downed
@@ -3028,8 +3122,13 @@ class SceneMain extends SceneBase {
                 entry.y = fromY + (entry.ty - fromY) * u;
             }
             entry.root.setPosition(entry.x, entry.y);
-            // Same Y-sort as local Player / Things / net mobs (not y+40 — that floats above trees)
-            entry.root.setDepth(entry.y | 0);
+            // Sleepers sort in front of the lean-to (its feet), not by body-center Y.
+            if (entry.resting && typeof sleepSortDepth === "function") {
+                const lean = this.findLeanToByUid?.(entry.lastSleep?.uid);
+                entry.root.setDepth(sleepSortDepth(entry.root, lean, entry.lastSleep?.slot));
+            } else {
+                entry.root.setDepth(entry.y | 0);
+            }
             const attacking = entry.attackTimer > 0;
             const prone = !!entry.prone;
             if (prone) {
@@ -3038,7 +3137,28 @@ class SceneMain extends SceneBase {
                 entry.root.setPosition(entry.x, entry.y);
             }
             if (typeof setPuppetProne === "function") {
-                setPuppetProne(entry.spr, prone, { feetAnchored: true });
+                if (entry.resting) {
+                    const lean = this.findLeanToByUid?.(entry.lastSleep?.uid);
+                    const spec = entry.lastSleep;
+                    if (lean?.entry && typeof Sleep !== "undefined") {
+                        const pos = Sleep.sleeperWorldPos(
+                            lean.entry,
+                            spec?.slot || 0,
+                            this.tileSize,
+                            lean.meta
+                        );
+                        entry.x = pos.x;
+                        entry.y = pos.y;
+                        entry.root.setPosition(pos.x, pos.y);
+                    }
+                    setPuppetProne(entry.spr, true, {
+                        feetAnchored: false,
+                        resting: true,
+                        restRot: entry.restRot ?? lean?.entry?.rot
+                    });
+                } else {
+                    setPuppetProne(entry.spr, prone, { feetAnchored: true });
+                }
             }
             const snapDist = Number.isFinite(entry.snapDist) ? entry.snapDist : err;
             const wantWalk = !attacking && !prone
@@ -3516,6 +3636,11 @@ class SceneMain extends SceneBase {
         this.refreshTooltip = () => {
             // Keep source when text is empty so hotbar swaps can re-show (e.g. rock knap tip)
             if (!this._tooltipSource) return;
+            const target = this._tooltipTarget;
+            if (target && (target.scene == null || target.active === false)) {
+                this.hideWorldTooltip();
+                return;
+            }
             const t = this._tooltipSource() || "";
             if (!t) {
                 this.tooltip.setVisible(false);
@@ -3613,6 +3738,20 @@ class SceneMain extends SceneBase {
                 return storeP.container;
             }
 
+            const leanP = this.leanToPanel;
+            if (leanP?.visible && leanP.containsPointer?.(pointer)) {
+                for (let i = hits.length - 1; i >= 0; i--) {
+                    const obj = hits[i];
+                    if (!obj?.active || !obj.input?.enabled) continue;
+                    if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
+                    if (this._isUnderLeanToPanel(obj)) return obj;
+                }
+                if (leanP._pointerOnRect?.(leanP.destroyRect, leanP.destroyBtn, pointer)) {
+                    return leanP.destroyRect;
+                }
+                return leanP.actionRect;
+            }
+
             if (this.pointerOnCraftTake?.(pointer)) {
                 for (let i = hits.length - 1; i >= 0; i--) {
                     const obj = hits[i];
@@ -3640,6 +3779,20 @@ class SceneMain extends SceneBase {
                 }
             }
 
+            const switchAlly = this.partySys?.worldSwitchTarget?.(pointer);
+
+            // Empty lean-to bunks beat a sleeper's standing AABB (90°/270°),
+            // but not a standing ally you're trying to click.
+            if (!switchAlly) {
+                for (let i = hits.length - 1; i >= 0; i--) {
+                    const obj = hits[i];
+                    if (!obj?.active || !obj.input?.enabled) continue;
+                    if (!(obj instanceof LeanTo)) continue;
+                    const slot = obj.slotAtPointer?.(pointer) ?? 0;
+                    if (!obj.entry?.occupants?.[slot]) return obj;
+                }
+            }
+
             const downedAlly = this.partySys?.downedAllyUnderPointer?.(pointer);
             if (downedAlly) return downedAlly;
 
@@ -3651,7 +3804,7 @@ class SceneMain extends SceneBase {
                 // must still hover so the name / "Downed" tip can show.
                 if (
                     this.party?.includes(obj)
-                    && (obj.isBodyDead?.() || obj._bodyDead)
+                    && (obj.isBodyDead?.() || obj._bodyDead || obj._resting)
                 ) continue;
                 return obj;
             }
@@ -3730,6 +3883,20 @@ class SceneMain extends SceneBase {
                 if (panel.slotViews?.some(v =>
                     v.slot === cur || v.icon === cur || v.fill === cur || v.qty === cur
                 )) return true;
+                cur = cur.parentContainer;
+            }
+            return false;
+        };
+
+        this._isUnderLeanToPanel = (obj) => {
+            const panel = this.leanToPanel;
+            if (!panel) return false;
+            let cur = obj;
+            while (cur) {
+                if (cur === panel.container || cur === panel.actionBtn ||
+                    cur === panel.actionRect || cur === panel.actionText ||
+                    cur === panel.destroyBtn || cur === panel.destroyRect ||
+                    cur === panel.destroyText) return true;
                 cur = cur.parentContainer;
             }
             return false;
@@ -4251,12 +4418,26 @@ class SceneMain extends SceneBase {
         thing.on("pointerdown", (pointer) => {
             if (pointer.rightButtonDown()) return;
             if (this.pointerOverWorldUi?.(pointer)) return;
+            if (this.restBlocksWorldUi?.()) return;
             if (!thing.inRange?.()) return;
             this.toggleCraftStationMenu(thing);
         });
         thing.on("destroy", () => {
             if (this._craftStationThing === thing) this.closeCraftMenu();
         });
+    }
+
+    /** World object UIs (campfire, storage, corpse, stations) while lying in a lean-to. */
+    restBlocksWorldUi() {
+        return !!(this.player?._resting && !this.player?._bodyDead);
+    }
+
+    _closeWorldUisForRest() {
+        this.campfirePanel?.close?.();
+        this.storagePanel?.close?.();
+        this.corpsePanel?.close?.();
+        if (this.craftMenuVisible) this.closeCraftMenu();
+        this.knappingPanel?.close?.();
     }
 
     /**
@@ -4267,6 +4448,7 @@ class SceneMain extends SceneBase {
         if (!pointer) return false;
         if (this.corpsePanel?.containsPointer?.(pointer)) return true;
         if (this.campfirePanel?.containsPointer?.(pointer)) return true;
+        if (this.leanToPanel?.containsPointer?.(pointer)) return true;
         if (this.storagePanel?.containsPointer?.(pointer)) return true;
         if (this.pointerOnCraftTake?.(pointer)) return true;
         if (this._pointerOverCraftMenu?.(pointer)) return true;
@@ -4489,11 +4671,20 @@ class SceneMain extends SceneBase {
 
     _spawnThingSprite(chunk, entry, lootable) {
         if (!chunk?.isLoaded || !entry?.id) return null;
+        const existing = (chunk.things?.getChildren?.() || []).find(
+            (t) => t?.active && t.entry === entry
+        );
+        if (existing) {
+            existing.applyVisual?.();
+            return existing;
+        }
         let thing;
         if (lootable) {
             thing = new LootableThing(this, entry, chunk);
         } else if (entry.id === "campfire" || entry.id === "unlit_campfire") {
             thing = new Campfire(this, entry);
+        } else if (this.getThing(entry.id)?.sleep || Array.isArray(entry.occupants)) {
+            thing = new LeanTo(this, entry);
         } else if (this.getThing(entry.id)?.craftStation) {
             thing = new CraftStation(this, entry);
         } else if (Array.isArray(entry.slots) || this.getThing(entry.id)?.storage) {
@@ -4509,6 +4700,7 @@ class SceneMain extends SceneBase {
             }
         }
         chunk.things.add(thing);
+        if (thing instanceof LeanTo) this._reconcileSleepOccupants?.(entry);
         return thing;
     }
 
@@ -4685,7 +4877,7 @@ class SceneMain extends SceneBase {
     }
 
     _placeGhostBlocked() {
-        if (this._gamePaused || this.player?._bodyDead) return true;
+        if (this._gamePaused || this.player?._bodyDead || this.player?._resting) return true;
         if (this.combatLog?.isComposing?.()) return true;
         if (this.knappingPanel?.visible) return true;
         if (this.craftMenuVisible) return true;
@@ -4693,6 +4885,7 @@ class SceneMain extends SceneBase {
         if (this.healthPanel?.visible) return true;
         if (this.campfirePanel?.visible) return true;
         if (this.storagePanel?.visible) return true;
+        if (this.leanToPanel?.visible) return true;
         if (this.corpsePanel?.visible) return true;
         return false;
     }
@@ -4710,33 +4903,69 @@ class SceneMain extends SceneBase {
 
     _placeListsForTile(tx, ty) {
         const { x, y } = this.tileCenter(tx, ty);
-        const chunk = this.getChunkAtWorld(x, y - 1);
+        const home = this.getChunkAtWorld(x, y - 1);
+        const things = [];
+        const lootables = [];
+        const seen = new Set();
+        const add = (chunk) => {
+            if (!chunk || seen.has(chunk)) return;
+            seen.add(chunk);
+            if (Array.isArray(chunk.meta?.things)) things.push(...chunk.meta.things);
+            if (Array.isArray(chunk.meta?.lootableThings)) lootables.push(...chunk.meta.lootableThings);
+        };
+        add(home);
+        const cs = this.chunkSize || 16;
+        const ts = this.tileSize || 16;
+        const cx = Math.floor(x / (cs * ts));
+        const cy = Math.floor((y - 1) / (cs * ts));
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                add(this.getChunk?.(cx + dx, cy + dy));
+            }
+        }
         return {
             tileKey: this._tileKeyAt(tx, ty),
-            things: chunk?.meta?.things || [],
-            lootables: chunk?.meta?.lootableThings || [],
-            chunk
+            things,
+            lootables,
+            chunk: home
         };
     }
 
     canPlaceAt(tx, ty) {
         if (!this.player) return false;
-        const { x, y } = this.tileCenter(tx, ty);
+        const info = this._heldPlaceableDef();
+        const def = info?.thingDef;
+        const rot = typeof Place !== "undefined" ? Place.normalizeRot(this.placeRot) : (this.placeRot || 0);
+        const ts = this.tileSize;
         const range = this.player.interactionRange;
+        const { x, y } = this.tileCenter(tx, ty);
         if (typeof Place !== "undefined") {
-            if (!Place.inPlaceRange(this.player.x, this.player.y, x, y, this.tileSize, range)) {
+            if (!Place.inPlaceRange(this.player.x, this.player.y, x, y, ts, range)) {
                 return false;
             }
-            const occ = this._placeListsForTile(tx, ty);
-            return Place.canPlaceOnTile({
-                tileKey: occ.tileKey,
-                things: occ.things,
-                lootables: occ.lootables,
-                tx, ty,
-                tileSize: this.tileSize
-            });
         }
-        return !!this._tileKeyAt(tx, ty);
+        const fp = typeof Place !== "undefined" ? Place.footprintSize(def) : [1, 1];
+        const tiles = typeof Place !== "undefined"
+            ? Place.footprintTiles(tx, ty, rot, fp)
+            : [{ tx, ty }];
+        const getThing = (id) => this.getThing(id);
+        for (const t of tiles) {
+            if (typeof Place !== "undefined") {
+                const occ = this._placeListsForTile(t.tx, t.ty);
+                if (!Place.canPlaceOnTile({
+                    tileKey: occ.tileKey,
+                    things: occ.things,
+                    lootables: occ.lootables,
+                    tx: t.tx,
+                    ty: t.ty,
+                    tileSize: ts,
+                    getThing
+                })) return false;
+            } else if (!this._tileKeyAt(t.tx, t.ty)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     _ensurePlaceGhost() {
@@ -4756,6 +4985,7 @@ class SceneMain extends SceneBase {
 
     _hidePlaceGhost() {
         if (this._placeGhost) this._placeGhost.setVisible(false);
+        if (this._placeGhostFrame) this._placeGhostFrame.setVisible(false);
         this._placeGhostTile = null;
         this._placeGhostValid = false;
     }
@@ -4798,11 +5028,40 @@ class SceneMain extends SceneBase {
         if (hangKey && this.textures.exists(hangKey)) ghost.setTexture(hangKey);
         else if (this.textures.exists(rotTex)) ghost.setTexture(rotTex);
         else if (this.textures.exists(info.thingDef.key)) ghost.setTexture(info.thingDef.key);
-        ghost.setPosition(x, y);
-        ghost.setDepth(y);
+        let gx = x;
+        let gy = y;
+        if (typeof Place !== "undefined") {
+            const fp = Place.footprintSize(info.thingDef);
+            const pos = Place.footprintWorldPos(tx, ty, rot, fp, this.tileSize);
+            gx = pos.x;
+            gy = pos.y;
+        }
+        ghost.setPosition(gx, gy);
+        const floorH = ghost.displayHeight || ghost.height || 16;
+        ghost.setDepth(gy - floorH - 1);
         ghost.setAlpha(0.5);
         ghost.setTint(valid ? 0xffffff : 0xff5555);
         ghost.setVisible(true);
+        const frameTex = (typeof Place !== "undefined" && info.thingDef?.sleep)
+            ? Place.rotationFrameTextureKey(info.thingDef.key, rot)
+            : null;
+        if (frameTex && this.textures.exists(frameTex)) {
+            let frame = this._placeGhostFrame;
+            if (!frame || !frame.active) {
+                frame = this.add.image(gx, gy, frameTex).setOrigin(0.5, 1);
+                this.mainLayer.add(frame);
+                this._placeGhostFrame = frame;
+            } else {
+                frame.setTexture(frameTex);
+            }
+            frame.setPosition(gx, gy);
+            frame.setDepth(gy + 2);
+            frame.setAlpha(0.5);
+            frame.setTint(valid ? 0xffffff : 0xff5555);
+            frame.setVisible(true);
+        } else if (this._placeGhostFrame) {
+            this._placeGhostFrame.setVisible(false);
+        }
         this._placeGhostTile = { tx, ty };
         this._placeGhostValid = valid;
     }
@@ -4843,7 +5102,9 @@ class SceneMain extends SceneBase {
             return true;
         }
 
-        const placed = info.thingDef.craftStation
+        const placed = info.thingDef.sleep
+            ? this.placeSleep(tile.tx, tile.ty, info.thingId, rot)
+            : info.thingDef.craftStation
             ? this.placeCraftStation(tile.tx, tile.ty, info.thingId, rot)
             : this.placeStorage(tile.tx, tile.ty, info.thingId, rot);
         if (!placed) return false;
@@ -4871,6 +5132,28 @@ class SceneMain extends SceneBase {
         if (typeof Place !== "undefined") Place.ensureStorageEntry(entry, def);
         chunk.meta.things.push(entry);
         const spr = Storage.create(this, entry);
+        chunk.things.add(spr);
+        return spr;
+    }
+
+    placeSleep(tx, ty, thingId, rot = 0) {
+        if (!this.canPlaceAt(tx, ty)) return null;
+        const { x, y } = this.tileCenter(tx, ty);
+        const chunk = this.getChunkAtWorld(x, y - 1);
+        if (!chunk || !chunk.isLoaded) return null;
+        const def = this.getThing(thingId);
+        if (!def?.sleep) return null;
+        const entry = {
+            id: thingId,
+            x,
+            y,
+            tx,
+            ty,
+            rot: typeof Place !== "undefined" ? Place.normalizeRot(rot) : rot
+        };
+        if (typeof Place !== "undefined") Place.ensureSleepEntry(entry, def);
+        chunk.meta.things.push(entry);
+        const spr = new LeanTo(this, entry);
         chunk.things.add(spr);
         return spr;
     }
@@ -5020,6 +5303,621 @@ class SceneMain extends SceneBase {
         if (this.storagePanel?.storage === storage) this.storagePanel.close();
         if (this._craftStationThing === storage) this.closeCraftMenu();
         storage.destroy();
+    }
+
+    findLeanToByUid(uid) {
+        if (!uid) return null;
+        for (const chunk of Object.values(this.chunks || {})) {
+            for (const t of chunk.things?.getChildren?.() || []) {
+                if (t instanceof LeanTo && t.entry?.uid === uid) return t;
+            }
+        }
+        return null;
+    }
+
+    forEachSleepEntry(fn) {
+        for (const chunk of Object.values(this.chunks || {})) {
+            const list = chunk.meta?.things;
+            if (!Array.isArray(list)) continue;
+            for (const entry of list) {
+                const def = this.getThing(entry?.id);
+                if (!entry || !(def?.sleep || Array.isArray(entry.occupants))) continue;
+                fn(entry, def, chunk);
+            }
+        }
+    }
+
+    _reconcileSleepOccupants(entry) {
+        if (!entry || !Array.isArray(entry.occupants)) return;
+        const dedicated = !!(this.isNet && this.net?.connected && !this.net.isLocal);
+        for (let i = 0; i < entry.occupants.length; i++) {
+            const id = entry.occupants[i];
+            if (!id) continue;
+            const pawn = (this.party || []).find((p) => p && p.pawnId === id);
+            if (!pawn || pawn.isBodyDead?.()) {
+                if (!dedicated) entry.occupants[i] = null;
+                continue;
+            }
+            if (!pawn._resting) this._occupySlot(pawn, entry, i);
+        }
+        for (const pawn of this.party || []) {
+            if (!pawn?._resting || pawn.isBodyDead?.()) continue;
+            const last = pawn.lastSleep;
+            if (last?.uid !== entry.uid) continue;
+            const slot = last.slot || 0;
+            if (entry.occupants[slot] && entry.occupants[slot] !== pawn.pawnId) {
+                this._wakePawn(pawn, { manual: true });
+                const def = this.getThing(entry.id);
+                const pos = typeof Sleep !== "undefined"
+                    ? Sleep.besideWorldPos(entry, this.tileSize, def)
+                    : { x: entry.x, y: entry.y };
+                pawn.x = pos.x;
+                pawn.y = pos.y;
+            }
+        }
+    }
+
+    _findPawnSleepBed(pawn) {
+        const id = pawn?.pawnId;
+        const pose = this.net?.world?.poses?.[id];
+        const hint = pose?.lastSleep || pawn?.lastSleep;
+        if (id) {
+            let occ = null;
+            this.forEachSleepEntry((entry) => {
+                if (occ || !Array.isArray(entry.occupants)) return;
+                const slot = entry.occupants.indexOf(id);
+                if (slot >= 0) occ = { entry, slot };
+            });
+            if (occ) return occ;
+        }
+        if (hint?.uid) {
+            const lean = this.findLeanToByUid(hint.uid);
+            if (lean?.entry) return { entry: lean.entry, slot: hint.slot || 0, lean };
+        }
+        const saved = this.net?.isLocal ? this.net.world?.chunks : null;
+        if (saved && typeof Sleep !== "undefined" && Sleep.bedInChunkMap) {
+            return Sleep.bedInChunkMap(saved, id, hint);
+        }
+        return null;
+    }
+
+    _restorePartySleep() {
+        const dedicated = !!(this.isNet && this.net?.connected && !this.net.isLocal);
+        for (const pawn of this.party || []) {
+            if (!pawn || pawn.isBodyDead?.()) continue;
+            const pose = this.net?.world?.poses?.[pawn.pawnId];
+            if (pose?.lastSleep) pawn.lastSleep = pose.lastSleep;
+            const bed = this._findPawnSleepBed(pawn);
+            if (bed?.entry) {
+                const slot = bed.slot || 0;
+                if (typeof Sleep !== "undefined"
+                    && Sleep.isSlotOccupied(bed.entry, slot)
+                    && bed.entry.occupants[slot] !== pawn.pawnId) {
+                    const def = this.getThing(bed.entry.id);
+                    const pos = Sleep.besideWorldPos(bed.entry, this.tileSize, def);
+                    pawn.x = pos.x;
+                    pawn.y = pos.y;
+                    setCreatureRest?.(pawn, false);
+                    pawn._resting = false;
+                    continue;
+                }
+                this._occupySlot(pawn, bed.entry, slot);
+                continue;
+            }
+            // Dedicated: chunks may not have arrived yet; YOU.resting is authoritative.
+            if (pawn._resting && !dedicated) this._wakePawn(pawn, { manual: true });
+        }
+    }
+
+    openLeanToPanel(leanTo, pointer) {
+        const switchAlly = this.partySys?.worldSwitchTarget?.(pointer);
+        if (switchAlly) {
+            this.partySys.tryAllyClick(switchAlly);
+            return;
+        }
+        if (!leanTo?.inRange?.()) return;
+        if (this.restBlocksWorldUi?.()) {
+            const uid = this.player?.lastSleep?.uid;
+            if (!uid || leanTo.entry?.uid !== uid) return;
+        }
+        const slot = leanTo.slotAtPointer?.(pointer) ?? 0;
+        const occ = leanTo.entry?.occupants?.[slot];
+        const ally = (this.party || []).find((p) => p && p.pawnId === occ && p !== this.player);
+        if (ally && !ally.isBodyDead?.()) {
+            const cam = this.cameras?.main;
+            const world = cam && pointer ? cam.getWorldPoint(pointer.x, pointer.y) : null;
+            const onAlly = !world || typeof creaturePointerHit !== "function"
+                || creaturePointerHit(ally, world.x, world.y);
+            if (onAlly) {
+                this.partySys?.tryAllyClick?.(ally);
+                return;
+            }
+        }
+        this.leanToPanel?.toggle(leanTo, slot);
+    }
+
+    _sleepLog(msg) {
+        this.combatLog?.push?.(msg);
+    }
+
+    _cancelPawnChannels(pawn) {
+        if (!pawn) return;
+        pawn._cancelEat?.();
+        if (pawn._tendChannel && !pawn._tendChannel.corpse) pawn._cancelTend?.();
+        pawn._cancelKnap?.();
+        pawn._cancelCraft?.();
+    }
+
+    _intendedSleep() {
+        if (!this._sleepIntended) this._sleepIntended = new Map();
+        return this._sleepIntended;
+    }
+
+    tryLeanToRest(leanTo, slot) {
+        const pawn = this.player;
+        if (!pawn || pawn.isBodyDead?.()) return false;
+        const entry = leanTo?.entry;
+        if (!entry) return false;
+        if (typeof Sleep !== "undefined" && Sleep.isSlotOccupied(entry, slot) && entry.occupants[slot] !== pawn.pawnId) {
+            this._sleepLog("That spot is taken.");
+            return false;
+        }
+        if (pawn._downed || pawn.isIncapacitated?.() || pawn.isImmobile?.()) {
+            const pos = typeof Sleep !== "undefined"
+                ? Sleep.sleeperWorldPos(entry, slot, this.tileSize, leanTo.meta)
+                : { x: leanTo.x, y: leanTo.y };
+            const onTile = Math.hypot(pawn.x - pos.x, pawn.y - pos.y) < (this.tileSize || 16);
+            if (!onTile) {
+                this._sleepLog("They can't walk to the lean-to.");
+                return false;
+            }
+        }
+        this._cancelPawnChannels(pawn);
+        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+            this._netSendMove?.(true);
+            this.net.sendAction({
+                type: NetProtocol.Actions.SLEEP,
+                op: "rest",
+                uid: entry.uid,
+                slot,
+                pawnId: pawn.pawnId
+            });
+            this._orderRest(pawn, entry, slot, { autofill: false });
+            this.leanToPanel?.close();
+            return true;
+        }
+        this._orderRest(pawn, entry, slot, { autofill: true });
+        this.leanToPanel?.close();
+        return true;
+    }
+
+    tryLeanToWake(leanTo, slot) {
+        const pawn = this.player;
+        const occ = leanTo?.entry?.occupants?.[slot];
+        if (!pawn || occ !== pawn.pawnId) return false;
+        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+            this.net.sendAction({
+                type: NetProtocol.Actions.SLEEP,
+                op: "wake",
+                pawnId: pawn.pawnId
+            });
+        }
+        this._wakePawn(pawn, { manual: true });
+        this.leanToPanel?.close();
+        this.applyRestClock?.();
+        return true;
+    }
+
+    tryDestroyLeanTo(leanTo) {
+        const entry = leanTo?.entry;
+        if (!entry || (typeof Sleep !== "undefined" && !Sleep.isEmpty(entry))) return false;
+        if (!leanTo.inRange?.()) return false;
+        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+            this.net.sendAction({
+                type: NetProtocol.Actions.SLEEP,
+                op: "destroy",
+                uid: entry.uid,
+                pawnId: this.player?.pawnId
+            });
+            this.leanToPanel?.close();
+            return true;
+        }
+        this._cancelRestWalksTo(entry.uid);
+        const itemDef = this.getItem(typeof Place !== "undefined"
+            ? Place.itemIdForThing(entry.id, this.items())
+            : "lean_to");
+        const stacks = typeof Sleep !== "undefined"
+            ? Sleep.salvageStacks(itemDef?.recipe)
+            : [];
+        const tiles = typeof Place !== "undefined"
+            ? Place.entryFootprintTiles(entry, this.tileSize, leanTo.meta)
+            : null;
+        const piles = typeof Sleep !== "undefined"
+            ? Sleep.scatterSalvagePiles(stacks, tiles, this.tileSize)
+            : stacks.map((s) => ({ ...s, x: leanTo.x, y: leanTo.y }));
+        for (const pile of piles) {
+            const meta = this.getItem(pile.id);
+            if (!meta || !(pile.quantity > 0)) continue;
+            DroppedItem.spawn(this, pile.x, pile.y, meta, pile.quantity);
+        }
+        this._removeLeanToThing(leanTo);
+        this.leanToPanel?.close();
+        return true;
+    }
+
+    _removeLeanToThing(leanTo) {
+        if (!leanTo) return;
+        const entry = leanTo.entry;
+        const uid = entry?.uid;
+        const dropFrom = (chunk) => {
+            const list = chunk?.meta?.things;
+            if (!Array.isArray(list)) return;
+            for (let i = list.length - 1; i >= 0; i--) {
+                const e = list[i];
+                if (e === entry || (uid && e?.uid === uid)) list.splice(i, 1);
+            }
+        };
+        const ox = Number.isFinite(entry?.x) ? entry.x : leanTo.x;
+        const oy = Number.isFinite(entry?.y) ? entry.y : leanTo.y;
+        const home = this.getChunkAtWorld(ox, oy - 1)
+            || this.getChunkAtWorld(leanTo.x, leanTo.y - 1);
+        dropFrom(home);
+        if (home) {
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    dropFrom(this.getChunk(home.x + dx, home.y + dy));
+                }
+            }
+        }
+        if (this.leanToPanel?.leanTo === leanTo) this.leanToPanel.close();
+        leanTo.destroy();
+    }
+
+    _cancelRestWalksTo(uid) {
+        const intended = this._intendedSleep();
+        for (const [id, spec] of [...intended.entries()]) {
+            if (spec?.uid !== uid) continue;
+            intended.delete(id);
+            const pawn = (this.party || []).find((p) => p.pawnId === id);
+            if (pawn) {
+                pawn._restWalk = null;
+                this._sleepLog(`${pawn.pawnName || "They"} can't rest there.`);
+            }
+        }
+    }
+
+    _orderRest(pawn, entry, slot, opts = {}) {
+        if (!pawn || !entry) return false;
+        const id = pawn.pawnId;
+        if (pawn._resting && pawn.lastSleep?.uid === entry.uid && pawn.lastSleep?.slot === slot) {
+            return true;
+        }
+        if (typeof Sleep !== "undefined" && Sleep.isSlotOccupied(entry, slot) && entry.occupants[slot] !== id) {
+            this._sleepLog("That spot is taken.");
+            return false;
+        }
+        this._cancelPawnChannels(pawn);
+        if (pawn._resting) this._wakePawn(pawn, { moving: true });
+        pawn._restWalk = { uid: entry.uid, slot };
+        pawn.lastSleep = { uid: entry.uid, slot };
+        this._intendedSleep().set(id, { uid: entry.uid, slot });
+        if (opts.autofill) this._autofillInjured(entry);
+        return true;
+    }
+
+    _autofillInjured(originEntry) {
+        const originSpr = this.findLeanToByUid(originEntry.uid);
+        const ox = originSpr?.x ?? originEntry.x;
+        const oy = originSpr?.y ?? originEntry.y;
+        const ts = this.tileSize;
+        const intended = this._intendedSleep();
+        const taken = new Set();
+        for (const spec of intended.values()) taken.add(`${spec.uid}:${spec.slot}`);
+        this.forEachSleepEntry((e) => {
+            (e.occupants || []).forEach((id, i) => {
+                if (id) taken.add(`${e.uid}:${i}`);
+            });
+        });
+        const slots = [];
+        this.forEachSleepEntry((e, def, chunk) => {
+            const spr = this.findLeanToByUid(e.uid);
+            const x = spr?.x ?? e.x;
+            const y = spr?.y ?? e.y;
+            if (typeof Sleep !== "undefined" && !Sleep.inCampRange(ox, oy, x, y, ts)) return;
+            const n = typeof Sleep !== "undefined" ? Sleep.slotCount(def, e) : 2;
+            for (let i = 0; i < n; i++) {
+                const key = `${e.uid}:${i}`;
+                if (taken.has(key)) continue;
+                slots.push({ entry: e, def, slot: i, x, y });
+            }
+        });
+        const injured = (this.party || []).filter((p) => {
+            if (!p || p === this.player || p.isBodyDead?.()) return false;
+            if (p._resting || p._restWalk) return false;
+            if (p._downed || p.isIncapacitated?.() || p.isImmobile?.()) return false;
+            return typeof Sleep !== "undefined" ? Sleep.injuredForAutofill(p.anatomy) : false;
+        });
+        for (const pawn of injured) {
+            const next = slots.shift();
+            if (!next) break;
+            taken.add(`${next.entry.uid}:${next.slot}`);
+            this._orderRest(pawn, next.entry, next.slot, { autofill: false });
+        }
+    }
+
+    _occupySlot(pawn, entry, slot) {
+        if (!pawn || !entry) return false;
+        if (!Array.isArray(entry.occupants)) entry.occupants = [null, null];
+        if (entry.occupants[slot] && entry.occupants[slot] !== pawn.pawnId) {
+            this._sleepLog("That spot is taken.");
+            pawn._restWalk = null;
+            this._intendedSleep().delete(pawn.pawnId);
+            return false;
+        }
+        this.forEachSleepEntry((e) => {
+            if (!Array.isArray(e.occupants)) return;
+            for (let i = 0; i < e.occupants.length; i++) {
+                if (e.occupants[i] === pawn.pawnId) e.occupants[i] = null;
+            }
+        });
+        entry.occupants[slot] = pawn.pawnId;
+        pawn._restWalk = null;
+        pawn._resting = true;
+        pawn.lastSleep = { uid: entry.uid, slot, rot: entry.rot };
+        this._intendedSleep().delete(pawn.pawnId);
+        pawn.setVelocity?.(0, 0);
+        if (typeof pinRestingCreature === "function") pinRestingCreature(pawn, this);
+        else {
+            const pos = typeof Sleep !== "undefined"
+                ? Sleep.sleeperWorldPos(entry, slot, this.tileSize, def)
+                : { x: entry.x, y: entry.y };
+            setCreatureRest?.(pawn, true, entry.rot);
+            pawn.setPosition?.(pos.x, pos.y);
+            pawn.syncSortDepth?.();
+        }
+        this.applyRestClock();
+        this.leanToPanel?.refresh?.();
+        if (pawn === this.player) {
+            this._closeWorldUisForRest();
+            this._netSendMove?.(true);
+        }
+        return true;
+    }
+
+    _wakePawn(pawn, opts = {}) {
+        if (!pawn) return;
+        const id = pawn.pawnId;
+        const last = pawn.lastSleep;
+        this.forEachSleepEntry((e) => {
+            if (!Array.isArray(e.occupants)) return;
+            for (let i = 0; i < e.occupants.length; i++) {
+                if (e.occupants[i] === id) e.occupants[i] = null;
+            }
+        });
+        pawn._restWalk = null;
+        this._intendedSleep().delete(id);
+        setCreatureRest?.(pawn, false);
+        pawn._resting = false;
+        this._placePawnAtWakePos(pawn, last);
+        pawn._skipMove = true;
+        if (opts.help) pawn._wokeFromRest = true;
+        if (opts.manual) pawn._wokeFromRest = false;
+        this.applyRestClock();
+        this.leanToPanel?.refresh?.();
+    }
+
+    /** Standing pose just outside the open side — same tile the Wake button uses. */
+    _placePawnAtWakePos(pawn, last = null) {
+        const spec = last || pawn?.lastSleep;
+        if (!pawn || !spec?.uid || typeof Sleep === "undefined") return false;
+        const lean = this.findLeanToByUid(spec.uid);
+        const entry = lean?.entry;
+        if (!entry) return false;
+        const pos = Sleep.besideWorldPos(entry, this.tileSize, lean.meta);
+        if (typeof pawn.teleport === "function") pawn.teleport(pos.x, pos.y);
+        else pawn.setPosition?.(pos.x, pos.y);
+        pawn.setVelocity?.(0, 0);
+        if (pawn.body) {
+            pawn.body.reset?.(pos.x, pos.y);
+            pawn.body.setVelocity?.(0, 0);
+        }
+        pawn._physX = pos.x;
+        pawn._physY = pos.y;
+        return true;
+    }
+
+    applyRestClock() {
+        if (this.isNet && this.net?.connected && !this.net.isLocal) return this.tickSpeed;
+        const base = Number.isFinite(this._baseTickSpeed) ? this._baseTickSpeed : (this.tickSpeed || 1);
+        const speed = this.setTickSpeed(base);
+        this.updateClockText?.();
+        return speed;
+    }
+
+    _tickSleepZzz(delta) {
+        const seen = new Set();
+        const tick = (host) => {
+            if (typeof tickSleepZzz === "function") tickSleepZzz(host, this, delta);
+            if (typeof tickSleepHealFx === "function") tickSleepHealFx(host, this, delta);
+        };
+        for (const p of this.party || []) {
+            if (!p || seen.has(p)) continue;
+            seen.add(p);
+            tick(p);
+        }
+        if (this.player && !seen.has(this.player)) tick(this.player);
+        for (const entry of this.remotePlayers?.values?.() || []) tick(entry);
+    }
+
+    _restEffectiveSpeed(base) {
+        const b = Number.isFinite(base) ? base : (this._baseTickSpeed || 1);
+        const living = (this.party || []).filter((p) => p && !p.isBodyDead?.());
+        const everyone = living.length > 0 && living.every((p) => p._resting);
+        return typeof Sleep !== "undefined"
+            ? Sleep.effectiveTickSpeed(b, everyone)
+            : (everyone ? Math.max(4, b) : b);
+    }
+
+    _tryWakePlayer() {
+        const pawn = this.player;
+        if (!pawn?._resting) return;
+        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+            this.net.sendAction({
+                type: NetProtocol.Actions.SLEEP,
+                op: "wake",
+                pawnId: pawn.pawnId
+            });
+        }
+        this._wakePawn(pawn, { manual: true });
+    }
+
+    tickSleepWalks(delta) {
+        const ts = this.tileSize || 16;
+        for (const pawn of this.party || []) {
+            if (!pawn || pawn.isBodyDead?.()) continue;
+            if (pawn._restWalk) {
+                const spec = pawn._restWalk;
+                const lean = this.findLeanToByUid(spec.uid);
+                const entry = lean?.entry;
+                if (!entry) {
+                    pawn._restWalk = null;
+                    this._sleepLog(`${pawn.pawnName || "They"} can't rest there.`);
+                    continue;
+                }
+                const def = this.getThing(entry.id);
+                const pos = Sleep.sleeperWorldPos(entry, spec.slot, ts, def);
+                const c = pawn.bodyCenter?.() || { x: pawn.x, y: pawn.y };
+                const d = Math.hypot(c.x - pos.x, c.y - pos.y);
+                const arrive = Sleep.ARRIVE_PX || 16;
+                if (d < arrive) {
+                    this._occupySlot(pawn, entry, spec.slot);
+                    continue;
+                }
+                if (pawn.isControlled?.()) continue;
+                if (pawn.partyAI?._walkBodyToward) {
+                    pawn.partyAI._walkBodyToward(pawn, pos.x, pos.y, ts, false, delta);
+                } else {
+                    pawn.partyAI?._walkToward?.(pawn, pos.x, pos.y, ts, false, delta);
+                }
+            } else if (pawn._resting) {
+                pawn.setVelocity?.(0, 0);
+                if (typeof pinRestingCreature === "function") pinRestingCreature(pawn, this);
+                else {
+                    const spec = pawn.lastSleep;
+                    const lean = spec ? this.findLeanToByUid(spec.uid) : null;
+                    setCreatureRest?.(pawn, true, spec?.rot ?? lean?.entry?.rot);
+                }
+            } else if (pawn._wokeFromRest && !pawn.partyAI?.assistTarget) {
+                if (!this.partySys?._shouldDelaySleep?.(pawn)) this._tryReturnToBed(pawn);
+            }
+        }
+    }
+
+    _sleepSlotClaimed(entry, slot, exceptId) {
+        if (!entry) return true;
+        const occ = entry.occupants?.[slot];
+        if (occ && occ !== exceptId) return true;
+        for (const [id, spec] of this._intendedSleep()) {
+            if (id === exceptId) continue;
+            if (spec?.uid === entry.uid && spec.slot === slot) return true;
+        }
+        for (const p of this.party || []) {
+            if (!p || p.pawnId === exceptId) continue;
+            if (p._restWalk?.uid === entry.uid && p._restWalk.slot === slot) return true;
+        }
+        return false;
+    }
+
+    _tryInjuredRest(pawn) {
+        if (!pawn || pawn === this.player || pawn.isControlled?.()) return;
+        if (pawn._resting || pawn._restWalk || pawn._wokeFromRest) return;
+        if (pawn.partyAI?.assistTarget) return;
+        if (this.partySys?._shouldDelaySleep?.(pawn)) return;
+        if (pawn._downed || pawn.isIncapacitated?.() || pawn.isImmobile?.()) return;
+        if (typeof Sleep === "undefined" || !Sleep.injuredForAutofill(pawn.anatomy)) return;
+        this._tryReturnToBed(pawn);
+    }
+
+    _tryReturnToBed(pawn) {
+        if (!pawn || pawn._resting || pawn._restWalk) return;
+        if (!Sleep.capableToFight(pawn) && (pawn._downed || pawn.isIncapacitated?.())) {
+            pawn._wokeFromRest = false;
+            return;
+        }
+        const id = pawn.pawnId;
+        const last = pawn.lastSleep;
+        let entry = null;
+        let slot = 0;
+        if (last?.uid) {
+            const lean = this.findLeanToByUid(last.uid);
+            entry = lean?.entry;
+            slot = last.slot || 0;
+            if (entry && this._sleepSlotClaimed(entry, slot, id)) entry = null;
+        }
+        if (!entry) {
+            const ox = pawn.x;
+            const oy = pawn.y;
+            let best = null;
+            let bestD = Infinity;
+            this.forEachSleepEntry((e, def) => {
+                const spr = this.findLeanToByUid(e.uid);
+                const x = spr?.x ?? e.x;
+                const y = spr?.y ?? e.y;
+                if (!Sleep.inCampRange(ox, oy, x, y, this.tileSize)) return;
+                const n = Sleep.slotCount(def, e);
+                for (let i = 0; i < n; i++) {
+                    if (this._sleepSlotClaimed(e, i, id)) continue;
+                    const d = Math.hypot(ox - x, oy - y);
+                    if (d < bestD) {
+                        bestD = d;
+                        best = { entry: e, slot: i };
+                    }
+                }
+            });
+            if (best) {
+                entry = best.entry;
+                slot = best.slot;
+            }
+        }
+        pawn._wokeFromRest = false;
+        if (entry) this._orderRest(pawn, entry, slot, { autofill: false });
+    }
+
+    _isLocalPartyPawn(pawn) {
+        return !!(pawn && (this.party?.includes(pawn) || pawn === this.player || pawn === this.leader));
+    }
+
+    /** Stand capable resters in camp so they can defend, then return to bed after. */
+    _wakeAbleResters(enemy, origin) {
+        if (this.isNet && this.net?.connected && !this.net.isLocal) return;
+        if (!enemy || enemy.isBodyDead?.()) return;
+        const from = origin || this.player;
+        const ts = this.tileSize || 16;
+        const camp = (typeof Sleep !== "undefined" ? Sleep.CAMP_TILES : 12) * ts;
+        const ox = from?.x ?? 0;
+        const oy = from?.y ?? 0;
+        for (const p of this.party || []) {
+            if (!p || p.isBodyDead?.()) continue;
+            if (!p._resting) continue;
+            if (typeof Sleep !== "undefined" && !Sleep.capableToFight(p)) continue;
+            if (Math.hypot(p.x - ox, p.y - oy) > camp) continue;
+            this._wakePawn(p, { help: true });
+            p.partyAI?.setAssist?.(enemy);
+        }
+        if (this.partySys) {
+            this.partySys.lastHitMob = enemy;
+            this.partySys.lastHitAt = this.time?.now || Date.now();
+        }
+    }
+
+    _onSleepCombatHit(victim, attacker) {
+        if (this.isNet && this.net?.connected && !this.net.isLocal) return;
+        if (!victim || victim.isBodyDead?.()) return;
+        if (attacker && typeof Party !== "undefined" && Party.sameFaction?.(victim, attacker)) return;
+        if (!attacker || attacker === victim) return;
+        if (!this._isLocalPartyPawn(victim)) return;
+        this._wakeAbleResters(attacker, victim);
+        if (!victim._resting) victim.partyAI?.setAssist?.(attacker);
     }
 
     /** Ground drops within the player's interaction range, nearest first. */
@@ -5229,6 +6127,7 @@ class SceneMain extends SceneBase {
     }
 
     tryUseFirestarter() {
+        if (this.player?._resting) return false;
         if (this.isNet && this.net?.connected && !this.net.isLocal) {
             this._netSendMove?.(true);
             const aim = this._firestarterAimWorld();
@@ -5347,19 +6246,31 @@ class SceneMain extends SceneBase {
      * Debug: change how fast the world clock ticks.
      * @param {Number} mult  1 = normal (1 game min / real sec), 60 ≈ 1 game hour/sec, 0 = pause
      */
-    setTickSpeed(mult) {
+    setTickSpeed(mult, opts = {}) {
         const m = Number(mult);
         if (!Number.isFinite(m) || m < 0) return this.tickSpeed;
-        this.tickSpeed = m;
-        // Net: server advances the clock; local timer stays off
+        if (!opts.fromRest) this._baseTickSpeed = m;
+        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+            this.tickSpeed = m;
+            return this.tickSpeed;
+        }
+        const speed = opts.fromRest ? m : this._restEffectiveSpeed(this._baseTickSpeed);
+        this.tickSpeed = speed;
+        const localClock = this.net?.isLocal
+            ? (this.net.world?.clock || this.net.sim?.world?.clock)
+            : null;
+        if (localClock) {
+            localClock.baseTickSpeed = this._baseTickSpeed;
+            localClock.tickSpeed = speed;
+        }
         if (this.isNet) return this.tickSpeed;
         if (this._worldMinuteEvent) {
             this._worldMinuteEvent.remove(false);
             this._worldMinuteEvent = null;
         }
-        if (m > 0) {
+        if (speed > 0) {
             this._worldMinuteEvent = this.time.addEvent({
-                delay: Math.max(1, 1000 / m),
+                delay: Math.max(1, 1000 / speed),
                 callback: this.worldMinuteTick,
                 callbackScope: this,
                 loop: true
@@ -6650,7 +7561,7 @@ class SceneMain extends SceneBase {
     _craftRecipeIconKey(recipe) {
         const meta = this.getItem(recipe.id);
         if (typeof Place !== "undefined" && Place.itemIconKey) {
-            const key = Place.itemIconKey(meta, (id) => this.getThing(id));
+            const key = Place.itemIconKey(meta, (id) => this.getThing(id), (k) => this.textures.exists(k));
             if (key && this.textures.exists(key)) return key;
         }
         if (recipe.key && this.textures.exists(recipe.key)) return recipe.key;
@@ -6807,7 +7718,7 @@ class SceneMain extends SceneBase {
                 }
             }
             const iconKey = (typeof Place !== "undefined" && Place.itemIconKey)
-                ? Place.itemIconKey(meta, (id) => this.getThing(id))
+                ? Place.itemIconKey(meta, (id) => this.getThing(id), (k) => this.textures.exists(k))
                 : meta.key;
             return {
                 id: meta.id,
@@ -7307,6 +8218,7 @@ class SceneMain extends SceneBase {
         if (this.corpsePanel?.visible) this.corpsePanel.close();
         if (this.campfirePanel?.visible) this.campfirePanel.close();
         if (this.storagePanel?.visible) this.storagePanel.close();
+        if (this.leanToPanel?.visible) this.leanToPanel.close();
         if (this.combatLog?.composing) this.combatLog.closeChat(false);
     }
 
@@ -7317,7 +8229,8 @@ class SceneMain extends SceneBase {
             this.healthPanel?.visible ||
             this.corpsePanel?.visible ||
             this.campfirePanel?.visible ||
-            this.storagePanel?.visible
+            this.storagePanel?.visible ||
+            this.leanToPanel?.visible
         );
     }
 
@@ -7639,6 +8552,7 @@ class SceneMain extends SceneBase {
 
     toggleCraftStationMenu(thing) {
         if (!thing || this.knappingPanel?.visible) return;
+        if (this.player?._resting) return;
         if (this.craftMenuVisible && this._craftStationThing === thing) {
             this.closeCraftMenu();
             return;
@@ -7697,6 +8611,7 @@ class SceneMain extends SceneBase {
         if (this.corpsePanel?.visible) this.corpsePanel.close(true);
         if (this.campfirePanel?.visible) this.campfirePanel.close();
         if (this.storagePanel?.visible) this.storagePanel.close();
+        if (this.leanToPanel?.visible) this.leanToPanel.close();
         if (this.craftMenuVisible) this.closeCraftMenu();
         if (this.healthPanel?.isInspecting?.()) this.healthPanel.close();
 
@@ -7939,6 +8854,7 @@ class SceneMain extends SceneBase {
 
         if (this.campfirePanel?.visible) this.campfirePanel.layout();
         if (this.storagePanel?.visible) this.storagePanel.layout();
+        if (this.leanToPanel?.visible) this.leanToPanel.layout();
         if (this.knappingPanel?.visible) this.knappingPanel.layout();
         this._layoutPauseMenu();
 
@@ -8079,6 +8995,7 @@ class SceneMain extends SceneBase {
             this._netUpdateRemotes(delta);
             this._netUpdateMobs(delta);
         }
+        this._tickSleepZzz?.(delta);
         this.combatLog?.update?.();
         this.updateFpsMeter?.(delta);
         this.updateLocationDebug?.();
@@ -8117,6 +9034,7 @@ class SceneMain extends SceneBase {
 
         this.campfirePanel?.update();
         this.storagePanel?.update();
+        this.leanToPanel?.update();
         this._updateCraftStationMenu();
         this.corpsePanel?.update();
         this.updateLightVeil();

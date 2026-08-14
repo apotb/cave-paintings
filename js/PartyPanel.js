@@ -93,6 +93,35 @@ class PartyPanel {
         return d > (P.FOLLOW_DETACH || 12);
     }
 
+    _hotbarFull(pawn) {
+        const inv = pawn?.inventory;
+        const n = Math.max(0, Number(pawn?.inventorySize) || (inv?.length || 0));
+        if (!(n > 0) || !Array.isArray(inv)) return false;
+        for (let i = 0; i < n; i++) {
+            if (!inv[i]) return false;
+        }
+        return true;
+    }
+
+    /** Integer-pixel "!" so it stays sharp next to the 3px carry bar. */
+    _drawPixelBang(g, right, midY, u) {
+        const stemW = u;
+        const stemH = 3 * u;
+        const dot = u;
+        const gap = u;
+        const pad = u;
+        const totalW = stemW + pad * 2;
+        const totalH = stemH + gap + dot;
+        const x0 = Math.round(right - totalW);
+        const y0 = Math.round(midY - totalH / 2);
+        g.fillStyle(0x000000, 1);
+        g.fillRect(x0, y0, totalW, stemH);
+        g.fillRect(x0, y0 + stemH + gap, totalW, dot);
+        g.fillStyle(0xffcc66, 1);
+        g.fillRect(x0 + pad, y0, stemW, stemH);
+        g.fillRect(x0 + pad, y0 + stemH + gap, stemW, dot);
+    }
+
     _drawVitals(row, pawn, s, cardW) {
         const g = row.vitals;
         g.clear();
@@ -144,6 +173,10 @@ class PartyPanel {
         if (width2 > 0) {
             g.fillStyle(0xF39C12, 1);
             g.fillRect(x, y, width2, h);
+        }
+        if (this._hotbarFull(pawn)) {
+            const u = Math.max(1, Math.round(s));
+            this._drawPixelBang(g, x - u, y + h / 2, u);
         }
 
         row.warn.setVisible(starving || !!pawn._downed);

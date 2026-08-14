@@ -37,6 +37,48 @@ class HealthPanel {
         "Brain"
     ];
 
+    /**
+     * Injury list: head → feet. Paired organs sit L/R together;
+     * limbs are the whole left branch, then the whole right branch.
+     */
+    static PART_LIST_ORDER = [
+        "Head", "Skull", "Brain",
+        "Left Eye", "Right Eye",
+        "Left Ear", "Right Ear",
+        "Nose", "Jaw", "Tongue",
+        "Neck",
+        "Torso",
+        "Spine", "Ribcage", "Sternum", "Heart",
+        "Left Lung", "Right Lung",
+        "Stomach", "Liver",
+        "Left Kidney", "Right Kidney",
+        "Waist", "Pelvis",
+        "Left Shoulder", "Left Clavicle", "Left Arm", "Left Humerus", "Left Radius",
+        "Left Hand",
+        "Left Thumb", "Left Index Finger", "Left Middle Finger", "Left Ring Finger", "Left Pinky Finger",
+        "Right Shoulder", "Right Clavicle", "Right Arm", "Right Humerus", "Right Radius",
+        "Right Hand",
+        "Right Thumb", "Right Index Finger", "Right Middle Finger", "Right Ring Finger", "Right Pinky Finger",
+        "Left Front Leg", "Left Front Hoof",
+        "Right Front Leg", "Right Front Hoof",
+        "Left Leg", "Left Femur", "Left Tibia", "Left Foot",
+        "Left Big Toe", "Left Second Toe", "Left Middle Toe", "Left Fourth Toe", "Left Little Toe",
+        "Right Leg", "Right Femur", "Right Tibia", "Right Foot",
+        "Right Big Toe", "Right Second Toe", "Right Middle Toe", "Right Fourth Toe", "Right Little Toe",
+        "Left Rear Leg", "Left Rear Hoof",
+        "Right Rear Leg", "Right Rear Hoof"
+    ];
+
+    static partListIndex(name) {
+        if (!HealthPanel._partListIndex) {
+            const map = new Map();
+            HealthPanel.PART_LIST_ORDER.forEach((n, i) => map.set(n, i));
+            HealthPanel._partListIndex = map;
+        }
+        const i = HealthPanel._partListIndex.get(name);
+        return i == null ? 10000 : i;
+    }
+
     static partTexKey(name) {
         return `status_part_${String(name).replace(/ /g, "_")}`;
     }
@@ -496,7 +538,10 @@ class HealthPanel {
         const caps = new Capacities(body);
         const c = caps.all();
         const pct = (v) => `${Math.round(v * 100)}%`;
-        const title = this._inspectTitle || "Health";
+        const title = this._inspectTitle
+            || this.scene.player?.displayName?.()
+            || this.scene.playerName
+            || "Health";
         this.title.setText(title);
 
         // Hoverable capacities (Pain is display-only; Blood Loss always tips)
@@ -588,7 +633,29 @@ class HealthPanel {
                 });
             }
         };
-        for (const part of Object.values(body.parts())) {
+        // Whole-body hediffs (food poisoning, malnutrition, …) always first
+        const hediffs = body.hediffs || [];
+        if (hediffs.length) {
+            any = true;
+            lines.push({ text: "Whole Body:" });
+            for (const h of hediffs) {
+                const label = typeof Hediffs !== "undefined"
+                    ? Hediffs.displayLabel(h, this.scene)
+                    : h.id;
+                const tip = typeof Hediffs !== "undefined"
+                    ? Hediffs.tooltipFor(h, this.scene)
+                    : null;
+                lines.push({ text: `  ${label}`, tip });
+            }
+        }
+
+        const parts = Object.values(body.parts() || []).slice().sort((a, b) => {
+            const ia = HealthPanel.partListIndex(a.name);
+            const ib = HealthPanel.partListIndex(b.name);
+            if (ia !== ib) return ia - ib;
+            return String(a.name).localeCompare(String(b.name));
+        });
+        for (const part of parts) {
             if (part.isDead()) {
                 // Destroyed parts: header + stump only (no old cut list)
                 const tip = part.destroySource ? `From ${part.destroySource}` : null;
@@ -603,26 +670,16 @@ class HealthPanel {
             lines.push({ text: `${part.name}: ${part.hp().toFixed(1)}/${Number(part.mhp).toFixed(1)}` });
             pushInjuries(part);
         }
-        for (const stump of Object.values(stumpByPart)) {
+        const leftoverStumps = Object.values(stumpByPart).sort((a, b) => {
+            const ia = HealthPanel.partListIndex(a.partName);
+            const ib = HealthPanel.partListIndex(b.partName);
+            if (ia !== ib) return ia - ib;
+            return String(a.partName || "").localeCompare(String(b.partName || ""));
+        });
+        for (const stump of leftoverStumps) {
             lines.push({ text: `${stump.partName}: Destroyed`, destroyed: true });
             pushStumpBleed(stump.partName);
             any = true;
-        }
-
-        // Whole-body hediffs (food poisoning, malnutrition, …)
-        const hediffs = body.hediffs || [];
-        if (hediffs.length) {
-            any = true;
-            lines.push({ text: "Whole Body:" });
-            for (const h of hediffs) {
-                const label = typeof Hediffs !== "undefined"
-                    ? Hediffs.displayLabel(h, this.scene)
-                    : h.id;
-                const tip = typeof Hediffs !== "undefined"
-                    ? Hediffs.tooltipFor(h, this.scene)
-                    : null;
-                lines.push({ text: `  ${label}`, tip });
-            }
         }
 
         if (!any) lines.push({ text: "None" });

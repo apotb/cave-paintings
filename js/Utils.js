@@ -586,7 +586,11 @@ function mealFillTint(stack, getItem) {
 
 function stackIconKey(meta, stack, scene) {
     if (typeof Place !== "undefined" && Place.itemIconKey && scene?.getThing) {
-        const key = Place.itemIconKey(meta, (id) => scene.getThing(id));
+        const key = Place.itemIconKey(
+            meta,
+            (id) => scene.getThing(id),
+            (k) => scene.textures?.exists?.(k)
+        );
         if (key) return key;
     }
     return meta?.key || stack?.id || "";
@@ -977,6 +981,33 @@ function getTimeOfDayTint(minutes) {
 }
 
 /**
+ * Standing click tests use a tall AABB from the feet. While lying, x/y is the
+ * body center and that same box covers a whole extra tile (90°/270° lean-tos).
+ */
+function creaturePointerHit(sprite, worldX, worldY) {
+    if (!sprite?.active) return false;
+    const x = Number(sprite.x) || 0;
+    const y = Number(sprite.y) || 0;
+    if (sprite._resting || sprite._prone) {
+        const w = Math.max(4, (Number(sprite.displayWidth) || 16) * 0.45);
+        const h = Math.max(4, (Number(sprite.displayHeight) || 16) * 0.45);
+        return Math.abs(worldX - x) <= w && Math.abs(worldY - y) <= h;
+    }
+    const hs = (Number(sprite.hitboxSize) || 8) + 4;
+    return Math.abs(worldX - x) < hs && Math.abs(worldY - y) < hs * 2;
+}
+
+/** Resting pawns are click-through so the lean-to under them can be targeted. */
+function syncCreatureInputHit(sprite) {
+    if (!sprite) return;
+    if (sprite._resting) {
+        if (sprite.input) sprite.input.enabled = false;
+        return;
+    }
+    if (sprite.input) sprite.input.enabled = true;
+}
+
+/**
  * Lay down like a corpse (right-facing, -90°) without gray tint.
  * Toggles origin between standing (0,1) and prone (0.5, 0.5), preserving world position.
  * @param {Phaser.GameObjects.Sprite} sprite
@@ -985,12 +1016,15 @@ function getTimeOfDayTint(minutes) {
 function setCreatureProne(sprite, prone) {
     if (!sprite) return;
     const want = !!prone;
+    if (sprite._resting && !want) return;
     if (!!sprite._prone === want) {
         if (want) {
             sprite.anims?.stop?.();
             if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
             sprite.setRotation(-Math.PI / 2);
             sprite.clearTint?.();
+        } else if (sprite.scaleX !== 1 || sprite.scaleY !== 1) {
+            sprite.setScale(1);
         }
         return;
     }
@@ -1008,13 +1042,485 @@ function setCreatureProne(sprite, prone) {
         if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
         sprite.clearTint?.();
         sprite._prone = true;
+        if (sprite.body) {
+            sprite.body.moves = false;
+            sprite.setVelocity?.(0, 0);
+        }
     } else {
         sprite.setRotation(0);
         sprite.x -= w * 0.5;
         sprite.y += h * 0.5;
         sprite.setOrigin(0, 1);
         sprite._prone = false;
+        if (sprite.body && !sprite._resting) sprite.body.moves = true;
     }
+    syncCreatureInputHit(sprite);
+}
+
+/**
+ * Lie in a lean-to: centered origin, facing along the bed, scaled down.
+ */
+function setCreatureRest(sprite, resting, rot) {
+    if (!sprite) return;
+    const want = !!resting;
+    const ang = typeof Sleep !== "undefined" ? Sleep.restRotation(rot) : -Math.PI / 2;
+    const scale = want && typeof Sleep !== "undefined" ? Sleep.SCALE : 1;
+    const w = sprite.width || 16;
+    const h = sprite.height || 16;
+
+    if (!want) {
+        if (!sprite._resting) {
+            if (sprite.scaleX !== 1 || sprite.scaleY !== 1) sprite.setScale(1);
+            return;
+        }
+        sprite.setScale(1);
+        sprite._resting = false;
+        if (sprite.body && !sprite._downed && !sprite.isIncapacitated?.() && !sprite.isImmobile?.()) {
+            sprite.body.moves = true;
+        }
+        if (sprite._downed || sprite.isIncapacitated?.() || sprite.isImmobile?.()) {
+            sprite.setRotation(-Math.PI / 2);
+            sprite._prone = true;
+            syncCreatureInputHit(sprite);
+            return;
+        }
+        setCreatureProne(sprite, false);
+        return;
+    }
+
+    if (sprite.originX !== 0.5 || sprite.originY !== 0.5) {
+        sprite.x += w * 0.5;
+        sprite.y -= h * 0.5;
+        sprite.setOrigin(0.5, 0.5);
+    }
+    sprite.anims?.stop?.();
+    if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
+    sprite.setRotation(ang);
+    sprite.setScale(scale);
+    sprite.clearTint?.();
+    sprite._prone = true;
+    sprite._resting = true;
+    if (sprite.body) {
+        sprite.body.moves = false;
+        sprite.setVelocity?.(0, 0);
+    }
+    syncCreatureInputHit(sprite);
+}
+
+/**
+ * Keep a sleeper on their slot as body-center (not feet), and stop Arcade from
+ * ejecting party members out of the solid lean-to.
+ */
+function pinRestingCreature(sprite, scene) {
+    if (!sprite?._resting) return;
+    const sc = scene || sprite.scene;
+    const spec = sprite.lastSleep;
+    const lean = spec?.uid ? sc?.findLeanToByUid?.(spec.uid) : null;
+    const entry = lean?.entry;
+    const rot = spec?.rot ?? entry?.rot;
+    setCreatureRest(sprite, true, rot);
+    if (entry && typeof Sleep !== "undefined") {
+        const def = sc?.getThing?.(entry.id) || lean?.meta;
+        const pos = Sleep.sleeperWorldPos(entry, spec.slot, sc?.tileSize || 16, def);
+        if (typeof sprite.teleport === "function") sprite.teleport(pos.x, pos.y);
+        else sprite.setPosition?.(pos.x, pos.y);
+        if (sprite.body) {
+            sprite.body.moves = false;
+            sprite.body.setVelocity?.(0, 0);
+            sprite.body.reset?.(pos.x, pos.y);
+        }
+        sprite._physX = pos.x;
+        sprite._physY = pos.y;
+    } else if (sprite.body) {
+        sprite.body.moves = false;
+        sprite.setVelocity?.(0, 0);
+    }
+    syncCreatureInputHit(sprite);
+    sprite.syncSortDepth?.();
+}
+
+function pawnIgnoresThing(pawn, thing) {
+    return typeof Sleep !== "undefined" && !!Sleep.ignoresThingCollision?.(pawn, thing);
+}
+
+function overlappingThingSprite(pawn) {
+    const body = pawn?.body;
+    const things = pawn?.scene?._things?.getChildren?.();
+    if (!body || !things) return null;
+    for (let i = 0; i < things.length; i++) {
+        const t = things[i];
+        const tb = t?.body;
+        if (!tb || !tb.enable || pawnIgnoresThing(pawn, t)) continue;
+        if (body.right > tb.left && body.left < tb.right
+            && body.bottom > tb.top && body.top < tb.bottom) {
+            return t;
+        }
+    }
+    return null;
+}
+
+function pawnPoseHitsThing(pawn, x, y) {
+    return pawnPoseBlocked(pawn, x, y, 0);
+}
+
+function pawnTileBlocked(pawn, x, y) {
+    const scene = pawn?.scene;
+    if (!scene?.worldToTile) return false;
+    const { tx, ty } = scene.worldToTile(x, y - 1);
+    const key = scene._tileKeyAt?.(tx, ty);
+    if (!key) return false;
+    if (typeof Place !== "undefined" && Place.BLOCKED && Place.BLOCKED[key]) return true;
+    return false;
+}
+
+/** True if the 8×8 body at (x,y), grown by `pad`, hits a Thing or blocked tile. */
+function pawnPoseBlocked(pawn, x, y, pad = 0) {
+    const body = pawn?.body;
+    const things = pawn?.scene?._things?.getChildren?.();
+    if (!body || !things) return false;
+    const p = Math.max(0, Number(pad) || 0);
+    const dx = x - pawn.x;
+    const dy = y - pawn.y;
+    const left = body.left + dx - p;
+    const right = body.right + dx + p;
+    const top = body.top + dy - p;
+    const bottom = body.bottom + dy + p;
+    if (pawnTileBlocked(pawn, x, y)) return true;
+    for (let i = 0; i < things.length; i++) {
+        const t = things[i];
+        const tb = t?.body;
+        if (!tb || !tb.enable || pawnIgnoresThing(pawn, t)) continue;
+        if (right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function findFreePawnPose(pawn, maxR = 80) {
+    if (!pawn?.body) return null;
+    const ox = pawn.x;
+    const oy = pawn.y;
+    const step = 4;
+    const reach = Math.max(step, Number(maxR) || 80);
+    for (let r = step; r <= reach; r += step) {
+        const n = Math.max(8, Math.round(r));
+        for (let i = 0; i < n; i++) {
+            const a = (i / n) * Math.PI * 2;
+            const x = ox + Math.cos(a) * r;
+            const y = oy + Math.sin(a) * r;
+            if (!pawnPoseBlocked(pawn, x, y, 2)) return { x, y };
+        }
+    }
+    const scene = pawn.scene;
+    if (!scene?.worldToTile || !scene?.tileCenter) return null;
+    const ts = scene.tileSize || 16;
+    const start = scene.worldToTile(ox, oy - 1);
+    const seen = new Set();
+    const q = [{ tx: start.tx, ty: start.ty, d: 0 }];
+    seen.add(`${start.tx},${start.ty}`);
+    const maxD = Math.max(2, Math.ceil(reach / ts));
+    const nbs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    while (q.length) {
+        const c = q.shift();
+        const pos = scene.tileCenter(c.tx, c.ty);
+        if (pos && !pawnPoseBlocked(pawn, pos.x, pos.y, 2)) return pos;
+        if (c.d >= maxD) continue;
+        for (let i = 0; i < nbs.length; i++) {
+            const ntx = c.tx + nbs[i][0];
+            const nty = c.ty + nbs[i][1];
+            const k = `${ntx},${nty}`;
+            if (seen.has(k)) continue;
+            seen.add(k);
+            q.push({ tx: ntx, ty: nty, d: c.d + 1 });
+        }
+    }
+    return null;
+}
+
+function teleportPawnPose(pawn, x, y) {
+    if (!pawn) return;
+    if (typeof pawn.teleport === "function") pawn.teleport(x, y);
+    else {
+        pawn.setPosition?.(x, y);
+        pawn._physX = x;
+        pawn._physY = y;
+    }
+    pawn.body?.reset?.(x, y);
+}
+
+/** Pop the Arcade body into open space — never into a gap between two solids. */
+function nudgePawnOutOfThing(pawn, thing) {
+    const tb = thing?.body;
+    const body = pawn?.body;
+    if (!tb || !body) return false;
+    const pad = 3;
+    const hw = (body.right - body.left) * 0.5;
+    const hh = (body.bottom - body.top) * 0.5;
+    const offX = pawn.x - body.center.x;
+    const offY = pawn.y - body.center.y;
+    const tcx = (tb.left + tb.right) * 0.5;
+    const tcy = (tb.top + tb.bottom) * 0.5;
+    const opts = [
+        { x: tb.left - hw - pad + offX, y: pawn.y },
+        { x: tb.right + hw + pad + offX, y: pawn.y },
+        { x: pawn.x, y: tb.top - hh - pad + offY },
+        { x: pawn.x, y: tb.bottom + hh + pad + offY }
+    ];
+    opts.sort((a, b) =>
+        Math.hypot(b.x - tcx, b.y - tcy) - Math.hypot(a.x - tcx, a.y - tcy)
+    );
+    for (let i = 0; i < opts.length; i++) {
+        const o = opts[i];
+        if (pawnPoseBlocked(pawn, o.x, o.y, 2)) continue;
+        teleportPawnPose(pawn, o.x, o.y);
+        return true;
+    }
+    const free = findFreePawnPose(pawn, 80);
+    if (!free) return false;
+    teleportPawnPose(pawn, free.x, free.y);
+    return true;
+}
+
+/**
+ * Arcade corner snag: both axes blocked, velocity never moves them.
+ * Commit a short free step, then return that heading.
+ */
+function slidePawnAroundThings(pawn, nx, ny, dist, scramble, side) {
+    if (!pawn?.body) return null;
+    const s = side >= 0 ? 1 : -1;
+    const step = Math.max(2, Number(dist) || 4);
+    let dirs = scramble
+        ? [
+            [1, 0], [-1, 0], [0, 1], [0, -1],
+            [1, 1], [1, -1], [-1, 1], [-1, -1]
+        ]
+        : [
+            [-ny * s, nx * s],
+            [ny * s, -nx * s],
+            [nx, ny],
+            [nx, 0], [0, ny],
+            [1, 0], [-1, 0], [0, 1], [0, -1],
+            [1, 1], [1, -1], [-1, 1], [-1, -1]
+        ];
+    if (scramble) {
+        dirs = dirs.slice();
+        for (let i = dirs.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            const tmp = dirs[i];
+            dirs[i] = dirs[j];
+            dirs[j] = tmp;
+        }
+    }
+    for (let i = 0; i < dirs.length; i++) {
+        const dx = dirs[i][0];
+        const dy = dirs[i][1];
+        if (!(Math.abs(dx) + Math.abs(dy) > 0)) continue;
+        const len = Math.hypot(dx, dy) || 1;
+        const sx = dx / len;
+        const sy = dy / len;
+        const px = pawn.x + sx * step;
+        const py = pawn.y + sy * step;
+        if (pawnPoseHitsThing(pawn, px, py)) continue;
+        teleportPawnPose(pawn, px, py);
+        return { nx: sx, ny: sy };
+    }
+    return null;
+}
+
+function sleepZzzHostPos(host) {
+    if (!host) return null;
+    if (host.root && host.spr) {
+        return {
+            x: Number(host.root.x) + Number(host.spr.x || 0),
+            y: Number(host.root.y) + Number(host.spr.y || 0)
+        };
+    }
+    if (typeof host.bodyCenter === "function") {
+        const c = host.bodyCenter();
+        if (c) return c;
+    }
+    if (!Number.isFinite(host.x) || !Number.isFinite(host.y)) return null;
+    return { x: host.x, y: host.y };
+}
+
+function sleepZzzIsResting(host) {
+    if (!host) return false;
+    if (host.root) return !!(host.resting && !host.dead && host.root.active);
+    return !!(host._resting && host.active && !host.isBodyDead?.() && !host._bodyDead);
+}
+
+function sleepHealIsInjured(host) {
+    if (!host) return false;
+    if (typeof host.injured === "boolean") return !!host.injured;
+    const body = host.anatomy;
+    if (typeof Sleep !== "undefined" && Sleep.injuredForAutofill) {
+        return !!Sleep.injuredForAutofill(body);
+    }
+    return false;
+}
+
+function sleepFxHostWidth(host) {
+    const spr = host?.spr || host;
+    const w = Number(spr?.displayWidth) || Number(spr?.width) || 16;
+    return Math.max(8, w);
+}
+
+function clearSleepZzz(host) {
+    const st = host?._zzz;
+    if (!st) return;
+    for (const b of st.bits || []) {
+        try { b.obj?.destroy?.(); } catch (_) {}
+    }
+    host._zzz = null;
+}
+
+function clearSleepHealFx(host) {
+    const st = host?._healFx;
+    if (!st) return;
+    for (const b of st.bits || []) {
+        try { b.obj?.destroy?.(); } catch (_) {}
+    }
+    host._healFx = null;
+}
+
+function clearSleepFx(host) {
+    clearSleepZzz(host);
+    clearSleepHealFx(host);
+}
+
+function _tickSleepFxBits(st, dt) {
+    if (!st?.bits) return;
+    for (let i = st.bits.length - 1; i >= 0; i--) {
+        const b = st.bits[i];
+        const obj = b.obj;
+        if (!obj?.active) {
+            st.bits.splice(i, 1);
+            continue;
+        }
+        b.t += dt;
+        const k = Math.min(1, b.t / b.life);
+        const ease = 1 - (1 - k) * (1 - k);
+        obj.setPosition(b.x0 + b.dx * ease, b.y0 + b.dy * ease);
+        obj.setAlpha(1 - k * k);
+        obj.setDepth(52);
+        if (k >= 1) {
+            obj.destroy();
+            st.bits.splice(i, 1);
+        }
+    }
+}
+
+/**
+ * Comic z z z drifting off a sleeper. Call every frame; starts/stops itself.
+ */
+function tickSleepZzz(host, scene, delta) {
+    const resting = sleepZzzIsResting(host);
+    let st = host?._zzz;
+    if (!resting && !st?.bits?.length) {
+        if (host) host._zzz = null;
+        return;
+    }
+    const pos = sleepZzzHostPos(host);
+    const dt = Math.max(0, Number(delta) || 16);
+    if (resting && pos) {
+        if (!st) st = host._zzz = { wait: 80, seq: 0, bits: [] };
+        st.wait -= dt;
+        if (st.wait <= 0 && st.bits.length < 3) {
+            st.wait = 780 + Math.random() * 360;
+            _spawnSleepZ(host, scene, st, pos);
+        }
+    }
+    _tickSleepFxBits(st, dt);
+    if (!resting && !st.bits.length) host._zzz = null;
+}
+
+function tickSleepHealFx(host, scene, delta) {
+    const resting = sleepZzzIsResting(host);
+    const injured = resting && sleepHealIsInjured(host);
+    let st = host?._healFx;
+    if (!injured && !st?.bits?.length) {
+        if (host) host._healFx = null;
+        return;
+    }
+    const pos = sleepZzzHostPos(host);
+    const dt = Math.max(0, Number(delta) || 16);
+    if (injured && pos) {
+        if (!st) st = host._healFx = { wait: 120, seq: 0, bits: [] };
+        st.wait -= dt;
+        if (st.wait <= 0 && st.bits.length < 3) {
+            st.wait = 700 + Math.random() * 320;
+            _spawnSleepPlus(host, scene, st, pos);
+        }
+    }
+    _tickSleepFxBits(st, dt);
+    if (!injured && !st?.bits?.length) host._healFx = null;
+}
+
+function _spawnSleepGlyph(scene, ch, color, x0, y0, n) {
+    if (!scene?.add?.text) return null;
+    const zoom = scene.worldZoom || scene.cameras?.main?.zoom || 1;
+    const dpr = window.devicePixelRatio || 1;
+    const font = pixelUiFontSize(16, 1);
+    const txt = scene.add.text(x0, y0, ch, {
+        fontFamily: PIXEL_UI_FONT,
+        fontSize: `${font}px`,
+        color,
+        stroke: "#000000",
+        strokeThickness: 2,
+        align: "center"
+    }).setOrigin(0.5, 1);
+    txt.setResolution(Math.max(2, zoom * dpr * 2));
+    if (txt.context) txt.context.imageSmoothingEnabled = true;
+    try {
+        txt.texture?.setFilter?.(Phaser.Textures.FilterMode.LINEAR);
+    } catch (_) {}
+    const size = [0.62, 0.76, 0.96][n];
+    txt.setScale(size / zoom);
+    if (typeof scene._liftAboveVeil === "function") scene._liftAboveVeil(txt, 52);
+    else {
+        scene.mainLayer?.add(txt);
+        scene._uiCam?.ignore(txt);
+        txt.setDepth(52);
+    }
+    return txt;
+}
+
+function _spawnSleepZ(host, scene, st, pos) {
+    const n = (st.seq || 0) % 3;
+    st.seq = (st.seq || 0) + 1;
+    const x0 = pos.x + 2 + n * 0.6;
+    const y0 = pos.y - 4;
+    const txt = _spawnSleepGlyph(scene, "z", "#b7c2d4", x0, y0, n);
+    if (!txt) return;
+    st.bits.push({
+        obj: txt,
+        t: 0,
+        life: 2100 + n * 220,
+        x0,
+        y0,
+        dx: 3 + n * 1.4 + Math.random() * 1.2,
+        dy: -(6 + n * 2.2 + Math.random() * 1.5)
+    });
+}
+
+function _spawnSleepPlus(host, scene, st, pos) {
+    const n = (st.seq || 0) % 3;
+    st.seq = (st.seq || 0) + 1;
+    const half = sleepFxHostWidth(host) * 0.5;
+    const x0 = pos.x + (Math.random() * 2 - 1) * half;
+    const y0 = pos.y;
+    const txt = _spawnSleepGlyph(scene, "+", "#4ee05a", x0, y0, n);
+    if (!txt) return;
+    st.bits.push({
+        obj: txt,
+        t: 0,
+        life: 2100 + n * 220,
+        x0,
+        y0,
+        dx: (Math.random() * 2 - 1) * 1.4,
+        dy: -(7 + n * 2.4 + Math.random() * 1.6)
+    });
 }
 
 /**
@@ -1045,16 +1551,22 @@ function creatureFeetPose(sprite) {
 function setPuppetProne(sprite, prone, opts = {}) {
     if (!sprite) return;
     const want = !!prone;
+    const rest = !!(want && opts.resting);
+    const ang = rest && typeof Sleep !== "undefined"
+        ? Sleep.restRotation(opts.restRot)
+        : -Math.PI / 2;
+    const scale = rest && typeof Sleep !== "undefined" ? Sleep.SCALE : 1;
     const w = sprite.displayWidth || sprite.width || 16;
     const h = sprite.displayHeight || sprite.height || 16;
     // Feet-anchored puppets (mobs): shift to geometric body center while prone
     const localX = opts.feetAnchored ? w * 0.5 : 0;
     const localY = opts.feetAnchored ? -h * 0.5 : 0;
-    if (!!sprite._prone === want) {
+    if (!!sprite._prone === want && !!sprite._resting === rest) {
         if (want) {
             sprite.anims?.stop?.();
             if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
-            sprite.setRotation(-Math.PI / 2);
+            sprite.setRotation(ang);
+            sprite.setScale(scale);
             sprite.clearTint?.();
             sprite.setOrigin(0.5, 0.5);
             sprite.setPosition(localX, localY);
@@ -1064,16 +1576,20 @@ function setPuppetProne(sprite, prone, opts = {}) {
     if (want) {
         sprite.setOrigin(0.5, 0.5);
         sprite.setPosition(localX, localY);
-        sprite.setRotation(-Math.PI / 2);
+        sprite.setRotation(ang);
+        sprite.setScale(scale);
         sprite.anims?.stop?.();
         if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
         sprite.clearTint?.();
         sprite._prone = true;
+        sprite._resting = rest;
     } else {
         sprite.setRotation(0);
+        sprite.setScale(1);
         sprite.setOrigin(0, 1);
         sprite.setPosition(0, 0);
         sprite._prone = false;
+        sprite._resting = false;
     }
 }
 
@@ -1103,6 +1619,14 @@ function placeUnarmedThrustSprite(sprite, cx, cy, angle, range, progress, depthY
     );
     sprite.setRotation(angle + Math.PI / 2);
     if (depthY != null) sprite.setDepth(depthY + 1);
+}
+
+/** Y-sort a sleeper between the leaf floor (lean.y) and stick frame (lean.y + 2). */
+function sleepSortDepth(sprite, leanTo, slot) {
+    const leanY = Number(leanTo?.y);
+    const spriteY = Number(sprite?.y) || 0;
+    const base = Number.isFinite(leanY) ? leanY : spriteY + 16;
+    return base + 1 + (Number(slot) || 0) * 0.01;
 }
 
 /** Short segment around the fist for hit tests. */

@@ -24,6 +24,23 @@
         return ctxOrScene || owner?.anatomy?.ctx || owner?.scene || null;
     }
 
+    function combatLogOf(ctxOrScene) {
+        return (
+            ctxOrScene?.combatLog ||
+            ctxOrScene?.scene?.combatLog ||
+            (ctxOrScene?.cache ? ctxOrScene.combatLog : null) ||
+            null
+        );
+    }
+
+    function isPartyPawn(owner) {
+        if (!owner) return false;
+        if (owner.kind === "mob") return false;
+        if (owner.role === "wanderer") return false;
+        if (owner.kind === "player") return true;
+        return owner.role === "leader" || owner.role === "companion";
+    }
+
     const BodyHealing = {
         BASE_HEAL_RATE: 11.52,
         MINUTES_PER_DAY: 1440,
@@ -110,11 +127,44 @@
                 owner.onBodyFatal?.(null, "capacity");
             }
 
-            this.healGameMinute(owner, host);
+            if (
+                this.healGameMinute(owner, host)
+                && isPartyPawn(owner)
+                && !owner.isBodyDead?.()
+            ) {
+                this._announceFullyHealed(owner, host);
+            }
 
             if (Hediffs && typeof Hediffs.minuteTick === "function") {
                 Hediffs.minuteTick(owner, host);
             }
+        },
+
+        hasHealableInjuries(body) {
+            if (!body || typeof body.parts !== "function") return false;
+            for (const part of Object.values(body.parts() || {})) {
+                if (!part || part.isDead?.()) continue;
+                for (const inj of part.injuries || []) {
+                    if (inj && !inj.permanent) return true;
+                }
+            }
+            return false;
+        },
+
+        fullyHealedMessage(owner, host) {
+            const you = Hediffs && typeof Hediffs._logIsYou === "function"
+                ? Hediffs._logIsYou(owner, host)
+                : !!(typeof owner?.isControlled === "function" && owner.isControlled());
+            if (you) return "You are fully healed";
+            const name = Hediffs && typeof Hediffs._logName === "function"
+                ? Hediffs._logName(owner)
+                : (owner?.displayName?.() || owner?.pawnName || owner?.name || "Someone");
+            return `${name} is fully healed`;
+        },
+
+        _announceFullyHealed(owner, host) {
+            const log = combatLogOf(host) || combatLogOf(owner?.scene);
+            log?.push?.(this.fullyHealedMessage(owner, host), { owner });
         },
 
         /**
@@ -260,7 +310,7 @@
 
         healGameMinute(owner, ctxOrScene) {
             const body = owner.anatomy;
-            if (!body) return;
+            if (!body) return false;
             const host = resolveHost(owner, ctxOrScene);
             const math = mathOf(body.ctx || host);
 
@@ -270,7 +320,7 @@
             } else if (typeof body.ctx?.worldMinuteIndex === "function") {
                 worldMin = body.ctx.worldMinuteIndex();
             }
-            if (worldMin != null && worldMin % 10 !== 0) return;
+            if (worldMin != null && worldMin % 10 !== 0) return false;
 
             const wounds = [];
             for (const part of Object.values(body.parts())) {
@@ -279,7 +329,7 @@
                     if (!inj.permanent) wounds.push({ part, inj });
                 }
             }
-            if (!wounds.length) return;
+            if (!wounds.length) return false;
 
             const pick = math.pick(wounds);
             const { part, inj } = pick;
@@ -289,6 +339,7 @@
                 const q = math.clamp(Number(inj.tendQuality) || 0, 0, 1);
                 healRate += 4 + q * 8;
             }
+            if (owner._resting) healRate += 8;
             inj.severity = Math.max(0, (Number(inj.severity) || 0) - healRate * 0.01);
 
             if (inj.scarPending && inj.severity <= (inj.scarSeverity || 0)) {
@@ -309,6 +360,7 @@
             }
 
             body.markDirty?.();
+            return !this.hasHealableInjuries(body);
         },
 
         isTendTargetValid(body, target) {
@@ -366,11 +418,55 @@
             return null;
         },
 
-        pickTendTarget(body, opts = {}) {
+        /** RimWorld-style: one medicine tend covers up to this much injury severity. */
+        BATCH_TEND_SEVERITY: 20,
+
+        tendTargetSeverity(target) {
+            if (!target) return 0;
+            if (target.destroyed) {
+                const mhp = Number(target.destroyed.mhp);
+                return Number.isFinite(mhp) && mhp > 0 ? mhp * 2 : this.BATCH_TEND_SEVERITY;
+            }
+            return Math.max(0, Number(target.inj?.severity) || 0);
+        },
+
+        tendTargetHint(target) {
+            if (!target) return null;
+            return {
+                partName: target.part?.name || null,
+                injuryIndex: target.part && target.inj
+                    ? target.part.injuries.indexOf(target.inj)
+                    : -1,
+                injuryId: target.inj?.id,
+                injuryName: target.inj?.name,
+                injurySeverity: target.inj?.severity,
+                destroyedPartName: target.destroyed?.partName || null
+            };
+        },
+
+        tendLogLine(who, poss, quality, targets, body) {
+            const qPct = Math.round((Number(quality) || 0) * 100);
+            const list = (targets || []).filter(Boolean);
+            if (list.length > 1) return `${who} bandaged ${list.length} wounds (${qPct}%)`;
+            const target = list[0];
+            if (target?.part) return `${who} bandaged ${poss} ${target.part.name} (${qPct}%)`;
+            if (target?.destroyed) {
+                const name = target.destroyed.partName;
+                const part = name ? body?.part?.(name) : null;
+                if (this.isStumpPart(part)) return `${who} bandaged a stump (${qPct}%)`;
+                if (name) return `${who} packed the wound (${qPct}%)`;
+            }
+            return `${who} finished bandaging (${qPct}%)`;
+        },
+
+        /**
+         * Untreated wounds in tend order: bleeders / stumps first, then the rest.
+         */
+        listTendCandidates(body, opts = {}) {
             const skip = typeof opts.skip === "function" ? opts.skip : null;
             const bleeding = [];
             const other = [];
-            for (const part of Object.values(body.parts())) {
+            for (const part of Object.values(body.parts() || {})) {
                 if (part.isDead()) continue;
                 for (const inj of part.injuries) {
                     if (inj.permanent) continue;
@@ -397,15 +493,42 @@
                     score: d.mhp * 2 * 0.06 * (d.bleedMult || 1)
                 });
             }
-            if (bleeding.length) {
-                bleeding.sort((a, b) => b.score - a.score);
-                return bleeding[0];
+            bleeding.sort((a, b) => b.score - a.score);
+            other.sort((a, b) => b.score - a.score);
+            return bleeding.concat(other);
+        },
+
+        pickTendTarget(body, opts = {}) {
+            return this.pickTendTargets(body, { ...opts, batchSeverity: 0 })[0] || null;
+        },
+
+        /**
+         * One bandage: first wound always, then more until severity reaches batchSeverity
+         * (default 20). At most one stump / missing part.
+         */
+        pickTendTargets(body, opts = {}) {
+            if (!body) return [];
+            const raw = Number(opts.batchSeverity);
+            const budget = Number.isFinite(raw) ? raw : this.BATCH_TEND_SEVERITY;
+            const candidates = this.listTendCandidates(body, opts);
+            const out = [];
+            let used = 0;
+            let tookStump = false;
+            for (const t of candidates) {
+                if (t.destroyed && tookStump) continue;
+                if (!out.length) {
+                    out.push(t);
+                    if (t.destroyed) tookStump = true;
+                    used += this.tendTargetSeverity(t);
+                    if (budget <= 0 || used >= budget) break;
+                    continue;
+                }
+                if (used >= budget) break;
+                out.push(t);
+                if (t.destroyed) tookStump = true;
+                used += this.tendTargetSeverity(t);
             }
-            if (other.length) {
-                other.sort((a, b) => b.score - a.score);
-                return other[0];
-            }
-            return null;
+            return out;
         },
 
         rollTendQuality(base = 0.4, max = 0.7, math = GameMath) {

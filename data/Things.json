@@ -234,5 +234,16 @@
         "hitboxSize": 5,
         "craftStation": true,
         "rotations": [0, 90, 180, 270]
+    },
+    {
+        "id": "lean_to",
+        "name": "Lean-to",
+        "key": "lean_to",
+        "hitboxSize": 5,
+        "sleep": {
+            "slots": 2
+        },
+        "footprint": [2, 1],
+        "rotations": [0, 90, 180, 270]
     }
 ]

@@ -180,7 +180,8 @@ class SceneBase extends Phaser.Scene {
             "brain",
             "bone",
             "stick",
-            "log"
+            "log",
+            "lean_to"
         ];
         for (const item of items) {
             this.loadImage(item, 'items');

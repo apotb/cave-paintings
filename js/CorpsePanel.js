@@ -52,10 +52,12 @@ class CorpsePanel {
 
     open(corpse) {
         if (!corpse?.entry) return;
+        if (this.scene.restBlocksWorldUi?.()) return;
         if (corpse.inRange && !corpse.inRange()) return;
         // Close other world/craft UIs; equipment can stay open for right-click equip-from-loot
         if (this.scene.campfirePanel?.visible) this.scene.campfirePanel.close();
         if (this.scene.storagePanel?.visible) this.scene.storagePanel.close();
+        if (this.scene.leanToPanel?.visible) this.scene.leanToPanel.close();
         if (this.scene.craftMenuVisible) this.scene.closeCraftMenu();
 
         this.corpse = corpse;

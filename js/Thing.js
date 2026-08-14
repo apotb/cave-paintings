@@ -38,10 +38,18 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         const a = this.meta.anim;
         if (!a) return null;
         const key = this.animKey();
+        const texKey = this.meta.key;
+        const tex = this.scene.textures?.get?.(texKey);
+        // frameTotal includes __BASE; a 4-frame sheet reports 5.
+        const sheetFrames = Math.max(0, (Number(tex?.frameTotal) || 0) - 1);
+        const existing = this.scene.anims.get(key);
+        if (existing && sheetFrames >= 2 && (existing.frames?.length || 0) < 2) {
+            this.scene.anims.remove(key);
+        }
         if (!this.scene.anims.exists(key)) {
             this.scene.anims.create({
                 key,
-                frames: this.scene.anims.generateFrameNumbers(this.meta.key),
+                frames: this.scene.anims.generateFrameNumbers(texKey),
                 frameRate: a.frameRate ?? 8,
                 repeat: a.repeat ?? -1
             });
@@ -49,10 +57,24 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         return key;
     }
 
+    _animIsLive(key) {
+        const st = this.anims;
+        return !!(
+            st?.isPlaying
+            && !st.isPaused
+            && st.currentAnim?.key === key
+        );
+    }
+
     applyVisual() {
         if (this.meta.anim) {
             const key = this.ensureAnim();
-            if (key) this.play(key, true);
+            if (key) {
+                // Layer add / static physics can drop sprites off the Scene update
+                // list, which is what actually advances Phaser animations.
+                this.addToUpdateList?.();
+                if (!this._animIsLive(key)) this.play(key);
+            }
             return;
         }
         if (this.anims?.isPlaying) this.stop();
@@ -85,6 +107,25 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
     }
 
     _positionBody() {
+        const ts = this.scene?.tileSize || 16;
+        const fp = typeof Place !== "undefined" ? Place.footprintSize(this.meta) : [1, 1];
+        // Lean-tos only. Do not call refreshBody() — it copies the full sprite.
+        if (
+            (fp[0] > 1 || fp[1] > 1)
+            && typeof Place !== "undefined"
+            && this.entry
+            && Place.collisionWorldRect
+        ) {
+            const rect = Place.collisionWorldRect(this.entry, this.meta, ts);
+            if (rect) {
+                const bw = rect.right - rect.left;
+                const bh = rect.bottom - rect.top;
+                const ox = rect.left - (this.x - this.width * 0.5);
+                const oy = rect.top - (this.y - this.height);
+                this.body.setSize(bw, bh).setOffset(ox, oy);
+                return;
+            }
+        }
         const hs = this.hitboxSize;
         this.body.setSize(hs, hs)
             .setOffset((this.width - hs) * 0.5, this.height - hs);
@@ -273,6 +314,7 @@ class Campfire extends Thing {
         this.on('pointerdown', (pointer) => {
             if (pointer.rightButtonDown()) return;
             if (this.scene.pointerOverWorldUi?.(pointer)) return;
+            if (this.scene.restBlocksWorldUi?.()) return;
             if (!this.inRange()) return;
             this.scene.campfirePanel?.toggle(this);
         });
@@ -283,6 +325,9 @@ class Campfire extends Thing {
             }
             this.scene.markLightDirty?.();
         });
+        // setInteractive after play() can leave the sprite on a still frame;
+        // kick the burn loop again now that the sprite is fully wired.
+        this.applyVisual();
         this.applySmokeVisual();
     }
 
@@ -736,6 +781,7 @@ class Storage extends Thing {
         this.on("pointerdown", (pointer) => {
             if (pointer.rightButtonDown()) return;
             if (this.scene.pointerOverWorldUi?.(pointer)) return;
+            if (this.scene.restBlocksWorldUi?.()) return;
             if (!this.inRange()) return;
             if (this.onInteract(pointer)) return;
             this.scene.storagePanel?.toggle(this);
@@ -914,5 +960,166 @@ class CraftStation extends Thing {
 
     isEmpty() {
         return true;
+    }
+}
+
+class LeanTo extends Thing {
+    constructor(scene, entry) {
+        const def = scene.getThing(entry.id);
+        if (typeof Place !== "undefined") Place.ensureSleepEntry(entry, def);
+        const ts = scene.tileSize || 16;
+        const origin = typeof Place !== "undefined"
+            ? Place.originTileOf(entry, ts)
+            : { tx: 0, ty: 0 };
+        const pos = typeof Place !== "undefined"
+            ? Place.footprintWorldPos(origin.tx, origin.ty, entry.rot, Place.footprintSize(def), ts)
+            : { x: entry.x, y: entry.y };
+        super(scene, pos.x, pos.y, entry.id, entry);
+        this.applyVisual();
+        this.refreshCollision();
+        this.setInteractive({ cursor: "pointer" });
+        this.on("pointerover", (pointer) => {
+            this.scene.showTooltip(
+                () => this.tooltipText(pointer),
+                pointer.x,
+                pointer.y,
+                this
+            );
+        });
+        this.on("pointerout", () => {
+            if (this.scene._hoverTarget === this) this.scene._hoverTarget = null;
+            if (this.scene._tooltipTarget === this) this.scene.hideTooltip();
+        });
+        this.on("pointerdown", (pointer) => {
+            if (pointer.rightButtonDown()) return;
+            if (this.scene.pointerOverWorldUi?.(pointer)) return;
+            this.scene.openLeanToPanel?.(this, pointer);
+        });
+        this.on("destroy", () => {
+            this._destroyFrame();
+            const scene = this.scene;
+            if (scene?.leanToPanel?.leanTo === this) scene.leanToPanel.close();
+            if (scene?._hoverTarget === this) scene._hoverTarget = null;
+            if (scene?._tooltipTarget === this) scene.hideTooltip();
+        });
+    }
+
+    applyVisual() {
+        super.applyVisual();
+        this.setDepth(this._floorDepth());
+        this._syncFrame();
+    }
+
+    _floorDepth() {
+        const h = this.displayHeight || this.height || 16;
+        return (Number(this.y) || 0) - h - 1;
+    }
+
+    frameTextureKey() {
+        if (typeof Place === "undefined") return "";
+        return Place.rotationFrameTextureKey(this.meta?.key, this.entry?.rot);
+    }
+
+    _syncFrame() {
+        const tex = this.frameTextureKey();
+        if (!tex || !this.scene.textures.exists(tex)) {
+            this._destroyFrame();
+            return;
+        }
+        if (!this._frameSpr || this._frameKey !== tex) {
+            this._destroyFrame();
+            this._frameSpr = this.scene.add.image(this.x, this.y, tex);
+            this._frameKey = tex;
+            this.scene.mainLayer?.add(this._frameSpr);
+        }
+        this._frameSpr.setOrigin(0.5, 1);
+        this._frameSpr.setPosition(this.x, this.y);
+        this._frameSpr.setDepth(this.y + 2);
+        this._frameSpr.setVisible(true);
+    }
+
+    _destroyFrame() {
+        if (this._frameSpr) {
+            this._frameSpr.destroy();
+            this._frameSpr = null;
+        }
+        this._frameKey = null;
+    }
+
+    refreshCollision() {
+        if (this.hitboxSize > 0 || this.meta?.sleep) {
+            if (!this.body) this.createCollision();
+            else this._positionBody();
+        }
+    }
+
+    inRange() {
+        const p = this.scene.player;
+        if (!p) return false;
+        if (typeof Sleep !== "undefined") {
+            return Sleep.inHarvestRange(
+                p.x, p.y, this.entry,
+                this.scene.tileSize,
+                p.interactionRange,
+                this.meta
+            );
+        }
+        const dx = this.x - p.x;
+        const dy = this.y - p.y;
+        const r = this.scene.tileSize * p.interactionRange;
+        return dx * dx + dy * dy <= r * r;
+    }
+
+    slotAtPointer(pointer) {
+        const scene = this.scene;
+        if (!scene?.cameras?.main || !pointer) return 0;
+        const world = scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const ts = this.scene.tileSize || 16;
+        if (typeof Place !== "undefined" && Place.entryFootprintTiles) {
+            const tiles = Place.entryFootprintTiles(this.entry, ts, this.meta);
+            if (tiles.length) {
+                let best = 0;
+                let bestD = Infinity;
+                for (let i = 0; i < tiles.length; i++) {
+                    const cx = tiles[i].tx * ts + ts / 2;
+                    const cy = tiles[i].ty * ts + ts / 2;
+                    const dx = world.x - cx;
+                    const dy = world.y - cy;
+                    const d = dx * dx + dy * dy;
+                    if (d < bestD) {
+                        bestD = d;
+                        best = i;
+                    }
+                }
+                return best;
+            }
+        }
+        if (typeof Sleep === "undefined") return 0;
+        const { tx, ty } = scene.worldToTile(world.x, world.y);
+        const slot = Sleep.slotIndexFromTile(
+            this.entry, tx, ty, ts, this.meta
+        );
+        return slot >= 0 ? slot : 0;
+    }
+
+    occupantName(slot) {
+        const id = this.entry?.occupants?.[slot];
+        if (!id) return "Empty";
+        const scene = this.scene;
+        const pawn = (scene.party || []).find((p) => p.pawnId === id)
+            || scene.partySys?.wanderers?.find?.((p) => p.pawnId === id);
+        if (pawn?.pawnName || pawn?.displayName) return pawn.pawnName || pawn.displayName;
+        for (const rp of scene.remotePlayers?.values?.() || []) {
+            if (rp.id === id) return rp.displayName || "Empty";
+        }
+        return "Occupied";
+    }
+
+    tooltipText(pointer) {
+        if (!this.scene || !this.active) return "";
+        const slot = pointer ? this.slotAtPointer(pointer) : 0;
+        const who = this.occupantName(slot);
+        const name = this.meta?.name || "Lean-to";
+        return `${name}\n${who}`;
     }
 }

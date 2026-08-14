@@ -115,7 +115,11 @@ class Chunk {
     }
 
     unload() {
-        if (!this.isLoaded) return;
+        this._loadGen = (this._loadGen || 0) + 1;
+        if (!this.isLoaded) {
+            this._destroyThingSprites();
+            return;
+        }
         this.isLoaded = false;
         if (this.rt) {
             if (typeof this.scene.recycleChunkRt === "function") this.scene.recycleChunkRt(this.rt);
@@ -123,7 +127,7 @@ class Chunk {
             this.rt = null;
         }
         this.scene.dropChunkPaint?.(this);
-        this.things.children.each(thing => thing.destroy());
+        this._destroyThingSprites();
         this._clearBloodSprites();
         this.flushMobs();
         this.flushDrops();
@@ -152,17 +156,40 @@ class Chunk {
         this.scene.markLightDirty?.();
     }
 
+    _destroyThingSprites() {
+        const kids = this.things?.getChildren?.() || [];
+        for (const thing of kids.slice()) {
+            try { thing.destroy(); } catch (_) {}
+        }
+        this.things?.clear(false, false);
+    }
+
+    _loadStillCurrent(gen) {
+        return this.isLoaded && gen === (this._loadGen || 0);
+    }
+
     async load() {
         if (this.isLoaded) return;
+        const gen = this._loadGen || 0;
         this.isLoaded = true;
         await this.generate();
+        if (!this._loadStillCurrent(gen)) return;
         await this.render();
+        if (!this._loadStillCurrent(gen)) return;
         await this.makeThings();
+        if (!this._loadStillCurrent(gen)) {
+            this._destroyThingSprites();
+            return;
+        }
         await this.makeBloodStains();
+        if (!this._loadStillCurrent(gen)) return;
         await this.makeMobs();
+        if (!this._loadStillCurrent(gen)) return;
         this.scene.partySys?.loadChunkWanderers?.(this);
         await this.makeDrops();
+        if (!this._loadStillCurrent(gen)) return;
         await this.makeCorpses();
+        if (!this._loadStillCurrent(gen)) return;
     }
 
     _clearBloodSprites() {

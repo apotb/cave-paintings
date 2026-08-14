@@ -297,8 +297,10 @@ class StoragePanel {
     }
 
     open(storage) {
+        if (this.scene.restBlocksWorldUi?.()) return;
         if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
         if (this.scene.campfirePanel?.visible) this.scene.campfirePanel.close();
+        if (this.scene.leanToPanel?.visible) this.scene.leanToPanel.close();
 
         if (this.storage && this.storage !== storage) this._notifyStorage("leave");
         this.storage = storage;

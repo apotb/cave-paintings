@@ -1,6 +1,4 @@
-Lean-to that can be used for sleeping, will speed up time and increase recovery rate
-
-"Back" equipment slot -- first item will be a backpack that adds 3 extra slots, but they will appear above your hotbar, so if you want to access them you'll have to manually drag them down into your hotbar
+"Back" equipment slot -- first item will be some item that a caveman would use (not a modern backpack) that adds 3 extra slots, but they will appear above your hotbar, so if you want to access them you'll have to manually drag them down into your hotbar
 
 Bones
 

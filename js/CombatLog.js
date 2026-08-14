@@ -284,14 +284,21 @@ class CombatLog {
         }
         if (cmd === "/regen") {
             if (this.scene.isNet && this.scene.net?.connected) {
-                // Shared world / LocalSim: server (or sim) regenerates for the session
+                // Shared world / LocalSim: server (or sim) confirms + regenerates
                 this.scene.net.sendAction({
                     type: NetProtocol.Actions.CHAT,
                     text: "/regen"
                 });
-                this.push("World regenerated.");
                 return;
             }
+            const now = Date.now();
+            const armed = Number(this._regenArmedAt) || 0;
+            if (!(armed > 0) || now - armed > 10000) {
+                this._regenArmedAt = now;
+                this.push("Type /regen again within 10 seconds to regenerate the world.");
+                return;
+            }
+            this._regenArmedAt = 0;
             const n = this.scene.regenChunks?.() ?? 0;
             this.push(`Regenerated world (${n} chunk${n === 1 ? "" : "s"} cleared)`);
             return;
@@ -563,7 +570,7 @@ class CombatLog {
                 const h = Math.floor((this.scene.gameMinutes || 0) / 60);
                 const m = (this.scene.gameMinutes || 0) % 60;
                 this.push(
-                    `Day ${this.scene.gameDay}  ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")} (${this.scene.tickSpeed ?? 1}×)`
+                    `Day ${this.scene.gameDay}  ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
                 );
                 return;
             }

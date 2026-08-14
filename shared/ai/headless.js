@@ -558,6 +558,7 @@
             this._pathGoalY = null;
             this._unstick = null;
             this._openSticky = null;
+            this.eatSeek = null;
             this.LEASH_TILES = (Party && Party.COMBAT_LEASH) || 10;
             this.MELEE_RESUME_PAD = 3;
         }
@@ -573,6 +574,15 @@
             if (world?.isControlled?.(mob)) {
                 this._clearCombat();
                 mob.setDesiredVel?.(0, 0);
+                return;
+            }
+            if (mob._resting) {
+                this._clearCombat();
+                mob.setDesiredVel?.(0, 0);
+                return;
+            }
+            if (mob._restWalk) {
+                this._clearCombat();
                 return;
             }
             if (mob.isIncapacitated?.() || mob.isImmobile?.() || mob.isVomiting?.()) {
@@ -609,11 +619,32 @@
                 this._tickCombat(delta, world, follow);
                 return;
             }
+            if (mob._wokeFromRest) {
+                world?.tryReturnToBed?.(mob);
+                return;
+            }
             if (mob._tending) {
                 mob.setDesiredVel?.(0, 0);
                 return;
             }
+            if (this._tickEatSeek(delta, world)) return;
             this._tickFollow(follow, delta);
+        }
+
+        _tickEatSeek(delta, world) {
+            const mob = this.mob;
+            const target = this.eatSeek;
+            if (!target || target.isBodyDead?.()) {
+                this.eatSeek = null;
+                return false;
+            }
+            if (Party?.inInteractRange?.(mob, target, TILE)) {
+                mob.setDesiredVel?.(0, 0);
+                return true;
+            }
+            const dist = Math.hypot((mob.x || 0) - (target.x || 0), (mob.y || 0) - (target.y || 0));
+            this._walkToward(target.x, target.y, dist > TILE * 6, world, delta);
+            return true;
         }
 
         _clearCombat() {
@@ -640,6 +671,7 @@
                 const jammed = overlapping || this._noProgressMs > 200;
                 if (!jammed && this._unstickFromMates(follow, idleR)) return;
                 this._idle();
+                if (!this._leaderMoving(follow)) this._world?.tryInjuredRest?.(mob);
                 return;
             }
             this._holdFollow = false;
@@ -895,7 +927,9 @@
                 x: tx + (from.x - mob.x),
                 y: ty + (from.y - mob.y)
             };
-            this._solids = world?.thingRectsNear?.(from.x, from.y, TILE * 13) || [];
+            this._solids = world?.thingRectsNear?.(
+                from.x, from.y, TILE * ((this._pathRange || 12) + 2)
+            ) || [];
             if (this._lastPx == null) {
                 this._lastPx = from.x;
                 this._lastPy = from.y;
@@ -910,7 +944,7 @@
             }
 
             const overlap = this._overlappingThing(world);
-            if (overlap) {
+            if (overlap && !this._keepPathOnOverlap) {
                 this._path = null;
                 const around = this._exitDir(overlap, from);
                 this._walk(around.nx, around.ny, sprint);
@@ -919,19 +953,29 @@
             this._escapeKey = null;
 
             const open = this._openPoint(want.x, want.y, world);
-            const los = this._losClear(from.x, from.y, open.x, open.y, world);
+            const stalled = this._noProgressMs > 140;
+            const look = Math.max(8, this._clearance() + 4);
+            const odx = open.x - from.x;
+            const ody = open.y - from.y;
+            const olen = Math.hypot(odx, ody) || 1;
+            const blockedAhead = this._pointBlocked(
+                from.x + (odx / olen) * look,
+                from.y + (ody / olen) * look,
+                world
+            );
+            const los = !stalled && !this._unstick && !blockedAhead
+                && this._losClear(from.x, from.y, open.x, open.y, world);
             const goalDrift = this._pathGoalX == null
                 || Math.hypot(open.x - this._pathGoalX, open.y - this._pathGoalY) > 28;
-            const stalled = this._noProgressMs > 140;
-            if (los && !stalled && !this._unstick) {
+            if (los) {
                 this._path = null;
                 this._pathMs = 0;
-            } else if (!los && (!this._path || !this._path.length || goalDrift || stalled || this._pathMs > 800)) {
+            } else if (!this._path || !this._path.length || goalDrift || stalled
+                || this._pathMs > (this._pathRefreshMs || 800)) {
                 this._path = this._planPath(open.x, open.y, world);
                 this._pathGoalX = open.x;
                 this._pathGoalY = open.y;
                 this._pathMs = 0;
-                if (stalled) this._noProgressMs = 0;
             } else {
                 this._pathMs += dt;
             }
@@ -982,7 +1026,11 @@
 
         _clearance() {
             const hs = Number(this.mob?.hitboxSize) || 8;
-            return Math.max(6, hs * 0.5 + 4);
+            return Math.max(6, hs * 0.5 + 3);
+        }
+
+        _cellCenter(cx, cy, cell = TILE) {
+            return { x: cx * cell + cell * 0.5, y: cy * cell + cell * 0.5 };
         }
 
         _bodyRect() {
@@ -1162,9 +1210,13 @@
             const dy = y1 - y0;
             const dist = Math.hypot(dx, dy);
             if (!(dist > 4)) return true;
-            const steps = Math.min(16, Math.max(2, Math.ceil(dist / 10)));
+            const stepPx = Math.max(3, this._clearance() * 0.5);
+            // Only the next ~14 tiles matter. Stretching 48 samples over a
+            // 48-tile dest left 16px gaps — a bench/tree fit between them.
+            const maxDist = Math.min(dist, TILE * 14);
+            const steps = Math.max(2, Math.ceil(maxDist / stepPx));
             for (let i = 1; i <= steps; i++) {
-                const f = i / steps;
+                const f = ((maxDist * i) / steps) / dist;
                 if (this._pointBlocked(x0 + dx * f, y0 + dy * f, world)) return false;
             }
             return true;
@@ -1174,10 +1226,10 @@
             const mob = this.mob;
             const from = mob.bodyCenter?.() || { x: mob.x, y: mob.y };
             const cell = TILE;
-            const sx = Math.round(from.x / cell);
-            const sy = Math.round(from.y / cell);
-            const gx = Math.round(destX / cell);
-            const gy = Math.round(destY / cell);
+            const sx = Math.floor(from.x / cell);
+            const sy = Math.floor(from.y / cell);
+            const gx = Math.floor(destX / cell);
+            const gy = Math.floor(destY / cell);
             if (sx === gx && sy === gy) return [{ x: destX, y: destY }];
             const keyOf = (cx, cy) => `${cx},${cy}`;
             const came = new Map();
@@ -1186,7 +1238,7 @@
             let found = null;
             let best = [sx, sy];
             let bestH = Math.abs(gx - sx) + Math.abs(gy - sy);
-            const maxR = 12;
+            const maxR = this._pathRange || 12;
             const dirs = [
                 [1, 0], [-1, 0], [0, 1], [0, -1],
                 [1, 1], [1, -1], [-1, 1], [-1, -1]
@@ -1213,12 +1265,15 @@
                     const k = keyOf(nx, ny);
                     if (came.has(k)) continue;
                     const goalCell = nx === gx && ny === gy;
-                    if (!goalCell && this._pointBlocked(nx * cell, ny * cell, world)) continue;
+                    const pos = this._cellCenter(nx, ny, cell);
+                    if (!goalCell && this._pointBlocked(pos.x, pos.y, world)) continue;
                     const dx = dirs[d][0];
                     const dy = dirs[d][1];
                     if (dx && dy) {
-                        if (this._pointBlocked((cx + dx) * cell, cy * cell, world)
-                            || this._pointBlocked(cx * cell, (cy + dy) * cell, world)) {
+                        const sideX = this._cellCenter(cx + dx, cy, cell);
+                        const sideY = this._cellCenter(cx, cy + dy, cell);
+                        if (this._pointBlocked(sideX.x, sideX.y, world)
+                            || this._pointBlocked(sideY.x, sideY.y, world)) {
                             continue;
                         }
                     }
@@ -1239,7 +1294,7 @@
             cells.reverse();
             const pts = [];
             for (let i = 1; i < cells.length; i++) {
-                pts.push({ x: cells[i][0] * cell, y: cells[i][1] * cell });
+                pts.push(this._cellCenter(cells[i][0], cells[i][1], cell));
             }
             if (found) pts.push({ x: destX, y: destY });
             return this._stringPull(pts, world);
@@ -1284,6 +1339,56 @@
         }
     }
 
+    /** Passerby stroll: same A* as party follow, toward a stable point along heading. */
+    class WandererStrollAI extends PartyAI {
+        constructor(mob) {
+            super(mob);
+            this._keepPathOnOverlap = true;
+            this._pathRange = 16;
+            this._pathRefreshMs = 4000;
+        }
+
+        update(delta, world) {
+            const mob = this.mob;
+            this._world = world;
+            if (!mob || mob.isBodyDead?.()) {
+                mob?.setDesiredVel?.(0, 0);
+                return;
+            }
+            if (mob.isIncapacitated?.() || mob.isImmobile?.()) {
+                mob.setDesiredVel?.(0, 0);
+                return;
+            }
+            const dest = mob.walkDest;
+            const tx = Number(dest?.x);
+            const ty = Number(dest?.y);
+            if (Number.isFinite(tx) && Number.isFinite(ty)) {
+                this._walkToward(tx, ty, false, world, delta);
+                return;
+            }
+            const h = mob.heading || { x: 1, y: 0 };
+            const len = Math.hypot(h.x, h.y) || 1;
+            this._walkToward(
+                mob.x + (h.x / len) * TILE * 40,
+                mob.y + (h.y / len) * TILE * 40,
+                false,
+                world,
+                delta
+            );
+        }
+
+        _walk(nx, ny) {
+            const mob = this.mob;
+            const moveMul = mob.capacities?.moving
+                ? Math.max(0.05, Math.min(1.5, mob.capacities.moving()))
+                : 1;
+            const tiles = 3.5 * ((Party && Party.WANDER_WALK_MULT) || 0.28);
+            const speed = tiles * TILE * moveMul;
+            mob.setDesiredVel?.(nx * speed, ny * speed);
+            this._face(nx, ny);
+        }
+    }
+
     const MobAI = {
         doofus: DoofusAI,
         scaredAnimal: ScaredAnimalAI,
@@ -1306,6 +1411,7 @@
         NeutralAnimalAI,
         AggressiveAnimalAI,
         PartyAI,
+        WandererStrollAI,
         MobAI,
         createAI
     };

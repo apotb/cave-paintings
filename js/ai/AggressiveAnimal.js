@@ -202,6 +202,11 @@ class NeutralAnimalAI extends DoofusAI {
             ny /= nlen;
         }
 
+        const overlap = typeof overlappingThingSprite === "function"
+            ? overlappingThingSprite(mob)
+            : null;
+        if (overlap) nudgePawnOutOfThing?.(mob, overlap);
+
         // Skirt static things (trees/rocks) instead of bee-lining into trunks
         const steered = this._steerAroundObstacles(mob, nx, ny, delta);
         nx = steered.nx;
@@ -268,9 +273,16 @@ class NeutralAnimalAI extends DoofusAI {
             }
         }
 
-        // Truly stuck: flip preferred side and shove sideways briefly
         this._stuckMs += delta;
-        if (this._stuckMs > 280) {
+        if (this._stuckMs > 220) {
+            const slid = slidePawnAroundThings?.(
+                mob, nx, ny, 4, this._stuckMs > 400, this._avoidSide
+            );
+            if (slid) {
+                this._avoidSide = slid.nx !== 0 ? Math.sign(slid.nx) : (slid.ny || 1);
+                this._stuckMs = 0;
+                return slid;
+            }
             this._avoidSide *= -1;
             this._stuckMs = 0;
             return { nx: this._avoidSide, ny: this._avoidSide * 0.35 };

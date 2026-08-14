@@ -180,7 +180,7 @@ class KnappingPanel {
         const pointer = this.scene.input?.activePointer;
         if (this.scene.pointerOverWorldUi?.(pointer)) return false;
         const player = this.scene.player;
-        if (!player || player._bodyDead || player.isIncapacitated?.()) return false;
+        if (!player || player._bodyDead || player.isIncapacitated?.() || player._resting) return false;
         // Close whatever menu is open, then start knapping
         this.scene.closeOpenMenus?.();
         this.scene.player?._cancelSkin?.();

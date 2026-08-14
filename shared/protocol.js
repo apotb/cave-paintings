@@ -78,6 +78,8 @@
         COMMAND: "command",
         CANCEL_CHANNEL: "cancel_channel",
         RESYNC: "resync",
+        /** Lie down in / wake from / destroy a lean-to. */
+        SLEEP: "sleep",
         RECRUIT: "recruit",
         SWITCH_CONTROL: "switch_control",
         PARTY_EAT: "party_eat",

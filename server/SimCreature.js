@@ -120,6 +120,10 @@ class SimCreature {
         this._desiredVx = 0;
         this._desiredVy = 0;
         this._prone = !!opts.prone;
+        this._resting = false;
+        this._restWalk = null;
+        this.lastSleep = null;
+        this._wokeFromRest = false;
         this._dead = false;
         this.active = true;
 
@@ -287,7 +291,7 @@ class SimCreature {
 
     applyDesiredVel(dtMs = 16) {
         void dtMs;
-        if (this._dead || this.isImmobile() || this.isIncapacitated()) {
+        if (this._dead || this.isImmobile() || this.isIncapacitated() || this._resting) {
             this.vx = 0;
             this.vy = 0;
             return;
@@ -306,12 +310,24 @@ class SimCreature {
         return this.name || this.def?.name || "Creature";
     }
 
+    isControlled() {
+        const sim = this.ctx?.sim;
+        if (!sim?.players) return false;
+        for (const p of sim.players.values()) {
+            if (!p.connected) continue;
+            if ((p.controlId || p.id) === this.id) return true;
+        }
+        return false;
+    }
+
     onBodyDamaged(source, _result) {
         if (source && source !== this) this._lastHitBy = source;
         this.ctx?.sim?._notePvpHit?.(source, this);
         this.ctx?.sim?._noteHuntHit?.(source, this);
         this.capacities = new Capacities(this.anatomy);
         this._prone = this.isImmobile() || this.isIncapacitated();
+        if (this._restWalk) this._restWalk = null;
+        this.ctx?.sim?._onSleepCombatHit?.(this, source);
         if (this._dead) return;
         if (this.capacities.isDeadFromCapacities()) {
             this.onBodyFatal(null, "capacity");
@@ -365,6 +381,7 @@ class SimCreature {
             this.vy = 0;
             this.setDesiredVel(0, 0);
             this._endAttack();
+            this.ctx?.sim?._vacatePawn?.(this.ctx.sim._findOwnedPawn?.(this.id) || this);
             return;
         }
         this.die();
@@ -401,7 +418,7 @@ class SimCreature {
      * @returns {boolean}
      */
     startMeleeAttack(angle) {
-        if (this._dead || this.isAttacking() || this.isIncapacitated()) return false;
+        if (this._dead || this.isAttacking() || this.isIncapacitated() || this._resting) return false;
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
 

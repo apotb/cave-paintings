@@ -11,6 +11,7 @@ const Spoil = require("../shared/spoil");
 const Durability = require("../shared/durability");
 const Chop = require("../shared/chop");
 const Place = require("../shared/place");
+const Sleep = require("../shared/sleep");
 const Hide = require("../shared/hide");
 const Carry = require("../shared/carry");
 const Party = require("../shared/party");
@@ -23,7 +24,7 @@ const Hediffs = require("../shared/body/Hediff");
 const BodyCombat = require("../shared/body/Combat");
 const { Body } = require("../shared/body/Body");
 const Capacities = require("../shared/body/Capacities");
-const { createAI, PartyAI } = require("../shared/ai/headless");
+const { createAI, PartyAI, WandererStrollAI } = require("../shared/ai/headless");
 const {
     createPlayerCreature,
     createMobCreature
@@ -119,6 +120,7 @@ class SimWorld {
         this.gameDay = 1;
         this.gameMinutes = 8 * 60;
         this.tickSpeed = 1;
+        this.baseTickSpeed = 1;
         this.genVersion = 2;
         this.chunks = new Map(); // key -> chunk meta
         this.players = new Map(); // id -> pawn
@@ -444,6 +446,18 @@ class SimWorld {
                 if (duel) return duel;
                 const owner = self.players.get(mob?.ownerId);
                 return self._chaseTarget(owner);
+            },
+            tryReturnToBed(mob) {
+                const pawn = self._findOwnedPawn(mob?.id);
+                if (!pawn) return;
+                const session = self._sessionOfPawn(pawn);
+                self._tryReturnToBed(session, pawn);
+            },
+            tryInjuredRest(mob) {
+                const pawn = self._findOwnedPawn(mob?.id);
+                if (!pawn) return;
+                const session = self._sessionOfPawn(pawn);
+                self._tryInjuredRest(session, pawn);
             }
         };
     }
@@ -557,6 +571,9 @@ class SimWorld {
             creature.active = false;
         }
         creature._vomitRemainingMs = Number(p.vomitRemainingMs) || 0;
+        creature._resting = !!p._resting;
+        creature._restWalk = p._restWalk || null;
+        creature.lastSleep = p.lastSleep || null;
         return creature;
     }
 
@@ -613,6 +630,11 @@ class SimWorld {
         w.gameMinutes = data.clock?.gameMinutes ?? 8 * 60;
         w.tickSpeed = data.clock?.tickSpeed != null ? Number(data.clock.tickSpeed) : 1;
         if (!Number.isFinite(w.tickSpeed) || w.tickSpeed < 0) w.tickSpeed = 1;
+        w.baseTickSpeed = data.clock?.baseTickSpeed != null
+            ? Number(data.clock.baseTickSpeed)
+            : w.tickSpeed;
+        if (!Number.isFinite(w.baseTickSpeed) || w.baseTickSpeed < 0) w.baseTickSpeed = w.tickSpeed;
+        w.tickSpeed = w.baseTickSpeed;
         w.spawn = data.spawn || w.spawn;
         w.poses = (data.poses && typeof data.poses === "object") ? { ...data.poses } : {};
         w.rng = mulberry32(w.seed >>> 0);
@@ -808,7 +830,11 @@ class SimWorld {
             genVersion: 2,
             seed: this.seed,
             spawn: this.spawn,
-            clock: { gameDay: this.gameDay, gameMinutes: this.gameMinutes, tickSpeed: this.tickSpeed },
+            clock: {
+                gameDay: this.gameDay,
+                gameMinutes: this.gameMinutes,
+                tickSpeed: Number.isFinite(this.baseTickSpeed) ? this.baseTickSpeed : this.tickSpeed
+            },
             poses: this.poses || {},
             wanderers: [...this.wanderers.values()]
                 .filter((w) => w && !w.dead)
@@ -863,6 +889,10 @@ class SimWorld {
             existing._joinGraceUntil = Date.now() + 4000;
             this._ensurePlayerCreature(existing);
             this._interestLoad(existing.x, existing.y, this.interestRadius(existing));
+            this._restorePawnSleep(existing, existing);
+            for (const m of existing.party || []) this._restorePawnSleep(existing, m);
+            this._sanitizeSleepOccupants();
+            this._applyRestClock();
             this._youDirty.add(playerId);
             return existing;
         }
@@ -870,6 +900,7 @@ class SimWorld {
         if (character && typeof character === "object") {
             this._applyCharacterSnapshot(p, character);
         }
+        // Occupied sleepers are snapped to the bunk in `_restorePawnSleep`.
         this._restoreLogoutPose(p);
         p.connected = true;
         p.poseAuth = false;
@@ -877,6 +908,10 @@ class SimWorld {
         this.players.set(playerId, p);
         this._ensurePlayerCreature(p);
         this._interestLoad(p.x, p.y, this.interestRadius(p));
+        this._restorePawnSleep(p, p);
+        for (const m of p.party || []) this._restorePawnSleep(p, m);
+        this._sanitizeSleepOccupants();
+        this._applyRestClock();
         this._youDirty.add(playerId);
         this.pushEvent({ kind: "chat", text: `${p.name} joined`, system: true });
         return p;
@@ -890,7 +925,7 @@ class SimWorld {
         this._interestLoad(saved.x, saved.y, this.interestRadius(p));
         let x = saved.x;
         let y = saved.y;
-        if (this.isBlocked(x, y)) {
+        if (this.isBlocked(x, y) && !saved.resting) {
             const near = this._findOpenNear(x, y, 6);
             if (near) {
                 x = near.x;
@@ -900,6 +935,8 @@ class SimWorld {
         p.x = x;
         p.y = y;
         if (typeof saved.facing === "string" && saved.facing) p.facing = saved.facing;
+        if (saved.lastSleep) p.lastSleep = saved.lastSleep;
+        if (typeof saved.resting === "boolean") p._resting = !!saved.resting;
     }
 
     /** Snapshot every connected pawn into poses so crash/restart keeps rejoin spots. */
@@ -911,14 +948,18 @@ class SimWorld {
             this.poses[p.id] = {
                 x: p.x,
                 y: p.y,
-                facing: p.facing || "down"
+                facing: p.facing || "down",
+                resting: !!p._resting,
+                lastSleep: p.lastSleep || null
             };
             for (const m of p.party || []) {
                 if (!m?.id || !Number.isFinite(m.x)) continue;
                 this.poses[m.id] = {
                     x: m.x,
                     y: m.y,
-                    facing: m.facing || "down"
+                    facing: m.facing || "down",
+                    resting: !!m._resting,
+                    lastSleep: m.lastSleep || null
                 };
             }
         }
@@ -946,14 +987,18 @@ class SimWorld {
         this.poses[p.id] = {
             x: p.x,
             y: p.y,
-            facing: p.facing || "down"
+            facing: p.facing || "down",
+            resting: !!p._resting,
+            lastSleep: p.lastSleep || null
         };
         for (const m of p.party || []) {
             if (!m?.id || !Number.isFinite(m.x)) continue;
             this.poses[m.id] = {
                 x: m.x,
                 y: m.y,
-                facing: m.facing || "down"
+                facing: m.facing || "down",
+                resting: !!m._resting,
+                lastSleep: m.lastSleep || null
             };
         }
     }
@@ -993,6 +1038,8 @@ class SimWorld {
             p.party = character.party.map((m) => this._companionFromSnap(p, m));
         }
         if (character.controlId) p.controlId = character.controlId;
+        if (character.lastSleep) p.lastSleep = character.lastSleep;
+        if (typeof character.resting === "boolean") p._joinRestHint = !!character.resting;
         if (p.hp <= 0) {
             p.dead = true;
         }
@@ -1071,7 +1118,10 @@ class SimWorld {
             dead: false,
             ownerId: owner.id,
             leaderId: owner.id,
-            role: "companion"
+            role: "companion",
+            lastSleep: m.lastSleep || null,
+            _resting: false,
+            _joinRestHint: !!m.resting
         };
         this._restoreLogoutPose(rec);
         this._ensureCompanionCreature(owner, rec);
@@ -1393,10 +1443,7 @@ class SimWorld {
     }
 
     _wandererTimeScale() {
-        const s = Number(this.tickSpeed);
-        if (!Number.isFinite(s) || s <= 0) return 0;
-        // Cap so /tick 600 doesn't teleport them through a chunk per frame.
-        return Math.min(8, s);
+        return Party.wandererTimeScale(this.tickSpeed);
     }
 
     _tickWandererDirector(dtMs) {
@@ -1680,171 +1727,150 @@ class SimWorld {
     }
 
     _stepWanderer(w, dtMs) {
-        const speed = SPEED * (Party.WANDER_WALK_MULT || 0.28);
-        this._moveWanderer(w, speed, dtMs);
+        const c = this._ensureWandererCreature(w);
+        if (!c) return;
+        w.heading = this._wandererHeading(w.heading);
+        const hlen = Math.hypot(w.heading.x, w.heading.y) || 1;
+        const hx = w.heading.x / hlen;
+        const hy = w.heading.y / hlen;
+        const dest = w._walkDest;
+        if (
+            !dest
+            || !Number.isFinite(dest.x)
+            || Math.hypot(w.x - dest.x, w.y - dest.y) < 8 * TS
+        ) {
+            w._walkDest = { x: w.x + hx * 48 * TS, y: w.y + hy * 48 * TS };
+        }
+        c.x = w.x;
+        c.y = w.y;
+        c.facing = w.facing || c.facing;
+        c.heading = w.heading;
+        c.walkDest = w._walkDest;
+        if (!(c.ai instanceof WandererStrollAI)) c.ai = new WandererStrollAI(c);
+        const world = this._aiWorld();
+        c.refreshCapacities?.();
+        const ox = w.x;
+        const oy = w.y;
+        c.ai.update(dtMs, world);
+        c.applyDesiredVel(dtMs);
+        let vx = c.vx || 0;
+        let vy = c.vy || 0;
+        const vlen = Math.hypot(vx, vy);
+        if (vlen > 0.5) {
+            const sep = this._unstickWandererFromPack(w, vx / vlen, vy / vlen);
+            vx = sep.nx * vlen;
+            vy = sep.ny * vlen;
+            c.vx = vx;
+            c.vy = vy;
+        }
+        const dt = dtMs / 1000;
+        const nx = w.x + vx * dt;
+        const ny = w.y + vy * dt;
+        if (!this._partyPoseBlocked(c, nx, c.y)) c.x = nx;
+        if (!this._partyPoseBlocked(c, c.x, ny)) c.y = ny;
+        w.x = c.x;
+        w.y = c.y;
+        w.facing = c.facing || w.facing;
+        w._moved = Math.hypot(w.x - ox, w.y - oy) > 0.15
+            || Math.hypot(c.vx || 0, c.vy || 0) > 2;
+        c.x = w.x;
+        c.y = w.y;
     }
 
     /**
-     * Walk the lasting heading. Skirt / unstick is per-step only — committing a
-     * new cardinal on every Thing graze was the MP bounce.
+     * Same mover as wildlife: hold a heading, axis-slide with `isBlocked`,
+     * and only pick a new direction when both axes are stuck.
+     * Per-frame skirt/detour was the jitter (tree vs rock ping-pong).
      */
     _moveWanderer(w, speedPx, dtMs) {
         const dt = dtMs / 1000;
         w.heading = this._wandererHeading(w.heading);
-        if (!w._avoidSide) w._avoidSide = this.rng() < 0.5 ? -1 : 1;
-        const overlap = this._wandererOverlappingThing(w);
-        if (overlap) this._nudgeWandererOutOfThing(w, overlap);
         const hlen = Math.hypot(w.heading.x, w.heading.y) || 1;
-        const hx = w.heading.x / hlen;
-        const hy = w.heading.y / hlen;
-        const steered0 = this._steerWanderer(w, hx, hy);
-        const steered = this._unstickWandererFromPack(w, steered0.nx, steered0.ny);
-        const blocked = (x, y) => this._wandererPoseBlocked(w, x, y);
-        const stepX = steered.nx * speedPx * dt;
-        const stepY = steered.ny * speedPx * dt;
-        let moved = false;
-        if (Math.abs(stepX) > 0.01 && !blocked(w.x + stepX, w.y)) {
-            w.x += stepX;
-            moved = true;
+        let hx = w.heading.x / hlen;
+        let hy = w.heading.y / hlen;
+        if (w._nudgeMs > 0) {
+            w._nudgeMs -= dtMs;
+            const nx = Number(w._nudgeVx) || 0;
+            const ny = Number(w._nudgeVy) || 0;
+            const n = Math.hypot(nx, ny);
+            if (n > 0) {
+                hx = nx / n;
+                hy = ny / n;
+            }
+        } else {
+            const sep = this._unstickWandererFromPack(w, hx, hy);
+            hx = sep.nx;
+            hy = sep.ny;
         }
-        if (Math.abs(stepY) > 0.01 && !blocked(w.x, w.y + stepY)) {
-            w.y += stepY;
-            moved = true;
+        const ox = w.x;
+        const oy = w.y;
+        const nx = w.x + hx * speedPx * dt;
+        const ny = w.y + hy * speedPx * dt;
+        let movedX = false;
+        let movedY = false;
+        if (!this.isBlocked(nx, w.y)) {
+            w.x = nx;
+            movedX = true;
         }
-        if (!moved) moved = this._slideWanderer(w, steered.nx, steered.ny, Math.max(2, speedPx * dt));
-        w._moved = !!moved;
-        if (!moved) {
+        if (!this.isBlocked(w.x, ny)) {
+            w.y = ny;
+            movedY = true;
+        }
+        w._moved = movedX || movedY;
+        if (!movedX && !movedY) {
             w._stuckMs = (w._stuckMs || 0) + dtMs;
-            if (w._stuckMs > 280) {
-                w._avoidSide *= -1;
+            if (!(w._nudgeMs > 0) && w._stuckMs > 220) {
+                this._wandererUnstick(w);
                 w._stuckMs = 0;
-                this._slideWanderer(w, 0, 0, 4, true);
             }
         } else {
             w._stuckMs = 0;
         }
-        const faceX = moved && Math.abs(stepX) >= Math.abs(stepY) ? stepX : hx;
-        const faceY = moved && Math.abs(stepY) > Math.abs(stepX) ? stepY : hy;
+        const faceX = movedX ? w.x - ox : hx;
+        const faceY = movedY ? w.y - oy : hy;
         if (Math.abs(faceX) >= Math.abs(faceY)) w.facing = faceX >= 0 ? "right" : "left";
         else w.facing = faceY >= 0 ? "down" : "up";
     }
 
-    /** 8×8 feet box — same as the human Arcade hitbox, not the full 16×16 sprite. */
-    _wandererFeetBox(x, y) {
-        const hs = 8;
-        const left = x + (16 - hs) * 0.5;
-        return { left, right: left + hs, top: y - hs, bottom: y };
-    }
-
-    _wandererPoseBlocked(w, x, y) {
-        if (this._tileBlocked(x, y)) return true;
-        const b = this._wandererFeetBox(x, y);
-        return !!this._aabbHitsThing(b.left, b.right, b.top, b.bottom, x, y);
-    }
-
-    _wandererOverlappingThing(w) {
-        if (!w) return null;
-        const b = this._wandererFeetBox(w.x, w.y);
-        return this._aabbHitsThing(b.left, b.right, b.top, b.bottom, w.x, w.y)
-            || this._solidThingAt(w.x, w.y);
-    }
-
-    /** Pop the feet box just outside a solid Thing so 0.25px steps can walk again. */
-    _nudgeWandererOutOfThing(w, hit) {
-        if (!hit) return false;
-        const pad = 2;
-        const opts = [
-            { x: hit.left - 12 - pad, y: w.y, h: { x: -1, y: 0 } },
-            { x: hit.right - 4 + pad, y: w.y, h: { x: 1, y: 0 } },
-            { x: w.x, y: hit.top - pad, h: { x: 0, y: -1 } },
-            { x: w.x, y: hit.bottom + 8 + pad, h: { x: 0, y: 1 } }
+    /** Hold one open 8-way step briefly, same as `_mobUnstick`. */
+    _wandererUnstick(w) {
+        const dirs = [
+            [1, 0], [-1, 0], [0, 1], [0, -1],
+            [1, 1], [1, -1], [-1, 1], [-1, -1]
         ];
-        opts.sort((a, b) =>
-            Math.hypot(a.x - w.x, a.y - w.y) - Math.hypot(b.x - w.x, b.y - w.y)
-        );
-        for (const o of opts) {
-            if (this._wandererPoseBlocked(w, o.x, o.y)) continue;
-            w.x = o.x;
-            w.y = o.y;
-            w.heading = o.h;
-            w._moved = true;
-            w._escapeThingKey = null;
-            w._escapeH = null;
-            return true;
+        for (let i = dirs.length - 1; i > 0; i--) {
+            const j = Math.floor(this.rng() * (i + 1));
+            const tmp = dirs[i];
+            dirs[i] = dirs[j];
+            dirs[j] = tmp;
         }
-        return false;
-    }
-
-    /**
-     * Corner slide: try perpendicular then 8-way until a short step is free.
-     * Commits heading only when we actually moved, so they don't ping-pong.
-     */
-    _slideWanderer(w, nx, ny, dist, scramble = false) {
-        const side = w._avoidSide >= 0 ? 1 : -1;
-        const dirs = scramble
-            ? [
-                [1, 0], [-1, 0], [0, 1], [0, -1],
-                [1, 1], [1, -1], [-1, 1], [-1, -1]
-            ]
-            : [
-                [-ny * side, nx * side],
-                [ny * side, -nx * side],
-                [nx, ny],
-                [1, 0], [-1, 0], [0, 1], [0, -1],
-                [1, 1], [1, -1], [-1, 1], [-1, -1]
-            ];
-        if (scramble) {
-            for (let i = dirs.length - 1; i > 0; i--) {
-                const j = Math.floor(this.rng() * (i + 1));
-                const tmp = dirs[i];
-                dirs[i] = dirs[j];
-                dirs[j] = tmp;
+        const step = TS * 0.6;
+        for (const [dx, dy] of dirs) {
+            const dlen = Math.hypot(dx, dy) || 1;
+            const nx = w.x + (dx / dlen) * step;
+            const ny = w.y + (dy / dlen) * step;
+            const canX = !this.isBlocked(nx, w.y);
+            const canY = !this.isBlocked(w.x, ny);
+            if (!canX && !canY) continue;
+            w._nudgeVx = dx / dlen;
+            w._nudgeVy = dy / dlen;
+            w._nudgeMs = 320;
+            w._moved = true;
+            return;
+        }
+        for (let r = 8; r <= 48; r += 8) {
+            for (let i = 0; i < 8; i++) {
+                const a = (i / 8) * Math.PI * 2;
+                const x = w.x + Math.cos(a) * r;
+                const y = w.y + Math.sin(a) * r;
+                if (this.isBlocked(x, y)) continue;
+                w.x = x;
+                w.y = y;
+                w._moved = true;
+                w._nudgeMs = 0;
+                return;
             }
         }
-        const step = Math.max(2, Number(dist) || 3);
-        for (const [dx, dy] of dirs) {
-            if (!(Math.abs(dx) + Math.abs(dy) > 0)) continue;
-            const len = Math.hypot(dx, dy) || 1;
-            const ux = dx / len;
-            const uy = dy / len;
-            const nxPos = w.x + ux * step;
-            const nyPos = w.y + uy * step;
-            if (this._wandererPoseBlocked(w, nxPos, nyPos)) continue;
-            w.x = nxPos;
-            w.y = nyPos;
-            w.heading = { x: ux, y: uy };
-            return true;
-        }
-        return false;
-    }
-
-    _wandererProbeBlocked(w, nx, ny, dist = TS * 0.9) {
-        return this._wandererPoseBlocked(w, w.x + nx * dist, w.y + ny * dist);
-    }
-
-    _steerWanderer(w, nx, ny) {
-        const overlap = this._wandererOverlappingThing(w);
-        if (overlap) return this._wandererStickyExit(w, overlap, nx, ny);
-        w._escapeThingKey = null;
-        w._escapeH = null;
-        if (!this._wandererProbeBlocked(w, nx, ny)) return { nx, ny };
-        const left = { nx: -ny, ny: nx };
-        const right = { nx: ny, ny: -nx };
-        const order = w._avoidSide >= 0 ? [right, left] : [left, right];
-        const extras = [
-            { nx: nx + right.nx, ny: ny + right.ny },
-            { nx: nx + left.nx, ny: ny + left.ny }
-        ];
-        for (const d of [...order, ...extras]) {
-            const len = Math.hypot(d.nx, d.ny) || 1;
-            const cx = d.nx / len;
-            const cy = d.ny / len;
-            if (this._wandererProbeBlocked(w, cx, cy)) continue;
-            if (this._wandererPoseBlocked(w, w.x + cx * 4, w.y + cy * 4)) continue;
-            w._avoidSide = (d === right || d === extras[0]) ? 1 : -1;
-            return { nx: cx, ny: cy };
-        }
-        return { nx, ny };
     }
 
     _idHash(id) {
@@ -1883,45 +1909,8 @@ class SimWorld {
         const n = Math.hypot(wx, wy) || 1;
         wx /= n;
         wy /= n;
-        if (this._wandererProbeBlocked(w, wx, wy)) return { nx, ny };
+        if (this.isBlocked(w.x + wx * 8, w.y + wy * 8)) return { nx, ny };
         return { nx: wx, ny: wy };
-    }
-
-    _wandererStickyExit(w, hit, hx, hy) {
-        const t = hit.t;
-        const key = t ? (t.uid || `${t.id}:${t.x}:${t.y}`) : "thing";
-        if (w._escapeThingKey === key && w._escapeH) return w._escapeH;
-        const side = w._avoidSide >= 0 ? 1 : -1;
-        const perp = Math.abs(hx) >= Math.abs(hy)
-            ? { nx: 0, ny: side }
-            : { nx: side, ny: 0 };
-        const candidates = [
-            perp,
-            { nx: -perp.nx, ny: -perp.ny },
-            { nx: hx, ny: hy }
-        ];
-        for (let i = 0; i < candidates.length; i++) {
-            const c = candidates[i];
-            if (!(Math.abs(c.nx) + Math.abs(c.ny) > 0)) continue;
-            const len = Math.hypot(c.nx, c.ny) || 1;
-            const u = { nx: c.nx / len, ny: c.ny / len };
-            if (this._wandererProbeBlocked(w, u.nx, u.ny)) continue;
-            w._escapeThingKey = key;
-            w._escapeH = u;
-            if (i === 1) w._avoidSide *= -1;
-            return u;
-        }
-        const exits = [
-            { d: w.x - hit.left, nx: -1, ny: 0 },
-            { d: hit.right - w.x, nx: 1, ny: 0 },
-            { d: w.y - hit.top, nx: 0, ny: -1 },
-            { d: hit.bottom - w.y, nx: 0, ny: 1 }
-        ];
-        exits.sort((a, b) => a.d - b.d);
-        const pick = { nx: exits[0].nx, ny: exits[0].ny };
-        w._escapeThingKey = key;
-        w._escapeH = pick;
-        return pick;
     }
 
     /**
@@ -1931,9 +1920,27 @@ class SimWorld {
     _thingRect(t) {
         if (!t || t.gone) return null;
         const def = thingDefs().get(t.id);
+        const pad = 1;
+        const fp = typeof Place !== "undefined" ? Place.footprintSize(def) : [1, 1];
+        if (
+            (fp[0] > 1 || fp[1] > 1)
+            && typeof Place !== "undefined"
+            && Place.collisionWorldRect
+        ) {
+            const rect = Place.collisionWorldRect(t, def, TS);
+            if (rect) {
+                return {
+                    t,
+                    left: rect.left - pad,
+                    right: rect.right + pad,
+                    top: rect.top - pad,
+                    bottom: rect.bottom + pad,
+                    r: Math.max(rect.right - rect.left, rect.bottom - rect.top) * 0.5 + pad
+                };
+            }
+        }
         const hs = Number(def?.hitboxSize);
         if (!(hs > 0)) return null;
-        const pad = 1;
         const hx = hs * 0.5;
         return {
             t,
@@ -1988,10 +1995,11 @@ class SimWorld {
         return out;
     }
 
-    _aabbHitsThing(left, right, top, bottom, nearX, nearY, cull = 64) {
+    _aabbHitsThing(left, right, top, bottom, nearX, nearY, cull = 64, creature = null) {
         const rects = this._thingRectsNear(nearX, nearY, cull);
         for (let i = 0; i < rects.length; i++) {
             const tb = rects[i];
+            if (creature && Sleep.ignoresThingCollision?.(creature, tb.t)) continue;
             if (right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom) {
                 return tb;
             }
@@ -2002,7 +2010,9 @@ class SimWorld {
     _partyPoseBlocked(creature, x, y) {
         if (this._tileBlocked(x, y)) return true;
         const body = this._creatureBodyAt(creature, x, y);
-        return !!this._aabbHitsThing(body.left, body.right, body.top, body.bottom, x, y);
+        return !!this._aabbHitsThing(
+            body.left, body.right, body.top, body.bottom, x, y, 64, creature
+        );
     }
 
     _solidThingAt(wx, wy) {
@@ -2053,17 +2063,20 @@ class SimWorld {
             { d: w.y - hit.top, h: { x: 0, y: -1 } },
             { d: hit.bottom - w.y, h: { x: 0, y: 1 } }
         ];
-        exits.sort((a, b) => a.d - b.d);
-        if (w._escapeThingKey === key && w.heading) {
-            const keep = exits.find((e) => e.h.x === w.heading.x && e.h.y === w.heading.y);
-            if (keep) {
-                w.heading = keep.h;
-                return true;
-            }
+        exits.sort((a, b) => {
+            const hx = Number(w.heading?.x) || 0;
+            const hy = Number(w.heading?.y) || 0;
+            const da = a.h.x * hx + a.h.y * hy;
+            const db = b.h.x * hx + b.h.y * hy;
+            if (db !== da) return db - da;
+            return a.d - b.d;
+        });
+        if (w._escapeThingKey === key && w._escapeH) {
+            const keep = exits.find((e) => e.h.x === w._escapeH.nx && e.h.y === w._escapeH.ny);
+            if (keep) return true;
         }
         w._escapeThingKey = key;
-        w.heading = exits[0].h;
-        w._avoidSide = exits[0].h.x !== 0 ? exits[0].h.x : (w._avoidSide || 1);
+        w._escapeH = { nx: exits[0].h.x, ny: exits[0].h.y };
         return true;
     }
 
@@ -2130,6 +2143,10 @@ class SimWorld {
         if (!p) return null;
         this._cancelChannels(p);
         p.connected = false;
+        this._vacatePawn(p);
+        for (const m of p.party || []) this._vacatePawn(m);
+        this._sanitizeSleepOccupants();
+        this._applyRestClock();
         this._saveLogoutPose(p);
         const finalYou = this.youPayload(playerId);
         this._clearPlayerCampfireAttend(playerId);
@@ -2292,6 +2309,7 @@ class SimWorld {
         Party.setWildAggroOwner?.(victim, attacker);
         const rec = this.wanderers.get(victim.id) || this.mobs.get(victim.id);
         if (rec && rec !== victim) Party.setWildAggroOwner?.(rec, attacker);
+        this._wakeAbleResters(session, victim, session);
     }
 
     _chaseTarget(p) {
@@ -2443,20 +2461,38 @@ class SimWorld {
         }
         if (facing) control.facing = facing;
         const cc = control.creature || this.creatures.get(control.id);
+        let justWoke = false;
+        if (
+            control._resting
+            && Math.hypot(x, y) > 0.01
+            && !control.dead
+            && !cc?.isImmobile?.()
+            && !cc?.isIncapacitated?.()
+            && !this._pawnVomiting(control)
+        ) {
+            this._wakePawn(p, control, { manual: true });
+            justWoke = true;
+        }
         const poseLocked = !!(
             control.dead
+            || control._resting
             || control.prone
             || cc?._prone
             || cc?.isImmobile?.()
             || cc?.isIncapacitated?.()
             || this._pawnVomiting(control)
         );
-        if (poseLocked) {
+        if (!poseLocked && control._restWalk && (Math.hypot(x, y) > 0.01)) {
+            control._restWalk = null;
+            if (cc) cc._restWalk = null;
+            this._sleepLog(p, `${control.name || "They"} can't rest there.`);
+        }
+        if (poseLocked || justWoke) {
             p.moveX = 0;
             p.moveY = 0;
             p.sprint = false;
         }
-        if (Number.isFinite(px) && Number.isFinite(py) && !poseLocked) {
+        if (Number.isFinite(px) && Number.isFinite(py) && !poseLocked && !justWoke) {
             const jump = Math.hypot(px - control.x, py - control.y);
             const joinGrace = !!(p._joinGraceUntil && Date.now() < p._joinGraceUntil);
             // Relog used to send spawn (0,0) before YOU applied; that teleported
@@ -2667,6 +2703,10 @@ class SimWorld {
             this._tryPlace(p, action);
             return;
         }
+        if (type === Protocol.Actions.SLEEP) {
+            this._trySleep(p, action);
+            return;
+        }
         if (type === Protocol.Actions.STORAGE) {
             this._tryStorage(p, action);
             return;
@@ -2788,6 +2828,18 @@ class SimWorld {
             return;
         }
         if (cmd === "/regen") {
+            const now = Date.now();
+            const armed = this._regenArmed?.get(p.id) || 0;
+            if (!(armed > 0) || now - armed > 10000) {
+                if (!this._regenArmed) this._regenArmed = new Map();
+                this._regenArmed.set(p.id, now);
+                this.announceCmd(
+                    "Type /regen again within 10 seconds to regenerate the world.",
+                    { to: p.id }
+                );
+                return;
+            }
+            this._regenArmed.delete(p.id);
             this.regenWorld(p);
             return;
         }
@@ -2806,8 +2858,10 @@ class SimWorld {
                 return;
             }
             this.tickSpeed = m;
+            this.baseTickSpeed = m;
             this._minuteAcc = 0;
-            this.announceCmd(`${p.name} set tick speed to ${m}×`);
+            this._applyRestClock();
+            this.announceCmd(`${p.name} set tick speed to ${this.tickSpeed}×`);
             return;
         }
         if (cmd === "/time") {
@@ -2815,7 +2869,7 @@ class SimWorld {
                 const h = Math.floor(this.gameMinutes / 60);
                 const m = this.gameMinutes % 60;
                 this.announceCmd(
-                    `Day ${this.gameDay}  ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")} (${this.tickSpeed}×)`,
+                    `Day ${this.gameDay}  ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`,
                     { to: p.id }
                 );
                 return;
@@ -5565,8 +5619,14 @@ class SimWorld {
         return !!def?.storage;
     }
 
+    _isSleepEntry(t) {
+        if (!t) return false;
+        const def = thingDefs().get(t.id);
+        return Place.isSleepThing(def, t);
+    }
+
     _isPlaceableEntry(t) {
-        return this._isStorageEntry(t) || this._isCraftStationEntry(t);
+        return this._isStorageEntry(t) || this._isCraftStationEntry(t) || this._isSleepEntry(t);
     }
 
     _storagePublic(entry, chunk = null) {
@@ -5584,6 +5644,23 @@ class SimWorld {
                 rev: Number(entry.rev) || 0,
                 rot: Place.normalizeRot(entry.rot),
                 craftStation: true
+            };
+        }
+        if (Place.isSleepThing(def, entry)) {
+            Place.ensureSleepEntry(entry, def);
+            return {
+                uid: entry.uid,
+                id: entry.id,
+                x: entry.x,
+                y: entry.y,
+                tx: entry.tx,
+                ty: entry.ty,
+                cx: chunk?.cx,
+                cy: chunk?.cy,
+                rev: Number(entry.rev) || 0,
+                rot: Place.normalizeRot(entry.rot),
+                sleep: true,
+                occupants: Array.isArray(entry.occupants) ? entry.occupants : [null, null]
             };
         }
         Place.ensureStorageEntry(entry, def);
@@ -5645,7 +5722,7 @@ class SimWorld {
 
     _tryPlace(session, action = {}) {
         const p = this._actionPawn(session, action);
-        if (!p || p.dead) return;
+        if (!p || p.dead || p._resting) return;
         const invIndex = Math.floor(Number(p.hotbarIndex) || 0);
         const held = p.inventory?.[invIndex];
         if (!held?.id || !(held.quantity > 0)) return;
@@ -5660,22 +5737,45 @@ class SimWorld {
         const rot = Place.normalizeRot(action.rot);
         const { x, y } = this._tileCenter(tx, ty);
         if (!Place.inPlaceRange(p.x, p.y, x, y, TS, HARVEST_RANGE_TILES)) return;
-        const { cx, cy } = worldToChunk(x, y - 1);
-        const chunk = this._ensureChunk(cx, cy);
-        if (!Array.isArray(chunk.things)) chunk.things = [];
-        if (!Array.isArray(chunk.lootableThings)) chunk.lootableThings = [];
-        const tileKey = this._tileKeyAt(tx, ty);
-        if (!Place.canPlaceOnTile({
-            tileKey,
-            things: chunk.things,
-            lootables: chunk.lootableThings,
-            tx, ty,
-            tileSize: TS
-        })) return;
+        const fp = Place.footprintSize(thingDef);
+        const tiles = Place.footprintTiles(tx, ty, rot, fp);
+        const getThing = (id) => thingDefs().get(id);
+        for (const t of tiles) {
+            const occ = this._placeOccForTile(t.tx, t.ty);
+            if (!Place.canPlaceOnTile({
+                tileKey: occ.tileKey,
+                things: occ.things,
+                lootables: occ.lootables,
+                tx: t.tx,
+                ty: t.ty,
+                tileSize: TS,
+                getThing
+            })) return;
+        }
 
         held.quantity = Math.max(0, Math.floor(Number(held.quantity) || 1) - 1);
         if (!(held.quantity > 0)) p.inventory[invIndex] = null;
         this._dirtyPawnOwner(p);
+
+        const { cx, cy } = worldToChunk(x, y - 1);
+        const chunk = this._ensureChunk(cx, cy);
+        if (!Array.isArray(chunk.things)) chunk.things = [];
+        if (!Array.isArray(chunk.lootableThings)) chunk.lootableThings = [];
+
+        if (thingDef.sleep) {
+            const entry = {
+                id: thingId,
+                x,
+                y,
+                tx,
+                ty,
+                rot
+            };
+            Place.ensureSleepEntry(entry, thingDef);
+            chunk.things.push(entry);
+            this._emitStorage(chunk, entry);
+            return;
+        }
 
         if (thingDef.craftStation) {
             const entry = {
@@ -5703,6 +5803,573 @@ class SimWorld {
         this._emitStorage(chunk, entry);
     }
 
+    _placeOccForTile(tx, ty) {
+        const { x, y } = this._tileCenter(tx, ty);
+        const { cx, cy } = worldToChunk(x, y - 1);
+        const things = [];
+        const lootables = [];
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                const c = this.chunks.get(chunkKey(cx + dx, cy + dy));
+                if (!c) continue;
+                if (Array.isArray(c.things)) things.push(...c.things);
+                if (Array.isArray(c.lootableThings)) lootables.push(...c.lootableThings);
+            }
+        }
+        return {
+            tileKey: this._tileKeyAt(tx, ty),
+            things,
+            lootables
+        };
+    }
+
+    _trySleep(session, action = {}) {
+        const op = String(action.op || "");
+        if (op === "rest") this._sleepRest(session, action);
+        else if (op === "wake") this._sleepWake(session, action);
+        else if (op === "destroy") this._sleepDestroy(session, action);
+    }
+
+    _sleepLog(session, text) {
+        if (!session || !text) return;
+        this.pushEvent({
+            kind: "combat_log",
+            text: String(text),
+            to: session.id
+        });
+    }
+
+    _livingPartyOf(session) {
+        const out = [];
+        if (!session) return out;
+        if (!session.dead) out.push(session);
+        for (const m of session.party || []) {
+            if (m && !m.dead) out.push(m);
+        }
+        return out;
+    }
+
+    _findSleepByUid(uid, near = null) {
+        if (!uid) return null;
+        const scan = (chunks) => {
+            for (const c of chunks) {
+                if (!Array.isArray(c.things)) continue;
+                for (const t of c.things) {
+                    if (t?.uid === uid && this._isSleepEntry(t)) return { chunk: c, entry: t };
+                }
+            }
+            return null;
+        };
+        if (near && Number.isFinite(near.x) && Number.isFinite(near.y)) {
+            const hit = scan(this._chunksNear(near.x, near.y, 2));
+            if (hit) return hit;
+        }
+        return scan(this.chunks.values());
+    }
+
+    _sleepDef(entry) {
+        return thingDefs().get(entry?.id);
+    }
+
+    _cancelRestWalksTo(uid) {
+        for (const session of this.players.values()) {
+            for (const pawn of this._livingPartyOf(session)) {
+                if (pawn._restWalk?.uid !== uid) continue;
+                pawn._restWalk = null;
+                const c = pawn.creature || this.creatures.get(pawn.id);
+                if (c) c._restWalk = null;
+                this._sleepLog(session, `${pawn.name || "They"} can't rest there.`);
+            }
+        }
+    }
+
+    _vacatePawn(pawn) {
+        if (!pawn) return;
+        const id = pawn.id;
+        for (const c of this.chunks.values()) {
+            if (!Array.isArray(c.things)) continue;
+            for (const t of c.things) {
+                if (!this._isSleepEntry(t) || !Array.isArray(t.occupants)) continue;
+                let changed = false;
+                for (let i = 0; i < t.occupants.length; i++) {
+                    if (t.occupants[i] === id) {
+                        t.occupants[i] = null;
+                        changed = true;
+                    }
+                }
+                if (changed) this._emitStorage(c, t);
+            }
+        }
+        pawn._resting = false;
+        pawn._restWalk = null;
+        const c = pawn.creature || this.creatures.get(pawn.id);
+        if (c) {
+            c._resting = false;
+            c._restWalk = null;
+        }
+    }
+
+    _sleepRest(session, action) {
+        const pawn = this._actionPawn(session, action);
+        if (!pawn || pawn.dead) return;
+        const found = this._findSleepByUid(action.uid, pawn);
+        if (!found) {
+            this._sleepLog(session, "They can't rest there.");
+            return;
+        }
+        const { entry } = found;
+        const def = this._sleepDef(entry);
+        Place.ensureSleepEntry(entry, def);
+        const slot = Math.max(0, Math.floor(Number(action.slot) || 0));
+        if (!Sleep.inHarvestRange(pawn.x, pawn.y, entry, TS, HARVEST_RANGE_TILES, def)
+            && !(pawn._resting && pawn.lastSleep?.uid === entry.uid)) {
+            // Allow the walk from farther than harvest once Rest is issued; only the click needs range.
+        }
+        const occ = entry.occupants[slot];
+        if (occ && occ !== pawn.id) {
+            this._sleepLog(session, "That spot is taken.");
+            return;
+        }
+        const pos = Sleep.sleeperWorldPos(entry, slot, TS, def);
+        const downed = !!(pawn.prone || pawn.creature?._prone || pawn.creature?.isIncapacitated?.()
+            || pawn.creature?.isImmobile?.());
+        if (downed) {
+            const onTile = Math.hypot(pawn.x - pos.x, pawn.y - pos.y) < TS;
+            if (!onTile) {
+                this._sleepLog(session, "They can't walk to the lean-to.");
+                return;
+            }
+        }
+        this._cancelChannels(pawn);
+        this._orderRest(session, pawn, entry, slot, { autofill: true });
+    }
+
+    _orderRest(session, pawn, entry, slot, opts = {}) {
+        if (!pawn || !entry) return false;
+        if (entry.occupants?.[slot] && entry.occupants[slot] !== pawn.id) {
+            this._sleepLog(session, "That spot is taken.");
+            return false;
+        }
+        if (pawn._resting) this._wakePawn(session, pawn, { moving: true });
+        pawn._restWalk = { uid: entry.uid, slot };
+        pawn.lastSleep = { uid: entry.uid, slot, rot: entry.rot };
+        const c = pawn.creature || this.creatures.get(pawn.id);
+        if (c) {
+            c._restWalk = pawn._restWalk;
+            c.lastSleep = pawn.lastSleep;
+        }
+        if (opts.autofill) this._autofillInjured(session, entry);
+        return true;
+    }
+
+    _autofillInjured(session, originEntry) {
+        const ox = originEntry.x;
+        const oy = originEntry.y;
+        const taken = new Set();
+        for (const p of this.players.values()) {
+            for (const pawn of this._livingPartyOf(p)) {
+                if (pawn._restWalk) taken.add(`${pawn._restWalk.uid}:${pawn._restWalk.slot}`);
+            }
+        }
+        const slots = [];
+        for (const c of this._chunksNear(ox, oy, 2)) {
+            if (!Array.isArray(c.things)) continue;
+            for (const e of c.things) {
+                if (!this._isSleepEntry(e)) continue;
+                Place.ensureSleepEntry(e, this._sleepDef(e));
+                if (!Sleep.inCampRange(ox, oy, e.x, e.y, TS)) continue;
+                const n = Sleep.slotCount(this._sleepDef(e), e);
+                for (let i = 0; i < n; i++) {
+                    const key = `${e.uid}:${i}`;
+                    if (e.occupants[i] || taken.has(key)) continue;
+                    slots.push({ entry: e, slot: i });
+                    taken.add(key);
+                }
+            }
+        }
+        const injured = this._livingPartyOf(session).filter((p) => {
+            if (p === session && session.controlId && p.id === session.controlId) return false;
+            const control = this._actionPawn(session, { pawnId: session.controlId });
+            if (p === control) return false;
+            if (p._resting || p._restWalk) return false;
+            const c = p.creature || this.creatures.get(p.id);
+            if (c?.isIncapacitated?.() || c?.isImmobile?.() || p.prone) return false;
+            return Sleep.injuredForAutofill(c?.anatomy);
+        });
+        for (const pawn of injured) {
+            const next = slots.shift();
+            if (!next) break;
+            this._orderRest(session, pawn, next.entry, next.slot, { autofill: false });
+        }
+    }
+
+    _occupySlot(session, pawn, entry, slot) {
+        if (!pawn || !entry) return false;
+        Place.ensureSleepEntry(entry, this._sleepDef(entry));
+        if (entry.occupants[slot] && entry.occupants[slot] !== pawn.id) {
+            this._sleepLog(session, "That spot is taken.");
+            pawn._restWalk = null;
+            return false;
+        }
+        this._vacatePawn(pawn);
+        entry.occupants[slot] = pawn.id;
+        pawn._restWalk = null;
+        pawn._resting = true;
+        pawn.lastSleep = { uid: entry.uid, slot, rot: entry.rot };
+        const def = this._sleepDef(entry);
+        const pos = Sleep.sleeperWorldPos(entry, slot, TS, def);
+        pawn.x = pos.x;
+        pawn.y = pos.y;
+        pawn.vx = 0;
+        pawn.vy = 0;
+        const c = pawn.creature || this.creatures.get(pawn.id);
+        if (c) {
+            c.x = pos.x;
+            c.y = pos.y;
+            c.vx = 0;
+            c.vy = 0;
+            c.setDesiredVel?.(0, 0);
+            c._resting = true;
+            c._restWalk = null;
+            c.lastSleep = pawn.lastSleep;
+            c._prone = true;
+        }
+        const found = this._findSleepByUid(entry.uid, pawn);
+        if (found) this._emitStorage(found.chunk, entry);
+        this._applyRestClock();
+        this._dirtyPawnOwner(pawn);
+        return true;
+    }
+
+    _wakePawn(session, pawn, opts = {}) {
+        if (!pawn) return;
+        const last = pawn.lastSleep;
+        this._vacatePawn(pawn);
+        pawn._resting = false;
+        pawn._restWalk = null;
+        const c = pawn.creature || this.creatures.get(pawn.id);
+        if (c) {
+            c._resting = false;
+            c._restWalk = null;
+            if (!(c.isImmobile?.() || c.isIncapacitated?.())) c._prone = false;
+        }
+        const found = last?.uid ? this._findSleepByUid(last.uid, pawn) : null;
+        if (found?.entry) {
+            const pos = Sleep.besideWorldPos(found.entry, TS, this._sleepDef(found.entry));
+            pawn.x = pos.x;
+            pawn.y = pos.y;
+            pawn.vx = 0;
+            pawn.vy = 0;
+            if (c) {
+                c.x = pos.x;
+                c.y = pos.y;
+                c.vx = 0;
+                c.vy = 0;
+                c.setDesiredVel?.(0, 0);
+            }
+        }
+        if (opts.help) {
+            pawn._wokeFromRest = true;
+            if (c) c._wokeFromRest = true;
+        }
+        if (opts.manual) {
+            pawn._wokeFromRest = false;
+            if (c) c._wokeFromRest = false;
+        }
+        this._applyRestClock();
+        this._dirtyPawnOwner(pawn);
+    }
+
+    _sleepWake(session, action) {
+        const pawn = this._actionPawn(session, action);
+        if (!pawn || !pawn._resting) return;
+        this._wakePawn(session, pawn, { manual: true });
+    }
+
+    _sleepDestroy(session, action) {
+        const pawn = this._actionPawn(session, action);
+        if (!pawn || pawn.dead) return;
+        const found = this._findSleepByUid(action.uid, pawn);
+        if (!found) return;
+        const { chunk, entry } = found;
+        const def = this._sleepDef(entry);
+        if (!Sleep.isEmpty(entry)) return;
+        if (!Sleep.inHarvestRange(pawn.x, pawn.y, entry, TS, HARVEST_RANGE_TILES, def)) return;
+        this._cancelRestWalksTo(entry.uid);
+        const itemId = Place.itemIdForThing(entry.id, itemDefs());
+        const itemDef = itemDefs().get(itemId);
+        const stacks = Sleep.salvageStacks(itemDef?.recipe, () => this.rng());
+        const tiles = Place.entryFootprintTiles(entry, TS, def);
+        const piles = Sleep.scatterSalvagePiles(stacks, tiles, TS, () => this.rng());
+        for (const pile of piles) {
+            this._pushDrop(pile.x, pile.y, { id: pile.id, quantity: pile.quantity });
+        }
+        const i = chunk.things.indexOf(entry);
+        if (i >= 0) chunk.things.splice(i, 1);
+        this._emitStorageRemoved(chunk, entry);
+    }
+
+    _stepRestWalk(session, pawn, dt) {
+        const spec = pawn._restWalk;
+        if (!spec) return;
+        const found = this._findSleepByUid(spec.uid, pawn);
+        if (!found) {
+            pawn._restWalk = null;
+            this._sleepLog(session, `${pawn.name || "They"} can't rest there.`);
+            return;
+        }
+        const { entry } = found;
+        const def = this._sleepDef(entry);
+        const pos = Sleep.sleeperWorldPos(entry, spec.slot, TS, def);
+        const cx = Number(pawn.x) + TS * 0.5;
+        const cy = Number(pawn.y) - TS * 0.5;
+        const d = Math.hypot(cx - pos.x, cy - pos.y);
+        const arrive = Sleep.ARRIVE_PX || 16;
+        if (d < arrive) {
+            this._occupySlot(session, pawn, entry, spec.slot);
+            return;
+        }
+        const controlId = session.controlId || session.id;
+        if (pawn.id === controlId) return;
+        const tx = pos.x - TS * 0.5;
+        const ty = pos.y + TS * 0.5;
+        const len = Math.hypot(tx - pawn.x, ty - pawn.y) || 1;
+        const speed = SPEED * (pawn.creature?.capacities?.moving?.() || 1);
+        const nx = pawn.x + ((tx - pawn.x) / len) * speed * dt;
+        const ny = pawn.y + ((ty - pawn.y) / len) * speed * dt;
+        pawn.x = nx;
+        pawn.y = ny;
+        const c = pawn.creature || this.creatures.get(pawn.id);
+        if (c) {
+            c.x = nx;
+            c.y = ny;
+            c.setDesiredVel?.(0, 0);
+        }
+    }
+
+    _tickSleepWalks(dtMs) {
+        const dt = dtMs / 1000;
+        for (const session of this.players.values()) {
+            if (!session.connected) continue;
+            for (const pawn of this._livingPartyOf(session)) {
+                if (pawn._restWalk) this._stepRestWalk(session, pawn, dt);
+                else if (pawn._resting) {
+                    pawn.vx = 0;
+                    pawn.vy = 0;
+                    const c = pawn.creature || this.creatures.get(pawn.id);
+                    if (c) {
+                        c.vx = 0;
+                        c.vy = 0;
+                        c.setDesiredVel?.(0, 0);
+                        c._resting = true;
+                    }
+                } else if (pawn._wokeFromRest) {
+                    const assist = pawn.creature?.ai?.assistTarget;
+                    if (!assist) this._tryReturnToBed(session, pawn);
+                }
+            }
+        }
+    }
+
+    _sleepSlotClaimed(entry, slot, exceptId) {
+        if (!entry) return true;
+        const occ = entry.occupants?.[slot];
+        if (occ && occ !== exceptId) return true;
+        for (const p of this.players.values()) {
+            for (const pawn of this._livingPartyOf(p)) {
+                if (pawn.id === exceptId) continue;
+                if (pawn._restWalk?.uid === entry.uid && pawn._restWalk.slot === slot) return true;
+            }
+        }
+        return false;
+    }
+
+    _tryInjuredRest(session, pawn) {
+        if (!session || !pawn || pawn._resting || pawn._restWalk || pawn._wokeFromRest) return;
+        const controlId = session.controlId || session.id;
+        if (pawn.id === controlId) return;
+        const c = pawn.creature || this.creatures.get(pawn.id);
+        if (!Sleep.injuredForAutofill(c?.anatomy)) return;
+        if (c?.isIncapacitated?.() || c?.isImmobile?.() || pawn.prone) return;
+        if (c?.ai?.assistTarget) return;
+        if (session.lastHitMob && Date.now() - (Number(session.lastHitAt) || 0) < 8000) return;
+        const control = this._actionPawn(session, { pawnId: controlId });
+        if (control && Math.hypot(control.vx || 0, control.vy || 0) > 8) return;
+        this._tryReturnToBed(session, pawn);
+    }
+
+    _tryReturnToBed(session, pawn) {
+        if (!pawn || pawn._resting || pawn._restWalk) return;
+        const c = pawn.creature || this.creatures.get(pawn.id);
+        if (!Sleep.capableToFight(c || pawn)) {
+            pawn._wokeFromRest = false;
+            return;
+        }
+        const last = pawn.lastSleep;
+        let entry = null;
+        let slot = 0;
+        if (last?.uid) {
+            const found = this._findSleepByUid(last.uid, pawn);
+            entry = found?.entry || null;
+            slot = last.slot || 0;
+            if (entry && this._sleepSlotClaimed(entry, slot, pawn.id)) entry = null;
+        }
+        if (!entry) {
+            let best = null;
+            let bestD = Infinity;
+            for (const ch of this._chunksNear(pawn.x, pawn.y, 2)) {
+                if (!Array.isArray(ch.things)) continue;
+                for (const e of ch.things) {
+                    if (!this._isSleepEntry(e)) continue;
+                    Place.ensureSleepEntry(e, this._sleepDef(e));
+                    if (!Sleep.inCampRange(pawn.x, pawn.y, e.x, e.y, TS)) continue;
+                    const n = Sleep.slotCount(this._sleepDef(e), e);
+                    for (let i = 0; i < n; i++) {
+                        if (this._sleepSlotClaimed(e, i, pawn.id)) continue;
+                        const d = Math.hypot(pawn.x - e.x, pawn.y - e.y);
+                        if (d < bestD) {
+                            bestD = d;
+                            best = { entry: e, slot: i };
+                        }
+                    }
+                }
+            }
+            if (best) {
+                entry = best.entry;
+                slot = best.slot;
+            }
+        }
+        pawn._wokeFromRest = false;
+        if (entry) this._orderRest(session, pawn, entry, slot, { autofill: false });
+    }
+
+    _everyoneLying() {
+        const sessions = [...this.players.values()].filter((p) => p.connected);
+        if (!sessions.length) return false;
+        for (const p of sessions) {
+            for (const pawn of this._livingPartyOf(p)) {
+                if (!pawn._resting) return false;
+            }
+        }
+        return true;
+    }
+
+    _applyRestClock() {
+        const base = Number.isFinite(this.baseTickSpeed) ? this.baseTickSpeed : (this.tickSpeed || 1);
+        this.baseTickSpeed = base;
+        this.tickSpeed = Sleep.effectiveTickSpeed(base, this._everyoneLying());
+    }
+
+    _sleepLiveIds() {
+        const ids = new Set();
+        for (const p of this.players.values()) {
+            if (!p.connected) continue;
+            if (!p.dead) ids.add(p.id);
+            for (const m of p.party || []) {
+                if (m && !m.dead) ids.add(m.id);
+            }
+        }
+        return ids;
+    }
+
+    _sanitizeSleepOccupants() {
+        const live = this._sleepLiveIds();
+        for (const c of this.chunks.values()) {
+            if (!Array.isArray(c.things)) continue;
+            for (const t of c.things) {
+                if (!this._isSleepEntry(t) || !Array.isArray(t.occupants)) continue;
+                let changed = false;
+                for (let i = 0; i < t.occupants.length; i++) {
+                    const id = t.occupants[i];
+                    if (id && !live.has(id)) {
+                        t.occupants[i] = null;
+                        changed = true;
+                    }
+                }
+                if (changed) this._emitStorage(c, t);
+            }
+        }
+    }
+
+    _onSleepCombatHit(victimCreature, attacker) {
+        if (!victimCreature || victimCreature.isBodyDead?.()) return;
+        if (attacker && Party.sameFaction?.(victimCreature, attacker)) return;
+        if (!attacker || attacker === victimCreature) return;
+        const victim = this._findOwnedPawn(victimCreature.id);
+        if (!victim) return;
+        const session = this._sessionOfPawn(victim);
+        this._wakeAbleResters(session, attacker, victim);
+        if (!victim._resting) victimCreature.ai?.setAssist?.(attacker);
+    }
+
+    _wakeAbleResters(session, enemy, origin) {
+        if (!session || !enemy || enemy.isBodyDead?.()) return;
+        const from = origin || session;
+        const camp = Sleep.CAMP_TILES * TS;
+        const ox = Number(from.x) || 0;
+        const oy = Number(from.y) || 0;
+        for (const p of this._livingPartyOf(session)) {
+            if (!p._resting) continue;
+            const pc = p.creature || this.creatures.get(p.id);
+            if (!Sleep.capableToFight(pc || p)) continue;
+            if (Math.hypot(p.x - ox, p.y - oy) > camp) continue;
+            this._wakePawn(session, p, { help: true });
+            pc?.ai?.setAssist?.(enemy);
+        }
+        session.lastHitMob = enemy;
+        session.lastHitAt = Date.now();
+    }
+
+    _findSleepByOccupant(pawnId) {
+        if (!pawnId) return null;
+        for (const c of this.chunks.values()) {
+            if (!Array.isArray(c.things)) continue;
+            for (const t of c.things) {
+                if (!this._isSleepEntry(t) || !Array.isArray(t.occupants)) continue;
+                const slot = t.occupants.indexOf(pawnId);
+                if (slot >= 0) return { chunk: c, entry: t, slot };
+            }
+        }
+        return null;
+    }
+
+    _clearPawnRest(pawn) {
+        if (!pawn) return;
+        pawn._resting = false;
+        pawn._restWalk = null;
+        pawn._joinRestHint = false;
+        const c = pawn.creature || this.creatures.get(pawn.id);
+        if (c) {
+            c._resting = false;
+            c._restWalk = null;
+        }
+    }
+
+    _restorePawnSleep(session, pawn) {
+        if (!pawn) return;
+        const pose = this.poses?.[pawn.id];
+        const byOcc = this._findSleepByOccupant(pawn.id);
+        let found = byOcc;
+        let slot = byOcc?.slot || 0;
+        const hint = pose?.lastSleep || pawn.lastSleep;
+        const tryUid = !!(byOcc || pose?.resting || pawn._joinRestHint || pawn._resting);
+        if (!found && tryUid && hint?.uid) {
+            found = this._findSleepByUid(hint.uid, pawn);
+            slot = hint.slot || 0;
+        }
+        if (found?.entry) {
+            if (!Sleep.isSlotOccupied(found.entry, slot) || found.entry.occupants[slot] === pawn.id) {
+                this._occupySlot(session, pawn, found.entry, slot);
+                pawn._joinRestHint = false;
+                return;
+            }
+            const pos = Sleep.besideWorldPos(found.entry, TS, this._sleepDef(found.entry));
+            pawn.x = pos.x;
+            pawn.y = pos.y;
+        }
+        this._clearPawnRest(pawn);
+    }
+
     _findPlayerStorage(p, action = {}) {
         if (!p) return null;
         const range2 = (TS * HARVEST_RANGE_TILES) * (TS * HARVEST_RANGE_TILES);
@@ -5714,7 +6381,7 @@ class SimWorld {
         for (const c of this._chunksNear(p.x, p.y, 1)) {
             if (!Array.isArray(c.things)) continue;
             for (const t of c.things) {
-                if (!this._isPlaceableEntry(t)) continue;
+                if (!this._isPlaceableEntry(t) || this._isSleepEntry(t)) continue;
                 const dx = t.x - p.x;
                 const dy = t.y - p.y;
                 const d2 = dx * dx + dy * dy;
@@ -6230,26 +6897,37 @@ class SimWorld {
             : this._ensureCompanionCreature(p, patientPawn);
         if (!patientCreature?.anatomy) return;
 
-        const hint = {
-            partName: action.partName ? String(action.partName) : null,
-            injuryIndex: Number.isInteger(Number(action.injuryIndex))
-                ? Number(action.injuryIndex)
+        const parseHint = (src) => ({
+            partName: src?.partName ? String(src.partName) : null,
+            injuryIndex: Number.isInteger(Number(src?.injuryIndex))
+                ? Number(src.injuryIndex)
                 : -1,
             inj: {
-                id: action.injuryId != null ? action.injuryId : undefined,
-                name: action.injuryName ? String(action.injuryName) : undefined,
-                severity: Number(action.injurySeverity)
+                id: src?.injuryId != null ? src.injuryId : undefined,
+                name: src?.injuryName ? String(src.injuryName) : undefined,
+                severity: Number(src?.injurySeverity)
             },
-            destroyedPartName: action.destroyedPartName
-                ? String(action.destroyedPartName)
+            destroyedPartName: src?.destroyedPartName
+                ? String(src.destroyedPartName)
                 : null
-        };
-        let target = BodyHealing.resolveTendTarget?.(patientCreature.anatomy, hint) || null;
-        const hinted = !!(hint.partName || hint.injuryId != null || hint.injuryName || hint.destroyedPartName);
-        if (!target && !hinted) {
-            target = BodyHealing.pickTendTarget(patientCreature.anatomy);
+        });
+        const rawHints = Array.isArray(action.targets) && action.targets.length
+            ? action.targets
+            : [action];
+        const hints = rawHints.map(parseHint);
+        const hinted = hints.some((h) => h.partName || h.inj.id != null || h.inj.name || h.destroyedPartName);
+        const applied = [];
+        for (const hint of hints) {
+            const t = BodyHealing.resolveTendTarget?.(patientCreature.anatomy, hint);
+            if (t) applied.push(t);
         }
-        if (!target) {
+        if (!applied.length && !hinted) {
+            const batch = BodyHealing.pickTendTargets?.(patientCreature.anatomy, {
+                batchSeverity: Number(meta.bandage.batchSeverity)
+            }) || [];
+            applied.push(...batch);
+        }
+        if (!applied.length) {
             const healer = tenderIsYou ? "you" : (tender.name || "they");
             this.pushEvent({
                 kind: "combat_log",
@@ -6264,7 +6942,7 @@ class SimWorld {
             Number(meta.bandage.tendQuality) || 0.4,
             Number(meta.bandage.tendQualityMax) || 0.7
         );
-        BodyHealing.applyTend(patientCreature.anatomy, target, quality);
+        for (const t of applied) BodyHealing.applyTend(patientCreature.anatomy, t, quality);
 
         held.quantity = Math.max(0, Math.floor(Number(held.quantity) || 1) - 1);
         if (!(held.quantity > 0)) from.inventory[slot] = null;
@@ -6273,23 +6951,12 @@ class SimWorld {
         patientCreature.anatomy._dirty = false;
         this._youDirty.add(p.id);
 
-        const qPct = Math.round(quality * 100);
         const who = tenderIsYou ? "You" : (tender.name || "Someone");
         const poss = patientIsYou
             ? "your"
             : (patientPawn.name ? `${patientPawn.name}'s` : "their");
-        let text = `${who} finished bandaging (${qPct}%)`;
-        if (target.part) {
-            text = `${who} bandaged ${poss} ${target.part.name} (${qPct}%)`;
-        } else if (target.destroyed) {
-            const name = target.destroyed.partName;
-            const part = name ? patientCreature.anatomy.part?.(name) : null;
-            text = BodyHealing.isStumpPart?.(part)
-                ? `${who} bandaged a stump (${qPct}%)`
-                : name
-                    ? `${who} packed the wound (${qPct}%)`
-                    : `${who} finished bandaging (${qPct}%)`;
-        }
+        const text = BodyHealing.tendLogLine?.(who, poss, quality, applied, patientCreature.anatomy)
+            || `${who} finished bandaging (${Math.round(quality * 100)}%)`;
         this.pushEvent({ kind: "combat_log", text, to: p.id });
     }
 
@@ -6409,7 +7076,7 @@ class SimWorld {
 
     _tryAttack(p, angle, pawnId = null) {
         const actor = this._actionPawn(p, { pawnId });
-        if (!actor || actor.dead) return;
+        if (!actor || actor.dead || actor._resting) return;
         if (actor.eatChannel || this._pawnVomiting(actor)) return;
         let creature = actor === p
             ? (this._syncPlayerCreature(p) || this._ensurePlayerCreature(p))
@@ -6531,6 +7198,8 @@ class SimWorld {
             if (creature.anatomy) p.body = creature.anatomy.toJSON();
         }
         if (!alreadyDead) {
+            this._vacatePawn(p);
+            this._applyRestClock();
             const loot = [];
             for (const key of ["head", "torso", "legs", "feet"]) {
                 const s = p.equipment?.[key];
@@ -6721,6 +7390,73 @@ class SimWorld {
         }
     }
 
+    _sessionPartyCombat(session, uncontrolled) {
+        if (this._chaseTarget(session)) return true;
+        if (session.attackTimer > 0) return true;
+        const control = this._actionPawn(session, { pawnId: session.controlId });
+        if (control?.creature?.isAttacking?.()) return true;
+        for (const row of uncontrolled || []) {
+            if (row.creature?.ai?.assistTarget) return true;
+            if (row.creature?.isAttacking?.()) return true;
+        }
+        return false;
+    }
+
+    _pickPartyAutoEat(eater, members, control) {
+        const mal = !!eater.creature?.anatomy?.hediff?.("malnutrition");
+        return Party.pickAutoEat(eater, members, {
+            tileSize: TS,
+            allowPoison: mal,
+            skipHeld: control ? { id: control.id, slot: control.hotbarIndex ?? 0 } : null,
+            getFood: (stack) => this._foodForEat(stack)
+        });
+    }
+
+    _assignPartyEatSeeks(session, uncontrolled, controlId) {
+        const members = [];
+        if (!session.dead) members.push(session);
+        for (const m of session.party || []) {
+            if (!m.dead) members.push(m);
+        }
+        const control = members.find((m) => m.id === controlId) || session;
+        const combat = this._sessionPartyCombat(session, uncontrolled);
+        for (const row of uncontrolled || []) {
+            const rec = row.rec;
+            const cc = row.creature;
+            if (!cc) continue;
+            cc.x = rec.x;
+            cc.y = rec.y;
+            if (!(cc.ai instanceof PartyAI)) cc.ai = new PartyAI(cc);
+            if (
+                combat
+                || rec.eatChannel
+                || rec._resting
+                || rec._restWalk
+                || rec.dead
+                || this._pawnVomiting(rec)
+            ) {
+                cc.ai.eatSeek = null;
+                continue;
+            }
+            if ((Number(rec.kc) || 0) >= Party.AUTO_EAT_BELOW) {
+                cc.ai.eatSeek = null;
+                continue;
+            }
+            const pick = this._pickPartyAutoEat(rec, members, control);
+            if (!pick || pick.inRange) {
+                cc.ai.eatSeek = null;
+                continue;
+            }
+            const from = pick.pawn;
+            const fromC = from.creature || this.creatures.get(from.id);
+            if (fromC) {
+                fromC.x = from.x;
+                fromC.y = from.y;
+            }
+            cc.ai.eatSeek = fromC || from;
+        }
+    }
+
     _tickPartyAI(dtMs, world) {
         const dt = dtMs / 1000;
         for (const p of this.players.values()) {
@@ -6737,12 +7473,16 @@ class SimWorld {
                 if (cc && !cc.isBodyDead()) rows.push({ rec: m, creature: cc });
             }
             const uncontrolled = rows.filter((row) => row.rec.id !== controlId);
+            this._assignPartyEatSeeks(p, uncontrolled, controlId);
             for (const row of uncontrolled) {
                 const cc = row.creature;
                 const rec = row.rec;
                 cc.x = rec.x;
                 cc.y = rec.y;
                 cc.facing = rec.facing || cc.facing;
+                cc._restWalk = rec._restWalk || null;
+                cc._resting = !!rec._resting;
+                cc._wokeFromRest = !!rec._wokeFromRest;
                 cc.inventory = rec.inventory;
                 cc.equipment = rec.equipment;
                 cc.hotbarIndex = rec.hotbarIndex ?? 0;
@@ -6764,6 +7504,7 @@ class SimWorld {
                 rec.vx = cc.vx || 0;
                 rec.vy = cc.vy || 0;
                 rec.facing = cc.facing || rec.facing;
+                rec._wokeFromRest = !!cc._wokeFromRest;
                 if (
                     Math.hypot(rec.x - ox, rec.y - oy) < 0.2
                     && (Math.abs(cc.vx) > 4 || Math.abs(cc.vy) > 4)
@@ -6833,6 +7574,7 @@ class SimWorld {
 
         this._rebuildDuelAssignments();
         this._tickPartyAI(dtMs, aiWorld);
+        this._tickSleepWalks(dtMs);
 
         for (const p of this.players.values()) {
             if (!p.connected) continue;
@@ -7000,6 +7742,7 @@ class SimWorld {
             if (creature?.capacities?.hungerRateFactor) {
                 tick *= creature.capacities.hungerRateFactor() || 1;
             }
+            tick *= Sleep.hungerMult(p._resting);
             p.saturation -= tick;
             if (p.saturation < 0) {
                 p.kc = Math.max(0, p.kc + p.saturation);
@@ -7027,6 +7770,7 @@ class SimWorld {
                 this._tickPlayerSpoilLeft(mem);
                 const mFed = (Number(mem.kc) > 0) || (Number(mem.saturation) > 0);
                 let mTick = 2000 / (24 * 60);
+                mTick *= Sleep.hungerMult(mem._resting);
                 mem.saturation = (Number(mem.saturation) || 0) - mTick;
                 if (mem.saturation < 0) {
                     mem.kc = Math.max(0, (Number(mem.kc) || 0) + mem.saturation);
@@ -7704,7 +8448,7 @@ class SimWorld {
     }
 
     _poseMotion(rec) {
-        if (rec?.dead || rec?.prone || rec?.creature?._prone) {
+        if (rec?.dead || rec?.prone || rec?._resting || rec?.creature?._prone || rec?.creature?._resting) {
             return { vx: 0, vy: 0, moving: false };
         }
         const vx = Number(rec?.vx) || Number(rec?.creature?.vx) || 0;
@@ -7733,7 +8477,13 @@ class SimWorld {
                 moving: motion.moving,
                 sprint: p.sprint,
                 dead: p.dead,
-                prone: !!(p.dead || p.prone),
+                prone: !!(p.dead || p.prone || p._resting),
+                resting: !!p._resting,
+                injured: !!(typeof Sleep !== "undefined" && Sleep.injuredForAutofill
+                    ? Sleep.injuredForAutofill(p.creature?.anatomy || p.anatomy)
+                    : false),
+                restRot: p.lastSleep?.rot,
+                lastSleep: p.lastSleep || null,
                 eating: !!p.eatChannel,
                 attacking: p.attackTimer > 0,
                 attackAngle: p.attackAngle ?? null,
@@ -7754,7 +8504,13 @@ class SimWorld {
                         vy: mm.vy,
                         moving: mm.moving,
                         dead: !!m.dead,
-                        prone: !!(m.dead || m.prone || m.creature?._prone),
+                        prone: !!(m.dead || m.prone || m.creature?._prone || m._resting),
+                        resting: !!m._resting,
+                        injured: !!(typeof Sleep !== "undefined" && Sleep.injuredForAutofill
+                            ? Sleep.injuredForAutofill(m.creature?.anatomy || m.anatomy)
+                            : false),
+                        restRot: m.lastSleep?.rot,
+                        lastSleep: m.lastSleep || null,
                         look: m.look || Look.normalizeLook(null),
                         attacking: (m.attackTimer || 0) > 0,
                         attackAngle: m.attackAngle ?? null,
@@ -7840,7 +8596,12 @@ class SimWorld {
             mobs.push(row);
         }
         const out = {
-            clock: { gameDay: this.gameDay, gameMinutes: this.gameMinutes, tickSpeed: this.tickSpeed },
+            clock: {
+                gameDay: this.gameDay,
+                gameMinutes: this.gameMinutes,
+                tickSpeed: this.tickSpeed,
+                baseTickSpeed: Number.isFinite(this.baseTickSpeed) ? this.baseTickSpeed : this.tickSpeed
+            },
             players,
             drops,
             corpses,
@@ -7882,7 +8643,10 @@ class SimWorld {
             hp: p.hp,
             mhp: p.mhp,
             dead: p.dead,
-            prone: !!(p.dead || p.prone || creature?._prone),
+            prone: !!(p.dead || p.prone || creature?._prone || p._resting),
+            resting: !!p._resting,
+            restRot: p.lastSleep?.rot,
+            lastSleep: p.lastSleep || null,
             look: p.look || Look.normalizeLook(null),
             eatChannel: p.eatChannel
                 ? { progress: 1 - p.eatChannel.remaining / p.eatChannel.max }
@@ -7907,7 +8671,10 @@ class SimWorld {
                 y: m.y,
                 facing: m.facing,
                 dead: !!m.dead,
-                prone: !!(m.dead || m.prone || m.creature?._prone),
+                prone: !!(m.dead || m.prone || m.creature?._prone || m._resting),
+                resting: !!m._resting,
+                restRot: m.lastSleep?.rot,
+                lastSleep: m.lastSleep || null,
                 eatChannel: m.eatChannel
                     ? { progress: 1 - m.eatChannel.remaining / m.eatChannel.max }
                     : null

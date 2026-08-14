@@ -189,6 +189,11 @@ class Hotbar {
             quantity.setPosition(slot.x + slotW - 4 * s, slot.y - 4 * s);
 
             const stack = this.scene.player.inventory[i] || null;
+            if (stack && stack.quantity > 1) {
+                quantity.setText(String(stack.quantity)).setVisible(true);
+            } else {
+                quantity.setVisible(false);
+            }
             const meta = stack ? this.scene.getItem(stack.id) : null;
             syncStackIcon(icon, fill, stack, meta, id => this.scene.getItem(id),
                 this.scene.textures, 3.0 * s);
