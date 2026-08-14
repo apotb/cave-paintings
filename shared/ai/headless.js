@@ -637,6 +637,8 @@
                 || (this._noProgressMs > 280 && dist < catchR);
             if (closeEnough) {
                 this._holdFollow = true;
+                const jammed = overlapping || this._noProgressMs > 200;
+                if (!jammed && this._unstickFromMates(follow, idleR)) return;
                 this._idle();
                 return;
             }
@@ -644,6 +646,66 @@
 
             const sprint = dist > TILE * 6;
             this._walkToward(follow.x, follow.y, sprint, this._world, delta);
+        }
+
+        _separation() {
+            const mob = this.mob;
+            const mates = this._world?.getPartyMates?.(mob) || [];
+            const want = TILE * 0.5;
+            let sx = 0;
+            let sy = 0;
+            for (const other of mates) {
+                if (!other || other === mob || other.id === mob.id) continue;
+                if (other._prone || other.isBodyDead?.()) continue;
+                const dx = mob.x - other.x;
+                const dy = mob.y - other.y;
+                const d = Math.hypot(dx, dy);
+                if (!(d > 0.01)) {
+                    const h = this._idHash(mob.id || 0);
+                    sx += Math.cos(h);
+                    sy += Math.sin(h);
+                    continue;
+                }
+                if (d >= want) continue;
+                const w = (want - d) / want;
+                sx += (dx / d) * w;
+                sy += (dy / d) * w;
+            }
+            return { sx, sy };
+        }
+
+        _idHash(id) {
+            const s = String(id);
+            let n = 0;
+            for (let i = 0; i < s.length; i++) n = (n * 31 + s.charCodeAt(i)) | 0;
+            return ((n >>> 0) / 4294967296) * Math.PI * 2;
+        }
+
+        _unstickFromMates(follow, idleR) {
+            if (this._overlappingThing(this._world)) return false;
+            const sep = this._separation();
+            const sl = Math.hypot(sep.sx, sep.sy);
+            if (!(sl > 0.45)) return false;
+            const mob = this.mob;
+            let wx = sep.sx / sl;
+            let wy = sep.sy / sl;
+            const fx = follow.x - mob.x;
+            const fy = follow.y - mob.y;
+            const fd = Math.hypot(fx, fy) || 1;
+            const nx = fx / fd;
+            const ny = fy / fd;
+            const away = wx * -nx + wy * -ny;
+            if (fd > idleR * 0.65 && away > 0) {
+                wx += nx * (away + 0.4);
+                wy += ny * (away + 0.4);
+                const n = Math.hypot(wx, wy) || 1;
+                wx /= n;
+                wy /= n;
+            }
+            const from = mob.bodyCenter?.() || mob;
+            if (this._agentBlocked(from.x + wx * 10, from.y + wy * 10, this._world)) return false;
+            this._walk(wx, wy, false);
+            return true;
         }
 
         _leaderMoving(follow) {

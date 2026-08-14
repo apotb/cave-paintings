@@ -346,7 +346,11 @@ class EquipmentPanel {
         const toHotbar = hotbar.getIndexAt(pointer.x, pointer.y);
 
         let ok = false;
-        if (toHotbar !== -1) {
+        const partyTarget = this.scene.partySys?.partyDropTarget?.(pointer);
+        if (partyTarget) {
+            ok = this._giveSlotToParty(fromKey, partyTarget);
+            if (!ok) this._shakeSlot(fromKey);
+        } else if (toHotbar !== -1) {
             const result = this.scene.player.unequipToHotbar(fromKey, toHotbar);
             ok = result.ok;
             if (!ok) this._shakeSlot(fromKey);
@@ -365,6 +369,23 @@ class EquipmentPanel {
         this.layout();
         hotbar.dirty = true;
         this.scene.refreshTooltip();
+    }
+
+    _giveSlotToParty(fromKey, target) {
+        const player = this.scene.player;
+        const stack = player.getEquipmentStack(fromKey);
+        if (!stack || !target) return false;
+        if (!this.scene.partySys?.canGiveTo(player, target, stack)) return false;
+        const inv = player.inventory;
+        let idx = inv.findIndex((s) => !s);
+        if (idx < 0 && inv.length < player.inventorySize) idx = inv.length;
+        if (idx < 0) {
+            this.scene.combatLog?.push("No empty hotbar slot to hand that over.");
+            return false;
+        }
+        const result = player.unequipToHotbar(fromKey, idx);
+        if (!result.ok) return false;
+        return !!this.scene.partySys.tryGive(player, idx, target);
     }
 
     _swapEquipSlots(fromKey, toKey) {

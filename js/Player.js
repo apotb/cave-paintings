@@ -2224,9 +2224,28 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const meta = this.scene.getItem(item.id);
         if (!meta?.bandage) return false;
         const who = patient && patient.anatomy ? patient : this;
-        const target = BodyHealing.pickTendTarget(who.anatomy);
+        let skip = typeof opts.skip === "function" ? opts.skip : null;
+        if (!skip) {
+            const sys = this.scene.partySys;
+            if (sys?._reservedTendKeys && sys?._woundIsReserved) {
+                const reserved = sys._reservedTendKeys(this);
+                skip = (spec) => sys._woundIsReserved(reserved, who, spec);
+            }
+        }
+        let target = opts.target && (opts.target.inj || opts.target.destroyed)
+            ? opts.target
+            : null;
+        if (target && skip?.(target)) target = null;
         if (!target) {
-            if (!opts.silent) this.scene.combatLog?.push("Nothing to bandage");
+            target = BodyHealing.pickTendTarget(who.anatomy, skip ? { skip } : undefined);
+        }
+        if (!target) {
+            if (!opts.silent) {
+                const claimed = skip && BodyHealing.pickTendTarget(who.anatomy);
+                this.scene.combatLog?.push(
+                    claimed ? "That wound is already being bandaged" : "Nothing to bandage"
+                );
+            }
             return false;
         }
         const seconds = Number(meta.bandage.channelSeconds) || 5;
@@ -2667,9 +2686,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             || (BodyHealing.isTendTargetValid(body, ch.target) ? ch.target : null);
         if (!target) {
             // Wound closed on its own — finish the channel, keep the bandage
-            if (this.isControlled?.()) {
-                this.scene.combatLog?.push("The wound healed before you finished");
-            }
+            const healer = this.isControlled?.() ? "you" : this.displayName();
+            this.scene.combatLog?.push(`The wound healed before ${healer} finished`);
             this._tendChannel = null;
             if (this.isControlled?.()) this.scene.hideChannelBar?.();
             this.scene.healthPanel?.refresh?.();
@@ -2684,24 +2702,21 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (typeof src.loseItemAt === "function") src.loseItemAt(ch.slot, 1);
         else this.loseAnyItem(ch.itemId, 1);
         const qPct = Math.round(quality * 100);
-        if (this.isControlled?.()) {
-            const who = "You";
-            const other = patient !== this;
-            const poss = other ? `${patient.displayName()}'s` : "your";
-            let tendMsg = `${who} finished bandaging (${qPct}%)`;
-            if (target?.part) {
-                tendMsg = `${who} bandaged ${poss} ${target.part.name} (${qPct}%)`;
-            } else if (target?.destroyed) {
-                const name = target.destroyed.partName;
-                const part = name ? body?.part?.(name) : null;
-                tendMsg = (typeof BodyHealing !== "undefined" && BodyHealing.isStumpPart(part))
-                    ? `${who} bandaged a stump (${qPct}%)`
-                    : name
-                        ? `${who} packed the wound (${qPct}%)`
-                        : `${who} finished bandaging (${qPct}%)`;
-            }
-            this.scene.combatLog?.push(tendMsg);
+        const who = this.isControlled?.() ? "You" : this.displayName();
+        const poss = patient.isControlled?.() ? "your" : `${patient.displayName()}'s`;
+        let tendMsg = `${who} finished bandaging (${qPct}%)`;
+        if (target?.part) {
+            tendMsg = `${who} bandaged ${poss} ${target.part.name} (${qPct}%)`;
+        } else if (target?.destroyed) {
+            const name = target.destroyed.partName;
+            const part = name ? body?.part?.(name) : null;
+            tendMsg = (typeof BodyHealing !== "undefined" && BodyHealing.isStumpPart(part))
+                ? `${who} bandaged a stump (${qPct}%)`
+                : name
+                    ? `${who} packed the wound (${qPct}%)`
+                    : `${who} finished bandaging (${qPct}%)`;
         }
+        this.scene.combatLog?.push(tendMsg);
         this._tendChannel = null;
         if (this.isControlled?.()) this.scene.hideChannelBar?.();
         this.scene.healthPanel?.refresh?.();
@@ -2746,12 +2761,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const room = who.stomach - who.kc;
         if (isMeal && !(room > 0)) return false;
 
-        // Dedicated MP: server owns hunger + food stacks — ask it to run the eat channel
-        // unless this is a companion PARTY_EAT / force-feed (explicit source pawn/slot).
+        // Dedicated MP: server owns hunger + food stacks.
         const partyEat = !!(opts.sourcePawn || opts.slot != null || patient);
-        const serverAuth = !!opts.serverAuth
-            || (!partyEat && this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
-        if (serverAuth && this.scene.net?.connected && !partyEat) {
+        const dedicated = !!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
+        const serverAuth = !!opts.serverAuth || dedicated;
+        if (serverAuth && dedicated && !partyEat) {
             this.scene._netSendMove?.(true);
             this.scene.net.sendAction({ type: NetProtocol.Actions.USE, pawnId: this.pawnId });
         }
@@ -2784,8 +2798,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const serverAuth = !!this._eatChannel.serverAuth;
         this._eatChannel = null;
         if (this.isControlled?.()) this.scene.hideChannelBar?.();
-        if (serverAuth && this.scene.net?.connected && !this.scene.net.isLocal) {
-            this.scene.net.sendAction({ type: NetProtocol.Actions.CANCEL_CHANNEL });
+        if (serverAuth && this.isControlled?.() && this.scene.net?.connected && !this.scene.net.isLocal) {
+            this.scene.net.sendAction({ type: NetProtocol.Actions.CANCEL_CHANNEL, pawnId: this.pawnId });
         }
     }
 
@@ -2822,7 +2836,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this._cancelEat();
             return;
         }
-        if (this._eatChannel.serverAuth && fromSelf) {
+        if (this._eatChannel.serverAuth && fromSelf && this.isControlled?.()) {
             const held = this.getHeldItem();
             if (!held || held.id !== this._eatChannel.itemId) {
                 this._cancelEat();
@@ -3021,9 +3035,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         );
         if (downed) {
             this.facing = "right";
-            const w = this.width || 16;
-            const h = this.height || 16;
+            // Server pose is feet-anchored. Apply it first, then origin shift.
             if (this._prone) {
+                const w = this.width || 16;
+                const h = this.height || 16;
                 this.x = tx + w * 0.5;
                 this.y = ty - h * 0.5;
             } else {
@@ -3031,6 +3046,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 this.y = ty;
             }
             this._puppetMoving = false;
+            this.setVelocity?.(0, 0);
+            this._iceVx = 0;
+            this._iceVy = 0;
             if (typeof setCreatureProne === "function") setCreatureProne(this, true);
             else {
                 this.anims?.stop?.();
@@ -3184,6 +3202,14 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const immobile = this.isImmobile();
         const vomiting = this.isVomiting();
         const prone = immobile || incapacitated;
+        if (this.body) {
+            this.body.moves = !prone && !vomiting;
+            if (prone || vomiting) {
+                this.setVelocity(0, 0);
+                this._iceVx = 0;
+                this._iceVy = 0;
+            }
+        }
         setCreatureProne(this, prone);
 
         // Movement — no crawling; immobile / incapacitated / vomiting stay put

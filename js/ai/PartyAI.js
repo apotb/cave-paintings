@@ -152,18 +152,20 @@ class PartyAI {
         const distPlayer = Math.hypot(pawn.x - controlled.x, pawn.y - controlled.y);
         const idleR = (P?.FOLLOW_IDLE ?? 2.6) * ts;
         const catchR = (P?.FOLLOW_CATCH ?? 4.8) * ts;
+        const overlapping = !!this._overlappingThing(pawn);
+        const closeEnough = distPlayer <= idleR
+            || (this._holdFollow && distPlayer < catchR)
+            || (overlapping && distPlayer < catchR)
+            || (this._noProgressMs > 280 && distPlayer < catchR);
 
-        if (this._holdFollow) {
-            if (distPlayer < catchR) {
-                this._idleFollow(pawn);
-                return;
-            }
-            this._holdFollow = false;
-        } else if (distPlayer <= idleR) {
+        if (closeEnough) {
             this._holdFollow = true;
+            const jammed = overlapping || this._noProgressMs > 200;
+            if (!jammed && this._unstickFromMates(pawn, controlled, ts, idleR)) return;
             this._idleFollow(pawn);
             return;
         }
+        this._holdFollow = false;
 
         const sprintCatch =
             (!!controlled.isSprinting && distPlayer > catchR)
@@ -204,11 +206,11 @@ class PartyAI {
         this._unstick = null;
     }
 
-    _separation(pawn, ts) {
+    _separation(pawn, ts, wantTiles) {
         const scene = pawn.scene;
         let sx = 0;
         let sy = 0;
-        const want = this.assistTarget ? ts * 1.35 : ts * 1.05;
+        const want = (wantTiles ?? (this.assistTarget ? 1.35 : 1.05)) * ts;
         for (const other of scene?.party || []) {
             if (!other || other === pawn) continue;
             if (typeof Party !== "undefined" && Party.walkThrough?.(other)) continue;
@@ -216,12 +218,53 @@ class PartyAI {
             const dx = pawn.x - other.x;
             const dy = pawn.y - other.y;
             const d = Math.hypot(dx, dy);
-            if (!(d > 0.01) || d >= want) continue;
+            if (!(d > 0.01)) {
+                const h = this._idHash(pawn.pawnId || pawn.x);
+                sx += Math.cos(h);
+                sy += Math.sin(h);
+                continue;
+            }
+            if (d >= want) continue;
             const w = (want - d) / want;
             sx += (dx / d) * w;
             sy += (dy / d) * w;
         }
         return { sx, sy };
+    }
+
+    _idHash(id) {
+        const s = String(id);
+        let n = 0;
+        for (let i = 0; i < s.length; i++) n = (n * 31 + s.charCodeAt(i)) | 0;
+        return ((n >>> 0) / 4294967296) * Math.PI * 2;
+    }
+
+    /** Step aside if stacked on a mate, without walking away from the player. */
+    _unstickFromMates(pawn, follow, ts, idleR) {
+        if (this._overlappingThing(pawn)) return false;
+        const sep = this._separation(pawn, ts, 0.5);
+        const sl = Math.hypot(sep.sx, sep.sy);
+        if (!(sl > 0.45)) return false;
+        let wx = sep.sx / sl;
+        let wy = sep.sy / sl;
+        const fx = follow.x - pawn.x;
+        const fy = follow.y - pawn.y;
+        const fd = Math.hypot(fx, fy) || 1;
+        const nx = fx / fd;
+        const ny = fy / fd;
+        const away = wx * -nx + wy * -ny;
+        if (fd > idleR * 0.65 && away > 0) {
+            wx += nx * (away + 0.4);
+            wy += ny * (away + 0.4);
+            const n = Math.hypot(wx, wy) || 1;
+            wx /= n;
+            wy /= n;
+        }
+        const from = pawn.body?.center || pawn;
+        if (this._pointBlocked(from.x + wx * 10, from.y + wy * 10, pawn)) return false;
+        pawn.isSprinting = false;
+        this._applyWalk(pawn, wx, wy, false);
+        return true;
     }
 
     _walkToward(pawn, tx, ty, ts, sprint, delta) {

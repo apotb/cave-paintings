@@ -47,7 +47,9 @@ class SceneMenu extends Phaser.Scene {
         }
         this._onMenuKeydown = (e) => this._handleMenuEscape(e);
         document.addEventListener("keydown", this._onMenuKeydown, true);
+        if (this._onResize) this.scale.off("resize", this._onResize);
         this._onResize = () => {
+            if (!this.sys?.isActive?.()) return;
             if (this._resizeTimer) clearTimeout(this._resizeTimer);
             this._resizeTimer = setTimeout(() => this._relayout(), 40);
         };
@@ -226,7 +228,7 @@ class SceneMenu extends Phaser.Scene {
 
     /** Rebuild the current menu screen after a window resize. */
     _relayout() {
-        if (!this.sys || this.sys.isActive === false) return;
+        if (!this.sys?.isActive?.() || !this.cameras?.main) return;
         const gw = this.scale.width;
         const gh = this.scale.height;
         this.cameras.main.setSize(gw, gh);

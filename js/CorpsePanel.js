@@ -358,6 +358,8 @@ class CorpsePanel {
             itemId: stack.id,
             quantity,
             equipIfEmpty: !!opts?.equipIfEmpty,
+            pawnId: player?.pawnId,
+            toPawnId: opts?.toPawnId || undefined,
             x: player?.x,
             y: player?.y
         });
@@ -582,11 +584,40 @@ class CorpsePanel {
         return false;
     }
 
+    tryGiveToPartyMember(pointer) {
+        const target = this.scene.partySys?.partyDropTarget?.(pointer);
+        if (!target || this._dragFrom == null) return false;
+        const stack = this.session[this._dragFrom];
+        if (!stack) return false;
+        const from = this.scene.player;
+        if (!this.scene.partySys.canGiveTo(from, target, stack)) return false;
+
+        if (this._dedicatedNet()) {
+            const qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
+            this._notifyServerTake(this._dragFrom, qty, { toPawnId: target.pawnId });
+            this.session[this._dragFrom] = null;
+            this._afterTake();
+            return true;
+        }
+
+        const whole = typeof cloneItemStack === "function" ? cloneItemStack(stack) : { ...stack };
+        if (!this.scene.partySys.deliverGive(target, whole)) {
+            this.scene.combatLog?.push(`${target.displayName()} cannot carry that.`);
+            return false;
+        }
+        this.session[this._dragFrom] = null;
+        this._afterTake();
+        return true;
+    }
+
     _onPointerUp(pointer) {
         if (this._dragging && this._dragFrom != null) {
             let handled = false;
+            if (this.scene.partyPanel?.visible) {
+                handled = this.tryGiveToPartyMember(pointer);
+            }
             const hotIdx = this.scene.hotbar?.getIndexAt?.(pointer.x, pointer.y);
-            if (hotIdx != null && hotIdx >= 0) {
+            if (!handled && hotIdx != null && hotIdx >= 0) {
                 handled = this.tryDepositToHotbar(hotIdx);
             }
             if (this._dragIcon) this._dragIcon.destroy();

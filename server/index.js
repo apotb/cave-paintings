@@ -164,6 +164,8 @@ class GameServer {
         if (!meta) return;
         this.clients.delete(ws);
         if (meta.authed && meta.playerId) {
+            // Reconnect closes the old socket after AUTH already bound the new one.
+            if (this.playerSockets.get(meta.playerId) !== ws) return;
             const leaving = this.sim.players.get(meta.playerId);
             const name = leaving?.name || meta.playerId;
             this.playerSockets.delete(meta.playerId);
@@ -279,7 +281,8 @@ class GameServer {
             clock: { gameDay: this.sim.gameDay, gameMinutes: this.sim.gameMinutes, tickSpeed: this.sim.tickSpeed },
             spawn: this.sim.spawn,
             motd: this.props.motd || "",
-            you: this.sim.youPayload(playerId)
+            you: this.sim.youPayload(playerId),
+            wanderers: [...this.sim.wanderers.values()].map((w) => this.sim._publicWanderer(w)).filter(Boolean)
         });
         this.syncChunks(ws, meta, true);
         this.send(ws, Protocol.Types.YOU, this.sim.youPayload(playerId));

@@ -165,11 +165,7 @@ class SimCreature {
     }
 
     bodyCenter() {
-        // Players: client poseAuth sends center-anchored coords while prone.
-        // Mobs: server pose stays feet/bottom-left even when downed.
-        if (this._prone && this.kind === "player") {
-            return { x: this.x, y: this.y };
-        }
+        // Net/sim pose is always feet / bottom-left, even while downed.
         return {
             x: this.x + this.width * 0.5,
             y: this.y - this.height * 0.5
@@ -512,7 +508,8 @@ class SimCreature {
             if (!target || target === this || target.isBodyDead?.()) continue;
             if (this.attackHitSet.has(target)) continue;
             if (Party?.sameFaction?.(this, target)) continue;
-            if (!MeleeMath.meleeSegmentHitsTarget(seg.a, seg.b, radius, target)) continue;
+            const rad = target.role === "wanderer" ? radius + 8 : radius;
+            if (!MeleeMath.meleeSegmentHitsTarget(seg.a, seg.b, rad, target)) continue;
 
             this.attackHitSet.add(target);
             BodyCombat.applyHit(this, target, attack);
@@ -648,11 +645,14 @@ function createPlayerCreature(p, dataStore, extras = {}) {
         ctx: extras
     });
         creature.look = p.look || null;
-        creature.ownerId = p.ownerId || p.id || extras.ownerId;
         creature.role = p.role || extras.role || "leader";
-        creature.faction = creature.role === "wanderer"
-            ? Party.FACTION_WANDERERS
-            : Party.partyFactionId(creature.ownerId);
+        if (creature.role === "wanderer") {
+            creature.ownerId = null;
+            creature.faction = Party.FACTION_WANDERERS;
+        } else {
+            creature.ownerId = p.ownerId || p.id || extras.ownerId;
+            creature.faction = Party.partyFactionId(creature.ownerId);
+        }
         return creature;
 }
 

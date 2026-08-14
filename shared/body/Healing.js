@@ -366,13 +366,15 @@
             return null;
         },
 
-        pickTendTarget(body) {
+        pickTendTarget(body, opts = {}) {
+            const skip = typeof opts.skip === "function" ? opts.skip : null;
             const bleeding = [];
             const other = [];
             for (const part of Object.values(body.parts())) {
                 if (part.isDead()) continue;
                 for (const inj of part.injuries) {
                     if (inj.permanent) continue;
+                    if (skip?.({ part, inj })) continue;
                     if (inj.bleeding && !inj.tended) {
                         bleeding.push({
                             part,
@@ -388,12 +390,12 @@
                 }
             }
             for (const d of body.destroyedBleed || []) {
-                if (!d.tended) {
-                    bleeding.push({
-                        destroyed: d,
-                        score: d.mhp * 2 * 0.06 * (d.bleedMult || 1)
-                    });
-                }
+                if (d.tended) continue;
+                if (skip?.({ destroyed: d })) continue;
+                bleeding.push({
+                    destroyed: d,
+                    score: d.mhp * 2 * 0.06 * (d.bleedMult || 1)
+                });
             }
             if (bleeding.length) {
                 bleeding.sort((a, b) => b.score - a.score);

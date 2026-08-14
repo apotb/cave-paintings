@@ -956,6 +956,48 @@ class CampfirePanel {
         this._notifyCampfire("slot_to_inv", { slot: key, inv: -1, amount: moved });
     }
 
+    _giveSlotToParty(fromKey, target) {
+        if (fromKey === "catalyst" && this._catalystLocked()) return false;
+        const stack = this._stackFor(fromKey);
+        if (!stack || !target) return false;
+        const from = this.scene.player;
+        if (!this.scene.partySys?.canGiveTo(from, target, stack)) return false;
+        const qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
+        const amount = fromKey.startsWith("fuel:") ? qty : 1;
+        if (this._isDedicated()) {
+            if (amount >= qty) this._setStack(fromKey, null);
+            else {
+                stack.quantity -= amount;
+                this._setStack(fromKey, stack);
+            }
+            this._notifyCampfire("slot_to_inv", {
+                slot: fromKey,
+                inv: -1,
+                amount,
+                toPawnId: target.pawnId
+            });
+            this.layout();
+            this.scene.refreshTooltip();
+            return true;
+        }
+        const piece = this._cloneStack(stack);
+        piece.quantity = amount;
+        const invStack = this._toInvStack(piece);
+        if (!this.scene.partySys.deliverGive(target, invStack)) {
+            this.scene.combatLog?.push(`${target.displayName()} cannot carry that.`);
+            return false;
+        }
+        if (amount >= qty) this._setStack(fromKey, null);
+        else {
+            stack.quantity -= amount;
+            this._setStack(fromKey, stack);
+        }
+        this.layout();
+        this.scene.hotbar.dirty = true;
+        this.scene.refreshTooltip();
+        return true;
+    }
+
     _onPointerUp(pointer) {
         if (!this._dragging) {
             this._pointerIsDown = false;
@@ -967,13 +1009,18 @@ class CampfirePanel {
         const fromKey = this._dragFromKey;
         const stack = this._stackFor(fromKey);
         if (stack) {
-            const toHotbar = this.scene.hotbar.getIndexAt(pointer.x, pointer.y);
-            if (toHotbar !== -1) {
-                this._dropSlotToHotbar(fromKey, toHotbar);
+            const partyTarget = this.scene.partySys?.partyDropTarget?.(pointer);
+            if (partyTarget && this._giveSlotToParty(fromKey, partyTarget)) {
+                // given
             } else {
-                const toKey = this.getSlotAt(pointer.x, pointer.y);
-                if (toKey && toKey !== fromKey) {
-                    this._moveBetweenSlots(fromKey, toKey);
+                const toHotbar = this.scene.hotbar.getIndexAt(pointer.x, pointer.y);
+                if (toHotbar !== -1) {
+                    this._dropSlotToHotbar(fromKey, toHotbar);
+                } else {
+                    const toKey = this.getSlotAt(pointer.x, pointer.y);
+                    if (toKey && toKey !== fromKey) {
+                        this._moveBetweenSlots(fromKey, toKey);
+                    }
                 }
             }
         }

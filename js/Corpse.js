@@ -154,9 +154,9 @@ class Corpse extends Phaser.GameObjects.Sprite {
         // Above same-y Things / slightly above blood so pools don't steal hover
         this.setDepth((Number(entry.y) || 0) + 1);
 
-        if (!chunk.corpses) chunk.corpses = scene.add.group();
+        if (!chunk.corpses?.children) chunk.corpses = scene.add.group();
         chunk.corpses.add(this);
-        if (!scene.corpses) scene.corpses = scene.add.group();
+        if (!scene.corpses?.children) scene.corpses = scene.add.group();
         scene.corpses.add(this);
 
         this.on("pointerover", (pointer) => {
@@ -188,8 +188,8 @@ class Corpse extends Phaser.GameObjects.Sprite {
             if (scene._hoverTarget === this) scene._hoverTarget = null;
             if (scene._tooltipTarget === this) scene.hideTooltip();
             if (scene.corpsePanel?.corpse === this) scene.corpsePanel.close();
-            chunk.corpses?.remove(this);
-            scene.corpses?.remove(this);
+            if (chunk.corpses?.children) chunk.corpses.remove(this);
+            if (scene.corpses?.children) scene.corpses.remove(this);
         });
     }
 

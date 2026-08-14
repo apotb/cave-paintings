@@ -59,6 +59,8 @@ class SceneMain extends SceneBase {
         this.partyPanel = null;
         this.chunks = null;
         this.droppedItems = null;
+        this.corpses = null;
+        this.netCorpses = new Map();
         this.cursors = null;
         this.keys = null;
         this.key1 = this.key2 = this.key3 = this.key4 = this.key5 = null;
@@ -187,6 +189,7 @@ class SceneMain extends SceneBase {
         this.physics.add.overlap(this.player, this.mobs);
         this.physics.add.collider(this.mobs, this._things);
         this.droppedItems = this.add.group();
+        this.corpses = this.add.group();
 
         // UI
         this.cameras.main.ignore(this.uiLayer);
@@ -256,6 +259,8 @@ class SceneMain extends SceneBase {
             this.player.teleport(you.x, you.y);
             this.syncCameraToPlayer();
         }
+        this._netWandererGraceUntil = performance.now() + 3000;
+        if (this.welcome?.wanderers) this._netApplyWanderers(this.welcome.wanderers);
         // First SP entry into a world: let ensureSpawnSign run pickRandomSpawnTile (same as respawn).
         // Dedicated MP / rejoin already have an authoritative pose on YOU.
         this._playerSpawnPlaced = !this.welcome?.firstSpawn;
@@ -266,6 +271,7 @@ class SceneMain extends SceneBase {
         this._netForceYouInv = false;
         this.partySys?.applyJoinParty?.(you, this.character, { join: true });
 
+        this.net.clearHandlers?.();
         this.net.on(NetProtocol.Types.SNAPSHOT, (payload) => this._netApplySnapshot(payload));
         this.net.on(NetProtocol.Types.EVENT, (payload) => this._netApplyEvent(payload));
         this.net.on(NetProtocol.Types.CHUNK, (payload) => this._netApplyChunk(payload));
@@ -973,6 +979,10 @@ class SceneMain extends SceneBase {
         if (this.net?.isLocal) return;
         const sys = this.partySys;
         if (!sys) return;
+        const incoming = list || [];
+        if (!incoming.length && this._netWandererGraceUntil && performance.now() < this._netWandererGraceUntil) {
+            return;
+        }
         const seen = new Set();
         for (const w of list || []) {
             if (!w?.id) continue;
@@ -997,6 +1007,11 @@ class SceneMain extends SceneBase {
                 pawn._netTx = w.x;
                 pawn._netTy = w.y;
                 pawn._netSnapAt = performance.now();
+                pawn._netSnapDt = 1000 / ((typeof NetProtocol !== "undefined" && NetProtocol.SNAPSHOT_HZ) || 15);
+                pawn._netMoving = typeof w.moving === "boolean"
+                    ? w.moving
+                    : !!(w.heading && (Math.abs(w.heading.x) + Math.abs(w.heading.y) > 0));
+                if (w.heading) pawn.heading = w.heading;
             } else {
                 if (pawn._netTx == null) {
                     pawn.x = w.x;
@@ -1011,7 +1026,9 @@ class SceneMain extends SceneBase {
                 pawn._netTy = w.y;
                 pawn._netSnapAt = performance.now();
                 pawn._netSnapDt = 1000 / ((typeof NetProtocol !== "undefined" && NetProtocol.SNAPSHOT_HZ) || 15);
-                if (typeof w.moving === "boolean") pawn._netMoving = w.moving;
+                pawn._netMoving = typeof w.moving === "boolean"
+                    ? w.moving
+                    : !!(w.heading && (Math.abs(Number(w.heading.x)) + Math.abs(Number(w.heading.y)) > 0));
                 pawn.facing = w.facing || pawn.facing;
                 pawn.heading = w.heading || pawn.heading;
                 pawn.hostile = !!w.hostile;
@@ -1252,7 +1269,7 @@ class SceneMain extends SceneBase {
     _netUpsertCorpse(c, opts = {}) {
         if (!c?.id || this.net?.isLocal) return null;
         if (!this.netCorpses) this.netCorpses = new Map();
-        if (!this.corpses) this.corpses = this.add.group();
+        if (!this.corpses?.children) this.corpses = this.add.group();
         const loot = Array.isArray(c.loot)
             ? c.loot.map((s) => (typeof cloneItemStack === "function" ? cloneItemStack(s) : s)).filter(Boolean)
             : [];
@@ -1310,9 +1327,9 @@ class SceneMain extends SceneBase {
         if (spr.chunk !== chunk) {
             spr.chunk?.corpses?.remove(spr);
             spr.chunk = chunk;
-            if (!chunk.corpses) chunk.corpses = this.add.group();
+            if (!chunk.corpses?.children) chunk.corpses = this.add.group();
             chunk.corpses.add(spr);
-        } else if (chunk.corpses && !chunk.corpses.contains(spr)) {
+        } else if (chunk.corpses?.children && !chunk.corpses.contains(spr)) {
             chunk.corpses.add(spr);
         }
         if (spr.entry) {
@@ -1351,7 +1368,7 @@ class SceneMain extends SceneBase {
         // Malformed payload (e.g. single object) would iterate keys and wipe everyone
         if (!Array.isArray(corpses)) return;
         if (!this.netCorpses) this.netCorpses = new Map();
-        if (!this.corpses) this.corpses = this.add.group();
+        if (!this.corpses?.children) this.corpses = this.add.group();
         const seen = new Set();
         const now = performance.now();
         for (const c of corpses) {
@@ -1647,8 +1664,8 @@ class SceneMain extends SceneBase {
         let nameX;
         let nameY;
         if (prone) {
-            // Sprite is centered in the container while downed
-            nameX = 0;
+            // Container is feet-anchored; sprite is shifted to body center
+            nameX = Math.round((spr.width || 16) * 0.5);
             nameY = -Math.round(Math.max(spr.width || 16, spr.height || 16) * 0.5 + 4);
         } else {
             nameX = Math.round((spr.width || 16) * 0.5);
@@ -2952,10 +2969,10 @@ class SceneMain extends SceneBase {
         const p = this.player;
         let x = 0;
         let y = 0;
+        const downed = !!(p.isIncapacitated?.() || p.isImmobile?.() || p._prone || p._downed);
         if (
             !this._gamePaused
-            && !p.isIncapacitated?.()
-            && !p.isImmobile?.()
+            && !downed
             && !p.isVomiting?.()
         ) {
             const left = (p.cursors || this.cursors)?.left?.isDown || (p.keys || this.keys)?.A?.isDown;
@@ -2965,13 +2982,16 @@ class SceneMain extends SceneBase {
             x = (right ? 1 : 0) - (left ? 1 : 0);
             y = (down ? 1 : 0) - (up ? 1 : 0);
         }
+        const pose = typeof creatureFeetPose === "function"
+            ? creatureFeetPose(p)
+            : { x: p.x, y: p.y };
         this.net.sendMove({
             x,
             y,
             sprint: !this._gamePaused && !!p.isSprinting,
             facing: p.facing || "down",
-            px: p.x,
-            py: p.y,
+            px: pose.x,
+            py: pose.y,
             pawnId: p.pawnId || this._netPlayerId,
             partyPoses: (this.party || [])
                 .filter((m) => m && m !== p && !m.isBodyDead?.())
@@ -3012,8 +3032,13 @@ class SceneMain extends SceneBase {
             entry.root.setDepth(entry.y | 0);
             const attacking = entry.attackTimer > 0;
             const prone = !!entry.prone;
+            if (prone) {
+                entry.x = entry.tx;
+                entry.y = entry.ty;
+                entry.root.setPosition(entry.x, entry.y);
+            }
             if (typeof setPuppetProne === "function") {
-                setPuppetProne(entry.spr, prone);
+                setPuppetProne(entry.spr, prone, { feetAnchored: true });
             }
             const snapDist = Number.isFinite(entry.snapDist) ? entry.snapDist : err;
             const wantWalk = !attacking && !prone

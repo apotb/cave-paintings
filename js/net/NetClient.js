@@ -28,6 +28,11 @@ class NetClient {
         if (i >= 0) list.splice(i, 1);
     }
 
+    /** Drop play-scene listeners so a reused SceneMain does not stack them. */
+    clearHandlers() {
+        this.handlers = {};
+    }
+
     /** Call after play scene registers handlers so buffered chunks/events apply. */
     flushAndListen() {
         this._buffering = false;

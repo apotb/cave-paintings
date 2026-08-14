@@ -50,6 +50,10 @@ class LocalSim {
         if (i >= 0) list.splice(i, 1);
     }
 
+    clearHandlers() {
+        this.handlers = {};
+    }
+
     emit(type, payload) {
         for (const fn of this.handlers[type] || []) {
             try {

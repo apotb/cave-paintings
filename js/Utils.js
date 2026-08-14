@@ -1018,10 +1018,26 @@ function setCreatureProne(sprite, prone) {
 }
 
 /**
+ * Canonical net/sim pose is always standing (feet / origin 0,1).
+ * Prone sprites store world x,y at body center — convert back before sending.
+ */
+function creatureFeetPose(sprite) {
+    if (!sprite) return { x: 0, y: 0 };
+    const w = sprite.width || 16;
+    const h = sprite.height || 16;
+    if (sprite._prone) {
+        return {
+            x: sprite.x - w * 0.5,
+            y: sprite.y + h * 0.5
+        };
+    }
+    return { x: sprite.x, y: sprite.y };
+}
+
+/**
  * Prone pose for net puppets (sprite is a child of a world-positioned container).
- * Remote players: container is already at body center while downed (poseAuth).
- * Net mobs: container stays at feet — offset the sprite to body center so blood
- * and the laid-out body share the same world point.
+ * Container stays at feet; pass feetAnchored so the sprite shifts to body center.
+ * Blood and the laid-out body then share the same world point.
  * @param {Phaser.GameObjects.Sprite} sprite
  * @param {boolean} prone
  * @param {{ feetAnchored?: boolean }} [opts]
@@ -1188,6 +1204,12 @@ function meleeSegmentHitsTarget(a, b, radius, target) {
  */
 function applyEntityVelocity(sprite, targetVx, targetVy, delta, scene) {
     if (!sprite) return;
+    if (sprite._prone || sprite._downed || sprite.isIncapacitated?.() || sprite.isImmobile?.()) {
+        sprite._iceVx = 0;
+        sprite._iceVy = 0;
+        sprite.setVelocity?.(0, 0);
+        return;
+    }
     const onIce = !!scene?._isIceAt?.(sprite.x, sprite.y - 1);
     if (!onIce) {
         sprite._iceVx = targetVx;

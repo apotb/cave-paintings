@@ -62,8 +62,11 @@ class PartySystem {
 
     _wirePawn(player) {
         const scene = this.scene;
-        if (scene._things?.children) scene.physics.add.collider(player, scene._things);
-        if (scene.mobs?.children) scene.physics.add.overlap(player, scene.mobs);
+        const dedicatedWanderer = this._isDedicatedNet() && player.role === "wanderer";
+        if (!dedicatedWanderer) {
+            if (scene._things?.children) scene.physics.add.collider(player, scene._things);
+            if (scene.mobs?.children) scene.physics.add.overlap(player, scene.mobs);
+        }
         scene.damageables?.add(player);
         player.setInteractive?.({ cursor: "pointer", pixelPerfect: false });
         if (!player._partyHoverBound) {
@@ -89,14 +92,25 @@ class PartySystem {
     _enablePawnPhysics(pawn) {
         const body = pawn?.body;
         if (!body) return;
+        const downed = !!(
+            pawn._downed
+            || pawn._prone
+            || pawn.isIncapacitated?.()
+            || pawn.isImmobile?.()
+        );
+        pawn.setVelocity?.(0, 0);
+        pawn._iceVx = 0;
+        pawn._iceVy = 0;
         body.enable = true;
-        body.moves = true;
+        body.moves = !downed;
     }
 
     _disablePawnPhysics(pawn) {
         const body = pawn?.body;
         if (!body) return;
         pawn.setVelocity?.(0, 0);
+        pawn._iceVx = 0;
+        pawn._iceVy = 0;
         body.enable = false;
         body.moves = false;
     }
@@ -233,6 +247,23 @@ class PartySystem {
         pawn.keys = scene.keys;
         this._enablePawnPhysics(pawn);
         if (from && this._isDedicatedNet()) this._disablePawnPhysics(from);
+        if (this._isDedicatedNet() && (pawn._netProne || pawn._downed || pawn._prone || pawn.isIncapacitated?.())) {
+            const tx = pawn._netTx;
+            const ty = pawn._netTy;
+            const w = pawn.width || 16;
+            const h = pawn.height || 16;
+            if (Number.isFinite(tx) && Number.isFinite(ty)) {
+                if (pawn._prone) {
+                    pawn.x = tx + w * 0.5;
+                    pawn.y = ty - h * 0.5;
+                } else {
+                    pawn.x = tx;
+                    pawn.y = ty;
+                    if (typeof setCreatureProne === "function") setCreatureProne(pawn, true);
+                }
+            }
+            pawn.setVelocity?.(0, 0);
+        }
         pawn.syncWaistSlots?.();
         pawn.recomputeEquipmentEffects?.();
         // Taking control interrupts AI eat/tend so you don't inherit a channel bar
@@ -334,8 +365,7 @@ class PartySystem {
         }
         pawn.wandererAI = new WandererAI(pawn);
         this._wirePawn(pawn);
-        const dedicated = !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
-        if (dedicated && pawn.body) {
+        if (this._isDedicatedNet() && pawn.body) {
             pawn.body.enable = false;
             pawn.body.moves = false;
         }
@@ -477,17 +507,58 @@ class PartySystem {
         return this.switchControl(pawn);
     }
 
-    tryGive(fromPawn, slot, toPawn) {
+    partyDropTarget(pointer) {
         const scene = this.scene;
-        if (!fromPawn || !toPawn || fromPawn === toPawn) return false;
+        if (!scene.partyPanel?.visible || !pointer) return null;
+        const target = scene.partyPanel.pawnAtPointer(pointer);
+        if (!target || target === scene.player) return null;
+        return target;
+    }
+
+    canGiveTo(fromPawn, toPawn, stack) {
+        const scene = this.scene;
+        if (!fromPawn || !toPawn || fromPawn === toPawn || !stack?.id) return false;
         if (!scene.party?.includes(toPawn)) return false;
+        if (toPawn.isBodyDead?.()) return false;
         const P = typeof Party !== "undefined" ? Party : null;
         if (P && !P.inInteractRange(fromPawn, toPawn, scene.tileSize)) {
             scene.combatLog?.push(`${toPawn.displayName()} is too far away.`);
             return false;
         }
-        const stack = fromPawn.inventory?.[slot];
-        if (!stack) return false;
+        const qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
+        const probe = typeof cloneItemStack === "function" ? cloneItemStack(stack) : { ...stack };
+        let need = qty;
+        if (toPawn.canEquipLootStackIfSlotEmpty?.(probe)) need = Math.max(0, qty - 1);
+        if (need > 0) {
+            const rest = typeof cloneItemStack === "function" ? cloneItemStack(stack) : { ...stack };
+            rest.quantity = need;
+            const space = toPawn.countLootSpace?.(rest, need) ?? 0;
+            if (space < need) {
+                scene.combatLog?.push(`${toPawn.displayName()} cannot carry that.`);
+                return false;
+            }
+        }
+        return true;
+    }
+
+    deliverGive(toPawn, stack) {
+        const scene = this.scene;
+        if (!toPawn || !stack) return false;
+        const whole = typeof cloneItemStack === "function" ? cloneItemStack(stack) : { ...stack };
+        if (toPawn.canEquipLootStackIfSlotEmpty?.(whole) && toPawn.tryEquipLootStackIfSlotEmpty?.(whole)) {
+            if (whole.quantity > 0 && !toPawn.gainStack(whole)) return false;
+        } else if (!toPawn.gainStack(whole)) {
+            return false;
+        }
+        scene.hotbar.dirty = true;
+        scene.equipmentPanel?.refresh?.();
+        return true;
+    }
+
+    tryGive(fromPawn, slot, toPawn) {
+        const scene = this.scene;
+        const stack = fromPawn?.inventory?.[slot];
+        if (!this.canGiveTo(fromPawn, toPawn, stack)) return false;
         if (scene.isNet && scene.net?.connected && !scene.net.isLocal) {
             scene.net.sendAction({
                 type: NetProtocol.Actions.GIVE_ITEM,
@@ -497,33 +568,12 @@ class PartySystem {
             });
             return true;
         }
-        const meta = scene.getItem(stack.id);
-        const clone = typeof cloneItemStack === "function" ? cloneItemStack(stack) : { ...stack };
-        const unitW = typeof Carry !== "undefined"
-            ? Carry.unitWeight(clone, meta)
-            : Number(meta?.weight) || 0;
-        const cap = typeof Carry !== "undefined"
-            ? Carry.carryCap(toPawn.strength)
-            : toPawn.strength * 2;
-        const extra = unitW * (clone.quantity || 1);
-        const nextMass = toPawn.getInventoryWeight() + extra;
-        if (nextMass > cap + 1e-8) {
-            scene.combatLog?.push(`${toPawn.displayName()} cannot carry that.`);
-            return false;
-        }
-        const whole = typeof cloneItemStack === "function" ? cloneItemStack(stack) : { ...stack };
         fromPawn.inventory[slot] = null;
-        if (toPawn.canEquipLootStackIfSlotEmpty?.(whole) && toPawn.tryEquipLootStackIfSlotEmpty?.(whole)) {
-            if (whole.quantity > 0 && !toPawn.gainStack(whole)) {
-                fromPawn.inventory[slot] = whole;
-            }
-        } else if (!toPawn.gainStack(whole)) {
+        if (!this.deliverGive(toPawn, stack)) {
             fromPawn.inventory[slot] = stack;
             scene.combatLog?.push(`${toPawn.displayName()} cannot carry that.`);
             return false;
         }
-        scene.hotbar.dirty = true;
-        scene.equipmentPanel?.refresh?.();
         return true;
     }
 
@@ -1262,7 +1312,8 @@ class PartySystem {
             pawn.beginTend?.(job.patient, {
                 slot: job.slot,
                 sourcePawn: job.source,
-                silent: true
+                silent: true,
+                target: job.target
             });
         }
     }
@@ -1326,6 +1377,45 @@ class PartySystem {
         return false;
     }
 
+    _tendWoundKeys(patient, spec) {
+        const pid = patient?.pawnId || patient?.id || "";
+        const keys = [];
+        const destroyed = spec?.destroyed?.partName || spec?.destroyedPartName;
+        if (destroyed) keys.push(`${pid}#d:${destroyed}`);
+        const part = spec?.part?.name || spec?.partName || "";
+        const inj = spec?.inj;
+        const injId = spec?.injuryId ?? inj?.id;
+        if (injId != null && injId !== "") keys.push(`${pid}#i:${injId}`);
+        if (inj || spec?.injuryName) {
+            const name = spec?.injuryName || inj?.name || "";
+            const idx = Number.isInteger(spec?.injuryIndex)
+                ? spec.injuryIndex
+                : (spec?.part && inj ? spec.part.injuries.indexOf(inj) : -1);
+            keys.push(`${pid}#p:${part}:${idx}:${name}`);
+            if (name) keys.push(`${pid}#p:${part}:${name}`);
+        }
+        return keys;
+    }
+
+    _reservedTendKeys(exceptTender) {
+        const reserved = new Set();
+        for (const p of this.scene.party || []) {
+            if (!p || p === exceptTender) continue;
+            const ch = p._tendChannel;
+            if (!ch || ch.corpse) continue;
+            const patient = ch.patient || p;
+            const spec = ch.targetHint || ch.target;
+            if (!spec) continue;
+            for (const k of this._tendWoundKeys(patient, spec)) reserved.add(k);
+        }
+        return reserved;
+    }
+
+    _woundIsReserved(reserved, patient, spec) {
+        if (!reserved?.size) return false;
+        return this._tendWoundKeys(patient, spec).some((k) => reserved.has(k));
+    }
+
     _isBeingTended(patient) {
         for (const p of this.scene.party || []) {
             const ch = p?._tendChannel;
@@ -1367,24 +1457,25 @@ class PartySystem {
         const scene = this.scene;
         const P = typeof Party !== "undefined" ? Party : { INTERACT_TILES: 4 };
         const ts = scene.tileSize || 16;
+        const reserved = this._reservedTendKeys(tender);
         const others = [];
         let selfJob = null;
         for (const p of scene.party || []) {
             if (!p || p.isBodyDead?.() || !p.anatomy) continue;
-            if (this._isBeingTended(p)) continue;
-            const target = BodyHealing?.pickTendTarget?.(p.anatomy);
+            const skip = (spec) => this._woundIsReserved(reserved, p, spec);
+            const target = BodyHealing?.pickTendTarget?.(p.anatomy, { skip });
             if (!target) continue;
             const bleeding = !!(target.inj?.bleeding || target.destroyed);
             if (p === tender) {
                 const bandage = this._pickBandage(tender, tender, true);
-                if (bandage) selfJob = { patient: p, bleeding, ...bandage };
+                if (bandage) selfJob = { patient: p, bleeding, ...bandage, target };
                 continue;
             }
             if (P && !P.inInteractRange(tender, p, ts)) continue;
             const bandage = this._pickBandage(tender, p, false);
             if (!bandage) continue;
             const dist = Math.hypot(p.x - tender.x, p.y - tender.y);
-            others.push({ patient: p, bleeding, dist, ...bandage });
+            others.push({ patient: p, bleeding, dist, ...bandage, target });
         }
         others.sort((a, b) => {
             if (a.bleeding !== b.bleeding) return a.bleeding ? -1 : 1;
@@ -1398,6 +1489,7 @@ class PartySystem {
 
     _tickFood() {
         const scene = this.scene;
+        const dedicated = !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
         const P = typeof Party !== "undefined" ? Party : { AUTO_EAT_BELOW: 1000, AUTO_EAT_UNTIL: 1400, INTERACT_TILES: 4 };
         const ts = scene.tileSize || 16;
         if (this._partyInCombat()) return;
@@ -1405,6 +1497,7 @@ class PartySystem {
             if (!pawn || pawn === scene.player) continue;
             if (pawn.isBodyDead?.() || pawn.isVomiting?.() || pawn.isIncapacitated?.()) continue;
             if (pawn.isAttacking?.() || pawn._eatChannel || pawn._tendChannel) continue;
+            if (dedicated && pawn._netEating) continue;
             if (pawn.partyAI?.assistTarget) continue;
             if ((pawn.kc || 0) >= P.AUTO_EAT_BELOW) {
                 this._eatSittings.delete(pawn.pawnId);
@@ -1726,6 +1819,10 @@ class PartySystem {
                     if (typeof m.kc === "number") existing.kc = m.kc;
                     if (typeof m.saturation === "number") existing.saturation = m.saturation;
                     if (typeof m.stomach === "number") existing.stomach = m.stomach;
+                    if (dedicated) existing._netEating = !!m.eatChannel;
+                    if (dedicated && !m.eatChannel && existing._eatChannel?.serverAuth) {
+                        existing._eatChannel = null;
+                    }
                     const skipGear = guard && existing === scene.player;
                     if (dedicated && !skipGear && Array.isArray(m.inventory)) {
                         const sig = this._gearSig(m.inventory, m.equipment, m.hotbarIndex);

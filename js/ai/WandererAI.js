@@ -59,7 +59,8 @@ class WandererAI {
         const len = Math.hypot(nx, ny) || 1;
         nx /= len;
         ny /= len;
-        const steered = this._steer(pawn, nx, ny, delta);
+        const steered0 = this._steer(pawn, nx, ny, delta);
+        const steered = this._unstickFromPack(pawn, steered0.nx, steered0.ny);
         const stroll = (typeof Party !== "undefined" && Party.WANDER_WALK_MULT) || 0.28;
         const speed =
             (pawn.speed || 3.5) *
@@ -107,6 +108,50 @@ class WandererAI {
             this._stuckMs = 0;
         }
         return { nx, ny };
+    }
+
+    _idHash(id) {
+        const s = String(id || "");
+        let n = 0;
+        for (let i = 0; i < s.length; i++) n = (n * 31 + s.charCodeAt(i)) | 0;
+        return ((n >>> 0) / 4294967296) * Math.PI * 2;
+    }
+
+    _unstickFromPack(pawn, nx, ny) {
+        const scene = pawn.scene;
+        const pack = scene?.partySys?.wanderers || [];
+        const ts = scene?.tileSize || 16;
+        const want = ts * 0.8;
+        let sx = 0;
+        let sy = 0;
+        for (const other of pack) {
+            if (!other || other === pawn || other.isBodyDead?.()) continue;
+            const dx = pawn.x - other.x;
+            const dy = pawn.y - other.y;
+            const d = Math.hypot(dx, dy);
+            if (!(d > 0.01)) {
+                const h = this._idHash(pawn.pawnId || pawn.x);
+                sx += Math.cos(h);
+                sy += Math.sin(h);
+                continue;
+            }
+            if (d >= want) continue;
+            const w = (want - d) / want;
+            sx += (dx / d) * w;
+            sy += (dy / d) * w;
+        }
+        const sl = Math.hypot(sx, sy);
+        if (!(sl > 0.2)) return { nx, ny };
+        const sepW = Math.min(0.8, 0.4 + sl * 0.35);
+        let wx = nx * (1 - sepW) + (sx / sl) * sepW;
+        let wy = ny * (1 - sepW) + (sy / sl) * sepW;
+        const n = Math.hypot(wx, wy) || 1;
+        wx /= n;
+        wy /= n;
+        if (this._probeBlocked(pawn, wx, wy) || this._blockedInDir(pawn.body, wx, wy)) {
+            return { nx, ny };
+        }
+        return { nx: wx, ny: wy };
     }
 
     _blockedInDir(body, nx, ny) {
