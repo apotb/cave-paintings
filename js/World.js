@@ -37,15 +37,51 @@ function octaveNoise2D(x, y, octaves=1, persistence=1.0, lacunarity=1.0, seed=0)
     return total / maxValue;
 }
 
+/** Tile texture key from noise only (no decor RNG). Matches generateTile's key branches. */
+function tileKeyFromNoise(px, py) {
+    const inv = 1 / NOISE_SCALE;
+    const nx = px * inv;
+    const ny = py * inv;
+    const elevation = octaveNoise2D(nx, ny, 2, 0.5, 2.5, 0);
+    const temperature = octaveNoise2D(nx, ny, 3, 0.2, 4.2, 1);
+    const river = Math.abs(octaveNoise2D(nx, ny, 3, 1.2, 0.7, 2));
+    if (river < 0.005) return "water";
+    if (elevation < -0.2) return temperature < -0.4 ? "ice" : "water";
+    if (river < 0.0065 && elevation < 0.14) return "gravel";
+    if (elevation < -0.19) {
+        if (river < 0.005) return "water";
+        if (river < 0.0065) return "gravel";
+        if (temperature < -0.25) return "snow_beach";
+        return "sand";
+    }
+    if (elevation < 0.15) {
+        if (temperature < -0.25) return "snow";
+        if (temperature < 0.25) return "grass";
+        return "sand";
+    }
+    if (elevation < 0.25) {
+        if (temperature < -0.25) return "snow_hill";
+        if (temperature < 0.25) return "grass_hill";
+        return "sand_hill";
+    }
+    if (elevation < 0.55) {
+        if (temperature < -0.25) return "snow_mountain";
+        if (temperature < 0.25) return "mountain";
+        return "mesa";
+    }
+    if (elevation < 0.7) return "mountain";
+    return "snow_mountain";
+}
+
 class Chunk {
     constructor(scene, x, y, meta) {
         this.scene = scene;
         this.x = x;
         this.y = y;
-        this.things = this.scene.add.group();
-        this.mobs = this.scene.add.group();
-        this.drops = this.scene.add.group();
-        this.corpses = this.scene.add.group();
+        this.things = null;
+        this.mobs = null;
+        this.drops = null;
+        this.corpses = null;
         this.isLoaded = false;
         this.isGenerated = false;
         this.meta = meta || {
@@ -114,6 +150,17 @@ class Chunk {
         return this.scene.chunkPx();
     }
 
+    ensureSpriteGroups() {
+        if (this.things) return;
+        // `scene.add.group()` puts the Group on the Scene update list even when
+        // runChildUpdate is false. After exploring, those groups never left
+        // (profiler: updateList 571 → 2700 and did not shrink on return).
+        this.things = new Phaser.GameObjects.Group(this.scene);
+        this.mobs = new Phaser.GameObjects.Group(this.scene);
+        this.drops = new Phaser.GameObjects.Group(this.scene);
+        this.corpses = new Phaser.GameObjects.Group(this.scene);
+    }
+
     unload() {
         this._loadGen = (this._loadGen || 0) + 1;
         if (!this.isLoaded) {
@@ -121,6 +168,7 @@ class Chunk {
             return;
         }
         this.isLoaded = false;
+        this.scene._untrackLoadedChunk?.(this);
         if (this.rt) {
             if (typeof this.scene.recycleChunkRt === "function") this.scene.recycleChunkRt(this.rt);
             else this.rt.destroy();
@@ -131,18 +179,18 @@ class Chunk {
         this._clearBloodSprites();
         this.flushMobs();
         this.flushDrops();
-        for (const mob of this.mobs.getChildren().slice()) {
+        for (const mob of this.mobs?.getChildren?.().slice() || []) {
             this.scene.damageables?.remove(mob);
             this.scene.mobs?.remove(mob);
             mob.destroy();
         }
-        this.mobs.clear(false, false);
-        for (const drop of this.drops.getChildren().slice()) {
+        this.mobs?.clear(false, false);
+        for (const drop of this.drops?.getChildren?.().slice() || []) {
             if (typeof drop.persistDestroy === "function") drop.persistDestroy();
             else drop.destroy();
         }
-        this.drops.clear(false, false);
-        for (const corpse of this.corpses.getChildren().slice()) {
+        this.drops?.clear(false, false);
+        for (const corpse of this.corpses?.getChildren?.().slice() || []) {
             // Dedicated net corpses are owned by snapshots/events — keep them
             // across chunk unload so a kill doesn't vanish when streaming reloads.
             if (corpse?.entry?.netSync) {
@@ -152,7 +200,7 @@ class Chunk {
             this.scene.corpses?.remove(corpse);
             corpse.destroy();
         }
-        this.corpses.clear(false, false);
+        this.corpses?.clear(false, false);
         this.scene.markLightDirty?.();
     }
 
@@ -172,6 +220,8 @@ class Chunk {
         if (this.isLoaded) return;
         const gen = this._loadGen || 0;
         this.isLoaded = true;
+        this.ensureSpriteGroups();
+        this.scene._trackLoadedChunk?.(this);
         await this.generate();
         if (!this._loadStillCurrent(gen)) return;
         await this.render();
@@ -229,33 +279,149 @@ class Chunk {
     generate() {
         if (this.isGenerated) return Promise.resolve();
 
+        this._ensureParentFireChunks();
+
         const rand = mulberry32(this.seed());
         const cs = this.scene.chunkSize;
         const ts = this.scene.tileSize;
+        const originX = this.x * this.px();
+        const originY = this.y * this.px();
+        for (let i = cs * cs - 1; i >= 0; i--) {
+            const x = i % cs;
+            const y = (i / cs) | 0;
+            this.generateTile(x, y, originX + x * ts, originY + y * ts, rand);
+        }
+        this._stampStructures();
+        this.populatePebbles(rand);
+        this.populateNaturalMobs(rand);
+        this.isGenerated = true;
+        return Promise.resolve();
+    }
 
-        const BUDGET_MS = 0.001;
-        let i = cs * cs - 1;
-        return new Promise(resolve => {
-            const slice = () => {
-                const start = performance.now();
-                while (i >= 0 && (performance.now() - start) < BUDGET_MS) {
-                    const x = i % cs;
-                    const y = (i / cs) | 0;
-                    const tx = this.x * this.px() + x * ts;
-                    const ty = this.y * this.px() + y * ts;
-                    this.generateTile(x, y, tx, ty, rand);
-                    i--;
-                }
-                if (i >= 0) this.scene.time.delayedCall(0, slice);
-                else {
-                    this.populatePebbles(rand);
-                    this.populateNaturalMobs(rand);
-                    this.isGenerated = true;
-                    resolve();
-                }
+    _generatedStructureChunk(cx, cy) {
+        if (cx === this.x && cy === this.y) return null;
+        const key = `${cx},${cy}`;
+        const sc = this.scene.chunks?.[key];
+        if (sc?.isGenerated && sc.meta?.tiles) {
+            return {
+                cx,
+                cy,
+                tileSize: this.scene.tileSize,
+                things: sc.meta.things,
+                lootableThings: sc.meta.lootableThings,
+                tiles: sc.meta.tiles
             };
-            slice();
+        }
+        const net = this.scene.net?.world?.chunks?.[key];
+        if (net?.tiles) {
+            if (!Array.isArray(net.things)) net.things = [];
+            if (!Array.isArray(net.lootableThings)) net.lootableThings = [];
+            return {
+                cx,
+                cy,
+                tileSize: this.scene.tileSize,
+                things: net.things,
+                lootableThings: net.lootableThings,
+                tiles: net.tiles
+            };
+        }
+        return null;
+    }
+
+    _ensureParentFireChunks() {
+        if (typeof Structures === "undefined" || !Structures.parentFireChunks) return;
+        const ts = this.scene.tileSize;
+        const parents = Structures.parentFireChunks(
+            this.x,
+            this.y,
+            worldSeed,
+            (tx, ty) => tileKeyFromNoise(tx * ts, ty * ts)
+        );
+        for (const p of parents) {
+            if (this._generatedStructureChunk(p.cx, p.cy)) continue;
+            const key = `${p.cx},${p.cy}`;
+            let ch = this.scene.chunks?.[key];
+            if (!ch) {
+                if (this.scene.isNet && this.scene.net?.isLocal) continue;
+                if (this.scene.isNet) continue;
+                ch = new Chunk(this.scene, p.cx, p.cy);
+                this.scene.chunks[key] = ch;
+            }
+            if (!ch.isGenerated) ch.generate();
+        }
+    }
+
+    _syncStructureSprites(chunk) {
+        if (!chunk?.isLoaded || typeof this.scene._spawnThingSprite !== "function") return;
+        const structureId = {
+            unlit_campfire: true,
+            campfire: true,
+            lean_to: true,
+            wicker_basket: true,
+            skinworking_bench: true,
+            tree_stump: true,
+            snow_tree_stump: true,
+            coconut_tree_stump: true
+        };
+        const entries = new Set(chunk.meta?.things || []);
+        const loot = new Set(chunk.meta?.lootableThings || []);
+        for (const spr of (chunk.things?.getChildren?.() || []).slice()) {
+            const entry = spr?.entry;
+            if (!entry) continue;
+            if (!entries.has(entry) && !loot.has(entry)) {
+                if (structureId[entry.id] || structureId[spr.meta?.id] || spr instanceof LootableThing) {
+                    try { spr.destroy(); } catch (_) {}
+                }
+                continue;
+            }
+            if (entry.id && spr.meta?.id !== entry.id && typeof spr.morph === "function") {
+                spr.morph(entry.id);
+            } else {
+                spr.applyVisual?.();
+            }
+        }
+        for (const entry of chunk.meta?.things || []) {
+            if (!structureId[entry?.id]) continue;
+            this.scene._spawnThingSprite(chunk, entry, false);
+        }
+    }
+
+    _stampStructures() {
+        if (typeof Structures === "undefined" || !Structures.stampChunk) return;
+        const cs = this.scene.chunkSize;
+        const ts = this.scene.tileSize;
+        const chunkOx = this.x * cs;
+        const chunkOy = this.y * cs;
+        const result = Structures.stampChunk({
+            cx: this.x,
+            cy: this.y,
+            worldSeed,
+            tileSize: ts,
+            things: this.meta.things,
+            lootableThings: this.meta.lootableThings,
+            scene: this.scene,
+            tileKeyAt: (tx, ty) => {
+                const lx = tx - chunkOx;
+                const ly = ty - chunkOy;
+                if (lx >= 0 && ly >= 0 && lx < cs && ly < cs) {
+                    return this.meta.tiles[lx + ly * cs];
+                }
+                const n = this._generatedStructureChunk(Math.floor(tx / cs), Math.floor(ty / cs));
+                if (n?.tiles) {
+                    const nx = tx - n.cx * cs;
+                    const ny = ty - n.cy * cs;
+                    if (nx >= 0 && ny >= 0 && nx < cs && ny < cs) return n.tiles[nx + ny * cs];
+                }
+                return tileKeyFromNoise(tx * ts, ty * ts);
+            },
+            getGeneratedChunk: (cx, cy) => this._generatedStructureChunk(cx, cy),
+            onChunkMutated: (cx, cy) => {
+                const sc = this.scene.chunks?.[`${cx},${cy}`];
+                if (sc?.isLoaded) this._syncStructureSprites(sc);
+            }
         });
+        this._structureYard = result?.yard || null;
+        this._structureFootprints = result?.footprints || null;
     }
 
     /**
@@ -304,6 +470,9 @@ class Chunk {
                 if (occupied.has(key)) continue;
                 const tile = tileAt(nx, ny);
                 if (!tile || blockedGround.has(tile)) continue;
+                const worldTx = this.x * cs + nx;
+                const worldTy = this.y * cs + ny;
+                if (this._structureYard?.has(`${worldTx},${worldTy}`)) continue;
                 if (rand() >= PEBBLE_CHANCE) continue;
 
                 const tx = chunkOx + nx * ts;
@@ -354,6 +523,9 @@ class Chunk {
                     const key = this.meta.tiles[cx + cy * cs];
                     if (!allow.has(key)) continue;
                     if (blocked.has(`${cx},${cy}`)) continue;
+                    const worldTx = this.x * cs + cx;
+                    const worldTy = this.y * cs + cy;
+                    if (this._structureFootprints?.has(`${worldTx},${worldTy}`)) continue;
                     candidates.push({ cx, cy });
                 }
             }
@@ -552,10 +724,6 @@ class Chunk {
     }
 
     async render() {
-        if (typeof this.scene.enqueueChunkPaint === "function") {
-            await this.scene.enqueueChunkPaint(this);
-            return;
-        }
         await this._paintGround();
     }
 
@@ -573,31 +741,16 @@ class Chunk {
 
         const cs = this.scene.chunkSize;
         const ts = this.scene.tileSize;
-
-        const BUDGET_MS = 1;
-        let i = cs * cs - 1;
-        return new Promise(resolve => {
-            const slice = () => {
-                if (!this.rt || !this.isLoaded) {
-                    resolve();
-                    return;
-                }
-                const start = performance.now();
-                while (i >= 0 && (performance.now() - start) < BUDGET_MS) {
-                    const x = i % cs, y = (i / cs) | 0;
-                    const key = this.meta.tiles[i];
-                    if (key && key !== 'water') this.rt.draw(key, x * ts, y * ts);
-                    i--;
-                }
-                if (i >= 0) this.scene.time.delayedCall(0, slice);
-                else {
-                    this.scene.groundLayer.add(this.rt);
-                    this.rt.setVisible(true);
-                    resolve();
-                }
-            };
-            slice();
-        });
+        for (let i = cs * cs - 1; i >= 0; i--) {
+            const key = this.meta.tiles[i];
+            if (!key || key === "water") continue;
+            const x = i % cs;
+            const y = (i / cs) | 0;
+            this.rt.draw(key, x * ts, y * ts);
+        }
+        this.scene.groundLayer.add(this.rt);
+        this.rt.setVisible(true);
+        return Promise.resolve();
     }
 
     async makeThings() {

@@ -55,7 +55,7 @@ class ScaredAnimalAI extends DoofusAI {
 
         this.timer -= delta;
         if (this.timer <= 0) this._beginPanicDash();
-        this._applyWalk(this.PANIC_SPEED_MULT);
+        this._applyWalk(this.PANIC_SPEED_MULT, delta);
     }
 
     _beginPanicDash() {

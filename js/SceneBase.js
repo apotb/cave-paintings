@@ -15,12 +15,13 @@ class SceneBase extends Phaser.Scene {
             this.load = this.sys.load;
         }
         // Second Play → Leave → Play: textures/json already live in the game caches.
-        if (this.cache?.json?.exists?.("items") && this.textures?.exists("grass") && this.textures?.exists("slot")) {
+        if (this.cache?.json?.exists?.("items") && this.cache?.json?.exists?.("structures") && this.textures?.exists("grass") && this.textures?.exists("slot")) {
             return;
         }
         // Data
         this.load.json("items", "data/Items.json");
         this.load.json("things", "data/Things.json");
+        this.load.json("structures", "data/Structures.json");
         this.load.json("bodyPlans", "data/BodyPlans.json");
         this.load.json("injuries", "data/Injuries.json");
         this.load.json("hediffs", "data/Hediffs.json");

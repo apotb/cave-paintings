@@ -28,7 +28,7 @@ class DoofusAI {
         }
 
         if (this.state === "walk") {
-            this._applyWalk(1);
+            this._applyWalk(1, delta);
         } else {
             mob.setVelocity(0, 0);
             mob.anims.timeScale = 1;
@@ -54,7 +54,7 @@ class DoofusAI {
         return Phaser.Math.Clamp(tilesPerSec / ref, 0.2, 2.5);
     }
 
-    _applyWalk(speedMult) {
+    _applyWalk(speedMult, delta = 16) {
         const mob = this.mob;
         // Same as player / NeutralAnimal: Moving capacity slows damaged legs
         const moveMul = mob.capacities?.moving
@@ -68,6 +68,22 @@ class DoofusAI {
         const len = Math.hypot(x, y) || 1;
         x /= len;
         y /= len;
+        if (typeof Path !== "undefined" && Path.steerHeading) {
+            const blocked = (px, py) => (typeof pawnPoseBlocked === "function"
+                ? pawnPoseBlocked(mob, px, py, 1)
+                : false);
+            const steered = Path.steerHeading(
+                { x: mob.x, y: mob.y },
+                x,
+                y,
+                blocked,
+                this._nav || { side: 1 },
+                { dt: delta, rangeTiles: 6, cellSize: mob.scene?.tileSize || 16 }
+            );
+            this._nav = steered;
+            x = steered.nx;
+            y = steered.ny;
+        }
         mob.setVelocity(x * speed, y * speed);
 
         if (Math.abs(x) > Math.abs(y)) {

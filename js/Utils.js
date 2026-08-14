@@ -997,14 +997,56 @@ function creaturePointerHit(sprite, worldX, worldY) {
     return Math.abs(worldX - x) < hs && Math.abs(worldY - y) < hs * 2;
 }
 
-/** Resting pawns are click-through so the lean-to under them can be targeted. */
+/**
+ * Resting pawns and the pawn you control are click-through so world Things
+ * under them (campfire, basket, bench) can be hovered and opened.
+ */
 function syncCreatureInputHit(sprite) {
     if (!sprite) return;
-    if (sprite._resting) {
+    const self = sprite.scene?.player === sprite;
+    if (sprite._resting || self) {
         if (sprite.input) sprite.input.enabled = false;
         return;
     }
     if (sprite.input) sprite.input.enabled = true;
+}
+
+/**
+ * Arcade writes sprite += (body.pos - prevFrame). If prevFrame still has the
+ * pre-restore body, that delta is one hitbox (~8px) and the pawn pops half a
+ * tile when you take control.
+ */
+function syncPawnPhysicsPose(sprite) {
+    if (!sprite) return;
+    const body = sprite.body;
+    if (!body) return;
+    body.updateFromGameObject?.();
+    if (body.prev?.copy && body.position) body.prev.copy(body.position);
+    if (body.prevFrame?.copy && body.position) body.prevFrame.copy(body.position);
+    if (body.autoFrame?.copy && body.position) body.autoFrame.copy(body.position);
+}
+
+/**
+ * Standing pose is feet / origin (0,1). A leftover centered origin with
+ * `_prone === false` (or the reverse) is the half-tile pop on party switch.
+ */
+function ensureStandingFeetOrigin(sprite) {
+    if (!sprite || sprite._resting) return;
+    if (sprite._prone || sprite._downed || sprite.isIncapacitated?.() || sprite.isImmobile?.()) {
+        return;
+    }
+    const w = Number(sprite.width) || 16;
+    const h = Number(sprite.height) || 16;
+    if (sprite.originX === 0.5 && sprite.originY === 0.5) {
+        sprite.x -= w * 0.5;
+        sprite.y += h * 0.5;
+    }
+    if (sprite.originX !== 0 || sprite.originY !== 1) sprite.setOrigin(0, 1);
+    if (sprite.rotation) sprite.setRotation(0);
+    sprite._prone = false;
+    sprite._physX = sprite.x;
+    sprite._physY = sprite.y;
+    syncPawnPhysicsPose(sprite);
 }
 
 /**
@@ -1034,9 +1076,11 @@ function setCreatureProne(sprite, prone) {
 
     if (want) {
         // bottom-left origin → center
-        sprite.x += w * 0.5;
-        sprite.y -= h * 0.5;
-        sprite.setOrigin(0.5, 0.5);
+        if (sprite.originX !== 0.5 || sprite.originY !== 0.5) {
+            sprite.x += w * 0.5;
+            sprite.y -= h * 0.5;
+            sprite.setOrigin(0.5, 0.5);
+        }
         sprite.setRotation(-Math.PI / 2);
         sprite.anims?.stop?.();
         if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
@@ -1048,12 +1092,17 @@ function setCreatureProne(sprite, prone) {
         }
     } else {
         sprite.setRotation(0);
-        sprite.x -= w * 0.5;
-        sprite.y += h * 0.5;
+        if (sprite.originX === 0.5 && sprite.originY === 0.5) {
+            sprite.x -= w * 0.5;
+            sprite.y += h * 0.5;
+        }
         sprite.setOrigin(0, 1);
         sprite._prone = false;
         if (sprite.body && !sprite._resting) sprite.body.moves = true;
     }
+    sprite._physX = sprite.x;
+    sprite._physY = sprite.y;
+    syncPawnPhysicsPose(sprite);
     syncCreatureInputHit(sprite);
 }
 
@@ -1143,20 +1192,96 @@ function pawnIgnoresThing(pawn, thing) {
     return typeof Sleep !== "undefined" && !!Sleep.ignoresThingCollision?.(pawn, thing);
 }
 
-function overlappingThingSprite(pawn) {
-    const body = pawn?.body;
-    const things = pawn?.scene?._things?.getChildren?.();
-    if (!body || !things) return null;
-    for (let i = 0; i < things.length; i++) {
-        const t = things[i];
-        const tb = t?.body;
-        if (!tb || !tb.enable || pawnIgnoresThing(pawn, t)) continue;
-        if (body.right > tb.left && body.left < tb.right
-            && body.bottom > tb.top && body.top < tb.bottom) {
-            return t;
+function indexThingSprite(scene, thing) {
+    if (!scene || !thing) return;
+    unindexThingSprite(scene, thing);
+    const cells = scene._thingCells || (scene._thingCells = new Map());
+    const ts = scene.tileSize || 16;
+    const tb = thing.body;
+    const left = tb ? tb.left : thing.x;
+    const right = tb ? tb.right : thing.x;
+    const top = tb ? tb.top : thing.y;
+    const bottom = tb ? tb.bottom : thing.y;
+    const x0 = Math.floor(left / ts);
+    const x1 = Math.floor(right / ts);
+    const y0 = Math.floor(top / ts);
+    const y1 = Math.floor(bottom / ts);
+    const keys = [];
+    for (let ty = y0; ty <= y1; ty++) {
+        for (let tx = x0; tx <= x1; tx++) {
+            const key = `${tx},${ty}`;
+            keys.push(key);
+            let arr = cells.get(key);
+            if (!arr) {
+                arr = [];
+                cells.set(key, arr);
+            }
+            arr.push(thing);
         }
     }
-    return null;
+    thing._cellKeys = keys;
+}
+
+function unindexThingSprite(scene, thing) {
+    const keys = thing?._cellKeys;
+    if (!keys || !scene?._thingCells) {
+        if (thing) thing._cellKeys = null;
+        return;
+    }
+    for (let i = 0; i < keys.length; i++) {
+        const arr = scene._thingCells.get(keys[i]);
+        if (!arr) continue;
+        const idx = arr.indexOf(thing);
+        if (idx >= 0) arr.splice(idx, 1);
+        if (!arr.length) scene._thingCells.delete(keys[i]);
+    }
+    thing._cellKeys = null;
+}
+
+function forThingsNearAabb(scene, left, right, top, bottom, fn) {
+    const cells = scene?._thingCells;
+    if (!cells || !cells.size) {
+        const things = scene?._things?.getChildren?.();
+        if (!things) return false;
+        for (let i = 0; i < things.length; i++) {
+            if (fn(things[i])) return true;
+        }
+        return false;
+    }
+    const ts = scene.tileSize || 16;
+    const pad = ts;
+    const x0 = Math.floor((left - pad) / ts);
+    const x1 = Math.floor((right + pad) / ts);
+    const y0 = Math.floor((top - pad) / ts);
+    const y1 = Math.floor((bottom + pad) / ts);
+    for (let ty = y0; ty <= y1; ty++) {
+        for (let tx = x0; tx <= x1; tx++) {
+            const arr = cells.get(`${tx},${ty}`);
+            if (!arr) continue;
+            for (let i = 0; i < arr.length; i++) {
+                if (fn(arr[i])) return true;
+            }
+        }
+    }
+    return false;
+}
+
+function overlappingThingSprite(pawn) {
+    const body = pawn?.body;
+    const scene = pawn?.scene;
+    if (!body || !scene) return null;
+    let hit = null;
+    forThingsNearAabb(scene, body.left, body.right, body.top, body.bottom, (t) => {
+        const tb = t?.body;
+        if (!tb || !tb.enable || pawnIgnoresThing(pawn, t)) return false;
+        if (body.right > tb.left && body.left < tb.right
+            && body.bottom > tb.top && body.top < tb.bottom) {
+            hit = t;
+            return true;
+        }
+        return false;
+    });
+    return hit;
 }
 
 function pawnPoseHitsThing(pawn, x, y) {
@@ -1176,8 +1301,8 @@ function pawnTileBlocked(pawn, x, y) {
 /** True if the 8×8 body at (x,y), grown by `pad`, hits a Thing or blocked tile. */
 function pawnPoseBlocked(pawn, x, y, pad = 0) {
     const body = pawn?.body;
-    const things = pawn?.scene?._things?.getChildren?.();
-    if (!body || !things) return false;
+    const scene = pawn?.scene;
+    if (!body || !scene) return false;
     const p = Math.max(0, Number(pad) || 0);
     const dx = x - pawn.x;
     const dy = y - pawn.y;
@@ -1186,15 +1311,17 @@ function pawnPoseBlocked(pawn, x, y, pad = 0) {
     const top = body.top + dy - p;
     const bottom = body.bottom + dy + p;
     if (pawnTileBlocked(pawn, x, y)) return true;
-    for (let i = 0; i < things.length; i++) {
-        const t = things[i];
+    let hit = false;
+    forThingsNearAabb(scene, left, right, top, bottom, (t) => {
         const tb = t?.body;
-        if (!tb || !tb.enable || pawnIgnoresThing(pawn, t)) continue;
+        if (!tb || !tb.enable || pawnIgnoresThing(pawn, t)) return false;
         if (right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom) {
+            hit = true;
             return true;
         }
-    }
-    return false;
+        return false;
+    });
+    return hit;
 }
 
 function findFreePawnPose(pawn, maxR = 80) {

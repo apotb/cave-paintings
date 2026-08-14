@@ -5,6 +5,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const { mulberry32, hash2D } = require("../shared/rng");
+const Structures = require("../shared/structures");
 
 const NOISE_SCALE = 6000;
 const CS = 8;
@@ -180,6 +181,10 @@ function generateTileKey(tx, ty, rand) {
     }
 }
 
+function tileKeyAt(tileIx, tileIy) {
+    return generateTileKey(tileIx * TS, tileIy * TS, () => 1).key;
+}
+
 function pushDecor(list, tx, ty, id) {
     if (tx === 0 && ty === 0) return;
     const x = tx + TS / 2;
@@ -197,7 +202,7 @@ function pushDecor(list, tx, ty, id) {
  * @param {number} cy
  * @param {number} worldSeed
  */
-function generateChunk(cx, cy, worldSeed) {
+function generateChunk(cx, cy, worldSeed, opts = {}) {
     applySeed(worldSeed);
     const seed = hash2D(cx, cy, worldSeed);
     const rand = mulberry32(seed);
@@ -217,6 +222,33 @@ function generateChunk(cx, cy, worldSeed) {
         for (const id of loot) pushDecor(lootableThings, tx, ty, id);
     }
 
+    const getGeneratedChunk = opts.getGeneratedChunk;
+    const stamped = Structures.stampChunk({
+        cx,
+        cy,
+        worldSeed,
+        tileSize: TS,
+        things,
+        lootableThings,
+        getGeneratedChunk,
+        tileKeyAt: (tx, ty) => {
+            const pcx = Math.floor(tx / CS);
+            const pcy = Math.floor(ty / CS);
+            if (pcx === cx && pcy === cy) {
+                const lx = tx - cx * CS;
+                const ly = ty - cy * CS;
+                return tiles[lx + ly * CS];
+            }
+            const n = getGeneratedChunk?.(pcx, pcy);
+            if (n?.tiles) {
+                const lx = tx - pcx * CS;
+                const ly = ty - pcy * CS;
+                if (lx >= 0 && ly >= 0 && lx < CS && ly < CS) return n.tiles[lx + ly * CS];
+            }
+            return tileKeyAt(tx, ty);
+        }
+    });
+
     // Natural deer packs (mirrors Mobs.json deer.spawn roughly)
     const mobs = [];
     const allow = new Set(["grass", "grass_hill"]);
@@ -225,6 +257,9 @@ function generateChunk(cx, cy, worldSeed) {
         if (!allow.has(tiles[i])) continue;
         const lx = i % CS;
         const ly = (i / CS) | 0;
+        const wx = cx * CS + lx;
+        const wy = cy * CS + ly;
+        if (stamped?.footprints?.has(`${wx},${wy}`)) continue;
         candidates.push({ lx, ly });
     }
     if (candidates.length >= 4 && rand() < 0.08) {
@@ -274,5 +309,6 @@ module.exports = {
     pickWorldSeed,
     applySeed,
     generateChunk,
-    octaveNoise2D
+    octaveNoise2D,
+    tileKeyAt
 };

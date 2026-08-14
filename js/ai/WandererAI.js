@@ -92,9 +92,7 @@ class WandererAI {
         const stroll = (typeof Party !== "undefined" && Party.WANDER_WALK_MULT) || 0.28;
         if (typeof PartyAI !== "undefined") {
             if (!this._pather || this._pather.pawn !== pawn) this._pather = new PartyAI(pawn);
-            this._pather._keepPathOnOverlap = true;
             this._pather._pathRange = 16;
-            this._pather._pathRefreshMs = 4000;
             if (
                 !this._walkDest
                 || Math.hypot(pawn.x - this._walkDest.x, pawn.y - this._walkDest.y) < 8 * ts
@@ -106,7 +104,8 @@ class WandererAI {
                 let vx = (pawn.body.velocity?.x || 0) * stroll * tickScale;
                 let vy = (pawn.body.velocity?.y || 0) * stroll * tickScale;
                 const vlen = Math.hypot(vx, vy);
-                if (vlen > 0.5) {
+                const onPath = !!(this._pather._path && this._pather._path.length);
+                if (vlen > 0.5 && !onPath) {
                     const sep = this._unstickFromPack(pawn, vx / vlen, vy / vlen);
                     vx = sep.nx * vlen;
                     vy = sep.ny * vlen;
@@ -307,7 +306,6 @@ class WandererAI {
         const reach = Math.max(8, scene.tileSize || 16);
         const half = Math.max(3, (mob.hitboxSize || 8) * 0.5 + 1);
         const n = Math.max(2, Math.ceil(reach / 4));
-        const things = scene._things.getChildren();
         for (let s = 1; s <= n; s++) {
             const d = (reach * s) / n;
             const ax = body.center.x + nx * d;
@@ -316,14 +314,30 @@ class WandererAI {
             const right = ax + half;
             const top = ay - half;
             const bottom = ay + half;
-            for (let i = 0; i < things.length; i++) {
-                const t = things[i];
-                const tb = t?.body;
-                if (!tb || !tb.enable || pawnIgnoresThing?.(mob, t)) continue;
-                if (right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom) {
-                    return true;
+            let hit = false;
+            if (typeof forThingsNearAabb === "function") {
+                forThingsNearAabb(scene, left, right, top, bottom, (t) => {
+                    const tb = t?.body;
+                    if (!tb || !tb.enable || pawnIgnoresThing?.(mob, t)) return false;
+                    if (right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom) {
+                        hit = true;
+                        return true;
+                    }
+                    return false;
+                });
+            } else {
+                const things = scene._things.getChildren();
+                for (let i = 0; i < things.length; i++) {
+                    const t = things[i];
+                    const tb = t?.body;
+                    if (!tb || !tb.enable || pawnIgnoresThing?.(mob, t)) continue;
+                    if (right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom) {
+                        hit = true;
+                        break;
+                    }
                 }
             }
+            if (hit) return true;
         }
         return false;
     }

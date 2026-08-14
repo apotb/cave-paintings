@@ -97,6 +97,7 @@ class PartySystem {
             player.partyAI = new PartyAI(player);
         }
         player.ensureNameLabel?.();
+        if (typeof syncCreatureInputHit === "function") syncCreatureInputHit(player);
     }
 
     _enablePawnPhysics(pawn) {
@@ -113,6 +114,7 @@ class PartySystem {
         pawn._iceVy = 0;
         body.enable = true;
         body.moves = !downed;
+        if (typeof syncPawnPhysicsPose === "function") syncPawnPhysicsPose(pawn);
     }
 
     _disablePawnPhysics(pawn) {
@@ -268,11 +270,26 @@ class PartySystem {
         if (pawn.isBodyDead?.() && pawn !== scene.leader) return false;
 
         scene.knappingPanel?.close?.();
+        scene.restorePlayerPhysicsPos?.();
         scene.player = pawn;
+        if (typeof syncCreatureInputHit === "function") {
+            syncCreatureInputHit(from);
+            syncCreatureInputHit(pawn);
+        }
+        if (typeof ensureStandingFeetOrigin === "function") {
+            ensureStandingFeetOrigin(from);
+            ensureStandingFeetOrigin(pawn);
+        }
         pawn.cursors = scene.cursors;
         pawn.keys = scene.keys;
         this._enablePawnPhysics(pawn);
         if (from && this._isDedicatedNet()) this._disablePawnPhysics(from);
+        else if (from) {
+            from.setVelocity?.(0, 0);
+            from._iceVx = 0;
+            from._iceVy = 0;
+            if (typeof syncPawnPhysicsPose === "function") syncPawnPhysicsPose(from);
+        }
         if (this._isDedicatedNet() && (pawn._netProne || pawn._downed || pawn._prone || pawn.isIncapacitated?.())) {
             const tx = pawn._netTx;
             const ty = pawn._netTy;
@@ -307,7 +324,13 @@ class PartySystem {
         scene.equipmentPanel?.refresh?.();
         from?.syncNameLabel?.();
         pawn.syncNameLabel?.();
-        scene.syncCameraToPlayer?.();
+        const cam = scene.cameras?.main;
+        if (cam && pawn) {
+            const c = typeof pawn.bodyCenter === "function"
+                ? pawn.bodyCenter()
+                : { x: pawn.x, y: pawn.y };
+            cam.centerOn(c.x, c.y);
+        }
         scene.partyPanel?.refresh?.();
 
         if (pawn === scene.leader && this.leaderDead) {
@@ -767,6 +790,7 @@ class PartySystem {
 
     _playerCanFight(a, b) {
         const P = typeof Party !== "undefined" ? Party : null;
+        if (a?.role === "wanderer" && b?.role === "wanderer") return false;
         const oa = P?.ownerIdOf?.(a) || a?.ownerId || a?._remote?.ownerId;
         const ob = P?.ownerIdOf?.(b) || b?.ownerId || b?._remote?.ownerId;
         const self = this.scene.leader?.ownerId || this.scene._netPlayerId;

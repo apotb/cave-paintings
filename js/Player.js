@@ -3211,6 +3211,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 if (this.attackTimer <= 0) this._endAttack();
             }
             this.partyAI?.update(dt);
+            if (this._wakeIframes > 0) this._wakeIframes--;
+            this._skipMove = false;
             if (this.body && !this._resting) {
                 const canWalk = !this.isIncapacitated() && !this.isImmobile() && !this.isVomiting();
                 this.body.moves = canWalk;
@@ -3243,6 +3245,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 || this.cursors.down.isDown || this.keys.S.isDown;
             if (movingKeys) this.scene._tryWakePlayer?.();
         }
+        if (this._wakeIframes > 0) this._wakeIframes--;
+        const skipMove = !!this._skipMove;
+        this._skipMove = false;
         const resting = !!this._resting;
         const restWalk = !!this._restWalk;
         const prone = immobile || incapacitated || resting;
@@ -3266,6 +3271,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 || this.cursors.down.isDown || this.keys.S.isDown;
             if (movingKeys) {
                 this._restWalk = null;
+                this.partyAI?._clearAvoid?.();
                 this.scene._intendedSleep?.().delete(this.pawnId);
             }
         }
@@ -3279,21 +3285,22 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 this._restWalk = null;
             } else {
                 const pos = Sleep.sleeperWorldPos(entry, spec.slot, this.scene.tileSize, def);
-                const d = Math.hypot(this.x - pos.x, this.y - pos.y);
+                const c = this.bodyCenter?.() || { x: this.x, y: this.y };
+                const d = Math.hypot(c.x - pos.x, c.y - pos.y);
                 const arrive = Sleep.ARRIVE_PX || 16;
                 if (d < arrive) {
                     this.scene._occupySlot?.(this, entry, spec.slot);
+                    this.partyAI?._clearAvoid?.();
                 } else {
-                    const len = d || 1;
-                    const speed = this.speed * this.scene.tileSize
-                        * Math.max(0.05, Math.min(1.5, this.capacities?.moving?.() || 1));
-                    applyEntityVelocity(
-                        this,
-                        ((pos.x - this.x) / len) * speed,
-                        ((pos.y - this.y) / len) * speed,
-                        delta,
-                        this.scene
-                    );
+                    if (!this.partyAI && typeof PartyAI !== "undefined") {
+                        this.partyAI = new PartyAI(this);
+                    }
+                    const ts = this.scene.tileSize || 16;
+                    if (this.partyAI?._walkBodyToward) {
+                        this.partyAI._walkBodyToward(this, pos.x, pos.y, ts, false, delta);
+                    } else if (this.partyAI?._walkToward) {
+                        this.partyAI._walkToward(this, pos.x, pos.y, ts, false, delta);
+                    }
                     this.syncSortDepth();
                     this.syncFxRoot?.();
                     this.syncNameLabel?.();
@@ -3303,8 +3310,6 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
 
         // Movement — no crawling; immobile / incapacitated / vomiting stay put
-        const skipMove = !!this._skipMove;
-        this._skipMove = false;
         let x = 0, y = 0;
         if (!prone && !vomiting && !restWalk && !skipMove && this.cursors && this.keys) {
             const left  = this.cursors.left.isDown  || this.keys.A.isDown;

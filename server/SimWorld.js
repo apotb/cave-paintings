@@ -12,6 +12,7 @@ const Durability = require("../shared/durability");
 const Chop = require("../shared/chop");
 const Place = require("../shared/place");
 const Sleep = require("../shared/sleep");
+const Path = require("../shared/path");
 const Hide = require("../shared/hide");
 const Carry = require("../shared/carry");
 const Party = require("../shared/party");
@@ -24,7 +25,7 @@ const Hediffs = require("../shared/body/Hediff");
 const BodyCombat = require("../shared/body/Combat");
 const { Body } = require("../shared/body/Body");
 const Capacities = require("../shared/body/Capacities");
-const { createAI, PartyAI, WandererStrollAI } = require("../shared/ai/headless");
+const { createAI, PartyAI, WandererStrollAI, NeutralAnimalAI } = require("../shared/ai/headless");
 const {
     createPlayerCreature,
     createMobCreature
@@ -393,6 +394,17 @@ class SimWorld {
             },
             isBlocked: (x, y) => self.isBlocked(x, y),
             tileBlocked: (x, y) => self._tileBlocked(x, y),
+            poseBlocked: (creature, x, y) => self._partyPoseBlocked(creature, x, y),
+            getRestWalkDest(mob) {
+                const spec = mob?._restWalk;
+                if (!spec?.uid) return null;
+                const found = self._findSleepByUid(spec.uid, mob);
+                if (!found?.entry) return null;
+                const pos = Sleep.sleeperWorldPos(
+                    found.entry, spec.slot, TS, self._sleepDef(found.entry)
+                );
+                return { x: pos.x - TS * 0.5, y: pos.y + TS * 0.5 };
+            },
             solidThingAt: (x, y) => self._solidThingAt(x, y),
             thingRectsNear: (x, y, radius) => self._thingRectsNear(x, y, radius),
             getItem: (id) => itemDefs().get(id),
@@ -1571,20 +1583,38 @@ class SimWorld {
         creature.x = w.x;
         creature.y = w.y;
         creature.inventory = w.inventory;
-        if (w.hostile && !creature.ai) {
-            createAI(creature, "neutralAnimal");
-            if (creature.ai) creature.ai.hostile = true;
-        }
+        if (w.hostile) this._ensureHostileWandererAI(w, creature);
         return creature;
+    }
+
+    /**
+     * Stroll AI is attached while they walk in. Hitting them sets hostile but
+     * leaves that AI in place unless we swap to NeutralAnimalAI.
+     */
+    _ensureHostileWandererAI(w, c) {
+        if (!c) return null;
+        if (!(c.ai instanceof NeutralAnimalAI)) {
+            const aggro = w?.aggroOwnerId || c.aggroOwnerId || c.ai?.aggroOwnerId || null;
+            const source = c._lastHitBy || null;
+            createAI(c, "neutralAnimal");
+            if (aggro) {
+                if (w && !w.aggroOwnerId) w.aggroOwnerId = aggro;
+                if (!c.aggroOwnerId) c.aggroOwnerId = aggro;
+                if (c.ai && !c.ai.aggroOwnerId) c.ai.aggroOwnerId = aggro;
+            }
+            if (source) c.ai?.onDamaged?.(source);
+        }
+        if (c.ai) {
+            c.ai.hostile = true;
+            c.hostile = true;
+        }
+        return c.ai;
     }
 
     _stepHostileWanderer(w, dtMs) {
         const world = this._aiWorld();
         const c = this._ensureWandererCreature(w);
-        if (w.hostile && c && !c.ai) {
-            createAI(c, "neutralAnimal");
-            if (c.ai) c.ai.hostile = true;
-        }
+        this._ensureHostileWandererAI(w, c);
         if (!c?.ai) {
             this._stepWanderer(w, dtMs);
             return;
@@ -1756,7 +1786,8 @@ class SimWorld {
         let vx = c.vx || 0;
         let vy = c.vy || 0;
         const vlen = Math.hypot(vx, vy);
-        if (vlen > 0.5) {
+        const onPath = !!(c.ai?._path && c.ai._path.length);
+        if (vlen > 0.5 && !onPath) {
             const sep = this._unstickWandererFromPack(w, vx / vlen, vy / vlen);
             vx = sep.nx * vlen;
             vy = sep.ny * vlen;
@@ -2379,6 +2410,7 @@ class SimWorld {
      * neighboring tribe does not pile into someone else's hunt.
      */
     _playerCanFight(a, b) {
+        if (a?.role === "wanderer" && b?.role === "wanderer") return false;
         const oa = Party.ownerIdOf(a);
         const ob = Party.ownerIdOf(b);
         const aSess = !!(oa && this.players.has(oa));
@@ -6131,20 +6163,7 @@ class SimWorld {
         }
         const controlId = session.controlId || session.id;
         if (pawn.id === controlId) return;
-        const tx = pos.x - TS * 0.5;
-        const ty = pos.y + TS * 0.5;
-        const len = Math.hypot(tx - pawn.x, ty - pawn.y) || 1;
-        const speed = SPEED * (pawn.creature?.capacities?.moving?.() || 1);
-        const nx = pawn.x + ((tx - pawn.x) / len) * speed * dt;
-        const ny = pawn.y + ((ty - pawn.y) / len) * speed * dt;
-        pawn.x = nx;
-        pawn.y = ny;
-        const c = pawn.creature || this.creatures.get(pawn.id);
-        if (c) {
-            c.x = nx;
-            c.y = ny;
-            c.setDesiredVel?.(0, 0);
-        }
+        // Uncontrolled rest-walk is PartyAI._walkToward (same as SP).
     }
 
     _tickSleepWalks(dtMs) {
@@ -7673,7 +7692,9 @@ class SimWorld {
                 });
             }
             // Hold a short unstick velocity so AI bee-lines don't immediately re-wedge
-            if (mob._nudgeMs > 0) {
+            const onNav = !!(mob.ai?._nav?.path && mob.ai._nav.path.length)
+                || !!(mob.ai?._path && mob.ai._path.length);
+            if (mob._nudgeMs > 0 && !onNav) {
                 mob.setDesiredVel(mob._nudgeVx || 0, mob._nudgeVy || 0);
                 mob._nudgeMs -= dtMs;
             }
@@ -7697,7 +7718,46 @@ class SimWorld {
                 && !movedY
                 && (Math.abs(wantVx) > 1 || Math.abs(wantVy) > 1)
             ) {
-                if (!mob._blockRetry || mob._blockRetry <= 0) {
+                const speed = Math.hypot(wantVx, wantVy) || 1;
+                const navState = mob.ai?._nav || {};
+                let escaped = false;
+                if (Path?.steerToward) {
+                    const steered = Path.steerToward({
+                        from: { x: mob.x, y: mob.y },
+                        to: {
+                            x: mob.x + (wantVx / speed) * 6 * TS,
+                            y: mob.y + (wantVy / speed) * 6 * TS
+                        },
+                        blocked: (px, py) => this.isBlocked(px, py),
+                        cellSize: TS,
+                        side: navState.side,
+                        path: navState.path,
+                        pathGoal: navState.pathGoal,
+                        stuckMs: navState.stuckMs,
+                        lastFrom: navState.lastFrom,
+                        lastWpDist: navState.lastWpDist,
+                        maxRange: 6,
+                        dt: dtMs
+                    });
+                    if (mob.ai) mob.ai._nav = steered;
+                    if (!steered.arrived && (steered.nx || steered.ny)) {
+                        const nxx = mob.x + steered.nx * speed * dt;
+                        const nyy = mob.y + steered.ny * speed * dt;
+                        if (!this.isBlocked(nxx, mob.y)) {
+                            mob.x = nxx;
+                            escaped = true;
+                        }
+                        if (!this.isBlocked(mob.x, nyy)) {
+                            mob.y = nyy;
+                            escaped = true;
+                        }
+                        if (escaped) {
+                            mob.vx = steered.nx * speed;
+                            mob.vy = steered.ny * speed;
+                        }
+                    }
+                }
+                if (!escaped && (!mob._blockRetry || mob._blockRetry <= 0)) {
                     mob._blockRetry = 400 + this.rng() * 350;
                     this._mobUnstick(mob);
                 }
@@ -8275,7 +8335,29 @@ class SimWorld {
         const key = chunkKey(cx, cy);
         let c = this.chunks.get(key);
         if (c) return c;
-        c = WorldGen.generateChunk(cx, cy, this.seed);
+        if (typeof Structures !== "undefined" && Structures.parentFireChunks) {
+            const parents = Structures.parentFireChunks(cx, cy, this.seed, WorldGen.tileKeyAt);
+            for (const p of parents) {
+                if (p.cx === cx && p.cy === cy) continue;
+                this._ensureChunk(p.cx, p.cy);
+            }
+            c = this.chunks.get(key);
+            if (c) return c;
+        }
+        c = WorldGen.generateChunk(cx, cy, this.seed, {
+            getGeneratedChunk: (ncx, ncy) => {
+                const n = this.chunks.get(chunkKey(ncx, ncy));
+                if (!n?.tiles) return null;
+                return {
+                    cx: ncx,
+                    cy: ncy,
+                    tileSize: 16,
+                    things: n.things,
+                    lootableThings: n.lootableThings,
+                    tiles: n.tiles
+                };
+            }
+        });
         this.chunks.set(key, c);
         this._ensureLootableUids(c);
         this._registerChunkMobs(c);

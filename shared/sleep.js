@@ -102,6 +102,7 @@
         const uid = entry?.uid || thing.uid;
         if (pawn._restWalk?.uid && uid && pawn._restWalk.uid === uid) return true;
         if (pawn._resting && pawn.lastSleep?.uid && pawn.lastSleep.uid === uid) return true;
+        if (pawn._wakeIframes > 0 && pawn.lastSleep?.uid && pawn.lastSleep.uid === uid) return true;
         // Returning to bed: other bunks in camp must not snag the path.
         if (pawn._restWalk && isSleepThing(thing.meta, entry)) return true;
         return false;
@@ -127,18 +128,53 @@
         };
     }
 
-    function besideWorldPos(entry, tileSize, thingDef) {
+    function footprintBounds(entry, tileSize, thingDef) {
         const ts = Number(tileSize) || 16;
-        if (!Place || !entry) return { x: Number(entry?.x) || 0, y: Number(entry?.y) || 0 };
-        const tiles = Place.entryFootprintTiles(entry, ts, thingDef);
-        const t = tiles[0] || Place.originTileOf(entry, ts);
-        const off = openOffset(entry.rot);
-        const ox = off.x ? Math.sign(off.x) * ts : 0;
-        const oy = off.y ? Math.sign(off.y) * ts : ts;
-        return {
-            x: t.tx * ts + ts / 2 + ox,
-            y: t.ty * ts + ts + oy
-        };
+        const tiles = Place ? Place.entryFootprintTiles(entry, ts, thingDef) : [];
+        const origin = (tiles && tiles[0]) || (Place && Place.originTileOf(entry, ts));
+        if (!origin) return null;
+        let minTx = origin.tx;
+        let maxTx = origin.tx;
+        let minTy = origin.ty;
+        let maxTy = origin.ty;
+        for (let i = 0; i < tiles.length; i++) {
+            const t = tiles[i];
+            if (t.tx < minTx) minTx = t.tx;
+            if (t.tx > maxTx) maxTx = t.tx;
+            if (t.ty < minTy) minTy = t.ty;
+            if (t.ty > maxTy) maxTy = t.ty;
+        }
+        return { minTx, maxTx, minTy, maxTy, ts };
+    }
+
+    /**
+     * Standing feet (origin 0,1) in the tile directly outside the open side,
+     * centered on that edge. sleeperWorldPos is body-center in a bunk.
+     */
+    function besideWorldPos(entry, tileSize, thingDef) {
+        const b = footprintBounds(entry, tileSize, thingDef);
+        if (!b) return { x: Number(entry?.x) || 0, y: Number(entry?.y) || 0 };
+        const r = Place.normalizeRot(entry.rot);
+        const ts = b.ts;
+        const midX = (b.minTx + b.maxTx + 1) * ts * 0.5;
+        const midFeetY = (b.minTy + b.maxTy) * ts * 0.5 + ts;
+        // cx is sprite-center in the front tile; standing origin (0,1) is feet-left.
+        let cx;
+        let feetY;
+        if (r === 90) {
+            cx = b.minTx * ts - ts * 0.5;
+            feetY = midFeetY;
+        } else if (r === 270) {
+            cx = (b.maxTx + 1) * ts + ts * 0.5;
+            feetY = midFeetY;
+        } else if (r === 180) {
+            cx = midX;
+            feetY = b.minTy * ts;
+        } else {
+            cx = midX;
+            feetY = (b.maxTy + 1) * ts + ts;
+        }
+        return { x: cx - ts * 0.5, y: feetY };
     }
 
     function inCampRange(ax, ay, bx, by, tileSize) {
@@ -264,6 +300,23 @@
         return byUid;
     }
 
+    function clearOccupantInChunkMap(chunks, pawnId) {
+        if (!chunks || !pawnId) return;
+        const vals = typeof chunks.values === "function" ? chunks.values() : Object.values(chunks);
+        for (const c of vals) {
+            const lists = [c?.things, c?.meta?.things];
+            for (const things of lists) {
+                if (!Array.isArray(things)) continue;
+                for (const t of things) {
+                    if (!Array.isArray(t?.occupants)) continue;
+                    for (let i = 0; i < t.occupants.length; i++) {
+                        if (t.occupants[i] === pawnId) t.occupants[i] = null;
+                    }
+                }
+            }
+        }
+    }
+
     return {
         CAMP_TILES,
         REST_TICK,
@@ -271,6 +324,7 @@
         HUNGER_RATE,
         hungerMult,
         bedInChunkMap,
+        clearOccupantInChunkMap,
         SCALE,
         ARRIVE_PX,
         ignoresThingCollision,

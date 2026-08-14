@@ -465,6 +465,7 @@ class LocalSim {
         this.world.seed = seed;
         this.world.chunks = {};
         this._knownChunks.clear();
+        if (typeof Structures !== "undefined") Structures.clearPending?.(this.world.seed);
         if (typeof noise !== "undefined") noise.seed(this.world.seed);
         if (typeof worldSeed !== "undefined") worldSeed = this.world.seed;
 
@@ -745,10 +746,45 @@ class LocalSim {
         }
     }
 
+    async _ensureStructureParents(cx, cy) {
+        if (typeof Structures === "undefined" || !Structures.parentFireChunks) return;
+        const seed = (this.world?.seed ?? (typeof worldSeed !== "undefined" ? worldSeed : 0)) >>> 0;
+        const ts = 16;
+        const keyAt = (typeof tileKeyFromNoise === "function")
+            ? (tx, ty) => tileKeyFromNoise(tx * ts, ty * ts)
+            : null;
+        if (!keyAt) return;
+        const parents = Structures.parentFireChunks(cx, cy, seed, keyAt);
+        for (const p of parents) {
+            if (p.cx === cx && p.cy === cy) continue;
+            const payload = await this._ensureChunkPayload(p.cx, p.cy);
+            const pkey = `${p.cx},${p.cy}`;
+            if (payload && !this._knownChunks.has(pkey)) {
+                this._knownChunks.add(pkey);
+                this._dispatch(NetProtocol.Types.CHUNK, payload);
+            }
+        }
+    }
+
     async _ensureChunkPayload(cx, cy) {
         if (!this.world.chunks) this.world.chunks = {};
         const key = `${cx},${cy}`;
         let meta = this.world.chunks[key];
+        if (meta?.tiles) {
+            return {
+                x: cx,
+                y: cy,
+                tiles: meta.tiles,
+                things: meta.things || [],
+                lootableThings: meta.lootableThings || [],
+                drops: meta.drops || [],
+                mobs: meta.mobs || [],
+                corpses: meta.corpses || [],
+                bloodStains: meta.bloodStains || []
+            };
+        }
+        await this._ensureStructureParents(cx, cy);
+        meta = this.world.chunks[key];
         if (meta?.tiles) {
             return {
                 x: cx,

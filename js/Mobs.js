@@ -105,6 +105,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         scene.mobs.add(this);
         scene.damageables?.add(this);
         this.faction = (typeof Party !== "undefined" && Party.FACTION_WILDLIFE) || "Wildlife";
+        chunk.ensureSpriteGroups?.();
         chunk.mobs.add(this);
 
         const AiClass = typeof MobAI !== "undefined" ? MobAI[this.def.ai] : null;
@@ -820,7 +821,10 @@ class DroppedItem extends Mob {
         scene.groundLayer.add(this);
         if (!scene.droppedItems) scene.droppedItems = scene.add.group();
         scene.droppedItems.add(this);
-        if (!chunk.drops) chunk.drops = scene.add.group();
+        if (!chunk.drops) {
+            chunk.ensureSpriteGroups?.();
+            if (!chunk.drops) chunk.drops = new Phaser.GameObjects.Group(scene);
+        }
         chunk.drops.add(this);
 
         this.setOrigin(0, 1);
@@ -936,7 +940,10 @@ class DroppedItem extends Mob {
             this.persistDestroy();
             return;
         }
-        if (!next.drops) next.drops = this.scene.add.group();
+        if (!next.drops) {
+            next.ensureSpriteGroups?.();
+            if (!next.drops) next.drops = new Phaser.GameObjects.Group(this.scene);
+        }
         next.drops.add(this);
     }
 

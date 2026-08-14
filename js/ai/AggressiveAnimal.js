@@ -101,7 +101,11 @@ class NeutralAnimalAI extends DoofusAI {
         }
 
         const sys = this.mob.scene?.partySys;
-        const player = sys?.duelTargetFor?.(mob)
+        let player = sys?.duelTargetFor?.(mob);
+        if (player?.role === "wanderer" || (typeof Party !== "undefined" && Party.sameFaction?.(mob, player))) {
+            player = null;
+        }
+        player = player
             || sys?.nearestParty?.(mob.x, mob.y)
             || mob.scene.player;
         this._combatTarget = player;
@@ -207,12 +211,15 @@ class NeutralAnimalAI extends DoofusAI {
             : null;
         if (overlap) nudgePawnOutOfThing?.(mob, overlap);
 
-        // Skirt static things (trees/rocks) instead of bee-lining into trunks
-        const steered = this._steerAroundObstacles(mob, nx, ny, delta);
-        nx = steered.nx;
-        ny = steered.ny;
-
         const near = edgeDist <= Math.max(reach + 8, 14);
+        if (!near) {
+            const steered = this._steerAroundObstacles(mob, nx, ny, delta);
+            nx = steered.nx;
+            ny = steered.ny;
+        } else {
+            this._nav = null;
+        }
+
         const canSprint = livingLegs >= legsNeeded && !swinging && !near;
         mob.isSprinting = canSprint;
         const speed = walk * (canSprint ? sprintFactor : 1);
@@ -225,69 +232,28 @@ class NeutralAnimalAI extends DoofusAI {
     }
 
     /**
-     * Short multi-probe steering around nearby `_things`. Prefers a sticky side so
-     * packs don't flicker left/right every frame on the same trunk.
+     * Short sticky detour around nearby solids. Same Path as party/wanderers.
+     * Bee-line until ~12px ahead is blocked; then keep a committed path.
      */
     _steerAroundObstacles(mob, nx, ny, delta = 16) {
-        // Prefer physics contact — free when clear, skip world scan
-        const touching = this._blockedInDir(mob.body, nx, ny);
-        const needAvoid = touching || this._probeBlocked(mob, nx, ny);
-
-        if (!needAvoid) {
-            this._stuckMs = 0;
-            return { nx, ny };
-        }
-
-        const side = this._avoidSide || 1;
-        // Fewer angles: physics already separates; probes only pick a slide
-        const angles = [0.55, 1.1, 1.65].flatMap((a) => [a * side, -a * side]);
-        for (const ang of angles) {
-            const c = Math.cos(ang);
-            const s = Math.sin(ang);
-            const rx = nx * c - ny * s;
-            const ry = nx * s + ny * c;
-            const len = Math.hypot(rx, ry) || 1;
-            const sx = rx / len;
-            const sy = ry / len;
-            if (!this._blockedInDir(mob.body, sx, sy) && !this._probeBlocked(mob, sx, sy)) {
-                this._avoidSide = Math.sign(ang) || side;
-                this._stuckMs = 0;
-                return { nx: sx, ny: sy };
-            }
-        }
-
-        // Axis slides as last resort
-        if (Math.abs(nx) >= Math.abs(ny)) {
-            if (!this._probeBlocked(mob, Math.sign(nx) || 1, 0)) {
-                return { nx: Math.sign(nx) || 1, ny: 0 };
-            }
-            if (!this._probeBlocked(mob, 0, this._avoidSide)) {
-                return { nx: 0, ny: this._avoidSide };
-            }
-        } else {
-            if (!this._probeBlocked(mob, 0, Math.sign(ny) || 1)) {
-                return { nx: 0, ny: Math.sign(ny) || 1 };
-            }
-            if (!this._probeBlocked(mob, this._avoidSide, 0)) {
-                return { nx: this._avoidSide, ny: 0 };
-            }
-        }
-
-        this._stuckMs += delta;
-        if (this._stuckMs > 220) {
-            const slid = slidePawnAroundThings?.(
-                mob, nx, ny, 4, this._stuckMs > 400, this._avoidSide
-            );
-            if (slid) {
-                this._avoidSide = slid.nx !== 0 ? Math.sign(slid.nx) : (slid.ny || 1);
-                this._stuckMs = 0;
-                return slid;
-            }
-            this._avoidSide *= -1;
-            this._stuckMs = 0;
-            return { nx: this._avoidSide, ny: this._avoidSide * 0.35 };
-        }
-        return { nx, ny };
+        if (typeof Path === "undefined" || !Path.steerHeading) return { nx, ny };
+        const overlapping = this._blockedInDir(mob.body, nx, ny)
+            || this._probeBlocked(mob, nx, ny);
+        const blocked = (x, y) => (typeof pawnPoseBlocked === "function"
+            ? pawnPoseBlocked(mob, x, y, 1)
+            : this._probeBlocked(mob, nx, ny));
+        const steered = Path.steerHeading(
+            { x: mob.x, y: mob.y },
+            nx,
+            ny,
+            blocked,
+            this._nav || { side: this._avoidSide },
+            { dt: delta, rangeTiles: 6, cellSize: mob.scene?.tileSize || 16, overlapping }
+        );
+        this._nav = steered;
+        this._avoidSide = steered.side;
+        this._stuckMs = steered.stuckMs;
+        return { nx: steered.nx, ny: steered.ny };
     }
 
     _blockedInDir(body, nx, ny) {
@@ -315,9 +281,20 @@ class NeutralAnimalAI extends DoofusAI {
         const right = ax + half;
         const top = ay - half;
         const bottom = ay + half;
-        // Broad-phase: ignore trunks far from the probe (full-world scan was a fight spike)
+        let hit = false;
+        if (typeof forThingsNearAabb === "function") {
+            forThingsNearAabb(scene, left, right, top, bottom, (t) => {
+                const tb = t?.body;
+                if (!tb || !tb.enable) return false;
+                if (right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom) {
+                    hit = true;
+                    return true;
+                }
+                return false;
+            });
+            return hit;
+        }
         const cull = 28;
-
         const things = scene._things.getChildren();
         for (let i = 0; i < things.length; i++) {
             const t = things[i];

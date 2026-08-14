@@ -103,6 +103,13 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         if (!this._inStaticGroup) {
             this.scene._things.add(this);
             this._inStaticGroup = true;
+            if (typeof indexThingSprite === "function") indexThingSprite(this.scene, this);
+            if (!this._cellDestroyBound) {
+                this._cellDestroyBound = true;
+                this.once("destroy", () => {
+                    if (typeof unindexThingSprite === "function") unindexThingSprite(this.scene, this);
+                });
+            }
         }
     }
 
@@ -135,6 +142,7 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         this.scene.physics.world.disable(this);
         this.body = null;
         if (this._inStaticGroup) {
+            if (typeof unindexThingSprite === "function") unindexThingSprite(this.scene, this);
             this.scene._things.remove(this, false, false);
             this._inStaticGroup = false;
         }

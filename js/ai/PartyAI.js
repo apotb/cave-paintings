@@ -8,15 +8,14 @@ class PartyAI {
         this._meleeHold = false;
         this._avoidSide = Math.random() < 0.5 ? -1 : 1;
         this._stuckMs = 0;
-        this._noProgressMs = 0;
         this._lastPx = null;
         this._lastPy = null;
         this._escapeKey = null;
         this._path = null;
-        this._pathMs = 0;
         this._pathGoalX = null;
         this._pathGoalY = null;
-        this._unstick = null;
+        this._pathRange = null;
+        this._pathOpenRadius = null;
         this._atkCache = null;
         this._atkCacheMs = 0;
         this._holdFollow = true;
@@ -227,11 +226,11 @@ class PartyAI {
         const catchR = (P?.FOLLOW_CATCH ?? 4.8) * ts;
         const overlap = this._overlappingThing(pawn);
         if (overlap) nudgePawnOutOfThing?.(pawn, overlap);
-        const overlapping = !!this._overlappingThing(pawn);
+        const overlapping = !!overlap;
         const jammedOnThing = overlapping || this._anyArcadeHit(pawn.body);
         const closeEnough = distPlayer <= idleR
             || (this._holdFollow && distPlayer < catchR && !jammedOnThing)
-            || (this._noProgressMs > 280 && distPlayer < catchR && !jammedOnThing);
+            || (this._stuckMs > 280 && distPlayer < catchR && !jammedOnThing);
 
         if (closeEnough && !overlapping) {
             this._holdFollow = true;
@@ -272,13 +271,14 @@ class PartyAI {
 
     _clearAvoid() {
         this._stuckMs = 0;
-        this._noProgressMs = 0;
         this._escapeKey = null;
         this._path = null;
-        this._pathMs = 0;
         this._pathGoalX = null;
         this._pathGoalY = null;
-        this._unstick = null;
+        this._pathOpenRadius = null;
+        this._lastPx = null;
+        this._lastPy = null;
+        this._lastWpDist = null;
     }
 
     _separation(pawn, ts, wantTiles) {
@@ -335,148 +335,65 @@ class PartyAI {
             wx /= n;
             wy /= n;
         }
-        const from = pawn.body?.center || pawn;
-        if (this._pointBlocked(from.x + wx * 10, from.y + wy * 10, pawn)) return false;
+        if (pawnPoseBlocked?.(pawn, pawn.x + wx * 10, pawn.y + wy * 10, 1)) return false;
         pawn.isSprinting = false;
         this._applyWalk(pawn, wx, wy, false);
         return true;
     }
 
     _walkToward(pawn, tx, ty, ts, sprint, delta) {
-        this._noteProgress(pawn, delta);
-        const body = pawn.body;
-        const from = body?.center
-            ? { x: body.center.x, y: body.center.y }
-            : { x: pawn.x, y: pawn.y };
-        // Callers pass a feet-origin target; collide/path at the body center.
-        const want = {
-            x: tx + (from.x - pawn.x),
-            y: ty + (from.y - pawn.y)
-        };
-        const open = this._openPoint(want.x, want.y, ts, pawn);
         const overlap = this._overlappingThing(pawn);
-        if (overlap && !this._keepPathOnOverlap) {
-            this._path = null;
-            nudgePawnOutOfThing?.(pawn, overlap);
-            if (this._overlappingThing(pawn)) {
-                const around = this._exitDir(pawn, overlap);
-                pawn.isSprinting = !!sprint && pawn.kc > 0 && !pawn.getEncumbrance?.().cannotSprint;
-                this._applyWalk(pawn, around.nx, around.ny, pawn.isSprinting);
-                return;
-            }
+        if (overlap) nudgePawnOutOfThing?.(pawn, overlap);
+        const from = { x: pawn.x, y: pawn.y };
+        const to = { x: tx, y: ty };
+        const blocked = (x, y) => (typeof pawnPoseBlocked === "function"
+            ? pawnPoseBlocked(pawn, x, y, 1)
+            : false);
+        const nav = typeof Path !== "undefined" ? Path : null;
+        if (!nav?.steerToward) return;
+        const steered = nav.steerToward({
+            from,
+            to,
+            blocked,
+            cellSize: ts || 16,
+            side: this._avoidSide,
+            path: this._path,
+            pathGoal: this._pathGoalX != null ? { x: this._pathGoalX, y: this._pathGoalY } : null,
+            stuckMs: this._stuckMs,
+            lastFrom: this._lastPx != null ? { x: this._lastPx, y: this._lastPy } : null,
+            lastWpDist: this._lastWpDist,
+            maxRange: this._pathRange || 12,
+            dt: delta,
+            overlapping: !!overlap,
+            openRadius: this._pathOpenRadius
+        });
+        this._path = steered.path;
+        this._pathGoalX = steered.pathGoal ? steered.pathGoal.x : null;
+        this._pathGoalY = steered.pathGoal ? steered.pathGoal.y : null;
+        this._avoidSide = steered.side;
+        this._stuckMs = steered.stuckMs;
+        this._lastPx = steered.lastFrom?.x;
+        this._lastPy = steered.lastFrom?.y;
+        this._lastWpDist = steered.lastWpDist;
+        if (steered.arrived) {
+            pawn.setVelocity?.(0, 0);
+            return;
         }
-        this._escapeKey = null;
-
-        const stalled = this._noProgressMs > 140;
-        const look = Math.max(8, this._clearance(pawn) + 4);
-        const odx = open.x - from.x;
-        const ody = open.y - from.y;
-        const olen = Math.hypot(odx, ody) || 1;
-        const blockedAhead = olen > 4 && !this._losPoints(
-            from.x,
-            from.y,
-            from.x + (odx / olen) * look,
-            from.y + (ody / olen) * look,
-            pawn
-        );
-        const los = !stalled && !this._unstick && !blockedAhead
-            && this._losPoints(from.x, from.y, open.x, open.y, pawn);
-        const goalDrift = this._pathGoalX == null
-            || Math.hypot(open.x - this._pathGoalX, open.y - this._pathGoalY) > 28;
-        if (los) {
-            this._path = null;
-            this._pathMs = 0;
-        } else if (!this._path || !this._path.length || goalDrift || stalled
-            || this._pathMs > (this._pathRefreshMs || 800)) {
-            this._path = this._planPath(pawn, open.x, open.y, ts);
-            this._pathGoalX = open.x;
-            this._pathGoalY = open.y;
-            this._pathMs = 0;
-        } else {
-            this._pathMs += delta;
-        }
-
-        if (this._path && this._path.length) {
-            while (
-                this._path.length
-                && Math.hypot(from.x - this._path[0].x, from.y - this._path[0].y) < 10
-            ) {
-                this._path.shift();
-            }
-        }
-
-        let gx = open.x;
-        let gy = open.y;
-        if (this._path && this._path.length) {
-            gx = this._path[0].x;
-            gy = this._path[0].y;
-        } else if (los) {
+        let nx = steered.nx;
+        let ny = steered.ny;
+        if (!this._path || !this._path.length) {
             const sep = this._separation(pawn, ts);
-            gx += sep.sx * ts * 0.5;
-            gy += sep.sy * ts * 0.5;
-        } else {
-            const corner = this._escapeCorner(pawn, open.x, open.y, ts);
-            if (corner) {
-                gx = corner.x;
-                gy = corner.y;
+            const sl = Math.hypot(sep.sx, sep.sy);
+            if (sl > 0.15) {
+                nx += (sep.sx / sl) * 0.35;
+                ny += (sep.sy / sl) * 0.35;
+                const nlen = Math.hypot(nx, ny) || 1;
+                nx /= nlen;
+                ny /= nlen;
             }
         }
-
-        let dx = gx - from.x;
-        let dy = gy - from.y;
-        let dist = Math.hypot(dx, dy) || 1;
-        let nx = dx / dist;
-        let ny = dy / dist;
-        const jammed = stalled || this._blockedInDir(body, nx, ny);
-        if (this._unstick && Math.hypot(from.x - this._unstick.x, from.y - this._unstick.y) < 10) {
-            this._unstick = null;
-        }
-        if (jammed || this._unstick) {
-            const corner = this._unstick || this._escapeCorner(pawn, open.x, open.y, ts);
-            if (corner) {
-                dx = corner.x - from.x;
-                dy = corner.y - from.y;
-                dist = Math.hypot(dx, dy) || 1;
-                nx = dx / dist;
-                ny = dy / dist;
-            }
-        }
-
-        if (stalled) {
-            const slid = slidePawnAroundThings?.(
-                pawn, nx, ny, 4, this._noProgressMs > 400, this._avoidSide
-            );
-            if (slid) {
-                nx = slid.nx;
-                ny = slid.ny;
-                this._avoidSide = nx !== 0 ? Math.sign(nx) : (ny || 1);
-            } else {
-                const free = findFreePawnPose?.(pawn, 80);
-                if (free) {
-                    teleportPawnPose?.(pawn, free.x, free.y);
-                    this._noProgressMs = 0;
-                    this._path = null;
-                    this._unstick = null;
-                }
-            }
-        }
-
         pawn.isSprinting = !!sprint && pawn.kc > 0 && !pawn.getEncumbrance?.().cannotSprint;
         this._applyWalk(pawn, nx, ny, pawn.isSprinting);
-    }
-
-    _clearance(pawn) {
-        const body = pawn?.body;
-        if (body && body.right > body.left) {
-            const hw = (body.right - body.left) * 0.5;
-            const hh = (body.bottom - body.top) * 0.5;
-            return Math.max(hw, hh) + 3;
-        }
-        return Math.max(6, (pawn?.hitboxSize || 8) * 0.5 + 3);
-    }
-
-    _cellCenter(cx, cy, cell) {
-        return { x: cx * cell + cell * 0.5, y: cy * cell + cell * 0.5 };
     }
 
     _anyArcadeHit(body) {
@@ -505,235 +422,6 @@ class PartyAI {
         if (ny < -0.25 && (b?.up || t?.up)) return true;
         if (ny > 0.25 && (b?.down || t?.down)) return true;
         return false;
-    }
-
-    _touchingThing(pawn) {
-        const scene = pawn?.scene;
-        const body = pawn?.body;
-        if (!body || !scene?._things) return null;
-        const pad = 3;
-        const things = scene._things.getChildren();
-        let best = null;
-        let bestD = Infinity;
-        for (let i = 0; i < things.length; i++) {
-            const t = things[i];
-            const tb = t?.body;
-            if (!tb || !tb.enable || pawnIgnoresThing?.(pawn, t)) continue;
-            if (!(body.right + pad > tb.left && body.left - pad < tb.right
-                && body.bottom + pad > tb.top && body.top - pad < tb.bottom)) {
-                continue;
-            }
-            const tcx = (tb.left + tb.right) * 0.5;
-            const tcy = (tb.top + tb.bottom) * 0.5;
-            const d = Math.hypot(body.center.x - tcx, body.center.y - tcy);
-            if (d < bestD) {
-                bestD = d;
-                best = t;
-            }
-        }
-        return best;
-    }
-
-    _escapeCorner(pawn, destX, destY, ts) {
-        const from = pawn.body?.center || pawn;
-        if (this._unstick) {
-            const u = this._unstick;
-            if (Math.hypot(from.x - u.x, from.y - u.y) >= 10 && !this._pointBlocked(u.x, u.y, pawn)) {
-                return u;
-            }
-        }
-        const thing = this._overlappingThing(pawn) || this._touchingThing(pawn);
-        const tb = thing?.body;
-        const pad = this._clearance(pawn) + 6;
-        const corners = [];
-        if (tb) {
-            corners.push(
-                { x: tb.left - pad, y: tb.top - pad },
-                { x: tb.right + pad, y: tb.top - pad },
-                { x: tb.left - pad, y: tb.bottom + pad },
-                { x: tb.right + pad, y: tb.bottom + pad }
-            );
-        } else {
-            const side = this._avoidSide || 1;
-            corners.push(
-                { x: from.x + side * (ts || 16), y: from.y },
-                { x: from.x, y: from.y + side * (ts || 16) },
-                { x: from.x - side * (ts || 16), y: from.y },
-                { x: from.x, y: from.y - side * (ts || 16) }
-            );
-        }
-        let best = null;
-        let bestCost = Infinity;
-        for (const c of corners) {
-            if (this._pointBlocked(c.x, c.y, pawn)) continue;
-            const cost =
-                Math.hypot(c.x - from.x, c.y - from.y)
-                + Math.hypot(c.x - destX, c.y - destY) * 0.7;
-            if (cost < bestCost) {
-                bestCost = cost;
-                best = c;
-            }
-        }
-        if (best) this._unstick = best;
-        return best;
-    }
-
-    _nearbyBodies(pawn, radius) {
-        const scene = pawn?.scene;
-        const body = pawn?.body;
-        if (!body || !scene?._things) return [];
-        const cx = body.center.x;
-        const cy = body.center.y;
-        const out = [];
-        const things = scene._things.getChildren();
-        for (let i = 0; i < things.length; i++) {
-            const t = things[i];
-            const tb = t?.body;
-            if (!tb || !tb.enable || pawnIgnoresThing?.(pawn, t)) continue;
-            const tcx = (tb.left + tb.right) * 0.5;
-            const tcy = (tb.top + tb.bottom) * 0.5;
-            if (Math.abs(tcx - cx) > radius || Math.abs(tcy - cy) > radius) continue;
-            out.push(tb);
-        }
-        return out;
-    }
-
-    _planPath(pawn, destX, destY, ts) {
-        const cell = ts || 16;
-        const from = pawn.body?.center
-            ? { x: pawn.body.center.x, y: pawn.body.center.y }
-            : { x: pawn.x, y: pawn.y };
-        const solids = this._nearbyBodies(pawn, cell * 13);
-        const half = this._clearance(pawn);
-        const blockedAt = (wx, wy) => {
-            for (let i = 0; i < solids.length; i++) {
-                const tb = solids[i];
-                if (wx + half > tb.left && wx - half < tb.right
-                    && wy + half > tb.top && wy - half < tb.bottom) {
-                    return true;
-                }
-            }
-            return false;
-        };
-        const sx = Math.floor(from.x / cell);
-        const sy = Math.floor(from.y / cell);
-        const gx = Math.floor(destX / cell);
-        const gy = Math.floor(destY / cell);
-        if (sx === gx && sy === gy) return [{ x: destX, y: destY }];
-
-        const keyOf = (cx, cy) => `${cx},${cy}`;
-        const came = new Map();
-        came.set(keyOf(sx, sy), null);
-        const q = [[sx, sy]];
-        let found = null;
-        let best = [sx, sy];
-        let bestH = Math.abs(gx - sx) + Math.abs(gy - sy);
-        const maxR = this._pathRange || 12;
-        const dirs = [
-            [1, 0], [-1, 0], [0, 1], [0, -1],
-            [1, 1], [1, -1], [-1, 1], [-1, -1]
-        ];
-        let steps = 0;
-        while (q.length && steps < 280) {
-            const cur = q.shift();
-            const cx = cur[0];
-            const cy = cur[1];
-            steps++;
-            const h = Math.abs(gx - cx) + Math.abs(gy - cy);
-            if (h < bestH) {
-                bestH = h;
-                best = cur;
-            }
-            if (cx === gx && cy === gy) {
-                found = cur;
-                break;
-            }
-            for (let d = 0; d < dirs.length; d++) {
-                const nx = cx + dirs[d][0];
-                const ny = cy + dirs[d][1];
-                if (Math.abs(nx - sx) > maxR || Math.abs(ny - sy) > maxR) continue;
-                const k = keyOf(nx, ny);
-                if (came.has(k)) continue;
-                const goalCell = nx === gx && ny === gy;
-                const pos = this._cellCenter(nx, ny, cell);
-                if (!goalCell && blockedAt(pos.x, pos.y)) continue;
-                const dx = dirs[d][0];
-                const dy = dirs[d][1];
-                if (dx && dy) {
-                    const sideX = this._cellCenter(cx + dx, cy, cell);
-                    const sideY = this._cellCenter(cx, cy + dy, cell);
-                    if (blockedAt(sideX.x, sideX.y) || blockedAt(sideY.x, sideY.y)) {
-                        continue;
-                    }
-                }
-                came.set(k, cur);
-                q.push([nx, ny]);
-            }
-        }
-        const end = found || best;
-        if (!end || (end[0] === sx && end[1] === sy)) return null;
-        const cells = [];
-        let cur = end;
-        const seen = new Set();
-        while (cur && !seen.has(keyOf(cur[0], cur[1]))) {
-            seen.add(keyOf(cur[0], cur[1]));
-            cells.push(cur);
-            cur = came.get(keyOf(cur[0], cur[1]));
-        }
-        cells.reverse();
-        const pts = [];
-        for (let i = 1; i < cells.length; i++) {
-            const p = this._cellCenter(cells[i][0], cells[i][1], cell);
-            pts.push(p);
-        }
-        if (found) pts.push({ x: destX, y: destY });
-        return this._stringPull(pawn, pts);
-    }
-
-    _stringPull(pawn, pts) {
-        if (!pts || pts.length <= 1) return pts;
-        const from = pawn.body?.center
-            ? { x: pawn.body.center.x, y: pawn.body.center.y }
-            : { x: pawn.x, y: pawn.y };
-        const out = [];
-        let ax = from.x;
-        let ay = from.y;
-        let i = 0;
-        while (i < pts.length) {
-            let j = pts.length - 1;
-            while (j > i && !this._losPoints(ax, ay, pts[j].x, pts[j].y, pawn)) j--;
-            out.push(pts[j]);
-            ax = pts[j].x;
-            ay = pts[j].y;
-            i = j + 1;
-        }
-        return out;
-    }
-
-    _losPoints(x0, y0, x1, y1, pawn) {
-        const dx = x1 - x0;
-        const dy = y1 - y0;
-        const dist = Math.hypot(dx, dy);
-        if (!(dist > 4)) return true;
-        const half = this._clearance(pawn);
-        const stepPx = Math.max(3, half * 0.5);
-        const ts = pawn?.scene?.tileSize || 16;
-        const maxDist = Math.min(dist, ts * 14);
-        const steps = Math.max(2, Math.ceil(maxDist / stepPx));
-        const solids = this._nearbyBodies(pawn, maxDist + 48);
-        for (let i = 1; i <= steps; i++) {
-            const f = ((maxDist * i) / steps) / dist;
-            const ax = x0 + dx * f;
-            const ay = y0 + dy * f;
-            for (let s = 0; s < solids.length; s++) {
-                const tb = solids[s];
-                if (ax + half > tb.left && ax - half < tb.right
-                    && ay + half > tb.top && ay - half < tb.bottom) {
-                    return false;
-                }
-            }
-        }
-        return true;
     }
 
     _tickCombat(delta, ts) {
@@ -774,18 +462,13 @@ class PartyAI {
                 entities: sys?._duelEntities
             })
             : { x: pc.x, y: pc.y, flanking: false };
-        const arrive = (typeof Party !== "undefined" && Party.DUEL_STAND_ARRIVE_PX) || 8;
-        const standDist = Math.hypot(stand.x - mc.x, stand.y - mc.y);
-        const atStand = !stand.flanking || standDist <= arrive;
-
-        if (canLand && atStand) this._meleeHold = true;
-        else if (!atStand || edgeDist > reach + this.MELEE_RESUME_PAD) this._meleeHold = false;
+        if (canLand) this._meleeHold = true;
+        else if (edgeDist > reach + this.MELEE_RESUME_PAD) this._meleeHold = false;
 
         if (
             !swinging &&
             atk &&
             canLand &&
-            atStand &&
             pawn.capacities?.canManipulate?.()
         ) {
             pawn.tryMeleeAttack?.(target, atk);
@@ -799,7 +482,7 @@ class PartyAI {
         }
 
         const sprint = distT > ts * 2 && pawn.kc > 0;
-        this._walkCombatToward(pawn, stand.x, stand.y, ts, sprint);
+        this._walkCombatToward(pawn, stand.x, stand.y, ts, sprint, delta);
     }
 
     _distToHurtbox(x, y, target) {
@@ -836,60 +519,14 @@ class PartyAI {
     }
 
     /**
-     * Combat close: go straight at the stand/hurtbox. Follow pathfinding
-     * (open-point hops, tree corners) looks like teleporting in a scrap.
+     * Approach the stand with the same grid path as follow. Bee-line when the
+     * line is clear; keep a short path when a tree/rock sits in the way.
      */
-    _walkCombatToward(pawn, tx, ty, ts, sprint) {
-        this._path = null;
-        this._unstick = null;
-        const from = pawn.bodyCenter?.()
-            || pawn.body?.center
-            || { x: pawn.x, y: pawn.y };
-        let dx = tx - from.x;
-        let dy = ty - from.y;
-        const dist = Math.hypot(dx, dy) || 1;
-        let nx = dx / dist;
-        let ny = dy / dist;
-        const rep = typeof Party !== "undefined" && Party.duelRepulse
-            ? Party.duelRepulse(pawn, pawn.scene?.partySys?._duelEntities)
-            : null;
-        if (rep && (rep.rx || rep.ry)) {
-            nx += rep.rx * 0.7;
-            ny += rep.ry * 0.7;
-            const nlen = Math.hypot(nx, ny) || 1;
-            nx /= nlen;
-            ny /= nlen;
-        }
-        const overlap = this._overlappingThing(pawn);
-        if (overlap) {
-            nudgePawnOutOfThing?.(pawn, overlap);
-            if (this._overlappingThing(pawn)) {
-                const around = this._exitDir(pawn, overlap);
-                pawn.isSprinting = !!sprint && pawn.kc > 0 && !pawn.getEncumbrance?.().cannotSprint;
-                this._applyWalk(pawn, around.nx, around.ny, pawn.isSprinting);
-                return;
-            }
-        }
-        if (this._blockedInDir(pawn.body, nx, ny) || this._arcadeJammed(pawn.body)) {
-            const sx = Math.sign(dx) || 0;
-            const sy = Math.sign(dy) || 0;
-            if (sx && !this._blockedInDir(pawn.body, sx, 0) && Math.abs(dx) > 2) {
-                nx = sx;
-                ny = 0;
-            } else if (sy && !this._blockedInDir(pawn.body, 0, sy) && Math.abs(dy) > 2) {
-                nx = 0;
-                ny = sy;
-            } else {
-                const slid = slidePawnAroundThings?.(pawn, nx, ny, 4, false, this._avoidSide);
-                if (slid) {
-                    nx = slid.nx;
-                    ny = slid.ny;
-                    this._avoidSide = nx !== 0 ? Math.sign(nx) : (ny || 1);
-                }
-            }
-        }
-        pawn.isSprinting = !!sprint && pawn.kc > 0 && !pawn.getEncumbrance?.().cannotSprint;
-        this._applyWalk(pawn, nx, ny, pawn.isSprinting);
+    _walkCombatToward(pawn, tx, ty, ts, sprint, delta) {
+        this._pathRange = 16;
+        this._pathOpenRadius = 2;
+        this._walkBodyToward(pawn, tx, ty, ts, sprint, delta);
+        this._pathOpenRadius = null;
     }
 
     _applyWalk(pawn, nx, ny, sprint) {
@@ -921,23 +558,6 @@ class PartyAI {
         pawn.anims.timeScale = 1;
         if (typeof PlayerLook !== "undefined") PlayerLook.play(pawn, pawn.facing, false);
         pawn.syncFxRoot?.();
-    }
-
-    _noteProgress(pawn, delta) {
-        if (this._lastPx == null) {
-            this._lastPx = pawn.x;
-            this._lastPy = pawn.y;
-            this._noProgressMs = 0;
-            return;
-        }
-        const moved = Math.hypot(pawn.x - this._lastPx, pawn.y - this._lastPy);
-        if (moved > 5) {
-            this._lastPx = pawn.x;
-            this._lastPy = pawn.y;
-            this._noProgressMs = 0;
-        } else {
-            this._noProgressMs += delta;
-        }
     }
 
     _exitDir(mob, thing) {
@@ -974,61 +594,8 @@ class PartyAI {
     }
 
     _overlappingThing(mob) {
-        const scene = mob?.scene;
-        const body = mob?.body;
-        if (!body || !scene?._things) return null;
-        const things = scene._things.getChildren();
-        for (let i = 0; i < things.length; i++) {
-            const t = things[i];
-            const tb = t?.body;
-            if (!tb || !tb.enable || pawnIgnoresThing?.(mob, t)) continue;
-            if (body.right > tb.left && body.left < tb.right && body.bottom > tb.top && body.top < tb.bottom) {
-                return t;
-            }
-        }
-        return null;
-    }
-
-    _pointBlocked(x, y, pawn = this.pawn) {
-        const scene = pawn?.scene;
-        if (!scene?._things) return false;
-        const half = this._clearance(pawn);
-        return this._aabbHitsThing(x, y, half, scene);
-    }
-
-    _aabbHitsThing(ax, ay, half, scene) {
-        const left = ax - half;
-        const right = ax + half;
-        const top = ay - half;
-        const bottom = ay + half;
-        const cull = 52;
-        const things = scene._things.getChildren();
-        for (let i = 0; i < things.length; i++) {
-            const t = things[i];
-            const tb = t?.body;
-            if (!tb || !tb.enable || pawnIgnoresThing?.(this.pawn, t)) continue;
-            const tcx = (tb.left + tb.right) * 0.5;
-            const tcy = (tb.top + tb.bottom) * 0.5;
-            if (Math.abs(tcx - ax) > cull || Math.abs(tcy - ay) > cull) continue;
-            if (right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    _openPoint(x, y, ts, pawn = this.pawn) {
-        if (!this._pointBlocked(x, y, pawn)) return { x, y };
-        const step = Math.max(8, ts * 0.55);
-        const bias = this._avoidSide >= 0 ? 0.2 : -0.2;
-        for (let r = 1; r <= 6; r++) {
-            for (let a = 0; a < 8; a++) {
-                const ang = (a / 8) * Math.PI * 2 + bias;
-                const px = x + Math.cos(ang) * step * r;
-                const py = y + Math.sin(ang) * step * r;
-                if (!this._pointBlocked(px, py, pawn)) return { x: px, y: py };
-            }
-        }
-        return { x, y };
+        return (typeof overlappingThingSprite === "function")
+            ? overlappingThingSprite(mob)
+            : null;
     }
 }

@@ -154,7 +154,10 @@ class Corpse extends Phaser.GameObjects.Sprite {
         // Above same-y Things / slightly above blood so pools don't steal hover
         this.setDepth((Number(entry.y) || 0) + 1);
 
-        if (!chunk.corpses?.children) chunk.corpses = scene.add.group();
+        if (!chunk.corpses?.children) {
+            chunk.ensureSpriteGroups?.();
+            if (!chunk.corpses) chunk.corpses = new Phaser.GameObjects.Group(scene);
+        }
         chunk.corpses.add(this);
         if (!scene.corpses?.children) scene.corpses = scene.add.group();
         scene.corpses.add(this);

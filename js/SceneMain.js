@@ -108,6 +108,8 @@ class SceneMain extends SceneBase {
         this.tileSize = 16;
         this.worldZoom = 3;
         this.chunks = {};
+        this._loadedChunks = [];
+        this._thingCells = this._thingCells || new Map();
         this._chunkRtPool = [];
         this._chunkPaintQ = [];
         this._paintBusy = false;
@@ -149,6 +151,9 @@ class SceneMain extends SceneBase {
         if (typeof DataStore !== "undefined") {
             DataStore.initFromPhaserScene(this);
         }
+        if (typeof Structures !== "undefined") {
+            Structures.loadConfig(this.cache.json.get("structures"));
+        }
 
         // Player
         this.partySys = new PartySystem(this);
@@ -185,6 +190,7 @@ class SceneMain extends SceneBase {
 
         // Collisions
         this._things = this.physics.add.staticGroup();
+        this._thingCells = new Map();
         this.physics.add.collider(
             this.player,
             this._things,
@@ -1371,7 +1377,10 @@ class SceneMain extends SceneBase {
         if (spr.chunk !== chunk) {
             spr.chunk?.corpses?.remove(spr);
             spr.chunk = chunk;
-            if (!chunk.corpses?.children) chunk.corpses = this.add.group();
+            if (!chunk.corpses?.children) {
+                chunk.ensureSpriteGroups?.();
+                if (!chunk.corpses) chunk.corpses = new Phaser.GameObjects.Group(this);
+            }
             chunk.corpses.add(spr);
         } else if (chunk.corpses?.children && !chunk.corpses.contains(spr)) {
             chunk.corpses.add(spr);
@@ -4203,9 +4212,9 @@ class SceneMain extends SceneBase {
 
     getCampfires() {
         const list = [];
-        for (const chunk of Object.values(this.chunks)) {
+        for (const chunk of this._loadedChunks || []) {
             if (!chunk.isLoaded) continue;
-            for (const thing of chunk.things.getChildren()) {
+            for (const thing of chunk.things?.getChildren?.() || []) {
                 // Prefer duck-typing over instanceof (breaks after live script reload)
                 if (thing.active && thing.meta?.campfire && typeof thing.burnMinute === 'function') {
                     list.push(thing);
@@ -5338,7 +5347,12 @@ class SceneMain extends SceneBase {
                 if (!dedicated) entry.occupants[i] = null;
                 continue;
             }
-            if (!pawn._resting) this._occupySlot(pawn, entry, i);
+            // Occupancy is "in this bed now", not "slept here once".
+            if (!pawn._resting) {
+                if (!dedicated) entry.occupants[i] = null;
+                continue;
+            }
+            this._occupySlot(pawn, entry, i);
         }
         for (const pawn of this.party || []) {
             if (!pawn?._resting || pawn.isBodyDead?.()) continue;
@@ -5381,12 +5395,37 @@ class SceneMain extends SceneBase {
         return null;
     }
 
+    _clearPawnSleepOccupancy(pawn) {
+        const id = pawn?.pawnId;
+        if (!id) return;
+        this.forEachSleepEntry((e) => {
+            if (!Array.isArray(e.occupants)) return;
+            for (let i = 0; i < e.occupants.length; i++) {
+                if (e.occupants[i] === id) e.occupants[i] = null;
+            }
+        });
+        const saved = this.net?.isLocal ? this.net.world?.chunks : null;
+        if (saved && typeof Sleep !== "undefined") Sleep.clearOccupantInChunkMap?.(saved, id);
+    }
+
     _restorePartySleep() {
         const dedicated = !!(this.isNet && this.net?.connected && !this.net.isLocal);
+        const poses = this.net?.world?.poses || {};
         for (const pawn of this.party || []) {
             if (!pawn || pawn.isBodyDead?.()) continue;
-            const pose = this.net?.world?.poses?.[pawn.pawnId];
+            const pose = poses[pawn.pawnId];
             if (pose?.lastSleep) pawn.lastSleep = pose.lastSleep;
+            // Per-world logout pose wins. A pose without `resting` is treated as
+            // awake so lastSleep (remembered bunk) cannot put people back to bed.
+            const wantRest = pose && typeof pose.resting === "boolean"
+                ? !!pose.resting
+                : (pose ? false : !!pawn._resting);
+            pawn._resting = wantRest;
+            if (!wantRest) {
+                if (!dedicated) this._clearPawnSleepOccupancy(pawn);
+                setCreatureRest?.(pawn, false);
+                continue;
+            }
             const bed = this._findPawnSleepBed(pawn);
             if (bed?.entry) {
                 const slot = bed.slot || 0;
@@ -5415,11 +5454,6 @@ class SceneMain extends SceneBase {
             this.partySys.tryAllyClick(switchAlly);
             return;
         }
-        if (!leanTo?.inRange?.()) return;
-        if (this.restBlocksWorldUi?.()) {
-            const uid = this.player?.lastSleep?.uid;
-            if (!uid || leanTo.entry?.uid !== uid) return;
-        }
         const slot = leanTo.slotAtPointer?.(pointer) ?? 0;
         const occ = leanTo.entry?.occupants?.[slot];
         const ally = (this.party || []).find((p) => p && p.pawnId === occ && p !== this.player);
@@ -5432,6 +5466,11 @@ class SceneMain extends SceneBase {
                 this.partySys?.tryAllyClick?.(ally);
                 return;
             }
+        }
+        if (!leanTo?.inRange?.()) return;
+        if (this.restBlocksWorldUi?.()) {
+            const uid = this.player?.lastSleep?.uid;
+            if (!uid || leanTo.entry?.uid !== uid) return;
         }
         this.leanToPanel?.toggle(leanTo, slot);
     }
@@ -5694,6 +5733,9 @@ class SceneMain extends SceneBase {
                 if (e.occupants[i] === id) e.occupants[i] = null;
             }
         });
+        if (this.net?.isLocal && this.net.world?.chunks && typeof Sleep !== "undefined") {
+            Sleep.clearOccupantInChunkMap?.(this.net.world.chunks, id);
+        }
         pawn._restWalk = null;
         this._intendedSleep().delete(id);
         setCreatureRest?.(pawn, false);
@@ -5714,15 +5756,18 @@ class SceneMain extends SceneBase {
         const entry = lean?.entry;
         if (!entry) return false;
         const pos = Sleep.besideWorldPos(entry, this.tileSize, lean.meta);
+        if (typeof ensureStandingFeetOrigin === "function") ensureStandingFeetOrigin(pawn);
         if (typeof pawn.teleport === "function") pawn.teleport(pos.x, pos.y);
         else pawn.setPosition?.(pos.x, pos.y);
         pawn.setVelocity?.(0, 0);
-        if (pawn.body) {
-            pawn.body.reset?.(pos.x, pos.y);
-            pawn.body.setVelocity?.(0, 0);
-        }
         pawn._physX = pos.x;
         pawn._physY = pos.y;
+        if (pawn.body) {
+            pawn.body.setVelocity?.(0, 0);
+            if (typeof syncPawnPhysicsPose === "function") syncPawnPhysicsPose(pawn);
+            else pawn.body.reset?.(pos.x, pos.y);
+        }
+        pawn._wakeIframes = 2;
         return true;
     }
 
@@ -7767,9 +7812,9 @@ class SceneMain extends SceneBase {
         const r2 = r * r;
         const px = this.player.x;
         const py = this.player.y;
-        for (const chunk of Object.values(this.chunks)) {
+        for (const chunk of this._loadedChunks || []) {
             if (!chunk.isLoaded) continue;
-            for (const thing of chunk.things.getChildren()) {
+            for (const thing of chunk.things?.getChildren?.() || []) {
                 if (!thing.active || thing.meta?.id !== id) continue;
                 const dx = thing.x - px;
                 const dy = thing.y - py;
@@ -7786,7 +7831,7 @@ class SceneMain extends SceneBase {
         const r2 = r * r;
         const px = this.player.x;
         const py = this.player.y;
-        for (const chunk of Object.values(this.chunks || {})) {
+        for (const chunk of this._loadedChunks || []) {
             if (!chunk.isLoaded) continue;
             for (const thing of chunk.things?.getChildren?.() || []) {
                 const id = thing?.active && thing.meta?.craftStation ? thing.meta.id : null;
@@ -7811,7 +7856,7 @@ class SceneMain extends SceneBase {
         const r2 = r * r;
         const px = this.player.x;
         const py = this.player.y;
-        for (const chunk of Object.values(this.chunks || {})) {
+        for (const chunk of this._loadedChunks || []) {
             if (!chunk.isLoaded) continue;
             for (const thing of chunk.things?.getChildren?.() || []) {
                 if (!thing?.active || thing.meta?.id !== stationId) continue;
@@ -8617,6 +8662,9 @@ class SceneMain extends SceneBase {
 
         for (const chunk of Object.values(this.chunks || {})) chunk.unload();
         this.chunks = {};
+        this._loadedChunks = [];
+        this._thingCells = new Map();
+        if (typeof Structures !== "undefined") Structures.clearPending?.();
         // Re-place the origin sign in the new world, but do not reset player spawn —
         // /regen must keep the current camera/player position.
         this._spawnSignPlaced = false;
@@ -8675,6 +8723,19 @@ class SceneMain extends SceneBase {
         try { rt.clear(); } catch (_) {}
         this._chunkRtPool = this._chunkRtPool || [];
         this._chunkRtPool.push(rt);
+    }
+
+    _trackLoadedChunk(chunk) {
+        if (!chunk) return;
+        const list = this._loadedChunks || (this._loadedChunks = []);
+        if (list.indexOf(chunk) < 0) list.push(chunk);
+    }
+
+    _untrackLoadedChunk(chunk) {
+        const list = this._loadedChunks;
+        if (!list || !chunk) return;
+        const i = list.indexOf(chunk);
+        if (i >= 0) list.splice(i, 1);
     }
 
     enqueueChunkPaint(chunk) {
@@ -8921,7 +8982,22 @@ class SceneMain extends SceneBase {
                 y: Math.floor(this.player.posY() / this.chunkSize)
             });
         }
-        const genR = this.genDistance || this.cullDistance || this.renderDistance;
+        const loadR = this.renderDistance || this.cullDistance || this.genDistance;
+        // One-chunk hysteresis only. Unloading at cullDistance (render+2) kept a
+        // 15×15 sprite window after any walk (profiler: nLoaded 40 → 241, stayed ~206 on return).
+        const unloadR = loadR + 1;
+        const genR = this.genDistance || unloadR;
+        // Sprite/physics streaming follows the camera pawn. The whole party as
+        // load anchors left every explored chunk loaded while companions lagged.
+        const stream = [];
+        if (this.player?.active) {
+            stream.push({
+                x: Math.floor(this.player.posX() / this.chunkSize),
+                y: Math.floor(this.player.posY() / this.chunkSize)
+            });
+        } else if (snapped.length) {
+            stream.push(snapped[0]);
+        }
         for (const a of snapped) {
             for (let x = a.x - genR; x <= a.x + genR; x++) {
                 for (let y = a.y - genR; y <= a.y + genR; y++) {
@@ -8934,28 +9010,47 @@ class SceneMain extends SceneBase {
             }
         }
 
-        // Load/unload chunks (iterate known chunks so a shrink on resize unloads correctly)
-        let startedLoads = 0;
+        const chunkDist = (chunk) => {
+            let min = Infinity;
+            for (let i = 0; i < stream.length; i++) {
+                const a = stream[i];
+                const d = Math.max(Math.abs(a.x - chunk.x), Math.abs(a.y - chunk.y));
+                if (d < min) min = d;
+            }
+            return min;
+        };
+
+        const loaded = this._loadedChunks || (this._loadedChunks = []);
         let startedUnloads = 0;
-        for (const chunk of Object.values(this.chunks)) {
-            const dist = snapped.reduce((min, a) => Math.min(
-                min,
-                Phaser.Math.Distance.Between(a.x, a.y, chunk.x, chunk.y)
-            ), Infinity);
-            if (dist <= genR) {
-                if (!chunk.isLoaded) {
-                    if (startedLoads >= 1) continue;
-                    startedLoads++;
-                }
-                chunk.load();
-            } else if (chunk.isLoaded) {
-                // Same budget as load: tearing down a column of RTs/sprites in one
-                // frame is the walking hitch (destroy is sync + GPU).
+        for (let i = loaded.length - 1; i >= 0; i--) {
+            const chunk = loaded[i];
+            if (!chunk?.isLoaded) {
+                loaded.splice(i, 1);
+                continue;
+            }
+            if (chunkDist(chunk) > unloadR) {
                 if (startedUnloads >= 1) continue;
                 startedUnloads++;
                 chunk.unload();
             }
         }
+
+        let best = null;
+        let bestD = Infinity;
+        for (const a of stream) {
+            for (let x = a.x - loadR; x <= a.x + loadR; x++) {
+                for (let y = a.y - loadR; y <= a.y + loadR; y++) {
+                    const chunk = this.chunks[this.getKey(x, y)];
+                    if (!chunk || chunk.isLoaded) continue;
+                    const d = Math.max(Math.abs(a.x - x), Math.abs(a.y - y));
+                    if (d < bestD) {
+                        bestD = d;
+                        best = chunk;
+                    }
+                }
+            }
+        }
+        if (best) best.load();
         this._pumpChunkPaint();
 
         if (!this._spawnSignPlaced || !this._playerSpawnPlaced) this.ensureSpawnSign();

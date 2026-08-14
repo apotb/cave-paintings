@@ -1,0 +1,83 @@
+{
+    "types": [
+        {
+            "id": "abandoned_camp",
+            "salt": 3238844033,
+            "cellChunks": 8,
+            "attemptChance": 0.45,
+            "innerChebyshev": 3,
+            "pad": 1,
+            "template": {
+                "pieces": [
+                    {
+                        "id": "unlit_campfire",
+                        "kind": "campfire",
+                        "dx": 0,
+                        "dy": 0,
+                        "rot": 0
+                    },
+                    {
+                        "id": "lean_to",
+                        "kind": "sleep",
+                        "dx": 0,
+                        "dy": 2,
+                        "rot": 180,
+                        "footprint": [2, 1]
+                    },
+                    {
+                        "id": "wicker_basket",
+                        "kind": "storage",
+                        "dx": -2,
+                        "dy": 0,
+                        "rot": 0,
+                        "loot": "abandoned_basket"
+                    },
+                    {
+                        "id": "lean_to",
+                        "kind": "sleep",
+                        "dx": 0,
+                        "dy": -2,
+                        "rot": 0,
+                        "footprint": [2, 1],
+                        "chance": 0.55
+                    },
+                    {
+                        "id": "wicker_basket",
+                        "kind": "storage",
+                        "dx": 2,
+                        "dy": 0,
+                        "rot": 180,
+                        "loot": "abandoned_basket",
+                        "chance": 0.5
+                    },
+                    {
+                        "id": "skinworking_bench",
+                        "kind": "craft",
+                        "dx": 2,
+                        "dy": 2,
+                        "rot": 270,
+                        "chance": 0.12
+                    }
+                ]
+            }
+        }
+    ],
+    "lootTables": {
+        "abandoned_basket": {
+            "stackCount": [
+                { "n": 1, "weight": 65 },
+                { "n": 2, "weight": 35 }
+            ],
+            "junk": [
+                { "id": "rot", "weight": 45, "min": 1, "max": 3 },
+                { "id": "stick", "weight": 30, "min": 2, "max": 6 },
+                { "id": "pebble", "weight": 15, "min": 1, "max": 4 },
+                { "id": "leaf_cord", "weight": 10, "min": 1, "max": 2 }
+            ],
+            "weapons": [
+                { "id": "stone_spear", "chance": 0.01, "durability": 120, "durabilityFrac": [0.25, 0.55] },
+                { "id": "wooden_spear", "chance": 0.03, "durability": 100, "durabilityFrac": [0.25, 0.55] }
+            ]
+        }
+    }
+}
