@@ -128,15 +128,15 @@
 
         malnutritionStageMessage(owner, stageLabel, ctx) {
             if (this._logIsYou(owner, ctx)) {
-                return `Your malnutrition is now ${stageLabel}.`;
+                return `Your malnutrition is now ${stageLabel}`;
             }
-            return `${this._logName(owner)}'s malnutrition is now ${stageLabel}.`;
+            return `${this._logName(owner)}'s malnutrition is now ${stageLabel}`;
         },
 
         malnutritionStarvedMessage(owner, ctx) {
             return this._logIsYou(owner, ctx)
-                ? "You starved to death."
-                : `${this._logName(owner)} starved to death.`;
+                ? "You starved to death"
+                : `${this._logName(owner)} starved to death`;
         },
 
         /**

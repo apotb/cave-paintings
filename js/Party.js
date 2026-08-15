@@ -317,6 +317,7 @@ class PartySystem {
         if (scene.hotbar) {
             const hi = Math.max(0, Math.min((scene.hotbar.size || 5) - 1, pawn.hotbarIndex || 0));
             scene.hotbar.setSize?.(pawn.inventorySize || pawn.inventory?.length || 5);
+            scene.hotbar.setOverflowSize?.(pawn.overflowSize || pawn.overflow?.length || 0);
             scene.hotbar.setActiveIndex(hi, { notifyNet: false });
             scene.hotbar.dirty = true;
         }
@@ -368,7 +369,18 @@ class PartySystem {
         pawn.hotbarIndex = opts.hotbarIndex || 0;
         if (Array.isArray(opts.inventory)) pawn.inventory = opts.inventory;
         while (pawn.inventory.length < (pawn.inventorySize || 5)) pawn.inventory.push(null);
-        if (opts.equipment) pawn.equipment = JSON.parse(JSON.stringify(opts.equipment));
+        if (opts.equipment) {
+            const eq = JSON.parse(JSON.stringify(opts.equipment));
+            pawn.equipment = {
+                head: eq.head ?? null,
+                torso: eq.torso ?? null,
+                legs: eq.legs ?? null,
+                feet: eq.feet ?? null,
+                back: eq.back ?? null,
+                waist: Array.isArray(eq.waist) ? eq.waist : []
+            };
+        }
+        if (Array.isArray(opts.overflow)) pawn.overflow = JSON.parse(JSON.stringify(opts.overflow));
         if (typeof opts.kc === "number") pawn.kc = opts.kc;
         if (typeof opts.saturation === "number") pawn.saturation = opts.saturation;
         if (typeof opts.stomach === "number") pawn.stomach = opts.stomach;
@@ -453,7 +465,7 @@ class PartySystem {
         const P = typeof Party !== "undefined" ? Party : null;
         if (P && !P.inInteractRange(me, wanderer, scene.tileSize)) return false;
         if ((scene.party?.length || 0) >= (P?.CAP || 6)) {
-            scene.combatLog?.push("Party is full.");
+            scene.combatLog?.push("Party is full");
             return false;
         }
         const myId = scene.leader?.pawnId || scene.characterId;
@@ -475,7 +487,7 @@ class PartySystem {
         if (holdingFood) this._consumeRecruitFood(me);
         if (Math.random() >= chance) {
             wanderer.refusedBy.add(myId);
-            scene.combatLog?.push(`${wanderer.displayName()} is not interested.`);
+            scene.combatLog?.push(`${wanderer.displayName()} is not interested`);
             wanderer.syncNameLabel?.();
             return false;
         }
@@ -516,7 +528,7 @@ class PartySystem {
         if (!scene.party.includes(wanderer)) scene.party.push(wanderer);
         wanderer.syncNameLabel?.();
         scene.partyPanel?.refresh?.();
-        scene.combatLog?.push(`${name} joins you.`);
+        scene.combatLog?.push(`${name} joins you`);
         if (scene.net?.isLocal) {
             scene.net.sendAction?.({
                 type: NetProtocol.Actions.RECRUIT,
@@ -576,7 +588,7 @@ class PartySystem {
         if (toPawn.isBodyDead?.()) return false;
         const P = typeof Party !== "undefined" ? Party : null;
         if (P && !P.inInteractRange(fromPawn, toPawn, scene.tileSize)) {
-            scene.combatLog?.push(`${toPawn.displayName()} is too far away.`);
+            scene.combatLog?.push(`${toPawn.displayName()} is too far away`);
             return false;
         }
         const qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
@@ -588,7 +600,7 @@ class PartySystem {
             rest.quantity = need;
             const space = toPawn.countLootSpace?.(rest, need) ?? 0;
             if (space < need) {
-                scene.combatLog?.push(`${toPawn.displayName()} cannot carry that.`);
+                scene.combatLog?.push(`${toPawn.displayName()} cannot carry that`);
                 return false;
             }
         }
@@ -609,23 +621,26 @@ class PartySystem {
         return true;
     }
 
-    tryGive(fromPawn, slot, toPawn) {
+    tryGive(fromPawn, slot, toPawn, bag = 'hotbar') {
         const scene = this.scene;
-        const stack = fromPawn?.inventory?.[slot];
+        const fromInv = fromPawn?.bagArray?.(bag)
+            || (bag === 'overflow' ? fromPawn?.overflow : fromPawn?.inventory);
+        const stack = fromInv?.[slot];
         if (!this.canGiveTo(fromPawn, toPawn, stack)) return false;
         if (scene.isNet && scene.net?.connected && !scene.net.isLocal) {
             scene.net.sendAction({
                 type: NetProtocol.Actions.GIVE_ITEM,
                 fromPawnId: fromPawn.pawnId,
                 fromSlot: slot,
+                fromBag: bag === 'overflow' ? 'overflow' : 'hotbar',
                 toPawnId: toPawn.pawnId
             });
             return true;
         }
-        fromPawn.inventory[slot] = null;
+        fromInv[slot] = null;
         if (!this.deliverGive(toPawn, stack)) {
-            fromPawn.inventory[slot] = stack;
-            scene.combatLog?.push(`${toPawn.displayName()} cannot carry that.`);
+            fromInv[slot] = stack;
+            scene.combatLog?.push(`${toPawn.displayName()} cannot carry that`);
             return false;
         }
         return true;
@@ -655,7 +670,7 @@ class PartySystem {
         }
         pawn.setVisible(false);
         if (pawn.body) pawn.body.enable = false;
-        scene.combatLog?.push(`${name} died.`);
+        scene.combatLog?.push(`${name} died`);
         scene.partyPanel?.refresh?.();
         scene.time?.delayedCall?.(0, () => pawn.destroy?.());
     }
@@ -671,8 +686,8 @@ class PartySystem {
         const killerName = killer?.displayName?.() || (killer === scene.player ? "You" : null);
         if (killer === scene.player || scene.party?.includes(killer)) {
             scene.combatLog?.push(killerName === "You" || killer === scene.player
-                ? `You slew ${name}.`
-                : `${killer.displayName()} slew ${name}.`);
+                ? `You slew ${name}`
+                : `${killer.displayName()} slew ${name}`);
         }
         scene.time?.delayedCall?.(0, () => pawn.destroy?.());
     }
@@ -1404,7 +1419,7 @@ class PartySystem {
             const name = w?.displayName?.() || "Wanderer";
             const myId = scene.leader?.pawnId || scene.characterId || scene._netPlayerId;
             if (w && myId) w.refusedBy.add(myId);
-            scene.combatLog?.push(`${name} is not interested.`);
+            scene.combatLog?.push(`${name} is not interested`);
             w?.syncNameLabel?.();
             return;
         }
@@ -1412,7 +1427,7 @@ class PartySystem {
             this._promoteWanderer(w);
         }
         const name = ev.name || "Wanderer";
-        scene.combatLog?.push(`${name} joins you.`);
+        scene.combatLog?.push(`${name} joins you`);
     }
 
     _promoteWanderer(w) {
@@ -1728,6 +1743,7 @@ class PartySystem {
 
     _pickAutoEat(eater, allowPoison, ts) {
         const scene = this.scene;
+        const skipPawnId = scene.player?.pawnId || null;
         const skipHeld = scene.player && scene.hotbar
             ? { id: scene.player.pawnId, slot: scene.hotbar.activeIndex }
             : null;
@@ -1735,6 +1751,7 @@ class PartySystem {
             return Party.pickAutoEat(eater, scene.party || [], {
                 tileSize: ts,
                 allowPoison,
+                skipPawnId,
                 skipHeld,
                 getFood: (stack) => {
                     const meta = scene.getItem(stack.id);
@@ -1746,6 +1763,7 @@ class PartySystem {
         const candidates = [];
         for (const p of scene.party || []) {
             if (!p || p.isBodyDead?.()) continue;
+            if (skipPawnId && p.pawnId === skipPawnId) continue;
             const d = Math.hypot(p.x - eater.x, p.y - eater.y);
             if (p !== eater && d > range) continue;
             for (let i = 0; i < (p.inventory || []).length; i++) {
@@ -1942,7 +1960,7 @@ class PartySystem {
         const scene = this.scene;
         const P = typeof Party !== "undefined" ? Party : { CAP: 6 };
         if ((scene.party?.length || 0) >= P.CAP) {
-            scene.combatLog?.push("Party is full.");
+            scene.combatLog?.push("Party is full");
             return;
         }
         const p = this.spawnCompanion({
@@ -1951,16 +1969,16 @@ class PartySystem {
         });
         if (p) {
             this.applyRoughVitals(p);
-            scene.combatLog?.push(`${p.displayName()} joins you.`);
+            scene.combatLog?.push(`${p.displayName()} joins you`);
         }
     }
 
     debugSpawnWanderer() {
         const scene = this.scene;
         const n = this._spawnOffscreenWanderers() || 0;
-        if (n > 1) scene.combatLog?.push(`${n} wanderers approach.`);
-        else if (n === 1) scene.combatLog?.push("A wanderer approaches.");
-        else scene.combatLog?.push("No room to spawn a wanderer.");
+        if (n > 1) scene.combatLog?.push(`${n} wanderers approach`);
+        else if (n === 1) scene.combatLog?.push("A wanderer approaches");
+        else scene.combatLog?.push("No room to spawn a wanderer");
         if (n > 0) {
             this.directorCd = typeof Party !== "undefined"
                 ? Party.directorCooldown(scene.party?.length || 1)
@@ -1978,6 +1996,7 @@ class PartySystem {
             saturation: p.saturation,
             stomach: p.stomach,
             inventory: p.inventory,
+            overflow: p.overflow,
             equipment: p.equipment,
             hotbarIndex: p.hotbarIndex,
             body: p.anatomy?.toJSON?.() ?? null,
@@ -2031,18 +2050,20 @@ class PartySystem {
                     }
                     const skipGear = guard && existing === scene.player;
                     if (dedicated && !skipGear && Array.isArray(m.inventory)) {
-                        const sig = this._gearSig(m.inventory, m.equipment, m.hotbarIndex);
+                        const sig = this._gearSig(m.inventory, m.equipment, m.hotbarIndex, m.overflow);
                         if (sig !== existing._netGearSig) {
                             existing.inventory = m.inventory;
+                            if (Array.isArray(m.overflow)) existing.overflow = m.overflow;
                             if (m.equipment) existing.equipment = JSON.parse(JSON.stringify(m.equipment));
                             if (typeof m.hotbarIndex === "number") existing.hotbarIndex = m.hotbarIndex;
                             existing._netGearSig = sig;
                         }
                         existing.syncWaistSlots?.();
                         existing.recomputeEquipmentEffects?.();
-                        if (existing === scene.player) {
+                            if (existing === scene.player) {
                             if (scene.hotbar) {
                                 scene.hotbar.setSize?.(existing.inventorySize || 5);
+                                scene.hotbar.setOverflowSize?.(existing.overflowSize || 0);
                                 scene.hotbar.dirty = true;
                             }
                             if (scene.equipmentPanel?.visible) {
@@ -2108,9 +2129,9 @@ class PartySystem {
         scene.partyPanel?.refresh?.();
     }
 
-    _gearSig(inv, eq, hotbar) {
+    _gearSig(inv, eq, hotbar, overflow) {
         try {
-            return JSON.stringify({ inv, eq, hi: hotbar });
+            return JSON.stringify({ inv, eq, hi: hotbar, ov: overflow });
         } catch (_) {
             return "";
         }

@@ -166,6 +166,8 @@ class SceneBase extends Phaser.Scene {
             "leaf_pouch",
             "hide_pouch",
             "leather_pouch",
+            "hide_bundle",
+            "leather_pack",
             "cracked_coconut",
             "cracked_coconut_overlay",
             "rot",

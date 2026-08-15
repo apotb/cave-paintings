@@ -593,35 +593,49 @@ class CampfirePanel {
         return null;
     }
 
-    tryAddFromHotbar(hotbarIndex, pointer) {
-        const key = this.getSlotAt(pointer.x, pointer.y);
-        if (!key) return false;
-
-        if (key === 'cook') {
-            this._depositQty1FromHotbar('cook', hotbarIndex);
-            return true;
+    _sourceInv(bag = this._sourceBag) {
+        const p = this.scene.player;
+        if (bag === 'overflow') {
+            if (!Array.isArray(p.overflow)) p.overflow = [];
+            return p.overflow;
         }
-        if (key.startsWith('simmer:')) {
-            this._depositSimmerFromHotbar(key, hotbarIndex);
-            return true;
-        }
-        if (key === 'catalyst') {
-            this._depositCatalystFromHotbar(hotbarIndex);
-            return true;
-        }
-
-        const inv = this.scene.player.inventory;
-        const stack = inv[hotbarIndex];
-        if (!stack) return true;
-        const meta = this.scene.getItem(stack.id);
-        if (!meta?.fuel) return true;
-
-        this._depositFuelIntoSlot(parseInt(key.slice(5), 10), hotbarIndex);
-        return true;
+        return p.inventory;
     }
 
-    tryAddFuelFromHotbar(hotbarIndex, pointer) {
-        return this.tryAddFromHotbar(hotbarIndex, pointer);
+    tryAddFromHotbar(hotbarIndex, pointer, bag = 'hotbar') {
+        this._sourceBag = bag === 'overflow' ? 'overflow' : 'hotbar';
+        try {
+            const key = this.getSlotAt(pointer.x, pointer.y);
+            if (!key) return false;
+
+            if (key === 'cook') {
+                this._depositQty1FromHotbar('cook', hotbarIndex);
+                return true;
+            }
+            if (key.startsWith('simmer:')) {
+                this._depositSimmerFromHotbar(key, hotbarIndex);
+                return true;
+            }
+            if (key === 'catalyst') {
+                this._depositCatalystFromHotbar(hotbarIndex);
+                return true;
+            }
+
+            const inv = this._sourceInv();
+            const stack = inv[hotbarIndex];
+            if (!stack) return true;
+            const meta = this.scene.getItem(stack.id);
+            if (!meta?.fuel) return true;
+
+            this._depositFuelIntoSlot(parseInt(key.slice(5), 10), hotbarIndex);
+            return true;
+        } finally {
+            this._sourceBag = 'hotbar';
+        }
+    }
+
+    tryAddFuelFromHotbar(hotbarIndex, pointer, bag = 'hotbar') {
+        return this.tryAddFromHotbar(hotbarIndex, pointer, bag);
     }
 
     tryQuickAdd(hotbarIndex, pointer = null) {
@@ -745,7 +759,7 @@ class CampfirePanel {
 
     _depositCatalystFromHotbar(hotbarIndex) {
         if (!this.campfire) return;
-        const inv = this.scene.player.inventory;
+        const inv = this._sourceInv();
         const stack = inv[hotbarIndex];
         if (!stack) return;
         const meta = this.scene.getItem(stack.id);
@@ -777,12 +791,12 @@ class CampfirePanel {
         this.scene.hotbar.dirty = true;
         this.layout();
         this.scene.refreshTooltip();
-        this._notifyCampfire("inv_to_slot", { inv: hotbarIndex, slot: "catalyst", amount: 1 });
+        this._notifyCampfire("inv_to_slot", { inv: hotbarIndex, slot: "catalyst", amount: 1, bag: this._sourceBag === 'overflow' ? 'overflow' : 'hotbar' });
     }
 
     _depositSimmerFromHotbar(key, hotbarIndex) {
         if (!this._isShellSimmer()) return;
-        const inv = this.scene.player.inventory;
+        const inv = this._sourceInv();
         const stack = inv[hotbarIndex];
         if (!stack || !isSimmerIngredient(stack.id)) return;
 
@@ -796,14 +810,14 @@ class CampfirePanel {
         this.scene.hotbar.dirty = true;
         this.refresh();
         this.scene.refreshTooltip();
-        this._notifyCampfire("inv_to_slot", { inv: hotbarIndex, slot: key, amount: 1 });
+        this._notifyCampfire("inv_to_slot", { inv: hotbarIndex, slot: key, amount: 1, bag: this._sourceBag === 'overflow' ? 'overflow' : 'hotbar' });
     }
 
     _depositQty1FromHotbar(key, hotbarIndex) {
         if (!this.campfire) return;
         if (key === 'cook' && !this._cookSlotOpen()) return;
 
-        const inv = this.scene.player.inventory;
+        const inv = this._sourceInv();
         const stack = inv[hotbarIndex];
         if (!stack) return;
         if (key === 'cook' && !this._cookAccepts(stack)) return;
@@ -831,7 +845,7 @@ class CampfirePanel {
         this.scene.hotbar.dirty = true;
         this.refresh();
         this.scene.refreshTooltip();
-        this._notifyCampfire("inv_to_slot", { inv: hotbarIndex, slot: key, amount: 1 });
+        this._notifyCampfire("inv_to_slot", { inv: hotbarIndex, slot: key, amount: 1, bag: this._sourceBag === 'overflow' ? 'overflow' : 'hotbar' });
     }
 
     /** Insert a full stack object into inventory (preserves custom meal fields). */
@@ -863,7 +877,7 @@ class CampfirePanel {
     }
 
     _depositFuelIntoSlot(idx, hotbarIndex, pointer = null) {
-        const inv = this.scene.player.inventory;
+        const inv = this._sourceInv();
         const stack = inv[hotbarIndex];
         if (!stack) return;
         const meta = this.scene.getItem(stack.id);
@@ -920,7 +934,8 @@ class CampfirePanel {
         this._notifyCampfire("inv_to_slot", {
             inv: hotbarIndex,
             slot: `fuel:${idx}`,
-            amount: moved
+            amount: moved,
+            bag: this._sourceBag === 'overflow' ? 'overflow' : 'hotbar'
         });
     }
 
@@ -986,7 +1001,7 @@ class CampfirePanel {
         piece.quantity = amount;
         const invStack = this._toInvStack(piece);
         if (!this.scene.partySys.deliverGive(target, invStack)) {
-            this.scene.combatLog?.push(`${target.displayName()} cannot carry that.`);
+            this.scene.combatLog?.push(`${target.displayName()} cannot carry that`);
             return false;
         }
         if (amount >= qty) this._setStack(fromKey, null);

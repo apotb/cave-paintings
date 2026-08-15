@@ -385,8 +385,8 @@ class KnappingPanel {
         this._redraw();
         if (out.shattered) {
             this._shattered = true;
-            this.preview.setText(out.reason || "It shattered.");
-            this.scene.combatLog?.push(out.reason || "It shattered.");
+            this.preview.setText(out.reason || "It shattered");
+            this.scene.combatLog?.push(out.reason || "It shattered");
             // Stay open — player dismisses with Finish
             this.btnFinish.label.setText("[ Finish ]");
             return;
@@ -433,8 +433,8 @@ class KnappingPanel {
         const fail = Knapping.shatterCheck(this.grid);
         if (fail.shattered) {
             this._shattered = true;
-            this.preview.setText(fail.reason || "It crumbled.");
-            this.scene.combatLog?.push(fail.reason || "It crumbled.");
+            this.preview.setText(fail.reason || "It crumbled");
+            this.scene.combatLog?.push(fail.reason || "It crumbled");
             this.btnFinish.label.setText("[ Finish ]");
             return;
         }
@@ -473,10 +473,10 @@ class KnappingPanel {
         const verb = this._rework ? "reshaped" : "knapped";
         const ok = this._grantTool(stack);
         if (ok) {
-            this.scene.combatLog?.push(`You ${verb} a ${stack.customName}.`);
+            this.scene.combatLog?.push(`You ${verb} a ${stack.customName}`);
         } else {
             this.scene.combatLog?.push?.(
-                `You ${verb} a ${stack?.customName || "tool"}, but it fell out of reach.`
+                `You ${verb} a ${stack?.customName || "tool"}, but it fell out of reach`
             );
         }
         this.close();

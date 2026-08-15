@@ -127,7 +127,7 @@
 
     function breakMessage(name, held) {
         const n = name || "item";
-        return held ? `Your ${n} broke.` : `The ${n} broke.`;
+        return held ? `Your ${n} broke` : `The ${n} broke`;
     }
 
     /** Slot fill 0–1, or null when the bar should be hidden (100% / none). */

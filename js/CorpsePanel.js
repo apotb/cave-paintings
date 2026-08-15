@@ -604,7 +604,7 @@ class CorpsePanel {
 
         const whole = typeof cloneItemStack === "function" ? cloneItemStack(stack) : { ...stack };
         if (!this.scene.partySys.deliverGive(target, whole)) {
-            this.scene.combatLog?.push(`${target.displayName()} cannot carry that.`);
+            this.scene.combatLog?.push(`${target.displayName()} cannot carry that`);
             return false;
         }
         this.session[this._dragFrom] = null;

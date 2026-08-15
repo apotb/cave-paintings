@@ -395,6 +395,7 @@ class SimWorld {
             isBlocked: (x, y) => self.isBlocked(x, y),
             tileBlocked: (x, y) => self._tileBlocked(x, y),
             poseBlocked: (creature, x, y) => self._partyPoseBlocked(creature, x, y),
+            terrainSpeedMult: (x, y) => self._terrainSpeedMult(x, y),
             getRestWalkDest(mob) {
                 const spec = mob?._restWalk;
                 if (!spec?.uid) return null;
@@ -876,6 +877,7 @@ class SimWorld {
             saturation: p.saturation,
             stomach: p.stomach,
             inventory: p.inventory,
+            overflow: p.overflow,
             equipment: p.equipment,
             hotbarIndex: p.hotbarIndex,
             body: p.body || null,
@@ -1031,10 +1033,14 @@ class SimWorld {
                 torso: character.equipment.torso ?? null,
                 legs: character.equipment.legs ?? null,
                 feet: character.equipment.feet ?? null,
+                back: character.equipment.back ?? null,
                 waist: Array.isArray(character.equipment.waist)
                     ? character.equipment.waist.slice()
                     : []
             };
+        }
+        if (Array.isArray(character.overflow)) {
+            p.overflow = character.overflow.slice(0, 16);
         }
         if (typeof character.hotbarIndex === "number") {
             p.hotbarIndex = Math.max(0, Math.min(p.inventory.length - 1, character.hotbarIndex));
@@ -1060,6 +1066,11 @@ class SimWorld {
         this._ensureEquipment(p);
         this._syncPlayerInvSize(p);
         this._enforceCarryCap(p);
+        for (const m of p.party || []) {
+            this._ensureEquipment(m);
+            this._syncPlayerInvSize(m);
+            this._enforceCarryCap(m);
+        }
         if (this.players.has(p.id) || p.creature) {
             this._ensurePlayerCreature(p);
         }
@@ -1083,7 +1094,8 @@ class SimWorld {
             stomach: 1600,
             hunger: 2000,
             inventory: emptyInv(5),
-            equipment: { head: null, torso: null, legs: null, feet: null, waist: [] },
+            overflow: [],
+            equipment: { head: null, torso: null, legs: null, feet: null, back: null, waist: [] },
             hotbarIndex: 0,
             hp: 100,
             mhp: 100,
@@ -1121,7 +1133,8 @@ class SimWorld {
             saturation: m.saturation ?? 0,
             stomach: m.stomach ?? 1600,
             inventory: Array.isArray(m.inventory) ? m.inventory : emptyInv(5),
-            equipment: m.equipment || { head: null, torso: null, legs: null, feet: null, waist: [] },
+            overflow: Array.isArray(m.overflow) ? m.overflow : [],
+            equipment: m.equipment || { head: null, torso: null, legs: null, feet: null, back: null, waist: [] },
             hotbarIndex: m.hotbarIndex || 0,
             hp: m.hp ?? 100,
             mhp: m.mhp ?? 100,
@@ -1290,16 +1303,18 @@ class SimWorld {
         const to = this._ownedPawns(p).find((m) => m.id === action.toPawnId);
         if (!from || !to || from === to) return;
         const slot = Number(action.fromSlot);
-        const stack = from.inventory?.[slot];
+        const fromBag = this._normBag(action.fromBag);
+        const fromInv = this._pawnBag(from, fromBag);
+        const stack = fromInv?.[slot];
         if (!stack) return;
         const dist = Math.hypot(from.x - to.x, from.y - to.y) / TS;
         if (dist > Party.INTERACT_TILES + 0.2) return;
         const qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
-        from.inventory[slot] = null;
+        fromInv[slot] = null;
         const left = this._giveOwnedStack(to, { ...stack, quantity: qty });
         if (left > 0) {
             stack.quantity = left;
-            from.inventory[slot] = stack;
+            fromInv[slot] = stack;
         }
         this._youDirty.add(p.id);
     }
@@ -1636,10 +1651,11 @@ class SimWorld {
         const dt = dtMs / 1000;
         const ox = w.x;
         const oy = w.y;
-        const nx = w.x + (c.vx || 0) * dt;
-        const ny = w.y + (c.vy || 0) * dt;
-        if (!this.isBlocked(nx, w.y)) w.x = nx;
-        if (!this.isBlocked(w.x, ny)) w.y = ny;
+        const swim = this._terrainSpeedMult(w.x, w.y - 1);
+        const nx = w.x + (c.vx || 0) * dt * swim;
+        const ny = w.y + (c.vy || 0) * dt * swim;
+        if (!this.isBlocked(nx, w.y, { swim: true })) w.x = nx;
+        if (!this.isBlocked(w.x, ny, { swim: true })) w.y = ny;
         w._moved = Math.hypot(w.x - ox, w.y - oy) > 0.15
             || Math.hypot(c.vx || 0, c.vy || 0) > 2;
         c.x = w.x;
@@ -1795,8 +1811,9 @@ class SimWorld {
             c.vy = vy;
         }
         const dt = dtMs / 1000;
-        const nx = w.x + vx * dt;
-        const ny = w.y + vy * dt;
+        const swim = this._terrainSpeedMult(w.x, w.y - 1);
+        const nx = w.x + vx * dt * swim;
+        const ny = w.y + vy * dt * swim;
         if (!this._partyPoseBlocked(c, nx, c.y)) c.x = nx;
         if (!this._partyPoseBlocked(c, c.x, ny)) c.y = ny;
         w.x = c.x;
@@ -1835,15 +1852,16 @@ class SimWorld {
         }
         const ox = w.x;
         const oy = w.y;
-        const nx = w.x + hx * speedPx * dt;
-        const ny = w.y + hy * speedPx * dt;
+        const swim = this._terrainSpeedMult(w.x, w.y - 1);
+        const nx = w.x + hx * speedPx * dt * swim;
+        const ny = w.y + hy * speedPx * dt * swim;
         let movedX = false;
         let movedY = false;
-        if (!this.isBlocked(nx, w.y)) {
+        if (!this.isBlocked(nx, w.y, { swim: true })) {
             w.x = nx;
             movedX = true;
         }
-        if (!this.isBlocked(w.x, ny)) {
+        if (!this.isBlocked(w.x, ny, { swim: true })) {
             w.y = ny;
             movedY = true;
         }
@@ -1880,8 +1898,8 @@ class SimWorld {
             const dlen = Math.hypot(dx, dy) || 1;
             const nx = w.x + (dx / dlen) * step;
             const ny = w.y + (dy / dlen) * step;
-            const canX = !this.isBlocked(nx, w.y);
-            const canY = !this.isBlocked(w.x, ny);
+            const canX = !this.isBlocked(nx, w.y, { swim: true });
+            const canY = !this.isBlocked(w.x, ny, { swim: true });
             if (!canX && !canY) continue;
             w._nudgeVx = dx / dlen;
             w._nudgeVy = dy / dlen;
@@ -1894,7 +1912,7 @@ class SimWorld {
                 const a = (i / 8) * Math.PI * 2;
                 const x = w.x + Math.cos(a) * r;
                 const y = w.y + Math.sin(a) * r;
-                if (this.isBlocked(x, y)) continue;
+                if (this.isBlocked(x, y, { swim: true })) continue;
                 w.x = x;
                 w.y = y;
                 w._moved = true;
@@ -1940,7 +1958,7 @@ class SimWorld {
         const n = Math.hypot(wx, wy) || 1;
         wx /= n;
         wy /= n;
-        if (this.isBlocked(w.x + wx * 8, w.y + wy * 8)) return { nx, ny };
+        if (this.isBlocked(w.x + wx * 8, w.y + wy * 8, { swim: true })) return { nx, ny };
         return { nx: wx, ny: wy };
     }
 
@@ -1983,14 +2001,27 @@ class SimWorld {
         };
     }
 
-    _tileBlocked(wx, wy) {
+    _tileBlocked(wx, wy, opts = {}) {
         const { cx, cy } = worldToChunk(wx, wy);
         const c = this._ensureChunk(cx, cy);
         const lx = Math.floor((wx - cx * CHUNK_PX) / TS);
         const ly = Math.floor((wy - cy * CHUNK_PX) / TS);
         if (lx < 0 || ly < 0 || lx >= CS || ly >= CS) return true;
         const tile = c.tiles[lx + ly * CS];
-        return !!(tile && BLOCKED.has(tile));
+        if (!tile || !BLOCKED.has(tile)) return false;
+        if (opts.swim && (tile === "water" || tile === "ice")) return false;
+        return true;
+    }
+
+    /** Move speed scale for standing in water (ice is not slowed). */
+    _terrainSpeedMult(wx, wy) {
+        const { cx, cy } = worldToChunk(wx, wy);
+        const c = this.chunks.get(chunkKey(cx, cy));
+        if (!c) return 1;
+        const lx = Math.floor((wx - cx * CHUNK_PX) / TS);
+        const ly = Math.floor((wy - cy * CHUNK_PX) / TS);
+        if (lx < 0 || ly < 0 || lx >= CS || ly >= CS) return 1;
+        return c.tiles[lx + ly * CS] === "water" ? 0.5 : 1;
     }
 
     _creatureBodyAt(creature, x, y) {
@@ -2039,7 +2070,7 @@ class SimWorld {
     }
 
     _partyPoseBlocked(creature, x, y) {
-        if (this._tileBlocked(x, y)) return true;
+        if (this._tileBlocked(x, y, { swim: Party.traversesWater?.(creature) })) return true;
         const body = this._creatureBodyAt(creature, x, y);
         return !!this._aabbHitsThing(
             body.left, body.right, body.top, body.bottom, x, y, 64, creature
@@ -2150,7 +2181,8 @@ class SimWorld {
             saturation: saved.saturation ?? 0,
             stomach: saved.stomach ?? 1600,
             inventory: Array.isArray(saved.inventory) ? saved.inventory : emptyInv(5),
-            equipment: saved.equipment || { head: null, torso: null, legs: null, feet: null, waist: [] },
+            overflow: Array.isArray(saved.overflow) ? saved.overflow : [],
+            equipment: saved.equipment || { head: null, torso: null, legs: null, feet: null, back: null, waist: [] },
             hotbarIndex: saved.hotbarIndex || 0,
             hp: saved.hp ?? 100,
             mhp: saved.mhp ?? 100,
@@ -2295,13 +2327,6 @@ class SimWorld {
             remainingMs: Math.max(0, Number(p.vomitRemainingMs) || 0),
             drip: !opts.start
         });
-        if (opts.start) {
-            this.pushEvent({
-                kind: "combat_log",
-                text: "You vomit.",
-                to: this._sessionOfPawn(p)?.id || p.id
-            });
-        }
         this._dirtyPawnOwner(p);
     }
 
@@ -2517,7 +2542,7 @@ class SimWorld {
         if (!poseLocked && control._restWalk && (Math.hypot(x, y) > 0.01)) {
             control._restWalk = null;
             if (cc) cc._restWalk = null;
-            this._sleepLog(p, `${control.name || "They"} can't rest there.`);
+            this._sleepLog(p, `${control.name || "They"} can't rest there`);
         }
         if (poseLocked || justWoke) {
             p.moveX = 0;
@@ -2770,7 +2795,7 @@ class SimWorld {
         }
         if (cmd === "/party") {
             if ((p.party || []).length + 1 >= Party.CAP) {
-                this.announceCmd("Party is full.", { to: p.id });
+                this.announceCmd("Party is full", { to: p.id });
                 return;
             }
             const rec = this._companionFromSnap(p, {
@@ -2783,7 +2808,7 @@ class SimWorld {
             if (!p.party) p.party = [];
             p.party.push(rec);
             this._youDirty.add(p.id);
-            this.announceCmd(`${rec.name} joins you.`, { to: p.id });
+            this.announceCmd(`${rec.name} joins you`, { to: p.id });
             return;
         }
         if (cmd === "/wanderer") {
@@ -2793,10 +2818,10 @@ class SimWorld {
             }
             this.announceCmd(
                 n > 1
-                    ? `${n} wanderers approach.`
+                    ? `${n} wanderers approach`
                     : n === 1
-                        ? "A wanderer approaches."
-                        : "No room to spawn a wanderer.",
+                        ? "A wanderer approaches"
+                        : "No room to spawn a wanderer",
                 { to: p.id }
             );
             return;
@@ -2856,7 +2881,7 @@ class SimWorld {
         }
         if (cmd === "/kill") {
             this._kill(p, null);
-            this.announceCmd(`${p.name} used /kill.`, { except: p.id });
+            this.announceCmd(`${p.name} used /kill`, { except: p.id });
             return;
         }
         if (cmd === "/regen") {
@@ -3146,7 +3171,7 @@ class SimWorld {
         const fitNow = () => Carry.countFit(
             remaining,
             unitW,
-            Carry.gearMass(p.inventory, p.equipment, getDef),
+            Carry.gearMass(p.inventory, p.equipment, getDef, p.overflow),
             cap
         );
         if (fitNow() <= 0 && unitW > 0) return remaining;
@@ -3203,7 +3228,7 @@ class SimWorld {
         const drop = opts.drop !== false;
         const getDef = (id) => itemDefs().get(id);
         const cap = Carry.carryCap(Carry.strengthFromEquip(p.equipment, getDef));
-        const mass = () => Carry.gearMass(p.inventory, p.equipment, getDef);
+        const mass = () => Carry.gearMass(p.inventory, p.equipment, getDef, p.overflow);
         let dumped = 0;
         while (mass() > cap + 1e-6) {
             let idx = -1;
@@ -3771,20 +3796,22 @@ class SimWorld {
         }
     }
 
-    /** Swap or merge two hotbar slots (client drag-drop). */
+    /** Swap or merge two bag slots (hotbar and/or overflow). */
     _tryInvSwap(session, action = {}) {
         const p = this._actionPawn(session, action);
         if (!p || p.dead) return;
         const from = Math.floor(Number(action.from));
         const to = Math.floor(Number(action.to));
-        const inv = p.inventory;
-        if (!Array.isArray(inv)) return;
+        const fromBag = this._normBag(action.fromBag);
+        const toBag = this._normBag(action.toBag);
+        const fromInv = this._pawnBag(p, fromBag);
+        const toInv = this._pawnBag(p, toBag);
         if (!Number.isInteger(from) || !Number.isInteger(to)) return;
-        if (from === to) return;
-        if (from < 0 || to < 0 || from >= inv.length || to >= inv.length) return;
-        const a = inv[from];
+        if (fromBag === toBag && from === to) return;
+        if (from < 0 || to < 0 || from >= fromInv.length || to >= toInv.length) return;
+        const a = fromInv[from];
         if (!a?.id) return;
-        const b = inv[to];
+        const b = toInv[to];
         if (b && a.id === b.id && !this._stackIsSpecial(a) && !this._stackIsSpecial(b)) {
             const meta = itemDefs().get(a.id);
             const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
@@ -3800,25 +3827,29 @@ class SimWorld {
                 Hide.applyMergedSoakProgress(b, b.quantity || 1, moved, a.soakProgress);
                 b.quantity = (b.quantity || 1) + moved;
                 a.quantity = (a.quantity || 1) - moved;
-                if (!(a.quantity > 0)) inv[from] = null;
+                if (!(a.quantity > 0)) fromInv[from] = null;
             } else {
-                inv[from] = b;
-                inv[to] = a;
+                fromInv[from] = b;
+                toInv[to] = a;
             }
         } else {
-            inv[to] = a;
-            inv[from] = b || null;
+            toInv[to] = a;
+            fromInv[from] = b || null;
         }
-        p.hotbarIndex = to;
-        if (p.creature) p.creature.hotbarIndex = to;
+        if (toBag === "hotbar") {
+            p.hotbarIndex = to;
+            if (p.creature) p.creature.hotbarIndex = to;
+        }
         this._dirtyPawnOwner(p);
     }
 
     _ensureEquipment(p) {
         if (!p.equipment || typeof p.equipment !== "object") {
-            p.equipment = { head: null, torso: null, legs: null, feet: null, waist: [] };
+            p.equipment = { head: null, torso: null, legs: null, feet: null, back: null, waist: [] };
         }
+        if (p.equipment.back === undefined) p.equipment.back = null;
         if (!Array.isArray(p.equipment.waist)) p.equipment.waist = [];
+        if (!Array.isArray(p.overflow)) p.overflow = [];
         return p.equipment;
     }
 
@@ -3838,7 +3869,7 @@ class SimWorld {
     _waistCapacity(p) {
         this._ensureEquipment(p);
         let n = 0;
-        for (const key of ["head", "torso", "legs", "feet"]) {
+        for (const key of ["head", "torso", "legs", "feet", "back"]) {
             const stack = p.equipment[key];
             if (stack?.id) n += this._waistGrant(stack.id);
         }
@@ -3867,6 +3898,7 @@ class SimWorld {
             p.equipment.torso,
             p.equipment.legs,
             p.equipment.feet,
+            p.equipment.back,
             ...p.equipment.waist
         ];
         for (const stack of pieces) {
@@ -3876,6 +3908,53 @@ class SimWorld {
             for (const s of add) if (s === "hotbar") n++;
         }
         return n;
+    }
+
+    _overflowBonus(p) {
+        this._ensureEquipment(p);
+        let n = 0;
+        const pieces = [
+            p.equipment.head,
+            p.equipment.torso,
+            p.equipment.legs,
+            p.equipment.feet,
+            p.equipment.back,
+            ...p.equipment.waist
+        ];
+        for (const stack of pieces) {
+            if (!stack?.id) continue;
+            const add = itemDefs().get(stack.id)?.equip?.effects?.addSlot;
+            if (!Array.isArray(add)) continue;
+            for (const s of add) if (s === "overflow") n++;
+        }
+        return n;
+    }
+
+    _normBag(bag) {
+        return String(bag || "hotbar") === "overflow" ? "overflow" : "hotbar";
+    }
+
+    _pawnBag(p, bag) {
+        this._ensureEquipment(p);
+        if (this._normBag(bag) === "overflow") {
+            if (!Array.isArray(p.overflow)) p.overflow = [];
+            return p.overflow;
+        }
+        if (!Array.isArray(p.inventory)) p.inventory = [];
+        return p.inventory;
+    }
+
+    _syncOverflowSize(p) {
+        const size = Math.max(0, this._overflowBonus(p));
+        if (!Array.isArray(p.overflow)) p.overflow = [];
+        while (p.overflow.length < size) p.overflow.push(null);
+        if (p.overflow.length > size) {
+            for (let i = size; i < p.overflow.length; i++) {
+                const s = p.overflow[i];
+                if (s?.id) this._pushDrop(p.x, p.y, this._cloneStackForWorld(s));
+            }
+            p.overflow.length = size;
+        }
     }
 
     _syncPlayerInvSize(p) {
@@ -3890,6 +3969,7 @@ class SimWorld {
             p.inventory.length = size;
         }
         if (p.hotbarIndex >= size) p.hotbarIndex = Math.max(0, size - 1);
+        this._syncOverflowSize(p);
     }
 
     _getEquipStack(p, slotKey) {
@@ -3899,7 +3979,7 @@ class SimWorld {
             if (!Number.isInteger(i) || i < 0) return null;
             return p.equipment.waist[i] || null;
         }
-        if (!["head", "torso", "legs", "feet"].includes(slotKey)) return null;
+        if (!["head", "torso", "legs", "feet", "back"].includes(slotKey)) return null;
         return p.equipment[slotKey] || null;
     }
 
@@ -3912,7 +3992,7 @@ class SimWorld {
             p.equipment.waist[i] = stack;
             return true;
         }
-        if (!["head", "torso", "legs", "feet"].includes(slotKey)) return false;
+        if (!["head", "torso", "legs", "feet", "back"].includes(slotKey)) return false;
         p.equipment[slotKey] = stack;
         return true;
     }
@@ -3928,7 +4008,7 @@ class SimWorld {
 
     _parseEquipSlot(slotKey) {
         const key = String(slotKey || "");
-        if (["head", "torso", "legs", "feet"].includes(key)) {
+        if (["head", "torso", "legs", "feet", "back"].includes(key)) {
             return { key, body: key, waist: false, index: -1 };
         }
         if (key.startsWith("waist:")) {
@@ -3945,7 +4025,8 @@ class SimWorld {
         const from = Math.floor(Number(action.from));
         const parsed = this._parseEquipSlot(action.slot);
         if (!parsed || !Number.isInteger(from) || from < 0) return;
-        const inv = p.inventory;
+        const fromBag = this._normBag(action.fromBag);
+        const inv = this._pawnBag(p, fromBag);
         if (!Array.isArray(inv) || from >= inv.length) return;
         const stack = inv[from];
         if (!stack?.id) return;
@@ -3988,8 +4069,11 @@ class SimWorld {
         const equipped = this._getEquipStack(p, parsed.key);
         if (!equipped?.id) return;
         if (!parsed.waist && !this._canChangeBodySlot(p, parsed.key, null)) return;
-        const inv = p.inventory;
+        const toBag = this._normBag(action.toBag);
+        if (toBag === "overflow" && parsed.key === "back") return;
+        const inv = this._pawnBag(p, toBag);
         if (!Array.isArray(inv)) return;
+        if (toBag === "overflow" && to >= this._overflowBonus(p)) return;
         while (inv.length <= to) inv.push(null);
         const dest = inv[to];
         if (!dest) {
@@ -5496,8 +5580,8 @@ class SimWorld {
         return wantUid || (Number.isFinite(ax) && Number.isFinite(ay)) ? null : best;
     }
 
-    _splitInvToWorld(p, index, amount) {
-        const inv = p.inventory;
+    _splitInvToWorld(p, index, amount, bag = "hotbar") {
+        const inv = this._pawnBag(p, bag);
         const held = inv?.[index];
         if (!held?.id) return null;
         const qty = Math.max(1, Math.floor(Number(held.quantity) || 1));
@@ -5910,7 +5994,7 @@ class SimWorld {
                 pawn._restWalk = null;
                 const c = pawn.creature || this.creatures.get(pawn.id);
                 if (c) c._restWalk = null;
-                this._sleepLog(session, `${pawn.name || "They"} can't rest there.`);
+                this._sleepLog(session, `${pawn.name || "They"} can't rest there`);
             }
         }
     }
@@ -5946,7 +6030,7 @@ class SimWorld {
         if (!pawn || pawn.dead) return;
         const found = this._findSleepByUid(action.uid, pawn);
         if (!found) {
-            this._sleepLog(session, "They can't rest there.");
+            this._sleepLog(session, "They can't rest there");
             return;
         }
         const { entry } = found;
@@ -5959,7 +6043,7 @@ class SimWorld {
         }
         const occ = entry.occupants[slot];
         if (occ && occ !== pawn.id) {
-            this._sleepLog(session, "That spot is taken.");
+            this._sleepLog(session, "That spot is taken");
             return;
         }
         const pos = Sleep.sleeperWorldPos(entry, slot, TS, def);
@@ -5968,7 +6052,7 @@ class SimWorld {
         if (downed) {
             const onTile = Math.hypot(pawn.x - pos.x, pawn.y - pos.y) < TS;
             if (!onTile) {
-                this._sleepLog(session, "They can't walk to the lean-to.");
+                this._sleepLog(session, "They can't walk to the lean-to");
                 return;
             }
         }
@@ -5979,7 +6063,7 @@ class SimWorld {
     _orderRest(session, pawn, entry, slot, opts = {}) {
         if (!pawn || !entry) return false;
         if (entry.occupants?.[slot] && entry.occupants[slot] !== pawn.id) {
-            this._sleepLog(session, "That spot is taken.");
+            this._sleepLog(session, "That spot is taken");
             return false;
         }
         if (pawn._resting) this._wakePawn(session, pawn, { moving: true });
@@ -6039,7 +6123,7 @@ class SimWorld {
         if (!pawn || !entry) return false;
         Place.ensureSleepEntry(entry, this._sleepDef(entry));
         if (entry.occupants[slot] && entry.occupants[slot] !== pawn.id) {
-            this._sleepLog(session, "That spot is taken.");
+            this._sleepLog(session, "That spot is taken");
             pawn._restWalk = null;
             return false;
         }
@@ -6147,7 +6231,7 @@ class SimWorld {
         const found = this._findSleepByUid(spec.uid, pawn);
         if (!found) {
             pawn._restWalk = null;
-            this._sleepLog(session, `${pawn.name || "They"} can't rest there.`);
+            this._sleepLog(session, `${pawn.name || "They"} can't rest there`);
             return;
         }
         const { entry } = found;
@@ -6492,7 +6576,8 @@ class SimWorld {
         const dest = this._storageGetSlot(entry, slotKey);
         if (dest === undefined) return;
         const invIndex = Math.floor(Number(action.inv));
-        const held = p.inventory?.[invIndex];
+        const bag = this._normBag(action.bag);
+        const held = this._pawnBag(p, bag)?.[invIndex];
         if (!held?.id) return;
         const thingDef = thingDefs().get(entry.id);
         const meta = itemDefs().get(held.id);
@@ -6503,7 +6588,7 @@ class SimWorld {
         const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
 
         if (!dest) {
-            const piece = this._splitInvToWorld(p, invIndex, amount);
+            const piece = this._splitInvToWorld(p, invIndex, amount, bag);
             if (piece) this._storageSetSlot(entry, slotKey, this._hangIfRack(entry, piece));
             return;
         }
@@ -6512,7 +6597,7 @@ class SimWorld {
             if (slotMax > 0) space = Math.min(space, Math.max(0, slotMax - (dest.quantity || 1)));
             const take = Math.min(space, amount, held.quantity || 1);
             if (!(take > 0)) return;
-            const piece = this._splitInvToWorld(p, invIndex, take);
+            const piece = this._splitInvToWorld(p, invIndex, take, bag);
             if (!piece) return;
             dest.spoilAt = Spoil.mergeSpoilAt(
                 dest.quantity || 1, dest.spoilAt,
@@ -6526,10 +6611,10 @@ class SimWorld {
         }
         if (amount < (held.quantity || 1)) return;
         if (slotMax > 0 && (held.quantity || 1) > slotMax) return;
-        const incoming = this._splitInvToWorld(p, invIndex, held.quantity);
+        const incoming = this._splitInvToWorld(p, invIndex, held.quantity, bag);
         if (!incoming) return;
         if (!this._returnWorldToInv(p, dest, invIndex)) {
-            p.inventory[invIndex] = this._worldStackToInv(incoming);
+            this._pawnBag(p, bag)[invIndex] = this._worldStackToInv(incoming);
             this._youDirty.add(p.id);
             return;
         }
@@ -6613,7 +6698,8 @@ class SimWorld {
         const parsed = this._parseCampfireSlot(slotKey);
         if (!parsed) return;
         const invIndex = Math.floor(Number(action.inv));
-        const held = p.inventory?.[invIndex];
+        const bag = this._normBag(action.bag);
+        const held = this._pawnBag(p, bag)?.[invIndex];
         if (!held?.id) return;
         const meta = itemDefs().get(held.id);
         const dest = this._campfireGetSlot(entry, slotKey);
@@ -6624,7 +6710,7 @@ class SimWorld {
         if (parsed.kind === "fuel") {
             if (!meta?.fuel) return;
             if (!dest) {
-                const piece = this._splitInvToWorld(p, invIndex, Math.min(want, qty));
+                const piece = this._splitInvToWorld(p, invIndex, Math.min(want, qty), bag);
                 if (piece) this._campfireSetSlot(entry, slotKey, piece);
                 return;
             }
@@ -6633,7 +6719,7 @@ class SimWorld {
                 const space = Math.max(0, maxStack - (dest.quantity || 1));
                 const moved = Math.min(space, want, qty);
                 if (!(moved > 0)) return;
-                const piece = this._splitInvToWorld(p, invIndex, moved);
+                const piece = this._splitInvToWorld(p, invIndex, moved, bag);
                 if (!piece) return;
                 dest.spoilAt = Spoil.mergeSpoilAt(
                     dest.quantity || 1, dest.spoilAt,
@@ -6646,7 +6732,7 @@ class SimWorld {
                 return;
             }
             if (want < qty) return;
-            const incoming = this._splitInvToWorld(p, invIndex, qty);
+            const incoming = this._splitInvToWorld(p, invIndex, qty, bag);
             if (!incoming) return;
             this._campfireSetSlot(entry, slotKey, incoming);
             this._returnWorldToInv(p, dest, invIndex);
@@ -6657,7 +6743,7 @@ class SimWorld {
             if (!meta?.cook?.method) return;
             if (dest && this._campfireCatalystLocked(entry)) return;
             if (dest && dest.id === held.id) return;
-            const incoming = this._splitInvToWorld(p, invIndex, 1);
+            const incoming = this._splitInvToWorld(p, invIndex, 1, bag);
             if (!incoming) return;
             this._campfireSetSlot(entry, slotKey, incoming);
             if (dest) this._returnWorldToInv(p, dest, invIndex);
@@ -6668,7 +6754,7 @@ class SimWorld {
             if (!this._campfireCookOpen(entry)) return;
             if (!this._campfireCookAccepts(entry, held.id)) return;
             if (dest && dest.id === held.id) return;
-            const incoming = this._splitInvToWorld(p, invIndex, 1);
+            const incoming = this._splitInvToWorld(p, invIndex, 1, bag);
             if (!incoming) return;
             this._campfireSetSlot(entry, slotKey, incoming);
             if (dest) this._returnWorldToInv(p, dest, invIndex);
@@ -6680,7 +6766,7 @@ class SimWorld {
             if (this._campfireMethod(entry) !== "shell_simmer") return;
             if (!this._isSimmerIngredient(held.id)) return;
             if (dest) return;
-            const incoming = this._splitInvToWorld(p, invIndex, 1);
+            const incoming = this._splitInvToWorld(p, invIndex, 1, bag);
             if (incoming) this._campfireSetSlot(entry, slotKey, incoming);
         }
     }
@@ -7220,11 +7306,14 @@ class SimWorld {
             this._vacatePawn(p);
             this._applyRestClock();
             const loot = [];
-            for (const key of ["head", "torso", "legs", "feet"]) {
+            for (const key of ["head", "torso", "legs", "feet", "back"]) {
                 const s = p.equipment?.[key];
                 if (s) loot.push(this._cloneStackForWorld(s));
             }
             for (const s of p.equipment?.waist || []) {
+                if (s) loot.push(this._cloneStackForWorld(s));
+            }
+            for (const s of p.overflow || []) {
                 if (s) loot.push(this._cloneStackForWorld(s));
             }
             for (const s of p.inventory || []) {
@@ -7253,7 +7342,8 @@ class SimWorld {
         }
         // Empty gear so YOU cannot restore dumped loot after death.
         p.inventory = emptyInv(5);
-        p.equipment = { head: null, torso: null, legs: null, feet: null, waist: [] };
+        p.overflow = [];
+        p.equipment = { head: null, torso: null, legs: null, feet: null, back: null, waist: [] };
         p.hotbarIndex = 0;
         if (creature) {
             creature.inventory = p.inventory;
@@ -7294,11 +7384,14 @@ class SimWorld {
             if (creature.anatomy) mem.body = creature.anatomy.toJSON();
         }
         const loot = [];
-        for (const key of ["head", "torso", "legs", "feet"]) {
+        for (const key of ["head", "torso", "legs", "feet", "back"]) {
             const s = mem.equipment?.[key];
             if (s) loot.push(this._cloneStackForWorld(s));
         }
         for (const s of mem.equipment?.waist || []) {
+            if (s) loot.push(this._cloneStackForWorld(s));
+        }
+        for (const s of mem.overflow || []) {
             if (s) loot.push(this._cloneStackForWorld(s));
         }
         for (const s of mem.inventory || []) {
@@ -7319,7 +7412,8 @@ class SimWorld {
             playerCorpse: true
         });
         mem.inventory = emptyInv(5);
-        mem.equipment = { head: null, torso: null, legs: null, feet: null, waist: [] };
+        mem.overflow = [];
+        mem.equipment = { head: null, torso: null, legs: null, feet: null, back: null, waist: [] };
         mem.hotbarIndex = 0;
         this.creatures.delete(mem.id);
         mem.creature = null;
@@ -7426,6 +7520,7 @@ class SimWorld {
         return Party.pickAutoEat(eater, members, {
             tileSize: TS,
             allowPoison: mal,
+            skipPawnId: control?.id || null,
             skipHeld: control ? { id: control.id, slot: control.hotbarIndex ?? 0 } : null,
             getFood: (stack) => this._foodForEat(stack)
         });
@@ -8232,7 +8327,7 @@ class SimWorld {
     }
 
     isBlocked(wx, wy, opts = {}) {
-        if (this._tileBlocked(wx, wy)) return true;
+        if (this._tileBlocked(wx, wy, opts)) return true;
 
         // Match client Thing.setup: only hitboxSize > 0 is solid (bushes/debris are not).
         const { cx, cy } = worldToChunk(wx, wy);
@@ -8423,9 +8518,12 @@ class SimWorld {
         if (Array.isArray(p.inventory)) {
             Spoil.migrateCharacterStacks(p.inventory, now);
         }
+        if (Array.isArray(p.overflow)) {
+            Spoil.migrateCharacterStacks(p.overflow, now);
+        }
         const eq = p.equipment;
         if (!eq) return;
-        for (const key of ["head", "torso", "legs", "feet"]) {
+        for (const key of ["head", "torso", "legs", "feet", "back"]) {
             if (eq[key]) Spoil.migrateToSpoilLeft(eq[key], now);
         }
         if (Array.isArray(eq.waist)) {
@@ -8446,9 +8544,12 @@ class SimWorld {
         if (Array.isArray(p.inventory)) {
             for (let i = 0; i < p.inventory.length; i++) tick(p.inventory[i]);
         }
+        if (Array.isArray(p.overflow)) {
+            for (let i = 0; i < p.overflow.length; i++) tick(p.overflow[i]);
+        }
         const eq = p.equipment;
         if (!eq) return;
-        for (const key of ["head", "torso", "legs", "feet"]) tick(eq[key]);
+        for (const key of ["head", "torso", "legs", "feet", "back"]) tick(eq[key]);
         if (Array.isArray(eq.waist)) {
             for (let i = 0; i < eq.waist.length; i++) tick(eq.waist[i]);
         }
@@ -8505,9 +8606,14 @@ class SimWorld {
                 if (p.inventory[i]) this._spoilStackIfDue(p.inventory[i]);
             }
         }
+        if (Array.isArray(p.overflow)) {
+            for (let i = 0; i < p.overflow.length; i++) {
+                if (p.overflow[i]) this._spoilStackIfDue(p.overflow[i]);
+            }
+        }
         const eq = p.equipment;
         if (!eq) return;
-        for (const key of ["head", "torso", "legs", "feet"]) {
+        for (const key of ["head", "torso", "legs", "feet", "back"]) {
             if (eq[key]) this._spoilStackIfDue(eq[key]);
         }
         if (Array.isArray(eq.waist)) {
@@ -8719,6 +8825,7 @@ class SimWorld {
             saturation: p.saturation,
             stomach: p.stomach,
             inventory: p.inventory,
+            overflow: p.overflow,
             equipment: p.equipment,
             hotbarIndex: p.hotbarIndex,
             body,
@@ -8744,6 +8851,7 @@ class SimWorld {
                 saturation: m.saturation,
                 stomach: m.stomach,
                 inventory: m.inventory,
+                overflow: m.overflow,
                 equipment: m.equipment,
                 hotbarIndex: m.hotbarIndex,
                 body: m.body || m.creature?.anatomy?.toJSON?.() || null,

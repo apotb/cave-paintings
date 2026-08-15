@@ -73,9 +73,9 @@
             y /= len;
             if (Path?.steerHeading) {
                 const world = this._world || this._aiWorldRef;
-                const blocked = (px, py) => (world?.isBlocked
-                    ? world.isBlocked(px, py)
-                    : false);
+                const blocked = (px, py) => (world?.poseBlocked
+                    ? world.poseBlocked(mob, px, py)
+                    : (world?.isBlocked ? world.isBlocked(px, py) : false));
                 const steered = Path.steerHeading(
                     { x: mob.x, y: mob.y },
                     x,
@@ -526,9 +526,9 @@
 
             const near = edgeDist <= Math.max(reach + 8, 14);
             if (!near && Path?.steerHeading) {
-                const blocked = (px, py) => (world?.isBlocked
-                    ? world.isBlocked(px, py)
-                    : false);
+                const blocked = (px, py) => (world?.poseBlocked
+                    ? world.poseBlocked(mob, px, py)
+                    : (world?.isBlocked ? world.isBlocked(px, py) : false));
                 const steered = Path.steerHeading(
                     { x: mob.x, y: mob.y },
                     nx,
@@ -1007,6 +1007,7 @@
         }
 
         _pointBlocked(x, y, world = this._world) {
+            if (world?.poseBlocked) return world.poseBlocked(this.mob, x, y);
             if (world?.tileBlocked?.(x, y)) return true;
             if (!world?.tileBlocked && world?.isBlocked?.(x, y)) return true;
             const solids = this._solids || world?.thingRectsNear?.(x, y, TILE * 8) || [];

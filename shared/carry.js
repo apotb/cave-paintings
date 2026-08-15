@@ -50,14 +50,18 @@
             equipment.torso,
             equipment.legs,
             equipment.feet,
+            equipment.back,
             ...(Array.isArray(equipment.waist) ? equipment.waist : [])
         ];
     }
 
-    function gearMass(inventory, equipment, getDef) {
+    function gearMass(inventory, equipment, getDef, overflow) {
         const defOf = (id) => (typeof getDef === "function" ? getDef(id) : null);
         let total = 0;
         for (const s of inventory || []) {
+            if (s?.id) total += stackMass(s, defOf(s.id));
+        }
+        for (const s of overflow || []) {
             if (s?.id) total += stackMass(s, defOf(s.id));
         }
         for (const s of wornPieces(equipment)) {

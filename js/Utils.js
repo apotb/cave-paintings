@@ -1294,7 +1294,12 @@ function pawnTileBlocked(pawn, x, y) {
     const { tx, ty } = scene.worldToTile(x, y - 1);
     const key = scene._tileKeyAt?.(tx, ty);
     if (!key) return false;
-    if (typeof Place !== "undefined" && Place.BLOCKED && Place.BLOCKED[key]) return true;
+    if (typeof Place !== "undefined" && Place.BLOCKED && Place.BLOCKED[key]) {
+        if ((key === "water" || key === "ice") && typeof Party !== "undefined" && Party.traversesWater?.(pawn)) {
+            return false;
+        }
+        return true;
+    }
     return false;
 }
 

@@ -48,7 +48,7 @@
         SPAWN_DROP: "spawn_drop",
         ATTACK: "attack",
         HOTBAR: "hotbar",
-        /** Swap / merge two hotbar inventory slots (dedicated MP). */
+        /** Swap / merge two inventory slots (hotbar and/or overflow). Optional fromBag/toBag. */
         INV_SWAP: "inv_swap",
         /** Equip hotbar stack into an equipment slot. */
         EQUIP: "equip",

@@ -1,5 +1,3 @@
-"Back" equipment slot -- first item will be some item that a caveman would use (not a modern backpack) that adds 3 extra slots, but they will appear above your hotbar, so if you want to access them you'll have to manually drag them down into your hotbar
-
 Bones
 
 New burning system -- fires won't heat up immediately, different fuels burn at different temperatures, moisture will actually do something

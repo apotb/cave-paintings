@@ -339,6 +339,7 @@ class SceneMain extends SceneBase {
         return {
             name: this.playerName || pl.pawnName || pl.name,
             inventory: pl.inventory,
+            overflow: pl.overflow,
             equipment: pl.equipment,
             hotbarIndex: pl.hotbarIndex,
             kc: pl.kc,
@@ -395,6 +396,7 @@ class SceneMain extends SceneBase {
                 torso: this._cloneSaveStack(equipment.torso),
                 legs: this._cloneSaveStack(equipment.legs),
                 feet: this._cloneSaveStack(equipment.feet),
+                back: this._cloneSaveStack(equipment.back),
                 waist: Array.isArray(equipment.waist)
                     ? equipment.waist.map((s) => this._cloneSaveStack(s))
                     : []
@@ -412,6 +414,9 @@ class SceneMain extends SceneBase {
                 inventory: Array.isArray(m.inventory)
                     ? m.inventory.map((s) => this._cloneSaveStack(s))
                     : m.inventory,
+                overflow: Array.isArray(m.overflow)
+                    ? m.overflow.map((s) => this._cloneSaveStack(s))
+                    : m.overflow,
                 equipment: cloneEq(m.equipment),
                 hotbarIndex: m.hotbarIndex,
                 body: m.body,
@@ -429,6 +434,9 @@ class SceneMain extends SceneBase {
             inventory: Array.isArray(raw.inventory)
                 ? raw.inventory.map((s) => this._cloneSaveStack(s))
                 : raw.inventory,
+            overflow: Array.isArray(raw.overflow)
+                ? raw.overflow.map((s) => this._cloneSaveStack(s))
+                : (raw.overflow || []),
             equipment: cloneEq(eq),
             party: cloneParty(raw.party)
         };
@@ -545,6 +553,7 @@ class SceneMain extends SceneBase {
             this._lastYou = {
                 ...you,
                 inventory: youPawn.inventory,
+                overflow: youPawn.overflow,
                 equipment: youPawn.equipment,
                 dead: true
             };
@@ -580,6 +589,7 @@ class SceneMain extends SceneBase {
             this._pendingYouTarget = youPawn;
             this._pendingYouGear = {
                 inventory: Array.isArray(you.inventory) ? you.inventory : null,
+                overflow: Array.isArray(you.overflow) ? you.overflow : null,
                 equipment: you.equipment || null,
                 hotbarIndex: you.hotbarIndex
             };
@@ -686,6 +696,7 @@ class SceneMain extends SceneBase {
                 torso: cloneStack(eq.torso),
                 legs: cloneStack(eq.legs),
                 feet: cloneStack(eq.feet),
+                back: cloneStack(eq.back),
                 waist: Array.isArray(eq.waist) ? eq.waist.map(cloneStack) : []
             };
             target.syncWaistSlots?.();
@@ -713,11 +724,25 @@ class SceneMain extends SceneBase {
             }
             if (target === this.player && this.hotbar) {
                 this.hotbar.setSize?.(target.inventorySize || size);
+                this.hotbar.setOverflowSize?.(target.overflowSize || 0);
                 this.hotbar.dirty = true;
                 // layout() resyncs icon positions + textures (update alone can miss when
                 // called from a net handler while the campfire world UI is open)
                 this.hotbar.layout?.();
                 this.hotbar.dirty = false;
+            }
+        }
+
+        if (Array.isArray(pending.overflow)) {
+            const cap = Math.max(0, Number(target.overflowSize) || 0);
+            const over = pending.overflow.slice(0, cap).map(cloneStack);
+            while (over.length < cap) over.push(null);
+            target.overflow = over;
+            target.syncOverflowSize?.();
+            if (target === this.player && this.hotbar) {
+                this.hotbar.setOverflowSize?.(target.overflowSize || cap);
+                this.hotbar.dirty = true;
+                this.hotbar.layout?.();
             }
         }
 
@@ -1971,8 +1996,7 @@ class SceneMain extends SceneBase {
             const remaining = Number(ev.remainingMs);
             this.player?.startVomit?.({
                 remainingMs: remaining > 0 ? remaining : undefined,
-                fromServer: true,
-                silentLog: true
+                fromServer: true
             });
         }
         const x = Number(ev.x);
@@ -1990,8 +2014,7 @@ class SceneMain extends SceneBase {
             if (!target.isVomiting?.()) {
                 target.startVomit?.({
                     remainingMs: remaining,
-                    fromServer: true,
-                    silentLog: true
+                    fromServer: true
                 });
             } else if (target._vomit) {
                 target._vomit.fromServer = true;
@@ -5498,7 +5521,7 @@ class SceneMain extends SceneBase {
         const entry = leanTo?.entry;
         if (!entry) return false;
         if (typeof Sleep !== "undefined" && Sleep.isSlotOccupied(entry, slot) && entry.occupants[slot] !== pawn.pawnId) {
-            this._sleepLog("That spot is taken.");
+            this._sleepLog("That spot is taken");
             return false;
         }
         if (pawn._downed || pawn.isIncapacitated?.() || pawn.isImmobile?.()) {
@@ -5507,7 +5530,7 @@ class SceneMain extends SceneBase {
                 : { x: leanTo.x, y: leanTo.y };
             const onTile = Math.hypot(pawn.x - pos.x, pawn.y - pos.y) < (this.tileSize || 16);
             if (!onTile) {
-                this._sleepLog("They can't walk to the lean-to.");
+                this._sleepLog("They can't walk to the lean-to");
                 return false;
             }
         }
@@ -5620,7 +5643,7 @@ class SceneMain extends SceneBase {
             const pawn = (this.party || []).find((p) => p.pawnId === id);
             if (pawn) {
                 pawn._restWalk = null;
-                this._sleepLog(`${pawn.pawnName || "They"} can't rest there.`);
+                this._sleepLog(`${pawn.pawnName || "They"} can't rest there`);
             }
         }
     }
@@ -5632,7 +5655,7 @@ class SceneMain extends SceneBase {
             return true;
         }
         if (typeof Sleep !== "undefined" && Sleep.isSlotOccupied(entry, slot) && entry.occupants[slot] !== id) {
-            this._sleepLog("That spot is taken.");
+            this._sleepLog("That spot is taken");
             return false;
         }
         this._cancelPawnChannels(pawn);
@@ -5688,7 +5711,7 @@ class SceneMain extends SceneBase {
         if (!pawn || !entry) return false;
         if (!Array.isArray(entry.occupants)) entry.occupants = [null, null];
         if (entry.occupants[slot] && entry.occupants[slot] !== pawn.pawnId) {
-            this._sleepLog("That spot is taken.");
+            this._sleepLog("That spot is taken");
             pawn._restWalk = null;
             this._intendedSleep().delete(pawn.pawnId);
             return false;
@@ -5826,7 +5849,7 @@ class SceneMain extends SceneBase {
                 const entry = lean?.entry;
                 if (!entry) {
                     pawn._restWalk = null;
-                    this._sleepLog(`${pawn.pawnName || "They"} can't rest there.`);
+                    this._sleepLog(`${pawn.pawnName || "They"} can't rest there`);
                     continue;
                 }
                 const def = this.getThing(entry.id);
@@ -6932,13 +6955,20 @@ class SceneMain extends SceneBase {
                     }
                 }
                 const eq = pawn.equipment;
-                if (!eq) continue;
-                for (const key of ["head", "torso", "legs", "feet"]) {
-                    if (eq[key]) eq[key] = applyCharacterStack(eq[key]);
+                if (eq) {
+                    for (const key of ["head", "torso", "legs", "feet", "back"]) {
+                        if (eq[key]) eq[key] = applyCharacterStack(eq[key]);
+                    }
+                    if (Array.isArray(eq.waist)) {
+                        for (let i = 0; i < eq.waist.length; i++) {
+                            if (eq.waist[i]) eq.waist[i] = applyCharacterStack(eq.waist[i]);
+                        }
+                    }
                 }
-                if (Array.isArray(eq.waist)) {
-                    for (let i = 0; i < eq.waist.length; i++) {
-                        if (eq.waist[i]) eq.waist[i] = applyCharacterStack(eq.waist[i]);
+                const over = pawn.overflow;
+                if (Array.isArray(over)) {
+                    for (let i = 0; i < over.length; i++) {
+                        if (over[i]) over[i] = applyCharacterStack(over[i]);
                     }
                 }
             }
@@ -7336,7 +7366,7 @@ class SceneMain extends SceneBase {
                     const counts = {};
                     for (const s of addSlot) counts[s] = (counts[s] || 0) + 1;
                     for (const [s, n] of Object.entries(counts)) {
-                        const label = s === 'hotbar' ? 'hotbar' : s;
+                        const label = s === 'hotbar' ? 'hotbar' : s === 'overflow' ? 'pack' : s;
                         lines.push(`+ ${n} ${label} slot${n > 1 ? 's' : ''}`);
                     }
                 }
@@ -8134,6 +8164,7 @@ class SceneMain extends SceneBase {
             this._lastYou = {
                 ...this._lastYou,
                 inventory: leader.inventory,
+                overflow: leader.overflow,
                 equipment: leader.equipment,
                 dead: true,
                 leaderDead: true

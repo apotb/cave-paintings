@@ -520,10 +520,24 @@ class StoragePanel {
         return this.pointerOnTake(pointer);
     }
 
-    tryAddFromHotbar(hotbarIndex, pointer) {
+    _sourceInv(bag = this._sourceBag) {
+        const p = this.scene.player;
+        if (bag === 'overflow') {
+            if (!Array.isArray(p.overflow)) p.overflow = [];
+            return p.overflow;
+        }
+        return p.inventory;
+    }
+
+    tryAddFromHotbar(hotbarIndex, pointer, bag = 'hotbar') {
+        this._sourceBag = bag === 'overflow' ? 'overflow' : 'hotbar';
         const key = this.getSlotAt(pointer.x, pointer.y);
-        if (!key) return false;
+        if (!key) {
+            this._sourceBag = 'hotbar';
+            return false;
+        }
         this._depositFromHotbar(key, hotbarIndex, pointer);
+        this._sourceBag = 'hotbar';
         return true;
     }
 
@@ -612,7 +626,7 @@ class StoragePanel {
 
     _depositFromHotbar(key, hotbarIndex, pointer = null, amountCap = null) {
         if (!this.storage) return;
-        const inv = this.scene.player.inventory;
+        const inv = this._sourceInv();
         const stack = inv[hotbarIndex];
         if (!stack) return;
         if (!this._acceptsStack(stack)) return;
@@ -669,7 +683,8 @@ class StoragePanel {
         this._notifyStorage("inv_to_slot", {
             inv: hotbarIndex,
             slot: key,
-            amount: moved
+            amount: moved,
+            bag: this._sourceBag === 'overflow' ? 'overflow' : 'hotbar'
         });
     }
 
@@ -726,7 +741,7 @@ class StoragePanel {
         }
         const invStack = this._toInvStack(stack);
         if (!this.scene.partySys.deliverGive(target, invStack)) {
-            this.scene.combatLog?.push(`${target.displayName()} cannot carry that.`);
+            this.scene.combatLog?.push(`${target.displayName()} cannot carry that`);
             return false;
         }
         this._setStack(fromKey, null);

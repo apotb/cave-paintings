@@ -147,7 +147,10 @@ class LocalSim {
                 : CharacterStore.emptyInv(5),
             equipment: char.equipment
                 ? JSON.parse(JSON.stringify(char.equipment))
-                : { head: null, torso: null, legs: null, feet: null, waist: [] },
+                : { head: null, torso: null, legs: null, feet: null, back: null, waist: [] },
+            overflow: Array.isArray(char.overflow)
+                ? JSON.parse(JSON.stringify(char.overflow))
+                : [],
             hotbarIndex: char.hotbarIndex || 0,
             hp: char.hp ?? 100,
             mhp: char.mhp ?? 100,
@@ -332,7 +335,8 @@ class LocalSim {
             p.dead = true;
             p.hp = 0;
             p.inventory = [null, null, null, null, null];
-            p.equipment = { head: null, torso: null, legs: null, feet: null, waist: [] };
+            p.overflow = [];
+            p.equipment = { head: null, torso: null, legs: null, feet: null, back: null, waist: [] };
             p.hotbarIndex = 0;
             this._dispatch(NetProtocol.Types.YOU, this._youPayload());
             return;
@@ -541,6 +545,7 @@ class LocalSim {
         if (!pl || !this._pawn) return;
         this.syncPawnFromClient({
             inventory: pl.inventory,
+            overflow: pl.overflow,
             equipment: pl.equipment,
             hotbarIndex: pl.hotbarIndex,
             kc: pl.kc,
@@ -564,6 +569,7 @@ class LocalSim {
                 saturation: m.saturation,
                 stomach: m.stomach,
                 inventory: m.inventory,
+                overflow: m.overflow,
                 equipment: m.equipment,
                 hotbarIndex: m.hotbarIndex,
                 body: m.anatomy?.toJSON?.() ?? null,
@@ -659,6 +665,7 @@ class LocalSim {
             saturation: p.saturation,
             stomach: p.stomach,
             inventory: p.inventory,
+            overflow: p.overflow,
             equipment: p.equipment,
             hotbarIndex: p.hotbarIndex,
             body: p.body,
@@ -1045,6 +1052,7 @@ class LocalSim {
         if (!this._pawn || !partial) return;
         const p = this._pawn;
         if (Array.isArray(partial.inventory)) p.inventory = partial.inventory;
+        if (Array.isArray(partial.overflow)) p.overflow = partial.overflow;
         if (partial.equipment) p.equipment = partial.equipment;
         if (typeof partial.hotbarIndex === "number") p.hotbarIndex = partial.hotbarIndex;
         if (typeof partial.kc === "number") p.kc = partial.kc;

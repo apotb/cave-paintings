@@ -213,7 +213,8 @@
 
     /**
      * Best auto-eat stack in the party. In-range meals win; otherwise anything
-     * within seek range (so a hungry companion can walk in).
+     * within seek range (so a hungry companion can walk in). Never takes from
+     * `skipPawnId` (the currently controlled pawn).
      * @returns {{ pawn, slot, stack, dist, inRange, poison }|null}
      */
     function pickAutoEat(eater, members, opts = {}) {
@@ -221,6 +222,7 @@
         const ts = Number(opts.tileSize) || 16;
         const interact = (Number(opts.interactTiles) || INTERACT_TILES) * ts;
         const seek = (Number(opts.seekTiles) || FOLLOW_DETACH) * ts;
+        const skipPawnId = opts.skipPawnId;
         const skipId = opts.skipHeld?.id;
         const skipSlot = opts.skipHeld?.slot;
         const getFood = opts.getFood;
@@ -233,6 +235,7 @@
             if (!p || p.dead || p.isBodyDead?.()) continue;
             const d = Math.hypot((Number(p.x) || 0) - ex, (Number(p.y) || 0) - ey);
             const pid = p.id || p.pawnId;
+            if (skipPawnId && pid === skipPawnId) continue;
             const isSelf = p === eater || (eaterId && pid === eaterId);
             if (!isSelf && d > seek) continue;
             const inv = p.inventory || [];
@@ -513,7 +516,7 @@
 
     function clothingSlotFor(meta) {
         const slot = meta?.equip?.slot || meta?.equipment?.slot || meta?.equipSlot || meta?.slot;
-        if (slot === "head" || slot === "torso" || slot === "legs" || slot === "feet" || slot === "waist") {
+        if (slot === "head" || slot === "torso" || slot === "legs" || slot === "feet" || slot === "waist" || slot === "back") {
             return slot;
         }
         return null;
@@ -767,6 +770,11 @@
         return { rx, ry };
     }
 
+    /** Passersby swim; water/ice are placement-blocked, not a wanderer wall. */
+    function traversesWater(entity) {
+        return entity?.role === "wanderer";
+    }
+
     /** Downed / dead / corpse — walk and clicks pass through. */
     function walkThrough(entity) {
         if (!entity) return true;
@@ -846,6 +854,7 @@
         rollRoughInjury,
         clothingSlotFor,
         publicPawn,
+        traversesWater,
         walkThrough,
         assignDuels,
         duelStandPoint,

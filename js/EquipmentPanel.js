@@ -80,7 +80,7 @@ class EquipmentPanel {
 
     _slotLabel(key) {
         if (key.startsWith('waist:')) return 'Waist';
-        const labels = { head: 'Head', torso: 'Torso', legs: 'Legs', feet: 'Feet' };
+        const labels = { head: 'Head', torso: 'Torso', back: 'Back', legs: 'Legs', feet: 'Feet' };
         return labels[key] || key;
     }
 
@@ -116,9 +116,11 @@ class EquipmentPanel {
 
         let legsCX = 0.5 * bw;
         let legsCY = this.anchors.legs.y * bh;
+        let torsoCX = 0.5 * bw;
+        let torsoCY = this.anchors.torso.y * bh;
 
         for (const view of this.slotViews) {
-            if (view.key.startsWith('waist:')) continue;
+            if (view.key.startsWith('waist:') || view.key === 'back') continue;
             const a = this.anchors[view.key];
             const x = a.x * bw - half;
             const y = a.y * bh - half;
@@ -133,6 +135,10 @@ class EquipmentPanel {
                 legsCX = x + half;
                 legsCY = y + half;
             }
+            if (view.key === 'torso') {
+                torsoCX = x + half;
+                torsoCY = y + half;
+            }
             const stack = this.scene.player.getEquipmentStack(view.key);
             const meta = stack ? this.scene.getItem(stack.id) : null;
             syncStackIcon(view.icon, view.fill, stack, meta,
@@ -140,6 +146,30 @@ class EquipmentPanel {
             syncIngredientBadges(
                 view.badges,
                 x + slotW - 4 * s, y + slotW - 4 * s, s,
+                stack,
+                id => this.scene.getItem(id),
+                this.scene.textures
+            );
+        }
+
+        for (const view of this.slotViews) {
+            if (view.key !== 'back') continue;
+            const cx = torsoCX - spacing;
+            const cy = torsoCY;
+            view.slot.setScale(slotScale).setPosition(cx - half, cy - half);
+            view.icon.setScale(3 * s).setPosition(cx, cy);
+            view.fill.setScale(3 * s).setPosition(cx, cy);
+            view.homeX = cx - half;
+            view.homeY = cy - half;
+            view.iconHomeX = cx;
+            view.iconHomeY = cy;
+            const stack = this.scene.player.getEquipmentStack(view.key);
+            const meta = stack ? this.scene.getItem(stack.id) : null;
+            syncStackIcon(view.icon, view.fill, stack, meta,
+                id => this.scene.getItem(id), this.scene.textures, 3 * s);
+            syncIngredientBadges(
+                view.badges,
+                cx + half - 4 * s, cy + half - 4 * s, s,
                 stack,
                 id => this.scene.getItem(id),
                 this.scene.textures
@@ -178,7 +208,7 @@ class EquipmentPanel {
         this.slotsLayer.removeAll(true);
         this.slotViews = [];
 
-        const keys = ['head', 'torso', 'legs', 'feet'];
+        const keys = ['head', 'torso', 'back', 'legs', 'feet'];
         for (const key of keys) {
             this._addSlotView(key);
         }
@@ -343,15 +373,18 @@ class EquipmentPanel {
 
         const fromKey = this._dragFromKey;
         const hotbar = this.scene.hotbar;
-        const toHotbar = hotbar.getIndexAt(pointer.x, pointer.y);
+        const toHotbar = hotbar.getBagSlotAt?.(pointer.x, pointer.y)
+            || (hotbar.getIndexAt
+                ? ((i) => (i >= 0 ? { bag: 'hotbar', index: i } : null))(hotbar.getIndexAt(pointer.x, pointer.y))
+                : null);
 
         let ok = false;
         const partyTarget = this.scene.partySys?.partyDropTarget?.(pointer);
         if (partyTarget) {
             ok = this._giveSlotToParty(fromKey, partyTarget);
             if (!ok) this._shakeSlot(fromKey);
-        } else if (toHotbar !== -1) {
-            const result = this.scene.player.unequipToHotbar(fromKey, toHotbar);
+        } else if (toHotbar) {
+            const result = this.scene.player.unequipToHotbar(fromKey, toHotbar.index, toHotbar.bag);
             ok = result.ok;
             if (!ok) this._shakeSlot(fromKey);
         } else {
@@ -380,7 +413,7 @@ class EquipmentPanel {
         let idx = inv.findIndex((s) => !s);
         if (idx < 0 && inv.length < player.inventorySize) idx = inv.length;
         if (idx < 0) {
-            this.scene.combatLog?.push("No empty hotbar slot to hand that over.");
+            this.scene.combatLog?.push("No empty hotbar slot to hand that over");
             return false;
         }
         const result = player.unequipToHotbar(fromKey, idx);
@@ -429,11 +462,11 @@ class EquipmentPanel {
         return true;
     }
 
-    /** Called by Hotbar when a hotbar drag is released over an equip slot */
-    tryEquipFromHotbar(hotbarIndex, pointer) {
+    /** Called by Hotbar when a bag drag is released over an equip slot */
+    tryEquipFromHotbar(hotbarIndex, pointer, bag = 'hotbar') {
         const key = this.getSlotAt(pointer.x, pointer.y);
         if (!key) return false;
-        const result = this.scene.player.equipFromHotbar(hotbarIndex, key);
+        const result = this.scene.player.equipFromHotbar(hotbarIndex, key, bag);
         if (!result.ok) {
             this._shakeSlot(key);
             return true; // consumed drop attempt

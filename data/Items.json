@@ -791,6 +791,74 @@
         }
     },
     {
+        "id": "hide_bundle",
+        "name": "Hide Bundle",
+        "key": "hide_bundle",
+        "maxStack": 1,
+        "weight": 1.5,
+        "weightFixed": true,
+        "equip": {
+            "slot": "back",
+            "effects": {
+                "strength": 5,
+                "addSlot": [
+                    "overflow",
+                    "overflow",
+                    "overflow"
+                ]
+            }
+        },
+        "tooltip": [
+            "Adds pack slots above the hotbar",
+            "Drag items down to use them"
+        ],
+        "recipe": {
+            "ANY_HIDE": {
+                "qty": 2,
+                "hideStage": "dried"
+            },
+            "leaf_cord": 6
+        }
+    },
+    {
+        "id": "leather_pack",
+        "name": "Leather Pack",
+        "key": "leather_pack",
+        "maxStack": 1,
+        "weight": 2,
+        "weightFixed": true,
+        "equip": {
+            "slot": "back",
+            "effects": {
+                "strength": 10,
+                "addSlot": [
+                    "overflow",
+                    "overflow",
+                    "overflow",
+                    "overflow",
+                    "overflow"
+                ]
+            }
+        },
+        "tooltip": [
+            "Adds pack slots above the hotbar",
+            "Drag items down to use them"
+        ],
+        "recipe": {
+            "ANY_LEATHER": {
+                "qty": 3,
+                "hideStage": "leather"
+            },
+            "leaf_cord": 6,
+            "REQUIRE_STATION": "skinworking_bench",
+            "CRAFT_SECONDS": 16,
+            "REQUIRE_TOOL": {
+                "toolClass": "awl",
+                "wear": 10
+            }
+        }
+    },
+    {
         "id": "leaf_sandals",
         "name": "Leaf Sandals",
         "key": "leaf_sandals",

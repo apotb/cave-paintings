@@ -69,7 +69,8 @@ const CharacterStore = (() => {
             saturation: 0,
             stomach: 1600,
             inventory: emptyInv(5),
-            equipment: { head: null, torso: null, legs: null, feet: null, waist: [] },
+            overflow: [],
+            equipment: { head: null, torso: null, legs: null, feet: null, back: null, waist: [] },
             hotbarIndex: 0,
             hp: 100,
             mhp: 100,
@@ -104,15 +105,21 @@ const CharacterStore = (() => {
         return inv.map(cloneStack);
     }
 
+    function cloneOverflow(arr) {
+        if (!Array.isArray(arr)) return [];
+        return arr.map(cloneStack);
+    }
+
     function cloneEquipment(eq) {
         if (!eq || typeof eq !== "object") {
-            return { head: null, torso: null, legs: null, feet: null, waist: [] };
+            return { head: null, torso: null, legs: null, feet: null, back: null, waist: [] };
         }
         return {
             head: cloneStack(eq.head),
             torso: cloneStack(eq.torso),
             legs: cloneStack(eq.legs),
             feet: cloneStack(eq.feet),
+            back: cloneStack(eq.back),
             waist: Array.isArray(eq.waist) ? eq.waist.map(cloneStack) : []
         };
     }
@@ -196,11 +203,13 @@ const CharacterStore = (() => {
         if (!character?.id) throw new Error("Character needs id");
         const row = clone(character) || { ...character };
         row.inventory = cloneInv(character.inventory);
+        row.overflow = cloneOverflow(character.overflow);
         row.equipment = cloneEquipment(character.equipment);
         if (Array.isArray(character.party)) {
             row.party = character.party.map((m) => {
                 const cm = clone(m) || { ...m };
                 if (Array.isArray(m?.inventory)) cm.inventory = cloneInv(m.inventory);
+                if (Array.isArray(m?.overflow)) cm.overflow = cloneOverflow(m.overflow);
                 if (m?.equipment) cm.equipment = cloneEquipment(m.equipment);
                 return cm;
             });
@@ -263,10 +272,13 @@ const CharacterStore = (() => {
         }
         const eq = character.equipment;
         if (eq && typeof eq === "object") {
-            for (const key of ["head", "torso", "legs", "feet"]) stripWorldSpoil(eq[key]);
+            for (const key of ["head", "torso", "legs", "feet", "back"]) stripWorldSpoil(eq[key]);
             if (Array.isArray(eq.waist)) {
                 for (const s of eq.waist) stripWorldSpoil(s);
             }
+        }
+        if (Array.isArray(character.overflow)) {
+            for (const s of character.overflow) stripWorldSpoil(s);
         }
         return character;
     }
@@ -281,6 +293,7 @@ const CharacterStore = (() => {
             saturation: character.saturation,
             stomach: character.stomach,
             inventory: cloneInv(character.inventory),
+            overflow: cloneOverflow(character.overflow),
             equipment: cloneEquipment(character.equipment),
             hotbarIndex: character.hotbarIndex || 0,
             hp: character.hp,
@@ -291,6 +304,7 @@ const CharacterStore = (() => {
                 ? character.party.map((m) => {
                     const cm = clone(m) || { ...m };
                     if (Array.isArray(m?.inventory)) cm.inventory = cloneInv(m.inventory);
+                    if (Array.isArray(m?.overflow)) cm.overflow = cloneOverflow(m.overflow);
                     if (m?.equipment) cm.equipment = cloneEquipment(m.equipment);
                     return cm;
                 })
@@ -313,6 +327,7 @@ const CharacterStore = (() => {
         if (typeof you.saturation === "number") next.saturation = you.saturation;
         if (typeof you.stomach === "number") next.stomach = you.stomach;
         if (Array.isArray(you.inventory)) next.inventory = cloneInv(you.inventory);
+        if (Array.isArray(you.overflow)) next.overflow = cloneOverflow(you.overflow);
         if (you.equipment) next.equipment = cloneEquipment(you.equipment);
         if (typeof you.hotbarIndex === "number") next.hotbarIndex = you.hotbarIndex;
         if (typeof you.hp === "number") next.hp = you.hp;
@@ -324,6 +339,7 @@ const CharacterStore = (() => {
             next.party = you.party.map((m) => {
                 const cm = clone(m) || { id: m?.id, name: m?.name };
                 if (Array.isArray(m?.inventory)) cm.inventory = cloneInv(m.inventory);
+                if (Array.isArray(m?.overflow)) cm.overflow = cloneOverflow(m.overflow);
                 if (m?.equipment) cm.equipment = cloneEquipment(m.equipment);
                 return cm;
             });

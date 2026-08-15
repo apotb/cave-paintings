@@ -456,7 +456,7 @@ const Knapping = {
     shatterCheck(grid) {
         const m = this.mass(grid);
         if (m < this.MIN_MASS) {
-            return { shattered: true, reason: "It crumbled to dust." };
+            return { shattered: true, reason: "It crumbled to dust" };
         }
         return { shattered: false, reason: null };
     },

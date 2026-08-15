@@ -61,8 +61,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             torso: null,
             legs: null,
             feet: null,
+            back: null,
             waist: []
         };
+        this.overflow = [];
+        this.overflowSize = 0;
 
         // Movement — base speed matches the human mob def
         this.speed = Number(human?.speed) || 3.5;
@@ -527,7 +530,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     /**
      * Start a RimWorld-style vomit bout (5–15s). Ignores if already vomiting.
-     * @param {{ remainingMs?: number, fromServer?: boolean, silentLog?: boolean }} [opts]
+     * @param {{ remainingMs?: number, fromServer?: boolean }} [opts]
      */
     startVomit(opts = {}) {
         if (this._bodyDead || this.isVomiting()) return;
@@ -540,10 +543,6 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         };
         this.setVelocity(0, 0);
         if (this.isAttacking()) this._endAttack?.();
-        if (!opts.silentLog) {
-            const you = this.isControlled?.();
-            this.scene.combatLog?.push(you ? "You vomit." : `${this.displayName()} vomits.`);
-        }
         if (!this._vomit.fromServer) this._vomitDrip();
     }
 
@@ -824,11 +823,14 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const hotbarSnap = this.inventory.map(s => (s ? toLoot(s) : null));
 
         const loot = [];
-        for (const key of ["head", "torso", "legs", "feet"]) {
+        for (const key of ["head", "torso", "legs", "feet", "back"]) {
             const s = this.equipment[key];
             if (s) loot.push(toLoot(s));
         }
         for (const s of this.equipment.waist || []) {
+            if (s) loot.push(toLoot(s));
+        }
+        for (const s of this.overflow || []) {
             if (s) loot.push(toLoot(s));
         }
         for (const s of hotbarSnap) {
@@ -836,13 +838,16 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
 
         // Clear without syncInventorySize dropping overflow (already snapped)
-        this.equipment = { head: null, torso: null, legs: null, feet: null, waist: [] };
+        this.equipment = { head: null, torso: null, legs: null, feet: null, back: null, waist: [] };
+        this.overflow = [];
+        this.overflowSize = 0;
         this.inventory = [];
         for (let i = 0; i < this.baseInventorySize; i++) this.inventory.push(null);
         this.inventorySize = this.baseInventorySize;
         this.recomputeEquipmentEffects();
         if (this.isControlled?.()) {
             this.scene.hotbar?.setSize?.(this.inventorySize);
+            this.scene.hotbar?.setOverflowSize?.(0);
             this.scene.hotbar.dirty = true;
             this.scene.equipmentPanel?.refresh?.();
         }
@@ -881,7 +886,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     getWaistCapacity() {
         let n = 0;
-        for (const key of ['head', 'torso', 'legs', 'feet']) {
+        for (const key of ['head', 'torso', 'legs', 'feet', 'back']) {
             const stack = this.equipment[key];
             if (stack) n += this.getWaistGrant(stack.id);
         }
@@ -902,16 +907,29 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
-    getHotbarBonus() {
-        let n = 0;
-        const pieces = [
+    wornEquipmentPieces() {
+        return [
             this.equipment.head,
             this.equipment.torso,
             this.equipment.legs,
             this.equipment.feet,
-            ...this.equipment.waist
+            this.equipment.back,
+            ...(this.equipment.waist || [])
         ];
-        for (const stack of pieces) {
+    }
+
+    /** @param {'hotbar'|'overflow'} bag */
+    bagArray(bag) {
+        if (bag === 'overflow') {
+            if (!Array.isArray(this.overflow)) this.overflow = [];
+            return this.overflow;
+        }
+        return this.inventory;
+    }
+
+    getHotbarBonus() {
+        let n = 0;
+        for (const stack of this.wornEquipmentPieces()) {
             if (!stack) continue;
             const add = this.scene.getItem(stack.id)?.equip?.effects?.addSlot;
             if (!add) continue;
@@ -920,17 +938,21 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return n;
     }
 
+    getOverflowBonus() {
+        let n = 0;
+        for (const stack of this.wornEquipmentPieces()) {
+            if (!stack) continue;
+            const add = this.scene.getItem(stack.id)?.equip?.effects?.addSlot;
+            if (!add) continue;
+            for (const s of add) if (s === 'overflow') n++;
+        }
+        return n;
+    }
+
     recomputeEquipmentEffects() {
         let str = this.baseStrength;
         let speedMul = 1;
-        const pieces = [
-            this.equipment.head,
-            this.equipment.torso,
-            this.equipment.legs,
-            this.equipment.feet,
-            ...this.equipment.waist
-        ];
-        for (const stack of pieces) {
+        for (const stack of this.wornEquipmentPieces()) {
             if (!stack) continue;
             const meta = this.scene.getItem(stack.id);
             const effects = meta?.equip?.effects;
@@ -940,6 +962,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.strength = str;
         this.equipSpeedMultiplier = speedMul;
         this.syncInventorySize();
+        this.syncOverflowSize();
     }
 
     /** Resize hotbar inventory to base + equipment hotbar grants; overflow drops at feet. */
@@ -967,6 +990,36 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         if (this.scene.hotbar && this.isControlled?.()) {
             this.scene.hotbar.setSize(size);
+            this.scene.hotbar.dirty = true;
+        }
+    }
+
+    /** Resize pack overflow to equipment overflow grants; extras drop at feet. */
+    syncOverflowSize() {
+        const size = Math.max(0, this.getOverflowBonus());
+        this.overflowSize = size;
+        if (!Array.isArray(this.overflow)) this.overflow = [];
+
+        while (this.overflow.length < size) this.overflow.push(null);
+
+        if (this.overflow.length > size) {
+            for (let i = size; i < this.overflow.length; i++) {
+                const stack = this.overflow[i];
+                if (!stack) continue;
+                const meta = this.scene.getItem(stack.id);
+                if (!meta) continue;
+                const extras = mealStackExtras(stack);
+                const now = this.scene.worldMinuteIndex?.() ?? null;
+                DroppedItem.spawn(
+                    this.scene, this.x, this.y,
+                    meta, stack.quantity, spoilAtForWorld(stack, now), extras
+                );
+            }
+            this.overflow.length = size;
+        }
+
+        if (this.scene.hotbar && this.isControlled?.()) {
+            this.scene.hotbar.setOverflowSize?.(size);
             this.scene.hotbar.dirty = true;
         }
     }
@@ -1112,11 +1165,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Equip one item from hotbar index into equip slot key.
+     * Equip one item from a bag slot into equip slot key.
+     * @param {number} hotbarIndex
+     * @param {string} slotKey
+     * @param {'hotbar'|'overflow'} [bag]
      * @returns {{ok:boolean, reason?:string}}
      */
-    equipFromHotbar(hotbarIndex, slotKey) {
-        const inv = this.inventory;
+    equipFromHotbar(hotbarIndex, slotKey, bag = 'hotbar') {
+        const fromBag = bag === 'overflow' ? 'overflow' : 'hotbar';
+        const inv = this.bagArray(fromBag);
         const stack = inv[hotbarIndex];
         if (!stack) return { ok: false, reason: 'empty' };
 
@@ -1136,6 +1193,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
 
         const existing = this.getEquipmentStack(slotKey);
+        const bagCap = fromBag === 'overflow' ? this.overflowSize : this.inventorySize;
 
         // Equipables are typically maxStack 1; move whole stack / swap with existing
         if (stack.quantity !== 1 && existing) {
@@ -1146,10 +1204,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             stack.quantity -= 1;
             this.setEquipmentStack(slotKey, makeItemStack(meta, 1, stack.spoilLeft));
             if (existing) {
-                // Try to return existing to an empty inventory slot
                 const empty = inv.findIndex(s => !s);
                 if (empty !== -1) inv[empty] = existing;
-                else if (inv.length < this.inventorySize) inv.push(existing);
+                else if (inv.length < bagCap) inv.push(existing);
                 else {
                     stack.quantity += 1;
                     this.setEquipmentStack(slotKey, existing);
@@ -1167,6 +1224,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._notifyNetGear(typeof NetProtocol !== "undefined" ? NetProtocol.Actions.EQUIP : "equip", {
             from: hotbarIndex,
             slot: slotKey,
+            fromBag,
             pawnId: this.pawnId
         });
         return { ok: true };
@@ -1182,9 +1240,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Move equipped item to a hotbar index (swap if occupied with compatible gear).
+     * Move equipped item to a bag index (swap if occupied with compatible gear).
+     * @param {string} slotKey
+     * @param {number} hotbarIndex
+     * @param {'hotbar'|'overflow'} [bag]
      */
-    unequipToHotbar(slotKey, hotbarIndex) {
+    unequipToHotbar(slotKey, hotbarIndex, bag = 'hotbar') {
         const equipped = this.getEquipmentStack(slotKey);
         if (!equipped) return { ok: false, reason: 'empty' };
 
@@ -1193,8 +1254,14 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             return { ok: false, reason: 'waist_blocked' };
         }
 
-        const inv = this.inventory;
-        while (inv.length <= hotbarIndex) inv.push(null);
+        const toBag = bag === 'overflow' ? 'overflow' : 'hotbar';
+        if (toBag === 'overflow' && slotKey === 'back') {
+            return { ok: false, reason: 'wrong_slot' };
+        }
+        const inv = this.bagArray(toBag);
+        const bagCap = toBag === 'overflow' ? this.overflowSize : this.inventorySize;
+        while (inv.length <= hotbarIndex && inv.length < bagCap) inv.push(null);
+        if (hotbarIndex < 0 || hotbarIndex >= bagCap) return { ok: false, reason: 'no_space' };
         const dest = inv[hotbarIndex];
 
         if (!dest) {
@@ -1227,7 +1294,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 dest.quantity -= 1;
                 const empty = inv.findIndex(s => !s);
                 if (empty !== -1) inv[empty] = dest;
-                else if (inv.length < this.inventorySize) inv.push(dest);
+                else if (inv.length < bagCap) inv.push(dest);
                 else {
                     // rollback
                     inv[hotbarIndex] = dest;
@@ -1242,7 +1309,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.scene.hotbar.dirty = true;
         this._notifyNetGear(typeof NetProtocol !== "undefined" ? NetProtocol.Actions.UNEQUIP : "unequip", {
             slot: slotKey,
-            to: hotbarIndex
+            to: hotbarIndex,
+            toBag
         });
         return { ok: true };
     }
@@ -1253,10 +1321,16 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             torso: data?.torso ?? null,
             legs: data?.legs ?? null,
             feet: data?.feet ?? null,
+            back: data?.back ?? null,
             waist: Array.isArray(data?.waist) ? data.waist.slice() : []
         };
         this.syncWaistSlots();
         this.recomputeEquipmentEffects();
+    }
+
+    loadOverflow(data) {
+        this.overflow = Array.isArray(data) ? data.slice() : [];
+        this.syncOverflowSize();
     }
 
     posX() {
@@ -2986,7 +3060,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             return Carry.gearMass(
                 this.inventory,
                 this.equipment,
-                (id) => this.scene.getItem(id)
+                (id) => this.scene.getItem(id),
+                this.overflow
             );
         }
         let total = 0;
@@ -3004,9 +3079,19 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this.equipment.torso,
             this.equipment.legs,
             this.equipment.feet,
+            this.equipment.back,
             ...this.equipment.waist
         ];
         for (const stack of worn) {
+            if (!stack) continue;
+            const meta = this.scene.getItem(stack.id);
+            const knap = !!(stack.toolClass || stack.knapMaterial);
+            const w = knap
+                ? (meta?.weight ?? 0)
+                : (stack.weight != null ? stack.weight : meta.weight);
+            total += (Number(w) || 0) * stack.quantity;
+        }
+        for (const stack of this.overflow || []) {
             if (!stack) continue;
             const meta = this.scene.getItem(stack.id);
             const knap = !!(stack.toolClass || stack.knapMaterial);
