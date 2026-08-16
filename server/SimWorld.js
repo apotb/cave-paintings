@@ -423,6 +423,7 @@ class SimWorld {
             solidThingAt: (x, y) => self._solidThingAt(x, y),
             thingRectsNear: (x, y, radius) => self._thingRectsNear(x, y, radius),
             getItem: (id) => itemDefs().get(id),
+            alertNearbyMobs: (victim, source) => self.alertNearbyMobs(victim, source),
             isControlled(mob) {
                 if (!mob) return false;
                 for (const p of self.players.values()) {
@@ -4578,6 +4579,15 @@ class SimWorld {
             ];
             return Body.isBrainDestroyed?.(bodyJson) ? loot.filter((d) => d.id !== "brain") : loot;
         }
+        if (id === "boar") {
+            const loot = [
+                { id: "raw_pork", min: 3, max: 5 },
+                { id: "boar_hide", min: 1, max: 1 },
+                { id: "brain", min: 1, max: 1 },
+                { id: "bone", min: 2, max: 4 }
+            ];
+            return Body.isBrainDestroyed?.(bodyJson) ? loot.filter((d) => d.id !== "brain") : loot;
+        }
         if (id === "human") {
             const loot = [
                 { id: "raw_beef", min: 2, max: 4 },
@@ -5141,16 +5151,6 @@ class SimWorld {
         });
     }
 
-    _campfireIsAttended(entry) {
-        const attend = entry?.attend;
-        if (!attend || typeof attend !== "object") return false;
-        for (const id of Object.keys(attend)) {
-            const p = this.players.get(id);
-            if (p?.connected && !p.dead) return true;
-        }
-        return false;
-    }
-
     _clearPlayerCampfireAttend(playerId) {
         if (!playerId) return;
         for (const c of this.chunks.values()) {
@@ -5218,15 +5218,17 @@ class SimWorld {
         let kind = "mash";
         let name = "Simmered Meal";
         let spoilHours = 24;
-        const hasBeef = unique.includes("raw_beef");
-        const hasVenison = unique.includes("raw_venison");
-        const hasMeat = hasBeef || hasVenison;
+        const meats = [];
+        if (unique.includes("raw_beef")) meats.push("Beef");
+        if (unique.includes("raw_venison")) meats.push("Venison");
+        if (unique.includes("raw_pork")) meats.push("Pork");
+        const hasMeat = meats.length > 0;
         const hasApple = unique.includes("apple");
         const hasBlue = unique.includes("blueberry");
         if (hasMeat) {
             kind = "stew";
             spoilHours = 36;
-            const meatLabel = hasBeef && hasVenison ? "Meat" : hasVenison ? "Venison" : "Beef";
+            const meatLabel = meats.length > 1 ? "Meat" : meats[0];
             if (hasApple && hasBlue) name = "Hunter's Stew";
             else if (hasApple) name = `Apple and ${meatLabel} Stew`;
             else if (hasBlue) {
@@ -5314,9 +5316,7 @@ class SimWorld {
         if (!cook?.id) return false;
         const recipe = method ? itemDefs().get(cook.id)?.cook?.[method] : null;
         const smoke = method === "smoke_hide";
-        const canAdvance = smoke
-            ? !!(lit && method && recipe?.result && recipe.minutes > 0)
-            : !!(lit && this._campfireIsAttended(entry) && method && recipe?.result && recipe.minutes > 0);
+        const canAdvance = !!(lit && method && recipe?.result && recipe.minutes > 0);
         if (!canAdvance) {
             if (!smoke && (entry.cookProgress || 0) > 0 && !lit) {
                 entry.cookProgress -= 1;
@@ -5679,7 +5679,7 @@ class SimWorld {
     }
 
     _isSimmerIngredient(id) {
-        return ["apple", "blueberry", "raw_beef", "raw_venison"].includes(String(id || ""));
+        return ["apple", "blueberry", "raw_beef", "raw_venison", "raw_pork"].includes(String(id || ""));
     }
 
     _findPlayerCampfire(p, action = {}) {

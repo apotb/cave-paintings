@@ -67,9 +67,11 @@ class SceneNet extends Phaser.Scene {
 
         for (const item of [
             "apple", "blueberry", "blueberries", "roasted_apple",
-            "raw_beef", "roast_beef", "raw_venison", "roasted_venison", "coconut",
+            "raw_beef", "roast_beef", "raw_venison", "roasted_venison", "raw_pork", "roasted_pork", "coconut",
             "flint", "pebble", "deer_hide", "deer_hide_fleshed", "deer_hide_dry",
             "deer_hide_soaked", "deer_hide_dehaired", "deer_hide_brained", "deer_leather",
+            "boar_hide", "boar_hide_fleshed", "boar_hide_dry",
+            "boar_hide_soaked", "boar_hide_dehaired", "boar_hide_brained", "boar_leather",
             "brain", "bone", "stick", "log", "lean_to",
             "hide_pouch", "hide_bundle", "hide_tunic", "hide_loincloth",
             "leather_pouch", "leather_pack", "leather_tunic", "leather_kilt"
@@ -583,7 +585,7 @@ class SceneNet extends Phaser.Scene {
             const held = this.pawn.inventory?.[this.pawn.hotbarIndex];
             const foodIds = new Set([
                 "apple", "blueberry", "roasted_apple", "raw_beef", "roast_beef",
-                "raw_venison", "roasted_venison", "cracked_coconut", "coconut_meal"
+                "raw_venison", "roasted_venison", "raw_pork", "roasted_pork", "cracked_coconut", "coconut_meal"
             ]);
             if (held && (held.food?.kc > 0 || foodIds.has(held.id))) {
                 this.net.sendAction({ type: NetProtocol.Actions.USE, pawnId: this.pawn?.pawnId });

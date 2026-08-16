@@ -135,5 +135,63 @@
             "hoof_poke": { "name": "Hoof", "damage": 7, "type": "blunt", "verb": "poked", "cooldown": 2.0, "weightMultiplier": 1, "range": 4 }
         },
         "fatalParts": ["Brain", "Heart", "Torso", "Head", "Neck"]
+    },
+    "boar": {
+        "id": "boar",
+        "name": "Wild Boar",
+        "healRate": 11.52,
+        "painShockThreshold": 0.8,
+        "healthScale": 1.1,
+        "core": "Torso",
+        "showDoll": false,
+        "parts": {
+            "Brain": { "mhp": 10, "coverage": 0.7, "internal": true, "delicate": true, "alwaysScar": true },
+            "Skull": { "mhp": 25, "coverage": 0.25, "internal": true, "children": ["Brain"] },
+            "Eye": { "mhp": 10, "coverage": 0.12, "delicate": true },
+            "Ear": { "mhp": 12, "coverage": 0.08 },
+            "Nose": { "mhp": 10, "coverage": 0.1 },
+            "Tusk": { "mhp": 14, "coverage": 0.08, "attacks": ["tusk_slash", "tusk_stab"] },
+            "Jaw": { "mhp": 20, "coverage": 0.12, "attacks": ["bite"], "pairChildren": ["Tusk"] },
+            "Head": {
+                "mhp": 25,
+                "coverage": 0.75,
+                "attacks": ["headbutt"],
+                "children": ["Skull", "Nose", "Jaw"],
+                "pairChildren": ["Eye", "Ear"]
+            },
+            "Neck": { "mhp": 25, "coverage": 0.22, "bleedMult": 4, "children": ["Head"] },
+            "Spine": { "mhp": 25, "coverage": 0.03, "internal": true },
+            "Heart": { "mhp": 15, "coverage": 0.03, "internal": true, "bleedMult": 5, "fatal": true },
+            "Lung": { "mhp": 15, "coverage": 0.03, "internal": true },
+            "Stomach": { "mhp": 20, "coverage": 0.03, "internal": true },
+            "Liver": { "mhp": 20, "coverage": 0.03, "internal": true },
+            "Kidney": { "mhp": 15, "coverage": 0.03, "internal": true },
+            "Front Hoof": { "mhp": 10, "coverage": 0.15 },
+            "Rear Hoof": { "mhp": 10, "coverage": 0.15 },
+            "Front Leg": {
+                "mhp": 30,
+                "coverage": 0.07,
+                "children": ["Front Hoof"]
+            },
+            "Rear Leg": {
+                "mhp": 30,
+                "coverage": 0.07,
+                "children": ["Rear Hoof"]
+            },
+            "Torso": {
+                "mhp": 40,
+                "coverage": 1.0,
+                "fatal": true,
+                "children": ["Neck", "Spine", "Heart", "Stomach", "Liver"],
+                "pairChildren": ["Lung", "Kidney", "Front Leg", "Rear Leg"]
+            }
+        },
+        "unarmedAttacks": {
+            "tusk_slash": { "name": "Tusk", "damage": 10, "type": "sharp", "verb": "slashed", "cooldown": 2.0, "weightMultiplier": 1, "range": 3 },
+            "tusk_stab": { "name": "Tusk", "damage": 10, "type": "sharp", "verb": "gored", "cooldown": 2.0, "weightMultiplier": 1, "range": 3 },
+            "bite": { "name": "Bite", "damage": 8, "type": "sharp", "verb": "sunk", "cooldown": 2.0, "weightMultiplier": 0.5, "range": 3 },
+            "headbutt": { "name": "Headbutt", "damage": 6, "type": "blunt", "verb": "bashed", "cooldown": 2.0, "weightMultiplier": 0.2, "range": 3 }
+        },
+        "fatalParts": ["Brain", "Heart", "Torso", "Head", "Neck"]
     }
 }

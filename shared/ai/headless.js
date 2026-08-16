@@ -553,15 +553,33 @@
     class AggressiveAnimalAI extends NeutralAnimalAI {
         constructor(mob) {
             super(mob);
-            this.SIGHT_TILES = 8;
+            this.STARE_TILES = 8;
+            this.AGGRO_TILES = 4;
+            this.staring = false;
+            this._stareTarget = null;
+        }
+
+        onDamaged(source = null, opts = null) {
+            super.onDamaged(source, opts);
+            if (this.hostile) {
+                this.staring = false;
+                this._stareTarget = null;
+            }
         }
 
         update(delta, world = null) {
-            if (!this.hostile) this._trySightAggro(world);
+            if (world) this._aiWorldRef = world;
+            if (!this.hostile) this._tryNotice(world);
+            if (this.staring && !this.hostile) {
+                this._updateStare();
+                return;
+            }
             super.update(delta, world);
         }
 
-        _trySightAggro(world) {
+        _tryNotice(world) {
+            this.staring = false;
+            this._stareTarget = null;
             const mob = this.mob;
             if (!mob || mob.isBodyDead?.() || !mob.active) return;
             if (mob.isIncapacitated?.() || mob.isImmobile?.()) return;
@@ -571,16 +589,44 @@
                 (mob.x - player.x) / TILE,
                 (mob.y - player.y) / TILE
             );
-            const sight = this.SIGHT_TILES + (this._leashBonus || 0) * 0.25;
-            if (distTiles > sight) return;
+            const stare = this.STARE_TILES + (this._leashBonus || 0) * 0.25;
+            if (distTiles <= this.AGGRO_TILES) {
+                this._goHostile(player, world);
+                return;
+            }
+            if (distTiles <= stare) {
+                this.staring = true;
+                this._stareTarget = player;
+            }
+        }
+
+        _goHostile(player, world = null) {
+            if (this.hostile) return;
             this.hostile = true;
             this.mob.hostile = true;
+            this.staring = false;
+            this._stareTarget = null;
             Party?.setWildAggroOwner?.(this.mob, player);
             if (!this.aggroOwnerId) this.aggroOwnerId = Party?.ownerIdOf?.(player) || null;
             this.timeSinceHitPlayer = 0;
             this._deaggroTimer = 0;
             this._atkCache = null;
             this._atkCacheMs = 0;
+            const w = world || this._aiWorldRef;
+            w?.alertNearbyMobs?.(this.mob, player);
+        }
+
+        _updateStare() {
+            const mob = this.mob;
+            const player = this._stareTarget;
+            this._clearCombatMove();
+            if (!mob || !player) return;
+            mob.setDesiredVel(0, 0);
+            mob.isSprinting = false;
+            const dx = player.x - mob.x;
+            const dy = player.y - mob.y;
+            if (Math.abs(dx) > Math.abs(dy)) mob.facing = dx > 0 ? "right" : "left";
+            else if (dy !== 0) mob.facing = dy > 0 ? "down" : "up";
         }
     }
 

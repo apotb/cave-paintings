@@ -127,6 +127,40 @@
         }
     },
     {
+        "id": "raw_pork",
+        "name": "Raw Pork",
+        "key": "raw_pork",
+        "maxStack": 99,
+        "weight": 0.25,
+        "fillColor": "#C45C5C",
+        "food": {
+            "kc": 340,
+            "spoil": 12,
+            "foodPoisonChance": 0.33,
+            "eatSeconds": 4.0,
+            "satietyRatio": 0.12
+        },
+        "cook": {
+            "stick_roast": {
+                "result": "roasted_pork",
+                "minutes": 15
+            }
+        }
+    },
+    {
+        "id": "roasted_pork",
+        "name": "Roasted Pork",
+        "key": "roasted_pork",
+        "maxStack": 99,
+        "weight": 0.22,
+        "food": {
+            "kc": 450,
+            "spoil": 36,
+            "eatSeconds": 4.5,
+            "satietyRatio": 0.28
+        }
+    },
+    {
         "id": "coconut",
         "name": "Coconut",
         "key": "coconut",
@@ -358,6 +392,131 @@
         ]
     },
     {
+        "id": "boar_hide",
+        "name": "Boar Hide",
+        "key": "boar_hide",
+        "maxStack": 99,
+        "weight": 2.5,
+        "hide": {
+            "animal": "boar",
+            "stage": "raw"
+        },
+        "food": {
+            "kc": 0,
+            "spoil": 96
+        },
+        "tooltip": [
+            "Hang on a drying rack and scrape it"
+        ]
+    },
+    {
+        "id": "boar_hide_fleshed",
+        "name": "Fleshed Boar Hide",
+        "key": "boar_hide_fleshed",
+        "maxStack": 99,
+        "weight": 2.5,
+        "hide": {
+            "animal": "boar",
+            "stage": "fleshed"
+        },
+        "food": {
+            "kc": 0,
+            "spoil": 48
+        },
+        "tooltip": [
+            "Hang to dry into rawhide",
+            "Drop in water to tan"
+        ]
+    },
+    {
+        "id": "boar_hide_dry",
+        "name": "Dried Boar Hide",
+        "key": "boar_hide_dry",
+        "maxStack": 99,
+        "weight": 1.2,
+        "hide": {
+            "animal": "boar",
+            "stage": "dried"
+        },
+        "tooltip": [
+            "Sew at a Skinworking Bench"
+        ]
+    },
+    {
+        "id": "boar_hide_soaked",
+        "name": "Soaked Boar Hide",
+        "key": "boar_hide_soaked",
+        "maxStack": 99,
+        "weight": 2.5,
+        "hide": {
+            "animal": "boar",
+            "stage": "soaked"
+        },
+        "food": {
+            "kc": 0,
+            "spoil": 48
+        },
+        "tooltip": [
+            "Hang on a drying rack and scrape the hair off"
+        ]
+    },
+    {
+        "id": "boar_hide_dehaired",
+        "name": "Dehaired Boar Hide",
+        "key": "boar_hide_dehaired",
+        "maxStack": 99,
+        "weight": 2.5,
+        "hide": {
+            "animal": "boar",
+            "stage": "dehaired"
+        },
+        "food": {
+            "kc": 0,
+            "spoil": 48
+        },
+        "tooltip": [
+            "Rub brains into it on a drying rack"
+        ]
+    },
+    {
+        "id": "boar_hide_brained",
+        "name": "Brained Boar Hide",
+        "key": "boar_hide_brained",
+        "maxStack": 99,
+        "weight": 2.5,
+        "hide": {
+            "animal": "boar",
+            "stage": "brained"
+        },
+        "food": {
+            "kc": 0,
+            "spoil": 48
+        },
+        "cook": {
+            "smoke_hide": {
+                "result": "boar_leather",
+                "minutes": 240
+            }
+        },
+        "tooltip": [
+            "Smoke over a fire with a drying rack"
+        ]
+    },
+    {
+        "id": "boar_leather",
+        "name": "Boar Leather",
+        "key": "boar_leather",
+        "maxStack": 99,
+        "weight": 1.2,
+        "hide": {
+            "animal": "boar",
+            "stage": "leather"
+        },
+        "tooltip": [
+            "Soft tanned hide"
+        ]
+    },
+    {
         "id": "brain",
         "name": "Brain",
         "key": "brain",
@@ -466,7 +625,7 @@
         },
         "tooltip": [
             "Use on 15 sticks and 10 leaves to start a fire",
-            "Hold over a campfire to roast raw food"
+            "Prop on a campfire to roast raw food"
         ],
         "recipe": {
             "REQUIRE_THING": "rock",

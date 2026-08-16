@@ -540,10 +540,10 @@ class Campfire extends Thing {
 
     /**
      * Advance cooking by one game minute when conditions allow; otherwise pause.
-     * @param {boolean} lit        campfire is burning
-     * @param {boolean} attending  this campfire's menu is open (stick-roast only)
+     * Stick-roast and shell simmer both run unattended while the fire is lit.
+     * @param {boolean} lit  campfire is burning
      */
-    tickCook(lit, attending) {
+    tickCook(lit) {
         const method = this.getCatalystMethod();
         // Keep ticking simmer while vessel is valid, slots still hold leftovers, or progress is draining
         const simmerActive = method === "shell_simmer"
@@ -564,9 +564,7 @@ class Campfire extends Thing {
             ? getCookRecipe(id => this.scene.getItem(id), cook.id, method)
             : null;
         const smoke = method === "smoke_hide";
-        const canAdvance = smoke
-            ? !!(lit && method && recipe)
-            : !!(lit && attending && method && recipe);
+        const canAdvance = !!(lit && method && recipe);
 
         if (!canAdvance) {
             // Stick-roast drains when the fire is out; smoke pauses.
@@ -690,9 +688,6 @@ class Campfire extends Thing {
         if (!cook) return false;
         const method = this.getCatalystMethod();
         if (!method) return false;
-        const open = this.scene.campfirePanel?.visible
-            && this.scene.campfirePanel.campfire === this;
-        if (!open) return false;
         return !!getCookRecipe(id => this.scene.getItem(id), cook.id, method);
     }
 

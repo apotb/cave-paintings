@@ -1,7 +1,5 @@
 Bones
 
-Add Boar using AggressiveAnimal AI
-
 Infection
 
 New burning system -- fires won't heat up immediately, different fuels burn at different temperatures, moisture will actually do something

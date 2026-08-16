@@ -272,6 +272,16 @@ class Corpse extends Phaser.GameObjects.Sprite {
             const destroyed = typeof Body !== "undefined" && Body.isBrainDestroyed?.(this.entry?.body);
             return destroyed ? loot.filter((d) => d.id !== "brain") : loot;
         }
+        if (id === "boar") {
+            const loot = [
+                { id: "raw_pork", min: 3, max: 5 },
+                { id: "boar_hide", min: 1, max: 1 },
+                { id: "brain", min: 1, max: 1 },
+                { id: "bone", min: 2, max: 4 }
+            ];
+            const destroyed = typeof Body !== "undefined" && Body.isBrainDestroyed?.(this.entry?.body);
+            return destroyed ? loot.filter((d) => d.id !== "brain") : loot;
+        }
         if (id === "human") {
             const loot = [
                 { id: "raw_beef", min: 2, max: 4 },

@@ -197,6 +197,107 @@ function pushDecor(list, tx, ty, id) {
     });
 }
 
+let _mobSpawnRules = null;
+function mobSpawnRules() {
+    if (_mobSpawnRules) return _mobSpawnRules;
+    const raw = JSON.parse(
+        fs.readFileSync(path.join(__dirname, "..", "data", "Mobs.json"), "utf8")
+    );
+    _mobSpawnRules = (raw || []).filter((m) => m?.id && m.spawn);
+    return _mobSpawnRules;
+}
+
+/** Pack wildlife from Mobs.json spawn rules (mirrors js/World.js populateNaturalMobs). */
+function populateNaturalMobs(cx, cy, tiles, things, lootableThings, stamped, rand) {
+    const rules = mobSpawnRules();
+    const mobs = [];
+    if (!rules.length) return mobs;
+
+    const blocked = new Set();
+    const markBlocked = (entry) => {
+        if (!entry) return;
+        const chunkOx = cx * CHUNK_PX;
+        const chunkOy = cy * CHUNK_PX;
+        const lx = Math.round((entry.x - TS / 2 - chunkOx) / TS);
+        const ly = Math.round((entry.y - TS - chunkOy) / TS);
+        if (lx >= 0 && ly >= 0 && lx < CS && ly < CS) blocked.add(`${lx},${ly}`);
+    };
+    for (const t of things || []) markBlocked(t);
+    for (const t of lootableThings || []) markBlocked(t);
+
+    for (const def of rules) {
+        const sp = def.spawn || {};
+        const allow = new Set(sp.tiles || []);
+        const minCand = Math.max(1, Math.floor(Number(sp.minCandidates) || 4));
+        const chance = Number(sp.chunkChance);
+        if (!(chance > 0) || !allow.size) continue;
+
+        const candidates = [];
+        for (let i = 0; i < CS * CS; i++) {
+            if (!allow.has(tiles[i])) continue;
+            const lx = i % CS;
+            const ly = (i / CS) | 0;
+            if (blocked.has(`${lx},${ly}`)) continue;
+            const wx = cx * CS + lx;
+            const wy = cy * CS + ly;
+            if (stamped?.footprints?.has(`${wx},${wy}`)) continue;
+            candidates.push({ lx, ly });
+        }
+        if (candidates.length < minCand) continue;
+        if (rand() >= chance) continue;
+
+        let packMin = Math.max(1, Math.floor(Number(sp.packMin) || 1));
+        let packMax = Math.max(packMin, Math.floor(Number(sp.packMax) || packMin));
+        packMax = Math.min(packMax, candidates.length);
+        packMin = Math.min(packMin, packMax);
+        const pack = packMin + Math.floor(rand() * (packMax - packMin + 1));
+        const packRadius = Math.max(1, Math.floor(Number(sp.packRadius) || 2));
+
+        for (let i = candidates.length - 1; i > 0; i--) {
+            const j = Math.floor(rand() * (i + 1));
+            const tmp = candidates[i];
+            candidates[i] = candidates[j];
+            candidates[j] = tmp;
+        }
+        const picks = [];
+        const anchor = candidates[0];
+        picks.push(anchor);
+        const rest = candidates.slice(1).map((c) => ({
+            c,
+            d: Math.abs(c.lx - anchor.lx) + Math.abs(c.ly - anchor.ly)
+        }));
+        rest.sort((a, b) => a.d - b.d || a.c.lx - b.c.lx || a.c.ly - b.c.ly);
+        const used = new Set([`${anchor.lx},${anchor.ly}`]);
+        for (const e of rest) {
+            if (picks.length >= pack) break;
+            if (e.d > packRadius) continue;
+            picks.push(e.c);
+            used.add(`${e.c.lx},${e.c.ly}`);
+        }
+        for (const e of rest) {
+            if (picks.length >= pack) break;
+            const k = `${e.c.lx},${e.c.ly}`;
+            if (used.has(k)) continue;
+            picks.push(e.c);
+            used.add(k);
+        }
+
+        for (const { lx, ly } of picks) {
+            const x = cx * CHUNK_PX + lx * TS;
+            const y = cy * CHUNK_PX + ly * TS + TS;
+            mobs.push({
+                id: def.id,
+                x,
+                y,
+                homeX: x,
+                homeY: y
+            });
+            blocked.add(`${lx},${ly}`);
+        }
+    }
+    return mobs;
+}
+
 /**
  * @param {number} cx
  * @param {number} cy
@@ -249,40 +350,9 @@ function generateChunk(cx, cy, worldSeed, opts = {}) {
         }
     });
 
-    // Natural deer packs (mirrors Mobs.json deer.spawn roughly)
-    const mobs = [];
-    const allow = new Set(["grass", "grass_hill"]);
-    const candidates = [];
-    for (let i = 0; i < CS * CS; i++) {
-        if (!allow.has(tiles[i])) continue;
-        const lx = i % CS;
-        const ly = (i / CS) | 0;
-        const wx = cx * CS + lx;
-        const wy = cy * CS + ly;
-        if (stamped?.footprints?.has(`${wx},${wy}`)) continue;
-        candidates.push({ lx, ly });
-    }
-    if (candidates.length >= 4 && rand() < 0.08) {
-        const pack = 2 + Math.floor(rand() * 2);
-        for (let i = candidates.length - 1; i > 0; i--) {
-            const j = Math.floor(rand() * (i + 1));
-            const t = candidates[i];
-            candidates[i] = candidates[j];
-            candidates[j] = t;
-        }
-        for (let n = 0; n < Math.min(pack, candidates.length); n++) {
-            const { lx, ly } = candidates[n];
-            const x = cx * CHUNK_PX + lx * TS;
-            const y = cy * CHUNK_PX + ly * TS + TS;
-            mobs.push({
-                id: "deer",
-                x,
-                y,
-                homeX: x,
-                homeY: y
-            });
-        }
-    }
+    const mobs = populateNaturalMobs(
+        cx, cy, tiles, things, lootableThings, stamped, rand
+    );
 
     return {
         cx,

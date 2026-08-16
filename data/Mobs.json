@@ -51,5 +51,35 @@
                 "max": 4
             }
         ]
+    },
+    {
+        "id": "boar",
+        "name": "Wild Boar",
+        "key": "boar",
+        "bodyPlan": "boar",
+        "speed": 3.6,
+        "wanderSpeed": 1.2,
+        "hitboxSize": 8,
+        "ai": "aggressiveAnimal",
+        "anim": {
+            "frameWidth": 16,
+            "frameHeight": 16
+        },
+        "spawn": {
+            "tiles": ["grass", "grass_hill"],
+            "chunkChance": 0.027,
+            "packMin": 2,
+            "packMax": 4,
+            "packRadius": 2,
+            "minCandidates": 4
+        },
+        "attacks": [],
+        "drops": [
+            {
+                "item": "raw_pork",
+                "min": 3,
+                "max": 5
+            }
+        ]
     }
 ]

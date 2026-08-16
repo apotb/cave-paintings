@@ -6259,14 +6259,13 @@ class SceneMain extends SceneBase {
 
     tickCampfires() {
         let lightChanged = false;
-        const openFire = this.campfirePanel?.visible ? this.campfirePanel.campfire : null;
 
         for (const fire of this.getCampfires()) {
             // Burn first so a fire that dies this minute starts draining cook progress immediately
             if (fire.isLit() && fire.burnMinute()) lightChanged = true;
             const lit = fire.isLit();
-            // Stick-roast needs the menu open (tending); shell simmer runs unattended while lit
-            fire.tickCook(lit, lit && fire === openFire);
+            // Stick-roast, smoke, and shell simmer all run unattended while lit
+            fire.tickCook(lit);
         }
         if (lightChanged) this.updateLightVeil();
     }

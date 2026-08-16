@@ -502,7 +502,7 @@ function getCookRecipe(getItem, inputId, method) {
     return recipe;
 }
 
-const SIMMER_INGREDIENTS = new Set(["apple", "blueberry", "raw_beef", "raw_venison"]);
+const SIMMER_INGREDIENTS = new Set(["apple", "blueberry", "raw_beef", "raw_venison", "raw_pork"]);
 const SIMMER_MINUTES_PER_SLOT = 5;
 
 function isSimmerIngredient(itemId) {
@@ -524,21 +524,18 @@ function getSimmerDishInfo(getItem, ingredientIds, coconutMeta) {
     let name = "Simmered Meal";
     let spoilHours = 24;
 
-    const hasBeef = unique.includes("raw_beef");
-    const hasVenison = unique.includes("raw_venison");
-    const hasMeat = hasBeef || hasVenison;
+    const meats = [];
+    if (unique.includes("raw_beef")) meats.push("Beef");
+    if (unique.includes("raw_venison")) meats.push("Venison");
+    if (unique.includes("raw_pork")) meats.push("Pork");
+    const hasMeat = meats.length > 0;
     const hasApple = unique.includes("apple");
     const hasBlue = unique.includes("blueberry");
 
     if (hasMeat) {
         kind = "stew";
         spoilHours = 36;
-        // Label by meat type; mixed meats → generic "Meat"
-        const meatLabel = hasBeef && hasVenison
-            ? "Meat"
-            : hasVenison
-                ? "Venison"
-                : "Beef";
+        const meatLabel = meats.length > 1 ? "Meat" : meats[0];
         if (hasApple && hasBlue) name = "Hunter's Stew";
         else if (hasApple) name = `Apple and ${meatLabel} Stew`;
         else if (hasBlue) {

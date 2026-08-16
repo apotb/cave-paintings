@@ -14,7 +14,7 @@
 
     function boneRange(mobId) {
         const id = String(mobId || "");
-        if (id === "deer") return { min: 2, max: 4 };
+        if (id === "deer" || id === "boar") return { min: 2, max: 4 };
         if (id === "human") return { min: 1, max: 2 };
         return { min: 1, max: 2 };
     }

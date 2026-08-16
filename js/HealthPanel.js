@@ -46,6 +46,7 @@ class HealthPanel {
         "Left Eye", "Right Eye",
         "Left Ear", "Right Ear",
         "Nose", "Jaw", "Tongue",
+        "Left Tusk", "Right Tusk",
         "Neck",
         "Torso",
         "Spine", "Ribcage", "Sternum", "Heart",

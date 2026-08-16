@@ -325,37 +325,95 @@ class NeutralAnimalAI extends DoofusAI {
 }
 
 /**
- * Always-hostile aggressive: same combat as neutral, but aggroes on sight.
+ * Territorial aggressive: stares at nearby party pawns, then charges
+ * when they step closer. Pack-alerts same-species neighbors on charge.
  */
 class AggressiveAnimalAI extends NeutralAnimalAI {
     constructor(mob) {
         super(mob);
-        this.SIGHT_TILES = 8;
+        this.STARE_TILES = 8;
+        this.AGGRO_TILES = 4;
+        this.staring = false;
+        this._stareTarget = null;
+    }
+
+    onDamaged(source = null, opts = null) {
+        super.onDamaged(source, opts);
+        if (this.hostile) {
+            this.staring = false;
+            this._stareTarget = null;
+        }
     }
 
     update(delta) {
-        if (!this.hostile) this._trySightAggro();
+        if (!this.hostile) this._tryNotice();
+        if (this.staring && !this.hostile) {
+            this._updateStare();
+            return;
+        }
         super.update(delta);
     }
 
-    _trySightAggro() {
+    _findHuntTarget() {
+        const mob = this.mob;
+        const sys = mob.scene?.partySys;
+        let player = sys?.nearestParty?.(mob.x, mob.y) || mob.scene?.player;
+        if (!player || player.isBodyDead?.()) return null;
+        if (player.role === "wanderer") return null;
+        if (typeof Party !== "undefined" && Party.sameFaction?.(mob, player)) return null;
+        return player;
+    }
+
+    _tryNotice() {
+        this.staring = false;
+        this._stareTarget = null;
         const mob = this.mob;
         if (!mob?.active || mob.isBodyDead?.()) return;
         if (mob.isIncapacitated?.() || mob.isImmobile?.()) return;
-        const player = mob.scene?.player;
-        if (!player || player.isBodyDead?.()) return;
+        const player = this._findHuntTarget();
+        if (!player) return;
         const ts = mob.scene.tileSize || 16;
         const distTiles = Math.hypot(
             (mob.x - player.x) / ts,
             (mob.y - player.y) / ts
         );
-        const sight = this.SIGHT_TILES + (this._leashBonus || 0) * 0.25;
-        if (distTiles > sight) return;
+        const stare = this.STARE_TILES + (this._leashBonus || 0) * 0.25;
+        if (distTiles <= this.AGGRO_TILES) {
+            this._goHostile(player);
+            return;
+        }
+        if (distTiles <= stare) {
+            this.staring = true;
+            this._stareTarget = player;
+        }
+    }
+
+    _goHostile(player) {
+        if (this.hostile) return;
         this.hostile = true;
+        this.staring = false;
+        this._stareTarget = null;
+        this._combatTarget = player;
         this.timeSinceHitPlayer = 0;
         this._deaggroTimer = 0;
         this._atkCache = null;
         this._atkCacheMs = 0;
+        this.mob.alertNearbyMobs?.(player);
+    }
+
+    _updateStare() {
+        const mob = this.mob;
+        const player = this._stareTarget;
+        this._clearCombatMove();
+        if (!mob || !player) return;
+        mob.setVelocity(0, 0);
+        mob.isSprinting = false;
+        mob.anims.timeScale = 1;
+        const dx = player.x - mob.x;
+        const dy = player.y - mob.y;
+        if (Math.abs(dx) > Math.abs(dy)) mob.facing = dx > 0 ? "right" : "left";
+        else if (dy !== 0) mob.facing = dy > 0 ? "down" : "up";
+        mob.playAnim?.(`idle-${mob.facing}`);
     }
 }
 
