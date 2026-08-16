@@ -541,32 +541,37 @@ class StoragePanel {
         return true;
     }
 
-    tryQuickAdd(hotbarIndex, pointer = null) {
+    tryQuickAdd(hotbarIndex, pointer = null, bag = 'hotbar') {
         if (!this.visible || !this.storage) return false;
-        const inv = this.scene.player.inventory;
-        const stack = inv[hotbarIndex];
-        if (!stack) return false;
-        if (!this._acceptsStack(stack)) return false;
-        const n = this._slotCount();
-        for (let pass = 0; pass < 2; pass++) {
-            for (let i = 0; i < n; i++) {
-                const dest = this.storage.getSlot(i);
-                if (pass === 0) {
-                    if (!dest || dest.id !== stack.id) continue;
-                    if (typeof isSpecialStack === "function" && (isSpecialStack(stack) || isSpecialStack(dest))) continue;
-                    const meta = this.scene.getItem(stack.id);
-                    const maxStack = Math.max(1, meta?.maxStack || 1);
-                    if (dest.quantity >= maxStack) continue;
-                    this._depositFromHotbar(String(i), hotbarIndex, pointer);
-                    return true;
-                }
-                if (!dest) {
-                    this._depositFromHotbar(String(i), hotbarIndex, pointer);
-                    return true;
+        this._sourceBag = bag === 'overflow' ? 'overflow' : 'hotbar';
+        try {
+            const inv = this._sourceInv();
+            const stack = inv[hotbarIndex];
+            if (!stack) return false;
+            if (!this._acceptsStack(stack)) return false;
+            const n = this._slotCount();
+            for (let pass = 0; pass < 2; pass++) {
+                for (let i = 0; i < n; i++) {
+                    const dest = this.storage.getSlot(i);
+                    if (pass === 0) {
+                        if (!dest || dest.id !== stack.id) continue;
+                        if (typeof isSpecialStack === "function" && (isSpecialStack(stack) || isSpecialStack(dest))) continue;
+                        const meta = this.scene.getItem(stack.id);
+                        const maxStack = Math.max(1, meta?.maxStack || 1);
+                        if (dest.quantity >= maxStack) continue;
+                        this._depositFromHotbar(String(i), hotbarIndex, pointer);
+                        return true;
+                    }
+                    if (!dest) {
+                        this._depositFromHotbar(String(i), hotbarIndex, pointer);
+                        return true;
+                    }
                 }
             }
+            return false;
+        } finally {
+            this._sourceBag = 'hotbar';
         }
-        return false;
     }
 
     _oneFromStack(stack) {
@@ -599,22 +604,13 @@ class StoragePanel {
     }
 
     _tryInsertStack(stack) {
-        const inv = this.scene.player.inventory;
         const now = this.scene.worldMinuteIndex?.() ?? null;
         const forInv = stack.spoilLeft != null ? stack : (() => {
             const c = cloneItemStack(stack) || stack;
             migrateToSpoilLeft(c, now);
             return c;
         })();
-        const empty = inv.findIndex(s => !s);
-        if (empty !== -1) {
-            inv[empty] = forInv;
-            return true;
-        }
-        if (inv.length < this.scene.player.inventorySize) {
-            inv.push(forInv);
-            return true;
-        }
+        if (this.scene.player.insertOwnedStack?.(forInv)) return true;
         if (forInv.customName || forInv.food) return false;
         const meta = this.scene.getItem(forInv.id);
         const left = this.scene.player.gainItem(
@@ -766,9 +762,9 @@ class StoragePanel {
             if (partyTarget && this._giveSlotToParty(fromKey, partyTarget)) {
                 // given
             } else {
-                const toHotbar = this.scene.hotbar.getIndexAt(pointer.x, pointer.y);
-                if (toHotbar !== -1) {
-                    this._dropSlotToHotbar(fromKey, toHotbar);
+                const toBag = this.scene.hotbar.getBagSlotAt?.(pointer.x, pointer.y);
+                if (toBag) {
+                    this._dropSlotToHotbar(fromKey, toBag.index, toBag.bag);
                 } else {
                     const toKey = this.getSlotAt(pointer.x, pointer.y);
                     if (toKey && toKey !== fromKey) {
@@ -782,11 +778,15 @@ class StoragePanel {
         this._cancelDrag();
     }
 
-    _dropSlotToHotbar(fromKey, toHotbar) {
+    _dropSlotToHotbar(fromKey, toHotbar, bag = 'hotbar') {
         const stack = this._stackFor(fromKey);
         if (!stack) return;
-        const inv = this.scene.player.inventory;
-        while (inv.length <= toHotbar) inv.push(null);
+        const toBag = bag === 'overflow' ? 'overflow' : 'hotbar';
+        const player = this.scene.player;
+        const inv = player.bagArray(toBag);
+        const cap = player.bagCap(toBag);
+        if (toHotbar < 0 || toHotbar >= cap) return;
+        while (inv.length <= toHotbar && inv.length < cap) inv.push(null);
         const dest = inv[toHotbar];
         const now = this.scene.worldMinuteIndex?.() ?? null;
         let moved = stack.quantity;
@@ -823,7 +823,8 @@ class StoragePanel {
         this._notifyStorage("slot_to_inv", {
             slot: fromKey,
             inv: toHotbar,
-            amount: moved
+            amount: moved,
+            bag: toBag
         });
     }
 

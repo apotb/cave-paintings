@@ -362,6 +362,8 @@ class CorpsePanel {
             equipIfEmpty: !!opts?.equipIfEmpty,
             pawnId: player?.pawnId,
             toPawnId: opts?.toPawnId || undefined,
+            inv: Number.isInteger(opts?.inv) ? opts.inv : undefined,
+            bag: opts?.bag || undefined,
             x: player?.x,
             y: player?.y
         });
@@ -511,18 +513,25 @@ class CorpsePanel {
     }
 
     /**
-     * Place session stack into a hotbar index (merge / empty slot).
+     * Place session stack into a bag index (merge / empty slot).
      * @returns {boolean}
      */
-    tryDepositToHotbar(hotbarIndex) {
+    tryDepositToHotbar(hotbarIndex, bag = 'hotbar') {
         if (this._dragFrom == null) return false;
         const stack = this.session[this._dragFrom];
         if (!stack) return false;
+        const toBag = bag === 'overflow' ? 'overflow' : 'hotbar';
+        const player = this.scene.player;
+        const inv = player.bagArray?.(toBag) || (toBag === 'overflow' ? player.overflow : player.inventory);
+        const cap = player.bagCap?.(toBag)
+            ?? (toBag === 'overflow' ? (player.overflowSize || 0) : (player.inventorySize || inv.length));
+        if (hotbarIndex < 0 || hotbarIndex >= cap) return false;
+        while (inv.length <= hotbarIndex && inv.length < cap) inv.push(null);
 
         if (this._dedicatedNet()) {
             const meta = this.scene.getItem(stack.id);
             if (!meta) return false;
-            const dest = this.scene.player.inventory[hotbarIndex];
+            const dest = inv[hotbarIndex];
             let moved = stack.quantity;
             if (dest && (dest.id !== stack.id || dest.customName || dest.food || dest.ingredients
                 || stack.customName || stack.food || stack.ingredients)) {
@@ -534,7 +543,7 @@ class CorpsePanel {
                 if (space <= 0) return false;
                 moved = Math.min(space, stack.quantity);
             }
-            this._notifyServerTake(this._dragFrom, moved);
+            this._notifyServerTake(this._dragFrom, moved, { inv: hotbarIndex, bag: toBag });
             if (moved >= stack.quantity) this.session[this._dragFrom] = null;
             else {
                 stack.quantity -= moved;
@@ -544,16 +553,12 @@ class CorpsePanel {
             return true;
         }
 
-        const inv = this.scene.player.inventory;
-        while (inv.length <= hotbarIndex) inv.push(null);
         const dest = inv[hotbarIndex];
         const meta = this.scene.getItem(stack.id);
         if (!meta) return false;
 
         const special = !!(stack.customName || stack.food || stack.ingredients);
         if (!dest) {
-            const moved = Math.max(1, Math.floor(Number(stack.quantity) || 1));
-            const from = this._dragFrom;
             inv[hotbarIndex] = (() => {
                 const c = cloneItemStack(stack);
                 migrateToSpoilLeft(c, this.scene.worldMinuteIndex?.() ?? null);
@@ -618,9 +623,9 @@ class CorpsePanel {
             if (this.scene.partyPanel?.visible) {
                 handled = this.tryGiveToPartyMember(pointer);
             }
-            const hotIdx = this.scene.hotbar?.getIndexAt?.(pointer.x, pointer.y);
-            if (!handled && hotIdx != null && hotIdx >= 0) {
-                handled = this.tryDepositToHotbar(hotIdx);
+            const toBag = this.scene.hotbar?.getBagSlotAt?.(pointer.x, pointer.y);
+            if (!handled && toBag) {
+                handled = this.tryDepositToHotbar(toBag.index, toBag.bag);
             }
             if (this._dragIcon) this._dragIcon.destroy();
             this._dragIcon = null;

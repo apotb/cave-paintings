@@ -93,14 +93,27 @@ class PartyPanel {
         return d > (P.FOLLOW_DETACH || 12);
     }
 
-    _hotbarFull(pawn) {
-        const inv = pawn?.inventory;
-        const n = Math.max(0, Number(pawn?.inventorySize) || (inv?.length || 0));
-        if (!(n > 0) || !Array.isArray(inv)) return false;
-        for (let i = 0; i < n; i++) {
-            if (!inv[i]) return false;
-        }
-        return true;
+    _bagsFull(pawn) {
+        if (!pawn) return false;
+        const bagFull = (arr, cap) => {
+            const n = Math.max(0, Math.floor(Number(cap) || 0));
+            if (!(n > 0)) return true;
+            const list = arr || [];
+            for (let i = 0; i < n; i++) {
+                if (!list[i]) return false;
+            }
+            return true;
+        };
+        const hotCap = Math.max(
+            Number(pawn.inventorySize) || 0,
+            Array.isArray(pawn.inventory) ? pawn.inventory.length : 0
+        );
+        const overCap = Math.max(
+            Number(pawn.overflowSize) || 0,
+            Array.isArray(pawn.overflow) ? pawn.overflow.length : 0,
+            pawn.getOverflowBonus?.() || 0
+        );
+        return bagFull(pawn.inventory, hotCap) && bagFull(pawn.overflow, overCap);
     }
 
     /** Integer-pixel "!" so it stays sharp next to the 3px carry bar. */
@@ -174,7 +187,7 @@ class PartyPanel {
             g.fillStyle(0xF39C12, 1);
             g.fillRect(x, y, width2, h);
         }
-        if (this._hotbarFull(pawn)) {
+        if (this._bagsFull(pawn)) {
             const u = Math.max(1, Math.round(s));
             this._drawPixelBang(g, x - u, y + h / 2, u);
         }
@@ -229,7 +242,7 @@ class PartyPanel {
         root.add([bg, spr, crown, name, vitals, warn, hit]);
         const row = { root, bg, hit, spr, crown, name, vitals, warn, pawn: null };
         hit.on("pointerdown", () => {
-            if (row.pawn) this._onRowClick(row.pawn);
+            if (row.pawn) scene.partySys?.tryAllyClick?.(row.pawn, { forceSwitch: true });
         });
         hit.on("pointerover", (p) => {
             if (!row.pawn) return;
@@ -249,38 +262,7 @@ class PartyPanel {
         return row;
     }
 
-    _cancelPendingRowClick() {
-        this._pendingRowClick?.remove?.(false);
-        this._pendingRowClick = null;
-    }
-
-    _onRowClick(pawn) {
-        const scene = this.scene;
-        if (!pawn) return;
-        const now = Date.now();
-        const doubleMs = 350;
-        if (this._rowClickPawn === pawn && now - (this._rowClickAt || 0) < doubleMs) {
-            this._cancelPendingRowClick();
-            this._rowClickPawn = null;
-            this._rowClickAt = 0;
-            scene.partySys?.tryAllyClick?.(pawn, { forceSwitch: true });
-            return;
-        }
-        this._cancelPendingRowClick();
-        this._rowClickPawn = pawn;
-        this._rowClickAt = now;
-        if (!scene.partySys?.allyClickWouldUseItem?.(pawn)) {
-            scene.partySys?.tryAllyClick?.(pawn);
-            return;
-        }
-        this._pendingRowClick = scene.time.delayedCall(doubleMs, () => {
-            this._pendingRowClick = null;
-            scene.partySys?.tryAllyClick?.(pawn);
-        });
-    }
-
     _clearRows() {
-        this._cancelPendingRowClick();
         for (const row of this.rows) row.root.destroy(true);
         this.rows = [];
         for (const pip of this.pips) pip.destroy();

@@ -20,6 +20,40 @@
         return !!RECIPE_META_KEYS[k];
     }
 
+    function hideStageOf(v) {
+        if (!v || typeof v !== "object" || !v.hideStage) return null;
+        return {
+            stage: String(v.hideStage),
+            qty: Math.max(0, Number(v.qty) || 1)
+        };
+    }
+
+    /** Raw hide/leather defs at a processing stage (no recipe of their own). */
+    function hideStageMaterials(items, stage) {
+        const out = [];
+        if (!stage) return out;
+        for (const item of items || []) {
+            if (item?.hide?.stage === stage && !item.recipe) out.push(item);
+        }
+        return out;
+    }
+
+    function avgHideStageWeight(items, stage) {
+        const mats = hideStageMaterials(items, stage);
+        if (!mats.length) return 0;
+        let sum = 0;
+        for (const m of mats) sum += Number(m.weight) || 0;
+        return sum / mats.length;
+    }
+
+    function avgHideStageFuelKj(items, stage) {
+        const mats = hideStageMaterials(items, stage);
+        if (!mats.length) return 0;
+        let sum = 0;
+        for (const m of mats) sum += Number(m.fuel?.kj) || 0;
+        return sum / mats.length;
+    }
+
     const BASE_STRENGTH = 15;
 
     function unitWeight(stack, def) {
@@ -138,7 +172,11 @@
                     continue;
                 }
                 if (isRecipeMetaKey(k)) continue;
-                if (v && typeof v === "object" && v.hideStage) continue;
+                const hide = hideStageOf(v);
+                if (hide) {
+                    sum += avgHideStageWeight(items, hide.stage) * hide.qty;
+                    continue;
+                }
                 const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
                 sum += weightOf(k) * qty;
             }
@@ -196,7 +234,11 @@
                     continue;
                 }
                 if (isRecipeMetaKey(k)) continue;
-                if (v && typeof v === "object" && v.hideStage) continue;
+                const hide = hideStageOf(v);
+                if (hide) {
+                    sum += avgHideStageFuelKj(items, hide.stage) * hide.qty;
+                    continue;
+                }
                 const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
                 sum += fuelKjOf(k) * qty;
             }
@@ -231,7 +273,23 @@
                     continue;
                 }
                 if (isRecipeMetaKey(k)) continue;
-                if (v && typeof v === "object" && v.hideStage) continue;
+                const hide = hideStageOf(v);
+                if (hide) {
+                    const mats = hideStageMaterials(items, hide.stage);
+                    let mSum = 0;
+                    let mN = 0;
+                    for (const m of mats) {
+                        const mv = Number(m.fuel?.moisture);
+                        if (!Number.isFinite(mv)) continue;
+                        mSum += mv;
+                        mN += 1;
+                    }
+                    if (mN > 0) {
+                        sum += (mSum / mN) * hide.qty;
+                        weight += hide.qty;
+                    }
+                    continue;
+                }
                 const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
                 const child = fuelMoistureOf(k);
                 if (!(child.weight > 0)) continue;

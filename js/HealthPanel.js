@@ -201,6 +201,16 @@ class HealthPanel {
         }
     }
 
+    /** "You" when this is the controlled pawn; otherwise the inspect/pawn name. */
+    _healthySubject() {
+        if (this._inspectBody) {
+            const title = String(this._inspectTitle || "").trim();
+            if (title && title !== "Health" && title !== "Corpse") return title;
+            return "They";
+        }
+        return "You";
+    }
+
     isInspecting() {
         return !!this._inspectBody;
     }
@@ -462,7 +472,7 @@ class HealthPanel {
             text.setInteractive({ useHandCursor: false });
             const row = { bg, text, bleeding: false, destroyed: false, tip: null };
             text.on("pointerover", (p) => {
-                // Live getter so severity/stage tips update while hovering
+                if (!row.tip) return;
                 this.scene.showTooltip(() => row.tip || "", p.x, p.y, text);
             });
             text.on("pointerout", () => {
@@ -682,7 +692,15 @@ class HealthPanel {
             any = true;
         }
 
-        if (!any) lines.push({ text: "None" });
+        if (!any) {
+            const who = this._healthySubject();
+            lines.push({
+                text: "None",
+                tip: who === "You"
+                    ? "You are perfectly healthy!"
+                    : `${who} is perfectly healthy!`
+            });
+        }
         this._setInjLines(lines);
         // Keep scroll position across refreshes (tickBodySystems); clamp in layout()
 

@@ -9,6 +9,7 @@ const Look = require("../shared/look");
 const { mulberry32, hash2D, uuid } = require("../shared/rng");
 const Spoil = require("../shared/spoil");
 const Durability = require("../shared/durability");
+const Apparel = require("../shared/apparel");
 const Chop = require("../shared/chop");
 const Place = require("../shared/place");
 const Sleep = require("../shared/sleep");
@@ -163,6 +164,8 @@ class SimWorld {
                         combat: !!o.combat,
                         segments,
                         color: o.color || null,
+                        deflected: !!o.deflected,
+                        spark: o.spark || null,
                         to: id
                     });
                 }
@@ -333,6 +336,15 @@ class SimWorld {
             ];
         }
 
+        if (opts.deflected) {
+            const itemName = opts.deflectName || "apparel";
+            return [
+                { text: vicIsYou ? "Your" : "The", color: vicIsYou ? YOU : ENEMY },
+                { text: itemName, color: WEAPON },
+                { text: "deflected the blow" }
+            ];
+        }
+
         const subj = isYou
             ? "You"
             : attacker?.displayName?.() || attacker?.def?.name || "Someone";
@@ -344,7 +356,9 @@ class SimWorld {
         const vicPossessive = vicIsYou
             ? "your"
             : `${target.def?.name || target.displayName?.() || "foe"}'s`;
-        const dmgStr = `(${Number(opts.damage).toFixed(1)})`;
+        const dmgStr = opts.glanced
+            ? `(${Number(opts.damage).toFixed(1)}, glanced)`
+            : `(${Number(opts.damage).toFixed(1)})`;
         return [
             { text: subj, color: isYou ? YOU : ENEMY },
             { text: verb },
@@ -1346,7 +1360,8 @@ class SimWorld {
         if (!eater || !from) return;
         if (eater.dead || this._pawnVomiting(eater) || eater.eatChannel) return;
         const slot = Number(action.slot);
-        const stack = from.inventory?.[slot];
+        const bag = this._normBag(action.bag);
+        const stack = this._pawnBag(from, bag)?.[slot];
         if (!stack) return;
         const food = this._foodForEat(stack);
         if (!(Number(food.kc) > 0)) return;
@@ -1359,6 +1374,7 @@ class SimWorld {
             remaining: max,
             max,
             slot,
+            bag,
             fromId: from.id,
             itemId: stack.id,
             itemIndex: slot,
@@ -1376,7 +1392,8 @@ class SimWorld {
         const dist = Math.hypot(feeder.x - patient.x, feeder.y - patient.y) / TS;
         if (dist > Party.INTERACT_TILES + 0.2) return;
         const slot = Number(action.slot);
-        const held = feeder.inventory?.[slot];
+        const bag = this._normBag(action.bag);
+        const held = this._pawnBag(feeder, bag)?.[slot];
         const wantId = action.itemId ? String(action.itemId) : null;
         if (!held?.id || (wantId && held.id !== wantId)) return;
         const food = this._foodForEat(held);
@@ -1394,17 +1411,17 @@ class SimWorld {
                 if (!held.food) held.food = { ...food };
                 if (held.food.kcFull == null) held.food.kcFull = Math.round(total);
                 held.food.kc = Math.max(0, Math.round(total - consumed));
-                if (!(held.food.kc > 0)) feeder.inventory[slot] = null;
+                if (!(held.food.kc > 0)) this._pawnBag(feeder, bag)[slot] = null;
             } else {
                 held.quantity = (held.quantity || 1) - 1;
-                if (!(held.quantity > 0)) feeder.inventory[slot] = null;
+                if (!(held.quantity > 0)) this._pawnBag(feeder, bag)[slot] = null;
             }
         } else {
             patient.kc += Math.min(total, room);
             patient.saturation += total * this._satietyRatio(food, false);
             this._tryFoodPoison(patient, food);
             held.quantity = (held.quantity || 1) - 1;
-            if (!(held.quantity > 0)) feeder.inventory[slot] = null;
+            if (!(held.quantity > 0)) this._pawnBag(feeder, bag)[slot] = null;
         }
         this._youDirty.add(p.id);
     }
@@ -3204,6 +3221,37 @@ class SimWorld {
             p.inventory[i] = slot;
             remaining -= add;
         }
+        this._syncOverflowSize(p);
+        const over = p.overflow || [];
+        for (let i = 0; i < over.length && remaining > 0; i++) {
+            const s = over[i];
+            if (!s || s.id !== itemId || this._stackIsSpecial(s) || incomingUnique) continue;
+            const space = Math.max(0, maxStack - (s.quantity || 1));
+            if (space <= 0) continue;
+            const add = Math.min(space, remaining, fitNow());
+            if (!(add > 0)) break;
+            if (incomingLeft != null) {
+                s.spoilLeft = Spoil.mergeSpoilLeft(
+                    s.quantity || 1, s.spoilLeft,
+                    add, incomingLeft
+                );
+                delete s.spoilAt;
+            }
+            Hide.applyMergedDryProgress(s, s.quantity || 1, add, extraFields?.dryProgress);
+            Hide.applyMergedSoakProgress(s, s.quantity || 1, add, extraFields?.soakProgress);
+            s.quantity = (s.quantity || 1) + add;
+            remaining -= add;
+        }
+        for (let i = 0; i < over.length && remaining > 0; i++) {
+            if (over[i]) continue;
+            const add = Math.min(maxStack, remaining, fitNow());
+            if (!(add > 0)) break;
+            const slot = { id: itemId, quantity: add };
+            this._applyStackExtras(slot, extraFields);
+            if (incomingLeft != null) slot.spoilLeft = incomingLeft;
+            over[i] = slot;
+            remaining -= add;
+        }
         this._enforceCarryCap(p);
         if (remaining < tookStart) this._dirtyPawnOwner(p);
         return remaining;
@@ -3701,6 +3749,14 @@ class SimWorld {
             this._youDirty.add(p.id);
             return true;
         }
+        this._syncOverflowSize(p);
+        const over = p.overflow || [];
+        for (let i = 0; i < over.length; i++) {
+            if (over[i]) continue;
+            over[i] = clone;
+            this._youDirty.add(p.id);
+            return true;
+        }
         this._pushDrop(p.x, p.y, this._cloneStackForWorld(clone));
         this._youDirty.add(p.id);
         return false;
@@ -3812,12 +3868,16 @@ class SimWorld {
         const a = fromInv[from];
         if (!a?.id) return;
         const b = toInv[to];
+        const qty = Math.max(1, Math.floor(Number(a.quantity) || 1));
+        let want = Math.floor(Number(action.amount));
+        if (!Number.isFinite(want) || want < 1) want = qty;
+        want = Math.min(want, qty);
         if (b && a.id === b.id && !this._stackIsSpecial(a) && !this._stackIsSpecial(b)) {
             const meta = itemDefs().get(a.id);
             const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
             const space = Math.max(0, maxStack - (b.quantity || 1));
             if (space > 0) {
-                const moved = Math.min(space, a.quantity || 1);
+                const moved = Math.min(space, want);
                 b.spoilLeft = Spoil.mergeSpoilLeft(
                     b.quantity || 1, b.spoilLeft,
                     moved, a.spoilLeft
@@ -3826,15 +3886,28 @@ class SimWorld {
                 Hide.applyMergedDryProgress(b, b.quantity || 1, moved, a.dryProgress);
                 Hide.applyMergedSoakProgress(b, b.quantity || 1, moved, a.soakProgress);
                 b.quantity = (b.quantity || 1) + moved;
-                a.quantity = (a.quantity || 1) - moved;
+                a.quantity = qty - moved;
                 if (!(a.quantity > 0)) fromInv[from] = null;
-            } else {
+            } else if (want >= qty) {
                 fromInv[from] = b;
                 toInv[to] = a;
+            } else {
+                return;
             }
-        } else {
+        } else if (!b) {
+            if (want >= qty) {
+                toInv[to] = a;
+                fromInv[from] = null;
+            } else {
+                const piece = this._cloneGearStack(a, want);
+                a.quantity = qty - want;
+                toInv[to] = piece;
+            }
+        } else if (want >= qty) {
             toInv[to] = a;
             fromInv[from] = b || null;
+        } else {
+            return;
         }
         if (toBag === "hotbar") {
             p.hotbarIndex = to;
@@ -3887,7 +3960,61 @@ class SimWorld {
         const cap = this._waistCapacity(p);
         const w = this._ensureEquipment(p).waist;
         while (w.length < cap) w.push(null);
-        if (w.length > cap) w.length = cap;
+        if (w.length > cap) {
+            for (let i = cap; i < w.length; i++) {
+                const s = w[i];
+                if (s?.id) this._pushDrop(p.x, p.y, this._cloneStackForWorld(s));
+            }
+            w.length = cap;
+        }
+    }
+
+    _afterApparelWear(creature) {
+        const pawn = this._findOwnedPawn(creature?.id);
+        if (!pawn) return;
+        this._syncWaistSlots(pawn);
+        this._syncPlayerInvSize(pawn);
+        if (creature) creature.equipment = pawn.equipment;
+        this._dirtyPawnOwner(pawn);
+    }
+
+    _applyApparelDeathWear(p) {
+        if (!p?.equipment) return;
+        Apparel.applyDeathWear(
+            p.equipment,
+            (id) => DataStore.getItem(id),
+            () => this.rng(),
+            Durability
+        );
+        this._syncWaistSlots(p);
+        this._syncPlayerInvSize(p);
+    }
+
+    _tickApparelDailyWear(p) {
+        if (!p?.equipment || p.dead) return;
+        const broke = Apparel.applyDailyWear(
+            p.equipment,
+            (id) => DataStore.getItem(id),
+            () => this.rng(),
+            Durability
+        );
+        if (broke.length) {
+            this._syncWaistSlots(p);
+            this._syncPlayerInvSize(p);
+            const creature = p.creature || this.creatures.get(p.id);
+            if (creature) creature.equipment = p.equipment;
+            const self = !p.ownerId || p.ownerId === p.id;
+            for (const piece of broke) {
+                this.pushEvent({
+                    kind: "combat_log",
+                    text: self
+                        ? `Your ${piece.name} fell apart`
+                        : `${p.name || "Someone"}'s ${piece.name} fell apart`,
+                    to: p.ownerId || p.id
+                });
+            }
+            this._dirtyPawnOwner(p);
+        }
     }
 
     _hotbarBonus(p) {
@@ -3938,6 +4065,8 @@ class SimWorld {
         this._ensureEquipment(p);
         if (this._normBag(bag) === "overflow") {
             if (!Array.isArray(p.overflow)) p.overflow = [];
+            const size = Math.max(0, this._overflowBonus(p));
+            while (p.overflow.length < size) p.overflow.push(null);
             return p.overflow;
         }
         if (!Array.isArray(p.inventory)) p.inventory = [];
@@ -4638,9 +4767,13 @@ class SimWorld {
 
         const want = Math.max(1, Math.floor(Number(action.quantity) || 1));
         const takeQty = Math.min(Math.max(1, Math.floor(Number(stack.quantity) || 1)), want);
+        const prefer = Math.floor(Number(action.inv));
+        const bag = this._normBag(action.bag);
         const left = action.toPawnId
             ? this._giveOwnedStack(receiver, { ...stack, quantity: takeQty })
-            : this._give(p, stack.id, takeQty, this._stackExtrasFrom(stack));
+            : (Number.isInteger(prefer) && prefer >= 0
+                ? this._placeInBagSlot(receiver, { ...stack, quantity: takeQty }, prefer, bag)
+                : this._give(p, stack.id, takeQty, this._stackExtrasFrom(stack)));
         const taken = takeQty - left;
         if (taken <= 0) {
             this._youDirty.add(p.id);
@@ -5594,7 +5727,7 @@ class SimWorld {
         return piece;
     }
 
-    _returnWorldToInv(p, worldStack, preferIndex = -1) {
+    _returnWorldToInv(p, worldStack, preferIndex = -1, bag = "hotbar") {
         if (!p || !worldStack?.id) return false;
         const now = this.worldMinuteIndex();
         const qty = Math.max(1, Math.floor(Number(worldStack.quantity) || 1));
@@ -5603,39 +5736,46 @@ class SimWorld {
         if (left != null) extras.spoilLeft = left;
         delete extras.spoilAt;
         const prefer = Math.floor(Number(preferIndex));
+        const toBag = this._normBag(bag);
         if (Number.isInteger(prefer) && prefer >= 0) {
-            if (!Array.isArray(p.inventory)) p.inventory = [];
-            while (p.inventory.length <= prefer) p.inventory.push(null);
-            const dest = p.inventory[prefer];
-            if (!dest) {
-                const slot = { id: worldStack.id, quantity: qty };
-                this._applyStackExtras(slot, extras);
-                if (left != null) slot.spoilLeft = left;
-                p.inventory[prefer] = slot;
-                this._youDirty.add(p.id);
-                this._enforceCarryCap(p);
-                return true;
-            }
-            if (dest.id === worldStack.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(worldStack)) {
-                const meta = itemDefs().get(dest.id);
-                const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
-                const space = Math.max(0, maxStack - (dest.quantity || 1));
-                const moved = Math.min(space, qty);
-                if (moved > 0) {
-                    dest.spoilLeft = Spoil.mergeSpoilLeft(
-                        dest.quantity || 1, dest.spoilLeft,
-                        moved, left
-                    );
-                    delete dest.spoilAt;
-                    Hide.applyMergedDryProgress(dest, dest.quantity || 1, moved, extras.dryProgress);
-                    Hide.applyMergedSoakProgress(dest, dest.quantity || 1, moved, extras.soakProgress);
-                    dest.quantity = (dest.quantity || 1) + moved;
+            this._ensureEquipment(p);
+            if (toBag === "overflow") this._syncOverflowSize(p);
+            else this._syncPlayerInvSize(p);
+            const inv = this._pawnBag(p, toBag);
+            const cap = toBag === "overflow" ? this._overflowBonus(p) : inv.length;
+            if (prefer < cap) {
+                while (inv.length <= prefer) inv.push(null);
+                const dest = inv[prefer];
+                if (!dest) {
+                    const slot = { id: worldStack.id, quantity: qty };
+                    this._applyStackExtras(slot, extras);
+                    if (left != null) slot.spoilLeft = left;
+                    inv[prefer] = slot;
                     this._youDirty.add(p.id);
-                    if (moved >= qty) {
-                        this._enforceCarryCap(p);
-                        return true;
+                    this._enforceCarryCap(p);
+                    return true;
+                }
+                if (dest.id === worldStack.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(worldStack)) {
+                    const meta = itemDefs().get(dest.id);
+                    const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
+                    const space = Math.max(0, maxStack - (dest.quantity || 1));
+                    const moved = Math.min(space, qty);
+                    if (moved > 0) {
+                        dest.spoilLeft = Spoil.mergeSpoilLeft(
+                            dest.quantity || 1, dest.spoilLeft,
+                            moved, left
+                        );
+                        delete dest.spoilAt;
+                        Hide.applyMergedDryProgress(dest, dest.quantity || 1, moved, extras.dryProgress);
+                        Hide.applyMergedSoakProgress(dest, dest.quantity || 1, moved, extras.soakProgress);
+                        dest.quantity = (dest.quantity || 1) + moved;
+                        this._youDirty.add(p.id);
+                        if (moved >= qty) {
+                            this._enforceCarryCap(p);
+                            return true;
+                        }
+                        worldStack = { ...worldStack, quantity: qty - moved };
                     }
-                    worldStack = { ...worldStack, quantity: qty - moved };
                 }
             }
         }
@@ -5648,6 +5788,57 @@ class SimWorld {
         }
         this._enforceCarryCap(p);
         return leftover < (worldStack.quantity || qty);
+    }
+
+    /**
+     * Put a world stack into a specific bag slot (empty or merge). Returns leftover qty.
+     * Does not drop leftovers — caller keeps them (e.g. corpse loot).
+     */
+    _placeInBagSlot(p, worldStack, index, bag = "hotbar") {
+        if (!p || !worldStack?.id) return Math.max(1, Math.floor(Number(worldStack?.quantity) || 1));
+        const now = this.worldMinuteIndex();
+        const qty = Math.max(1, Math.floor(Number(worldStack.quantity) || 1));
+        const extras = this._stackExtrasFrom(worldStack) || {};
+        const spoilLeft = Spoil.spoilLeftForCharacter(worldStack, now);
+        if (spoilLeft != null) extras.spoilLeft = spoilLeft;
+        delete extras.spoilAt;
+        this._ensureEquipment(p);
+        const toBag = this._normBag(bag);
+        if (toBag === "overflow") this._syncOverflowSize(p);
+        else this._syncPlayerInvSize(p);
+        const inv = this._pawnBag(p, toBag);
+        const cap = toBag === "overflow" ? this._overflowBonus(p) : inv.length;
+        if (!Number.isInteger(index) || index < 0 || index >= cap) return qty;
+        while (inv.length <= index) inv.push(null);
+        const dest = inv[index];
+        if (!dest) {
+            const slot = { id: worldStack.id, quantity: qty };
+            this._applyStackExtras(slot, extras);
+            if (spoilLeft != null) slot.spoilLeft = spoilLeft;
+            inv[index] = slot;
+            this._youDirty.add(p.id);
+            this._enforceCarryCap(p);
+            return 0;
+        }
+        if (dest.id === worldStack.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(worldStack)) {
+            const meta = itemDefs().get(dest.id);
+            const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
+            const space = Math.max(0, maxStack - (dest.quantity || 1));
+            const moved = Math.min(space, qty);
+            if (!(moved > 0)) return qty;
+            dest.spoilLeft = Spoil.mergeSpoilLeft(
+                dest.quantity || 1, dest.spoilLeft,
+                moved, spoilLeft
+            );
+            delete dest.spoilAt;
+            Hide.applyMergedDryProgress(dest, dest.quantity || 1, moved, extras.dryProgress);
+            Hide.applyMergedSoakProgress(dest, dest.quantity || 1, moved, extras.soakProgress);
+            dest.quantity = (dest.quantity || 1) + moved;
+            this._youDirty.add(p.id);
+            this._enforceCarryCap(p);
+            return qty - moved;
+        }
+        return qty;
     }
 
     _tryCampfire(session, action = {}) {
@@ -6295,6 +6486,8 @@ class SimWorld {
         if (!Sleep.injuredForAutofill(c?.anatomy)) return;
         if (c?.isIncapacitated?.() || c?.isImmobile?.() || pawn.prone) return;
         if (c?.ai?.assistTarget) return;
+        if (c?._tending || c?.ai?.tendSeek) return;
+        if (this._partyNeedsAutoTend(session)) return;
         if (session.lastHitMob && Date.now() - (Number(session.lastHitAt) || 0) < 8000) return;
         const control = this._actionPawn(session, { pawnId: controlId });
         if (control && Math.hypot(control.vx || 0, control.vy || 0) > 8) return;
@@ -6613,7 +6806,7 @@ class SimWorld {
         if (slotMax > 0 && (held.quantity || 1) > slotMax) return;
         const incoming = this._splitInvToWorld(p, invIndex, held.quantity, bag);
         if (!incoming) return;
-        if (!this._returnWorldToInv(p, dest, invIndex)) {
+        if (!this._returnWorldToInv(p, dest, invIndex, bag)) {
             this._pawnBag(p, bag)[invIndex] = this._worldStackToInv(incoming);
             this._youDirty.add(p.id);
             return;
@@ -6652,7 +6845,7 @@ class SimWorld {
             this._storageSetSlot(entry, slotKey, stack.quantity > 0 ? stack : null);
             return;
         }
-        if (!this._returnWorldToInv(p, piece, prefer)) return;
+        if (!this._returnWorldToInv(p, piece, prefer, this._normBag(action.bag))) return;
         stack.quantity = (stack.quantity || 1) - take;
         this._storageSetSlot(entry, slotKey, stack.quantity > 0 ? stack : null);
     }
@@ -6735,7 +6928,7 @@ class SimWorld {
             const incoming = this._splitInvToWorld(p, invIndex, qty, bag);
             if (!incoming) return;
             this._campfireSetSlot(entry, slotKey, incoming);
-            this._returnWorldToInv(p, dest, invIndex);
+            this._returnWorldToInv(p, dest, invIndex, bag);
             return;
         }
 
@@ -6746,7 +6939,7 @@ class SimWorld {
             const incoming = this._splitInvToWorld(p, invIndex, 1, bag);
             if (!incoming) return;
             this._campfireSetSlot(entry, slotKey, incoming);
-            if (dest) this._returnWorldToInv(p, dest, invIndex);
+            if (dest) this._returnWorldToInv(p, dest, invIndex, bag);
             return;
         }
 
@@ -6757,7 +6950,7 @@ class SimWorld {
             const incoming = this._splitInvToWorld(p, invIndex, 1, bag);
             if (!incoming) return;
             this._campfireSetSlot(entry, slotKey, incoming);
-            if (dest) this._returnWorldToInv(p, dest, invIndex);
+            if (dest) this._returnWorldToInv(p, dest, invIndex, bag);
             return;
         }
 
@@ -6801,7 +6994,7 @@ class SimWorld {
                 this._campfireSetSlot(entry, slotKey, stack);
             }
         } else {
-            this._returnWorldToInv(p, piece, action.inv);
+            this._returnWorldToInv(p, piece, action.inv, this._normBag(action.bag));
         }
     }
 
@@ -6970,10 +7163,12 @@ class SimWorld {
         const slot = Number.isInteger(Number(action.slot))
             ? Number(action.slot)
             : (from.hotbarIndex ?? tender.hotbarIndex ?? 0);
+        const bag = this._normBag(action.bag);
         const controlId = p.controlId || p.id;
         const tenderIsYou = tender.id === controlId;
         const patientIsYou = patientPawn.id === controlId;
-        const held = from.inventory?.[slot];
+        const fromInv = this._pawnBag(from, bag);
+        const held = fromInv?.[slot];
         const wantId = action.itemId ? String(action.itemId) : null;
         if (!held?.id || (wantId && held.id !== wantId)) {
             const who = tenderIsYou ? "You" : (tender.name || "They");
@@ -7050,7 +7245,7 @@ class SimWorld {
         for (const t of applied) BodyHealing.applyTend(patientCreature.anatomy, t, quality);
 
         held.quantity = Math.max(0, Math.floor(Number(held.quantity) || 1) - 1);
-        if (!(held.quantity > 0)) from.inventory[slot] = null;
+        if (!(held.quantity > 0)) fromInv[slot] = null;
 
         patientPawn.body = patientCreature.anatomy.toJSON();
         patientCreature.anatomy._dirty = false;
@@ -7077,7 +7272,9 @@ class SimWorld {
         if (!ch) return;
         const from = (ch.fromId && this._findOwnedPawn(ch.fromId)) || p;
         const idx = ch.slot ?? ch.itemIndex ?? from.hotbarIndex ?? 0;
-        const held = from.inventory?.[idx];
+        const bag = this._normBag(ch.bag);
+        const inv = this._pawnBag(from, bag);
+        const held = inv?.[idx];
         if (!held) return;
         const food = this._foodForEat(held);
         const total = Number(food.kc) || 0;
@@ -7098,17 +7295,17 @@ class SimWorld {
                 if (!held.food) held.food = { ...food };
                 if (held.food.kcFull == null) held.food.kcFull = Math.round(total);
                 held.food.kc = Math.max(0, Math.round(total - consumed));
-                if (!(held.food.kc > 0)) from.inventory[idx] = null;
+                if (!(held.food.kc > 0)) inv[idx] = null;
             } else {
                 held.quantity = (held.quantity || 1) - 1;
-                if (!(held.quantity > 0)) from.inventory[idx] = null;
+                if (!(held.quantity > 0)) inv[idx] = null;
             }
         } else {
             p.kc += Math.min(total, room);
             p.saturation += total * this._satietyRatio(food, false);
             this._tryFoodPoison(p, food);
             held.quantity = (held.quantity || 1) - 1;
-            if (!(held.quantity > 0)) from.inventory[idx] = null;
+            if (!(held.quantity > 0)) inv[idx] = null;
         }
         this._dirtyPawnOwner(p);
         const session = this._sessionOfPawn(p);
@@ -7305,6 +7502,9 @@ class SimWorld {
         if (!alreadyDead) {
             this._vacatePawn(p);
             this._applyRestClock();
+            if (killer) {
+                this._applyApparelDeathWear(p);
+            }
             const loot = [];
             for (const key of ["head", "torso", "legs", "feet", "back"]) {
                 const s = p.equipment?.[key];
@@ -7383,6 +7583,7 @@ class SimWorld {
             creature._endAttack?.();
             if (creature.anatomy) mem.body = creature.anatomy.toJSON();
         }
+        if (killer) this._applyApparelDeathWear(mem);
         const loot = [];
         for (const key of ["head", "torso", "legs", "feet", "back"]) {
             const s = mem.equipment?.[key];
@@ -7526,6 +7727,119 @@ class SimWorld {
         });
     }
 
+    _pawnHasBandage(m, skipHeld = null) {
+        if (!m) return null;
+        const bags = [
+            { bag: "hotbar", slots: m.inventory || [] },
+            { bag: "overflow", slots: m.overflow || [] }
+        ];
+        for (const { bag, slots } of bags) {
+            for (let i = 0; i < slots.length; i++) {
+                const stack = slots[i];
+                if (!stack?.id) continue;
+                if (skipHeld && m.id === skipHeld.id && bag === "hotbar" && i === skipHeld.slot) continue;
+                if (itemDefs().get(stack.id)?.bandage) {
+                    return { source: m, slot: i, bag, stack };
+                }
+            }
+        }
+        return null;
+    }
+
+    _partyNeedsAutoTend(session) {
+        const members = this._ownedPawns(session).filter((m) => m && !m.dead);
+        if (!members.some((m) => this._pawnHasBandage(m))) return false;
+        for (const m of members) {
+            const c = m.creature || this.creatures.get(m.id);
+            if (c?.anatomy && BodyHealing.pickTendTarget?.(c.anatomy)) return true;
+        }
+        return false;
+    }
+
+    _pickPartyAutoTend(tender, members, control) {
+        const skipHeld = control ? { id: control.id, slot: control.hotbarIndex ?? 0 } : null;
+        const seek = (Party.FOLLOW_DETACH || 12) * TS;
+        const inRangeOthers = [];
+        const seekOthers = [];
+        let selfJob = null;
+        const anatomyOf = (m) => (m.creature || this.creatures.get(m.id))?.anatomy;
+        for (const p of members || []) {
+            if (!p || p.dead) continue;
+            const anatomy = anatomyOf(p);
+            if (!anatomy) continue;
+            const target = BodyHealing.pickTendTarget(anatomy);
+            if (!target) continue;
+            const bleeding = !!(target.inj?.bleeding || target.destroyed);
+            if (p === tender || p.id === tender.id) {
+                const bandage = this._pawnHasBandage(tender, skipHeld);
+                if (bandage) selfJob = { patient: p, bleeding, inRange: true, ...bandage, target };
+                continue;
+            }
+            const dist = Math.hypot((Number(p.x) || 0) - (Number(tender.x) || 0),
+                (Number(p.y) || 0) - (Number(tender.y) || 0));
+            if (dist > seek) continue;
+            const bandage = this._pawnHasBandage(tender, skipHeld) || this._pawnHasBandage(p, skipHeld);
+            if (!bandage) continue;
+            const inRange = Party.inInteractRange(tender, p, TS);
+            const job = { patient: p, bleeding, dist, inRange, ...bandage, target };
+            (inRange ? inRangeOthers : seekOthers).push(job);
+        }
+        const byNeed = (a, b) => {
+            if (a.bleeding !== b.bleeding) return a.bleeding ? -1 : 1;
+            return (a.dist || 0) - (b.dist || 0);
+        };
+        inRangeOthers.sort(byNeed);
+        seekOthers.sort(byNeed);
+        if (inRangeOthers[0]?.bleeding) return inRangeOthers[0];
+        if (selfJob?.bleeding) return selfJob;
+        if (seekOthers[0]?.bleeding) return seekOthers[0];
+        if (inRangeOthers.length) return inRangeOthers[0];
+        if (selfJob) return selfJob;
+        return seekOthers[0] || null;
+    }
+
+    _assignPartyTendSeeks(session, uncontrolled, controlId) {
+        const members = [];
+        if (!session.dead) members.push(session);
+        for (const m of session.party || []) {
+            if (!m.dead) members.push(m);
+        }
+        const control = members.find((m) => m.id === controlId) || session;
+        const combat = this._sessionPartyCombat(session, uncontrolled);
+        for (const row of uncontrolled || []) {
+            const rec = row.rec;
+            const cc = row.creature;
+            if (!cc) continue;
+            cc.x = rec.x;
+            cc.y = rec.y;
+            if (!(cc.ai instanceof PartyAI)) cc.ai = new PartyAI(cc);
+            if (
+                combat
+                || rec.eatChannel
+                || rec._resting
+                || rec._restWalk
+                || rec.dead
+                || rec.tending
+                || this._pawnVomiting(rec)
+            ) {
+                cc.ai.tendSeek = null;
+                continue;
+            }
+            const pick = this._pickPartyAutoTend(rec, members, control);
+            if (!pick || pick.inRange) {
+                cc.ai.tendSeek = null;
+                continue;
+            }
+            const to = pick.patient;
+            const toC = to.creature || this.creatures.get(to.id);
+            if (toC) {
+                toC.x = to.x;
+                toC.y = to.y;
+            }
+            cc.ai.tendSeek = toC || to;
+        }
+    }
+
     _assignPartyEatSeeks(session, uncontrolled, controlId) {
         const members = [];
         if (!session.dead) members.push(session);
@@ -7548,6 +7862,7 @@ class SimWorld {
                 || rec._restWalk
                 || rec.dead
                 || this._pawnVomiting(rec)
+                || cc.ai.tendSeek
             ) {
                 cc.ai.eatSeek = null;
                 continue;
@@ -7587,6 +7902,7 @@ class SimWorld {
                 if (cc && !cc.isBodyDead()) rows.push({ rec: m, creature: cc });
             }
             const uncontrolled = rows.filter((row) => row.rec.id !== controlId);
+            this._assignPartyTendSeeks(p, uncontrolled, controlId);
             this._assignPartyEatSeeks(p, uncontrolled, controlId);
             for (const row of uncontrolled) {
                 const cc = row.creature;
@@ -7965,6 +8281,15 @@ class SimWorld {
         this._tickCampfires();
         this._tickDryingRacks();
         this._tickCorpseDecay();
+        if (Apparel.isDayBoundary(this.worldMinuteIndex())) {
+            for (const p of this.players.values()) {
+                if (!p.connected || p.dead) continue;
+                this._tickApparelDailyWear(p);
+                for (const mem of p.party || []) {
+                    if (!mem.dead) this._tickApparelDailyWear(mem);
+                }
+            }
+        }
     }
 
     _convertCorpseToCarcass(entry, now) {

@@ -22,6 +22,7 @@ class PartyAI {
         this._prevFx = null;
         this._prevFy = null;
         this.eatSeek = null;
+        this.tendSeek = null;
         this.LEASH_TILES = (typeof Party !== "undefined" && Party.COMBAT_LEASH) || 10;
         this.MELEE_RESUME_PAD = 3;
     }
@@ -30,6 +31,7 @@ class PartyAI {
         this.assistTarget = null;
         this._clearCombatMove();
         this.eatSeek = null;
+        this.tendSeek = null;
     }
 
     _clearCombatMove() {
@@ -134,6 +136,8 @@ class PartyAI {
             return;
         }
 
+        if (this._tickTendSeek(delta, ts)) return;
+
         if (this._tickEatSeek(delta, ts)) return;
 
         this._tickFollow(delta, ts, controlled);
@@ -141,6 +145,36 @@ class PartyAI {
 
     setEatSeek(target) {
         this.eatSeek = target && !target.isBodyDead?.() ? target : null;
+    }
+
+    setTendSeek(target) {
+        this.tendSeek = target && !target.isBodyDead?.() ? target : null;
+    }
+
+    _tickTendSeek(delta, ts) {
+        const pawn = this.pawn;
+        const target = this.tendSeek;
+        if (!target || target.isBodyDead?.() || !target.active) {
+            this.tendSeek = null;
+            return false;
+        }
+        if (pawn._tendChannel && !pawn._tendChannel.corpse) {
+            pawn.setVelocity(0, 0);
+            pawn.isSprinting = false;
+            this._playIdle(pawn);
+            return true;
+        }
+        const P = typeof Party !== "undefined" ? Party : null;
+        if (P?.inInteractRange?.(pawn, target, ts)) {
+            pawn.setVelocity(0, 0);
+            pawn.isSprinting = false;
+            this._playIdle(pawn);
+            return true;
+        }
+        const dist = Math.hypot((pawn.x || 0) - (target.x || 0), (pawn.y || 0) - (target.y || 0));
+        const sprint = dist > ts * 6;
+        this._walkToward(pawn, target.x, target.y, ts, sprint, delta);
+        return true;
     }
 
     _tickEatSeek(delta, ts) {
@@ -172,7 +206,8 @@ class PartyAI {
     _shouldHoldForTend(pawn) {
         const ch = pawn._tendChannel;
         if (ch && !ch.corpse) return true;
-        return !!pawn.scene?.partySys?._isBeingTended?.(pawn);
+        return !!pawn.scene?.partySys?._isTendTargeted?.(pawn)
+            || !!pawn.scene?.partySys?._isBeingTended?.(pawn);
     }
 
     _refreshAssist(scene, controlled, ts) {

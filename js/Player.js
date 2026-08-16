@@ -646,23 +646,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     /**
      * Insert a unique stack (meals / knapped tools). Returns false if inventory full
-     * (caller should drop on ground).
+     * (caller should drop on ground). Fills hotbar, then pack.
      */
     gainStack(stack) {
         if (!stack || !(stack.quantity > 0)) return false;
         const clone = typeof cloneItemStack === "function" ? cloneItemStack(stack) : { ...stack };
-        const nullIndex = this.inventory.findIndex((s) => !s);
-        if (nullIndex !== -1) {
-            this.inventory[nullIndex] = clone;
-            this.scene.hotbar.dirty = true;
-            return true;
-        }
-        if (this.inventory.length < this.inventorySize) {
-            this.inventory.push(clone);
-            this.scene.hotbar.dirty = true;
-            return true;
-        }
-        return false;
+        return this.insertOwnedStack(clone);
     }
 
     /**
@@ -790,17 +779,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             : !!(stack.customName || stack.food || stack.ingredients || stack.toolClass);
         if (special) {
             const clone = cloneItemStack(stack);
-            const nullIndex = this.inventory.findIndex(s => !s);
-            if (nullIndex !== -1) {
-                this.inventory[nullIndex] = clone;
-                this.scene.hotbar.dirty = true;
-                return true;
-            }
-            if (this.inventory.length < this.inventorySize) {
-                this.inventory.push(clone);
-                this.scene.hotbar.dirty = true;
-                return true;
-            }
+            if (this.insertOwnedStack(clone)) return true;
             const meta = this.scene.getItem(stack.id);
             if (!meta) return false;
             const now = this.scene.worldMinuteIndex?.() ?? null;
@@ -837,6 +816,18 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      */
     createDeathCorpse(opts = {}) {
         const spawn = opts.spawn !== false;
+        const combatDeath = opts.combatDeath === true;
+        if (combatDeath && typeof Apparel !== "undefined" && typeof Durability !== "undefined") {
+            const getItem = (id) => this.scene.getItem?.(id);
+            Apparel.applyDeathWear(
+                this.equipment,
+                getItem,
+                () => (typeof GameMath !== "undefined" ? GameMath.random() : Math.random()),
+                Durability
+            );
+            this.syncWaistSlots();
+            this.recomputeEquipmentEffects();
+        }
         // Snapshot hotbar BEFORE unequipping pouches (keeps slots 6+)
         const now = this.scene.worldMinuteIndex?.() ?? null;
         const toLoot = (s) => {
@@ -928,7 +919,28 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const cap = this.getWaistCapacity();
         while (this.equipment.waist.length < cap) this.equipment.waist.push(null);
         if (this.equipment.waist.length > cap) {
+            for (let i = cap; i < this.equipment.waist.length; i++) {
+                const stack = this.equipment.waist[i];
+                if (!stack) continue;
+                const meta = this.scene.getItem(stack.id);
+                if (!meta) continue;
+                const extras = mealStackExtras(stack);
+                const now = this.scene.worldMinuteIndex?.() ?? null;
+                DroppedItem.spawn(
+                    this.scene, this.x, this.y,
+                    meta, stack.quantity, spoilAtForWorld(stack, now), extras
+                );
+            }
             this.equipment.waist.length = cap;
+        }
+    }
+
+    afterApparelWear() {
+        this.syncWaistSlots();
+        this.recomputeEquipmentEffects();
+        if (this.isControlled?.()) {
+            this.scene.equipmentPanel?.refresh?.();
+            this.scene.hotbar.dirty = true;
         }
     }
 
@@ -950,6 +962,30 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             return this.overflow;
         }
         return this.inventory;
+    }
+
+    /** @param {'hotbar'|'overflow'} bag */
+    bagCap(bag) {
+        return bag === 'overflow' ? (this.overflowSize || 0) : (this.inventorySize || this.inventory.length);
+    }
+
+    /** Place a whole stack object into the first empty hotbar, then pack, slot. */
+    insertOwnedStack(stack) {
+        if (!stack) return false;
+        const bags = ['hotbar'];
+        if ((this.overflowSize || 0) > 0) bags.push('overflow');
+        for (const bag of bags) {
+            const inv = this.bagArray(bag);
+            const cap = this.bagCap(bag);
+            while (inv.length < cap) inv.push(null);
+            const empty = inv.findIndex((s) => !s);
+            if (empty !== -1) {
+                inv[empty] = stack;
+                this.scene.hotbar.dirty = true;
+                return true;
+            }
+        }
+        return false;
     }
 
     getHotbarBonus() {
@@ -1142,10 +1178,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Equip from hotbar into the natural slot for that item (hotswaps if occupied).
+     * Equip from a bag slot into the natural slot for that item (hotswaps if occupied).
+     * @param {'hotbar'|'overflow'} [bag]
      */
-    equipFromHotbarAuto(hotbarIndex) {
-        const stack = this.inventory[hotbarIndex];
+    equipFromHotbarAuto(hotbarIndex, bag = 'hotbar') {
+        const fromBag = bag === 'overflow' ? 'overflow' : 'hotbar';
+        const stack = this.bagArray(fromBag)[hotbarIndex];
         if (!stack) return { ok: false, reason: 'empty' };
 
         const meta = this.scene.getItem(stack.id);
@@ -1173,20 +1211,26 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             slotKey = want;
         }
 
-        return this.equipFromHotbar(hotbarIndex, slotKey);
+        return this.equipFromHotbar(hotbarIndex, slotKey, fromBag);
     }
 
     /**
-     * Unequip into the first empty hotbar slot.
+     * Unequip into the first empty hotbar slot, then pack if the hotbar is full.
      */
     unequipToFirstHotbarSlot(slotKey) {
-        const inv = this.inventory;
-        let idx = inv.findIndex(s => !s);
-        if (idx === -1) {
-            if (inv.length < this.inventorySize) idx = inv.length;
-            else return { ok: false, reason: 'no_space' };
-        }
-        return this.unequipToHotbar(slotKey, idx);
+        const emptyIn = (bag) => {
+            const inv = this.bagArray(bag);
+            const cap = this.bagCap(bag);
+            if (!(cap > 0)) return -1;
+            while (inv.length < cap) inv.push(null);
+            return inv.findIndex((s) => !s);
+        };
+        let idx = emptyIn('hotbar');
+        if (idx >= 0) return this.unequipToHotbar(slotKey, idx, 'hotbar');
+        if (slotKey === 'back') return { ok: false, reason: 'no_space' };
+        idx = emptyIn('overflow');
+        if (idx >= 0) return this.unequipToHotbar(slotKey, idx, 'overflow');
+        return { ok: false, reason: 'no_space' };
     }
 
     /**
@@ -2073,16 +2117,21 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (allowedByWeight <= 0) return 0;
 
         let space = 0;
-        if (!special) {
-            for (const slot of this.inventory) {
-                if (!slot || slot.id !== item.id || slot.quantity >= maxStack) continue;
-                if (slot.customName || slot.food || slot.ingredients || slot.toolClass) continue;
-                space += maxStack - slot.quantity;
+        const countBag = (arr, cap) => {
+            if (!special) {
+                for (const slot of arr || []) {
+                    if (!slot || slot.id !== item.id || slot.quantity >= maxStack) continue;
+                    if (slot.customName || slot.food || slot.ingredients || slot.toolClass) continue;
+                    space += maxStack - slot.quantity;
+                }
             }
-        }
-        const empty = this.inventory.filter((s) => !s).length
-            + Math.max(0, this.inventorySize - this.inventory.length);
-        space += empty * maxStack;
+            const list = arr || [];
+            const empty = list.filter((s) => !s).length
+                + Math.max(0, cap - list.length);
+            space += empty * maxStack;
+        };
+        countBag(this.inventory, this.inventorySize);
+        countBag(this.overflow, this.overflowSize || 0);
         return Math.min(wantN, space, allowedByWeight);
     }
 
@@ -2113,11 +2162,29 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             ? spoilLeft
             : defaultSpoilLeft(item);
 
-        // Fill existing stacks first (never merge into meals / food-overridden stacks)
-        for (const slot of this.inventory) {
-            if (!slot || slot.id !== item.id || slot.quantity >= item.maxStack) continue;
+        remaining = this._gainIntoArray(
+            this.inventory, this.inventorySize, item, remaining, incomingSpoil, extras, fitNow
+        );
+        if (remaining > 0 && (this.overflowSize || 0) > 0) {
+            const over = this.bagArray('overflow');
+            while (over.length < this.overflowSize) over.push(null);
+            remaining = this._gainIntoArray(
+                over, this.overflowSize, item, remaining, incomingSpoil, extras, fitNow
+            );
+        }
+        if (remaining !== amount) {
+            this.scene.hotbar.dirty = true;
+            this.scene._scheduleCharacterSave?.();
+        }
+        return remaining;
+    }
+
+    _gainIntoArray(arr, cap, item, remaining, incomingSpoil, extras, fitNow) {
+        const maxStack = Math.max(1, item.maxStack || 1);
+        for (const slot of arr) {
+            if (!slot || slot.id !== item.id || slot.quantity >= maxStack) continue;
             if (slot.customName || slot.food || slot.ingredients || slot.toolClass) continue;
-            const space = item.maxStack - slot.quantity;
+            const space = maxStack - slot.quantity;
             const toAdd = Math.min(space, remaining, fitNow());
             if (!(toAdd > 0)) break;
             slot.spoilLeft = mergeSpoilLeft(
@@ -2129,34 +2196,26 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             mergeSoakInto(slot, slot.quantity, toAdd, extras?.soakProgress);
             slot.quantity += toAdd;
             remaining -= toAdd;
-            if (remaining === 0) {
-                this.scene.hotbar.dirty = true;
-                return remaining;
-            }
+            if (remaining === 0) return remaining;
         }
 
-        // Create new stacks as needed
         while (remaining > 0) {
-            const toAdd = Math.min(item.maxStack, remaining, fitNow());
+            const toAdd = Math.min(maxStack, remaining, fitNow());
             if (!(toAdd > 0)) break;
             const stack = makeItemStack(item, toAdd, incomingSpoil);
             const dry = Math.floor(Number(extras?.dryProgress) || 0);
             if (dry > 0) stack.dryProgress = dry;
             const soak = Math.floor(Number(extras?.soakProgress) || 0);
             if (soak > 0) stack.soakProgress = soak;
-            const nullIndex = this.inventory.findIndex(s => !s);
+            const nullIndex = arr.findIndex(s => !s);
             if (nullIndex !== -1) {
-                this.inventory[nullIndex] = stack;
+                arr[nullIndex] = stack;
                 remaining -= toAdd;
                 continue;
             }
-            if (this.inventory.length >= this.inventorySize) break;
-            this.inventory.push(stack);
+            if (arr.length >= cap) break;
+            arr.push(stack);
             remaining -= toAdd;
-        }
-        if (remaining !== amount) {
-            this.scene.hotbar.dirty = true;
-            this.scene._scheduleCharacterSave?.();
         }
         return remaining;
     }
@@ -2164,7 +2223,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     loseItem(item, amount=1) {
         const numLost = Math.min(item.quantity, amount);
         item.quantity -= numLost;
-        if (item.quantity <= 0) this.inventory[this.inventory.indexOf(item)] = null;
+        if (item.quantity <= 0) {
+            const invIdx = this.inventory.indexOf(item);
+            if (invIdx >= 0) this.inventory[invIdx] = null;
+            else {
+                const over = this.overflow || [];
+                const oi = over.indexOf(item);
+                if (oi >= 0) over[oi] = null;
+            }
+        }
         if (numLost > 0) this.scene.hotbar.dirty = true;
         return numLost;
     }
@@ -2327,12 +2394,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!this.capacities.canManipulate()) return false;
         if (this.isIncapacitated()) return false;
         const sourcePawn = opts.sourcePawn || this;
+        const bag = opts.bag === "overflow" ? "overflow" : "hotbar";
         const slot = opts.slot != null
             ? opts.slot
             : (this.isControlled?.()
                 ? this.scene.hotbar.activeIndex
                 : (this.hotbarIndex ?? 0));
-        const item = sourcePawn.inventory?.[slot] || this.getHeldItem();
+        const fromInv = sourcePawn.bagArray?.(bag)
+            || (bag === "overflow" ? sourcePawn.overflow : sourcePawn.inventory);
+        const item = fromInv?.[slot] || (bag === "hotbar" ? this.getHeldItem() : null);
         if (!item) return false;
         const meta = this.scene.getItem(item.id);
         if (!meta?.bandage) return false;
@@ -2376,6 +2446,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             remaining: max,
             max,
             slot,
+            bag,
             sourcePawn,
             patient: who,
             // Locked at start so natural healing mid-channel doesn't retarget/cancel
@@ -2744,14 +2815,17 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             return;
         }
         const src = ch.sourcePawn || this;
-        const slot = this.isControlled?.() && src === this
+        const bag = ch.bag === "overflow" ? "overflow" : "hotbar";
+        const slot = this.isControlled?.() && src === this && bag !== "overflow"
             ? this.scene.hotbar.activeIndex
             : (ch.slot ?? this.hotbarIndex ?? 0);
-        if (this.isControlled?.() && src === this && slot !== ch.slot) {
+        if (this.isControlled?.() && src === this && bag !== "overflow" && slot !== ch.slot) {
             this._cancelTend();
             return;
         }
-        const held = src.inventory?.[slot];
+        const fromInv = src.bagArray?.(bag)
+            || (bag === "overflow" ? src.overflow : src.inventory);
+        const held = fromInv?.[slot];
         if (!held || held.id !== ch.itemId) {
             this._cancelTend();
             return;
@@ -2793,6 +2867,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 patientId: patient.pawnId || null,
                 fromPawnId: src.pawnId || null,
                 slot,
+                bag,
                 ...first,
                 targets: hints.map(hintPayload)
             });
@@ -2822,7 +2897,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             ch.qualityMax
         );
         for (const t of applied) BodyHealing.applyTend(body, t, quality);
-        if (typeof src.loseItemAt === "function") src.loseItemAt(ch.slot, 1);
+        if (typeof src.loseItem === "function") src.loseItem(held, 1);
+        else if (typeof src.loseItemAt === "function") src.loseItemAt(ch.slot, 1);
         else this.loseAnyItem(ch.itemId, 1);
         const who = this.isControlled?.() ? "You" : this.displayName();
         const poss = patient.isControlled?.() ? "your" : `${patient.displayName()}'s`;
@@ -2887,6 +2963,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const scale = this.capacities.eatingDurationScale();
         const max = seconds * 1000 * scale;
         const sourcePawn = opts.sourcePawn || this;
+        const bag = opts.bag === "overflow" ? "overflow" : "hotbar";
         const slot = opts.slot != null
             ? opts.slot
             : (this.isControlled?.() ? this.scene.hotbar.activeIndex : (this.hotbarIndex ?? 0));
@@ -2894,6 +2971,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             remaining: max,
             max,
             slot,
+            bag,
             sourcePawn,
             patient,
             item,
@@ -2941,14 +3019,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         // Don't compare stack object identity — YOU replaces inventory arrays every sync.
         const src = this._eatChannel.sourcePawn || this;
         const fromSelf = src === this;
-        const slot = this.isControlled?.() && fromSelf
+        const bag = this._eatChannel.bag === "overflow" ? "overflow" : "hotbar";
+        const slot = this.isControlled?.() && fromSelf && bag !== "overflow"
             ? this.scene.hotbar.activeIndex
             : (this._eatChannel.slot ?? this.hotbarIndex ?? 0);
-        if (this.isControlled?.() && fromSelf && slot !== this._eatChannel.slot) {
+        if (this.isControlled?.() && fromSelf && bag !== "overflow" && slot !== this._eatChannel.slot) {
             this._cancelEat();
             return;
         }
-        if (this._eatChannel.serverAuth && fromSelf && this.isControlled?.()) {
+        if (this._eatChannel.serverAuth && fromSelf && this.isControlled?.() && bag !== "overflow") {
             const held = this.getHeldItem();
             if (!held || held.id !== this._eatChannel.itemId) {
                 this._cancelEat();
@@ -2958,7 +3037,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             return;
         }
 
-        const held = src.inventory?.[slot] || null;
+        const held = (src.bagArray?.(bag) || (bag === "overflow" ? src.overflow : src.inventory))?.[slot] || null;
         if (
             !held
             || held.id !== this._eatChannel.itemId
@@ -2992,6 +3071,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const sourcePawn = this._eatChannel?.sourcePawn || this;
         const patient = this._eatChannel?.patient || null;
         const slot = this._eatChannel?.slot;
+        const bag = this._eatChannel?.bag === "overflow" ? "overflow" : "hotbar";
         this._eatChannel = null;
         if (this.isControlled?.()) this.scene.hideChannelBar?.();
         const dedicated = this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal;
@@ -3002,6 +3082,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 patientId: patient.pawnId || null,
                 fromPawnId: sourcePawn.pawnId || this.pawnId || null,
                 slot,
+                bag,
                 itemId: item?.id
             });
             return;
@@ -3284,7 +3365,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             const dedicated = !!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
             if (dedicated) {
                 const tendLock = !!(this._tendChannel && !this._tendChannel.corpse)
-                    || !!this.scene.partySys?._isBeingTended?.(this);
+                    || !!this.scene.partySys?._isTendTargeted?.(this);
                 const prone = !!(
                     this._netProne
                     || this._downed

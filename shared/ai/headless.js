@@ -609,6 +609,7 @@
             this._pathRange = null;
             this._pathOpenRadius = null;
             this.eatSeek = null;
+            this.tendSeek = null;
             this.LEASH_TILES = (Party && Party.COMBAT_LEASH) || 10;
             this.MELEE_RESUME_PAD = 3;
         }
@@ -679,8 +680,37 @@
                 mob.setDesiredVel?.(0, 0);
                 return;
             }
+            if (this._isTendPatient(world)) {
+                mob.setDesiredVel?.(0, 0);
+                return;
+            }
+            if (this._tickTendSeek(delta, world)) return;
             if (this._tickEatSeek(delta, world)) return;
             this._tickFollow(follow, delta);
+        }
+
+        _isTendPatient(world) {
+            const mob = this.mob;
+            for (const mate of world?.getPartyMates?.(mob) || []) {
+                if (mate && mate !== mob && mate.ai?.tendSeek === mob) return true;
+            }
+            return false;
+        }
+
+        _tickTendSeek(delta, world) {
+            const mob = this.mob;
+            const target = this.tendSeek;
+            if (!target || target.isBodyDead?.()) {
+                this.tendSeek = null;
+                return false;
+            }
+            if (Party?.inInteractRange?.(mob, target, TILE)) {
+                mob.setDesiredVel?.(0, 0);
+                return true;
+            }
+            const dist = Math.hypot((mob.x || 0) - (target.x || 0), (mob.y || 0) - (target.y || 0));
+            this._walkToward(target.x, target.y, dist > TILE * 6, world, delta);
+            return true;
         }
 
         _tickEatSeek(delta, world) {

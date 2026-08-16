@@ -38,18 +38,20 @@ class Hotbar {
     }
 
     /** Dedicated MP: tell the server; local inventory is already swapped (optimistic). */
-    _notifyInvSwap(from, to, fromBag = 'hotbar', toBag = 'hotbar') {
+    _notifyInvSwap(from, to, fromBag = 'hotbar', toBag = 'hotbar', amount = null) {
         if (!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal)) return;
         if (typeof NetProtocol === "undefined" || !NetProtocol.Actions?.INV_SWAP) return;
         this.scene._invSwapGuardUntil = performance.now() + 500;
-        this.scene.net.sendAction({
+        const action = {
             type: NetProtocol.Actions.INV_SWAP,
             from,
             to,
             fromBag,
             toBag,
             pawnId: this.scene.player?.pawnId
-        });
+        };
+        if (Number.isInteger(amount) && amount > 0) action.amount = amount;
+        this.scene.net.sendAction(action);
     }
 
     _slotRef(value, fallbackBag = 'hotbar') {
@@ -64,7 +66,7 @@ class Hotbar {
     }
 
     /** Swap or merge two bag slots, then notify dedicated MP. */
-    _applyInvSwap(fromRef, toRef) {
+    _applyInvSwap(fromRef, toRef, amount = null) {
         const from = this._slotRef(fromRef);
         const to = this._slotRef(toRef);
         if (!from || !to) return false;
@@ -85,6 +87,12 @@ class Hotbar {
         const b = toInv[to.index] ?? null;
         if (!a) return false;
 
+        const qty = Math.max(1, Math.floor(Number(a.quantity) || 1));
+        const parsedAmount = Math.floor(Number(amount));
+        const want = Number.isInteger(parsedAmount) && parsedAmount > 0
+            ? Math.min(qty, parsedAmount)
+            : qty;
+
         const aSpecial = typeof isSpecialStack === "function"
             ? isSpecialStack(a)
             : !!(a.customName || a.food || a.ingredients || a.toolClass);
@@ -97,7 +105,7 @@ class Hotbar {
             const space = Math.max(0, maxStack - b.quantity);
 
             if (space > 0) {
-                const moved = Math.min(space, a.quantity);
+                const moved = Math.min(space, want);
                 b.spoilLeft = mergeSpoilLeft(
                     b.quantity, b.spoilLeft,
                     moved, a.spoilLeft
@@ -108,21 +116,132 @@ class Hotbar {
                 b.quantity += moved;
                 a.quantity -= moved;
                 if (a.quantity <= 0) fromInv[from.index] = null;
-            } else {
+            } else if (want >= qty) {
                 fromInv[from.index] = b;
                 toInv[to.index] = a;
+            } else {
+                return false;
             }
-        } else {
+        } else if (!b) {
+            if (want >= qty) {
+                toInv[to.index] = a;
+                fromInv[from.index] = null;
+            } else {
+                const piece = typeof cloneItemStack === "function" ? cloneItemStack(a) : { ...a };
+                piece.quantity = want;
+                a.quantity = qty - want;
+                toInv[to.index] = piece;
+            }
+        } else if (want >= qty) {
             toInv[to.index] = a;
-            fromInv[from.index] = b || null;
+            fromInv[from.index] = b;
+        } else {
+            return false;
         }
 
-        this._notifyInvSwap(from.index, to.index, from.bag, to.bag);
+        this._notifyInvSwap(from.index, to.index, from.bag, to.bag, want < qty ? want : null);
         if (to.bag === 'hotbar') this.changeSlot(to.index);
         this.dirty = true;
         this.update();
         this.scene.refreshTooltip();
         return true;
+    }
+
+    /** Right-click: deposit/equip if a panel consumes it, else move between hotbar and pack. */
+    _handleSlotRightClick(index, bag, pointer) {
+        const fromBag = bag === 'overflow' ? 'overflow' : 'hotbar';
+        if (this.scene.campfirePanel?.visible) {
+            if (this.scene.campfirePanel.tryQuickAddFuel(index, pointer, fromBag)) {
+                this.dirty = true;
+                this.scene.refreshTooltip();
+                return;
+            }
+        }
+        if (this.scene.storagePanel?.visible) {
+            if (this.scene.storagePanel.tryQuickAdd(index, pointer, fromBag)) {
+                this.dirty = true;
+                this.scene.refreshTooltip();
+                return;
+            }
+        }
+        if (this.scene.equipmentPanel?.visible) {
+            const result = this.scene.player.equipFromHotbarAuto(index, fromBag);
+            if (result.ok) {
+                this.dirty = true;
+                this.scene.equipmentPanel.refresh();
+                this.scene.equipmentPanel.layout();
+                this.scene.refreshTooltip();
+                return;
+            }
+        }
+        this._quickMoveToOtherBag({ bag: fromBag, index }, pointer);
+    }
+
+    _tryStartDrag(pointer) {
+        if (this._dragging || !this._pointerIsDown || !this._dragFrom || !this._pointerDownPos) return;
+        const distance = Phaser.Math.Distance.Between(
+            this._pointerDownPos.x, this._pointerDownPos.y,
+            pointer.x, pointer.y
+        );
+        if (distance < this.dragDistanceThreshold) return;
+        const from = this._slotRef(this._dragFrom);
+        if (!from) return;
+        const player = this.scene.player;
+        const inv = player.bagArray(from.bag);
+        const cap = player.bagCap(from.bag);
+        while (inv.length < cap) inv.push(null);
+        const stack = (from.index >= 0 && from.index < inv.length) ? inv[from.index] : null;
+        if (!stack) return;
+        const meta = this.scene.getItem(stack.id);
+        const s = this.scene.uiScale || 1;
+        const drag = createStackDragIcon(this.scene, pointer.x, pointer.y, stack, meta, 3.0 * s);
+        if (!drag) return;
+        this._dragging = true;
+        this.scene.hideTooltip();
+        this._dragIcon = drag;
+    }
+
+    /** Move a stack between hotbar and pack (merge, then first empty slot). */
+    _quickMoveToOtherBag(fromRef, pointer = null) {
+        const from = this._slotRef(fromRef);
+        if (!from) return false;
+        const player = this.scene.player;
+        const fromInv = player.bagArray(from.bag);
+        const stack = fromInv[from.index];
+        if (!stack) return false;
+
+        const toBag = from.bag === 'overflow' ? 'hotbar' : 'overflow';
+        const toCap = toBag === 'overflow' ? (player.overflowSize || 0) : this.size;
+        if (!(toCap > 0)) return false;
+        const toInv = player.bagArray(toBag);
+        while (toInv.length < toCap) toInv.push(null);
+
+        const qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
+
+        const special = typeof isSpecialStack === "function"
+            ? isSpecialStack(stack)
+            : !!(stack.customName || stack.food || stack.ingredients || stack.toolClass);
+
+        if (!special) {
+            for (let i = 0; i < toCap; i++) {
+                const dest = toInv[i];
+                if (!dest || dest.id !== stack.id) continue;
+                const destSpecial = typeof isSpecialStack === "function"
+                    ? isSpecialStack(dest)
+                    : !!(dest.customName || dest.food || dest.ingredients || dest.toolClass);
+                if (destSpecial) continue;
+                const meta = this.scene.getItem(stack.id);
+                const maxStack = Math.max(1, meta?.maxStack || 1);
+                if (dest.quantity >= maxStack) continue;
+                return this._applyInvSwap(from, { bag: toBag, index: i }, qty);
+            }
+        }
+
+        for (let i = 0; i < toCap; i++) {
+            if (toInv[i]) continue;
+            return this._applyInvSwap(from, { bag: toBag, index: i }, qty);
+        }
+        return false;
     }
 
     /** Grow/shrink visible hotbar to match player.inventorySize. */
@@ -371,61 +490,16 @@ class Hotbar {
 
         slot.on('pointerdown', (pointer) => {
             if (pointer.rightButtonDown()) {
-                if (this.scene.campfirePanel?.visible) {
-                    if (this.scene.campfirePanel.tryQuickAddFuel(slot.index, pointer)) {
-                        this.dirty = true;
-                        this.scene.refreshTooltip();
-                    }
-                    return;
-                }
-                if (this.scene.storagePanel?.visible) {
-                    if (this.scene.storagePanel.tryQuickAdd(slot.index, pointer)) {
-                        this.dirty = true;
-                        this.scene.refreshTooltip();
-                    }
-                    return;
-                }
-                if (this.scene.equipmentPanel?.visible) {
-                    const result = this.scene.player.equipFromHotbarAuto(slot.index);
-                    if (result.ok) {
-                        this.dirty = true;
-                        this.scene.equipmentPanel.refresh();
-                        this.scene.equipmentPanel.layout();
-                        this.scene.refreshTooltip();
-                    }
-                }
+                this._handleSlotRightClick(slot.index, 'hotbar', pointer);
                 return;
             }
             this._pointerDownPos = { x: pointer.x, y: pointer.y };
             this._pointerIsDown = true;
             this._dragging = false;
+            this._dragFrom = { bag: 'hotbar', index: slot.index };
         });
 
-        slot.on('pointermove', (pointer) => {
-            if (!this._pointerIsDown || this._dragging) return;
-
-            const distance = Phaser.Math.Distance.Between(
-                this._pointerDownPos.x, this._pointerDownPos.y,
-                pointer.x, pointer.y
-            );
-
-            if (distance >= this.dragDistanceThreshold) {
-                const from = slot.index;
-                const inv = this.scene.player.inventory;
-                if (from < inv.length && inv[from]) {
-                    const stack = inv[from];
-                    const meta = this.scene.getItem(stack.id);
-                    const s = this.scene.uiScale || 1;
-                    const drag = createStackDragIcon(this.scene, pointer.x, pointer.y, stack, meta, 3.0 * s);
-                    if (drag) {
-                        this._dragging = true;
-                        this._dragFrom = { bag: 'hotbar', index: from };
-                        this.scene.hideTooltip();
-                        this._dragIcon = drag;
-                    }
-                }
-            }
-        });
+        slot.on('pointermove', (pointer) => this._tryStartDrag(pointer));
 
         this.scene.uiLayer.add(slot);
         this.slots.push(slot);
@@ -486,34 +560,17 @@ class Hotbar {
         slot.on('pointerout', () => this.scene.hideTooltip());
 
         slot.on('pointerdown', (pointer) => {
-            if (pointer.rightButtonDown()) return;
+            if (pointer.rightButtonDown()) {
+                this._handleSlotRightClick(slot.index, 'overflow', pointer);
+                return;
+            }
             this._pointerDownPos = { x: pointer.x, y: pointer.y };
             this._pointerIsDown = true;
             this._dragging = false;
+            this._dragFrom = { bag: 'overflow', index: slot.index };
         });
 
-        slot.on('pointermove', (pointer) => {
-            if (!this._pointerIsDown || this._dragging) return;
-            const distance = Phaser.Math.Distance.Between(
-                this._pointerDownPos.x, this._pointerDownPos.y,
-                pointer.x, pointer.y
-            );
-            if (distance < this.dragDistanceThreshold) return;
-            const from = slot.index;
-            const inv = this.scene.player.overflow || [];
-            if (from < inv.length && inv[from]) {
-                const stack = inv[from];
-                const meta = this.scene.getItem(stack.id);
-                const s = this.scene.uiScale || 1;
-                const drag = createStackDragIcon(this.scene, pointer.x, pointer.y, stack, meta, 3.0 * s);
-                if (drag) {
-                    this._dragging = true;
-                    this._dragFrom = { bag: 'overflow', index: from };
-                    this.scene.hideTooltip();
-                    this._dragIcon = drag;
-                }
-            }
-        });
+        slot.on('pointermove', (pointer) => this._tryStartDrag(pointer));
 
         this.scene.uiLayer.add(slot);
         this.overflowSlots.push(slot);
@@ -582,8 +639,9 @@ class Hotbar {
 
         this.dragDistanceThreshold = 6;
 
-        // Global pointer move to handle drag icon positioning (only when dragging)
+        // Global pointer move to handle drag start + icon positioning
         this.scene.input.on('pointermove', (pointer) => {
+            this._tryStartDrag(pointer);
             if (this._dragIcon && this._dragging) {
                 this._dragIcon.setPosition(pointer.x, pointer.y);
             }
@@ -596,16 +654,15 @@ class Hotbar {
                 let handled = false;
                 const fromIndex = from?.index;
                 const fromBag = from?.bag || 'hotbar';
+                const overPartyPanel = !!this.scene.partyPanel?.containsPointer?.(pointer);
 
-                // Prefer dropping onto equipment panel
-                if (this.scene.equipmentPanel?.visible && from) {
-                    handled = this.scene.equipmentPanel.tryEquipFromHotbar(fromIndex, pointer, fromBag);
-                }
-
-                if (!handled && this.scene.partyPanel?.visible && from) {
-                    const target = this.scene.partyPanel.pawnAtPointer(pointer);
-                    if (target && target !== this.scene.player) {
-                        handled = !!this.scene.partySys?.tryGive?.(this.scene.player, fromIndex, target, fromBag);
+                // Hand to a party member (roster card or world sprite) before bag swaps.
+                if (!handled && from) {
+                    const panelTarget = this.scene.partySys?.partyDropTarget?.(pointer);
+                    if (panelTarget) {
+                        handled = !!this.scene.partySys?.tryGive?.(
+                            this.scene.player, fromIndex, panelTarget, fromBag
+                        );
                     }
                 }
 
@@ -616,10 +673,16 @@ class Hotbar {
                         if (!p || p === this.scene.player || p.isBodyDead?.()) continue;
                         const hs = (p.hitboxSize || 8) + 6;
                         if (Math.abs(p.x - world.x) < hs && Math.abs(p.y - world.y) < hs * 2) {
-                            handled = !!this.scene.partySys?.tryGive?.(this.scene.player, fromIndex, p, fromBag);
+                            handled = !!this.scene.partySys?.tryGive?.(
+                                this.scene.player, fromIndex, p, fromBag
+                            );
                             if (handled) break;
                         }
                     }
+                }
+
+                if (!handled && this.scene.equipmentPanel?.visible && from) {
+                    handled = this.scene.equipmentPanel.tryEquipFromHotbar(fromIndex, pointer, fromBag);
                 }
 
                 if (!handled && this.scene.campfirePanel?.visible && from) {
@@ -630,7 +693,7 @@ class Hotbar {
                     handled = this.scene.storagePanel.tryAddFromHotbar(fromIndex, pointer, fromBag);
                 }
 
-                if (!handled && from) {
+                if (!handled && from && !overPartyPanel) {
                     const to = this.getBagSlotAt(pointer.x, pointer.y);
                     if (to && (to.bag !== from.bag || to.index !== from.index)) {
                         this._applyInvSwap(from, to);
@@ -641,13 +704,13 @@ class Hotbar {
 
                 if (this._dragIcon) this._dragIcon.destroy();
                 this._dragIcon = null;
-                this._dragFrom = null;
             }
 
             // Reset all tracking
             this._dragging = false;
             this._pointerIsDown = false;
             this._pointerDownPos = null;
+            this._dragFrom = null;
         });
 
         this.layout();

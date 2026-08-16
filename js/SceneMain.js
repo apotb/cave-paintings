@@ -1934,6 +1934,9 @@ class SceneMain extends SceneBase {
                 segments: ev.segments || null,
                 color: ev.color || null
             });
+            if (ev.deflected && ev.spark) {
+                this.spawnApparelDeflectSpark?.(ev.spark.x, ev.spark.y);
+            }
         }
         if (ev.kind === "pvp_hit") {
             this.partySys?.onPvpHit?.(ev);
@@ -6424,6 +6427,34 @@ class SceneMain extends SceneBase {
         this.tickLootableRegrows();
         this.tickBodySystems();
         this.tickBloodStains();
+        this.tickApparelDailyWear();
+    }
+
+    tickApparelDailyWear() {
+        if (this.isNet && this.net?.connected && !this.net.isLocal) return;
+        if (typeof Apparel === "undefined" || typeof Durability === "undefined") return;
+        if (!Apparel.isDayBoundary(this.worldMinuteIndex())) return;
+        const rng = () => (typeof GameMath !== "undefined" ? GameMath.random() : Math.random());
+        const getItem = (id) => this.getItem?.(id);
+        const pawns = [
+            this.player,
+            ...(this.party || []),
+            ...(this.partySys?.wanderers || [])
+        ];
+        const seen = new Set();
+        for (const pawn of pawns) {
+            if (!pawn || seen.has(pawn) || pawn.isBodyDead?.()) continue;
+            seen.add(pawn);
+            if (!pawn.equipment) continue;
+            const broke = Apparel.applyDailyWear(pawn.equipment, getItem, rng, Durability);
+            if (!broke.length) continue;
+            pawn.afterApparelWear?.();
+            const yours = pawn === this.player;
+            for (const piece of broke) {
+                const who = yours ? "Your" : `${pawn.displayName?.() || "Their"}'s`;
+                this.combatLog?.push?.(`${who} ${piece.name} fell apart`);
+            }
+        }
     }
 
     tickBodySystems() {
@@ -6477,6 +6508,34 @@ class SceneMain extends SceneBase {
             }
         }
         return this.bloodDraw;
+    }
+
+    /** Small yellow/white puff when apparel fully deflects a blow. No sound. */
+    spawnApparelDeflectSpark(x, y) {
+        if (!this.add || !(Number.isFinite(x) && Number.isFinite(y))) return;
+        const n = Phaser.Math.Between(6, 9);
+        const colors = [0xfff4c0, 0xffe08a, 0xffffff, 0xf0d070, 0xd8c070];
+        const baseAngle = Math.random() * Math.PI * 2;
+        for (let i = 0; i < n; i++) {
+            const size = Phaser.Math.Between(1, 2);
+            const p = this.add.rectangle(x, y, size, size, colors[i % colors.length], 1)
+                .setDepth((y || 0) + 32);
+            this.mainLayer?.add(p);
+            const angle = baseAngle + (i / n) * Math.PI * 2 + Phaser.Math.FloatBetween(-0.12, 0.12);
+            const dist = Phaser.Math.FloatBetween(4, 9);
+            const tx = x + Math.cos(angle) * dist;
+            const ty = y + Math.sin(angle) * dist;
+            const dur = Phaser.Math.Between(220, 380);
+            this.tweens.add({
+                targets: p,
+                x: tx,
+                y: ty,
+                alpha: 0,
+                duration: dur,
+                ease: "Sine.easeOut",
+                onComplete: () => p.destroy()
+            });
+        }
     }
 
     spawnBloodStain(x, y, opts = null) {
@@ -7382,6 +7441,9 @@ class SceneMain extends SceneBase {
                     lines.push(`+ ${Math.round(speed * 100)}% speed`);
                 }
             }
+            if (typeof Apparel !== "undefined") {
+                for (const line of Apparel.armorTooltipLines(item)) lines.push(line);
+            }
         }
 
         return lines.join("\n");
@@ -8147,8 +8209,8 @@ class SceneMain extends SceneBase {
         // Dedicated: spawn a pending local corpse with a shared id so you can
         // see/loot it immediately; server adopts that id on DIE.
         const deathCorpse = spawnCorpse
-            ? leader.createDeathCorpse({ spawn: true })
-            : leader.createDeathCorpse({ spawn: false });
+            ? leader.createDeathCorpse({ spawn: true, combatDeath: !!killer })
+            : leader.createDeathCorpse({ spawn: false, combatDeath: !!killer });
         if (dedicated && deathCorpse?.entry) {
             deathCorpse.entry.netSync = true;
             deathCorpse.entry.pendingServer = true;

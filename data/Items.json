@@ -180,7 +180,8 @@
         "maxStack": 99,
         "weight": 0.05,
         "equip": {
-            "slot": "head"
+            "slot": "head",
+            "layer": "headgear"
         }
     },
     {
@@ -273,7 +274,7 @@
         "name": "Dried Deer Hide",
         "key": "deer_hide_dry",
         "maxStack": 99,
-        "weight": 2.5,
+        "weight": 1.2,
         "hide": {
             "animal": "deer",
             "stage": "dried"
@@ -347,7 +348,7 @@
         "name": "Deer Leather",
         "key": "deer_leather",
         "maxStack": 99,
-        "weight": 2.5,
+        "weight": 1.2,
         "hide": {
             "animal": "deer",
             "stage": "leather"
@@ -675,11 +676,15 @@
         "name": "Leaf Wrap",
         "key": "leaf_wrap",
         "maxStack": 1,
+        "durability": 60,
         "fuel": {
             "moisture": 0.4
         },
         "equip": {
-            "slot": "torso"
+            "slot": "torso",
+            "layer": "skin",
+            "covers": ["torso", "right_shoulder"],
+            "armor": { "sharp": 0.12, "blunt": 0.04 }
         },
         "recipe": {
             "leaf_cord": 6,
@@ -691,11 +696,15 @@
         "name": "Leaf Loincloth",
         "key": "leaf_loincloth",
         "maxStack": 1,
+        "durability": 50,
         "fuel": {
             "moisture": 0.4
         },
         "equip": {
             "slot": "legs",
+            "layer": "skin",
+            "covers": ["legs"],
+            "armor": { "sharp": 0.1, "blunt": 0.03 },
             "effects": {
                 "addSlot": [
                     "waist",
@@ -718,6 +727,7 @@
         },
         "equip": {
             "slot": "waist",
+            "layer": "belt",
             "effects": {
                 "strength": 2.5,
                 "addSlot": [
@@ -735,10 +745,9 @@
         "name": "Hide Pouch",
         "key": "hide_pouch",
         "maxStack": 1,
-        "weight": 0.8,
-        "weightFixed": true,
         "equip": {
             "slot": "waist",
+            "layer": "belt",
             "effects": {
                 "strength": 5,
                 "addSlot": [
@@ -748,7 +757,7 @@
         },
         "recipe": {
             "ANY_HIDE": {
-                "qty": 2,
+                "qty": 1,
                 "hideStage": "dried"
             },
             "leaf_cord": 4,
@@ -765,10 +774,9 @@
         "name": "Hide Bundle",
         "key": "hide_bundle",
         "maxStack": 1,
-        "weight": 1.5,
-        "weightFixed": true,
         "equip": {
             "slot": "back",
+            "layer": "pack",
             "effects": {
                 "strength": 5,
                 "addSlot": [
@@ -780,7 +788,7 @@
         },
         "tooltip": [
             "Adds pack slots above the hotbar",
-            "Drag items down to use them"
+            "Right-click/drag items to move between rows"
         ],
         "recipe": {
             "ANY_HIDE": {
@@ -797,14 +805,71 @@
         }
     },
     {
+        "id": "hide_tunic",
+        "name": "Hide Tunic",
+        "key": "hide_tunic",
+        "maxStack": 1,
+        "durability": 110,
+        "equip": {
+            "slot": "torso",
+            "layer": "middle",
+            "covers": ["torso", "shoulders"],
+            "armor": { "sharp": 0.32, "blunt": 0.12 }
+        },
+        "recipe": {
+            "ANY_HIDE": {
+                "qty": 3,
+                "hideStage": "dried"
+            },
+            "leaf_cord": 8,
+            "REQUIRE_STATION": "skinworking_bench",
+            "CRAFT_SECONDS": 28,
+            "REQUIRE_TOOL": {
+                "toolClass": "awl",
+                "wear": 16
+            }
+        }
+    },
+    {
+        "id": "hide_loincloth",
+        "name": "Hide Loincloth",
+        "key": "hide_loincloth",
+        "maxStack": 1,
+        "durability": 90,
+        "equip": {
+            "slot": "legs",
+            "layer": "skin",
+            "covers": ["legs"],
+            "armor": { "sharp": 0.28, "blunt": 0.1 },
+            "effects": {
+                "addSlot": [
+                    "waist",
+                    "waist"
+                ]
+            }
+        },
+        "recipe": {
+            "ANY_HIDE": {
+                "qty": 2,
+                "hideStage": "dried"
+            },
+            "leaf_cord": 5,
+            "REQUIRE_STATION": "skinworking_bench",
+            "CRAFT_SECONDS": 16,
+            "REQUIRE_TOOL": {
+                "toolClass": "awl",
+                "wear": 10
+            }
+        }
+    },
+    {
         "id": "leather_pouch",
         "name": "Leather Pouch",
         "key": "leather_pouch",
         "maxStack": 1,
-        "weight": 1,
-        "weightFixed": true,
         "equip": {
             "slot": "waist",
+            "layer": "belt",
             "effects": {
                 "strength": 7.5,
                 "addSlot": [
@@ -815,7 +880,7 @@
         },
         "recipe": {
             "ANY_LEATHER": {
-                "qty": 2,
+                "qty": 1,
                 "hideStage": "leather"
             },
             "leaf_cord": 4,
@@ -832,10 +897,9 @@
         "name": "Leather Pack",
         "key": "leather_pack",
         "maxStack": 1,
-        "weight": 2,
-        "weightFixed": true,
         "equip": {
             "slot": "back",
+            "layer": "pack",
             "effects": {
                 "strength": 10,
                 "addSlot": [
@@ -849,7 +913,7 @@
         },
         "tooltip": [
             "Adds pack slots above the hotbar",
-            "Drag items down to use them"
+            "Right-click/drag items to move between rows"
         ],
         "recipe": {
             "ANY_LEATHER": {
@@ -866,15 +930,77 @@
         }
     },
     {
+        "id": "leather_tunic",
+        "name": "Leather Tunic",
+        "key": "leather_tunic",
+        "maxStack": 1,
+        "durability": 180,
+        "equip": {
+            "slot": "torso",
+            "layer": "middle",
+            "covers": ["torso", "shoulders"],
+            "armor": { "sharp": 0.5, "blunt": 0.18 }
+        },
+        "recipe": {
+            "ANY_LEATHER": {
+                "qty": 3,
+                "hideStage": "leather"
+            },
+            "leaf_cord": 8,
+            "REQUIRE_STATION": "skinworking_bench",
+            "CRAFT_SECONDS": 32,
+            "REQUIRE_TOOL": {
+                "toolClass": "awl",
+                "wear": 16
+            }
+        }
+    },
+    {
+        "id": "leather_kilt",
+        "name": "Leather Kilt",
+        "key": "leather_kilt",
+        "maxStack": 1,
+        "durability": 140,
+        "equip": {
+            "slot": "legs",
+            "layer": "skin",
+            "covers": ["legs"],
+            "armor": { "sharp": 0.42, "blunt": 0.16 },
+            "effects": {
+                "addSlot": [
+                    "waist",
+                    "waist"
+                ]
+            }
+        },
+        "recipe": {
+            "ANY_LEATHER": {
+                "qty": 2,
+                "hideStage": "leather"
+            },
+            "leaf_cord": 5,
+            "REQUIRE_STATION": "skinworking_bench",
+            "CRAFT_SECONDS": 20,
+            "REQUIRE_TOOL": {
+                "toolClass": "awl",
+                "wear": 10
+            }
+        }
+    },
+    {
         "id": "leaf_sandals",
         "name": "Leaf Sandals",
         "key": "leaf_sandals",
         "maxStack": 1,
+        "durability": 40,
         "fuel": {
             "moisture": 0.33
         },
         "equip": {
             "slot": "feet",
+            "layer": "skin",
+            "covers": ["feet"],
+            "armor": { "sharp": 0.08, "blunt": 0.06 },
             "effects": {
                 "speed": 0.1
             }

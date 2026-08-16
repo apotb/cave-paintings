@@ -77,6 +77,11 @@
                     (ctxOrScene.scene?.spawnBloodStain
                         ? ctxOrScene.scene.spawnBloodStain.bind(ctxOrScene.scene)
                         : null),
+                spawnApparelDeflectSpark:
+                    ctxOrScene.spawnApparelDeflectSpark ||
+                    (ctxOrScene.scene?.spawnApparelDeflectSpark
+                        ? ctxOrScene.scene.spawnApparelDeflectSpark.bind(ctxOrScene.scene)
+                        : null),
                 emitBleedFx: ctxOrScene.emitBleedFx || null,
                 time: ctxOrScene.time || ctxOrScene.scene?.time || null,
                 player: ctxOrScene.player || ctxOrScene.scene?.player || null,
@@ -98,6 +103,9 @@
                 tileSize: ctxOrScene.tileSize || null,
                 spawnBloodStain: ctxOrScene.spawnBloodStain
                     ? ctxOrScene.spawnBloodStain.bind(ctxOrScene)
+                    : null,
+                spawnApparelDeflectSpark: ctxOrScene.spawnApparelDeflectSpark
+                    ? ctxOrScene.spawnApparelDeflectSpark.bind(ctxOrScene)
                     : null,
                 emitBleedFx: ctxOrScene.emitBleedFx || null,
                 time: ctxOrScene.time || null,

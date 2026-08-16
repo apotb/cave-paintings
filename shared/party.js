@@ -221,7 +221,7 @@
      * Best auto-eat stack in the party. In-range meals win; otherwise anything
      * within seek range (so a hungry companion can walk in). Never takes from
      * `skipPawnId` (the currently controlled pawn).
-     * @returns {{ pawn, slot, stack, dist, inRange, poison }|null}
+     * @returns {{ pawn, slot, bag, stack, dist, inRange, poison }|null}
      */
     function pickAutoEat(eater, members, opts = {}) {
         if (!eater) return null;
@@ -244,29 +244,35 @@
             if (skipPawnId && pid === skipPawnId) continue;
             const isSelf = p === eater || (eaterId && pid === eaterId);
             if (!isSelf && d > seek) continue;
-            const inv = p.inventory || [];
-            for (let i = 0; i < inv.length; i++) {
-                const stack = inv[i];
-                if (!stack) continue;
-                if (skipId != null && pid === skipId && i === skipSlot) continue;
-                const food = typeof getFood === "function"
-                    ? getFood(stack)
-                    : (stack.food || null);
-                if (!(Number(food?.kc ?? 0) > 0)) continue;
-                const poison = Number(food?.foodPoisonChance ?? 0) > 0;
-                if (poison && !allowPoison) continue;
-                if (isReservedAutoEat(stack, food) && !allowPoison) continue;
-                const spoil = Number(stack.spoilAt ?? stack.spoilLeft ?? Infinity);
-                candidates.push({
-                    pawn: p,
-                    slot: i,
-                    stack,
-                    spoil,
-                    own: isSelf,
-                    poison,
-                    dist: d,
-                    inRange: isSelf || d <= interact + 0.05
-                });
+            const bags = [
+                { bag: "hotbar", slots: p.inventory || [] },
+                { bag: "overflow", slots: p.overflow || [] }
+            ];
+            for (const { bag, slots } of bags) {
+                for (let i = 0; i < slots.length; i++) {
+                    const stack = slots[i];
+                    if (!stack) continue;
+                    if (skipId != null && pid === skipId && bag === "hotbar" && i === skipSlot) continue;
+                    const food = typeof getFood === "function"
+                        ? getFood(stack)
+                        : (stack.food || null);
+                    if (!(Number(food?.kc ?? 0) > 0)) continue;
+                    const poison = Number(food?.foodPoisonChance ?? 0) > 0;
+                    if (poison && !allowPoison) continue;
+                    if (isReservedAutoEat(stack, food) && !allowPoison) continue;
+                    const spoil = Number(stack.spoilAt ?? stack.spoilLeft ?? Infinity);
+                    candidates.push({
+                        pawn: p,
+                        slot: i,
+                        bag,
+                        stack,
+                        spoil,
+                        own: isSelf,
+                        poison,
+                        dist: d,
+                        inRange: isSelf || d <= interact + 0.05
+                    });
+                }
             }
         }
         candidates.sort((a, b) => {

@@ -8,15 +8,26 @@
         const DataStore = require("../DataStore");
         const BodyHealing = require("./Healing");
         const Party = require("../party");
-        module.exports = factory(GameMath, DataStore, BodyHealing, Party);
+        const Apparel = require("../apparel");
+        const Durability = require("../durability");
+        module.exports = factory(GameMath, DataStore, BodyHealing, Party, Apparel, Durability);
     } else {
-        root.BodyCombat = factory(root.GameMath, root.DataStore, root.BodyHealing, root.Party);
+        root.BodyCombat = factory(
+            root.GameMath,
+            root.DataStore,
+            root.BodyHealing,
+            root.Party,
+            root.Apparel,
+            root.Durability
+        );
     }
 })(typeof globalThis !== "undefined" ? globalThis : this, function (
     GameMath,
     DataStore,
     BodyHealing,
-    Party
+    Party,
+    Apparel,
+    Durability
 ) {
     function mathOf(ownerOrCtx) {
         return (
@@ -35,6 +46,19 @@
         if (host?.data?.getInjuryDefs) return host.data.getInjuryDefs() || {};
         if (DataStore?.getInjuryDefs) return DataStore.getInjuryDefs() || {};
         return host?.cache?.json?.get?.("injuries") || host?.scene?.cache?.json?.get?.("injuries") || {};
+    }
+
+    function itemOf(host, id) {
+        if (host?.data?.getItem) return host.data.getItem(id);
+        if (DataStore?.getItem) return DataStore.getItem(id);
+        if (typeof host?.getItem === "function") return host.getItem(id);
+        if (typeof host?.scene?.getItem === "function") return host.scene.getItem(id);
+        return null;
+    }
+
+    function hitPoint(target) {
+        if (typeof target?.bodyCenter === "function") return target.bodyCenter();
+        return { x: Number(target?.x) || 0, y: Number(target?.y) || 0 };
     }
 
     function combatLogColors() {
@@ -224,7 +248,110 @@
             damage = Math.round(damage * 10) / 10;
             if (!(damage > 0)) return null;
 
-            const isSharp = attack.type === "sharp";
+            const armorPen = Number(attack.armorPen ?? attack.def?.armorPen) || 0;
+            let armor = null;
+            if (Apparel && target.equipment) {
+                armor = Apparel.resolveHit({
+                    equipment: target.equipment,
+                    getItem: (id) => itemOf(host, id),
+                    part: victimPart,
+                    damage,
+                    damageType: attack.type === "sharp" ? "sharp" : "blunt",
+                    armorPen,
+                    random: () => math.random()
+                });
+                damage = armor.damage;
+            }
+
+            const brokeApparel = (armor && Durability)
+                ? Apparel.applyRolledWear(
+                    target.equipment,
+                    armor.rolled,
+                    (id) => itemOf(host, id),
+                    Durability
+                )
+                : [];
+            if (brokeApparel.length) target.afterApparelWear?.();
+
+            const log =
+                host?.combatLog ||
+                target.scene?.combatLog ||
+                attacker?.scene?.combatLog ||
+                null;
+            const player = host?.player || target.scene?.player;
+            const vicIsYou = target === player;
+            const colors = combatLogColors();
+            const sparkAt = hitPoint(target);
+
+            if (brokeApparel.length && typeof log?.push === "function") {
+                for (const piece of brokeApparel) {
+                    const who = vicIsYou
+                        ? "Your"
+                        : `${target.displayName?.() || target.def?.name || "Their"}'s`;
+                    log.push(`${who} ${piece.name} fell apart`, {
+                        combat: true,
+                        attacker,
+                        target
+                    });
+                }
+            }
+
+            if (armor?.deflected) {
+                const first = (armor.rolled || []).find((r) => r.outcome === "deflect");
+                const itemName = first?.def?.name || first?.stack?.id || "apparel";
+                if (typeof log?.push === "function") {
+                    log.push(null, {
+                        combat: true,
+                        attacker,
+                        target,
+                        attack,
+                        victimPartName: victimPart.name,
+                        damage: 0,
+                        destroyed: false,
+                        deflected: true,
+                        deflectName: itemName,
+                        spark: sparkAt,
+                        segments: [
+                            { text: vicIsYou ? "Your" : "The", color: vicIsYou ? colors.you : colors.enemy },
+                            { text: itemName, color: colors.weapon },
+                            { text: "deflected the blow" }
+                        ]
+                    });
+                }
+                const sparkFn = host?.spawnApparelDeflectSpark
+                    || target.scene?.spawnApparelDeflectSpark;
+                sparkFn?.(sparkAt.x, sparkAt.y);
+                const result = {
+                    damage: 0,
+                    part: victimPart,
+                    destroyed: false,
+                    injury: null,
+                    attack,
+                    deflected: true,
+                    glanced: false,
+                    brokeApparel
+                };
+                target.onBodyDamaged?.(attacker, result);
+                return result;
+            }
+
+            if (!(damage > 0)) {
+                const result = {
+                    damage: 0,
+                    part: victimPart,
+                    destroyed: false,
+                    injury: null,
+                    attack,
+                    deflected: false,
+                    glanced: !!armor?.glanced,
+                    brokeApparel
+                };
+                target.onBodyDamaged?.(attacker, result);
+                return result;
+            }
+
+            const hitType = armor?.damageType || (attack.type === "sharp" ? "sharp" : "blunt");
+            const isSharp = hitType === "sharp";
             let idef = isSharp ? defs.cut : defs.bruise;
             if (victimPart.baseId === "Brain" || victimPart.name === "Brain") {
                 idef = defs.brain_cut || idef;
@@ -256,7 +383,7 @@
             const alwaysScar =
                 idef.alwaysScar || victimPart.def?.alwaysScar || victimPart.baseId === "Brain";
             const delicate = idef.delicate || victimPart.def?.delicate;
-            if (idef.canScar !== false && attack.type !== "blunt") {
+            if (idef.canScar !== false && hitType !== "blunt") {
                 let odds = 0;
                 if (alwaysScar) odds = 1;
                 else if (damage >= 5) {
@@ -275,19 +402,22 @@
             victimPart.injure(injury);
 
             const destroyed = victimPart.isDead();
-            const result = { damage, part: victimPart, destroyed, injury, attack };
+            const result = {
+                damage,
+                part: victimPart,
+                destroyed,
+                injury,
+                attack,
+                deflected: false,
+                glanced: !!armor?.glanced,
+                brokeApparel
+            };
 
             if (injury.bleeding) {
                 BodyHealing.spawnHitBleedBurst?.(target, host, injury, victimPart, destroyed);
             }
 
-            const log =
-                host?.combatLog ||
-                target.scene?.combatLog ||
-                attacker?.scene?.combatLog ||
-                null;
             if (typeof log?.push === "function") {
-                const player = host?.player || target.scene?.player;
                 const isYou = attacker === player;
                 const subj = isYou
                     ? "You"
@@ -297,12 +427,12 @@
                     !attack.unarmed && attack.weaponName
                         ? attack.weaponName
                         : attack.sourcePart?.name || attack.weaponName || "blow";
-                const vicIsYou = target === player;
                 const vicPossessive = vicIsYou
                     ? "your"
                     : `${target.def?.name || target.displayName?.() || "foe"}'s`;
-                const colors = combatLogColors();
-                const dmgStr = `(${Number(damage).toFixed(1)})`;
+                const dmgStr = armor?.glanced
+                    ? `(${Number(damage).toFixed(1)}, glanced)`
+                    : `(${Number(damage).toFixed(1)})`;
                 const logOpts = {
                     combat: true,
                     attacker,
@@ -310,7 +440,8 @@
                     attack,
                     victimPartName: victimPart.name,
                     damage,
-                    destroyed: false
+                    destroyed: false,
+                    glanced: !!armor?.glanced
                 };
                 log.push(null, {
                     ...logOpts,

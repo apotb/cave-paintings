@@ -539,17 +539,6 @@ class PartySystem {
         }
     }
 
-    allyClickWouldUseItem(pawn) {
-        const scene = this.scene;
-        const me = scene.player;
-        if (!pawn || !scene.party?.includes(pawn)) return false;
-        const held = me?.getHeldItem?.();
-        const meta = held ? scene.getItem(held.id) : null;
-        if (meta?.bandage) return true;
-        const food = held?.food || meta?.food;
-        return !!(Number(food?.kc ?? 0) > 0 && this._needsForceFeed(pawn) && pawn !== me);
-    }
-
     tryAllyClick(pawn, opts = {}) {
         const scene = this.scene;
         const me = scene.player;
@@ -638,8 +627,14 @@ class PartySystem {
 
     tryGive(fromPawn, slot, toPawn, bag = 'hotbar') {
         const scene = this.scene;
-        const fromInv = fromPawn?.bagArray?.(bag)
-            || (bag === 'overflow' ? fromPawn?.overflow : fromPawn?.inventory);
+        const fromBag = bag === 'overflow' ? 'overflow' : 'hotbar';
+        if (fromBag === 'overflow') fromPawn?.syncOverflowSize?.();
+        const fromInv = fromPawn?.bagArray?.(fromBag)
+            || (fromBag === 'overflow' ? fromPawn?.overflow : fromPawn?.inventory);
+        if (fromInv && fromPawn?.bagCap) {
+            const cap = fromPawn.bagCap(fromBag);
+            while (fromInv.length < cap) fromInv.push(null);
+        }
         const stack = fromInv?.[slot];
         if (!this.canGiveTo(fromPawn, toPawn, stack)) return false;
         if (scene.isNet && scene.net?.connected && !scene.net.isLocal) {
@@ -647,7 +642,7 @@ class PartySystem {
                 type: NetProtocol.Actions.GIVE_ITEM,
                 fromPawnId: fromPawn.pawnId,
                 fromSlot: slot,
-                fromBag: bag === 'overflow' ? 'overflow' : 'hotbar',
+                fromBag,
                 toPawnId: toPawn.pawnId
             });
             return true;
@@ -674,7 +669,7 @@ class PartySystem {
         const name = pawn.displayName();
         const dedicated = !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
         const spawn = opts.spawn != null ? !!opts.spawn : !dedicated;
-        pawn.createDeathCorpse?.({ spawn });
+        pawn.createDeathCorpse?.({ spawn, combatDeath: !!killer });
         scene.party = (scene.party || []).filter((p) => p !== pawn);
         if (scene.player === pawn) {
             const next = scene.leader && !scene.leader.isBodyDead?.()
@@ -694,7 +689,7 @@ class PartySystem {
         const scene = this.scene;
         if (!pawn) return;
         const name = pawn.displayName?.() || "Wanderer";
-        pawn.createDeathCorpse?.({ spawn: true });
+        pawn.createDeathCorpse?.({ spawn: true, combatDeath: !!killer });
         this.wanderers = this.wanderers.filter((w) => w !== pawn);
         pawn.setVisible(false);
         if (pawn.body) pawn.body.enable = false;
@@ -1476,17 +1471,44 @@ class PartySystem {
             return;
         }
         for (const pawn of scene.party || []) {
-            if (!pawn || pawn === scene.player) continue;
-            if (pawn.isBodyDead?.() || pawn.isVomiting?.() || pawn.isIncapacitated?.()) continue;
-            if (pawn._resting || pawn._restWalk) continue;
-            if (pawn.isAttacking?.() || pawn._eatChannel || pawn._tendChannel) continue;
-            if (pawn.partyAI?.assistTarget) continue;
+            if (!pawn || pawn === scene.player) {
+                pawn?.partyAI?.setTendSeek?.(null);
+                continue;
+            }
+            if (pawn.isBodyDead?.() || pawn.isVomiting?.() || pawn.isIncapacitated?.()) {
+                pawn.partyAI?.setTendSeek?.(null);
+                continue;
+            }
+            if (pawn._resting || pawn._restWalk) {
+                pawn.partyAI?.setTendSeek?.(null);
+                continue;
+            }
+            if (pawn.isAttacking?.() || pawn._eatChannel || pawn._tendChannel) {
+                pawn.partyAI?.setTendSeek?.(null);
+                continue;
+            }
+            if (pawn.partyAI?.assistTarget) {
+                pawn.partyAI?.setTendSeek?.(null);
+                continue;
+            }
             pawn.capacities = pawn.capacities || (pawn.anatomy ? new Capacities(pawn.anatomy) : null);
-            if (!pawn.capacities?.canManipulate?.()) continue;
+            if (!pawn.capacities?.canManipulate?.()) {
+                pawn.partyAI?.setTendSeek?.(null);
+                continue;
+            }
             const job = this._pickAutoTend(pawn);
-            if (!job) continue;
+            if (!job) {
+                pawn.partyAI?.setTendSeek?.(null);
+                continue;
+            }
+            if (!job.inRange && job.patient && job.patient !== pawn) {
+                pawn.partyAI?.setTendSeek?.(job.patient);
+                continue;
+            }
+            pawn.partyAI?.setTendSeek?.(null);
             pawn.beginTend?.(job.patient, {
                 slot: job.slot,
+                bag: job.bag,
                 sourcePawn: job.source,
                 silent: true,
                 target: job.target
@@ -1500,14 +1522,16 @@ class PartySystem {
         if (this._partyInCombat()) return true;
         const ch = pawn._tendChannel;
         if (ch && !ch.corpse) return true;
-        if (this._isBeingTended(pawn)) return true;
-        return !!this._pickAutoTend(pawn);
+        if (this._isTendTargeted(pawn)) return true;
+        if (this._pickAutoTend(pawn)) return true;
+        return this._pawnNeedsTend(pawn) && this._partyHasBandage();
     }
 
     _cancelAutoTends() {
         const scene = this.scene;
         for (const pawn of scene.party || []) {
             if (!pawn || pawn === scene.player) continue;
+            pawn.partyAI?.setTendSeek?.(null);
             const ch = pawn._tendChannel;
             if (ch && !ch.corpse) pawn._cancelTend?.();
         }
@@ -1611,11 +1635,38 @@ class PartySystem {
         return false;
     }
 
+    _isTendTargeted(patient) {
+        if (this._isBeingTended(patient)) return true;
+        for (const p of this.scene.party || []) {
+            if (p && p !== patient && p.partyAI?.tendSeek === patient) return true;
+        }
+        return false;
+    }
+
+    _pawnNeedsTend(pawn) {
+        if (!pawn?.anatomy || pawn.isBodyDead?.()) return false;
+        return !!BodyHealing?.pickTendTarget?.(pawn.anatomy);
+    }
+
+    _partyHasBandage() {
+        const scene = this.scene;
+        for (const p of scene.party || []) {
+            if (!p || p.isBodyDead?.()) continue;
+            const bags = [p.inventory, p.overflow];
+            for (const slots of bags) {
+                for (const stack of slots || []) {
+                    if (stack?.id && scene.getItem(stack.id)?.bandage) return true;
+                }
+            }
+        }
+        return false;
+    }
+
     _isTendLocked(pawn) {
         if (!pawn) return false;
         const ch = pawn._tendChannel;
         if (ch && !ch.corpse) return true;
-        return this._isBeingTended(pawn);
+        return this._isTendTargeted(pawn);
     }
 
     _pickBandage(tender, patient, selfOnly) {
@@ -1623,18 +1674,24 @@ class PartySystem {
         const skipHeld = scene.player && scene.hotbar
             ? { pawn: scene.player, slot: scene.hotbar.activeIndex }
             : null;
-        const bags = selfOnly ? [tender] : [tender, patient];
+        const pawns = selfOnly ? [tender] : [tender, patient];
         const seen = new Set();
-        for (const p of bags) {
+        for (const p of pawns) {
             if (!p || seen.has(p)) continue;
             seen.add(p);
-            for (let i = 0; i < (p.inventory || []).length; i++) {
-                const stack = p.inventory[i];
-                if (!stack) continue;
-                if (skipHeld && p === skipHeld.pawn && i === skipHeld.slot) continue;
-                const meta = scene.getItem(stack.id);
-                if (!meta?.bandage) continue;
-                return { source: p, slot: i, stack };
+            const bags = [
+                { bag: "hotbar", slots: p.inventory || [] },
+                { bag: "overflow", slots: p.overflow || [] }
+            ];
+            for (const { bag, slots } of bags) {
+                for (let i = 0; i < slots.length; i++) {
+                    const stack = slots[i];
+                    if (!stack) continue;
+                    if (skipHeld && p === skipHeld.pawn && bag === "hotbar" && i === skipHeld.slot) continue;
+                    const meta = scene.getItem(stack.id);
+                    if (!meta?.bandage) continue;
+                    return { source: p, slot: i, bag, stack };
+                }
             }
         }
         return null;
@@ -1642,10 +1699,12 @@ class PartySystem {
 
     _pickAutoTend(tender) {
         const scene = this.scene;
-        const P = typeof Party !== "undefined" ? Party : { INTERACT_TILES: 4 };
+        const P = typeof Party !== "undefined" ? Party : { INTERACT_TILES: 4, FOLLOW_DETACH: 12 };
         const ts = scene.tileSize || 16;
+        const seek = (P.FOLLOW_DETACH || 12) * ts;
         const reserved = this._reservedTendKeys(tender);
-        const others = [];
+        const inRangeOthers = [];
+        const seekOthers = [];
         let selfJob = null;
         for (const p of scene.party || []) {
             if (!p || p.isBodyDead?.() || !p.anatomy) continue;
@@ -1655,23 +1714,31 @@ class PartySystem {
             const bleeding = !!(target.inj?.bleeding || target.destroyed);
             if (p === tender) {
                 const bandage = this._pickBandage(tender, tender, true);
-                if (bandage) selfJob = { patient: p, bleeding, ...bandage, target };
+                if (bandage) selfJob = { patient: p, bleeding, inRange: true, ...bandage, target };
                 continue;
             }
-            if (P && !P.inInteractRange(tender, p, ts)) continue;
+            const dist = Math.hypot(p.x - tender.x, p.y - tender.y);
+            if (dist > seek) continue;
             const bandage = this._pickBandage(tender, p, false);
             if (!bandage) continue;
-            const dist = Math.hypot(p.x - tender.x, p.y - tender.y);
-            others.push({ patient: p, bleeding, dist, ...bandage, target });
+            const inRange = typeof P.inInteractRange === "function"
+                ? P.inInteractRange(tender, p, ts)
+                : dist <= ((P.INTERACT_TILES || 4) * ts + 0.05);
+            const job = { patient: p, bleeding, dist, inRange, ...bandage, target };
+            (inRange ? inRangeOthers : seekOthers).push(job);
         }
-        others.sort((a, b) => {
+        const byNeed = (a, b) => {
             if (a.bleeding !== b.bleeding) return a.bleeding ? -1 : 1;
-            return a.dist - b.dist;
-        });
-        if (others.length && others[0].bleeding) return others[0];
+            return (a.dist || 0) - (b.dist || 0);
+        };
+        inRangeOthers.sort(byNeed);
+        seekOthers.sort(byNeed);
+        if (inRangeOthers[0]?.bleeding) return inRangeOthers[0];
         if (selfJob?.bleeding) return selfJob;
-        if (others.length) return others[0];
-        return selfJob;
+        if (seekOthers[0]?.bleeding) return seekOthers[0];
+        if (inRangeOthers.length) return inRangeOthers[0];
+        if (selfJob) return selfJob;
+        return seekOthers[0] || null;
     }
 
     _tickFood() {
@@ -1689,7 +1756,7 @@ class PartySystem {
                 pawn.partyAI?.setEatSeek?.(null);
                 continue;
             }
-            if (pawn.isAttacking?.() || pawn._eatChannel || pawn._tendChannel) {
+            if (pawn.isAttacking?.() || pawn._eatChannel || pawn._tendChannel || pawn.partyAI?.tendSeek) {
                 pawn.partyAI?.setEatSeek?.(null);
                 continue;
             }
@@ -1731,6 +1798,7 @@ class PartySystem {
             pawn.partyAI?.setEatSeek?.(null);
             const ok = pawn.beginEat(pick.stack, {
                 slot: pick.slot,
+                bag: pick.bag,
                 sourcePawn: pick.pawn
             });
             if (ok) {
@@ -1743,7 +1811,8 @@ class PartySystem {
                         type: NetProtocol.Actions.PARTY_EAT,
                         eaterId: pawn.pawnId,
                         fromPawnId: pick.pawn.pawnId,
-                        slot: pick.slot
+                        slot: pick.slot,
+                        bag: pick.bag === "overflow" ? "overflow" : "hotbar"
                     });
                 }
             }
@@ -1783,28 +1852,35 @@ class PartySystem {
             if (skipPawnId && p.pawnId === skipPawnId) continue;
             const d = Math.hypot(p.x - eater.x, p.y - eater.y);
             if (p !== eater && d > range) continue;
-            for (let i = 0; i < (p.inventory || []).length; i++) {
-                const stack = p.inventory[i];
-                if (!stack) continue;
-                if (skipHeld && p.pawnId === skipHeld.id && i === skipHeld.slot) continue;
-                const meta = scene.getItem(stack.id);
-                const food = stack.food || meta?.food;
-                if (!(Number(food?.kc ?? 0) > 0)) continue;
-                const poison = Number(food?.foodPoisonChance ?? 0) > 0;
-                if (poison && !allowPoison) continue;
-                const reserved = food.autoEat === "malnourished" || stack.id === "cracked_coconut";
-                if (reserved && !allowPoison) continue;
-                const spoil = Number(stack.spoilAt ?? stack.spoilLeft ?? Infinity);
-                candidates.push({
-                    pawn: p,
-                    slot: i,
-                    stack,
-                    spoil,
-                    own: p === eater,
-                    poison,
-                    dist: d,
-                    inRange: true
-                });
+            const bags = [
+                { bag: "hotbar", slots: p.inventory || [] },
+                { bag: "overflow", slots: p.overflow || [] }
+            ];
+            for (const { bag, slots } of bags) {
+                for (let i = 0; i < slots.length; i++) {
+                    const stack = slots[i];
+                    if (!stack) continue;
+                    if (skipHeld && p.pawnId === skipHeld.id && bag === "hotbar" && i === skipHeld.slot) continue;
+                    const meta = scene.getItem(stack.id);
+                    const food = stack.food || meta?.food;
+                    if (!(Number(food?.kc ?? 0) > 0)) continue;
+                    const poison = Number(food?.foodPoisonChance ?? 0) > 0;
+                    if (poison && !allowPoison) continue;
+                    const reserved = food.autoEat === "malnourished" || stack.id === "cracked_coconut";
+                    if (reserved && !allowPoison) continue;
+                    const spoil = Number(stack.spoilAt ?? stack.spoilLeft ?? Infinity);
+                    candidates.push({
+                        pawn: p,
+                        slot: i,
+                        bag,
+                        stack,
+                        spoil,
+                        own: p === eater,
+                        poison,
+                        dist: d,
+                        inRange: true
+                    });
+                }
             }
         }
         candidates.sort((a, b) => {

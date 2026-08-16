@@ -409,16 +409,30 @@ class EquipmentPanel {
         const stack = player.getEquipmentStack(fromKey);
         if (!stack || !target) return false;
         if (!this.scene.partySys?.canGiveTo(player, target, stack)) return false;
-        const inv = player.inventory;
-        let idx = inv.findIndex((s) => !s);
-        if (idx < 0 && inv.length < player.inventorySize) idx = inv.length;
+        const emptyIn = (bag) => {
+            const inv = player.bagArray(bag);
+            const cap = player.bagCap(bag);
+            if (!(cap > 0)) return -1;
+            while (inv.length < cap) inv.push(null);
+            return inv.findIndex((s) => !s);
+        };
+        let bag = 'hotbar';
+        let idx = emptyIn('hotbar');
         if (idx < 0) {
-            this.scene.combatLog?.push("No empty hotbar slot to hand that over");
+            if (fromKey === 'back') {
+                this.scene.combatLog?.push("No empty hotbar slot to hand that over");
+                return false;
+            }
+            bag = 'overflow';
+            idx = emptyIn('overflow');
+        }
+        if (idx < 0) {
+            this.scene.combatLog?.push("No empty slot to hand that over");
             return false;
         }
-        const result = player.unequipToHotbar(fromKey, idx);
+        const result = player.unequipToHotbar(fromKey, idx, bag);
         if (!result.ok) return false;
-        return !!this.scene.partySys.tryGive(player, idx, target);
+        return !!this.scene.partySys.tryGive(player, idx, target, bag);
     }
 
     _swapEquipSlots(fromKey, toKey) {

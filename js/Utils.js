@@ -350,7 +350,20 @@ function resolveCraftedWeights(items) {
             if (typeof Carry !== "undefined" && Carry.isRecipeMetaKey) {
                 if (Carry.isRecipeMetaKey(k)) continue;
             } else if (k === "REQUIRE_THING") continue;
-            if (v && typeof v === "object" && v.hideStage) continue;
+            if (v && typeof v === "object" && v.hideStage) {
+                const stage = String(v.hideStage);
+                const qty = +v.qty || 1;
+                let n = 0;
+                let hideSum = 0;
+                for (const other of items) {
+                    if (other?.hide?.stage === stage && !other.recipe) {
+                        hideSum += Number(other.weight) || 0;
+                        n += 1;
+                    }
+                }
+                if (n) sum += (hideSum / n) * qty;
+                continue;
+            }
             const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
             sum += weightOf(k) * qty;
         }
@@ -420,7 +433,20 @@ function resolveCraftedFuel(items) {
             if (typeof Carry !== "undefined" && Carry.isRecipeMetaKey) {
                 if (Carry.isRecipeMetaKey(k)) continue;
             } else if (k === "REQUIRE_THING") continue;
-            if (v && typeof v === "object" && v.hideStage) continue;
+            if (v && typeof v === "object" && v.hideStage) {
+                const stage = String(v.hideStage);
+                const qty = +v.qty || 1;
+                let n = 0;
+                let hideSum = 0;
+                for (const other of items) {
+                    if (other?.hide?.stage === stage && !other.recipe) {
+                        hideSum += Number(other.fuel?.kj) || 0;
+                        n += 1;
+                    }
+                }
+                if (n) sum += (hideSum / n) * qty;
+                continue;
+            }
             const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
             sum += fuelKjOf(k) * qty;
         }

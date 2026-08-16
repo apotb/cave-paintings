@@ -387,6 +387,10 @@ class SimCreature {
         this.die();
     }
 
+    afterApparelWear() {
+        this.ctx?.sim?._afterApparelWear?.(this);
+    }
+
     takeDamage(amount, source = null, opts = null) {
         if (this._dead) return 0;
         if (opts?.attack) {
