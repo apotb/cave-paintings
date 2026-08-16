@@ -1,7 +1,3 @@
-Bones
-
-Infection
-
 New burning system -- fires won't heat up immediately, different fuels burn at different temperatures, moisture will actually do something
 
 Rock types -- more than pebble vs flint (obsidian, quartz, basalt, sandstone). Different knap feel / quality, some better for blades, some blunt for plant stuff. Later gate for tools a pebble shouldn't make.

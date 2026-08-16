@@ -623,6 +623,28 @@ class HealthPanel {
                 tip: tipLines.length ? tipLines.join("\n") : null
             });
         };
+        const pushInfections = (partName) => {
+            const list = (body.hediffs || []).filter(
+                (h) => h && h.id === "infection" && h.partName === partName
+            );
+            for (const h of list) {
+                const label = typeof Hediffs !== "undefined"
+                    ? Hediffs.displayLabel(h, this.scene)
+                    : "Infection";
+                const tip = typeof Hediffs !== "undefined"
+                    ? Hediffs.tooltipFor(h, this.scene, body)
+                    : null;
+                const stage = typeof Hediffs !== "undefined"
+                    ? Hediffs.stageFor(h, this.scene)
+                    : null;
+                lines.push({
+                    text: `  ${label}`,
+                    bleeding: !!stage?.lifeThreatening,
+                    tip
+                });
+            }
+            return list.length;
+        };
         const pushInjuries = (part) => {
             for (const inj of part.injuries) {
                 const bleeding = !inj.permanent && !!inj.bleeding && !inj.tended;
@@ -645,7 +667,7 @@ class HealthPanel {
             }
         };
         // Whole-body hediffs (food poisoning, malnutrition, …) always first
-        const hediffs = body.hediffs || [];
+        const hediffs = (body.hediffs || []).filter((h) => h && !h.partName);
         if (hediffs.length) {
             any = true;
             lines.push({ text: "Whole Body:" });
@@ -654,7 +676,7 @@ class HealthPanel {
                     ? Hediffs.displayLabel(h, this.scene)
                     : h.id;
                 const tip = typeof Hediffs !== "undefined"
-                    ? Hediffs.tooltipFor(h, this.scene)
+                    ? Hediffs.tooltipFor(h, this.scene, body)
                     : null;
                 lines.push({ text: `  ${label}`, tip });
             }
@@ -676,10 +698,14 @@ class HealthPanel {
                 continue;
             }
             // Keep injury history even when a parent limb is destroyed (toes, etc.).
-            if (!part.injuries.length) continue;
+            const infN = (body.hediffs || []).filter(
+                (h) => h && h.id === "infection" && h.partName === part.name
+            ).length;
+            if (!part.injuries.length && !infN) continue;
             any = true;
             lines.push({ text: `${part.name}: ${part.hp().toFixed(1)}/${Number(part.mhp).toFixed(1)}` });
             pushInjuries(part);
+            pushInfections(part.name);
         }
         const leftoverStumps = Object.values(stumpByPart).sort((a, b) => {
             const ia = HealthPanel.partListIndex(a.partName);

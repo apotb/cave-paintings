@@ -74,7 +74,7 @@
             "punch": { "name": "Punch", "damage": 6, "type": "blunt", "verb": "swung", "cooldown": 2.0, "weightMultiplier": 1, "range": 4 },
             "kick": { "name": "Kick", "damage": 4, "type": "blunt", "verb": "kicked", "cooldown": 2.0, "weightMultiplier": 1, "range": 5 },
             "headbutt": { "name": "Headbutt", "damage": 3, "type": "blunt", "verb": "bashed", "cooldown": 2.0, "weightMultiplier": 0.2, "range": 3 },
-            "bite": { "name": "Bite", "damage": 4, "type": "sharp", "verb": "sunk", "cooldown": 2.0, "weightMultiplier": 0.2, "range": 3 }
+            "bite": { "name": "Bite", "damage": 4, "type": "sharp", "verb": "sunk", "cooldown": 2.0, "weightMultiplier": 0.2, "range": 3, "injury": "bite" }
         },
         "fatalParts": ["Brain", "Heart", "Torso", "Head", "Neck"]
     },
@@ -129,7 +129,7 @@
             }
         },
         "unarmedAttacks": {
-            "bite": { "name": "Bite", "damage": 8, "type": "sharp", "verb": "sunk", "cooldown": 2.0, "weightMultiplier": 0.5, "range": 3 },
+            "bite": { "name": "Bite", "damage": 8, "type": "sharp", "verb": "sunk", "cooldown": 2.0, "weightMultiplier": 0.5, "range": 3, "injury": "bite" },
             "headbutt": { "name": "Headbutt", "damage": 5, "type": "blunt", "verb": "bashed", "cooldown": 2.0, "weightMultiplier": 0.2, "range": 3 },
             "hoof_blunt": { "name": "Hoof", "damage": 7, "type": "blunt", "verb": "struck", "cooldown": 2.0, "weightMultiplier": 1, "range": 4 },
             "hoof_poke": { "name": "Hoof", "damage": 7, "type": "blunt", "verb": "poked", "cooldown": 2.0, "weightMultiplier": 1, "range": 4 }
@@ -189,7 +189,7 @@
         "unarmedAttacks": {
             "tusk_slash": { "name": "Tusk", "damage": 10, "type": "sharp", "verb": "slashed", "cooldown": 2.0, "weightMultiplier": 1, "range": 3 },
             "tusk_stab": { "name": "Tusk", "damage": 10, "type": "sharp", "verb": "gored", "cooldown": 2.0, "weightMultiplier": 1, "range": 3 },
-            "bite": { "name": "Bite", "damage": 8, "type": "sharp", "verb": "sunk", "cooldown": 2.0, "weightMultiplier": 0.5, "range": 3 },
+            "bite": { "name": "Bite", "damage": 8, "type": "sharp", "verb": "sunk", "cooldown": 2.0, "weightMultiplier": 0.5, "range": 3, "injury": "bite" },
             "headbutt": { "name": "Headbutt", "damage": 6, "type": "blunt", "verb": "bashed", "cooldown": 2.0, "weightMultiplier": 0.2, "range": 3 }
         },
         "fatalParts": ["Brain", "Heart", "Torso", "Head", "Neck"]

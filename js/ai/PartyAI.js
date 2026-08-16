@@ -87,7 +87,8 @@ class PartyAI {
         }
 
         if (pawn.isIncapacitated?.() || pawn.isImmobile?.() || pawn.isVomiting?.()) {
-            this._clearCombatMove();
+            this.setAssist(null);
+            this.tendSeek = null;
             pawn.setVelocity(0, 0);
             if (pawn.body) pawn.body.moves = false;
             setCreatureProne?.(pawn, true);

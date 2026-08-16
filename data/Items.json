@@ -536,7 +536,11 @@
         "name": "Bone",
         "key": "bone",
         "maxStack": 99,
-        "weight": 0.3
+        "weight": 0.3,
+        "toolClass": "awl",
+        "tooltip": [
+            "Functions as a single-use Awl"
+        ]
     },
     {
         "id": "leaf",

@@ -131,6 +131,7 @@
                 this.healGameMinute(owner, host)
                 && isPartyPawn(owner)
                 && !owner.isBodyDead?.()
+                && !(Hediffs && Hediffs.hasInfections?.(owner.anatomy))
             ) {
                 this._announceFullyHealed(owner, host);
             }
@@ -364,6 +365,9 @@
         },
 
         isTendTargetValid(body, target) {
+            if (target?.hediff) {
+                return !!(Hediffs && Hediffs.infectionNeedsTend?.(target.hediff));
+            }
             return !!this.resolveTendTarget(body, target);
         },
 
@@ -374,6 +378,15 @@
          */
         resolveTendTarget(body, hint) {
             if (!body || !hint) return null;
+            const hediffId = hint.hediffId || hint.hediff?.id || null;
+            if (hediffId || hint.hediff) {
+                const partName = hint.partName || hint.hediff?.partName || null;
+                const h = (body.hediffs || []).find(
+                    (x) => x && x.id === (hediffId || "infection") && x.partName === partName
+                );
+                if (h && Hediffs && Hediffs.infectionNeedsTend?.(h)) return { hediff: h };
+                return null;
+            }
             const destroyedName = hint.destroyed?.partName || hint.destroyedPartName || null;
             if (destroyedName || hint.destroyed) {
                 const name = destroyedName || hint.destroyed?.partName;
@@ -432,6 +445,12 @@
 
         tendTargetHint(target) {
             if (!target) return null;
+            if (target.hediff) {
+                return {
+                    hediffId: target.hediff.id,
+                    partName: target.hediff.partName || null
+                };
+            }
             return {
                 partName: target.part?.name || null,
                 injuryIndex: target.part && target.inj
@@ -447,6 +466,12 @@
         tendLogLine(who, poss, quality, targets, body) {
             const qPct = Math.round((Number(quality) || 0) * 100);
             const list = (targets || []).filter(Boolean);
+            if (list.length === 1 && list[0]?.hediff) {
+                const part = list[0].hediff.partName;
+                return part
+                    ? `${who} treated ${poss} ${part} infection (${qPct}%)`
+                    : `${who} treated ${poss} infection (${qPct}%)`;
+            }
             if (list.length > 1) return `${who} bandaged ${list.length} wounds (${qPct}%)`;
             const target = list[0];
             if (target?.part) return `${who} bandaged ${poss} ${target.part.name} (${qPct}%)`;
@@ -495,7 +520,21 @@
             }
             bleeding.sort((a, b) => b.score - a.score);
             other.sort((a, b) => b.score - a.score);
-            return bleeding.concat(other);
+            const infections = [];
+            if (Hediffs && typeof Hediffs.infectionsOf === "function") {
+                for (const h of Hediffs.infectionsOf(body)) {
+                    if (!Hediffs.infectionNeedsTend(h)) continue;
+                    if (skip?.({ hediff: h, partName: h.partName })) continue;
+                    const stage = Hediffs.stageFor(h, body.ctx);
+                    const threat = stage?.lifeThreatening ? 1000 : 0;
+                    infections.push({
+                        hediff: h,
+                        score: threat + (Number(h.severity) || 0)
+                    });
+                }
+                infections.sort((a, b) => b.score - a.score);
+            }
+            return bleeding.concat(infections, other);
         },
 
         pickTendTarget(body, opts = {}) {
@@ -511,10 +550,12 @@
             const raw = Number(opts.batchSeverity);
             const budget = Number.isFinite(raw) ? raw : this.BATCH_TEND_SEVERITY;
             const candidates = this.listTendCandidates(body, opts);
+            if (candidates[0]?.hediff) return [candidates[0]];
             const out = [];
             let used = 0;
             let tookStump = false;
             for (const t of candidates) {
+                if (t.hediff) continue;
                 if (t.destroyed && tookStump) continue;
                 if (!out.length) {
                     out.push(t);
@@ -531,16 +572,29 @@
             return out;
         },
 
-        rollTendQuality(base = 0.4, max = 0.7, math = GameMath) {
+        rollTendQuality(base = 0.4, max = 0.7, math = GameMath, opts = null) {
             const m = math || GameMath;
             const b = Math.max(0, Number(base) || 0);
             const cap = Math.max(0, Number(max) || 0.7);
-            const rolled = b * m.floatBetween(0, 1.25);
+            let rolled = b * m.floatBetween(0, 1.25);
+            if (opts && opts.selfTend) rolled *= Hediffs?.SELF_TEND_FACTOR || 0.7;
             return m.clamp(rolled, 0, cap);
         },
 
         applyTend(body, target, quality = 0.4) {
             if (!target) return false;
+            if (target.hediff) {
+                const h = target.hediff;
+                h.tended = true;
+                h.tendQuality = quality;
+                const def = Hediffs && typeof Hediffs.def === "function"
+                    ? Hediffs.def(body?.ctx, h.id)
+                    : null;
+                const hours = Number(def?.baseTendDurationHours) || 12;
+                h.tendMinutesLeft = hours * 60;
+                body?.markDirty?.();
+                return true;
+            }
             if (target.destroyed) {
                 target.destroyed.tended = true;
                 body?.markDirty?.();
@@ -551,6 +605,7 @@
             inj.tended = true;
             inj.tendQuality = quality;
             inj.bleeding = false;
+            inj.infectBedFactor = body?.owner?._resting ? 0.5 : 1;
             body?.markDirty?.();
             return true;
         }

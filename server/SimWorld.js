@@ -3436,7 +3436,8 @@ class SimWorld {
         if (recipe.requireStation && !this._hasNearbyThing(p, recipe.requireStation)) return;
         if (recipe.requireTool?.toolClass) {
             const held = this._held(p);
-            if (!held || held.toolClass !== recipe.requireTool.toolClass) return;
+            const def = held ? itemDefs().get(held.id) : null;
+            if (Carry.stackToolClass(held, def) !== recipe.requireTool.toolClass) return;
         }
 
         let tipQuality = null;
@@ -3445,8 +3446,7 @@ class SimWorld {
             if (ing.toolClass === "spear_tip" && knapQuality) tipQuality = knapQuality;
         }
 
-        const wear = Number(recipe.requireTool?.wear) || 0;
-        if (wear > 0) this._wearHeld(p, wear);
+        this._consumeCraftTool(p, recipe);
 
         const extras = {};
         if (tipQuality && (recipe.id === "stone_spear" || recipe.id === "flint_spear")) {
@@ -3466,6 +3466,23 @@ class SimWorld {
     _held(p) {
         if (!p?.inventory) return null;
         return p.inventory[p.hotbarIndex] || null;
+    }
+
+    _consumeCraftTool(p, recipe) {
+        if (!recipe.requireTool?.toolClass) return;
+        const held = this._held(p);
+        const def = held ? itemDefs().get(held.id) : null;
+        if (Carry.isSingleUseTool(held, def)) {
+            const idx = p.hotbarIndex | 0;
+            const s = p.inventory[idx];
+            if (!s) return;
+            const qty = Math.max(0, Math.floor(Number(s.quantity) || 0));
+            if (qty <= 1) p.inventory[idx] = null;
+            else s.quantity = qty - 1;
+            return;
+        }
+        const wear = Number(recipe.requireTool.wear) || 0;
+        if (wear > 0) this._wearHeld(p, wear);
     }
 
     _wearPlayerHeld(creatureId, amount) {
@@ -7209,13 +7226,14 @@ class SimWorld {
             },
             destroyedPartName: src?.destroyedPartName
                 ? String(src.destroyedPartName)
-                : null
+                : null,
+            hediffId: src?.hediffId ? String(src.hediffId) : null
         });
         const rawHints = Array.isArray(action.targets) && action.targets.length
             ? action.targets
             : [action];
         const hints = rawHints.map(parseHint);
-        const hinted = hints.some((h) => h.partName || h.inj.id != null || h.inj.name || h.destroyedPartName);
+        const hinted = hints.some((h) => h.partName || h.inj.id != null || h.inj.name || h.destroyedPartName || h.hediffId);
         const applied = [];
         for (const hint of hints) {
             const t = BodyHealing.resolveTendTarget?.(patientCreature.anatomy, hint);
@@ -7240,7 +7258,9 @@ class SimWorld {
 
         const quality = BodyHealing.rollTendQuality(
             Number(meta.bandage.tendQuality) || 0.4,
-            Number(meta.bandage.tendQualityMax) || 0.7
+            Number(meta.bandage.tendQualityMax) || 0.7,
+            undefined,
+            { selfTend: tender.id === patientPawn.id }
         );
         for (const t of applied) BodyHealing.applyTend(patientCreature.anatomy, t, quality);
 
@@ -7710,8 +7730,12 @@ class SimWorld {
         const control = this._actionPawn(session, { pawnId: session.controlId });
         if (control?.creature?.isAttacking?.()) return true;
         for (const row of uncontrolled || []) {
-            if (row.creature?.ai?.assistTarget) return true;
-            if (row.creature?.isAttacking?.()) return true;
+            const c = row.creature;
+            if (!c) continue;
+            if (c._resting || c._downed || c.isIncapacitated?.() || c.isImmobile?.()) continue;
+            if (c.isAttacking?.()) return true;
+            const t = c.ai?.assistTarget;
+            if (t && t.active !== false && !t.isBodyDead?.()) return true;
         }
         return false;
     }

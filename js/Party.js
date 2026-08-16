@@ -1554,7 +1554,10 @@ class PartySystem {
         if (hit && now - this.lastHitAt < 8000 && !hit.isBodyDead?.()) return true;
         for (const p of scene.party || []) {
             if (!p || p.isBodyDead?.()) continue;
-            if (p.isAttacking?.() || p.partyAI?.assistTarget) return true;
+            if (p._resting || p._downed || p.isIncapacitated?.() || p.isImmobile?.()) continue;
+            if (p.isAttacking?.()) return true;
+            const t = p.partyAI?.assistTarget;
+            if (t && t.active !== false && !t.isBodyDead?.()) return true;
         }
         const ts = scene.tileSize || 16;
         const range = ((typeof Party !== "undefined" && Party.DUEL_CLUSTER_TILES) || 12) * ts;
@@ -1590,6 +1593,12 @@ class PartySystem {
     _tendWoundKeys(patient, spec) {
         const pid = patient?.pawnId || patient?.id || "";
         const keys = [];
+        const hediffId = spec?.hediffId || spec?.hediff?.id;
+        if (hediffId) {
+            const part = spec?.partName || spec?.hediff?.partName || "";
+            keys.push(`${pid}#inf:${part}:${hediffId}`);
+            return keys;
+        }
         const destroyed = spec?.destroyed?.partName || spec?.destroyedPartName;
         if (destroyed) keys.push(`${pid}#d:${destroyed}`);
         const part = spec?.part?.name || spec?.partName || "";

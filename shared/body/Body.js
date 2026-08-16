@@ -281,7 +281,12 @@
                     painCategory: i.painCategory || null,
                     scarPending: !!i.scarPending,
                     scarSeverity: i.scarSeverity || 0,
-                    sourceLabel: i.sourceLabel || null
+                    sourceLabel: i.sourceLabel || null,
+                    infectionChance: Number(i.infectionChance) || 0,
+                    infectInMinutes: i.infectInMinutes != null ? Number(i.infectInMinutes) : null,
+                    infectBedFactor: Number.isFinite(Number(i.infectBedFactor))
+                        ? Number(i.infectBedFactor)
+                        : null
                 })),
                 limbs: Object.fromEntries(
                     Object.entries(this.limbs).map(([k, v]) => [k, v.toJSON()])
@@ -328,8 +333,10 @@
             }
             this.bloodLoss = 0;
             this.destroyedBleed = [];
-            /** @type {{ id: string, severity: number }[]} */
+            /** @type {{ id: string, severity: number, partName?: string }[]} */
             this.hediffs = [];
+            /** @type {Record<string, number>} */
+            this.immunities = {};
             const math = resolveMath(this.ctx);
             this.malnutritionRatePerDay = math.floatBetween(0.3624, 0.5436);
             this._dirty = false;
@@ -346,10 +353,15 @@
         }
 
         hediff(id) {
-            return (this.hediffs || []).find((h) => h.id === id) || null;
+            return (this.hediffs || []).find((h) => h.id === id && !h.partName) || null;
         }
 
-        addHediff(id, severity = undefined) {
+        localHediff(id, partName) {
+            if (!partName) return this.hediff(id);
+            return (this.hediffs || []).find((h) => h.id === id && h.partName === partName) || null;
+        }
+
+        addHediff(id, severity = undefined, opts = null) {
             const def =
                 Hediffs && typeof Hediffs.def === "function"
                     ? Hediffs.def(this.ctx, id)
@@ -357,23 +369,57 @@
             if (!def && severity === undefined) {
                 console.warn("Unknown hediff", id);
             }
-            let h = this.hediff(id);
+            const partName = opts && typeof opts === "object" ? opts.partName || null : null;
+            const isLocal = !!(def?.local || partName);
+            if (isLocal && !partName) {
+                console.warn("Local hediff missing partName", id);
+                return null;
+            }
+            let h = isLocal ? this.localHediff(id, partName) : this.hediff(id);
             const sev =
                 severity !== undefined ? Number(severity) : Number(def?.initialSeverity) || 0;
             if (h) {
                 h.severity = Number.isFinite(sev) ? sev : 0;
             } else {
-                h = { id, severity: Number.isFinite(sev) ? sev : 0 };
+                h = {
+                    id,
+                    severity: Number.isFinite(sev) ? sev : 0,
+                    partName: isLocal ? partName : undefined,
+                    tended: false,
+                    tendQuality: 0,
+                    tendMinutesLeft: 0,
+                    luck: null
+                };
                 this.hediffs.push(h);
             }
             this.markDirty();
             return h;
         }
 
-        removeHediff(id) {
-            const i = (this.hediffs || []).findIndex((h) => h.id === id);
+        removeHediff(id, partName = null) {
+            const i = (this.hediffs || []).findIndex((h) => {
+                if (h.id !== id) return false;
+                if (partName) return h.partName === partName;
+                return !h.partName;
+            });
             if (i < 0) return false;
             this.hediffs.splice(i, 1);
+            this.markDirty();
+            return true;
+        }
+
+        removeLocalHediffsOnPart(part) {
+            if (!part || !this.hediffs?.length) return false;
+            const names = new Set();
+            const walk = (p) => {
+                if (!p?.name) return;
+                names.add(p.name);
+                for (const c of Object.values(p.limbs || {})) walk(c);
+            };
+            walk(part);
+            const before = this.hediffs.length;
+            this.hediffs = this.hediffs.filter((h) => !h.partName || !names.has(h.partName));
+            if (this.hediffs.length === before) return false;
             this.markDirty();
             return true;
         }
@@ -406,6 +452,7 @@
 
         _onPartDestroyed(part) {
             this.rebuildIndex();
+            this.removeLocalHediffsOnPart(part);
             this.markDirty();
             const fatals = this.plan.fatalParts || ["Brain", "Heart", "Torso", "Head", "Neck"];
             const coreId = this.plan.core || "Torso";
@@ -492,6 +539,7 @@
             this.bloodLoss = 0;
             this.destroyedBleed = [];
             this.hediffs = [];
+            this.immunities = {};
             const coreDef = this.plan.parts[this.plan.core || "Torso"];
             this.core = new BodyPart(
                 this,
@@ -511,8 +559,14 @@
                 destroyedBleed: this.destroyedBleed.slice(),
                 hediffs: (this.hediffs || []).map((h) => ({
                     id: h.id,
-                    severity: Number(h.severity) || 0
+                    severity: Number(h.severity) || 0,
+                    partName: h.partName || null,
+                    tended: !!h.tended,
+                    tendQuality: Number(h.tendQuality) || 0,
+                    tendMinutesLeft: Number(h.tendMinutesLeft) || 0,
+                    luck: Number.isFinite(Number(h.luck)) ? Number(h.luck) : null
                 })),
+                immunities: { ...(this.immunities || {}) },
                 malnutritionRatePerDay: this.malnutritionRatePerDay,
                 core: this.core.toJSON()
             };
@@ -524,8 +578,19 @@
             this.destroyedBleed = (data.destroyedBleed || []).slice();
             this.hediffs = (data.hediffs || []).map((h) => ({
                 id: h.id,
-                severity: Number(h.severity) || 0
+                severity: Number(h.severity) || 0,
+                partName: h.partName || undefined,
+                tended: !!h.tended,
+                tendQuality: Number(h.tendQuality) || 0,
+                tendMinutesLeft: Number(h.tendMinutesLeft) || 0,
+                luck: Number.isFinite(Number(h.luck)) ? Number(h.luck) : null
             }));
+            const imm = data.immunities && typeof data.immunities === "object" ? data.immunities : {};
+            this.immunities = {};
+            for (const [k, v] of Object.entries(imm)) {
+                const n = Number(v);
+                if (Number.isFinite(n) && n > 0) this.immunities[k] = n;
+            }
             const rate = Number(data.malnutritionRatePerDay);
             const math = resolveMath(this.ctx);
             this.malnutritionRatePerDay =

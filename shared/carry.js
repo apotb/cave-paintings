@@ -20,6 +20,19 @@
         return !!RECIPE_META_KEYS[k];
     }
 
+    /** Knapped tools store class on the stack; stackable tools (bone awl) use the item def. */
+    function stackToolClass(stack, def) {
+        return (stack && stack.toolClass) || def?.toolClass || null;
+    }
+
+    /** Stackable def tools are consumed 1× per craft instead of durability wear. */
+    function isSingleUseTool(stack, def) {
+        if (!stack) return false;
+        if (stack.knapMaterial || stack.knapIconData || stack.knapDamage != null) return false;
+        if (!stackToolClass(stack, def)) return false;
+        return Math.max(1, Number(def?.maxStack) || 1) > 1;
+    }
+
     function hideStageOf(v) {
         if (!v || typeof v !== "object" || !v.hideStage) return null;
         return {
@@ -316,6 +329,8 @@
         BASE_STRENGTH,
         RECIPE_META_KEYS,
         isRecipeMetaKey,
+        stackToolClass,
+        isSingleUseTool,
         unitWeight,
         stackMass,
         wornPieces,

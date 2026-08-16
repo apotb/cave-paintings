@@ -86,5 +86,47 @@
                 "hungerRateFactor": 3.0
             }
         ]
+    },
+    "infection": {
+        "id": "infection",
+        "name": "Infection",
+        "local": true,
+        "isInfection": true,
+        "tendable": true,
+        "initialSeverity": 0.001,
+        "lethalSeverity": 1,
+        "baseTendDurationHours": 12,
+        "severityPerDayNotImmune": 0.84,
+        "severityPerDayTended": -0.53,
+        "immunityPerDaySick": 0.6441,
+        "severityPerDayImmune": -0.70,
+        "immunityPerDayNotSick": -0.40,
+        "stages": [
+            {
+                "label": "minor",
+                "minSeverity": 0,
+                "painOffset": 0.05
+            },
+            {
+                "label": "major",
+                "minSeverity": 0.33,
+                "painOffset": 0.08
+            },
+            {
+                "label": "extreme",
+                "minSeverity": 0.78,
+                "lifeThreatening": true,
+                "painOffset": 0.12,
+                "capacityOffsets": { "consciousness": -0.05 }
+            },
+            {
+                "label": "extreme",
+                "minSeverity": 0.87,
+                "lifeThreatening": true,
+                "painOffset": 0.85,
+                "capacityMax": { "consciousness": 0.1 },
+                "capacityOffsets": { "breathing": -0.05 }
+            }
+        ]
     }
 }

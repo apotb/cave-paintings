@@ -7894,8 +7894,23 @@ class SceneMain extends SceneBase {
 
     _heldMatchesCraftTool(requireTool) {
         if (!requireTool?.toolClass) return true;
+        return this.player?.heldToolClass?.() === requireTool.toolClass;
+    }
+
+    /** Wear a knapped tool, or consume 1 from a stackable single-use tool (bone). */
+    _consumeCraftTool(recipe) {
+        if (!recipe.requireTool?.toolClass) return;
         const held = this.player?.getHeldItem?.();
-        return !!(held && held.toolClass === requireTool.toolClass);
+        const def = held ? this.getItem(held.id) : null;
+        if (typeof Carry !== "undefined" && Carry.isSingleUseTool?.(held, def)) {
+            const idx = this.player.isControlled?.()
+                ? (this.hotbar?.activeIndex ?? this.player.hotbarIndex ?? 0)
+                : (this.player.hotbarIndex ?? 0);
+            this.player.loseItemAt(idx, 1);
+            return;
+        }
+        const wear = Number(recipe.requireTool.wear) || 0;
+        if (wear > 0) this.player.wearHeld(wear);
     }
 
     hasNearbyThing(id) {
@@ -8016,8 +8031,7 @@ class SceneMain extends SceneBase {
         }
         for (const ing of recipe.ingredients) this.player.loseMatchingItems(ing);
 
-        const wear = Number(recipe.requireTool?.wear) || 0;
-        if (wear > 0) this.player.wearHeld(wear);
+        this._consumeCraftTool(recipe);
 
         if (tipQuality && (recipe.id === "stone_spear" || recipe.id === "flint_spear")) {
             const stack = makeItemStack(item, recipe.quantity || 1, undefined, this.worldMinuteIndex());

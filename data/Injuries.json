@@ -6,7 +6,8 @@
         "painPerSeverity": 0.0125,
         "bleedRate": 0.06,
         "canScar": true,
-        "delicate": false
+        "delicate": false,
+        "infectionChance": 0.15
     },
     "bruise": {
         "id": "bruise",
@@ -15,7 +16,8 @@
         "painPerSeverity": 0.0125,
         "bleedRate": 0,
         "canScar": false,
-        "delicate": false
+        "delicate": false,
+        "infectionChance": 0
     },
     "brain_cut": {
         "id": "brain_cut",
@@ -25,6 +27,17 @@
         "bleedRate": 0.06,
         "canScar": true,
         "delicate": true,
-        "alwaysScar": true
+        "alwaysScar": true,
+        "infectionChance": 0.15
+    },
+    "bite": {
+        "id": "bite",
+        "name": "Bite",
+        "type": "sharp",
+        "painPerSeverity": 0.0125,
+        "bleedRate": 0.06,
+        "canScar": true,
+        "delicate": false,
+        "infectionChance": 0.30
     }
 }

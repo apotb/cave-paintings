@@ -690,7 +690,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._bodyDead = true;
         this.setVelocity(0, 0);
         if (this._resting || this._restWalk) this.scene?._wakePawn?.(this);
-        const environmental = _reason === "bloodLoss" || _reason === "starvation";
+        const environmental = _reason === "bloodLoss" || _reason === "starvation" || _reason === "infection";
         const killer = !environmental && this._hitKiller
             ? this._hitKiller
             : null;
@@ -2326,6 +2326,16 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return this.inventory[idx] || null;
     }
 
+    /** Knapped class on the stack, or item-def class (bone awl). */
+    heldToolClass() {
+        const stack = this.getHeldItem();
+        if (!stack) return null;
+        const def = this.scene.getItem?.(stack.id);
+        return typeof Carry !== "undefined" && Carry.stackToolClass
+            ? Carry.stackToolClass(stack, def)
+            : (stack.toolClass || def?.toolClass || null);
+    }
+
     useHeldItem() {
         const item = this.getHeldItem();
         if (item) return this.useItem(item);
@@ -2741,7 +2751,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!this.scene.canCraft?.(recipe)) return false;
         const item = this.getHeldItem();
         const wantClass = recipe.requireTool?.toolClass;
-        if (wantClass && (!item || item.toolClass !== wantClass)) return false;
+        if (wantClass && this.heldToolClass() !== wantClass) return false;
 
         const seconds = Math.max(0.1, Number(recipe.craftSeconds) || 1);
         const scale = this.capacities.manipulationDurationScale();
@@ -2773,13 +2783,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     _tickCraft(delta) {
         if (!this._craftChannel) return;
         const slot = this.scene.hotbar.activeIndex;
-        const held = this.getHeldItem();
         const station = this._craftChannel.station;
         const recipe = this._craftChannel.recipe;
         const wantClass = this._craftChannel.toolClass;
         if (
             slot !== this._craftChannel.slot
-            || (wantClass && (!held || held.toolClass !== wantClass))
+            || (wantClass && this.heldToolClass() !== wantClass)
             || !station?.active
             || !station.inRange?.()
         ) {
@@ -2853,7 +2862,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             injuryId: h?.injuryId ?? h?.inj?.id,
             injuryName: h?.injuryName || h?.inj?.name || null,
             injurySeverity: h?.injurySeverity ?? h?.inj?.severity,
-            destroyedPartName: h?.destroyedPartName || h?.destroyed?.partName || null
+            destroyedPartName: h?.destroyedPartName || h?.destroyed?.partName || null,
+            hediffId: h?.hediffId || h?.hediff?.id || null
         });
 
         // Dedicated MP: server applies tend + consumes bandage (YOU syncs body/inv).
@@ -2894,7 +2904,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         const quality = BodyHealing.rollTendQuality(
             ch.qualityBase,
-            ch.qualityMax
+            ch.qualityMax,
+            undefined,
+            { selfTend: this === patient }
         );
         for (const t of applied) BodyHealing.applyTend(body, t, quality);
         if (typeof src.loseItem === "function") src.loseItem(held, 1);

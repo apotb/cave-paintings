@@ -72,6 +72,16 @@
         return { you: "#7ec8ff", enemy: "#ff9a7a", weapon: "#ffe08a" };
     }
 
+    function hediffsApi() {
+        if (typeof Hediffs !== "undefined") return Hediffs;
+        try {
+            if (typeof module === "object" && module.exports) return require("./Hediff");
+        } catch (_) {
+            /* optional */
+        }
+        return null;
+    }
+
     /** Fatal part destroy is deferred via microtask — flush so death lands now. */
     function finishFatal(target, part) {
         if (!target) return;
@@ -352,7 +362,8 @@
 
             const hitType = armor?.damageType || (attack.type === "sharp" ? "sharp" : "blunt");
             const isSharp = hitType === "sharp";
-            let idef = isSharp ? defs.cut : defs.bruise;
+            const injuryKey = attack.def?.injury || attack.injury;
+            let idef = (injuryKey && defs[injuryKey]) || (isSharp ? defs.cut : defs.bruise);
             if (victimPart.baseId === "Brain" || victimPart.name === "Brain") {
                 idef = defs.brain_cut || idef;
             }
@@ -377,7 +388,10 @@
                 scarPending: false,
                 scarSeverity: 0,
                 painCategory: null,
-                sourceLabel: this.sourceLabelFor(attacker, attack)
+                sourceLabel: this.sourceLabelFor(attacker, attack),
+                infectionChance: Number(idef.infectionChance) || 0,
+                infectInMinutes: null,
+                infectBedFactor: null
             };
 
             const alwaysScar =
@@ -400,6 +414,9 @@
             }
 
             victimPart.injure(injury);
+            if (!victimPart.isDead()) {
+                hediffsApi()?.armInfecter?.(injury, target, math);
+            }
 
             const destroyed = victimPart.isDead();
             const result = {

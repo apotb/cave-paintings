@@ -62,6 +62,7 @@
 
     function injuredForAutofill(body) {
         if (!body || typeof body.parts !== "function") return false;
+        if ((body.hediffs || []).some((h) => h && h.id === "infection")) return true;
         for (const part of Object.values(body.parts() || {})) {
             if (!part || part.isDead?.()) continue;
             for (const inj of part.injuries || []) {
