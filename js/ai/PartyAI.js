@@ -534,7 +534,8 @@ class PartyAI {
         const enc = pawn.getEncumbrance?.() || { speedMultiplier: 1 };
         const moveMul = Math.max(0.05, Math.min(1.5, pawn.capacities?.moving?.() || 1));
         let mul = 1;
-        if (pawn._eatChannel || pawn._tendChannel) mul *= 0.5;
+        if (pawn._eatChannel || pawn._tendChannel || pawn._skinChannel
+            || pawn._fleshChannel || pawn._brainChannel || pawn._craftChannel) mul *= 0.5;
         if (pawn.isAttacking?.()) mul *= 0.5;
         const speed =
             (pawn.speed || 3.5) *

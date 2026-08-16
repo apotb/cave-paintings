@@ -539,11 +539,26 @@ class PartySystem {
         }
     }
 
-    tryAllyClick(pawn) {
+    allyClickWouldUseItem(pawn) {
+        const scene = this.scene;
+        const me = scene.player;
+        if (!pawn || !scene.party?.includes(pawn)) return false;
+        const held = me?.getHeldItem?.();
+        const meta = held ? scene.getItem(held.id) : null;
+        if (meta?.bandage) return true;
+        const food = held?.food || meta?.food;
+        return !!(Number(food?.kc ?? 0) > 0 && this._needsForceFeed(pawn) && pawn !== me);
+    }
+
+    tryAllyClick(pawn, opts = {}) {
         const scene = this.scene;
         const me = scene.player;
         if (!pawn) return false;
         if (!scene.party?.includes(pawn)) return false;
+        if (opts.forceSwitch) {
+            if (pawn === me) return false;
+            return this.switchControl(pawn);
+        }
         const held = me?.getHeldItem?.();
         const meta = held ? scene.getItem(held.id) : null;
         if (meta?.bandage) {
@@ -612,8 +627,8 @@ class PartySystem {
         if (!toPawn || !stack) return false;
         const whole = typeof cloneItemStack === "function" ? cloneItemStack(stack) : { ...stack };
         if (toPawn.canEquipLootStackIfSlotEmpty?.(whole) && toPawn.tryEquipLootStackIfSlotEmpty?.(whole)) {
-            if (whole.quantity > 0 && !toPawn.gainStack(whole)) return false;
-        } else if (!toPawn.gainStack(whole)) {
+            if (whole.quantity > 0 && !toPawn.receiveStack(whole)) return false;
+        } else if (!toPawn.receiveStack(whole)) {
             return false;
         }
         scene.hotbar.dirty = true;
@@ -1755,7 +1770,9 @@ class PartySystem {
                 skipHeld,
                 getFood: (stack) => {
                     const meta = scene.getItem(stack.id);
-                    return stack.food || meta?.food;
+                    const food = { ...(meta?.food || {}) };
+                    if (stack.food && typeof stack.food === "object") Object.assign(food, stack.food);
+                    return food;
                 }
             });
         }
@@ -1775,6 +1792,8 @@ class PartySystem {
                 if (!(Number(food?.kc ?? 0) > 0)) continue;
                 const poison = Number(food?.foodPoisonChance ?? 0) > 0;
                 if (poison && !allowPoison) continue;
+                const reserved = food.autoEat === "malnourished" || stack.id === "cracked_coconut";
+                if (reserved && !allowPoison) continue;
                 const spoil = Number(stack.spoilAt ?? stack.spoilLeft ?? Infinity);
                 candidates.push({
                     pawn: p,

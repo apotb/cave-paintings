@@ -37,7 +37,7 @@
     const RECRUIT_EMPTY = 0.5;
     const RECRUIT_FOOD = 0.75;
 
-    const COOLDOWN_ROOM = [60, 120];
+    const COOLDOWN_ROOM = [120, 240];
     /** Full-party packs of 2–6: twice as long as the previous full-party wait. */
     const COOLDOWN_FULL = [480, 960];
 
@@ -211,6 +211,12 @@
         return distTiles(a, b, tileSize) <= range + 0.05;
     }
 
+    /** Bowls / emergency rations: companions skip these until malnourished. */
+    function isReservedAutoEat(stack, food) {
+        if (food?.autoEat === "malnourished") return true;
+        return stack?.id === "cracked_coconut";
+    }
+
     /**
      * Best auto-eat stack in the party. In-range meals win; otherwise anything
      * within seek range (so a hungry companion can walk in). Never takes from
@@ -249,6 +255,7 @@
                 if (!(Number(food?.kc ?? 0) > 0)) continue;
                 const poison = Number(food?.foodPoisonChance ?? 0) > 0;
                 if (poison && !allowPoison) continue;
+                if (isReservedAutoEat(stack, food) && !allowPoison) continue;
                 const spoil = Number(stack.spoilAt ?? stack.spoilLeft ?? Infinity);
                 candidates.push({
                     pawn: p,

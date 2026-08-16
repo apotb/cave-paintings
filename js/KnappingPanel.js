@@ -159,15 +159,15 @@ class KnappingPanel {
         const cy = cam.height * 0.5;
         this.container.setPosition(cx, cy);
         this.backdrop.setSize(cam.width + 40, cam.height + 40);
-        const s = this.scene.uiScale || 1;
-        this.title.setFontSize(pixelUiFontSize(24, s));
-        this.preview.setFontSize(pixelUiFontSize(16, s));
-        this.btnRotate?.label.setFontSize(pixelUiFontSize(16, s));
-        this.btnFinish?.label.setFontSize(pixelUiFontSize(16, s));
+        // Knapping stays 1:1 with the chip grid — GUI scale must not enlarge text alone.
+        this.title.setFontSize(pixelUiFontSize(24, 1));
+        this.preview.setFontSize(pixelUiFontSize(16, 1));
+        this.btnRotate?.label.setFontSize(pixelUiFontSize(16, 1));
+        this.btnFinish?.label.setFontSize(pixelUiFontSize(16, 1));
         // Screen-space top-right of the 420×354 panel
         this.helpBtn
-            ?.setScale(3 * s)
-            .setPosition(cx + 210 - 32 * s, cy - 177 + 32 * s);
+            ?.setScale(3)
+            .setPosition(cx + 210 - 32, cy - 177 + 32);
     }
 
     /**

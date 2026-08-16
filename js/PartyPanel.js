@@ -229,7 +229,7 @@ class PartyPanel {
         root.add([bg, spr, crown, name, vitals, warn, hit]);
         const row = { root, bg, hit, spr, crown, name, vitals, warn, pawn: null };
         hit.on("pointerdown", () => {
-            if (row.pawn) scene.partySys?.tryAllyClick?.(row.pawn);
+            if (row.pawn) this._onRowClick(row.pawn);
         });
         hit.on("pointerover", (p) => {
             if (!row.pawn) return;
@@ -249,7 +249,38 @@ class PartyPanel {
         return row;
     }
 
+    _cancelPendingRowClick() {
+        this._pendingRowClick?.remove?.(false);
+        this._pendingRowClick = null;
+    }
+
+    _onRowClick(pawn) {
+        const scene = this.scene;
+        if (!pawn) return;
+        const now = Date.now();
+        const doubleMs = 350;
+        if (this._rowClickPawn === pawn && now - (this._rowClickAt || 0) < doubleMs) {
+            this._cancelPendingRowClick();
+            this._rowClickPawn = null;
+            this._rowClickAt = 0;
+            scene.partySys?.tryAllyClick?.(pawn, { forceSwitch: true });
+            return;
+        }
+        this._cancelPendingRowClick();
+        this._rowClickPawn = pawn;
+        this._rowClickAt = now;
+        if (!scene.partySys?.allyClickWouldUseItem?.(pawn)) {
+            scene.partySys?.tryAllyClick?.(pawn);
+            return;
+        }
+        this._pendingRowClick = scene.time.delayedCall(doubleMs, () => {
+            this._pendingRowClick = null;
+            scene.partySys?.tryAllyClick?.(pawn);
+        });
+    }
+
     _clearRows() {
+        this._cancelPendingRowClick();
         for (const row of this.rows) row.root.destroy(true);
         this.rows = [];
         for (const pip of this.pips) pip.destroy();

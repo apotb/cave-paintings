@@ -265,7 +265,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const crown = this._nameCrown;
         if (crown?.active && crown.visible) {
             const s = this.scene.uiScale || 1;
-            const glyphH = Math.ceil(10 * s / zoom) + 1;
+            const glyphH = Math.max(0, Math.ceil(8 * s / zoom) - 2);
             ly = this.y + a.y - glyphH - Math.ceil(crown.displayHeight || 0) - 1;
         } else {
             ly -= nameH + 2;
@@ -409,7 +409,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this._bindNameHud(crown);
             const zoom = this.scene.worldZoom || 3;
             const s = this.scene.uiScale || 1;
-            const glyphH = Math.ceil(10 * s / zoom) + 1;
+            const glyphH = Math.max(0, Math.ceil(8 * s / zoom) - 2);
             crown.setPosition(this.x + a.x, this.y + a.y - glyphH);
         }
     }
@@ -663,6 +663,31 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Accept a whole given stack, merging into existing stacks when possible.
+     * Returns true only if the entire quantity was taken.
+     */
+    receiveStack(stack) {
+        if (!stack || !(stack.quantity > 0)) return false;
+        const qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
+        if ((this.countLootSpace?.(stack, qty) ?? 0) < qty) return false;
+
+        const special = typeof isSpecialStack === "function"
+            ? isSpecialStack(stack)
+            : !!(stack.customName || stack.food || stack.ingredients || stack.toolClass);
+        if (special) return this.gainStack(stack);
+
+        const meta = this.scene.getItem(stack.id);
+        if (!meta) return false;
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        const left = spoilLeftForCharacter(stack, now);
+        const remaining = this.gainItem(meta, stack.quantity, left, {
+            dryProgress: stack.dryProgress,
+            soakProgress: stack.soakProgress
+        });
+        return remaining === 0;
     }
 
     /** Unarmed fist fill — matches arm color on the character look. */
@@ -3412,7 +3437,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const encumbrance = this.getEncumbrance();
         const moving = x !== 0 || y !== 0;
         const attacking = this.isAttacking();
-        const tending = !!this._tendChannel || !!this._eatChannel || !!this._fleshChannel || !!this._brainChannel || !!this._craftChannel;
+        const tending = !!this._tendChannel || !!this._eatChannel || !!this._skinChannel
+            || !!this._fleshChannel || !!this._brainChannel || !!this._craftChannel;
         const livingLegs = this.anatomy.livingLegs();
         const canSprint = livingLegs >= 2
             && !prone
