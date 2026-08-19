@@ -2,6 +2,17 @@
  * In-browser world session for Singleplayer — same NetClient surface as WebSocket MP.
  * Persists worlds via WorldStore; characters stay in CharacterStore (client-owned).
  */
+(function (root, factory) {
+    if (typeof module === "object" && module.exports) {
+        const NetProtocol = require("../../shared/protocol");
+        const Sleep = require("../../shared/sleep");
+        const Hunger = require("../../shared/hunger");
+        const Carry = require("../../shared/carry");
+        module.exports = factory(NetProtocol, Sleep, Hunger, Carry);
+    } else {
+        root.LocalSim = factory(root.NetProtocol, root.Sleep, root.Hunger, root.Carry);
+    }
+})(typeof globalThis !== "undefined" ? globalThis : this, function (NetProtocol, Sleep, Hunger, Carry) {
 class LocalSim {
     /**
      * @param {{ world: object, character: object }} opts
@@ -248,6 +259,10 @@ class LocalSim {
         if (!this.connected || !this._pawn) return;
         const type = action?.type;
         const p = this._pawn;
+        if ((NetProtocol.ClientAuthoredActions || []).indexOf(type) >= 0) {
+            // SP ground loot / buildings / rest are client-authored into chunk.meta.
+            return;
+        }
         if (type === NetProtocol.Actions.SWITCH_CONTROL) {
             if (action.pawnId) this._controlId = action.pawnId;
             this._dispatch(NetProtocol.Types.YOU, this._youPayload());
@@ -293,22 +308,6 @@ class LocalSim {
                 text: `<${p.name}> ${text}`,
                 from: p.id
             });
-            return;
-        }
-        if (type === NetProtocol.Actions.DROP) {
-            // SP ground loot is client-authored (DroppedItem → chunk.meta); ignore.
-            return;
-        }
-        if (type === NetProtocol.Actions.SPAWN_DROP) {
-            // Same — client already spawned into the live scene.
-            return;
-        }
-        if (type === NetProtocol.Actions.PICKUP) {
-            // Client handles local pickup for SP drops.
-            return;
-        }
-        if (type === NetProtocol.Actions.PLACE || type === NetProtocol.Actions.STORAGE || type === NetProtocol.Actions.SLEEP) {
-            // SP buildings / rest are client-authored into chunk.meta; ignore.
             return;
         }
         if (type === NetProtocol.Actions.ATTACK) {
@@ -858,18 +857,22 @@ class LocalSim {
             for (const pawn of pawns) {
                 if (!pawn || pawn.dead) continue;
                 const fed = (Number(pawn.kc) > 0) || (Number(pawn.saturation) > 0);
-                let tick = 2000 / (24 * 60);
                 const scenePawn = this._scenePawn(pawn.id);
-                const caps = scenePawn?.capacities;
-                if (caps?.hungerRateFactor) tick *= caps.hungerRateFactor() || 1;
-                if (typeof Sleep !== "undefined") {
-                    tick *= Sleep.hungerMult?.(scenePawn?._resting) ?? 1;
-                }
-                pawn.saturation -= tick;
-                if (pawn.saturation < 0) {
-                    pawn.kc = Math.max(0, pawn.kc + pawn.saturation);
-                    pawn.saturation = 0;
-                }
+                const getDef = (id) => this.scene?.getItem?.(id) || null;
+                const enc = (Carry && Carry.encumbrance)
+                    ? Carry.encumbrance(
+                        Carry.gearMass(pawn.inventory, pawn.equipment, getDef, pawn.overflow),
+                        scenePawn?.strength || Carry.strengthFromEquip(pawn.equipment, getDef)
+                    )
+                    : { hungerRate: 1 };
+                const tick = Hunger.minuteDrain({
+                    hunger: pawn.hunger || scenePawn?.hunger || Hunger.DEFAULT_HUNGER,
+                    sprinting: !!(scenePawn?.isSprinting || pawn.sprint),
+                    encumbranceHungerRate: enc.hungerRate,
+                    hungerRateFactor: scenePawn?.capacities?.hungerRateFactor?.() || 1,
+                    resting: !!(scenePawn?._resting)
+                });
+                Hunger.applyStarve(pawn, tick);
                 if (scenePawn) {
                     scenePawn.kc = pawn.kc;
                     scenePawn.saturation = pawn.saturation;
@@ -1099,3 +1102,6 @@ class LocalSim {
         this.emit("close", {});
     }
 }
+
+return LocalSim;
+});

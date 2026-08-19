@@ -1,3 +1,7 @@
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+
+test("abandoned camp structure gen", { timeout: 120000 }, () => {
 /**
  * Determinism / occupancy checks for abandoned-camp structure gen.
  */
@@ -210,11 +214,5 @@ for (let cy = -12; cy <= 12 && !mountainNull; cy++) {
 
 const originCovered = found.footprints.some((t) => t.tx === 0 && t.ty === 0);
 if (originCovered) throw new Error("camp covers origin tile");
-
-console.log("assert-structures ok", {
-    seed,
-    cell: foundCell,
-    fire: { tx: found.fireTx, ty: found.fireTy },
-    pieces: found.spawned.map((s) => s.piece.id),
-    chunk: { x: fireChunkX, y: fireChunkY }
+assert.ok(found);
 });

@@ -1,9 +1,5 @@
-/**
- * Infection chance, immunity race, tend expiry, and death.
- */
-const path = require("path");
-const GameMath = require("../shared/gameMath");
-const DataStore = require("../shared/DataStore");
+const { test } = require("node:test");
+const { loadDefs, DataStore, GameMath } = require("./helpers/load");
 const { Body } = require("../shared/body/Body");
 const Hediffs = require("../shared/body/Hediff");
 const BodyHealing = require("../shared/body/Healing");
@@ -11,8 +7,9 @@ const BodyCombat = require("../shared/body/Combat");
 const Sleep = require("../shared/sleep");
 const { createPlayerCreature } = require("../server/SimCreature");
 
-DataStore.loadFromDisk(path.resolve(__dirname, ".."));
+loadDefs();
 
+test("ported infection asserts", () => {
 function assert(cond, msg) {
     if (!cond) throw new Error(msg || "assert failed");
 }
@@ -293,4 +290,6 @@ GameMath.setRng(() => 0.5);
     assert((Number(round.immunities.infection) || 0) >= 0, "serialize immunities");
 }
 
-console.log("infection asserts ok");
+
+
+});

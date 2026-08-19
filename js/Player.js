@@ -2082,13 +2082,14 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         // starts fed still counts as fed even if hungerRateFactor empties the stomach.
         this._malnutritionFed = (this.kc > 0) || (this.saturation > 0);
 
-        // 2000 kcal over 1440 game minutes (one day) while idle
-        let tick = this.hunger / (24 * 60);
-        if (this.isSprinting) tick *= 1.5;
-        tick *= this.getEncumbrance().hungerRate;
         this.capacities = this.capacities || new Capacities(this.anatomy);
-        tick *= this.capacities.hungerRateFactor?.() || 1;
-        if (typeof Sleep !== "undefined") tick *= Sleep.hungerMult?.(this._resting) ?? 1;
+        const tick = Hunger.minuteDrain({
+            hunger: this.hunger,
+            sprinting: !!this.isSprinting,
+            encumbranceHungerRate: this.getEncumbrance().hungerRate,
+            hungerRateFactor: this.capacities.hungerRateFactor?.() || 1,
+            resting: this._resting
+        });
         this.starve(tick);
         // Malnutrition hediff rises/falls in Hediffs.minuteTick
     }
@@ -3222,13 +3223,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     getEncumbrance() {
-        const w = this.getInventoryWeight();
-        const m = Math.min(Math.max(w - this.strength, 0), this.strength) / this.strength;
-        return {
-            speedMultiplier: 1.0 - 0.6 * m,
-            hungerRate: 1.0 + 0.5 * m,
-            cannotSprint: m > 0
-        }
+        return Carry.encumbrance(this.getInventoryWeight(), this.strength);
     }
 
     /**

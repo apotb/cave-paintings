@@ -6356,9 +6356,7 @@ class SceneMain extends SceneBase {
 
     /** Roll regrowAt = now + base * (0.85..1.15). */
     jitteredRegrowAt(baseMinutes) {
-        const base = Math.max(1, Math.floor(Number(baseMinutes) || 0));
-        const factor = 0.85 + Math.random() * 0.30;
-        return this.worldMinuteIndex() + Math.max(1, Math.floor(base * factor));
+        return GameMath.jitteredRegrowAt(baseMinutes, this.worldMinuteIndex());
     }
 
     /**

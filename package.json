@@ -8,7 +8,7 @@
     "server": "node server/index.js",
     "server:world": "node server/index.js --world",
     "client": "npx --yes serve -l 21825",
-    "test:shared-combat": "node -e \"require('./shared/body/Combat.js'); require('./server/SimCreature'); require('./shared/ai/headless'); console.log('shared combat ok');\""
+    "test": "node --test --test-concurrency=1 test/*.test.js"
   },
   "dependencies": {
     "ws": "^8.18.0"

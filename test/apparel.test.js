@@ -1,20 +1,16 @@
-/**
- * Apparel coverage, RimWorld armor formula, wear, occupancy.
- */
-const path = require("path");
-const GameMath = require("../shared/gameMath");
-const DataStore = require("../shared/DataStore");
+const { test } = require("node:test");
+const { loadDefs, DataStore, GameMath } = require("./helpers/load");
 const Apparel = require("../shared/apparel");
 const Durability = require("../shared/durability");
 const BodyCombat = require("../shared/body/Combat");
 const { createPlayerCreature } = require("../server/SimCreature");
 
-DataStore.loadFromDisk(path.resolve(__dirname, ".."));
+loadDefs();
 
+test("ported apparel asserts", () => {
 function assert(cond, msg) {
     if (!cond) throw new Error(msg || "assert failed");
 }
-
 function emptyEquip() {
     return { head: null, torso: null, legs: null, feet: null, back: null, waist: [] };
 }
@@ -269,4 +265,6 @@ assert(Math.abs(DataStore.getItem("leather_pack").weight - 3.9) < 1e-9, "pack in
 assert(Math.abs(DataStore.getItem("hide_bundle").weight - 2.7) < 1e-9, "bundle inherit");
 assert(!DataStore.getItem("hide_pouch").weightFixed, "pouch not weightFixed");
 
-console.log("assert-apparel ok");
+
+
+});

@@ -13,6 +13,7 @@ const Apparel = require("../shared/apparel");
 const Chop = require("../shared/chop");
 const Place = require("../shared/place");
 const Sleep = require("../shared/sleep");
+const Hunger = require("../shared/hunger");
 const Path = require("../shared/path");
 const Hide = require("../shared/hide");
 const Carry = require("../shared/carry");
@@ -4999,10 +5000,7 @@ class SimWorld {
         const regrowMinutes = Number(loot.regrowMinutes) || 0;
         const canRegrow = regrowMinutes > 0;
         const regrowAt = canRegrow
-            ? this.worldMinuteIndex() + Math.max(
-                1,
-                Math.floor(regrowMinutes * (0.85 + this.rng() * 0.30))
-            )
+            ? GameMath.jitteredRegrowAt(regrowMinutes, this.worldMinuteIndex(), () => this.rng())
             : null;
 
         // Use the owning chunk, not worldToChunk(feet) — south-row lootables sit on the next chunk's edge
@@ -8220,6 +8218,22 @@ class SimWorld {
         this._reapDeadMobs();
     }
 
+    _hungerDrainForPawn(pawn, creature) {
+        if (!pawn) return 0;
+        const getDef = (id) => itemDefs().get(id);
+        const enc = Carry.encumbrance(
+            Carry.gearMass(pawn.inventory, pawn.equipment, getDef, pawn.overflow),
+            Carry.strengthFromEquip(pawn.equipment, getDef)
+        );
+        return Hunger.minuteDrain({
+            hunger: pawn.hunger,
+            sprinting: !!pawn.sprint,
+            encumbranceHungerRate: enc.hungerRate,
+            hungerRateFactor: creature?.capacities?.hungerRateFactor?.() || 1,
+            resting: pawn._resting
+        });
+    }
+
     _worldMinute() {
         this.gameMinutes += 1;
         if (this.gameMinutes >= 24 * 60) {
@@ -8232,17 +8246,8 @@ class SimWorld {
             const creature = p.creature || this.creatures.get(p.id);
             // Snapshot before drain — same as Player.hungerTick (fed minute still recovers)
             const fed = (Number(p.kc) > 0) || (Number(p.saturation) > 0);
-            let tick = (Number(p.hunger) > 0 ? p.hunger : 2000) / (24 * 60);
-            if (p.sprint && (p.moveX || p.moveY)) tick *= 1.5;
-            if (creature?.capacities?.hungerRateFactor) {
-                tick *= creature.capacities.hungerRateFactor() || 1;
-            }
-            tick *= Sleep.hungerMult(p._resting);
-            p.saturation -= tick;
-            if (p.saturation < 0) {
-                p.kc = Math.max(0, p.kc + p.saturation);
-                p.saturation = 0;
-            }
+            const tick = this._hungerDrainForPawn(p, creature);
+            Hunger.applyStarve(p, tick);
             this._tickPlayerSpoilLeft(p);
             if (creature && !creature.isBodyDead() && BodyHealing?.minuteTick) {
                 creature._malnutritionFed = fed;
@@ -8264,13 +8269,8 @@ class SimWorld {
                 if (mem.dead) continue;
                 this._tickPlayerSpoilLeft(mem);
                 const mFed = (Number(mem.kc) > 0) || (Number(mem.saturation) > 0);
-                let mTick = 2000 / (24 * 60);
-                mTick *= Sleep.hungerMult(mem._resting);
-                mem.saturation = (Number(mem.saturation) || 0) - mTick;
-                if (mem.saturation < 0) {
-                    mem.kc = Math.max(0, (Number(mem.kc) || 0) + mem.saturation);
-                    mem.saturation = 0;
-                }
+                const mcPre = mem.creature || this.creatures.get(mem.id);
+                Hunger.applyStarve(mem, this._hungerDrainForPawn(mem, mcPre));
                 const mc = mem.creature || this.creatures.get(mem.id);
                 if (mc && !mc.isBodyDead() && BodyHealing?.minuteTick) {
                     mc._malnutritionFed = mFed;

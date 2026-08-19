@@ -1753,6 +1753,9 @@ function setPuppetProne(sprite, prone, opts = {}) {
  * @returns {Number} 0..1 (extend then retract)
  */
 function meleeThrustCurve(progress) {
+    if (typeof MeleeMath !== "undefined" && MeleeMath.meleeThrustCurve) {
+        return MeleeMath.meleeThrustCurve(progress);
+    }
     const peak = 0.4;
     if (progress <= peak) {
         const t = progress / peak;
@@ -1786,6 +1789,9 @@ function sleepSortDepth(sprite, leanTo, slot) {
 
 /** Short segment around the fist for hit tests. */
 function unarmedHitSegment(sprite, angle) {
+    if (typeof MeleeMath !== "undefined" && MeleeMath.unarmedHitSegment) {
+        return MeleeMath.unarmedHitSegment(sprite, angle);
+    }
     if (!sprite) return null;
     const c = { x: sprite.x, y: sprite.y };
     return {
@@ -1795,6 +1801,9 @@ function unarmedHitSegment(sprite, angle) {
 }
 
 function meleeSegmentHitsRect(ax, ay, bx, by, box, radius = 0) {
+    if (typeof MeleeMath !== "undefined" && MeleeMath.meleeSegmentHitsRect) {
+        return MeleeMath.meleeSegmentHitsRect(ax, ay, bx, by, box, radius);
+    }
     const left = box.left - radius;
     const right = box.right + radius;
     const top = box.top - radius;
@@ -1814,6 +1823,9 @@ function meleeSegmentHitsRect(ax, ay, bx, by, box, radius = 0) {
 }
 
 function meleeSegmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
+    if (typeof MeleeMath !== "undefined" && MeleeMath.meleeSegmentsIntersect) {
+        return MeleeMath.meleeSegmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy);
+    }
     const abx = bx - ax, aby = by - ay;
     const cdx = dx - cx, cdy = dy - cy;
     const den = abx * cdy - aby * cdx;
@@ -1825,6 +1837,9 @@ function meleeSegmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy) {
 }
 
 function meleeDistPointToSegment(px, py, ax, ay, bx, by) {
+    if (typeof MeleeMath !== "undefined" && MeleeMath.meleeDistPointToSegment) {
+        return MeleeMath.meleeDistPointToSegment(px, py, ax, ay, bx, by);
+    }
     const abx = bx - ax;
     const aby = by - ay;
     const len2 = abx * abx + aby * aby;
@@ -1841,6 +1856,9 @@ function meleeDistPointToSegment(px, py, ax, ay, bx, by) {
  * @param {number} [scale=1]
  */
 function meleeAttackDurationMs(cooldownSec, scale = 1) {
+    if (typeof MeleeMath !== "undefined" && MeleeMath.meleeAttackDurationMs) {
+        return MeleeMath.meleeAttackDurationMs(cooldownSec, scale);
+    }
     const REF_FPS = 144;
     const cd = Number(cooldownSec);
     const sc = Number(scale);
@@ -1852,6 +1870,9 @@ function meleeAttackDurationMs(cooldownSec, scale = 1) {
 
 /** Unarmed / melee segment vs a damageable target. */
 function meleeSegmentHitsTarget(a, b, radius, target) {
+    if (typeof MeleeMath !== "undefined" && MeleeMath.meleeSegmentHitsTarget) {
+        return MeleeMath.meleeSegmentHitsTarget(a, b, radius, target);
+    }
     if (typeof target.hurtbox === "function") {
         return meleeSegmentHitsRect(a.x, a.y, b.x, b.y, target.hurtbox(0), radius);
     }

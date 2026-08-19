@@ -88,6 +88,19 @@
         GIVE_ITEM: "give_item"
     };
 
+    /**
+     * LocalSim SP: the Phaser client already mutated chunk.meta / inventory.
+     * Dedicated MP: SimWorld.handleAction owns these verbs.
+     */
+    const ClientAuthoredActions = Object.freeze([
+        Actions.PICKUP,
+        Actions.DROP,
+        Actions.SPAWN_DROP,
+        Actions.PLACE,
+        Actions.STORAGE,
+        Actions.SLEEP
+    ]);
+
     function msg(type, payload = {}) {
         return { v: PROTOCOL_VERSION, type, payload };
     }
@@ -119,6 +132,7 @@
         PROTOCOL_VERSION,
         Types,
         Actions,
+        ClientAuthoredActions,
         msg,
         parse,
         encode,

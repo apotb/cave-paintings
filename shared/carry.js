@@ -132,6 +132,22 @@
     }
 
     /**
+     * Over-strength mass: m in 0..1 when weight is between strength and 2×strength.
+     * Matches Player.getEncumbrance (hungerRate 1 + 0.5m, cannot sprint if m > 0).
+     */
+    function encumbrance(weight, strength) {
+        const s = Number(strength);
+        const capStr = Number.isFinite(s) && s > 0 ? s : BASE_STRENGTH;
+        const w = Math.max(0, Number(weight) || 0);
+        const m = Math.min(Math.max(w - capStr, 0), capStr) / capStr;
+        return {
+            speedMultiplier: 1.0 - 0.6 * m,
+            hungerRate: 1.0 + 0.5 * m,
+            cannotSprint: m > 0
+        };
+    }
+
+    /**
      * How many units of `unitW` fit without exceeding cap.
      * Weightless items are not limited here (caller still slot-limits).
      */
@@ -337,6 +353,7 @@
         gearMass,
         strengthFromEquip,
         carryCap,
+        encumbrance,
         countFit,
         resolveCraftedWeights,
         resolveCraftedFuel

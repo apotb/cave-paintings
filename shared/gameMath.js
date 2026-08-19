@@ -44,12 +44,27 @@
         return arr[Math.floor(random() * arr.length)];
     }
 
+    /**
+     * Harvest / lootable respawn clock: base minutes jittered 85–115%.
+     * @param {number} baseMinutes
+     * @param {number} now  world minute index
+     * @param {function} [rng]  0–1; defaults to GameMath.random
+     */
+    function jitteredRegrowAt(baseMinutes, now, rng) {
+        const base = Math.max(1, Math.floor(Number(baseMinutes) || 0));
+        const u = typeof rng === "function" ? rng() : random();
+        const t = Number.isFinite(u) ? Math.max(0, Math.min(1, u)) : random();
+        const factor = 0.85 + t * 0.30;
+        return Math.round(Number(now) || 0) + Math.max(1, Math.floor(base * factor));
+    }
+
     return {
         setRng,
         random,
         clamp,
         between,
         floatBetween,
-        pick
+        pick,
+        jitteredRegrowAt
     };
 });
