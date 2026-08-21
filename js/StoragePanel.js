@@ -660,6 +660,7 @@ class StoragePanel {
             );
             mergeDryInto(dest, dest.quantity, moved, stack.dryProgress);
             mergeSoakInto(dest, dest.quantity, moved, stack.soakProgress);
+            mergeTempInto(dest, dest.quantity, moved, stack.temp);
             dest.quantity += moved;
             stack.quantity -= moved;
             if (stack.quantity <= 0) inv[hotbarIndex] = null;
@@ -808,6 +809,7 @@ class StoragePanel {
                 delete dest.spoilAt;
                 mergeDryInto(dest, dest.quantity, moved, stack.dryProgress);
                 mergeSoakInto(dest, dest.quantity, moved, stack.soakProgress);
+                mergeTempInto(dest, dest.quantity, moved, stack.temp);
                 dest.quantity += moved;
                 stack.quantity -= moved;
                 if (stack.quantity <= 0) this._setStack(fromKey, null);
@@ -848,6 +850,7 @@ class StoragePanel {
                 b.spoilAt = mergeSpoilAt(b.quantity, b.spoilAt, moved, a.spoilAt);
                 mergeDryInto(b, b.quantity, moved, a.dryProgress);
                 mergeSoakInto(b, b.quantity, moved, a.soakProgress);
+                mergeTempInto(b, b.quantity, moved, a.temp);
                 b.quantity += moved;
                 a.quantity -= moved;
                 this._setStack(toKey, b);

@@ -67,6 +67,16 @@
         return sum / mats.length;
     }
 
+    function maxHideStageFuelTemp(items, stage) {
+        const mats = hideStageMaterials(items, stage);
+        let maxT = 0;
+        for (const m of mats) {
+            const t = Number(m.fuel?.temp) || 0;
+            if (t > maxT) maxT = t;
+        }
+        return maxT;
+    }
+
     const BASE_STRENGTH = 15;
 
     function unitWeight(stack, def) {
@@ -281,63 +291,58 @@
             return kj;
         }
 
-        function hasMoistureOverride(item) {
-            return !!(item.fuelFixed || (item.fuel && Object.prototype.hasOwnProperty.call(item.fuel, "moisture")));
+        const tempResolved = new Map();
+        const tempResolving = new Set();
+
+        function hasTempOverride(item) {
+            return !!(item.fuelFixed || (item.fuel && Object.prototype.hasOwnProperty.call(item.fuel, "temp")));
         }
 
-        function fuelMoistureOf(id) {
+        function fuelTempOf(id) {
+            if (tempResolved.has(id)) return tempResolved.get(id);
             const item = byId.get(id);
-            if (!item) return { sum: 0, weight: 0 };
-            if (!item.recipe || hasMoistureOverride(item)) {
-                const m = Number(item.fuel?.moisture);
-                if (Number.isFinite(m)) return { sum: m, weight: 1 };
-                return { sum: 0, weight: 0 };
+            if (!item) {
+                tempResolved.set(id, 0);
+                return 0;
             }
-            let quantity = 1;
-            let sum = 0;
-            let weight = 0;
+            if (!item.recipe || hasTempOverride(item)) {
+                const t = Number(item.fuel?.temp) || 0;
+                tempResolved.set(id, t);
+                return t;
+            }
+            if (tempResolving.has(id)) {
+                const t = Number(item.fuel?.temp) || 0;
+                tempResolved.set(id, t);
+                return t;
+            }
+            tempResolving.add(id);
+            let maxT = 0;
             for (const [k, v] of Object.entries(item.recipe)) {
-                if (k === "QUANTITY") {
-                    quantity = +v || 1;
-                    continue;
-                }
+                if (k === "QUANTITY") continue;
                 if (isRecipeMetaKey(k)) continue;
                 const hide = hideStageOf(v);
                 if (hide) {
-                    const mats = hideStageMaterials(items, hide.stage);
-                    let mSum = 0;
-                    let mN = 0;
-                    for (const m of mats) {
-                        const mv = Number(m.fuel?.moisture);
-                        if (!Number.isFinite(mv)) continue;
-                        mSum += mv;
-                        mN += 1;
-                    }
-                    if (mN > 0) {
-                        sum += (mSum / mN) * hide.qty;
-                        weight += hide.qty;
-                    }
+                    const t = maxHideStageFuelTemp(items, hide.stage);
+                    if (t > maxT) maxT = t;
                     continue;
                 }
-                const qty = (v && typeof v === "object") ? (+v.qty || 1) : (+v || 1);
-                const child = fuelMoistureOf(k);
-                if (!(child.weight > 0)) continue;
-                sum += child.sum * qty;
-                weight += child.weight * qty;
+                const t = fuelTempOf(k);
+                if (t > maxT) maxT = t;
             }
-            if (weight > 0 && !hasMoistureOverride(item)) {
-                const moisture = Math.round((sum / weight) * 1000) / 1000;
+            tempResolving.delete(id);
+            if (maxT > 0) {
                 if (!item.fuel) item.fuel = {};
-                item.fuel.moisture = moisture;
+                item.fuel.temp = maxT;
             }
-            return { sum, weight: Math.max(weight, quantity) };
+            tempResolved.set(id, maxT);
+            return maxT;
         }
 
         for (const item of items) {
             if (item?.id) fuelKjOf(item.id);
         }
         for (const item of items) {
-            if (item?.id) fuelMoistureOf(item.id);
+            if (item?.id) fuelTempOf(item.id);
         }
     }
 

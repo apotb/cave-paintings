@@ -287,6 +287,30 @@ class PartyPanel {
         return null;
     }
 
+    /** Screen-space pos of a pawn's visual center (origin 0,1 is feet-left). */
+    _pawnScreenPos(pawn, cam, view, zoom) {
+        const c = typeof pawn.bodyCenter === "function"
+            ? pawn.bodyCenter()
+            : { x: (pawn.x || 0) + 8, y: (pawn.y || 0) - 8 };
+        return {
+            x: (c.x - view.x) * zoom + (cam.x || 0),
+            y: (c.y - view.y) * zoom + (cam.y || 0)
+        };
+    }
+
+    /** Clip center→target to the padded screen rect (stay on the bearing). */
+    _rayToRect(cx, cy, px, py, left, top, right, bottom) {
+        const dx = px - cx;
+        const dy = py - cy;
+        let t = Infinity;
+        if (dx > 1e-9) t = Math.min(t, (right - cx) / dx);
+        else if (dx < -1e-9) t = Math.min(t, (left - cx) / dx);
+        if (dy > 1e-9) t = Math.min(t, (bottom - cy) / dy);
+        else if (dy < -1e-9) t = Math.min(t, (top - cy) / dy);
+        if (!Number.isFinite(t) || t <= 0) return { x: cx, y: cy };
+        return { x: cx + dx * t, y: cy + dy * t };
+    }
+
     updatePips() {
         const scene = this.scene;
         const cam = scene.cameras?.main;
@@ -307,20 +331,23 @@ class PartyPanel {
         while (this.pips.length > members.length) {
             this.pips.pop().destroy();
         }
+        const zoom = cam.zoom || scene.worldZoom || 1;
+        const w = cam.width || scene.scale.width;
+        const h = cam.height || scene.scale.height;
+        const ox = cam.x || 0;
+        const oy = cam.y || 0;
         const pad = 12 * s;
+        const cx = ox + w / 2;
+        const cy = oy + h / 2;
         members.forEach((pawn, i) => {
             const pip = this.pips[i];
-            const inside = view.contains(pawn.x, pawn.y);
+            const sp = this._pawnScreenPos(pawn, cam, view, zoom);
+            const inside = sp.x >= ox && sp.x <= ox + w && sp.y >= oy && sp.y <= oy + h;
             pip.setVisible(!inside);
             if (inside) return;
-            const c = cam.getWorldPoint(scene.scale.width / 2, scene.scale.height / 2);
-            const ang = Math.atan2(pawn.y - c.y, pawn.x - c.x);
-            const w = scene.scale.width;
-            const h = scene.scale.height;
-            const x = Phaser.Math.Clamp(w / 2 + Math.cos(ang) * (w / 2 - pad), pad, w - pad);
-            const y = Phaser.Math.Clamp(h / 2 + Math.sin(ang) * (h / 2 - pad), pad, h - pad);
-            pip.setPosition(x, y);
-            pip.setRotation(ang + Math.PI / 2);
+            const hit = this._rayToRect(cx, cy, sp.x, sp.y, ox + pad, oy + pad, ox + w - pad, oy + h - pad);
+            pip.setPosition(hit.x, hit.y);
+            pip.setRotation(Math.atan2(sp.y - cy, sp.x - cx) + Math.PI / 2);
             pip.setScale(s);
         });
     }

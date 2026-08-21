@@ -641,7 +641,8 @@ class DroppedItem extends Mob {
                 durability: stackExtras?.durability,
                 dryProgress: stackExtras?.dryProgress,
                 soakProgress: stackExtras?.soakProgress,
-                soakDoneAt: stackExtras?.soakDoneAt
+                soakDoneAt: stackExtras?.soakDoneAt,
+                temp: stackExtras?.temp
             });
             return null;
         }
@@ -701,6 +702,7 @@ class DroppedItem extends Mob {
                     if (mergedDone != null) drop.soakDoneAt = mergedDone;
                     else delete drop.soakDoneAt;
                 }
+                mergeTempInto(drop, drop.quantity, add, soakStamp?.temp);
                 drop.quantity += add;
                 // Merged stacks refresh despawn timer (soaking piles skip lifeMs in update)
                 drop.lifeMs = DROP_LIFE_MS;
@@ -762,6 +764,7 @@ class DroppedItem extends Mob {
         if (stackExtras?.dryProgress != null) entry.dryProgress = stackExtras.dryProgress;
         if (stackExtras?.soakProgress != null) entry.soakProgress = stackExtras.soakProgress;
         if (stackExtras?.soakDoneAt != null) entry.soakDoneAt = stackExtras.soakDoneAt;
+        if (typeof Fire !== "undefined") Fire.copyStackTemp(stackExtras, entry);
         return entry;
     }
 
@@ -803,6 +806,7 @@ class DroppedItem extends Mob {
         if (entry.dryProgress != null) this.dryProgress = entry.dryProgress;
         if (entry.soakProgress != null) this.soakProgress = entry.soakProgress;
         if (entry.soakDoneAt != null) this.soakDoneAt = entry.soakDoneAt;
+        if (entry.temp != null) this.temp = entry.temp;
 
         // Knapped silhouette on the ground drop
         if (this.knapIconData && typeof Knapping !== "undefined") {
@@ -907,6 +911,8 @@ class DroppedItem extends Mob {
         else delete this.entry.soakProgress;
         if (this.soakDoneAt != null) this.entry.soakDoneAt = this.soakDoneAt;
         else delete this.entry.soakDoneAt;
+        if (this.temp != null) this.entry.temp = this.temp;
+        else delete this.entry.temp;
     }
 
     _removeEntry() {
@@ -1036,7 +1042,8 @@ class DroppedItem extends Mob {
                 ...(this.durability != null ? { durability: this.durability } : {}),
                 ...(this.dryProgress != null ? { dryProgress: this.dryProgress } : {}),
                 ...(this.soakProgress != null ? { soakProgress: this.soakProgress } : {}),
-                ...(this.soakDoneAt != null ? { soakDoneAt: this.soakDoneAt } : {})
+                ...(this.soakDoneAt != null ? { soakDoneAt: this.soakDoneAt } : {}),
+                ...(this.temp != null ? { temp: this.temp } : {})
             };
             if (typeof Hide !== "undefined") Hide.pickupSoak(stack, now);
             const inv = player.inventory;
@@ -1073,7 +1080,8 @@ class DroppedItem extends Mob {
                 };
                 if (typeof Hide !== "undefined") Hide.pickupSoak(pickup, now);
                 return pickup.soakProgress;
-            })()
+            })(),
+            temp: this.temp
         });
         if (remaining === before) return false;
         this.scene.hotbar.dirty = true;
@@ -1104,6 +1112,7 @@ class DroppedItem extends Mob {
             dryProgress: this.dryProgress,
             soakProgress: this.soakProgress ?? this.entry?.soakProgress,
             soakDoneAt: this.soakDoneAt ?? this.entry?.soakDoneAt,
+            temp: this.temp ?? this.entry?.temp,
             spoilAt: this.spoilAt,
             spoilLeft: this.spoilLeft
         };

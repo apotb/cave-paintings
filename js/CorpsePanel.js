@@ -581,6 +581,7 @@ class CorpsePanel {
             delete dest.spoilAt;
             mergeDryInto(dest, dest.quantity, moved, stack.dryProgress);
             mergeSoakInto(dest, dest.quantity, moved, stack.soakProgress);
+            mergeTempInto(dest, dest.quantity, moved, stack.temp);
             dest.quantity += moved;
             stack.quantity -= moved;
             if (stack.quantity <= 0) this.session[this._dragFrom] = null;

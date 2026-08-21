@@ -8,7 +8,7 @@
         "weight": 0.2,
         "fuel": {
             "kj": 5,
-            "moisture": 0.15
+            "temp": 600
         }
     },
     {
@@ -41,7 +41,8 @@
         "cook": {
             "stick_roast": {
                 "result": "roasted_apple",
-                "minutes": 10
+                "minutes": 10,
+                "temp": 300
             }
         }
     },
@@ -75,7 +76,8 @@
         "cook": {
             "stick_roast": {
                 "result": "roast_beef",
-                "minutes": 15
+                "minutes": 15,
+                "temp": 550
             }
         }
     },
@@ -109,7 +111,8 @@
         "cook": {
             "stick_roast": {
                 "result": "roasted_venison",
-                "minutes": 15
+                "minutes": 15,
+                "temp": 550
             }
         }
     },
@@ -143,7 +146,8 @@
         "cook": {
             "stick_roast": {
                 "result": "roasted_pork",
-                "minutes": 15
+                "minutes": 15,
+                "temp": 550
             }
         }
     },
@@ -184,7 +188,8 @@
             "autoEat": "malnourished"
         },
         "cook": {
-            "method": "shell_simmer"
+            "method": "shell_simmer",
+            "temp": 450
         },
         "tooltip": [
             "Use as a bowl on a campfire to simmer meals"
@@ -370,7 +375,8 @@
         "cook": {
             "smoke_hide": {
                 "result": "deer_leather",
-                "minutes": 240
+                "minutes": 240,
+                "temp": 500
             }
         },
         "tooltip": [
@@ -495,7 +501,8 @@
         "cook": {
             "smoke_hide": {
                 "result": "boar_leather",
-                "minutes": 240
+                "minutes": 240,
+                "temp": 500
             }
         },
         "tooltip": [
@@ -550,7 +557,7 @@
         "weight": 0.01,
         "fuel": {
             "kj": 1,
-            "moisture": 0.4
+            "temp": 400
         }
     },
     {
@@ -558,9 +565,6 @@
         "name": "Leaf Cord",
         "key": "leaf_cord",
         "maxStack": 99,
-        "fuel": {
-            "moisture": 0.4
-        },
         "bandage": {
             "tendQuality": 0.4,
             "tendQualityMax": 0.7,
@@ -623,9 +627,6 @@
         },
         "cook": {
             "method": "stick_roast"
-        },
-        "fuel": {
-            "moisture": 0.15
         },
         "tooltip": [
             "Use on 15 sticks and 10 leaves to start a fire",
@@ -691,9 +692,6 @@
                     "range": 4
                 }
             ]
-        },
-        "fuel": {
-            "moisture": 0.32
         },
         "tooltip": [
             "Thrust at foes with Space"
@@ -840,9 +838,6 @@
         "key": "leaf_wrap",
         "maxStack": 1,
         "durability": 60,
-        "fuel": {
-            "moisture": 0.4
-        },
         "equip": {
             "slot": "torso",
             "layer": "skin",
@@ -860,9 +855,6 @@
         "key": "leaf_loincloth",
         "maxStack": 1,
         "durability": 50,
-        "fuel": {
-            "moisture": 0.4
-        },
         "equip": {
             "slot": "legs",
             "layer": "skin",
@@ -885,9 +877,6 @@
         "name": "Leaf Pouch",
         "key": "leaf_pouch",
         "maxStack": 1,
-        "fuel": {
-            "moisture": 0.4
-        },
         "equip": {
             "slot": "waist",
             "layer": "belt",
@@ -1156,9 +1145,6 @@
         "key": "leaf_sandals",
         "maxStack": 1,
         "durability": 40,
-        "fuel": {
-            "moisture": 0.33
-        },
         "equip": {
             "slot": "feet",
             "layer": "skin",
@@ -1179,9 +1165,6 @@
         "name": "Stick Frame",
         "key": "stick_frame",
         "maxStack": 99,
-        "fuel": {
-            "moisture": 0.28
-        },
         "recipe": {
             "stick": 4,
             "leaf_cord": 4
@@ -1276,7 +1259,7 @@
         "weight": 2,
         "fuel": {
             "kj": 40,
-            "moisture": 0.22
+            "temp": 800
         }
     }
 ]

@@ -1480,8 +1480,11 @@ class PartySystem {
                 continue;
             }
             if (pawn._resting || pawn._restWalk) {
-                pawn.partyAI?.setTendSeek?.(null);
-                continue;
+                const dedicated = !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
+                if (dedicated || !this._wakeRestingTender(pawn)) {
+                    pawn.partyAI?.setTendSeek?.(null);
+                    continue;
+                }
             }
             if (pawn.isAttacking?.() || pawn._eatChannel || pawn._tendChannel) {
                 pawn.partyAI?.setTendSeek?.(null);
@@ -1522,6 +1525,7 @@ class PartySystem {
         if (this._partyInCombat()) return true;
         const ch = pawn._tendChannel;
         if (ch && !ch.corpse) return true;
+        if (pawn.partyAI?.tendSeek) return true;
         if (this._isTendTargeted(pawn)) return true;
         if (this._pickAutoTend(pawn)) return true;
         return this._pawnNeedsTend(pawn) && this._partyHasBandage();
@@ -1657,6 +1661,28 @@ class PartySystem {
         return !!BodyHealing?.pickTendTarget?.(pawn.anatomy);
     }
 
+    _isLyingDown(pawn) {
+        if (!pawn || pawn.isBodyDead?.()) return false;
+        return !!(pawn._resting || pawn._downed || pawn._prone || pawn.isIncapacitated?.());
+    }
+
+    /** Get up from a lean-to (or abort walking to one) to tend a lying ally, then `_wokeFromRest` sends them back. */
+    _wakeRestingTender(pawn) {
+        if (!pawn || pawn.isBodyDead?.() || pawn.isVomiting?.() || pawn.isIncapacitated?.()) return false;
+        pawn.capacities = pawn.capacities || (pawn.anatomy ? new Capacities(pawn.anatomy) : null);
+        if (!pawn.capacities?.canManipulate?.()) return false;
+        const job = this._pickAutoTend(pawn, { lyingOnly: true });
+        if (!job?.patient || job.patient === pawn) return false;
+        const scene = this.scene;
+        if (pawn._resting) scene._wakePawn?.(pawn, { help: true });
+        else if (pawn._restWalk) {
+            pawn._restWalk = null;
+            scene._intendedSleep?.().delete(pawn.pawnId);
+            pawn._wokeFromRest = true;
+        }
+        return true;
+    }
+
     _partyHasBandage() {
         const scene = this.scene;
         for (const p of scene.party || []) {
@@ -1706,7 +1732,7 @@ class PartySystem {
         return null;
     }
 
-    _pickAutoTend(tender) {
+    _pickAutoTend(tender, opts = {}) {
         const scene = this.scene;
         const P = typeof Party !== "undefined" ? Party : { INTERACT_TILES: 4, FOLLOW_DETACH: 12 };
         const ts = scene.tileSize || 16;
@@ -1717,6 +1743,10 @@ class PartySystem {
         let selfJob = null;
         for (const p of scene.party || []) {
             if (!p || p.isBodyDead?.() || !p.anatomy) continue;
+            if (opts.lyingOnly) {
+                if (p === tender) continue;
+                if (!this._isLyingDown(p)) continue;
+            }
             const skip = (spec) => this._woundIsReserved(reserved, p, spec);
             const target = BodyHealing?.pickTendTarget?.(p.anatomy, { skip });
             if (!target) continue;

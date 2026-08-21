@@ -73,7 +73,7 @@ class SceneMain extends SceneBase {
         this.craft = this.healthBtn = this.equipmentBtn = this.help = null;
         this.fpsText = this.locXText = this.locYText = null;
         this._waterSprite = null;
-        this.groundLayer = this.mainLayer = this.uiLayer = this.worldHudLayer = null;
+        this.groundLayer = this.mainLayer = this.uiLayer = this.veilLayer = this.worldHudLayer = null;
         this._hoverTarget = null;
         this._tooltipTarget = null;
         this._things = null;
@@ -82,9 +82,15 @@ class SceneMain extends SceneBase {
         this._chunkRtPool = null;
         this._chunkPaintQ = null;
         this._paintBusy = false;
+        // Phaser never auto-calls Scene.shutdown(); bind it so pauseAll is resumed.
+        this.events.off("shutdown", this.shutdown, this);
+        this.events.once("shutdown", this.shutdown, this);
     }
 
     create() {
+        // pauseAll is global. Save-and-quit used to leave every Animation paused,
+        // so the 2nd world join froze campfires, walks, and anything else that plays.
+        try { this.anims?.resumeAll?.(); } catch (_) {}
         this.input.mouse.disableContextMenu();
         resolveCraftedWeights(this.items());
         resolveCraftedFuel(this.items());
@@ -99,9 +105,10 @@ class SceneMain extends SceneBase {
         this.groundLayer = this.add.layer().setDepth(0);
         this.mainLayer = this.add.layer().setDepth(1);
         this.uiLayer = this.add.layer().setDepth(2);
-        // Above the night veil (lightGfx depth 50). UI cam ignores this layer so
-        // world-locked HUD is not also drawn unzoomed at raw world coordinates.
-        this.worldHudLayer = this.add.layer().setDepth(51);
+        // Night overlay between the world and party HUD. UI cam ignores these
+        // so world-locked HUD is not also drawn unzoomed at raw world coordinates.
+        this.veilLayer = this.add.layer().setDepth(50);
+        this.worldHudLayer = this.add.layer().setDepth(200);
 
         // Chunks
         this.chunkSize = 8;
@@ -211,7 +218,7 @@ class SceneMain extends SceneBase {
             .setScroll(0, 0)
             .setZoom(1)
             .setRoundPixels(false);
-        let cameras = [this.groundLayer, this.mainLayer, this.worldHudLayer];
+        let cameras = [this.groundLayer, this.mainLayer, this.veilLayer, this.worldHudLayer];
         if (this.physics.world.debug) cameras.push(this.physics.world.debugGraphic);
         this._uiCam.ignore(cameras);
         this.createLightVeil();
@@ -837,7 +844,8 @@ class SceneMain extends SceneBase {
         }).setOrigin(0.5, 1);
         name.setResolution(zoom * (window.devicePixelRatio || 1));
         name.setScale(1 / zoom);
-        this._liftAboveVeil(name, 60);
+        const ownerId = rp.ownerId || rp.id;
+        this._placeWorldHud(name, 60, this.isPartyWorldHud({ ownerId }));
 
         const bubbleFont = pixelUiFontSize(16, s);
         const bubble = this.add.text(8, -30, "", {
@@ -851,7 +859,7 @@ class SceneMain extends SceneBase {
         }).setOrigin(0.5, 1).setVisible(false);
         bubble.setResolution(zoom * (window.devicePixelRatio || 1));
         bubble.setScale(1 / zoom);
-        this._liftAboveVeil(bubble, 61);
+        this._placeWorldHud(bubble, 61, this.isPartyWorldHud({ ownerId }));
 
         if (typeof PlayerLook !== "undefined") PlayerLook.play(spr, rp.facing || "down", false);
         else if (this.anims.exists("idle-down")) spr.play("idle-down", true);
@@ -887,6 +895,7 @@ class SceneMain extends SceneBase {
             stillMs: 0,
             animKey: null,
             displayName: rp.name || "?",
+            ownerId: rp.ownerId || rp.id,
             attackTimer: 0,
             attackMax: 0,
             attackAngle: 0,
@@ -981,6 +990,7 @@ class SceneMain extends SceneBase {
                 if (!mEntry) {
                     mEntry = this._netMakeRemote({
                         ...mem,
+                        ownerId: rp.id,
                         name: mem.name,
                         look: mem.look,
                         x: mem.x,
@@ -1300,6 +1310,7 @@ class SceneMain extends SceneBase {
         assign("dryProgress", d.dryProgress);
         assign("soakProgress", d.soakProgress);
         assign("soakDoneAt", d.soakDoneAt);
+        assign("temp", d.temp);
         if (d.ingredients) {
             entry.ingredients = Array.isArray(d.ingredients)
                 ? d.ingredients.slice()
@@ -1328,6 +1339,7 @@ class SceneMain extends SceneBase {
         spr.dryProgress = e.dryProgress;
         spr.soakProgress = e.soakProgress;
         spr.soakDoneAt = e.soakDoneAt;
+        spr.temp = e.temp;
         spr.ingredients = e.ingredients;
         spr.stackWeight = e.weight;
         if (e.food) spr.food = { ...e.food };
@@ -1770,13 +1782,15 @@ class SceneMain extends SceneBase {
         }
         const wx = entry.x + nameX;
         const wy = entry.y + nameY;
+        const above = this.isPartyWorldHud(entry);
+        const underDepth = (entry.y | 0) + 40;
         if (entry.name?.active) {
-            this._liftAboveVeil(entry.name, 60);
+            this._placeWorldHud(entry.name, above ? 60 : underDepth, above);
             entry.name.setPosition(wx, wy);
         }
         const bubbleOn = entry.bubble?.visible && (this.time?.now || 0) < entry.bubbleUntil;
         if (entry.bubble?.active) {
-            this._liftAboveVeil(entry.bubble, 61);
+            this._placeWorldHud(entry.bubble, above ? 61 : underDepth + 1, above);
             if (bubbleOn) entry.bubble.setPosition(wx, wy - nameH - 2);
         }
     }
@@ -2550,20 +2564,44 @@ class SceneMain extends SceneBase {
                 simmer: src.simmer || [null, null, null, null],
                 cookProgress: src.cookProgress || 0,
                 burnRemaining: src.burnRemaining || 0,
-                roastBarMinutes: src.roastBarMinutes || 0
+                roastBarMinutes: src.roastBarMinutes || 0,
+                pitTemp: src.pitTemp,
+                cookTemp: src.cookTemp,
+                maxTemp: src.maxTemp,
+                canIgniteFuel: !!src.canIgniteFuel,
+                smolderAt: src.smolderAt
             };
             if ((src.simmerBarMinutes || 0) > 0) entry.simmerBarMinutes = src.simmerBarMinutes;
             chunk.meta.things.push(entry);
         } else if (progressOnly) {
+            const radiusBefore = typeof Fire !== "undefined"
+                ? Math.round(Fire.lightRadiusForEntry(entry) * 100)
+                : null;
             if (src.id) entry.id = src.id;
             if (src.cookProgress != null) entry.cookProgress = src.cookProgress;
             if (src.burnRemaining != null) entry.burnRemaining = src.burnRemaining;
             if (src.roastBarMinutes != null) entry.roastBarMinutes = src.roastBarMinutes;
+            if (src.pitTemp != null) entry.pitTemp = src.pitTemp;
+            if (src.cookTemp != null) entry.cookTemp = src.cookTemp;
+            if (src.maxTemp != null) entry.maxTemp = src.maxTemp;
+            if (src.canIgniteFuel != null) entry.canIgniteFuel = !!src.canIgniteFuel;
+            if ("smolderAt" in src) {
+                if (src.smolderAt != null) entry.smolderAt = src.smolderAt;
+                else delete entry.smolderAt;
+            }
             if ((src.simmerBarMinutes || 0) > 0) entry.simmerBarMinutes = src.simmerBarMinutes;
             else delete entry.simmerBarMinutes;
             if (Number.isFinite(incomingRev)) entry.rev = Math.max(curRev || 0, incomingRev);
             this._netSyncCampfireSprite(chunk, entry, src.id || entry.id, x, y);
             this.campfirePanel?.refreshCookBar?.();
+            this.campfirePanel?.refreshHeatLabel?.();
+            const radiusAfter = typeof Fire !== "undefined"
+                ? Math.round(Fire.lightRadiusForEntry(entry) * 100)
+                : null;
+            if (radiusBefore !== radiusAfter) {
+                this.markLightDirty?.();
+                this.updateLightVeil?.();
+            }
             return;
         } else {
             entry.uid = src.uid || opts.uid || entry.uid;
@@ -2581,6 +2619,14 @@ class SceneMain extends SceneBase {
             else delete entry.roastBarMinutes;
             if ((src.simmerBarMinutes || 0) > 0) entry.simmerBarMinutes = src.simmerBarMinutes;
             else delete entry.simmerBarMinutes;
+            if (src.pitTemp != null) entry.pitTemp = src.pitTemp;
+            if (src.cookTemp != null) entry.cookTemp = src.cookTemp;
+            if (src.maxTemp != null) entry.maxTemp = src.maxTemp;
+            if (src.canIgniteFuel != null) entry.canIgniteFuel = !!src.canIgniteFuel;
+            if ("smolderAt" in src) {
+                if (src.smolderAt != null) entry.smolderAt = src.smolderAt;
+                else delete entry.smolderAt;
+            }
         }
         this._netSyncCampfireSprite(chunk, entry, src.id || entry.id, x, y);
         this.markLightDirty?.();
@@ -3444,21 +3490,48 @@ class SceneMain extends SceneBase {
     }
 
     /**
-     * World HUD above the time-of-day veil. Parent into worldHudLayer (depth 51)
+     * Party nametags / crown / channel bars stay readable in the dark.
+     * Wanderers and other players stay in the world so the night veil covers them.
+     */
+    isPartyWorldHud(pawn) {
+        if (!pawn) return false;
+        if (pawn === this.player || pawn === this.leader) return true;
+        if (this.party?.includes(pawn)) return true;
+        if (pawn.role === "wanderer") return false;
+        const oid = pawn.ownerId || pawn._remote?.ownerId;
+        const self = this.leader?.ownerId || this._netPlayerId || this.characterId;
+        if (oid && self && String(oid) === String(self)) return true;
+        if (pawn.pawnId && this.party?.some((p) => p.pawnId === pawn.pawnId)) return true;
+        return false;
+    }
+
+    /**
+     * World HUD. `aboveVeil` parents into worldHudLayer (depth 200, over the night
+     * overlay). Otherwise the object lives in mainLayer and is darkened at night.
+     */
+    _placeWorldHud(obj, depth = 51, aboveVeil = true) {
+        if (!obj) return obj;
+        if (obj.parentContainer) obj.parentContainer.remove(obj);
+        const layer = aboveVeil ? this.worldHudLayer : this.mainLayer;
+        if (layer) {
+            if (obj.displayList !== layer) {
+                obj.displayList?.remove?.(obj);
+                layer.add(obj);
+            }
+        } else {
+            this.add.existing(obj);
+        }
+        this._uiCam?.ignore(obj);
+        obj.setDepth(depth);
+        return obj;
+    }
+
+    /**
+     * World HUD above the time-of-day veil. Parent into worldHudLayer
      * so the UI camera never draws a second unzoomed copy at world x/y.
      */
     _liftAboveVeil(obj, depth = 51) {
-        if (!obj) return obj;
-        if (obj.parentContainer) obj.parentContainer.remove(obj);
-        const layer = this.worldHudLayer;
-        if (layer) {
-            if (obj.displayList !== layer) layer.add(obj);
-        } else {
-            this.add.existing(obj);
-            this._uiCam?.ignore(obj);
-        }
-        obj.setDepth(depth);
-        return obj;
+        return this._placeWorldHud(obj, depth, true);
     }
 
     _ensureWorldHudBar(existing) {
@@ -4072,8 +4145,8 @@ class SceneMain extends SceneBase {
             strokeThickness: 2
         }).setOrigin(0.5, 0).setDepth(9998).setScrollFactor(0);
         this.uiLayer.add(this.fpsText);
-        this._fpsVisible = true;
-        this.fpsText.setVisible(true).setText(this._fpsPlaceholderText());
+        this._fpsVisible = false;
+        this.fpsText.setVisible(false);
         /** @type {{ t: number, d: number }[]} frame deltas in the last ~1s */
         this._fpsSamples = [];
         this._fpsUiAcc = 0;
@@ -4218,12 +4291,19 @@ class SceneMain extends SceneBase {
     }
 
     createLightVeil() {
-        // Per-tile sky veil on the scene list (not inside a Layer — Layer + MULTIPLY
-        // was effectively a no-op). UI cam ignores it; depth sits above world layers.
-        this.lightGfx = this.add.graphics().setDepth(50);
+        // Canvas overlay: destination-out punches real holes. Graphics ERASE and
+        // RenderTexture.erase(stamp) both failed (solid circles / no holes).
+        const key = "__night_veil";
+        if (this.lightGfx?.destroy) this.lightGfx.destroy();
+        if (!this.textures.exists(key)) this.textures.createCanvas(key, 64, 64);
+        this._lightCanvasKey = key;
+        this.lightGfx = this.add.image(0, 0, key).setOrigin(0, 0).setDepth(50);
+        this.veilLayer?.add(this.lightGfx);
         this._uiCam.ignore(this.lightGfx);
-        this.blockLight = new Map();
         this.lightDirty = true;
+        this._lightHadFlame = false;
+        this._lightRadiusAnimating = false;
+        this._fireLightEase = new Map();
         this.updateLightVeil();
     }
 
@@ -4250,57 +4330,34 @@ class SceneMain extends SceneBase {
         return list;
     }
 
-    recomputeBlockLight() {
-        this.blockLight.clear();
-        const queue = [];
-        for (const fire of this.getCampfires()) {
-            if (!fire.isLit()) continue;
-            const level = Number(fire.meta.lightLevel ?? 12);
-            if (level <= 0) continue;
-            const tx = Math.floor(fire.x / this.tileSize);
-            const ty = Math.floor((fire.y - 1) / this.tileSize);
-            const key = `${tx},${ty}`;
-            const prev = this.blockLight.get(key) || 0;
-            if (level > prev) {
-                this.blockLight.set(key, level);
-                queue.push({ tx, ty, level });
-            }
-        }
-
-        const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-        while (queue.length) {
-            const { tx, ty, level } = queue.shift();
-            const next = level - 1;
-            if (next <= 0) continue;
-            for (const [dx, dy] of dirs) {
-                const nx = tx + dx;
-                const ny = ty + dy;
-                const key = `${nx},${ny}`;
-                const prev = this.blockLight.get(key) || 0;
-                if (next > prev) {
-                    this.blockLight.set(key, next);
-                    queue.push({ tx: nx, ty: ny, level: next });
-                }
-            }
-        }
-    }
-
     updateLightVeil() {
-        if (!this.lightGfx) return;
+        const img = this.lightGfx;
+        const key = this._lightCanvasKey;
+        if (!img || !key || !this.textures.exists(key)) return;
+        const canvasTex = this.textures.get(key);
+        const ctx = canvasTex?.context || canvasTex?.canvas?.getContext?.("2d");
+        if (!ctx) return;
 
         if (this.lightDirty) {
-            this.recomputeBlockLight();
             this.lightDirty = false;
             this._lightVersion = (this._lightVersion || 0) + 1;
         }
 
         const cam = this.cameras.main;
         const ts = this.tileSize;
+        const now = this.time?.now ?? 0;
+        const animating = this._lightRadiusAnimating;
+        // Terrax fire is a 1-frame radius dip; 50ms is fast enough to see it
+        // without a 60fps canvasTex.refresh (that blanks Thing sprites).
+        const flameTick = (this._lightHadFlame || animating)
+            ? Math.floor(now / 50)
+            : 0;
         const sig = [
             Math.floor(cam.worldView.x / ts),
             Math.floor(cam.worldView.y / ts),
             this.gameMinutes,
-            this._lightVersion || 0
+            this._lightVersion || 0,
+            flameTick
         ].join(',');
         if (sig === this._lightSig) return;
         this._lightSig = sig;
@@ -4310,53 +4367,107 @@ class SceneMain extends SceneBase {
         const g = (color >> 8) & 255;
         const b = color & 255;
 
+        if (skyDark < 0.01 && skyWash < 0.01) {
+            img.setVisible(false);
+            this._lightHadFlame = false;
+            this._lightRadiusAnimating = false;
+            return;
+        }
+
         const pad = 2;
         const x0 = Math.floor(cam.worldView.x / ts) - pad;
         const y0 = Math.floor(cam.worldView.y / ts) - pad;
         const x1 = Math.ceil(cam.worldView.right / ts) + pad;
         const y1 = Math.ceil(cam.worldView.bottom / ts) + pad;
-
-        this.lightGfx.clear();
-        if (skyDark < 0.01 && skyWash < 0.01) return;
-
         const wx = x0 * ts;
         const wy = y0 * ts;
-        const ww = (x1 - x0) * ts;
-        const wh = (y1 - y0) * ts;
-        const washColor = Phaser.Display.Color.GetColor(r, g, b);
+        let ww = Math.max(ts, (x1 - x0) * ts);
+        let wh = Math.max(ts, (y1 - y0) * ts);
+        ww = Math.ceil(ww / 2) * 2;
+        wh = Math.ceil(wh / 2) * 2;
 
-        const fillSky = (dark, wash) => {
-            if (dark >= 0.02) {
-                this.lightGfx.fillStyle(0x060a14, Math.min(0.96, dark));
-                this.lightGfx.fillRect(wx, wy, ww, wh);
-            }
-            if (wash >= 0.02) {
-                this.lightGfx.fillStyle(washColor, Math.min(0.28, wash));
-                this.lightGfx.fillRect(wx, wy, ww, wh);
-            }
-        };
-
-        // No campfire light: one overlay instead of hundreds of tile rects (walking hitch).
-        if (!this.blockLight.size) {
-            fillSky(skyDark, skyWash);
-        } else {
-            for (let ty = y0; ty < y1; ty++) {
-                for (let tx = x0; tx < x1; tx++) {
-                    const block = this.blockLight.get(`${tx},${ty}`) || 0;
-                    const light = 1 - Math.min(15, block) / 15;
-                    const dark = skyDark * light;
-                    const wash = skyWash * light;
-                    if (dark >= 0.02) {
-                        this.lightGfx.fillStyle(0x060a14, Math.min(0.96, dark));
-                        this.lightGfx.fillRect(tx * ts, ty * ts, ts, ts);
-                    }
-                    if (wash >= 0.02) {
-                        this.lightGfx.fillStyle(washColor, Math.min(0.28, wash));
-                        this.lightGfx.fillRect(tx * ts, ty * ts, ts, ts);
-                    }
-                }
-            }
+        if (canvasTex.width !== ww || canvasTex.height !== wh) {
+            canvasTex.setSize(ww, wh);
+            img.setTexture(key);
         }
+        img.setPosition(wx, wy);
+        img.setDisplaySize(ww, wh);
+        img.setVisible(true);
+
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalCompositeOperation = "source-over";
+        ctx.clearRect(0, 0, ww, wh);
+        if (skyDark >= 0.02) {
+            ctx.fillStyle = `rgba(6, 10, 20, ${Math.min(0.96, skyDark)})`;
+            ctx.fillRect(0, 0, ww, wh);
+        }
+        if (skyWash >= 0.02) {
+            ctx.fillStyle = `rgba(${r},${g},${b},${Math.min(0.28, skyWash)})`;
+            ctx.fillRect(0, 0, ww, wh);
+        }
+
+        let hadFlame = false;
+        let radiusAnimating = false;
+        if (typeof Fire !== "undefined") {
+            const punches = [];
+            const zoom = this.worldZoom || this.cameras.main?.zoom || 1;
+            const ease = this._fireLightEase || (this._fireLightEase = new Map());
+            for (const st of ease.values()) st.seen = false;
+            for (const fire of this.getCampfires()) {
+                const target = Fire.lightRadiusForEntry(fire.entry);
+                const key = fire.entry?.uid || `${Math.round(fire.x)},${Math.round(fire.y)}`;
+                let st = ease.get(key);
+                if (!st) {
+                    st = { shown: target, at: now };
+                    ease.set(key, st);
+                } else {
+                    const dt = Math.max(0, Math.min(100, now - st.at));
+                    st.shown = (typeof Light !== "undefined" && Light.smoothRadius)
+                        ? Light.smoothRadius(st.shown, target, dt)
+                        : target;
+                    st.at = now;
+                }
+                st.seen = true;
+                if (Math.abs(st.shown - target) > 0.03) radiusAnimating = true;
+                const tiles = st.shown;
+                if (!(tiles > 0.02)) continue;
+                const kind = (typeof Light !== "undefined" && Light.kindOf)
+                    ? Light.kindOf(fire.meta, Light.KIND.FLAME)
+                    : "flame";
+                const flick = (typeof Light !== "undefined" && Light.flicker)
+                    ? Light.flicker(kind, now, Light.seedOf(fire.x, fire.y, fire.entry?.uid))
+                    : { radiusMul: 1, core: 1, x: 0, y: 0, radiusPx: 0 };
+                const flame = typeof Light !== "undefined" && Light.isFlame
+                    ? Light.isFlame(kind)
+                    : kind === "flame";
+                if (flame) hadFlame = true;
+                const dip = (flick.radiusPx || 0) / zoom;
+                punches.push({
+                    kind,
+                    flame,
+                    rad: Math.max(0, tiles * (flick.radiusMul || 1) * ts - dip),
+                    fx: fire.x - wx + (flick.x || 0) * ts,
+                    fy: fire.y - ts * 0.5 - wy + (flick.y || 0) * ts,
+                    core: flick.core || 1
+                });
+            }
+            for (const [k, st] of ease) {
+                if (!st.seen) ease.delete(k);
+            }
+            ctx.globalCompositeOperation = "destination-out";
+            for (const p of punches) {
+                const grd = ctx.createRadialGradient(p.fx, p.fy, 0, p.fx, p.fy, p.rad);
+                grd.addColorStop(0, `rgba(0,0,0,${p.core})`);
+                grd.addColorStop(0.4, `rgba(0,0,0,${0.85 * p.core})`);
+                grd.addColorStop(1, "rgba(0,0,0,0)");
+                ctx.fillStyle = grd;
+                ctx.fillRect(p.fx - p.rad, p.fy - p.rad, p.rad * 2, p.rad * 2);
+            }
+            ctx.globalCompositeOperation = "source-over";
+        }
+        this._lightHadFlame = hadFlame;
+        this._lightRadiusAnimating = radiusAnimating;
+        canvasTex.refresh();
     }
 
     worldToTile(wx, wy) {
@@ -6230,6 +6341,7 @@ class SceneMain extends SceneBase {
         if (best) {
             best.setKind('campfire');
             best.ensureBurning();
+            this.markLightDirty();
             this.updateLightVeil();
             this.player?.wearHeld?.(1);
             return true;
@@ -6253,7 +6365,11 @@ class SceneMain extends SceneBase {
             makeItemStack(stick, 15, undefined, this.worldMinuteIndex())
         );
         if (fire) fire.ensureBurning();
-        if (fire) this.player?.wearHeld?.(1);
+        if (fire) {
+            this.markLightDirty();
+            this.updateLightVeil();
+            this.player?.wearHeld?.(1);
+        }
         return !!fire;
     }
 
@@ -6261,13 +6377,14 @@ class SceneMain extends SceneBase {
         let lightChanged = false;
 
         for (const fire of this.getCampfires()) {
-            // Burn first so a fire that dies this minute starts draining cook progress immediately
-            if (fire.isLit() && fire.burnMinute()) lightChanged = true;
-            const lit = fire.isLit();
-            // Stick-roast, smoke, and shell simmer all run unattended while lit
-            fire.tickCook(lit);
+            if (fire.burnMinute()) lightChanged = true;
         }
-        if (lightChanged) this.updateLightVeil();
+        if (lightChanged) {
+            // worldMinuteTick already drew the veil this minute; bump the cache
+            // so the new heat band is punched immediately instead of next tick.
+            this.markLightDirty();
+            this.updateLightVeil();
+        }
     }
 
     tickDryingRacks() {
@@ -6983,8 +7100,9 @@ class SceneMain extends SceneBase {
         // Dedicated MP: server owns character spoilLeft (YOU). LocalSim / offline tick locally.
         const skipPlayerSpoil = this.isNet && this.net?.connected && !this.net.isLocal;
 
-        const applyWorldStack = (stack) => {
+        const applyWorldStack = (stack, cool = true) => {
             if (!stack) return stack;
+            if (cool && typeof Fire !== "undefined") Fire.tickStackTemp(stack);
             migrateToSpoilAt(stack, now, getItem);
             const { stack: next, changed } = spoilStackIfDue(stack, now, rot);
             if (changed) dirty = true;
@@ -6993,6 +7111,7 @@ class SceneMain extends SceneBase {
 
         const applyCharacterStack = (stack) => {
             if (!stack) return stack;
+            if (typeof Fire !== "undefined") Fire.tickStackTemp(stack);
             migrateToSpoilLeft(stack, now, getItem);
             tickSpoilLeft(stack);
             const { stack: next, changed } = spoilStackIfDue(stack, now, rot);
@@ -7039,6 +7158,13 @@ class SceneMain extends SceneBase {
                     const live = liveDrops.find((d) => d.active && d.entry === entry);
                     const onWater = this._dropIsOnWater(live || entry);
                     const def = getItem(entry.id);
+                    if (typeof Fire !== "undefined") {
+                        Fire.tickStackTemp(entry);
+                        if (live) {
+                            if (entry.temp != null) live.temp = entry.temp;
+                            else delete live.temp;
+                        }
+                    }
                     if (typeof Hide !== "undefined" && Hide.pausesDropDespawn(entry, def, onWater)) {
                         continue;
                     }
@@ -7130,7 +7256,7 @@ class SceneMain extends SceneBase {
 
                     if (entry.cook) {
                         const prevId = entry.cook.id;
-                        entry.cook = applyWorldStack(entry.cook);
+                        entry.cook = applyWorldStack(entry.cook, false);
                         if (entry.cook?.id !== prevId) {
                             entry.cookProgress = 0;
                             cookDirty = true;
@@ -7145,7 +7271,7 @@ class SceneMain extends SceneBase {
                         for (let i = 0; i < entry.simmer.length; i++) {
                             if (!entry.simmer[i]) continue;
                             const prevId = entry.simmer[i].id;
-                            entry.simmer[i] = applyWorldStack(entry.simmer[i]);
+                            entry.simmer[i] = applyWorldStack(entry.simmer[i], false);
                             if (entry.simmer[i]?.id !== prevId) cookDirty = true;
                         }
                     }
@@ -7314,7 +7440,12 @@ class SceneMain extends SceneBase {
         }
 
         const fuelKj = Number(item.fuel?.kj ?? 0);
-        if (fuelKj > 0) lines.push(`Fuel: ${fuelKj} kj`);
+        if (fuelKj > 0) {
+            const fuelTemp = Number(item.fuel?.temp);
+            lines.push(fuelTemp > 0
+                ? `Fuel: ${fuelKj} kj, ${typeof Fire !== "undefined" ? Fire.formatTemp(fuelTemp) : `${Math.round(fuelTemp)}°C`}`
+                : `Fuel: ${fuelKj} kj`);
+        }
 
         if (quantity > 1) {
             const totWeight = Math.round(weight * quantity * 100) / 100;
@@ -7441,6 +7572,10 @@ class SceneMain extends SceneBase {
             if (typeof Apparel !== "undefined") {
                 for (const line of Apparel.armorTooltipLines(item)) lines.push(line);
             }
+        }
+
+        if (typeof Fire !== "undefined" && Fire.stackShowsTemp(stack)) {
+            lines.push(Fire.formatTemp(stack.temp));
         }
 
         return lines.join("\n");
@@ -8585,7 +8720,8 @@ class SceneMain extends SceneBase {
         if (this._isSingleplayerSession()) {
             try { this.net?.setPaused?.(true); } catch (_) {}
             try { this.physics?.world?.pause?.(); } catch (_) {}
-            try { this.anims?.pauseAll?.(); } catch (_) {}
+            // Do not pauseAll here — it is global and the scene is about to stop.
+            // Pause-menu pauseAll is resumed in shutdown / the next create().
         }
         try { this.cameras?.main?.setBackgroundColor?.("#1a1510"); } catch (_) {}
 
@@ -8642,7 +8778,10 @@ class SceneMain extends SceneBase {
         if (this._leavingGame) return;
         if (!Phaser.Input.Keyboard.JustDown(this.keyEsc)) return;
         if (this.combatLog?.composing) return; // CombatLog closes chat
-        if (this.knappingPanel?.visible) return; // KnappingPanel closes itself
+        if (this.knappingPanel?.visible) {
+            this.knappingPanel.finishOrClose?.();
+            return;
+        }
         if (this._gamePaused) {
             this._closePauseMenu();
             return;

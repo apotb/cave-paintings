@@ -17,6 +17,7 @@ class CampfirePanel {
 
         this._buildSlots();
         this._buildDestroy();
+        this._buildHeatLabel();
 
         this.cookBarBg = scene.add.graphics();
         this.cookBarFill = scene.add.graphics();
@@ -179,13 +180,33 @@ class CampfirePanel {
             this.container.add(icon);
             this.container.add(fill);
             this.container.add(qty);
+            const heat = this.scene.add.text(0, 0, "", {
+                fontSize: `${pixelUiFontSize(8, 1)}px`,
+                fontFamily: PIXEL_UI_FONT,
+                color: "#e8a040",
+                stroke: "#000000",
+                strokeThickness: 2
+            }).setOrigin(0, 0).setVisible(false);
+            this.container.add(heat);
             const bar = this.scene.add.graphics();
             this.container.add(bar);
             const badges = createIngredientBadges(this.scene, (img) => {
                 this.container.add(img);
             });
-            this.slotViews.push({ key, slot, icon, fill, qty, bar, badges });
+            this.slotViews.push({ key, slot, icon, fill, qty, heat, bar, badges });
         }
+    }
+
+    _buildHeatLabel() {
+        this.heatText = this.scene.add.text(0, 0, "", {
+            fontSize: `${pixelUiFontSize(8, 1)}px`,
+            fontFamily: PIXEL_UI_FONT,
+            color: "#e8a040",
+            stroke: "#000000",
+            strokeThickness: 3,
+            align: "center"
+        }).setOrigin(0.5, 0.5).setVisible(false);
+        this.container.add(this.heatText);
     }
 
     _buildDestroy() {
@@ -383,6 +404,19 @@ class CampfirePanel {
             } else {
                 view.qty.setVisible(false);
             }
+            const showHeat = showSlot
+                && (view.key === "cook" || view.key === "catalyst" || view.key.startsWith("simmer:"))
+                && typeof Fire !== "undefined"
+                && Fire.stackShowsTemp(stack);
+            if (view.heat) {
+                if (showHeat) {
+                    view.heat.setText(Fire.formatTemp(stack.temp));
+                    view.heat.setColor(Fire.heatColor(Fire.heatBand(stack.temp)));
+                    view.heat.setVisible(true);
+                } else {
+                    view.heat.setVisible(false);
+                }
+            }
             syncIngredientBadges(
                 view.badges,
                 view.qty.x, view.qty.y, ws,
@@ -402,7 +436,23 @@ class CampfirePanel {
         if (canDestroy) this._syncDestroyHitArea(true);
         else this.destroyRect?.disableInteractive();
         this._syncDestroyHover();
+        this.refreshHeatLabel();
         this.refreshCookBar();
+    }
+
+    refreshHeatLabel() {
+        const txt = this.heatText;
+        if (!txt) return;
+        if (!this.campfire || typeof Fire === "undefined") {
+            txt.setVisible(false);
+            return;
+        }
+        const temp = Number(this.campfire.entry?.pitTemp);
+        const deg = Math.round(Number.isFinite(temp) ? temp : Fire.AMBIENT_TEMP);
+        const band = Fire.heatBand(deg);
+        txt.setText(Fire.formatTemp(deg));
+        txt.setColor(Fire.heatColor(band));
+        txt.setVisible(true);
     }
 
     refreshCookBar() {
@@ -425,7 +475,9 @@ class CampfirePanel {
             minutes = this.campfire.entry.simmerBarMinutes
                 || Math.max(filled, 2) * SIMMER_MINUTES_PER_SLOT;
             barView = this.slotViews.find(v => v.key === 'catalyst');
-            advancing = this.campfire.isSimmerAdvancing();
+            advancing = typeof Fire !== "undefined"
+                ? Fire.isCookAdvancing(this.campfire.entry, (id) => this.scene.getItem(id))
+                : this.campfire.isSimmerAdvancing();
         } else {
             const cook = this.campfire.getCook();
             const progressAmt = this.campfire.entry.cookProgress || 0;
@@ -448,10 +500,9 @@ class CampfirePanel {
                 || 0;
             if (!(minutes > 0) || (progressAmt <= 0 && !recipe)) return;
             barView = this.slotViews.find(v => v.key === 'cook');
-            // Orange while the fire is lit; gray only when draining after it goes out.
-            // Don't use isRoastAdvancing() — dedicated MP can have a valid roast
-            // (server-ticked) while the client helper still thinks it's paused.
-            advancing = this.campfire.isLit();
+            advancing = typeof Fire !== "undefined"
+                ? Fire.isCookAdvancing(this.campfire.entry, (id) => this.scene.getItem(id))
+                : this.campfire.isLit();
         }
 
         if (!barView || !barView.slot.visible || !(minutes > 0)) return;
@@ -520,6 +571,14 @@ class CampfirePanel {
             view.qty.setStroke('#000000', strokePx);
             view.qty.setScale(1 / zoom);
             view.qty.setPosition(p.x + slotW / 2 - 4 * ws, p.y + slotW / 2 - 4 * ws);
+            if (view.heat) {
+                const heatFont = pixelUiFontSize(8, s);
+                view.heat.setResolution(zoom * (window.devicePixelRatio || 1));
+                view.heat.setFontSize(`${heatFont}px`);
+                view.heat.setStroke("#000000", Math.max(2, Math.round(2 * s)));
+                view.heat.setScale(1 / zoom);
+                view.heat.setPosition(p.x - slotW / 2 + 3 * ws, p.y - slotW / 2 + 2 * ws);
+            }
         }
 
         const btnFontPx = pixelUiFontSize(16, s);
@@ -533,7 +592,17 @@ class CampfirePanel {
         this.destroyText.setScale(1 / zoom);
         this.destroyBtn.setPosition(0, fuelY + slotW / 2 + padding + bh / 2);
 
+        if (this.heatText) {
+            const heatFont = pixelUiFontSize(8, s);
+            this.heatText.setResolution(zoom * (window.devicePixelRatio || 1));
+            this.heatText.setFontSize(`${heatFont}px`);
+            this.heatText.setStroke("#000000", Math.max(2, Math.round(3 * s)));
+            this.heatText.setScale(1 / zoom);
+            this.heatText.setPosition(0, 0);
+        }
+
         this.container.setPosition(this.campfire.x, this.campfire.y);
+        this.refreshHeatLabel();
         this.refresh();
     }
 
@@ -720,6 +789,25 @@ class CampfirePanel {
         return this.tryQuickAdd(hotbarIndex, pointer, bag);
     }
 
+    _stackMoveExtras(stack) {
+        return {
+            dryProgress: stack?.dryProgress,
+            soakProgress: stack?.soakProgress,
+            temp: stack?.temp
+        };
+    }
+
+    _fuelStackFrom(stack, quantity, now) {
+        const spoilAt = spoilAtForWorld(stack, now);
+        const out = {
+            id: stack.id,
+            quantity,
+            ...(spoilAt != null ? { spoilAt } : {})
+        };
+        if (typeof Fire !== "undefined") Fire.copyStackTemp(stack, out);
+        return out;
+    }
+
     _oneFromStack(stack) {
         const now = this.scene.worldMinuteIndex?.() ?? null;
         const spoilAt = spoilAtForWorld(stack, now);
@@ -734,6 +822,7 @@ class CampfirePanel {
         if (stack.weight != null) one.weight = stack.weight;
         if (stack.kind) one.kind = stack.kind;
         if (stack.fillTint != null) one.fillTint = stack.fillTint;
+        if (typeof Fire !== "undefined") Fire.copyStackTemp(stack, one);
         return one;
     }
 
@@ -741,7 +830,7 @@ class CampfirePanel {
     _cloneStack(stack) {
         const now = this.scene.worldMinuteIndex?.() ?? null;
         const spoilAt = spoilAtForWorld(stack, now);
-        return {
+        const clone = {
             id: stack.id,
             quantity: stack.quantity,
             ...(spoilAt != null ? { spoilAt } : {}),
@@ -752,6 +841,8 @@ class CampfirePanel {
             ...(stack.kind ? { kind: stack.kind } : {}),
             ...(stack.fillTint != null ? { fillTint: stack.fillTint } : {})
         };
+        if (typeof Fire !== "undefined") Fire.copyStackTemp(stack, clone);
+        return clone;
     }
 
     /** Inventory stack from a campfire/world stack (spoilLeft). */
@@ -867,7 +958,7 @@ class CampfirePanel {
         const meta = this.scene.getItem(forInv.id);
         const left = this.scene.player.gainItem(
             meta, forInv.quantity, spoilLeftForCharacter(forInv, now),
-            { dryProgress: forInv.dryProgress, soakProgress: forInv.soakProgress }
+            this._stackMoveExtras(forInv)
         );
         return left < forInv.quantity && left === 0;
     }
@@ -887,12 +978,7 @@ class CampfirePanel {
         if (!dest) {
             moved = Math.min(stack.quantity, want);
             if (!(moved > 0)) return;
-            const spoilAt = spoilAtForWorld(stack, now);
-            this.campfire.setFuel(idx, {
-                id: stack.id,
-                quantity: moved,
-                ...(spoilAt != null ? { spoilAt } : {})
-            });
+            this.campfire.setFuel(idx, this._fuelStackFrom(stack, moved, now));
             stack.quantity -= moved;
             if (stack.quantity <= 0) inv[hotbarIndex] = null;
         } else if (dest.id === stack.id) {
@@ -907,6 +993,7 @@ class CampfirePanel {
             );
             mergeDryInto(dest, dest.quantity, moved, stack.dryProgress);
             mergeSoakInto(dest, dest.quantity, moved, stack.soakProgress);
+            mergeTempInto(dest, dest.quantity, moved, stack.temp);
             dest.quantity += moved;
             stack.quantity -= moved;
             if (stack.quantity <= 0) inv[hotbarIndex] = null;
@@ -914,13 +1001,8 @@ class CampfirePanel {
         } else {
             // Different item: only full-stack swap
             if (want < stack.quantity) return;
-            const spoilAt = spoilAtForWorld(stack, now);
             moved = stack.quantity;
-            this.campfire.setFuel(idx, {
-                id: stack.id,
-                quantity: stack.quantity,
-                ...(spoilAt != null ? { spoilAt } : {})
-            });
+            this.campfire.setFuel(idx, this._fuelStackFrom(stack, stack.quantity, now));
             inv[hotbarIndex] = this._toInvStack(dest);
         }
 
@@ -955,7 +1037,7 @@ class CampfirePanel {
             if (!(amount > 0)) return;
             const remaining = this.scene.player.gainItem(
                 meta, amount, spoilLeftForCharacter(stack, now),
-                { dryProgress: stack.dryProgress, soakProgress: stack.soakProgress }
+                this._stackMoveExtras(stack)
             );
             moved = amount - remaining;
             if (moved <= 0) return;
@@ -1072,6 +1154,7 @@ class CampfirePanel {
                 delete dest.spoilAt;
                 mergeDryInto(dest, dest.quantity, moved, stack.dryProgress);
             mergeSoakInto(dest, dest.quantity, moved, stack.soakProgress);
+                mergeTempInto(dest, dest.quantity, moved, stack.temp);
                 dest.quantity += moved;
                 stack.quantity -= moved;
                 if (stack.quantity <= 0) this._setStack(fromKey, null);
@@ -1195,6 +1278,7 @@ class CampfirePanel {
                 );
                 mergeDryInto(b, b.quantity, a.quantity, a.dryProgress);
                 mergeSoakInto(b, b.quantity, a.quantity, a.soakProgress);
+                mergeTempInto(b, b.quantity, a.quantity, a.temp);
                 b.quantity += a.quantity;
                 this._setStack(toKey, b);
                 this._setStack(fromKey, null);

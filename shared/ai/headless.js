@@ -719,8 +719,16 @@
                 return;
             }
             if (mob._wokeFromRest) {
-                world?.tryReturnToBed?.(mob);
-                return;
+                const delay = !!(
+                    this.tendSeek
+                    || mob._tending
+                    || this._isTendPatient(world)
+                    || world?.shouldDelaySleep?.(mob)
+                );
+                if (!delay) {
+                    world?.tryReturnToBed?.(mob);
+                    return;
+                }
             }
             if (mob._tending) {
                 mob.setDesiredVel?.(0, 0);

@@ -2,6 +2,8 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { createTestWorld, originChunk } = require("./helpers/simWorld");
 const { loadDefs, DataStore, restoreRng } = require("./helpers/load");
+const Place = require("../shared/place");
+const BodyHealing = require("../shared/body/Healing");
 
 loadDefs();
 
@@ -135,4 +137,136 @@ test("corpse_skin with knife marks skinned", () => {
     });
     world.handleAction(pawn.id, { type: Protocol.Actions.CORPSE_SKIN, corpseId: "c2" });
     assert.equal(chunk.corpses[0].skinned, true);
+});
+
+function makeCompanion(id, extra = {}) {
+    return {
+        id,
+        name: id,
+        x: 32,
+        y: 32,
+        facing: "down",
+        vx: 0,
+        vy: 0,
+        inventory: [null, null, null, null, null],
+        overflow: [],
+        equipment: { head: null, torso: null, legs: null, feet: null, back: null, waist: [] },
+        hotbarIndex: 0,
+        kc: 1200,
+        dead: false,
+        prone: false,
+        ownerId: "p1",
+        leaderId: "p1",
+        role: "companion",
+        _resting: false,
+        _restWalk: null,
+        _wokeFromRest: false,
+        lastSleep: null,
+        ...extra
+    };
+}
+
+function cutArm(creature) {
+    const part = creature.anatomy.part("Left Arm") || creature.anatomy.core;
+    part.injure({
+        id: "cut",
+        severity: 8,
+        bleeding: true,
+        bleedRate: 0.06,
+        tended: false
+    });
+}
+
+function partyOf(world, pawn, doctor, patient) {
+    pawn.party = [doctor, patient];
+    world._ensureCompanionCreature(pawn, doctor);
+    world._ensureCompanionCreature(pawn, patient);
+    return [pawn, doctor, patient];
+}
+
+test("resting doctor gets up to tend a lying ally", () => {
+    const { world, pawn } = createTestWorld();
+    const doctor = makeCompanion("doc", {
+        _resting: true,
+        inventory: [{ id: "leaf_cord", quantity: 2 }, null, null, null, null]
+    });
+    const patient = makeCompanion("pat", { _resting: true });
+    const members = partyOf(world, pawn, doctor, patient);
+    cutArm(patient.creature);
+    const ok = world._wakeRestingTender(pawn, doctor, members, pawn);
+    assert.equal(ok, true);
+    assert.equal(doctor._resting, false);
+    assert.equal(doctor._wokeFromRest, true);
+    assert.equal(patient._resting, true);
+});
+
+test("resting doctor stays down if the wounded ally is standing", () => {
+    const { world, pawn } = createTestWorld();
+    const doctor = makeCompanion("doc", {
+        _resting: true,
+        inventory: [{ id: "leaf_cord", quantity: 2 }, null, null, null, null]
+    });
+    const patient = makeCompanion("pat", { _resting: false });
+    const members = partyOf(world, pawn, doctor, patient);
+    cutArm(patient.creature);
+    const ok = world._wakeRestingTender(pawn, doctor, members, pawn);
+    assert.equal(ok, false);
+    assert.equal(doctor._resting, true);
+    assert.equal(doctor._wokeFromRest, false);
+});
+
+test("resting doctor wakes for a lying ally even if someone standing also needs tend", () => {
+    const { world, pawn } = createTestWorld();
+    const doctor = makeCompanion("doc", {
+        _resting: true,
+        inventory: [{ id: "leaf_cord", quantity: 2 }, null, null, null, null]
+    });
+    const standing = makeCompanion("stand", { _resting: false, x: 40, y: 32 });
+    const lying = makeCompanion("lie", { _resting: true, x: 48, y: 32 });
+    pawn.party = [doctor, standing, lying];
+    world._ensureCompanionCreature(pawn, doctor);
+    world._ensureCompanionCreature(pawn, standing);
+    world._ensureCompanionCreature(pawn, lying);
+    cutArm(standing.creature);
+    cutArm(lying.creature);
+    const members = [pawn, doctor, standing, lying];
+    const ok = world._wakeRestingTender(pawn, doctor, members, pawn);
+    assert.equal(ok, true);
+    assert.equal(doctor._resting, false);
+    assert.equal(doctor._wokeFromRest, true);
+});
+
+test("woke doctor delays returning to rest while a lying ally still needs tend", () => {
+    const { world, pawn } = createTestWorld();
+    const doctor = makeCompanion("doc", {
+        inventory: [{ id: "leaf_cord", quantity: 2 }, null, null, null, null],
+        _wokeFromRest: true
+    });
+    const patient = makeCompanion("pat", { _resting: true });
+    partyOf(world, pawn, doctor, patient);
+    cutArm(patient.creature);
+    assert.equal(world._shouldDelaySleep(pawn, doctor), true);
+    const target = BodyHealing.pickTendTarget(patient.creature.anatomy);
+    assert.ok(target);
+    BodyHealing.applyTend(patient.creature.anatomy, target, 0.5);
+    assert.equal(world._shouldDelaySleep(pawn, doctor), false);
+});
+
+test("woke doctor walks back to the lean-to after tending", () => {
+    const { world, pawn } = createTestWorld();
+    const chunk = originChunk(world);
+    const entry = { uid: "lt1", id: "lean_to", x: 32, y: 32, tx: 2, ty: 2, rot: 0 };
+    Place.ensureSleepEntry(entry, { sleep: { slots: 2 } });
+    chunk.things.push(entry);
+    const doctor = makeCompanion("doc", {
+        _wokeFromRest: true,
+        lastSleep: { uid: "lt1", slot: 0, rot: 0 }
+    });
+    const patient = makeCompanion("pat", { _resting: true, lastSleep: { uid: "lt1", slot: 1, rot: 0 } });
+    entry.occupants[1] = patient.id;
+    partyOf(world, pawn, doctor, patient);
+    world._tryReturnToBed(pawn, doctor);
+    assert.equal(doctor._wokeFromRest, false);
+    assert.ok(doctor._restWalk || doctor._resting);
+    assert.equal(doctor._restWalk?.uid || doctor.lastSleep?.uid, "lt1");
 });

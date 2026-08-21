@@ -170,6 +170,7 @@
         "campfire": true,
         "lit": true,
         "lightLevel": 12,
+        "lightKind": "flame",
         "anim": {
             "frameWidth": 16,
             "frameHeight": 16,
@@ -184,7 +185,8 @@
         "hitboxSize": 5,
         "campfire": true,
         "lit": false,
-        "lightLevel": 0
+        "lightLevel": 0,
+        "lightKind": "flame"
     },
     {
         "id": "tree_stump",

@@ -388,12 +388,16 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     _bindNameHud(obj) {
         if (!obj?.active) return;
-        this.scene._liftAboveVeil?.(obj, 60);
+        const above = !!this.scene.isPartyWorldHud?.(this);
+        const depth = above ? 60 : (this.y | 0) + 40;
+        this.scene._placeWorldHud?.(obj, depth, above);
     }
 
     _bindChatHud(obj) {
         if (!obj?.active) return;
-        this.scene._liftAboveVeil?.(obj, 61);
+        const above = !!this.scene.isPartyWorldHud?.(this);
+        const depth = above ? 61 : (this.y | 0) + 41;
+        this.scene._placeWorldHud?.(obj, depth, above);
     }
 
     _syncNameHudPos() {
@@ -497,9 +501,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             return;
         }
         const frac = Phaser.Math.Clamp(1 - ch.remaining / ch.max, 0, 1);
-        this._ownChannelBar = this.scene._ensureWorldHudBar?.(this._ownChannelBar)
-            || this._ownChannelBar
-            || this.scene.add.graphics();
+        if (!this._ownChannelBar?.active) {
+            this._ownChannelBar = this.scene.add.graphics().setVisible(false);
+        }
+        const above = !!this.scene.isPartyWorldHud?.(this);
+        this.scene._placeWorldHud?.(
+            this._ownChannelBar,
+            above ? 51 : (this.y | 0) + 41,
+            above
+        );
         const zoom = this.scene.worldZoom || 3;
         const w = 40;
         const h = 5;
@@ -1347,6 +1357,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             delete dest.spoilAt;
             mergeDryInto(dest, dest.quantity, equipped.quantity, equipped.dryProgress);
             mergeSoakInto(dest, dest.quantity, equipped.quantity, equipped.soakProgress);
+            mergeTempInto(dest, dest.quantity, equipped.quantity, equipped.temp);
             dest.quantity += equipped.quantity;
             this.setEquipmentStack(slotKey, null);
         } else {
@@ -2195,6 +2206,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             delete slot.spoilAt;
             mergeDryInto(slot, slot.quantity, toAdd, extras?.dryProgress);
             mergeSoakInto(slot, slot.quantity, toAdd, extras?.soakProgress);
+            mergeTempInto(slot, slot.quantity, toAdd, extras?.temp);
             slot.quantity += toAdd;
             remaining -= toAdd;
             if (remaining === 0) return remaining;
@@ -2208,6 +2220,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (dry > 0) stack.dryProgress = dry;
             const soak = Math.floor(Number(extras?.soakProgress) || 0);
             if (soak > 0) stack.soakProgress = soak;
+            if (typeof Fire !== "undefined") Fire.applyStackTemp(stack, extras?.temp);
             const nullIndex = arr.findIndex(s => !s);
             if (nullIndex !== -1) {
                 arr[nullIndex] = stack;
@@ -3428,6 +3441,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         if (composing || knapping) {
             this.setVelocity(0, 0);
+            this._iceVx = 0;
+            this._iceVy = 0;
+            this.isSprinting = false;
+            if (this.anims) this.anims.timeScale = 1;
+            // No input → idle; otherwise walk keeps playing from the last moving frame.
+            if (!this._prone && !this._resting && !this._downed) {
+                if (typeof PlayerLook !== "undefined") PlayerLook.play(this, this.facing || "down", false);
+                else this.play(`idle-${this.facing || "down"}`, true);
+            }
             this.syncSortDepth();
             this.syncFxRoot?.();
             return;

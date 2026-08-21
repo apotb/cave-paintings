@@ -317,6 +317,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
                 const freshAt = defaultSpoilAt(item, this.scene.worldMinuteIndex?.());
                 slot.spoilAt = mergeSpoilAt(slot.quantity, slot.spoilAt, add, freshAt);
                 mergeDryInto(slot, slot.quantity, add, 0);
+                mergeTempInto(slot, slot.quantity, add, null);
                 slot.quantity += add;
                 qty -= add;
                 gained.push({ id: item.id, quantity: add });

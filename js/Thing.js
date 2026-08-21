@@ -298,12 +298,14 @@ class Campfire extends Thing {
         if (!Array.isArray(entry.simmer)) entry.simmer = [null, null, null, null];
         while (entry.simmer.length < 4) entry.simmer.push(null);
         if (entry.simmer.length > 4) entry.simmer.length = 4;
-        if (entry.cookProgress == null) entry.cookProgress = 0;
-        // burnRemaining: minutes left on the unit already in the fire (pulled from a slot)
-        if (entry.burnRemaining == null) {
-            // Migrate old burnProgress (minutes into current stack item, not yet pulled)
-            entry.burnRemaining = 0;
-            delete entry.burnProgress;
+        if (typeof Fire !== "undefined") {
+            Fire.migrateEntry(entry, (id) => scene.getItem(id));
+        } else {
+            if (entry.cookProgress == null) entry.cookProgress = 0;
+            if (entry.burnRemaining == null) {
+                entry.burnRemaining = 0;
+                delete entry.burnProgress;
+            }
         }
 
         this.setInteractive({ cursor: 'pointer' });
@@ -354,18 +356,34 @@ class Campfire extends Thing {
 
     tooltipText() {
         const lines = [this.meta.name];
+        const getItem = (id) => this.scene.getItem(id);
+        const now = this.scene.worldMinuteIndex?.();
+        if (typeof Fire !== "undefined") {
+            const band = Fire.displayBand(this.entry, now);
+            const deg = Math.round(Number(this.entry.pitTemp) || Fire.AMBIENT_TEMP);
+            lines.push(Fire.formatTemp(deg));
+            if (this.isLit()) {
+                const mins = typeof Fire !== "undefined"
+                    ? Fire.burnMinutes(this.entry, getItem)
+                    : campfireBurnMinutes(getItem, this.entry.fuel, this.entry.burnRemaining);
+                if (mins <= 0) lines.push("Burn time: <1h");
+                else lines.push(`Burn time: ${formatHours(Math.floor(mins / 60))}`);
+            } else if (!this.hasFuel() || band === "cold") {
+                // Unlit empty pits always need fuel, even hot coals that would relight.
+                lines.push(this.hasFuel() ? "Needs firestarter" : "Needs fuel");
+            }
+            return lines.join("\n");
+        }
         if (this.isLit()) {
-            const mins = campfireBurnMinutes(
-                (id) => this.scene.getItem(id),
-                this.entry.fuel,
-                this.entry.burnRemaining
-            );
-            if (mins <= 0) lines.push('Burn time: <1h');
+            const mins = typeof Fire !== "undefined"
+                ? Fire.burnMinutes(this.entry, getItem)
+                : campfireBurnMinutes(getItem, this.entry.fuel, this.entry.burnRemaining);
+            if (mins <= 0) lines.push("Burn time: <1h");
             else lines.push(`Burn time: ${formatHours(Math.floor(mins / 60))}`);
         } else {
-            lines.push(this.hasFuel() ? 'Needs firestarter' : 'Needs fuel');
+            lines.push(this.hasFuel() ? "Needs firestarter" : "Needs fuel");
         }
-        return lines.join('\n');
+        return lines.join("\n");
     }
 
     /** Fuel still sitting in the input slots (not the unit already in the fire). */
@@ -401,61 +419,55 @@ class Campfire extends Thing {
         scene.campfirePanel?.refresh();
     }
 
-    /**
-     * Pull one fuel unit from left→right into the fire. Returns kj (minutes) or 0.
-     */
-    consumeFuelUnit() {
-        for (let i = 0; i < 2; i++) {
-            const stack = this.entry.fuel[i];
-            if (!stack) continue;
-            const item = this.scene.getItem(stack.id);
-            const kj = Number(item?.fuel?.kj ?? 0);
-            if (kj <= 0) continue;
-
-            stack.quantity -= 1;
-            if (stack.quantity <= 0) this.entry.fuel[i] = null;
-            this.entry.burnRemaining = kj;
-            this.scene.campfirePanel?.refresh();
-            if (this.scene.tooltip?.visible && this.scene._tooltipTarget === this) {
-                this.scene.refreshTooltip();
-            }
-            return kj;
-        }
-        return 0;
+    _getItem(id) {
+        return this.scene.getItem(id);
     }
 
-    /** If lit with nothing actively burning, pull the next fuel unit. */
+    _syncKind() {
+        const id = this.entry?.id;
+        if (!id || this.meta?.id === id) return;
+        this.setKind(id);
+    }
+
+    /** If unlit with nothing actively burning, pull the next fuel unit and light. */
     ensureBurning() {
-        if (!this.isLit()) return false;
-        if ((this.entry.burnRemaining || 0) > 0) return true;
-        return this.consumeFuelUnit() > 0;
-    }
-
-    /**
-     * Burn 1 minute off the active unit; pull the next when empty.
-     * Removing slot fuel does not snuff the unit already in the fire.
-     * Returns true if became unlit.
-     */
-    burnMinute() {
-        if (!this.isLit()) return false;
-
-        if ((this.entry.burnRemaining || 0) > 0) {
-            this.entry.burnRemaining -= 1;
-        }
-
-        if ((this.entry.burnRemaining || 0) <= 0) {
-            if (!this.consumeFuelUnit()) {
-                this.entry.burnRemaining = 0;
-                this.setKind('unlit_campfire');
-                return true;
-            }
-        }
-
+        if (typeof Fire === "undefined") return false;
+        const ok = Fire.lightPit(this.entry, (id) => this._getItem(id));
+        this._syncKind();
+        if (ok) this.scene.markLightDirty?.();
         this.scene.campfirePanel?.refresh();
         if (this.scene.tooltip?.visible && this.scene._tooltipTarget === this) {
             this.scene.refreshTooltip();
         }
-        return false;
+        return ok;
+    }
+
+    /**
+     * Burn, heat, smolder, and cook one game minute.
+     * Returns true if the night-veil light band or lit visual changed.
+     */
+    burnMinute() {
+        if (typeof Fire === "undefined") return false;
+        const getItem = (id) => this._getItem(id);
+        const now = this.scene.worldMinuteIndex?.();
+        const pit = Fire.tickPit(this.entry, getItem, now);
+        const cook = Fire.tickCook(this.entry, getItem, {
+            worldMinute: now,
+            makeResult: (meta, qty, at) => makeWorldItemStack(meta, qty, undefined, at),
+            finishSimmer: (entry) => this._finishSimmerMeal(entry)
+        });
+        if (cook.rate > 0 && cook.method === "stick_roast") {
+            this._wearRoastCatalyst(cook.rate);
+        }
+        if (pit.litChanged) this._syncKind();
+        else {
+            this.scene.campfirePanel?.refresh();
+            if (this.scene.tooltip?.visible && this.scene._tooltipTarget === this) {
+                this.scene.refreshTooltip();
+            }
+        }
+        this.applySmokeVisual();
+        return !!(pit.lightChanged || pit.litChanged);
     }
 
     getFuel(index) {
@@ -464,6 +476,14 @@ class Campfire extends Thing {
 
     setFuel(index, stack) {
         this.entry.fuel[index] = stack;
+        if (typeof Fire !== "undefined") {
+            Fire.tryAutoIgnite(
+                this.entry,
+                (id) => this._getItem(id),
+                this.scene.worldMinuteIndex?.()
+            );
+            this._syncKind();
+        }
         this.scene.campfirePanel?.refresh();
         if (this.scene.tooltip?.visible && this.scene._tooltipTarget === this) {
             this.scene.refreshTooltip();
@@ -477,7 +497,8 @@ class Campfire extends Thing {
     setCook(stack) {
         const prevId = this.entry.cook?.id;
         this.entry.cook = stack;
-        if (!stack || stack.id !== prevId) this.entry.cookProgress = 0;
+        if (typeof Fire !== "undefined") Fire.onCookChanged(this.entry, prevId);
+        else if (!stack || stack.id !== prevId) this.entry.cookProgress = 0;
         this.scene.campfirePanel?.refresh();
         this.applySmokeVisual();
         if (this.scene.tooltip?.visible && this.scene._tooltipTarget === this) {
@@ -538,72 +559,7 @@ class Campfire extends Thing {
         this.entry.simmer = [null, null, null, null];
     }
 
-    /**
-     * Advance cooking by one game minute when conditions allow; otherwise pause.
-     * Stick-roast and shell simmer both run unattended while the fire is lit.
-     * @param {boolean} lit  campfire is burning
-     */
-    tickCook(lit) {
-        const method = this.getCatalystMethod();
-        // Keep ticking simmer while vessel is valid, slots still hold leftovers, or progress is draining
-        const simmerActive = method === "shell_simmer"
-            || this.hasSimmerContents()
-            || ((this.entry.cookProgress || 0) > 0 && (this.entry.simmerBarMinutes || 0) > 0);
-        if (simmerActive) {
-            this._tickShellSimmer(lit);
-            return;
-        }
-
-        const cook = this.entry.cook;
-        if (!cook) {
-            this.applySmokeVisual();
-            return;
-        }
-
-        const recipe = method
-            ? getCookRecipe(id => this.scene.getItem(id), cook.id, method)
-            : null;
-        const smoke = method === "smoke_hide";
-        const canAdvance = !!(lit && method && recipe);
-
-        if (!canAdvance) {
-            // Stick-roast drains when the fire is out; smoke pauses.
-            if (!smoke && (this.entry.cookProgress || 0) > 0 && !lit) {
-                this.entry.cookProgress -= 1;
-                if (this.entry.cookProgress <= 0) {
-                    this.entry.cookProgress = 0;
-                    delete this.entry.roastBarMinutes;
-                }
-                if (this.scene.campfirePanel?.campfire === this) {
-                    this.scene.campfirePanel.refresh();
-                }
-            } else {
-                this.scene.campfirePanel?.refreshCookBar?.();
-            }
-            this.applySmokeVisual();
-            return;
-        }
-
-        this.entry.roastBarMinutes = recipe.minutes;
-        this.entry.cookProgress = (this.entry.cookProgress || 0) + 1;
-        if (!smoke) this._wearRoastCatalyst();
-        if (this.entry.cookProgress >= recipe.minutes) {
-            const resultMeta = this.scene.getItem(recipe.result);
-            delete this.entry.roastBarMinutes;
-            if (resultMeta) {
-                this.setCook(makeWorldItemStack(resultMeta, cook.quantity || 1, undefined, this.scene.worldMinuteIndex?.()));
-            } else {
-                this.entry.cookProgress = 0;
-                this.scene.campfirePanel?.refresh();
-            }
-            this.applySmokeVisual();
-            return;
-        }
-        this.scene.campfirePanel?.refresh();
-        this.applySmokeVisual();
-    }
-
-    _wearRoastCatalyst() {
+    _wearRoastCatalyst(rate = 1) {
         if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) return;
         if (typeof Durability === "undefined") return;
         const stack = this.entry.catalyst;
@@ -611,7 +567,7 @@ class Campfire extends Thing {
         const def = this.scene.getItem(stack.id);
         const result = Durability.applyDurabilityUse(
             stack,
-            Durability.COOK_WEAR_PER_MINUTE,
+            Durability.COOK_WEAR_PER_MINUTE * Math.max(0, Number(rate) || 0),
             def
         );
         if (!result.broke) return;
@@ -683,74 +639,36 @@ class Campfire extends Thing {
     }
 
     isRoastAdvancing() {
-        if (!this.isLit()) return false;
-        const cook = this.entry.cook;
-        if (!cook) return false;
+        if (typeof Fire === "undefined") return false;
         const method = this.getCatalystMethod();
-        if (!method) return false;
-        return !!getCookRecipe(id => this.scene.getItem(id), cook.id, method);
+        if (method === "shell_simmer") return false;
+        return Fire.isCookAdvancing(this.entry, (id) => this._getItem(id));
     }
 
-    /** Lit + valid shell vessel + ≥2 valid ingredients + no junk in simmer slots. */
-    _simmerCanAdvance(lit) {
-        if (!lit) return false;
-        if (this.getCatalystMethod() !== "shell_simmer") return false;
-        let filled = 0;
-        for (const s of this.entry.simmer) {
-            if (!s) continue;
-            if (!isSimmerIngredient(s.id)) return false;
-            filled += 1;
-        }
-        return filled >= 2;
+    _simmerCanAdvance() {
+        if (typeof Fire === "undefined") return false;
+        return Fire.simmerCanAdvance(this.entry, (id) => this._getItem(id));
     }
 
     isSimmerAdvancing() {
-        return this._simmerCanAdvance(this.isLit());
+        if (typeof Fire === "undefined") return false;
+        return Fire.isCookAdvancing(this.entry, (id) => this._getItem(id))
+            && (this.getCatalystMethod() === "shell_simmer" || this.hasSimmerContents());
     }
 
-    _refreshSimmerUi() {
-        const panel = this.scene.campfirePanel;
-        if (panel?.visible && panel.campfire === this) panel.refresh();
-    }
-
-    _tickShellSimmer(lit) {
-        if (!this._simmerCanAdvance(lit)) {
-            if ((this.entry.cookProgress || 0) > 0) {
-                this.entry.cookProgress -= 1;
-                if (this.entry.cookProgress <= 0) {
-                    this.entry.cookProgress = 0;
-                    delete this.entry.simmerBarMinutes;
-                }
-                this._refreshSimmerUi();
-            } else {
-                delete this.entry.simmerBarMinutes;
-                this._refreshSimmerUi();
-            }
-            return;
-        }
-
-        const filled = this.simmerFilledCount();
-        const need = filled * SIMMER_MINUTES_PER_SLOT;
-        this.entry.simmerBarMinutes = need;
-        this.entry.cookProgress = (this.entry.cookProgress || 0) + 1;
-        if (this.entry.cookProgress >= need) {
-            const ids = this.entry.simmer
-                .filter(s => s && isSimmerIngredient(s.id))
-                .map(s => s.id);
-            const coconutMeta = this.scene.getItem(this.entry.catalyst?.id);
-            const meal = makeCoconutMealStack(
-                id => this.scene.getItem(id),
-                ids,
-                coconutMeta,
-                this.scene.worldMinuteIndex?.()
-            );
-            this.clearSimmer();
-            this.entry.cookProgress = 0;
-            delete this.entry.simmerBarMinutes;
-            this.setCatalyst(meal);
-            return;
-        }
-        this._refreshSimmerUi();
+    _finishSimmerMeal(entry) {
+        const ids = (entry?.simmer || [])
+            .filter((s) => s && isSimmerIngredient(s.id))
+            .map((s) => s.id);
+        const coconutMeta = this.scene.getItem(entry?.catalyst?.id);
+        const meal = makeCoconutMealStack(
+            (id) => this.scene.getItem(id),
+            ids,
+            coconutMeta,
+            this.scene.worldMinuteIndex?.()
+        );
+        this.clearSimmer();
+        this.setCatalyst(meal);
     }
 }
 

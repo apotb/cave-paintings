@@ -38,3 +38,14 @@ test("resolveCraftedWeights hide-stage averaging", () => {
     assert.ok(cord);
     assert.ok(Math.abs(cord.weight - 0.05) < 1e-9);
 });
+
+test("resolveCraftedFuel derives kj and max temp from ingredients", () => {
+    const cord = DataStore.getItem("leaf_cord");
+    assert.equal(cord.fuel.kj, 5);
+    assert.equal(cord.fuel.temp, 400);
+    const frame = DataStore.getItem("stick_frame");
+    assert.ok(frame.fuel.kj > 0);
+    assert.equal(frame.fuel.temp, 600);
+    const log = DataStore.getItem("log");
+    assert.equal(log.fuel.temp, 800);
+});

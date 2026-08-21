@@ -21,6 +21,7 @@ class SceneMenu extends Phaser.Scene {
     }
 
     create() {
+        try { this.anims?.resumeAll?.(); } catch (_) {}
         this.cameras.main.setBackgroundColor("#1a1510");
         this.cameras.main.setRoundPixels(true);
         this._dom = [];

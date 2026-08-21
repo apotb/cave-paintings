@@ -497,7 +497,8 @@ class LocalSim {
             y: Number.isFinite(action.y) ? action.y : p.y,
             food: held.food,
             customName: held.customName,
-            spoilAt: spoilAtForWorld(held, now)
+            spoilAt: spoilAtForWorld(held, now),
+            temp: held.temp
         });
         this._dispatch(NetProtocol.Types.YOU, this._youPayload());
     }
@@ -535,7 +536,8 @@ class LocalSim {
             y,
             food: action.food,
             customName: action.customName,
-            spoilAt: action.spoilAt
+            spoilAt: action.spoilAt,
+            ...(action.temp != null ? { temp: action.temp } : {})
         });
     }
 
@@ -923,6 +925,7 @@ class LocalSim {
                         dryProgress: d.dryProgress,
                         soakProgress: d.soakProgress,
                         soakDoneAt: d.soakDoneAt,
+                        temp: d.temp,
                         ingredients: d.ingredients,
                         kind: d.kind,
                         fillTint: d.fillTint,

@@ -17,6 +17,7 @@ const Hunger = require("../shared/hunger");
 const Path = require("../shared/path");
 const Hide = require("../shared/hide");
 const Carry = require("../shared/carry");
+const Fire = require("../shared/fire");
 const Party = require("../shared/party");
 const CavemanNames = require("../shared/cavemanNames");
 const CorpseDecay = require("../shared/corpseDecay");
@@ -475,6 +476,12 @@ class SimWorld {
                 if (duel) return duel;
                 const owner = self.players.get(mob?.ownerId);
                 return self._chaseTarget(owner);
+            },
+            shouldDelaySleep(mob) {
+                const pawn = self._findOwnedPawn(mob?.id);
+                if (!pawn) return false;
+                const session = self._sessionOfPawn(pawn);
+                return self._shouldDelaySleep(session, pawn);
             },
             tryReturnToBed(mob) {
                 const pawn = self._findOwnedPawn(mob?.id);
@@ -3210,6 +3217,7 @@ class SimWorld {
             }
             Hide.applyMergedDryProgress(s, s.quantity || 1, add, extraFields?.dryProgress);
             Hide.applyMergedSoakProgress(s, s.quantity || 1, add, extraFields?.soakProgress);
+            Fire.applyMergedStackTemp(s, s.quantity || 1, add, extraFields?.temp);
             s.quantity = (s.quantity || 1) + add;
             remaining -= add;
         }
@@ -3241,6 +3249,7 @@ class SimWorld {
             }
             Hide.applyMergedDryProgress(s, s.quantity || 1, add, extraFields?.dryProgress);
             Hide.applyMergedSoakProgress(s, s.quantity || 1, add, extraFields?.soakProgress);
+            Fire.applyMergedStackTemp(s, s.quantity || 1, add, extraFields?.temp);
             s.quantity = (s.quantity || 1) + add;
             remaining -= add;
         }
@@ -3668,6 +3677,9 @@ class SimWorld {
             const n = Math.round(Number(src.soakDoneAt));
             if (Number.isFinite(n)) out.soakDoneAt = n;
         }
+        if (src.temp != null && Number(src.temp) > Fire.AMBIENT_TEMP) {
+            out.temp = Number(src.temp);
+        }
         return Object.keys(out).length ? out : null;
     }
 
@@ -3693,6 +3705,7 @@ class SimWorld {
         if (extras.dryProgress != null) slot.dryProgress = extras.dryProgress;
         if (extras.soakProgress != null) slot.soakProgress = extras.soakProgress;
         if (extras.soakDoneAt != null) slot.soakDoneAt = extras.soakDoneAt;
+        if (extras.temp != null) Fire.applyStackTemp(slot, extras.temp);
         return slot;
     }
 
@@ -3904,6 +3917,7 @@ class SimWorld {
                 delete b.spoilAt;
                 Hide.applyMergedDryProgress(b, b.quantity || 1, moved, a.dryProgress);
                 Hide.applyMergedSoakProgress(b, b.quantity || 1, moved, a.soakProgress);
+                Fire.applyMergedStackTemp(b, b.quantity || 1, moved, a.temp);
                 b.quantity = (b.quantity || 1) + moved;
                 a.quantity = qty - moved;
                 if (!(a.quantity > 0)) fromInv[from] = null;
@@ -4239,6 +4253,7 @@ class SimWorld {
             delete dest.spoilAt;
             Hide.applyMergedDryProgress(dest, dest.quantity || 1, eqQty, equipped.dryProgress);
             Hide.applyMergedSoakProgress(dest, dest.quantity || 1, eqQty, equipped.soakProgress);
+            Fire.applyMergedStackTemp(dest, dest.quantity || 1, eqQty, equipped.temp);
             dest.quantity = (dest.quantity || 1) + eqQty;
             this._setEquipStack(p, parsed.key, null);
         } else {
@@ -4341,6 +4356,7 @@ class SimWorld {
                 pile.spoilAt = Spoil.mergeSpoilAt(qty, pile.spoilAt, add, drop.spoilAt);
                 Hide.applyMergedDryProgress(pile, qty, add, drop.dryProgress);
                 Hide.applyMergedSoakProgress(pile, qty, add, drop.soakProgress);
+                Fire.applyMergedStackTemp(pile, qty, add, drop.temp);
                 const mergedDone = Hide.mergeSoakDoneAt(qty, pile.soakDoneAt, add, drop.soakDoneAt);
                 if (mergedDone != null) pile.soakDoneAt = mergedDone;
                 else delete pile.soakDoneAt;
@@ -4657,6 +4673,7 @@ class SimWorld {
                     add, freshAt
                 );
                 Hide.applyMergedDryProgress(slot, slot.quantity || 1, add, 0);
+                Fire.applyMergedStackTemp(slot, slot.quantity || 1, add, null);
                 slot.quantity = (slot.quantity || 1) + add;
                 qty -= add;
             }
@@ -5106,21 +5123,7 @@ class SimWorld {
 
     _campfireEnsureBurning(entry) {
         if (!entry) return false;
-        entry.id = "campfire";
-        if ((entry.burnRemaining || 0) > 0) return true;
-        if (!Array.isArray(entry.fuel)) entry.fuel = [null, null];
-        for (let i = 0; i < 2; i++) {
-            const stack = entry.fuel[i];
-            if (!stack?.id) continue;
-            const meta = itemDefs().get(stack.id);
-            const kj = Number(meta?.fuel?.kj ?? 0);
-            if (!(kj > 0)) continue;
-            stack.quantity = Math.max(0, Math.floor(Number(stack.quantity) || 1) - 1);
-            if (!(stack.quantity > 0)) entry.fuel[i] = null;
-            entry.burnRemaining = kj;
-            return true;
-        }
-        return false;
+        return Fire.lightPit(entry, (id) => itemDefs().get(id));
     }
 
     _campfirePublic(entry, chunk = null) {
@@ -5143,7 +5146,12 @@ class SimWorld {
             cookProgress: entry.cookProgress || 0,
             burnRemaining: entry.burnRemaining || 0,
             roastBarMinutes: entry.roastBarMinutes || 0,
-            simmerBarMinutes: (entry.simmerBarMinutes > 0) ? entry.simmerBarMinutes : undefined
+            simmerBarMinutes: (entry.simmerBarMinutes > 0) ? entry.simmerBarMinutes : undefined,
+            pitTemp: entry.pitTemp,
+            cookTemp: entry.cookTemp,
+            maxTemp: entry.maxTemp,
+            canIgniteFuel: !!entry.canIgniteFuel,
+            smolderAt: entry.smolderAt
         };
     }
 
@@ -5183,26 +5191,8 @@ class SimWorld {
     }
 
     _tickCampfireBurn(entry) {
-        if (!entry || entry.id !== "campfire") return false;
-        if ((entry.burnRemaining || 0) > 0) {
-            entry.burnRemaining -= 1;
-        }
-        if ((entry.burnRemaining || 0) > 0) return false;
-        if (!Array.isArray(entry.fuel)) entry.fuel = [null, null];
-        for (let i = 0; i < 2; i++) {
-            const stack = entry.fuel[i];
-            if (!stack?.id) continue;
-            const meta = itemDefs().get(stack.id);
-            const kj = Number(meta?.fuel?.kj ?? 0);
-            if (!(kj > 0)) continue;
-            stack.quantity = Math.max(0, Math.floor(Number(stack.quantity) || 1) - 1);
-            if (!(stack.quantity > 0)) entry.fuel[i] = null;
-            entry.burnRemaining = kj;
-            return true;
-        }
-        entry.burnRemaining = 0;
-        entry.id = "unlit_campfire";
-        return true;
+        const pit = Fire.tickPit(entry, (id) => itemDefs().get(id), this.worldMinuteIndex());
+        return !!(pit.changed || pit.litChanged);
     }
 
     _simmerFilledCount(entry) {
@@ -5294,81 +5284,31 @@ class SimWorld {
         return stack;
     }
 
-    _tickShellSimmer(entry, lit) {
-        if (!this._simmerCanAdvance(entry, lit)) {
-            if ((entry.cookProgress || 0) > 0) {
-                entry.cookProgress -= 1;
-                if (entry.cookProgress <= 0) {
-                    entry.cookProgress = 0;
-                    delete entry.simmerBarMinutes;
-                }
-            } else {
-                delete entry.simmerBarMinutes;
+    _tickCampfireCook(entry) {
+        const getItem = (id) => itemDefs().get(id);
+        const cook = Fire.tickCook(entry, getItem, {
+            worldMinute: this.worldMinuteIndex(),
+            makeResult: (meta, qty, at) => Spoil.makeWorldItemStack(meta, qty, undefined, at),
+            finishSimmer: (e) => {
+                const meal = this._makeSimmerMeal(e);
+                e.simmer = [null, null, null, null];
+                e.catalyst = meal;
             }
-            return false;
+        });
+        if (cook.rate > 0 && cook.method === "stick_roast") {
+            this._wearRoastCatalyst(entry, cook.rate);
+            return true;
         }
-        const filled = this._simmerFilledCount(entry);
-        const need = filled * 5;
-        entry.simmerBarMinutes = need;
-        entry.cookProgress = (entry.cookProgress || 0) + 1;
-        if (entry.cookProgress < need) return false;
-        const meal = this._makeSimmerMeal(entry);
-        entry.simmer = [null, null, null, null];
-        entry.cookProgress = 0;
-        delete entry.simmerBarMinutes;
-        entry.catalyst = meal;
-        return true;
+        return !!(cook.changed || cook.converted);
     }
 
-    _tickCampfireCook(entry, lit) {
-        const method = this._campfireMethod(entry);
-        const simmerActive = method === "shell_simmer"
-            || this._campfireHasSimmer(entry)
-            || ((entry.cookProgress || 0) > 0 && (entry.simmerBarMinutes || 0) > 0);
-        if (simmerActive) return this._tickShellSimmer(entry, lit);
-
-        const cook = entry.cook;
-        if (!cook?.id) return false;
-        const recipe = method ? itemDefs().get(cook.id)?.cook?.[method] : null;
-        const smoke = method === "smoke_hide";
-        const canAdvance = !!(lit && method && recipe?.result && recipe.minutes > 0);
-        if (!canAdvance) {
-            if (!smoke && (entry.cookProgress || 0) > 0 && !lit) {
-                entry.cookProgress -= 1;
-                if (entry.cookProgress <= 0) {
-                    entry.cookProgress = 0;
-                    delete entry.roastBarMinutes;
-                }
-            }
-            return false;
-        }
-        entry.roastBarMinutes = recipe.minutes;
-        entry.cookProgress = (entry.cookProgress || 0) + 1;
-        const catBroke = smoke ? false : this._wearRoastCatalyst(entry);
-        if (entry.cookProgress < recipe.minutes) return catBroke;
-        const resultMeta = itemDefs().get(recipe.result);
-        delete entry.roastBarMinutes;
-        if (!resultMeta) {
-            entry.cookProgress = 0;
-            return false;
-        }
-        entry.cook = Spoil.makeWorldItemStack(
-            resultMeta,
-            cook.quantity || 1,
-            undefined,
-            this.worldMinuteIndex()
-        );
-        entry.cookProgress = 0;
-        return true;
-    }
-
-    _wearRoastCatalyst(entry) {
+    _wearRoastCatalyst(entry, rate = 1) {
         const stack = entry?.catalyst;
         if (!stack) return false;
         const def = itemDefs().get(stack.id);
         const result = Durability.applyDurabilityUse(
             stack,
-            Durability.COOK_WEAR_PER_MINUTE,
+            Durability.COOK_WEAR_PER_MINUTE * Math.max(0, Number(rate) || 0),
             def
         );
         if (!result.broke) return stack.durability != null;
@@ -5390,18 +5330,21 @@ class SimWorld {
 
     _tickOneCampfire(entry) {
         if (!this._isCampfireEntry(entry)) return false;
+        Fire.migrateEntry(entry, (id) => itemDefs().get(id));
         const idBefore = entry.id;
         const fuelBefore = this._fuelSignature(entry);
         const cookId = entry.cook?.id || "";
         const catId = entry.catalyst?.id || "";
-        const lit = entry.id === "campfire";
-        let slotDirty = false;
-        if (lit) slotDirty = this._tickCampfireBurn(entry) || slotDirty;
-        slotDirty = this._tickCampfireCook(entry, entry.id === "campfire") || slotDirty;
+        const tempBefore = entry.pitTemp;
+        const cookTempBefore = entry.cookTemp;
+        let slotDirty = this._tickCampfireBurn(entry);
+        slotDirty = this._tickCampfireCook(entry) || slotDirty;
         if (entry.id !== idBefore) slotDirty = true;
         if (this._fuelSignature(entry) !== fuelBefore) slotDirty = true;
         if ((entry.cook?.id || "") !== cookId) slotDirty = true;
         if ((entry.catalyst?.id || "") !== catId) slotDirty = true;
+        if (entry.pitTemp !== tempBefore) slotDirty = true;
+        if (entry.cookTemp !== cookTempBefore) slotDirty = true;
         return slotDirty;
     }
 
@@ -5644,8 +5587,9 @@ class SimWorld {
         const slot = this._parseCampfireSlot(key);
         if (!entry || !slot) return;
         if (slot.kind === "cook") {
-            if (!stack || stack.id !== entry.cook?.id) entry.cookProgress = 0;
+            const prevId = entry.cook?.id;
             entry.cook = stack || null;
+            Fire.onCookChanged(entry, prevId);
             return;
         }
         if (slot.kind === "catalyst") {
@@ -5655,6 +5599,7 @@ class SimWorld {
         if (slot.kind === "fuel") {
             if (!Array.isArray(entry.fuel)) entry.fuel = [null, null];
             entry.fuel[slot.i] = stack || null;
+            Fire.tryAutoIgnite(entry, (id) => itemDefs().get(id), this.worldMinuteIndex());
             return;
         }
         if (!Array.isArray(entry.simmer)) entry.simmer = [null, null, null, null];
@@ -5783,6 +5728,7 @@ class SimWorld {
                         delete dest.spoilAt;
                         Hide.applyMergedDryProgress(dest, dest.quantity || 1, moved, extras.dryProgress);
                         Hide.applyMergedSoakProgress(dest, dest.quantity || 1, moved, extras.soakProgress);
+                        Fire.applyMergedStackTemp(dest, dest.quantity || 1, moved, extras.temp);
                         dest.quantity = (dest.quantity || 1) + moved;
                         this._youDirty.add(p.id);
                         if (moved >= qty) {
@@ -5848,6 +5794,7 @@ class SimWorld {
             delete dest.spoilAt;
             Hide.applyMergedDryProgress(dest, dest.quantity || 1, moved, extras.dryProgress);
             Hide.applyMergedSoakProgress(dest, dest.quantity || 1, moved, extras.soakProgress);
+            Fire.applyMergedStackTemp(dest, dest.quantity || 1, moved, extras.temp);
             dest.quantity = (dest.quantity || 1) + moved;
             this._youDirty.add(p.id);
             this._enforceCarryCap(p);
@@ -6474,7 +6421,9 @@ class SimWorld {
                     }
                 } else if (pawn._wokeFromRest) {
                     const assist = pawn.creature?.ai?.assistTarget;
-                    if (!assist) this._tryReturnToBed(session, pawn);
+                    if (!assist && !this._shouldDelaySleep(session, pawn)) {
+                        this._tryReturnToBed(session, pawn);
+                    }
                 }
             }
         }
@@ -6813,6 +6762,7 @@ class SimWorld {
             );
             Hide.applyMergedDryProgress(dest, dest.quantity || 1, piece.quantity, piece.dryProgress);
             Hide.applyMergedSoakProgress(dest, dest.quantity || 1, piece.quantity, piece.soakProgress);
+            Fire.applyMergedStackTemp(dest, dest.quantity || 1, piece.quantity, piece.temp);
             dest.quantity = (dest.quantity || 1) + piece.quantity;
             this._storageSetSlot(entry, slotKey, this._hangIfRack(entry, dest));
             return;
@@ -6891,6 +6841,7 @@ class SimWorld {
             b.spoilAt = Spoil.mergeSpoilAt(b.quantity || 1, b.spoilAt, moved, a.spoilAt);
             Hide.applyMergedDryProgress(b, b.quantity || 1, moved, a.dryProgress);
             Hide.applyMergedSoakProgress(b, b.quantity || 1, moved, a.soakProgress);
+            Fire.applyMergedStackTemp(b, b.quantity || 1, moved, a.temp);
             b.quantity = (b.quantity || 1) + moved;
             a.quantity = (a.quantity || 1) - moved;
             this._storageSetSlot(entry, toKey, b);
@@ -6935,6 +6886,7 @@ class SimWorld {
                 );
                 Hide.applyMergedDryProgress(dest, dest.quantity || 1, piece.quantity, piece.dryProgress);
                 Hide.applyMergedSoakProgress(dest, dest.quantity || 1, piece.quantity, piece.soakProgress);
+                Fire.applyMergedStackTemp(dest, dest.quantity || 1, piece.quantity, piece.temp);
                 dest.quantity = (dest.quantity || 1) + piece.quantity;
                 this._campfireSetSlot(entry, slotKey, dest);
                 return;
@@ -7094,6 +7046,7 @@ class SimWorld {
             );
             Hide.applyMergedDryProgress(b, b.quantity || 1, moved, a.dryProgress);
             Hide.applyMergedSoakProgress(b, b.quantity || 1, moved, a.soakProgress);
+            Fire.applyMergedStackTemp(b, b.quantity || 1, moved, a.temp);
             b.quantity = (b.quantity || 1) + moved;
             a.quantity = (a.quantity || 1) - moved;
             this._campfireSetSlot(entry, toKey, b);
@@ -7778,7 +7731,56 @@ class SimWorld {
         return false;
     }
 
-    _pickPartyAutoTend(tender, members, control) {
+    _pawnIsLyingDown(rec) {
+        if (!rec || rec.dead) return false;
+        if (rec._resting) return true;
+        const c = rec.creature || this.creatures.get(rec.id);
+        return !!(rec.prone || c?._downed || c?._prone || c?._resting || c?.isIncapacitated?.());
+    }
+
+    _shouldDelaySleep(session, pawn) {
+        if (!session || !pawn || pawn._resting || pawn._restWalk) return false;
+        const members = this._ownedPawns(session).filter((m) => m && !m.dead);
+        const control = this._actionPawn(session, { pawnId: session.controlId });
+        const c = pawn.creature || this.creatures.get(pawn.id);
+        if (c?.ai?.assistTarget) return true;
+        if (pawn.tending || c?._tending) return true;
+        if (c?.ai?.tendSeek) return true;
+        for (const m of members) {
+            if (!m || m === pawn) continue;
+            const mc = m.creature || this.creatures.get(m.id);
+            const seek = mc?.ai?.tendSeek;
+            if (seek && (seek === c || seek === pawn || seek.id === pawn.id)) return true;
+        }
+        if (this._pickPartyAutoTend(pawn, members, control)) return true;
+        const anatomy = c?.anatomy;
+        if (anatomy && BodyHealing.pickTendTarget?.(anatomy)
+            && members.some((m) => this._pawnHasBandage(m))) {
+            return true;
+        }
+        return false;
+    }
+
+    /** Stand a resting doctor so they can tend a lying ally, then return to bed. */
+    _wakeRestingTender(session, rec, members, control) {
+        if (!session || !rec || rec.dead) return false;
+        const c = rec.creature || this.creatures.get(rec.id);
+        if (!c || c.isIncapacitated?.() || c.isImmobile?.() || c.isVomiting?.()) return false;
+        c.refreshCapacities?.();
+        if (!c.capacities?.canManipulate?.()) return false;
+        const pick = this._pickPartyAutoTend(rec, members, control, { lyingOnly: true });
+        if (!pick?.patient || pick.patient === rec || pick.patient.id === rec.id) return false;
+        if (rec._resting) this._wakePawn(session, rec, { help: true });
+        else if (rec._restWalk) {
+            rec._restWalk = null;
+            rec._wokeFromRest = true;
+            c._restWalk = null;
+            c._wokeFromRest = true;
+        }
+        return true;
+    }
+
+    _pickPartyAutoTend(tender, members, control, opts = {}) {
         const skipHeld = control ? { id: control.id, slot: control.hotbarIndex ?? 0 } : null;
         const seek = (Party.FOLLOW_DETACH || 12) * TS;
         const inRangeOthers = [];
@@ -7787,6 +7789,10 @@ class SimWorld {
         const anatomyOf = (m) => (m.creature || this.creatures.get(m.id))?.anatomy;
         for (const p of members || []) {
             if (!p || p.dead) continue;
+            if (opts.lyingOnly) {
+                if (p === tender || p.id === tender.id) continue;
+                if (!this._pawnIsLyingDown(p)) continue;
+            }
             const anatomy = anatomyOf(p);
             if (!anatomy) continue;
             const target = BodyHealing.pickTendTarget(anatomy);
@@ -7838,8 +7844,6 @@ class SimWorld {
             if (
                 combat
                 || rec.eatChannel
-                || rec._resting
-                || rec._restWalk
                 || rec.dead
                 || rec.tending
                 || this._pawnVomiting(rec)
@@ -7847,12 +7851,18 @@ class SimWorld {
                 cc.ai.tendSeek = null;
                 continue;
             }
+            if (rec._resting || rec._restWalk) {
+                if (!this._wakeRestingTender(session, rec, members, control)) {
+                    cc.ai.tendSeek = null;
+                    continue;
+                }
+            }
             const pick = this._pickPartyAutoTend(rec, members, control);
-            if (!pick || pick.inRange) {
+            const to = pick?.patient;
+            if (!to || to === rec || to.id === rec.id) {
                 cc.ai.tendSeek = null;
                 continue;
             }
-            const to = pick.patient;
             const toC = to.creature || this.creatures.get(to.id);
             if (toC) {
                 toC.x = to.x;
@@ -8888,6 +8898,7 @@ class SimWorld {
             if (!stack) return;
             Spoil.migrateToSpoilLeft(stack, now);
             Spoil.tickSpoilLeft(stack);
+            Fire.tickStackTemp(stack);
             this._spoilStackIfDue(stack);
         };
         if (Array.isArray(p.inventory)) {
@@ -8910,6 +8921,7 @@ class SimWorld {
             for (const d of c.drops) {
                 if (!d) continue;
                 const def = itemDefs().get(d.id);
+                Fire.tickStackTemp(d);
                 if (Hide.pausesDropDespawn(d, def, this._dropIsOnWater(d))) continue;
                 this._spoilStackIfDue(d);
             }
@@ -8918,14 +8930,20 @@ class SimWorld {
             for (const corpse of c.corpses) {
                 if (!Array.isArray(corpse?.loot)) continue;
                 for (let i = 0; i < corpse.loot.length; i++) {
-                    if (corpse.loot[i]) this._spoilStackIfDue(corpse.loot[i]);
+                    if (corpse.loot[i]) {
+                        Fire.tickStackTemp(corpse.loot[i]);
+                        this._spoilStackIfDue(corpse.loot[i]);
+                    }
                 }
             }
         }
         if (Array.isArray(c.things)) {
             for (const t of c.things) {
                 if (t?.cook) this._spoilStackIfDue(t.cook);
-                if (t?.catalyst) this._spoilStackIfDue(t.catalyst);
+                if (t?.catalyst) {
+                    Fire.tickStackTemp(t.catalyst);
+                    this._spoilStackIfDue(t.catalyst);
+                }
                 if (Array.isArray(t?.fuel)) {
                     for (let i = 0; i < t.fuel.length; i++) {
                         if (t.fuel[i]) this._spoilStackIfDue(t.fuel[i]);
@@ -8940,7 +8958,10 @@ class SimWorld {
                     const def = thingDefs().get(t.id);
                     if (!Hide.isDryingRack(def, t)) {
                         for (let i = 0; i < t.slots.length; i++) {
-                            if (t.slots[i]) this._spoilStackIfDue(t.slots[i]);
+                            if (t.slots[i]) {
+                                Fire.tickStackTemp(t.slots[i]);
+                                this._spoilStackIfDue(t.slots[i]);
+                            }
                         }
                     }
                 }

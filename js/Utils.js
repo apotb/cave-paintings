@@ -794,6 +794,10 @@ function mergeSoakInto(dest, destCount, addCount, addProgress) {
     }
 }
 
+function mergeTempInto(dest, destCount, addCount, addTemp) {
+    if (typeof Fire !== "undefined") Fire.applyMergedStackTemp(dest, destCount, addCount, addTemp);
+}
+
 /** Deep-enough clone of an inventory/equipment/loot stack. */
 function cloneItemStack(stack) {
     if (!stack) return null;
@@ -808,6 +812,7 @@ function cloneItemStack(stack) {
     if (stack.dryProgress != null) out.dryProgress = stack.dryProgress;
     if (stack.soakProgress != null) out.soakProgress = stack.soakProgress;
     if (stack.soakDoneAt != null) out.soakDoneAt = stack.soakDoneAt;
+    if (typeof Fire !== "undefined") Fire.copyStackTemp(stack, out);
     const extras = mealStackExtras(stack);
     if (extras) Object.assign(out, extras);
     return out;
@@ -828,6 +833,7 @@ function mealStackExtras(stack) {
         || stack.dryProgress != null
         || stack.soakProgress != null
         || stack.soakDoneAt != null
+        || (stack.temp != null && Number(stack.temp) > 20)
         || knap
     );
     if (!hasExtras) return null;
@@ -842,6 +848,7 @@ function mealStackExtras(stack) {
         dryProgress: stack.dryProgress,
         soakProgress: stack.soakProgress,
         soakDoneAt: stack.soakDoneAt,
+        ...(stack.temp != null && Number(stack.temp) > 20 ? { temp: stack.temp } : {}),
         ...(knap || {})
     };
 }
@@ -883,6 +890,7 @@ function hasStackExtras(dropOrStack) {
         || dropOrStack?.knapIconData
         || dropOrStack?.knapQuality
         || dropOrStack?.durability != null
+        || dropOrStack?.temp != null
     );
 }
 
@@ -965,7 +973,8 @@ function drawSlotConditionBar(gfx, slot, frac) {
  * @param {Array} fuelSlots   [stack|null, stack|null]
  * @param {Number} burnRemaining  minutes left on the currently burning unit
  */
-function campfireBurnMinutes(getItem, fuelSlots, burnRemaining = 0) {
+function campfireBurnMinutes(getItem, fuelSlots, burnRemaining = 0, entry = null) {
+    if (typeof Fire !== "undefined" && entry) return Fire.burnMinutes(entry, getItem);
     let kj = Math.max(0, burnRemaining || 0);
     for (const stack of fuelSlots || []) {
         if (!stack) continue;
@@ -1612,7 +1621,7 @@ function tickSleepHealFx(host, scene, delta) {
     if (!injured && !st?.bits?.length) host._healFx = null;
 }
 
-function _spawnSleepGlyph(scene, ch, color, x0, y0, n) {
+function _spawnSleepGlyph(scene, ch, color, x0, y0, n, host) {
     if (!scene?.add?.text) return null;
     const zoom = scene.worldZoom || scene.cameras?.main?.zoom || 1;
     const dpr = window.devicePixelRatio || 1;
@@ -1632,8 +1641,12 @@ function _spawnSleepGlyph(scene, ch, color, x0, y0, n) {
     } catch (_) {}
     const size = [0.62, 0.76, 0.96][n];
     txt.setScale(size / zoom);
-    if (typeof scene._liftAboveVeil === "function") scene._liftAboveVeil(txt, 52);
-    else {
+    const above = !!scene.isPartyWorldHud?.(host);
+    if (typeof scene._placeWorldHud === "function") {
+        scene._placeWorldHud(txt, above ? 52 : ((host?.y | 0) + 42), above);
+    } else if (above && typeof scene._liftAboveVeil === "function") {
+        scene._liftAboveVeil(txt, 52);
+    } else {
         scene.mainLayer?.add(txt);
         scene._uiCam?.ignore(txt);
         txt.setDepth(52);
@@ -1646,7 +1659,7 @@ function _spawnSleepZ(host, scene, st, pos) {
     st.seq = (st.seq || 0) + 1;
     const x0 = pos.x + 2 + n * 0.6;
     const y0 = pos.y - 4;
-    const txt = _spawnSleepGlyph(scene, "z", "#b7c2d4", x0, y0, n);
+    const txt = _spawnSleepGlyph(scene, "z", "#b7c2d4", x0, y0, n, host);
     if (!txt) return;
     st.bits.push({
         obj: txt,
@@ -1665,7 +1678,7 @@ function _spawnSleepPlus(host, scene, st, pos) {
     const half = sleepFxHostWidth(host) * 0.5;
     const x0 = pos.x + (Math.random() * 2 - 1) * half;
     const y0 = pos.y;
-    const txt = _spawnSleepGlyph(scene, "+", "#4ee05a", x0, y0, n);
+    const txt = _spawnSleepGlyph(scene, "+", "#4ee05a", x0, y0, n, host);
     if (!txt) return;
     st.bits.push({
         obj: txt,

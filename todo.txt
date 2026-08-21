@@ -1,4 +1,4 @@
-New burning system -- fires won't heat up immediately, different fuels burn at different temperatures, moisture will actually do something
+Improved hitboxes
 
 Rock types -- more than pebble vs flint (obsidian, quartz, basalt, sandstone). Different knap feel / quality, some better for blades, some blunt for plant stuff. Later gate for tools a pebble shouldn't make.
 
@@ -17,3 +17,5 @@ Settling Stone -- allows you to create a real settlement that will allow for a l
 Research Table -- part of settlement feature
 
 Burials / ritual -- early spiritualism
+
+Body/biome temperature
