@@ -1,6 +1,8 @@
 /**
  * Title menu — Singleplayer / Multiplayer with client-owned characters (IndexedDB).
  */
+const TITLE_CAVE_STAMPS = ["deer", "hand", "hide", "spear", "stick"];
+
 class SceneMenu extends Phaser.Scene {
     constructor() {
         super({ key: "SceneMenu" });
@@ -18,12 +20,18 @@ class SceneMenu extends Phaser.Scene {
         if (!this.textures.exists("ui-dice")) {
             this.load.image("ui-dice", "assets/ui/dice.png");
         }
+        for (const id of TITLE_CAVE_STAMPS) {
+            const key = `title-${id}`;
+            if (!this.textures.exists(key)) {
+                this.load.image(key, `assets/ui/title/${id}.png`);
+            }
+        }
     }
 
     create() {
         try { this.anims?.resumeAll?.(); } catch (_) {}
         this.cameras.main.setBackgroundColor("#1a1510");
-        this.cameras.main.setRoundPixels(true);
+        this.cameras.main.setRoundPixels(false);
         this._dom = [];
         this._phase = "root";
         this._backAction = null;
@@ -56,8 +64,13 @@ class SceneMenu extends Phaser.Scene {
         };
         this.scale.on("resize", this._onResize);
         if (this._openDisconnected) this._phase = "disconnected";
+        this._initCavePaintings();
         // Wait for yoster — first paint otherwise falls back to Arial
         this._bootRoot();
+    }
+
+    update(_time, delta) {
+        this._tickCavePaintings(delta);
     }
 
     async _ensurePrimaryFont() {
@@ -111,6 +124,208 @@ class SceneMenu extends Phaser.Scene {
         );
         if (obj.texture?.key) this._pixelFilter(obj.texture.key);
         return obj;
+    }
+
+    _initCavePaintings() {
+        if (this._caveRoot?.active) return;
+        const root = this.add.container(0, 0);
+        root.setDepth(-1000);
+        this._caveRoot = root;
+        this._caveStamps = [];
+        this._caveLastKey = null;
+        this._caveSpawnIn = 0;
+        this._sendCaveBehind();
+    }
+
+    _destroyCavePaintings() {
+        for (const stamp of this._caveStamps || []) {
+            try { stamp.img?.destroy?.(); } catch (_) {}
+        }
+        this._caveStamps = [];
+        if (this._caveRoot) {
+            try { this._caveRoot.destroy(true); } catch (_) {}
+            this._caveRoot = null;
+        }
+        this._caveLastKey = null;
+    }
+
+    _sendCaveBehind() {
+        const root = this._caveRoot;
+        if (!root?.active) return;
+        root.setDepth(-1000);
+        this.children.sendToBack(root);
+    }
+
+    _caveStampKeys() {
+        return TITLE_CAVE_STAMPS.filter((id) => this.textures.exists(`title-${id}`));
+    }
+
+    _pickCaveStampKey() {
+        const keys = this._caveStampKeys();
+        if (!keys.length) return null;
+        const pool = keys.length > 1
+            ? keys.filter((k) => `title-${k}` !== this._caveLastKey)
+            : keys;
+        return pool[Math.floor(Math.random() * pool.length)];
+    }
+
+    /**
+     * Center Y for the next stamp. First is anywhere in 10–90%.
+     * After that: opposite half of the 50% line from the previous stamp,
+     * and ≥10% of screen height from the last two centers.
+     */
+    _caveNextSpawnCY() {
+        const h = this.scale.height;
+        const minCY = h * 0.10;
+        const maxCY = h * 0.90;
+        const mid = h * 0.50;
+        const radius = h * 0.10;
+        const stamps = this._caveStamps || [];
+        const prev = stamps[stamps.length - 1];
+        const prev2 = stamps[stamps.length - 2];
+        let lo = minCY;
+        let hi = maxCY;
+        if (prev) {
+            const pcy = prev.y + prev.h / 2;
+            if (pcy < mid) {
+                lo = Math.max(mid, pcy + radius);
+                hi = maxCY;
+            } else {
+                lo = minCY;
+                hi = Math.min(mid, pcy - radius);
+            }
+        }
+        const ranges = this._caveCutRadius(lo, hi, prev2 ? prev2.y + prev2.h / 2 : null, radius);
+        return this._cavePickRange(ranges);
+    }
+
+    _caveCutRadius(lo, hi, center, radius) {
+        if (!(hi > lo)) return [];
+        if (center == null || !Number.isFinite(center)) return [[lo, hi]];
+        const holeLo = center - radius;
+        const holeHi = center + radius;
+        if (holeHi <= lo || holeLo >= hi) return [[lo, hi]];
+        const out = [];
+        if (holeLo > lo) out.push([lo, Math.min(hi, holeLo)]);
+        if (holeHi < hi) out.push([Math.max(lo, holeHi), hi]);
+        return out.filter(([a, b]) => b > a);
+    }
+
+    _cavePickRange(ranges) {
+        const usable = (ranges || []).filter(([a, b]) => b > a);
+        if (!usable.length) return null;
+        const total = usable.reduce((s, [a, b]) => s + (b - a), 0);
+        if (!(total > 0)) return null;
+        let r = Math.random() * total;
+        for (const [a, b] of usable) {
+            r -= b - a;
+            if (r <= 0) return a + Math.random() * (b - a);
+        }
+        const [a, b] = usable[usable.length - 1];
+        return a + Math.random() * (b - a);
+    }
+
+    _spawnCavePainting() {
+        if (!this._caveRoot?.active) return false;
+        const id = this._pickCaveStampKey();
+        if (!id) return false;
+        const key = `title-${id}`;
+        this._pixelFilter(key);
+
+        const scale = 4 + Math.floor(Math.random() * 4);
+        const dw = 32 * scale;
+        const dh = 32 * scale;
+        const cy = this._caveNextSpawnCY();
+        if (cy == null) return false;
+        const x = this.scale.width + dw * 0.25;
+        const y = cy - dh / 2;
+
+        const src = this.add.image(0, 0, key);
+        src.setOrigin(0.5, 0.5);
+        src.setScale(scale);
+        if (Math.random() < 0.5) src.setFlipX(true);
+        const img = this.add.renderTexture(0, 0, dw, dh);
+        img.setOrigin(0.5, 0.5);
+        img.setAlpha(0);
+        img.setAngle((Math.random() * 2 - 1) * 30);
+        img.draw(src, dw / 2, dh / 2);
+        src.destroy();
+        try {
+            img.texture?.setFilter(Phaser.Textures.FilterMode.LINEAR);
+        } catch (_) {}
+        this._caveRoot.add(img);
+        img.setPosition(x + dw / 2, y + dh / 2);
+
+        const fadeIn = 2500 + Math.random() * 1500;
+        this._caveStamps.push({
+            img,
+            key,
+            x,
+            y,
+            w: dw,
+            h: dh,
+            vx: 12 + Math.random() * 7,
+            age: 0,
+            fadeIn,
+            peakAlpha: 0.4 + Math.random() * 0.2
+        });
+        this._caveLastKey = key;
+        this._sendCaveBehind();
+        return true;
+    }
+
+    _killCaveStamp(stamp) {
+        if (!stamp) return;
+        try { stamp.img?.destroy?.(); } catch (_) {}
+        this._caveStamps = (this._caveStamps || []).filter((s) => s !== stamp);
+    }
+
+    _cullCavePaintings() {
+        for (const stamp of [...(this._caveStamps || [])]) {
+            if (!stamp.img?.active) {
+                this._killCaveStamp(stamp);
+                continue;
+            }
+            if (stamp.x + stamp.w < 0) {
+                this._killCaveStamp(stamp);
+            }
+        }
+    }
+
+    _tickCavePaintings(delta) {
+        if (!this._caveRoot?.active) return;
+        this.cameras.main.setRoundPixels(false);
+        const dt = Math.max(0, Number(delta) || 0);
+        this._caveSpawnIn -= dt;
+        if (this._caveSpawnIn <= 0) {
+            const spawned = this._spawnCavePainting();
+            if (spawned) {
+                this._caveSpawnIn = 9000 + Math.random() * 2000;
+            } else {
+                this._caveSpawnIn = 400 + Math.random() * 400;
+            }
+        }
+        const dtSec = dt / 1000;
+        for (const stamp of [...(this._caveStamps || [])]) {
+            const img = stamp.img;
+            if (!img?.active) {
+                this._killCaveStamp(stamp);
+                continue;
+            }
+            stamp.age += dt;
+            stamp.x -= stamp.vx * dtSec;
+            img.setPosition(stamp.x + stamp.w / 2, stamp.y + stamp.h / 2);
+
+            let alpha = stamp.peakAlpha;
+            if (stamp.age < stamp.fadeIn) {
+                alpha = stamp.peakAlpha * (stamp.age / stamp.fadeIn);
+            }
+            img.setAlpha(alpha);
+
+            if (stamp.x + stamp.w < 0) {
+                this._killCaveStamp(stamp);
+            }
+        }
     }
 
     _snapshotDrafts() {
@@ -283,6 +498,8 @@ class SceneMenu extends Phaser.Scene {
                 this._showRoot();
                 break;
         }
+        this._cullCavePaintings();
+        this._sendCaveBehind();
         this._restoreDomFocus(focus);
     }
 
@@ -319,8 +536,13 @@ class SceneMenu extends Phaser.Scene {
             } catch (_) {}
         }
         this._dom = [];
-        this.children.removeAll(true);
+        const cave = this._caveRoot;
+        for (const child of this.children.list.slice()) {
+            if (child === cave) continue;
+            try { child.destroy(true); } catch (_) {}
+        }
         this.cameras.main.setBackgroundColor("#1a1510");
+        this._sendCaveBehind();
         this._previewSprite = null;
         this._previewGfx = null;
         this._previewFrame = null;
@@ -336,17 +558,21 @@ class SceneMenu extends Phaser.Scene {
             if (typeof n.setFontFamily === "function") crispUiText(n);
             this._dom.push(n);
         }
+        this._sendCaveBehind();
         return nodes[0];
     }
 
     _title(text, yFrac = 0.14) {
         const w = this.scale.width;
         const h = this.scale.height;
-        const label = this._track(this.add.text(w / 2, h * yFrac, text, {
+        const label = this._track(this.add.text(0, 0, text, {
             fontFamily: PIXEL_UI_FONT,
             fontSize: "32px",
             color: "#e8dcc8"
-        }).setOrigin(0.5));
+        }).setOrigin(0, 0));
+        const tx = Math.round(w / 2);
+        const ty = Math.round(h * yFrac);
+        label.setPosition(tx + Math.round(-label.width / 2), ty + Math.round(-label.height / 2));
         // If we somehow drew early, swap metrics once the face is ready
         if (!this._primaryFontReady) {
             this._ensurePrimaryFont().then(() => {
@@ -354,8 +580,10 @@ class SceneMenu extends Phaser.Scene {
                 label.setStyle({ fontFamily: PIXEL_UI_FONT, fontSize: "32px", color: "#e8dcc8" });
                 label.setFontFamily(PIXEL_UI_FONT);
                 label.updateText?.();
+                label.setPosition(tx + Math.round(-label.width / 2), ty + Math.round(-label.height / 2));
             });
         }
+        this._sendCaveBehind();
         return label;
     }
 
@@ -422,13 +650,14 @@ class SceneMenu extends Phaser.Scene {
             fontFamily: PIXEL_UI_FONT,
             fontSize,
             color: "#d4c4a8"
-        }).setOrigin(0.5));
+        }).setOrigin(0, 0));
+        text.setPosition(Math.round(-text.width / 2), Math.round(-text.height / 2));
 
         const rect = this.add.rectangle(0, 0, bw, bh, BG, 1)
             .setStrokeStyle(2, OUTLINE)
             .setInteractive({ useHandCursor: true });
 
-        const root = this.add.container(x, y, [rect, text]);
+        const root = this.add.container(Math.round(x), Math.round(y), [rect, text]);
         let hovering = false;
         let pressing = false;
 
@@ -1010,6 +1239,7 @@ class SceneMenu extends Phaser.Scene {
         };
 
         let y = h * 0.30;
+        const textTop = y;
         const addLine = (text, opts = {}) => {
             const t = this._track(this.add.text(left, y, text, { ...style, ...opts }).setOrigin(0, 0));
             y += t.height + (opts.gapAfter ?? 14);
@@ -1054,6 +1284,20 @@ class SceneMenu extends Phaser.Scene {
             "You are responsible for making the server reachable. Port forward, use a tunnel (ngrok, Cloudflare, etc.), or any similar setup. The address shown on start is a LAN address and is inaccessible unless you are playing LAN on the downloaded client.",
             { gapAfter: 8 }
         );
+
+        const padX = 28;
+        const padY = 22;
+        const box = this.add.rectangle(
+            w / 2,
+            (textTop + y) / 2,
+            wrap + padX * 2,
+            (y - textTop) + padY * 2,
+            0x000000,
+            1
+        );
+        box.setDepth(-500);
+        this._track(box);
+        this._sendCaveBehind();
 
         this._button(w / 2, Math.min(y + 48, h * 0.88), "Back", () => this._showMpHost());
     }
@@ -1997,6 +2241,7 @@ class SceneMenu extends Phaser.Scene {
             this.scale.off("resize", this._onResize);
             this._onResize = null;
         }
+        this._destroyCavePaintings();
         this._clear();
         if (this._onMenuKeydown) {
             document.removeEventListener("keydown", this._onMenuKeydown, true);
