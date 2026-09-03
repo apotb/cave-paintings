@@ -12,6 +12,7 @@
     "client": "npx --yes serve -l 21825",
     "app": "node electron/launch.js",
     "build": "node electron/run-builder.js --mac --win --linux",
+    "vercel-build": "npm test",
     "build:mac": "node electron/run-builder.js --mac",
     "build:win": "node electron/run-builder.js --win",
     "build:linux": "node electron/run-builder.js --linux",

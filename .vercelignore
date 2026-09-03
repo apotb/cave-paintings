@@ -1,0 +1,6 @@
+out/
+dist/
+saves/
+.git/
+ngrok.env
+*.blockmap

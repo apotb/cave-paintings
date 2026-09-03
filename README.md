@@ -1,8 +1,14 @@
 # Cave Paintings
 
-Phaser survival game. Pixel-art world, RimWorld-style body simulation (injuries, hunger, food poisoning). Singleplayer runs entirely in the browser. Multiplayer is a Node world server; your character stays on your machine.
+Pixel-art survival game (Phaser). RimWorld-style body simulation: injuries, hunger, food poisoning. Play in the browser or as a standalone app.
 
-## Client
+Singleplayer is local. Multiplayer is a Node world server; your character stays on your machine.
+
+```bash
+npm install
+```
+
+## Browser
 
 ```bash
 npm run client
@@ -10,51 +16,79 @@ npm run client
 
 Open http://127.0.0.1:21825
 
-- **Singleplayer** — character, then a world. Worlds live in IndexedDB.
-- **Multiplayer** — character, then a server address (`host:port`). Default is `127.0.0.1:21826`.
+- **Singleplayer** — pick a character, then a world.
+- **Multiplayer** — pick a character, then a server (`host:port`). Default is `127.0.0.1:21826`.
 
-Characters (look, inventory, body) are stored in the browser. Export/import them from the menu. The world server does not keep your gear after you leave.
+In the browser, characters and worlds live in IndexedDB. Export / import from the menu. The world server does not keep your gear after you leave.
 
-If the client is served over HTTPS, joins use `wss://`. Bare `host:port` becomes `wss://host:port`, so the server needs TLS or a tunnel. HTTP clients can use plain `ws://`.
+If the page is HTTPS (for example Vercel), joins use `wss://`. A bare `host:port` becomes `wss://host:port`, so the server needs TLS or a tunnel. HTTP pages can use plain `ws://`.
 
 ## Standalone app
 
+Same Phaser client in a native window. File saves instead of IndexedDB.
+
 ```bash
-npm install
 npm run app
 ```
 
-Opens a native window (same Phaser client). Player data lives in a `save` folder:
+Saves:
 
-- macOS: `~/Library/Application Support/Cave Paintings/save/`
-- Windows: `%APPDATA%\Cave Paintings\save\`
-- Linux: `~/.config/Cave Paintings/save/`
+| OS | Folder |
+| --- | --- |
+| macOS | `~/Library/Application Support/Cave Paintings/save/` |
+| Windows | `%APPDATA%\Cave Paintings\save\` |
+| Linux | `~/.config/Cave Paintings/save/` |
 
-`characters/<id>.json`, `worlds/<id>.json`, and `options.json` (GUI scale, music, fullscreen). Options → **Open save folder**.
-
-Browser IndexedDB is separate. Move a save with Export in Chrome and Import in the app (or the other way).
-
-Packaged builds (unsigned — macOS Gatekeeper: right-click → Open):
-
-```bash
-npm run build        # macOS + Windows + Linux
-npm run build:mac
-npm run build:win
-npm run build:linux
+```
+characters/<id>.json
+worlds/<id>.json
+options.json          # GUI scale, music volume, fullscreen
 ```
 
-Needs `build/icon.png` (1024×1024). Output is `out/`. On Apple Silicon, `build:mac` is arm64. `build:win` is Windows x64 (zip + installer). `build:linux` is Linux x64 (AppImage + tar.gz). Delete `out/` (or the leftover `dist/`) and run the command again to rebuild from scratch.
+Title-screen Options → **Open save folder**. Fullscreen is Electron-only (also F11). Browser IndexedDB is separate; move a save with Export / Import.
 
-GitHub Actions also builds these. Tests run on every push (the green check next to Vercel). Electron packages build when you push a tag like `v0.1.1`, or from **Actions → Electron → Run workflow**. Download the artifacts from the run, or from the GitHub Release on a tag. Builds stay unsigned.
+### Packaged builds
+
+Unsigned. On macOS, right-click → Open the first time (Gatekeeper).
+
+```bash
+npm run build          # macOS + Windows + Linux
+npm run build:mac      # Apple Silicon .dmg + zip
+npm run build:win      # Windows x64 installer + zip
+npm run build:linux    # Linux x64 AppImage + tar.gz
+```
+
+Needs `build/icon.png` (1024×1024). Output is `out/`. Delete `out/` and run again to rebuild from scratch.
+
+Ship these files:
+
+| Platform | File |
+| --- | --- |
+| Mac | `Cave Paintings-<version>-arm64.dmg` |
+| Windows | `Cave Paintings Setup <version>.exe` |
+| Linux | `Cave Paintings-<version>.AppImage` |
+
+Zips / `.tar.gz` are optional no-installer copies. Do not ship `.blockmap`, `latest*.yml`, or `*-unpacked/` folders.
+
+### GitHub Actions
+
+- **CI** — `npm test` on every push / PR (status check).
+- **Electron** — Mac, Windows, and Linux packages when you push a `v*` tag, or **Actions → Electron → Run workflow**. A tag also makes a GitHub Release.
+
+```bash
+npm version 0.1.1      # bumps package.json and tags
+git push --follow-tags
+```
+
+`package.json` `"version"` is what installers use. Stay on `0.1.0` until you actually ship a numbered drop.
 
 ## Server
 
 ```bash
-npm install
 npm start
 ```
 
-Console asks for a world (`n` = new, `1`–`9` = existing). Banner prints a LAN join address. Saves go in `saves/<world>/`.
+Console asks for a world (`n` = new, `1`–`9` = existing). Banner prints a LAN join address. World data is `saves/<world>/`.
 
 ```bash
 npm start --world world
@@ -75,23 +109,31 @@ cp ngrok.env.example ngrok.env   # set NGROK_URL
 
 ## Controls
 
-Hover **?** in the corner for the full list.
+Hover **?** in the corner for the in-game list.
 
 ```
-WASD / arrows   Move
-Shift           Sprint
-Mouse           Aim
-Space           Use held item / place / attack
-R / Shift+R     Rotate placement
-Left-click      Pick up / interact
-F               Pick up nearby drops
-Q               Drop (Shift = stack, Ctrl = 10)
-1–0             Hotbar
-C / E / H       Craft / equipment / health
-T               Chat  (/ opens a command)
-Esc             Pause / menu
+WASD / arrows     Move
+Shift             Sprint
+Mouse             Aim
+Space             Use held item / place / attack
+R / Shift+R       Rotate placement
+Left-click        Pick up / interact
+F                 Pick up nearby drops
+Q                 Drop (Shift = stack, Ctrl = 10)
+1–9               Hotbar
+C / E / H         Craft / equipment / health
+. / ,             Next / previous party member
+Ctrl+1–6          Select party member
+T                 Chat  (/ opens a command)
+Esc               Pause / menu
 ```
 
 Right-click moves 1 item between slots; Shift+right-click the stack, Ctrl+right-click half.
 
 Chat commands: `/help`
+
+## Tests
+
+```bash
+npm test
+```

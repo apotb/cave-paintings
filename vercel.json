@@ -1,0 +1,4 @@
+{
+  "buildCommand": "npm test",
+  "installCommand": "npm install --omit=dev"
+}
