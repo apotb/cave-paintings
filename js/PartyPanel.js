@@ -34,7 +34,6 @@ class PartyPanel {
             const extra = this.rows.pop();
             extra.root.destroy(true);
         }
-        const font = pixelUiFontSize(8, s);
         let maxNameW = 0;
         let maxNameH = Math.round(12 * s);
         roster.forEach((pawn, i) => {
@@ -42,9 +41,14 @@ class PartyPanel {
             row.pawn = pawn;
             row.name.setText(pawn.displayName?.() || "?");
             row.name.setColor(P.COLOR_ALLY);
-            row.name.setFontSize(font);
-            maxNameW = Math.max(maxNameW, row.name.width || 0);
-            maxNameH = Math.max(maxNameH, row.name.height || 0);
+            if (typeof applyPixelUiFont === "function") {
+                applyPixelUiFont(row.name, 8, s);
+                applyPixelUiFont(row.warn, 8, s);
+            } else {
+                row.name.setFontSize(pixelUiFontSize(8, s));
+            }
+            maxNameW = Math.max(maxNameW, row.name.displayWidth || row.name.width || 0);
+            maxNameH = Math.max(maxNameH, row.name.displayHeight || row.name.height || 0);
         });
         const padX = 8 * s;
         const padY = 4 * s;
@@ -55,7 +59,10 @@ class PartyPanel {
         const rowH = h + 4 * s;
         const total = (roster.length - 1) * rowH;
         const startY = -total / 2;
-        this.root.setPosition(scene.scale.width - w / 2 - 8 * s, scene.scale.height / 2);
+        this.root.setPosition(
+            Math.round(scene.scale.width - w / 2 - 8 * s),
+            Math.round(scene.scale.height / 2)
+        );
         roster.forEach((pawn, i) => {
             const row = this.rows[i];
             row.root.setPosition(0, startY + i * rowH);
@@ -194,7 +201,8 @@ class PartyPanel {
 
         row.warn.setVisible(starving || !!pawn._downed);
         row.warn.setText(pawn._downed ? "!" : starving ? "H" : "");
-        row.warn.setFontSize(pixelUiFontSize(8, s));
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(row.warn, 8, s);
+        else row.warn.setFontSize(pixelUiFontSize(8, s));
     }
 
     _layoutCard(row, w, h, s, sprH, padY, nameH) {
@@ -225,20 +233,22 @@ class PartyPanel {
         const crown = scene.add.image(14 * s, -22 * s, "leader").setOrigin(0.5).setVisible(false);
         const name = crispUiText(scene.add.text(0, 18 * s, "", {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: `${pixelUiFontSize(8, s)}px`,
+            fontSize: `${pixelUiFontSize(8, 1)}px`,
             color: "#80e080",
             stroke: "#000000",
             strokeThickness: 3,
             align: "center"
         }).setOrigin(0.5, 0));
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(name, 8, s);
         const vitals = scene.add.graphics();
         const warn = crispUiText(scene.add.text(18 * s, -20 * s, "", {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: `${pixelUiFontSize(8, s)}px`,
+            fontSize: `${pixelUiFontSize(8, 1)}px`,
             color: "#ffcc66",
             stroke: "#000000",
             strokeThickness: 3
         }).setOrigin(0.5));
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(warn, 8, s);
         root.add([bg, spr, crown, name, vitals, warn, hit]);
         const row = { root, bg, hit, spr, crown, name, vitals, warn, pawn: null };
         hit.on("pointerdown", () => {

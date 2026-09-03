@@ -332,7 +332,9 @@ class HealthPanel {
         );
         this.root.setPosition(Math.round(left + panelW / 2), Math.round(top + panelH / 2));
 
-        this.title.setFontSize(pixelUiFontSize(16, s)).setPosition(0, -panelH / 2 + 18 * s);
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(this.title, 16, s);
+        else this.title.setFontSize(pixelUiFontSize(16, s));
+        this.title.setPosition(0, -panelH / 2 + 18 * s);
 
         this.doll.setVisible(showDoll);
         this.overlayLayer.setVisible(showDoll);
@@ -372,14 +374,18 @@ class HealthPanel {
         this.capLayer.setPosition(listX, listTop);
         for (let i = 0; i < this._capRows.length; i++) {
             const row = this._capRows[i];
-            row.setFontSize(fontSize).setPosition(0, i * lineH);
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(row, 8, s);
+            else row.setFontSize(fontSize);
+            row.setPosition(0, i * lineH);
             if (row.input?.hitArea?.setSize) {
                 row.input.hitArea.setSize(Math.max(row.width, 1), Math.max(row.height, 1));
             }
         }
 
         const headerY = listTop + this._capRows.length * lineH + 4 * s;
-        this.injHeader.setFontSize(fontSize).setPosition(listX, headerY);
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(this.injHeader, 8, s);
+        else this.injHeader.setFontSize(fontSize);
+        this.injHeader.setPosition(listX, headerY);
 
         const viewTop = headerY + lineH;
         const viewH = Math.max(24 * s, contentBottom - viewTop);
@@ -391,7 +397,9 @@ class HealthPanel {
         for (let i = 0; i < this._injLines.length; i++) {
             const line = this._injLines[i];
             if (!line.text.visible) continue;
-            line.text.setFontSize(fontSize).setWordWrapWidth(wrapW);
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(line.text, 8, s);
+            else line.text.setFontSize(pixelUiFontSize(8, s));
+            line.text.setWordWrapWidth(wrapW);
             // Row height from wrap count × lineH — not text.height (font metrics
             // add empty descent, so the red bar looked bottom-heavy).
             const wrapped = line.text.getWrappedText?.(String(line.text.text || ""));

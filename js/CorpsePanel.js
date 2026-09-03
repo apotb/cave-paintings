@@ -268,10 +268,7 @@ class CorpsePanel {
             this.bg.input.hitArea.setSize(this.bg.width, this.bg.height);
         }
 
-        const s = this.scene.uiScale || 1;
         const zoom = this.scene.worldZoom || 1;
-        const fontPx = pixelUiFontSize(16, s);
-        const strokePx = Math.max(2, Math.round(2 * s));
         for (let i = 0; i < n; i++) {
             const view = this.slotViews[i];
             const col = i % cols;
@@ -283,11 +280,13 @@ class CorpsePanel {
             const cy = y + slotW / 2;
             view.icon.setPosition(cx, cy);
             view.fill.setPosition(cx, cy);
-            // Crisp screen-sized glyphs under worldZoom (same as campfire qty)
-            view.qty.setResolution(zoom * (window.devicePixelRatio || 1));
-            view.qty.setFontSize(`${fontPx}px`);
-            view.qty.setStroke("#000", strokePx);
-            view.qty.setScale(1 / zoom);
+            view.qty.setStroke("#000", Math.max(2, Math.round(2 * (this.scene.uiScale || 1))));
+            if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(view.qty, 16, this.scene);
+            else {
+                view.qty.setResolution(zoom * (window.devicePixelRatio || 1));
+                view.qty.setFontSize(`${pixelUiFontSize(16, this.scene.uiScale || 1)}px`);
+                view.qty.setScale(1 / zoom);
+            }
             view.qty.setPosition(x + slotW - 4 * ws, y + slotW - 4 * ws);
             syncIngredientBadges(
                 view.badges,

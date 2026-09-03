@@ -198,6 +198,37 @@ function pixelUiFontSize(basePx, scale) {
     return Math.max(cell, Math.round(raw / cell) * cell);
 }
 
+/**
+ * Draw Yoster at a snapped pixel size (scale 1). extraScale is only for
+ * world HUD under camera zoom (pass 1/worldZoom) — never bake GUI scale into
+ * GameObject.scale or the glyphs go bilinear-soft.
+ */
+function applyPixelUiFont(text, basePx, uiScale, extraScale = 1) {
+    if (!text) return 1;
+    const px = pixelUiFontSize(basePx, uiScale);
+    const extraN = Number(extraScale);
+    const extra = Number.isFinite(extraN) && extraN !== 0 ? extraN : 1;
+    const sizeStr = `${px}px`;
+    const curSize = String(text.style?.fontSize ?? "");
+    const fontChanged = curSize !== sizeStr && curSize !== String(px);
+    const familyChanged = text.style?.fontFamily !== PIXEL_UI_FONT;
+    const scaleChanged = Math.abs((text.scaleX || 1) - extra) > 1e-6
+        || Math.abs((text.scaleY || 1) - extra) > 1e-6;
+    if (familyChanged) text.setFontFamily?.(PIXEL_UI_FONT);
+    if (fontChanged) text.setFontSize(sizeStr);
+    if (scaleChanged) text.setScale(extra);
+    crispUiText(text);
+    text._pixelUiCrisp = px;
+    return extra;
+}
+
+/** Screen-sized glyphs in the zoomed world camera: rasterize at GUI size, scale 1/zoom. */
+function applyPixelUiWorldFont(text, basePx, scene) {
+    const s = scene?.uiScale || 1;
+    const zoom = scene?.worldZoom || scene?.cameras?.main?.zoom || 1;
+    return applyPixelUiFont(text, basePx, s, 1 / zoom);
+}
+
 function clampTextureWrap(texture) {
     if (!texture || typeof Phaser === "undefined") return texture;
     const gl = texture.manager?.game?.renderer?.gl;
@@ -252,11 +283,58 @@ function crispUiText(text) {
 function placeUiText(text, x, y, originX = 0, originY = 0) {
     if (!text) return text;
     text.setOrigin(originX, originY);
-    const w = text.width || 0;
-    const h = text.height || 0;
+    const w = text.displayWidth || text.width || 0;
+    const h = text.displayHeight || text.height || 0;
     const left = Math.round(x - w * originX);
     const top = Math.round(y - h * originY);
     text.setPosition(left + w * originX, top + h * originY);
+    return text;
+}
+
+/**
+ * Center a label on the opaque ink of the glyph, not the font’s metrics box.
+ * Needed for symbols like ↺/↻ whose em-box is taller/wider than the stroke.
+ */
+function placeUiTextInkCentered(text, cx, cy) {
+    if (!text) return text;
+    text.setOrigin(0, 0);
+    const dw = text.width || 0;
+    const dh = text.height || 0;
+    const fallback = () => {
+        text.setPosition(Math.round(cx - dw / 2), Math.round(cy - dh / 2));
+        return text;
+    };
+    const canvas = text.canvas;
+    const ctx = text.context;
+    if (!canvas || !ctx || !dw || !dh) return fallback();
+    const cw = canvas.width;
+    const ch = canvas.height;
+    if (!cw || !ch) return fallback();
+    let data;
+    try {
+        data = ctx.getImageData(0, 0, cw, ch).data;
+    } catch (_) {
+        return fallback();
+    }
+    let minX = cw;
+    let minY = ch;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < ch; y++) {
+        for (let x = 0; x < cw; x++) {
+            if (data[(y * cw + x) * 4 + 3] < 40) continue;
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+        }
+    }
+    if (maxX < 0) return fallback();
+    const sx = dw / cw;
+    const sy = dh / ch;
+    const inkCx = (minX + maxX + 1) / 2 * sx;
+    const inkCy = (minY + maxY + 1) / 2 * sy;
+    text.setPosition(Math.round(cx - inkCx), Math.round(cy - inkCy));
     return text;
 }
 

@@ -33,10 +33,14 @@ class SceneMain extends SceneBase {
         this._lastYou = this.welcome?.you || null;
         this._onVisSave = null;
         this._gamePaused = false;
+        this._worldBooting = !!(this.net?.isLocal || this.localWorldId);
+        this._generatingUi = null;
+        this._generatingLabelTimer = null;
         this._pauseUi = null;
+        this._pausePage = "root";
         this._savingUi = null;
         // 0 = Auto; 1..N = fixed integer scale (N from resolution)
-        this.guiScalePref = this._loadGuiScalePref();
+        this.guiScalePref = typeof Settings !== "undefined" ? Settings.loadGuiScale() : 0;
         this._leavingGame = false;
         // Scene instance is reused across Play → Leave → Play; Phaser destroys
         // display objects on shutdown but leaves these refs pointing at dead objects.
@@ -92,6 +96,7 @@ class SceneMain extends SceneBase {
         // pauseAll is global. Save-and-quit used to leave every Animation paused,
         // so the 2nd world join froze campfires, walks, and anything else that plays.
         try { this.anims?.resumeAll?.(); } catch (_) {}
+        try { this.sound?.stopByKey?.("title"); } catch (_) {}
         this.input.mouse.disableContextMenu();
         resolveCraftedWeights(this.items());
         resolveCraftedFuel(this.items());
@@ -243,6 +248,7 @@ class SceneMain extends SceneBase {
         this.createDeathOverlay();
         this.partyPanel = new PartyPanel(this);
         this.applyUiScale();
+        if (this._worldBooting) this._showGeneratingOverlay();
 
         // Inputs
         this.key1 = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ONE);
@@ -325,19 +331,22 @@ class SceneMain extends SceneBase {
 
         this.net.flushAndListen();
         this.net.sendAction({ type: NetProtocol.Actions.RESYNC });
-        // Push pose immediately so others can see us before first WASD
-        this._netSendMove(true);
+        if (!this._worldBooting) this._netSendMove(true);
+        this._onVisSave = () => {
+            if (document.visibilityState === "hidden") this._saveCharacterNow();
+        };
+        document.addEventListener("visibilitychange", this._onVisSave);
+        if (this._worldBooting) this._runWorldBoot();
+        else this._startCharacterAutosave();
+    }
 
-        // Periodic character autosave (IndexedDB)
+    _startCharacterAutosave() {
+        if (this._charSaveTimer || !this.time) return;
         this._charSaveTimer = this.time.addEvent({
             delay: 15000,
             loop: true,
             callback: () => this._saveCharacterNow()
         });
-        this._onVisSave = () => {
-            if (document.visibilityState === "hidden") this._saveCharacterNow();
-        };
-        document.addEventListener("visibilitychange", this._onVisSave);
     }
 
     _playerCharacterPartial() {
@@ -455,6 +464,7 @@ class SceneMain extends SceneBase {
     }
 
     async _saveCharacterNow(youOverride = null, opts = {}) {
+        if (this._worldBooting && !opts.final) return;
         if (!this.characterId || typeof CharacterStore === "undefined") return;
         if (this._charSaveFrozen) return;
         if (this._leavingGame && !opts.final) return;
@@ -833,33 +843,37 @@ class SceneMain extends SceneBase {
         const spr = this.add.sprite(0, 0, lookKey, 1).setOrigin(0, 1);
         root.add(spr);
 
-        const nameFont = pixelUiFontSize(8, s);
         const nameStroke = Math.max(2, Math.round(3 * s));
         const name = this.add.text(8, -18, rp.name || "?", {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: `${nameFont}px`,
+            fontSize: `${pixelUiFontSize(8, s)}px`,
             color: "#ffffff",
             stroke: "#000000",
             strokeThickness: nameStroke,
             align: "center"
         }).setOrigin(0.5, 1);
-        name.setResolution(zoom * (window.devicePixelRatio || 1));
-        name.setScale(1 / zoom);
+        if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(name, 8, this);
+        else {
+            name.setResolution(zoom * (window.devicePixelRatio || 1));
+            name.setScale(1 / zoom);
+        }
         const ownerId = rp.ownerId || rp.id;
         this._placeWorldHud(name, 60, this.isPartyWorldHud({ ownerId }));
 
-        const bubbleFont = pixelUiFontSize(16, s);
         const bubble = this.add.text(8, -30, "", {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: `${bubbleFont}px`,
+            fontSize: `${pixelUiFontSize(16, s)}px`,
             color: "#ffffff",
             stroke: "#000000",
             strokeThickness: nameStroke,
             align: "center",
             wordWrap: { width: Math.round(140 * s), useAdvancedWrap: true }
         }).setOrigin(0.5, 1).setVisible(false);
-        bubble.setResolution(zoom * (window.devicePixelRatio || 1));
-        bubble.setScale(1 / zoom);
+        if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(bubble, 16, this);
+        else {
+            bubble.setResolution(zoom * (window.devicePixelRatio || 1));
+            bubble.setScale(1 / zoom);
+        }
         this._placeWorldHud(bubble, 61, this.isPartyWorldHud({ ownerId }));
 
         if (typeof PlayerLook !== "undefined") PlayerLook.play(spr, rp.facing || "down", false);
@@ -1800,23 +1814,18 @@ class SceneMain extends SceneBase {
     _netApplyRemoteLabelScale(entry) {
         if (!entry) return;
         const zoom = this.worldZoom || 3;
-        const s = this.uiScale || 1;
-        const res = zoom * (window.devicePixelRatio || 1);
-        const stroke = Math.max(2, Math.round(3 * s));
         if (entry.name?.active) {
-            entry.name
-                .setFontSize(`${pixelUiFontSize(8, s)}px`)
-                .setStroke("#000000", stroke)
-                .setResolution(res)
-                .setScale(1 / zoom);
+            const s = this.uiScale || 1;
+            entry.name.setStroke("#000000", Math.max(2, Math.round(3 * s)));
+            if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(entry.name, 8, this);
+            else entry.name.setScale(1 / zoom);
         }
         if (entry.bubble?.active) {
-            entry.bubble
-                .setFontSize(`${pixelUiFontSize(16, s)}px`)
-                .setStroke("#000000", stroke)
-                .setWordWrapWidth(Math.round(140 * s), true)
-                .setResolution(res)
-                .setScale(1 / zoom);
+            const s = this.uiScale || 1;
+            entry.bubble.setStroke("#000000", Math.max(2, Math.round(3 * s)))
+                .setWordWrapWidth(Math.round(140 * s), true);
+            if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(entry.bubble, 16, this);
+            else entry.bubble.setScale(1 / zoom);
         }
         this._netLayoutRemoteLabels(entry);
     }
@@ -3148,6 +3157,7 @@ class SceneMain extends SceneBase {
             || (p._prone && !p._resting));
         if (
             !this._gamePaused
+            && !this._worldBooting
             && !downed
             && !p.isVomiting?.()
         ) {
@@ -3164,7 +3174,7 @@ class SceneMain extends SceneBase {
         this.net.sendMove({
             x,
             y,
-            sprint: !this._gamePaused && !!p.isSprinting,
+            sprint: !this._gamePaused && !this._worldBooting && !!p.isSprinting,
             facing: p.facing || "down",
             px: pose.x,
             py: pose.y,
@@ -3335,6 +3345,8 @@ class SceneMain extends SceneBase {
         this._playReady = false;
         this._unbindSceneListeners();
         this._teardownCharacterAutosave?.();
+        this._hideGeneratingOverlay?.();
+        this._worldBooting = false;
         this._unbindNetClose();
         if (this._gamePaused) {
             try { this.net?.setPaused?.(false); } catch (_) {}
@@ -3342,6 +3354,12 @@ class SceneMain extends SceneBase {
             try { this.anims?.resumeAll?.(); } catch (_) {}
             this._gamePaused = false;
         }
+        try { this._destroyPauseUi?.(); } catch (_) {}
+        try { this.input?.setDefaultCursor?.("default"); } catch (_) {}
+        try {
+            const canvas = this.game?.canvas;
+            if (canvas) canvas.style.cursor = "default";
+        } catch (_) {}
         // Leave already saved + closed LocalSim; don't kick off another async close.
         if (this._leavingGame) {
             this._netLeaving = true;
@@ -3680,8 +3698,8 @@ class SceneMain extends SceneBase {
 
         const drawBg = () => {
             const pad = this._tooltipPadding;
-            const w = this.tooltipText.width + pad * 2;
-            const h = this.tooltipText.height + pad * 2;
+            const w = (this.tooltipText.displayWidth || this.tooltipText.width) + pad * 2;
+            const h = (this.tooltipText.displayHeight || this.tooltipText.height) + pad * 2;
             const radius = Math.max(4, Math.round(6 * (this.uiScale || 1)));
             this.tooltipBg.clear()
                 .fillStyle(0x111111, 0.95)
@@ -4048,6 +4066,13 @@ class SceneMain extends SceneBase {
 
         // Reconcile hover after camera/player movement (Phaser only updates on mouse move)
         this.syncPointerHover = () => {
+            if (this._worldBooting || this._generatingUi) {
+                this.input.setDefaultCursor("default");
+                try {
+                    if (this.game?.canvas) this.game.canvas.style.cursor = "default";
+                } catch (_) {}
+                return;
+            }
             const pointer = this.input.activePointer;
             const blockWorld = !!this.player?.blocksTooltips?.();
 
@@ -4115,6 +4140,15 @@ class SceneMain extends SceneBase {
         };
         this._onPostUpdate = () => {
             if (!this._playReady || this._leavingGame) return;
+            if (this._worldBooting || this._generatingUi) {
+                this.input?.setDefaultCursor?.("default");
+                try {
+                    if (this.game?.canvas) this.game.canvas.style.cursor = "default";
+                } catch (_) {}
+                this.syncCameraToPlayer();
+                this._pumpChunkPaint?.();
+                return;
+            }
             this.syncPointerHover();
             // After physics: snap player+camera for this frame's render
             this.syncCameraToPlayer();
@@ -4240,12 +4274,18 @@ class SceneMain extends SceneBase {
             ? slot0.y - slotW
             : this.scale.height - Math.round(48 * s);
         const y = slotTop - Math.round(4 * s);
-        const fs = pixelUiFontSize(16, s);
-        const stroke = Math.max(2, Math.round(fs / 8));
+        if (typeof applyPixelUiFont === "function") {
+            applyPixelUiFont(this.locXText, 16, s);
+            applyPixelUiFont(this.locYText, 16, s);
+        } else {
+            const fs = pixelUiFontSize(16, s);
+            this.locXText.setFontSize(`${fs}px`);
+            this.locYText.setFontSize(`${fs}px`);
+        }
+        this.locXText.setStroke("#000000", Math.max(2, Math.round(2 * s)));
+        this.locYText.setStroke("#000000", Math.max(2, Math.round(2 * s)));
         crispUiText(this.locXText);
         crispUiText(this.locYText);
-        this.locXText.setFontSize(`${fs}px`).setStroke("#000000", stroke);
-        this.locYText.setFontSize(`${fs}px`).setStroke("#000000", stroke);
         placeUiText(this.locXText, cx, y, 1, 1);
         placeUiText(this.locYText, cx, y, 0, 1);
     }
@@ -4286,7 +4326,7 @@ class SceneMain extends SceneBase {
         const s = this.uiScale || 1;
         const pad = Math.round(8 * s);
         const clockBottom = this.clockText
-            ? pad + Math.round(this.clockText.height || pixelUiFontSize(16, s))
+            ? pad + Math.round(this.clockText.displayHeight || this.clockText.height || pixelUiFontSize(16, 1) * s)
             : pad;
         placeUiText(this.fpsText, this.scale.width / 2, clockBottom + Math.round(2 * s), 0.5, 0);
     }
@@ -7673,8 +7713,9 @@ class SceneMain extends SceneBase {
 
             // Quantity
             const quantity = crispUiText(this.add.text(x + slotW - 4 * s, y + slotH - 4 * s, recipe.quantity > 1 ? String(recipe.quantity) : '', {
-                fontSize: `${pixelUiFontSize(16, s)}px`, fontFamily: PIXEL_UI_FONT, stroke: '#000', strokeThickness: 2, align: 'right'
+                fontSize: `${pixelUiFontSize(16, 1)}px`, fontFamily: PIXEL_UI_FONT, stroke: '#000', strokeThickness: 2, align: 'right'
             }).setOrigin(1, 1).setVisible(recipe.quantity > 1));
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(quantity, 16, s);
             this.craftContainer.add(quantity);
 
             // Tooltip
@@ -7768,11 +7809,12 @@ class SceneMain extends SceneBase {
         );
         const label = crispUiText(this.add.text(gridW / 2, y, `${page + 1} / ${pages}`, {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: `${pixelUiFontSize(16, s)}px`,
+            fontSize: `${pixelUiFontSize(16, 1)}px`,
             color: "#d4c4a8",
             stroke: "#000000",
-            strokeThickness: Math.max(2, Math.round(2 * s))
+            strokeThickness: 2
         }).setOrigin(0.5));
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(label, 16, s);
         this.craftContainer.add(label);
     }
 
@@ -7786,9 +7828,10 @@ class SceneMain extends SceneBase {
             .setStrokeStyle(2, OUTLINE);
         const text = crispUiText(this.add.text(x, y, label, {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: `${pixelUiFontSize(16, s)}px`,
+            fontSize: `${pixelUiFontSize(16, 1)}px`,
             color: "#d4c4a8"
         }).setOrigin(0.5));
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(text, 16, s);
         this.craftContainer.add(rect);
         this.craftContainer.add(text);
         if (!enabled) {
@@ -7916,9 +7959,12 @@ class SceneMain extends SceneBase {
         this._craftTakeBw = bw;
         this._craftTakeBh = bh;
         this._craftTakeRect.setSize(bw, bh);
-        this._craftTakeText.setResolution(zoom * (window.devicePixelRatio || 1));
-        this._craftTakeText.setFontSize(`${pixelUiFontSize(16, s)}px`);
-        this._craftTakeText.setScale(1 / zoom);
+        if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(this._craftTakeText, 16, this);
+        else {
+            this._craftTakeText.setResolution(zoom * (window.devicePixelRatio || 1));
+            this._craftTakeText.setFontSize(`${pixelUiFontSize(16, s)}px`);
+            this._craftTakeText.setScale(1 / zoom);
+        }
         this._craftTakeRect.setInteractive({ useHandCursor: true });
         if (this._craftTakeRect.input?.hitArea?.setTo) {
             this._craftTakeRect.input.hitArea.setTo(0, 0, bw, bh);
@@ -8309,6 +8355,98 @@ class SceneMain extends SceneBase {
         this._pendingDeathText = null;
     }
 
+    _yieldWorldBoot() {
+        this._pumpChunkPaint?.();
+        return new Promise((resolve) => {
+            if (this.time?.delayedCall) this.time.delayedCall(0, resolve);
+            else setTimeout(resolve, 0);
+        });
+    }
+
+    /** Wait until chunks in a Chebyshev radius around a world point are visually loaded. */
+    async _awaitChunksAround(wx, wy, radius) {
+        const px = this.chunkPx();
+        const ocx = Math.floor(wx / px);
+        const ocy = Math.floor(wy / px);
+        const r = Math.max(0, radius | 0);
+        if (this.net?.isLocal && this.net._pawn && Number.isFinite(wx) && Number.isFinite(wy)) {
+            this.net._pawn.x = wx;
+            this.net._pawn.y = wy;
+            this.net._kickInterest?.(true);
+        }
+        const cells = [];
+        for (let y = ocy - r; y <= ocy + r; y++) {
+            for (let x = ocx - r; x <= ocx + r; x++) {
+                cells.push({ x, y, key: this.getKey(x, y) });
+            }
+        }
+        const deadline = performance.now() + 60000;
+        while (this.sys?.isActive?.() && !this._leavingGame && performance.now() < deadline) {
+            let waiting = false;
+            for (const cell of cells) {
+                let ch = this.chunks[cell.key];
+                if (!ch) {
+                    ch = new Chunk(this, cell.x, cell.y);
+                    this.chunks[cell.key] = ch;
+                }
+                const hasTiles = !!(ch.isGenerated || ch.meta?.tiles?.some?.((t) => t));
+                if (!hasTiles) {
+                    if (this.net?.isLocal) {
+                        waiting = true;
+                        continue;
+                    }
+                }
+                if (!ch.isLoaded) {
+                    waiting = true;
+                    await ch.load();
+                }
+            }
+            if (!waiting && cells.every((c) => this.chunks[c.key]?.isLoaded)) return;
+            if (this.net?.isLocal) this.net._kickInterest?.(true);
+            await this._yieldWorldBoot();
+        }
+    }
+
+    async _runWorldBoot() {
+        if (!this._isSingleplayerSession()) {
+            this._worldBooting = false;
+            this._hideGeneratingOverlay();
+            return;
+        }
+        this._worldBooting = true;
+        this._showGeneratingOverlay();
+        try {
+            try { this.physics?.world?.pause?.(); } catch (_) {}
+            try { this.net?.setPaused?.(true); } catch (_) {}
+            const viewR = Math.max(3, this.renderDistance || 4);
+            if (!this._playerSpawnPlaced) {
+                await this._awaitChunksAround(0, 0, 2);
+                await this.ensureSpawnSign();
+            }
+            const p = this.player;
+            if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+                await this._awaitChunksAround(p.x, p.y, viewR);
+            }
+            this.syncCameraToPlayer();
+            this._netSendMove(true);
+        } catch (e) {
+            console.warn("[world boot]", e);
+            this._worldBooting = false;
+            this._hideGeneratingOverlay();
+            try { this.physics?.world?.resume?.(); } catch (_) {}
+            try { this.net?.setPaused?.(false); } catch (_) {}
+            if (this.sys?.isActive?.() && !this._leavingGame) {
+                this.scene.start("SceneMenu", {});
+            }
+            return;
+        }
+        try { this.physics?.world?.resume?.(); } catch (_) {}
+        try { this.net?.setPaused?.(false); } catch (_) {}
+        this._hideGeneratingOverlay();
+        this._worldBooting = false;
+        if (this.sys?.isActive?.() && !this._leavingGame) this._startCharacterAutosave();
+    }
+
     _formatPlayerDeathMessage(killer) {
         const victim = this.playerName || this.player?.displayName?.() || "Player";
         let killerName = null;
@@ -8408,11 +8546,18 @@ class SceneMain extends SceneBase {
         if (!this.deathOverlay) return;
         const s = this.uiScale || 1;
         this.deathOverlay.setPosition(this.scale.width / 2, this.scale.height / 2);
-        this.deathTitle.setFontSize(pixelUiFontSize(32, s));
-        this.deathTitle.setWordWrapWidth(Math.round(380 * s));
+        if (typeof applyPixelUiFont === "function") {
+            applyPixelUiFont(this.deathTitle, 32, s);
+            applyPixelUiFont(this.deathRespawn, 16, s);
+            applyPixelUiFont(this.deathRespawnHere, 16, s);
+            this.deathTitle.setWordWrapWidth(Math.round(380 * s));
+        } else {
+            this.deathTitle.setFontSize(pixelUiFontSize(32, s));
+            this.deathTitle.setWordWrapWidth(Math.round(380 * s));
+            this.deathRespawn.setFontSize(pixelUiFontSize(16, s));
+            this.deathRespawnHere.setFontSize(pixelUiFontSize(16, s));
+        }
         this.deathTitle.setAlign("center");
-        this.deathRespawn.setFontSize(pixelUiFontSize(16, s));
-        this.deathRespawnHere.setFontSize(pixelUiFontSize(16, s));
         this.deathBg.setSize(420 * s, 220 * s);
     }
 
@@ -8523,39 +8668,52 @@ class SceneMain extends SceneBase {
         return !!(this.net?.isLocal || this.localWorldId);
     }
 
-    _pauseMenuButton(x, y, label, onClick) {
+    _pauseMenuButton(x, y, label, onClick, opts = {}) {
         const BG = 0x120e0a;
         const BG_PRESS = 0x0a0806;
         const OUTLINE = 0x2a2218;
         const OUTLINE_HOVER = 0xffffff;
         const OUTLINE_PRESS = 0xd4a84b;
+        const s = this.uiScale || 1;
+        const stroke = Math.max(2, Math.round(2 * s));
+        const medium = opts.size === "medium";
+        const fontPx = pixelUiFontSize(medium ? 16 : 24, s);
         const text = crispUiText(this.add.text(0, 0, label, {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: "24px",
+            fontSize: `${fontPx}px`,
             color: "#d4c4a8"
         }).setOrigin(0.5));
-        // Same box as title-screen Singleplayer / Multiplayer
-        const bw = 240;
-        const bh = 52;
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(text, medium ? 16 : 24, s);
+        // large = title Singleplayer / Multiplayer; medium = Back / Help / Create
+        const bw = Math.round((medium ? 140 : 240) * s);
+        const bh = Math.round((medium ? 38 : 52) * s);
         const rect = this.add.rectangle(0, 0, bw, bh, BG, 1)
-            .setStrokeStyle(2, OUTLINE)
+            .setStrokeStyle(stroke, OUTLINE)
             .setInteractive({ useHandCursor: true });
         const root = this.add.container(x, y, [rect, text]);
         root.setLabel = (next) => {
             text.setText(String(next));
+        };
+        root.restoreHover = () => {
+            hovering = true;
+            pressing = false;
+            paint();
+            try {
+                if (this.game?.canvas) this.game.canvas.style.cursor = "pointer";
+            } catch (_) {}
         };
         let hovering = false;
         let pressing = false;
         const paint = () => {
             if (pressing) {
                 rect.setFillStyle(BG_PRESS, 1);
-                rect.setStrokeStyle(2, OUTLINE_PRESS);
+                rect.setStrokeStyle(stroke, OUTLINE_PRESS);
             } else if (hovering) {
                 rect.setFillStyle(BG, 1);
-                rect.setStrokeStyle(2, OUTLINE_HOVER);
+                rect.setStrokeStyle(stroke, OUTLINE_HOVER);
             } else {
                 rect.setFillStyle(BG, 1);
-                rect.setStrokeStyle(2, OUTLINE);
+                rect.setStrokeStyle(stroke, OUTLINE);
             }
         };
         rect.on("pointerover", () => { hovering = true; paint(); });
@@ -8570,25 +8728,10 @@ class SceneMain extends SceneBase {
         return root;
     }
 
-    _loadGuiScalePref() {
-        try {
-            const n = Number(localStorage.getItem("cp_gui_scale"));
-            if (Number.isFinite(n) && n >= 0) return Math.floor(n);
-        } catch (_) {}
-        return 0;
-    }
-
-    _saveGuiScalePref(pref) {
-        try {
-            localStorage.setItem("cp_gui_scale", String(pref));
-        } catch (_) {}
-    }
-
-    /**
-     * Largest integer GUI scale that fits this window.
-     * 480×360 reference so 1080p reaches 3 (not 1080/768 ≈ 1.4).
-     */
     _guiScaleFit() {
+        if (typeof Settings !== "undefined") {
+            return Settings.guiScaleFit(this.scale?.width, this.scale?.height);
+        }
         const w = this.scale?.width || window.innerWidth || 1024;
         const h = this.scale?.height || window.innerHeight || 768;
         return Math.min(w / 480, h / 360);
@@ -8596,6 +8739,9 @@ class SceneMain extends SceneBase {
 
     /** Highest fixed integer GUI scale for this window. */
     getMaxGuiScaleOption() {
+        if (typeof Settings !== "undefined") {
+            return Settings.getMaxGuiScaleOption(this.scale?.width, this.scale?.height);
+        }
         return Math.max(1, Math.floor(this._guiScaleFit()));
     }
 
@@ -8604,22 +8750,44 @@ class SceneMain extends SceneBase {
     }
 
     _guiScaleButtonLabel() {
+        if (typeof Settings !== "undefined") {
+            return Settings.guiScaleButtonLabel(this.guiScalePref);
+        }
         const pref = this.guiScalePref | 0;
         return pref === 0 ? "GUI Scale: Auto" : `GUI Scale: ${pref}`;
     }
 
     _cycleGuiScale() {
         const max = this.getMaxGuiScaleOption();
-        let cur = this.guiScalePref | 0;
-        if (cur < 0 || cur > max) cur = 0;
-        let next = cur + 1;
-        if (next > max) next = 0;
+        const next = typeof Settings !== "undefined"
+            ? Settings.cycleGuiScale(this.guiScalePref, max)
+            : ((this.guiScalePref | 0) + 1 > max ? 0 : (this.guiScalePref | 0) + 1);
         this.guiScalePref = next;
-        this._saveGuiScalePref(next);
+        if (typeof Settings !== "undefined") Settings.saveGuiScale(next);
+        else {
+            try { localStorage.setItem("cp_gui_scale", String(next)); } catch (_) {}
+        }
         this.updateUiScale();
         this.applyUiScale();
-        // Label after apply — applyUiScale → _layoutPauseMenu may also refresh it
-        this._pauseUi?.guiScale?.setLabel?.(this._guiScaleButtonLabel());
+        this.time?.delayedCall?.(0, () => this._pauseUi?.guiScale?.restoreHover?.());
+    }
+
+    _pauseAdd(node) {
+        if (!node) return node;
+        this.uiLayer.add(node);
+        this.uiLayer.bringToTop(node);
+        return node;
+    }
+
+    _destroyPauseUi() {
+        const ui = this._pauseUi;
+        this._pauseUi = null;
+        if (!ui) return;
+        try { ui.volumeSlider?.destroy?.(); } catch (_) {}
+        for (const [k, n] of Object.entries(ui)) {
+            if (k === "volumeSlider") continue;
+            try { n.destroy?.(true); } catch (_) {}
+        }
     }
 
     _openPauseMenu() {
@@ -8628,66 +8796,172 @@ class SceneMain extends SceneBase {
         if (this.knappingPanel?.visible) this.knappingPanel.finishOrClose?.();
 
         this._gamePaused = true;
+        this._pausePage = "root";
         if (this._isSingleplayerSession()) {
             this.net?.setPaused?.(true);
             this.physics?.world?.pause?.();
             this.anims?.pauseAll?.();
         }
+        this._buildPauseMenu();
+    }
 
+    _buildPauseMenu() {
+        this._destroyPauseUi();
+        if (!this._gamePaused || this._leavingGame) return;
         const w = this.scale.width;
         const h = this.scale.height;
         const dim = this.add.rectangle(w / 2, h / 2, w + 4, h + 4, 0x000000, 0.55)
             .setInteractive();
-        const title = crispUiText(this.add.text(w / 2, h * 0.36,
+        this._pauseAdd(dim);
+        if (this._pausePage === "options") this._fillPauseOptions(dim, w, h);
+        else this._fillPauseRoot(dim, w, h);
+    }
+
+    _pauseRootLayout(w, h) {
+        const s = this.uiScale || 1;
+        const titleFs = pixelUiFontSize(32, s);
+        const btnH = Math.round(52 * s);
+        const gap = Math.round(60 * s);
+        const titleGap = Math.round(24 * s);
+        const pad = Math.round(16 * s);
+        const totalH = titleFs + titleGap + btnH + gap * 2;
+        let titleY = Math.round(h / 2 - totalH / 2 + titleFs / 2);
+        titleY = Math.max(titleFs / 2 + pad, titleY);
+        const y0 = Math.round(titleY + titleFs / 2 + titleGap + btnH / 2);
+        return { s, titleFs, btnH, gap, titleY, y0 };
+    }
+
+    _fillPauseRoot(dim, w, h) {
+        const L = this._pauseRootLayout(w, h);
+        const title = crispUiText(this.add.text(w / 2, L.titleY,
             this._isSingleplayerSession() ? "Paused" : "Menu", {
                 fontFamily: PIXEL_UI_FONT,
-                fontSize: "32px",
+                fontSize: `${pixelUiFontSize(32, L.s)}px`,
                 color: "#e8dcc8"
             }).setOrigin(0.5));
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(title, 32, L.s);
         const quitLabel = this._isSingleplayerSession() ? "Save and Quit" : "Leave Game";
-        const y0 = h * 0.46;
-        const gap = 60;
-        const resume = this._pauseMenuButton(w / 2, y0, "Resume", () => this._closePauseMenu());
+        const resume = this._pauseMenuButton(w / 2, L.y0, "Resume", () => this._closePauseMenu());
+        const options = this._pauseMenuButton(
+            w / 2,
+            L.y0 + L.gap,
+            "Options",
+            () => {
+                this._pausePage = "options";
+                this._buildPauseMenu();
+            }
+        );
+        const quit = this._pauseMenuButton(w / 2, L.y0 + L.gap * 2, quitLabel, () => this._leaveGame());
+        this._pauseAdd(title);
+        this._pauseAdd(resume);
+        this._pauseAdd(options);
+        this._pauseAdd(quit);
+        this._pauseUi = { dim, title, resume, options, quit };
+    }
+
+    _pauseOptionsLayout(h) {
+        const s = this.uiScale || 1;
+        const titleFs = pixelUiFontSize(32, s);
+        const guiH = Math.round(38 * s);
+        const backH = Math.round(38 * s);
+        const titleGap = Math.round(40 * s);
+        const pad = Math.round(16 * s);
+        const totalH = titleFs + titleGap + guiH / 2 + Math.round(160 * s) + backH / 2;
+        let titleY = Math.round(h / 2 - totalH / 2 + titleFs / 2);
+        titleY = Math.max(titleFs / 2 + pad, titleY);
+        const y0 = titleY + Math.round(titleFs / 2) + titleGap + Math.round(guiH / 2);
+        return {
+            s,
+            titleFs,
+            titleY,
+            y0,
+            volLabelY: y0 + Math.round(56 * s),
+            sliderY: y0 + Math.round(78 * s),
+            backY: y0 + Math.round(160 * s),
+            sliderW: Math.round(280 * s)
+        };
+    }
+
+    _pauseOptionsPanelGeom(w, h) {
+        const L = this._pauseOptionsLayout(h);
+        const s = L.s;
+        const btnH = Math.round(38 * s);
+        const padX = Math.round(36 * s);
+        const padY = Math.round(28 * s);
+        const top = L.titleY - Math.round(20 * s);
+        const bot = L.backY + btnH / 2;
+        return {
+            x: w / 2,
+            y: (top + bot) / 2,
+            width: L.sliderW + Math.round(56 * s) + padX * 2,
+            height: (bot - top) + padY * 2
+        };
+    }
+
+    _fillPauseOptions(dim, w, h) {
+        const L = this._pauseOptionsLayout(h);
+        const panelG = this._pauseOptionsPanelGeom(w, h);
+        const panel = this.add.rectangle(panelG.x, panelG.y, panelG.width, panelG.height, 0x1a1510, 0.92)
+            .setStrokeStyle(Math.max(2, Math.round(2 * (this.uiScale || 1))), 0x6a5a45);
+        const title = crispUiText(this.add.text(w / 2, L.titleY, "Options", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: `${pixelUiFontSize(32, L.s)}px`,
+            color: "#e8dcc8"
+        }).setOrigin(0.5));
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(title, 32, L.s);
         const guiScale = this._pauseMenuButton(
             w / 2,
-            y0 + gap,
+            L.y0,
             this._guiScaleButtonLabel(),
-            () => this._cycleGuiScale()
+            () => this._cycleGuiScale(),
+            { size: "medium" }
         );
-        const quit = this._pauseMenuButton(w / 2, y0 + gap * 2, quitLabel, () => this._leaveGame());
-
-        this.uiLayer.add(dim);
-        this.uiLayer.add(title);
-        this.uiLayer.add(resume);
-        this.uiLayer.add(guiScale);
-        this.uiLayer.add(quit);
-        this.uiLayer.bringToTop(dim);
-        this.uiLayer.bringToTop(title);
-        this.uiLayer.bringToTop(resume);
-        this.uiLayer.bringToTop(guiScale);
-        this.uiLayer.bringToTop(quit);
-
-        this._pauseUi = { dim, title, resume, guiScale, quit };
+        const volLabel = crispUiText(this.add.text(w / 2, L.volLabelY, "Music Volume", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: `${pixelUiFontSize(16, L.s)}px`,
+            color: "#d4c4a8"
+        }).setOrigin(0.5));
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(volLabel, 16, L.s);
+        const sliderW = L.sliderW;
+        const volumeSlider = Settings.makePercentSlider(this, {
+            x: Math.floor(w / 2 - sliderW / 2),
+            y: Math.round(L.sliderY),
+            width: sliderW,
+            height: Math.round(16 * L.s),
+            scale: L.s,
+            value: Settings.loadMusicVolume(),
+            onChange: (n) => Settings.saveMusicVolume(n)
+        });
+        const back = this._pauseMenuButton(w / 2, L.backY, "Back", () => {
+            this._pausePage = "root";
+            this._buildPauseMenu();
+        }, { size: "medium" });
+        this._pauseAdd(panel);
+        this._pauseAdd(title);
+        this._pauseAdd(guiScale);
+        this._pauseAdd(volLabel);
+        for (const n of volumeSlider.nodes) this._pauseAdd(n);
+        this._pauseAdd(back);
+        this._pauseUi = { dim, panel, title, guiScale, volLabel, volumeSlider, back };
     }
 
     _closePauseMenu() {
         if (!this._gamePaused) return;
         this._gamePaused = false;
+        this._pausePage = "root";
         if (this._isSingleplayerSession()) {
             this.net?.setPaused?.(false);
             this.physics?.world?.resume?.();
             this.anims?.resumeAll?.();
         }
-        const ui = this._pauseUi;
-        this._pauseUi = null;
-        if (ui) {
-            for (const n of Object.values(ui)) {
-                try { n.destroy?.(true); } catch (_) {}
-            }
-        }
+        this._destroyPauseUi();
     }
 
     _layoutPauseMenu() {
+        if (this._generatingUi) {
+            this._layoutGeneratingOverlay();
+            return;
+        }
         if (this._savingUi) {
             const w = this.scale.width;
             const h = this.scale.height;
@@ -8698,24 +8972,31 @@ class SceneMain extends SceneBase {
         if (!this._pauseUi || !this._gamePaused) return;
         const w = this.scale.width;
         const h = this.scale.height;
-        const { dim, title, resume, guiScale, quit } = this._pauseUi;
-        const y0 = h * 0.46;
-        const gap = 60;
-        dim.setPosition(w / 2, h / 2).setSize(w + 4, h + 4);
-        title.setPosition(w / 2, h * 0.36);
-        resume?.setPosition(w / 2, y0);
-        guiScale?.setPosition(w / 2, y0 + gap);
-        guiScale?.setLabel?.(this._guiScaleButtonLabel());
-        quit?.setPosition(w / 2, y0 + gap * 2);
+        const ui = this._pauseUi;
+        ui.dim?.setPosition(w / 2, h / 2).setSize(w + 4, h + 4);
+        if (this._pausePage === "options") {
+            const L = this._pauseOptionsLayout(h);
+            const pg = this._pauseOptionsPanelGeom(w, h);
+            ui.panel?.setPosition(pg.x, pg.y).setSize(pg.width, pg.height);
+            ui.title?.setPosition(w / 2, L.titleY);
+            ui.guiScale?.setPosition(w / 2, L.y0);
+            ui.guiScale?.setLabel?.(this._guiScaleButtonLabel());
+            ui.volLabel?.setPosition(w / 2, L.volLabelY);
+            ui.volumeSlider?.setPosition?.(Math.floor(w / 2 - L.sliderW / 2), Math.round(L.sliderY));
+            ui.back?.setPosition(w / 2, L.backY);
+            return;
+        }
+        const L = this._pauseRootLayout(w, h);
+        ui.title?.setPosition(w / 2, L.titleY);
+        ui.resume?.setPosition(w / 2, L.y0);
+        ui.options?.setPosition(w / 2, L.y0 + L.gap);
+        ui.quit?.setPosition(w / 2, L.y0 + L.gap * 2);
     }
 
     /** Full menu-colored screen while quit saves finish — blocks quick rejoin races. */
     _showSavingScreen() {
         if (this._pauseUi) {
-            for (const n of Object.values(this._pauseUi)) {
-                try { n.destroy?.(true); } catch (_) {}
-            }
-            this._pauseUi = null;
+            this._destroyPauseUi();
         }
         this._gamePaused = true;
         if (this._isSingleplayerSession()) {
@@ -8732,9 +9013,10 @@ class SceneMain extends SceneBase {
             .setInteractive();
         const text = crispUiText(this.add.text(w / 2, h / 2, "Saving...", {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: "32px",
+            fontSize: `${pixelUiFontSize(32, 1)}px`,
             color: "#e8dcc8"
         }).setOrigin(0.5));
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(text, 32, this.uiScale || 1);
         this.uiLayer.add(bg);
         this.uiLayer.add(text);
         this.uiLayer.bringToTop(bg);
@@ -8742,11 +9024,76 @@ class SceneMain extends SceneBase {
         this._savingUi = { bg, text };
     }
 
+    _showGeneratingOverlay() {
+        if (this._generatingUi?.root?.active) {
+            this._layoutGeneratingOverlay();
+            return;
+        }
+        this._hideGeneratingOverlay();
+        try { this.cameras?.main?.setBackgroundColor?.("#1a1510"); } catch (_) {}
+        const w = this.scale.width;
+        const h = this.scale.height;
+        const bg = this.add.rectangle(w / 2, h / 2, w + 4, h + 4, 0x1a1510, 1)
+            .setScrollFactor(0)
+            .setInteractive({ cursor: "default", useHandCursor: false });
+        const text = crispUiText(this.add.text(w / 2, h / 2, "Generating world...", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: `${pixelUiFontSize(32, 1)}px`,
+            color: "#e8dcc8"
+        }).setOrigin(0.5).setScrollFactor(0).setVisible(false));
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(text, 32, this.uiScale || 1);
+        const root = this.add.container(0, 0, [bg, text]).setDepth(50000).setScrollFactor(0);
+        this.uiLayer?.add(root);
+        this.uiLayer?.bringToTop?.(root);
+        this._generatingUi = { root, bg, text };
+        // Overlay lives on the UI camera; world-camera hits (trees, camp, party
+        // sprites) would still steal the hand cursor if main input stays on.
+        if (this.cameras?.main) this.cameras.main.inputEnabled = false;
+        try { this.input?.setDefaultCursor?.("default"); } catch (_) {}
+        try {
+            if (this.game?.canvas) this.game.canvas.style.cursor = "default";
+        } catch (_) {}
+        // Skip the label on sub-frame / couple-of-frame boots; keep the hold either way.
+        try { this._generatingLabelTimer?.remove?.(false); } catch (_) {}
+        this._generatingLabelTimer = this.time?.delayedCall?.(100, () => {
+            this._generatingLabelTimer = null;
+            const ui = this._generatingUi;
+            if (!ui?.text?.active) return;
+            ui.text.setVisible(true);
+        }) || null;
+    }
+
+    _layoutGeneratingOverlay() {
+        const ui = this._generatingUi;
+        if (!ui) return;
+        const w = this.scale.width;
+        const h = this.scale.height;
+        ui.bg?.setPosition(w / 2, h / 2).setSize(w + 4, h + 4);
+        if (ui.text) {
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(ui.text, 32, this.uiScale || 1);
+            ui.text.setPosition(w / 2, h / 2);
+        }
+        if (ui.root && this.uiLayer) this.uiLayer.bringToTop(ui.root);
+    }
+
+    _hideGeneratingOverlay() {
+        try { this._generatingLabelTimer?.remove?.(false); } catch (_) {}
+        this._generatingLabelTimer = null;
+        const ui = this._generatingUi;
+        this._generatingUi = null;
+        if (this.cameras?.main) this.cameras.main.inputEnabled = true;
+        try { ui?.root?.destroy?.(true); } catch (_) {}
+    }
+
     async _leaveGame() {
         if (this._leavingGame) return;
         this._leavingGame = true;
         this._netLeaving = true;
         this._netDisconnectHandled = true;
+        try { this.input?.setDefaultCursor?.("default"); } catch (_) {}
+        try {
+            if (this.game?.canvas) this.game.canvas.style.cursor = "default";
+        } catch (_) {}
         // Drop the close handler before closing the socket so onclose cannot
         // race into the Disconnected screen after an intentional Leave.
         this._unbindNetClose();
@@ -8776,7 +9123,7 @@ class SceneMain extends SceneBase {
     }
 
     _handleEscapeKey() {
-        if (this._leavingGame) return;
+        if (this._leavingGame || this._worldBooting) return;
         if (!Phaser.Input.Keyboard.JustDown(this.keyEsc)) return;
         if (this.combatLog?.composing) return; // CombatLog closes chat
         if (this.knappingPanel?.visible) {
@@ -8784,7 +9131,12 @@ class SceneMain extends SceneBase {
             return;
         }
         if (this._gamePaused) {
-            this._closePauseMenu();
+            if (this._pausePage === "options") {
+                this._pausePage = "root";
+                this._buildPauseMenu();
+            } else {
+                this._closePauseMenu();
+            }
             return;
         }
         if (this._anyGameplayMenuOpen()) {
@@ -9075,6 +9427,19 @@ class SceneMain extends SceneBase {
     }
 
     updateUiScale() {
+        if (typeof Settings !== "undefined") {
+            this.uiScale = Settings.resolveUiScale(
+                this.guiScalePref,
+                this.scale?.width,
+                this.scale?.height
+            );
+            const max = Settings.getMaxGuiScaleOption(this.scale?.width, this.scale?.height);
+            let pref = this.guiScalePref | 0;
+            if (pref < 0) pref = 0;
+            if (pref > max) pref = max;
+            this.guiScalePref = pref;
+            return;
+        }
         const max = this.getMaxGuiScaleOption();
         let pref = this.guiScalePref | 0;
         if (pref < 0) pref = 0;
@@ -9100,29 +9465,30 @@ class SceneMain extends SceneBase {
 
         if (this.tooltipText) {
             this._tooltipPadding = Math.round(6 * s);
-            this.tooltipText.setFontSize(`${pixelUiFontSize(16, s)}px`);
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(this.tooltipText, 16, s);
+            else this.tooltipText.setFontSize(`${pixelUiFontSize(16, s)}px`);
             this.tooltipText.setPadding(this._tooltipPadding);
-            this.tooltipText.setStroke('#000000', Math.max(2, Math.round(2 * s)));
+            this.tooltipText.setStroke("#000000", Math.max(2, Math.round(2 * s)));
+            if (typeof crispUiText === "function") crispUiText(this.tooltipText);
         }
 
         const pad = Math.round(8 * s);
         const cx = this.scale.width / 2;
         if (this.clockText) {
-            const fs = pixelUiFontSize(16, s);
-            crispUiText(this.clockText);
-            this.clockText.setFontSize(`${fs}px`);
-            this.clockText.setStroke("#000000", Math.max(2, Math.round(fs / 8)));
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(this.clockText, 16, s);
+            else this.clockText.setFontSize(`${pixelUiFontSize(16, s)}px`);
+            this.clockText.setStroke("#000000", Math.max(2, Math.round(2 * s)));
+            if (typeof crispUiText === "function") crispUiText(this.clockText);
             placeUiText(this.clockText, cx, pad, 0.5, 0);
         }
         if (this.fpsText) {
-            const fs = pixelUiFontSize(16, s);
             const clockBottom = this.clockText
-                ? pad + Math.round(this.clockText.height || fs)
+                ? pad + Math.round(this.clockText.displayHeight || this.clockText.height || pixelUiFontSize(16, 1) * s)
                 : pad;
-            crispUiText(this.fpsText);
-            this.fpsText
-                .setFontSize(`${fs}px`)
-                .setStroke("#000000", Math.max(2, Math.round(fs / 8)));
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(this.fpsText, 16, s);
+            else this.fpsText.setFontSize(`${pixelUiFontSize(16, s)}px`);
+            this.fpsText.setStroke("#000000", Math.max(2, Math.round(2 * s)));
+            if (typeof crispUiText === "function") crispUiText(this.fpsText);
             placeUiText(this.fpsText, cx, clockBottom + Math.round(2 * s), 0.5, 0);
         }
         this._layoutLocationDebug?.();
@@ -9150,6 +9516,10 @@ class SceneMain extends SceneBase {
         if (this.craftMenuVisible) this.refreshCraftMenu();
         else this.positionCraftMenu();
 
+        if (this._gamePaused && this._pauseUi) this._buildPauseMenu();
+        else this._layoutPauseMenu();
+        if (this._generatingUi) this._layoutGeneratingOverlay();
+
         if (this.equipmentPanel?.visible) {
             this.equipmentPanel.refresh();
             this.equipmentPanel.layout();
@@ -9161,7 +9531,6 @@ class SceneMain extends SceneBase {
         if (this.storagePanel?.visible) this.storagePanel.layout();
         if (this.leanToPanel?.visible) this.leanToPanel.layout();
         if (this.knappingPanel?.visible) this.knappingPanel.layout();
-        this._layoutPauseMenu();
 
         this.player?.applyChatBubbleScale?.();
         for (const p of this.party || []) {
@@ -9203,6 +9572,11 @@ class SceneMain extends SceneBase {
         if (this._leavingGame) {
             this._hidePlaceGhost();
             this.combatLog?.update?.();
+            return;
+        }
+        if (this._worldBooting) {
+            this._hidePlaceGhost();
+            this._pumpChunkPaint();
             return;
         }
         // SP pause freezes the sim; dedicated MP menu must keep receiving world updates
@@ -9297,7 +9671,7 @@ class SceneMain extends SceneBase {
         if (best) best.load();
         this._pumpChunkPaint();
 
-        if (!this._spawnSignPlaced || !this._playerSpawnPlaced) this.ensureSpawnSign();
+        if (!this._worldBooting && (!this._spawnSignPlaced || !this._playerSpawnPlaced)) this.ensureSpawnSign();
 
         // Process input (menus / hotbar / chat blocked while knapping — R/Esc stay in panel)
         const chatting = !!this.combatLog?.isComposing?.();

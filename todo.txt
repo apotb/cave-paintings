@@ -19,3 +19,7 @@ Research Table -- part of settlement feature
 Burials / ritual -- early spiritualism
 
 Body/biome temperature
+
+Diet -- fruits, vegetables, grains, protein, dairy
+
+Electron wrapper for standalone client

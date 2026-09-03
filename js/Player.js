@@ -172,12 +172,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!msg) return;
         const scene = this.scene;
         const s = scene.uiScale || 1;
-        const zoom = scene.worldZoom || scene.cameras?.main?.zoom || 1;
-        const fontPx = pixelUiFontSize(16, s);
         if (!this.chatBubble) {
             this.chatBubble = scene.add.text(0, 0, "", {
                 fontFamily: PIXEL_UI_FONT,
-                fontSize: `${fontPx}px`,
+                fontSize: `${pixelUiFontSize(16, s)}px`,
                 color: "#ffffff",
                 stroke: "#000000",
                 strokeThickness: Math.max(2, Math.round(3 * s)),
@@ -187,14 +185,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
         this._bindChatHud(this.chatBubble);
         this.chatBubble
-            .setResolution(zoom * (window.devicePixelRatio || 1))
-            .setFontSize(`${fontPx}px`)
             .setStroke("#000000", Math.max(2, Math.round(3 * s)))
             .setWordWrapWidth(Math.round(140 * s), true)
-            .setScale(1 / zoom)
             .setText(String(msg))
             .setVisible(true)
             .setAlpha(1);
+        if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(this.chatBubble, 16, scene);
+        else this.chatBubble.setFontSize(`${pixelUiFontSize(16, s)}px`);
         this.chatBubbleUntil = (scene.time?.now || 0) + durationMs;
         this.syncFxRoot();
         this._syncChatBubble();
@@ -206,14 +203,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!bubble?.active) return;
         const scene = this.scene;
         const s = scene.uiScale || 1;
-        const zoom = scene.worldZoom || scene.cameras?.main?.zoom || 1;
-        const fontPx = pixelUiFontSize(16, s);
-        bubble
-            .setResolution(zoom * (window.devicePixelRatio || 1))
-            .setFontSize(`${fontPx}px`)
-            .setStroke("#000000", Math.max(2, Math.round(3 * s)))
-            .setWordWrapWidth(Math.round(140 * s), true)
-            .setScale(1 / zoom);
+        bubble.setStroke("#000000", Math.max(2, Math.round(3 * s)))
+            .setWordWrapWidth(Math.round(140 * s), true);
+        if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(bubble, 16, scene);
         this._syncChatBubble();
     }
 
@@ -228,13 +220,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const key = `${s}:${zoom}:${dpr}`;
         if (this._nameLabelScaleKey === key) return;
         this._nameLabelScaleKey = key;
-        const font = pixelUiFontSize(8, s);
-        const stroke = Math.max(2, Math.round(3 * s));
-        label
-            .setFontSize(`${font}px`)
-            .setStroke("#000000", stroke)
-            .setResolution(zoom * dpr)
-            .setScale(1 / zoom);
+        label.setStroke("#000000", Math.max(2, Math.round(3 * s)));
+        if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(label, 8, scene);
+        else {
+            label.setFontSize(`${pixelUiFontSize(8, s)}px`);
+            label.setScale(1 / zoom);
+        }
     }
 
     /**
@@ -424,19 +415,20 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const scene = this.scene;
         const zoom = scene.worldZoom || 3;
         const s = scene.uiScale || 1;
-        const font = pixelUiFontSize(8, s);
-        const stroke = Math.max(2, Math.round(3 * s));
         const color = scene.partySys?.nameColorFor?.(this) || "#ffffff";
         this._nameLabel = scene.add.text(8, -18, this.displayName(), {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: `${font}px`,
+            fontSize: `${pixelUiFontSize(8, 1)}px`,
             color,
             stroke: "#000000",
-            strokeThickness: stroke,
+            strokeThickness: 2,
             align: "center"
         }).setOrigin(0.5, 1);
-        this._nameLabel.setResolution(zoom * (window.devicePixelRatio || 1));
-        this._nameLabel.setScale(1 / zoom);
+        if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(this._nameLabel, 8, scene);
+        else {
+            this._nameLabel.setResolution(zoom * (window.devicePixelRatio || 1));
+            this._nameLabel.setScale(1 / zoom);
+        }
         this._bindNameHud(this._nameLabel);
         return this._nameLabel;
     }

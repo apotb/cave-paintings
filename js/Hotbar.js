@@ -386,8 +386,9 @@ class Hotbar {
             fill.setScale(3.0 * s).setPosition(cx, cy);
 
             const quantity = this.quantity[i];
-            quantity.setFontSize(`${pixelUiFontSize(16, s)}px`);
-            quantity.setStroke('#000', Math.max(2, Math.round(2 * s)));
+            quantity.setStroke("#000", Math.max(2, Math.round(2 * s)));
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(quantity, 16, s);
+            else quantity.setFontSize(`${pixelUiFontSize(16, s)}px`);
             quantity.setPosition(slot.x + slotW - 4 * s, slot.y - 4 * s);
 
             const stack = this.scene.player.inventory[i] || null;
@@ -427,8 +428,9 @@ class Hotbar {
                 fill.setScale(3.0 * s).setPosition(cx, cy);
 
                 const quantity = this.overflowQuantity[i];
-                quantity.setFontSize(`${pixelUiFontSize(16, s)}px`);
-                quantity.setStroke('#000', Math.max(2, Math.round(2 * s)));
+                quantity.setStroke("#000", Math.max(2, Math.round(2 * s)));
+                if (typeof applyPixelUiFont === "function") applyPixelUiFont(quantity, 16, s);
+                else quantity.setFontSize(`${pixelUiFontSize(16, s)}px`);
                 quantity.setPosition(slot.x + slotW - 4 * s, slot.y - 4 * s);
 
                 const stack = (this.scene.player.overflow || [])[i] || null;

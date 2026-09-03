@@ -429,9 +429,6 @@ class StoragePanel {
         const bottomRowY = -(objH + clear + slotW / 2);
 
         const zoom = this.scene.worldZoom || 1;
-        const fontPx = pixelUiFontSize(16, s);
-        const strokePx = Math.max(2, Math.round(2 * s));
-
         for (let i = 0; i < this.slotViews.length; i++) {
             const view = this.slotViews[i];
             if (i >= n) continue;
@@ -442,22 +439,27 @@ class StoragePanel {
             view.slot.setScale(ws).setPosition(x, y);
             view.icon.setScale(3 * ws).setPosition(x, y);
             view.fill.setScale(3 * ws).setPosition(x, y);
-            view.qty.setResolution(zoom * (window.devicePixelRatio || 1));
-            view.qty.setFontSize(`${fontPx}px`);
-            view.qty.setStroke("#000000", strokePx);
-            view.qty.setScale(1 / zoom);
+            view.qty.setStroke("#000000", Math.max(2, Math.round(2 * s)));
+            if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(view.qty, 16, this.scene);
+            else {
+                view.qty.setResolution(zoom * (window.devicePixelRatio || 1));
+                view.qty.setFontSize(`${pixelUiFontSize(16, s)}px`);
+                view.qty.setScale(1 / zoom);
+            }
             view.qty.setPosition(x + slotW / 2 - 4 * ws, y + slotW / 2 - 4 * ws);
         }
 
-        const btnFontPx = pixelUiFontSize(16, s);
         const bw = 78 * ws;
         const bh = 28 * ws;
         this._takeBw = bw;
         this._takeBh = bh;
         this.takeRect.setSize(bw, bh);
-        this.takeText.setResolution(zoom * (window.devicePixelRatio || 1));
-        this.takeText.setFontSize(`${btnFontPx}px`);
-        this.takeText.setScale(1 / zoom);
+        if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(this.takeText, 16, this.scene);
+        else {
+            this.takeText.setResolution(zoom * (window.devicePixelRatio || 1));
+            this.takeText.setFontSize(`${pixelUiFontSize(16, s)}px`);
+            this.takeText.setScale(1 / zoom);
+        }
         this.takeBtn.setPosition(0, clear + bh / 2);
 
         this.container.setPosition(this.storage.x, this.storage.y);

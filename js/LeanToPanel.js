@@ -222,14 +222,20 @@ class LeanToPanel {
         this._destroyBh = bh;
 
         this.actionRect.setSize(bw, bh);
-        this.actionText.setResolution(zoom * (window.devicePixelRatio || 1));
-        this.actionText.setFontSize(`${fontPx}px`);
-        this.actionText.setScale(1 / zoom);
+        if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(this.actionText, 16, this.scene);
+        else {
+            this.actionText.setResolution(zoom * (window.devicePixelRatio || 1));
+            this.actionText.setFontSize(`${fontPx}px`);
+            this.actionText.setScale(1 / zoom);
+        }
 
         this.destroyRect.setSize(bw, bh);
-        this.destroyText.setResolution(zoom * (window.devicePixelRatio || 1));
-        this.destroyText.setFontSize(`${fontPx}px`);
-        this.destroyText.setScale(1 / zoom);
+        if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(this.destroyText, 16, this.scene);
+        else {
+            this.destroyText.setResolution(zoom * (window.devicePixelRatio || 1));
+            this.destroyText.setFontSize(`${fontPx}px`);
+            this.destroyText.setScale(1 / zoom);
+        }
 
         const objH = this.leanTo.displayHeight || 16;
         this.actionBtn.setPosition(0, -(objH + clear + bh / 2));

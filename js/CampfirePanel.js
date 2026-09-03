@@ -559,46 +559,53 @@ class CampfirePanel {
         };
 
         const zoom = this.scene.worldZoom || 1;
-        const fontPx = pixelUiFontSize(16, s);
-        const strokePx = Math.max(2, Math.round(2 * s));
         for (const view of this.slotViews) {
             const p = positions[view.key];
             if (!p) continue;
             view.slot.setScale(ws).setPosition(p.x, p.y);
             view.icon.setScale(3 * ws).setPosition(p.x, p.y);
             view.fill.setScale(3 * ws).setPosition(p.x, p.y);
-            view.qty.setResolution(zoom * (window.devicePixelRatio || 1));
-            view.qty.setFontSize(`${fontPx}px`);
-            view.qty.setStroke('#000000', strokePx);
-            view.qty.setScale(1 / zoom);
+            view.qty.setStroke("#000000", Math.max(2, Math.round(2 * s)));
+            if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(view.qty, 16, this.scene);
+            else {
+                view.qty.setResolution(zoom * (window.devicePixelRatio || 1));
+                view.qty.setFontSize(`${pixelUiFontSize(16, s)}px`);
+                view.qty.setScale(1 / zoom);
+            }
             view.qty.setPosition(p.x + slotW / 2 - 4 * ws, p.y + slotW / 2 - 4 * ws);
             if (view.heat) {
-                const heatFont = pixelUiFontSize(8, s);
-                view.heat.setResolution(zoom * (window.devicePixelRatio || 1));
-                view.heat.setFontSize(`${heatFont}px`);
                 view.heat.setStroke("#000000", Math.max(2, Math.round(2 * s)));
-                view.heat.setScale(1 / zoom);
+                if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(view.heat, 8, this.scene);
+                else {
+                    view.heat.setResolution(zoom * (window.devicePixelRatio || 1));
+                    view.heat.setFontSize(`${pixelUiFontSize(8, s)}px`);
+                    view.heat.setScale(1 / zoom);
+                }
                 view.heat.setPosition(p.x - slotW / 2 + 3 * ws, p.y - slotW / 2 + 2 * ws);
             }
         }
 
-        const btnFontPx = pixelUiFontSize(16, s);
         const bw = 90 * ws;
         const bh = 28 * ws;
         this._destroyBw = bw;
         this._destroyBh = bh;
         this.destroyRect.setSize(bw, bh);
-        this.destroyText.setResolution(zoom * (window.devicePixelRatio || 1));
-        this.destroyText.setFontSize(`${btnFontPx}px`);
-        this.destroyText.setScale(1 / zoom);
+        if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(this.destroyText, 16, this.scene);
+        else {
+            this.destroyText.setResolution(zoom * (window.devicePixelRatio || 1));
+            this.destroyText.setFontSize(`${pixelUiFontSize(16, s)}px`);
+            this.destroyText.setScale(1 / zoom);
+        }
         this.destroyBtn.setPosition(0, fuelY + slotW / 2 + padding + bh / 2);
 
         if (this.heatText) {
-            const heatFont = pixelUiFontSize(8, s);
-            this.heatText.setResolution(zoom * (window.devicePixelRatio || 1));
-            this.heatText.setFontSize(`${heatFont}px`);
             this.heatText.setStroke("#000000", Math.max(2, Math.round(3 * s)));
-            this.heatText.setScale(1 / zoom);
+            if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(this.heatText, 8, this.scene);
+            else {
+                this.heatText.setResolution(zoom * (window.devicePixelRatio || 1));
+                this.heatText.setFontSize(`${pixelUiFontSize(8, s)}px`);
+                this.heatText.setScale(1 / zoom);
+            }
             this.heatText.setPosition(0, 0);
         }
 

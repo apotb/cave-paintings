@@ -32,10 +32,20 @@ class SceneMenu extends Phaser.Scene {
                 this.load.image(key, `assets/ui/title/${id}.png`);
             }
         }
+        if (!this.cache.audio.exists("title")) {
+            this.load.audio("title", "assets/audio/title.ogg");
+        }
     }
 
     create() {
         try { this.anims?.resumeAll?.(); } catch (_) {}
+        // SceneMain's hover sets the game-wide default cursor to pointer. That
+        // sticks across scene.start, so Leave left the title in the hand cursor.
+        try { this.input?.setDefaultCursor?.("default"); } catch (_) {}
+        try {
+            const canvas = this.game?.canvas;
+            if (canvas) canvas.style.cursor = "default";
+        } catch (_) {}
         this.cameras.main.setBackgroundColor("#1a1510");
         this.cameras.main.setRoundPixels(false);
         hookPixelTextureClamp(this);
@@ -74,6 +84,10 @@ class SceneMenu extends Phaser.Scene {
         this._initCavePaintings();
         this._initCaveFire();
         this._initMenuCampfire();
+        this._startTitleMusic();
+        // Phaser emits 'shutdown' but does not call Scene.shutdown() by itself.
+        this.events.off("shutdown", this.shutdown, this);
+        this.events.once("shutdown", this.shutdown, this);
         // Wait for yoster — first paint otherwise falls back to Arial
         this._bootRoot();
     }
@@ -105,6 +119,196 @@ class SceneMenu extends Phaser.Scene {
             return;
         }
         this._showRoot();
+    }
+
+    _titleMusicVolume() {
+        return typeof Settings !== "undefined" ? Settings.musicGain() : 0.85;
+    }
+
+    _hudUiScale() {
+        const pref = typeof Settings !== "undefined" ? Settings.loadGuiScale() : 0;
+        if (typeof Settings !== "undefined") {
+            return Settings.resolveUiScale(pref, this.scale?.width, this.scale?.height);
+        }
+        const w = this.scale?.width || 1024;
+        const h = this.scale?.height || 768;
+        const max = Math.max(1, Math.floor(Math.min(w / 480, h / 360)));
+        const n = pref | 0;
+        if (n <= 0) return max;
+        return Math.min(n, max);
+    }
+
+    /** 1× column height used to cap title scale so dense screens don't overflow. */
+    _menuFitBudget() {
+        switch (this._phase) {
+            case "characters":
+            case "worlds":
+                return 420;
+            default:
+                return 360;
+        }
+    }
+
+    _uiScale() {
+        const hud = this._hudUiScale();
+        const h = this.scale?.height || 768;
+        return Math.min(hud, Math.max(1, Math.floor(h / this._menuFitBudget())));
+    }
+
+    _uiFont(basePx) {
+        const px = typeof pixelUiFontSize === "function"
+            ? pixelUiFontSize(basePx, this._uiScale())
+            : Math.round((Number(basePx) || 16) * this._uiScale());
+        return `${px}px`;
+    }
+
+    _uiStroke() {
+        return Math.max(2, Math.round(2 * this._uiScale()));
+    }
+
+    _menuFormW() {
+        return Math.round(280 * this._uiScale());
+    }
+
+    _applyTitleMusicVolume() {
+        try {
+            this._titleMusicTween?.stop?.();
+        } catch (_) {}
+        this._titleMusicTween = null;
+        const vol = this._titleMusicVolume();
+        const gain = this._titleGain;
+        const ctx = this.sound?.context;
+        if (!gain || !ctx) return;
+        try {
+            gain.gain.cancelScheduledValues(ctx.currentTime);
+            gain.gain.setValueAtTime(vol, ctx.currentTime);
+        } catch (_) {
+            try { gain.gain.value = vol; } catch (_) {}
+        }
+    }
+
+    _unbindVolumeSlider() {
+        try { this._volumeSlider?.destroy?.(); } catch (_) {}
+        this._volumeSlider = null;
+    }
+
+    _discardHtmlTitleAudio() {
+        const el = this.game?._cpTitleAudio;
+        if (!el) return;
+        try { el.pause(); } catch (_) {}
+        try { el.removeAttribute("src"); el.load?.(); } catch (_) {}
+        this.game._cpTitleAudio = null;
+    }
+
+    _startTitleMusic() {
+        this._discardHtmlTitleAudio();
+        if (!this.cache?.audio?.exists?.("title") || !this.sound) return;
+        this.sound.pauseOnBlur = false;
+        if (typeof patchPhaserAudioTabHitch === "function") patchPhaserAudioTabHitch(this.game);
+        this._unbindTitleUnlock();
+        this._titleMusicWanted = true;
+        this._bindTitleMusicVis();
+        const play = () => {
+            if (!this.sys || !this._titleMusicWanted) return;
+            const status = this.sys.settings?.status;
+            if (status == null || status >= Phaser.Scenes.SLEEPING) return;
+            this._unbindTitleUnlock();
+            this._playTitleNow({ fade: true });
+        };
+        if (this.sound.locked) {
+            this._onTitleUnlock = play;
+            this.sound.once("unlocked", this._onTitleUnlock);
+        } else {
+            play();
+        }
+    }
+
+    _playTitleNow(opts = {}) {
+        if (!this._titleMusicWanted) return;
+        const ctx = this.sound?.context;
+        const buf = this.cache?.audio?.get?.("title");
+        if (!ctx || !buf) return;
+        const fade = !!opts.fade;
+        const vol = this._titleMusicVolume();
+        if (this._titleSrc && this._titleGain) {
+            this._applyTitleMusicVolume();
+            return;
+        }
+        this._stopTitleGraph();
+        try {
+            const gain = ctx.createGain();
+            const dest = this.sound.destination || ctx.destination;
+            gain.connect(dest);
+            gain.gain.value = fade ? 0 : vol;
+            const src = ctx.createBufferSource();
+            src.buffer = buf;
+            src.loop = true;
+            src.connect(gain);
+            src.start(0);
+            this._titleSrc = src;
+            this._titleGain = gain;
+            if (fade) {
+                const now = ctx.currentTime;
+                gain.gain.setValueAtTime(0, now);
+                gain.gain.linearRampToValueAtTime(vol, now + 1.4);
+            }
+        } catch (_) {}
+    }
+
+    _stopTitleGraph() {
+        const src = this._titleSrc;
+        const gain = this._titleGain;
+        this._titleSrc = null;
+        this._titleGain = null;
+        if (src) {
+            try { src.onended = null; } catch (_) {}
+            try { src.stop(); } catch (_) {}
+            try { src.disconnect(); } catch (_) {}
+        }
+        if (gain) {
+            try { gain.disconnect(); } catch (_) {}
+        }
+    }
+
+    _bindTitleMusicVis() {
+        this._unbindTitleMusicVis();
+        this._onTitleVis = () => {
+            if (document.visibilityState !== "visible") return;
+            if (!this._titleMusicWanted) return;
+            const ctx = this.sound?.context;
+            if (!ctx) return;
+            if (ctx.state === "suspended" || ctx.state === "interrupted") {
+                try { ctx.resume(); } catch (_) {}
+            }
+        };
+        document.addEventListener("visibilitychange", this._onTitleVis);
+    }
+
+    _unbindTitleMusicVis() {
+        if (this._onTitleVis) {
+            try { document.removeEventListener("visibilitychange", this._onTitleVis); } catch (_) {}
+        }
+        this._onTitleVis = null;
+    }
+
+    _unbindTitleUnlock() {
+        if (this._onTitleUnlock && this.sound) {
+            try { this.sound.off("unlocked", this._onTitleUnlock); } catch (_) {}
+        }
+        this._onTitleUnlock = null;
+    }
+
+    _stopTitleMusic() {
+        this._titleMusicWanted = false;
+        this._unbindTitleUnlock();
+        this._unbindTitleMusicVis();
+        try {
+            this._titleMusicTween?.stop?.();
+        } catch (_) {}
+        this._titleMusicTween = null;
+        this._stopTitleGraph();
+        this._discardHtmlTitleAudio();
+        try { this.sound?.stopByKey?.("title"); } catch (_) {}
     }
 
     /** Nearest-neighbor + clamp wrap (POT textures otherwise REPEAT the opposite edge). */
@@ -294,7 +498,7 @@ class SceneMenu extends Phaser.Scene {
         const root = this._caveRoot;
         if (root?.active) {
             root.setDepth(-1000);
-            this.children.sendToBack(root);
+            try { this.children?.sendToBack?.(root); } catch (_) {}
         }
         if (this._caveFireImg?.active) this._caveFireImg.setDepth(-900);
         this._placeMenuCampfire();
@@ -537,6 +741,7 @@ class SceneMenu extends Phaser.Scene {
         if (e.key !== "Escape" && e.code !== "Escape") return;
         if (e.repeat) return;
         if (this._escapeLock) return;
+        if (this._startingSp) return;
         if (!this.sys?.isActive?.()) return;
         if (this._phase === "root") return;
         e.preventDefault();
@@ -578,6 +783,9 @@ class SceneMenu extends Phaser.Scene {
             case "createWorld":
                 this._showWorlds();
                 return;
+            case "options":
+                this._showRoot();
+                return;
             case "rename":
                 if (this._renameKind === "world") this._showWorlds();
                 else this._showCharacters({ next: this._charNext });
@@ -589,6 +797,7 @@ class SceneMenu extends Phaser.Scene {
 
     /** Rebuild the current menu screen after a window resize. */
     _relayout() {
+        if (this._startingSp) return;
         if (!this.sys?.isActive?.() || !this.cameras?.main) return;
         const gw = this.scale.width;
         const gh = this.scale.height;
@@ -629,6 +838,9 @@ class SceneMenu extends Phaser.Scene {
             case "createWorld":
                 this._showCreateWorld({ drafts, relayout: true });
                 break;
+            case "options":
+                this._showOptions();
+                break;
             case "rename":
                 this._showRename({
                     kind: this._renameKind,
@@ -665,6 +877,7 @@ class SceneMenu extends Phaser.Scene {
     _clear() {
         this._unbindCardListScroll();
         this._unbindCreateHslInput();
+        this._unbindVolumeSlider();
         this._cancelMpProbe();
         this._backAction = null;
         if (this._armedDeleteTimer) {
@@ -685,17 +898,18 @@ class SceneMenu extends Phaser.Scene {
         const cave = this._caveRoot;
         const fire = this._caveFireImg;
         const camp = this._menuCampfire;
-        for (const child of this.children.list.slice()) {
+        for (const child of this.children?.list?.slice?.() || []) {
             if (child === cave || child === fire || child === camp) continue;
             try { child.destroy(true); } catch (_) {}
         }
-        this.cameras.main.setBackgroundColor("#1a1510");
+        this.cameras?.main?.setBackgroundColor?.("#1a1510");
         this._sendCaveBehind();
         this._previewSprite = null;
         this._previewGfx = null;
         this._previewFrame = null;
         this._createSwatches = null;
         this._createHslBars = null;
+        this._optionsGuiScaleBtn = null;
         this.hostInput = this.passInput = this.nameInput = this.worldNameInput = this.seedInput = this.renameInput = null;
         this._syncKeyboardForDom();
     }
@@ -710,14 +924,25 @@ class SceneMenu extends Phaser.Scene {
         return nodes[0];
     }
 
-    _title(text, yFrac = 0.14) {
+    _title(text, yFrac = 0.14, fontSize = 32) {
         const w = this.scale.width;
         const h = this.scale.height;
+        const s = this._uiScale();
+        const sizePx = this._uiFont(fontSize);
         const label = this._track(this.add.text(0, 0, text, {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: "32px",
+            fontSize: sizePx,
             color: "#e8dcc8"
         }).setOrigin(0, 0));
+        const maxW = Math.max(120, w - 48);
+        if (label.width > maxW && label.width > 0) {
+            const cur = parseFloat(label.style.fontSize) || fontSize;
+            const fit = Math.max(
+                typeof pixelUiFontSize === "function" ? pixelUiFontSize(Math.min(32, fontSize), s) : 32,
+                Math.floor(cur * maxW / label.width)
+            );
+            label.setFontSize(`${fit}px`);
+        }
         const tx = Math.round(w / 2);
         const ty = Math.round(h * yFrac);
         label.setPosition(tx + Math.round(-label.width / 2), ty + Math.round(-label.height / 2));
@@ -725,9 +950,17 @@ class SceneMenu extends Phaser.Scene {
         if (!this._primaryFontReady) {
             this._ensurePrimaryFont().then(() => {
                 if (!label?.active) return;
-                label.setStyle({ fontFamily: PIXEL_UI_FONT, fontSize: "32px", color: "#e8dcc8" });
+                label.setStyle({ fontFamily: PIXEL_UI_FONT, fontSize: sizePx, color: "#e8dcc8" });
                 label.setFontFamily(PIXEL_UI_FONT);
                 label.updateText?.();
+                if (label.width > maxW && label.width > 0) {
+                    const cur = parseFloat(label.style.fontSize) || fontSize;
+                    const fit = Math.max(
+                        typeof pixelUiFontSize === "function" ? pixelUiFontSize(Math.min(32, fontSize), s) : 32,
+                        Math.floor(cur * maxW / label.width)
+                    );
+                    label.setFontSize(`${fit}px`);
+                }
                 label.setPosition(tx + Math.round(-label.width / 2), ty + Math.round(-label.height / 2));
             });
         }
@@ -735,15 +968,15 @@ class SceneMenu extends Phaser.Scene {
         return label;
     }
 
-    _status(yFrac = 0.88) {
+    _status(yFrac = 0.80) {
         const w = this.scale.width;
         const h = this.scale.height;
         this.status = this._track(this.add.text(w / 2, h * yFrac, "", {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: "16px",
+            fontSize: this._uiFont(16),
             color: "#c0b0a0",
             align: "center",
-            wordWrap: { width: Math.min(520, w - 40) }
+            wordWrap: { width: Math.min(Math.round(520 * this._uiScale()), w - 40) }
         }).setOrigin(0.5));
         return this.status;
     }
@@ -766,19 +999,27 @@ class SceneMenu extends Phaser.Scene {
      * small  — character / world card actions
      */
     _buttonSizePreset(size) {
+        const s = this._uiScale();
         const presets = {
-            large: { fontSize: "24px", width: 240, height: 52 },
-            medium: { fontSize: "16px", width: 132, height: 38 },
-            small: { fontSize: "16px", width: 78, height: 28 }
+            large: { fontSize: 24, width: 240, height: 52 },
+            medium: { fontSize: 16, width: 140, height: 38 },
+            small: { fontSize: 16, width: 78, height: 28 }
         };
-        if (size === "large" || size === "lg" || size === "hero") return presets.large;
-        if (size === "small" || size === "sm" || size === "compact") return presets.small;
-        return presets.medium;
+        const raw = (size === "large" || size === "lg" || size === "hero")
+            ? presets.large
+            : (size === "small" || size === "sm" || size === "compact")
+                ? presets.small
+                : presets.medium;
+        return {
+            fontSize: this._uiFont(raw.fontSize),
+            width: Math.round(raw.width * s),
+            height: Math.round(raw.height * s)
+        };
     }
 
     /** Vertical center for stacked medium buttons (index 0 = base). */
     _mediumStackY(baseY, index = 0) {
-        const step = this._buttonSizePreset("medium").height + 10;
+        const step = this._buttonSizePreset("medium").height + Math.round(10 * this._uiScale());
         return baseY + step * index;
     }
 
@@ -801,8 +1042,9 @@ class SceneMenu extends Phaser.Scene {
         }).setOrigin(0, 0));
         text.setPosition(Math.round(-text.width / 2), Math.round(-text.height / 2));
 
+        const stroke = this._uiStroke();
         const rect = this.add.rectangle(0, 0, bw, bh, BG, 1)
-            .setStrokeStyle(2, OUTLINE)
+            .setStrokeStyle(stroke, OUTLINE)
             .setInteractive({ useHandCursor: true });
 
         const root = this.add.container(Math.round(x), Math.round(y), [rect, text]);
@@ -816,19 +1058,19 @@ class SceneMenu extends Phaser.Scene {
         const paint = () => {
             if (opts.armed) {
                 rect.setFillStyle(BG_PRESS, 1);
-                rect.setStrokeStyle(2, OUTLINE_PRESS);
+                rect.setStrokeStyle(stroke, OUTLINE_PRESS);
                 text.setColor("#e8d080");
             } else if (pressing) {
                 rect.setFillStyle(BG_PRESS, 1);
-                rect.setStrokeStyle(2, OUTLINE_PRESS);
+                rect.setStrokeStyle(stroke, OUTLINE_PRESS);
                 text.setColor("#d4c4a8");
             } else if (hovering) {
                 rect.setFillStyle(BG, 1);
-                rect.setStrokeStyle(2, OUTLINE_HOVER);
+                rect.setStrokeStyle(stroke, OUTLINE_HOVER);
                 text.setColor("#d4c4a8");
             } else {
                 rect.setFillStyle(BG, 1);
-                rect.setStrokeStyle(2, OUTLINE);
+                rect.setStrokeStyle(stroke, OUTLINE);
                 text.setColor("#d4c4a8");
             }
         };
@@ -872,6 +1114,15 @@ class SceneMenu extends Phaser.Scene {
         root.setBtnText = (str) => {
             text.setText(str);
             root.layoutBtnText();
+        };
+        root.restoreHover = () => {
+            hovering = true;
+            pressing = false;
+            paint();
+            setActive(true);
+            try {
+                if (this.game?.canvas) this.game.canvas.style.cursor = "pointer";
+            } catch (_) {}
         };
         root.setArmed = (on) => {
             opts.armed = !!on;
@@ -987,21 +1238,23 @@ class SceneMenu extends Phaser.Scene {
         const BG = 0x120e0a;
         const OUTLINE = 0x2a2218;
         const OUTLINE_HOVER = 0xffffff;
+        const s = this._uiScale();
+        const stroke = this._uiStroke();
         const left = Math.round(x - width / 2);
         const top = Math.round(y - height / 2);
-        const pad = 12;
-        // Fits 16px sprites at integer scale 3 (48×48)
-        const iconSlot = 48;
+        const pad = Math.round(12 * s);
+        // Fits 16px sprites at integer scale 3 (48×48) at GUI 1
+        const iconSlot = Math.round(48 * s);
 
         const panel = this.add.rectangle(Math.round(x), Math.round(y), width, height, BG, 1)
-            .setStrokeStyle(2, OUTLINE)
+            .setStrokeStyle(stroke, OUTLINE)
             .setInteractive({ useHandCursor: true });
         this._track(panel);
 
         let hovering = false;
         let lastClickAt = 0;
         const paintPanel = () => {
-            panel.setStrokeStyle(2, hovering ? OUTLINE_HOVER : OUTLINE);
+            panel.setStrokeStyle(stroke, hovering ? OUTLINE_HOVER : OUTLINE);
         };
         panel.on("pointerover", () => {
             hovering = true;
@@ -1038,18 +1291,18 @@ class SceneMenu extends Phaser.Scene {
         }
 
         const sideBtnW = this._buttonSizePreset("small").width;
-        const textLeft = left + pad + iconSlot + 10;
-        const textRight = left + width - pad - sideBtnW - 10;
-        const titleText = this.add.text(textLeft, top + 10, title || "", {
+        const textLeft = left + pad + iconSlot + Math.round(10 * s);
+        const textRight = left + width - pad - sideBtnW - Math.round(10 * s);
+        const titleText = this.add.text(textLeft, top + Math.round(10 * s), title || "", {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: "16px",
+            fontSize: this._uiFont(16),
             color: "#e8dcc8"
         }).setOrigin(0, 0);
         this._track(titleText);
 
-        const info = crispUiText(this.add.text(textLeft, top + 34, (lines || []).join(" / "), {
+        const info = crispUiText(this.add.text(textLeft, top + Math.round(34 * s), (lines || []).join(" / "), {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: "12px",
+            fontSize: `${Math.max(8, Math.round(12 * s))}px`,
             color: "#a89880"
         }).setOrigin(0, 0));
         this._track(info);
@@ -1080,21 +1333,21 @@ class SceneMenu extends Phaser.Scene {
         }
 
         // Bottom-left actions — 8px under a one-line info row
-        const btnY = top + 34 + 12 + 8 + playBtn.btnHeight / 2;
+        const btnY = top + Math.round(34 * s) + Math.round(12 * s) + Math.round(8 * s) + playBtn.btnHeight / 2;
         playBtn.x = textLeft + playBtn.btnWidth / 2;
         playBtn.y = btnY;
-        renameBtn.x = playBtn.x + playBtn.btnWidth / 2 + 8 + renameBtn.btnWidth / 2;
+        renameBtn.x = playBtn.x + playBtn.btnWidth / 2 + Math.round(8 * s) + renameBtn.btnWidth / 2;
         renameBtn.y = btnY;
         if (favoriteBtn) {
-            favoriteBtn.x = renameBtn.x + renameBtn.btnWidth / 2 + 8 + favoriteBtn.btnWidth / 2;
+            favoriteBtn.x = renameBtn.x + renameBtn.btnWidth / 2 + Math.round(8 * s) + favoriteBtn.btnWidth / 2;
             favoriteBtn.y = btnY;
         }
 
         // Top-right stack: Export, then Delete
-        const sideGap = 6;
+        const sideGap = Math.round(6 * s);
         const sideX = left + width - pad - Math.max(exportBtn.btnWidth, deleteBtn.btnWidth) / 2;
         exportBtn.x = sideX;
-        exportBtn.y = top + 10 + exportBtn.btnHeight / 2;
+        exportBtn.y = top + Math.round(10 * s) + exportBtn.btnHeight / 2;
         deleteBtn.x = sideX;
         deleteBtn.y = exportBtn.y + exportBtn.btnHeight / 2 + sideGap + deleteBtn.btnHeight / 2;
 
@@ -1130,10 +1383,11 @@ class SceneMenu extends Phaser.Scene {
         this._status();
 
         const typed = drafts?.renameName != null ? drafts.renameName : "";
+        const formW = this._menuFormW();
         this.renameInput = this._domInput(
-            w / 2 - 140,
+            w / 2 - formW / 2,
             h * 0.42,
-            280,
+            formW,
             this._renameCurrent,
             typed
         );
@@ -1168,7 +1422,7 @@ class SceneMenu extends Phaser.Scene {
 
     _listFooter(y, { onBack, onImport, onCreate }) {
         const w = this.scale.width;
-        const gap = this._buttonSizePreset("medium").width + 16;
+        const gap = this._buttonSizePreset("medium").width + Math.round(16 * this._uiScale());
         this._button(w / 2 - gap, y, "Back", onBack);
         this._button(w / 2, y, "Import", onImport);
         this._button(w / 2 + gap, y, "Create", onCreate);
@@ -1179,7 +1433,7 @@ class SceneMenu extends Phaser.Scene {
         const h = this.scale.height;
         const fireH = 16 * 8;
         const btnH = this._buttonSizePreset("medium").height;
-        return Math.round(h - fireH - btnH / 2 - 16);
+        return Math.round(h - fireH - btnH / 2 - Math.round(16 * this._uiScale()));
     }
 
     _cardListView() {
@@ -1189,7 +1443,7 @@ class SceneMenu extends Phaser.Scene {
         const viewTop = Math.round(h * 0.26);
         const viewBottom = Math.round(footerY - btnH / 2 - 12);
         // Card stroke is 2px and sits on the rect edge — keep it inside the mask.
-        const outlinePad = 2;
+        const outlinePad = this._uiStroke();
         return {
             viewTop,
             viewBottom,
@@ -1275,21 +1529,28 @@ class SceneMenu extends Phaser.Scene {
         this._cardList = { content, apply, maxScroll };
     }
     _roundArrow(x, y, glyph, onClick) {
-        const r = 18;
+        const s = this._uiScale();
+        const r = Math.round(18 * s);
+        const stroke = this._uiStroke();
         const hit = this.add.circle(x, y, r, 0x2a2218, 1)
-            .setStrokeStyle(2, 0x6a5a4a)
+            .setStrokeStyle(stroke, 0x6a5a4a)
             .setInteractive({ useHandCursor: true });
-        const label = crispUiText(this.add.text(x, y, glyph, {
+        const label = crispUiText(this.add.text(0, 0, glyph, {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: "16px",
+            fontSize: this._uiFont(16),
             color: "#d4c4a8"
-        }).setOrigin(0.5));
+        }));
+        if (typeof placeUiTextInkCentered === "function") {
+            placeUiTextInkCentered(label, x, y);
+        } else {
+            placeUiText(label, x, y, 0.5, 0.5);
+        }
         hit.on("pointerover", () => {
-            hit.setStrokeStyle(2, 0xc4b498);
+            hit.setStrokeStyle(stroke, 0xc4b498);
             label.setColor("#fff0d0");
         });
         hit.on("pointerout", () => {
-            hit.setStrokeStyle(2, 0x6a5a4a);
+            hit.setStrokeStyle(stroke, 0x6a5a4a);
             label.setColor("#d4c4a8");
         });
         hit.on("pointerdown", onClick);
@@ -1298,6 +1559,10 @@ class SceneMenu extends Phaser.Scene {
     }
 
     _domInput(x, y, width, placeholder, value, opts = {}) {
+        const s = this._uiScale();
+        const fontPx = typeof pixelUiFontSize === "function" ? pixelUiFontSize(16, s) : Math.round(16 * s);
+        const pad = Math.round(8 * s);
+        const border = Math.max(1, Math.round(s));
         const el = document.createElement("input");
         el.type = opts.type || "text";
         el.placeholder = placeholder;
@@ -1310,16 +1575,16 @@ class SceneMenu extends Phaser.Scene {
             `left:${x}px`,
             `top:${y}px`,
             `width:${width}px`,
-            "padding:8px",
+            `padding:${pad}px`,
             "font-family:PrimaryFont, monospace",
-            "font-size:16px",
+            `font-size:${fontPx}px`,
             "background:#2a2218",
             "color:#e8dcc8",
-            "border:1px solid #6a5a4a",
-            "border-radius:4px",
+            `border:${border}px solid #6a5a4a`,
+            `border-radius:${Math.round(4 * s)}px`,
             "z-index:1000",
             "pointer-events:auto",
-            "outline:1px solid #6a5a4a",
+            `outline:${border}px solid #6a5a4a`,
             "box-sizing:border-box"
         ].join(";");
         // Keep Phaser from treating clicks/keys on this field as game input
@@ -1330,14 +1595,14 @@ class SceneMenu extends Phaser.Scene {
             el.addEventListener(ev, (e) => e.stopPropagation());
         }
         el.addEventListener("focus", () => {
-            el.style.outline = "2px solid #d4a84b";
+            el.style.outline = `${Math.max(2, Math.round(2 * s))}px solid #d4a84b`;
             this._syncKeyboardForDom();
             try {
                 this.game?.canvas?.blur?.();
             } catch (_) {}
         });
         el.addEventListener("blur", () => {
-            el.style.outline = "1px solid #6a5a4a";
+            el.style.outline = `${border}px solid #6a5a4a`;
             // Next field may focus in the same turn — wait before re-enabling Phaser keys
             this.time?.delayedCall?.(0, () => this._syncKeyboardForDom());
         });
@@ -1351,10 +1616,76 @@ class SceneMenu extends Phaser.Scene {
         this._phase = "root";
         const w = this.scale.width;
         const h = this.scale.height;
-        this._title("CAVE PAINTINGS");
+        const step = this._buttonSizePreset("large").height + Math.round(8 * this._uiScale());
+        this._title("CAVE PAINTINGS", 0.16, 64);
         this._status();
         this._button(w / 2, h * 0.42, "Singleplayer", () => this._beginSp(), { size: "large" });
-        this._button(w / 2, h * 0.42 + 60, "Multiplayer", () => this._beginMp(), { size: "large" });
+        this._button(w / 2, h * 0.42 + step, "Multiplayer", () => this._beginMp(), { size: "large" });
+        this._button(w / 2, h * 0.42 + step * 2, "Options", () => this._showOptions(), { size: "large" });
+    }
+
+    _maxGuiScaleOption() {
+        return typeof Settings !== "undefined"
+            ? Settings.getMaxGuiScaleOption(this.scale?.width, this.scale?.height)
+            : Math.max(1, Math.floor(Math.min(
+                (this.scale?.width || 1024) / 480,
+                (this.scale?.height || 768) / 360
+            )));
+    }
+
+    _guiScaleButtonLabel() {
+        const pref = typeof Settings !== "undefined" ? Settings.loadGuiScale() : 0;
+        return typeof Settings !== "undefined"
+            ? Settings.guiScaleButtonLabel(pref)
+            : (pref === 0 ? "GUI Scale: Auto" : `GUI Scale: ${pref}`);
+    }
+
+    _cycleTitleGuiScale() {
+        const max = this._maxGuiScaleOption();
+        const cur = typeof Settings !== "undefined" ? Settings.loadGuiScale() : 0;
+        const next = typeof Settings !== "undefined" ? Settings.cycleGuiScale(cur, max) : 0;
+        if (typeof Settings !== "undefined") Settings.saveGuiScale(next);
+        this._showOptions();
+        this.time?.delayedCall?.(0, () => this._optionsGuiScaleBtn?.restoreHover?.());
+    }
+
+    _showOptions() {
+        this._clear();
+        this._phase = "options";
+        const w = this.scale.width;
+        const h = this.scale.height;
+        const s = this._uiScale();
+        this._title("Options");
+        const y0 = h * 0.40;
+        this._optionsGuiScaleBtn = this._button(
+            w / 2,
+            y0,
+            this._guiScaleButtonLabel(),
+            () => this._cycleTitleGuiScale()
+        );
+        this._track(this.add.text(w / 2, y0 + Math.round(56 * s), "Music Volume", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: this._uiFont(16),
+            color: "#d4c4a8"
+        }).setOrigin(0.5));
+        const sliderW = this._menuFormW();
+        const sliderX = Math.floor(w / 2 - sliderW / 2);
+        const sliderY = Math.round(y0 + Math.round(78 * s));
+        const vol = typeof Settings !== "undefined" ? Settings.loadMusicVolume() : 85;
+        this._volumeSlider = Settings.makePercentSlider(this, {
+            x: sliderX,
+            y: sliderY,
+            width: sliderW,
+            height: Math.round(16 * s),
+            scale: s,
+            value: vol,
+            onChange: (n) => {
+                Settings.saveMusicVolume(n);
+                this._applyTitleMusicVolume();
+            }
+        });
+        this._track(...this._volumeSlider.nodes);
+        this._button(w / 2, y0 + Math.round(160 * s), "Back", () => this._showRoot());
     }
 
     _showDisconnected() {
@@ -1389,7 +1720,8 @@ class SceneMenu extends Phaser.Scene {
             ?? this._mpHost
             ?? localStorage.getItem("cp_join_host")
             ?? "127.0.0.1:21826";
-        this.hostInput = this._domInput(w / 2 - 140, h * 0.40, 280, "", host);
+        const formW = this._menuFormW();
+        this.hostInput = this._domInput(w / 2 - formW / 2, h * 0.40, formW, "", host);
         this._button(w / 2, this._mediumStackY(h * 0.55, 0), "Connect", () => this._probeMultiplayer());
         this._button(w / 2, this._mediumStackY(h * 0.55, 1), "Help", () => this._showMpHelp());
         this._button(w / 2, this._mediumStackY(h * 0.55, 2), "Back", () => this._showRoot());
@@ -1397,9 +1729,10 @@ class SceneMenu extends Phaser.Scene {
 
     /** Inline black/white command chip; keeps surrounding sentence text unchanged. */
     _addCmdLine(x, y, before, command, after, style, wrap) {
+        const s = this._uiScale();
         const beforeT = this._track(this.add.text(x, y, before, { ...style }).setOrigin(0, 0));
-        const padX = 4;
-        const padY = 1;
+        const padX = Math.round(4 * s);
+        const padY = Math.max(1, Math.round(s));
         const measure = this.add.text(0, 0, command, {
             fontFamily: style.fontFamily || PIXEL_UI_FONT,
             fontSize: style.fontSize || "16px",
@@ -1466,11 +1799,11 @@ class SceneMenu extends Phaser.Scene {
                 .setVisible(false);
             const hangX = x + numM.width;
             numM.destroy();
-            const restT = this._track(this.add.text(hangX, bottom + 2, rest.replace(/^\s+/, ""), {
+            const restT = this._track(this.add.text(hangX, bottom + Math.round(2 * s), rest.replace(/^\s+/, ""), {
                 ...style,
                 wordWrap: { width: Math.max(40, wrap - (hangX - x)) }
             }).setOrigin(0, 0));
-            bottom = bottom + 2 + restT.height;
+            bottom = bottom + Math.round(2 * s) + restT.height;
         }
         return bottom;
     }
@@ -1480,40 +1813,49 @@ class SceneMenu extends Phaser.Scene {
         this._phase = "mpHelp";
         const w = this.scale.width;
         const h = this.scale.height;
-        this._title("Hosting a server");
+        const title = this._title("Hosting a server", 0.14);
 
+        const s = this._uiScale();
         const repoUrl = "https://github.com/apotb/cave-paintings";
-        const wrap = Math.min(520, w - 48);
-        const left = w / 2 - wrap / 2;
+        const wrap = Math.min(Math.round(520 * s), Math.max(120, w - Math.round(48 * s)));
+        const left = Math.round((w - wrap) / 2);
         const style = {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: "16px",
+            fontSize: this._uiFont(16),
             color: "#c0b0a0",
             align: "left",
-            lineSpacing: 6,
+            lineSpacing: Math.round(6 * s),
             wordWrap: { width: wrap }
         };
 
-        let y = h * 0.30;
-        const textTop = y;
+        const body = [];
+        const keep = (...nodes) => {
+            this._track(...nodes);
+            for (const n of nodes) {
+                if (n) body.push(n);
+            }
+            return nodes[0];
+        };
+
+        let y = 0;
+        const gap = Math.round(14 * s);
         const addLine = (text, opts = {}) => {
-            const t = this._track(this.add.text(left, y, text, { ...style, ...opts }).setOrigin(0, 0));
-            y += t.height + (opts.gapAfter ?? 14);
+            const t = keep(this.add.text(left, y, text, { ...style, ...opts }).setOrigin(0, 0));
+            y += t.height + (opts.gapAfter ?? gap);
             return t;
         };
 
         addLine("1. Use Git to clone the repository:");
-        // Indent past the "1. " prefix so the URL sits clearly to the right of the step text
         const numW = (() => {
             const m = this.add.text(0, 0, "1. ", { ...style }).setVisible(false);
-            const w = m.width;
+            const nw = m.width;
             m.destroy();
-            return w;
+            return nw;
         })();
-        const linkIndent = numW + 12;
-        const link = this._track(this.add.text(left + linkIndent, y, repoUrl, {
+        const linkIndent = numW + Math.round(12 * s);
+        const link = keep(this.add.text(left + linkIndent, y, repoUrl, {
             fontFamily: PIXEL_UI_FONT,
-            fontSize: "16px",
+            fontSize: this._uiFont(16),
             color: "#d4a84b",
             wordWrap: { width: Math.max(40, wrap - linkIndent) }
         }).setOrigin(0, 0).setInteractive({ useHandCursor: true }));
@@ -1524,30 +1866,50 @@ class SceneMenu extends Phaser.Scene {
                 window.open(repoUrl, "_blank", "noopener,noreferrer");
             } catch (_) {}
         });
-        y += link.height + 18;
+        y += link.height + Math.round(18 * s);
 
+        const cmdFrom = this._dom.length;
         y = this._addCmdLine(
             left, y,
             "2. Run ", "npm install", " when you first clone the repository, or after you update it.",
             style, wrap
-        ) + 14;
+        ) + gap;
         y = this._addCmdLine(
             left, y,
             "3. Run ", "npm start", " to start the server.",
             style, wrap
-        ) + 14;
+        ) + gap;
+        for (let i = cmdFrom; i < this._dom.length; i++) body.push(this._dom[i]);
+
         addLine(
             "You are responsible for making the server reachable. Port forward, use a tunnel (ngrok, Cloudflare, etc.), or any similar setup. The address shown on start is a LAN address and is inaccessible unless you are playing LAN on the downloaded client.",
-            { gapAfter: 8 }
+            { gapAfter: 0 }
         );
 
-        const padX = 28;
-        const padY = 22;
+        const textH = y;
+        const padX = Math.round(28 * s);
+        const padY = Math.round(22 * s);
+        const titleGap = Math.round(18 * s);
+        const btnGap = Math.round(20 * s);
+        const btnH = this._buttonSizePreset("medium").height;
+        const boxH = textH + padY * 2;
+        const stackH = title.height + titleGap + boxH + btnGap + btnH;
+        const fireH = 16 * 8;
+        const minTop = Math.round(16 * s);
+        const maxBottom = h - fireH;
+        let top = Math.round((h - stackH) / 2);
+        if (top < minTop) top = minTop;
+        if (top + stackH > maxBottom) top = Math.max(minTop, maxBottom - stackH);
+
+        title.setPosition(Math.round(w / 2 - title.width / 2), top);
+        const textTop = top + title.height + titleGap + padY;
+        for (const n of body) n.y += textTop;
+
         const box = this.add.rectangle(
-            w / 2,
-            (textTop + y) / 2,
+            Math.round(w / 2),
+            Math.round(textTop + textH / 2),
             wrap + padX * 2,
-            (y - textTop) + padY * 2,
+            boxH,
             0x000000,
             1
         );
@@ -1555,7 +1917,12 @@ class SceneMenu extends Phaser.Scene {
         this._track(box);
         this._sendCaveBehind();
 
-        this._button(w / 2, Math.min(y + 48, h * 0.88), "Back", () => this._showMpHost());
+        this._button(
+            Math.round(w / 2),
+            Math.round(textTop + textH + padY + btnGap + btnH / 2),
+            "Back",
+            () => this._showMpHost()
+        );
     }
 
     _cancelMpProbe() {
@@ -1613,10 +1980,11 @@ class SceneMenu extends Phaser.Scene {
         const h = this.scale.height;
         this._title("Password");
         this._status();
+        const formW = this._menuFormW();
         this.passInput = this._domInput(
-            w / 2 - 140,
+            w / 2 - formW / 2,
             h * 0.40,
-            280,
+            formW,
             "",
             opts.drafts?.pass ?? "",
             { type: "password", autocomplete: "current-password" }
@@ -1649,9 +2017,10 @@ class SceneMenu extends Phaser.Scene {
             this.status.setText(String(e.message || e));
         }
 
-        const cardW = Math.min(560, w - 48);
-        const cardH = 96;
-        const gap = 10;
+        const s = this._uiScale();
+        const cardW = Math.min(Math.round(560 * s), w - 48);
+        const cardH = Math.round(96 * s);
+        const gap = Math.round(10 * s);
         const { viewTop, viewBottom, footerY, outlinePad } = this._cardListView();
         const listRoot = this.add.container(0, 0);
         this._track(listRoot);
@@ -1662,7 +2031,7 @@ class SceneMenu extends Phaser.Scene {
                 ? PlayerLook.ensure(this, c.look)
                 : "human";
             const spr = this.add.sprite(0, 0, lookKey, 1);
-            this._placePixelIcon(spr, 0, 0, 3);
+            this._placePixelIcon(spr, 0, 0, 3 * this._uiScale());
             this._track(spr);
             if (typeof PlayerLook !== "undefined") PlayerLook.play(spr, "down", false);
 
@@ -1774,7 +2143,20 @@ class SceneMenu extends Phaser.Scene {
         for (const row of this._createSwatches || []) {
             const color = look[row.part] >>> 0;
             row.rect.setFillStyle(color, 1);
-            row.rect.setStrokeStyle(2, row.part === part ? 0xd4a84b : 0x6a5a4a);
+            this._paintSwatchOutline(row, part);
+        }
+    }
+
+    _paintSwatchOutline(row, selectedPart) {
+        if (!row?.rect) return;
+        const stroke = this._uiStroke();
+        const selected = row.part === (selectedPart || this._createLookPart);
+        if (selected || row.pressing) {
+            row.rect.setStrokeStyle(stroke, 0xd4a84b);
+        } else if (row.hovering) {
+            row.rect.setStrokeStyle(stroke, 0xffffff);
+        } else {
+            row.rect.setStrokeStyle(stroke, 0x2a2218);
         }
     }
 
@@ -1853,7 +2235,7 @@ class SceneMenu extends Phaser.Scene {
             g.fillStyle(colorAt(t), 1);
             g.fillRect(x + i, y, 1, h);
         }
-        g.lineStyle(2, 0x000000, 1);
+        g.lineStyle(this._uiStroke(), 0x000000, 1);
         g.strokeRect(x - 1, y - 1, width + 2, h + 2);
     }
 
@@ -1896,15 +2278,16 @@ class SceneMenu extends Phaser.Scene {
     }
 
     _makeHslBar(kind, x, y, w, bh) {
+        const s = this._uiScale();
         const g = this.add.graphics();
-        const hit = this.add.rectangle(x + w / 2, y + bh / 2, w + 8, bh + 10, 0x000000, 0.001)
+        const hit = this.add.rectangle(x + w / 2, y + bh / 2, w + Math.round(8 * s), bh + Math.round(8 * s), 0x000000, 0.001)
             .setInteractive({ useHandCursor: true });
         hit.on("pointerdown", (p) => {
             this._hslDrag = kind;
             this._hslSetFromPointer(kind, p);
         });
-        const handle = this.add.rectangle(x, y + bh / 2, 5, bh + 8, 0xffffff)
-            .setStrokeStyle(2, 0x000000)
+        const handle = this.add.rectangle(x, y + bh / 2, Math.max(4, Math.round(4 * s)), bh + Math.round(4 * s), 0xffffff)
+            .setStrokeStyle(this._uiStroke(), 0x000000)
             .setDepth(8);
         this._track(g, hit, handle);
         return { g, hit, handle, y };
@@ -1930,42 +2313,70 @@ class SceneMenu extends Phaser.Scene {
         }
         this._createLookPart = drafts?.lookPart || this._createLookPart || "head";
 
+        const s = this._uiScale();
         const facings = ["down", "right", "up", "left"];
         if (typeof drafts?.faceIdx === "number") this._createFaceIdx = drafts.faceIdx;
         else if (!relayout) this._createFaceIdx = 0;
 
-        const previewScale = h < 640 ? 5 : 6;
+        const previewScale = Math.max(1, Math.round((h < 640 ? 5 : 6) * s));
         const fw = 16;
+        const previewW = fw * previewScale;
         const previewH = fw * previewScale;
-        const gap = 20;
-        const rotateR = 18;
-        const swatchH = 22;
-        const labelBelow = 16;
-        const barH = 16;
-        const sliderStep = 26;
+        const gap = Math.round(20 * s);
+        const colGap = Math.round(28 * s);
+        const rotateR = Math.round(18 * s);
+        const swatchH = Math.round(22 * s);
+        const labelBelow = Math.round(24 * s);
+        const barH = Math.round(8 * s);
+        const sliderStep = Math.round(18 * s);
         const smallBtnH = this._buttonSizePreset("small").height;
-        const nameH = 36;
-        const arrowYOff = 10 + rotateR;
-        const rowYOff = arrowYOff + rotateR + gap + swatchH / 2;
-        const sliderTopOff = rowYOff + swatchH / 2 + labelBelow + gap;
-        const copyYOff = sliderTopOff + sliderStep * 2 + barH + gap + smallBtnH / 2;
-        const nameYOff = copyYOff + smallBtnH / 2 + gap;
-        const contentH = previewH + nameYOff + nameH;
-
-        const titleBottom = Math.round(h * 0.14 + 24);
+        const nameH = Math.round(36 * s);
         const btnH = this._buttonSizePreset("medium").height;
-        const btnY = Math.round(h * 0.78);
-        const createTop = btnY - btnH / 2;
-        const availTop = titleBottom + 12;
-        const availBot = createTop - 16;
-        const availH = Math.max(contentH, availBot - availTop);
-        const footY = Math.round(availTop + (availH - contentH) / 2 + previewH);
+        const formToBtn = Math.round(16 * s);
+        const lookDiceSize = this._diceButtonSize();
+        const arrowSpan = Math.round(52 * s);
+        const leftControlsH = Math.max(lookDiceSize, rotateR * 2);
+        const leftW = Math.max(previewW, arrowSpan * 2 + rotateR * 2, lookDiceSize);
+        const leftH = previewH + Math.round(12 * s) + leftControlsH;
+
+        const parts = L?.PARTS || ["head", "eyes", "arms", "shirt", "pants", "shoes"];
+        const labels = L?.PART_LABELS || {};
+        const swatchW = Math.round(36 * s);
+        const swatchGap = Math.round(18 * s);
+        const rowW = parts.length * swatchW + (parts.length - 1) * swatchGap;
+        const fieldW = this._menuFormW();
+        const pairGap = this._buttonSizePreset("medium").width + Math.round(16 * s);
+        const pairW = this._buttonSizePreset("medium").width * 2 + Math.round(16 * s);
+        const rightW = Math.max(fieldW, rowW, pairW);
+        const formH = swatchH + labelBelow + gap + sliderStep * 2 + barH + gap + smallBtnH + gap + nameH + formToBtn + btnH;
+
+        const totalW = leftW + colGap + rightW;
+        const blockH = Math.max(leftH, formH);
+        const titleBottom = Math.round(h * 0.14 + Math.round(24 * s));
+        const minTop = titleBottom + Math.round(8 * s);
+        const maxBot = h - Math.round(24 * s);
+        let colTop = Math.round((h - blockH) / 2);
+        if (colTop < minTop) colTop = minTop;
+        if (colTop + blockH > maxBot) colTop = Math.max(minTop, maxBot - blockH);
+
+        const blockLeft = Math.round((w - totalW) / 2);
+        const leftMidX = blockLeft + Math.round(leftW / 2);
+        const formMidX = blockLeft + leftW + colGap + Math.round(rightW / 2);
+        const leftTop = colTop + Math.round((blockH - leftH) / 2);
+        const formTop = colTop + Math.round((blockH - formH) / 2);
+        const footY = Math.round(leftTop + previewH);
+        const arrowY = Math.round(footY + Math.round(12 * s) + leftControlsH / 2);
+        const rowY = Math.round(formTop + swatchH / 2);
+        const sliderTop = Math.round(formTop + swatchH + labelBelow + gap);
+        const copyY = Math.round(sliderTop + sliderStep * 2 + barH + gap + smallBtnH / 2);
+        const nameY = Math.round(copyY + smallBtnH / 2 + gap);
+        const btnY = Math.round(nameY + nameH + formToBtn + btnH / 2);
 
         const previewKey = typeof PlayerLook !== "undefined"
             ? PlayerLook.ensure(this, this._createLook, { key: PlayerLook.PREVIEW_KEY, replace: true })
             : "human";
         const spr = this.add.sprite(0, 0, previewKey, 1);
-        const footX = Math.floor(w / 2 - (fw * previewScale) / 2);
+        const footX = Math.floor(leftMidX - previewW / 2);
         spr.setOrigin(0, 1);
         spr.setScale(previewScale);
         spr.setPosition(footX, footY);
@@ -1979,52 +2390,63 @@ class SceneMenu extends Phaser.Scene {
         };
         playWalk();
 
-        const arrowY = footY + arrowYOff;
-        this._roundArrow(Math.floor(w / 2 - 52), arrowY, "↺", () => {
+        this._roundArrow(Math.floor(leftMidX - arrowSpan), arrowY, "↺", () => {
             this._createFaceIdx = (this._createFaceIdx + 1) % 4;
             playWalk();
         });
-        this._roundArrow(Math.floor(w / 2 + 52), arrowY, "↻", () => {
+        this._roundArrow(Math.floor(leftMidX + arrowSpan), arrowY, "↻", () => {
             this._createFaceIdx = (this._createFaceIdx + 3) % 4;
             playWalk();
         });
-        this._diceButton(Math.floor(w / 2), arrowY, () => {
+        this._diceButton(Math.floor(leftMidX), arrowY, () => {
             this._createLook = L ? L.randomLook() : this._createLook;
             this._syncCreateHslFromLook();
             this._refreshCreatePreview();
-        }, 32);
+        });
 
-        const parts = L?.PARTS || ["head", "eyes", "arms", "shirt", "pants", "shoes"];
-        const labels = L?.PART_LABELS || {};
-        const swatchW = 36;
-        const swatchGap = 8;
-        const rowW = parts.length * swatchW + (parts.length - 1) * swatchGap;
-        const rowX = Math.floor(w / 2 - rowW / 2);
-        const rowY = footY + rowYOff;
+        const rowX = Math.floor(formMidX - rowW / 2);
         this._createSwatches = [];
         parts.forEach((part, i) => {
-            const cx = rowX + i * (swatchW + swatchGap) + swatchW / 2;
-            const rect = this.add.rectangle(cx, rowY, swatchW, 22, this._createLook[part] >>> 0, 1)
-                .setStrokeStyle(2, 0x6a5a4a)
+            const cx = Math.round(rowX + i * (swatchW + swatchGap) + swatchW / 2);
+            const rect = this.add.rectangle(cx, rowY, swatchW, swatchH, this._createLook[part] >>> 0, 1)
+                .setStrokeStyle(this._uiStroke(), 0x2a2218)
                 .setInteractive({ useHandCursor: true });
-            const label = crispUiText(this.add.text(cx, rowY + 18, labels[part] || part, {
+            const labelY = Math.round(rowY + swatchH / 2 + Math.round(6 * s));
+            const label = this.add.text(Math.round(cx), labelY, labels[part] || part, {
                 fontFamily: PIXEL_UI_FONT,
-                fontSize: "8px",
+                fontSize: this._uiFont(16),
                 color: "#c0b0a0"
-            }).setOrigin(0.5, 0));
+            });
+            crispUiText(label);
+            if (typeof placeUiText === "function") placeUiText(label, Math.round(cx), labelY, 0.5, 0);
+            else label.setOrigin(0.5, 0);
+            const row = { part, rect, hovering: false, pressing: false };
+            rect.on("pointerover", () => {
+                row.hovering = true;
+                this._paintSwatchOutline(row);
+            });
+            rect.on("pointerout", () => {
+                row.hovering = false;
+                row.pressing = false;
+                this._paintSwatchOutline(row);
+            });
             rect.on("pointerdown", () => {
+                row.pressing = true;
                 this._createLookPart = part;
                 this._paintCreateSwatches();
                 this._syncCreateHslFromLook();
             });
+            rect.on("pointerup", () => {
+                row.pressing = false;
+                this._paintSwatchOutline(row);
+            });
             this._track(rect, label);
-            this._createSwatches.push({ part, rect });
+            this._createSwatches.push(row);
         });
         this._paintCreateSwatches();
 
-        const sliderW = 280;
-        const sliderX = Math.floor(w / 2 - sliderW / 2);
-        const sliderTop = footY + sliderTopOff;
+        const sliderW = fieldW;
+        const sliderX = Math.floor(formMidX - sliderW / 2);
         this._createHslBars = {
             x: sliderX,
             w: sliderW,
@@ -2036,24 +2458,21 @@ class SceneMenu extends Phaser.Scene {
         this._bindCreateHslInput();
         this._syncCreateHslFromLook();
 
-        const copyY = footY + copyYOff;
-        const copyGap = 88;
-        this._button(w / 2 - copyGap, copyY, "Copy", () => this._copyCreateColor(), { size: "small" });
-        this._button(w / 2 + copyGap, copyY, "Paste", () => this._pasteCreateColor(), { size: "small" });
+        const copyGap = Math.round(88 * s);
+        this._button(formMidX - copyGap, copyY, "Copy", () => this._copyCreateColor(), { size: "small" });
+        this._button(formMidX + copyGap, copyY, "Paste", () => this._pasteCreateColor(), { size: "small" });
 
         const nameVal = drafts?.name != null ? drafts.name : "";
-        const nameY = footY + nameYOff;
-        const formLeft = w / 2 - 140;
-        const formW = 280;
-        const nameDiceSize = 32;
-        const nameDiceGap = 8;
-        const nameW = Math.max(120, formW - nameDiceGap - nameDiceSize);
+        const formLeft = Math.floor(formMidX - fieldW / 2);
+        const nameDiceSize = this._diceButtonSize();
+        const nameDiceGap = Math.round(8 * s);
+        const nameW = Math.max(120, fieldW - nameDiceGap - nameDiceSize);
         this.nameInput = this._domInput(formLeft, nameY, nameW, "Name", nameVal);
         this.nameInput.maxLength = 24;
         this._clearStatusOnInput(this.nameInput);
         const nameInputH = this.nameInput.offsetHeight || nameH;
         this._diceButton(
-            formLeft + formW - nameDiceSize / 2,
+            formLeft + fieldW - nameDiceSize / 2,
             nameY + nameInputH / 2,
             () => {
                 const gen = typeof CavemanNames !== "undefined" ? CavemanNames.generate() : "Og";
@@ -2063,7 +2482,8 @@ class SceneMenu extends Phaser.Scene {
         );
         if (!relayout) this.nameInput.focus();
 
-        this._button(w / 2, btnY, "Create", async () => {
+        this._button(formMidX - pairGap / 2, btnY, "Back", () => this._showCharacters({ next: this._charNext }));
+        this._button(formMidX + pairGap / 2, btnY, "Create", async () => {
             try {
                 const name = (this.nameInput?.value || "").trim();
                 if (!name) {
@@ -2078,7 +2498,9 @@ class SceneMenu extends Phaser.Scene {
                 this.status?.setText(String(e.message || e));
             }
         });
-        this._button(w / 2, this._mediumStackY(btnY, 1), "Back", () => this._showCharacters({ next: this._charNext }));
+        if (this.status) {
+            this.status.setPosition(w / 2, Math.min(h - 16, btnY + btnH / 2 + 22));
+        }
     }
 
     async _showWorlds() {
@@ -2100,9 +2522,10 @@ class SceneMenu extends Phaser.Scene {
             this.status.setText(String(e.message || e));
         }
 
-        const cardW = Math.min(560, w - 48);
-        const cardH = 96;
-        const gap = 10;
+        const s = this._uiScale();
+        const cardW = Math.min(Math.round(560 * s), w - 48);
+        const cardH = Math.round(96 * s);
+        const gap = Math.round(10 * s);
         const { viewTop, viewBottom, footerY, outlinePad } = this._cardListView();
         const listRoot = this.add.container(0, 0);
         this._track(listRoot);
@@ -2114,7 +2537,7 @@ class SceneMenu extends Phaser.Scene {
             if (palmKey) {
                 this._pixelFilter(palmKey);
                 icon = this.add.image(0, 0, palmKey);
-                this._placePixelIcon(icon, 0, 0, 2);
+                this._placePixelIcon(icon, 0, 0, 2 * this._uiScale());
                 this._track(icon);
             }
 
@@ -2231,20 +2654,24 @@ class SceneMenu extends Phaser.Scene {
         if (typeof noise !== "undefined") noise.seed(s);
         if (typeof worldSeed !== "undefined") worldSeed = s;
 
+        const ui = this._uiScale();
         const tiles = 11;
-        const px = 10;
+        const px = Math.max(1, Math.round(10 * ui));
         const half = (tiles * px) / 2;
         const worldTs = 16;
         const origin = Math.floor(tiles / 2);
+        const framePad = Math.round(4 * ui);
+        const cx = Math.round(centerX);
+        const cy = Math.round(centerY);
 
-        const frame = this.add.rectangle(centerX, centerY, tiles * px + 8, tiles * px + 8, 0x120e0a, 1)
-            .setStrokeStyle(2, 0x2a2218);
+        const frame = this.add.rectangle(cx, cy, tiles * px + framePad * 2, tiles * px + framePad * 2, 0x120e0a, 1)
+            .setStrokeStyle(this._uiStroke(), 0x2a2218);
         this._track(frame);
         this._previewFrame = frame;
 
         const g = this.add.graphics();
-        const left = centerX - half;
-        const top = centerY - half;
+        const left = Math.round(cx - half);
+        const top = Math.round(cy - half);
         for (let ty = 0; ty < tiles; ty++) {
             for (let tx = 0; tx < tiles; tx++) {
                 const wx = (tx - origin) * worldTs;
@@ -2254,32 +2681,44 @@ class SceneMenu extends Phaser.Scene {
                 g.fillRect(left + tx * px, top + ty * px, px, px);
             }
         }
-        // Spawn marker (sign tile at 0,0)
+        const inset = Math.max(1, Math.round(px * 0.3));
         g.fillStyle(0xe8dcc8, 1);
-        g.fillRect(left + origin * px + 3, top + origin * px + 3, px - 6, px - 6);
+        g.fillRect(left + origin * px + inset, top + origin * px + inset, px - inset * 2, px - inset * 2);
         this._track(g);
         this._previewGfx = g;
     }
 
-    /** Square button with dice icon (seed reroll). */
-    _diceButton(x, y, onClick, size = 36) {
+    _diceButtonSize(minSide = 0) {
+        const s = this._uiScale();
+        const texScale = Math.max(1, Math.round(2 * s));
+        const pad = Math.round(4 * s);
+        return Math.max(Math.round(minSide) || 0, 16 * texScale + pad * 2);
+    }
+
+    /** Square button with dice icon (seed / look reroll). */
+    _diceButton(x, y, onClick, size) {
         const BG = 0x120e0a;
         const BG_PRESS = 0x0a0806;
         const OUTLINE = 0x2a2218;
         const OUTLINE_HOVER = 0xffffff;
         const OUTLINE_PRESS = 0xd4a84b; // gold
 
-        const side = Math.max(24, Math.round(size));
-        const rect = this.add.rectangle(0, 0, side, side, BG, 1)
-            .setStrokeStyle(2, OUTLINE)
-            .setInteractive({ useHandCursor: true });
-
+        const s = this._uiScale();
+        const stroke = this._uiStroke();
         const icon = this.add.image(0, 0, "ui-dice");
         this._pixelFilter("ui-dice");
         const tw = icon.frame?.realWidth || icon.width || 16;
         const th = icon.frame?.realHeight || icon.height || 16;
-        // Largest integer scale that fits, then 2× for readability (keep crisp pixels)
-        const texScale = Math.max(1, Math.floor((side - 4) / Math.max(tw, th))) * 2;
+        const glyph = Math.max(tw, th);
+        const texScale = Math.max(1, Math.round(2 * s));
+        const pad = Math.round(4 * s);
+        const side = Math.max(
+            this._diceButtonSize(size),
+            glyph * texScale + pad * 2
+        );
+        const rect = this.add.rectangle(0, 0, side, side, BG, 1)
+            .setStrokeStyle(stroke, OUTLINE)
+            .setInteractive({ useHandCursor: true });
         this._placePixelIcon(icon, 0, 0, texScale);
 
         const root = this.add.container(Math.floor(x), Math.floor(y), [rect, icon]);
@@ -2288,13 +2727,13 @@ class SceneMenu extends Phaser.Scene {
         const paint = () => {
             if (pressing) {
                 rect.setFillStyle(BG_PRESS, 1);
-                rect.setStrokeStyle(2, OUTLINE_PRESS);
+                rect.setStrokeStyle(stroke, OUTLINE_PRESS);
             } else if (hovering) {
                 rect.setFillStyle(BG, 1);
-                rect.setStrokeStyle(2, OUTLINE_HOVER);
+                rect.setStrokeStyle(stroke, OUTLINE_HOVER);
             } else {
                 rect.setFillStyle(BG, 1);
-                rect.setStrokeStyle(2, OUTLINE);
+                rect.setStrokeStyle(stroke, OUTLINE);
             }
         };
         rect.on("pointerover", () => {
@@ -2326,7 +2765,7 @@ class SceneMenu extends Phaser.Scene {
         const w = this.scale.width;
         const h = this.scale.height;
         this._title("Create");
-        this._status();
+        this._status(0.94);
 
         let seed;
         if (drafts?.seed != null && Number.isFinite(Number(drafts.seed))) {
@@ -2335,28 +2774,41 @@ class SceneMenu extends Phaser.Scene {
             seed = WorldStore.findPlayableSeed(WorldStore.randomSeed());
         }
 
+        const s = this._uiScale();
+        const tiles = 11;
+        const px = Math.max(1, Math.round(10 * s));
+        const previewPad = Math.round(4 * s);
+        const previewSize = tiles * px + previewPad * 2;
+        const formW = this._menuFormW();
+        const formLeft = w / 2 - formW / 2;
+        const nameH = Math.round(36 * s);
+        const diceSize = this._diceButtonSize();
+        const rowGap = Math.round(12 * s);
+        const formToBtn = Math.round(16 * s);
+        const btnH = this._buttonSizePreset("medium").height;
+        const titleBottom = Math.round(h * 0.14 + Math.round(24 * s));
+        const availTop = titleBottom + Math.round(12 * s);
+        const availBot = h - Math.round(36 * s);
+        const columnH = previewSize + rowGap + nameH + rowGap + Math.max(nameH, diceSize) + formToBtn + btnH;
+        const availH = Math.max(0, availBot - availTop);
+        const colTop = availTop + Math.max(0, Math.floor((availH - columnH) / 2));
         const previewX = Math.round(w / 2);
-        const previewY = Math.round(h * 0.34);
-        this._drawSpawnPreview(seed, previewX, previewY);
+        const previewY = Math.round(colTop + previewSize / 2);
+        const nameY = Math.round(colTop + previewSize + rowGap);
 
-        const formLeft = w / 2 - 140;
-        const formW = 280;
-        const nameY = h * 0.52;
-        const rowOffset = 44;
+        this._drawSpawnPreview(seed, previewX, previewY);
 
         const worldName = drafts?.worldName != null ? drafts.worldName : "New World";
         this.worldNameInput = this._domInput(formLeft, nameY, formW, "", worldName);
         this.worldNameInput.maxLength = 32;
         this._clearStatusOnInput(this.worldNameInput);
 
-        const inputH = this.worldNameInput.offsetHeight || 36;
-        const gap = Math.max(4, rowOffset - inputH);
-        const diceSize = inputH;
-        const seedW = Math.max(120, formW - gap - diceSize);
-        const seedY = nameY + rowOffset;
+        const inputH = this.worldNameInput.offsetHeight || nameH;
+        const seedGap = Math.round(8 * s);
+        const seedW = Math.max(Math.round(120 * s), formW - seedGap - diceSize);
+        const seedY = Math.round(nameY + inputH + rowGap);
 
         this.seedInput = this._domInput(formLeft, seedY, seedW, "", String(seed));
-        // Right edge of dice = right edge of name box; gap matches name↔seed spacing
         this._diceButton(
             formLeft + formW - diceSize / 2,
             seedY + inputH / 2,
@@ -2378,19 +2830,25 @@ class SceneMenu extends Phaser.Scene {
         this.seedInput.addEventListener("change", refreshPreviewFromInput);
         if (!relayout) this.worldNameInput.focus();
 
-        this._button(w / 2, h * 0.72, "Create", async () => {
+        const seedBottom = seedY + Math.max(inputH, diceSize);
+        const btnY = Math.round(seedBottom + formToBtn + btnH / 2);
+        const pairGap = this._buttonSizePreset("medium").width + Math.round(16 * s);
+        this._button(w / 2 - pairGap / 2, btnY, "Back", () => this._showWorlds());
+        this._button(w / 2 + pairGap / 2, btnY, "Create", async () => {
             try {
                 const name = (this.worldNameInput?.value || "New World").trim() || "New World";
-                let s = Number(this.seedInput?.value);
-                if (!Number.isFinite(s)) s = WorldStore.randomSeed();
-                s = WorldStore.findPlayableSeed(s >>> 0);
-                await WorldStore.create(name, { seed: s });
+                let nextSeed = Number(this.seedInput?.value);
+                if (!Number.isFinite(nextSeed)) nextSeed = WorldStore.randomSeed();
+                nextSeed = WorldStore.findPlayableSeed(nextSeed >>> 0);
+                await WorldStore.create(name, { seed: nextSeed });
                 await this._showWorlds();
             } catch (e) {
                 this.status?.setText(String(e.message || e));
             }
         });
-        this._button(w / 2, this._mediumStackY(h * 0.72, 1), "Back", () => this._showWorlds());
+        if (this.status) {
+            this.status.setPosition(w / 2, Math.min(h - 16, btnY + btnH / 2 + 22));
+        }
     }
 
     async _startSingleplayer(world) {
@@ -2398,7 +2856,6 @@ class SceneMenu extends Phaser.Scene {
         const character = this._selectedCharacter;
         if (!character || !world) return;
         this._startingSp = true;
-        this.status?.setText("Loading…");
         this._cleanupDomOnly();
         try {
             const freshChar = await CharacterStore.get(character.id) || character;
@@ -2406,7 +2863,8 @@ class SceneMenu extends Phaser.Scene {
             const net = new LocalSim({ world: freshWorld, character: freshChar });
             try {
                 const welcome = await net.connect();
-                this._clear();
+                this._stopTitleMusic();
+                this._startingSp = false;
                 this.scene.start("SceneMain", {
                     net,
                     welcome,
@@ -2419,10 +2877,12 @@ class SceneMenu extends Phaser.Scene {
                 });
             } catch (e) {
                 await net.close();
+                this.status?.setColor?.("#e06060");
                 this.status?.setText(String(e.message || e));
                 this._startingSp = false;
             }
         } catch (e) {
+            this.status?.setColor?.("#e06060");
             this.status?.setText(String(e.message || e));
             this._startingSp = false;
         }
@@ -2458,6 +2918,7 @@ class SceneMenu extends Phaser.Scene {
             }
             this._mpJoinNet = null;
             this._clear();
+            this._stopTitleMusic();
             this.scene.start("SceneMain", {
                 net,
                 welcome,
@@ -2509,10 +2970,14 @@ class SceneMenu extends Phaser.Scene {
             this.scale.off("resize", this._onResize);
             this._onResize = null;
         }
-        this._destroyCavePaintings();
-        this._destroyMenuCampfire();
-        this._destroyCaveFire();
-        this._clear();
+        this._stopTitleMusic();
+        try { this._destroyCavePaintings(); } catch (_) {}
+        try { this._destroyMenuCampfire(); } catch (_) {}
+        try { this._destroyCaveFire(); } catch (_) {}
+        this._unbindVolumeSlider();
+        this._unbindCreateHslInput();
+        this._unbindCardListScroll();
+        this._cleanupDomOnly();
         if (this._onMenuKeydown) {
             document.removeEventListener("keydown", this._onMenuKeydown, true);
             this._onMenuKeydown = null;
