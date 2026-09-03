@@ -7,3 +7,5 @@ saves/
 node_modules/
 dist/
 out/
+public/
+

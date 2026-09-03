@@ -1,6 +1,19 @@
+# Not the static client — GitHub Actions tests and packages Electron.
+node_modules/
+electron/
+server/
+test/
+scripts/
+build/
+.github/
 out/
 dist/
 saves/
+public/
 .git/
 ngrok.env
+ngrok.env.example
+todo.txt
+run-ngrok.sh
+run-ngrok.bat
 *.blockmap

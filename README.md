@@ -75,6 +75,12 @@ Zips / `.tar.gz` are optional no-installer copies. Do not ship `.blockmap`, `lat
 - **CI** — `npm test` on every push / PR (status check).
 - **Electron** — Mac, Windows, and Linux packages when you push a `v*` tag, or **Actions → Electron → Run workflow**. A tag also makes a GitHub Release.
 
+### Vercel
+
+The browser client is already static files (`index.html`, `js/`, `assets/`, …). Vercel hosts those as-is. It must not run `npm run build` — that script packages the Electron app.
+
+In the Vercel project: Framework **Other**. Leave **Build Command**, **Install Command**, and **Output Directory** overrides **off** so `vercel.json` applies (empty build, output `.`).
+
 ```bash
 npm version 0.1.1      # bumps package.json and tags
 git push --follow-tags
