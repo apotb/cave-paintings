@@ -1336,7 +1336,10 @@ class PartySystem {
                     if (w.weaponSprite?.visible) w._updateWeaponSprite?.(progress);
                     if (w.unarmedSprite?.visible) w._updateUnarmedSprite?.(progress);
                     w._meleeHitCheck?.(progress);
-                    w.attackTimer -= delta;
+                    const scale = typeof Party !== "undefined" && Party.mobTimeScale
+                        ? Party.mobTimeScale(scene.tickSpeed)
+                        : 1;
+                    w.attackTimer -= delta * scale;
                     if (w.attackTimer <= 0) w._endAttack?.();
                 }
             }
@@ -1394,8 +1397,8 @@ class PartySystem {
                     const snapDtSec = Math.max(0.001, (w._netSnapDt || (1000 / 15)) / 1000);
                     let tilesPerSec = moving ? snapDist / snapDtSec / ts : 0;
                     if (moving && tilesPerSec < 0.05) {
-                        const tick = typeof Party !== "undefined" && Party.wandererTimeScale
-                            ? Party.wandererTimeScale(this.scene.tickSpeed)
+                        const tick = typeof Party !== "undefined" && Party.mobTimeScale
+                            ? Party.mobTimeScale(this.scene.tickSpeed)
                             : 1;
                         const stroll = w.hostile ? 1 : ((typeof Party !== "undefined" && Party.WANDER_WALK_MULT) || 0.28);
                         tilesPerSec = (w.speed || 3.5) * stroll * tick;

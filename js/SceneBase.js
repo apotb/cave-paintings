@@ -204,7 +204,9 @@ class SceneBase extends Phaser.Scene {
         }
     }
 
-    create() {}
+    create() {
+        hookPixelTextureClamp(this);
+    }
 
     update() {
         if (this.isPaused) return;

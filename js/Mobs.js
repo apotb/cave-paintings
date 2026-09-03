@@ -562,8 +562,20 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         const startVx = this._iceVx ?? this.body?.velocity?.x ?? 0;
         const startVy = this._iceVy ?? this.body?.velocity?.y ?? 0;
 
-        this.ai?.update(delta);
-        this._tickMeleeAttack(delta);
+        const tickScale = typeof Party !== "undefined" && Party.mobTimeScale
+            ? Party.mobTimeScale(this.scene?.tickSpeed)
+            : 1;
+        if (!(tickScale > 0)) {
+            this.setVelocity(0, 0);
+            setCreatureProne(this, prone);
+            this.setDepth(this.y | 0);
+            this.reassignChunkIfNeeded();
+            if (this.active) this.syncToEntry();
+            return;
+        }
+        const aiDelta = delta * tickScale;
+        this.ai?.update(aiDelta);
+        this._tickMeleeAttack(aiDelta);
         // Half move while swinging (same idea as the player)
         if (this.isAttacking() && this.body?.velocity) {
             this.setVelocity(this.body.velocity.x * 0.5, this.body.velocity.y * 0.5);
@@ -571,11 +583,20 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         // Apply prone after AI so walk/idle anims don't overwrite the lay-down pose
         setCreatureProne(this, prone);
 
-        const wantVx = prone ? 0 : (this.body?.velocity?.x ?? 0);
-        const wantVy = prone ? 0 : (this.body?.velocity?.y ?? 0);
+        let wantVx = prone ? 0 : (this.body?.velocity?.x ?? 0);
+        let wantVy = prone ? 0 : (this.body?.velocity?.y ?? 0);
+        if (tickScale !== 1) {
+            wantVx *= tickScale;
+            wantVy *= tickScale;
+        }
         this._iceVx = startVx;
         this._iceVy = startVy;
-        applyEntityVelocity(this, wantVx, wantVy, delta, this.scene);
+        applyEntityVelocity(this, wantVx, wantVy, aiDelta, this.scene);
+        if (this.anims && !prone && typeof Party !== "undefined" && Party.walkAnimTimeScale) {
+            const ts = this.scene?.tileSize || 16;
+            const tps = Math.hypot(wantVx, wantVy) / ts;
+            if (tps > 0.05) this.anims.timeScale = Party.walkAnimTimeScale(tps);
+        }
 
         this.setDepth(this.y | 0);
         this.reassignChunkIfNeeded();

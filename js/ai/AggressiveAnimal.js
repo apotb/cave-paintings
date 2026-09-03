@@ -227,7 +227,9 @@ class NeutralAnimalAI extends DoofusAI {
         // Same rule as player/Doofus: walk anim authored for ~human walk speed
         const ref = Number(this.mob.scene.getMob?.("human")?.speed) || 3.5;
         const tilesPerSec = speed / ts;
-        mob.anims.timeScale = Phaser.Math.Clamp(tilesPerSec / ref, 0.2, 2.5);
+        mob.anims.timeScale = typeof Party !== "undefined" && Party.walkAnimTimeScale
+            ? Party.walkAnimTimeScale(tilesPerSec)
+            : Phaser.Math.Clamp(tilesPerSec / ref, 0.15, 8);
         if (!swinging) mob.playAnim?.(`walk-${mob.facing}`);
     }
 

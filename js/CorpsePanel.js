@@ -11,8 +11,9 @@ class CorpsePanel {
         this.session = [];
         this.slotViews = [];
 
-        this.container = scene.add.container(0, 0).setVisible(false).setDepth(100);
-        // Scene root (not a Layer) so Phaser input depth-sort works; above time veil (depth 50).
+        this.container = scene.add.container(0, 0).setVisible(false).setDepth(250);
+        // Scene root (not a Layer) so Phaser input depth-sort works. Above party
+        // nametags / chat (worldHudLayer 200) and the night veil (50).
         if (scene._uiCam) scene._uiCam.ignore(this.container);
 
         this.bg = scene.add.rectangle(0, 0, 16, 16, 0x1a1410, 0.85)
@@ -68,9 +69,9 @@ class CorpsePanel {
 
         this.visible = true;
         this.container.setVisible(true);
-        // Above corpses (≈y) and the time veil (50); keep relative order by world Y
+        // Above nametags (worldHudLayer 200); keep relative order by world Y
         const dy = Number(corpse.y) || 0;
-        this.container.setDepth(Math.max(100, dy + 80));
+        this.container.setDepth(Math.max(250, dy + 80));
         this._rebuildSlots();
         this.layout();
         this.refresh();

@@ -42,12 +42,13 @@ class WandererAI {
         if (pawn.body) pawn.body.moves = true;
         setCreatureProne?.(pawn, false);
 
-        const tickScale = typeof Party !== "undefined" && Party.wandererTimeScale
-            ? Party.wandererTimeScale(scene.tickSpeed)
+        const tickScale = typeof Party !== "undefined" && Party.mobTimeScale
+            ? Party.mobTimeScale(scene.tickSpeed)
             : 1;
+        const aiDelta = delta * tickScale;
 
         if (pawn.hostile && this.combat) {
-            this.combat.update(delta);
+            this.combat.update(aiDelta);
             if (tickScale !== 1 && pawn.body) {
                 pawn.setVelocity(
                     (pawn.body.velocity?.x || 0) * tickScale,
@@ -99,7 +100,7 @@ class WandererAI {
             ) {
                 this._walkDest = { x: pawn.x + nx * 48 * ts, y: pawn.y + ny * 48 * ts };
             }
-            this._pather._walkToward(pawn, this._walkDest.x, this._walkDest.y, ts, false, delta);
+            this._pather._walkToward(pawn, this._walkDest.x, this._walkDest.y, ts, false, aiDelta);
             if (pawn.body) {
                 let vx = (pawn.body.velocity?.x || 0) * stroll * tickScale;
                 let vy = (pawn.body.velocity?.y || 0) * stroll * tickScale;
@@ -124,7 +125,7 @@ class WandererAI {
                 pawn,
                 steered.nx * tilesPerSec * ts,
                 steered.ny * tilesPerSec * ts,
-                delta || 16,
+                aiDelta || 16,
                 scene
             );
         }

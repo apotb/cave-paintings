@@ -174,7 +174,7 @@
         "anim": {
             "frameWidth": 16,
             "frameHeight": 16,
-            "frameRate": 8,
+            "frameRate": 4,
             "repeat": -1
         }
     },

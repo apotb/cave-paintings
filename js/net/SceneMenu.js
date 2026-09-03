@@ -20,6 +20,12 @@ class SceneMenu extends Phaser.Scene {
         if (!this.textures.exists("ui-dice")) {
             this.load.image("ui-dice", "assets/ui/dice.png");
         }
+        if (!this.textures.exists("menu-campfire")) {
+            this.load.spritesheet("menu-campfire", "assets/things/campfire.png", {
+                frameWidth: 16,
+                frameHeight: 16
+            });
+        }
         for (const id of TITLE_CAVE_STAMPS) {
             const key = `title-${id}`;
             if (!this.textures.exists(key)) {
@@ -32,6 +38,7 @@ class SceneMenu extends Phaser.Scene {
         try { this.anims?.resumeAll?.(); } catch (_) {}
         this.cameras.main.setBackgroundColor("#1a1510");
         this.cameras.main.setRoundPixels(false);
+        hookPixelTextureClamp(this);
         this._dom = [];
         this._phase = "root";
         this._backAction = null;
@@ -65,12 +72,15 @@ class SceneMenu extends Phaser.Scene {
         this.scale.on("resize", this._onResize);
         if (this._openDisconnected) this._phase = "disconnected";
         this._initCavePaintings();
+        this._initCaveFire();
+        this._initMenuCampfire();
         // Wait for yoster — first paint otherwise falls back to Arial
         this._bootRoot();
     }
 
     update(_time, delta) {
         this._tickCavePaintings(delta);
+        this._tickCaveFire();
     }
 
     async _ensurePrimaryFont() {
@@ -97,11 +107,13 @@ class SceneMenu extends Phaser.Scene {
         this._showRoot();
     }
 
-    /** Force nearest-neighbor on a texture (pixel art). */
+    /** Nearest-neighbor + clamp wrap (POT textures otherwise REPEAT the opposite edge). */
     _pixelFilter(key) {
         if (!key || !this.textures.exists(key)) return;
         try {
-            this.textures.get(key).setFilter(Phaser.Textures.FilterMode.NEAREST);
+            const tex = this.textures.get(key);
+            tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
+            clampTextureWrap(tex);
         } catch (_) {}
     }
 
@@ -149,11 +161,143 @@ class SceneMenu extends Phaser.Scene {
         this._caveLastKey = null;
     }
 
+    /**
+     * Night-veil punch from a fire at the viewer's feet: dark cave wall,
+     * destination-out hole, Terrax flicker. Sits above stamps, under UI.
+     */
+    _initCaveFire() {
+        if (this._caveFireImg?.active) return;
+        const key = "__menu_cave_fire";
+        if (!this.textures.exists(key)) this.textures.createCanvas(key, 64, 64);
+        this._caveFireKey = key;
+        const img = this.add.image(0, 0, key).setOrigin(0, 0).setDepth(-900);
+        this._caveFireImg = img;
+        this._caveFireSig = null;
+        clampTextureWrap(this.textures.get(key));
+        this._drawCaveFire(true);
+        this._sendCaveBehind();
+    }
+
+    _destroyCaveFire() {
+        try { this._caveFireImg?.destroy?.(); } catch (_) {}
+        this._caveFireImg = null;
+        this._caveFireSig = null;
+        if (this._caveFireKey && this.textures.exists(this._caveFireKey)) {
+            try { this.textures.remove(this._caveFireKey); } catch (_) {}
+        }
+        this._caveFireKey = null;
+    }
+
+    _tickCaveFire() {
+        this._drawCaveFire(false);
+    }
+
+    _drawCaveFire(force) {
+        const img = this._caveFireImg;
+        const key = this._caveFireKey;
+        if (!img?.active || !key || !this.textures.exists(key)) return;
+        const canvasTex = this.textures.get(key);
+        const ctx = canvasTex?.context || canvasTex?.canvas?.getContext?.("2d");
+        if (!ctx) return;
+
+        const now = this.time?.now ?? 0;
+        const flameTick = Math.floor(now / 50);
+        const w = Math.max(2, Math.ceil(this.scale.width / 2) * 2);
+        const h = Math.max(2, Math.ceil(this.scale.height / 2) * 2);
+        const sig = `${w},${h},${flameTick}`;
+        if (!force && sig === this._caveFireSig) return;
+        this._caveFireSig = sig;
+
+        if (canvasTex.width !== w || canvasTex.height !== h) {
+            canvasTex.setSize(w, h);
+            img.setTexture(key);
+            clampTextureWrap(canvasTex);
+        }
+        img.setPosition(0, 0);
+        img.setDisplaySize(w, h);
+
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalCompositeOperation = "source-over";
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = "rgba(10, 7, 5, 0.52)";
+        ctx.fillRect(0, 0, w, h);
+
+        const fx = w * 0.5;
+        const scale = 8;
+        const frame = 16;
+        // Flame centroid in the 16×16 sheet sits near (8.1, 8.1) from top-left.
+        const fy = h + (8.1 / frame - 1) * frame * scale;
+        const rad = Math.max(h * 0.72, w * 0.45);
+        let dip = 0;
+        if (typeof Light !== "undefined" && Light.flicker) {
+            const flick = Light.flicker(Light.KIND.FLAME, now, Light.seedOf(fx, fy, "menu-fire"));
+            const maxPx = Light.FIRE_RADIUS_PX || 7;
+            dip = (flick.radiusPx || 0) * rad * (0.055 / maxPx);
+        }
+        const r = Math.max(8, rad - dip);
+
+        ctx.globalCompositeOperation = "destination-out";
+        const grd = ctx.createRadialGradient(fx, fy, 0, fx, fy, r);
+        grd.addColorStop(0, "rgba(0,0,0,1)");
+        grd.addColorStop(0.4, "rgba(0,0,0,0.85)");
+        grd.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = grd;
+        ctx.fillRect(fx - r, fy - r, r * 2, r * 2);
+        ctx.globalCompositeOperation = "source-over";
+        canvasTex.refresh();
+        this._placeMenuCampfire();
+    }
+
+    _initMenuCampfire() {
+        if (this._menuCampfire?.active) {
+            this._placeMenuCampfire();
+            return;
+        }
+        if (!this.textures.exists("menu-campfire")) return;
+        this._pixelFilter("menu-campfire");
+        const animKey = "menu-campfire-anim";
+        const existing = this.anims.get(animKey);
+        if (existing && existing.frameRate !== 4) {
+            this.anims.remove(animKey);
+        }
+        if (!this.anims.exists(animKey)) {
+            this.anims.create({
+                key: animKey,
+                frames: this.anims.generateFrameNumbers("menu-campfire"),
+                frameRate: 4,
+                repeat: -1
+            });
+        }
+        const spr = this.add.sprite(0, 0, "menu-campfire");
+        spr.setDepth(-800);
+        spr.play(animKey);
+        this._menuCampfire = spr;
+        this._placeMenuCampfire();
+        this._sendCaveBehind();
+    }
+
+    _placeMenuCampfire() {
+        const spr = this._menuCampfire;
+        if (!spr?.active) return;
+        spr.setOrigin(0.5, 1);
+        spr.setScale(8);
+        spr.setDepth(-800);
+        spr.setPosition(Math.round(this.scale.width / 2), Math.round(this.scale.height));
+    }
+
+    _destroyMenuCampfire() {
+        try { this._menuCampfire?.destroy?.(); } catch (_) {}
+        this._menuCampfire = null;
+    }
+
     _sendCaveBehind() {
         const root = this._caveRoot;
-        if (!root?.active) return;
-        root.setDepth(-1000);
-        this.children.sendToBack(root);
+        if (root?.active) {
+            root.setDepth(-1000);
+            this.children.sendToBack(root);
+        }
+        if (this._caveFireImg?.active) this._caveFireImg.setDepth(-900);
+        this._placeMenuCampfire();
     }
 
     _caveStampKeys() {
@@ -252,6 +396,7 @@ class SceneMenu extends Phaser.Scene {
         src.destroy();
         try {
             img.texture?.setFilter(Phaser.Textures.FilterMode.LINEAR);
+            clampTextureWrap(img.texture);
         } catch (_) {}
         this._caveRoot.add(img);
         img.setPosition(x + dw / 2, y + dh / 2);
@@ -518,6 +663,7 @@ class SceneMenu extends Phaser.Scene {
     }
 
     _clear() {
+        this._unbindCardListScroll();
         this._unbindCreateHslInput();
         this._cancelMpProbe();
         this._backAction = null;
@@ -537,8 +683,10 @@ class SceneMenu extends Phaser.Scene {
         }
         this._dom = [];
         const cave = this._caveRoot;
+        const fire = this._caveFireImg;
+        const camp = this._menuCampfire;
         for (const child of this.children.list.slice()) {
-            if (child === cave) continue;
+            if (child === cave || child === fire || child === camp) continue;
             try { child.destroy(true); } catch (_) {}
         }
         this.cameras.main.setBackgroundColor("#1a1510");
@@ -718,6 +866,13 @@ class SceneMenu extends Phaser.Scene {
         root.btnHeight = bh;
         root.btnRect = rect;
         root.btnText = text;
+        root.layoutBtnText = () => {
+            text.setPosition(Math.round(-text.width / 2), Math.round(-text.height / 2));
+        };
+        root.setBtnText = (str) => {
+            text.setText(str);
+            root.layoutBtnText();
+        };
         root.setArmed = (on) => {
             opts.armed = !!on;
             paint();
@@ -784,7 +939,7 @@ class SceneMenu extends Phaser.Scene {
         }
         if (this._armedDeleteBtn?.active !== false && this._armedDeleteBtn?.btnText) {
             this._armedDeleteBtn.setArmed?.(false);
-            this._armedDeleteBtn.btnText.setText("Delete");
+            this._armedDeleteBtn.setBtnText?.("Delete");
         }
         this._armedDeleteId = null;
         this._armedDeleteBtn = null;
@@ -797,7 +952,7 @@ class SceneMenu extends Phaser.Scene {
         this._armedDeleteId = cardId;
         this._armedDeleteBtn = deleteBtn;
         deleteBtn.setArmed?.(true);
-        deleteBtn.btnText?.setText("Delete?");
+        deleteBtn.setBtnText?.("Delete?");
         if (this._armedDeleteTimer) clearTimeout(this._armedDeleteTimer);
         this._armedDeleteTimer = setTimeout(() => {
             this._armedDeleteTimer = null;
@@ -921,7 +1076,7 @@ class SceneMenu extends Phaser.Scene {
         }, { size: "small" });
         if (this._armedDeleteId === cardId) {
             deleteBtn.setArmed?.(true);
-            deleteBtn.btnText?.setText("Delete?");
+            deleteBtn.setBtnText?.("Delete?");
         }
 
         // Bottom-left actions — 8px under a one-line info row
@@ -943,7 +1098,7 @@ class SceneMenu extends Phaser.Scene {
         deleteBtn.x = sideX;
         deleteBtn.y = exportBtn.y + exportBtn.btnHeight / 2 + sideGap + deleteBtn.btnHeight / 2;
 
-        return { panel, playBtn, renameBtn, favoriteBtn, exportBtn, deleteBtn, height };
+        return { panel, playBtn, renameBtn, favoriteBtn, exportBtn, deleteBtn, titleText, info, height };
     }
 
     /**
@@ -1017,6 +1172,107 @@ class SceneMenu extends Phaser.Scene {
         this._button(w / 2 - gap, y, "Back", onBack);
         this._button(w / 2, y, "Import", onImport);
         this._button(w / 2 + gap, y, "Create", onCreate);
+    }
+
+    /** Footer stays above the 8× campfire; overflowing cards scroll instead. */
+    _listFooterY() {
+        const h = this.scale.height;
+        const fireH = 16 * 8;
+        const btnH = this._buttonSizePreset("medium").height;
+        return Math.round(h - fireH - btnH / 2 - 16);
+    }
+
+    _cardListView() {
+        const h = this.scale.height;
+        const footerY = this._listFooterY();
+        const btnH = this._buttonSizePreset("medium").height;
+        const viewTop = Math.round(h * 0.26);
+        const viewBottom = Math.round(footerY - btnH / 2 - 12);
+        // Card stroke is 2px and sits on the rect edge — keep it inside the mask.
+        const outlinePad = 2;
+        return {
+            viewTop,
+            viewBottom,
+            footerY,
+            outlinePad,
+            viewH: Math.max(0, viewBottom - viewTop)
+        };
+    }
+
+    _selectCardNodes(card, iconNode) {
+        return [
+            card?.panel,
+            iconNode,
+            card?.titleText,
+            card?.info,
+            card?.playBtn,
+            card?.renameBtn,
+            card?.favoriteBtn,
+            card?.exportBtn,
+            card?.deleteBtn
+        ].filter(Boolean);
+    }
+
+    _unbindCardListScroll() {
+        if (this._onCardListWheel) {
+            this.input?.off?.("wheel", this._onCardListWheel);
+            this._onCardListWheel = null;
+        }
+        try { this._cardListMask?.destroy?.(); } catch (_) {}
+        try { this._cardListMaskGfx?.destroy?.(); } catch (_) {}
+        this._cardListMask = null;
+        this._cardListMaskGfx = null;
+        this._cardList = null;
+    }
+
+    _syncCardListInput(content, viewTop, viewBottom) {
+        const visit = (obj) => {
+            if (!obj) return;
+            if (obj.input) {
+                let top = obj.y;
+                let bot = obj.y;
+                try {
+                    const b = obj.getBounds();
+                    top = b.top;
+                    bot = b.bottom;
+                } catch (_) {}
+                obj.input.enabled = bot > viewTop && top < viewBottom;
+            }
+            if (obj.list) {
+                for (const child of obj.list) visit(child);
+            }
+        };
+        visit(content);
+    }
+
+    _bindCardListScroll(content, { viewTop, viewBottom, contentH, outlinePad = 2 }) {
+        const viewH = Math.max(0, viewBottom - viewTop);
+        const maxScroll = Math.max(0, Math.round(contentH - viewH));
+        if (!(maxScroll > 0) || viewH <= 0) return;
+
+        const maskGfx = this.make.graphics({ x: 0, y: 0, add: false });
+        maskGfx.fillStyle(0xffffff, 1);
+        maskGfx.fillRect(0, viewTop - outlinePad, this.scale.width, viewH + outlinePad * 2);
+        const mask = maskGfx.createGeometryMask();
+        content.setMask(mask);
+        this._cardListMaskGfx = maskGfx;
+        this._cardListMask = mask;
+
+        let scroll = 0;
+        const apply = (next) => {
+            scroll = Math.max(0, Math.min(maxScroll, next));
+            content.y = -Math.round(scroll);
+            this._syncCardListInput(content, viewTop, viewBottom);
+        };
+        apply(0);
+
+        this._onCardListWheel = (_p, _over, _dx, dy) => {
+            const ptr = this.input?.activePointer;
+            if (!ptr || ptr.y < viewTop || ptr.y > viewBottom) return;
+            apply(scroll + dy * 0.45);
+        };
+        this.input.on("wheel", this._onCardListWheel);
+        this._cardList = { content, apply, maxScroll };
     }
     _roundArrow(x, y, glyph, onClick) {
         const r = 18;
@@ -1396,9 +1652,12 @@ class SceneMenu extends Phaser.Scene {
         const cardW = Math.min(560, w - 48);
         const cardH = 96;
         const gap = 10;
-        let y = Math.round(h * 0.26 + cardH / 2);
+        const { viewTop, viewBottom, footerY, outlinePad } = this._cardListView();
+        const listRoot = this.add.container(0, 0);
+        this._track(listRoot);
+        let y = viewTop + cardH / 2 + outlinePad;
 
-        for (const c of list.slice(0, 8)) {
+        for (const c of list) {
             const lookKey = typeof PlayerLook !== "undefined"
                 ? PlayerLook.ensure(this, c.look)
                 : "human";
@@ -1413,7 +1672,7 @@ class SceneMenu extends Phaser.Scene {
                 else if (next === "join") await this._joinMultiplayer();
             };
 
-            this._selectCard({
+            const card = this._selectCard({
                 x: Math.round(w / 2),
                 y,
                 width: cardW - (cardW % 2),
@@ -1456,11 +1715,14 @@ class SceneMenu extends Phaser.Scene {
                     else spr.setFrame(1);
                 }
             });
+            for (const node of this._selectCardNodes(card, spr)) listRoot.add(node);
 
             y += cardH + gap;
         }
 
-        const footerY = Math.max(y - cardH / 2 + 36, h * 0.90);
+        const n = list.length;
+        const contentH = n > 0 ? n * cardH + (n - 1) * gap + outlinePad * 2 : 0;
+        this._bindCardListScroll(listRoot, { viewTop, viewBottom, contentH, outlinePad });
         this._listFooter(footerY, {
             onBack: () => {
                 if (next === "join") this._showMpHost();
@@ -1841,10 +2103,13 @@ class SceneMenu extends Phaser.Scene {
         const cardW = Math.min(560, w - 48);
         const cardH = 96;
         const gap = 10;
-        let y = Math.round(h * 0.26 + cardH / 2);
+        const { viewTop, viewBottom, footerY, outlinePad } = this._cardListView();
+        const listRoot = this.add.container(0, 0);
+        this._track(listRoot);
+        let y = viewTop + cardH / 2 + outlinePad;
         const palmKey = this.textures.exists("menu-palm") ? "menu-palm" : null;
 
-        for (const world of list.slice(0, 8)) {
+        for (const world of list) {
             let icon = null;
             if (palmKey) {
                 this._pixelFilter(palmKey);
@@ -1853,7 +2118,7 @@ class SceneMenu extends Phaser.Scene {
                 this._track(icon);
             }
 
-            this._selectCard({
+            const card = this._selectCard({
                 x: Math.round(w / 2),
                 y,
                 width: cardW - (cardW % 2),
@@ -1893,11 +2158,14 @@ class SceneMenu extends Phaser.Scene {
                     await this._showWorlds();
                 }
             });
+            for (const node of this._selectCardNodes(card, icon)) listRoot.add(node);
 
             y += cardH + gap;
         }
 
-        const footerY = Math.max(y - cardH / 2 + 36, h * 0.90);
+        const n = list.length;
+        const contentH = n > 0 ? n * cardH + (n - 1) * gap + outlinePad * 2 : 0;
+        this._bindCardListScroll(listRoot, { viewTop, viewBottom, contentH, outlinePad });
         this._listFooter(footerY, {
             onBack: () => this._showCharacters({ next: "worlds" }),
             onImport: async () => {
@@ -2242,6 +2510,8 @@ class SceneMenu extends Phaser.Scene {
             this._onResize = null;
         }
         this._destroyCavePaintings();
+        this._destroyMenuCampfire();
+        this._destroyCaveFire();
         this._clear();
         if (this._onMenuKeydown) {
             document.removeEventListener("keydown", this._onMenuKeydown, true);

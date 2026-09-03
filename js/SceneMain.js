@@ -88,6 +88,7 @@ class SceneMain extends SceneBase {
     }
 
     create() {
+        hookPixelTextureClamp(this);
         // pauseAll is global. Save-and-quit used to leave every Animation paused,
         // so the 2nd world join froze campfires, walks, and anything else that plays.
         try { this.anims?.resumeAll?.(); } catch (_) {}
@@ -7854,7 +7855,7 @@ class SceneMain extends SceneBase {
         }).setOrigin(0.5);
         this._craftTakeBtn = this.add.container(0, 0, [this._craftTakeRect, this._craftTakeText])
             .setVisible(false)
-            .setDepth(100);
+            .setDepth(250);
         this._uiCam?.ignore(this._craftTakeBtn);
 
         this._craftTakeHovering = false;

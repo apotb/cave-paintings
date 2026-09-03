@@ -1495,8 +1495,14 @@ class SimWorld {
         };
     }
 
+    _mobTimeScale() {
+        return Party.mobTimeScale
+            ? Party.mobTimeScale(this.tickSpeed)
+            : Party.wandererTimeScale(this.tickSpeed);
+    }
+
     _wandererTimeScale() {
-        return Party.wandererTimeScale(this.tickSpeed);
+        return this._mobTimeScale();
     }
 
     _tickWandererDirector(dtMs) {
@@ -8033,6 +8039,9 @@ class SimWorld {
         }
 
         const meleeTargets = [...playerCreatures, ...liveMobs];
+        const mobScale = this._mobTimeScale();
+        const mobDtMs = dtMs * mobScale;
+        const mobDt = dt * mobScale;
 
         this._rebuildDuelAssignments();
         this._tickPartyAI(dtMs, aiWorld);
@@ -8096,7 +8105,7 @@ class SimWorld {
                 this._finishWandererDeath(w, wc._lastHitBy || null);
                 continue;
             }
-            wc.tickMelee(dtMs, meleeTargets);
+            wc.tickMelee(mobDtMs, meleeTargets);
             w.attackTimer = wc.attackTimer;
             w.attackMax = wc.attackMax;
             w.attackAngle = wc.attackAngle;
@@ -8118,7 +8127,7 @@ class SimWorld {
             mob.ctx.player = nearest || null;
             mob.refreshCapacities?.();
             const wasSwinging = !!mob.isAttacking?.();
-            mob.ai?.update?.(dtMs, aiWorld);
+            mob.ai?.update?.(mobDtMs, aiWorld);
             if (!wasSwinging && mob.isAttacking?.()) {
                 this.pushEvent({
                     kind: "attack",
@@ -8139,13 +8148,13 @@ class SimWorld {
                 || !!(mob.ai?._path && mob.ai._path.length);
             if (mob._nudgeMs > 0 && !onNav) {
                 mob.setDesiredVel(mob._nudgeVx || 0, mob._nudgeVy || 0);
-                mob._nudgeMs -= dtMs;
+                mob._nudgeMs -= mobDtMs;
             }
-            mob.applyDesiredVel(dtMs);
+            mob.applyDesiredVel(mobDtMs);
             const wantVx = mob.vx || 0;
             const wantVy = mob.vy || 0;
-            const nx = mob.x + wantVx * dt;
-            const ny = mob.y + wantVy * dt;
+            const nx = mob.x + wantVx * mobDt;
+            const ny = mob.y + wantVy * mobDt;
             let movedX = false;
             let movedY = false;
             if (!this.isBlocked(nx, mob.y)) {
@@ -8180,12 +8189,12 @@ class SimWorld {
                         lastFrom: navState.lastFrom,
                         lastWpDist: navState.lastWpDist,
                         maxRange: 6,
-                        dt: dtMs
+                        dt: mobDtMs
                     });
                     if (mob.ai) mob.ai._nav = steered;
                     if (!steered.arrived && (steered.nx || steered.ny)) {
-                        const nxx = mob.x + steered.nx * speed * dt;
-                        const nyy = mob.y + steered.ny * speed * dt;
+                        const nxx = mob.x + steered.nx * speed * mobDt;
+                        const nyy = mob.y + steered.ny * speed * mobDt;
                         if (!this.isBlocked(nxx, mob.y)) {
                             mob.x = nxx;
                             escaped = true;
@@ -8205,7 +8214,7 @@ class SimWorld {
                     this._mobUnstick(mob);
                 }
             }
-            if (mob._blockRetry > 0) mob._blockRetry -= dtMs;
+            if (mob._blockRetry > 0) mob._blockRetry -= mobDtMs;
             if (mob.entry) {
                 mob.entry.x = mob.x;
                 mob.entry.y = mob.y;
@@ -8214,7 +8223,7 @@ class SimWorld {
                     mob.entry.body = mob.anatomy.toJSON();
                 }
             }
-            mob.tickMelee(dtMs, meleeTargets);
+            mob.tickMelee(mobDtMs, meleeTargets);
 
             if (mob.isBodyDead()) {
                 this._finishMobDeath(mob, mob._lastHitBy || null);

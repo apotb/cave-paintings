@@ -270,3 +270,45 @@ test("woke doctor walks back to the lean-to after tending", () => {
     assert.ok(doctor._restWalk || doctor._resting);
     assert.equal(doctor._restWalk?.uid || doctor.lastSleep?.uid, "lt1");
 });
+
+test("wildlife movement and melee scale with tick speed", () => {
+    const Party = require("../shared/party");
+    assert.equal(Party.mobTimeScale(0), 0);
+    assert.equal(Party.mobTimeScale(8), 8);
+    assert.equal(Party.wandererTimeScale(8), 8);
+
+    function walkDist(tickSpeed) {
+        const { world } = createTestWorld();
+        world.tickSpeed = tickSpeed;
+        world.baseTickSpeed = tickSpeed;
+        const entry = world._spawnMobAt("deer", 80, 80);
+        const mob = world.mobs.get(entry.uid);
+        assert.ok(mob);
+        if (mob.ai) {
+            mob.ai.state = "walk";
+            mob.ai.timer = 8000;
+            mob.ai.dirX = 1;
+            mob.ai.dirY = 0;
+            mob.ai.panicMs = 0;
+        }
+        const x0 = mob.x;
+        for (let i = 0; i < 4; i++) world.tick(40);
+        return Math.abs(mob.x - x0);
+    }
+
+    const d1 = walkDist(1);
+    const d8 = walkDist(8);
+    assert.ok(d1 > 1, `deer should walk at 1× (moved ${d1})`);
+    assert.ok(d8 > d1 * 4, `8× should travel much farther (1×=${d1.toFixed(1)}, 8×=${d8.toFixed(1)})`);
+
+    const { world } = createTestWorld();
+    world.tickSpeed = 8;
+    const entry = world._spawnMobAt("deer", 80, 80);
+    const mob = world.mobs.get(entry.uid);
+    mob.startMeleeAttack(0);
+    const start = mob.attackTimer;
+    assert.ok(start > 0);
+    world.tick(40);
+    const elapsed = start - mob.attackTimer;
+    assert.ok(elapsed > 200, `8× melee should chew ~320ms of windup in 40ms wall time (got ${elapsed})`);
+});

@@ -49,9 +49,12 @@ class DoofusAI {
      * Scale cadence with actual movement so slow wander doesn't look like a sprint.
      */
     _animTimeScale(tilesPerSec) {
+        if (typeof Party !== "undefined" && Party.walkAnimTimeScale) {
+            return Party.walkAnimTimeScale(tilesPerSec);
+        }
         const human = this.mob.scene.getMob?.("human");
         const ref = Number(human?.speed) || 3.5;
-        return Phaser.Math.Clamp(tilesPerSec / ref, 0.2, 2.5);
+        return Phaser.Math.Clamp(tilesPerSec / ref, 0.15, 8);
     }
 
     _applyWalk(speedMult, delta = 16) {

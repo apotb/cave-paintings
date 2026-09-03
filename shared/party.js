@@ -48,11 +48,17 @@
     const WANDER_WALK_MULT = 0.28;
     /** Walk clips are authored for this tiles/s at anim timeScale 1. */
     const WALK_ANIM_TILES_PER_SEC = 3.5;
-    /** Passerby sim vs /tick. Cap so they don't teleport a chunk per frame. */
-    function wandererTimeScale(tickSpeed) {
+    /**
+     * Wildlife + passerby sim vs /tick (move, attack, idle timers).
+     * 0 pauses them. Party members and the player stay on wall-clock.
+     */
+    function mobTimeScale(tickSpeed) {
         const s = Number(tickSpeed);
         if (!Number.isFinite(s) || s <= 0) return 0;
-        return Math.min(8, s);
+        return s;
+    }
+    function wandererTimeScale(tickSpeed) {
+        return mobTimeScale(tickSpeed);
     }
     /** Map travel speed onto the human walk clip. */
     function walkAnimTimeScale(tilesPerSec, refTilesPerSec) {
@@ -826,6 +832,7 @@
         AUTO_EAT_UNTIL,
         WANDER_WALK_MULT,
         WALK_ANIM_TILES_PER_SEC,
+        mobTimeScale,
         wandererTimeScale,
         walkAnimTimeScale,
         WANDERER_ALERT_TILES,

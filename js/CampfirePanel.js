@@ -5,8 +5,9 @@ class CampfirePanel {
         this.campfire = null;
         this.slotViews = []; // { key, slot, icon, qty }
 
-        this.container = scene.add.container(0, 0).setVisible(false).setDepth(100);
-        // Scene root (not a Layer) so Phaser input depth-sort works; above time veil (depth 50).
+        this.container = scene.add.container(0, 0).setVisible(false).setDepth(250);
+        // Scene root (not a Layer) so Phaser input depth-sort works. Above party
+        // nametags / chat (worldHudLayer 200) and the night veil (50).
         if (scene._uiCam) scene._uiCam.ignore(this.container);
 
         this._dragging = false;

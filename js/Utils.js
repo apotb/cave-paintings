@@ -198,6 +198,44 @@ function pixelUiFontSize(basePx, scale) {
     return Math.max(cell, Math.round(raw / cell) * cell);
 }
 
+function clampTextureWrap(texture) {
+    if (!texture || typeof Phaser === "undefined") return texture;
+    const gl = texture.manager?.game?.renderer?.gl;
+    if (!gl) return texture;
+    for (const src of texture.source || []) {
+        const glTex = src?.glTexture;
+        if (!glTex?.webGLTexture) continue;
+        if (glTex.wrapS === gl.CLAMP_TO_EDGE && glTex.wrapT === gl.CLAMP_TO_EDGE) continue;
+        glTex.wrapS = gl.CLAMP_TO_EDGE;
+        glTex.wrapT = gl.CLAMP_TO_EDGE;
+        try {
+            gl.activeTexture(gl.TEXTURE0);
+            const current = gl.getParameter(gl.TEXTURE_BINDING_2D);
+            gl.bindTexture(gl.TEXTURE_2D, glTex.webGLTexture);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            if (current) gl.bindTexture(gl.TEXTURE_2D, current);
+        } catch (_) {}
+    }
+    return texture;
+}
+
+/** Phaser uses REPEAT on power-of-two images; UV 1.0 then wraps the opposite edge in. */
+function hookPixelTextureClamp(scene) {
+    const mgr = scene?.textures;
+    if (!mgr || mgr._clampWrapHooked) return;
+    mgr._clampWrapHooked = true;
+    const apply = (key, texture) => {
+        try {
+            clampTextureWrap(texture || (mgr.exists(key) ? mgr.get(key) : null));
+        } catch (_) {}
+    };
+    try {
+        for (const key of mgr.getTextureKeys()) apply(key);
+    } catch (_) {}
+    mgr.on("addtexture", (key, texture) => apply(key, texture));
+}
+
 function crispUiText(text) {
     if (!text) return text;
     text.setFontFamily?.(PIXEL_UI_FONT);

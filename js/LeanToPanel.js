@@ -5,7 +5,7 @@ class LeanToPanel {
         this.leanTo = null;
         this.slot = 0;
 
-        this.container = scene.add.container(0, 0).setVisible(false).setDepth(100);
+        this.container = scene.add.container(0, 0).setVisible(false).setDepth(250);
         if (scene._uiCam) scene._uiCam.ignore(this.container);
 
         this._buildAction();
