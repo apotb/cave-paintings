@@ -22,4 +22,4 @@ Body/biome temperature
 
 Diet -- fruits, vegetables, grains, protein, dairy
 
-Electron wrapper for standalone client
+Icons in tooltips

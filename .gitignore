@@ -5,3 +5,5 @@ ngrok.env
 saves/
 
 node_modules/
+dist/
+out/

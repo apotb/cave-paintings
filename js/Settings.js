@@ -1,13 +1,51 @@
 /**
- * Client prefs (localStorage). GUI scale and music volume are shared by
- * the title menu and in-game pause Options.
+ * Client prefs. Browser: localStorage. Electron: save/options.json via preload.
+ * GUI scale and music volume are shared by the title menu and in-game pause Options.
  */
 const Settings = {
     GUI_SCALE_KEY: "cp_gui_scale",
     MUSIC_VOLUME_KEY: "cp_music_volume",
     MUSIC_VOLUME_DEFAULT: 85,
+    _optionsCache: null,
+
+    _disk() {
+        try {
+            const api = typeof window !== "undefined" ? window.cavePaintings : null;
+            return api && api.diskSaves ? api : null;
+        } catch (_) {
+            return null;
+        }
+    },
+
+    _readDisk() {
+        if (this._optionsCache) return this._optionsCache;
+        const api = this._disk();
+        if (!api?.getOptions) return null;
+        try {
+            this._optionsCache = api.getOptions() || {
+                guiScale: 0,
+                musicVolume: this.MUSIC_VOLUME_DEFAULT,
+                fullscreen: false
+            };
+        } catch (_) {
+            this._optionsCache = { guiScale: 0, musicVolume: this.MUSIC_VOLUME_DEFAULT, fullscreen: false };
+        }
+        return this._optionsCache;
+    },
+
+    _writeDisk() {
+        const api = this._disk();
+        if (!api?.putOptions || !this._optionsCache) return;
+        try { api.putOptions(this._optionsCache); } catch (_) {}
+    },
 
     loadGuiScale() {
+        const disk = this._readDisk();
+        if (disk) {
+            const n = Number(disk.guiScale);
+            if (Number.isFinite(n) && n >= 0) return Math.floor(n);
+            return 0;
+        }
         try {
             const n = Number(localStorage.getItem(this.GUI_SCALE_KEY));
             if (Number.isFinite(n) && n >= 0) return Math.floor(n);
@@ -16,12 +54,24 @@ const Settings = {
     },
 
     saveGuiScale(pref) {
+        const n = pref | 0;
+        if (this._readDisk()) {
+            this._optionsCache.guiScale = n;
+            this._writeDisk();
+            return;
+        }
         try {
-            localStorage.setItem(this.GUI_SCALE_KEY, String(pref | 0));
+            localStorage.setItem(this.GUI_SCALE_KEY, String(n));
         } catch (_) {}
     },
 
     loadMusicVolume() {
+        const disk = this._readDisk();
+        if (disk) {
+            const n = Number(disk.musicVolume);
+            if (Number.isFinite(n)) return Math.max(0, Math.min(100, Math.round(n)));
+            return this.MUSIC_VOLUME_DEFAULT;
+        }
         try {
             const raw = localStorage.getItem(this.MUSIC_VOLUME_KEY);
             if (raw == null || raw === "") return this.MUSIC_VOLUME_DEFAULT;
@@ -33,10 +83,42 @@ const Settings = {
 
     saveMusicVolume(percent) {
         const n = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+        if (this._readDisk()) {
+            this._optionsCache.musicVolume = n;
+            this._writeDisk();
+            return n;
+        }
         try {
             localStorage.setItem(this.MUSIC_VOLUME_KEY, String(n));
         } catch (_) {}
         return n;
+    },
+
+    loadFullscreen() {
+        const api = this._disk();
+        if (api?.getOptions) {
+            try {
+                const fresh = api.getOptions();
+                if (fresh && this._optionsCache) this._optionsCache.fullscreen = !!fresh.fullscreen;
+                return !!(fresh && fresh.fullscreen);
+            } catch (_) {}
+        }
+        return false;
+    },
+
+    saveFullscreen(on) {
+        if (!this._readDisk()) return !!on;
+        this._optionsCache.fullscreen = !!on;
+        this._writeDisk();
+        return !!on;
+    },
+
+    noteFullscreen(on) {
+        if (this._optionsCache) this._optionsCache.fullscreen = !!on;
+    },
+
+    fullscreenButtonLabel(on) {
+        return on ? "Fullscreen: On" : "Fullscreen: Off";
     },
 
     /** Phaser gain for the stored (or given) 0–100 percent. */
@@ -48,12 +130,12 @@ const Settings = {
 
     /**
      * Largest integer GUI scale that fits this window.
-     * 480×360 reference so 1080p reaches 3 (not 1080/768 ≈ 1.4).
+     * 640×480 so 1080p Auto is 2 (HUD has slack). Old 480×360 packed 1080p to 3.
      */
     guiScaleFit(w, h) {
         const ww = w || window.innerWidth || 1024;
         const hh = h || window.innerHeight || 768;
-        return Math.min(ww / 480, hh / 360);
+        return Math.min(ww / 640, hh / 480);
     },
 
     getMaxGuiScaleOption(w, h) {

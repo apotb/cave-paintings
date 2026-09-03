@@ -17,6 +17,36 @@ Characters (look, inventory, body) are stored in the browser. Export/import them
 
 If the client is served over HTTPS, joins use `wss://`. Bare `host:port` becomes `wss://host:port`, so the server needs TLS or a tunnel. HTTP clients can use plain `ws://`.
 
+## Standalone app
+
+```bash
+npm install
+npm run app
+```
+
+Opens a native window (same Phaser client). Player data lives in a `save` folder:
+
+- macOS: `~/Library/Application Support/Cave Paintings/save/`
+- Windows: `%APPDATA%\Cave Paintings\save\`
+- Linux: `~/.config/Cave Paintings/save/`
+
+`characters/<id>.json`, `worlds/<id>.json`, and `options.json` (GUI scale, music, fullscreen). Options → **Open save folder**.
+
+Browser IndexedDB is separate. Move a save with Export in Chrome and Import in the app (or the other way).
+
+Packaged builds (unsigned — macOS Gatekeeper: right-click → Open):
+
+```bash
+npm run build        # macOS + Windows + Linux
+npm run build:mac
+npm run build:win
+npm run build:linux
+```
+
+Needs `build/icon.png` (1024×1024). Output is `out/`. On Apple Silicon, `build:mac` is arm64. `build:win` is Windows x64 (zip + installer). `build:linux` is Linux x64 (AppImage + tar.gz). Delete `out/` (or the leftover `dist/`) and run the command again to rebuild from scratch.
+
+GitHub Actions also builds these. Tests run on every push (the green check next to Vercel). Electron packages build when you push a tag like `v0.1.1`, or from **Actions → Electron → Run workflow**. Download the artifacts from the run, or from the GitHub Release on a tag. Builds stay unsigned.
+
 ## Server
 
 ```bash

@@ -93,6 +93,7 @@ class SceneMain extends SceneBase {
 
     create() {
         hookPixelTextureClamp(this);
+        this._bindFullscreenWatch();
         // pauseAll is global. Save-and-quit used to leave every Animation paused,
         // so the 2nd world join froze campfires, walks, and anything else that plays.
         try { this.anims?.resumeAll?.(); } catch (_) {}
@@ -3343,6 +3344,8 @@ class SceneMain extends SceneBase {
 
     shutdown() {
         this._playReady = false;
+        try { this._fullscreenWatchOff?.(); } catch (_) {}
+        this._fullscreenWatchOff = null;
         this._unbindSceneListeners();
         this._teardownCharacterAutosave?.();
         this._hideGeneratingOverlay?.();
@@ -8685,7 +8688,7 @@ class SceneMain extends SceneBase {
         }).setOrigin(0.5));
         if (typeof applyPixelUiFont === "function") applyPixelUiFont(text, medium ? 16 : 24, s);
         // large = title Singleplayer / Multiplayer; medium = Back / Help / Create
-        const bw = Math.round((medium ? 140 : 240) * s);
+        const bw = Math.round((medium ? 148 : 240) * s);
         const bh = Math.round((medium ? 38 : 52) * s);
         const rect = this.add.rectangle(0, 0, bw, bh, BG, 1)
             .setStrokeStyle(stroke, OUTLINE)
@@ -8734,7 +8737,7 @@ class SceneMain extends SceneBase {
         }
         const w = this.scale?.width || window.innerWidth || 1024;
         const h = this.scale?.height || window.innerHeight || 768;
-        return Math.min(w / 480, h / 360);
+        return Math.min(w / 640, h / 480);
     }
 
     /** Highest fixed integer GUI scale for this window. */
@@ -8770,6 +8773,40 @@ class SceneMain extends SceneBase {
         this.updateUiScale();
         this.applyUiScale();
         this.time?.delayedCall?.(0, () => this._pauseUi?.guiScale?.restoreHover?.());
+    }
+
+    _bindFullscreenWatch() {
+        try { this._fullscreenWatchOff?.(); } catch (_) {}
+        this._fullscreenWatchOff = null;
+        const api = typeof window !== "undefined" ? window.cavePaintings : null;
+        if (!api?.onFullscreen) return;
+        this._fullscreenWatchOff = api.onFullscreen((on) => {
+            if (typeof Settings !== "undefined") Settings.noteFullscreen(on);
+            const label = typeof Settings !== "undefined"
+                ? Settings.fullscreenButtonLabel(on)
+                : (on ? "Fullscreen: On" : "Fullscreen: Off");
+            this._pauseUi?.fullscreen?.setLabel?.(label);
+        });
+    }
+
+    _fullscreenButtonLabel() {
+        const on = typeof Settings !== "undefined" ? Settings.loadFullscreen() : false;
+        return typeof Settings !== "undefined"
+            ? Settings.fullscreenButtonLabel(on)
+            : (on ? "Fullscreen: On" : "Fullscreen: Off");
+    }
+
+    async _cyclePauseFullscreen() {
+        const api = typeof window !== "undefined" ? window.cavePaintings : null;
+        let cur = typeof Settings !== "undefined" && Settings.loadFullscreen();
+        try {
+            if (api?.isFullscreen) cur = await api.isFullscreen();
+        } catch (_) {}
+        const next = !cur;
+        if (typeof Settings !== "undefined") Settings.saveFullscreen(next);
+        try { await api?.setFullscreen?.(next); } catch (e) { console.warn(e); }
+        this._pauseUi?.fullscreen?.setLabel?.(this._fullscreenButtonLabel());
+        this.time?.delayedCall?.(0, () => this._pauseUi?.fullscreen?.restoreHover?.());
     }
 
     _pauseAdd(node) {
@@ -8861,23 +8898,35 @@ class SceneMain extends SceneBase {
 
     _pauseOptionsLayout(h) {
         const s = this.uiScale || 1;
+        const fs = typeof window !== "undefined" && window.cavePaintings?.diskSaves;
         const titleFs = pixelUiFontSize(32, s);
         const guiH = Math.round(38 * s);
         const backH = Math.round(38 * s);
-        const titleGap = Math.round(40 * s);
-        const pad = Math.round(16 * s);
-        const totalH = titleFs + titleGap + guiH / 2 + Math.round(160 * s) + backH / 2;
+        const titleGap = Math.round(16 * s);
+        const gap = Math.round(10 * s);
+        const inner = Math.round(8 * s);
+        const sliderH = Math.round(16 * s);
+        const handlePad = Math.round(4 * s);
+        const labelSlot = Math.round(12 * s);
+        const pad = Math.round(12 * s);
+        const y0Off = Math.round(titleFs / 2) + titleGap + Math.round(guiH / 2);
+        const fsYOff = fs ? y0Off + guiH + gap : y0Off;
+        const volLabelTopOff = (fs ? fsYOff : y0Off) + Math.round(guiH / 2) + gap;
+        const sliderYOff = volLabelTopOff + labelSlot + inner;
+        const backYOff = sliderYOff + sliderH + handlePad + gap + Math.round(guiH / 2);
+        const totalH = titleFs + titleGap + guiH / 2 + backYOff + backH / 2;
         let titleY = Math.round(h / 2 - totalH / 2 + titleFs / 2);
         titleY = Math.max(titleFs / 2 + pad, titleY);
-        const y0 = titleY + Math.round(titleFs / 2) + titleGap + Math.round(guiH / 2);
         return {
             s,
+            fs,
             titleFs,
             titleY,
-            y0,
-            volLabelY: y0 + Math.round(56 * s),
-            sliderY: y0 + Math.round(78 * s),
-            backY: y0 + Math.round(160 * s),
+            y0: titleY + y0Off,
+            fsY: titleY + fsYOff,
+            volLabelY: titleY + volLabelTopOff,
+            sliderY: titleY + sliderYOff,
+            backY: titleY + backYOff,
             sliderW: Math.round(280 * s)
         };
     }
@@ -8886,9 +8935,9 @@ class SceneMain extends SceneBase {
         const L = this._pauseOptionsLayout(h);
         const s = L.s;
         const btnH = Math.round(38 * s);
-        const padX = Math.round(36 * s);
-        const padY = Math.round(28 * s);
-        const top = L.titleY - Math.round(20 * s);
+        const padX = Math.round(28 * s);
+        const padY = Math.round(16 * s);
+        const top = L.titleY - Math.round(12 * s);
         const bot = L.backY + btnH / 2;
         return {
             x: w / 2,
@@ -8916,11 +8965,21 @@ class SceneMain extends SceneBase {
             () => this._cycleGuiScale(),
             { size: "medium" }
         );
+        let fullscreenBtn = null;
+        if (L.fs) {
+            fullscreenBtn = this._pauseMenuButton(
+                w / 2,
+                L.fsY,
+                this._fullscreenButtonLabel(),
+                () => this._cyclePauseFullscreen(),
+                { size: "medium" }
+            );
+        }
         const volLabel = crispUiText(this.add.text(w / 2, L.volLabelY, "Music Volume", {
             fontFamily: PIXEL_UI_FONT,
             fontSize: `${pixelUiFontSize(16, L.s)}px`,
             color: "#d4c4a8"
-        }).setOrigin(0.5));
+        }).setOrigin(0.5, 0));
         if (typeof applyPixelUiFont === "function") applyPixelUiFont(volLabel, 16, L.s);
         const sliderW = L.sliderW;
         const volumeSlider = Settings.makePercentSlider(this, {
@@ -8939,10 +8998,11 @@ class SceneMain extends SceneBase {
         this._pauseAdd(panel);
         this._pauseAdd(title);
         this._pauseAdd(guiScale);
+        if (fullscreenBtn) this._pauseAdd(fullscreenBtn);
         this._pauseAdd(volLabel);
         for (const n of volumeSlider.nodes) this._pauseAdd(n);
         this._pauseAdd(back);
-        this._pauseUi = { dim, panel, title, guiScale, volLabel, volumeSlider, back };
+        this._pauseUi = { dim, panel, title, guiScale, fullscreen: fullscreenBtn, volLabel, volumeSlider, back };
     }
 
     _closePauseMenu() {
@@ -8981,6 +9041,8 @@ class SceneMain extends SceneBase {
             ui.title?.setPosition(w / 2, L.titleY);
             ui.guiScale?.setPosition(w / 2, L.y0);
             ui.guiScale?.setLabel?.(this._guiScaleButtonLabel());
+            ui.fullscreen?.setPosition(w / 2, L.fsY);
+            ui.fullscreen?.setLabel?.(this._fullscreenButtonLabel());
             ui.volLabel?.setPosition(w / 2, L.volLabelY);
             ui.volumeSlider?.setPosition?.(Math.floor(w / 2 - L.sliderW / 2), Math.round(L.sliderY));
             ui.back?.setPosition(w / 2, L.backY);

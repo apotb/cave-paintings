@@ -73,6 +73,7 @@ class SceneMenu extends Phaser.Scene {
         }
         this._onMenuKeydown = (e) => this._handleMenuEscape(e);
         document.addEventListener("keydown", this._onMenuKeydown, true);
+        this._bindFullscreenWatch();
         if (this._onResize) this.scale.off("resize", this._onResize);
         this._onResize = () => {
             if (!this.sys?.isActive?.()) return;
@@ -132,7 +133,7 @@ class SceneMenu extends Phaser.Scene {
         }
         const w = this.scale?.width || 1024;
         const h = this.scale?.height || 768;
-        const max = Math.max(1, Math.floor(Math.min(w / 480, h / 360)));
+        const max = Math.max(1, Math.floor(Math.min(w / 640, h / 480)));
         const n = pref | 0;
         if (n <= 0) return max;
         return Math.min(n, max);
@@ -910,6 +911,7 @@ class SceneMenu extends Phaser.Scene {
         this._createSwatches = null;
         this._createHslBars = null;
         this._optionsGuiScaleBtn = null;
+        this._optionsFullscreenBtn = null;
         this.hostInput = this.passInput = this.nameInput = this.worldNameInput = this.seedInput = this.renameInput = null;
         this._syncKeyboardForDom();
     }
@@ -1002,7 +1004,7 @@ class SceneMenu extends Phaser.Scene {
         const s = this._uiScale();
         const presets = {
             large: { fontSize: 24, width: 240, height: 52 },
-            medium: { fontSize: 16, width: 140, height: 38 },
+            medium: { fontSize: 16, width: 148, height: 38 },
             small: { fontSize: 16, width: 78, height: 28 }
         };
         const raw = (size === "large" || size === "lg" || size === "hero")
@@ -1438,9 +1440,14 @@ class SceneMenu extends Phaser.Scene {
 
     _cardListView() {
         const h = this.scale.height;
+        const s = this._uiScale();
         const footerY = this._listFooterY();
         const btnH = this._buttonSizePreset("medium").height;
-        const viewTop = Math.round(h * 0.26);
+        const titleY = Math.round(h * 0.14);
+        const titleHalf = typeof pixelUiFontSize === "function"
+            ? Math.round(pixelUiFontSize(32, s) / 2)
+            : Math.round(16 * s);
+        const viewTop = Math.round(titleY + titleHalf + Math.round(10 * s));
         const viewBottom = Math.round(footerY - btnH / 2 - 12);
         // Card stroke is 2px and sits on the rect edge — keep it inside the mask.
         const outlinePad = this._uiStroke();
@@ -1617,19 +1624,26 @@ class SceneMenu extends Phaser.Scene {
         const w = this.scale.width;
         const h = this.scale.height;
         const step = this._buttonSizePreset("large").height + Math.round(8 * this._uiScale());
+        const canQuit = typeof window !== "undefined" && typeof window.cavePaintings?.quit === "function";
+        const y0 = h * (canQuit ? 0.36 : 0.42);
         this._title("CAVE PAINTINGS", 0.16, 64);
         this._status();
-        this._button(w / 2, h * 0.42, "Singleplayer", () => this._beginSp(), { size: "large" });
-        this._button(w / 2, h * 0.42 + step, "Multiplayer", () => this._beginMp(), { size: "large" });
-        this._button(w / 2, h * 0.42 + step * 2, "Options", () => this._showOptions(), { size: "large" });
+        this._button(w / 2, y0, "Singleplayer", () => this._beginSp(), { size: "large" });
+        this._button(w / 2, y0 + step, "Multiplayer", () => this._beginMp(), { size: "large" });
+        this._button(w / 2, y0 + step * 2, "Options", () => this._showOptions(), { size: "large" });
+        if (canQuit) {
+            this._button(w / 2, y0 + step * 3, "Quit Game", () => {
+                window.cavePaintings.quit().catch((e) => console.warn(e));
+            }, { size: "large" });
+        }
     }
 
     _maxGuiScaleOption() {
         return typeof Settings !== "undefined"
             ? Settings.getMaxGuiScaleOption(this.scale?.width, this.scale?.height)
             : Math.max(1, Math.floor(Math.min(
-                (this.scale?.width || 1024) / 480,
-                (this.scale?.height || 768) / 360
+                (this.scale?.width || 1024) / 640,
+                (this.scale?.height || 768) / 480
             )));
     }
 
@@ -1649,33 +1663,111 @@ class SceneMenu extends Phaser.Scene {
         this.time?.delayedCall?.(0, () => this._optionsGuiScaleBtn?.restoreHover?.());
     }
 
-    _showOptions() {
-        this._clear();
-        this._phase = "options";
+    _optionsLayout() {
         const w = this.scale.width;
         const h = this.scale.height;
         const s = this._uiScale();
-        this._title("Options");
-        const y0 = h * 0.40;
+        const disk = typeof window !== "undefined" && window.cavePaintings?.diskSaves;
+        const btnH = this._buttonSizePreset("medium").height;
+        const gap = Math.round(10 * s);
+        const inner = Math.round(8 * s);
+        const sliderH = Math.round(16 * s);
+        const handlePad = Math.round(4 * s);
+        const labelSlot = Math.round(12 * s);
+        const pad = Math.round(12 * s);
+        const titleHalf = typeof pixelUiFontSize === "function"
+            ? Math.round(pixelUiFontSize(32, s) / 2)
+            : Math.round(16 * s);
+        const y0Off = titleHalf + gap + Math.round(btnH / 2);
+        const fsYOff = disk ? y0Off + btnH + gap : y0Off;
+        const volLabelTopOff = (disk ? fsYOff : y0Off) + Math.round(btnH / 2) + gap;
+        const sliderYOff = volLabelTopOff + labelSlot + inner;
+        const folderYOff = sliderYOff + sliderH + handlePad + gap + Math.round(btnH / 2);
+        const backYOff = disk ? folderYOff + btnH + gap : folderYOff;
+        const totalH = titleHalf + backYOff + Math.round(btnH / 2);
+        let titleY = Math.round(h / 2 - totalH / 2 + titleHalf);
+        const minY = titleHalf + pad;
+        const maxY = h - (totalH - titleHalf) - pad;
+        titleY = maxY >= minY ? Math.min(maxY, Math.max(minY, titleY)) : minY;
+        return {
+            w, h, s, disk, titleY,
+            y0: titleY + y0Off,
+            fsY: titleY + fsYOff,
+            volLabelY: titleY + volLabelTopOff,
+            sliderY: titleY + sliderYOff,
+            folderY: titleY + folderYOff,
+            backY: titleY + backYOff,
+            sliderW: this._menuFormW()
+        };
+    }
+
+    _bindFullscreenWatch() {
+        try { this._fullscreenWatchOff?.(); } catch (_) {}
+        this._fullscreenWatchOff = null;
+        const api = typeof window !== "undefined" ? window.cavePaintings : null;
+        if (!api?.onFullscreen) return;
+        this._fullscreenWatchOff = api.onFullscreen((on) => {
+            if (typeof Settings !== "undefined") Settings.noteFullscreen(on);
+            const label = typeof Settings !== "undefined"
+                ? Settings.fullscreenButtonLabel(on)
+                : (on ? "Fullscreen: On" : "Fullscreen: Off");
+            this._optionsFullscreenBtn?.setBtnText?.(label);
+        });
+    }
+
+    _fullscreenButtonLabel() {
+        const on = typeof Settings !== "undefined" ? Settings.loadFullscreen() : false;
+        return typeof Settings !== "undefined"
+            ? Settings.fullscreenButtonLabel(on)
+            : (on ? "Fullscreen: On" : "Fullscreen: Off");
+    }
+
+    async _cycleTitleFullscreen() {
+        const api = typeof window !== "undefined" ? window.cavePaintings : null;
+        let cur = typeof Settings !== "undefined" && Settings.loadFullscreen();
+        try {
+            if (api?.isFullscreen) cur = await api.isFullscreen();
+        } catch (_) {}
+        const next = !cur;
+        if (typeof Settings !== "undefined") Settings.saveFullscreen(next);
+        try { await api?.setFullscreen?.(next); } catch (e) { console.warn(e); }
+        this._optionsFullscreenBtn?.setBtnText?.(this._fullscreenButtonLabel());
+        this.time?.delayedCall?.(0, () => this._optionsFullscreenBtn?.restoreHover?.());
+    }
+
+    _showOptions() {
+        this._clear();
+        this._phase = "options";
+        const L = this._optionsLayout();
+        const { w, h, s, disk } = L;
+        this._title("Options", L.titleY / h);
         this._optionsGuiScaleBtn = this._button(
             w / 2,
-            y0,
+            L.y0,
             this._guiScaleButtonLabel(),
             () => this._cycleTitleGuiScale()
         );
-        this._track(this.add.text(w / 2, y0 + Math.round(56 * s), "Music Volume", {
+        if (disk) {
+            this._optionsFullscreenBtn = this._button(
+                w / 2,
+                L.fsY,
+                this._fullscreenButtonLabel(),
+                () => this._cycleTitleFullscreen()
+            );
+        }
+        const volLabel = this._track(this.add.text(w / 2, L.volLabelY, "Music Volume", {
             fontFamily: PIXEL_UI_FONT,
             fontSize: this._uiFont(16),
             color: "#d4c4a8"
-        }).setOrigin(0.5));
-        const sliderW = this._menuFormW();
-        const sliderX = Math.floor(w / 2 - sliderW / 2);
-        const sliderY = Math.round(y0 + Math.round(78 * s));
+        }).setOrigin(0.5, 0));
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(volLabel, 16, s);
+        else if (typeof crispUiText === "function") crispUiText(volLabel);
+        const sliderX = Math.floor(w / 2 - L.sliderW / 2);
         const vol = typeof Settings !== "undefined" ? Settings.loadMusicVolume() : 85;
         this._volumeSlider = Settings.makePercentSlider(this, {
             x: sliderX,
-            y: sliderY,
-            width: sliderW,
+            y: Math.round(L.sliderY),
+            width: L.sliderW,
             height: Math.round(16 * s),
             scale: s,
             value: vol,
@@ -1685,7 +1777,12 @@ class SceneMenu extends Phaser.Scene {
             }
         });
         this._track(...this._volumeSlider.nodes);
-        this._button(w / 2, y0 + Math.round(160 * s), "Back", () => this._showRoot());
+        if (disk) {
+            this._button(w / 2, L.folderY, "Open save folder", () => {
+                window.cavePaintings.openFolder().catch((e) => console.warn(e));
+            });
+        }
+        this._button(w / 2, L.backY, "Back", () => this._showRoot());
     }
 
     _showDisconnected() {
@@ -2007,7 +2104,8 @@ class SceneMenu extends Phaser.Scene {
         const w = this.scale.width;
         const h = this.scale.height;
         this._title("Characters");
-        this._status(0.20);
+        const { viewTop, viewBottom, footerY, outlinePad } = this._cardListView();
+        this._status(Math.max(0.12, (viewTop - Math.round(8 * this._uiScale())) / h));
         this._ensurePlayerAnims();
 
         let list = [];
@@ -2021,7 +2119,6 @@ class SceneMenu extends Phaser.Scene {
         const cardW = Math.min(Math.round(560 * s), w - 48);
         const cardH = Math.round(96 * s);
         const gap = Math.round(10 * s);
-        const { viewTop, viewBottom, footerY, outlinePad } = this._cardListView();
         const listRoot = this.add.container(0, 0);
         this._track(listRoot);
         let y = viewTop + cardH / 2 + outlinePad;
@@ -2513,7 +2610,8 @@ class SceneMenu extends Phaser.Scene {
         const w = this.scale.width;
         const h = this.scale.height;
         this._title("Worlds");
-        this._status(0.20);
+        const { viewTop, viewBottom, footerY, outlinePad } = this._cardListView();
+        this._status(Math.max(0.12, (viewTop - Math.round(8 * this._uiScale())) / h));
 
         let list = [];
         try {
@@ -2526,7 +2624,6 @@ class SceneMenu extends Phaser.Scene {
         const cardW = Math.min(Math.round(560 * s), w - 48);
         const cardH = Math.round(96 * s);
         const gap = Math.round(10 * s);
-        const { viewTop, viewBottom, footerY, outlinePad } = this._cardListView();
         const listRoot = this.add.container(0, 0);
         this._track(listRoot);
         let y = viewTop + cardH / 2 + outlinePad;
@@ -2982,6 +3079,8 @@ class SceneMenu extends Phaser.Scene {
             document.removeEventListener("keydown", this._onMenuKeydown, true);
             this._onMenuKeydown = null;
         }
+        try { this._fullscreenWatchOff?.(); } catch (_) {}
+        this._fullscreenWatchOff = null;
         if (this.game?.canvas) this.game.canvas.tabIndex = 0;
         if (this.input?.keyboard) this.input.keyboard.enabled = true;
     }

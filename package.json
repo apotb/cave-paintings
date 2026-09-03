@@ -1,16 +1,93 @@
 {
   "name": "cave-paintings",
+  "productName": "Cave Paintings",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.js",
   "description": "Cave Paintings — Phaser client + dedicated multiplayer world server",
   "scripts": {
     "start": "node server/index.js",
     "server": "node server/index.js",
     "server:world": "node server/index.js --world",
     "client": "npx --yes serve -l 21825",
+    "app": "node electron/launch.js",
+    "build": "node electron/run-builder.js --mac --win --linux",
+    "build:mac": "node electron/run-builder.js --mac",
+    "build:win": "node electron/run-builder.js --win",
+    "build:linux": "node electron/run-builder.js --linux",
     "test": "node --test --test-concurrency=1 test/*.test.js"
   },
   "dependencies": {
     "ws": "^8.18.0"
+  },
+  "build": {
+    "appId": "com.cavepaintings.app",
+    "productName": "Cave Paintings",
+    "directories": {
+      "output": "out",
+      "buildResources": "build"
+    },
+    "files": [
+      "index.html",
+      "style.css",
+      "favicon.ico",
+      "js/**/*",
+      "shared/**/*",
+      "assets/**/*",
+      "data/**/*",
+      "electron/**/*",
+      "!electron/launch.js",
+      "!electron/run-builder.js"
+    ],
+    "mac": {
+      "category": "public.app-category.games",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "identity": null,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "linux": {
+      "category": "Game",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "tar.gz",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.1.1",
+    "electron-builder": "^26.15.3"
   }
 }

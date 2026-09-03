@@ -1,11 +1,30 @@
 /**
- * Client-owned characters in IndexedDB, with JSON export/import.
+ * Client-owned characters, with JSON export/import.
+ * Browser: IndexedDB. Electron: JSON files via preload.
  * Characters hold gear/vitals/body — not world pose.
  */
 const CharacterStore = (() => {
     const DB_NAME = "cave_paintings";
     const DB_VERSION = 2;
     const STORE = "characters";
+
+    function diskApi() {
+        try {
+            const api = typeof window !== "undefined" ? window.cavePaintings : null;
+            return api && api.diskSaves ? api : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function sortRows(rows) {
+        return (rows || []).slice().sort((a, b) => {
+            const fa = a.favorite ? 1 : 0;
+            const fb = b.favorite ? 1 : 0;
+            if (fb !== fa) return fb - fa;
+            return (b.updatedAt || 0) - (a.updatedAt || 0);
+        });
+    }
 
     function openDb() {
         return new Promise((resolve, reject) => {
@@ -148,17 +167,14 @@ const CharacterStore = (() => {
     }
 
     async function list() {
+        const api = diskApi();
+        if (api) return sortRows(await api.list("characters"));
         const db = await openDb();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(STORE, "readonly");
             const req = tx.objectStore(STORE).getAll();
             req.onsuccess = () => {
-                const rows = (req.result || []).slice().sort((a, b) => {
-                    const fa = a.favorite ? 1 : 0;
-                    const fb = b.favorite ? 1 : 0;
-                    if (fb !== fa) return fb - fa;
-                    return (b.updatedAt || 0) - (a.updatedAt || 0);
-                });
+                const rows = sortRows(req.result || []);
                 db.close();
                 resolve(rows);
             };
@@ -170,6 +186,8 @@ const CharacterStore = (() => {
     }
 
     async function get(id) {
+        const api = diskApi();
+        if (api) return api.get("characters", id);
         const db = await openDb();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(STORE, "readonly");
@@ -223,6 +241,11 @@ const CharacterStore = (() => {
         if (await nameTaken(row.name, row.id)) {
             throw new Error(`A character named "${row.name}" already exists.`);
         }
+        const api = diskApi();
+        if (api) {
+            await api.put("characters", row);
+            return row;
+        }
         await withStore("readwrite", (store) => store.put(row));
         return row;
     }
@@ -234,6 +257,11 @@ const CharacterStore = (() => {
     }
 
     async function remove(id) {
+        const api = diskApi();
+        if (api) {
+            await api.remove("characters", id);
+            return;
+        }
         await withStore("readwrite", (store) => store.delete(id));
     }
 

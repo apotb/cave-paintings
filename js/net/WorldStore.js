@@ -1,11 +1,30 @@
 /**
- * Singleplayer worlds in IndexedDB (seed, clock, chunks).
+ * Singleplayer worlds (seed, clock, chunks).
+ * Browser: IndexedDB. Electron: JSON files via preload.
  * Dedicated multiplayer worlds still live under saves/ on the Node server.
  */
 const WorldStore = (() => {
     const DB_NAME = "cave_paintings";
     const DB_VERSION = 2;
     const STORE = "worlds";
+
+    function diskApi() {
+        try {
+            const api = typeof window !== "undefined" ? window.cavePaintings : null;
+            return api && api.diskSaves ? api : null;
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function sortRows(rows) {
+        return (rows || []).slice().sort((a, b) => {
+            const fa = a.favorite ? 1 : 0;
+            const fb = b.favorite ? 1 : 0;
+            if (fb !== fa) return fb - fa;
+            return (b.updatedAt || 0) - (a.updatedAt || 0);
+        });
+    }
 
     function openDb() {
         return new Promise((resolve, reject) => {
@@ -89,17 +108,14 @@ const WorldStore = (() => {
     }
 
     async function list() {
+        const api = diskApi();
+        if (api) return sortRows(await api.list("worlds"));
         const db = await openDb();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(STORE, "readonly");
             const req = tx.objectStore(STORE).getAll();
             req.onsuccess = () => {
-                const rows = (req.result || []).slice().sort((a, b) => {
-                    const fa = a.favorite ? 1 : 0;
-                    const fb = b.favorite ? 1 : 0;
-                    if (fb !== fa) return fb - fa;
-                    return (b.updatedAt || 0) - (a.updatedAt || 0);
-                });
+                const rows = sortRows(req.result || []);
                 db.close();
                 resolve(rows);
             };
@@ -111,6 +127,8 @@ const WorldStore = (() => {
     }
 
     async function get(id) {
+        const api = diskApi();
+        if (api) return api.get("worlds", id);
         const db = await openDb();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(STORE, "readonly");
@@ -150,6 +168,11 @@ const WorldStore = (() => {
         if (await nameTaken(row.name, row.id)) {
             throw new Error(`A world named "${row.name}" already exists.`);
         }
+        const api = diskApi();
+        if (api) {
+            await api.put("worlds", row);
+            return row;
+        }
         const db = await openDb();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(STORE, "readwrite");
@@ -187,6 +210,11 @@ const WorldStore = (() => {
     }
 
     async function remove(id) {
+        const api = diskApi();
+        if (api) {
+            await api.remove("worlds", id);
+            return;
+        }
         const db = await openDb();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(STORE, "readwrite");
