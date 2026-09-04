@@ -229,11 +229,16 @@ class LootableThing extends Thing {
     }
 
     pickUp() {
+        this.pickUpBy(this.scene.player);
+    }
+
+    pickUpBy(pawn) {
         const loot = this.meta?.lootable;
-        if (!loot || !this.entry) return;
+        if (!loot || !this.entry || !pawn) return;
 
         // Dedicated MP: server owns lootables + inventory (YOU).
         if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            if (pawn !== this.scene.player) return;
             this.scene._netSendMove?.(true);
             this.scene.net.sendAction({
                 type: NetProtocol.Actions.HARVEST,
@@ -241,16 +246,16 @@ class LootableThing extends Thing {
                 id: this.meta?.id || this.entry?.id || null,
                 x: this.x,
                 y: this.y,
-                pawnId: this.scene.player?.pawnId
+                pawnId: pawn?.pawnId
             });
             return;
         }
 
         const harvestedId = this.meta.id;
         const item = this.scene.getItem(loot.item);
-        const remaining = this.scene.player.gainItem(item, loot.yield);
+        const remaining = pawn.gainItem(item, loot.yield);
         if (remaining > 0) DroppedItem.spawn(this.scene, this.x, this.y, item, remaining);
-        this.scene.hideTooltip();
+        if (pawn === this.scene.player) this.scene.hideTooltip();
 
         const transform = loot.transform;
         const regrowMinutes = Number(loot.regrowMinutes);
@@ -347,10 +352,12 @@ class Campfire extends Thing {
         return !!this.meta?.lit;
     }
 
-    inRange() {
-        const dx = this.x - this.scene.player.x;
-        const dy = this.y - this.scene.player.y;
-        const r = this.scene.tileSize * this.scene.player.interactionRange;
+    inRange(pawn) {
+        const p = pawn || this.scene.player;
+        if (!p) return false;
+        const dx = this.x - p.x;
+        const dy = this.y - p.y;
+        const r = this.scene.tileSize * (p.interactionRange || 4);
         return dx * dx + dy * dy <= r * r;
     }
 
@@ -714,10 +721,12 @@ class Storage extends Thing {
         });
     }
 
-    inRange() {
-        const dx = this.x - this.scene.player.x;
-        const dy = this.y - this.scene.player.y;
-        const r = this.scene.tileSize * this.scene.player.interactionRange;
+    inRange(pawn) {
+        const p = pawn || this.scene.player;
+        if (!p) return false;
+        const dx = this.x - p.x;
+        const dy = this.y - p.y;
+        const r = this.scene.tileSize * (p.interactionRange || 4);
         return dx * dx + dy * dy <= r * r;
     }
 
@@ -725,8 +734,8 @@ class Storage extends Thing {
         const name = this.meta?.name || "Storage";
         const slots = this.entry?.slots || [];
         const total = typeof Place !== "undefined"
-            ? (Place.storageSlotCount(this.meta, this.entry) || slots.length || 6)
-            : (slots.length || 6);
+            ? (Place.storageSlotCount(this.meta, this.entry) || slots.length || 8)
+            : (slots.length || 8);
         let used = 0;
         for (const s of slots) {
             if (s && s.quantity > 0) used++;
@@ -868,10 +877,12 @@ class CraftStation extends Thing {
         scene.wireCraftStation?.(this);
     }
 
-    inRange() {
-        const dx = this.x - this.scene.player.x;
-        const dy = this.y - this.scene.player.y;
-        const r = this.scene.tileSize * this.scene.player.interactionRange;
+    inRange(pawn) {
+        const p = pawn || this.scene.player;
+        if (!p) return false;
+        const dx = this.x - p.x;
+        const dy = this.y - p.y;
+        const r = this.scene.tileSize * (p.interactionRange || 4);
         return dx * dx + dy * dy <= r * r;
     }
 
@@ -901,7 +912,7 @@ class LeanTo extends Thing {
         this.setInteractive({ cursor: "pointer" });
         this.on("pointerover", (pointer) => {
             this.scene.showTooltip(
-                () => this.tooltipText(pointer),
+                () => this.tooltipText(),
                 pointer.x,
                 pointer.y,
                 this
@@ -1023,14 +1034,25 @@ class LeanTo extends Thing {
         return slot >= 0 ? slot : 0;
     }
 
+    occupantPawn(slot) {
+        const id = this.entry?.occupants?.[slot];
+        if (!id) return null;
+        const scene = this.scene;
+        return (scene.party || []).find((p) => p.pawnId === id)
+            || (scene.settlers || []).find((p) => p.pawnId === id)
+            || scene.partySys?.wanderers?.find?.((p) => p.pawnId === id)
+            || null;
+    }
+
     occupantName(slot) {
+        const pawn = this.occupantPawn(slot);
+        if (pawn) {
+            const name = pawn.displayName?.() || pawn.pawnName;
+            if (name) return name;
+        }
         const id = this.entry?.occupants?.[slot];
         if (!id) return "Empty";
-        const scene = this.scene;
-        const pawn = (scene.party || []).find((p) => p.pawnId === id)
-            || scene.partySys?.wanderers?.find?.((p) => p.pawnId === id);
-        if (pawn?.pawnName || pawn?.displayName) return pawn.pawnName || pawn.displayName;
-        for (const rp of scene.remotePlayers?.values?.() || []) {
+        for (const rp of this.scene.remotePlayers?.values?.() || []) {
             if (rp.id === id) return rp.displayName || "Empty";
         }
         return "Occupied";
@@ -1038,9 +1060,62 @@ class LeanTo extends Thing {
 
     tooltipText(pointer) {
         if (!this.scene || !this.active) return "";
-        const slot = pointer ? this.slotAtPointer(pointer) : 0;
+        const p = pointer || this.scene.input?.activePointer;
+        const slot = p ? this.slotAtPointer(p) : 0;
+        const pawn = this.occupantPawn(slot);
+        if (pawn && pawn.role !== "wanderer") {
+            const inParty = pawn.role === "companion"
+                || pawn.role === "leader"
+                || (this.scene.party || []).includes(pawn);
+            const parked = pawn.role === "settler"
+                || !!pawn.homeSettlementId
+                || (this.scene.settlers || []).includes(pawn);
+            if (inParty || parked) {
+                const tip = this.scene.partySys?.hoverTooltip?.(pawn);
+                if (tip) return tip;
+            }
+        }
         const who = this.occupantName(slot);
         const name = this.meta?.name || "Lean-to";
         return `${name}\n${who}`;
+    }
+}
+
+class SettlingStone extends Thing {
+    constructor(scene, entry) {
+        super(scene, entry.x, entry.y, entry.id || "settling_stone", entry);
+        if (typeof Place !== "undefined") Place.ensureSettlementEntry(entry);
+        this.setInteractive({ cursor: "pointer" });
+        this.on("pointerover", (pointer) => {
+            scene.showTooltip(() => this.tooltipText(), pointer.x, pointer.y, this);
+        });
+        this.on("pointerout", () => {
+            if (scene._hoverTarget === this) scene._hoverTarget = null;
+            if (scene._tooltipTarget === this) scene.hideTooltip();
+        });
+        this.on("pointerdown", (pointer) => {
+            if (pointer.rightButtonDown()) return;
+            if (scene.pointerOverWorldUi?.(pointer)) return;
+            if (scene.restBlocksWorldUi?.()) return;
+            if (!this.inRange()) return;
+            scene.settlementSys?.openFromStone?.(this);
+        });
+        this.on("destroy", () => {
+            if (scene.settlementPanel?.stone === this) scene.settlementPanel.close();
+        });
+    }
+
+    inRange() {
+        const p = this.scene.player;
+        if (!p) return false;
+        const dx = this.x - p.x;
+        const dy = this.y - p.y;
+        const r = this.scene.tileSize * (p.interactionRange || 4);
+        return dx * dx + dy * dy <= r * r;
+    }
+
+    tooltipText() {
+        const settle = this.scene.settlementSys?.byStoneUid?.(this.entry?.uid);
+        return settle?.name || this.meta?.name || "Settling Stone";
     }
 }

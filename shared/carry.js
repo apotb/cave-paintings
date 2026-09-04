@@ -142,6 +142,16 @@
     }
 
     /**
+     * Mass a pawn may pick up to. Players/companions may fill to 2×strength
+     * (encumbered). Settlers stop at strength so they never enter that state.
+     */
+    function pickupCap(strength, role) {
+        const s = Number(strength) || 0;
+        if (role === "settler") return s;
+        return carryCap(s);
+    }
+
+    /**
      * Over-strength mass: m in 0..1 when weight is between strength and 2×strength.
      * Matches Player.getEncumbrance (hungerRate 1 + 0.5m, cannot sprint if m > 0).
      */
@@ -358,6 +368,7 @@
         gearMass,
         strengthFromEquip,
         carryCap,
+        pickupCap,
         encumbrance,
         countFit,
         resolveCraftedWeights,

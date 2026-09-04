@@ -53,7 +53,7 @@
     const KIND_DEFS = {
         campfire: { campfire: true },
         sleep: { sleep: { slots: 2 }, footprint: [2, 1] },
-        storage: { storage: { slots: 6 } },
+        storage: { storage: { slots: 8 } },
         craft: { craftStation: true }
     };
 
@@ -171,11 +171,11 @@
     }
 
     function fillBasketSlots(table, rand) {
-        const slots = [null, null, null, null, null, null];
+        const slots = [null, null, null, null, null, null, null, null];
         if (!table) return slots;
         const countRow = pickWeighted(rand, table.stackCount || [{ n: 1, weight: 1 }]);
-        const n = Math.max(1, Math.min(6, Math.floor(Number(countRow?.n) || 1)));
-        const idxs = [0, 1, 2, 3, 4, 5];
+        const n = Math.max(1, Math.min(8, Math.floor(Number(countRow?.n) || 1)));
+        const idxs = [0, 1, 2, 3, 4, 5, 6, 7];
         for (let i = idxs.length - 1; i > 0; i--) {
             const j = Math.floor(rand() * (i + 1));
             const t = idxs[i];

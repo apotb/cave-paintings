@@ -9,6 +9,8 @@ test("chopFraction by class and quality", () => {
     assert.ok(rough > 0);
     assert.ok(crude < rough);
     assert.equal(Chop.chopFraction({ toolClass: "knife" }), 0);
+    assert.equal(Chop.isChopper({ toolClass: "chopper", knapQuality: "rough" }), true);
+    assert.equal(Chop.isChopper({ id: "stick" }), false);
 });
 
 test("trunkHitsSegment hit and miss", () => {
@@ -22,6 +24,34 @@ test("trunkHitsSegment hit and miss", () => {
     );
     assert.equal(boxHit, true);
     assert.equal(miss, false);
+});
+
+test("aimHitsTrunk matches player chop reach", () => {
+    assert.equal(Chop.aimHitsTrunk(0, 14, -Math.PI / 2, 0, 0, 5), true);
+    assert.equal(Chop.aimHitsTrunk(40, 40, 0, 0, 0, 5), false);
+});
+
+test("standDist is inside short chopper reach", () => {
+    const d = Chop.standDist(5);
+    assert.ok(d >= 7 && d <= 10);
+    assert.equal(Chop.aimHitsTrunk(0, d, -Math.PI / 2, 0, 0, 5), true);
+    const padded = Chop.standDist(5, 4);
+    assert.ok(padded > d);
+    assert.equal(Chop.aimHitsTrunk(0, padded, -Math.PI / 2, 0, 0, 5), true);
+    assert.equal(Chop.stillChoppable({ choppable: { stump: "tree_stump" } }, { id: "tree" }), true);
+    assert.equal(Chop.stillChoppable({ choppable: { stump: "tree_stump" } }, { id: "tree", chopProgress: 1 }), false);
+    assert.equal(Chop.stillChoppable({}, { id: "tree_stump" }), false);
+});
+
+test("ringStand stays on the approach side and never on the trunk", () => {
+    const east = Chop.ringStand(20, 0, 0, 0, 5, 4);
+    assert.ok(east.aimX > 0);
+    assert.ok(Math.abs(east.aimY) < 0.01);
+    assert.ok(east.dist > 8);
+    assert.equal(Chop.aimHitsTrunk(east.aimX, east.aimY, Math.PI, 0, 0, 5), true);
+    const south = Chop.ringStand(0, 20, 0, 0, 5, 4);
+    assert.ok(south.aimY > 0);
+    assert.ok(Math.abs(south.aimX) < 0.01);
 });
 
 test("applyChop reaches stump threshold", () => {

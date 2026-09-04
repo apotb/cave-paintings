@@ -1245,6 +1245,27 @@
         }
     },
     {
+        "id": "settling_stone",
+        "name": "Settling Stone",
+        "key": "settling_stone",
+        "maxStack": 1,
+        "place": {
+            "thing": "settling_stone"
+        },
+        "tooltip": [
+            "Found your own settlement",
+            "Manage people, work, and resources"
+        ],
+        "recipe": {
+            "pebble": 8,
+            "leaf_cord": 8,
+            "ANY_HIDE": {
+                "qty": 2,
+                "hideStage": "dried"
+            }
+        }
+    },
+    {
         "id": "rot",
         "name": "Rot",
         "key": "rot",

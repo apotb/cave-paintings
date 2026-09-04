@@ -10,6 +10,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
     const CAP = 6;
     const COLOR_ALLY = "#80e080";
+    const COLOR_SETTLER = "#7ec8ff";
     const COLOR_ENEMY = "#ff6666";
     const COLOR_NEUTRAL = "#ffffff";
 
@@ -97,6 +98,38 @@
 
     const FACTION_WILDLIFE = "Wildlife";
     const FACTION_WANDERERS = "Wanderers";
+
+    function hasWorldPose(poses, id) {
+        const s = id ? poses?.[id] : null;
+        return !!(s && Number.isFinite(s.x) && Number.isFinite(s.y));
+    }
+
+    /**
+     * Character JSON stores party x,y from the last world they stood in.
+     * Leave anyone who already has a logout pose on this world; cluster the
+     * rest beside the leader (same offsets as a fresh recruit).
+     */
+    function placeJoinParty(leader, members, poses, opts = {}) {
+        const ts = Number(opts.tileSize) > 0 ? Number(opts.tileSize) : 16;
+        if (!leader || !Array.isArray(members)) return;
+        let slot = 0;
+        for (const m of members) {
+            if (!m) continue;
+            if (hasWorldPose(poses, m.id)) continue;
+            slot += 1;
+            let x = leader.x + ts * slot;
+            let y = leader.y;
+            if (typeof opts.findOpen === "function") {
+                const near = opts.findOpen(x, y) || opts.findOpen(leader.x, leader.y);
+                if (near && Number.isFinite(near.x) && Number.isFinite(near.y)) {
+                    x = near.x;
+                    y = near.y;
+                }
+            }
+            m.x = x;
+            m.y = y;
+        }
+    }
 
     function ownerIdOf(entity) {
         if (!entity) return null;
@@ -212,8 +245,10 @@
         return Math.hypot((a.x - b.x) / ts, (a.y - b.y) / ts);
     }
 
-    function inInteractRange(a, b, tileSize = 16) {
-        const range = Number(a?.interactionRange) || INTERACT_TILES;
+    function inInteractRange(a, b, tileSize = 16, rangeTiles) {
+        const range = Number(rangeTiles) > 0
+            ? Number(rangeTiles)
+            : (Number(a?.interactionRange) || INTERACT_TILES);
         return distTiles(a, b, tileSize) <= range + 0.05;
     }
 
@@ -281,6 +316,7 @@
                 }
             }
         }
+        extraBagCandidates(eater, opts.extraBags, opts, candidates);
         candidates.sort((a, b) => {
             if (a.inRange !== b.inRange) return a.inRange ? -1 : 1;
             if (a.spoil !== b.spoil) return a.spoil - b.spoil;
@@ -288,6 +324,43 @@
             return a.dist - b.dist;
         });
         return candidates[0] || null;
+    }
+
+    function extraBagCandidates(eater, extraBags, opts, candidates) {
+        const ts = Number(opts.tileSize) || 16;
+        const interact = (Number(opts.interactTiles) || INTERACT_TILES) * ts;
+        const seek = (Number(opts.seekTiles) || FOLLOW_DETACH) * ts;
+        const getFood = opts.getFood;
+        const allowPoison = !!opts.allowPoison;
+        const ex = Number(eater.x) || 0;
+        const ey = Number(eater.y) || 0;
+        for (const bag of extraBags || []) {
+            const d = Math.hypot((Number(bag.x) || 0) - ex, (Number(bag.y) || 0) - ey);
+            if (d > seek) continue;
+            const slots = bag.slots || [];
+            for (let i = 0; i < slots.length; i++) {
+                const stack = slots[i];
+                if (!stack) continue;
+                const food = typeof getFood === "function" ? getFood(stack) : (stack.food || null);
+                if (!(Number(food?.kc ?? 0) > 0)) continue;
+                const poison = Number(food?.foodPoisonChance ?? 0) > 0;
+                if (poison && !allowPoison) continue;
+                if (isReservedAutoEat(stack, food) && !allowPoison) continue;
+                const spoil = Number(stack.spoilAt ?? stack.spoilLeft ?? Infinity);
+                candidates.push({
+                    pawn: bag.host || eater,
+                    slot: i,
+                    bag: bag.bag || "basket",
+                    stack,
+                    spoil,
+                    own: false,
+                    poison,
+                    dist: d,
+                    inRange: d <= interact + 0.05,
+                    extra: bag
+                });
+            }
+        }
     }
 
     function nearestLiving(list, x, y) {
@@ -789,9 +862,9 @@
         return { rx, ry };
     }
 
-    /** Passersby swim; water/ice are placement-blocked, not a wanderer wall. */
+    /** Passersby swim; settlers wade only while soaking hides. */
     function traversesWater(entity) {
-        return entity?.role === "wanderer";
+        return entity?.role === "wanderer" || !!entity?._wadeWater;
     }
 
     /** Downed / dead / corpse — walk and clicks pass through. */
@@ -808,6 +881,7 @@
     return {
         CAP,
         COLOR_ALLY,
+        COLOR_SETTLER,
         COLOR_ENEMY,
         COLOR_NEUTRAL,
         FOLLOW_BEHIND,
@@ -856,6 +930,8 @@
         ownerEngagedWithWild,
         sameParty,
         isOwnedPawn,
+        hasWorldPose,
+        placeJoinParty,
         livingParty,
         distTiles,
         inInteractRange,

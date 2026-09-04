@@ -312,3 +312,67 @@ test("wildlife movement and melee scale with tick speed", () => {
     const elapsed = start - mob.attackTimer;
     assert.ok(elapsed > 200, `8× melee should chew ~320ms of windup in 40ms wall time (got ${elapsed})`);
 });
+
+test("recruiting a wanderer drops stroll AI so they follow instead of walking off", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const { PartyAI, WandererStrollAI } = require("../shared/ai/headless");
+    world.rng = () => 0;
+    const id = "w-recruit-1";
+    world.wanderers.set(id, {
+        id,
+        name: "Og",
+        x: pawn.x,
+        y: pawn.y,
+        facing: "right",
+        heading: { x: 1, y: 0 },
+        inventory: [null, null, null, null, null],
+        hostile: false,
+        recruitLocked: false,
+        refusedBy: []
+    });
+    const w = world.wanderers.get(id);
+    world._stepWanderer(w, 50);
+    assert.ok(w.creature?.ai instanceof WandererStrollAI);
+    world.handleAction(pawn.id, { type: Protocol.Actions.RECRUIT, wandererId: id });
+    assert.equal(world.wanderers.has(id), false);
+    const mem = (pawn.party || []).find((m) => m.id === id);
+    assert.ok(mem, "wanderer should join the party");
+    world.tick(50);
+    const ai = mem.creature?.ai;
+    assert.equal(ai && ai.constructor, PartyAI);
+    assert.equal(ai instanceof WandererStrollAI, false);
+});
+
+test("addPlayer clusters a companion with no world pose next to the leader", () => {
+    const { world } = createTestWorld();
+    world.poses = {};
+    const p = world.addPlayer("joiner", "Joiner", {
+        name: "Joiner",
+        party: [{ id: "buddy", name: "Og", x: 9000, y: 8000, facing: "up" }]
+    });
+    const mem = (p.party || []).find((m) => m.id === "buddy");
+    assert.ok(mem, "companion should join");
+    const dist = Math.hypot(mem.x - p.x, mem.y - p.y);
+    assert.ok(dist <= 16 * 8, `expected near leader, dist=${dist} leader=${p.x},${p.y} mem=${mem.x},${mem.y}`);
+    assert.notEqual(mem.x, 9000);
+    assert.notEqual(mem.y, 8000);
+});
+
+test("addPlayer restores a companion logout pose for this world", () => {
+    const { world } = createTestWorld();
+    world.poses = {
+        joiner: { x: 48, y: 64, facing: "down" },
+        buddy: { x: 320, y: 400, facing: "left" }
+    };
+    const p = world.addPlayer("joiner", "Joiner", {
+        name: "Joiner",
+        party: [{ id: "buddy", name: "Og", x: 9000, y: 8000, facing: "up" }]
+    });
+    const mem = (p.party || []).find((m) => m.id === "buddy");
+    assert.ok(mem);
+    assert.equal(mem.x, 320);
+    assert.equal(mem.y, 400);
+    assert.equal(mem.facing, "left");
+    assert.equal(p.x, 48);
+    assert.equal(p.y, 64);
+});

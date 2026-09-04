@@ -18,6 +18,7 @@ class CampfirePanel {
 
         this._buildSlots();
         this._buildDestroy();
+        this._buildSettle();
         this._buildHeatLabel();
 
         this.cookBarBg = scene.add.graphics();
@@ -233,7 +234,9 @@ class CampfirePanel {
         this._destroyBw = 90;
         this._destroyBh = 28;
         this._paintDestroy = () => {
-            const strokeW = 2 / (this.scene.worldZoom || 1);
+            const strokeW = typeof pixelUiWorldStroke === "function"
+                ? pixelUiWorldStroke(this.scene)
+                : 2 / (this.scene.worldZoom || 1);
             if (!this._destroyEnabled) {
                 this.destroyRect.setFillStyle(BG, 1);
                 this.destroyRect.setStrokeStyle(strokeW, OUTLINE);
@@ -270,6 +273,29 @@ class CampfirePanel {
 
         this.container.add(this.destroyBtn);
         this.destroyBtn.setVisible(false);
+    }
+
+    _buildSettle() {
+        const sys = this.scene.settlementSys;
+        if (!sys) return;
+        this._settleUi = sys.makeStationButton(() => {
+            if (this.campfire) sys.toggleStation(this.campfire);
+            this._syncSettle();
+        });
+        this._billUi = sys.makeWorldButton("Bills", () => {
+            if (this.campfire) sys.openBills?.(this.campfire);
+        });
+        this.container.add(this._settleUi.btn);
+        this.container.add(this._billUi.btn);
+        this._settleUi.btn.setVisible(false);
+        this._billUi.btn.setVisible(false);
+    }
+
+    _syncSettle() {
+        this.scene.settlementSys?.syncStationButton(this._settleUi, this.campfire);
+        const added = this.scene.settlementSys?.isAdded(this.campfire);
+        this._billUi?.btn.setVisible(!!added);
+        this._placeActionRow();
     }
 
     _stackFor(key) {
@@ -335,6 +361,7 @@ class CampfirePanel {
         if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
         if (this.scene.storagePanel?.visible) this.scene.storagePanel.close();
         if (this.scene.leanToPanel?.visible) this.scene.leanToPanel.close();
+        this.scene.closeCraftStationMenu?.();
 
         if (this.campfire && this.campfire !== campfire) this._notifyCampfire("leave");
         this.campfire = campfire;
@@ -437,6 +464,7 @@ class CampfirePanel {
         if (canDestroy) this._syncDestroyHitArea(true);
         else this.destroyRect?.disableInteractive();
         this._syncDestroyHover();
+        this._placeActionRow();
         this.refreshHeatLabel();
         this.refreshCookBar();
     }
@@ -596,7 +624,17 @@ class CampfirePanel {
             this.destroyText.setFontSize(`${pixelUiFontSize(16, s)}px`);
             this.destroyText.setScale(1 / zoom);
         }
-        this.destroyBtn.setPosition(0, fuelY + slotW / 2 + padding + bh / 2);
+        const actionY = fuelY + slotW / 2 + padding + bh / 2;
+        const gap = 8 * ws;
+        this._actionRow = { y: actionY, bw, bh, gap };
+        this._settleUi?.setSize(bh);
+        this._syncSettle();
+        if (this._billUi) {
+            this._billUi.rect.setSize(bw, bh);
+            this._billUi.btn.setPosition(0, actionY + bh + gap);
+            if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(this._billUi.text, 14, this.scene);
+            this._billUi.paint?.();
+        }
 
         if (this.heatText) {
             this.heatText.setStroke("#000000", Math.max(2, Math.round(3 * s)));
@@ -612,6 +650,17 @@ class CampfirePanel {
         this.container.setPosition(this.campfire.x, this.campfire.y);
         this.refreshHeatLabel();
         this.refresh();
+        this._placeActionRow();
+    }
+
+    _placeActionRow() {
+        const row = this._actionRow;
+        if (!row) return;
+        this.scene.settlementSys?.placeAddActionRow(this._settleUi, this.destroyBtn, {
+            y: row.y, gap: row.gap, addW: row.bh, actionW: row.bw,
+            addOn: !!this._settleUi?.btn?.visible,
+            actionOn: !!this.destroyBtn?.visible
+        });
     }
 
     _syncDestroyHitArea(enable) {
@@ -1322,7 +1371,12 @@ class CampfirePanel {
     containsPointer(pointer) {
         if (!this.visible || !this.container?.visible || !pointer) return false;
         if (this.getSlotAt(pointer.x, pointer.y) != null) return true;
-        if (!this.destroyBtn?.visible) return false;
-        return this.pointerOnDestroy(pointer);
+        const pt = this.scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const hit = (rect, vis) => !!(vis && rect?.getBounds
+            && Phaser.Geom.Rectangle.Contains(rect.getBounds(), pt.x, pt.y));
+        if (this.destroyBtn?.visible && this.pointerOnDestroy(pointer)) return true;
+        if (hit(this._settleUi?.rect, this._settleUi?.btn?.visible)) return true;
+        if (hit(this._billUi?.rect, this._billUi?.btn?.visible)) return true;
+        return false;
     }
 }

@@ -34,3 +34,14 @@ test("beginSoak stamps soakDoneAt", () => {
     Hide.beginSoak(stack, 100);
     assert.ok(Number.isFinite(stack.soakDoneAt));
 });
+
+test("haulers leave fleshed hides in water, not other drops", () => {
+    const fleshed = DataStore.getItem("deer_hide_fleshed") || DataStore.getItem("deer_hide_flesh");
+    const soaked = DataStore.getItem("deer_hide_soaked");
+    const stick = DataStore.getItem("stick");
+    assert.ok(fleshed);
+    assert.equal(Hide.leaveHaulInWater(fleshed, true), true);
+    assert.equal(Hide.leaveHaulInWater(fleshed, false), false);
+    assert.equal(Hide.leaveHaulInWater(soaked, true), false);
+    assert.equal(Hide.leaveHaulInWater(stick, true), false);
+});

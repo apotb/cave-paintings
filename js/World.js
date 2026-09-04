@@ -224,7 +224,7 @@ class Chunk {
         this.scene._trackLoadedChunk?.(this);
         await this.generate();
         if (!this._loadStillCurrent(gen)) return;
-        await this.render();
+        this.render();
         if (!this._loadStillCurrent(gen)) return;
         await this.makeThings();
         if (!this._loadStillCurrent(gen)) {
@@ -724,6 +724,10 @@ class Chunk {
     }
 
     async render() {
+        if (typeof this.scene.enqueueChunkPaint === "function") {
+            this.scene.enqueueChunkPaint(this);
+            return;
+        }
         await this._paintGround();
     }
 

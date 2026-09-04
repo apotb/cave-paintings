@@ -47,6 +47,10 @@
         return base * (q / ROUGH_QUALITY) * mat;
     }
 
+    function isChopper(stack) {
+        return chopFraction(stack) > 0;
+    }
+
     function chopPercentLine(stack) {
         const frac = chopFraction(stack);
         if (!(frac > 0)) return null;
@@ -60,6 +64,46 @@
 
     function isChoppable(def) {
         return !!(def && def.choppable);
+    }
+
+    function stillChoppable(def, entry) {
+        if (!entry || entry.gone) return false;
+        if (Number(entry.chopProgress) >= 1) return false;
+        return isChoppable(def);
+    }
+
+    /** Body-center offset from trunk origin so a short knapped chopper still reaches. */
+    function standDist(hitboxSize, pad) {
+        const hs = Math.max(1, Number(hitboxSize) || 5);
+        const extra = Math.max(0, Number(pad) || 0);
+        return Math.max(7, hs * 0.5 + 5) + extra;
+    }
+
+    /**
+     * Stand on the ring around the trunk along the current approach, not a
+     * cardinal that sends the pawn around (and into) the collider.
+     */
+    function ringStand(px, py, tx, ty, hitboxSize, pad) {
+        const dist = standDist(hitboxSize, pad);
+        let dx = (Number(px) || 0) - (Number(tx) || 0);
+        let dy = (Number(py) || 0) - (Number(ty) || 0);
+        let radial = Math.hypot(dx, dy);
+        if (radial < 1) {
+            dx = 0;
+            dy = 1;
+            radial = 1;
+        } else {
+            dx /= radial;
+            dy /= radial;
+        }
+        return {
+            aimX: (Number(tx) || 0) + dx * dist,
+            aimY: (Number(ty) || 0) + dy * dist,
+            dist,
+            radial,
+            nx: dx,
+            ny: dy
+        };
     }
 
     function stumpId(def) {
@@ -102,6 +146,11 @@
             trunkBox(x, y, hitboxSize),
             rad
         );
+    }
+
+    function aimHitsTrunk(cx, cy, angle, x, y, hitboxSize) {
+        const seg = aimSegment(cx, cy, angle, AIM_REACH);
+        return trunkHitsSegment(seg, x, y, hitboxSize, HIT_RADIUS);
     }
 
     function rollBetween(rng, lo, hi) {
@@ -241,13 +290,18 @@
         AIM_REACH,
         BAR_RANGE,
         chopFraction,
+        isChopper,
         chopPercentLine,
         isChopAttack,
         isChoppable,
+        stillChoppable,
+        standDist,
+        ringStand,
         stumpId,
         trunkBox,
         aimSegment,
         trunkHitsSegment,
+        aimHitsTrunk,
         rollDrops,
         scatterFellPiles,
         applyChop,

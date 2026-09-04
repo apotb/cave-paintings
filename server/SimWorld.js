@@ -19,6 +19,8 @@ const Hide = require("../shared/hide");
 const Carry = require("../shared/carry");
 const Fire = require("../shared/fire");
 const Party = require("../shared/party");
+const Settlement = require("../shared/settlement");
+const StorageFilter = require("../shared/storageFilter");
 const CavemanNames = require("../shared/cavemanNames");
 const CorpseDecay = require("../shared/corpseDecay");
 const GameMath = require("../shared/gameMath");
@@ -35,6 +37,7 @@ const {
 } = require("./SimCreature");
 const SaveIO = require("./SaveIO");
 const WorldGen = require("./WorldGen");
+const SettlerWork = require("./settlerWork");
 
 const CS = WorldGen.CS;
 const TS = WorldGen.TS;
@@ -134,6 +137,8 @@ class SimWorld {
         this.creatures = new Map();
         /** @type {Map<string, object>} wandererId -> passerby */
         this.wanderers = new Map();
+        this.settlements = [];
+        this.settlers = [];
         this._directorCd = 0;
         this._duelMap = new Map();
         this._duelIds = new Map();
@@ -410,7 +415,7 @@ class SimWorld {
             },
             isBlocked: (x, y) => self.isBlocked(x, y),
             tileBlocked: (x, y) => self._tileBlocked(x, y),
-            poseBlocked: (creature, x, y) => self._partyPoseBlocked(creature, x, y),
+            poseBlocked: (creature, x, y, pad) => self._partyPoseBlocked(creature, x, y, pad),
             terrainSpeedMult: (x, y) => self._terrainSpeedMult(x, y),
             getRestWalkDest(mob) {
                 const spec = mob?._restWalk;
@@ -453,15 +458,24 @@ class SimWorld {
             },
             getPartyMates(mob) {
                 const owner = self.players.get(mob?.ownerId);
-                if (!owner) return [];
                 const out = [];
                 const add = (rec) => {
                     if (!rec || rec.dead) return;
                     const c = rec.creature || self.creatures.get(rec.id);
                     if (c && !c.isBodyDead()) out.push(c);
                 };
-                add(owner);
-                for (const m of owner.party || []) add(m);
+                if (owner) {
+                    add(owner);
+                    for (const m of owner.party || []) add(m);
+                }
+                if (mob?.role === "settler") {
+                    const homeId = mob.homeSettlementId;
+                    for (const rec of self.settlers || []) {
+                        if (!rec || rec.dead || rec.id === mob.id) continue;
+                        if (homeId && rec.homeSettlementId !== homeId) continue;
+                        add(rec);
+                    }
+                }
                 return out;
             },
             isPvpTarget(mob, target) {
@@ -494,6 +508,16 @@ class SimWorld {
                 if (!pawn) return;
                 const session = self._sessionOfPawn(pawn);
                 self._tryInjuredRest(session, pawn);
+            },
+            getSettlement(mob) {
+                const id = mob?.homeSettlementId;
+                return (self.settlements || []).find((s) => s.id === id) || null;
+            },
+            tickSettler(mob, delta) {
+                return self._tickSettlerWork?.(mob, delta);
+            },
+            releaseSettlerWork(mob) {
+                SettlerWork.releaseWork(self, mob);
             }
         };
     }
@@ -709,6 +733,12 @@ class SimWorld {
             const rec = w._wandererRecordFromSnap(snap);
             if (rec) w.wanderers.set(rec.id, rec);
         }
+        w.settlements = (data.settlements || []).map((s) => Settlement.ensureSettlement(s));
+        w.settlers = [];
+        for (const snap of data.settlers || []) {
+            const rec = w._settlerFromSnap(snap);
+            if (rec) w.settlers.push(rec);
+        }
         return w;
     }
 
@@ -875,6 +905,8 @@ class SimWorld {
             wanderers: [...this.wanderers.values()]
                 .filter((w) => w && !w.dead)
                 .map((w) => this._publicWanderer(w)),
+            settlements: this.settlements || [],
+            settlers: (this.settlers || []).filter((s) => s && !s.dead).map((s) => this._publicSettler(s)),
             chunks
         };
     }
@@ -925,6 +957,7 @@ class SimWorld {
             existing.poseAuth = false;
             existing._joinGraceUntil = Date.now() + 4000;
             this._ensurePlayerCreature(existing);
+            this._placeNewCompanionsNearLeader(existing);
             this._interestLoad(existing.x, existing.y, this.interestRadius(existing));
             this._restorePawnSleep(existing, existing);
             for (const m of existing.party || []) this._restorePawnSleep(existing, m);
@@ -939,6 +972,7 @@ class SimWorld {
         }
         // Occupied sleepers are snapped to the bunk in `_restorePawnSleep`.
         this._restoreLogoutPose(p);
+        this._placeNewCompanionsNearLeader(p);
         p.connected = true;
         p.poseAuth = false;
         p._joinGraceUntil = Date.now() + 4000;
@@ -974,6 +1008,24 @@ class SimWorld {
         if (typeof saved.facing === "string" && saved.facing) p.facing = saved.facing;
         if (saved.lastSleep) p.lastSleep = saved.lastSleep;
         if (typeof saved.resting === "boolean") p._resting = !!saved.resting;
+    }
+
+    /**
+     * Character-saved companion x,y is the last world, not this one.
+     * Keep this-world logout poses; cluster anyone new beside the leader.
+     */
+    _placeNewCompanionsNearLeader(p) {
+        if (!p) return;
+        Party.placeJoinParty(p, p.party, this.poses, {
+            tileSize: TS,
+            findOpen: (x, y) => this._findOpenNear(x, y, 4)
+        });
+        for (const m of p.party || []) {
+            if (m?.creature) {
+                m.creature.x = m.x;
+                m.creature.y = m.y;
+            }
+        }
     }
 
     /** Snapshot every connected pawn into poses so crash/restart keeps rejoin spots. */
@@ -1211,13 +1263,380 @@ class SimWorld {
         creature.ownerId = owner.id;
         creature.leaderId = owner.id;
         creature.role = "companion";
+        creature.homeSettlementId = rec.homeSettlementId || null;
         creature.faction = Party.partyFactionId(owner.id);
+        this._bindPartyAI(creature);
+        if (!creature.homeSettlementId && creature.ai) {
+            creature.ai._idleWanderState = null;
+            creature.ai._idleWanderDest = null;
+            creature.ai._path = null;
+        }
         return creature;
+    }
+
+    /**
+     * WandererStrollAI extends PartyAI, so `instanceof PartyAI` stays true after
+     * recruit and they keep strolling until relog. Require the exact class.
+     */
+    _bindPartyAI(creature) {
+        if (!creature) return null;
+        if (creature.ai && creature.ai.constructor === PartyAI) return creature.ai;
+        creature.walkDest = null;
+        creature.setDesiredVel?.(0, 0);
+        creature.vx = 0;
+        creature.vy = 0;
+        creature.ai = new PartyAI(creature);
+        return creature.ai;
+    }
+
+    _settlerFromSnap(snap) {
+        if (!snap?.id) return null;
+        return {
+            id: snap.id,
+            name: snap.name,
+            look: snap.look,
+            x: snap.x,
+            y: snap.y,
+            facing: snap.facing || "down",
+            kc: snap.kc ?? 1200,
+            saturation: snap.saturation ?? 0,
+            stomach: snap.stomach ?? 1600,
+            inventory: Array.isArray(snap.inventory) ? snap.inventory : [null, null, null, null, null],
+            overflow: Array.isArray(snap.overflow) ? snap.overflow : [],
+            equipment: snap.equipment || { head: null, torso: null, legs: null, feet: null, back: null, waist: [] },
+            hotbarIndex: snap.hotbarIndex || 0,
+            body: snap.body || null,
+            hp: snap.hp ?? 100,
+            mhp: snap.mhp ?? 100,
+            ownerId: snap.ownerId || null,
+            homeSettlementId: snap.homeSettlementId || null,
+            role: "settler",
+            lastSleep: snap.lastSleep || null,
+            resting: !!snap.resting,
+            _resting: !!snap.resting
+        };
+    }
+
+    _publicSettler(s) {
+        if (!s) return null;
+        const c = s.creature || this.creatures.get(s.id);
+        const motion = this._poseMotion(s);
+        return {
+            id: s.id,
+            name: s.name,
+            x: s.x,
+            y: s.y,
+            facing: s.facing,
+            vx: motion.vx,
+            vy: motion.vy,
+            moving: motion.moving,
+            look: s.look,
+            ownerId: s.ownerId,
+            homeSettlementId: s.homeSettlementId,
+            role: "settler",
+            dead: !!s.dead,
+            prone: !!(s.dead || s.prone || s._resting),
+            resting: !!s._resting,
+            attacking: (s.attackTimer || 0) > 0,
+            attackAngle: s.attackAngle ?? null,
+            attackArt: (s.attackTimer || 0) > 0 ? (s.attackArt || null) : null,
+            channel: SettlerWork.publicChannel?.(s) || null
+        };
+    }
+
+    _ensureSettlerCreature(rec) {
+        if (!rec) return null;
+        let creature = this.creatures.get(rec.id);
+        if (!creature) {
+            creature = createPlayerCreature(
+                {
+                    id: rec.id,
+                    name: rec.name,
+                    x: rec.x,
+                    y: rec.y,
+                    facing: rec.facing,
+                    inventory: rec.inventory,
+                    equipment: rec.equipment,
+                    hotbarIndex: rec.hotbarIndex,
+                    body: rec.body,
+                    look: rec.look
+                },
+                this.dataStore,
+                this._creatureCtx()
+            );
+            this.creatures.set(rec.id, creature);
+        }
+        rec.creature = creature;
+        creature.x = rec.x;
+        creature.y = rec.y;
+        creature.inventory = rec.inventory;
+        creature.equipment = rec.equipment;
+        creature.hotbarIndex = rec.hotbarIndex ?? 0;
+        creature.ownerId = rec.ownerId;
+        creature.leaderId = rec.ownerId;
+        creature.role = "settler";
+        creature.homeSettlementId = rec.homeSettlementId;
+        creature.faction = Party.partyFactionId(rec.ownerId);
+        creature._resting = !!(rec._resting || rec.resting);
+        creature._restWalk = rec._restWalk || null;
+        creature._wadeWater = !!rec._wadeWater;
+        creature.lastSleep = rec.lastSleep || creature.lastSleep;
+        this._bindPartyAI(creature);
+        return creature;
+    }
+
+    _ownedSettlements(ownerId) {
+        return Settlement.ownedOf(this.settlements, ownerId);
+    }
+
+    _handleSettlement(p, action = {}) {
+        const op = String(action.op || "");
+        if (op === "found") {
+            this._tryPlace(p, { ...action, name: action.name });
+            return;
+        }
+        const settle = this.settlements.find((s) => s.id === action.settlementId) || null;
+        if (op === "rename" && settle && settle.ownerId === p.id) {
+            settle.name = Settlement.clampName(action.name);
+            this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "destroy" && settle && settle.ownerId === p.id) {
+            this._destroySettlement(settle);
+            this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "drop") {
+            const mem = (p.party || []).find((m) => String(m.id) === String(action.pawnId));
+            let dropSettle = settle && settle.ownerId === p.id ? settle : null;
+            if (!dropSettle && mem) {
+                dropSettle = Settlement.atPoint(
+                    this._ownedSettlements(p.id),
+                    mem.x,
+                    mem.y,
+                    TS,
+                    p.id
+                ) || Settlement.atPoint(
+                    this._ownedSettlements(p.id),
+                    p.x,
+                    p.y,
+                    TS,
+                    p.id
+                );
+            }
+            if (!mem || mem.id === p.id || !dropSettle || dropSettle.ownerId !== p.id) return;
+            if ((p.controlId || p.id) === mem.id) p.controlId = p.id;
+            p.party = p.party.filter((m) => m !== mem);
+            mem.role = "settler";
+            mem.homeSettlementId = dropSettle.id;
+            mem.ownerId = p.id;
+            if (!dropSettle.jobs) dropSettle.jobs = {};
+            dropSettle.jobs[mem.id] = Settlement.defaultJobs();
+            this.settlers.push(mem);
+            SettlerWork.releaseWork(this, mem);
+            const cc = this._ensureSettlerCreature(mem);
+            if (cc?.ai) {
+                cc.ai._path = null;
+                cc.ai._pathGoalX = null;
+                cc.ai._pathGoalY = null;
+                cc.ai._holdFollow = false;
+                cc.ai.assistTarget = null;
+                cc.ai.eatSeek = null;
+                cc.ai.tendSeek = null;
+                cc.ai._idleWanderState = null;
+                cc.ai._idleWanderDest = null;
+            }
+            this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "pick" || op === "pickOrphan") {
+            const rec = this.settlers.find((s) => s.id === action.pawnId);
+            if (!rec || rec.ownerId !== p.id) return;
+            if ((p.party || []).length + 1 >= Party.CAP) return;
+            this.settlers = this.settlers.filter((s) => s !== rec);
+            rec.role = "companion";
+            rec.homeSettlementId = null;
+            SettlerWork.releaseWork(this, rec);
+            if (!p.party) p.party = [];
+            p.party.push(rec);
+            this._ensureCompanionCreature(p, rec);
+            this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "transfer" && settle && settle.ownerId === p.id) {
+            const rec = this.settlers.find((s) => s.id === action.pawnId);
+            const dest = this.settlements.find((s) => s.id === action.destId);
+            if (!rec || !dest || dest.ownerId !== p.id) return;
+            const from = this.settlements.find((s) => s.id === rec.homeSettlementId);
+            rec.homeSettlementId = dest.id;
+            const d = from ? Settlement.distTiles(from.x, from.y, dest.x, dest.y, TS) : 999;
+            if (Settlement.transferMode(d) === "teleport") {
+                rec.x = dest.x + 12;
+                rec.y = dest.y + 8;
+            }
+            this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "addStation" && settle && settle.ownerId === p.id) {
+            const uid = action.uid;
+            if (!uid) return;
+            if (this.settlements.some((s) => s.id !== settle.id && (s.stationUids || []).includes(uid))) return;
+            if (!settle.stationUids) settle.stationUids = [];
+            if (!settle.stationUids.includes(uid)) settle.stationUids.push(uid);
+            this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "removeStation" && settle && settle.ownerId === p.id) {
+            settle.stationUids = (settle.stationUids || []).filter((u) => u !== action.uid);
+            if (settle.bills) delete settle.bills[action.uid];
+            this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "setBills" && settle && settle.ownerId === p.id) {
+            Settlement.setBills(settle, action.stationUid, action.bills);
+            this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "setStorageFilter" && settle && settle.ownerId === p.id) {
+            const uid = String(action.uid || "");
+            if (!uid || !(settle.stationUids || []).includes(uid)) return;
+            const found = this._findThingByUid(uid);
+            if (!found) return;
+            if (Settlement.stationKind(found.entry?.id) !== "storage") return;
+            StorageFilter.applyToEntry(found.entry, action.filter);
+            this._emitStorage(found.chunk, found.entry);
+            return;
+        }
+        if (op === "setJobs" && settle && settle.ownerId === p.id) {
+            settle.jobs = settle.jobs || {};
+            settle.jobs[action.pawnId] = Settlement.normalizeJobs(action.jobs);
+            this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "setStock" && settle && settle.ownerId === p.id) {
+            settle.stock = Settlement.normalizeStock(action.stock);
+            this._youDirty.add(p.id);
+            return;
+        }
+    }
+
+    _destroySettlement(settle) {
+        if (!settle) return;
+        const name = Settlement.clampName(settle.name) || "Camp";
+        const heading = Settlement.cardinalHeading(() => this.rng());
+        const keep = [];
+        for (const rec of this.settlers) {
+            if (rec.homeSettlementId !== settle.id) {
+                keep.push(rec);
+                continue;
+            }
+            this._ensureSettlerCreature(rec);
+            if (rec._resting || rec.resting) this._wakePawn(null, rec, { manual: true });
+            else this._vacatePawn(rec);
+            this._releaseSettlerAsWanderer(rec, heading);
+        }
+        this.settlers = keep;
+        this.settlements = this.settlements.filter((s) => s.id !== settle.id);
+        if (settle.stoneUid) {
+            for (const c of this.chunks.values()) {
+                const list = c.things;
+                if (!Array.isArray(list)) continue;
+                const i = list.findIndex((t) => t?.uid === settle.stoneUid);
+                if (i >= 0) {
+                    const entry = list[i];
+                    list.splice(i, 1);
+                    this._emitStorageRemoved(c, entry);
+                    break;
+                }
+            }
+        }
+        this._announceWorld(`${name} has been destroyed!`);
+    }
+
+    _releaseSettlerAsWanderer(rec, heading) {
+        if (!rec?.id) return;
+        const h = this._wandererHeading(heading);
+        const c = rec.creature || this.creatures.get(rec.id);
+        if (c) {
+            c.role = "wanderer";
+            c.ownerId = null;
+            c.leaderId = null;
+            c.homeSettlementId = null;
+            c.faction = Party.FACTION_WANDERERS;
+            c._resting = false;
+            c._restWalk = null;
+            c.ai = null;
+        }
+        if (this.wanderers.has(rec.id)) return;
+        this.wanderers.set(rec.id, {
+            id: rec.id,
+            name: rec.name,
+            look: rec.look,
+            x: rec.x,
+            y: rec.y,
+            facing: h.x > 0 ? "right" : h.x < 0 ? "left" : h.y > 0 ? "down" : "up",
+            heading: h,
+            inventory: rec.inventory,
+            body: rec.body || c?.anatomy?.toJSON?.() || null,
+            hostile: false,
+            recruitLocked: false,
+            refusedBy: [],
+            kc: rec.kc,
+            overflow: rec.overflow,
+            equipment: rec.equipment
+        });
+    }
+
+    _pinSettlements() {
+        for (const settle of this.settlements || []) {
+            const n = (this.settlers || []).filter((s) => s && !s.dead && s.homeSettlementId === settle.id).length;
+            if (!Settlement.shouldPin(settle, n)) continue;
+            for (const key of Settlement.chunkKeysFor(settle, TS, CS)) {
+                const [cx, cy] = key.split(",").map(Number);
+                this._ensureChunk(cx, cy);
+            }
+        }
+        for (const rec of this.settlers || []) {
+            if (!rec || rec.dead || rec.homeSettlementId) continue;
+            if (Number.isFinite(rec.x)) this._interestLoad(rec.x, rec.y, 1);
+        }
+    }
+
+    _tickSettlerWork(mob, delta) {
+        return SettlerWork.tick(this, mob, delta);
+    }
+
+    _thingDef(id) {
+        return thingDefs().get(id);
+    }
+
+    _itemDef(id) {
+        return itemDefs().get(id);
+    }
+
+    _findThingByUid(uid) {
+        if (!uid) return null;
+        const want = String(uid);
+        for (const c of this.chunks.values()) {
+            const list = c.things;
+            if (!Array.isArray(list)) continue;
+            for (const t of list) {
+                if (t?.uid === want) return { chunk: c, entry: t };
+            }
+        }
+        return null;
     }
 
     _ownedPawns(p) {
         if (!p) return [];
-        return [p, ...(p.party || [])].filter(Boolean);
+        const out = [p, ...(p.party || [])].filter(Boolean);
+        const seen = new Set(out.map((x) => x.id));
+        for (const s of this.settlers || []) {
+            if (!s || s.dead || s.ownerId !== p.id || seen.has(s.id)) continue;
+            out.push(s);
+            seen.add(s.id);
+        }
+        return out;
     }
 
     /** Party member to receive a dragged stack, or `from` when toPawnId is omitted. */
@@ -1239,6 +1658,10 @@ class SimWorld {
         if (id && id !== p.id) {
             const mem = (p.party || []).find((m) => m.id === id);
             if (mem && !mem.dead) return mem;
+            const rec = (this.settlers || []).find(
+                (s) => s && s.id === id && s.ownerId === p.id && !s.dead
+            );
+            if (rec) return rec;
         }
         return p;
     }
@@ -1253,7 +1676,13 @@ class SimWorld {
         const wid = action.wandererId;
         const w = this.wanderers.get(wid);
         if (!w || w.hostile || w.recruitLocked) return;
-        if ((p.party || []).length + 1 >= Party.CAP) return;
+        if ((p.party || []).length + 1 >= Party.CAP) {
+            const actor = (p.party || []).find((m) => m.id === p.controlId) || p;
+            const settle = Settlement.atPoint(this.settlements, actor.x, actor.y, TS, p.id);
+            if (settle) {
+                // fall through after checks by parking as settler
+            } else return;
+        }
         const refused = w.refusedBy || [];
         if (refused.includes(p.id)) return;
         const control = (p.party || []).find((m) => m.id === p.controlId) || p;
@@ -1286,8 +1715,21 @@ class SimWorld {
             kc: Party.rollRoughKc(() => this.rng()),
             body: w.body || null
         });
-        if (!p.party) p.party = [];
-        p.party.push(rec);
+        const actor = (p.party || []).find((m) => m.id === p.controlId) || p;
+        const park = Settlement.atPoint(this.settlements, actor.x, actor.y, TS, p.id);
+        const full = (p.party || []).length + 1 >= Party.CAP;
+        if (full && park) {
+            rec.role = "settler";
+            rec.homeSettlementId = park.id;
+            rec.ownerId = p.id;
+            if (!park.jobs) park.jobs = {};
+            park.jobs[rec.id] = Settlement.defaultJobs();
+            this.settlers.push(rec);
+            this._ensureSettlerCreature(rec);
+        } else {
+            if (!p.party) p.party = [];
+            p.party.push(rec);
+        }
         const inj = Party.rollRoughInjury(() => this.rng());
         if (inj && rec.creature?.anatomy?.part) {
             const part = rec.creature.anatomy.part(inj.partName);
@@ -2101,11 +2543,12 @@ class SimWorld {
         return null;
     }
 
-    _partyPoseBlocked(creature, x, y) {
+    _partyPoseBlocked(creature, x, y, pad = 0) {
         if (this._tileBlocked(x, y, { swim: Party.traversesWater?.(creature) })) return true;
         const body = this._creatureBodyAt(creature, x, y);
+        const p = Math.max(0, Number(pad) || 0);
         return !!this._aabbHitsThing(
-            body.left, body.right, body.top, body.bottom, x, y, 64, creature
+            body.left - p, body.right + p, body.top - p, body.bottom + p, x, y, 64, creature
         );
     }
 
@@ -2266,6 +2709,7 @@ class SimWorld {
         if (!p) return;
         const wasEating = !!p.eatChannel;
         p.eatChannel = null;
+        p._workChannel = null;
         p.attackTimer = 0;
         p.attackArt = null;
         if (wasEating) {
@@ -2510,6 +2954,13 @@ class SimWorld {
         if (to) ev.to = to;
         if (except) ev.except = except;
         this.pushEvent(ev);
+    }
+
+    /** World chat line every connected player sees (join, death, settlement news). */
+    _announceWorld(text) {
+        const msg = String(text || "");
+        if (!msg) return;
+        this.pushEvent({ kind: "chat", text: msg, system: true });
     }
 
     drainEvents() {
@@ -2790,6 +3241,10 @@ class SimWorld {
         }
         if (type === Protocol.Actions.PLACE) {
             this._tryPlace(p, action);
+            return;
+        }
+        if (type === Protocol.Actions.SETTLEMENT) {
+            this._handleSettlement(p, action);
             return;
         }
         if (type === Protocol.Actions.SLEEP) {
@@ -4711,7 +5166,8 @@ class SimWorld {
             p.poseAuth = true;
         }
         const held = this._held(p);
-        if (!held || held.toolClass !== "scraper") return;
+        const heldDef = held ? itemDefs().get(held.id) : null;
+        if (!held || Carry.stackToolClass(held, heldDef) !== "scraper") return;
         const found = this._findPlayerStorage(p, action);
         if (!found) return;
         const { chunk, entry } = found;
@@ -5852,6 +6308,14 @@ class SimWorld {
         return stacks;
     }
 
+    _unlinkStationUid(uid) {
+        if (!uid) return;
+        const hit = Settlement.unlinkStation(this.settlements, uid);
+        for (const s of hit) {
+            if (s.ownerId) this._youDirty.add(s.ownerId);
+        }
+    }
+
     _destroyCampfire(chunk, entry) {
         if (!chunk || !entry) return;
         if (entry.id === "campfire") return;
@@ -5861,6 +6325,7 @@ class SimWorld {
             const world = this._cloneStackForWorld(stack);
             if (world) this._pushDrop(x, y, world);
         }
+        this._unlinkStationUid(entry.uid);
         const i = chunk.things.indexOf(entry);
         if (i >= 0) chunk.things.splice(i, 1);
         this._emitCampfireRemoved(chunk, entry);
@@ -5901,7 +6366,9 @@ class SimWorld {
     }
 
     _isPlaceableEntry(t) {
-        return this._isStorageEntry(t) || this._isCraftStationEntry(t) || this._isSleepEntry(t);
+        const def = thingDefs().get(t?.id);
+        return this._isStorageEntry(t) || this._isCraftStationEntry(t) || this._isSleepEntry(t)
+            || Place.isSettlementThing(def, t);
     }
 
     _storagePublic(entry, chunk = null) {
@@ -5938,6 +6405,21 @@ class SimWorld {
                 occupants: Array.isArray(entry.occupants) ? entry.occupants : [null, null]
             };
         }
+        if (Place.isSettlementThing(def, entry)) {
+            Place.ensureSettlementEntry(entry);
+            return {
+                uid: entry.uid,
+                id: entry.id,
+                x: entry.x,
+                y: entry.y,
+                cx: chunk?.cx,
+                cy: chunk?.cy,
+                rev: Number(entry.rev) || 0,
+                rot: Place.normalizeRot(entry.rot),
+                settlement: true,
+                settlementId: entry.settlementId || null
+            };
+        }
         Place.ensureStorageEntry(entry, def);
         return {
             uid: entry.uid,
@@ -5948,7 +6430,8 @@ class SimWorld {
             cy: chunk?.cy,
             rev: Number(entry.rev) || 0,
             rot: Place.normalizeRot(entry.rot),
-            slots: entry.slots || []
+            slots: entry.slots || [],
+            storageFilter: entry.storageFilter || null
         };
     }
 
@@ -6027,6 +6510,15 @@ class SimWorld {
                 getThing
             })) return;
         }
+        if ((thingDef.settlement || Place.isSettlementThing(thingDef))
+            && !Settlement.canPlace(this.settlements, x, y, TS)) {
+            this.pushEvent({
+                kind: "combat_log",
+                text: "Too close to another settlement",
+                to: session.id
+            });
+            return;
+        }
 
         held.quantity = Math.max(0, Math.floor(Number(held.quantity) || 1) - 1);
         if (!(held.quantity > 0)) p.inventory[invIndex] = null;
@@ -6065,13 +6557,33 @@ class SimWorld {
             return;
         }
 
+        if (thingDef.settlement || Place.isSettlementThing(thingDef)) {
+            const name = Settlement.clampName(action.name);
+            if (!Settlement.canPlace(this.settlements, x, y, TS)) return;
+            const entry = { id: thingId, x, y, tx, ty, rot };
+            Place.ensureSettlementEntry(entry);
+            chunk.things.push(entry);
+            const settle = Settlement.createSettlement({
+                name,
+                ownerId: session.id,
+                x, y, tx, ty
+            });
+            settle.stoneUid = entry.uid;
+            entry.settlementId = settle.id;
+            this.settlements.push(settle);
+            this._emitStorage(chunk, entry);
+            this._youDirty.add(session.id);
+            this._announceWorld(`${settle.name} has been founded`);
+            return;
+        }
+
         const entry = {
             id: thingId,
             x,
             y,
             rot,
             uid: `st_${Math.round(x)}_${Math.round(y)}`,
-            slots: Place.emptySlots(thingDef.storage?.slots || 6)
+            slots: Place.emptySlots(thingDef.storage?.slots || 1)
         };
         Place.ensureStorageEntry(entry, thingDef);
         chunk.things.push(entry);
@@ -6445,6 +6957,15 @@ class SimWorld {
                 if (pawn._restWalk?.uid === entry.uid && pawn._restWalk.slot === slot) return true;
             }
         }
+        for (const rec of this.settlers || []) {
+            if (!rec || rec.id === exceptId || rec.dead) continue;
+            if (rec._restWalk?.uid === entry.uid && rec._restWalk.slot === slot) return true;
+            if ((rec._resting || rec.resting)
+                && rec.lastSleep?.uid === entry.uid
+                && (rec.lastSleep.slot || 0) === slot) {
+                return true;
+            }
+        }
         return false;
     }
 
@@ -6534,6 +7055,9 @@ class SimWorld {
             for (const m of p.party || []) {
                 if (m && !m.dead) ids.add(m.id);
             }
+        }
+        for (const s of this.settlers || []) {
+            if (s && !s.dead && s.id) ids.add(s.id);
         }
         return ids;
     }
@@ -6699,6 +7223,7 @@ class SimWorld {
             if (leftover > 0) {
                 this._pushDrop(p.x, p.y, { id: itemId, quantity: leftover });
             }
+            this._unlinkStationUid(entry.uid);
             const i = chunk.things.indexOf(entry);
             if (i >= 0) chunk.things.splice(i, 1);
             this._emitStorageRemoved(chunk, entry);
@@ -6713,6 +7238,7 @@ class SimWorld {
             if (leftover > 0) {
                 this._pushDrop(p.x, p.y, { id: itemId, quantity: leftover });
             }
+            this._unlinkStationUid(entry.uid);
             const i = chunk.things.indexOf(entry);
             if (i >= 0) chunk.things.splice(i, 1);
             this._emitStorageRemoved(chunk, entry);
@@ -7125,15 +7651,33 @@ class SimWorld {
         this._dirtyPawnOwner(p);
     }
 
+    _creatureForPawn(session, pawn) {
+        if (!pawn) return null;
+        if (session && pawn.id === session.id) {
+            return this._syncPlayerCreature(session) || this._ensurePlayerCreature(session);
+        }
+        if (session && (session.party || []).some((m) => m.id === pawn.id)) {
+            return this._ensureCompanionCreature(session, pawn);
+        }
+        if (pawn.role === "settler" || pawn.homeSettlementId) {
+            return this._ensureSettlerCreature(pawn);
+        }
+        return pawn.creature || this.creatures.get(pawn.id) || null;
+    }
+
     /**
      * Finish a bandage channel (client runs the bar; server applies tend + consume).
      */
     _tryTend(p, action = {}) {
         if (!p || p.dead) return;
         const owned = this._ownedPawns(p);
-        const tender = (action.pawnId && owned.find((m) => m.id === action.pawnId)) || p;
-        const patientPawn = (action.patientId && owned.find((m) => m.id === action.patientId)) || tender;
-        const from = (action.fromPawnId && owned.find((m) => m.id === action.fromPawnId)) || tender;
+        const findPawn = (id) => {
+            if (!id) return null;
+            return owned.find((m) => m.id === id) || this._findOwnedPawn(id);
+        };
+        const tender = findPawn(action.pawnId) || p;
+        const patientPawn = findPawn(action.patientId) || tender;
+        const from = findPawn(action.fromPawnId) || tender;
         const slot = Number.isInteger(Number(action.slot))
             ? Number(action.slot)
             : (from.hotbarIndex ?? tender.hotbarIndex ?? 0);
@@ -7166,9 +7710,7 @@ class SimWorld {
             return;
         }
 
-        const patientCreature = patientPawn.id === p.id
-            ? (this._syncPlayerCreature(p) || this._ensurePlayerCreature(p))
-            : this._ensureCompanionCreature(p, patientPawn);
+        const patientCreature = this._creatureForPawn(p, patientPawn);
         if (!patientCreature?.anatomy) return;
 
         const parseHint = (src) => ({
@@ -7303,7 +7845,7 @@ class SimWorld {
             const m = (pl.party || []).find((x) => x.id === id);
             if (m) return m;
         }
-        return null;
+        return (this.settlers || []).find((s) => s && s.id === id) || null;
     }
 
     _sessionOfPawn(pawn) {
@@ -7312,6 +7854,9 @@ class SimWorld {
         for (const pl of this.players.values()) {
             if ((pl.party || []).some((m) => m.id === pawn.id)) return pl;
         }
+        const ownerId = pawn.ownerId
+            || (this.settlers || []).find((s) => s && (s === pawn || s.id === pawn.id))?.ownerId;
+        if (ownerId && this.players.has(ownerId)) return this.players.get(ownerId);
         return null;
     }
 
@@ -7656,6 +8201,18 @@ class SimWorld {
             for (const m of p.party || []) {
                 if (m && this._isVomiting(m)) this._tickPlayerVomit(m, dtMs);
             }
+        }
+        for (const rec of this.settlers || []) {
+            if (!rec || rec.dead) continue;
+            if (rec.eatChannel) {
+                rec.eatChannel.remaining -= dtMs;
+                if (rec.eatChannel.remaining <= 0) this._finishEat(rec);
+            }
+            if (rec._workChannel) SettlerWork.tickChannel(this, rec, dtMs);
+            if (this._isVomiting(rec)) this._tickPlayerVomit(rec, dtMs);
+        }
+        for (const p of this.players.values()) {
+            if (!p.connected) continue;
             if (p.dead) {
                 this._interestLoad(p.x, p.y, this.interestRadius(p));
                 for (const m of p.party || []) {
@@ -7670,6 +8227,7 @@ class SimWorld {
         }
 
         this._tickWandererDirector(dtMs);
+        this._pinSettlements();
         this._tickCreatures(dtMs, dt);
         // Scale with /tick like the world clock (paused at 0×)
         this._tickDropDespawn(dtMs * (Number(this.tickSpeed) || 0));
@@ -7846,7 +8404,7 @@ class SimWorld {
             if (!cc) continue;
             cc.x = rec.x;
             cc.y = rec.y;
-            if (!(cc.ai instanceof PartyAI)) cc.ai = new PartyAI(cc);
+            this._bindPartyAI(cc);
             if (
                 combat
                 || rec.eatChannel
@@ -7892,7 +8450,7 @@ class SimWorld {
             if (!cc) continue;
             cc.x = rec.x;
             cc.y = rec.y;
-            if (!(cc.ai instanceof PartyAI)) cc.ai = new PartyAI(cc);
+            this._bindPartyAI(cc);
             if (
                 combat
                 || rec.eatChannel
@@ -7955,7 +8513,9 @@ class SimWorld {
                 cc.equipment = rec.equipment;
                 cc.hotbarIndex = rec.hotbarIndex ?? 0;
                 cc.kc = rec.kc;
-                if (!(cc.ai instanceof PartyAI)) cc.ai = new PartyAI(cc);
+                cc.role = rec.role || "companion";
+                cc.homeSettlementId = rec.homeSettlementId || null;
+                this._bindPartyAI(cc);
                 const wasSwinging = !!cc.isAttacking?.();
                 cc.refreshCapacities?.();
                 cc.ai.update(dtMs, world);
@@ -8009,6 +8569,68 @@ class SimWorld {
                 }
             }
         }
+        this._tickSettlerAI(dtMs, world);
+    }
+
+    _tickSettlerAI(dtMs, world) {
+        const dt = dtMs / 1000;
+        for (const rec of this.settlers || []) {
+            if (!rec || rec.dead) continue;
+            const cc = this._ensureSettlerCreature(rec);
+            if (!cc || cc.isBodyDead()) continue;
+            cc.x = rec.x;
+            cc.y = rec.y;
+            cc.facing = rec.facing || cc.facing;
+            cc._resting = !!rec._resting;
+            cc._restWalk = rec._restWalk || null;
+            cc._wadeWater = !!rec._wadeWater;
+            cc.inventory = rec.inventory;
+            cc.kc = rec.kc;
+            cc.homeSettlementId = rec.homeSettlementId;
+            cc.role = "settler";
+            this._bindPartyAI(cc);
+            cc.refreshCapacities?.();
+            cc.ai.update(dtMs, world);
+            cc.applyDesiredVel(dtMs);
+            const ox = cc.x;
+            const oy = cc.y;
+            const nx = cc.x + (cc.vx || 0) * dt;
+            const ny = cc.y + (cc.vy || 0) * dt;
+            if (!this._partyPoseBlocked(cc, nx, cc.y)) cc.x = nx;
+            if (!this._partyPoseBlocked(cc, cc.x, ny)) cc.y = ny;
+            rec.x = cc.x;
+            rec.y = cc.y;
+            rec.vx = cc.vx || 0;
+            rec.vy = cc.vy || 0;
+            rec.facing = cc.facing || rec.facing;
+            rec.attackTimer = cc.attackTimer;
+            rec.attackAngle = cc.attackAngle;
+            rec.attackArt = cc.attackArt;
+            if (
+                Math.hypot(rec.x - ox, rec.y - oy) < 0.2
+                && (Math.abs(cc.vx) > 4 || Math.abs(cc.vy) > 4)
+            ) {
+                if (this._escapeOverlappingThing(rec)) {
+                    const step = 3.5 * TS * dt;
+                    const hx = rec._escapeH?.nx || 0;
+                    const hy = rec._escapeH?.ny || 0;
+                    if (hx && !this._partyPoseBlocked(cc, rec.x + hx * step, rec.y)) {
+                        rec.x += hx * step;
+                    }
+                    if (hy && !this._partyPoseBlocked(cc, rec.x, rec.y + hy * step)) {
+                        rec.y += hy * step;
+                    }
+                    cc.x = rec.x;
+                    cc.y = rec.y;
+                } else {
+                    this._mobUnstick(cc);
+                }
+            }
+            if (cc.isBodyDead()) {
+                rec.dead = true;
+                this.settlers = this.settlers.filter((s) => s !== rec);
+            }
+        }
     }
 
     _tickCreatures(dtMs, dt) {
@@ -8030,6 +8652,10 @@ class SimWorld {
         for (const w of this.wanderers.values()) {
             const wc = this._ensureWandererCreature(w);
             if (wc && !w.dead && !wc.isBodyDead()) playerCreatures.push(wc);
+        }
+        for (const rec of this.settlers || []) {
+            const sc = this._ensureSettlerCreature(rec);
+            if (sc && !rec.dead && !sc.isBodyDead()) playerCreatures.push(sc);
         }
 
         const liveMobs = [];
@@ -8114,6 +8740,27 @@ class SimWorld {
             if (wc.anatomy?._dirty) {
                 w.body = wc.anatomy.toJSON();
                 wc.anatomy._dirty = false;
+            }
+        }
+
+        for (const rec of this.settlers || []) {
+            if (!rec || rec.dead) continue;
+            const sc = rec.creature || this.creatures.get(rec.id);
+            if (!sc || sc.isBodyDead()) continue;
+            sc.x = rec.x;
+            sc.y = rec.y;
+            sc.inventory = rec.inventory;
+            sc.hotbarIndex = rec.hotbarIndex ?? 0;
+            sc._wadeWater = !!rec._wadeWater;
+            sc.refreshCapacities?.();
+            sc.tickMelee(dtMs, meleeTargets);
+            rec.attackTimer = sc.attackTimer;
+            rec.attackMax = sc.attackMax;
+            rec.attackAngle = sc.attackAngle;
+            rec.attackArt = sc.attackTimer > 0 ? (sc.attackArt || null) : null;
+            if (sc.anatomy?._dirty) {
+                rec.body = sc.anatomy.toJSON();
+                sc.anatomy._dirty = false;
             }
         }
 
@@ -8297,6 +8944,27 @@ class SimWorld {
                     BodyHealing.minuteTick(mc, mc.ctx);
                     if (mc.isBodyDead()) {
                         mem.body = mc.anatomy?.toJSON?.() || mem.body;
+                    }
+                }
+            }
+        }
+        for (const rec of this.settlers || []) {
+            if (!rec || rec.dead) continue;
+            const cc = rec.creature || this.creatures.get(rec.id);
+            const fed = (Number(rec.kc) > 0) || (Number(rec.saturation) > 0);
+            Hunger.applyStarve(rec, this._hungerDrainForPawn(rec, cc));
+            if (cc && !cc.isBodyDead?.()) {
+                cc._malnutritionFed = fed;
+                cc.kc = rec.kc;
+                cc.saturation = rec.saturation;
+                if (BodyHealing?.minuteTick) {
+                    BodyHealing.minuteTick(cc, cc.ctx);
+                    if (cc.isBodyDead()) {
+                        rec.body = cc.anatomy?.toJSON?.() || rec.body;
+                        rec.dead = true;
+                    } else if (cc.anatomy?._dirty) {
+                        rec.body = cc.anatomy.toJSON();
+                        cc.anatomy._dirty = false;
                     }
                 }
             }
@@ -8679,12 +9347,16 @@ class SimWorld {
             dirs[j] = tmp;
         }
         const step = TS * 0.6;
+        const usePose = mob.role === "settler" || mob.role === "companion" || mob.kind === "player";
+        const blocked = (x, y) => usePose
+            ? this._partyPoseBlocked(mob, x, y)
+            : this.isBlocked(x, y);
         for (const [dx, dy] of dirs) {
             const dlen = Math.hypot(dx, dy) || 1;
             const nx = mob.x + (dx / dlen) * step;
             const ny = mob.y + (dy / dlen) * step;
-            const canX = !this.isBlocked(nx, mob.y);
-            const canY = !this.isBlocked(mob.x, ny);
+            const canX = !blocked(nx, mob.y);
+            const canY = !blocked(mob.x, ny);
             if (!canX && !canY) continue;
             mob._nudgeVx = (dx / dlen) * speed;
             mob._nudgeVy = (dy / dlen) * speed;
@@ -8950,7 +9622,6 @@ class SimWorld {
             for (const t of c.things) {
                 if (t?.cook) this._spoilStackIfDue(t.cook);
                 if (t?.catalyst) {
-                    Fire.tickStackTemp(t.catalyst);
                     this._spoilStackIfDue(t.catalyst);
                 }
                 if (Array.isArray(t?.fuel)) {
@@ -9176,6 +9847,8 @@ class SimWorld {
             storages,
             mobs,
             wanderers: [...this.wanderers.values()].map((w) => this._publicWanderer(w)),
+            settlers: (this.settlers || []).filter((s) => s && !s.dead).map((s) => this._publicSettler(s)),
+            settlements: this.settlements || [],
             chunkCursor: { cx, cy },
             youId: viewerId
         };
@@ -9248,7 +9921,11 @@ class SimWorld {
                     ? { progress: 1 - m.eatChannel.remaining / m.eatChannel.max }
                     : null
             })),
-            controlId: p.controlId || p.id
+            controlId: p.controlId || p.id,
+            settlements: this._ownedSettlements(p.id),
+            settlers: (this.settlers || [])
+                .filter((s) => s && !s.dead && s.ownerId === p.id)
+                .map((s) => this._publicSettler(s))
         };
     }
 }

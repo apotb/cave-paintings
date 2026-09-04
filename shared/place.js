@@ -88,6 +88,20 @@
         return !!thingDef?.craftStation;
     }
 
+    function isSettlementThing(thingDef, entry) {
+        if (thingDef?.settlement) return true;
+        return entry?.id === "settling_stone" || !!entry?.settlementId;
+    }
+
+    function ensureSettlementEntry(entry) {
+        if (!entry) return entry;
+        if (!entry.uid) {
+            entry.uid = `ss_${Math.round(Number(entry.x) || 0)}_${Math.round(Number(entry.y) || 0)}`;
+        }
+        entry.rot = normalizeRot(entry.rot);
+        return entry;
+    }
+
     /**
      * Inventory / craft / hotbar texture for an item.
      * Dedicated item art (`itemDef.key`) wins when that texture exists;
@@ -324,8 +338,15 @@
 
     function storageSlotCount(thingDef, entry) {
         const fromDef = Math.floor(Number(thingDef?.storage?.slots) || 0);
-        if (Array.isArray(entry?.slots) && entry.slots.length) return entry.slots.length;
-        return fromDef > 0 ? fromDef : 0;
+        const fromEntry = Array.isArray(entry?.slots) ? entry.slots.length : 0;
+        if (fromDef > 0) return Math.max(fromDef, fromEntry);
+        return fromEntry;
+    }
+
+    /** Basket 8 → 2×4; drying rack 1 → single slot. */
+    function storageLayoutCols(n) {
+        const count = Math.max(1, Math.floor(Number(n) || 1));
+        return Math.min(4, count);
     }
 
     function ensureStorageEntry(entry, thingDef) {
@@ -391,6 +412,8 @@
         thingImageLoads,
         canRotate,
         isCraftStation,
+        isSettlementThing,
+        ensureSettlementEntry,
         itemIconKey,
         ensureCraftStationEntry,
         inPlaceRange,
@@ -408,6 +431,7 @@
         ensureSleepEntry,
         emptySlots,
         storageSlotCount,
+        storageLayoutCols,
         ensureStorageEntry,
         isStorageEmpty,
         isStorageThing,

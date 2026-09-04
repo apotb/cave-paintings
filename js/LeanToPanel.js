@@ -72,7 +72,9 @@ class LeanToPanel {
             enabledKey: `_${kind}Enabled`
         };
         const paint = () => {
-            const strokeW = 2 / (scene.worldZoom || 1);
+            const strokeW = typeof pixelUiWorldStroke === "function"
+                ? pixelUiWorldStroke(scene)
+                : 2 / (scene.worldZoom || 1);
             const enabled = this[state.enabledKey];
             if (!enabled) {
                 rect.setFillStyle(BG, 1);
@@ -155,6 +157,7 @@ class LeanToPanel {
         if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
         if (this.scene.storagePanel?.visible) this.scene.storagePanel.close();
         if (this.scene.campfirePanel?.visible) this.scene.campfirePanel.close();
+        this.scene.closeCraftStationMenu?.();
         this.leanTo = leanTo;
         this.slot = Math.max(0, Math.floor(Number(slot) || 0));
         this.visible = true;

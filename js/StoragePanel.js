@@ -16,6 +16,7 @@ class StoragePanel {
 
         this._buildSlots();
         this._buildTake();
+        this._buildSettle();
 
         this.dryBarBg = scene.add.graphics();
         this.dryBarFill = scene.add.graphics();
@@ -39,8 +40,8 @@ class StoragePanel {
     _slotCount() {
         const entry = this.storage?.entry;
         const def = this.storage?.meta;
-        if (typeof Place !== "undefined") return Place.storageSlotCount(def, entry) || 6;
-        return Array.isArray(entry?.slots) ? entry.slots.length : 6;
+        if (typeof Place !== "undefined") return Place.storageSlotCount(def, entry) || 8;
+        return Array.isArray(entry?.slots) ? entry.slots.length : 8;
     }
 
     _isDryingRack() {
@@ -98,7 +99,7 @@ class StoragePanel {
     }
 
     _buildSlots() {
-        for (let i = 0; i < 6; i++) {
+        for (let i = 0; i < 8; i++) {
             const key = String(i);
             const slot = this.scene.add.image(0, 0, "slot")
                 .setOrigin(0.5, 0.5)
@@ -215,7 +216,9 @@ class StoragePanel {
         this._takeBw = 78;
         this._takeBh = 28;
         this._paintTake = () => {
-            const strokeW = 2 / (this.scene.worldZoom || 1);
+            const strokeW = typeof pixelUiWorldStroke === "function"
+                ? pixelUiWorldStroke(this.scene)
+                : 2 / (this.scene.worldZoom || 1);
             if (!this._takeEnabled) {
                 this.takeRect.setFillStyle(BG, 1);
                 this.takeRect.setStrokeStyle(strokeW, OUTLINE);
@@ -251,6 +254,37 @@ class StoragePanel {
         });
 
         this.container.add(this.takeBtn);
+    }
+
+    _buildSettle() {
+        const sys = this.scene.settlementSys;
+        if (!sys) return;
+        this._settleUi = sys.makeStationButton(() => {
+            if (this.storage) sys.toggleStation(this.storage);
+            this._syncSettle();
+        });
+        this._billUi = sys.makeWorldButton("Storage", () => {
+            if (!this.storage) return;
+            const S = typeof Settlement !== "undefined" ? Settlement : null;
+            const kind = S?.stationKind?.(this.storage?.entry?.id || this.storage?.meta?.id);
+            if (kind === "rack") sys.openBills?.(this.storage);
+            else sys.openStorageFilter?.(this.storage);
+        });
+        this.container.add(this._settleUi.btn);
+        this.container.add(this._billUi.btn);
+        this._settleUi.btn.setVisible(false);
+        this._billUi.btn.setVisible(false);
+    }
+
+    _syncSettle() {
+        this.scene.settlementSys?.syncStationButton(this._settleUi, this.storage);
+        const added = this.scene.settlementSys?.isAdded(this.storage);
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        const kind = S?.stationKind?.(this.storage?.entry?.id || this.storage?.meta?.id);
+        const showBills = !!added && (kind === "storage" || kind === "rack");
+        this._billUi?.btn.setVisible(showBills);
+        this._billUi?.setLabel?.(kind === "rack" ? "Bills" : "Storage");
+        this._placeActionRow();
     }
 
     _stackFor(key) {
@@ -301,6 +335,7 @@ class StoragePanel {
         if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
         if (this.scene.campfirePanel?.visible) this.scene.campfirePanel.close();
         if (this.scene.leanToPanel?.visible) this.scene.leanToPanel.close();
+        this.scene.closeCraftStationMenu?.();
 
         if (this.storage && this.storage !== storage) this._notifyStorage("leave");
         this.storage = storage;
@@ -424,7 +459,9 @@ class StoragePanel {
         const objH = this.storage.displayHeight || 16;
         const clear = 2;
         const n = this._slotCount();
-        const cols = Math.min(3, Math.max(1, n));
+        const cols = typeof Place !== "undefined"
+            ? Place.storageLayoutCols(n)
+            : Math.min(4, Math.max(1, n));
         const rows = Math.ceil(n / cols);
         const bottomRowY = -(objH + clear + slotW / 2);
 
@@ -460,10 +497,33 @@ class StoragePanel {
             this.takeText.setFontSize(`${pixelUiFontSize(16, s)}px`);
             this.takeText.setScale(1 / zoom);
         }
-        this.takeBtn.setPosition(0, clear + bh / 2);
+        const actionY = clear + bh / 2;
+        const gap = 8 * ws;
+        this._actionRow = { y: actionY, bw, bh, gap };
+        this._settleUi?.setSize(bh);
+        this._syncSettle();
+        if (this._billUi) {
+            this._billUi.rect.setSize(bw, bh);
+            if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(this._billUi.text, 14, this.scene);
+            this._billUi.paint?.();
+        }
 
         this.container.setPosition(this.storage.x, this.storage.y);
         this.refresh();
+        this._placeActionRow();
+    }
+
+    _placeActionRow() {
+        const row = this._actionRow;
+        if (!row) return;
+        this.scene.settlementSys?.placeAddActionRow(this._settleUi, this.takeBtn, {
+            y: row.y, gap: row.gap, addW: row.bh, actionW: row.bw,
+            addOn: !!this._settleUi?.btn?.visible,
+            actionOn: !!this.takeBtn?.visible
+        });
+        if (this._billUi) {
+            this._billUi.btn.setPosition(0, row.y + row.bh + row.gap);
+        }
     }
 
     _syncTakeHitArea(enable) {
@@ -518,8 +578,13 @@ class StoragePanel {
     containsPointer(pointer) {
         if (!this.visible || !this.container?.visible || !pointer) return false;
         if (this.getSlotAt(pointer.x, pointer.y) != null) return true;
-        if (!this.takeBtn?.visible) return false;
-        return this.pointerOnTake(pointer);
+        const pt = this.scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const hit = (rect, vis) => !!(vis && rect?.getBounds
+            && Phaser.Geom.Rectangle.Contains(rect.getBounds(), pt.x, pt.y));
+        if (this.takeBtn?.visible && this.pointerOnTake(pointer)) return true;
+        if (hit(this._settleUi?.rect, this._settleUi?.btn?.visible)) return true;
+        if (hit(this._billUi?.rect, this._billUi?.btn?.visible)) return true;
+        return false;
     }
 
     _sourceInv(bag = this._sourceBag) {

@@ -192,6 +192,17 @@ function roundUpToEven(num) {
 const PIXEL_UI_FONT = "PrimaryFont";
 const PIXEL_FONT_CELL = 8;
 
+/** Screen-space outline thickness used by pause / HUD / settlement buttons. */
+function pixelUiStroke(uiScale) {
+    return Math.max(2, Math.round(2 * (Number(uiScale) || 1)));
+}
+
+/** Same outline in world units so zoomed station buttons match the HUD. */
+function pixelUiWorldStroke(scene) {
+    const zoom = Number(scene?.worldZoom || scene?.cameras?.main?.zoom || 1) || 1;
+    return pixelUiStroke(scene?.uiScale || 1) / zoom;
+}
+
 function pixelUiFontSize(basePx, scale) {
     const cell = PIXEL_FONT_CELL;
     const raw = Math.max(cell, (Number(basePx) || cell) * (Number(scale) || 1));
@@ -217,7 +228,8 @@ function applyPixelUiFont(text, basePx, uiScale, extraScale = 1) {
     if (familyChanged) text.setFontFamily?.(PIXEL_UI_FONT);
     if (fontChanged) text.setFontSize(sizeStr);
     if (scaleChanged) text.setScale(extra);
-    crispUiText(text);
+    // Phaser TextStyle.setResolution always rebuilds the canvas; skip when unchanged.
+    if (familyChanged || fontChanged || scaleChanged || !text._pixelUiCrisp) crispUiText(text);
     text._pixelUiCrisp = px;
     return extra;
 }
@@ -269,12 +281,15 @@ function hookPixelTextureClamp(scene) {
 
 function crispUiText(text) {
     if (!text) return text;
-    text.setFontFamily?.(PIXEL_UI_FONT);
+    if (text.style?.fontFamily !== PIXEL_UI_FONT) text.setFontFamily?.(PIXEL_UI_FONT);
     if (text.context) text.context.imageSmoothingEnabled = false;
-    try { text.setResolution?.(1); } catch (_) {}
+    if (text.style?.resolution !== 1) {
+        try { text.setResolution?.(1); } catch (_) {}
+    }
     const tex = text.texture;
     if (tex?.setFilter && typeof Phaser !== "undefined") {
-        tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
+        const nearest = Phaser.Textures.FilterMode.NEAREST;
+        if (tex.filterMode !== nearest) tex.setFilter(nearest);
     }
     return text;
 }
@@ -1388,14 +1403,7 @@ function unindexThingSprite(scene, thing) {
 
 function forThingsNearAabb(scene, left, right, top, bottom, fn) {
     const cells = scene?._thingCells;
-    if (!cells || !cells.size) {
-        const things = scene?._things?.getChildren?.();
-        if (!things) return false;
-        for (let i = 0; i < things.length; i++) {
-            if (fn(things[i])) return true;
-        }
-        return false;
-    }
+    if (!cells || !cells.size) return false;
     const ts = scene.tileSize || 16;
     const pad = ts;
     const x0 = Math.floor((left - pad) / ts);
@@ -1530,7 +1538,7 @@ function teleportPawnPose(pawn, x, y) {
 }
 
 /** Pop the Arcade body into open space — never into a gap between two solids. */
-function nudgePawnOutOfThing(pawn, thing) {
+function nudgePawnOutOfThing(pawn, thing, far = false) {
     const tb = thing?.body;
     const body = pawn?.body;
     if (!tb || !body) return false;
@@ -1556,6 +1564,7 @@ function nudgePawnOutOfThing(pawn, thing) {
         teleportPawnPose(pawn, o.x, o.y);
         return true;
     }
+    if (!far) return false;
     const free = findFreePawnPose(pawn, 80);
     if (!free) return false;
     teleportPawnPose(pawn, free.x, free.y);
@@ -1563,10 +1572,10 @@ function nudgePawnOutOfThing(pawn, thing) {
 }
 
 /**
- * Arcade corner snag: both axes blocked, velocity never moves them.
- * Commit a short free step, then return that heading.
+ * Arcade corner snag: pick a free heading. `commit` teleports one step;
+ * without it the pawn only steers so they don't vibrate in place.
  */
-function slidePawnAroundThings(pawn, nx, ny, dist, scramble, side) {
+function slidePawnAroundThings(pawn, nx, ny, dist, scramble, side, commit) {
     if (!pawn?.body) return null;
     const s = side >= 0 ? 1 : -1;
     const step = Math.max(2, Number(dist) || 4);
@@ -1602,7 +1611,7 @@ function slidePawnAroundThings(pawn, nx, ny, dist, scramble, side) {
         const px = pawn.x + sx * step;
         const py = pawn.y + sy * step;
         if (pawnPoseHitsThing(pawn, px, py)) continue;
-        teleportPawnPose(pawn, px, py);
+        if (commit) teleportPawnPose(pawn, px, py);
         return { nx: sx, ny: sy };
     }
     return null;

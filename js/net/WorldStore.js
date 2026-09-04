@@ -101,6 +101,8 @@ const WorldStore = (() => {
             spawn: { x: 8, y: 16 },
             clock: { gameDay: 1, gameMinutes: 8 * 60, tickSpeed: 1 },
             poses: {},
+            settlements: [],
+            settlers: [],
             chunks: {},
             favorite: false,
             lastPlayedAt: 0

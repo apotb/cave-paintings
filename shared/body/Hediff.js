@@ -501,9 +501,9 @@
             const list = body.hediffs || [];
             for (let i = list.length - 1; i >= 0; i--) {
                 const h = list[i];
-                if (h.id === "malnutrition" || h.id === "infection" || def.local) continue;
+                if (!h || h.id === "malnutrition" || h.id === "infection") continue;
                 const def = this.def(ctx, h.id);
-                if (!def) continue;
+                if (!def || def.local) continue;
 
                 const spd = Number(def.severityPerDay);
                 if (Number.isFinite(spd) && spd !== 0) {

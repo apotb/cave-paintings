@@ -19,7 +19,9 @@ function defs() {
             food: { spoil: 12 }
         },
         roast_beef: { id: "roast_beef", food: { spoil: 36 } },
-        sharp_stick: { id: "sharp_stick", cook: { method: "stick_roast" } }
+        sharp_stick: { id: "sharp_stick", cook: { method: "stick_roast" } },
+        cracked_coconut: { id: "cracked_coconut", cook: { method: "shell_simmer", temp: 450 } },
+        drying_rack: { id: "drying_rack", cook: { method: "smoke_hide" } }
     };
 }
 
@@ -309,18 +311,54 @@ test("cook heats stack.temp and result inherits it", () => {
     assert.ok(hot.cook.temp > 500, `roast inherits heat, got ${hot.cook.temp}`);
 });
 
-test("tickPit heats the cooking tool, not leftover fuel", () => {
+test("tickPit heats a simmer vessel, not fuel, a roast stick, or a smoke rack", () => {
     const e = pit({
         id: "campfire",
         fuel: [{ id: "stick", quantity: 5 }, null],
-        catalyst: { id: "sharp_stick", quantity: 1 },
+        catalyst: { id: "cracked_coconut", quantity: 1 },
         pitTemp: 500,
         maxTemp: 600,
         burnRemaining: 5
     });
     Fire.tickPit(e, getItem, 1);
     assert.equal(e.fuel[0].temp, undefined);
-    assert.ok(e.catalyst.temp > Fire.AMBIENT_TEMP, `tool should heat, got ${e.catalyst.temp}`);
+    assert.ok(e.catalyst.temp > Fire.AMBIENT_TEMP, `shell should heat, got ${e.catalyst.temp}`);
+
+    const stickPit = pit({
+        id: "campfire",
+        fuel: [{ id: "stick", quantity: 5 }, null],
+        catalyst: { id: "sharp_stick", quantity: 1, temp: 400 },
+        pitTemp: 500,
+        maxTemp: 600,
+        burnRemaining: 5
+    });
+    Fire.tickPit(stickPit, getItem, 1);
+    assert.equal(stickPit.catalyst.temp, undefined);
+
+    const rackPit = pit({
+        id: "campfire",
+        fuel: [{ id: "stick", quantity: 5 }, null],
+        catalyst: { id: "drying_rack", quantity: 1 },
+        pitTemp: 500,
+        maxTemp: 600,
+        burnRemaining: 5
+    });
+    Fire.tickPit(rackPit, getItem, 1);
+    assert.equal(rackPit.catalyst.temp, undefined);
+});
+
+test("simmer vessel reaches pit temp; ambient spoil cooling must not fight it", () => {
+    const e = pit({
+        id: "campfire",
+        fuel: [{ id: "stick", quantity: 20 }, null],
+        catalyst: { id: "cracked_coconut", quantity: 1 },
+        pitTemp: 600,
+        maxTemp: 600,
+        burnRemaining: 40
+    });
+    for (let t = 1; t <= 80; t++) Fire.tickPit(e, getItem, t);
+    assert.equal(e.pitTemp, 600);
+    assert.equal(e.catalyst.temp, 600);
 });
 
 test("tickStackTemp cools off-fire food and drops the field at ambient", () => {

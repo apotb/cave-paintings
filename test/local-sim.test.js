@@ -79,3 +79,31 @@ test("_tick hunger uses the shared drain helper", () => {
     sim._tick();
     assert.ok(Math.abs((before - sim._pawn.saturation) - expect) < 1e-6);
 });
+
+test("LocalSim clusters party members new to this world next to the leader", () => {
+    const sim = makeSim();
+    sim.world.poses = {};
+    sim._pawn.x = 80;
+    sim._pawn.y = 96;
+    sim._party = [{ id: "c1", name: "Og", x: 9000, y: 8000, facing: "up" }];
+    sim._placeNewPartyNearPawn();
+    const rec = sim._party[0];
+    assert.equal(rec.x, 96);
+    assert.equal(rec.y, 96);
+});
+
+test("LocalSim restores a companion logout pose for this world", () => {
+    const sim = makeSim();
+    sim.world.poses = {
+        p1: { x: 48, y: 64, facing: "down" },
+        c1: { x: 320, y: 400, facing: "left" }
+    };
+    sim._pawn.x = 48;
+    sim._pawn.y = 64;
+    sim._party = [{ id: "c1", name: "Og", x: 9000, y: 8000, facing: "up" }];
+    sim._placeNewPartyNearPawn();
+    const rec = sim._party[0];
+    assert.equal(rec.x, 320);
+    assert.equal(rec.y, 400);
+    assert.equal(rec.facing, "left");
+});

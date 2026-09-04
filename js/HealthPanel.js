@@ -218,6 +218,7 @@ class HealthPanel {
 
     /** Open player health (clears corpse inspect). */
     open() {
+        if (this.scene.settlementPanel?.visible) this.scene.settlementSys?.closePanel?.();
         this._inspectBody = null;
         this._inspectTitle = null;
         this._injScroll = 0;
@@ -234,6 +235,7 @@ class HealthPanel {
      */
     openInspect(body, title) {
         if (!body) return;
+        if (this.scene.settlementPanel?.visible) this.scene.settlementSys?.closePanel?.();
         this._inspectBody = body;
         this._inspectTitle = title || "Corpse";
         this._injScroll = 0;

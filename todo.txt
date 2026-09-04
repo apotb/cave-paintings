@@ -12,7 +12,7 @@ More animals -- lynx (neutral), auroch (scared)
 
 Better party management Kenshi-esque -- choose which severity of injuries to tend, make certain party members bodyguards that will only attack enemies near you, etc
 
-Settling Stone -- allows you to create a real settlement that will allow for a lot of new mechanics. When placed, it will allow you to name your settlement, and while you're in its UI you'll be able to see the range of your settlement. You'll also have a button on-screen while you're within the settlement's range to switch between the settlement UI and regular UI at any time. You'll be able to drop off party members at the settlement, or pick up new ones. While at the settlement, your people will rest, eat, and do automated tasks. You can automate tasks such as leatherworking, cooking, or farming.
+Farming and renewable trees
 
 Research Table -- part of settlement feature
 
@@ -23,3 +23,9 @@ Body/biome temperature
 Diet -- fruits, vegetables, grains, protein, dairy
 
 Icons in tooltips
+
+Needs beyond hunger: sleep, recreation, socialization, etc
+
+Schedule tab for settlement
+
+Upgrade to Phaser 4.0

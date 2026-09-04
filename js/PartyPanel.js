@@ -13,7 +13,38 @@ class PartyPanel {
     }
 
     layout() {
+        this._layoutKey = null;
         this.refresh();
+    }
+
+    /** Cheap per-frame: offscreen pips + vitals. Full card rebuild only when roster/layout changes. */
+    tick() {
+        const scene = this.scene;
+        this.updatePips();
+        const roster = scene.partySys?.roster?.() || [];
+        const show = roster.length >= 2;
+        if (!show) {
+            if (this.visible) this.refresh();
+            return;
+        }
+        const s = scene.uiScale || 1;
+        const ids = [];
+        for (let i = 0; i < roster.length; i++) ids.push(roster[i]?.pawnId || i);
+        const key = `${ids.join("\0")}|${scene.player?.pawnId || ""}|${scene.leader?.pawnId || ""}|${s}|${scene.scale.width}|${scene.scale.height}`;
+        if (key !== this._layoutKey) {
+            this.refresh();
+            return;
+        }
+        for (let i = 0; i < this.rows.length; i++) {
+            const row = this.rows[i];
+            const pawn = row.pawn;
+            if (!pawn) continue;
+            const dead = !!pawn.isBodyDead?.();
+            const far = this._isDetached(pawn);
+            const a = dead ? 0.4 : far ? 0.55 : 1;
+            if (row.root.alpha !== a) row.root.setAlpha(a);
+            this._drawVitals(row, pawn, s, row._cardW);
+        }
     }
 
     refresh() {
@@ -24,10 +55,14 @@ class PartyPanel {
         this.root.setVisible(show);
         this.visible = show;
         if (!show) {
+            this._layoutKey = null;
             this._clearRows();
             return;
         }
         const s = scene.uiScale || 1;
+        const ids = [];
+        for (let i = 0; i < roster.length; i++) ids.push(roster[i]?.pawnId || i);
+        this._layoutKey = `${ids.join("\0")}|${scene.player?.pawnId || ""}|${scene.leader?.pawnId || ""}|${s}|${scene.scale.width}|${scene.scale.height}`;
         const P = typeof Party !== "undefined" ? Party : { COLOR_ALLY: "#80e080" };
         while (this.rows.length < roster.length) this._makeRow();
         while (this.rows.length > roster.length) {
@@ -86,6 +121,8 @@ class PartyPanel {
             const dead = !!pawn.isBodyDead?.();
             const far = this._isDetached(pawn);
             row.root.setAlpha(dead ? 0.4 : far ? 0.55 : 1);
+            row._cardW = w;
+            row._vitalsSig = null;
             this._drawVitals(row, pawn, s, w);
         });
     }
@@ -143,16 +180,23 @@ class PartyPanel {
     }
 
     _drawVitals(row, pawn, s, cardW) {
-        const g = row.vitals;
-        g.clear();
         const cap = pawn.capacities || (pawn.anatomy ? new Capacities(pawn.anatomy) : null);
         const pain = Phaser.Math.Clamp(cap?.pain?.() ?? 0, 0, 1);
         const stomach = Math.max(1, Number(pawn.stomach) || 2000);
-        const kcFrac = Phaser.Math.Clamp((Number(pawn.kc) || 0) / stomach, 0, 1);
-        const satFrac = Phaser.Math.Clamp((Number(pawn.saturation) || 0) / stomach, 0, 1);
+        const kc = Number(pawn.kc) || 0;
+        const sat = Number(pawn.saturation) || 0;
         const weight = pawn.getInventoryWeight?.() ?? 0;
         const strength = Math.max(1, Number(pawn.strength) || 1);
-        const starving = (pawn.kc || 0) <= 0;
+        const starving = kc <= 0;
+        const downed = !!pawn._downed;
+        const bags = this._bagsFull(pawn);
+        const sig = `${pain.toFixed(3)}|${kc}|${sat}|${weight}|${strength}|${starving}|${downed}|${bags}|${s}|${cardW || 0}`;
+        if (row._vitalsSig === sig) return;
+        row._vitalsSig = sig;
+        const g = row.vitals;
+        g.clear();
+        const kcFrac = Phaser.Math.Clamp(kc / stomach, 0, 1);
+        const satFrac = Phaser.Math.Clamp(sat / stomach, 0, 1);
         const w = Math.max(28 * s, (cardW || 56 * s) - 16 * s);
         const h = 3 * s;
         const gap = 1 * s;
@@ -194,15 +238,14 @@ class PartyPanel {
             g.fillStyle(0xF39C12, 1);
             g.fillRect(x, y, width2, h);
         }
-        if (this._bagsFull(pawn)) {
+        if (bags) {
             const u = Math.max(1, Math.round(s));
             this._drawPixelBang(g, x - u, y + h / 2, u);
         }
 
-        row.warn.setVisible(starving || !!pawn._downed);
-        row.warn.setText(pawn._downed ? "!" : starving ? "H" : "");
-        if (typeof applyPixelUiFont === "function") applyPixelUiFont(row.warn, 8, s);
-        else row.warn.setFontSize(pixelUiFontSize(8, s));
+        const warn = downed ? "!" : starving ? "H" : "";
+        row.warn.setVisible(!!warn);
+        if (row.warn.text !== warn) row.warn.setText(warn);
     }
 
     _layoutCard(row, w, h, s, sprH, padY, nameH) {
@@ -252,16 +295,19 @@ class PartyPanel {
         root.add([bg, spr, crown, name, vitals, warn, hit]);
         const row = { root, bg, hit, spr, crown, name, vitals, warn, pawn: null };
         hit.on("pointerdown", () => {
+            if (scene._gamePaused) return;
             if (row.pawn) scene.partySys?.tryAllyClick?.(row.pawn, { forceSwitch: true });
         });
         hit.on("pointerover", (p) => {
-            if (!row.pawn) return;
+            if (scene._gamePaused || !row.pawn) return;
             scene.showTooltip?.(() => {
                 const pawn = row.pawn;
                 if (!pawn) return "";
                 const name = pawn.displayName?.() || "";
-                const busy = scene.partySys?.activityTooltip?.(pawn) || "";
-                return busy ? `${name}\n${busy}` : name;
+                const controlled = !!(pawn.isControlled?.() || pawn === scene.player);
+                const busy = controlled ? "" : (scene.partySys?.activityTooltip?.(pawn) || "");
+                const text = busy ? `${name}\n${busy}` : name;
+                return scene.partySys?.withHeldTooltip?.(pawn, text) || text;
             }, p.x, p.y, hit);
         });
         hit.on("pointerout", () => {

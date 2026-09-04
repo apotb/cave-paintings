@@ -568,7 +568,8 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         if (!(tickScale > 0)) {
             this.setVelocity(0, 0);
             setCreatureProne(this, prone);
-            this.setDepth(this.y | 0);
+            const d = this.y | 0;
+            if (this.depth !== d) this.setDepth(d);
             this.reassignChunkIfNeeded();
             if (this.active) this.syncToEntry();
             return;
@@ -598,7 +599,8 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             if (tps > 0.05) this.anims.timeScale = Party.walkAnimTimeScale(tps);
         }
 
-        this.setDepth(this.y | 0);
+        const d = this.y | 0;
+        if (this.depth !== d) this.setDepth(d);
         this.reassignChunkIfNeeded();
         if (!this.active) return;
         this.syncToEntry();
@@ -762,6 +764,7 @@ class DroppedItem extends Mob {
     static makeEntry(item, x, y, quantity, spoilAt, stackExtras = null) {
         const entry = {
             id: item.id,
+            uid: `drop-${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`,
             x,
             y,
             quantity,
@@ -803,6 +806,10 @@ class DroppedItem extends Mob {
 
         this.entry = entry;
         this.chunk = chunk;
+        if (!entry.uid) {
+            entry.uid = `drop-${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+        }
+        this.uid = entry.uid;
         this.item = item || { id: entry.id, key: texKey, maxStack: 1 };
         this.quantity = Number(entry.quantity) || 1;
         this.lifeMs = entry.lifeMs != null ? Number(entry.lifeMs) : DROP_LIFE_MS;
@@ -1022,11 +1029,11 @@ class DroppedItem extends Mob {
      * Try to move this drop into the player's inventory.
      * @returns {boolean} true if any quantity was taken
      */
-    tryPickup() {
+    tryPickup(pawn = null) {
         if (!this.active || !this.item || !(this.quantity > 0)) return false;
-        // Dedicated MP: ask the server. LocalSim SP takes from chunk.meta locally.
+        const player = pawn || this.scene.player;
         if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
-            if (this.entry?.netSync) {
+            if (this.entry?.netSync && player === this.scene.player) {
                 this.scene.net.sendAction({
                     type: NetProtocol.Actions.PICKUP,
                     dropId: this.entry.uid || null
@@ -1034,7 +1041,6 @@ class DroppedItem extends Mob {
             }
             return false;
         }
-        const player = this.scene.player;
         if (!player) return false;
 
         if (typeof hasStackExtras === "function" ? hasStackExtras(this) : (this.customName || this.food || this.ingredients || this.toolClass)) {
@@ -1067,6 +1073,8 @@ class DroppedItem extends Mob {
                 ...(this.temp != null ? { temp: this.temp } : {})
             };
             if (typeof Hide !== "undefined") Hide.pickupSoak(stack, now);
+            const want = Math.max(1, Number(this.quantity) || 1);
+            if ((player.countLootSpace?.(stack, want) ?? 0) < want) return false;
             const inv = player.inventory;
             const empty = inv.findIndex(s => !s);
             if (empty !== -1) {

@@ -85,7 +85,8 @@
         PARTY_EAT: "party_eat",
         /** Finish force-feeding a downed party member (dedicated MP). */
         FEED: "feed",
-        GIVE_ITEM: "give_item"
+        GIVE_ITEM: "give_item",
+        SETTLEMENT: "settlement"
     };
 
     /**

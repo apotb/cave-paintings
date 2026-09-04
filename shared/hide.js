@@ -333,6 +333,11 @@
         return false;
     }
 
+    /** Fleshed hides in water are soaking — haulers must not scoop them back up. */
+    function leaveHaulInWater(itemDef, onWater) {
+        return !!onWater && isFleshedHide(itemDef);
+    }
+
     function tickSoakDrop(entry, now, getItem, onWater) {
         if (!entry) return { changed: false };
         const def = typeof getItem === "function" ? getItem(entry.id) : null;
@@ -426,6 +431,7 @@
         beginSoak,
         pickupSoak,
         pausesDropDespawn,
+        leaveHaulInWater,
         tickSoakDrop
     };
 });

@@ -2,6 +2,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { Body } = require("../shared/body/Body");
 const BodyHealing = require("../shared/body/Healing");
+const Hediffs = require("../shared/body/Hediff");
 const GameMath = require("../shared/gameMath");
 const { loadDefs, DataStore, bodyCtx } = require("./helpers/load");
 
@@ -77,4 +78,13 @@ test("rollTendQuality respects self-tend factor", () => {
         { selfTend: true }
     );
     assert.ok(Math.abs(q - 0.4 * 0.7) < 1e-9);
+});
+
+test("minuteTick with food poisoning does not throw", () => {
+    const owner = makeOwner();
+    owner.anatomy.addHediff("food_poisoning", 0.5);
+    Hediffs.minuteTick(owner, owner.anatomy.ctx);
+    const h = owner.anatomy.hediff?.("food_poisoning");
+    assert.ok(h);
+    assert.ok(h.severity < 0.5);
 });

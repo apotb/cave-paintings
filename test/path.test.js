@@ -51,3 +51,69 @@ test("planPath goes around a tree that blocks standing feet, not cell center", (
     assert.ok(combat.path && combat.path.length);
     assert.ok(!(Math.abs(combat.ny) < 0.15 && combat.nx > 0.9));
 });
+
+test("planPath goes around a long wall beyond the old 12-tile / 280-step cap", () => {
+    const TS = 16;
+    const wallY = 10;
+    function blocked(x, y) {
+        const c = Path.cellOf(x, y, TS);
+        return c.cy === wallY && c.cx >= 5 && c.cx <= 20;
+    }
+    const from = Path.cellStand(3, wallY, TS);
+    const to = Path.cellStand(22, wallY, TS);
+    assert.equal(blocked(from.x, from.y), false);
+    assert.equal(blocked(to.x, to.y), false);
+
+    const path = Path.planPath(from, to, blocked, { cellSize: TS, maxRange: 20, side: 1 });
+    assert.ok(path && path.length, "long-range planPath returned a route");
+    for (const p of path) {
+        assert.equal(blocked(p.x, p.y), false, `waypoint hits wall ${JSON.stringify(p)}`);
+    }
+    const last = path[path.length - 1];
+    assert.ok(
+        Math.hypot(last.x - to.x, last.y - to.y) < TS,
+        "path reaches the far side of the wall"
+    );
+
+    const steered = Path.steerToward({
+        from, to, blocked, cellSize: TS, side: 1, dt: 16, maxRange: 20
+    });
+    assert.ok(steered.path && steered.path.length, "steerToward did not bee-line through the wall");
+    assert.equal(blocked(from.x + steered.nx * 8, from.y + steered.ny * 8), false);
+});
+
+test("steerToward does not replan when a follow target drifts", () => {
+    const TS = 16;
+    function blocked(x, y) {
+        const c = Path.cellOf(x, y, TS);
+        return c.cy === 10 && c.cx >= 4 && c.cx <= 8;
+    }
+    const from = Path.cellStand(2, 10, TS);
+    const to = Path.cellStand(12, 10, TS);
+    const first = Path.steerToward({
+        from, to, blocked, cellSize: TS, side: 1, dt: 16, maxRange: 16
+    });
+    assert.equal(first.replanned, true);
+    assert.ok(first.path && first.path.length);
+
+    const drifted = { x: to.x + 64, y: to.y };
+    let probes = 0;
+    function counted(x, y) {
+        probes++;
+        return blocked(x, y);
+    }
+    const second = Path.steerToward({
+        from,
+        to: drifted,
+        blocked: counted,
+        cellSize: TS,
+        side: first.side,
+        dt: 16,
+        maxRange: 16,
+        path: first.path,
+        pathGoal: first.pathGoal
+    });
+    assert.equal(second.replanned, false);
+    assert.ok(second.path && second.path.length);
+    assert.ok(probes < 80, `follow drift should not A* (${probes} blocked probes)`);
+});

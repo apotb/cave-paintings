@@ -212,7 +212,7 @@
         "key": "wicker_basket",
         "hitboxSize": 5,
         "storage": {
-            "slots": 6
+            "slots": 8
         },
         "rotations": [0, 90, 180, 270]
     },
@@ -247,5 +247,12 @@
         },
         "footprint": [2, 1],
         "rotations": [0, 90, 180, 270]
+    },
+    {
+        "id": "settling_stone",
+        "name": "Settling Stone",
+        "key": "settling_stone",
+        "hitboxSize": 5,
+        "settlement": true
     }
 ]

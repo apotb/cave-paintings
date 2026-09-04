@@ -12,6 +12,7 @@ class CombatLog {
     static COLOR_ENEMY = "#ef5a5a";
     static COLOR_WEAPON = "#f0a040";
     static COLOR_CHAT = "#f0d84a";
+    static COLOR_SETTLER = (typeof Party !== "undefined" && Party.COLOR_SETTLER) || "#7ec8ff";
     static COLOR_ERROR = "#ef5a5a";
     static STROKE = 3;
     static TEX_KEY = "__combat_log";
@@ -107,6 +108,7 @@ class CombatLog {
     openChat(initialDraft = "") {
         if (this.composing) return;
         if (this.scene.knappingPanel?.visible) return;
+        if (this.scene.settlementSys?.isNaming?.()) return;
         this.composing = true;
         this.draft = String(initialDraft || "");
         this._draftStash = "";
@@ -222,7 +224,7 @@ class CombatLog {
             this.scene.deathOverlay?.setVisible(false);
             this.scene.hideChannelBar?.();
             this.scene.healthPanel?.refresh?.();
-            this.push("Fully healed.");
+            this.push("Fully healed");
             return;
         }
         if (cmd === "/party") {
@@ -692,6 +694,7 @@ class CombatLog {
 
     _handleGlobalKey(event) {
         if (this._isTextTarget(event)) return;
+        if (this.scene.settlementSys?.isNaming?.()) return;
 
         if (!this.composing) {
             // T opens chat; / opens with a slash already typed (ignore key-repeat)

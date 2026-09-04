@@ -140,6 +140,7 @@ class PartySystem {
             const tag = t && t.tagName ? String(t.tagName).toUpperCase() : "";
             if (tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable) return;
             if (scene.combatLog?.isComposing?.()) return;
+            if (scene.settlementSys?.isNaming?.()) return;
             if (scene._gamePaused) return;
             if (scene.knappingPanel?.visible) return;
 
@@ -197,6 +198,10 @@ class PartySystem {
             }
             if (obj?.role === "wanderer") {
                 this.tryRecruit(obj);
+                return;
+            }
+            if (obj?.role === "settler") {
+                this.trySettlerClick(obj);
                 return;
             }
             if (scene.party?.includes(obj) && obj !== scene.player) {
@@ -353,7 +358,7 @@ class PartySystem {
     spawnCompanion(opts = {}) {
         const scene = this.scene;
         const P = typeof Party !== "undefined" ? Party : { CAP: 6 };
-        if ((scene.party?.length || 0) >= P.CAP) return null;
+        if (!opts.ignoreCap && (scene.party?.length || 0) >= P.CAP) return null;
         const x = opts.x ?? (scene.player?.x || 0) + 16;
         const y = opts.y ?? (scene.player?.y || 0);
         const look = opts.look || (typeof Look !== "undefined" ? Look.randomLook() : null);
@@ -402,6 +407,34 @@ class PartySystem {
         return pawn;
     }
 
+    /**
+     * After first-spawn teleport, snap companions who have never been in this
+     * world to the player. World poses are the only valid restore.
+     */
+    placeUnposedCompanionsAt(anchor, worldPoses, opts = {}) {
+        if (this._isDedicatedNet()) return;
+        const scene = this.scene;
+        if (!anchor) return;
+        const poses = worldPoses || scene.net?.world?.poses || {};
+        const skipId = opts.skipId;
+        const hasWorldPose = (typeof Party !== "undefined" && Party.hasWorldPose)
+            ? (id) => Party.hasWorldPose(poses, id)
+            : (id) => Number.isFinite(poses[id]?.x) && Number.isFinite(poses[id]?.y);
+        let slot = 0;
+        for (const p of scene.party || []) {
+            if (!p || p.pawnId === skipId) continue;
+            if (hasWorldPose(p.pawnId)) continue;
+            slot += 1;
+            const x = anchor.x + 16 * slot;
+            const y = anchor.y;
+            if (typeof p.teleport === "function") p.teleport(x, y);
+            else {
+                p.x = x;
+                p.y = y;
+            }
+        }
+    }
+
     spawnWanderer(opts = {}) {
         const scene = this.scene;
         const look = opts.look || (typeof Look !== "undefined" ? Look.randomLook() : null);
@@ -442,6 +475,49 @@ class PartySystem {
         return pawn;
     }
 
+    /** Camp is gone: this person walks off as a recruitable / attackable passerby. */
+    releaseSettlerAsWanderer(pawn, heading) {
+        const scene = this.scene;
+        if (!pawn) return null;
+        if (pawn._resting) scene._wakePawn?.(pawn, { manual: true });
+        else if (pawn._restWalk) {
+            pawn._restWalk = null;
+            scene._intendedSleep?.()?.delete?.(pawn.pawnId);
+        } else {
+            scene._clearPawnSleepOccupancy?.(pawn);
+        }
+        scene._cancelPawnChannels?.(pawn);
+        pawn.partyAI?.clearCombat?.();
+        pawn.partyAI = null;
+        scene.settlers = (scene.settlers || []).filter((p) => p !== pawn);
+        pawn.role = "wanderer";
+        pawn.homeSettlementId = null;
+        pawn.ownerId = null;
+        pawn.leaderId = null;
+        pawn.faction = (typeof Party !== "undefined" && Party.FACTION_WANDERERS) || "Wanderers";
+        pawn.hostile = false;
+        pawn.recruitLocked = false;
+        pawn.refusedBy = pawn.refusedBy instanceof Set ? pawn.refusedBy : new Set();
+        const h = heading && Number.isFinite(Number(heading.x)) && Number.isFinite(Number(heading.y))
+            ? { x: Number(heading.x), y: Number(heading.y) }
+            : { x: 1, y: 0 };
+        const len = Math.hypot(h.x, h.y) || 1;
+        pawn.heading = { x: h.x / len, y: h.y / len };
+        pawn.facing = h.x > 0 ? "right" : h.x < 0 ? "left" : h.y > 0 ? "down" : "up";
+        pawn.wandererAI = typeof WandererAI !== "undefined" ? new WandererAI(pawn) : null;
+        if (this._isDedicatedNet() && pawn.body) {
+            pawn.body.enable = false;
+            pawn.body.moves = false;
+        } else {
+            this._enablePawnPhysics(pawn);
+        }
+        if (!this.wanderers.includes(pawn)) this.wanderers.push(pawn);
+        pawn.ensureNameLabel?.();
+        if (typeof syncCreatureInputHit === "function") syncCreatureInputHit(pawn);
+        pawn.syncNameLabel?.();
+        return pawn;
+    }
+
     applyRoughVitals(pawn, rng = Math.random) {
         const r = typeof rng === "function" ? rng : Math.random;
         pawn.kc = typeof Party !== "undefined" ? Party.rollRoughKc(r) : Math.round(300 + r() * 900);
@@ -465,6 +541,7 @@ class PartySystem {
         const P = typeof Party !== "undefined" ? Party : null;
         if (P && !P.inInteractRange(me, wanderer, scene.tileSize)) return false;
         if ((scene.party?.length || 0) >= (P?.CAP || 6)) {
+            if (scene.settlementSys?.tryRecruitInto?.(wanderer)) return true;
             scene.combatLog?.push("Party is full");
             return false;
         }
@@ -493,6 +570,21 @@ class PartySystem {
         }
         this.acceptRecruit(wanderer);
         return true;
+    }
+
+    trySettlerClick(pawn) {
+        const scene = this.scene;
+        if (!pawn || pawn.role !== "settler") return false;
+        if (pawn.ownerId && pawn.ownerId !== (scene.leader?.ownerId || scene.characterId)) return false;
+        const P = typeof Party !== "undefined" ? Party : null;
+        if (P && !P.inInteractRange(scene.player, pawn, scene.tileSize)) return false;
+        if (pawn.homeSettlementId) return false;
+        const cap = P?.CAP || 6;
+        if ((scene.party?.length || 0) >= cap) {
+            scene.combatLog?.push("Party is full");
+            return false;
+        }
+        return scene.settlementSys?.pickOrphan?.(pawn);
     }
 
     _consumeRecruitFood(pawn) {
@@ -671,6 +763,7 @@ class PartySystem {
         const spawn = opts.spawn != null ? !!opts.spawn : !dedicated;
         pawn.createDeathCorpse?.({ spawn, combatDeath: !!killer });
         scene.party = (scene.party || []).filter((p) => p !== pawn);
+        scene.settlers = (scene.settlers || []).filter((p) => p !== pawn);
         if (scene.player === pawn) {
             const next = scene.leader && !scene.leader.isBodyDead?.()
                 ? scene.leader
@@ -890,12 +983,18 @@ class PartySystem {
     nameColorFor(pawn) {
         const P = typeof Party !== "undefined" ? Party : null;
         const ally = P?.COLOR_ALLY || "#80e080";
+        const settler = P?.COLOR_SETTLER || "#7ec8ff";
         const enemy = P?.COLOR_ENEMY || "#ff6666";
         const neu = P?.COLOR_NEUTRAL || "#ffffff";
         if (!pawn) return neu;
         if (pawn.role === "wanderer") return pawn.hostile ? enemy : neu;
         if (this.scene.party?.includes(pawn) || pawn === this.scene.leader) return ally;
         const oid = pawn.ownerId || pawn._remote?.ownerId;
+        const self = this.scene.leader?.ownerId || this.scene._netPlayerId;
+        const parked = pawn.role === "settler"
+            || !!pawn.homeSettlementId
+            || this.scene.settlers?.includes?.(pawn);
+        if (parked && (!oid || oid === self)) return settler;
         if (oid && this.pvpAggro.has(oid)) return enemy;
         if (pawn.hostile) return enemy;
         return neu;
@@ -944,6 +1043,9 @@ class PartySystem {
         };
         for (const p of scene.party || []) {
             if (p && p !== scene.player && hit(p)) return p;
+        }
+        for (const p of scene.settlers || []) {
+            if (p && hit(p)) return p;
         }
         return null;
     }
@@ -1081,21 +1183,85 @@ class PartySystem {
         }
         if (pawn.isVomiting?.()) return "Vomiting";
         if (this._isBeingTended(pawn)) return "Being tended";
-        if (pawn._chopBar) return "Chopping";
-        if (pawn._resting) return "Sleeping";
+        if (pawn._chopBar || pawn._resting) {
+            const act = pawn.partyAI?._settlerAct;
+            if (act && act !== "Idle") return act;
+            if (pawn._chopBar) return "Chopping";
+            return "Sleeping";
+        }
         if (pawn.partyAI?.eatSeek) return "Getting food";
+        if (pawn.partyAI?._settlerAct) return pawn.partyAI._settlerAct;
         if (pawn._downed || pawn._prone || pawn.isIncapacitated?.()) return "Downed";
         return "";
+    }
+
+    /** Occupied hotbar, backpack, then equipment (head → waist → feet). */
+    heldTooltipRows(pawn) {
+        if (!pawn) return [];
+        const rows = [];
+        const take = (arr, cap) => {
+            const out = [];
+            const n = Math.max(0, Number(cap) || (arr || []).length);
+            for (let i = 0; i < n; i++) {
+                const s = arr?.[i];
+                if (s?.id) out.push(s);
+            }
+            return out;
+        };
+        const hot = take(pawn.inventory, pawn.inventorySize || pawn.inventory?.length || 0);
+        if (hot.length) rows.push(hot);
+        if ((pawn.overflowSize || 0) > 0) {
+            const pack = take(pawn.overflow, pawn.overflowSize);
+            if (pack.length) rows.push(pack);
+        }
+        const eq = [];
+        const gear = pawn.equipment || {};
+        for (const key of ["head", "torso", "back", "legs"]) {
+            if (gear[key]?.id) eq.push(gear[key]);
+        }
+        for (const s of gear.waist || []) {
+            if (s?.id) eq.push(s);
+        }
+        if (gear.feet?.id) eq.push(gear.feet);
+        if (eq.length) rows.push(eq);
+        return rows;
+    }
+
+    withHeldTooltip(pawn, text) {
+        const rows = this.heldTooltipRows(pawn);
+        return rows.length ? { text: text || "", rows } : (text || "");
     }
 
     /** World-hover tip: wanderer recruit text, or name + activity (incl. Downed). */
     hoverTooltip(pawn) {
         if (!pawn || pawn.isBodyDead?.()) return "";
         if (pawn.role === "wanderer") return this.recruitTooltip(pawn) || "";
+        const name = pawn.displayName?.() || pawn.pawnName || "";
         const busy = this.activityTooltip(pawn) || "";
+        if (pawn.role === "settler") {
+            let text;
+            if (!pawn.homeSettlementId) {
+                const P = typeof Party !== "undefined" ? Party : { CAP: 6 };
+                const full = (this.scene.party?.length || 0) >= (P.CAP || 6);
+                text = full ? `${name}\nParty is full` : `${name}\nTake with you`;
+            } else {
+                text = busy ? `${name}\n${busy}` : (name || "Settler");
+            }
+            return this.withHeldTooltip(pawn, text);
+        }
+        const inParty = pawn.role === "companion" || pawn.role === "leader"
+            || (this.scene.party || []).includes(pawn);
+        if (inParty) {
+            const text = busy ? `${name}\n${busy}` : name;
+            if (pawn.isControlled?.()) {
+                const downed = !!(pawn._downed || pawn._prone || pawn.isIncapacitated?.());
+                if (!busy && !downed) return "";
+                return busy ? text : (name ? `${name}\nDowned` : "Downed");
+            }
+            return this.withHeldTooltip(pawn, text);
+        }
         const downed = !!(pawn._downed || pawn._prone || pawn.isIncapacitated?.());
         if (!busy && !downed) return "";
-        const name = pawn.displayName?.() || pawn.pawnName || "";
         const line = busy || "Downed";
         if (downed) return name ? `${name}\n${line}` : line;
         return line;
@@ -1158,6 +1324,10 @@ class PartySystem {
                 occupyOnly: occupy,
                 preferredTarget: occupy ? this._occupyTarget(p) : null
             });
+        }
+        for (const p of scene.settlers || []) {
+            if (!p?.active || p.isBodyDead?.()) continue;
+            entries.push({ entity: p });
         }
         for (const w of this.wanderers) {
             if (!w?.active || w.isBodyDead?.() || !w.hostile) continue;
@@ -1322,7 +1492,12 @@ class PartySystem {
             if (!p?.active) continue;
             p.update(time, delta);
             p.syncNameLabel?.();
-            p.syncPawnChannelBar?.();
+        }
+        for (const p of scene.settlers || []) {
+            if (!p?.active) continue;
+            if (dedicated) this._puppetWanderer(p, delta);
+            p.update(time, delta);
+            p.syncNameLabel?.();
         }
         for (const w of this.wanderers) {
             if (!w?.active) continue;
@@ -1350,8 +1525,11 @@ class PartySystem {
         this.scene.tickSleepWalks?.(delta);
         this._tickDirector(delta);
         if (!dedicated) this._despawnWanderersAtEdge();
-        scene.partyPanel?.refresh?.();
-        scene.partyPanel?.updatePips?.();
+        if (scene.partyPanel?.tick) scene.partyPanel.tick();
+        else {
+            scene.partyPanel?.refresh?.();
+            scene.partyPanel?.updatePips?.();
+        }
     }
 
     /** Dedicated: follow server pose, play walk/idle, keep name/hitbox on the sprite. */
@@ -1457,14 +1635,62 @@ class PartySystem {
             ? Party.partyFactionId(w.ownerId)
             : `party:${w.ownerId}`;
         if (!w.partyAI) w.partyAI = new PartyAI(w);
-        this._enablePawnPhysics(w);
+        if (this._isDedicatedNet()) this._disablePawnPhysics(w);
+        else this._enablePawnPhysics(w);
         this._wirePawn(w);
+        w.heading = null;
+        w._netMoving = false;
+        w._puppetMoving = false;
+        w._puppetStillMs = 0;
+        w._netFromX = w.x;
+        w._netFromY = w.y;
         w._netTx = w.x;
         w._netTy = w.y;
+        w._netSnapDist = 0;
+        w._netSnapAt = performance.now();
         if (!scene.party) scene.party = [];
         if (!scene.party.includes(w)) scene.party.push(w);
         w.syncNameLabel?.();
         scene.partyPanel?.refresh?.();
+    }
+
+    /**
+     * Parked settler joins the traveling party in place and walks over.
+     * Do not spawn a new pawn (that clusters them on the leader).
+     */
+    adoptSettler(pawn) {
+        const scene = this.scene;
+        if (!pawn) return null;
+        if (pawn._resting) scene._wakePawn?.(pawn, { manual: true });
+        else if (pawn._restWalk) {
+            pawn._restWalk = null;
+            scene._intendedSleep?.()?.delete?.(pawn.pawnId);
+        } else {
+            scene._clearPawnSleepOccupancy?.(pawn);
+        }
+        scene.settlers = (scene.settlers || []).filter((p) => p !== pawn);
+        pawn.role = "companion";
+        pawn.homeSettlementId = null;
+        pawn.ownerId = scene.leader?.ownerId || pawn.ownerId || scene._netPlayerId;
+        pawn.leaderId = scene.leader?.pawnId || pawn.leaderId;
+        pawn.faction = (typeof Party !== "undefined" && Party.partyFactionId)
+            ? Party.partyFactionId(pawn.ownerId)
+            : `party:${pawn.ownerId}`;
+        if (!pawn.partyAI) pawn.partyAI = new PartyAI(pawn);
+        pawn.partyAI.stopWork?.();
+        if (!this._isDedicatedNet()) this._enablePawnPhysics(pawn);
+        pawn._physX = pawn.x;
+        pawn._physY = pawn.y;
+        pawn._netTx = pawn.x;
+        pawn._netTy = pawn.y;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        pawn.partyAI._holdFollow = false;
+        pawn.partyAI._pathRange = (S?.RADIUS_TILES || 32) + 4;
+        pawn.partyAI._pathOpenRadius = 2;
+        if (!scene.party) scene.party = [];
+        if (!scene.party.includes(pawn)) scene.party.push(pawn);
+        pawn.syncNameLabel?.();
+        return pawn;
     }
 
     _tickBandage() {
@@ -1859,6 +2085,128 @@ class PartySystem {
                 }
             }
         }
+        this._tickSettlerFood(P, ts, dedicated);
+    }
+
+    _settlerBasketBags(eater) {
+        const scene = this.scene;
+        const settle = scene.settlementSys?.byId?.(eater?.homeSettlementId)
+            || scene.settlementSys?.here?.(eater);
+        if (!settle) return [];
+        const bags = [];
+        const bump = () => scene.settlementSys?.bumpWorkCache?.();
+        for (const entry of scene.settlementSys.addedBaskets(settle)) {
+            const slots = entry.slots || [];
+            const spr = scene.settlementSys.findThingByUid?.(entry.uid);
+            bags.push({
+                slots,
+                x: spr?.x ?? entry.x,
+                y: spr?.y ?? entry.y,
+                bag: "basket",
+                host: {
+                    x: spr?.x ?? entry.x,
+                    y: spr?.y ?? entry.y,
+                    active: true,
+                    entry,
+                    hitboxSize: spr?.hitboxSize || spr?.meta?.hitboxSize,
+                    meta: spr?.meta,
+                    pawnId: entry.uid,
+                    inventory: slots,
+                    bagArray() { return slots; },
+                    loseItem(item, amount = 1) {
+                        if (!item || !Array.isArray(slots)) return 0;
+                        const n = Math.min(
+                            Math.max(0, Number(item.quantity) || 0),
+                            Math.max(0, Number(amount) || 0)
+                        );
+                        if (!n) return 0;
+                        item.quantity -= n;
+                        if (!(item.quantity > 0)) {
+                            const i = slots.indexOf(item);
+                            if (i >= 0) slots[i] = null;
+                        }
+                        bump();
+                        return n;
+                    }
+                }
+            });
+        }
+        return bags;
+    }
+
+    _tickSettlerFood(P, ts, dedicated) {
+        const scene = this.scene;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        for (const pawn of scene.settlers || []) {
+            if (!pawn) continue;
+            if (pawn.isBodyDead?.() || pawn.isVomiting?.() || pawn.isIncapacitated?.()) {
+                pawn.partyAI?.setEatSeek?.(null);
+                continue;
+            }
+            if (pawn.isAttacking?.() || pawn._eatChannel || pawn._tendChannel || pawn.partyAI?.tendSeek) {
+                pawn.partyAI?.setEatSeek?.(null);
+                continue;
+            }
+            if (dedicated) {
+                pawn.partyAI?.setEatSeek?.(null);
+                continue;
+            }
+            if (pawn.partyAI?.assistTarget) {
+                pawn.partyAI?.setEatSeek?.(null);
+                continue;
+            }
+            if ((pawn.kc || 0) >= P.AUTO_EAT_BELOW) {
+                this._eatSittings.delete(pawn.pawnId);
+                pawn.partyAI?.setEatSeek?.(null);
+                continue;
+            }
+            const mal = !!pawn.anatomy?.hediff?.("malnutrition");
+            const sitting = this._eatSittings.get(pawn.pawnId);
+            const until = sitting ? P.AUTO_EAT_UNTIL : P.AUTO_EAT_BELOW;
+            if (sitting && pawn.kc >= until) {
+                this._eatSittings.delete(pawn.pawnId);
+                pawn.partyAI?.setEatSeek?.(null);
+                continue;
+            }
+            const settle = scene.settlementSys?.byId?.(pawn.homeSettlementId)
+                || scene.settlementSys?.here?.(pawn);
+            const seekTiles = settle?.radiusTiles || S?.RADIUS_TILES || 32;
+            const interactTiles = Math.max(
+                1.25,
+                Number(pawn.partyAI?._workInteractTiles?.()) || 1
+            ) + 0.7;
+            const pick = this._pickAutoEat(pawn, mal, ts, {
+                seekTiles,
+                interactTiles
+            });
+            if (!pick) {
+                pawn.partyAI?.setEatSeek?.(null);
+                continue;
+            }
+            const poisonous = this._isPoisonFood(pick.stack, scene);
+            if (poisonous && sitting?.poisonStop) {
+                pawn.partyAI?.setEatSeek?.(null);
+                continue;
+            }
+            const atFood = !!(pick.inRange
+                || (pick.pawn && pawn.partyAI?._near?.(pick.pawn, ts)));
+            if (!atFood) {
+                pawn.partyAI?.setEatSeek?.(pick.pawn);
+                continue;
+            }
+            pawn.partyAI?.setEatSeek?.(null);
+            const ok = pawn.beginEat(pick.stack, {
+                slot: pick.slot,
+                bag: pick.bag,
+                sourcePawn: pick.pawn
+            });
+            if (ok) {
+                this._eatSittings.set(pawn.pawnId, {
+                    until: poisonous ? pawn.kc + 1 : P.AUTO_EAT_UNTIL,
+                    poisonStop: poisonous
+                });
+            }
+        }
     }
 
     _isPoisonFood(stack, scene) {
@@ -1867,18 +2215,24 @@ class PartySystem {
         return Number(food?.foodPoisonChance ?? 0) > 0;
     }
 
-    _pickAutoEat(eater, allowPoison, ts) {
+    _pickAutoEat(eater, allowPoison, ts, extra = {}) {
         const scene = this.scene;
-        const skipPawnId = scene.player?.pawnId || null;
-        const skipHeld = scene.player && scene.hotbar
+        const isSettler = eater?.role === "settler";
+        const skipPawnId = isSettler ? null : (scene.player?.pawnId || null);
+        const skipHeld = (!isSettler && scene.player && scene.hotbar)
             ? { id: scene.player.pawnId, slot: scene.hotbar.activeIndex }
             : null;
+        const members = isSettler ? [eater] : (scene.party || []);
+        const extraBags = isSettler ? this._settlerBasketBags(eater) : [];
         if (typeof Party !== "undefined" && Party.pickAutoEat) {
-            return Party.pickAutoEat(eater, scene.party || [], {
+            return Party.pickAutoEat(eater, members, {
                 tileSize: ts,
                 allowPoison,
                 skipPawnId,
                 skipHeld,
+                extraBags,
+                interactTiles: extra.interactTiles,
+                seekTiles: extra.seekTiles,
                 getFood: (stack) => {
                     const meta = scene.getItem(stack.id);
                     const food = { ...(meta?.food || {}) };
@@ -2170,12 +2524,24 @@ class PartySystem {
         const dedicated = !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
         const guard = dedicated && scene._invSwapGuardUntil && performance.now() < scene._invSwapGuardUntil;
         const ids = new Set();
+        const hasWorldPose = (typeof Party !== "undefined" && Party.hasWorldPose)
+            ? (id) => Party.hasWorldPose(poses, id)
+            : (id) => Number.isFinite(poses[id]?.x) && Number.isFinite(poses[id]?.y);
+        let clusterSlot = 0;
         for (const m of members) {
             if (!m?.id) continue;
             ids.add(m.id);
             const wanderer = this.wanderers.find((w) => w.pawnId === m.id);
             if (wanderer) this._promoteWanderer(wanderer);
-            const existing = (scene.party || []).find((p) => p.pawnId === m.id);
+            let existing = (scene.party || []).find((p) => p.pawnId === m.id);
+            if (!existing) {
+                const parked = (scene.settlers || []).find((p) => p.pawnId === m.id);
+                // Drop-off is optimistic. A stale YOU.party can still list them;
+                // yanking them back into the party freezes dedicated puppets
+                // (no companion poses, and settler snapshots skip party members).
+                if (parked?.role === "settler") continue;
+                if (parked) existing = this.adoptSettler(parked);
+            }
             if (existing) {
                 if (opts.join || dedicated) {
                     if (typeof m.kc === "number") existing.kc = m.kc;
@@ -2234,19 +2600,46 @@ class PartySystem {
                 }
                 continue;
             }
+            // Character-saved m.x/m.y is the previous world. Only this world's
+            // logout pose (or the dedicated server's already-corrected YOU) is valid.
             const pose = poses[m.id];
-            const cluster = !pose && scene.player;
+            let x;
+            let y;
+            let facing = pose?.facing || m.facing;
+            if (hasWorldPose(m.id)) {
+                x = pose.x;
+                y = pose.y;
+            } else if (dedicated && Number.isFinite(m.x) && Number.isFinite(m.y)) {
+                x = m.x;
+                y = m.y;
+            } else if (scene.player) {
+                clusterSlot += 1;
+                x = scene.player.x + 16 * clusterSlot;
+                y = scene.player.y;
+            } else {
+                x = m.x;
+                y = m.y;
+            }
             this.spawnCompanion({
                 ...m,
-                x: pose?.x ?? (cluster ? scene.player.x + 16 * members.indexOf(m) : m.x),
-                y: pose?.y ?? (cluster ? scene.player.y : m.y),
-                facing: pose?.facing || m.facing
+                x,
+                y,
+                facing
             });
         }
         if (dedicated && you?.party) {
+            const settlerIds = new Set((you.settlers || []).map((s) => s && s.id));
             for (const p of [...(scene.party || [])]) {
                 if (!p || p === scene.leader) continue;
                 if (!ids.has(p.pawnId) && !p.isBodyDead?.()) {
+                    if (settlerIds.has(p.pawnId)) {
+                        if (p.role === "settler") {
+                            scene.party = (scene.party || []).filter((m) => m !== p);
+                            if (!scene.settlers) scene.settlers = [];
+                            if (!scene.settlers.includes(p)) scene.settlers.push(p);
+                        }
+                        continue;
+                    }
                     this.onMemberDied(p, null, { spawn: false });
                 }
             }

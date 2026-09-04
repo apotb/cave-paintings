@@ -358,6 +358,9 @@
         if (entry.maxTemp == null) entry.maxTemp = AMBIENT_TEMP;
         if (entry.canIgniteFuel == null) entry.canIgniteFuel = entry.id === LIT_ID;
         seedStackTempsFromEntry(entry);
+        if (entry.catalyst && !catalystSoaksPitHeat(entry, getItem)) {
+            applyStackTemp(entry.catalyst, AMBIENT_TEMP);
+        }
         return entry;
     }
 
@@ -420,13 +423,23 @@
         return igniteFuel(entry, getItem);
     }
 
-    /** Cooking tools sitting in the pit take on pit heat. Fuel does not — its
-     *  authored temp is burn heat, not a live stack temperature. */
-    function heatHoldings(entry) {
-        if (!entry?.catalyst?.id) return;
+    /** Vessels (coconut shell, leftover meal) soak pit heat. A roasting stick or
+     *  drying rack is just propped over the fire — it does not become hot. */
+    function catalystSoaksPitHeat(entry, getItem) {
+        const method = catalystMethod(entry, getItem);
+        return method !== "stick_roast" && method !== "smoke_hide";
+    }
+
+    function heatHoldings(entry, getItem) {
+        const cat = entry?.catalyst;
+        if (!cat?.id) return;
+        if (!catalystSoaksPitHeat(entry, getItem)) {
+            applyStackTemp(cat, AMBIENT_TEMP);
+            return;
+        }
         const pit = Number(entry.pitTemp);
         if (!(pit > AMBIENT_TEMP)) return;
-        applyStackTemp(entry.catalyst, heatTowardPit(stackTemp(entry.catalyst), pit, 0));
+        applyStackTemp(cat, heatTowardPit(stackTemp(cat), pit, 0));
     }
 
     function beginSmolder(entry, worldMinute) {
@@ -479,7 +492,7 @@
             }
         }
 
-        heatHoldings(entry);
+        heatHoldings(entry, getItem);
 
         const fuelAfter = (entry.fuel || []).map((s) => (s?.id ? `${s.id}:${s.quantity || 0}` : "")).join("|");
         const radiusAfter = lightRadiusForEntry(entry);

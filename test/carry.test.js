@@ -10,6 +10,15 @@ test("carryCap is strength times 2", () => {
     assert.equal(Carry.carryCap(0), 0);
 });
 
+test("settler pickupCap stops at strength so they stay unencumbered", () => {
+    assert.equal(Carry.pickupCap(15, "settler"), 15);
+    assert.equal(Carry.pickupCap(15, "leader"), 30);
+    assert.equal(Carry.pickupCap(15, "companion"), 30);
+    assert.equal(Carry.countFit(10, 2, 14, Carry.pickupCap(15, "settler")), 0);
+    assert.equal(Carry.countFit(10, 2, 14, Carry.pickupCap(15, "leader")), 8);
+    assert.equal(Carry.countFit(1, 0.3, 14.7, Carry.pickupCap(15, "settler")), 1);
+});
+
 test("countFit weightless vs over cap", () => {
     assert.equal(Carry.countFit(9, 0, 0, 10), 9);
     assert.equal(Carry.countFit(9, 5, 28, 30), 0);

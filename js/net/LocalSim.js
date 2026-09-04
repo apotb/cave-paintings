@@ -8,11 +8,12 @@
         const Sleep = require("../../shared/sleep");
         const Hunger = require("../../shared/hunger");
         const Carry = require("../../shared/carry");
-        module.exports = factory(NetProtocol, Sleep, Hunger, Carry);
+        const Party = require("../../shared/party");
+        module.exports = factory(NetProtocol, Sleep, Hunger, Carry, Party);
     } else {
-        root.LocalSim = factory(root.NetProtocol, root.Sleep, root.Hunger, root.Carry);
+        root.LocalSim = factory(root.NetProtocol, root.Sleep, root.Hunger, root.Carry, root.Party);
     }
-})(typeof globalThis !== "undefined" ? globalThis : this, function (NetProtocol, Sleep, Hunger, Carry) {
+})(typeof globalThis !== "undefined" ? globalThis : this, function (NetProtocol, Sleep, Hunger, Carry, Party) {
 class LocalSim {
     /**
      * @param {{ world: object, character: object }} opts
@@ -176,6 +177,7 @@ class LocalSim {
         this._party = Array.isArray(char.party)
             ? JSON.parse(JSON.stringify(char.party))
             : [];
+        this._placeNewPartyNearPawn();
         this._controlId = char.controlId || char.id;
 
         if (!this.world.clock) {
@@ -264,6 +266,7 @@ class LocalSim {
             return;
         }
         if (type === NetProtocol.Actions.SWITCH_CONTROL) {
+            this._pullFromScene();
             if (action.pawnId) this._controlId = action.pawnId;
             this._dispatch(NetProtocol.Types.YOU, this._youPayload());
             return;
@@ -601,6 +604,52 @@ class LocalSim {
         return (this.scene?.party || []).find((p) => p.pawnId === id) || null;
     }
 
+    _hungerTickSettlers() {
+        const scene = this.scene;
+        if (!scene) return;
+        const getDef = (id) => scene.getItem?.(id) || null;
+        for (const pawn of scene.settlers || []) {
+            if (!pawn || pawn.isBodyDead?.()) continue;
+            const fed = (Number(pawn.kc) > 0) || (Number(pawn.saturation) > 0);
+            const enc = (Carry && Carry.encumbrance)
+                ? Carry.encumbrance(
+                    Carry.gearMass(pawn.inventory, pawn.equipment, getDef, pawn.overflow),
+                    pawn.strength || Carry.strengthFromEquip(pawn.equipment, getDef)
+                )
+                : { hungerRate: 1 };
+            const tick = Hunger.minuteDrain({
+                hunger: pawn.hunger || Hunger.DEFAULT_HUNGER,
+                sprinting: !!pawn.isSprinting,
+                encumbranceHungerRate: enc.hungerRate,
+                hungerRateFactor: pawn.capacities?.hungerRateFactor?.() || 1,
+                resting: !!pawn._resting
+            });
+            Hunger.applyStarve(pawn, tick);
+            pawn._malnutritionFed = fed;
+        }
+    }
+
+    /**
+     * Character party x,y is the previous world. Restore this world's logout
+     * poses; cluster recruits who have never been here next to the leader.
+     */
+    _placeNewPartyNearPawn() {
+        const p = this._pawn;
+        const poses = this.world?.poses || {};
+        if (!p || !Array.isArray(this._party)) return;
+        for (const m of this._party) {
+            if (!m?.id) continue;
+            const saved = poses[m.id];
+            if (!Number.isFinite(saved?.x) || !Number.isFinite(saved?.y)) continue;
+            m.x = saved.x;
+            m.y = saved.y;
+            if (typeof saved.facing === "string" && saved.facing) m.facing = saved.facing;
+        }
+        if (Party?.placeJoinParty) {
+            Party.placeJoinParty(p, this._party, poses, { tileSize: 16 });
+        }
+    }
+
     _applyPartyPoses(poses) {
         if (!Array.isArray(poses)) return;
         if (!this._party) this._party = [];
@@ -701,6 +750,7 @@ class LocalSim {
                 for (let y = cy - r; y <= cy + r; y++) keys.add(`${x},${y}`);
             }
         }
+        this.scene?.settlementSys?.interestKeys?.(keys);
         return keys;
     }
 
@@ -881,6 +931,7 @@ class LocalSim {
                     scenePawn._malnutritionFed = fed;
                 }
             }
+            this._hungerTickSettlers();
             this._dispatch(NetProtocol.Types.YOU, this._youPayload());
         }
         this._snapAcc += dtMs;
@@ -1007,6 +1058,7 @@ class LocalSim {
                 }
             }
             this.world.lastPlayedAt = Date.now();
+            this.scene?.settlementSys?.persistTo?.(this.world);
             await WorldStore.put(this.world);
         } catch (e) {
             console.warn("[LocalSim] persist failed", e);

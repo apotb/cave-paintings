@@ -10,13 +10,14 @@
         const Party = require("../party");
         const MeleeMath = require("../melee");
         const Path = require("../path");
-        module.exports = factory(GameMath, BodyCombat, Party, MeleeMath, Path);
+        const Settlement = require("../settlement");
+        module.exports = factory(GameMath, BodyCombat, Party, MeleeMath, Path, Settlement);
     } else {
         root.HeadlessAI = factory(
-            root.GameMath, root.BodyCombat, root.Party, root.MeleeMath, root.Path
+            root.GameMath, root.BodyCombat, root.Party, root.MeleeMath, root.Path, root.Settlement
         );
     }
-})(typeof globalThis !== "undefined" ? globalThis : this, function (GameMath, BodyCombat, Party, MeleeMath, Path) {
+})(typeof globalThis !== "undefined" ? globalThis : this, function (GameMath, BodyCombat, Party, MeleeMath, Path, Settlement) {
     const TILE = 16;
 
     function clamp(v, a, b) {
@@ -646,6 +647,9 @@
             this._meleeHold = false;
             this._avoidSide = Math.random() < 0.5 ? -1 : 1;
             this._stuckMs = 0;
+            this._jamMs = 0;
+            this._jamPx = null;
+            this._jamPy = null;
             this._lastPx = null;
             this._lastPy = null;
             this._escapeKey = null;
@@ -696,6 +700,35 @@
                 return;
             }
             const follow = world?.getFollowTarget?.(mob);
+            if (mob.role === "settler") {
+                const next = world?.getAssistTarget?.(mob) || null;
+                const home = world?.getSettlement?.(mob);
+                const ox = home?.x ?? mob.x;
+                const oy = home?.y ?? mob.y;
+                const ok = next && this._assistStillOk(next, { x: ox, y: oy }, world);
+                if (ok) {
+                    this.assistTarget = next;
+                    world?.releaseSettlerWork?.(mob);
+                    this._tickCombat(delta, world);
+                    return;
+                }
+                this.assistTarget = null;
+                if (mob.isAttacking?.()) {
+                    mob.setDesiredVel?.(0, 0);
+                    return;
+                }
+                const work = world?.tickSettler?.(mob, delta) || null;
+                if (work?.halt) {
+                    mob.setDesiredVel?.(0, 0);
+                    return;
+                }
+                if (work?.walkTo && Number.isFinite(work.walkTo.x) && Number.isFinite(work.walkTo.y)) {
+                    this._walkToward(work.walkTo.x, work.walkTo.y, !!work.sprint, world, delta);
+                    return;
+                }
+                this._idleNearHome(home, world, delta);
+                return;
+            }
             if (!follow || follow.isBodyDead?.()) {
                 this._clearCombat();
                 mob.setDesiredVel?.(0, 0);
@@ -804,6 +837,8 @@
                 || (this._stuckMs > 280 && dist < catchR);
             if (closeEnough) {
                 this._holdFollow = true;
+                this._pathRange = null;
+                this._pathOpenRadius = null;
                 const jammed = overlapping || this._stuckMs > 200;
                 if (!jammed && this._unstickFromMates(follow, idleR)) return;
                 this._idle();
@@ -1028,13 +1063,39 @@
 
         _walkToward(tx, ty, sprint, world, delta) {
             const mob = this.mob;
+            const settler = mob.role === "settler" || !!mob.homeSettlementId;
+            let overlap = this._overlappingThing(world);
+            if (overlap) {
+                const now = Date.now();
+                if (now - (Number(this._nudgeAt) || 0) >= 400) {
+                    this._nudgeAt = now;
+                    if (this._nudgeOutOfThing(world, false)) overlap = this._overlappingThing(world);
+                }
+            }
             const from = { x: mob.x, y: mob.y };
             const to = { x: tx, y: ty };
+            const pad = settler ? 2 : 1;
             const blocked = (x, y) => {
-                if (world?.poseBlocked) return world.poseBlocked(mob, x, y);
+                if (world?.poseBlocked) return world.poseBlocked(mob, x, y, pad);
                 return this._agentBlocked(x, y, world);
             };
             if (!Path?.steerToward) return;
+            const destDistTiles = Math.hypot(tx - mob.x, ty - mob.y) / TILE;
+            let maxRange = this._pathRange || 12;
+            let openRadius = this._pathOpenRadius;
+            // Same local window as client settlers — enough to skirt a lean-to,
+            // without A*ing the whole camp for a two-tile stroll.
+            const local = Math.min(40, Math.max(8, Math.ceil(destDistTiles) + 6));
+            if (settler) {
+                maxRange = local;
+                if (openRadius == null) openRadius = 2;
+            } else if (destDistTiles > maxRange) {
+                maxRange = Math.max(maxRange, local);
+                if (openRadius == null) openRadius = 2;
+            }
+            const farLook = settler || destDistTiles > 12;
+            const now = Date.now();
+            const allowReplan = !this._planAt || now - this._planAt >= 220;
             const steered = Path.steerToward({
                 from,
                 to,
@@ -1046,24 +1107,211 @@
                 stuckMs: this._stuckMs,
                 lastFrom: this._lastPx != null ? { x: this._lastPx, y: this._lastPy } : null,
                 lastWpDist: this._lastWpDist,
-                maxRange: this._pathRange || 12,
+                maxRange,
                 dt: delta,
-                overlapping: !!this._overlappingThing(world),
-                openRadius: this._pathOpenRadius
+                overlapping: false,
+                lookPx: farLook ? TILE * 4 : undefined,
+                openRadius,
+                allowReplan
             });
             this._path = steered.path;
             this._pathGoalX = steered.pathGoal ? steered.pathGoal.x : null;
             this._pathGoalY = steered.pathGoal ? steered.pathGoal.y : null;
+            if (steered.replanned) this._planAt = now;
             this._avoidSide = steered.side;
             this._stuckMs = steered.stuckMs;
             this._lastPx = steered.lastFrom?.x;
             this._lastPy = steered.lastFrom?.y;
             this._lastWpDist = steered.lastWpDist;
+            const moved = this._jamPx != null
+                && Math.hypot(mob.x - this._jamPx, mob.y - this._jamPy) > 0.45;
+            this._jamPx = mob.x;
+            this._jamPy = mob.y;
+            const jammed = !!overlap || (this._stuckMs > 280 && !moved);
+            if (jammed && !moved) this._jamMs = (this._jamMs || 0) + (delta || 16);
+            else this._jamMs = 0;
+            if (settler && this._jamMs > 900 && this._nudgeOutOfThing(world, true)) {
+                this._jamMs = 0;
+                this._path = null;
+                this._pathGoalX = null;
+                this._pathGoalY = null;
+                return;
+            }
             if (steered.arrived) {
+                this._idle();
+                return;
+            }
+            let nx = steered.nx;
+            let ny = steered.ny;
+            if (jammed && !moved && this._jamMs > 120) {
+                const slide = this._slideAround(nx, ny, world, pad);
+                if (slide) {
+                    nx = slide.nx;
+                    ny = slide.ny;
+                }
+            }
+            this._walk(nx, ny, sprint);
+        }
+
+        _idleNearHome(home, world, delta) {
+            const mob = this.mob;
+            if (!home) {
                 mob.setDesiredVel?.(0, 0);
                 return;
             }
-            this._walk(steered.nx, steered.ny, sprint);
+            const S = Settlement || null;
+            const stand = S?.idleHome ? S.idleHome(home) : { x: home.x, y: home.y + 8 };
+            const distTiles = S?.idleRoamDistTiles
+                ? S.idleRoamDistTiles(home, mob.x, mob.y, TILE)
+                : Math.hypot(mob.x - stand.x, mob.y - stand.y) / TILE;
+            const hard = S?.IDLE_ROAM_HARD || 7;
+            const wedged = !!this._overlappingThing(world);
+            if (distTiles >= hard) {
+                this._strollMul = 0.5;
+                this._walkToward(stand.x, stand.y, false, world, delta);
+                this._strollMul = null;
+                return;
+            }
+            if (wedged && this._idleWanderState !== "walk") {
+                this._beginSettlerWalk(home, world);
+            }
+            if (this._idleWanderState == null) this._beginSettlerIdle();
+            this._idleWanderMs = (this._idleWanderMs || 0) - (delta || 16);
+            if (this._idleWanderMs <= 0) {
+                if (this._idleWanderState === "walk") this._beginSettlerIdle();
+                else this._beginSettlerWalk(home, world);
+            }
+            if (this._idleWanderState !== "walk" || !this._idleWanderDest) {
+                if (this._unstickFromMates(stand, TILE * 2.5)) return;
+                mob.setDesiredVel?.(0, 0);
+                return;
+            }
+            const dest = this._idleWanderDest;
+            this._strollMul = 0.5;
+            this._walkToward(dest.x, dest.y, false, world, delta);
+            this._strollMul = null;
+            if (Math.hypot(mob.x - dest.x, mob.y - dest.y) <= TILE * 0.55) {
+                this._beginSettlerIdle();
+            }
+        }
+
+        _beginSettlerIdle() {
+            this._idleWanderState = "idle";
+            this._idleWanderDest = null;
+            this._idleWanderMs = 1000 + Math.random() * 2000;
+            this._idle();
+        }
+
+        _beginSettlerWalk(home, world) {
+            const mob = this.mob;
+            this._idleWanderState = "walk";
+            this._idleWanderMs = 1000 + Math.random() * 1000;
+            const S = Settlement || null;
+            let dest = S?.idleRoamPoint
+                ? S.idleRoamPoint(home, Math.random, TILE, mob)
+                : { x: home.x + 12, y: home.y + 10 };
+            const blocked = (x, y) => {
+                if (world?.poseBlocked) return world.poseBlocked(mob, x, y, 2);
+                return this._agentBlocked(x, y, world);
+            };
+            if (Path?.openPoint) {
+                dest = Path.openPoint(dest.x, dest.y, blocked, TILE, this._avoidSide, 4);
+            }
+            this._idleWanderDest = dest;
+            this._path = null;
+        }
+
+        _nudgeOutOfThing(world, far = false) {
+            const mob = this.mob;
+            const hit = this._overlappingThing(world);
+            const blocked = (x, y) => {
+                if (world?.poseBlocked) return world.poseBlocked(mob, x, y, 2);
+                return this._agentBlocked(x, y, world);
+            };
+            if (hit) {
+                const body = this._bodyRect();
+                const hw = (body.right - body.left) * 0.5;
+                const hh = (body.bottom - body.top) * 0.5;
+                const pad = 3;
+                const offX = mob.x - (body.left + hw);
+                const offY = mob.y - (body.top + hh);
+                const tcx = (hit.left + hit.right) * 0.5;
+                const tcy = (hit.top + hit.bottom) * 0.5;
+                const opts = [
+                    { x: hit.left - hw - pad + offX, y: mob.y },
+                    { x: hit.right + hw + pad + offX, y: mob.y },
+                    { x: mob.x, y: hit.top - hh - pad + offY },
+                    { x: mob.x, y: hit.bottom + hh + pad + offY }
+                ];
+                opts.sort((a, b) =>
+                    Math.hypot(b.x - tcx, b.y - tcy) - Math.hypot(a.x - tcx, a.y - tcy)
+                );
+                for (let i = 0; i < opts.length; i++) {
+                    const o = opts[i];
+                    if (blocked(o.x, o.y)) continue;
+                    mob.x = o.x;
+                    mob.y = o.y;
+                    this._path = null;
+                    this._stuckMs = 0;
+                    this._jamMs = 0;
+                    return true;
+                }
+            }
+            if (!far) return false;
+            return this._unstickPose(world);
+        }
+
+        _slideAround(nx, ny, world, pad = 2) {
+            const mob = this.mob;
+            const blocked = (x, y) => {
+                if (world?.poseBlocked) return world.poseBlocked(mob, x, y, pad);
+                return this._agentBlocked(x, y, world);
+            };
+            const step = 8;
+            const s = this._avoidSide < 0 ? -1 : 1;
+            const candidates = [
+                [-ny * s, nx * s],
+                [ny * s, -nx * s],
+                [1, 0], [-1, 0], [0, 1], [0, -1],
+                [1, 1], [1, -1], [-1, 1], [-1, -1]
+            ];
+            for (let i = 0; i < candidates.length; i++) {
+                const dx = candidates[i][0];
+                const dy = candidates[i][1];
+                const len = Math.hypot(dx, dy) || 1;
+                const sx = dx / len;
+                const sy = dy / len;
+                if (!blocked(mob.x + sx * step, mob.y + sy * step)) {
+                    return { nx: sx, ny: sy };
+                }
+            }
+            return null;
+        }
+
+        _unstickPose(world) {
+            const mob = this.mob;
+            const blocked = (x, y) => {
+                if (world?.poseBlocked) return world.poseBlocked(mob, x, y, 2);
+                return this._agentBlocked(x, y, world);
+            };
+            const ox = mob.x;
+            const oy = mob.y;
+            for (let r = 4; r <= 96; r += 4) {
+                const n = Math.max(8, Math.round(r));
+                for (let i = 0; i < n; i++) {
+                    const a = (i / n) * Math.PI * 2;
+                    const x = ox + Math.cos(a) * r;
+                    const y = oy + Math.sin(a) * r;
+                    if (blocked(x, y)) continue;
+                    mob.x = x;
+                    mob.y = y;
+                    this._path = null;
+                    this._stuckMs = 0;
+                    this._jamMs = 0;
+                    return true;
+                }
+            }
+            return false;
         }
 
         _bodyRect() {
@@ -1127,7 +1375,8 @@
             let mul = 1;
             if (mob.isAttacking?.()) mul *= 0.5;
             const tiles = 3.5 * (sprint && (Number(mob.kc) > 0) ? 1.5 : 1);
-            const speed = tiles * TILE * moveMul * mul;
+            const stroll = this._strollMul != null ? this._strollMul : 1;
+            const speed = tiles * TILE * moveMul * mul * stroll;
             mob.setDesiredVel?.(nx * speed, ny * speed);
             this._face(nx, ny);
         }
