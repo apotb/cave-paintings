@@ -2,7 +2,109 @@
  * Title menu — Singleplayer / Multiplayer with client-owned characters (IndexedDB).
  */
 const TITLE_CAVE_STAMPS = ["deer", "hand", "hide", "spear", "stick"];
-const GAME_VERSION = "0.2.0";
+const GITHUB_REPO = "apotb/cave-paintings";
+const GITHUB_RELEASES_LATEST = `https://github.com/${GITHUB_REPO}/releases/latest`;
+const UPDATE_LINK_COLOR = "#ff8c00";
+const UPDATE_LINK_HOVER = "#ffc14a";
+
+/** @type {null | undefined | { version: string, url: string }} */
+let _latestReleaseCache;
+let _latestReleasePromise = null;
+/** @type {null | undefined | string} */
+let _localVersionCache;
+let _localVersionPromise = null;
+
+function isElectronApp() {
+    return typeof window !== "undefined" && !!window.cavePaintings;
+}
+
+function readElectronVersion() {
+    try {
+        const v = window.cavePaintings?.getVersion?.();
+        const s = String(v || "").trim();
+        return s || null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function resolveLocalVersion() {
+    if (_localVersionCache !== undefined) return Promise.resolve(_localVersionCache);
+    const v = readElectronVersion();
+    if (v) {
+        _localVersionCache = v;
+        return Promise.resolve(v);
+    }
+    if (_localVersionPromise) return _localVersionPromise;
+    _localVersionPromise = (async () => {
+        try {
+            const res = await fetch("package.json", { cache: "no-store" });
+            if (!res.ok) {
+                _localVersionCache = null;
+                return null;
+            }
+            const data = await res.json();
+            const v = String(data?.version || "").trim();
+            _localVersionCache = v || null;
+            return _localVersionCache;
+        } catch (_) {
+            _localVersionCache = null;
+            return null;
+        }
+    })();
+    return _localVersionPromise;
+}
+
+function parseGameVersion(raw) {
+    const s = String(raw || "").trim().replace(/^[vV]/, "");
+    const parts = s.split(/[.+-]/).map((p) => parseInt(p, 10));
+    const out = [0, 0, 0];
+    for (let i = 0; i < 3; i++) out[i] = Number.isFinite(parts[i]) ? parts[i] : 0;
+    return out;
+}
+
+function compareGameVersions(a, b) {
+    const pa = parseGameVersion(a);
+    const pb = parseGameVersion(b);
+    for (let i = 0; i < 3; i++) {
+        if (pa[i] > pb[i]) return 1;
+        if (pa[i] < pb[i]) return -1;
+    }
+    return 0;
+}
+
+function fetchLatestGithubRelease() {
+    if (_latestReleaseCache !== undefined) return Promise.resolve(_latestReleaseCache);
+    if (_latestReleasePromise) return _latestReleasePromise;
+    _latestReleasePromise = (async () => {
+        try {
+            const res = await fetch(
+                `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`,
+                { headers: { Accept: "application/vnd.github+json" } }
+            );
+            if (!res.ok) {
+                _latestReleaseCache = null;
+                return null;
+            }
+            const data = await res.json();
+            const tag = String(data?.tag_name || "").trim();
+            const version = tag.replace(/^[vV]/, "");
+            if (!version) {
+                _latestReleaseCache = null;
+                return null;
+            }
+            _latestReleaseCache = {
+                version,
+                url: String(data.html_url || "").trim() || GITHUB_RELEASES_LATEST
+            };
+            return _latestReleaseCache;
+        } catch (_) {
+            _latestReleaseCache = null;
+            return null;
+        }
+    })();
+    return _latestReleasePromise;
+}
 
 class SceneMenu extends Phaser.Scene {
     constructor() {
@@ -787,23 +889,96 @@ class SceneMenu extends Phaser.Scene {
         this._optionsFullscreenBtn = null;
         this.hostInput = this.passInput = this.nameInput = this.worldNameInput = this.seedInput = this.renameInput = null;
         this._versionLabel = null;
+        this._updateLabel = null;
+        this._updateUnderline = null;
         this._syncKeyboardForDom();
         this._placeVersionLabel();
     }
 
+    _destroyVersionChrome() {
+        for (const key of ["_versionLabel", "_updateLabel", "_updateUnderline"]) {
+            const obj = this[key];
+            this[key] = null;
+            if (!obj) continue;
+            try { obj.destroy(); } catch (_) {}
+        }
+    }
+
     /** Quiet build mark in the title-scene corner; rebuilt after every `_clear`. */
     _placeVersionLabel() {
+        this._destroyVersionChrome();
         const s = this._uiScale();
         const pad = Math.round(10 * s);
-        const label = this.add.text(pad, this.scale.height - pad, `v${GAME_VERSION}`, {
-            fontFamily: PIXEL_UI_FONT,
-            fontSize: this._uiFont(8),
-            color: "#8a7a68"
-        }).setOrigin(0, 1).setDepth(20);
-        if (typeof applyPixelUiFont === "function") applyPixelUiFont(label, 8, s);
-        else if (typeof crispUiText === "function") crispUiText(label);
-        this._versionLabel = label;
+        const gap = Math.round(2 * s);
+        const bottomY = this.scale.height - pad;
+        const electron = isElectronApp();
+        if (_localVersionCache === undefined) {
+            const v = readElectronVersion();
+            if (v) _localVersionCache = v;
+        }
+        const localVersion = typeof _localVersionCache === "string" ? _localVersionCache : "";
+        const info = electron ? _latestReleaseCache : null;
+        const showUpdate = !!(
+            info && localVersion && compareGameVersions(info.version, localVersion) > 0
+        );
+        let versionY = bottomY;
+        if (showUpdate) {
+            const text = `Update v${info.version} is available`;
+            const link = this.add.text(pad, bottomY, text, {
+                fontFamily: PIXEL_UI_FONT,
+                fontSize: this._uiFont(8),
+                color: UPDATE_LINK_COLOR
+            }).setOrigin(0, 1).setDepth(20);
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(link, 8, s);
+            else if (typeof crispUiText === "function") crispUiText(link);
+            link.setInteractive({ useHandCursor: true });
+            const lineH = Math.max(1, Math.round(s));
+            const underline = this.add.rectangle(
+                pad,
+                Math.round(link.y),
+                Math.max(1, Math.round(link.width)),
+                lineH,
+                0xff8c00
+            ).setOrigin(0, 1).setDepth(20);
+            const paintLink = (over) => {
+                const color = over ? UPDATE_LINK_HOVER : UPDATE_LINK_COLOR;
+                link.setColor(color);
+                underline.setFillStyle(over ? 0xffc14a : 0xff8c00);
+            };
+            link.on("pointerover", () => paintLink(true));
+            link.on("pointerout", () => paintLink(false));
+            link.on("pointerup", () => {
+                try {
+                    window.open(info.url || GITHUB_RELEASES_LATEST, "_blank", "noopener,noreferrer");
+                } catch (_) {}
+            });
+            this._updateLabel = link;
+            this._updateUnderline = underline;
+            versionY = Math.round(link.y - link.height - gap);
+        }
+        if (localVersion) {
+            const label = this.add.text(pad, versionY, `v${localVersion}`, {
+                fontFamily: PIXEL_UI_FONT,
+                fontSize: this._uiFont(8),
+                color: "#8a7a68"
+            }).setOrigin(0, 1).setDepth(20);
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(label, 8, s);
+            else if (typeof crispUiText === "function") crispUiText(label);
+            this._versionLabel = label;
+        }
         this._sendCaveBehind();
+        if (_localVersionCache === undefined) {
+            resolveLocalVersion().then(() => {
+                if (!this.sys?.isActive?.()) return;
+                this._placeVersionLabel();
+            });
+        }
+        if (electron && _latestReleaseCache === undefined) {
+            fetchLatestGithubRelease().then(() => {
+                if (!this.sys?.isActive?.()) return;
+                this._placeVersionLabel();
+            });
+        }
     }
 
     _track(...nodes) {

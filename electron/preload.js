@@ -9,6 +9,13 @@ contextBridge.exposeInMainWorld("cavePaintings", {
     getOptions: () => ipcRenderer.sendSync("saves:options:get"),
     putOptions: (opts) => ipcRenderer.invoke("saves:options:put", opts),
     openFolder: () => ipcRenderer.invoke("saves:openFolder"),
+    getVersion: () => {
+        try {
+            return ipcRenderer.sendSync("app:version") || "";
+        } catch (_) {
+            return "";
+        }
+    },
     quit: () => ipcRenderer.invoke("app:quit"),
     setFullscreen: (on) => ipcRenderer.invoke("app:setFullscreen", !!on),
     isFullscreen: () => ipcRenderer.invoke("app:isFullscreen"),

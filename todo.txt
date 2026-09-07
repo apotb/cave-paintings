@@ -1,21 +1,31 @@
-Painting Circle -- used for research. Crafted with Pebble x12, Leaf cord x6, shows 6 stones in a circle, have intermediate sprites for amount of paintings made that shows scribbles on them. Must keep the paintings as a persistent resource to "store" the research. 12 hours for each painting, persists on the Painting Circle so you don't have to finish it all at once. No bills, tooltip shows X/6 progress.
+Painting Circle -- used for research. Crafted with Pebble x12, Leaf cord x6, shows 6 stones in a circle, have intermediate sprites for amount of paintings made that shows scribbles on them. Must keep the paintings as a persistent resource to "store" the research. 12 hours for each painting, persists on the Painting Circle so you don't have to finish it all at once. No bills, tooltip shows X/6 progress. Place in hearth range; Research job, short "Res"; no bills; Research tab spends paintings and locks them; 1 point each. Tokens/clay tablets later are just other research items, tokens are still 1 point but can be made in bulk, and clay tablets grant a whopping 5 points.
 
 Gathering (done): Unlocks Get job
 ├── Cordage (done): Unlocks Leaf Cord and Leaf apparel
 │   └── Camping (done): Unlocks Stick Frame, Wicker Basket, Lean-to
 │       └── Basic Furniture (2): Unlocks Stool
-├── Fishing (2): Unlocks Fishing job
-└── Agriculture (3): Unlocks Agronomy job
-    └── Tree Sowing (2): Unlocks sowing Trees
+├── Herbalism (1): Unlocks Poultice (leaf cords + berries/flowers)
+├── Digging (2): Unlocks Digging Stick
+├── Traps (3): Unlocks Spike Trap
+│   └── Pit Traps (2): Unlocks Pit Trap                  ← also requires Digging
+├── Fishing (3): Unlocks Fishing job
+└── Agriculture (4): Unlocks Agronomy job
+    ├── Tree Sowing (2): Unlocks sowing Trees
+    └── Husbandry (3): Unlocks Husbandry job
+        └── Herding (4): Unlocks Fence, Fence Gate, Pen Marker, Trough
 
 Fire (done): Unlocks firestarting via Sharp Stick
 ├── Settlements (done): Unlocks Hearth
-└── Cooking (done): Unlocks Cracked Coconut
-    └── Feasts (2): Unlocks Feast ritual
+├── Cooking (done): Unlocks Cracked Coconut
+│   └── Feasts (2): Unlocks Feast ritual                  ← also requires Rituals
+└── Clay Forming (3): Unlocks clay forming
+    └── Pit Kiln (2): Unlocks Pit Kiln (20 leaves, 4 sticks, 4 logs)  ← also requires Digging
+        └── Pottery (5): Unlocks Clay Pot                     ← also requires Agriculture
 
 Knapping (done): Unlocks knapping via Rocks and 5 basic knapping techniques
 ├── Hafting (done): Unlocks spears                        ← also requires Cordage
-│   └── Bows (3): Unlocks Bow, Arrows
+│   ├── Bows (4): Unlocks Bow, Arrow                      ← also requires Blades
+│   └── Dogs (6): Unlocks taming Wolves into Dogs         ← also requires Husbandry
 └── Hand-axe (2): Unlocks Hand-axe knapping technique
     ├── Cleaver (1): Unlocks Cleaver knapping technique
     └── Blades (2): Unlocks Blade knapping technique
@@ -24,35 +34,49 @@ Tanning (done): Unlocks Tailoring job and Drying Rack
 └── Skinworking (1): unlocks Skinworking Bench            ← also requires Basic Furniture
 
 Culture (done)
-├── Painting (done): Unlocks Painting Circle
+├── Painting (done): Unlocks research job and Painting Circle
+│   └── Mathematics (3): Unlocks Clay Tokens              ← also requires Clay Forming
+│       └── Writing (10): Unlocks Clay Tablet and Research Bench    ← also requires Basic Furniture
 ├── Rituals (2)
-└── Burial (1): Unlocks Grave
+└── Burial (1): Unlocks Grave                             ← also requires Digging
     └── Afterlife (2): Unlocks Funeral ritual             ← also requires Rituals
 
-Gathering | Lower Paleolithic | 'Use your surroundings'
-Cordage | Upper Paleolithic | 'Knot bad'
-Camping | Upper Paleolithic | 'Embrace the elements'
-Basic Furniture | Upper Paleolithic | 'Make yourself at home'
+Gathering | Paleolithic | 'Use your surroundings'
+Cordage | Paleolithic | 'Knot bad'
+Camping | Paleolithic | 'Embrace the elements'
+Basic Furniture | Paleolithic | 'Make yourself at home'
+Herbalism | Paleolithic | 'This might sting'
+Digging | Paleolithic | 'Very undesirable profession'
+Traps | Mesolithic | 'Wait for dinner'
+Pit Traps | Mesolithic | 'Watch your step'
 Fishing | Mesolithic | 'Might need to adjust your palate'
-Agriculture | Neolithic | 'Soil is a gift from Mother Earth'
-Tree Sowing | Neolithic | 'Replenish your wood supply'
-Fire | Lower Paleolithic | 'It's hot!'
-Settlements | Middle Paleolithic | 'No longer nomads'
-Cooking | Lower Paleolithic | 'We can make eating fun'
-Feasts | Upper Paleolithic | 'Food makes the world go around'
-Knapping | Lower Paleolithic | 'Less is more'
-Hafting | Middle Paleolithic | 'Sharper sticks'
+Agriculture | Neolithic | 'I love dirt'
+Tree Sowing | Neolithic | 'Early environmentalism'
+Husbandry | Neolithic | 'More mouths to feed'
+Herding | Neolithic | 'The circle of life'
+Fire | Paleolithic | 'It's hot!'
+Settlements | Paleolithic | 'Precursor to society'
+Cooking | Paleolithic | 'We can make eating fun'
+Feasts | Paleolithic | 'Food makes the world go around'
+Clay Forming | Paleolithic | 'Shape the earth'
+Pit Kiln | Paleolithic | 'Reaches incredibly high temperatures'
+Pottery | Neolithic | 'For those who dislike coconuts'
+Knapping | Paleolithic | 'Less is more'
+Hafting | Paleolithic | 'Sharper sticks'
 Bows | Mesolithic | 'Stay out of danger'
-Hand-axe | Lower Paleolithic | 'Harder, better, faster, stronger'
-Cleaver | Lower Paleolithic | 'CLEAVER_TOOLTIP'
-Blades | Middle Paleolithic | 'BLADES_TOOLTIP'
-Tanning | Middle Paleolithic | 'Hope you don't mind the sight of blood'
-Skinworking | Upper Paleolithic | 'Cover up with style'
-Culture | Upper Paleolithic | 'The story of our people'
-Painting | Upper Paleolithic | 'A most desirable profession'
-Rituals | Upper Paleolithic | 'It's not a cult'
-Burial | Middle Paleolithic | 'Dead bodies smell bad'
-Afterlife | Upper Paleolithic | 'Our people have souls'
+Dogs | Neolithic | 'Man's best friend'
+Hand-axe | Paleolithic | 'Harder, better, faster, stronger'
+Cleaver | Paleolithic | 'Better butchering'
+Blades | Paleolithic | 'Knap stone into long flakes'
+Tanning | Paleolithic | 'Hope you don't mind the sight of blood'
+Skinworking | Paleolithic | 'Cover up with style'
+Culture | Paleolithic | 'The way of our people'
+Painting | Paleolithic | 'Very desirable profession'
+Mathematics | Neolithic | 'Invent 1, 2 before buckling shoes'
+Writing | Neolithic | 'Less ambiguous than paintings'
+Rituals | Paleolithic | 'It's not a cult'
+Burial | Paleolithic | 'Dead bodies smell bad'
+Afterlife | Paleolithic | 'Our people have souls'
 
 -----
 

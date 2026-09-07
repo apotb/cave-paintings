@@ -23,6 +23,12 @@ protocol.registerSchemesAsPrivileged([
 app.setName(PRODUCT);
 app.setPath("userData", path.join(app.getPath("appData"), PRODUCT));
 
+// Must be registered before any window loads. macOS `activate` can create
+// the window before `whenReady` finishes registering the rest of the IPC.
+ipcMain.on("app:version", (event) => {
+    event.returnValue = app.getVersion();
+});
+
 const gameRoot = path.resolve(path.join(__dirname, ".."));
 
 function savesRoot() {
@@ -187,6 +193,15 @@ function createWindow() {
     win.on("enter-full-screen", () => syncFullscreen(win, true));
     win.on("leave-full-screen", () => syncFullscreen(win, false));
     win.on("close", () => { win._cpClosing = true; });
+    win.webContents.setWindowOpenHandler(({ url }) => {
+        try {
+            const u = new URL(url);
+            if (u.protocol === "https:" || u.protocol === "http:") {
+                shell.openExternal(url);
+            }
+        } catch (_) {}
+        return { action: "deny" };
+    });
     win.loadURL(`${SCHEME}://${HOST}/index.html`);
     mainWindow = win;
     win.on("closed", () => {
@@ -214,6 +229,7 @@ if (!gotLock) {
 
     app.on("before-quit", () => { appQuitting = true; });
     app.on("activate", () => {
+        if (!app.isReady()) return;
         if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
 
