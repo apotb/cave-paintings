@@ -16,7 +16,10 @@ npm run build       # installers → out/
 npm run build:mac
 npm run build:win
 npm run build:linux
+npm run png         # lossless PNG optimize (needs oxipng on PATH)
 ```
+
+`npm run png` strips metadata and palettizes `assets/` plus `build/icon.png` without changing pixels. Install oxipng from [releases](https://github.com/oxipng/oxipng/releases) or `brew install oxipng`.
 
 Server flags, TLS, console commands: [server/README.md](server/README.md).
 

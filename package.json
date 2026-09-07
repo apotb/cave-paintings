@@ -16,6 +16,7 @@
     "build:mac": "node electron/run-builder.js --mac",
     "build:win": "node electron/run-builder.js --win",
     "build:linux": "node electron/run-builder.js --linux",
+    "png": "oxipng -r --strip all -o 4 assets build/icon.png",
     "test": "node --test --test-concurrency=1 test/*.test.js"
   },
   "dependencies": {
