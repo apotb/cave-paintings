@@ -1123,9 +1123,11 @@ test("addPlayer clusters a companion with no world pose next to the leader", () 
 
 test("addPlayer restores a companion logout pose for this world", () => {
     const { world } = createTestWorld();
+    // Stay inside the stubbed -1..1 chunks (128px). A far pose WorldGens real
+    // terrain and `_restoreLogoutPose` will nudge off blocked tiles.
     world.poses = {
         joiner: { x: 48, y: 64, facing: "down" },
-        buddy: { x: 320, y: 400, facing: "left" }
+        buddy: { x: 96, y: 112, facing: "left" }
     };
     const p = world.addPlayer("joiner", "Joiner", {
         name: "Joiner",
@@ -1133,8 +1135,8 @@ test("addPlayer restores a companion logout pose for this world", () => {
     });
     const mem = (p.party || []).find((m) => m.id === "buddy");
     assert.ok(mem);
-    assert.equal(mem.x, 320);
-    assert.equal(mem.y, 400);
+    assert.equal(mem.x, 96);
+    assert.equal(mem.y, 112);
     assert.equal(mem.facing, "left");
     assert.equal(p.x, 48);
     assert.equal(p.y, 64);
