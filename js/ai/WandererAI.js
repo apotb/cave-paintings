@@ -37,10 +37,21 @@ class WandererAI {
             pawn.setVelocity(0, 0);
             if (pawn.body) pawn.body.moves = false;
             setCreatureProne?.(pawn, true);
+            if (typeof applyCreatureSortDepth === "function") applyCreatureSortDepth(pawn);
+            else pawn.setDepth?.(pawn.y | 0);
             return;
         }
         if (pawn.body) pawn.body.moves = true;
         setCreatureProne?.(pawn, false);
+
+        const hit = typeof overlappingThingSprite === "function"
+            ? overlappingThingSprite(pawn)
+            : null;
+        if (hit) nudgePawnOutOfThing?.(pawn, hit, true);
+        else if (pawnPoseBlocked?.(pawn, pawn.x, pawn.y, 0)) {
+            const free = findFreePawnPose?.(pawn, 80);
+            if (free) teleportPawnPose?.(pawn, free.x, free.y);
+        }
 
         const tickScale = typeof Party !== "undefined" && Party.mobTimeScale
             ? Party.mobTimeScale(scene.tickSpeed)
@@ -83,22 +94,32 @@ class WandererAI {
         const oy = pawn.y;
         if (!(tickScale > 0)) {
             pawn.setVelocity?.(0, 0);
-            this._syncWalkAnim(pawn, 0);
-            pawn.setDepth(pawn.y | 0);
+            if (pawn.anims) {
+                if (typeof pawn.anims.pause === "function") {
+                    if (pawn.anims.isPlaying && !pawn.anims.isPaused) pawn.anims.pause();
+                } else {
+                    pawn.anims.timeScale = 0;
+                }
+            }
+            if (typeof applyCreatureSortDepth === "function") applyCreatureSortDepth(pawn);
+            else pawn.setDepth(pawn.y | 0);
             pawn.syncNameLabel?.();
             pawn.syncFxRoot?.();
             return;
+        }
+        if (pawn.anims?.isPaused && typeof pawn.anims.resume === "function") {
+            pawn.anims.resume();
         }
         const ts = scene.tileSize || 16;
         const stroll = (typeof Party !== "undefined" && Party.WANDER_WALK_MULT) || 0.28;
         if (typeof PartyAI !== "undefined") {
             if (!this._pather || this._pather.pawn !== pawn) this._pather = new PartyAI(pawn);
-            this._pather._pathRange = 16;
+            this._pather._pathRange = 8;
             if (
                 !this._walkDest
-                || Math.hypot(pawn.x - this._walkDest.x, pawn.y - this._walkDest.y) < 8 * ts
+                || Math.hypot(pawn.x - this._walkDest.x, pawn.y - this._walkDest.y) < 4 * ts
             ) {
-                this._walkDest = { x: pawn.x + nx * 48 * ts, y: pawn.y + ny * 48 * ts };
+                this._walkDest = { x: pawn.x + nx * 10 * ts, y: pawn.y + ny * 10 * ts };
             }
             this._pather._walkToward(pawn, this._walkDest.x, this._walkDest.y, ts, false, aiDelta);
             if (pawn.body) {
@@ -131,7 +152,8 @@ class WandererAI {
         }
         const tilesPerSec = Math.hypot(pawn.body?.velocity?.x || 0, pawn.body?.velocity?.y || 0) / ts;
         this._syncWalkAnim(pawn, tilesPerSec);
-        pawn.setDepth(pawn.y | 0);
+        if (typeof applyCreatureSortDepth === "function") applyCreatureSortDepth(pawn);
+        else pawn.setDepth(pawn.y | 0);
         pawn.syncNameLabel?.();
         pawn.syncFxRoot?.();
         if (!this._stuckOrigin) this._stuckOrigin = { x: ox, y: oy };

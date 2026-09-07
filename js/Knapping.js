@@ -839,7 +839,7 @@ const Knapping = {
         if (result.toolClass === "blank") {
             stack.tooltipExtra = "Failed knapping";
         } else if (result.toolClass === "knife") {
-            stack.tooltipExtra = "Mr. Stabby";
+            stack.tooltipExtra = "'Mr. Stabby'";
         } else if (result.toolClass === "chopper") {
             stack.tooltipExtra = "Slow but heavy";
         } else if (result.toolClass === "awl") {

@@ -36,3 +36,13 @@ test("spoilLeft and spoilAt round-trip", () => {
     const at = Spoil.spoilAtFromLeft(left, now);
     assert.equal(Spoil.spoilLeftFromAt(at, now), left);
 });
+
+test("browser UMD exposes Spoil (alias of NetSpoil)", () => {
+    const fs = require("fs");
+    const vm = require("vm");
+    const src = fs.readFileSync(require.resolve("../shared/spoil.js"), "utf8");
+    const root = {};
+    vm.runInNewContext(src, { globalThis: root });
+    assert.equal(typeof root.Spoil?.migrateCharacterStacks, "function");
+    assert.equal(root.Spoil, root.NetSpoil);
+});

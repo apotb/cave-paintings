@@ -5,6 +5,44 @@ const Place = require("../shared/place");
 const Sleep = require("../shared/sleep");
 const Party = require("../shared/party");
 
+test("planStorageDeposits fills matching stacks then empty slots", () => {
+    const slots = [
+        { id: "leaf", quantity: 90 },
+        null,
+        { id: "stick", quantity: 3 },
+        null
+    ];
+    const whole = Place.planStorageDeposits(slots, { id: "leaf", quantity: 20 }, 20, { maxStack: 99 });
+    assert.deepEqual(whole, [
+        { index: 0, amount: 9 },
+        { index: 1, amount: 11 }
+    ]);
+    const one = Place.planStorageDeposits(slots, { id: "leaf", quantity: 20 }, 1, { maxStack: 99 });
+    assert.deepEqual(one, [{ index: 0, amount: 1 }]);
+});
+
+test("planStorageDeposits splits leftovers across several partial stacks", () => {
+    const slots = [
+        { id: "leaf", quantity: 90 },
+        { id: "leaf", quantity: 95 },
+        null
+    ];
+    const plan = Place.planStorageDeposits(slots, { id: "leaf", quantity: 20 }, 20, { maxStack: 99 });
+    assert.deepEqual(plan, [
+        { index: 0, amount: 9 },
+        { index: 1, amount: 4 },
+        { index: 2, amount: 7 }
+    ]);
+});
+
+test("settling stone counts as a rock for nearby requirements", () => {
+    assert.equal(Place.countsAsThing("rock", "rock"), true);
+    assert.equal(Place.countsAsThing("settling_stone", "rock"), true);
+    assert.equal(Place.countsAsThing("rock", "settling_stone"), false);
+    assert.equal(Place.countsAsThing("wicker_basket", "rock"), false);
+    assert.equal(Place.countsAsThing("settling_stone", "skinworking_bench"), false);
+});
+
 test("settlement circles cannot overlap", () => {
     const a = Settlement.createSettlement({ x: 0, y: 0 });
     const ok = Settlement.canPlace([a], 64 * 16, 0, 16);
@@ -49,11 +87,11 @@ test("campfire bills catalog is Roast, Simmer, and Smoke leather", () => {
     assert.equal(recipes[2].method, "smoke_hide");
     const items = [
         { id: "apple", name: "Apple", cook: { stick_roast: { result: "roasted_apple", minutes: 10 } } },
-        { id: "raw_beef", name: "Raw Beef", cook: { stick_roast: { result: "roast_beef", minutes: 15 } } },
+        { id: "raw_human_flesh", name: "Raw Human Flesh", cook: { stick_roast: { result: "roasted_human_flesh", minutes: 15 } } },
         { id: "stick", name: "Stick" }
     ];
     const inputs = Settlement.cookInputsForMethod(items, "stick_roast");
-    assert.deepEqual(inputs.map((i) => i.id), ["apple", "raw_beef"]);
+    assert.deepEqual(inputs.map((i) => i.id), ["apple", "raw_human_flesh"]);
     const simmer = Settlement.billInputsFor(recipes[1], items);
     assert.ok(simmer.some((i) => i.id === "apple"));
     assert.ok(simmer.some((i) => i.id === "blueberry"));
@@ -75,10 +113,104 @@ test("campfire bills catalog is Roast, Simmer, and Smoke leather", () => {
     assert.deepEqual(simmerBill.resultIds, ["coconut_meal"]);
     assert.equal(Settlement.cookInputReady(() => null, { id: "blueberry" }, simmerBill), true);
     assert.equal(Settlement.cookOutputReady(() => null, { id: "coconut_meal" }, simmerBill), true);
-    assert.equal(Settlement.cycleBillMode("forever"), "until");
+    assert.equal(Settlement.cycleBillMode("count"), "until");
+    assert.equal(Settlement.cycleBillMode("until"), "forever");
+    assert.equal(Settlement.cycleBillMode("forever"), "count");
+    assert.equal(Settlement.billModeLabel("count"), "Do X times");
     assert.equal(Settlement.billModeLabel("until"), "Do until you have X");
+    assert.equal(Settlement.billModeLabel("forever"), "Do forever");
     const moved = Settlement.moveBill(Settlement.billsOf(settle, "fire1"), bill.id, 1);
     assert.equal(moved.length, 2);
+});
+
+test("new bills default to making one item", () => {
+    const bill = Settlement.makeBill({ recipeId: "roast" });
+    assert.equal(bill.mode, "count");
+    assert.equal(bill.n, 1);
+    assert.equal(bill.remaining, 1);
+    assert.equal(bill.paused, true);
+    assert.equal(Settlement.makeBill({ recipeId: "roast", paused: false }).paused, false);
+});
+
+test("bills report when they lack materials", () => {
+    const roastItems = [
+        { id: "apple", name: "Apple", cook: { stick_roast: { result: "roasted_apple", minutes: 8 } } }
+    ];
+    const roast = Settlement.makeBill({ recipeId: "roast", allowedIds: ["apple"] });
+    const roastOpts = (n) => ({
+        countItem: (id) => (id === "apple" ? n : 0),
+        items: roastItems
+    });
+    assert.equal(Settlement.billHasMaterials(roast, roastOpts(0)), false);
+    assert.equal(Settlement.billHasMaterials(roast, roastOpts(1)), true);
+
+    const simmer = Settlement.makeBill({ recipeId: "simmer" });
+    const fruit = { apple: 1, blueberry: 0 };
+    const simmerOpts = {
+        countItem: (id) => fruit[id] || 0,
+        items: [
+            { id: "apple", name: "Apple" },
+            { id: "blueberry", name: "Blueberry" }
+        ]
+    };
+    assert.equal(Settlement.billHasMaterials(simmer, simmerOpts), false);
+    fruit.blueberry = 1;
+    assert.equal(Settlement.billHasMaterials(simmer, simmerOpts), true);
+
+    const pouchItems = [
+        { id: "deer_hide_dry", name: "Dried Deer Hide", hide: { animal: "deer", stage: "dried" } },
+        { id: "leaf_cord", name: "Leaf Cord" },
+        {
+            id: "hide_pouch",
+            name: "Hide Pouch",
+            recipe: {
+                ANY_HIDE: { qty: 1, hideStage: "dried" },
+                leaf_cord: 4,
+                REQUIRE_STATION: "skinworking_bench",
+                CRAFT_SECONDS: 12,
+                REQUIRE_TOOL: { toolClass: "awl", wear: 10 }
+            }
+        }
+    ];
+    const pouch = Settlement.makeBill({ recipeId: "hide_pouch" });
+    const stock = { deer_hide_dry: 1, leaf_cord: 0 };
+    const pouchOpts = {
+        countItem: (id) => stock[id] || 0,
+        getItem: (id) => pouchItems.find((it) => it.id === id),
+        items: pouchItems
+    };
+    assert.equal(Settlement.billHasMaterials(pouch, pouchOpts), false);
+    stock.leaf_cord = 4;
+    assert.equal(Settlement.billHasMaterials(pouch, pouchOpts), true);
+    stock.deer_hide_dry = 0;
+    assert.equal(Settlement.billHasMaterials(pouch, pouchOpts), false);
+
+    const done = Settlement.makeBill({ recipeId: "roast", mode: "count", n: 1 });
+    done.remaining = 0;
+    assert.equal(Settlement.billWantsMaterials(done), false);
+    const until = Settlement.makeBill({
+        recipeId: "roast", mode: "until", n: 2, resultIds: ["roasted_apple"]
+    });
+    assert.equal(Settlement.billWantsMaterials(until, () => 2), false);
+    assert.equal(Settlement.billWantsMaterials(until, () => 1), true);
+});
+
+test("billTitle uses a custom name when set", () => {
+    const named = Settlement.makeBill({ recipeId: "roast", name: "  Evening roast  " });
+    assert.equal(named.name, "Evening roast");
+    assert.equal(Settlement.billTitle(named), "Evening roast");
+    const plain = Settlement.makeBill({ recipeId: "roast" });
+    assert.equal(Settlement.billTitle(plain), "Roast");
+});
+
+test("renameChat colors old and new settlement names", () => {
+    const line = Settlement.renameChat("River Camp", "Hill Camp", "#7ec8ff");
+    assert.equal(line.text, "River Camp was renamed to Hill Camp");
+    assert.deepEqual(line.segments, [
+        { text: "River Camp", color: "#7ec8ff" },
+        { text: "was renamed to" },
+        { text: "Hill Camp", color: "#7ec8ff" }
+    ]);
 });
 
 test("rack bills are per hide step with animal allowlists", () => {
@@ -163,11 +295,50 @@ test("bench bills catalog sewn hide and leather goods", () => {
 test("bill until-you-have counts across baskets", () => {
     const settle = Settlement.createSettlement({ x: 0, y: 0 });
     const baskets = [{ slots: [{ id: "stick", quantity: 4 }, { id: "stick", quantity: 3 }] }];
-    Settlement.addBill(settle, "fire1", { mode: "until", n: 10, outputId: "stick" });
+    Settlement.addBill(settle, "fire1", { mode: "until", n: 10, outputId: "stick", paused: false });
     const bill = Settlement.activeBill(settle, "fire1", (id) => Settlement.countStock(baskets, id));
     assert.ok(bill);
     const done = Settlement.activeBill(settle, "fire1", () => 12);
     assert.equal(done, null);
+});
+
+test("billIsActive ignores paused and finished count bills", () => {
+    const forever = Settlement.makeBill({ recipeId: "roast", mode: "forever", paused: false });
+    assert.equal(Settlement.billIsActive(forever), true);
+    forever.paused = true;
+    assert.equal(Settlement.billIsActive(forever), false);
+    const count = Settlement.makeBill({ recipeId: "simmer", mode: "count", n: 1, paused: false });
+    assert.equal(Settlement.billIsActive(count), true);
+    count.remaining = 0;
+    assert.equal(Settlement.billIsActive(count), false);
+    const settle = Settlement.createSettlement({ x: 0, y: 0 });
+    Settlement.addBill(settle, "fire1", { recipeId: "roast", mode: "forever", paused: true });
+    Settlement.addBill(settle, "fire1", { recipeId: "simmer", mode: "forever", paused: false });
+    const active = Settlement.activeBill(settle, "fire1", () => 0);
+    assert.equal(active.recipeId, "simmer");
+});
+
+test("completed count and fulfilled until bills are complete with red qty labels", () => {
+    const count = Settlement.makeBill({ recipeId: "roast", mode: "count", n: 3 });
+    assert.equal(Settlement.billIsComplete(count), false);
+    assert.equal(Settlement.billQtyLabel(count), "3x");
+    count.remaining = 0;
+    assert.equal(Settlement.billIsComplete(count), true);
+    assert.equal(Settlement.billQtyLabel(count), "0x");
+
+    const until = Settlement.makeBill({
+        recipeId: "roast",
+        mode: "until",
+        n: 2,
+        resultIds: ["roasted_apple"]
+    });
+    assert.equal(Settlement.billIsComplete(until, () => 1), false);
+    assert.equal(Settlement.billQtyLabel(until, () => 1), "1/2");
+    assert.equal(Settlement.billIsComplete(until, () => 2), true);
+    assert.equal(Settlement.billQtyLabel(until, () => 4), "4/2");
+    assert.equal(Settlement.billQtyLabel(until), "2x");
+    const forever = Settlement.makeBill({ recipeId: "roast", mode: "forever" });
+    assert.equal(Settlement.billIsComplete(forever), false);
 });
 
 test("interest keys cover settlement chunks when player is far", () => {
@@ -205,6 +376,20 @@ test("picking up a station unlinks it so a same-tile re-place is not auto-added"
     Place.ensureStorageEntry(entry, { storage: { slots: 8 } });
     assert.equal(entry.uid, "st_8_8");
     assert.equal(settle.stationUids.includes(entry.uid), false);
+});
+
+test("removing a station from a settlement keeps its bills for re-add", () => {
+    const settle = Settlement.createSettlement({ x: 0, y: 0 });
+    settle.stationUids = ["fire1"];
+    Settlement.addBill(settle, "fire1", { recipeId: "roast", mode: "forever", paused: false });
+    const kept = Settlement.billsOf(settle, "fire1").slice();
+    assert.equal(kept.length, 1);
+    assert.equal(Settlement.removeStation(settle, "fire1"), true);
+    assert.deepEqual(settle.stationUids, []);
+    assert.equal(Settlement.billsOf(settle, "fire1").length, 1);
+    assert.equal(Settlement.billsOf(settle, "fire1")[0].id, kept[0].id);
+    settle.stationUids.push("fire1");
+    assert.equal(Settlement.billsOf(settle, "fire1")[0].recipeId, "roast");
 });
 
 test("owner-only station add including abandoned-camp ids", () => {
@@ -249,6 +434,16 @@ test("settlers sleeping at night does not change player tick speed", () => {
     assert.equal(speed, base);
     const allTravelResting = Sleep.effectiveTickSpeed(base, true);
     assert.ok(allTravelResting > base);
+});
+
+test("rest clock waits 3s then runs at 10×", () => {
+    assert.equal(Sleep.REST_TICK, 10);
+    assert.equal(Sleep.REST_TICK_DELAY_MS, 3000);
+    assert.equal(Sleep.effectiveTickSpeed(1, true, 0), 1);
+    assert.equal(Sleep.effectiveTickSpeed(1, true, 2999), 1);
+    assert.equal(Sleep.effectiveTickSpeed(1, true, 3000), 10);
+    assert.equal(Sleep.effectiveTickSpeed(1, false, 5000), 1);
+    assert.equal(Sleep.effectiveTickSpeed(2, true, 3000), 10);
 });
 
 test("stock list only includes resources from local plants and trees", () => {
@@ -298,6 +493,12 @@ test("chop job skips fruiting resource trees", () => {
     assert.equal(Settlement.chopSkipsTree("palm_tree", { choppable: { stump: "coconut_tree_stump" } }), false);
     assert.equal(Settlement.chopSkipsTree("tree", { choppable: { stump: "tree_stump" } }), false);
     assert.equal(Settlement.chopSkipsTree("snow_tree", { choppable: { stump: "snow_tree_stump" } }), false);
+    assert.equal(Settlement.chopSkipsTree("tree", { choppable: { stump: "tree_stump" } }, {
+        id: "tree", regrowId: "apple_tree", regrowAt: 99
+    }), true);
+    assert.equal(Settlement.chopSkipsTree("palm_tree", { choppable: { stump: "coconut_tree_stump" } }, {
+        id: "palm_tree", regrowId: "coconut_tree", regrowAt: 1
+    }), true);
 });
 
 test("stock counts settler inventories so gather/chop stop before deposit", () => {
@@ -358,8 +559,42 @@ test("roast cook helpers tell input from output and the stick", () => {
     assert.equal(Settlement.cookInputReady(getItem, { id: "apple" }, bill), true);
     assert.equal(Settlement.cookInputReady(getItem, { id: "roasted_apple" }, bill), false);
     assert.equal(Settlement.cookOutputReady(getItem, { id: "roasted_apple" }, bill), true);
+    assert.equal(Settlement.cookOutputReady(getItem, { id: "boar_hide_brained" }, bill), false);
     assert.equal(Settlement.isCookTool(getItem, { id: "sharp_stick" }, "stick_roast"), true);
     assert.equal(Settlement.isCookTool(getItem, { id: "apple" }, "stick_roast"), false);
+});
+
+test("smoke bills accept brained boar hide and do not treat it as roast output", () => {
+    const items = {
+        deer_hide_brained: {
+            hide: { animal: "deer", stage: "brained" },
+            cook: { smoke_hide: { result: "deer_leather", minutes: 240 } }
+        },
+        boar_hide_brained: {
+            hide: { animal: "boar", stage: "brained" },
+            cook: { smoke_hide: { result: "boar_leather", minutes: 240 } }
+        },
+        deer_leather: { hide: { animal: "deer", stage: "leather" } },
+        boar_leather: { hide: { animal: "boar", stage: "leather" } },
+        drying_rack: { cook: { method: "smoke_hide" } }
+    };
+    const getItem = (id) => items[id] || null;
+    const smoke = Settlement.makeBill({
+        recipeId: "smoke",
+        mode: "forever",
+        allowedIds: ["deer_hide_brained", "boar_hide_brained"]
+    });
+    assert.equal(Settlement.cookInputReady(getItem, { id: "boar_hide_brained" }, smoke), true);
+    assert.equal(Settlement.cookInputReady(getItem, { id: "deer_hide_brained" }, smoke), true);
+    assert.equal(Settlement.cookOutputReady(getItem, { id: "boar_leather" }, smoke), true);
+    assert.equal(Settlement.cookOutputReady(getItem, { id: "boar_hide_brained" }, smoke), false);
+    const roast = Settlement.makeBill({
+        recipeId: "roast",
+        mode: "forever",
+        allowedIds: ["apple"]
+    });
+    assert.equal(Settlement.cookOutputReady(getItem, { id: "boar_hide_brained" }, roast), false);
+    assert.equal(Settlement.isCookTool(getItem, { id: "drying_rack" }, "smoke_hide"), true);
 });
 
 test("cook can light/relight when a firestarter is in storage", () => {
@@ -436,15 +671,19 @@ test("job tooltip lists work inside the column", () => {
     assert.equal(Settlement.jobLabel("gather"), "Get");
     const cook = Settlement.jobTooltip("cook");
     assert.match(cook, /^Cook\n/);
-    assert.match(cook, /^- Light campfire$/m);
-    assert.match(cook, /^- Roast at campfire$/m);
-    assert.match(cook, /^- Simmer at campfire$/m);
-    assert.match(cook, /^- Smoke leather$/m);
+    assert.match(cook, /^- Work at Campfire$/m);
+    assert.doesNotMatch(cook, /Roast at campfire/);
+    assert.doesNotMatch(cook, /Smoke leather/);
+    assert.equal(Settlement.jobLabel("leather"), "Tail");
     const hide = Settlement.jobTooltip("leather");
-    assert.match(hide, /Flesh hides/);
-    assert.match(hide, /Soak hides/);
-    assert.match(hide, /Brain-tan hides/);
-    assert.match(hide, /skinworking bench/);
+    assert.match(hide, /^Tailoring\n/);
+    assert.match(hide, /^- Work at Drying Rack$/m);
+    assert.match(hide, /^- Work at Skinworking Bench$/m);
+    assert.doesNotMatch(hide, /Flesh hides/);
+    const gather = Settlement.jobTooltip("gather");
+    assert.match(gather, /^Gather\n/);
+    assert.match(gather, /^- Harvest plants$/m);
+    assert.match(gather, /^- Gather resources$/m);
 });
 
 test("planWork: eat, night sleep, jobs, orphan idle", () => {
@@ -452,6 +691,20 @@ test("planWork: eat, night sleep, jobs, orphan idle", () => {
     assert.equal(Settlement.planWork({ kc: 200, canEat: false }).type, "idle");
     assert.equal(Settlement.planWork({ kc: 2000, isNight: true, bed: { slot: 0 } }).type, "sleep");
     assert.equal(Settlement.planWork({ kc: 2000, isNight: true }).type, "idle");
+    const misplacedNight = { kind: "move", reason: "wrong", stackId: "stick", fromIndex: 0 };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        isNight: true,
+        jobs: Settlement.defaultJobs(),
+        haulMerge: misplacedNight
+    }).type, "haul");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        isNight: true,
+        bed: { slot: 0 },
+        jobs: Settlement.defaultJobs(),
+        haulMerge: misplacedNight
+    }).type, "sleep");
     assert.equal(Settlement.planWork({ kc: 2000, isOrphan: true }).type, "idle");
     assert.equal(Settlement.planWork({
         kc: 2000,
@@ -494,9 +747,132 @@ test("planWork: eat, night sleep, jobs, orphan idle", () => {
         haulDrop: drop,
         haulMerge: merge
     }).target, drop);
+    const misplaced = { kind: "move", reason: "wrong", stackId: "stick", fromIndex: 0 };
+    const haulWrong = Settlement.planWork({
+        kc: 2000,
+        jobs: Settlement.defaultJobs(),
+        gatherThing: { id: "sticks" },
+        haulMerge: misplaced
+    });
+    assert.equal(haulWrong.type, "haul");
+    assert.equal(haulWrong.target, misplaced);
+    const haulOff = Settlement.defaultJobs();
+    haulOff.haul = 0;
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs: haulOff,
+        gatherThing: { id: "sticks" },
+        haulMerge: misplaced
+    }).type, "gather");
     assert.equal(Settlement.settlerShouldSleep(true, false), true);
     assert.equal(Settlement.settlerShouldSleep(false, true), true);
     assert.equal(Settlement.settlerShouldSleep(false, false), false);
+});
+
+test("planWork defers eat and sleep until the current job finishes", () => {
+    const jobs = Settlement.defaultJobs();
+    jobs.doctor = 0;
+    jobs.cook = 0;
+    jobs.leather = 0;
+    jobs.gather = 0;
+    jobs.haul = 0;
+    jobs.chop = 1;
+    const tree = { uid: "t1", id: "tree" };
+    const chopJob = { type: "chop", target: tree };
+    assert.equal(Settlement.planWork({
+        kc: 200,
+        jobs,
+        chopTree: tree,
+        busy: true,
+        busyJob: chopJob
+    }).type, "chop");
+    assert.equal(Settlement.planWork({
+        kc: 200,
+        jobs,
+        chopTree: tree
+    }).type, "eat");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        isNight: true,
+        bed: { slot: 0 },
+        jobs,
+        chopTree: tree,
+        busy: true,
+        busyJob: chopJob
+    }).type, "chop");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        isNight: true,
+        bed: { slot: 0 },
+        jobs,
+        chopTree: tree
+    }).type, "sleep");
+    const haulJob = { type: "haul", target: { uid: "d1" } };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        isNight: true,
+        bed: { slot: 0 },
+        jobs: Settlement.defaultJobs(),
+        haulDrop: haulJob.target,
+        busy: true,
+        busyJob: haulJob
+    }).type, "haul");
+});
+
+test("planWork drops a finished leather hold instead of sewing forever", () => {
+    const jobs = Settlement.defaultJobs();
+    const bench = { kind: "bench", station: { uid: "b1" } };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        leatherWork: bench,
+        busy: true,
+        busyJob: { type: "leather", target: bench }
+    }).type, "leather");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        busy: true,
+        busyJob: { type: "leather", target: bench }
+    }).type, "idle");
+    const basket = { uid: "st1" };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        busy: true,
+        busyJob: { type: "leather", target: bench },
+        stashUrgent: true,
+        stashBasket: basket
+    }).type, "stash");
+});
+
+test("planWork cook stokes after lighting and bills", () => {
+    const jobs = Settlement.defaultJobs();
+    jobs.doctor = 0;
+    jobs.leather = 0;
+    jobs.haul = 0;
+    jobs.gather = 0;
+    jobs.chop = 0;
+    const fire = { uid: "cf1" };
+    const bill = { fire, bill: { recipeId: "roast" } };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        cookBill: bill,
+        stokeFire: fire
+    }).type, "cook");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        stokeFire: fire
+    }).type, "cook_stoke");
+    assert.equal(Settlement.actLabel({ type: "cook_stoke" }), "Stoking the fire");
+    jobs.cook = 0;
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        stokeFire: fire
+    }).type, "idle");
 });
 
 test("settlers keep the best weapon (and a bandage while tending) when stashing", () => {
@@ -591,7 +967,24 @@ test("planWork dumps full pockets before other jobs, leftovers before idle", () 
         stashBasket: basket,
         hasStash: true,
         stashUrgent: false
-    }).type, "stash");
+    }).type, "idle");
+    const haulOff = Settlement.defaultJobs();
+    haulOff.haul = 0;
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs: haulOff,
+        gatherThing: { id: "stick_bush" },
+        stashBasket: basket,
+        hasStash: true,
+        stashUrgent: true
+    }).type, "gather");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs: haulOff,
+        stashBasket: basket,
+        hasStash: true,
+        stashUrgent: true
+    }).type, "idle");
 });
 
 test("pickAutoEat extraBags from settlement baskets, not traveling party", () => {
@@ -674,4 +1067,115 @@ test("work claims are exclusive and move with the pawn", () => {
     assert.equal(c.claim("tend:p9", "b"), false);
     assert.equal(c.claim("bed:lean:0", "b"), true);
     assert.equal(c.claim("bed:lean:0", "a"), false);
+});
+
+test("actLabel names gather, chop, haul, doctor, and idle jobs", () => {
+    const getItem = (id) => ({ stick: { name: "Stick" }, log: { name: "Log" } }[id]);
+    const getThing = (id) => ({
+        sticks: { name: "Sticks", lootable: { item: "stick", yield: 3 } },
+        tree: { name: "Tree" },
+        lean_to: { name: "Lean-to" }
+    }[id]);
+    const ctx = { getItem, getThing };
+    assert.equal(
+        Settlement.actLabel({ type: "gather", target: { id: "sticks" } }, ctx),
+        "Gathering sticks"
+    );
+    assert.equal(
+        Settlement.actLabel({ type: "chop", target: { id: "tree" } }, ctx),
+        "Chopping a tree"
+    );
+    assert.equal(
+        Settlement.actLabel({ type: "haul", target: { id: "stick", quantity: 2 } }, ctx),
+        "Hauling sticks"
+    );
+    assert.equal(
+        Settlement.actLabel({ type: "stash" }, { getItem, stashStack: { id: "stick", quantity: 4 } }),
+        "Hauling sticks"
+    );
+    assert.equal(
+        Settlement.actLabel({ type: "doctor", target: { name: "Ugg" } }),
+        "Tending Ugg"
+    );
+    assert.equal(Settlement.actLabel({ type: "idle" }), "Idle");
+    assert.equal(Settlement.actLabel({ type: "eat" }), "Getting food");
+    assert.equal(
+        Settlement.actLabel({ type: "sleep", target: { id: "lean_to" } }, ctx),
+        "Going to sleep in a lean-to"
+    );
+    assert.equal(
+        Settlement.actLabel({ type: "sleep", target: { id: "lean_to" } }, { ...ctx, asleep: true }),
+        "Sleeping in a lean-to"
+    );
+});
+
+test("actLabel names smoke and hidework by hide type, not the full allowlist", () => {
+    const getItem = (id) => ({
+        deer_hide_brained: {
+            name: "Brained Deer Hide",
+            hide: { animal: "deer", stage: "brained" },
+            cook: { smoke_hide: { result: "deer_leather", minutes: 240 } }
+        },
+        boar_hide_brained: {
+            name: "Brained Boar Hide",
+            hide: { animal: "boar", stage: "brained" },
+            cook: { smoke_hide: { result: "boar_leather", minutes: 240 } }
+        },
+        deer_hide: { name: "Deer Hide", hide: { animal: "deer", stage: "raw" } },
+        boar_hide: { name: "Boar Hide", hide: { animal: "boar", stage: "raw" } },
+        drying_rack: { name: "Drying Rack" }
+    }[id]);
+    const ctx = { getItem };
+
+    assert.equal(
+        Settlement.actLabel({
+            type: "cook",
+            target: {
+                bill: {
+                    method: "smoke_hide",
+                    allowedIds: ["deer_hide_brained", "boar_hide_brained"]
+                }
+            }
+        }, ctx),
+        "Smoking hide"
+    );
+    assert.equal(
+        Settlement.actLabel({
+            type: "cook",
+            target: {
+                bill: { method: "smoke_hide", allowedIds: ["deer_hide_brained"] }
+            }
+        }, ctx),
+        "Smoking deer hide"
+    );
+    assert.equal(
+        Settlement.actLabel({
+            type: "cook",
+            target: {
+                fire: { cook: { id: "deer_hide_brained" } },
+                bill: {
+                    method: "smoke_hide",
+                    allowedIds: ["deer_hide_brained", "boar_hide_brained"]
+                }
+            }
+        }, ctx),
+        "Smoking deer hide"
+    );
+    assert.equal(
+        Settlement.actLabel({
+            type: "leather",
+            target: {
+                bill: { method: "flesh_hide", allowedIds: ["deer_hide", "boar_hide"] },
+                station: { id: "drying_rack", slots: [{ id: "deer_hide" }] }
+            }
+        }, ctx),
+        "Fleshing deer hide"
+    );
+    assert.equal(
+        Settlement.actLabel({
+            type: "leather",
+            target: { bill: { method: "flesh_hide", allowedIds: ["deer_hide", "boar_hide"] } }
+        }, ctx),
+        "Fleshing hides"
+    );
 });

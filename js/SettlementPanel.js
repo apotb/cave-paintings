@@ -19,6 +19,8 @@ class SettlementPanel {
         this._bodyX = 10;
         this._bodyY = 62;
         this._scrollDrag = null;
+        this._refreshing = false;
+        this._contentSigVal = null;
         this._build();
         this._bindScroll();
     }
@@ -39,7 +41,12 @@ class SettlementPanel {
             const current = this.settle.name || "Camp";
             scene.settlementSys?._showNamePrompt?.((name) => {
                 scene.settlementSys.rename(this.settle, name);
-            }, { placeholder: current });
+            }, {
+                title: "Rename your settlement",
+                confirm: "Rename",
+                placeholder: current,
+                value: current
+            });
         });
         this.destroyBtn = this._btn(0, 0, "Destroy", () => {
             if (this.settle) scene.settlementSys?.promptDestroy(this.settle);
@@ -50,7 +57,8 @@ class SettlementPanel {
         this.tabStock = this._btn(0, 0, "Stock", () => this._setTab("stock"));
         this.body = scene.add.container(10, 64);
         this._maskGfx = scene.make.graphics({ x: 0, y: 0, add: false });
-        this.body.setMask(this._maskGfx.createGeometryMask());
+        // Bitmap mask (not stencil) so job/people tooltips are not washed out.
+        this.body.setMask(new Phaser.Display.Masks.BitmapMask(scene, this._maskGfx));
         this.scrollTrack = scene.add.rectangle(0, 0, 5, 100, 0x3a2e26, 1).setOrigin(0, 0).setVisible(false);
         this.scrollThumb = scene.add.rectangle(0, 0, 5, 20, 0x8a7260, 1).setOrigin(0, 0).setVisible(false);
         this.root.add([
@@ -216,6 +224,7 @@ class SettlementPanel {
     _setTab(tab) {
         this.tab = tab;
         this._scroll = 0;
+        this._contentSigVal = null;
         this._syncTabs();
         this.refresh();
     }
@@ -224,6 +233,7 @@ class SettlementPanel {
         this.settle = settle;
         this.visible = true;
         this._scroll = 0;
+        this._contentSigVal = null;
         this.root.setVisible(true);
         this.layout();
         this._syncTabs();
@@ -262,19 +272,23 @@ class SettlementPanel {
         this.title.setPosition(Math.round(12 * s), headerY);
         this.destroyBtn.setPosition(w - 110 * s, headerY);
         this.closeBtn.setPosition(w - 40 * s, headerY);
-        this.tabPeople.setPosition(40 * s, 44 * s);
-        this.tabJobs.setPosition(110 * s, 44 * s);
-        this.tabStock.setPosition(180 * s, 44 * s);
+        this.destroyBtn._bg.setSize(64 * s, 22 * s);
+        this.closeBtn._bg.setSize(52 * s, 22 * s);
+        const tabY = Math.round(44 * s);
+        const tabH = Math.round(22 * s);
+        const tabGap = Math.round(8 * s);
+        let tabLeft = Math.round(6 * s);
+        for (const tab of [this.tabPeople, this.tabJobs, this.tabStock]) {
+            const tw = Math.round((tab === this.tabPeople ? 68 : tab === this.tabJobs ? 56 : 60) * s);
+            tab._bg.setSize(tw, tabH);
+            tab.setPosition(tabLeft + tw / 2, tabY);
+            tabLeft += tw + tabGap;
+        }
         this._bodyX = Math.round(10 * s);
         this._bodyY = Math.round(62 * s);
         this._viewW = w - this._bodyX - Math.round(8 * s);
         this._viewH = h - this._bodyY - Math.round(8 * s);
         this.body.setPosition(this._bodyX, this._bodyY);
-        this.destroyBtn._bg.setSize(64 * s, 22 * s);
-        this.closeBtn._bg.setSize(52 * s, 22 * s);
-        this.tabPeople._bg.setSize(68 * s, 22 * s);
-        this.tabJobs._bg.setSize(56 * s, 22 * s);
-        this.tabStock._bg.setSize(60 * s, 22 * s);
         const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
         this.bg.setStrokeStyle(sw, 0x2a2218);
         this.destroyBtn._paint?.();
@@ -289,13 +303,62 @@ class SettlementPanel {
     }
 
     _clearBody() {
-        const tip = this.scene._tooltipTarget;
-        if (tip && (tip.parentContainer === this.body || tip === this.body)) {
-            this.scene.hideTooltip?.();
-        }
         this.body.removeAll(true);
         this._rows = [];
         this._stockRows = [];
+    }
+
+    _contentSig() {
+        const tab = this.tab || "people";
+        const id = this.settle?.id || "";
+        const sys = this.scene.settlementSys;
+        if (tab === "jobs") {
+            const here = sys?.settlersOf?.(this.settle.id) || [];
+            const jobs = here.map((p) => {
+                const pid = p.pawnId || p.id;
+                try {
+                    return `${pid}:${JSON.stringify(this.settle.jobs?.[pid] || {})}`;
+                } catch (_) {
+                    return String(pid);
+                }
+            }).join("|");
+            return `jobs:${id}:${jobs}`;
+        }
+        if (tab === "stock") {
+            const items = sys?.localStockItems?.(this.settle) || [];
+            return `stock:${id}:${items.join(",")}`;
+        }
+        const party = (this.scene.party || []).filter((p) => p && !p.isBodyDead?.());
+        const here = sys?.settlersOf?.(this.settle.id) || [];
+        const ids = (list) => list.map((p) => p.pawnId || p.id).join(",");
+        return `people:${id}:${ids(party)}:${ids(here)}`;
+    }
+
+    _pointerStillOn(obj, pointer) {
+        if (!obj || !pointer) return false;
+        const b = obj.getBounds?.();
+        return !!(b && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y));
+    }
+
+    _restoreHoverTip() {
+        const scene = this.scene;
+        const p = scene.input?.activePointer;
+        if (!p || !this.visible) return;
+        const visit = (obj) => {
+            if (!obj?.active) return false;
+            if (obj.input?.enabled && this._pointerStillOn(obj, p)) {
+                obj.emit("pointerover", p);
+                return true;
+            }
+            const kids = obj.list;
+            if (Array.isArray(kids)) {
+                for (let i = kids.length - 1; i >= 0; i--) {
+                    if (visit(kids[i])) return true;
+                }
+            }
+            return false;
+        };
+        visit(this.body);
     }
 
     refresh() {
@@ -303,6 +366,14 @@ class SettlementPanel {
         const scene = this.scene;
         const s = scene.uiScale || 1;
         this.title.setText(this.settle.name || "Camp");
+        const sig = this._contentSig();
+        if (sig === this._contentSigVal && this.body.list?.length) {
+            this._syncTabs();
+            this._refreshMask();
+            return;
+        }
+        this._contentSigVal = sig;
+        this._refreshing = true;
         this._clearBody();
         let contentH = 0;
         if (this.tab === "jobs") contentH = this._fillJobs(s);
@@ -313,6 +384,8 @@ class SettlementPanel {
         this._setScroll(Math.min(this._scroll, this._maxScroll));
         this._refreshMask();
         this._syncTabs();
+        this._refreshing = false;
+        this._restoreHoverTip();
     }
 
     _label(text, x, y, size = 12, wrapW = 0) {
@@ -415,12 +488,14 @@ class SettlementPanel {
             }
             const hitW = Math.max(8, colW - btnsW);
             const hit = scene.add.zone(x, y, hitW, rowH).setOrigin(0, 0);
-            hit.setInteractive({ cursor: "default" });
+            hit.setInteractive({ useHandCursor: true, cursor: "pointer" });
             hit.on("pointerover", (pointer) => {
                 if (!this._pointerInBody(pointer)) return;
                 scene.showTooltip(() => this._personActionTip(p), pointer.x, pointer.y, hit);
             });
-            hit.on("pointerout", () => {
+            hit.on("pointerout", (pointer) => {
+                if (this._refreshing) return;
+                if (this._pointerStillOn(hit, pointer)) return;
                 if (scene._tooltipTarget === hit) scene.hideTooltip?.();
             });
             this.body.add(hit);
@@ -494,13 +569,15 @@ class SettlementPanel {
             const hx = nameW + i * cellW + cellW / 2;
             const hit = scene.add.rectangle(nameW + i * cellW, 0, cellW, headerH, headerBg, 1)
                 .setOrigin(0, 0)
-                .setInteractive({ cursor: "default" });
+                .setInteractive({ useHandCursor: true, cursor: "pointer" });
             hit.on("pointerover", (pointer) => {
                 if (!this._pointerInBody(pointer)) return;
                 const text = S?.jobTooltip ? S.jobTooltip(j) : j;
                 scene.showTooltip(() => text, pointer.x, pointer.y, hit);
             });
-            hit.on("pointerout", () => {
+            hit.on("pointerout", (pointer) => {
+                if (this._refreshing) return;
+                if (this._pointerStillOn(hit, pointer)) return;
                 if (scene._tooltipTarget === hit) scene.hideTooltip?.();
             });
             this.body.add(hit);
@@ -593,6 +670,22 @@ class SettlementPanel {
         return gridH + 8 * sc;
     }
 
+    _itemIconKey(itemId) {
+        if (!itemId) return null;
+        const def = this.scene.getItem?.(itemId) || { id: itemId, key: itemId };
+        if (typeof Place !== "undefined" && Place.itemIconKey) {
+            const key = Place.itemIconKey(
+                def,
+                (id) => this.scene.getThing?.(id),
+                (k) => this.scene.textures.exists(k)
+            );
+            if (key && this.scene.textures.exists(key)) return key;
+        }
+        if (def?.key && this.scene.textures.exists(def.key)) return def.key;
+        if (this.scene.textures.exists(itemId)) return itemId;
+        return null;
+    }
+
     _fillStock(sc) {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         const scene = this.scene;
@@ -610,16 +703,27 @@ class SettlementPanel {
         }
         const btnX = this._viewW > 80 ? this._viewW - Math.round(72 * sc) : 200 * sc;
         const btnW = Math.round(24 * sc);
-        const btnH = Math.round(20 * sc);
+        const btnH = Math.round(16 * sc);
+        const iconS = Math.round(16 * sc);
+        const iconGap = Math.round(4 * sc);
+        const textX = iconS + iconGap;
         this._stockRows = [];
         for (const id of items) {
             const meta = scene.getItem?.(id);
             const name = meta?.name || id;
-            const label = this._label(`${name}  0/0`, 0, y, 11);
-            const minus = this._btn(btnX, y + 8 * sc, "–", (pointer) => {
+            const midY = y + 8 * sc;
+            const iconKey = this._itemIconKey(id);
+            if (iconKey) {
+                const icon = scene.add.image(iconS / 2, midY, iconKey)
+                    .setDisplaySize(iconS, iconS);
+                this.body.add(icon);
+            }
+            const label = this._label(`${name}  0/0`, textX, midY, 11);
+            label.setOrigin(0, 0.5);
+            const minus = this._btn(btnX, midY, "–", (pointer) => {
                 this._nudgeStock(settle, id, -this._stockStep(pointer));
             }, true);
-            const plus = this._btn(btnX + Math.round(32 * sc), y + 8 * sc, "+", (pointer) => {
+            const plus = this._btn(btnX + Math.round(32 * sc), midY, "+", (pointer) => {
                 this._nudgeStock(settle, id, this._stockStep(pointer));
             }, true);
             this._fitBtnHit(minus, btnW, btnH);
@@ -693,6 +797,26 @@ class SettlementPanel {
         const row = (this._stockRows || []).find((r) => r.id === id);
         if (row) this._paintStockRow(row);
         else this.refresh();
+    }
+
+    hoverObjAt(pointer) {
+        if (!pointer || !this.visible || !this._pointerInBody(pointer)) return null;
+        const visit = (obj) => {
+            if (!obj?.active) return null;
+            const kids = obj.list;
+            if (Array.isArray(kids)) {
+                for (let i = kids.length - 1; i >= 0; i--) {
+                    const hit = visit(kids[i]);
+                    if (hit) return hit;
+                }
+            }
+            if (obj.input?.enabled) {
+                const b = obj.getBounds?.();
+                if (b && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y)) return obj;
+            }
+            return null;
+        };
+        return visit(this.body);
     }
 
     containsPointer(pointer) {

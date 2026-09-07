@@ -82,6 +82,23 @@ class Corpse extends Phaser.GameObjects.Sprite {
         return new Corpse(scene, entry, chunk);
     }
 
+    /** Stamp a dense splatter of blood stains around a freshly skinned corpse. */
+    static bloodBurst(scene, x, y) {
+        if (!scene?.spawnBloodStain || !Number.isFinite(x) || !Number.isFinite(y)) return;
+        if (scene.bloodDraw === false) return;
+        const ts = scene.tileSize || 16;
+        const n = Phaser.Math.Between(52, 72);
+        for (let i = 0; i < n; i++) {
+            const ang = Math.random() * Math.PI * 2;
+            const d = Math.sqrt(Math.random()) * ts * 0.9;
+            scene.spawnBloodStain(
+                x + Math.cos(ang) * d,
+                y + Math.sin(ang) * d,
+                { merge: false }
+            );
+        }
+    }
+
     /** Soft gray/white sparkle puff when a corpse vanishes. */
     static puffAway(scene, x, y) {
         if (!scene?.add) return;
@@ -151,8 +168,9 @@ class Corpse extends Phaser.GameObjects.Sprite {
         this.setOrigin(0.5, 0.5);
         this.setRotation(-Math.PI / 2);
         this.applyStageAppearance();
-        // Above same-y Things / slightly above blood so pools don't steal hover
-        this.setDepth((Number(entry.y) || 0) + 1);
+        // Match living prone puppets: they y-sort from feet, while corpse x/y is body center.
+        const feetY = (Number(entry.y) || 0) + (Number(this.height) || 16) * 0.5;
+        this.setDepth((feetY | 0) + 1);
 
         if (!chunk.corpses?.children) {
             chunk.ensureSpriteGroups?.();
@@ -284,7 +302,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
         }
         if (id === "human") {
             const loot = [
-                { id: "raw_beef", min: 2, max: 4 },
+                { id: "raw_human_flesh", min: 2, max: 4 },
                 { id: "brain", min: 1, max: 1 },
                 { id: "bone", min: 1, max: 2 }
             ];
@@ -298,6 +316,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
     applySkin() {
         if (!this.entry || this.entry.skinned || this.entry.stage === "carcass") return [];
         this.entry.skinned = true;
+        Corpse.bloodBurst(this.scene, this.x, this.y);
         if (!this.entry.loot) this.entry.loot = [];
         const gained = [];
         for (const drop of this.skinLootTable()) {

@@ -14,6 +14,9 @@ class SceneBase extends Phaser.Scene {
         if (this.sys?.load && this.load !== this.sys.load) {
             this.load = this.sys.load;
         }
+        if (!this.cache?.audio?.exists?.("forest")) {
+            this.load.audio("forest", "assets/audio/forest.ogg");
+        }
         // Second Play → Leave → Play: textures/json already live in the game caches.
         if (this.cache?.json?.exists?.("items") && this.cache?.json?.exists?.("structures") && this.textures?.exists("grass") && this.textures?.exists("slot")) {
             return;
@@ -147,8 +150,8 @@ class SceneBase extends Phaser.Scene {
             "blueberry",
             "apple",
             "roasted_apple",
-            "raw_beef",
-            "roast_beef",
+            "raw_human_flesh",
+            "roasted_human_flesh",
             "raw_venison",
             "roasted_venison",
             "raw_pork",

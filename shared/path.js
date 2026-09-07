@@ -24,6 +24,38 @@
         return Math.hypot(dx, dy);
     }
 
+    /** Reuse blocked() results for one plan / steer (A* + LOS share many poses). */
+    function memoBlocked(blocked) {
+        if (typeof blocked !== "function") return blocked;
+        const cache = new Map();
+        return function (x, y) {
+            const kx = Math.round(x * 4);
+            const ky = Math.round(y * 4);
+            const k = kx * 1000003 + ky;
+            const hit = cache.get(k);
+            if (hit !== undefined) return hit;
+            const v = !!blocked(x, y);
+            cache.set(k, v);
+            return v;
+        };
+    }
+
+    function cellKey(cx, cy) {
+        return ((cx + 512) << 16) | ((cy + 512) & 65535);
+    }
+
+    /** Pull a far dest onto the maxRange circle so A* stays local. */
+    function clipToRange(fromX, fromY, toX, toY, maxRange, cell) {
+        const c = cell || TILE;
+        const maxPx = Math.max(1, Number(maxRange) || 12) * c;
+        const dx = toX - fromX;
+        const dy = toY - fromY;
+        const dist = hypot(dx, dy);
+        if (!(dist > maxPx)) return { x: toX, y: toY };
+        const s = maxPx / dist;
+        return { x: fromX + dx * s, y: fromY + dy * s };
+    }
+
     /**
      * Grid cell of a standing feet pose (origin 0,1). `y - 1` so feet on a
      * tile's bottom edge count as that tile, not the one below.
@@ -54,9 +86,18 @@
         const cap = opts && Number(opts.maxDist);
         const maxDist = Number.isFinite(cap) ? Math.min(dist, cap) : dist;
         const steps = Math.max(2, Math.ceil(maxDist / stepPx));
+        const fat = Math.max(0, Number(opts && opts.fatPx) || 0);
+        const pdx = dist > 0 ? -dy / dist : 0;
+        const pdy = dist > 0 ? dx / dist : 0;
         for (let i = 1; i <= steps; i++) {
             const f = ((maxDist * i) / steps) / dist;
-            if (blocked(x0 + dx * f, y0 + dy * f)) return false;
+            const x = x0 + dx * f;
+            const y = y0 + dy * f;
+            if (blocked(x, y)) return false;
+            if (fat > 0) {
+                if (blocked(x + pdx * fat, y + pdy * fat)) return false;
+                if (blocked(x - pdx * fat, y - pdy * fat)) return false;
+            }
         }
         return true;
     }
@@ -74,7 +115,7 @@
             from.x + (dx / dist) * reach,
             from.y + (dy / dist) * reach,
             blocked,
-            { stepPx: 3, maxDist: reach }
+            { stepPx: 3, maxDist: reach, fatPx: 3 }
         );
     }
 
@@ -125,7 +166,7 @@
         let i = 0;
         while (i < pts.length) {
             let j = pts.length - 1;
-            while (j > i && !losClear(ax, ay, pts[j].x, pts[j].y, blocked)) j--;
+            while (j > i && !losClear(ax, ay, pts[j].x, pts[j].y, blocked, { fatPx: 3 })) j--;
             out.push(pts[j]);
             ax = pts[j].x;
             ay = pts[j].y;
@@ -134,23 +175,121 @@
         return out;
     }
 
-    function openPoint(x, y, blocked, cell, side, maxR) {
+    /**
+     * Standing samples in a cell. 0.25 hits a centered 5px trunk; 0 and ~0.38
+     * still overlap that trunk but can stand in the open side of a full-tile
+     * building (the default 0.25 pose sits on the east half and kisses a
+     * vertical lean-to).
+     */
+    function cellStandCandidates(cx, cy, cell) {
+        const c = cell || TILE;
+        const y = cy * c + c;
+        const xs = [0.25, 0.12, 0, 0.38, 0.62, 0.75];
+        const out = [];
+        for (let i = 0; i < xs.length; i++) {
+            out.push({ x: cx * c + c * xs[i], y });
+        }
+        return out;
+    }
+
+    function cellStandOpen(cx, cy, cell, blocked) {
+        const pts = cellStandCandidates(cx, cy, cell);
+        if (typeof blocked !== "function") return pts[0];
+        let best = null;
+        let bestClear = -1;
+        for (let i = 0; i < pts.length; i++) {
+            if (blocked(pts[i].x, pts[i].y)) continue;
+            const n = clearance(pts[i].x, pts[i].y, blocked, 6);
+            if (n > bestClear) {
+                bestClear = n;
+                best = pts[i];
+            }
+        }
+        return best;
+    }
+
+    function clearance(x, y, blocked, r) {
+        const reach = r || 6;
+        const dirs = [
+            [1, 0], [-1, 0], [0, 1], [0, -1],
+            [1, 1], [1, -1], [-1, 1], [-1, -1]
+        ];
+        let n = 0;
+        for (let i = 0; i < dirs.length; i++) {
+            if (!blocked(x + dirs[i][0] * reach, y + dirs[i][1] * reach)) n++;
+        }
+        return n;
+    }
+
+    function openPoint(x, y, blocked, cell, side, maxR, from) {
         if (!blocked(x, y)) return { x, y };
         const step = Math.max(8, cell * 0.55);
         const bias = side >= 0 ? 0.2 : -0.2;
         const rings = Number.isFinite(maxR) ? Math.max(0, maxR) : 6;
+        let best = null;
+        let bestScore = -Infinity;
         for (let r = 1; r <= rings; r++) {
             for (let a = 0; a < 8; a++) {
                 const ang = (a / 8) * Math.PI * 2 + bias;
                 const px = x + Math.cos(ang) * step * r;
                 const py = y + Math.sin(ang) * step * r;
-                if (!blocked(px, py)) return { x: px, y: py };
+                if (blocked(px, py)) continue;
+                if (!from) return { x: px, y: py };
+                const clear = clearance(px, py, blocked, 6);
+                let score = clear * 16 - r * 3;
+                if (clear >= 4) score += 40;
+                score -= hypot(px - from.x, py - from.y) * 0.02;
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = { x: px, y: py };
+                }
             }
         }
-        return { x, y };
+        return best || { x, y };
+    }
+
+    function bestStand(from, dest, blocked, opts) {
+        const cell = (opts && opts.cellSize) || TILE;
+        const maxR = Number.isFinite(opts && opts.openRadius) ? Math.max(0, opts.openRadius) : 4;
+        const step = Math.max(6, cell * 0.45);
+        const losOpts = { stepPx: 3, fatPx: 3 };
+        const candidates = [];
+        if (!blocked(dest.x, dest.y)) candidates.push({ x: dest.x, y: dest.y, r: 0 });
+        for (let r = 1; r <= maxR; r++) {
+            for (let a = 0; a < 8; a++) {
+                const ang = (a / 8) * Math.PI * 2;
+                const x = dest.x + Math.cos(ang) * step * r;
+                const y = dest.y + Math.sin(ang) * step * r;
+                if (blocked(x, y)) continue;
+                candidates.push({ x, y, r });
+            }
+        }
+        if (!candidates.length) {
+            const fallback = openPoint(dest.x, dest.y, blocked, cell, 1, Math.max(4, maxR), from);
+            return fallback || { x: dest.x, y: dest.y };
+        }
+        let best = candidates[0];
+        let bestScore = -Infinity;
+        const destLos = from && losClear(from.x, from.y, dest.x, dest.y, blocked, losOpts);
+        for (let i = 0; i < candidates.length; i++) {
+            const c = candidates[i];
+            const clear = clearance(c.x, c.y, blocked, 6);
+            const los = from && losClear(from.x, from.y, c.x, c.y, blocked, losOpts);
+            let score = clear * 18 - c.r * 5;
+            if (clear >= 4) score += 30;
+            if (los && clear >= 4) score += destLos ? 50 : 8;
+            score -= hypot(c.x - dest.x, c.y - dest.y) * 0.25;
+            if (from) score -= hypot(c.x - from.x, c.y - from.y) * 0.02;
+            if (score > bestScore) {
+                bestScore = score;
+                best = c;
+            }
+        }
+        return { x: best.x, y: best.y };
     }
 
     function planPath(from, to, blocked, opts) {
+        blocked = memoBlocked(blocked);
         const cell = (opts && opts.cellSize) || TILE;
         const maxR = (opts && opts.maxRange) || 12;
         const stepCap = Math.min(1600, Math.max(280, maxR * maxR));
@@ -162,14 +301,21 @@
         const gx = goal.cx;
         const gy = goal.cy;
         if (sx === gx && sy === gy) return [{ x: to.x, y: to.y }];
-        const keyOf = (cx, cy) => `${cx},${cy}`;
+        const standMemo = new Map();
+        const standAt = (cx, cy) => {
+            const k = cellKey(cx, cy);
+            if (standMemo.has(k)) return standMemo.get(k);
+            const pos = cellStandOpen(cx, cy, cell, blocked);
+            standMemo.set(k, pos);
+            return pos;
+        };
         const hOf = (cx, cy) => Math.max(Math.abs(gx - cx), Math.abs(gy - cy));
         const came = new Map();
-        came.set(keyOf(sx, sy), null);
+        came.set(cellKey(sx, sy), null);
         const gScore = new Map();
-        gScore.set(keyOf(sx, sy), 0);
+        gScore.set(cellKey(sx, sy), 0);
         const open = [[sx, sy]];
-        const inOpen = new Set([keyOf(sx, sy)]);
+        const inOpen = new Set([cellKey(sx, sy)]);
         let found = null;
         let best = [sx, sy];
         let bestH = hOf(sx, sy);
@@ -180,7 +326,7 @@
             let bf = Infinity;
             for (let i = 0; i < open.length; i++) {
                 const c = open[i];
-                const g = gScore.get(keyOf(c[0], c[1])) || 0;
+                const g = gScore.get(cellKey(c[0], c[1])) || 0;
                 const f = g + hOf(c[0], c[1]);
                 if (f < bf) {
                     bf = f;
@@ -192,7 +338,7 @@
             open.pop();
             const cx = cur[0];
             const cy = cur[1];
-            inOpen.delete(keyOf(cx, cy));
+            inOpen.delete(cellKey(cx, cy));
             steps++;
             const h = hOf(cx, cy);
             if (h < bestH) {
@@ -203,22 +349,24 @@
                 found = cur;
                 break;
             }
-            const gCur = gScore.get(keyOf(cx, cy)) || 0;
+            const gCur = gScore.get(cellKey(cx, cy)) || 0;
+            const fromStand = standAt(cx, cy) || (cx === sx && cy === sy ? from : null);
             for (let d = 0; d < dirs.length; d++) {
                 const nx = cx + dirs[d][0];
                 const ny = cy + dirs[d][1];
                 if (Math.abs(nx - sx) > maxR || Math.abs(ny - sy) > maxR) continue;
-                const k = keyOf(nx, ny);
+                const k = cellKey(nx, ny);
                 const goalCell = nx === gx && ny === gy;
-                const pos = cellStand(nx, ny, cell);
-                if (!goalCell && blocked(pos.x, pos.y)) continue;
+                const nbStand = standAt(nx, ny);
+                if (!nbStand && !goalCell) continue;
                 const ddx = dirs[d][0];
                 const ddy = dirs[d][1];
                 if (ddx && ddy) {
-                    const sideX = cellStand(cx + ddx, cy, cell);
-                    const sideY = cellStand(cx, cy + ddy, cell);
-                    if (blocked(sideX.x, sideX.y) || blocked(sideY.x, sideY.y)) continue;
+                    if (!standAt(cx + ddx, cy) || !standAt(cx, cy + ddy)) continue;
                 }
+                if (fromStand && nbStand && !losClear(
+                    fromStand.x, fromStand.y, nbStand.x, nbStand.y, blocked, { fatPx: 3 }
+                )) continue;
                 const ng = gCur + 1;
                 if (gScore.has(k) && ng >= gScore.get(k)) continue;
                 gScore.set(k, ng);
@@ -234,17 +382,24 @@
         const cells = [];
         let cur = end;
         const seen = new Set();
-        while (cur && !seen.has(keyOf(cur[0], cur[1]))) {
-            seen.add(keyOf(cur[0], cur[1]));
+        while (cur && !seen.has(cellKey(cur[0], cur[1]))) {
+            seen.add(cellKey(cur[0], cur[1]));
             cells.push(cur);
-            cur = came.get(keyOf(cur[0], cur[1]));
+            cur = came.get(cellKey(cur[0], cur[1]));
         }
         cells.reverse();
         const pts = [];
         for (let i = 1; i < cells.length; i++) {
-            pts.push(cellStand(cells[i][0], cells[i][1], cell));
+            const stand = standAt(cells[i][0], cells[i][1]);
+            if (!stand || blocked(stand.x, stand.y)) continue;
+            pts.push(stand);
         }
-        if (found) pts.push({ x: to.x, y: to.y });
+        if (found && !blocked(to.x, to.y)) pts.push({ x: to.x, y: to.y });
+        else if (found) {
+            const open = openPoint(to.x, to.y, blocked, cell, side, 4, from);
+            if (open && !blocked(open.x, open.y)) pts.push(open);
+        }
+        if (!pts.length) return null;
         return stringPull(from, pts, blocked);
     }
 
@@ -263,8 +418,8 @@
         const c = cellOf(from.x, from.y, cell);
         const dirs = dirOrder(0, 1, side);
         for (let i = 0; i < dirs.length; i++) {
-            const pos = cellStand(c.cx + dirs[i][0], c.cy + dirs[i][1], cell);
-            if (!blocked(pos.x, pos.y)) return pos;
+            const pos = cellStandOpen(c.cx + dirs[i][0], c.cy + dirs[i][1], cell, blocked);
+            if (pos) return pos;
         }
         return null;
     }
@@ -290,7 +445,7 @@
      */
     function steerToward(input) {
         const from = input.from;
-        const blocked = input.blocked;
+        const blocked = memoBlocked(input.blocked);
         const cell = input.cellSize || TILE;
         const dt = Number(input.dt) > 0 ? input.dt : 16;
         let side = input.side < 0 ? -1 : 1;
@@ -300,16 +455,9 @@
         const maxRange = input.maxRange || 12;
         const lookPx = input.lookPx || LOOK_PX;
 
-        const dest = openPoint(
-            input.to.x,
-            input.to.y,
-            blocked,
-            cell,
-            side,
-            input.openRadius
-        );
-        const dist = hypot(dest.x - from.x, dest.y - from.y);
-        if (!(dist > ARRIVE_PX)) {
+        let dest = { x: input.to.x, y: input.to.y };
+        const dist0 = hypot(dest.x - from.x, dest.y - from.y);
+        if (!(dist0 > ARRIVE_PX)) {
             return {
                 nx: 0,
                 ny: 0,
@@ -324,20 +472,13 @@
         }
 
         path = consumeWaypoints(from, path);
+        if (path && path.length && blocked(path[0].x, path[0].y)) path.shift();
         const wp0 = path && path.length ? path[0] : dest;
         const wpDist = hypot(wp0.x - from.x, wp0.y - from.y);
         const lastWp = Number(input.lastWpDist);
         if (Number.isFinite(lastWp) && wpDist < lastWp - 0.25) stuckMs = 0;
         else stuckMs += dt;
         const overlapping = !!input.overlapping;
-        const losMax = Math.min(dist, cell * Math.max(maxRange, 8));
-        const clearToDest = !overlapping && losClear(
-            from.x, from.y, dest.x, dest.y, blocked,
-            { stepPx: 3, maxDist: losMax }
-        );
-        const ahead = overlapping || blockedAhead(from, dest, blocked, lookPx);
-        const goalDrift = !pathGoal
-            || hypot(dest.x - pathGoal.x, dest.y - pathGoal.y) > GOAL_DRIFT_PX;
         let nextBlocked = false;
         if (path && path.length) {
             const wx = path[0].x;
@@ -354,6 +495,22 @@
         );
         let replanned = false;
         if (!committed) {
+            let openR = input.openRadius != null ? input.openRadius : 4;
+            const destBlocked = blocked(dest.x, dest.y);
+            const destTight = !destBlocked && clearance(dest.x, dest.y, blocked, 6) < 3;
+            if (destBlocked || destTight) openR = Math.max(openR, 3);
+            dest = destBlocked || destTight
+                ? bestStand(from, dest, blocked, { cellSize: cell, openRadius: openR })
+                : openPoint(dest.x, dest.y, blocked, cell, side, openR, from);
+            const dist = hypot(dest.x - from.x, dest.y - from.y);
+            const losMax = Math.min(dist, cell * Math.max(maxRange, 8));
+            const clearToDest = !overlapping && losClear(
+                from.x, from.y, dest.x, dest.y, blocked,
+                { stepPx: 3, maxDist: losMax, fatPx: 3 }
+            );
+            const ahead = overlapping || blockedAhead(from, dest, blocked, lookPx);
+            const goalDrift = !pathGoal
+                || hypot(dest.x - pathGoal.x, dest.y - pathGoal.y) > GOAL_DRIFT_PX;
             const pathDone = !path || !path.length;
             const allowReplan = input.allowReplan !== false;
             if (clearToDest && !stuck && !ahead && (pathDone || goalDrift)) {
@@ -361,8 +518,12 @@
             } else if (!allowReplan && path && path.length && !stuck) {
                 // Stale but usable — wait for the next replan window.
             } else {
-                if (stuck) side = -side;
-                path = planPath(from, dest, blocked, { cellSize: cell, maxRange, side });
+                let planned = planPath(from, dest, blocked, { cellSize: cell, maxRange, side });
+                if (stuck && (!planned || !planned.length)) {
+                    side = -side;
+                    planned = planPath(from, dest, blocked, { cellSize: cell, maxRange, side });
+                }
+                path = planned;
                 pathGoal = dest;
                 stuckMs = 0;
                 replanned = true;
@@ -440,13 +601,17 @@
         TILE,
         LOOK_PX,
         losClear,
+        clipToRange,
         blockedAhead,
         planPath,
         steerToward,
         steerHeading,
         openPoint,
+        bestStand,
+        clearance,
         stringPull,
         cellStand,
+        cellStandOpen,
         cellOf
     };
 });

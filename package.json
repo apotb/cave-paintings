@@ -1,8 +1,9 @@
 {
   "name": "cave-paintings",
   "productName": "Cave Paintings",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "main": "electron/main.js",
   "description": "Cave Paintings — Phaser client + dedicated multiplayer world server",
   "scripts": {

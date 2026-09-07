@@ -19,6 +19,9 @@
     // Hysteresis: stay put until farther than CATCH, then walk until IDLE.
     const FOLLOW_IDLE = 2.6;
     const FOLLOW_CATCH = 4.8;
+    // Sprint on/off. A single cutoff (6 tiles) flickers walk/sprint on a ring.
+    const FOLLOW_SPRINT = 6;
+    const FOLLOW_SPRINT_DROP = 3.2;
     const FOLLOW_SPREAD = 1.05;
     const FOLLOW_ARRIVE = 0.55;
     const MILL_RADIUS = 5;
@@ -38,7 +41,7 @@
     const RECRUIT_EMPTY = 0.5;
     const RECRUIT_FOOD = 0.75;
 
-    const COOLDOWN_ROOM = [120, 240];
+    const COOLDOWN_ROOM = [240, 480];
     /** Full-party packs of 2–6: twice as long as the previous full-party wait. */
     const COOLDOWN_FULL = [480, 960];
 
@@ -50,8 +53,8 @@
     /** Walk clips are authored for this tiles/s at anim timeScale 1. */
     const WALK_ANIM_TILES_PER_SEC = 3.5;
     /**
-     * Wildlife + passerby sim vs /tick (move, attack, idle timers).
-     * 0 pauses them. Party members and the player stay on wall-clock.
+     * Wildlife, wanderers, and settlers vs /tick (move, attack, jobs, channels).
+     * 0 pauses them. Traveling party members and the player stay on wall-clock.
      */
     function mobTimeScale(tickSpeed) {
         const s = Number(tickSpeed);
@@ -61,6 +64,46 @@
     function wandererTimeScale(tickSpeed) {
         return mobTimeScale(tickSpeed);
     }
+    function settlerTimeScale(tickSpeed) {
+        return mobTimeScale(tickSpeed);
+    }
+    /**
+     * Latch follower sprint so they don't flicker on a distance ring around
+     * the leader. Start past `FOLLOW_SPRINT` (or `FOLLOW_CATCH` while the
+     * leader is already sprinting); drop only after closing to `FOLLOW_SPRINT_DROP`.
+     */
+    function followWantSprint(distPx, latched, opts = {}) {
+        const ts = Number(opts.tileSize) > 0 ? Number(opts.tileSize) : 16;
+        const onTiles = opts.leaderSprinting ? FOLLOW_CATCH : FOLLOW_SPRINT;
+        const offTiles = FOLLOW_SPRINT_DROP;
+        const d = Number(distPx);
+        if (!Number.isFinite(d)) return false;
+        if (d > onTiles * ts) return true;
+        if (d <= offTiles * ts) return false;
+        return !!latched;
+    }
+
+    function _followDead(ent) {
+        if (!ent) return true;
+        if (ent.isBodyDead?.()) return true;
+        return !!(ent._bodyDead || ent.dead);
+    }
+
+    /**
+     * Traveling companion idle line. Leader is "you"; a possessed companion
+     * is their name. No living follow target is Waiting.
+     */
+    function companionFollowLabel(opts = {}) {
+        const follow = opts.follow;
+        const leader = opts.leader;
+        const self = opts.self;
+        if (!follow || follow === self || _followDead(follow)) return "Waiting";
+        if (opts.leaderDead && follow === leader) return "Waiting";
+        if (follow === leader) return "Following you";
+        const name = follow.displayName?.() || follow.name || follow.pawnName || "ally";
+        return `Following ${name}`;
+    }
+
     /** Map travel speed onto the human walk clip. */
     function walkAnimTimeScale(tilesPerSec, refTilesPerSec) {
         const ref = Number(refTilesPerSec) > 0 ? Number(refTilesPerSec) : WALK_ANIM_TILES_PER_SEC;
@@ -201,14 +244,40 @@
         return !!(ia && ia === ib);
     }
 
+    function wildIsHostile(wild) {
+        if (!wild) return false;
+        return !!(
+            wild.hostile
+            || wild.ai?.hostile
+            || (Number(wild.ai?.panicMs) || 0) > 0
+        );
+    }
+
     /**
-     * True if this player party started the scrap or the wild thing is hunting them.
-     * Nearby other parties do not auto-join.
+     * True if this player party may auto-duel this wild / wanderer.
+     * Nearby hostiles with no owner (or this party) are fair game; a neighboring
+     * connected session that already owns aggro is not.
      */
     function ownerEngagedWithWild(ownerId, wild, opts = {}) {
         if (!ownerId || !wild) return false;
         if (sameWildTarget(opts.lastHitMob, wild)) return true;
-        return wildAggroOwnerId(wild) === ownerId;
+        const aim = opts.combatTarget
+            || wild.ai?._combatTarget
+            || wild.ai?._stareTarget;
+        if (ownerIdOf(aim) === ownerId) return true;
+        const aggro = wildAggroOwnerId(wild);
+        if (aggro === ownerId) return true;
+        const others = opts.otherOwnerIds;
+        if (
+            aggro
+            && aggro !== ownerId
+            && others
+            && typeof others.has === "function"
+            && others.has(aggro)
+        ) {
+            return false;
+        }
+        return wildIsHostile(wild);
     }
 
     function sameParty(a, b) {
@@ -252,10 +321,15 @@
         return distTiles(a, b, tileSize) <= range + 0.05;
     }
 
-    /** Bowls / emergency rations: companions skip these until malnourished. */
+    /** Bowls / emergency rations: companions skip these until hunger is empty. */
     function isReservedAutoEat(stack, food) {
         if (food?.autoEat === "malnourished") return true;
         return stack?.id === "cracked_coconut";
+    }
+
+    /** Empty stomach — not the lingering malnutrition hediff after a bite. */
+    function isStarving(pawn) {
+        return !(Number(pawn?.kc) > 0);
     }
 
     /**
@@ -492,7 +566,7 @@
                 { weight: 0.28, id: "blueberry", lo: 4, hi: 10 },
                 { weight: 0.32, id: "apple", lo: 1, hi: 3 },
                 { weight: 0.22, id: "roasted_apple", lo: 1, hi: 2 },
-                { weight: 0.18, id: "roast_beef", lo: 1, hi: 1 }
+                { weight: 0.18, id: "roasted_human_flesh", lo: 1, hi: 1 }
             ]
             : [
                 { weight: 0.65, id: "blueberry", lo: 2, hi: 6 },
@@ -888,6 +962,8 @@
         FOLLOW_DETACH,
         FOLLOW_IDLE,
         FOLLOW_CATCH,
+        FOLLOW_SPRINT,
+        FOLLOW_SPRINT_DROP,
         FOLLOW_SPREAD,
         FOLLOW_ARRIVE,
         MILL_RADIUS,
@@ -908,7 +984,10 @@
         WALK_ANIM_TILES_PER_SEC,
         mobTimeScale,
         wandererTimeScale,
+        settlerTimeScale,
         walkAnimTimeScale,
+        followWantSprint,
+        companionFollowLabel,
         WANDERER_ALERT_TILES,
         GEAR_TABLE,
         GEAR_TABLE_FULL,
@@ -927,6 +1006,7 @@
         setWildAggroOwner,
         clearWildAggroOwner,
         sameWildTarget,
+        wildIsHostile,
         ownerEngagedWithWild,
         sameParty,
         isOwnedPawn,
@@ -935,6 +1015,8 @@
         livingParty,
         distTiles,
         inInteractRange,
+        isReservedAutoEat,
+        isStarving,
         pickAutoEat,
         nearestLiving,
         followBehind,

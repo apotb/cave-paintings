@@ -39,7 +39,7 @@ class Hotbar {
 
     /** Dedicated MP: tell the server; local inventory is already swapped (optimistic). */
     _notifyInvSwap(from, to, fromBag = 'hotbar', toBag = 'hotbar', amount = null) {
-        if (!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal)) return;
+        if (!(this.scene.simAuth())) return;
         if (typeof NetProtocol === "undefined" || !NetProtocol.Actions?.INV_SWAP) return;
         this.scene._invSwapGuardUntil = performance.now() + 500;
         const action = {
@@ -674,8 +674,11 @@ class Hotbar {
                     const party = this.scene.party || [];
                     for (const p of party) {
                         if (!p || p === this.scene.player || p.isBodyDead?.()) continue;
-                        const hs = (p.hitboxSize || 8) + 6;
-                        if (Math.abs(p.x - world.x) < hs && Math.abs(p.y - world.y) < hs * 2) {
+                        const onBody = typeof creaturePointerHit === "function"
+                            ? creaturePointerHit(p, world.x, world.y)
+                            : (world.x >= p.x && world.x <= p.x + 16
+                                && world.y >= p.y - 16 && world.y <= p.y);
+                        if (onBody) {
                             handled = !!this.scene.partySys?.tryGive?.(
                                 this.scene.player, fromIndex, p, fromBag
                             );
@@ -731,6 +734,7 @@ class Hotbar {
             if (this.scene.settlementPanel?.containsPointer?.(p)) return;
             if (this.scene.billsPanel?.containsPointer?.(p)) return;
             if (this.scene.storageFilterPanel?.containsPointer?.(p)) return;
+            if (this.scene.fuelFilterPanel?.containsPointer?.(p)) return;
             if (this.scene.craftMenuVisible && this.scene._pointerOverCraftMenu?.(p)) return;
             // Shift+wheel is often reported as deltaX (browser "horizontal scroll")
             const delta = deltaY || deltaX;

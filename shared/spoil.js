@@ -7,6 +7,7 @@
         module.exports = factory();
     } else {
         const api = factory();
+        root.Spoil = api;
         root.NetSpoil = api;
         Object.assign(root, api);
     }

@@ -77,8 +77,11 @@ test("knapped stack uses toolClass key not unique silhouette", () => {
     const ids = (tools.items || []).map((it) => it.id);
     assert.deepEqual(ids, [
         "tool:awl", "bone", "tool:chopper", "flint_tool", "tool:knife",
-        "tool:scraper", "tool:spear_tip", "stone_tool"
+        "tool:scraper", "stone_tool"
     ]);
+    const stoneIds = (SF.findNode(t, "materials/stone").items || []).map((it) => it.id);
+    assert.ok(stoneIds.includes("tool:spear_tip"));
+    assert.equal(stoneIds.includes("tool:chopper"), false);
     let f = SF.toggleItem(SF.emptyFilter(), t, "tool:chopper");
     assert.equal(SF.allows(f, knap, getItem), false);
     assert.equal(SF.allows(f, { id: "bone" }, getItem), true);
@@ -92,6 +95,13 @@ test("knapped stack uses toolClass key not unique silhouette", () => {
     assert.equal(SF.allows(f, tip, getItem), false);
     assert.equal(SF.allows(f, knap, getItem), true);
     assert.equal(SF.allows(f, { id: "stone_tool" }, getItem), true);
+    f = SF.toggleCategory(SF.emptyFilter(), t, "materials/stone");
+    assert.equal(SF.allows(f, tip, getItem), false);
+    assert.equal(SF.allows(f, { id: "pebble" }, getItem), false);
+    assert.equal(SF.allows(f, knap, getItem), true);
+    f = SF.toggleCategory(SF.emptyFilter(), t, "tools");
+    assert.equal(SF.allows(f, tip, getItem), true);
+    assert.equal(SF.allows(f, knap, getItem), false);
 });
 
 test("allows for sprite-like stacks with numeric id", () => {
@@ -141,13 +151,24 @@ test("every item lands in exactly one leaf", () => {
     assert.equal(SF.leafCategory(getItem("skinworking_bench"), null), "buildings");
     assert.equal(SF.leafCategory(getItem("settling_stone"), null), "buildings");
     assert.equal(SF.leafCategory(getItem("leaf_cord"), null), "medicine");
+    assert.equal(SF.leafCategory(getItem("stick_frame"), null), "materials/wood");
+    assert.equal(SF.leafCategory(getItem("stick"), null), "materials/wood");
+    const materialKids = (SF.findNode(t, "materials").children || []).map((n) => n.id);
+    assert.deepEqual(materialKids, [
+        "materials/hides", "materials/leather", "materials/stone", "materials/wood"
+    ]);
+    assert.equal(SF.findNode(t, "materials/fuel"), null);
+    const woodIds = (SF.findNode(t, "materials/wood").items || []).map((it) => it.id);
+    assert.ok(woodIds.includes("stick_frame"));
+    assert.ok(woodIds.includes("stick"));
+    assert.ok(woodIds.includes("log"));
     const buildings = SF.findNode(t, "buildings");
     assert.ok((buildings.items || []).some((it) => it.id === "wicker_basket"));
     const medicine = SF.findNode(t, "medicine");
     assert.deepEqual((medicine.items || []).map((it) => it.id), ["leaf_cord"]);
     const apparelKids = (SF.findNode(t, "apparel").children || []).map((n) => n.id);
-    assert.deepEqual(apparelKids, ["apparel/clothing", "apparel/equipment", "apparel/armor"]);
-    assert.equal((SF.findNode(t, "apparel/armor").items || []).length, 0);
+    assert.deepEqual(apparelKids, ["apparel/clothing", "apparel/equipment"]);
+    assert.equal(SF.findNode(t, "apparel/armor"), null);
     assert.ok((SF.findNode(t, "apparel/clothing").items || []).some((it) => it.id === "cactus_flower"));
     assert.ok((SF.findNode(t, "apparel/equipment").items || []).some((it) => it.id === "leaf_pouch"));
 });
@@ -227,14 +248,68 @@ test("findMergeJob packs a basket or moves between same-priority storage", () =>
         storageFilter: { priority: "critical" }
     };
     const acrossPri = SF.findMergeJob([src, crit], getItem, 0, 0);
-    assert.equal(acrossPri, null);
+    assert.equal(acrossPri.kind, "move");
+    assert.equal(acrossPri.to, crit);
 
     const denied = {
         uid: "no", x: 8, y: 0,
         slots: [{ id: "stick", quantity: 20 }, null],
         storageFilter: { priority: "normal", offCategories: ["materials"] }
     };
-    assert.equal(SF.findMergeJob([src, denied], getItem, 0, 0), null);
+    const outOfDenied = SF.findMergeJob([src, denied], getItem, 0, 0);
+    assert.equal(outOfDenied.kind, "move");
+    assert.equal(outOfDenied.from, denied);
+    assert.equal(outOfDenied.to, src);
+    assert.equal(outOfDenied.reason, "wrong");
+});
+
+test("findMergeJob takes disallowed items to a basket that wants them", () => {
+    const apparel = {
+        uid: "apparel", x: 0, y: 0,
+        slots: [
+            { id: "leaf_wrap", quantity: 1 },
+            { id: "stick", quantity: 8 },
+            { id: "pebble", quantity: 3 },
+            null
+        ],
+        storageFilter: { priority: "normal", offCategories: ["materials", "food", "tools", "weapons", "junk", "buildings", "medicine"] }
+    };
+    const wood = {
+        uid: "wood", x: 40, y: 0,
+        slots: [null, null, null, null],
+        storageFilter: { priority: "normal", offCategories: ["apparel", "food", "tools", "weapons", "junk", "buildings", "medicine"] }
+    };
+    const job = SF.findMergeJob([apparel, wood], getItem, 0, 0);
+    assert.ok(job);
+    assert.equal(job.kind, "move");
+    assert.equal(job.reason, "wrong");
+    assert.equal(job.from, apparel);
+    assert.equal(job.to, wood);
+    assert.equal(job.stackId, "stick");
+});
+
+test("findMergeJob spreads from an unfiltered dump into a category basket", () => {
+    const dump = {
+        uid: "dump", x: 0, y: 0,
+        slots: [
+            { id: "leaf_wrap", quantity: 1 },
+            { id: "stick", quantity: 6 },
+            null, null
+        ],
+        storageFilter: { priority: "normal" }
+    };
+    const clothes = {
+        uid: "clothes", x: 32, y: 0,
+        slots: [null, null, null, null],
+        storageFilter: { priority: "normal", offCategories: ["materials", "food", "tools", "weapons", "junk", "buildings", "medicine"] }
+    };
+    const job = SF.findMergeJob([dump, clothes], getItem, 0, 0);
+    assert.ok(job);
+    assert.equal(job.kind, "move");
+    assert.equal(job.reason, "better");
+    assert.equal(job.from, dump);
+    assert.equal(job.to, clothes);
+    assert.equal(job.stackId, "leaf_wrap");
 });
 
 test("pickBasket prefers existing stacks at the same priority", () => {

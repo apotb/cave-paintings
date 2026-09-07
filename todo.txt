@@ -1,20 +1,84 @@
-Improved hitboxes
+Painting Circle -- used for research. Crafted with Pebble x12, Leaf cord x6, shows 6 stones in a circle, have intermediate sprites for amount of paintings made that shows scribbles on them. Must keep the paintings as a persistent resource to "store" the research. 12 hours for each painting, persists on the Painting Circle so you don't have to finish it all at once. No bills, tooltip shows X/6 progress.
+
+Gathering (done): Unlocks Get job
+├── Cordage (done): Unlocks Leaf Cord and Leaf apparel
+│   └── Camping (done): Unlocks Stick Frame, Wicker Basket, Lean-to
+│       └── Basic Furniture (2): Unlocks Stool
+├── Fishing (2): Unlocks Fishing job
+└── Agriculture (3): Unlocks Agronomy job
+    └── Tree Sowing (2): Unlocks sowing Trees
+
+Fire (done): Unlocks firestarting via Sharp Stick
+├── Settlements (done): Unlocks Hearth
+└── Cooking (done): Unlocks Cracked Coconut
+    └── Feasts (2): Unlocks Feast ritual
+
+Knapping (done): Unlocks knapping via Rocks and 5 basic knapping techniques
+├── Hafting (done): Unlocks spears                        ← also requires Cordage
+│   └── Bows (3): Unlocks Bow, Arrows
+└── Hand-axe (2): Unlocks Hand-axe knapping technique
+    ├── Cleaver (1): Unlocks Cleaver knapping technique
+    └── Blades (2): Unlocks Blade knapping technique
+
+Tanning (done): Unlocks Tailoring job and Drying Rack
+└── Skinworking (1): unlocks Skinworking Bench            ← also requires Basic Furniture
+
+Culture (done)
+├── Painting (done): Unlocks Painting Circle
+├── Rituals (2)
+└── Burial (1): Unlocks Grave
+    └── Afterlife (2): Unlocks Funeral ritual             ← also requires Rituals
+
+Gathering | Lower Paleolithic | 'Use your surroundings'
+Cordage | Upper Paleolithic | 'Knot bad'
+Camping | Upper Paleolithic | 'Embrace the elements'
+Basic Furniture | Upper Paleolithic | 'Make yourself at home'
+Fishing | Mesolithic | 'Might need to adjust your palate'
+Agriculture | Neolithic | 'Soil is a gift from Mother Earth'
+Tree Sowing | Neolithic | 'Replenish your wood supply'
+Fire | Lower Paleolithic | 'It's hot!'
+Settlements | Middle Paleolithic | 'No longer nomads'
+Cooking | Lower Paleolithic | 'We can make eating fun'
+Feasts | Upper Paleolithic | 'Food makes the world go around'
+Knapping | Lower Paleolithic | 'Less is more'
+Hafting | Middle Paleolithic | 'Sharper sticks'
+Bows | Mesolithic | 'Stay out of danger'
+Hand-axe | Lower Paleolithic | 'Harder, better, faster, stronger'
+Cleaver | Lower Paleolithic | 'CLEAVER_TOOLTIP'
+Blades | Middle Paleolithic | 'BLADES_TOOLTIP'
+Tanning | Middle Paleolithic | 'Hope you don't mind the sight of blood'
+Skinworking | Upper Paleolithic | 'Cover up with style'
+Culture | Upper Paleolithic | 'The story of our people'
+Painting | Upper Paleolithic | 'A most desirable profession'
+Rituals | Upper Paleolithic | 'It's not a cult'
+Burial | Middle Paleolithic | 'Dead bodies smell bad'
+Afterlife | Upper Paleolithic | 'Our people have souls'
+
+-----
+
+Agriculture -- will unlock a tutorial tip that you can open to learn about soil and farming mechanics
+
+Fishing -- will also open a tutorial tip to learn about fishing mechanics
+
+Schedule tab for settlement
+
+Assign tab for settlement -- manage weapons and apparel
 
 Rock types -- more than pebble vs flint (obsidian, quartz, basalt, sandstone). Different knap feel / quality, some better for blades, some blunt for plant stuff. Later gate for tools a pebble shouldn't make.
 
-Hand-axe and cleaver -- later knapped tools, not day-one. Choppers stay the way you get wood. Hand-axe = biface, general-purpose; cleaver = big-game processing. Needs better stone and a harder silhouette so they don't fall out of a messy pebble.
+Hand-axe and cleaver. Choppers nerfed to have even weaker chop power and yield less logs so that Hand-axe can be much faster and yield much more logs. Hand-axe = biface, general-purpose; cleaver = big-game processing. Needs better stone and a harder silhouette so they don't fall out of a messy pebble.
 
 Mode 3 blades -- prepared-core / long flakes (at least twice as long as wide). Further down than hand-axes.
 
-Fishing
-
-More animals -- lynx (neutral), auroch (scared)
+Replace Settling Stone with Hearth: Log x4, Dried hide x1, Pebble x8, Leaf cord x4, Stick frame x1. Update existing Settling Stones to a Campfire with a Hearth and migrate all the data, but make sure we have patches like this are written in a way that it'll be easy to find and remove from the final versions of the game to prevent unnecessary bloat.
 
 Better party management Kenshi-esque -- choose which severity of injuries to tend, make certain party members bodyguards that will only attack enemies near you, etc
 
-Farming and renewable trees
+Visible apparel on body
 
-Research Table -- part of settlement feature
+Fishing
+
+Bows
 
 Burials / ritual -- early spiritualism
 
@@ -22,10 +86,8 @@ Body/biome temperature
 
 Diet -- fruits, vegetables, grains, protein, dairy
 
+More animals -- lynx (neutral), auroch (scared)
+
 Icons in tooltips
 
 Needs beyond hunger: sleep, recreation, socialization, etc
-
-Schedule tab for settlement
-
-Upgrade to Phaser 4.0

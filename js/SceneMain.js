@@ -33,6 +33,7 @@ class SceneMain extends SceneBase {
         this._lastYou = this.welcome?.you || null;
         this._onVisSave = null;
         this._gamePaused = false;
+        this._chatFadeHold = null;
         this._worldBooting = !!(this.net?.isLocal || this.localWorldId);
         this._generatingUi = null;
         this._generatingLabelTimer = null;
@@ -66,6 +67,7 @@ class SceneMain extends SceneBase {
         this.settlementPanel = null;
         this.billsPanel = null;
         this.storageFilterPanel = null;
+        this.fuelFilterPanel = null;
         this.chunks = null;
         this.droppedItems = null;
         this.corpses = null;
@@ -80,6 +82,17 @@ class SceneMain extends SceneBase {
         this.painBar = this.kcBar = this.weightBar = this.barIcons = null;
         this.channelBar = this.treeChopBar = null;
         this.craft = this.healthBtn = this.equipmentBtn = this.help = null;
+        this.craftContainer = null;
+        this.craftMenuVisible = false;
+        this._craftStationThing = null;
+        this._craftFromStation = false;
+        this._craftSettleUi = null;
+        this._craftBillUi = null;
+        this._craftTakeBtn = null;
+        this._craftTakeRect = null;
+        this._craftTakeText = null;
+        this._craftMenuSig = null;
+        this._craftMenuData = null;
         this.fpsText = this.locXText = this.locYText = null;
         this._waterSprite = null;
         this.groundLayer = this.mainLayer = this.uiLayer = this.veilLayer = this.worldHudLayer = null;
@@ -96,6 +109,11 @@ class SceneMain extends SceneBase {
         this.events.once("shutdown", this.shutdown, this);
     }
 
+    /** True when SimWorld owns gameplay (LocalSim host or dedicated MP). */
+    simAuth() {
+        return !!(this.isNet && this.net && this.net.connected);
+    }
+
     create() {
         hookPixelTextureClamp(this);
         this._bindFullscreenWatch();
@@ -103,6 +121,7 @@ class SceneMain extends SceneBase {
         // so the 2nd world join froze campfires, walks, and anything else that plays.
         try { this.anims?.resumeAll?.(); } catch (_) {}
         try { this.sound?.stopByKey?.("title"); } catch (_) {}
+        if (typeof GameMusic !== "undefined") GameMusic.play(this, "forest", { fade: true });
         this.input.mouse.disableContextMenu();
         resolveCraftedWeights(this.items());
         resolveCraftedFuel(this.items());
@@ -117,6 +136,8 @@ class SceneMain extends SceneBase {
         this.groundLayer = this.add.layer().setDepth(0);
         this.mainLayer = this.add.layer().setDepth(1);
         this.uiLayer = this.add.layer().setDepth(2);
+        // HUD tips sit on their own list so panel stencil masks cannot wash them out.
+        this.tooltipLayer = this.add.layer().setDepth(40000);
         // Night overlay between the world and party HUD. UI cam ignores these
         // so world-locked HUD is not also drawn unzoomed at raw world coordinates.
         this.veilLayer = this.add.layer().setDepth(50);
@@ -196,6 +217,7 @@ class SceneMain extends SceneBase {
         this.gameMinutes = 8 * 60;
         this.tickSpeed = 1;
         this._baseTickSpeed = 1;
+        this._restSpeedElapsedMs = 0;
         this._worldMinuteEvent = null;
         // Don't apply welcome clock yet — clockText / lightGfx are created below.
         if (!this.isNet) {
@@ -233,6 +255,18 @@ class SceneMain extends SceneBase {
         let cameras = [this.groundLayer, this.mainLayer, this.veilLayer, this.worldHudLayer];
         if (this.physics.world.debug) cameras.push(this.physics.world.debugGraphic);
         this._uiCam.ignore(cameras);
+        // Camera.ignore(Layer) only tags children that exist *now*. Layers are
+        // empty here, so later world sprites still hit-test on the UI camera at
+        // their world x/y (as screen pixels). Stamp the Layer itself so willRender
+        // rejects them regardless of add order — otherwise a lean-to you're in
+        // steals HUD clicks/tooltips.
+        this.uiLayer.cameraFilter |= this.cameras.main.id;
+        if (this.tooltipLayer) this.tooltipLayer.cameraFilter |= this.cameras.main.id;
+        for (const layer of cameras) {
+            if (layer && layer !== this.physics.world.debugGraphic) {
+                layer.cameraFilter |= this._uiCam.id;
+            }
+        }
         this.createLightVeil();
         this.createBars();
         this.hotbar = new Hotbar(this);
@@ -258,6 +292,7 @@ class SceneMain extends SceneBase {
         this.settlementPanel = new SettlementPanel(this);
         this.billsPanel = new BillsPanel(this);
         this.storageFilterPanel = new StorageFilterPanel(this);
+        this.fuelFilterPanel = new FuelFilterPanel(this);
         this.applyUiScale();
         if (this._worldBooting) this._showGeneratingOverlay();
 
@@ -303,7 +338,7 @@ class SceneMain extends SceneBase {
         // Dedicated MP / rejoin already have an authoritative pose on YOU.
         this._playerSpawnPlaced = !this.welcome?.firstSpawn;
         this.player.createAnimations?.();
-        // Apply join snapshot once (including SP gear); later LocalSim YOU won't stomp inventory
+        // Apply join snapshot (SimWorld YOU is the inventory source in both modes)
         this._netForceYouInv = true;
         if (you.inventory || you.kc != null || you.equipment) this._netApplyYou(you);
         this._netForceYouInv = false;
@@ -364,18 +399,13 @@ class SceneMain extends SceneBase {
     _bootSettlements(you) {
         const sys = this.settlementSys;
         if (!sys) return;
-        if (this.net?.isLocal && this.net.world) {
-            sys.loadFromWorld(this.net.world);
-            sys.spawnSavedSettlers(this.net.world);
-            return;
-        }
         const world = {
-            settlements: you?.settlements || this.welcome?.settlements || [],
-            settlers: you?.settlers || this.welcome?.settlers || []
+            settlements: you?.settlements || this.welcome?.you?.settlements || this.welcome?.settlements || [],
+            settlers: you?.settlers || this.welcome?.you?.settlers || this.welcome?.settlers || []
         };
         if (world.settlements.length || world.settlers.length) {
             sys.loadFromWorld(world);
-            if (!this.isNet || this.net?.isLocal) sys.spawnSavedSettlers(world);
+            sys.spawnSavedSettlers(world);
         }
     }
 
@@ -508,8 +538,6 @@ class SceneMain extends SceneBase {
         this._charSavePromise = (async () => {
             try {
                 const live = this._characterSavePartial();
-                // SP: client inventory is authoritative — push into LocalSim pawn first
-                if (this.net?.isLocal && live) this.net.syncPawnFromClient?.(live);
                 let base = this.character;
                 if (!base) base = await CharacterStore.get(this.characterId);
                 if (!base) {
@@ -591,12 +619,9 @@ class SceneMain extends SceneBase {
         const youPawn = (this.party || []).find((p) => p.pawnId === you.id)
             || this.leader
             || this.player;
-        const hud = youPawn === this.player;
-        // LocalSim SP: after join, inventory is client-authored — don't stomp with pawn YOU
-        // (vitals still apply; hunger is owned by LocalSim's clock).
-        // Dedicated MP: while dead, client already dumped gear into a corpse — never
-        // re-apply stale server inventory (that was the /kms dupe).
-        const applyGear = (!this.net?.isLocal || this._netForceYouInv) && !youPawn._bodyDead;
+        // SimWorld owns gear. Skip only while dead so a stale YOU cannot refill
+        // a corpse dump (the old /kms duplicate).
+        const applyGear = !youPawn._bodyDead;
         if (youPawn._bodyDead) {
             this._lastYou = {
                 ...you,
@@ -612,8 +637,7 @@ class SceneMain extends SceneBase {
         if (
             you.dead
             && !youPawn._bodyDead
-            && this.net?.connected
-            && !this.net.isLocal
+            && this.simAuth()
             && !this.deathOverlay?.visible
         ) {
             youPawn._bodyDead = true;
@@ -646,20 +670,9 @@ class SceneMain extends SceneBase {
         if (typeof you.kc === "number") youPawn.kc = you.kc;
         if (typeof you.saturation === "number") youPawn.saturation = you.saturation;
         if (typeof you.stomach === "number") youPawn.stomach = you.stomach;
-        if (hud && you.eatChannel && typeof you.eatChannel.progress === "number"
-            && this.net?.connected && !this.net.isLocal
-            && youPawn._eatChannel) {
-            // Only while local eat channel is active — ignore stale YOU after cancel
-            this.showChannelBar?.(Phaser.Math.Clamp(you.eatChannel.progress, 0, 1));
-        } else if (
-            hud
-            && this.net?.connected && !this.net.isLocal
-            && !you.eatChannel
-            && !youPawn._eatChannel
-            && !youPawn._tendChannel
-            && !youPawn._skinChannel
-        ) {
-            this.hideChannelBar?.();
+        if (this.simAuth()) {
+            this._applyPawnChannelVisual(youPawn, you.eatChannel || null, "eat");
+            this._applyPawnChannelVisual(youPawn, you.tendChannel || null, "tend");
         }
         if (applyGear && you.body && youPawn.anatomy?.loadJSON) {
             try {
@@ -671,17 +684,24 @@ class SceneMain extends SceneBase {
         this._netApplyYouVomit(you, youPawn);
         // Dedicated: server rest is per-world. Character `resting` is global, so
         // YOU.resting=false must stand you up when this world has no bed.
+        // `resting` is always a boolean on YOU, so the old `else if (you.prone)`
+        // never ran after stand-up — leftover `_netProne` blocked melee until relog.
         if (youPawn && typeof you.resting === "boolean") {
             if (you.resting) {
                 youPawn._resting = true;
+                youPawn._netProne = true;
                 if (you.lastSleep) youPawn.lastSleep = you.lastSleep;
                 if (typeof pinRestingCreature === "function") pinRestingCreature(youPawn, this);
                 else setCreatureRest?.(youPawn, true, you.lastSleep?.rot ?? you.restRot);
-            } else if (youPawn._resting) {
-                setCreatureRest?.(youPawn, false);
-                youPawn._resting = false;
+            } else {
+                if (youPawn._resting) {
+                    setCreatureRest?.(youPawn, false);
+                    youPawn._resting = false;
+                }
+                youPawn._netProne = !!you.prone;
             }
         } else if (youPawn && typeof you.prone === "boolean" && !youPawn._resting) {
+            youPawn._netProne = !!you.prone;
             setCreatureProne(
                 youPawn,
                 !!you.prone && !youPawn._bodyDead && !you.dead
@@ -696,13 +716,25 @@ class SceneMain extends SceneBase {
                 settlers: you.settlers || []
             });
         }
+        if (Array.isArray(you.settlers)) {
+            for (const row of you.settlers) {
+                if (!row?.id) continue;
+                if ((this.party || []).some((p) => p && p.pawnId === row.id && p.role !== "settler")) {
+                    continue;
+                }
+                let pawn = (this.settlers || []).find((p) => p && p.pawnId === row.id);
+                if (!pawn) pawn = this.settlementSys?._spawnSettlerPawn?.(row);
+                if (pawn) this._netApplySettlerGear(pawn, row);
+            }
+        }
     }
 
     /**
      * True while a UI fully owns local gear and must not be stomped by YOU.
      * Craft is excluded: recipes are clicks only (no local gear edits) — blocking YOU
      * while craft was open hid crafted items until close and spawned phantom overflow drops.
-     * Campfire is excluded: transfers use `_invSwapGuardUntil` for campfire slots only.
+     * Campfire is excluded: transfers wait for the sim event/YOU instead of
+     * holding inventory for a second, which used to restore hotbar counts.
      */
     _inventoryUiOwnsGear() {
         return !!this.knappingPanel?.visible;
@@ -716,15 +748,12 @@ class SceneMain extends SceneBase {
         const pending = this._pendingYouGear;
         const target = this._pendingYouTarget || this.leader || this.player;
         if (!pending || !target || target._bodyDead) return;
-        // LocalSim: inventory is client-authored after join
-        if (this.net?.isLocal && !this._netForceYouInv) return;
         if (target === this.player && this._inventoryUiOwnsGear()) return;
         // Keep the latest YOU stashed during an optimistic hotbar/equip edit so a
         // stale packet cannot snap icons back. Update flushes once the guard ends.
         if (
             target === this.player
-            && this.net?.connected
-            && !this.net.isLocal
+            && this.simAuth()
             && performance.now() < (this._invSwapGuardUntil || 0)
         ) {
             return;
@@ -802,7 +831,9 @@ class SceneMain extends SceneBase {
 
         this._pendingYouGear = null;
         this._pendingYouTarget = null;
-        if (this.craftMenuVisible) this.refreshCraftMenu?.();
+        // Ingredient counts are live in the tooltip fn — don't rebuild slots
+        // (that destroys the hover target and flashes the tip every YOU / hunger tick).
+        if (this.craftMenuVisible) this.refreshTooltip?.();
     }
 
     _netApplyChunk(meta) {
@@ -870,7 +901,6 @@ class SceneMain extends SceneBase {
         const zoom = this.worldZoom || 3;
         const s = this.uiScale || 1;
         const root = this.add.container(rp.x, rp.y);
-        root.setDepth(rp.y || 0);
         this.mainLayer.add(root);
 
         const lookKey = typeof PlayerLook !== "undefined"
@@ -923,7 +953,7 @@ class SceneMain extends SceneBase {
             .setVisible(false);
         root.add(fist);
 
-        return {
+        const entry = {
             root,
             spr,
             name,
@@ -951,9 +981,14 @@ class SceneMain extends SceneBase {
             attackMax: 0,
             attackAngle: 0,
             prone: !!(rp.prone || rp.dead),
+            resting: !!rp.resting,
+            lastSleep: rp.lastSleep || null,
+            restRot: rp.restRot ?? rp.lastSleep?.rot,
             look: rp.look || null,
             tex: spr.texture?.key
         };
+        this._setRemoteSortDepth(entry);
+        return entry;
     }
 
     _netStampRemotePose(entry, pose) {
@@ -1015,15 +1050,19 @@ class SceneMain extends SceneBase {
             entry.prone = !!(rp.prone || rp.dead);
             entry.resting = !!rp.resting;
             entry.injured = !!rp.injured;
+            entry.eatChannel = rp.eatChannel && typeof rp.eatChannel.progress === "number"
+                ? rp.eatChannel
+                : (rp.tendChannel && typeof rp.tendChannel.progress === "number"
+                    ? rp.tendChannel
+                    : null);
             entry.restRot = rp.restRot ?? rp.lastSleep?.rot;
             entry.lastSleep = rp.lastSleep || null;
             // Dead players leave a corpse — no translucent ghost puppet
             entry.root.setVisible(!rp.dead);
             entry.name?.setVisible(!rp.dead);
             if (rp.dead) entry.bubble?.setVisible(false);
-            if (rp.dead) {
-                if (entry.fist) entry.fist.setVisible(false);
-                if (entry.weapon) entry.weapon.setVisible(false);
+            if (rp.dead || rp.prone) {
+                this._netClearRemoteAttack(entry);
             } else if (rp.attacking && Number.isFinite(rp.attackAngle)) {
                 // Keep / start remote swing from snapshot if event was missed
                 if (!(entry.attackTimer > 0)) {
@@ -1065,6 +1104,11 @@ class SceneMain extends SceneBase {
                 mEntry.prone = !!(mem.prone || mem.dead);
                 mEntry.resting = !!mem.resting;
                 mEntry.injured = !!mem.injured;
+                mEntry.eatChannel = mem.eatChannel && typeof mem.eatChannel.progress === "number"
+                    ? mem.eatChannel
+                    : (mem.tendChannel && typeof mem.tendChannel.progress === "number"
+                        ? mem.tendChannel
+                        : null);
                 mEntry.restRot = mem.restRot ?? mem.lastSleep?.rot;
                 mEntry.lastSleep = mem.lastSleep || null;
                 mEntry.root.setVisible(!mem.dead);
@@ -1077,9 +1121,8 @@ class SceneMain extends SceneBase {
                     }
                     mEntry.look = mem.look;
                 }
-                if (mem.dead) {
-                    if (mEntry.fist) mEntry.fist.setVisible(false);
-                    if (mEntry.weapon) mEntry.weapon.setVisible(false);
+                if (mem.dead || mem.prone) {
+                    this._netClearRemoteAttack(mEntry);
                 } else if (mem.attacking && Number.isFinite(mem.attackAngle)) {
                     if (!(mEntry.attackTimer > 0)) {
                         this._netStartRemoteAttack(mEntry, mem.attackAngle, mem.facing, mem.attackArt);
@@ -1108,7 +1151,6 @@ class SceneMain extends SceneBase {
     }
 
     _netApplySettlers(snap) {
-        if (this.net?.isLocal) return;
         const sys = this.settlementSys;
         if (!sys) return;
         if (Array.isArray(snap.settlements)) {
@@ -1116,6 +1158,7 @@ class SceneMain extends SceneBase {
             if (mine.length || sys.list.length) sys.list = mine.map((s) =>
                 (typeof Settlement !== "undefined" ? Settlement.ensureSettlement(s) : s)
             );
+            sys.rebindOpenPanels?.();
         }
         const incoming = snap.settlers || [];
         const seen = new Set();
@@ -1139,14 +1182,22 @@ class SceneMain extends SceneBase {
                     x: row.x,
                     y: row.y,
                     facing: row.facing,
+                    inventory: row.inventory,
+                    overflow: row.overflow,
+                    equipment: row.equipment,
+                    hotbarIndex: row.hotbarIndex,
                     homeSettlementId: row.homeSettlementId,
-                    ownerId: row.ownerId
+                    ownerId: row.ownerId,
+                    kc: row.kc,
+                    saturation: row.saturation,
+                    stomach: row.stomach
                 });
             }
             if (!pawn) continue;
             pawn.ownerId = row.ownerId || pawn.ownerId;
             pawn.homeSettlementId = row.homeSettlementId || null;
             pawn.role = "settler";
+            if (typeof syncCreatureInputHit === "function") syncCreatureInputHit(pawn);
             pawn._netFromX = pawn.x;
             pawn._netFromY = pawn.y;
             pawn._netTx = row.x;
@@ -1154,10 +1205,61 @@ class SceneMain extends SceneBase {
             pawn._netSnapAt = performance.now();
             pawn._netSnapDt = 1000 / ((typeof NetProtocol !== "undefined" && NetProtocol.SNAPSHOT_HZ) || 15);
             pawn._netMoving = !!row.moving;
-            pawn._netWorkChannel = row.channel && typeof row.channel.progress === "number"
-                ? { kind: row.channel.kind || null, progress: row.channel.progress }
-                : null;
+            pawn._netProne = !!row.prone;
+            if (row.lastSleep) pawn.lastSleep = row.lastSleep;
+            if (typeof row.resting === "boolean") {
+                pawn._resting = !!row.resting;
+                if (pawn._resting) {
+                    pawn._netMoving = false;
+                    pawn._netSnapDist = 0;
+                    if (typeof pinRestingCreature === "function") {
+                        pinRestingCreature(pawn, this);
+                    } else {
+                        setCreatureRest?.(pawn, true, row.lastSleep?.rot ?? row.restRot);
+                    }
+                } else {
+                    setCreatureRest?.(pawn, false);
+                }
+            }
+            if (typeof row.injured === "boolean") pawn.injured = !!row.injured;
+            const prevCh = pawn._netWorkChannel;
+            if (row.channel && typeof row.channel.progress === "number") {
+                pawn._netWorkChannel = {
+                    kind: row.channel.kind || null,
+                    progress: row.channel.progress,
+                    itemId: row.channel.itemId || prevCh?.itemId || null,
+                    uid: row.channel.uid || prevCh?.uid || null,
+                    patientId: row.channel.patientId || prevCh?.patientId || null,
+                    patientName: row.channel.patientName || prevCh?.patientName || null
+                };
+                pawn._netEating = pawn._netWorkChannel.kind === "eat";
+            } else {
+                pawn._netWorkChannel = null;
+                pawn._netEating = false;
+            }
+            if (typeof row.activity === "string" && row.activity) {
+                const keepChop = !!(
+                    row.attacking
+                    && row.activity === "Idle"
+                    && pawn._settlerAct
+                    && /^Chopping/i.test(pawn._settlerAct)
+                );
+                if (!keepChop) {
+                    pawn._settlerAct = row.activity;
+                    if (pawn.partyAI) pawn.partyAI._settlerAct = row.activity;
+                }
+            } else if (!row.moving && !row.attacking && !row.channel) {
+                // Chop swings skip the work tick, so a snapshot can omit activity
+                // for a frame. Clearing here strobes the hover tip (name vs name+job).
+                pawn._settlerAct = null;
+                if (pawn.partyAI) pawn.partyAI._settlerAct = null;
+            }
+            this._netApplySettlerGear(pawn, row);
+            if (typeof row.kc === "number") pawn.kc = row.kc;
+            if (typeof row.saturation === "number") pawn.saturation = row.saturation;
+            if (typeof row.stomach === "number") pawn.stomach = row.stomach;
             if (row.facing) pawn.facing = row.facing;
+            this._applyPawnNetAttack(pawn, row);
             if (row.ownerId && row.ownerId !== oid) {
                 pawn.faction = `party:${row.ownerId}`;
             }
@@ -1175,8 +1277,59 @@ class SceneMain extends SceneBase {
         });
     }
 
+    /**
+     * Dedicated puppet melee. Attack events start a fresh swing even if the
+     * last pose is still up. Snapshots must not restart the same swing, and
+     * must not freeze the spear out waiting for attacking to drop (chops and
+     * assists chain faster than 15 Hz).
+     */
+    _beginPawnNetSwing(pawn, angle, art) {
+        if (!pawn || pawn._netProne || pawn._prone || pawn._downed) return;
+        pawn._netAttacking = true;
+        pawn._netSwingDone = false;
+        if (pawn.isAttacking?.()) pawn._endAttack?.();
+        pawn.startMeleeAttack?.(null, {
+            silentNet: true,
+            angle: Number(angle) || 0,
+            art: art || null
+        });
+    }
+
+    _applyPawnNetAttack(pawn, row) {
+        if (!pawn || !row) return;
+        if (row.prone) {
+            pawn._netAttacking = false;
+            pawn._netSwingDone = false;
+            if (pawn.isAttacking?.()) pawn._endAttack?.();
+            return;
+        }
+        if (row.attacking && Number.isFinite(row.attackAngle)) {
+            pawn._netAttacking = true;
+            if (!pawn.isAttacking?.() && !pawn._netSwingDone) {
+                this._beginPawnNetSwing(pawn, row.attackAngle, row.attackArt || null);
+            } else if (pawn.isAttacking?.()) {
+                pawn.attackAngle = row.attackAngle;
+            }
+            return;
+        }
+        pawn._netAttacking = false;
+        pawn._netSwingDone = false;
+        if (pawn.isAttacking?.()) pawn._endAttack?.();
+    }
+
+    /**
+     * Copy sim-authored bags onto a settler puppet. Snapshots are pose-only
+     * besides this; without it hover tooltips stay empty while the sim carries loot.
+     * Present empty arrays (stash/dump) apply; omitted fields do not wipe.
+     */
+    _netApplySettlerGear(pawn, row) {
+        if (!pawn || !row) return;
+        if (typeof NetProtocol === "undefined" || !NetProtocol.applyNetPawnGear) return;
+        const sig = this.partySys?._gearSig?.(row.inventory, row.equipment, row.hotbarIndex, row.overflow);
+        NetProtocol.applyNetPawnGear(pawn, row, (s) => this._cloneSaveStack(s), sig);
+    }
+
     _netApplyWanderers(list) {
-        if (this.net?.isLocal) return;
         const sys = this.partySys;
         if (!sys) return;
         const incoming = list || [];
@@ -1217,6 +1370,7 @@ class SceneMain extends SceneBase {
                 pawn._netMoving = typeof w.moving === "boolean"
                     ? w.moving
                     : !!(w.heading && (Math.abs(w.heading.x) + Math.abs(w.heading.y) > 0));
+                pawn._netProne = !!w.prone;
                 if (w.heading) pawn.heading = w.heading;
             } else {
                 if (pawn._netTx == null) {
@@ -1235,12 +1389,14 @@ class SceneMain extends SceneBase {
                 pawn._netMoving = typeof w.moving === "boolean"
                     ? w.moving
                     : !!(w.heading && (Math.abs(Number(w.heading.x)) + Math.abs(Number(w.heading.y)) > 0));
-                pawn.facing = w.facing || pawn.facing;
+                pawn._netProne = !!w.prone;
+                pawn.facing = w.prone ? "right" : (w.facing || pawn.facing);
                 pawn.heading = w.heading || pawn.heading;
                 pawn.hostile = !!w.hostile;
                 pawn.recruitLocked = !!w.recruitLocked;
                 pawn.refusedBy = new Set(w.refusedBy || []);
-                if (w.attacking && Number.isFinite(w.attackAngle) && !pawn.isAttacking?.()) {
+                if (w.prone && pawn.isAttacking?.()) pawn._endAttack?.();
+                else if (w.attacking && Number.isFinite(w.attackAngle) && !pawn.isAttacking?.()) {
                     pawn.startMeleeAttack?.(null, {
                         silentNet: true,
                         angle: w.attackAngle
@@ -1280,8 +1436,6 @@ class SceneMain extends SceneBase {
         this.updateClockText();
         if (this.lightGfx && this.worldMinuteIndex() !== prevIdx) this.updateTimeTint();
 
-        if (this.net?.isLocal) this.applyRestClock?.();
-
         if (opts.catchUp === false) return;
 
         // Drive local minute systems when the shared clock advances
@@ -1293,7 +1447,7 @@ class SceneMain extends SceneBase {
             // Net sessions: hunger drain is owned by LocalSim / dedicated server (YOU).
             if (!(this.isNet && this.net?.connected)) {
                 this._hungerTickAll();
-            } else if (this.net?.isLocal && this.player) {
+            } else if (this.simAuth() && this.player) {
                 // LocalSim skips hungerTick; still refresh the fed snapshot each minute
                 // so malnutrition (and /heal's sticky flag) advances correctly.
                 this._forEachHungerPawn((p) => {
@@ -1302,10 +1456,9 @@ class SceneMain extends SceneBase {
                 });
             }
             this.tickSoakDrops();
-            this.tickSpoilage();
-            this.tickCorpseDecay();
-            // Dedicated MP: campfire burn/cook is server-authored (events + snapshots).
-            if (!(this.isNet && this.net?.connected && !this.net.isLocal)) {
+            if (!(this.simAuth())) {
+                this.tickSpoilage();
+                this.tickCorpseDecay();
                 this.tickCampfires();
                 this.tickDryingRacks();
                 this.tickLootableRegrows();
@@ -1316,12 +1469,11 @@ class SceneMain extends SceneBase {
     }
 
     _netDropKey(d) {
-        return d.uid || `${d.id}:${Math.round(d.x)}:${Math.round(d.y)}:${d.quantity || 1}`;
+        if (d.uid) return String(d.uid);
+        return `${d.id}:${Math.round(d.x)}:${Math.round(d.y)}`;
     }
 
     _netApplyDrops(drops) {
-        // LocalSim SP: chunk meta owns ground loot (same as offline)
-        if (this.net?.isLocal) return;
         if (!this.netDrops) this.netDrops = new Map();
         if (!this.droppedItems) this.droppedItems = this.add.group();
         const seen = new Set();
@@ -1476,7 +1628,7 @@ class SceneMain extends SceneBase {
      * @param {{ pending?: boolean, confirmed?: boolean }} [opts]
      */
     _netUpsertCorpse(c, opts = {}) {
-        if (!c?.id || this.net?.isLocal) return null;
+        if (!c?.id) return null;
         if (!this.netCorpses) this.netCorpses = new Map();
         if (!this.corpses?.children) this.corpses = this.add.group();
         const loot = Array.isArray(c.loot)
@@ -1575,8 +1727,6 @@ class SceneMain extends SceneBase {
     }
 
     _netApplyCorpses(corpses) {
-        // LocalSim SP: chunk meta owns corpses (same as offline)
-        if (this.net?.isLocal) return;
         // Malformed payload (e.g. single object) would iterate keys and wipe everyone
         if (!Array.isArray(corpses)) return;
         if (!this.netCorpses) this.netCorpses = new Map();
@@ -1715,15 +1865,6 @@ class SceneMain extends SceneBase {
     }
 
     _netApplyMobs(mobs) {
-        // LocalSim SP: LivingMobs own wildlife — ignore empty/leftover puppets.
-        // Dedicated: restore snapshot puppets (server SimCreatures).
-        if (this.net?.isLocal) {
-            if (this.netMobs?.size) {
-                for (const entry of this.netMobs.values()) entry.root?.destroy?.(true);
-                this.netMobs.clear();
-            }
-            return;
-        }
         const seen = new Set();
         const now = performance.now();
         const snapDt = 1000 / (NetProtocol.SNAPSHOT_HZ || 15);
@@ -1754,7 +1895,9 @@ class SceneMain extends SceneBase {
             entry.state = m.state || entry.state;
             entry.prone = !!m.prone;
             if (m.look) entry.look = m.look;
-            if (m.attacking && Number.isFinite(m.attackAngle)) {
+            if (m.prone) {
+                this._netClearRemoteAttack(entry);
+            } else if (m.attacking && Number.isFinite(m.attackAngle)) {
                 if (!(entry.attackTimer > 0)) {
                     this._netStartRemoteAttack(entry, m.attackAngle, m.facing, m.attackArt);
                 } else {
@@ -1785,7 +1928,7 @@ class SceneMain extends SceneBase {
             const err = Math.hypot(entry.tx - entry.fromX, entry.ty - entry.fromY);
             const prevX = entry.x;
             const prevY = entry.y;
-            if (err > 72) {
+            if (entry.prone || err > 72) {
                 entry.x = entry.tx;
                 entry.y = entry.ty;
                 entry.fromX = entry.tx;
@@ -1796,9 +1939,11 @@ class SceneMain extends SceneBase {
             }
 
             entry.root.setPosition(entry.x, entry.y);
-            entry.root.setDepth(entry.y | 0);
+            this._setRemoteSortDepth(entry);
 
-            if (entry.attackTimer > 0) {
+            if (entry.prone) {
+                this._netClearRemoteAttack(entry);
+            } else if (entry.attackTimer > 0) {
                 entry.attackTimer = Math.max(0, entry.attackTimer - (delta || 16));
                 const progress = entry.attackMax > 0
                     ? 1 - entry.attackTimer / entry.attackMax
@@ -1845,6 +1990,25 @@ class SceneMain extends SceneBase {
                 entry.animKey = null;
                 continue;
             }
+            const wildlifeFrozen = typeof Party !== "undefined" && Party.mobTimeScale
+                ? !(Party.mobTimeScale(this.tickSpeed) > 0)
+                : !(Number(this.tickSpeed) > 0);
+            if (wildlifeFrozen) {
+                entry.moving = false;
+                if (entry.spr.anims) {
+                    if (typeof entry.spr.anims.pause === "function") {
+                        if (entry.spr.anims.isPlaying && !entry.spr.anims.isPaused) {
+                            entry.spr.anims.pause();
+                        }
+                    } else {
+                        entry.spr.anims.timeScale = 0;
+                    }
+                }
+                continue;
+            }
+            if (entry.spr.anims?.isPaused && typeof entry.spr.anims.resume === "function") {
+                entry.spr.anims.resume();
+            }
             const facing = entry.facing || "down";
             const key = `${tex}-${entry.moving ? "walk" : "idle"}-${facing}`;
             // Only restart anim when the key changes (play every frame kills cadence)
@@ -1872,7 +2036,7 @@ class SceneMain extends SceneBase {
         const text = String(msg).replace(/^<[^>]+>\s*/, "");
         if (!text) return;
         entry.bubble.setText(text).setVisible(true).setAlpha(1);
-        entry.bubbleUntil = (this.time?.now || 0) + 10000;
+        entry.bubbleUntil = (this._chatFadeNow?.() ?? (this.time?.now || 0)) + 10000;
         this._netLayoutRemoteLabels(entry);
     }
 
@@ -1880,7 +2044,34 @@ class SceneMain extends SceneBase {
         if (!entry) return;
         entry.name?.destroy?.();
         entry.bubble?.destroy?.();
+        entry.channelBar?.destroy?.();
         entry.root?.destroy?.(true);
+    }
+
+    /**
+     * Lying puppets sort under standing bodies. Sleepers sit just above the
+     * lean-to floor (not at the structure's south feet). Net roots are
+     * feet-anchored except while resting (body-center).
+     */
+    _setRemoteSortDepth(entry) {
+        if (!entry?.root) return;
+        if (typeof applyCreatureSortDepth === "function") {
+            applyCreatureSortDepth(entry.root, {
+                sprite: entry.spr,
+                y: entry.y,
+                prone: !!entry.prone,
+                resting: !!entry.resting,
+                centered: false,
+                leanTo: entry.resting
+                    ? this.findLeanToByUid?.(entry.lastSleep?.uid)
+                    : null,
+                slot: entry.lastSleep?.slot,
+                height: Number(entry.spr?.height) || 16
+            });
+            return;
+        }
+        const y = Number(entry.y) || 0;
+        entry.root.setDepth(y | 0);
     }
 
     _netLayoutRemoteLabels(entry) {
@@ -1910,11 +2101,45 @@ class SceneMain extends SceneBase {
             this._placeWorldHud(entry.name, above ? 60 : underDepth, above);
             entry.name.setPosition(wx, wy);
         }
-        const bubbleOn = entry.bubble?.visible && (this.time?.now || 0) < entry.bubbleUntil;
+        const bubbleOn = entry.bubble?.visible
+            && (this._chatFadeNow?.() ?? (this.time?.now || 0)) < entry.bubbleUntil;
         if (entry.bubble?.active) {
             this._placeWorldHud(entry.bubble, above ? 61 : underDepth + 1, above);
             if (bubbleOn) entry.bubble.setPosition(wx, wy - nameH - 2);
         }
+        this._netSyncRemoteChannelBar(entry);
+    }
+
+    _netSyncRemoteChannelBar(entry) {
+        if (!entry) return;
+        const eat = entry.eatChannel;
+        const live = eat && typeof eat.progress === "number" && !entry.dead;
+        if (!live) {
+            if (entry.channelBar) {
+                entry.channelBar.clear();
+                entry.channelBar.setVisible(false);
+            }
+            return;
+        }
+        entry.channelBar = this._ensureWorldHudBar(entry.channelBar);
+        const frac = Phaser.Math.Clamp(eat.progress, 0, 1);
+        const zoom = this.worldZoom || 3;
+        const w = 40;
+        const h = 5;
+        const spr = entry.spr;
+        const prone = !!(entry.prone || spr?._prone);
+        const lx = prone ? 0 : Math.round((spr?.width || 16) * 0.5);
+        const ly = prone
+            ? -Math.round(Math.max(spr?.width || 16, spr?.height || 16) * 0.5 + 2)
+            : -Math.round((spr?.height || 16) + 2);
+        const above = this.isPartyWorldHud(entry);
+        this._placeWorldHud(entry.channelBar, above ? 51 : (entry.y | 0) + 41, above);
+        const g = entry.channelBar;
+        g.clear().setVisible(true);
+        g.setScale(1 / zoom);
+        g.setPosition(entry.x + lx, entry.y + ly);
+        const color = this._channelBarFillColor?.(frac) || 0x80e080;
+        this._drawBar(g, -Math.floor(w / 2), -h, w, h, frac, 0x000000, 0x222222, color, 2);
     }
 
     /** Refresh remote name / chat bubble fonts after GUI scale changes. */
@@ -1950,12 +2175,19 @@ class SceneMain extends SceneBase {
             const isLeave = / left\.?$/.test(text);
             const isPlayerChat = !!(ev.from || /^<.+>\s/.test(text));
             const isSettleNews = / has been founded$/.test(text)
-                || / has been destroyed!$/.test(text);
+                || / has been destroyed!$/.test(text)
+                || / was renamed to /.test(text);
             const yellow = isJoin || isLeave || isPlayerChat;
             const color = isSettleNews
                 ? (CombatLog.COLOR_SETTLER || "#7ec8ff")
                 : (yellow ? CombatLog.COLOR_CHAT : null);
-            this.combatLog?.push?.(text, color ? { color } : null);
+            if (!(isJoin && this.net?.isLocal)) {
+                if (ev.segments?.length) {
+                    this.combatLog?.push?.(text, { segments: ev.segments });
+                } else {
+                    this.combatLog?.push?.(text, color ? { color } : null);
+                }
+            }
             if (ev.from && ev.from !== selfId) {
                 this._netShowRemoteBubble(ev.from, text);
             }
@@ -1976,19 +2208,21 @@ class SceneMain extends SceneBase {
                 else this.partySys?.clearPvpAggro?.(ev.playerId);
             }
         }
-        if (ev.kind === "channel" && ev.channel === "eat") {
+        if (ev.kind === "channel" && (ev.channel === "eat" || ev.channel === "tend")) {
             const selfId = this._netPlayerId || this.net?.playerId;
-            if (ev.playerId === selfId && this.net?.connected && !this.net.isLocal) {
-                const pawn = ev.pawnId
-                    ? (this.party || []).find((p) => p.pawnId === ev.pawnId)
-                    : this.player;
-                const hud = !pawn || pawn === this.player;
+            if (ev.playerId === selfId && this.simAuth()) {
+                const pawn = this._pawnByNetId(ev.pawnId) || this.player;
                 if (ev.done || ev.cancelled) {
-                    if (pawn) pawn._eatChannel = null;
-                    else this.player._eatChannel = null;
-                    if (hud) this.hideChannelBar?.();
-                } else if (typeof ev.progress === "number" && hud && this.player._eatChannel) {
-                    this.showChannelBar?.(Phaser.Math.Clamp(ev.progress, 0, 1));
+                    if (ev.channel === "eat" && pawn?._eatChannel?.serverAuth) pawn._eatChannel = null;
+                    if (ev.channel === "tend" && pawn?._tendChannel?.serverAuth) pawn._tendChannel = null;
+                    this._applyPawnChannelVisual(pawn, null, ev.channel);
+                } else if (typeof ev.progress === "number") {
+                    this._applyPawnChannelVisual(pawn, {
+                        progress: ev.progress,
+                        itemId: ev.itemId,
+                        patientId: ev.patientId,
+                        patientName: ev.patientName
+                    }, ev.channel);
                 }
             }
         }
@@ -2022,24 +2256,18 @@ class SceneMain extends SceneBase {
                 ev.playerId === selfId
                 && ev.pawnId
                 && ev.pawnId !== this.player?.pawnId
-                && !this.net?.isLocal
+                && this.simAuth()
             ) {
                 // Dedicated puppets: start the swing at the server pose.
                 // LocalSim SP already plays companion attacks in PartyAI — echoing
                 // `_pawn` x/y here snapped them onto the focused member.
-                const pawn = (this.party || []).find((p) => p.pawnId === ev.pawnId);
+                const pawn = this._pawnByNetId?.(ev.pawnId)
+                    || (this.party || []).find((p) => p.pawnId === ev.pawnId)
+                    || (this.settlers || []).find((p) => p.pawnId === ev.pawnId);
                 if (pawn) {
-                    if (Number.isFinite(ev.x) && Number.isFinite(ev.y)) {
-                        pawn.x = ev.x;
-                        pawn.y = ev.y;
-                        pawn._netTx = ev.x;
-                        pawn._netTy = ev.y;
+                    if (!(pawn._netProne || pawn._prone || pawn._downed)) {
+                        this._beginPawnNetSwing(pawn, ev.angle, ev.art);
                     }
-                    pawn.startMeleeAttack?.(null, {
-                        silentNet: true,
-                        angle: Number(ev.angle) || 0,
-                        art: ev.art || null
-                    });
                 }
             } else if (ev.wandererId || (ev.uid && this.partySys?.wanderers?.some?.((p) => p.pawnId === ev.uid))) {
                 const wid = ev.wandererId || ev.uid;
@@ -2051,15 +2279,17 @@ class SceneMain extends SceneBase {
                         pawn._netTx = ev.x;
                         pawn._netTy = ev.y;
                     }
-                    pawn.startMeleeAttack?.(null, {
-                        silentNet: true,
-                        angle: Number(ev.angle) || 0,
-                        art: ev.art || null
-                    });
+                    if (!(pawn._netProne || pawn._prone || pawn._downed)) {
+                        pawn.startMeleeAttack?.(null, {
+                            silentNet: true,
+                            angle: Number(ev.angle) || 0,
+                            art: ev.art || null
+                        });
+                    }
                 }
             } else if (!ev.playerId && ev.uid && this.netMobs) {
                 const puppet = this.netMobs.get(ev.uid);
-                if (puppet) {
+                if (puppet && !puppet.prone) {
                     this._netStartRemoteAttack(puppet, Number(ev.angle) || 0, ev.facing, ev.art);
                 }
             }
@@ -2119,6 +2349,7 @@ class SceneMain extends SceneBase {
         }
         if (ev.kind === "storage") {
             this._netApplyStorageEvent(ev);
+            this.settlementSys?.bumpWorkCache?.();
         }
         if (ev.kind === "thing_set") {
             this._netApplyThingSet(ev);
@@ -2129,7 +2360,7 @@ class SceneMain extends SceneBase {
      * Dedicated MP: server cues vomit lock + spray. Each client paints local stains.
      */
     _netApplyVomitEvent(ev) {
-        if (!ev || !this.net?.connected || this.net.isLocal) return;
+        if (!ev || !this.simAuth()) return;
         const selfId = this._netPlayerId || this.net?.playerId;
         if (ev.playerId === selfId && !ev.drip) {
             const remaining = Number(ev.remainingMs);
@@ -2145,9 +2376,65 @@ class SceneMain extends SceneBase {
         }
     }
 
+    _pawnByNetId(id) {
+        if (!id) return null;
+        if (this.player?.pawnId === id) return this.player;
+        const partyHit = (this.party || []).find((p) => p && p.pawnId === id);
+        if (partyHit) return partyHit;
+        return (this.settlers || []).find((p) => p && p.pawnId === id) || null;
+    }
+
+    /**
+     * World-space channel bar on an uncontrolled pawn, or the HUD bar when you
+     * control them. Sim-authored eat/tend never open a local `_eatChannel`.
+     */
+    _applyPawnChannelVisual(pawn, data, kind = "eat") {
+        if (!pawn) return;
+        const live = data && typeof data.progress === "number";
+        if (live) {
+            if (kind === "eat") pawn._netEating = true;
+            pawn._netWorkChannel = {
+                kind,
+                progress: Phaser.Math.Clamp(data.progress, 0, 1),
+                itemId: data.itemId || pawn._netWorkChannel?.itemId || null,
+                uid: data.uid || pawn._netWorkChannel?.uid || null,
+                patientId: data.patientId || pawn._netWorkChannel?.patientId || null,
+                patientName: data.patientName || pawn._netWorkChannel?.patientName || null
+            };
+        } else {
+            if (kind === "eat") pawn._netEating = false;
+            if (pawn._netWorkChannel?.kind === kind) pawn._netWorkChannel = null;
+        }
+        if (pawn.isControlled?.()) {
+            pawn._hideOwnChannelBar?.();
+            const localCh = kind === "tend" ? pawn._tendChannel : pawn._eatChannel;
+            if (live && !localCh) {
+                if (kind === "eat") pawn._netEating = false;
+                if (pawn._netWorkChannel?.kind === kind) pawn._netWorkChannel = null;
+            }
+            if (live && localCh) this.showChannelBar?.(pawn._netWorkChannel.progress);
+            else if (
+                !pawn._eatChannel
+                && !pawn._tendChannel
+                && !pawn._skinChannel
+                && !pawn._fleshChannel
+                && !pawn._brainChannel
+                && !pawn._craftChannel
+            ) {
+                this.hideChannelBar?.();
+            }
+            return;
+        }
+        pawn.syncPawnChannelBar?.();
+    }
+
+    _applyPawnEatVisual(pawn, eat) {
+        this._applyPawnChannelVisual(pawn, eat, "eat");
+    }
+
     _netApplyYouVomit(you, pawn = null) {
         const target = pawn || this.leader || this.player;
-        if (!you || !target || !this.net?.connected || this.net.isLocal) return;
+        if (!you || !target || !this.simAuth()) return;
         const remaining = Number(you.vomit?.remainingMs);
         if (remaining > 0) {
             if (!target.isVomiting?.()) {
@@ -2170,7 +2457,7 @@ class SceneMain extends SceneBase {
      */
     _netApplyBleedFx(ev) {
         if (!ev || this.bloodDraw === false) return;
-        if (!this.net?.connected || this.net.isLocal) return;
+        if (!this.simAuth()) return;
         const x = Number(ev.x);
         const y = Number(ev.y);
         if (!Number.isFinite(x) || !Number.isFinite(y)) return;
@@ -2247,7 +2534,7 @@ class SceneMain extends SceneBase {
 
     /** Spawn/remove wildlife from dedicated server (chunk meta + puppets). */
     _netApplyMobEvent(ev) {
-        if (!ev || this.net?.isLocal) return;
+        if (!ev || !this.simAuth()) return;
         if (ev.op === "remove" && ev.uid) {
             const puppet = this.netMobs?.get(ev.uid);
             if (puppet) {
@@ -2301,7 +2588,7 @@ class SceneMain extends SceneBase {
 
     /** Immediate corpse add/remove from dedicated server (before next snapshot). */
     _netApplyCorpseEvent(ev) {
-        if (!ev || this.net?.isLocal) return;
+        if (!ev || !this.simAuth()) return;
         if (!this.netCorpses) this.netCorpses = new Map();
         if (ev.op === "remove" && ev.id) {
             const spr = this.netCorpses.get(ev.id);
@@ -2315,6 +2602,11 @@ class SceneMain extends SceneBase {
         }
         if ((ev.op === "loot" || ev.op === "skin" || ev.op === "carcass") && ev.entry?.id) {
             const spr = this.netCorpses.get(ev.entry.id);
+            if (ev.op === "skin") {
+                const bx = Number.isFinite(spr?.x) ? spr.x : Number(ev.entry.x);
+                const by = Number.isFinite(spr?.y) ? spr.y : Number(ev.entry.y);
+                Corpse.bloodBurst?.(this, bx, by);
+            }
             if (spr?.entry) {
                 if (ev.op === "skin" || ev.op === "carcass" || ev.entry.skinned != null) {
                     spr.entry.skinned = !!ev.entry.skinned || ev.op === "carcass";
@@ -2366,7 +2658,7 @@ class SceneMain extends SceneBase {
 
     /** Apply server harvest / regrow to a loaded chunk's lootableThings. */
     _netApplyLootableEvent(ev) {
-        if (!ev || this.net?.isLocal) return;
+        if (!ev || !this.simAuth()) return;
         const keys = [];
         if (Number.isInteger(ev.cx) && Number.isInteger(ev.cy)) {
             for (let dx = -1; dx <= 1; dx++) {
@@ -2528,7 +2820,7 @@ class SceneMain extends SceneBase {
     }
 
     _netApplyChopEvent(ev) {
-        if (!ev || this.net?.isLocal) return;
+        if (!ev || !this.simAuth()) return;
         const x = Number(ev.x);
         const y = Number(ev.y);
         const keys = [];
@@ -2571,7 +2863,7 @@ class SceneMain extends SceneBase {
         if (entry) {
             if (ev.felled) {
                 if (ev.id) entry.id = ev.id;
-                delete entry.chopProgress;
+                entry.chopProgress = 1;
                 delete entry.regrowAt;
                 delete entry.regrowId;
                 delete entry.gone;
@@ -2644,18 +2936,34 @@ class SceneMain extends SceneBase {
         return { chunk, entry, x, y };
     }
 
-    _netCampfireHeld(entry) {
-        if (performance.now() < (this._invSwapGuardUntil || 0)) {
-            const open = this.campfirePanel?.visible && this.campfirePanel.campfire?.entry;
-            if (open && entry && (open === entry || (open.uid && open.uid === entry.uid))) {
-                return true;
-            }
+    _netCloneCampfireStack(stack) {
+        if (!stack?.id) return null;
+        if (typeof cloneItemStack === "function") {
+            const clone = cloneItemStack(stack);
+            if (clone) return clone;
         }
+        try {
+            return JSON.parse(JSON.stringify(stack));
+        } catch (_) {
+            return { ...stack };
+        }
+    }
+
+    _netCloneCampfireList(list, len) {
+        const src = Array.isArray(list) ? list : [];
+        const out = [];
+        for (let i = 0; i < len; i++) out.push(this._netCloneCampfireStack(src[i]));
+        return out;
+    }
+
+    _netCampfireHeld(_entry) {
+        // Campfire transfers wait for the sim event/YOU instead of optimistic
+        // slot writes. Always apply server slot state so ghosts cannot stick.
         return false;
     }
 
     _netApplyCampfirePayload(src, opts = {}) {
-        if (!src || this.net?.isLocal) return;
+        if (!src || !this.simAuth()) return;
         if (src.removed || opts.removed) {
             this._netRemoveCampfire(src, opts);
             return;
@@ -2683,10 +2991,10 @@ class SceneMain extends SceneBase {
                 x,
                 y,
                 rev: Number.isFinite(incomingRev) ? incomingRev : 0,
-                fuel: src.fuel || [null, null],
-                cook: src.cook ?? null,
-                catalyst: src.catalyst ?? null,
-                simmer: src.simmer || [null, null, null, null],
+                fuel: this._netCloneCampfireList(src.fuel, 2),
+                cook: this._netCloneCampfireStack(src.cook),
+                catalyst: this._netCloneCampfireStack(src.catalyst),
+                simmer: this._netCloneCampfireList(src.simmer, 4),
                 cookProgress: src.cookProgress || 0,
                 burnRemaining: src.burnRemaining || 0,
                 roastBarMinutes: src.roastBarMinutes || 0,
@@ -2694,9 +3002,11 @@ class SceneMain extends SceneBase {
                 cookTemp: src.cookTemp,
                 maxTemp: src.maxTemp,
                 canIgniteFuel: !!src.canIgniteFuel,
-                smolderAt: src.smolderAt
+                smolderAt: src.smolderAt,
+                catalystReserved: !!src.catalystReserved
             };
             if ((src.simmerBarMinutes || 0) > 0) entry.simmerBarMinutes = src.simmerBarMinutes;
+            this._netApplyFuelFilter(entry, src);
             chunk.meta.things.push(entry);
         } else if (progressOnly) {
             const radiusBefore = typeof Fire !== "undefined"
@@ -2716,6 +3026,7 @@ class SceneMain extends SceneBase {
             }
             if ((src.simmerBarMinutes || 0) > 0) entry.simmerBarMinutes = src.simmerBarMinutes;
             else delete entry.simmerBarMinutes;
+            if ("catalystReserved" in src) entry.catalystReserved = !!src.catalystReserved;
             if (Number.isFinite(incomingRev)) entry.rev = Math.max(curRev || 0, incomingRev);
             this._netSyncCampfireSprite(chunk, entry, src.id || entry.id, x, y);
             this.campfirePanel?.refreshCookBar?.();
@@ -2734,10 +3045,10 @@ class SceneMain extends SceneBase {
             entry.x = x;
             entry.y = y;
             if (Number.isFinite(incomingRev)) entry.rev = incomingRev;
-            if (src.fuel) entry.fuel = src.fuel;
-            if ("cook" in src) entry.cook = src.cook;
-            if ("catalyst" in src) entry.catalyst = src.catalyst;
-            if (src.simmer) entry.simmer = src.simmer;
+            if ("fuel" in src) entry.fuel = this._netCloneCampfireList(src.fuel, 2);
+            if ("cook" in src) entry.cook = this._netCloneCampfireStack(src.cook);
+            if ("catalyst" in src) entry.catalyst = this._netCloneCampfireStack(src.catalyst);
+            if ("simmer" in src) entry.simmer = this._netCloneCampfireList(src.simmer, 4);
             if (src.cookProgress != null) entry.cookProgress = src.cookProgress;
             if (src.burnRemaining != null) entry.burnRemaining = src.burnRemaining;
             if (src.roastBarMinutes != null) entry.roastBarMinutes = src.roastBarMinutes;
@@ -2752,11 +3063,16 @@ class SceneMain extends SceneBase {
                 if (src.smolderAt != null) entry.smolderAt = src.smolderAt;
                 else delete entry.smolderAt;
             }
+            this._netApplyFuelFilter(entry, src);
+            if ("catalystReserved" in src) entry.catalystReserved = !!src.catalystReserved;
         }
         this._netSyncCampfireSprite(chunk, entry, src.id || entry.id, x, y);
         this.markLightDirty?.();
         this.updateLightVeil?.();
         this.campfirePanel?.refresh?.();
+        if (this.fuelFilterPanel?.visible && this.fuelFilterPanel.thing?.entry === entry) {
+            this.fuelFilterPanel.refresh();
+        }
     }
 
     _netFindCampfireSprite(entry, x, y) {
@@ -2812,7 +3128,7 @@ class SceneMain extends SceneBase {
     }
 
     _netApplyCampfireEvent(ev) {
-        if (!ev || this.net?.isLocal) return;
+        if (!ev || !this.simAuth()) return;
         if (ev.removed) {
             this._netRemoveCampfire(ev, {
                 cx: ev.cx,
@@ -2856,7 +3172,6 @@ class SceneMain extends SceneBase {
     }
 
     _netApplyCampfires(list) {
-        if (this.net?.isLocal) return;
         if (!Array.isArray(list)) return;
         for (const src of list) {
             if (!src) continue;
@@ -2929,7 +3244,7 @@ class SceneMain extends SceneBase {
     }
 
     _netApplyStoragePayload(src, opts = {}) {
-        if (!src || this.net?.isLocal) return;
+        if (!src || !this.simAuth()) return;
         if (src.removed || opts.removed) {
             this._netRemoveStorage(src, opts);
             return;
@@ -2943,6 +3258,15 @@ class SceneMain extends SceneBase {
         const incomingRev = Number(src.rev ?? opts.rev);
         const curRev = Number(entry?.rev);
         if (entry && Number.isFinite(curRev) && Number.isFinite(incomingRev) && incomingRev < curRev) {
+            return;
+        }
+        if (
+            opts.snapshot
+            && entry
+            && Number.isFinite(curRev)
+            && Number.isFinite(incomingRev)
+            && incomingRev === curRev
+        ) {
             return;
         }
 
@@ -2993,7 +3317,13 @@ class SceneMain extends SceneBase {
             this._netApplyStorageFilter(entry, src);
         }
         this._netSyncStorageSprite(chunk, entry, x, y);
-        this.storagePanel?.refresh?.();
+        const storeP = this.storagePanel;
+        if (storeP?.visible) {
+            const open = storeP.storage?.entry;
+            if (open && (open === entry || (open.uid && open.uid === entry.uid))) {
+                storeP.refresh();
+            }
+        }
         this.leanToPanel?.refresh?.();
         if (this.storageFilterPanel?.visible && this.storageFilterPanel.thing?.entry === entry) {
             this.storageFilterPanel.refresh();
@@ -3007,6 +3337,14 @@ class SceneMain extends SceneBase {
         if (SF) SF.applyToEntry(entry, src.storageFilter);
         else if (src.storageFilter) entry.storageFilter = src.storageFilter;
         else delete entry.storageFilter;
+    }
+
+    _netApplyFuelFilter(entry, src) {
+        if (!entry || !src || !Object.prototype.hasOwnProperty.call(src, "fuelFilter")) return;
+        const FF = typeof FuelFilter !== "undefined" ? FuelFilter : null;
+        if (FF) FF.applyToEntry(entry, src.fuelFilter);
+        else if (src.fuelFilter) entry.fuelFilter = src.fuelFilter;
+        else delete entry.fuelFilter;
     }
 
     _netSyncStorageSprite(chunk, entry, x, y) {
@@ -3049,10 +3387,18 @@ class SceneMain extends SceneBase {
         }
         if (live) {
             if (live.entry !== entry) live.entry = entry;
-            if (!isSleep) {
-                live.x = x;
-                live.y = y;
+            if (isSleep) {
+                // Occupant-only storage snapshots used to applyVisual every tick.
+                // setTexture drops Phaser's over-state and flashes the bunk tooltip.
+                const visKey = `${entry.id || ""}:${entry.rot ?? 0}`;
+                if (live._sleepVisKey !== visKey) {
+                    live.applyVisual?.();
+                    live._sleepVisKey = visKey;
+                }
+                return;
             }
+            live.x = x;
+            live.y = y;
             live.applyVisual?.();
             return;
         }
@@ -3107,7 +3453,7 @@ class SceneMain extends SceneBase {
     }
 
     _netApplyStorageEvent(ev) {
-        if (!ev || this.net?.isLocal) return;
+        if (!ev || !this.simAuth()) return;
         this._netApplyStoragePayload(ev, {
             snapshot: false,
             cx: ev.cx,
@@ -3119,7 +3465,6 @@ class SceneMain extends SceneBase {
     }
 
     _netApplyStorages(list) {
-        if (this.net?.isLocal) return;
         if (!Array.isArray(list)) return;
         for (const src of list) {
             if (!src) continue;
@@ -3135,6 +3480,8 @@ class SceneMain extends SceneBase {
 
     /** Unarmed thrust fill for remotes / net mobs. */
     _netFistColor(entry) {
+        const fromArt = entry?.attackArt?.color;
+        if (Number.isFinite(fromArt)) return fromArt >>> 0;
         if (entry?.look && typeof PlayerLook !== "undefined") {
             return PlayerLook.fistColor(entry.look);
         }
@@ -3145,8 +3492,17 @@ class SceneMain extends SceneBase {
         return 0x000000;
     }
 
-    _netStartRemoteAttack(entry, angle, facing = null, art = null) {
+    _netClearRemoteAttack(entry) {
         if (!entry) return;
+        entry.attackTimer = 0;
+        entry.attackMax = 0;
+        entry.attackArt = null;
+        if (entry.fist) entry.fist.setVisible(false);
+        if (entry.weapon) entry.weapon.setVisible(false);
+    }
+
+    _netStartRemoteAttack(entry, angle, facing = null, art = null) {
+        if (!entry || entry.prone || entry.dead) return;
         const a = Number(angle);
         entry.attackAngle = Number.isFinite(a) ? a : 0;
         const resolvedArt = art && typeof art === "object"
@@ -3282,7 +3638,7 @@ class SceneMain extends SceneBase {
     }
 
     _netApplyThingSet(ev) {
-        if (!ev || this.net?.isLocal) return;
+        if (!ev || !this.simAuth()) return;
         const tx = Math.floor(Number(ev.tx));
         const ty = Math.floor(Number(ev.ty));
         if (!Number.isFinite(tx) || !Number.isFinite(ty)) return;
@@ -3362,19 +3718,13 @@ class SceneMain extends SceneBase {
                 entry.y = fromY + (entry.ty - fromY) * u;
             }
             entry.root.setPosition(entry.x, entry.y);
-            // Sleepers sort in front of the lean-to (its feet), not by body-center Y.
-            if (entry.resting && typeof sleepSortDepth === "function") {
-                const lean = this.findLeanToByUid?.(entry.lastSleep?.uid);
-                entry.root.setDepth(sleepSortDepth(entry.root, lean, entry.lastSleep?.slot));
-            } else {
-                entry.root.setDepth(entry.y | 0);
-            }
             const attacking = entry.attackTimer > 0;
             const prone = !!entry.prone;
             if (prone) {
                 entry.x = entry.tx;
                 entry.y = entry.ty;
                 entry.root.setPosition(entry.x, entry.y);
+                this._netClearRemoteAttack(entry);
             }
             if (typeof setPuppetProne === "function") {
                 if (entry.resting) {
@@ -3400,6 +3750,7 @@ class SceneMain extends SceneBase {
                     setPuppetProne(entry.spr, prone, { feetAnchored: true });
                 }
             }
+            this._setRemoteSortDepth(entry);
             const snapDist = Number.isFinite(entry.snapDist) ? entry.snapDist : err;
             const wantWalk = !attacking && !prone
                 && (entry.serverMoving === true || snapDist > 1);
@@ -3456,11 +3807,12 @@ class SceneMain extends SceneBase {
             }
 
             if (entry.bubble.visible) {
-                if (now >= entry.bubbleUntil) {
+                const fadeNow = this._chatFadeNow?.() ?? now;
+                if (fadeNow >= entry.bubbleUntil) {
                     entry.bubble.setVisible(false);
                 } else {
                     const fadeMs = 2000;
-                    const remaining = entry.bubbleUntil - now;
+                    const remaining = entry.bubbleUntil - fadeNow;
                     entry.bubble.setAlpha(
                         remaining < fadeMs ? Phaser.Math.Clamp(remaining / fadeMs, 0, 1) : 1
                     );
@@ -3494,6 +3846,7 @@ class SceneMain extends SceneBase {
         try { this._fullscreenWatchOff?.(); } catch (_) {}
         this._fullscreenWatchOff = null;
         this._unbindSceneListeners();
+        if (typeof GameMusic !== "undefined") GameMusic.stop();
         this._teardownCharacterAutosave?.();
         this._hideGeneratingOverlay?.();
         this._worldBooting = false;
@@ -3529,10 +3882,9 @@ class SceneMain extends SceneBase {
         // so night/dawn wash can't hide them. Position is world space; postupdate
         // redraws after the player snap so they stay locked to the sprite.
         this._channelBarProgress = null;
-        this._chopBarThing = null;
-        this._chopBarFrac = null;
+        this._chopBarMap = new Map();
+        this._chopBarPool = [];
         this.channelBar = this._ensureWorldHudBar(this.channelBar);
-        this.treeChopBar = this._ensureWorldHudBar(this.treeChopBar);
 
         this.painBar = this.add.graphics();
         this.uiLayer.add(this.painBar);
@@ -3714,8 +4066,39 @@ class SceneMain extends SceneBase {
     }
 
     /**
-     * Progress 0–1 bar above the player. World-space, scaled 1/zoom so it stays
-     * a constant screen size. Redrawn after the render snap in postupdate.
+     * Drying-rack sprite a pawn is fleshing or brain-tanning, if any.
+     */
+    _hideWorkRackForPawn(pawn) {
+        const local = pawn?._fleshChannel || pawn?._brainChannel;
+        if (local?.rack?.active) return local.rack;
+        const net = pawn?._netWorkChannel;
+        if (!net || (net.kind !== "flesh" && net.kind !== "brain")) return null;
+        const uid = net.uid || local?.rack?.entry?.uid;
+        return uid ? this.findStorageByUid(uid) : null;
+    }
+
+    /**
+     * World position for a flesh/brain bar: just above the hanging hide.
+     * Returns null when the pawn is not working a rack (eat/tend/craft stay on the pawn).
+     */
+    _hideWorkBarPos(pawn) {
+        const rack = this._hideWorkRackForPawn(pawn);
+        if (!rack?.active) return null;
+        const hang = rack._hangSpr;
+        if (hang?.active) {
+            return { x: hang.x, y: hang.y - 2, depthY: rack.y };
+        }
+        return {
+            x: rack.x,
+            y: rack.y - (rack.height || 16) - 2,
+            depthY: rack.y
+        };
+    }
+
+    /**
+     * Progress 0–1 bar above the player (or hanging hide while scraping/tanning).
+     * World-space, scaled 1/zoom so it stays a constant screen size. Redrawn
+     * after the render snap in postupdate.
      */
     showChannelBar(progress) {
         this._channelBarProgress = Phaser.Math.Clamp(progress, 0, 1);
@@ -3742,14 +4125,18 @@ class SceneMain extends SceneBase {
         const w = 40;
         const h = 5;
 
-        let lx, ly;
-        if (player._prone) {
-            lx = 0;
-            ly = -Math.round(Math.max(player.width, player.height) * 0.5 + 2);
+        const hidePos = this._hideWorkBarPos(player);
+        let wx, wy;
+        if (hidePos) {
+            wx = hidePos.x;
+            wy = hidePos.y;
+        } else if (player._prone) {
+            wx = player.x;
+            wy = player.y - Math.round(Math.max(player.width, player.height) * 0.5 + 2);
         } else {
             // Sprite origin is bottom-left — center X, just above top of sprite
-            lx = Math.round(player.width * 0.5);
-            ly = -Math.round(player.height + 2);
+            wx = player.x + Math.round(player.width * 0.5);
+            wy = player.y - Math.round(player.height + 2);
         }
 
         // 0–25% red → 25–50% → orange → 50–75% → yellow → 75–90% → green → 90–100% solid green
@@ -3758,46 +4145,95 @@ class SceneMain extends SceneBase {
         const g = this.channelBar;
         g.clear().setVisible(true);
         g.setScale(1 / zoom);
-        g.setPosition(player.x + lx, player.y + ly);
+        g.setPosition(wx, wy);
         // Local draw in screen-pixel units; scale makes them world-sized
         this._drawBar(g, -Math.floor(w / 2), -h, w, h, frac, 0x000000, 0x222222, color, 2);
     }
 
     showTreeChopBar(thing, frac) {
-        if (!thing?.active) {
-            this.hideTreeChopBar();
-            return;
+        if (!thing?.active) return;
+        const entry = thing.entry;
+        if (entry && frac != null) {
+            entry.chopProgress = Phaser.Math.Clamp(Number(frac) || 0, 0, 1);
         }
-        this._chopBarThing = thing;
-        this._chopBarFrac = Phaser.Math.Clamp(Number(frac) || 0, 0, 1);
-        this._drawTreeChopBar();
     }
 
-    hideTreeChopBar() {
-        this._chopBarThing = null;
-        this._chopBarFrac = null;
-        this.treeChopBar?.clear();
-        this.treeChopBar?.setVisible(false);
-    }
-
-    _drawTreeChopBar() {
-        const thing = this._chopBarThing;
-        const frac = this._chopBarFrac;
-        if (frac == null || !thing?.active) {
-            this.hideTreeChopBar();
+    hideTreeChopBar(thing) {
+        if (!thing) {
+            for (const rec of this._chopBarMap?.values?.() || []) {
+                rec.gfx?.clear();
+                rec.gfx?.setVisible(false);
+                if (rec.gfx) this._chopBarPool.push(rec.gfx);
+            }
+            this._chopBarMap?.clear?.();
             return;
         }
+        const key = this._chopBarKey(thing);
+        const rec = this._chopBarMap?.get(key);
+        if (!rec) return;
+        rec.gfx?.clear();
+        rec.gfx?.setVisible(false);
+        if (rec.gfx) this._chopBarPool.push(rec.gfx);
+        this._chopBarMap.delete(key);
+    }
 
-        this.treeChopBar = this._ensureWorldHudBar(this.treeChopBar);
+    _chopBarKey(thing) {
+        return thing?.entry?.uid || thing?.uid || `${Math.round(thing?.x || 0)}:${Math.round(thing?.y || 0)}`;
+    }
 
+    _takeChopBarGfx() {
+        while (this._chopBarPool.length) {
+            const g = this._chopBarPool.pop();
+            if (g?.active) return this._ensureWorldHudBar(g);
+        }
+        return this._ensureWorldHudBar(null);
+    }
+
+    _tickTreeChopBars() {
+        if (!this._chopBarMap) this._chopBarMap = new Map();
+        const view = this.cameras.main?.worldView;
+        const pad = 32;
+        const seen = new Set();
+        for (const chunk of Object.values(this.chunks || {})) {
+            const kids = chunk.things?.getChildren?.() || [];
+            for (const t of kids) {
+                if (!t?.active || t.entry?.gone) continue;
+                const frac = Number(t.entry?.chopProgress);
+                if (!(frac > 0) || frac >= 1) continue;
+                if (view) {
+                    if (t.x < view.x - pad || t.x > view.right + pad) continue;
+                    if (t.y < view.y - pad || t.y > view.bottom + pad) continue;
+                }
+                const key = this._chopBarKey(t);
+                seen.add(key);
+                this._drawOneChopBar(t, frac, key);
+            }
+        }
+        for (const [key, rec] of this._chopBarMap) {
+            if (seen.has(key)) continue;
+            rec.gfx?.clear();
+            rec.gfx?.setVisible(false);
+            if (rec.gfx) this._chopBarPool.push(rec.gfx);
+            this._chopBarMap.delete(key);
+        }
+    }
+
+    _drawOneChopBar(thing, frac, key) {
+        let rec = this._chopBarMap.get(key);
+        if (!rec) {
+            rec = { gfx: this._takeChopBarGfx(), thing };
+            this._chopBarMap.set(key, rec);
+        } else {
+            rec.thing = thing;
+        }
+        const g = rec.gfx = this._ensureWorldHudBar(rec.gfx);
         const zoom = this.worldZoom || this.cameras.main?.zoom || 1;
         const w = 40;
         const h = 5;
         const color = this._channelBarFillColor(frac);
-        const g = this.treeChopBar;
         g.clear().setVisible(true);
         g.setScale(1 / zoom);
-        g.setPosition(thing.x, thing.y - thing.height - 2);
+        g.setPosition(thing.x, thing.y - (thing.height || 16) - 2);
         this._drawBar(g, -Math.floor(w / 2), -h, w, h, frac, 0x000000, 0x222222, color, 2);
     }
 
@@ -3834,52 +4270,145 @@ class SceneMain extends SceneBase {
         if (raw && typeof raw === "object" && !Array.isArray(raw)) {
             return {
                 text: raw.text || "",
-                rows: Array.isArray(raw.rows) ? raw.rows : null
+                rows: Array.isArray(raw.rows) ? raw.rows : null,
+                hunger: raw.hunger && typeof raw.hunger === "object" ? raw.hunger : null
             };
         }
-        return { text: raw || "", rows: null };
+        return { text: raw || "", rows: null, hunger: null };
+    }
+
+    _splitTooltipText(text) {
+        const s = String(text || "");
+        const i = s.indexOf("\n");
+        if (i < 0) return { head: s, tail: "" };
+        return { head: s.slice(0, i), tail: s.slice(i + 1) };
+    }
+
+    _hungerSig(h) {
+        if (!h) return "";
+        return [
+            Math.round(Number(h.kc) || 0),
+            Math.round(Number(h.sat) || 0),
+            Math.round(Number(h.stomach) || 0)
+        ].join(":");
     }
 
     _applyTooltipPayload() {
         const raw = this._tooltipSource ? this._tooltipSource() : "";
-        const { text, rows } = this._tooltipPayload(raw);
+        const { text, rows, hunger } = this._tooltipPayload(raw);
+        const useHunger = !!hunger;
+        const split = useHunger ? this._splitTooltipText(text) : { head: text, tail: "" };
+        const head = useHunger ? split.head : text;
+        const tail = useHunger ? split.tail : "";
         const gearSig = this._gearRowsSig(rows);
+        const hungerSig = this._hungerSig(hunger);
         if (
             this._tooltipDrawn
-            && this.tooltipText.text === text
+            && this.tooltipText.text === head
+            && (this.tooltipSub?.text || "") === tail
             && gearSig === this._tooltipGearSig
+            && hungerSig === this._tooltipHungerSig
         ) {
-            return !!(text || this._tooltipGearH);
+            return !!(head || tail || this._tooltipGearH || this._tooltipHungerH);
         }
-        this.tooltipText.setText(text);
+        this.tooltipText.setText(head);
+        if (this.tooltipSub) {
+            this.tooltipSub.setText(tail);
+            this.tooltipSub.setVisible(!!tail);
+        }
         this._syncTooltipGear(rows, gearSig);
-        this._drawTooltipBg();
+        this._layoutTooltip(hunger);
         this._tooltipDrawn = true;
-        return !!(text || this._tooltipGearH);
+        return !!(head || tail || this._tooltipGearH || this._tooltipHungerH);
     }
 
-    _drawTooltipBg() {
+    _syncTooltipHunger(hunger, sig) {
+        this._tooltipHungerSig = sig || "";
+        const g = this.tooltipHunger;
+        if (!g) {
+            this._tooltipHungerH = 0;
+            this._tooltipHungerW = 0;
+            return;
+        }
+        g.clear();
+        if (!hunger) {
+            this._tooltipHungerH = 0;
+            this._tooltipHungerW = 0;
+            g.setVisible(false);
+            return;
+        }
+        const s = this.uiScale || 1;
+        const pad = this._tooltipPadding;
+        const nameW = Math.max(0, (this.tooltipText.displayWidth || 0) - pad * 2);
+        const w = Math.max(Math.round(80 * s), nameW);
+        const h = Math.max(4, Math.round(8 * s));
+        const border = Math.max(1, Math.round(s));
+        const stomach = Math.max(1, Number(hunger.stomach) || 2000);
+        const kcFrac = Phaser.Math.Clamp((Number(hunger.kc) || 0) / stomach, 0, 1);
+        const satFrac = Phaser.Math.Clamp((Number(hunger.sat) || 0) / stomach, 0, 1);
+        this._drawBar(g, 0, 0, w, h, kcFrac, 0x000000, 0x222222, 0xE0C14B, border);
+        const satW = Math.floor(w * satFrac);
+        if (satW > 0) {
+            g.fillStyle(0xE67E22, 1);
+            g.fillRect(0, 0, satW, h);
+        }
+        this._tooltipHungerW = w;
+        this._tooltipHungerH = h;
+        g.setVisible(true);
+    }
+
+    _layoutTooltip(hunger) {
         const pad = this._tooltipPadding;
         const s = this.uiScale || 1;
-        const hasText = !!(this.tooltipText.text);
-        const tw = hasText ? (this.tooltipText.displayWidth || this.tooltipText.width || 0) : 0;
-        const th = hasText ? (this.tooltipText.displayHeight || this.tooltipText.height || 0) : 0;
+        const hungerOn = !!hunger;
+        const tail = !!(this.tooltipSub?.text);
+        if (hungerOn) {
+            this.tooltipText.setPadding({
+                left: pad, right: pad, top: pad, bottom: Math.round(2 * s)
+            });
+            if (this.tooltipSub) {
+                this.tooltipSub.setPadding({
+                    left: pad, right: pad, top: Math.round(2 * s), bottom: pad
+                });
+            }
+        } else {
+            this.tooltipText.setPadding(pad);
+            if (this.tooltipSub) this.tooltipSub.setPadding(pad);
+        }
+        this._syncTooltipHunger(hunger, this._hungerSig(hunger));
+        const tw = this.tooltipText.displayWidth || 0;
+        const th = this.tooltipText.displayHeight || 0;
+        const sw = tail ? (this.tooltipSub.displayWidth || 0) : 0;
+        const sh = tail ? (this.tooltipSub.displayHeight || 0) : 0;
         const gw = this._tooltipGearW || 0;
         const gh = this._tooltipGearH || 0;
-        const gap = gh > 0 ? Math.round(2 * s) : 0;
-        const contentW = Math.max(tw, gw);
-        const contentH = th + gap + gh;
-        const w = contentW + pad * 2;
-        const h = contentH + pad * 2;
-        this._tooltipBoxW = w;
-        this._tooltipBoxH = h;
+        const hw = this._tooltipHungerW || 0;
+        const hh = this._tooltipHungerH || 0;
+        const gap = Math.round(2 * s);
+        let y = th;
+        if (this.tooltipHunger) {
+            if (hh > 0) this.tooltipHunger.setPosition(pad, y);
+            else this.tooltipHunger.setPosition(0, 0);
+        }
+        if (hh > 0) y += hh;
+        if (this.tooltipSub) {
+            this.tooltipSub.setPosition(0, tail ? y : 0);
+            if (tail) y += sh;
+        }
+        const gearGap = gh > 0 ? gap : 0;
+        if (this.tooltipGear) this.tooltipGear.setPosition(0, y + gearGap);
+        const innerW = Math.max(tw, sw, gw, hh > 0 ? hw + pad * 2 : 0);
+        const innerH = y + gearGap + gh;
+        const boxW = innerW + pad * 2;
+        const boxH = innerH + pad * 2;
+        this._tooltipBoxW = boxW;
+        this._tooltipBoxH = boxH;
         const radius = Math.max(4, Math.round(6 * s));
         this.tooltipBg.clear()
-            .fillStyle(0x111111, 0.95)
-            .fillRoundedRect(-pad, -pad, w, h, radius)
-            .lineStyle(1, 0x000000, 0.6)
-            .strokeRoundedRect(-pad, -pad, w, h, radius);
-        if (this.tooltipGear) this.tooltipGear.setPosition(0, th + gap);
+            .fillStyle(0x111111, 1)
+            .fillRoundedRect(-pad, -pad, boxW, boxH, radius)
+            .lineStyle(1, 0x000000, 1)
+            .strokeRoundedRect(-pad, -pad, boxW, boxH, radius);
     }
 
     _heldStackSig(stack) {
@@ -3974,8 +4503,8 @@ class SceneMain extends SceneBase {
     createTooltip() {
         this._tooltipPadding = 6;
 
-        this.tooltip = this.add.container(0, 0).setDepth(40000).setVisible(false);
-        this.tooltipBg = this.add.graphics();
+        this.tooltip = this.add.container(0, 0).setDepth(40000).setVisible(false).setAlpha(1);
+        this.tooltipBg = this.add.graphics().setAlpha(1);
         this.tooltipText = crispUiText(this.add.text(0, 0, "", {
             fontFamily: PIXEL_UI_FONT,
             fontSize: `${pixelUiFontSize(16, 1)}px`,
@@ -3984,9 +4513,21 @@ class SceneMain extends SceneBase {
             strokeThickness: 2,
             padding: { left: this._tooltipPadding, right: this._tooltipPadding, top: this._tooltipPadding, bottom: this._tooltipPadding }
         }));
+        this.tooltipHunger = this.add.graphics().setVisible(false);
+        this.tooltipSub = crispUiText(this.add.text(0, 0, "", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: `${pixelUiFontSize(16, 1)}px`,
+            color: "#ffffff",
+            stroke: "#000000",
+            strokeThickness: 2,
+            padding: { left: this._tooltipPadding, right: this._tooltipPadding, top: this._tooltipPadding, bottom: this._tooltipPadding }
+        })).setVisible(false);
         this.tooltipGear = this.add.container(0, 0);
-        this.tooltip.add([this.tooltipBg, this.tooltipText, this.tooltipGear]);
-        this.uiLayer.add(this.tooltip);
+        this.tooltip.add([
+            this.tooltipBg, this.tooltipText, this.tooltipHunger, this.tooltipSub, this.tooltipGear
+        ]);
+        this.tooltip.clearMask?.(true);
+        (this.tooltipLayer || this.uiLayer).add(this.tooltip);
 
         this._tooltipSource = null;
         this._tooltipTarget = null;
@@ -3994,6 +4535,9 @@ class SceneMain extends SceneBase {
         this._tooltipGearSig = null;
         this._tooltipGearW = 0;
         this._tooltipGearH = 0;
+        this._tooltipHungerSig = "";
+        this._tooltipHungerW = 0;
+        this._tooltipHungerH = 0;
         this._tooltipBoxW = 0;
         this._tooltipBoxH = 0;
         this._tooltipDrawn = false;
@@ -4007,6 +4551,10 @@ class SceneMain extends SceneBase {
                 seen.add(cur);
                 if (
                     cur === this.uiLayer ||
+                    cur === this.craft ||
+                    cur === this.healthBtn ||
+                    cur === this.equipmentBtn ||
+                    cur === this.help ||
                     cur === this.craftContainer ||
                     cur === this.equipmentPanel?.container ||
                     cur === this.healthPanel?.root ||
@@ -4016,7 +4564,15 @@ class SceneMain extends SceneBase {
                     cur === this.partyPanel?.root ||
                     cur === this.settlementPanel?.root ||
                     cur === this.billsPanel?.root ||
-                    cur === this.storageFilterPanel?.root
+                    cur === this.storageFilterPanel?.root ||
+                    cur === this.fuelFilterPanel?.root ||
+                    cur === this.storagePanel?.container ||
+                    cur === this.campfirePanel?.container ||
+                    cur === this.painBarZone ||
+                    cur === this.kcBarZone ||
+                    cur === this.weightBarZone ||
+                    this.hotbar?.slots?.includes(cur) ||
+                    this.hotbar?.overflowSlots?.includes(cur)
                 ) {
                     return true;
                 }
@@ -4034,6 +4590,42 @@ class SceneMain extends SceneBase {
             return false;
         };
 
+        /** Tip text depends on pointer pose (bunk slot, storage hover) — refresh without a new over-event. */
+        this._tooltipFollowsPointer = (obj) => {
+            if (!obj) return false;
+            if (typeof LeanTo !== "undefined" && obj instanceof LeanTo) return true;
+            if (typeof Storage !== "undefined" && obj instanceof Storage) return true;
+            if (this._isHoverPawn(obj) || obj.role === "settler") return true;
+            return false;
+        };
+
+        /** Traveling companions we keep hovered over trees so work anims don't strobe the tip. */
+        this._isHoverPawn = (obj) => {
+            if (!obj?.active || obj._resting) return false;
+            if (obj === this.player) return false;
+            if (obj.role === "settler") return false;
+            const role = obj.role;
+            if (role === "companion" || role === "leader" || role === "wanderer") {
+                return true;
+            }
+            if ((this.party || []).includes(obj)) return true;
+            return false;
+        };
+
+        this._pointerOnCreature = (pointer, sprite) => {
+            if (!pointer || !sprite?.active) return false;
+            const wpt = this.cameras?.main?.getWorldPoint?.(pointer.x, pointer.y);
+            if (!wpt) return false;
+            if (typeof creaturePointerHit === "function") {
+                return creaturePointerHit(sprite, wpt.x, wpt.y);
+            }
+            const body = 16;
+            const sx = Number(sprite.x) || 0;
+            const sy = Number(sprite.y) || 0;
+            return wpt.x >= sx && wpt.x <= sx + body
+                && wpt.y >= sy - body && wpt.y <= sy;
+        };
+
         this.hideWorldTooltip = () => {
             if (this._tooltipTarget && this._isUiTooltipTarget(this._tooltipTarget)) return;
             this.hideTooltip();
@@ -4045,12 +4637,23 @@ class SceneMain extends SceneBase {
                 (this.player?.blocksTooltips?.() || this.settlementSys?.isNaming?.())
                 && !this._isUiTooltipTarget(target)
             ) return;
+            // Native Phaser over-events still fire on the work object (tree, bush,
+            // campfire) while a pawn is under the cursor. Don't let those steal the tip.
+            if (
+                target
+                && target !== this._hoverTarget
+                && !this._isUiTooltipTarget(target)
+                && this._isHoverPawn(this._hoverTarget)
+                && this._pointerOnCreature(this.input?.activePointer, this._hoverTarget)
+            ) return;
             this._tooltipSource = (typeof textOrFn === "function") ? textOrFn : () => textOrFn;
             this._tooltipTarget = target;
             const shown = this._applyTooltipPayload();
+            this.tooltip.setAlpha(1);
             this.tooltip.setVisible(shown);
             // Keep tooltip above every UI sibling (knapping help used to bringToTop itself)
-            this.uiLayer?.bringToTop?.(this.tooltip);
+            const tipLayer = this.tooltipLayer || this.uiLayer;
+            tipLayer?.bringToTop?.(this.tooltip);
             this.positionTooltip(x, y);
         };
 
@@ -4071,6 +4674,9 @@ class SceneMain extends SceneBase {
             this._tooltipTarget = null;
             this._tooltipDrawn = false;
             this._clearTooltipGear();
+            this._syncTooltipHunger(null, "");
+            this.tooltipSub?.setText("");
+            this.tooltipSub?.setVisible(false);
             this.tooltip.setVisible(false);
         };
 
@@ -4111,37 +4717,44 @@ class SceneMain extends SceneBase {
                 }
             }
 
-            const settleP = this.settlementPanel;
-            if (settleP?.visible && settleP.containsPointer?.(pointer)) {
-                for (let i = hits.length - 1; i >= 0; i--) {
-                    const obj = hits[i];
-                    if (!obj?.active || !obj.input?.enabled) continue;
-                    if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
-                    if (this._isUnderSettlementPanel(obj)) return obj;
-                }
-                return settleP.bg;
-            }
-
+            // Centered overlays sit above the left settlement panel (depth 15150 > 15100).
+            // Check them first or the overlapping left strip fights the cursor and eats clicks.
             const billsP = this.billsPanel;
             if (billsP?.visible && billsP.containsPointer?.(pointer)) {
-                for (let i = hits.length - 1; i >= 0; i--) {
-                    const obj = hits[i];
-                    if (!obj?.active || !obj.input?.enabled) continue;
-                    if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
-                    if (this._isUnderBillsPanel(obj)) return obj;
-                }
-                return billsP.bg;
+                return this._pickMaskedPanelHover(
+                    pointer, hits, billsP.bg,
+                    (obj) => this._isUnderBillsPanel(obj)
+                );
             }
 
             const storageFP = this.storageFilterPanel;
             if (storageFP?.visible && storageFP.containsPointer?.(pointer)) {
-                for (let i = hits.length - 1; i >= 0; i--) {
-                    const obj = hits[i];
-                    if (!obj?.active || !obj.input?.enabled) continue;
-                    if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
-                    if (this._isUnderStorageFilterPanel(obj)) return obj;
-                }
-                return storageFP.bg;
+                const row = storageFP.hoverObjAt?.(pointer);
+                if (row) return row;
+                return this._pickMaskedPanelHover(
+                    pointer, hits, storageFP.bg,
+                    (obj) => this._isUnderStorageFilterPanel(obj)
+                );
+            }
+
+            const fuelFP = this.fuelFilterPanel;
+            if (fuelFP?.visible && fuelFP.containsPointer?.(pointer)) {
+                const row = fuelFP.hoverObjAt?.(pointer);
+                if (row) return row;
+                return this._pickMaskedPanelHover(
+                    pointer, hits, fuelFP.bg,
+                    (obj) => this._isUnderFuelFilterPanel(obj)
+                );
+            }
+
+            const settleP = this.settlementPanel;
+            if (settleP?.visible && settleP.containsPointer?.(pointer)) {
+                const row = settleP.hoverObjAt?.(pointer);
+                if (row) return row;
+                return this._pickMaskedPanelHover(
+                    pointer, hits, settleP.bg,
+                    (obj) => this._isUnderSettlementPanel(obj)
+                );
             }
 
             // Corpse loot panel (world-space) blocks behind it
@@ -4175,7 +4788,12 @@ class SceneMain extends SceneBase {
                 if (campP.pointerOnDestroy?.(pointer)) return campP.destroyRect;
                 if (this._pointerOnWorldBtn?.(campP._settleUi, pointer)) return campP._settleUi.rect;
                 if (this._pointerOnWorldBtn?.(campP._billUi, pointer)) return campP._billUi.rect;
-                return campP.container;
+                if (this._pointerOnWorldBtn?.(campP._fuelUi, pointer)) return campP._fuelUi.rect;
+                const campSlot = this._worldPanelSlotAt?.(campP, pointer);
+                if (campSlot) return campSlot;
+                const keepCamp = this._tooltipTarget || this._hoverTarget;
+                if (keepCamp?.active && this._isUnderCampfirePanel(keepCamp)) return keepCamp;
+                return null;
             }
 
             const storeP = this.storagePanel;
@@ -4189,7 +4807,11 @@ class SceneMain extends SceneBase {
                 if (storeP.pointerOnTake?.(pointer)) return storeP.takeRect;
                 if (this._pointerOnWorldBtn?.(storeP._settleUi, pointer)) return storeP._settleUi.rect;
                 if (this._pointerOnWorldBtn?.(storeP._billUi, pointer)) return storeP._billUi.rect;
-                return storeP.container;
+                const storeSlot = this._worldPanelSlotAt?.(storeP, pointer);
+                if (storeSlot) return storeSlot;
+                const keepStore = this._tooltipTarget || this._hoverTarget;
+                if (keepStore?.active && this._isUnderStoragePanel(keepStore)) return keepStore;
+                return null;
             }
 
             const leanP = this.leanToPanel;
@@ -4212,11 +4834,16 @@ class SceneMain extends SceneBase {
                     const obj = hits[i];
                     if (!obj?.active || !obj.input?.enabled) continue;
                     if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
-                    if (this._isUnderCraftTake(obj)) return obj;
+                    if (this._isUnderCraftTake(obj) || this._isUnderCraftMenu(obj)) return obj;
                 }
+                const craftSlot = this._craftSlotAtPointer?.(pointer);
+                if (craftSlot) return craftSlot;
                 if (this.pointerOnCraftBills?.(pointer)) return this._craftBillUi?.rect;
                 if (this.pointerOnCraftSettle?.(pointer)) return this._craftSettleUi?.rect;
-                return this._craftTakeRect;
+                if (this.pointerOnCraftTake?.(pointer)) return this._craftTakeRect;
+                const keepCraft = this._tooltipTarget || this._hoverTarget;
+                if (keepCraft?.active && this._isUnderCraftMenu?.(keepCraft)) return keepCraft;
+                return null;
             }
 
             // Equipment panel body blocks world/UI behind it
@@ -4236,27 +4863,51 @@ class SceneMain extends SceneBase {
                 }
             }
 
+            // HUD / screen-space UI always beats world sprites (lean-to AABB, etc.)
+            for (let i = hits.length - 1; i >= 0; i--) {
+                const obj = hits[i];
+                if (!obj?.active || !obj.input?.enabled) continue;
+                if (!this._objectShown?.(obj)) continue;
+                if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
+                if (this._isUiTooltipTarget(obj)) return obj;
+            }
+
             const switchAlly = this.partySys?.worldSwitchTarget?.(pointer);
 
             // Empty lean-to bunks beat a sleeper's standing AABB (90°/270°),
-            // but not a standing ally you're trying to click.
+            // but not a standing ally you're trying to click. The bunk you're in
+            // is hoverable too (finger cursor / Rest tip) unless the pointer is
+            // on HUD chrome that the big AABB would steal.
             if (!switchAlly) {
                 for (let i = hits.length - 1; i >= 0; i--) {
                     const obj = hits[i];
                     if (!obj?.active || !obj.input?.enabled) continue;
                     if (!(obj instanceof LeanTo)) continue;
+                    if (this._skipOwnRestLeanTo?.(obj, pointer)) continue;
                     const slot = obj.slotAtPointer?.(pointer) ?? 0;
-                    if (!obj.entry?.occupants?.[slot]) return obj;
+                    const occ = obj.entry?.occupants?.[slot];
+                    if (!occ || occ === this.player?.pawnId) return obj;
                 }
             }
 
             const downedAlly = this.partySys?.downedAllyUnderPointer?.(pointer);
             if (downedAlly) return downedAlly;
 
+            // Standing companions beat trees under the cursor so chop/gather
+            // animations don't flicker the tip. Parked settlers do not — baskets
+            // and stations need to stay clickable while people work at them.
+            const keepPawn = this._hoverTarget || this._tooltipTarget;
+            if (this._isHoverPawn(keepPawn) && this._pointerOnCreature(pointer, keepPawn)) {
+                return keepPawn;
+            }
+            if (switchAlly && switchAlly.role !== "settler") return switchAlly;
+
             for (let i = hits.length - 1; i >= 0; i--) {
                 const obj = hits[i];
                 if (!obj?.active || !obj.input?.enabled) continue;
                 if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
+                if (this._skipOwnRestLeanTo?.(obj, pointer)) continue;
+                if (obj.role === "settler" && obj.homeSettlementId) continue;
                 // Dead party sprites stay click-through for loot; downed allies
                 // must still hover so the name / "Downed" tip can show.
                 if (
@@ -4264,6 +4915,10 @@ class SceneMain extends SceneBase {
                     && (obj.isBodyDead?.() || obj._bodyDead || obj._resting)
                 ) continue;
                 return obj;
+            }
+            for (const p of this.settlers || []) {
+                if (!p?.active || p._resting || p.isBodyDead?.()) continue;
+                if (this._pointerOnCreature(pointer, p)) return p;
             }
             return null;
         };
@@ -4299,6 +4954,26 @@ class SceneMain extends SceneBase {
             return false;
         };
 
+        // Masked panel rows often drop out of hitTestPointer. Prefer a child
+        // over the chrome bg, and keep the current hover if the cursor is
+        // still inside it — otherwise each hover-scan pointerouts the tip.
+        this._pointerInObj = (pointer, obj) => {
+            const b = obj?.getBounds?.();
+            return !!(pointer && b && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y));
+        };
+        this._pickMaskedPanelHover = (pointer, hits, bg, isUnder) => {
+            for (let i = hits.length - 1; i >= 0; i--) {
+                const obj = hits[i];
+                if (!obj?.active || !obj.input?.enabled) continue;
+                if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
+                if (obj === bg) continue;
+                if (isUnder(obj)) return obj;
+            }
+            const keep = this._tooltipTarget || this._hoverTarget;
+            if (keep?.active && isUnder(keep) && this._pointerInObj(pointer, keep)) return keep;
+            return bg;
+        };
+
         this._isUnderSettlementPanel = (obj) => {
             const panel = this.settlementPanel;
             if (!panel) return false;
@@ -4323,6 +4998,17 @@ class SceneMain extends SceneBase {
 
         this._isUnderStorageFilterPanel = (obj) => {
             const panel = this.storageFilterPanel;
+            if (!panel) return false;
+            let cur = obj;
+            while (cur) {
+                if (cur === panel.root || cur === panel.bg || cur === panel.body) return true;
+                cur = cur.parentContainer;
+            }
+            return false;
+        };
+
+        this._isUnderFuelFilterPanel = (obj) => {
+            const panel = this.fuelFilterPanel;
             if (!panel) return false;
             let cur = obj;
             while (cur) {
@@ -4359,6 +5045,8 @@ class SceneMain extends SceneBase {
                     cur === panel._settleUi?.icon) return true;
                 if (cur === panel._billUi?.btn || cur === panel._billUi?.rect ||
                     cur === panel._billUi?.text) return true;
+                if (cur === panel._fuelUi?.btn || cur === panel._fuelUi?.rect ||
+                    cur === panel._fuelUi?.text) return true;
                 if (panel.slotViews?.some(v =>
                     v.slot === cur || v.icon === cur || v.fill === cur || v.qty === cur
                 )) return true;
@@ -4414,6 +5102,29 @@ class SceneMain extends SceneBase {
             return false;
         };
 
+        this._isUnderCraftMenu = (obj) => {
+            if (!obj) return false;
+            let cur = obj;
+            while (cur) {
+                if (cur === this.craftContainer) return true;
+                cur = cur.parentContainer;
+            }
+            return this._isUnderCraftTake(obj);
+        };
+
+        this._objectShown = (obj) => {
+            if (!obj?.active) return false;
+            let cur = obj;
+            const seen = new Set();
+            while (cur && !seen.has(cur)) {
+                seen.add(cur);
+                if (cur.visible === false) return false;
+                if (cur === this.craftContainer && !this.craftMenuVisible) return false;
+                cur = cur.parentContainer;
+            }
+            return true;
+        };
+
         this._isUnderEquipmentPanel = (obj) => {
             const panel = this.equipmentPanel;
             if (!panel) return false;
@@ -4428,7 +5139,18 @@ class SceneMain extends SceneBase {
             return false;
         };
 
+        this._worldPanelSlotAt = (panel, pointer) => {
+            if (!panel || !pointer) return null;
+            const key = panel.getSlotAt?.(pointer.x, pointer.y);
+            if (key == null) return null;
+            const view = panel.slotViews?.find((v) => v.key === key);
+            return view?.slot?.active ? view.slot : null;
+        };
+
         this._cursorFor = (obj) => {
+            if (this._isUnderStoragePanel?.(obj) || this._isUnderCampfirePanel?.(obj)) {
+                return "pointer";
+            }
             if (!obj?.input) return 'default';
             // Rocks: hand cursor only when "Click to knap" tip would show
             if (obj.meta?.id === "rock") {
@@ -4480,16 +5202,52 @@ class SceneMain extends SceneBase {
             // During attacks, ignore world hover for tooltips; side UI still works
             let top = (blockWorld && hit && !this._isUiTooltipTarget(hit)) ? null : hit;
 
+            // Don't let a world sprite steal an active HUD hover (lean-to while
+            // lying in it used to pointerout Craft/hotbar/health and hide tips).
+            if (
+                this._isUiTooltipTarget(this._hoverTarget)
+                && this._objectShown?.(this._hoverTarget)
+                && (!top || !this._isUiTooltipTarget(top))
+            ) {
+                const prev = this._hoverTarget;
+                const b = prev.getBounds?.();
+                if (b && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y)) {
+                    top = prev;
+                }
+            }
+
             // Texture/setInteractive resets drop the object from Phaser's hit list for
             // a frame (or until the next mouse move). If the cursor is still inside
             // the last hover sprite, keep it so lighting a campfire doesn't hide the tip.
             if (!top && !blockWorld && !this.pointerOverWorldUi?.(pointer) && this._hoverTarget?.active) {
                 const prev = this._hoverTarget;
-                const b = prev.getBounds?.();
-                if (b) {
-                    const wpt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-                    if (Phaser.Geom.Rectangle.Contains(b, wpt.x, wpt.y)) top = prev;
+                if (!this._skipOwnRestLeanTo?.(prev, pointer)) {
+                    if (this._isHoverPawn(prev) || prev.role === "settler") {
+                        if (this._pointerOnCreature(pointer, prev)) top = prev;
+                    } else {
+                        const b = prev.getBounds?.();
+                        if (b) {
+                            if (this._isUiTooltipTarget(prev)) {
+                                if (Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y)) top = prev;
+                            } else {
+                                const wpt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+                                if (Phaser.Geom.Rectangle.Contains(b, wpt.x, wpt.y)) top = prev;
+                            }
+                        }
+                    }
                 }
+            }
+
+            // A tree/bush/fire can sit on top in the display list while the cursor is
+            // still in the pawn's click box. Keep the pawn so the tip doesn't strobe.
+            if (
+                !blockWorld
+                && this._isHoverPawn(this._hoverTarget)
+                && (!top || (!this._isUiTooltipTarget(top) && top !== this._hoverTarget))
+                && !this.pointerOverWorldUi?.(pointer)
+                && this._pointerOnCreature(pointer, this._hoverTarget)
+            ) {
+                top = this._hoverTarget;
             }
 
             if (top !== this._hoverTarget) {
@@ -4506,6 +5264,16 @@ class SceneMain extends SceneBase {
                 else this.hideWorldTooltip();
             } else if (top && this.tooltip?.visible && this.tooltip.scene) {
                 this.positionTooltip(pointer.x, pointer.y);
+                if (this._tooltipFollowsPointer(top)) this.refreshTooltip();
+            } else if (
+                top
+                && top.input?.enabled
+                && this._objectShown?.(top)
+                && !this.tooltip?.visible
+            ) {
+                // Rest pinning used to drop Phaser's over-state without a mouse
+                // move; pointerover never fired again until you left and re-entered.
+                top.emit("pointerover", pointer);
             }
 
             this.input.setDefaultCursor(top ? this._cursorFor(top) : "default");
@@ -4525,7 +5293,9 @@ class SceneMain extends SceneBase {
 
         this.input.on("pointermove", (pointer) => {
             if (!this._playReady || this._leavingGame) return;
-            if (this.tooltip?.visible) this.positionTooltip(pointer.x, pointer.y);
+            if (!this.tooltip?.visible) return;
+            this.positionTooltip(pointer.x, pointer.y);
+            if (this._tooltipFollowsPointer(this._tooltipTarget)) this.refreshTooltip();
         });
         // Snap player for draw only; restore true pose before the next physics step
         // so diagonal speed stays normalized (square-grid body snaps are √2-fast).
@@ -4550,7 +5320,7 @@ class SceneMain extends SceneBase {
             this.syncCameraToPlayer();
             this.player?._syncChatBubble?.();
             if (this._channelBarProgress != null) this._drawChannelBar();
-            if (this._chopBarFrac != null) this._drawTreeChopBar();
+            this._tickTreeChopBars();
             this.drawChunkDebug();
         };
         this.events.on("preupdate", this._onPreUpdate);
@@ -4615,7 +5385,7 @@ class SceneMain extends SceneBase {
 
     /** Dedicated MP: wildlife is server-owned — client mob count is meaningless. */
     _fpsShowsMobs() {
-        return !(this.isNet && this.net && !this.net.isLocal);
+        return !(this.simAuth());
     }
 
     _fpsPlaceholderText() {
@@ -5017,7 +5787,7 @@ class SceneMain extends SceneBase {
         });
     }
 
-    /** Skinworking bench (and later craft stations): click opens the station recipe list. */
+    /** Skinworking bench (and later craft stations): click opens the C-key craft menu, filtered. */
     wireCraftStation(thing) {
         if (!thing || !thing.meta?.craftStation) return;
         thing.setInteractive({ cursor: "pointer" });
@@ -5053,11 +5823,53 @@ class SceneMain extends SceneBase {
         return !!(this.player?._resting && !this.player?._bodyDead);
     }
 
+    /** The bunk you're currently occupying. */
+    _isOwnRestLeanTo(obj) {
+        if (typeof LeanTo === "undefined" || !(obj instanceof LeanTo)) return false;
+        const pawn = this.player;
+        if (!pawn?._resting || pawn._bodyDead) return false;
+        const uid = pawn.lastSleep?.uid;
+        return !!(uid && obj.entry?.uid === uid);
+    }
+
+    /**
+     * Screen HUD under the pointer. The occupied lean-to AABB is large and often
+     * covers Craft/hotbar/health; skip the bunk there so those keep the finger.
+     */
+    _pointerOverHudChrome(pointer) {
+        if (!pointer) return false;
+        const over = (obj) => {
+            if (!obj?.active || obj.visible === false) return false;
+            const b = obj.getBounds?.();
+            return !!(b && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y));
+        };
+        if (over(this.craft) || over(this.healthBtn) || over(this.equipmentBtn) || over(this.help)) {
+            return true;
+        }
+        if (over(this.painBarZone) || over(this.kcBarZone) || over(this.weightBarZone)) return true;
+        for (const slot of this.hotbar?.slots || []) {
+            if (over(slot)) return true;
+        }
+        for (const slot of this.hotbar?.overflowSlots || []) {
+            if (over(slot)) return true;
+        }
+        if (this.craftMenuVisible && over(this.craftContainer)) return true;
+        if (this.partyPanel?.visible && this.partyPanel.containsPointer?.(pointer)) return true;
+        if (this.healthPanel?.visible && this.healthPanel.containsPointer?.(pointer)) return true;
+        if (this.equipmentPanel?.visible && this.equipmentPanel.containsPointer?.(pointer)) return true;
+        if (this.settlementSys?.hudContains?.(pointer)) return true;
+        return false;
+    }
+
+    _skipOwnRestLeanTo(obj, pointer) {
+        return !!(this._isOwnRestLeanTo(obj) && this._pointerOverHudChrome(pointer));
+    }
+
     _closeWorldUisForRest() {
         this.campfirePanel?.close?.();
         this.storagePanel?.close?.();
         this.corpsePanel?.close?.();
-        if (this.craftMenuVisible) this.closeCraftMenu();
+        this.closeCraftStationMenu();
         this.knappingPanel?.close?.();
     }
 
@@ -5074,12 +5886,15 @@ class SceneMain extends SceneBase {
         if (this.settlementPanel?.containsPointer?.(pointer)) return true;
         if (this.billsPanel?.containsPointer?.(pointer)) return true;
         if (this.storageFilterPanel?.containsPointer?.(pointer)) return true;
+        if (this.fuelFilterPanel?.containsPointer?.(pointer)) return true;
         if (this.settlementSys?.hudContains?.(pointer)) return true;
         if (this.pointerOnCraftTake?.(pointer)) return true;
         if (this.pointerOnCraftSettle?.(pointer)) return true;
         if (this.pointerOnCraftBills?.(pointer)) return true;
         if (this._pointerOverCraftMenu?.(pointer)) return true;
         if (this.partyPanel?.containsPointer?.(pointer)) return true;
+        if (this.healthPanel?.containsPointer?.(pointer)) return true;
+        if (this.equipmentPanel?.containsPointer?.(pointer)) return true;
         return false;
     }
 
@@ -5097,6 +5912,18 @@ class SceneMain extends SceneBase {
         }
         if (!this.craftContainer.getBounds) return false;
         return Phaser.Geom.Rectangle.Contains(this.craftContainer.getBounds(), pointer.x, pointer.y);
+    }
+
+    _craftSlotAtPointer(pointer) {
+        if (!this.craftMenuVisible || !pointer || !Array.isArray(this._data)) return null;
+        const pt = pointer;
+        for (const row of this._data) {
+            const slot = row?.slot;
+            if (!slot?.active || slot.visible === false) continue;
+            const b = slot.getBounds?.();
+            if (b && Phaser.Geom.Rectangle.Contains(b, pt.x, pt.y)) return slot;
+        }
+        return null;
     }
 
     _rockKnapTooltipText() {
@@ -5130,8 +5957,16 @@ class SceneMain extends SceneBase {
     /** Tile keys occupied by things / lootables in loaded chunks. */
     _spawnOccupiedTiles() {
         const occupied = new Set();
+        const ts = this.tileSize || 16;
         const mark = (entry) => {
             if (!entry) return;
+            const def = this.getThing?.(entry.id);
+            if (typeof Place !== "undefined" && Place.occupyTiles) {
+                for (const t of Place.occupyTiles(entry, ts, def)) {
+                    occupied.add(`${t.tx},${t.ty}`);
+                }
+                return;
+            }
             const { tx, ty } = this.worldToTile(entry.x, entry.y - 1);
             occupied.add(`${tx},${ty}`);
         };
@@ -5429,7 +6264,7 @@ class SceneMain extends SceneBase {
                 }
             }
 
-            if (!hasSign && !this._spawnSignPlaced) {
+            if (!hasSign && !this._spawnSignPlaced && !this.simAuth()) {
                 this._clearTileThings(0, 0);
                 const { x, y } = this.tileCenter(0, 0);
                 const chunk = this.getChunkAtWorld(x, y - 1);
@@ -5441,12 +6276,12 @@ class SceneMain extends SceneBase {
                     spawnHint: true,
                     tooltip: this._spawnSignTooltip()
                 };
-                    chunk.meta.things.push(entry);
-                    if (chunk.isLoaded) {
-                        const thing = new Thing(this, entry.x, entry.y, entry.id);
+                chunk.meta.things.push(entry);
+                if (chunk.isLoaded) {
+                    const thing = new Thing(this, entry.x, entry.y, entry.id);
                     thing.entry = entry;
-                        this.wireThingTooltip(thing);
-                        chunk.things.add(thing);
+                    this.wireThingTooltip(thing);
+                    chunk.things.add(thing);
                 }
                 this._spawnSignPlaced = true;
             } else {
@@ -5463,12 +6298,7 @@ class SceneMain extends SceneBase {
                     this.partySys?.placeUnposedCompanionsAt?.(this.player, this.net?.world?.poses, {
                         skipId: this.player?.pawnId
                     });
-                    if (this.net?.isLocal) {
-                        this.net.syncPawnFromClient?.(this._playerCharacterPartial());
-                        this.net.rememberPose?.();
-                    } else if (this.isNet && this.net?.connected) {
-                        this._netSendMove(true);
-                    }
+                    if (this.simAuth()) this._netSendMove(true);
                 }
                 this._playerSpawnPlaced = true;
             }
@@ -5530,13 +6360,6 @@ class SceneMain extends SceneBase {
         if (this.combatLog?.isComposing?.()) return true;
         if (this.settlementSys?.isNaming?.()) return true;
         if (this.knappingPanel?.visible) return true;
-        if (this.craftMenuVisible) return true;
-        if (this.equipmentPanel?.visible) return true;
-        if (this.healthPanel?.visible) return true;
-        if (this.campfirePanel?.visible) return true;
-        if (this.storagePanel?.visible) return true;
-        if (this.leanToPanel?.visible) return true;
-        if (this.corpsePanel?.visible) return true;
         return false;
     }
 
@@ -5596,7 +6419,9 @@ class SceneMain extends SceneBase {
         }
         const fp = typeof Place !== "undefined" ? Place.footprintSize(def) : [1, 1];
         const tiles = typeof Place !== "undefined"
-            ? Place.footprintTiles(tx, ty, rot, fp)
+            ? (Place.placeOccupyTiles
+                ? Place.placeOccupyTiles(tx, ty, rot, def)
+                : Place.footprintTiles(tx, ty, rot, fp))
             : [{ tx, ty }];
         const getThing = (id) => this.getThing(id);
         for (const t of tiles) {
@@ -5641,6 +6466,7 @@ class SceneMain extends SceneBase {
     _hidePlaceGhost() {
         if (this._placeGhost) this._placeGhost.setVisible(false);
         if (this._placeGhostFrame) this._placeGhostFrame.setVisible(false);
+        if (this._placeGhostInteract) this._placeGhostInteract.setVisible(false);
         this._placeGhostTile = null;
         this._placeGhostValid = false;
     }
@@ -5717,8 +6543,40 @@ class SceneMain extends SceneBase {
         } else if (this._placeGhostFrame) {
             this._placeGhostFrame.setVisible(false);
         }
+        this._syncPlaceGhostInteract(info.thingDef, tx, ty, rot, valid);
         this._placeGhostTile = { tx, ty };
         this._placeGhostValid = valid;
+    }
+
+    _syncPlaceGhostInteract(thingDef, tx, ty, rot, valid) {
+        const ts = this.tileSize || 16;
+        const tiles = typeof Place !== "undefined" && Place.placeOccupyTiles
+            ? Place.placeOccupyTiles(tx, ty, rot, thingDef)
+            : [];
+        const origin = { tx, ty };
+        const extra = tiles.find((t) => t.tx !== origin.tx || t.ty !== origin.ty);
+        if (!extra || !Place.interactOffset?.(thingDef)) {
+            if (this._placeGhostInteract) this._placeGhostInteract.setVisible(false);
+            return;
+        }
+        const cx = extra.tx * ts + ts / 2;
+        const cy = extra.ty * ts + ts / 2;
+        let g = this._placeGhostInteract;
+        if (!g || !g.active) {
+            g = this.add.graphics();
+            this.mainLayer?.add(g);
+            this._placeGhostInteract = g;
+        }
+        const tint = valid ? 0xffffff : 0xff5555;
+        g.clear();
+        g.fillStyle(tint, 0.18);
+        g.fillCircle(0, 0, ts * 0.28);
+        g.lineStyle(1, tint, 0.9);
+        g.strokeCircle(0, 0, ts * 0.28);
+        g.setPosition(cx, cy);
+        g.setDepth(cy - ts);
+        g.setVisible(true);
+        g.setAlpha(0.85);
     }
 
     _handlePlaceRotate() {
@@ -5751,7 +6609,7 @@ class SceneMain extends SceneBase {
             return true;
         }
 
-        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+        if (this.simAuth()) {
             this._netSendMove?.(true);
             this.net.sendAction({
                 type: NetProtocol.Actions.PLACE,
@@ -5864,8 +6722,7 @@ class SceneMain extends SceneBase {
             ? Place.itemIdForThing(entry.id, this.items())
             : entry.id;
 
-        if (this.isNet && this.net?.connected && !this.net.isLocal) {
-            this._invSwapGuardUntil = performance.now() + 1000;
+        if (this.simAuth()) {
             this._netSendMove?.(true);
             this.net.sendAction({
                 type: NetProtocol.Actions.STORAGE,
@@ -5900,7 +6757,7 @@ class SceneMain extends SceneBase {
         if (!campfire || campfire.isLit?.()) return false;
         if (!campfire.inRange?.()) return false;
         const entry = campfire.entry;
-        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+        if (this.simAuth()) {
             this._invSwapGuardUntil = performance.now() + 1000;
             this._netSendMove?.(true);
             this.net.sendAction({
@@ -6006,7 +6863,7 @@ class SceneMain extends SceneBase {
 
     _reconcileSleepOccupants(entry) {
         if (!entry || !Array.isArray(entry.occupants)) return;
-        const dedicated = !!(this.isNet && this.net?.connected && !this.net.isLocal);
+        const dedicated = !!(this.simAuth());
         for (let i = 0; i < entry.occupants.length; i++) {
             const id = entry.occupants[i];
             if (!id) continue;
@@ -6042,7 +6899,7 @@ class SceneMain extends SceneBase {
     _findPawnSleepBed(pawn) {
         const id = pawn?.pawnId;
         const pose = this.net?.world?.poses?.[id];
-        const hint = pose?.lastSleep || pawn?.lastSleep;
+        const hint = pawn?.lastSleep || pose?.lastSleep;
         if (id) {
             let occ = null;
             this.forEachSleepEntry((entry) => {
@@ -6056,10 +6913,6 @@ class SceneMain extends SceneBase {
             const lean = this.findLeanToByUid(hint.uid);
             if (lean?.entry) return { entry: lean.entry, slot: hint.slot || 0, lean };
         }
-        const saved = this.net?.isLocal ? this.net.world?.chunks : null;
-        if (saved && typeof Sleep !== "undefined" && Sleep.bedInChunkMap) {
-            return Sleep.bedInChunkMap(saved, id, hint);
-        }
         return null;
     }
 
@@ -6072,12 +6925,10 @@ class SceneMain extends SceneBase {
                 if (e.occupants[i] === id) e.occupants[i] = null;
             }
         });
-        const saved = this.net?.isLocal ? this.net.world?.chunks : null;
-        if (saved && typeof Sleep !== "undefined") Sleep.clearOccupantInChunkMap?.(saved, id);
     }
 
     _restorePartySleep() {
-        const dedicated = !!(this.isNet && this.net?.connected && !this.net.isLocal);
+        const dedicated = !!(this.simAuth());
         const poses = this.net?.world?.poses || {};
         for (const pawn of this.party || []) {
             if (!pawn || pawn.isBodyDead?.()) continue;
@@ -6180,7 +7031,7 @@ class SceneMain extends SceneBase {
             }
         }
         this._cancelPawnChannels(pawn);
-        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+        if (this.simAuth()) {
             this._netSendMove?.(true);
             this.net.sendAction({
                 type: NetProtocol.Actions.SLEEP,
@@ -6202,7 +7053,7 @@ class SceneMain extends SceneBase {
         const pawn = this.player;
         const occ = leanTo?.entry?.occupants?.[slot];
         if (!pawn || occ !== pawn.pawnId) return false;
-        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+        if (this.simAuth()) {
             this.net.sendAction({
                 type: NetProtocol.Actions.SLEEP,
                 op: "wake",
@@ -6219,7 +7070,7 @@ class SceneMain extends SceneBase {
         const entry = leanTo?.entry;
         if (!entry || (typeof Sleep !== "undefined" && !Sleep.isEmpty(entry))) return false;
         if (!leanTo.inRange?.()) return false;
-        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+        if (this.simAuth()) {
             this.net.sendAction({
                 type: NetProtocol.Actions.SLEEP,
                 op: "destroy",
@@ -6299,7 +7150,7 @@ class SceneMain extends SceneBase {
         if (pawn._resting && pawn.lastSleep?.uid === entry.uid && pawn.lastSleep?.slot === slot) {
             return true;
         }
-        if (typeof Sleep !== "undefined" && Sleep.isSlotOccupied(entry, slot) && entry.occupants[slot] !== id) {
+        if (typeof Sleep !== "undefined" && this._sleepSlotClaimed(entry, slot, id)) {
             this._sleepLog("That spot is taken");
             return false;
         }
@@ -6361,6 +7212,9 @@ class SceneMain extends SceneBase {
             this._intendedSleep().delete(pawn.pawnId);
             return false;
         }
+        const already = entry.occupants[slot] === pawn.pawnId && pawn._resting
+            && pawn.lastSleep?.uid === entry.uid
+            && (pawn.lastSleep?.slot || 0) === slot;
         this.forEachSleepEntry((e) => {
             if (!Array.isArray(e.occupants)) return;
             for (let i = 0; i < e.occupants.length; i++) {
@@ -6383,8 +7237,8 @@ class SceneMain extends SceneBase {
             pawn.syncSortDepth?.();
         }
         this.applyRestClock();
-        this.leanToPanel?.refresh?.();
-        if (pawn === this.player) {
+        if (!already) this.leanToPanel?.refresh?.();
+        if (!already && pawn === this.player) {
             this._closeWorldUisForRest();
             this._netSendMove?.(true);
         }
@@ -6401,13 +7255,15 @@ class SceneMain extends SceneBase {
                 if (e.occupants[i] === id) e.occupants[i] = null;
             }
         });
-        if (this.net?.isLocal && this.net.world?.chunks && typeof Sleep !== "undefined") {
-            Sleep.clearOccupantInChunkMap?.(this.net.world.chunks, id);
-        }
         pawn._restWalk = null;
         this._intendedSleep().delete(id);
         setCreatureRest?.(pawn, false);
         pawn._resting = false;
+        if (!(pawn._downed || pawn.isIncapacitated?.() || pawn.isImmobile?.())) {
+            pawn._netProne = false;
+        }
+        pawn._settlerAct = null;
+        if (pawn.partyAI) pawn.partyAI._settlerAct = null;
         this._placePawnAtWakePos(pawn, last);
         pawn._skipMove = true;
         if (opts.help) pawn._wokeFromRest = true;
@@ -6440,11 +7296,28 @@ class SceneMain extends SceneBase {
     }
 
     applyRestClock() {
-        if (this.isNet && this.net?.connected && !this.net.isLocal) return this.tickSpeed;
+        if (this.simAuth()) return this.tickSpeed;
         const base = Number.isFinite(this._baseTickSpeed) ? this._baseTickSpeed : (this.tickSpeed || 1);
         const speed = this.setTickSpeed(base);
         this.updateClockText?.();
         return speed;
+    }
+
+    _tickRestClock(delta) {
+        if (this.simAuth()) return;
+        const living = (this.party || []).filter((p) => p && !p.isBodyDead?.());
+        const everyone = living.length > 0 && living.every((p) => p._resting);
+        const delay = (typeof Sleep !== "undefined" && Sleep.REST_TICK_DELAY_MS) || 3000;
+        if (!everyone) {
+            if (this._restSpeedElapsedMs) {
+                this._restSpeedElapsedMs = 0;
+                this.applyRestClock();
+            }
+            return;
+        }
+        const before = this._restSpeedElapsedMs || 0;
+        this._restSpeedElapsedMs = before + (Number(delta) || 0);
+        if (before < delay && this._restSpeedElapsedMs >= delay) this.applyRestClock();
     }
 
     _tickSleepZzz(delta) {
@@ -6471,15 +7344,16 @@ class SceneMain extends SceneBase {
         const b = Number.isFinite(base) ? base : (this._baseTickSpeed || 1);
         const living = (this.party || []).filter((p) => p && !p.isBodyDead?.());
         const everyone = living.length > 0 && living.every((p) => p._resting);
-        return typeof Sleep !== "undefined"
-            ? Sleep.effectiveTickSpeed(b, everyone)
-            : (everyone ? Math.max(4, b) : b);
+        const lyingMs = everyone ? (this._restSpeedElapsedMs || 0) : 0;
+        if (typeof Sleep !== "undefined") return Sleep.effectiveTickSpeed(b, everyone, lyingMs);
+        const delay = 3000;
+        return everyone && lyingMs >= delay ? Math.max(10, b) : b;
     }
 
     _tryWakePlayer() {
         const pawn = this.player;
         if (!pawn?._resting) return;
-        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+        if (this.simAuth()) {
             this.net.sendAction({
                 type: NetProtocol.Actions.SLEEP,
                 op: "wake",
@@ -6490,6 +7364,7 @@ class SceneMain extends SceneBase {
     }
 
     tickSleepWalks(delta) {
+        if (this.simAuth()) return;
         this.tickSleepWalksFor(this.party, delta);
         this.tickSleepWalksFor(this.settlers, delta);
     }
@@ -6508,19 +7383,26 @@ class SceneMain extends SceneBase {
                     continue;
                 }
                 const def = this.getThing(entry.id);
+                const stand = Sleep.restWalkStand
+                    ? Sleep.restWalkStand(entry, spec.slot, ts, def)
+                    : null;
                 const pos = Sleep.sleeperWorldPos(entry, spec.slot, ts, def);
                 const c = pawn.bodyCenter?.() || { x: pawn.x, y: pawn.y };
-                const d = Math.hypot(c.x - pos.x, c.y - pos.y);
                 const arrive = Sleep.ARRIVE_PX || 16;
-                if (d < arrive) {
+                const dStand = stand
+                    ? Math.hypot(pawn.x - stand.x, pawn.y - stand.y)
+                    : Infinity;
+                const dBunk = Math.hypot(c.x - pos.x, c.y - pos.y);
+                if (dStand < arrive || dBunk < arrive) {
                     this._occupySlot(pawn, entry, spec.slot);
                     continue;
                 }
                 if (pawn.isControlled?.()) continue;
-                if (pawn.partyAI?._walkBodyToward) {
-                    pawn.partyAI._walkBodyToward(pawn, pos.x, pos.y, ts, false, delta);
+                const dest = stand || pos;
+                if (pawn.partyAI?._walkBodyToward && !stand) {
+                    pawn.partyAI._walkBodyToward(pawn, dest.x, dest.y, ts, false, delta);
                 } else {
-                    pawn.partyAI?._walkToward?.(pawn, pos.x, pos.y, ts, false, delta);
+                    pawn.partyAI?._walkToward?.(pawn, dest.x, dest.y, ts, false, delta);
                 }
             } else if (pawn._resting) {
                 pawn.setVelocity?.(0, 0);
@@ -6619,7 +7501,7 @@ class SceneMain extends SceneBase {
 
     /** Stand capable resters in camp so they can defend, then return to bed after. */
     _wakeAbleResters(enemy, origin) {
-        if (this.isNet && this.net?.connected && !this.net.isLocal) return;
+        if (this.simAuth()) return;
         if (!enemy || enemy.isBodyDead?.()) return;
         const from = origin || this.player;
         const ts = this.tileSize || 16;
@@ -6641,7 +7523,7 @@ class SceneMain extends SceneBase {
     }
 
     _onSleepCombatHit(victim, attacker) {
-        if (this.isNet && this.net?.connected && !this.net.isLocal) return;
+        if (this.simAuth()) return;
         if (!victim || victim.isBodyDead?.()) return;
         if (attacker && typeof Party !== "undefined" && Party.sameFaction?.(victim, attacker)) return;
         if (!attacker || attacker === victim) return;
@@ -6738,7 +7620,7 @@ class SceneMain extends SceneBase {
     tickSoakDrops() {
         if (typeof Hide === "undefined") return;
         // Dedicated MP: soak conversion is server-authored (snapshots).
-        if (this.isNet && this.net?.connected && !this.net.isLocal) return;
+        if (this.simAuth()) return;
         const now = this.worldMinuteIndex();
         const getItem = (id) => this.getItem(id);
         const liveDrops = this.droppedItems?.getChildren?.() || [];
@@ -6858,7 +7740,7 @@ class SceneMain extends SceneBase {
 
     tryUseFirestarter() {
         if (this.player?._resting) return false;
-        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+        if (this.simAuth()) {
             this._netSendMove?.(true);
             const aim = this._firestarterAimWorld();
             this.net.sendAction({
@@ -6985,7 +7867,7 @@ class SceneMain extends SceneBase {
         const m = Number(mult);
         if (!Number.isFinite(m) || m < 0) return this.tickSpeed;
         if (!opts.fromRest) this._baseTickSpeed = m;
-        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+        if (this.simAuth()) {
             this.tickSpeed = m;
             return this.tickSpeed;
         }
@@ -7090,7 +7972,7 @@ class SceneMain extends SceneBase {
     }
 
     tickApparelDailyWear() {
-        if (this.isNet && this.net?.connected && !this.net.isLocal) return;
+        if (this.simAuth()) return;
         if (typeof Apparel === "undefined" || typeof Durability === "undefined") return;
         if (!Apparel.isDayBoundary(this.worldMinuteIndex())) return;
         const rng = () => (typeof GameMath !== "undefined" ? GameMath.random() : Math.random());
@@ -7136,7 +8018,7 @@ class SceneMain extends SceneBase {
     tickBodySystems() {
         // Dedicated: server owns bleed/heal/hediffs. Blood VFX arrives via "bleed" events.
         // Running minuteTick here double-applied bloodLoss and only dripped on one client.
-        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+        if (this.simAuth()) {
             this.healthPanel?.refresh?.();
             return;
         }
@@ -7245,9 +8127,11 @@ class SceneMain extends SceneBase {
         const alpha = opts?.alpha != null
             ? opts.alpha
             : (isVomit ? 0.7 : 0.55);
-        const mergeDist = isVomit
-            ? SceneMain.BLOOD_MERGE_DIST * 1.35
-            : SceneMain.BLOOD_MERGE_DIST;
+        const mergeDist = opts?.merge === false
+            ? 0
+            : (opts?.mergeDist != null
+                ? Number(opts.mergeDist)
+                : (isVomit ? SceneMain.BLOOD_MERGE_DIST * 1.35 : SceneMain.BLOOD_MERGE_DIST));
         const mergeDistSq = mergeDist * mergeDist;
 
         // Grow a nearby pool of the same kind instead of adding another circle
@@ -7632,7 +8516,7 @@ class SceneMain extends SceneBase {
      * Dedicated MP: server owns this (events + snapshots).
      */
     tickCorpseDecay() {
-        if (this.isNet && this.net?.connected && !this.net.isLocal) return;
+        if (this.simAuth()) return;
         const Decay = typeof CorpseDecay !== "undefined" ? CorpseDecay : null;
         if (!Decay) return;
         const now = this.worldMinuteIndex();
@@ -7663,7 +8547,7 @@ class SceneMain extends SceneBase {
         let corpsePanelDirty = false;
         const getItem = (id) => this.getItem(id);
         // Dedicated MP: server owns character spoilLeft (YOU). LocalSim / offline tick locally.
-        const skipPlayerSpoil = this.isNet && this.net?.connected && !this.net.isLocal;
+        const skipPlayerSpoil = this.simAuth();
 
         const applyWorldStack = (stack, cool = true) => {
             if (!stack) return stack;
@@ -7896,7 +8780,9 @@ class SceneMain extends SceneBase {
         if (!stacks) return;
         const now = this.worldMinuteIndex();
         const getItem = (id) => this.getItem(id);
-        migrateCharacterStacks(stacks, now, getItem);
+        const migrate = (typeof Spoil !== "undefined" && Spoil.migrateCharacterStacks)
+            || (typeof migrateCharacterStacks === "function" ? migrateCharacterStacks : null);
+        if (migrate) migrate(stacks, now, getItem);
         }
 
     /** @deprecated Use ensureSpoilLeft */
@@ -7916,6 +8802,10 @@ class SceneMain extends SceneBase {
             if (!stack?.id) continue;
             if (typeof Hide !== "undefined") Hide.migrateStackItemId?.(stack);
             else if (stack.id === "wood_spear") stack.id = "wooden_spear";
+            else if (stack.id === "raw_beef") stack.id = "raw_human_flesh";
+            else if (stack.id === "roast_beef" || stack.id === "roast_human_flesh") {
+                stack.id = "roasted_human_flesh";
+            }
         }
     }
 
@@ -7959,6 +8849,10 @@ class SceneMain extends SceneBase {
             : (stack?.weight != null ? stack.weight : item.weight);
         if (weight > 0) {
             lines.push(`Weight: ${weight} kg`);
+        }
+
+        if (typeof Stats !== "undefined") {
+            for (const line of Stats.tooltipLines(item)) lines.push(line);
         }
 
         if (item.bandage) {
@@ -8064,10 +8958,11 @@ class SceneMain extends SceneBase {
             !knapFlavor
             && stack?.toolClass === "knife"
         ) {
-            knapFlavor = "Mr. Stabby";
+            knapFlavor = "'Mr. Stabby'";
         } else if (!knapFlavor && stack?.toolClass === "chopper") {
             knapFlavor = "Slow but heavy";
         }
+        if (knapFlavor === "Mr. Stabby") knapFlavor = "'Mr. Stabby'";
         if (
             knapFlavor
             && knapFlavor !== "Needs a shaft"
@@ -8088,6 +8983,33 @@ class SceneMain extends SceneBase {
             lines.push("Attack trees to chop them down");
         }
 
+        // Slot / pack bonuses before flavor text so packs read Fuel → Slot → how-to.
+        if (item.equip) {
+            lines.push(`Slot: ${item.equip.slot}`);
+            if (item.equip.effects) {
+                const addSlot = item.equip.effects.addSlot;
+                if (addSlot) {
+                    const counts = {};
+                    for (const s of addSlot) counts[s] = (counts[s] || 0) + 1;
+                    for (const [s, n] of Object.entries(counts)) {
+                        const label = s === "hotbar" ? "hotbar" : s === "overflow" ? "pack" : s;
+                        lines.push(`+ ${n} ${label} slot${n > 1 ? "s" : ""}`);
+                    }
+                }
+                const strength = item.equip.effects.strength;
+                if (strength) {
+                    lines.push(`+ ${strength} kg carry`);
+                }
+                const speed = item.equip.effects.speed;
+                if (speed) {
+                    lines.push(`+ ${Math.round(speed * 100)}% speed`);
+                }
+            }
+            if (typeof Apparel !== "undefined") {
+                for (const line of Apparel.armorTooltipLines(item)) lines.push(line);
+            }
+        }
+
         // Static tooltips only when not a custom-named meal
         if (!stack?.customName && Array.isArray(item.tooltip)) {
             const dryPct = (typeof Hide !== "undefined" && Hide.isFleshedHide(item))
@@ -8104,40 +9026,6 @@ class SceneMain extends SceneBase {
                 } else {
                     lines.push(line);
                 }
-            }
-        }
-
-        // Equipment
-        if (item.equip) {
-            // Slot
-            lines.push(`Slot: ${item.equip.slot}`);
-
-            // Effects
-            if (item.equip.effects) {
-                // Add Slot
-                const addSlot = item.equip.effects.addSlot;
-                if (addSlot) {
-                    const counts = {};
-                    for (const s of addSlot) counts[s] = (counts[s] || 0) + 1;
-                    for (const [s, n] of Object.entries(counts)) {
-                        const label = s === 'hotbar' ? 'hotbar' : s === 'overflow' ? 'pack' : s;
-                        lines.push(`+ ${n} ${label} slot${n > 1 ? 's' : ''}`);
-                    }
-                }
-                
-                // Strength
-                const strength = item.equip.effects.strength;
-                if (strength) {
-                    lines.push(`+ ${strength} kg carry`)
-                }
-
-                const speed = item.equip.effects.speed;
-                if (speed) {
-                    lines.push(`+ ${Math.round(speed * 100)}% speed`);
-                }
-            }
-            if (typeof Apparel !== "undefined") {
-                for (const line of Apparel.armorTooltipLines(item)) lines.push(line);
             }
         }
 
@@ -8169,24 +9057,77 @@ class SceneMain extends SceneBase {
 
     positionCraftMenu() {
         if (!this.craftContainer || !this.craft) return;
+        this._hostCraftMenu();
         const left = this.craft.x + this.craft.displayWidth / 2;
         const height = this._craftMenuData?.gridH || 0;
         const top = Phaser.Math.Clamp((this.scale.height - height) / 2, 0, this.scale.height - height);
         this.craftContainer.setPosition(Math.round(left), Math.round(top));
     }
 
+    /** Recipe list is always the C-key screen HUD, even when filtered to a station. */
+    _hostCraftMenu() {
+        const c = this.craftContainer;
+        if (!c) return;
+        if (this.worldHudLayer && (c.parentContainer === this.worldHudLayer || c.displayList === this.worldHudLayer)) {
+            this.worldHudLayer.remove(c);
+        }
+        if (this.uiLayer && c.displayList !== this.uiLayer) {
+            this.uiLayer.add(c);
+        }
+        if (this._uiCam) c.cameraFilter = (c.cameraFilter || 0) & ~this._uiCam.id;
+    }
+
+    _craftMenuLayoutSig() {
+        const s = this.uiScale || 1;
+        const stationId = this._craftStationThing?.meta?.id || "";
+        const nearby = stationId ? "" : (this.nearbyCraftStationIds() || []).join(",");
+        const page = this._craftPage || 0;
+        return `${stationId}|${nearby}|${page}|${s}`;
+    }
+
+    _craftHoverRecipeId() {
+        const target = this._tooltipTarget;
+        if (!target || !Array.isArray(this._data)) return null;
+        const row = this._data.find((d) => d.slot === target);
+        return row?.recipe?.id || null;
+    }
+
+    _restoreCraftTooltip(recipeId) {
+        if (!recipeId || !this.craftMenuVisible) return;
+        const row = this._data?.find((d) => d.recipe?.id === recipeId);
+        const slot = row?.slot;
+        const pointer = this.input?.activePointer;
+        if (!slot?.active || !row.tt || !pointer) return;
+        const hit = this._craftSlotAtPointer?.(pointer);
+        if (hit !== slot) return;
+        this.showTooltip(row.tt, pointer.x, pointer.y, slot);
+        this._hoverTarget = slot;
+    }
+
     refreshCraftMenu() {
         if (!this.craftContainer) return;
+        const sig = this._craftMenuLayoutSig();
+        if (sig === this._craftMenuSig && this.craftContainer.list?.length) {
+            this.positionCraftMenu();
+            this._layoutCraftTakeButton();
+            this._layoutCraftSettle();
+            return;
+        }
+        const keepRecipeId = this._craftHoverRecipeId();
+        this._craftMenuRefreshing = true;
+        if (this._hoverTarget?.parentContainer === this.craftContainer) this._hoverTarget = null;
         this.craftContainer.removeAll(true);
         this._data = [];
+        this._craftMenuSig = sig;
 
         const s = this.uiScale || 1;
-        const pad = Math.round(4 * s);
+        const ui = s;
+        const pad = Math.round(4 * ui);
         const slotImg = this.textures.get('slot').getSourceImage();
         const baseW = slotImg ? slotImg.width : 32;
         const baseH = slotImg ? slotImg.height : 32;
-        const slotW = baseW * s;
-        const slotH = baseH * s;
+        const slotW = baseW * ui;
+        const slotH = baseH * ui;
 
         const stationId = this._craftStationThing?.meta?.id || null;
         let recipes;
@@ -8210,8 +9151,8 @@ class SceneMain extends SceneBase {
         const gridH = pageRecipes.length
             ? rows * slotH + (rows - 1) * pad
             : slotH;
-        const pagerH = Math.round(28 * s);
-        const pagerGap = Math.round(6 * s);
+        const pagerH = Math.round(28 * ui);
+        const pagerGap = Math.round(6 * ui);
         const gridY = pagerH + pagerGap;
         this._craftMenuData = {
             cols, rows, gridW,
@@ -8220,7 +9161,7 @@ class SceneMain extends SceneBase {
             pages
         };
 
-        this._addCraftPager(gridW, pagerH, s, this._craftPage, pages);
+        this._addCraftPager(gridW, pagerH, ui, this._craftPage, pages);
 
         for (let i = 0; i < pageRecipes.length; i++) {
             const recipe = pageRecipes[i];
@@ -8230,16 +9171,16 @@ class SceneMain extends SceneBase {
             const y = gridY + row * (slotH + pad);
 
             // Slot
-            const slot = this.add.image(x, y, 'slot').setOrigin(0, 0).setScale(s).setInteractive({ cursor: 'pointer' });
+            const slot = this.add.image(x, y, 'slot').setOrigin(0, 0).setScale(ui).setInteractive({ cursor: 'pointer' });
             this.craftContainer.add(slot);
 
             // Icon
             const iconKey = this._craftRecipeIconKey(recipe);
-            const icon = this.add.image(x + slotW / 2, y + slotH / 2, iconKey).setOrigin(0.5, 0.5).setScale(3.0 * s);
+            const icon = this.add.image(x + slotW / 2, y + slotH / 2, iconKey).setOrigin(0.5, 0.5).setScale(3.0 * ui);
             this.craftContainer.add(icon);
 
             // Quantity
-            const quantity = crispUiText(this.add.text(x + slotW - 4 * s, y + slotH - 4 * s, recipe.quantity > 1 ? String(recipe.quantity) : '', {
+            const quantity = crispUiText(this.add.text(x + slotW - 4 * ui, y + slotH - 4 * ui, recipe.quantity > 1 ? String(recipe.quantity) : '', {
                 fontSize: `${pixelUiFontSize(16, 1)}px`, fontFamily: PIXEL_UI_FONT, stroke: '#000', strokeThickness: 2, align: 'right'
             }).setOrigin(1, 1).setVisible(recipe.quantity > 1));
             if (typeof applyPixelUiFont === "function") applyPixelUiFont(quantity, 16, s);
@@ -8252,7 +9193,7 @@ class SceneMain extends SceneBase {
                 lines.push('—');
 
                 for (const ingredient of recipe.ingredients) {
-                    const have = this.player.getNumMatchingItems(ingredient);
+                    const have = this._craftIngredientHave(ingredient);
                     lines.push(`${this._craftIngredientLabel(ingredient)}: ${have}/${ingredient.qty}`);
                 }
 
@@ -8272,7 +9213,10 @@ class SceneMain extends SceneBase {
             };
 
             slot.on('pointerover', (p) => this.showTooltip(tt, p.x, p.y, slot));
-            slot.on('pointerout',  ()  => this.hideTooltip());
+            slot.on('pointerout', () => {
+                if (this._craftMenuRefreshing) return;
+                if (this._tooltipTarget === slot) this.hideTooltip();
+            });
 
             // Craft
             slot.on('pointerdown', ()  => {
@@ -8282,11 +9226,11 @@ class SceneMain extends SceneBase {
                     this.refreshTooltip();
                     this.refreshCraftMenu();
                 } else {
-                    const shake = 3 * s;
+                    const shake = 3 * ui;
                     const homes = [
                         [slot, x],
                         [icon, x + slotW / 2],
-                        [quantity, x + slotW - 4 * s]
+                        [quantity, x + slotW - 4 * ui]
                     ];
                     for (const [obj] of homes) this.tweens.killTweensOf(obj);
                     if (slot._shakeTween) slot._shakeTween.stop();
@@ -8306,48 +9250,70 @@ class SceneMain extends SceneBase {
                 }
             });
 
-            this._data.push({ slot, icon, qty: quantity, recipe: recipe });
+            this._data.push({ slot, icon, qty: quantity, recipe, tt });
         }
 
         this.positionCraftMenu();
         this._layoutCraftTakeButton();
         this._layoutCraftSettle();
+        this._craftMenuRefreshing = false;
+        this._restoreCraftTooltip(keepRecipeId);
+    }
+
+    _worldUiLive(ui) {
+        const btn = ui?.btn;
+        const rect = ui?.rect;
+        return !!(btn?.active && btn.scene && rect?.active && rect.scene && rect.geom);
+    }
+
+    _discardWorldUi(key) {
+        const ui = this[key];
+        if (!ui) return;
+        try { ui.btn?.destroy?.(); } catch (_) {}
+        this[key] = null;
+    }
+
+    _placeCraftWorldBtn(btn) {
+        if (!btn) return;
+        if (typeof this._placeWorldHud === "function") this._placeWorldHud(btn, 250);
+        else {
+            btn.setDepth(250);
+            this._uiCam?.ignore(btn);
+        }
     }
 
     _layoutCraftSettle() {
-        const thing = this._craftStationThing;
+        const station = this._craftStationThing;
         const sys = this.settlementSys;
-        if (this._craftSettleUi?._screenUi) {
-            this._craftSettleUi.btn.destroy();
-            this._craftSettleUi = null;
-        }
-        if (!this._craftSettleUi && sys) {
-            this._craftSettleUi = sys.makeStationButton(() => {
-                if (this._craftStationThing) sys.toggleStation(this._craftStationThing);
-                this._layoutCraftSettle();
-            });
-            this._craftSettleUi.btn.setDepth(250);
-            this._uiCam?.ignore(this._craftSettleUi.btn);
-        }
-        const ui = this._craftSettleUi;
-        if (!ui) return;
-        const station = thing;
         const s = this.uiScale || 1;
         const zoom = this.worldZoom || 1;
         const ws = s / zoom;
         const bw = this._craftTakeBw || 78 * ws;
         const bh = this._craftTakeBh || 28 * ws;
         const gap = 8 * ws;
-        const clear = 2;
-        const x = station?.x || 0;
-        const y = station ? station.y + clear + bh / 2 : 0;
-        ui.setSize(bh);
-        if (!this.craftMenuVisible || !station) {
-            ui.btn.setVisible(false);
-            ui.rect?.disableInteractive?.();
-            this._layoutCraftBills(null, x, y, bw, bh, gap);
+        if (this._craftSettleUi && (this._craftSettleUi._screenUi || !this._worldUiLive(this._craftSettleUi))) {
+            this._discardWorldUi("_craftSettleUi");
+        }
+        const show = !!(this.craftMenuVisible && station && sys);
+        if (!show) {
+            this._craftSettleUi?.btn?.setVisible?.(false);
+            this._craftSettleUi?.rect?.disableInteractive?.();
+            this._layoutCraftBills(null, 0, 0, bw, bh, gap);
             return;
         }
+        if (!this._craftSettleUi) {
+            this._craftSettleUi = sys.makeStationButton(() => {
+                if (this._craftStationThing) sys.toggleStation(this._craftStationThing);
+                this._layoutCraftSettle();
+            });
+            this._placeCraftWorldBtn(this._craftSettleUi.btn);
+        }
+        const ui = this._craftSettleUi;
+        if (!ui) return;
+        const clear = 2;
+        const x = station.x || 0;
+        const y = station.y + clear + bh / 2;
+        ui.setSize(bh);
         sys.syncStationButton(ui, station);
         sys.placeAddActionRow(ui, this._craftTakeBtn, {
             x, y, gap, addW: bh, actionW: bw,
@@ -8359,21 +9325,24 @@ class SceneMain extends SceneBase {
 
     _layoutCraftBills(station, x, y, bw, bh, gap) {
         const sys = this.settlementSys;
-        if (!this._craftBillUi && sys) {
+        if (this._craftBillUi && !this._worldUiLive(this._craftBillUi)) {
+            this._discardWorldUi("_craftBillUi");
+        }
+        const show = !!(this.craftMenuVisible && station && sys?.isAdded(station));
+        if (!show) {
+            this._craftBillUi?.btn?.setVisible?.(false);
+            this._craftBillUi?.rect?.disableInteractive?.();
+            return;
+        }
+        if (!this._craftBillUi) {
             this._craftBillUi = sys.makeWorldButton("Bills", () => {
                 if (this._craftStationThing) sys.openBills?.(this._craftStationThing);
             });
-            this._craftBillUi.btn.setDepth(250);
-            this._uiCam?.ignore(this._craftBillUi.btn);
+            this._placeCraftWorldBtn(this._craftBillUi.btn);
         }
         const bill = this._craftBillUi;
         if (!bill) return;
-        const show = !!(this.craftMenuVisible && station && sys?.isAdded(station));
-        bill.btn.setVisible(show);
-        if (!show) {
-            bill.rect?.disableInteractive?.();
-            return;
-        }
+        bill.btn.setVisible(true);
         bill.rect.setSize(bw, bh);
         bill.rect.setInteractive({ useHandCursor: true });
         if (bill.rect.input?.hitArea?.setTo) bill.rect.input.hitArea.setTo(0, 0, bw, bh);
@@ -8404,14 +9373,18 @@ class SceneMain extends SceneBase {
             gridW / 2 + gap, y, bw, pagerH, ">",
             page < pages - 1, () => this._shiftCraftPage(1), s
         );
-        const label = crispUiText(this.add.text(gridW / 2, y, `${page + 1} / ${pages}`, {
+        const stroke = typeof pixelUiStroke === "function" ? pixelUiStroke(this.uiScale || 1) : Math.max(2, Math.round(2 * s));
+        const label = this.add.text(gridW / 2, y, `${page + 1} / ${pages}`, {
             fontFamily: PIXEL_UI_FONT,
             fontSize: `${pixelUiFontSize(16, 1)}px`,
-            color: "#d4c4a8",
+            color: "#ffffff",
             stroke: "#000000",
-            strokeThickness: 2
-        }).setOrigin(0.5));
-        if (typeof applyPixelUiFont === "function") applyPixelUiFont(label, 16, s);
+            strokeThickness: stroke
+        }).setOrigin(0.5);
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(label, 16, this.uiScale || 1);
+        else label.setFontSize(`${pixelUiFontSize(16, this.uiScale || 1)}px`);
+        label.setStroke("#000000", stroke);
+        if (typeof crispUiText === "function") crispUiText(label);
         this.craftContainer.add(label);
     }
 
@@ -8421,7 +9394,8 @@ class SceneMain extends SceneBase {
         const OUTLINE = 0x2a2218;
         const OUTLINE_HOVER = 0xffffff;
         const OUTLINE_PRESS = 0xd4a84b;
-        const stroke = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
+        const strokeOf = () => (typeof pixelUiStroke === "function" ? pixelUiStroke(this.uiScale || 1) : 2);
+        const stroke = strokeOf();
         const rect = this.add.rectangle(x, y, bw, bh, BG, 1)
             .setStrokeStyle(stroke, OUTLINE);
         const text = crispUiText(this.add.text(x, y, label, {
@@ -8429,7 +9403,7 @@ class SceneMain extends SceneBase {
             fontSize: `${pixelUiFontSize(16, 1)}px`,
             color: "#d4c4a8"
         }).setOrigin(0.5));
-        if (typeof applyPixelUiFont === "function") applyPixelUiFont(text, 16, s);
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(text, 16, this.uiScale || 1);
         this.craftContainer.add(rect);
         this.craftContainer.add(text);
         if (!enabled) {
@@ -8441,16 +9415,16 @@ class SceneMain extends SceneBase {
         let hovering = false;
         let pressing = false;
         const paint = () => {
-            const stroke = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
+            const sw = strokeOf();
             if (pressing) {
                 rect.setFillStyle(BG_PRESS, 1);
-                rect.setStrokeStyle(stroke, OUTLINE_PRESS);
+                rect.setStrokeStyle(sw, OUTLINE_PRESS);
             } else if (hovering) {
                 rect.setFillStyle(BG, 1);
-                rect.setStrokeStyle(stroke, OUTLINE_HOVER);
+                rect.setStrokeStyle(sw, OUTLINE_HOVER);
             } else {
                 rect.setFillStyle(BG, 1);
-                rect.setStrokeStyle(stroke, OUTLINE);
+                rect.setStrokeStyle(sw, OUTLINE);
             }
         };
         rect.on("pointerover", () => { hovering = true; paint(); });
@@ -8496,9 +9470,8 @@ class SceneMain extends SceneBase {
             color: "#d4c4a8"
         }).setOrigin(0.5);
         this._craftTakeBtn = this.add.container(0, 0, [this._craftTakeRect, this._craftTakeText])
-            .setVisible(false)
-            .setDepth(250);
-        this._uiCam?.ignore(this._craftTakeBtn);
+            .setVisible(false);
+        this._placeCraftWorldBtn(this._craftTakeBtn);
 
         this._craftTakeHovering = false;
         this._craftTakePressing = false;
@@ -8510,7 +9483,7 @@ class SceneMain extends SceneBase {
                 : 2 / (this.worldZoom || 1);
             const rect = this._craftTakeRect;
             const text = this._craftTakeText;
-            if (!rect) return;
+            if (!rect?.active || !rect.geom) return;
             if (this._craftTakePressing) {
                 rect.setFillStyle(BG_PRESS, 1);
                 rect.setStrokeStyle(strokeW, OUTLINE_PRESS);
@@ -8543,7 +9516,7 @@ class SceneMain extends SceneBase {
     _layoutCraftTakeButton() {
         const btn = this._craftTakeBtn;
         const station = this._craftStationThing;
-        if (!btn) return;
+        if (!btn?.active || !this._craftTakeRect?.active || !this._craftTakeRect.geom) return;
         if (!this.craftMenuVisible || !station?.active) {
             this._craftTakeRect?.disableInteractive();
             btn.setVisible(false);
@@ -8726,7 +9699,11 @@ class SceneMain extends SceneBase {
         for (const chunk of this._loadedChunks || []) {
             if (!chunk.isLoaded) continue;
             for (const thing of chunk.things?.getChildren?.() || []) {
-                if (!thing.active || thing.meta?.id !== id) continue;
+                if (!thing.active) continue;
+                const have = thing.meta?.id;
+                if (typeof Place !== "undefined" && Place.countsAsThing
+                    ? !Place.countsAsThing(have, id)
+                    : have !== id) continue;
                 const dx = thing.x - px;
                 const dy = thing.y - py;
                 if (dx * dx + dy * dy <= r2) return true;
@@ -8736,7 +9713,9 @@ class SceneMain extends SceneBase {
     }
 
     nearbyCraftStationIds() {
-        const now = this.time?.now || 0;
+        const now = (typeof performance !== "undefined" && performance.now)
+            ? performance.now()
+            : (this.time?.now || 0);
         const px = this.player.x;
         const py = this.player.y;
         const cell = `${Math.round(px / 8)}:${Math.round(py / 8)}`;
@@ -8760,6 +9739,7 @@ class SceneMain extends SceneBase {
                 ids.push(id);
             }
         }
+        ids.sort();
         this._nearbyCraftAt = now;
         this._nearbyCraftCell = cell;
         this._nearbyCraftIds = ids;
@@ -8790,10 +9770,69 @@ class SceneMain extends SceneBase {
         return null;
     }
 
+    _openCraftStorage(pawn) {
+        const panel = this.storagePanel;
+        if (!panel?.visible || !panel.storage?.active) return null;
+        const store = panel.storage;
+        if (!store.inRange?.(pawn || this.player)) return null;
+        return store;
+    }
+
+    _countSlotsMatching(slots, match, who) {
+        if (!Array.isArray(slots) || !who?._stackMatchesCraft) return 0;
+        const hideStage = match?.hideStage || null;
+        const id = match?.id;
+        const wantClass = match?.toolClass || null;
+        if (!hideStage && !id) return 0;
+        let sum = 0;
+        for (const s of slots) {
+            if (!who._stackMatchesCraft(s, hideStage ? { hideStage } : { id, toolClass: wantClass })) continue;
+            sum += Math.max(0, Math.floor(Number(s.quantity) || 0));
+        }
+        return sum;
+    }
+
+    _craftIngredientHave(ingredient, pawn) {
+        const who = pawn || this.player;
+        let n = who.getNumMatchingItems?.(ingredient) || 0;
+        const store = this._openCraftStorage(who);
+        if (store) n += this._countSlotsMatching(store.entry?.slots, ingredient, who);
+        return n;
+    }
+
+    _loseStorageCraft(store, match, qty, who) {
+        if (!store || !(qty > 0) || !who?._stackMatchesCraft) return 0;
+        const slots = store.entry?.slots;
+        if (!Array.isArray(slots)) return 0;
+        let remaining = Math.max(0, Math.floor(Number(qty) || 0));
+        const hideStage = match?.hideStage || null;
+        const id = match?.id;
+        const wantClass = match?.toolClass || null;
+        const takeFrom = (requireClass) => {
+            for (let i = 0; i < slots.length && remaining > 0; i++) {
+                const s = slots[i];
+                if (!who._stackMatchesCraft(s, hideStage ? { hideStage } : { id })) continue;
+                if (requireClass && s.toolClass !== requireClass) continue;
+                if (!requireClass && wantClass && s.toolClass === wantClass) continue;
+                const have = Math.max(0, Math.floor(Number(s.quantity) || 0));
+                const take = Math.min(have, remaining);
+                if (!(take > 0)) continue;
+                s.quantity = have - take;
+                remaining -= take;
+                if (!(s.quantity > 0)) store.setSlot(i, null);
+                else store.setSlot(i, s);
+            }
+        };
+        if (hideStage) takeFrom(null);
+        else if (wantClass) takeFrom(wantClass);
+        else takeFrom(null);
+        return Math.max(0, Math.floor(Number(qty) || 0) - remaining);
+    }
+
     canCraft(recipe, pawn) {
         const who = pawn || this.player;
         if (!recipe.ingredients.every(
-            (ingredient) => who.getNumMatchingItems(ingredient) >= ingredient.qty
+            (ingredient) => this._craftIngredientHave(ingredient, who) >= ingredient.qty
         )) {
             return false;
         }
@@ -8825,16 +9864,19 @@ class SceneMain extends SceneBase {
         if (!this.canCraft(recipe, who)) return;
         // Dedicated MP: server consumes ingredients + grants/drops; YOU/snapshots update UI.
         // Do not mutate locally — that fought deferred YOU sync and spawned ghost ground piles.
-        if (this.isNet && this.net?.connected && !this.net.isLocal) {
+        if (this.simAuth()) {
             this._netSendMove?.(true);
+            const store = this._openCraftStorage(who);
             this.net.sendAction({
                 type: NetProtocol.Actions.CRAFT,
                 id: recipe.id,
-                pawnId: who?.pawnId
+                pawnId: who?.pawnId,
+                storageUid: store?.entry?.uid || null
             });
             return;
         }
         const item = this.getItem(recipe.id);
+        const store = this._openCraftStorage(who);
         // Tipped spears inherit quality from the leftmost matching tip in the hotbar
         let tipQuality = null;
         const tipIng = recipe.ingredients?.find((i) => i.toolClass === "spear_tip");
@@ -8846,7 +9888,12 @@ class SceneMain extends SceneBase {
                 break;
             }
         }
-        for (const ing of recipe.ingredients) who.loseMatchingItems(ing);
+        for (const ing of recipe.ingredients) {
+            const need = Math.max(0, Number(ing.qty) || 1);
+            const fromInv = who.loseMatchingItems(ing);
+            const left = Math.max(0, need - fromInv);
+            if (left > 0) this._loseStorageCraft(store, ing, left, who);
+        }
 
         this._consumeCraftTool(recipe, who);
 
@@ -8871,7 +9918,10 @@ class SceneMain extends SceneBase {
         const s = this.uiScale || 1;
         this.craft = this.add.image(44 * s, this.scale.height / 2, 'craft');
         this.craft.setInteractive({ cursor: 'pointer', pixelPerfect: true });
-        this.craft.on('pointerdown', () => this.toggleCraftMenu());
+        this.craft.on('pointerdown', (pointer) => {
+            if (pointer?.button != null && pointer.button !== 0) return;
+            this.toggleCraftMenu();
+        });
         this.craft.on('pointerover', () => {
             if (!this.craftMenuVisible) this.craft.setTexture('craft_hover');
         });
@@ -9008,10 +10058,8 @@ class SceneMain extends SceneBase {
         const ocx = Math.floor(wx / px);
         const ocy = Math.floor(wy / px);
         const r = Math.max(0, radius | 0);
-        if (this.net?.isLocal && this.net._pawn && Number.isFinite(wx) && Number.isFinite(wy)) {
-            this.net._pawn.x = wx;
-            this.net._pawn.y = wy;
-            this.net._kickInterest?.(true);
+        if (this.simAuth() && Number.isFinite(wx) && Number.isFinite(wy)) {
+            this._netSendMove?.(true);
         }
         const cells = [];
         for (let y = ocy - r; y <= ocy + r; y++) {
@@ -9030,7 +10078,7 @@ class SceneMain extends SceneBase {
                 }
                 const hasTiles = !!(ch.isGenerated || ch.meta?.tiles?.some?.((t) => t));
                 if (!hasTiles) {
-                    if (this.net?.isLocal) {
+                    if (this.simAuth()) {
                         waiting = true;
                         continue;
                     }
@@ -9042,7 +10090,7 @@ class SceneMain extends SceneBase {
                 }
             }
             if (!waiting && cells.every((c) => this.chunks[c.key]?.isLoaded)) return;
-            if (this.net?.isLocal) this.net._kickInterest?.(true);
+            if (this.simAuth()) this._netSendMove?.(true);
             await this._yieldWorldBoot();
         }
     }
@@ -9134,7 +10182,7 @@ class SceneMain extends SceneBase {
         leader._eatChannel = null;
         if (this.player === leader) this.hideChannelBar?.();
         this.corpsePanel?.close?.(true);
-        const dedicated = !!(this.isNet && this.net?.connected && !this.net.isLocal);
+        const dedicated = !!(this.simAuth());
         const spawnCorpse = opts.spawnCorpse !== false;
         // Dedicated: spawn a pending local corpse with a shared id so you can
         // see/loot it immediately; server adopts that id on DIE.
@@ -9162,10 +10210,8 @@ class SceneMain extends SceneBase {
                 leaderDead: true
             };
         }
-        if (this.isNet && this.net?.connected) {
-            if (this.net.isLocal) {
-                this.net.syncPawnFromClient?.(this._playerCharacterPartial());
-            } else if (spawnCorpse) {
+        if (this.simAuth()) {
+            if (spawnCorpse) {
                 this.net.sendAction({
                     type: NetProtocol.Actions.DIE,
                     corpseId: deathCorpse?.entry?.id || null,
@@ -9219,17 +10265,41 @@ class SceneMain extends SceneBase {
     }
 
     /**
-     * After physics: remember the true pose, then snap player + camera to the
-     * screen-pixel grid for rendering (1/zoom world units). Physics keeps using
-     * the unsnapped pose via restorePlayerPhysicsPos on preupdate.
-     * Use round (not floor) so +X/+Y and -X/-Y feel the same speed.
-     * Camera targets the sprite center (not feet / origin 0,1).
+     * After physics: remember the true pose, then snap camera scroll and
+     * on-screen pawns to integer screen pixels (1/zoom world units). Physics
+     * keeps using the unsnapped pose via restorePlayerPhysicsPos on preupdate.
+     * Camera scroll must be on the same grid as the sprites — otherwise an odd
+     * viewport leaves everyone on a half-pixel and NEAREST shimmers while you
+     * walk. Camera targets the sprite center (not feet / origin 0,1).
      */
     syncCameraToPlayer() {
         const player = this.player;
         const cam = this.cameras?.main;
         if (!player?.active || !cam) return;
         const z = this.worldZoom || cam.zoom || 1;
+        const save = (p) => {
+            if (!p?.active) return;
+            p._physX = p.x;
+            p._physY = p.y;
+        };
+        for (const p of this.party || []) save(p);
+        if (!(this.party || []).includes(player)) save(player);
+        for (const s of this.settlers || []) save(s);
+        for (const w of this.partySys?.wanderers || []) save(w);
+
+        const c = typeof player.bodyCenter === "function"
+            ? player.bodyCenter()
+            : { x: player.x, y: player.y };
+        cam.centerOn(
+            Math.round(c.x * z) / z,
+            Math.round(c.y * z) / z
+        );
+        if (typeof snapCameraScrollToPixels === "function") snapCameraScrollToPixels(cam, z);
+        else {
+            cam.scrollX = Math.round(cam.scrollX * z) / z;
+            cam.scrollY = Math.round(cam.scrollY * z) / z;
+        }
+
         const view = cam.worldView;
         const pad = 64;
         const onScreen = (p) => {
@@ -9239,25 +10309,17 @@ class SceneMain extends SceneBase {
         };
         const snap = (p) => {
             if (!p?.active) return;
-            p._physX = p.x;
-            p._physY = p.y;
             if (p !== player && !onScreen(p)) return;
-            const x = Math.round(p.x * z) / z;
-            const y = Math.round(p.y * z) / z;
-            if (p.x !== x || p.y !== y) p.setPosition(x, y);
+            const s = typeof snapWorldToScreenPixel === "function"
+                ? snapWorldToScreenPixel(cam, p.x, p.y, z)
+                : { x: Math.round(p.x * z) / z, y: Math.round(p.y * z) / z };
+            if (p.x !== s.x || p.y !== s.y) p.setPosition(s.x, s.y);
             p.syncFxRoot?.();
         };
         for (const p of this.party || []) snap(p);
         if (!(this.party || []).includes(player)) snap(player);
         for (const s of this.settlers || []) snap(s);
         for (const w of this.partySys?.wanderers || []) snap(w);
-        const c = typeof player.bodyCenter === "function"
-            ? player.bodyCenter()
-            : { x: player.x, y: player.y };
-        cam.centerOn(
-            Math.round(c.x * z) / z,
-            Math.round(c.y * z) / z
-        );
     }
 
     respawnPlayer(here) {
@@ -9283,13 +10345,9 @@ class SceneMain extends SceneBase {
         this.closeOpenMenus();
         this.syncCameraToPlayer();
         this.healthPanel?.refresh?.();
-        if (this.isNet && this.net?.connected) {
-            if (!this.net.isLocal) {
-                this.net.sendAction({ type: NetProtocol.Actions.RESPAWN });
-                this._netAwaitPoseFromYou = !here;
-            } else {
-                this.net.syncPawnFromClient?.(this._playerCharacterPartial());
-            }
+        if (this.simAuth()) {
+            this.net.sendAction({ type: NetProtocol.Actions.RESPAWN });
+            this._netAwaitPoseFromYou = !here;
             this._netSendMove(true);
         }
     }
@@ -9308,6 +10366,7 @@ class SceneMain extends SceneBase {
         if (this.settlementPanel?.visible) this.settlementSys?.closePanel?.();
         if (this.billsPanel?.visible) this.billsPanel.close();
         if (this.storageFilterPanel?.visible) this.storageFilterPanel.close();
+        if (this.fuelFilterPanel?.visible) this.fuelFilterPanel.close();
         if (this.combatLog?.composing) this.combatLog.closeChat(false);
     }
 
@@ -9322,7 +10381,8 @@ class SceneMain extends SceneBase {
             this.leanToPanel?.visible ||
             this.settlementPanel?.visible ||
             this.billsPanel?.visible ||
-            this.storageFilterPanel?.visible
+            this.storageFilterPanel?.visible ||
+            this.fuelFilterPanel?.visible
         );
     }
 
@@ -9538,6 +10598,7 @@ class SceneMain extends SceneBase {
         }
 
         this._gamePaused = true;
+        this._holdChatFade();
         this._pausePage = "root";
         if (this._isSingleplayerSession()) {
             this.net?.setPaused?.(true);
@@ -9696,7 +10757,10 @@ class SceneMain extends SceneBase {
             height: Math.round(16 * L.s),
             scale: L.s,
             value: Settings.loadMusicVolume(),
-            onChange: (n) => Settings.saveMusicVolume(n)
+            onChange: (n) => {
+                Settings.saveMusicVolume(n);
+                if (typeof GameMusic !== "undefined") GameMusic.applyVolume();
+            }
         });
         const back = this._pauseMenuButton(w / 2, L.backY, "Back", () => {
             this._pausePage = "root";
@@ -9714,6 +10778,7 @@ class SceneMain extends SceneBase {
 
     _closePauseMenu() {
         if (!this._gamePaused) return;
+        this._releaseChatFade();
         this._gamePaused = false;
         this._pausePage = "root";
         if (this._isSingleplayerSession()) {
@@ -9726,6 +10791,47 @@ class SceneMain extends SceneBase {
         try {
             if (this.game?.canvas) this.game.canvas.style.cursor = "default";
         } catch (_) {}
+    }
+
+    /** Clock used by combat-log / speech-bubble fade. Frozen while the pause menu is up. */
+    _chatFadeNow() {
+        if (this._chatFadeHold != null) return this._chatFadeHold;
+        return this.time?.now || 0;
+    }
+
+    _holdChatFade() {
+        if (this._chatFadeHold != null) return;
+        this._chatFadeHold = this.time?.now || 0;
+    }
+
+    _releaseChatFade() {
+        if (this._chatFadeHold == null) return;
+        const now = this.time?.now || 0;
+        const dt = now - this._chatFadeHold;
+        this._chatFadeHold = null;
+        if (!(dt > 0)) return;
+        this._shiftChatFade(dt);
+    }
+
+    _shiftChatFade(dt) {
+        const n = Number(dt);
+        if (!(n > 0)) return;
+        this.combatLog?.shiftFade?.(n);
+        const seen = new Set();
+        const bumpPawn = (p) => {
+            if (!p || seen.has(p)) return;
+            seen.add(p);
+            const until = Number(p.chatBubbleUntil);
+            if (Number.isFinite(until) && until > 0) p.chatBubbleUntil = until + n;
+        };
+        bumpPawn(this.player);
+        for (const p of this.party || []) bumpPawn(p);
+        for (const s of this.settlers || []) bumpPawn(s);
+        for (const w of this.partySys?.wanderers || []) bumpPawn(w);
+        for (const entry of this.remotePlayers?.values?.() || []) {
+            const until = Number(entry.bubbleUntil);
+            if (Number.isFinite(until) && until > 0) entry.bubbleUntil = until + n;
+        }
     }
 
     _layoutPauseMenu() {
@@ -9912,6 +11018,10 @@ class SceneMain extends SceneBase {
             this.storageFilterPanel.handleEsc();
             return;
         }
+        if (this.fuelFilterPanel?.visible) {
+            this.fuelFilterPanel.handleEsc();
+            return;
+        }
         if (this.combatLog?.composing) return; // CombatLog closes chat
         if (this.knappingPanel?.visible) {
             this.knappingPanel.finishOrClose?.();
@@ -9949,7 +11059,7 @@ class SceneMain extends SceneBase {
         this.healthPanel.open();
     }
 
-    /** Station recipe list is a world UI; the C-key hand list is a side menu. */
+    /** Close the station-filtered craft list and Take / Add / Bills chrome. */
     closeCraftStationMenu() {
         if (!this._craftFromStation && !this._craftStationThing) return;
         const thing = this._craftStationThing;
@@ -9960,9 +11070,9 @@ class SceneMain extends SceneBase {
     }
 
     _hideCraftStationChrome() {
-        this._craftSettleUi?.btn.setVisible(false);
+        this._craftSettleUi?.btn?.setVisible?.(false);
         this._craftSettleUi?.rect?.disableInteractive?.();
-        this._craftBillUi?.btn.setVisible(false);
+        this._craftBillUi?.btn?.setVisible?.(false);
         this._craftBillUi?.rect?.disableInteractive?.();
         this._layoutCraftTakeButton();
     }
@@ -9976,6 +11086,33 @@ class SceneMain extends SceneBase {
         return !!(a && b && a === b);
     }
 
+    _stationInteractVisible(thing) {
+        if (!thing?.active) return false;
+        if (this.craftMenuVisible && this._craftFromStation && this._isSameCraftStation(thing)) {
+            return true;
+        }
+        const bills = this.billsPanel;
+        if (bills?.visible && bills.thing) {
+            if (bills.thing === thing) return true;
+            const a = bills.thing.entry?.uid;
+            const b = thing.entry?.uid;
+            if (a && b && a === b) return true;
+        }
+        return false;
+    }
+
+    _refreshStationInteractMarks(...things) {
+        const seen = new Set();
+        const sync = (t) => {
+            if (!t || seen.has(t)) return;
+            seen.add(t);
+            t._syncInteractMark?.();
+        };
+        for (const t of things) sync(t);
+        sync(this._craftStationThing);
+        sync(this.billsPanel?.thing);
+    }
+
     _liveCraftStation(station) {
         if (station?.active) return station;
         const uid = station?.entry?.uid;
@@ -9984,11 +11121,17 @@ class SceneMain extends SceneBase {
 
     closeCraftMenu() {
         const was = this.craftMenuVisible;
+        const station = this._craftStationThing;
         this.craftMenuVisible = false;
         this._craftStationThing = null;
         this._craftFromStation = false;
+        this._craftMenuSig = null;
         this.craftContainer?.setVisible(false);
         this._hideCraftStationChrome();
+        this._hostCraftMenu?.();
+        this._refreshStationInteractMarks(station);
+        if (this._isUnderCraftMenu?.(this._tooltipTarget)) this.hideTooltip?.();
+        if (this._isUnderCraftMenu?.(this._hoverTarget)) this._hoverTarget = null;
         if (!was) return;
         const p = this.input.activePointer;
         const hovering = Phaser.Geom.Rectangle.Contains(this.craft.getBounds(), p.x, p.y);
@@ -10000,8 +11143,12 @@ class SceneMain extends SceneBase {
     toggleCraftMenu() {
         if (this.knappingPanel?.visible) return;
         if (this.settlementSys?.isNaming?.()) return;
+        const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+        if (now - (this._craftToggleAt || 0) < 80) return;
+        this._craftToggleAt = now;
         if (this.craftMenuVisible) {
-            this.closeCraftMenu();
+            if (this._craftFromStation) this.closeCraftStationMenu();
+            else this.closeCraftMenu();
             return;
         }
         if (this.equipmentPanel?.visible) this.equipmentPanel.close();
@@ -10027,15 +11174,18 @@ class SceneMain extends SceneBase {
             this.closeCraftStationMenu();
             return;
         }
+        if (this.craftMenuVisible && !this._craftFromStation) this.closeCraftMenu();
         if (this.equipmentPanel?.visible) this.equipmentPanel.close();
         if (this.healthPanel?.visible) this.healthPanel.close();
         if (this.settlementPanel?.visible) this.settlementSys?.closePanel?.();
         if (this.corpsePanel?.visible) this.corpsePanel.close();
-        if (this.campfirePanel?.visible) this.campfirePanel.close();
         if (this.storagePanel?.visible) this.storagePanel.close();
+        if (this.campfirePanel?.visible) this.campfirePanel.close();
         if (this.leanToPanel?.visible) this.leanToPanel.close();
         if (this.billsPanel?.visible && this.billsPanel.thing !== thing) this.billsPanel.close();
         if (this.storageFilterPanel?.visible) this.storageFilterPanel.close();
+        if (this.fuelFilterPanel?.visible) this.fuelFilterPanel.close();
+        const prev = this._craftStationThing;
         this._craftStationThing = thing;
         this._craftFromStation = true;
         this._craftPage = 0;
@@ -10044,12 +11194,17 @@ class SceneMain extends SceneBase {
         this.positionCraftMenu();
         this.craftContainer.setVisible(true);
         this.craft.setTexture('craft_open');
+        this._refreshStationInteractMarks(prev, thing);
     }
 
     _updateCraftStationMenu() {
         if (this._craftFromStation || this._craftStationThing) {
             const station = this._liveCraftStation(this._craftStationThing);
-            if (station && station !== this._craftStationThing) this._craftStationThing = station;
+            if (station && station !== this._craftStationThing) {
+                this._craftStationThing = station;
+                this._layoutCraftTakeButton();
+                this._layoutCraftSettle();
+            }
             if (!this.craftMenuVisible || !station?.active || !station.inRange?.()) {
                 this.closeCraftStationMenu();
                 return;
@@ -10314,6 +11469,16 @@ class SceneMain extends SceneBase {
             this.tooltipText.setPadding(this._tooltipPadding);
             this.tooltipText.setStroke("#000000", Math.max(2, Math.round(2 * s)));
             if (typeof crispUiText === "function") crispUiText(this.tooltipText);
+            if (this.tooltipSub) {
+                if (typeof applyPixelUiFont === "function") applyPixelUiFont(this.tooltipSub, 16, s);
+                else this.tooltipSub.setFontSize(`${pixelUiFontSize(16, s)}px`);
+                this.tooltipSub.setStroke("#000000", Math.max(2, Math.round(2 * s)));
+                if (typeof crispUiText === "function") crispUiText(this.tooltipSub);
+            }
+            if (this.tooltip?.visible) {
+                this._tooltipDrawn = false;
+                this.refreshTooltip?.();
+            }
         }
 
         const pad = Math.round(8 * s);
@@ -10355,6 +11520,7 @@ class SceneMain extends SceneBase {
             this.settlementPanel?.layout?.();
             this.billsPanel?.layout?.();
             this.storageFilterPanel?.layout?.();
+            this.fuelFilterPanel?.layout?.();
             this.settlementSys?.layoutHud?.();
             this._layoutFpsMeter?.();
         }
@@ -10451,7 +11617,7 @@ class SceneMain extends SceneBase {
             return;
         }
 
-        // Calculate player chunk (union of all party pawns so scouts stay simulated)
+        // Camera pawn chunk. Companions no longer stream a second neighborhood.
         const anchors = (this.party && this.party.length)
             ? this.party.filter((p) => p?.active)
             : (this.player ? [this.player] : []);
@@ -10481,7 +11647,7 @@ class SceneMain extends SceneBase {
         } else if (snapped.length) {
             stream.push(snapped[0]);
         }
-        for (const a of snapped) {
+        for (const a of stream) {
             for (let x = a.x - genR; x <= a.x + genR; x++) {
                 for (let y = a.y - genR; y <= a.y + genR; y++) {
                     const key = this.getKey(x, y);
@@ -10571,24 +11737,27 @@ class SceneMain extends SceneBase {
         this.settlementSys?.update?.(time, delta);
         this.updatePlaceGhost();
         if (this.isNet) {
+            if (this.net?.isLocal && !this._worldBooting) this.net.tickFromScene?.(delta);
             this._netSendMove();
             this._netUpdateRemotes(delta);
             this._netUpdateMobs(delta);
         }
         this._tickSleepZzz?.(delta);
+        this._tickRestClock?.(delta);
         this.combatLog?.update?.();
         this.updateFpsMeter?.(delta);
         this.updateLocationDebug?.();
         // In case a YOU arrived while knapping/craft was open and close missed a flush
         this._flushPendingYouGear?.();
 
-        // Update living mobs (reverse: AI may destroy self on chunk boundary)
-        // Dedicated MP: wildlife is server-owned; LivingMobs only for LocalSim / offline.
-        const mobs = this.mobs.getChildren();
-        for (let i = mobs.length - 1; i >= 0; i--) {
-            const mob = mobs[i];
-            if (mob?.active && typeof mob.update === "function") {
-                mob.update(time, delta);
+        // Wildlife: SimWorld owns AI. Snapshot puppets live in netMobs.
+        if (!this.simAuth()) {
+            const mobs = this.mobs.getChildren();
+            for (let i = mobs.length - 1; i >= 0; i--) {
+                const mob = mobs[i];
+                if (mob?.active && typeof mob.update === "function") {
+                    mob.update(time, delta);
+                }
             }
         }
         const drops = this.droppedItems.getChildren();

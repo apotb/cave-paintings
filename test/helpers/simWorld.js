@@ -1,6 +1,6 @@
 const os = require("os");
 const path = require("path");
-const { SimWorld, chunkKey } = require("../../server/SimWorld");
+const { SimWorld, chunkKey } = require("../../shared/sim/SimWorld");
 const Protocol = require("../../shared/protocol");
 const { loadDefs } = require("./load");
 

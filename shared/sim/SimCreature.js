@@ -1,16 +1,30 @@
 /**
- * Headless server creature with shared Body anatomy + melee.
- * Used for both players and mobs in dedicated MP.
+ * Headless creature with shared Body anatomy + melee.
+ * Used for players and mobs in SimWorld (SP host + dedicated).
  */
-const path = require("path");
-const GameMath = require("../shared/gameMath");
-const DataStore = require("../shared/DataStore");
-const Spoil = require("../shared/spoil");
-const { Body } = require("../shared/body/Body");
-const Capacities = require("../shared/body/Capacities");
-const BodyCombat = require("../shared/body/Combat");
-const MeleeMath = require("../shared/melee");
-const Party = require("../shared/party");
+(function (root, factory) {
+    if (typeof module === "object" && module.exports) {
+        const GameMath = require("../gameMath");
+        const DataStore = require("../DataStore");
+        const Spoil = require("../spoil");
+        const BodyMod = require("../body/Body");
+        const Capacities = require("../body/Capacities");
+        const BodyCombat = require("../body/Combat");
+        const MeleeMath = require("../melee");
+        const Party = require("../party");
+        module.exports = factory(
+            GameMath, DataStore, Spoil, BodyMod, Capacities, BodyCombat, MeleeMath, Party
+        );
+    } else {
+        root.SimCreatureAPI = factory(
+            root.GameMath, root.DataStore, root.Spoil || root.NetSpoil,
+            { Body: root.Body }, root.Capacities, root.BodyCombat, root.MeleeMath, root.Party
+        );
+    }
+})(typeof globalThis !== "undefined" ? globalThis : this, function (
+    GameMath, DataStore, Spoil, BodyMod, Capacities, BodyCombat, MeleeMath, Party
+) {
+    const { Body } = BodyMod;
 
 const TILE = 16;
 
@@ -80,8 +94,8 @@ function knapWeaponMetaFromStack(baseMeta, stack) {
 
 function ensureData(dataStore) {
     const ds = dataStore || DataStore;
-    if (!ds.isReady?.()) {
-        ds.loadFromDisk(path.resolve(__dirname, ".."));
+    if (!ds.isReady?.() && typeof ds.loadFromDisk === "function") {
+        ds.loadFromDisk();
     }
     return ds;
 }
@@ -97,6 +111,16 @@ function makeCtx(dataStore, extras = {}) {
         player: extras.player || null,
         tileSize: TILE,
         ...extras
+    };
+}
+
+/** Sim/net pose is feet (bottom-left). Corpses and prone sprites use the body center. */
+function feetToBodyCenter(x, y, width, height) {
+    const w = Number(width) > 0 ? Number(width) : 16;
+    const h = Number(height) > 0 ? Number(height) : 16;
+    return {
+        x: (Number(x) || 0) + w * 0.5,
+        y: (Number(y) || 0) - h * 0.5
     };
 }
 
@@ -170,10 +194,7 @@ class SimCreature {
 
     bodyCenter() {
         // Net/sim pose is always feet / bottom-left, even while downed.
-        return {
-            x: this.x + this.width * 0.5,
-            y: this.y - this.height * 0.5
-        };
+        return feetToBodyCenter(this.x, this.y, this.width, this.height);
     }
 
     hurtbox(pad = 0) {
@@ -249,11 +270,13 @@ class SimCreature {
             (meta.key || meta.id || stack?.knapIcon)
         );
         if (!useWeaponArt) {
-            return {
+            const art = {
                 unarmed: true,
                 range: Number(attack?.range) || 4,
                 max: this.attackMax || 0
             };
+            if (Number.isFinite(attack?.color)) art.color = attack.color >>> 0;
+            return art;
         }
         return {
             unarmed: false,
@@ -326,6 +349,7 @@ class SimCreature {
         this.ctx?.sim?._noteHuntHit?.(source, this);
         this.capacities = new Capacities(this.anatomy);
         this._prone = this.isImmobile() || this.isIncapacitated();
+        if (this._prone) this._endAttack();
         if (this._restWalk) this._restWalk = null;
         this.ctx?.sim?._onSleepCombatHit?.(this, source);
         if (this._dead) return;
@@ -422,7 +446,7 @@ class SimCreature {
      * @returns {boolean}
      */
     startMeleeAttack(angle) {
-        if (this._dead || this.isAttacking() || this.isIncapacitated() || this._resting) return false;
+        if (this._dead || this.isAttacking() || this.isIncapacitated() || this.isImmobile() || this._prone || this._resting) return false;
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
 
@@ -495,6 +519,8 @@ class SimCreature {
         this.attackTimer = durationMs;
         this.attackAngle = ang;
         this.attackHitSet = new Set();
+        this._attackWoreHeld = false;
+        this._attackChoppedTree = false;
         this.facing = this.facingFromAngle(ang);
         this.attackArt = this.getAttackArt();
         return true;
@@ -641,6 +667,7 @@ class SimCreature {
             this.onBodyFatal(null, "capacity");
         }
         this._prone = !this._dead && (this.isImmobile() || this.isIncapacitated());
+        if (this._prone) this._endAttack();
         return this.capacities;
     }
 }
@@ -704,16 +731,18 @@ function createMobCreature(entry, def, dataStore, extras = {}) {
     return creature;
 }
 
-module.exports = {
-    SimCreature,
-    createPlayerCreature,
-    createMobCreature,
-    ensureData,
-    makeCtx,
-    BodyCombat,
-    Capacities,
-    Body,
-    GameMath,
-    DataStore,
-    MeleeMath
-};
+    return {
+        SimCreature,
+        feetToBodyCenter,
+        createPlayerCreature,
+        createMobCreature,
+        ensureData,
+        makeCtx,
+        BodyCombat,
+        Capacities,
+        Body,
+        GameMath,
+        DataStore,
+        MeleeMath
+    };
+});

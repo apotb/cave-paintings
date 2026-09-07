@@ -30,6 +30,19 @@ class SettlementSystem {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         this.list = (world?.settlements || []).map((s) => (S ? S.ensureSettlement(s) : s));
         this.scene.settlers = this.scene.settlers || [];
+        this.rebindOpenPanels();
+    }
+
+    rebindOpenPanels() {
+        const bind = (panel) => {
+            if (!panel?.visible || !panel.settle) return;
+            const next = this.byId(panel.settle.id);
+            if (next) panel.settle = next;
+        };
+        bind(this.scene.settlementPanel);
+        bind(this.scene.billsPanel);
+        bind(this.scene.storageFilterPanel);
+        bind(this.scene.fuelFilterPanel);
     }
 
     persistTo(world) {
@@ -91,6 +104,7 @@ class SettlementSystem {
         scene.party = (scene.party || []).filter((p) => p !== pawn);
         pawn.role = "settler";
         pawn.homeSettlementId = snap.homeSettlementId || null;
+        if (typeof syncCreatureInputHit === "function") syncCreatureInputHit(pawn);
         if (!scene.settlers) scene.settlers = [];
         scene.settlers.push(pawn);
         scene.partyPanel?.refresh?.();
@@ -234,7 +248,10 @@ class SettlementSystem {
             if (!S || !S.inRange(settle, t.x, t.y, ts)) return;
             if (t.meta?.lootable) loot.push(t);
             const def = this.scene.getThing?.(t.entry?.id) || t.meta;
-            if (typeof Chop !== "undefined" && Chop.stillChoppable?.(def, t.entry)) chop.push(t);
+            if (typeof Chop !== "undefined" && Chop.stillChoppable?.(def, t.entry)
+                && !S?.chopSkipsTree?.(t.entry?.id || def?.id, def, t.entry)) {
+                chop.push(t);
+            }
         }, settle);
         this._worldCache = { id: settle.id, at: now, loot, chop, drops: this._collectDrops(settle, S, ts) };
         return this._worldCache;
@@ -362,8 +379,6 @@ class SettlementSystem {
             if (!e) continue;
             n += S.countInSlots(e.slots, itemId);
             n += S.countInSlots(e.fuel, itemId);
-            if (e.cook?.id === itemId) n += S.stackQty(e.cook);
-            n += S.countInSlots(e.simmer, itemId);
         }
         return n;
     }
@@ -415,7 +430,7 @@ class SettlementSystem {
         this._showNamePrompt((name) => {
             const scene = this.scene;
             const info = scene._heldPlaceableDef?.();
-            if (scene.isNet && scene.net?.connected && !scene.net.isLocal) {
+            if (scene.simAuth()) {
                 scene._netSendMove?.(true);
                 scene.net.sendAction({
                     type: NetProtocol.Actions.SETTLEMENT,
@@ -455,7 +470,7 @@ class SettlementSystem {
             `min-width:${Math.round(220 * s)}px`
         ].join(";");
         const label = document.createElement("div");
-        label.textContent = "Name your settlement";
+        label.textContent = String(opts.title || "Name your settlement");
         label.style.cssText = [
             "color:#d4c4a8",
             "font-family:PrimaryFont,monospace",
@@ -464,8 +479,13 @@ class SettlementSystem {
         ].join(";");
         const placeholder = String(opts.placeholder || "").trim() || "Camp";
         const input = document.createElement("input");
-        input.maxLength = (typeof Settlement !== "undefined" && Settlement.NAME_MAX) || 24;
+        input.maxLength = Number(opts.maxLength) > 0
+            ? Math.floor(Number(opts.maxLength))
+            : ((typeof Settlement !== "undefined" && Settlement.NAME_MAX) || 24);
         input.placeholder = placeholder;
+        if (opts.value != null && String(opts.value).trim()) {
+            input.value = String(opts.value).trim().slice(0, input.maxLength);
+        }
         input.style.cssText = [
             "width:100%",
             "box-sizing:border-box",
@@ -538,7 +558,7 @@ class SettlementSystem {
             if (ok) onOk?.(raw || placeholder);
         };
         row.appendChild(mk("Cancel", () => finish(false)));
-        row.appendChild(mk("Found", () => finish(true)));
+        row.appendChild(mk(String(opts.confirm || "Found"), () => finish(true)));
         // Stop bubble so Phaser (window, non-capture) never sees WASD / C / E / etc.
         for (const ev of ["keydown", "keyup", "keypress"]) {
             input.addEventListener(ev, (e) => {
@@ -831,7 +851,7 @@ class SettlementSystem {
             stone.destroy();
         }
         scene.settlementPanel?.close?.();
-        const dedicated = !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
+        const dedicated = !!(scene.simAuth());
         if (!dedicated) {
             scene.combatLog?.push(`${settle.name} has been destroyed!`, {
                 color: (typeof CombatLog !== "undefined" && CombatLog.COLOR_SETTLER) || "#7ec8ff"
@@ -865,6 +885,7 @@ class SettlementSystem {
         scene.party = scene.party.filter((p) => p !== pawn);
         pawn.role = "settler";
         pawn.homeSettlementId = target.id;
+        if (typeof syncCreatureInputHit === "function") syncCreatureInputHit(pawn);
         pawn._netTx = pawn.x;
         pawn._netTy = pawn.y;
         pawn._netFromX = pawn.x;
@@ -879,7 +900,7 @@ class SettlementSystem {
         scene.net?._pullFromScene?.();
         scene.partyPanel?.refresh?.();
         scene.settlementPanel?.refresh?.();
-        scene.combatLog?.push(`${pawn.displayName?.() || pawn.pawnName} was dropped off at ${target.name}`);
+        this._logPawnSettle(pawn, "was dropped off at", target.name);
         return true;
     }
 
@@ -891,11 +912,14 @@ class SettlementSystem {
             scene.combatLog?.push("Party is full");
             return false;
         }
+        const from = settle || this.byId(pawn.homeSettlementId);
+        const fromName = from?.name || "";
         this.sendNet("pick", { pawnId: pawn.pawnId });
         scene.partySys?.adoptSettler?.(pawn);
         scene.partyPanel?.refresh?.();
         scene.settlementPanel?.refresh?.();
-        scene.combatLog?.push(`${pawn.displayName?.() || pawn.pawnName} joins the traveling party`);
+        if (fromName) this._logPawnSettle(pawn, "was picked up from", fromName);
+        else this._logPawnSettle(pawn, "joins the traveling party", "");
         return true;
     }
 
@@ -921,7 +945,7 @@ class SettlementSystem {
             pawn.setVelocity?.(0, 0);
         }
         scene.settlementPanel?.refresh?.();
-        scene.combatLog?.push(`${pawn.displayName?.() || pawn.pawnName} is bound for ${dest.name}`);
+        this._logPawnSettle(pawn, "is bound for", dest.name);
         return true;
     }
 
@@ -955,7 +979,7 @@ class SettlementSystem {
         if (!target.stationUids.includes(uid)) target.stationUids.push(uid);
         this.bumpWorkCache();
         this.sendNet("addStation", { uid, settlementId: target.id });
-        this.scene.combatLog?.push(`Added ${this._stationLabel(thing)} to ${target.name}`);
+        this._logStationSettle("Added", this._stationLabel(thing), "to", target.name);
         this.scene.settlementPanel?.refresh?.();
         return true;
     }
@@ -963,11 +987,12 @@ class SettlementSystem {
     removeStation(uid, settle, thing) {
         const target = settle || this.here(this.scene.player);
         if (!target || !uid) return false;
-        target.stationUids = (target.stationUids || []).filter((u) => u !== uid);
-        if (target.bills) delete target.bills[uid];
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (S?.removeStation) S.removeStation(target, uid);
+        else target.stationUids = (target.stationUids || []).filter((u) => u !== uid);
         this.bumpWorkCache();
         this.sendNet("removeStation", { uid, settlementId: target.id });
-        this.scene.combatLog?.push(`Removed ${this._stationLabel(thing)} from ${target.name}`);
+        this._logStationSettle("Removed", this._stationLabel(thing), "from", target.name);
         this.scene.settlementPanel?.refresh?.();
         return true;
     }
@@ -986,6 +1011,8 @@ class SettlementSystem {
         if (bills?.visible && (bills.uid === uid || bills.thing?.entry?.uid === uid)) bills.close();
         const filt = this.scene.storageFilterPanel;
         if (filt?.visible && filt.thing?.entry?.uid === uid) filt.close();
+        const fuel = this.scene.fuelFilterPanel;
+        if (fuel?.visible && fuel.thing?.entry?.uid === uid) fuel.close();
         this.scene.settlementPanel?.refresh?.();
         return true;
     }
@@ -1194,8 +1221,21 @@ class SettlementSystem {
     rename(settle, name) {
         if (!settle) return;
         const S = typeof Settlement !== "undefined" ? Settlement : null;
-        settle.name = S ? S.clampName(name) : String(name || "Camp").slice(0, 24);
-        this.sendNet("rename", { settlementId: settle.id, name: settle.name });
+        const from = S ? S.clampName(settle.name) : String(settle.name || "Camp").slice(0, 24);
+        const to = S ? S.clampName(name) : String(name || "Camp").slice(0, 24);
+        if (this.sendNet("rename", { settlementId: settle.id, name: to })) {
+            settle.name = to;
+            this.scene.settlementPanel?.refresh?.();
+            return;
+        }
+        if (from === to) {
+            this.scene.settlementPanel?.refresh?.();
+            return;
+        }
+        settle.name = to;
+        const camp = (typeof CombatLog !== "undefined" && CombatLog.COLOR_SETTLER) || "#7ec8ff";
+        const line = S?.renameChat?.(from, to, camp);
+        if (line) this.scene.combatLog?.push(line.text, { segments: line.segments });
         this.scene.settlementPanel?.refresh?.();
     }
 
@@ -1230,6 +1270,8 @@ class SettlementSystem {
         if (!thing?.entry?.uid) return false;
         const settle = this.here(this.scene.player);
         if (!this.canManage(settle) || !this.isAdded(thing)) return false;
+        this.scene.storageFilterPanel?.close();
+        this.scene.fuelFilterPanel?.close();
         this.scene.billsPanel?.open(settle, thing);
         return true;
     }
@@ -1238,7 +1280,19 @@ class SettlementSystem {
         if (!thing?.entry?.uid) return false;
         const settle = this.here(this.scene.player);
         if (!this.canManage(settle) || !this.isAdded(thing)) return false;
+        this.scene.billsPanel?.close();
+        this.scene.fuelFilterPanel?.close();
         this.scene.storageFilterPanel?.open(settle, thing);
+        return true;
+    }
+
+    openFuelFilter(thing) {
+        if (!thing?.entry?.uid) return false;
+        const settle = this.here(this.scene.player);
+        if (!this.canManage(settle) || !this.isAdded(thing)) return false;
+        this.scene.billsPanel?.close();
+        this.scene.storageFilterPanel?.close();
+        this.scene.fuelFilterPanel?.open(settle, thing);
         return true;
     }
 
@@ -1268,6 +1322,7 @@ class SettlementSystem {
             ? pixelUiWorldStroke(scene)
             : 2 / (scene.worldZoom || 1));
         const paint = () => {
+            if (!rect?.active || !rect.geom) return;
             const sw = strokeW();
             if (ui._pressing) {
                 rect.setFillStyle(BG_PRESS, 1);
@@ -1337,6 +1392,7 @@ class SettlementSystem {
                 ? pixelUiWorldStroke(scene)
                 : 2 / (scene.worldZoom || 1)));
         const paint = () => {
+            if (!rect?.active || !rect.geom) return;
             const sw = strokeW();
             if (ui._added) {
                 if (ui._pressing) {
@@ -1361,6 +1417,7 @@ class SettlementSystem {
             }
         };
         const layoutIcon = () => {
+            if (!icon?.active) return;
             const n = ui._side;
             const iw = icon.width || 16;
             const pad = Math.max(4, n * 0.22);
@@ -1378,13 +1435,22 @@ class SettlementSystem {
             if (scene._tooltipTarget === rect) scene.refreshTooltip?.();
         };
         ui.setSize = (side) => {
+            if (!rect?.active || !rect.geom) return;
             const n = Math.max(8, Number(side) || size);
+            if (ui._side === n && rect.input) {
+                if (rect.input.hitArea?.setTo) rect.input.hitArea.setTo(0, 0, n, n);
+                else if (rect.input.hitArea?.setSize) rect.input.hitArea.setSize(n, n);
+                layoutIcon();
+                paint();
+                return;
+            }
             ui._side = n;
             rect.setSize(n, n);
             if (rect.input) {
-                rect.setInteractive({ useHandCursor: true });
                 if (rect.input.hitArea?.setTo) rect.input.hitArea.setTo(0, 0, n, n);
                 else if (rect.input.hitArea?.setSize) rect.input.hitArea.setSize(n, n);
+            } else {
+                rect.setInteractive({ useHandCursor: true });
             }
             layoutIcon();
             paint();
@@ -1394,7 +1460,15 @@ class SettlementSystem {
             paint();
             scene.showTooltip?.(tipText, pointer.x, pointer.y, rect);
         });
-        rect.on("pointerout", () => {
+        rect.on("pointerout", (pointer) => {
+            if (pointer) {
+                const cam = scene.cameras?.main;
+                const pt = ui._screenUi || !cam
+                    ? { x: pointer.x, y: pointer.y }
+                    : cam.getWorldPoint(pointer.x, pointer.y);
+                const b = rect.getBounds?.();
+                if (b && Phaser.Geom.Rectangle.Contains(b, pt.x, pt.y)) return;
+            }
             ui._hovering = false;
             ui._pressing = false;
             paint();
@@ -1427,6 +1501,11 @@ class SettlementSystem {
             if (this.scene._tooltipTarget === ui.rect) this.scene.hideTooltip?.();
             return;
         }
+        // Closing craft/world UI (including sleep) calls disableInteractive.
+        // Showing the button again must restore hits — otherwise Add/Remove
+        // stays visible but dead until relog.
+        if (typeof ensurePointerInteractive === "function") ensurePointerInteractive(ui.rect);
+        else ui.rect?.setInteractive?.({ useHandCursor: true });
         ui.setAdded?.(this.isAdded(thing));
         ui.paint?.();
     }
@@ -1453,9 +1532,36 @@ class SettlementSystem {
         if (actionOn && actionBtn) actionBtn.setPosition(x, y);
     }
 
+    /** Workstation and settlement names in settler blue. */
+    _logStationSettle(action, station, prep, settleName) {
+        const camp = (typeof CombatLog !== "undefined" && CombatLog.COLOR_SETTLER) || "#7ec8ff";
+        const what = String(station || "station");
+        const place = String(settleName || "");
+        const segments = [
+            { text: String(action || "") },
+            { text: what, color: camp }
+        ];
+        if (prep) segments.push({ text: String(prep) });
+        if (place) segments.push({ text: place, color: camp });
+        this.scene.combatLog?.push(null, { segments });
+    }
+
+    /** Party name in green, settlement name in blue. */
+    _logPawnSettle(pawn, rest, settleName) {
+        const you = (typeof CombatLog !== "undefined" && CombatLog.COLOR_YOU) || "#80e080";
+        const camp = (typeof CombatLog !== "undefined" && CombatLog.COLOR_SETTLER) || "#7ec8ff";
+        const who = pawn?.displayName?.() || pawn?.pawnName || "Someone";
+        const place = settleName ? String(settleName) : "";
+        const restText = String(rest || "").trim();
+        const segments = [{ text: who, color: you }];
+        if (restText) segments.push({ text: restText });
+        if (place) segments.push({ text: place, color: camp });
+        this.scene.combatLog?.push(null, { segments });
+    }
+
     sendNet(op, extra = {}) {
         const scene = this.scene;
-        if (scene.isNet && scene.net?.connected && !scene.net.isLocal) {
+        if (scene.simAuth()) {
             scene.net.sendAction({
                 type: NetProtocol.Actions.SETTLEMENT,
                 op,
@@ -1522,6 +1628,12 @@ class SettlementSystem {
             if (!open || !this.byId(open.id) || !this._inRangePawn(this.scene.player, open)
                 || !this.isAdded(thing, open)) {
                 bills.close();
+            } else {
+                this._billsUiAcc = (this._billsUiAcc || 0) + (this.scene.game?.loop?.delta || 16);
+                if (this._billsUiAcc > 600) {
+                    this._billsUiAcc = 0;
+                    bills.refreshLive?.();
+                }
             }
         }
         const storageF = this.scene.storageFilterPanel;
@@ -1531,6 +1643,15 @@ class SettlementSystem {
             if (!open || !this.byId(open.id) || !this._inRangePawn(this.scene.player, open)
                 || !this.isAdded(thing, open)) {
                 storageF.close();
+            }
+        }
+        const fuelF = this.scene.fuelFilterPanel;
+        if (fuelF?.visible) {
+            const open = fuelF.settle;
+            const thing = fuelF.thing;
+            if (!open || !this.byId(open.id) || !this._inRangePawn(this.scene.player, open)
+                || !this.isAdded(thing, open)) {
+                fuelF.close();
             }
         }
         // Settlers are ticked from PartySystem.update so they share eat/tend/AI.

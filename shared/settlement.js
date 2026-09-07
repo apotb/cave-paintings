@@ -14,12 +14,14 @@
     const IDLE_ROAM_HARD = 7;
     const IDLE_ROAM_MIN = 1.4;
     const IDLE_ROAM_MAX = 4.6;
+    const IDLE_STAND_MIN_MS = 2000;
+    const IDLE_STAND_MAX_MS = 6000;
     const NAME_MAX = 24;
     const JOBS = ["doctor", "cook", "chop", "leather", "gather", "haul"];
     const JOB_LABELS = {
         doctor: "Doc",
         cook: "Cook",
-        leather: "Hide",
+        leather: "Tail",
         haul: "Haul",
         gather: "Get",
         chop: "Chop"
@@ -27,26 +29,22 @@
     const JOB_NAMES = {
         doctor: "Doctor",
         cook: "Cook",
-        leather: "Hidework",
+        leather: "Tailoring",
         haul: "Haul",
         gather: "Gather",
         chop: "Chop"
     };
-    /** Work inside each column, in the order settlers try it. */
+    /** Work inside each column. Station bills are one line; order is the bill list. */
     const JOB_WORK = {
         doctor: ["Tend the wounded"],
-        cook: ["Light campfire", "Roast at campfire", "Simmer at campfire", "Smoke leather"],
+        cook: ["Work at Campfire"],
         chop: ["Chop trees"],
         leather: [
-            "Flesh hides",
-            "Dry hides",
-            "Soak hides",
-            "Dehair hides",
-            "Brain-tan hides",
-            "Work at skinworking bench"
+            "Work at Drying Rack",
+            "Work at Skinworking Bench"
         ],
-        gather: ["Harvest plants", "Gather sticks"],
-        haul: ["Haul to baskets"]
+        gather: ["Harvest plants", "Gather resources"],
+        haul: ["Haul to storage"]
     };
     const STOCK_ITEMS = [
         "stick", "leaf", "log", "blueberry", "apple", "coconut",
@@ -66,8 +64,8 @@
         bush: "blueberry",
         tree: "apple"
     };
-    const BILL_MODES = ["until", "count", "forever"];
-    const SIMMER_INGREDIENT_IDS = ["apple", "blueberry", "raw_beef", "raw_venison", "raw_pork"];
+    const BILL_MODES = ["count", "until", "forever"];
+    const SIMMER_INGREDIENT_IDS = ["apple", "blueberry", "raw_human_flesh", "raw_venison", "raw_pork"];
     const SIMMER_RESULT = "coconut_meal";
     const SIMMER_MIN_SLOTS = 2;
     const HIDE_ANIMALS = ["deer", "boar"];
@@ -125,6 +123,20 @@
     function clampName(name) {
         const s = String(name || "").trim().slice(0, NAME_MAX);
         return s || "Camp";
+    }
+
+    function renameChat(oldName, newName, color) {
+        const from = clampName(oldName);
+        const to = clampName(newName);
+        const paint = color || "#7ec8ff";
+        return {
+            text: `${from} was renamed to ${to}`,
+            segments: [
+                { text: from, color: paint },
+                { text: "was renamed to" },
+                { text: to, color: paint }
+            ]
+        };
     }
 
     function defaultJobs() {
@@ -306,6 +318,15 @@
             hit.push(s);
         }
         return hit;
+    }
+
+    /** Drop from the settlement without forgetting bills (pickup/move still uses unlinkStation). */
+    function removeStation(settle, uid) {
+        if (!settle || !uid) return false;
+        const uids = settle.stationUids || [];
+        if (!uids.includes(uid)) return false;
+        settle.stationUids = uids.filter((u) => u !== uid);
+        return true;
     }
 
     function isNight(gameMinutes) {
@@ -531,7 +552,92 @@
         if (!itemId) return false;
         const allowed = bill?.allowedIds;
         if (!Array.isArray(allowed) || !allowed.length) return true;
-        return allowed.includes(itemId);
+        const want = canonItemId(itemId);
+        return allowed.some((id) => canonItemId(id) === want);
+    }
+
+    const RECIPE_SKIP = {
+        QUANTITY: true,
+        REQUIRE_THING: true,
+        REQUIRE_STATION: true,
+        CRAFT_SECONDS: true,
+        REQUIRE_TOOL: true
+    };
+
+    function billCraftNeeds(bill, getItem) {
+        const id = bill?.outputId || bill?.recipeId;
+        const def = typeof getItem === "function" ? getItem(id) : null;
+        const raw = def?.recipe;
+        if (!raw || typeof raw !== "object") return null;
+        const out = [];
+        for (const [k, v] of Object.entries(raw)) {
+            if (RECIPE_SKIP[k]) continue;
+            if (v && typeof v === "object") {
+                out.push({
+                    id: k,
+                    qty: Math.max(1, Math.floor(Number(v.qty) || 1)),
+                    hideStage: v.hideStage ? String(v.hideStage) : null
+                });
+            } else {
+                const qty = Math.max(1, Math.floor(Number(v) || 0));
+                if (qty > 0) out.push({ id: k, qty, hideStage: null });
+            }
+        }
+        return out.length ? out : null;
+    }
+
+    function countBillInputs(bill, items, countItem, pred = null) {
+        const rec = billRecipeById(bill?.recipeId) || bill;
+        const inputs = billInputsFor(rec, items);
+        let n = 0;
+        const count = typeof countItem === "function" ? countItem : () => 0;
+        for (const inp of inputs) {
+            if (!inp?.id || !billAllowsInput(bill, inp.id)) continue;
+            if (pred && !pred(inp)) continue;
+            n += Math.max(0, Number(count(inp.id)) || 0);
+        }
+        return n;
+    }
+
+    function billHasMaterials(bill, opts = {}) {
+        if (!bill) return false;
+        const countItem = typeof opts.countItem === "function" ? opts.countItem : () => 0;
+        const getItem = opts.getItem;
+        const items = opts.items || [];
+        const rec = billRecipeById(bill.recipeId) || bill;
+        const needs = billCraftNeeds(bill, getItem);
+        if (needs) {
+            for (const need of needs) {
+                if (need.hideStage) {
+                    const n = countBillInputs(bill, items, countItem, (inp) => {
+                        const def = typeof getItem === "function" ? getItem(inp.id) : null;
+                        return hideStageOf(def, inp.id) === need.hideStage;
+                    });
+                    if (n < need.qty) return false;
+                    continue;
+                }
+                if (need.id === "ANY_HIDE" || need.id === "ANY_LEATHER") {
+                    if (countBillInputs(bill, items, countItem) < need.qty) return false;
+                    continue;
+                }
+                if ((Number(countItem(need.id)) || 0) < need.qty) return false;
+            }
+            return true;
+        }
+        const have = countBillInputs(bill, items, countItem);
+        const method = bill.method || rec?.method;
+        if (method === "shell_simmer") return have >= SIMMER_MIN_SLOTS;
+        return have >= 1;
+    }
+
+    function billWantsMaterials(bill, haveOutput) {
+        if (!bill) return false;
+        if (bill.mode === "count") return (Number(bill.remaining) || 0) > 0;
+        if (bill.mode === "until") {
+            const need = Math.max(1, Math.floor(Number(bill.n) || 1));
+            return untilHave(bill, haveOutput) < need;
+        }
+        return true;
     }
 
     function hideAllowsStack(bill, stack, getItem) {
@@ -608,8 +714,15 @@
         return best;
     }
 
+    function canonItemId(id) {
+        if (typeof Hide !== "undefined" && Hide.canonicalItemId) return Hide.canonicalItemId(id);
+        if (id === "raw_beef") return "raw_human_flesh";
+        if (id === "roast_beef" || id === "roast_human_flesh") return "roasted_human_flesh";
+        return id;
+    }
+
     function isSimmerIngredientId(itemId) {
-        return SIMMER_INGREDIENT_IDS.includes(itemId);
+        return SIMMER_INGREDIENT_IDS.includes(canonItemId(itemId));
     }
 
     function isCookTool(getItem, stack, method) {
@@ -618,13 +731,51 @@
         return meta?.cook?.method === method;
     }
 
+    function cookAllowsInput(bill, itemId, getItem) {
+        if (billAllowsInput(bill, itemId)) return true;
+        if (bill?.method !== "smoke_hide") return false;
+        const allowed = bill.allowedIds;
+        if (!Array.isArray(allowed) || !allowed.length) return true;
+        const animal = hideAnimalOf(typeof getItem === "function" ? getItem(itemId) : null, itemId);
+        if (!animal) return false;
+        return allowed.some((id) => (
+            hideAnimalOf(typeof getItem === "function" ? getItem(id) : null, id) === animal
+        ));
+    }
+
+    function cookResultIds(bill, getItem) {
+        if (Array.isArray(bill?.resultIds) && bill.resultIds.length) return bill.resultIds.slice();
+        if (bill?.method === "shell_simmer") return [SIMMER_RESULT];
+        if (bill?.method === "smoke_hide") {
+            const inputs = Array.isArray(bill.allowedIds) && bill.allowedIds.length
+                ? bill.allowedIds
+                : HIDE_ANIMALS.map((a) => hideItemId(a, "brained"));
+            const outs = [];
+            for (const id of inputs) {
+                const def = typeof getItem === "function" ? getItem(id) : null;
+                const r = def?.cook?.smoke_hide?.result
+                    || hideItemId(hideAnimalOf(def, id), "leather");
+                if (r && !outs.includes(r)) outs.push(r);
+            }
+            return outs;
+        }
+        const inputs = Array.isArray(bill?.allowedIds) ? bill.allowedIds : [];
+        const outs = [];
+        if (typeof getItem !== "function") return outs;
+        for (const id of inputs) {
+            const r = getItem(id)?.cook?.[bill.method]?.result;
+            if (r && !outs.includes(r)) outs.push(r);
+        }
+        return outs;
+    }
+
     function cookInputReady(getItem, stack, bill) {
         if (!stack?.id || !bill?.method) return false;
         if (bill.method === "shell_simmer") {
             if (!isSimmerIngredientId(stack.id)) return false;
             return billAllowsInput(bill, stack.id);
         }
-        if (!billAllowsInput(bill, stack.id)) return false;
+        if (!cookAllowsInput(bill, stack.id, getItem)) return false;
         const rec = typeof getItem === "function" ? getItem(stack.id)?.cook?.[bill.method] : null;
         return !!(rec?.result && Number(rec.minutes) > 0);
     }
@@ -632,7 +783,22 @@
     function cookOutputReady(getItem, stack, bill) {
         if (!stack?.id || !bill) return false;
         if (bill.method === "shell_simmer") return stack.id === SIMMER_RESULT;
-        return !cookInputReady(getItem, stack, bill);
+        if (cookInputReady(getItem, stack, bill)) return false;
+        const results = cookResultIds(bill, getItem);
+        if (results.length) return results.includes(canonItemId(stack.id));
+        if ((bill.method || "stick_roast") === "stick_roast") {
+            const def = typeof getItem === "function" ? getItem(stack.id) : null;
+            if (def?.hide) return false;
+            if (isCookTool(getItem, stack, "stick_roast") || isCookTool(getItem, stack, "smoke_hide")) {
+                return false;
+            }
+            return !!(def?.food);
+        }
+        if (bill.method === "smoke_hide") {
+            const def = typeof getItem === "function" ? getItem(stack.id) : null;
+            return hideStageOf(def, stack.id) === "leather";
+        }
+        return false;
     }
 
     function billRecipeTitle(rec) {
@@ -647,6 +813,8 @@
 
     function billTitle(bill) {
         if (!bill) return "Bill";
+        const custom = String(bill.name || "").trim();
+        if (custom) return custom.slice(0, NAME_MAX);
         const rec = billRecipeById(bill.recipeId);
         if (rec) return billRecipeTitle(rec);
         if (bill.kind === "craft" && bill.outputId) {
@@ -673,12 +841,27 @@
         return "Do until you have X";
     }
 
-    function billQtyLabel(bill) {
+    function billQtyLabel(bill, haveOutput) {
         if (!bill || bill.mode === "forever") return "Forever";
         if (bill.mode === "count") {
             return `${Math.max(0, Math.floor(Number(bill.remaining ?? bill.n) || 0))}x`;
         }
-        return `${Math.max(1, Math.floor(Number(bill.n) || 1))}x`;
+        const need = Math.max(1, Math.floor(Number(bill.n) || 1));
+        if (typeof haveOutput === "function") {
+            const have = Math.max(0, Math.floor(Number(untilHave(bill, haveOutput)) || 0));
+            return `${have}/${need}`;
+        }
+        return `${need}x`;
+    }
+
+    function billIsComplete(bill, haveOutput) {
+        if (!bill) return false;
+        if (bill.mode === "count") return (Number(bill.remaining) || 0) <= 0;
+        if (bill.mode === "until") {
+            const need = Math.max(1, Math.floor(Number(bill.n) || 1));
+            return untilHave(bill, haveOutput) >= need;
+        }
+        return false;
     }
 
     function moveBill(list, billId, dir) {
@@ -726,7 +909,7 @@
 
     function makeBill(opts = {}) {
         const rec = opts.recipeId ? billRecipeById(opts.recipeId) : null;
-        const mode = BILL_MODES.includes(opts.mode) ? opts.mode : "until";
+        const mode = BILL_MODES.includes(opts.mode) ? opts.mode : "count";
         const allowed = Array.isArray(opts.allowedIds)
             ? opts.allowedIds.map((id) => String(id || "")).filter(Boolean)
             : null;
@@ -738,12 +921,13 @@
             outputId: opts.outputId || rec?.outputId || null,
             mode,
             n: Math.max(1, Math.floor(Number(opts.n) || 1)),
-            paused: !!opts.paused,
+            paused: opts.paused == null ? true : !!opts.paused,
             remaining: mode === "count"
                 ? Math.max(1, Math.floor(Number(opts.remaining ?? opts.n) || 1))
                 : 0,
             allowedIds: allowed && allowed.length ? allowed : null,
-            resultIds: Array.isArray(opts.resultIds) ? opts.resultIds.filter(Boolean) : null
+            resultIds: Array.isArray(opts.resultIds) ? opts.resultIds.filter(Boolean) : null,
+            name: String(opts.name || "").trim().slice(0, NAME_MAX) || null
         };
         return bill;
     }
@@ -776,15 +960,20 @@
         return n;
     }
 
+    function billIsActive(bill, haveOutput) {
+        if (!bill || bill.paused) return false;
+        if (bill.mode === "forever") return true;
+        if (bill.mode === "count") return (Number(bill.remaining) || 0) > 0;
+        if (bill.mode === "until") {
+            const need = Math.max(1, Math.floor(Number(bill.n) || 1));
+            return untilHave(bill, haveOutput) < need;
+        }
+        return false;
+    }
+
     function activeBill(settle, stationUid, haveOutput) {
         for (const b of billsOf(settle, stationUid)) {
-            if (!b || b.paused) continue;
-            if (b.mode === "forever") return b;
-            if (b.mode === "count" && (Number(b.remaining) || 0) > 0) return b;
-            if (b.mode === "until") {
-                const need = Math.max(1, Math.floor(Number(b.n) || 1));
-                if (untilHave(b, haveOutput) < need) return b;
-            }
+            if (billIsActive(b, haveOutput)) return b;
         }
         return null;
     }
@@ -853,9 +1042,12 @@
     }
 
     /** Chop job leaves fruiting trees for gather (apple, coconut, later lootable woods). */
-    function chopSkipsTree(id, def) {
-        if (fruitTreeId(id || def?.id)) return true;
-        return !!(def && def.lootable);
+    function chopSkipsTree(id, def, entry) {
+        if (fruitTreeId(id || def?.id || entry?.id)) return true;
+        if (def && def.lootable) return true;
+        // Picked fruit: apple_tree → tree, coconut_tree → palm_tree, waiting to respawn.
+        if (entry?.regrowId || entry?.regrowAt != null) return true;
+        return false;
     }
 
     function canDropOff(pawn, leader) {
@@ -888,10 +1080,6 @@
         if (!settle) return false;
         if ((Number(settlerCount) || 0) > 0) return true;
         if ((settle.stationUids || []).length > 0) return true;
-        const bills = settle.bills || {};
-        for (const uid of Object.keys(bills)) {
-            if (Array.isArray(bills[uid]) && bills[uid].some((b) => b && !b.paused)) return true;
-        }
         return false;
     }
 
@@ -904,6 +1092,12 @@
     /** Night or untreated injury: stay in / go to a lean-to. Dawn + healthy: get up. */
     function settlerShouldSleep(isNight, injured) {
         return !!(isNight || injured);
+    }
+
+    function isBusyWork(type) {
+        return type === "chop" || type === "gather" || type === "haul" || type === "stash"
+            || type === "cook" || type === "cook_light" || type === "cook_stoke"
+            || type === "leather" || type === "doctor";
     }
 
     function isFirestarter(stack, getItem) {
@@ -1010,17 +1204,35 @@
      */
     function planWork(state = {}) {
         const AUTO = Number(state.autoEatBelow) > 0 ? Number(state.autoEatBelow) : 1000;
-        if ((Number(state.kc) || 0) < AUTO && state.canEat !== false) return { type: "eat" };
+        const busy = !!state.busy;
+        const busyJob = state.busyJob && isBusyWork(state.busyJob.type) ? state.busyJob : null;
+        if (busy && busyJob) {
+            // A finished count/until bill leaves a leather hold pointing at the bench.
+            // Don't keep sewing just because the previous scan still had that job.
+            if (busyJob.type !== "leather" || state.leatherWork || state.benchBill) {
+                return busyJob;
+            }
+        }
+        if (!busy && (Number(state.kc) || 0) < AUTO && state.canEat !== false) return { type: "eat" };
         if (state.isOrphan) return { type: "idle" };
         const night = !!state.isNight;
         const injured = !!state.injured;
-        if (settlerShouldSleep(night, injured)) {
-            if (state.bed) return { type: "sleep", target: state.bed };
-            return { type: "idle" };
+        if (!busy && settlerShouldSleep(night, injured) && state.bed) {
+            return { type: "sleep", target: state.bed };
         }
-        if (state.stashUrgent && state.stashBasket) {
+        const haulOn = enabledJobs(state.jobs || defaultJobs()).includes("haul");
+        if (haulOn && state.stashUrgent && state.stashBasket) {
             return { type: "stash", target: state.stashBasket };
         }
+        const haulReason = state.haulMerge?.reason;
+        const haulWrong = haulOn && state.haulMerge
+            && (haulReason === "wrong" || haulReason === "better");
+        // Free a hotbar slot before carrying a mis-stored stack.
+        if (haulWrong && state.mergeNeedsRoom && state.stashBasket) {
+            return { type: "stash", target: state.stashBasket };
+        }
+        if (haulWrong) return { type: "haul", target: state.haulMerge };
+        if (!busy && settlerShouldSleep(night, injured)) return { type: "idle" };
         const row = state.jobs || defaultJobs();
         for (const job of enabledJobs(row)) {
             if (job === "doctor" && (state.patients || []).length) {
@@ -1031,6 +1243,7 @@
                     return { type: "cook_light", target: state.unlitFire };
                 }
                 if (state.cookBill) return { type: "cook", target: state.cookBill };
+                if (state.stokeFire) return { type: "cook_stoke", target: state.stokeFire };
             }
             if (job === "leather" && (state.leatherWork || state.benchBill)) {
                 return { type: "leather", target: state.leatherWork || state.benchBill };
@@ -1041,10 +1254,282 @@
             if (job === "gather" && state.gatherThing) return { type: "gather", target: state.gatherThing };
             if (job === "chop" && state.chopTree) return { type: "chop", target: state.chopTree };
         }
-        if (state.hasStash && state.stashBasket) {
+        if (haulOn && state.hasStash && state.stashBasket) {
             return { type: "stash", target: state.stashBasket };
         }
         return { type: "idle" };
+    }
+
+    function _lc(s) {
+        return String(s || "").trim().toLowerCase();
+    }
+
+    function _an(s) {
+        const n = _lc(s);
+        if (!n) return n;
+        return ("aeiou".includes(n[0]) ? "an " : "a ") + n;
+    }
+
+    function _itemName(stackOrId, getItem) {
+        if (stackOrId == null) return "";
+        if (typeof stackOrId === "string") return getItem?.(stackOrId)?.name || stackOrId;
+        if (stackOrId.customName) return stackOrId.customName;
+        const nested = stackOrId.item;
+        if (nested?.name) return nested.name;
+        const id = stackOrId.id || nested?.id;
+        const meta = id ? getItem?.(id) : null;
+        return meta?.name || nested?.name || id || "";
+    }
+
+    function _haulNoun(stack, getItem) {
+        const name = _itemName(stack, getItem);
+        if (!name) return "";
+        const low = _lc(name);
+        const n = Math.max(1, Number(stack?.quantity) || 1);
+        if (n > 1 && !low.endsWith("s")) return `${low}s`;
+        return low;
+    }
+
+    function _thingName(thing, getThing) {
+        if (!thing) return "";
+        if (thing.meta?.name) return thing.meta.name;
+        const id = thing.entry?.id || thing.id;
+        return getThing?.(id)?.name || id || "";
+    }
+
+    function _lootable(thing, getThing) {
+        if (thing?.meta?.lootable) return thing.meta.lootable;
+        const nested = thing?.entry;
+        if (nested?.lootable) return nested.lootable;
+        const id = nested?.id || thing?.id;
+        return getThing?.(id)?.lootable || null;
+    }
+
+    function _billFoods(bill, getItem) {
+        const ids = Array.isArray(bill?.allowedIds) ? bill.allowedIds : [];
+        if (!ids.length) return "";
+        const names = [];
+        for (const id of ids) {
+            const n = _lc(_itemName(id, getItem));
+            if (n && !names.includes(n)) names.push(n);
+            if (names.length >= 3) break;
+        }
+        if (!names.length) return "";
+        if (names.length === 1) return names[0];
+        if (names.length === 2) return `${names[0]} or ${names[1]}`;
+        return `${names[0]}, ${names[1]}…`;
+    }
+
+    function _hideTypeNoun(stackOrId, getItem) {
+        const id = typeof stackOrId === "string"
+            ? stackOrId
+            : (stackOrId?.id || stackOrId?.item?.id);
+        if (!id) return "";
+        const def = typeof getItem === "function" ? getItem(id) : null;
+        const animal = hideAnimalOf(def, id);
+        return animal ? `${animal} hide` : "hide";
+    }
+
+    function _billHideNoun(bill, getItem) {
+        const ids = Array.isArray(bill?.allowedIds) ? bill.allowedIds : [];
+        const animals = [];
+        for (const id of ids) {
+            const def = typeof getItem === "function" ? getItem(id) : null;
+            const animal = hideAnimalOf(def, id);
+            if (animal && !animals.includes(animal)) animals.push(animal);
+        }
+        if (animals.length === 1) return `${animals[0]} hide`;
+        return "hide";
+    }
+
+    function _hideJobNoun(job, getItem) {
+        const hang = job?.station?.slots?.[0]
+            || job?.entry?.slots?.[0]
+            || job?.drop;
+        return _hideTypeNoun(hang, getItem) || _billHideNoun(job?.bill, getItem);
+    }
+
+    function _dropAsStack(drop) {
+        if (!drop) return null;
+        const id = drop.item?.id || (typeof drop.id === "string" ? drop.id : null);
+        if (!id && !drop.item) return null;
+        return {
+            id,
+            item: drop.item,
+            quantity: drop.quantity || 1,
+            customName: drop.customName
+        };
+    }
+
+    function _fireEntry(fire) {
+        return fire?.entry || fire;
+    }
+
+    function _fireCook(fire) {
+        if (typeof fire?.getCook === "function") return fire.getCook();
+        return _fireEntry(fire)?.cook || null;
+    }
+
+    function _fireCatalyst(fire) {
+        if (typeof fire?.getCatalyst === "function") return fire.getCatalyst();
+        return _fireEntry(fire)?.catalyst || null;
+    }
+
+    function _fireIsLit(fire) {
+        if (typeof fire?.isLit === "function") return !!fire.isLit();
+        const id = _fireEntry(fire)?.id;
+        if (id === "unlit_campfire") return false;
+        if (id === "campfire") return true;
+        return false;
+    }
+
+    function _fireHasFuel(fire) {
+        if (typeof fire?.hasFuel === "function") return !!fire.hasFuel();
+        const fuel = _fireEntry(fire)?.fuel;
+        if (Array.isArray(fuel)) return fuel.some((s) => s && s.quantity > 0);
+        return !!fuel;
+    }
+
+    function _simmerFilled(fire) {
+        if (typeof fire?.simmerFilledCount === "function") return fire.simmerFilledCount() || 0;
+        const slots = _fireEntry(fire)?.simmerSlots;
+        if (Array.isArray(slots)) return slots.filter(Boolean).length;
+        return 0;
+    }
+
+    function _cookActLabel(job, getItem) {
+        const fire = job?.fire;
+        const bill = job?.bill;
+        const title = billTitle(bill) || "meal";
+        const method = bill?.method || "stick_roast";
+        const cat = _fireCatalyst(fire);
+        if (method === "shell_simmer" && cookOutputReady(getItem, cat, bill)) {
+            const n = _itemName(cat, getItem);
+            return n ? `Taking ${_lc(n)}` : "Taking a meal";
+        }
+        const cook = _fireCook(fire);
+        if (cook) {
+            const n = _itemName(cook, getItem);
+            if (n) {
+                if (cookOutputReady(getItem, cook, bill)) return `Taking ${_lc(n)}`;
+                if (bill?.leftover) return `Taking ${_lc(n)}`;
+                if (method === "smoke_hide") return `Smoking ${_hideTypeNoun(cook, getItem)}`;
+                const roast = method === "stick_roast" || title === "Roast";
+                return `${roast ? "Roasting" : "Cooking"} ${_lc(n)}`;
+            }
+        }
+        if (fire && !_fireIsLit(fire)) return "Lighting a fire";
+        if (fire && !_fireHasFuel(fire)) return "Stoking the fire";
+        if (method === "shell_simmer") {
+            if (_simmerFilled(fire) > 0) return "Simmering a meal";
+            return "Simmering";
+        }
+        if (fire && !isCookTool(getItem, cat, method)) {
+            if (method === "stick_roast") return "Getting a roasting stick";
+            if (method === "smoke_hide") return "Getting a drying rack";
+            return "Getting a cooking tool";
+        }
+        if (method === "stick_roast" && isCookTool(getItem, cat, method) && !cook && bill?.leftover) {
+            return "Taking a roasting stick";
+        }
+        const foods = _billFoods(bill, getItem);
+        if (method === "smoke_hide") {
+            return `Smoking ${_billHideNoun(bill, getItem)}`;
+        }
+        if (foods) return `Cooking ${_lc(title)} (${foods})`;
+        return `Cooking ${_lc(title)}`;
+    }
+
+    function _leatherActLabel(job, getItem, getThing) {
+        const station = job?.station || job?.entry || job;
+        const bill = job?.bill;
+        const method = bill?.method;
+        const stationId = station?.entry?.id || station?.id;
+        if (job?.kind === "bench" || stationId === "skinworking_bench") {
+            const title = billTitle(bill);
+            if (title) return title.startsWith("Make ") ? title : `Sewing ${_lc(title)}`;
+            const name = _thingName(station, getThing);
+            return name ? `Working at ${_an(name)}` : "Working hides";
+        }
+        const hide = _hideJobNoun(job, getItem);
+        const typed = hide && hide !== "hide";
+        if (method === "flesh_hide") return typed ? `Fleshing ${hide}` : "Fleshing hides";
+        if (method === "dry_hide") return typed ? `Drying ${hide}` : "Drying hides";
+        if (method === "soak_hide") {
+            if (job?.kind === "soak_pickup") {
+                return typed ? `Taking soaked ${hide}` : "Taking soaked hides";
+            }
+            return typed ? `Soaking ${hide}` : "Soaking hides";
+        }
+        if (method === "dehair_hide") return typed ? `Dehairing ${hide}` : "Dehairing hides";
+        if (method === "brain_hide") return typed ? `Brain-tanning ${hide}` : "Brain-tanning hides";
+        if (stationId === "drying_rack") return typed ? `Working ${hide}` : "Working hides";
+        return typed ? `Working ${hide}` : "Working hides";
+    }
+
+    /**
+     * Human-readable settler job line for tooltips. Phaser-free so sim
+     * snapshots and client AI share one string.
+     */
+    function actLabel(plan, ctx = {}) {
+        const getItem = ctx.getItem || (() => null);
+        const getThing = ctx.getThing || (() => null);
+        const t = plan?.type;
+        if (t === "fight") return "Fighting";
+        if (t === "eat") return "Getting food";
+        if (t === "cook_light") return "Lighting a fire";
+        if (t === "cook_stoke") return "Stoking the fire";
+        if (t === "flesh") return "Fleshing hides";
+        if (t === "brain") return "Brain-tanning hides";
+        if (t === "craft") return "Crafting";
+        if (t === "tend" || t === "doctor") {
+            const who = ctx.patientName != null ? ctx.patientName : pawnDisplayName(plan?.target);
+            return who && who !== "Someone" ? `Tending ${who}` : "Tending";
+        }
+        if (t === "cook") return _cookActLabel(plan.target, getItem);
+        if (t === "haul") {
+            if (plan.target?.kind === "pack") return "Stacking storage";
+            if (plan.target?.kind === "move") {
+                const noun = _haulNoun({ id: plan.target.stackId }, getItem);
+                if (plan.target.reason === "merge") {
+                    return noun ? `Stacking ${noun}` : "Stacking storage";
+                }
+                return noun ? `Hauling ${noun}` : "Hauling";
+            }
+            const noun = _haulNoun(_dropAsStack(plan.target), getItem) || ctx.haulWhat;
+            return noun ? `Hauling ${noun}` : "Hauling";
+        }
+        if (t === "stash") {
+            const noun = _haulNoun(ctx.stashStack, getItem) || ctx.haulWhat;
+            return noun ? `Hauling ${noun}` : "Hauling";
+        }
+        if (t === "gather") {
+            const thing = plan.target;
+            const loot = _lootable(thing, getThing);
+            const lootId = loot?.item;
+            const lootName = _itemName(lootId, getItem);
+            if (lootName) {
+                const yieldN = Math.max(1, Number(loot.yield) || 1);
+                return `Gathering ${_haulNoun({ id: lootId, quantity: yieldN }, getItem)}`;
+            }
+            const plant = _thingName(thing, getThing);
+            return plant ? `Gathering from ${_an(plant)}` : "Gathering";
+        }
+        if (t === "chop") {
+            const tree = _thingName(plan.target, getThing);
+            return tree ? `Chopping ${_an(tree)}` : "Chopping";
+        }
+        if (t === "leather") return _leatherActLabel(plan.target, getItem, getThing);
+        if (t === "sleep") {
+            const bed = plan.target?.entry || plan.target;
+            const name = ctx.bedName || getThing(bed?.id)?.name;
+            if (ctx.asleep) {
+                return name ? `Sleeping in ${_an(name)}` : "Sleeping";
+            }
+            return name ? `Going to sleep in ${_an(name)}` : "Going to sleep";
+        }
+        if (t === "idle" || !t) return "Idle";
+        return "Idle";
     }
 
     function cardinalHeading(rng) {
@@ -1082,6 +1567,11 @@
 
     function idleHome(settle) {
         return { x: settle?.x || 0, y: (settle?.y || 0) + 8 };
+    }
+
+    function idleStandMs(rng) {
+        const roll = typeof rng === "function" ? rng : Math.random;
+        return IDLE_STAND_MIN_MS + roll() * (IDLE_STAND_MAX_MS - IDLE_STAND_MIN_MS);
     }
 
     function idleRoamDistTiles(settle, x, y, ts) {
@@ -1164,6 +1654,8 @@
         WALK_TRANSFER_TILES,
         IDLE_ROAM_SOFT,
         IDLE_ROAM_HARD,
+        IDLE_STAND_MIN_MS,
+        IDLE_STAND_MAX_MS,
         NAME_MAX,
         JOBS,
         JOB_LABELS,
@@ -1182,6 +1674,7 @@
         ADDABLE,
         uid,
         clampName,
+        renameChat,
         defaultJobs,
         normalizeJobs,
         cyclePriority,
@@ -1218,6 +1711,8 @@
         cookInputsForMethod,
         billInputsFor,
         billAllowsInput,
+        billHasMaterials,
+        billWantsMaterials,
         hideItemId,
         hideStepOf,
         hideAnimalOf,
@@ -1237,10 +1732,12 @@
         cycleBillMode,
         billModeLabel,
         billQtyLabel,
+        billIsComplete,
         moveBill,
         removeBill,
         syncBillResults,
         untilHave,
+        billIsActive,
         activeBill,
         noteBillCrafted,
         jobLabel,
@@ -1250,6 +1747,7 @@
         ownedOf,
         atPoint,
         unlinkStation,
+        removeStation,
         chunkKeysFor,
         fruitTreeId,
         chopSkipsTree,
@@ -1260,6 +1758,7 @@
         shouldPin,
         gatherShouldWork,
         settlerShouldSleep,
+        isBusyWork,
         isFirestarter,
         cookCanLight,
         weaponDamage,
@@ -1268,7 +1767,9 @@
         stashIsUrgent,
         storageLayoutCols,
         planWork,
+        actLabel,
         idleHome,
+        idleStandMs,
         idleRoamDistTiles,
         idleRoamPoint,
         createWorkClaims,

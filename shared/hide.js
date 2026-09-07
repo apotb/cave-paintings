@@ -55,6 +55,11 @@
         return hideStage(itemDef) === "leather";
     }
 
+    /** Finished goods haulers/hidework may take off a drying rack. */
+    function canTakeFromRack(itemDef) {
+        return isDriedHide(itemDef) || isLeather(itemDef);
+    }
+
     function isBrainItem(itemDef) {
         return !!itemDef?.brain;
     }
@@ -62,6 +67,8 @@
     function canonicalItemId(id) {
         if (id === "deer_brain") return "brain";
         if (id === "wood_spear") return "wooden_spear";
+        if (id === "raw_beef") return "raw_human_flesh";
+        if (id === "roast_beef" || id === "roast_human_flesh") return "roasted_human_flesh";
         return id;
     }
 
@@ -397,6 +404,7 @@
         isDehairedHide,
         isBrainedHide,
         isLeather,
+        canTakeFromRack,
         isBrainItem,
         canonicalItemId,
         migrateStackItemId,

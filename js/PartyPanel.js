@@ -104,7 +104,7 @@ class PartyPanel {
             this._layoutCard(row, w, h, s, sprH, padY, maxNameH);
             const tex = pawn.texture?.key || "human";
             if (row.spr.texture?.key !== tex) row.spr.setTexture(tex, 1);
-            else row.spr.setFrame(1);
+            else if (row.spr.frame?.name !== 1) row.spr.setFrame(1);
             row.spr.setScale(2 * s);
             row.crown.setVisible(pawn === scene.leader);
             row.crown.setScale(s);

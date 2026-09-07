@@ -15,8 +15,10 @@
         hediffs: null,
         itemsById: null,
         mobsById: null,
+        thingsById: null,
         itemsList: null,
         mobsList: null,
+        thingsList: null,
         _ready: false
     };
 
@@ -35,8 +37,10 @@
         store.hediffs = payload.hediffs || {};
         store.itemsList = Array.isArray(payload.items) ? payload.items : [];
         store.mobsList = Array.isArray(payload.mobs) ? payload.mobs : [];
+        store.thingsList = Array.isArray(payload.things) ? payload.things : [];
         store.itemsById = _indexById(store.itemsList);
         store.mobsById = _indexById(store.mobsList);
+        store.thingsById = _indexById(store.thingsList);
         const planCount = store.bodyPlans ? Object.keys(store.bodyPlans).length : 0;
         store._ready = planCount > 0;
         return store;
@@ -63,7 +67,8 @@
             injuries: json.get("injuries") || {},
             hediffs: json.get("hediffs") || {},
             items: json.get("items") || [],
-            mobs: json.get("mobs") || []
+            mobs: json.get("mobs") || [],
+            things: json.get("things") || []
         });
     }
 
@@ -82,7 +87,8 @@
             injuries: read("Injuries.json"),
             hediffs: read("Hediffs.json"),
             items: read("Items.json"),
-            mobs: read("Mobs.json")
+            mobs: read("Mobs.json"),
+            things: read("Things.json")
         });
     }
 
@@ -113,13 +119,22 @@
         if (store.itemsById[id]) return store.itemsById[id];
         const want = (typeof Hide !== "undefined" && Hide.canonicalItemId)
             ? Hide.canonicalItemId(id)
-            : (id === "deer_brain" ? "brain" : id === "wood_spear" ? "wooden_spear" : id);
+            : (id === "deer_brain" ? "brain"
+                : id === "wood_spear" ? "wooden_spear"
+                : id === "raw_beef" ? "raw_human_flesh"
+                : (id === "roast_beef" || id === "roast_human_flesh") ? "roasted_human_flesh"
+                : id);
         return store.itemsById[want] || null;
     }
 
     function getMob(id) {
         if (!id || !store.mobsById) return null;
         return store.mobsById[id] || null;
+    }
+
+    function getThing(id) {
+        if (!id || !store.thingsById) return null;
+        return store.thingsById[id] || null;
     }
 
     function getUnarmedAttacks(planId) {
@@ -137,6 +152,7 @@
         getHediffDefs,
         getItem,
         getMob,
+        getThing,
         getUnarmedAttacks,
         /** Internal snapshot (tests). */
         _store: store

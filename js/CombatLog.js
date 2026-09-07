@@ -8,7 +8,7 @@
  */
 class CombatLog {
     static COLOR_DEFAULT = "#e8e0d0";
-    static COLOR_YOU = "#6ecf6e";
+    static COLOR_YOU = (typeof Party !== "undefined" && Party.COLOR_ALLY) || "#80e080";
     static COLOR_ENEMY = "#ef5a5a";
     static COLOR_WEAPON = "#f0a040";
     static COLOR_CHAT = "#f0d84a";
@@ -170,7 +170,6 @@ class CombatLog {
             tick: "/tick [speed]",
             time: "/time [HH] [MM]",
             tp: "/tp <x> <y>",
-            party: "/party",
             wanderer: "/wanderer"
         };
         if (cmd === "/help") {
@@ -200,13 +199,14 @@ class CombatLog {
                 this.push("No player to heal.");
                 return;
             }
-            // Net sessions: server/sim owns hunger — local heal alone is stomped by YOU.
-            if (this.scene.isNet && this.scene.net?.connected) {
+            // SimWorld owns hunger/anatomy — send and wait for YOU.
+            if (this.scene.simAuth()) {
                 this.scene.net.sendAction({
                     type: NetProtocol.Actions.CHAT,
                     text: "/heal",
                     pawnId: player.pawnId
                 });
+                return;
             }
             player.anatomy?.fullHeal?.();
             player.kc = player.stomach;
@@ -227,19 +227,8 @@ class CombatLog {
             this.push("Fully healed");
             return;
         }
-        if (cmd === "/party") {
-            if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
-                this.scene.net.sendAction({
-                    type: NetProtocol.Actions.CHAT,
-                    text: "/party"
-                });
-                return;
-            }
-            this.scene.partySys?.debugAddCompanion?.();
-            return;
-        }
         if (cmd === "/wanderer") {
-            if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            if (this.scene.simAuth()) {
                 this.scene.net.sendAction({
                     type: NetProtocol.Actions.CHAT,
                     text: "/wanderer"
@@ -253,6 +242,14 @@ class CombatLog {
             const player = this.scene.player;
             if (!player || player._bodyDead) {
                 this.push("You are already dead.");
+                return;
+            }
+            if (this.scene.simAuth()) {
+                this.scene.net.sendAction({
+                    type: NetProtocol.Actions.CHAT,
+                    text: "/kms",
+                    pawnId: player.pawnId
+                });
                 return;
             }
             const brain = player.anatomy?.part?.("Brain");
@@ -322,7 +319,7 @@ class CombatLog {
                 return;
             }
             // Dedicated MP: server owns wildlife (SNAPSHOT.mobs). Local spawn would freeze.
-            if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            if (this.scene.simAuth()) {
                 this.scene._netSendMove?.(true);
                 this.scene.net.sendAction({
                     type: NetProtocol.Actions.CHAT,
@@ -361,7 +358,7 @@ class CombatLog {
                 this.pushError("No tile to set.");
                 return;
             }
-            if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            if (this.scene.simAuth()) {
                 this.scene._netSendMove?.(true);
                 const id = resolved.clear ? "null" : resolved.id;
                 this.scene.net.sendAction({
@@ -417,7 +414,7 @@ class CombatLog {
                 return;
             }
             // Dedicated MP: server owns inventory (YOU). Local give alone is stomped.
-            if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            if (this.scene.simAuth()) {
                 this.scene._netSendMove?.(true);
                 this.scene.net.sendAction({
                     type: NetProtocol.Actions.CHAT,
@@ -618,7 +615,7 @@ class CombatLog {
             const px = tx * ts - w * 0.5;
             const py = ty * ts;
             // Dedicated MP: server owns pose — YOU applies via _netAwaitPoseFromYou.
-            if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+            if (this.scene.simAuth()) {
                 this.scene._netAwaitPoseFromYou = true;
                 this.scene.net.sendAction({
                     type: NetProtocol.Actions.CHAT,
@@ -629,11 +626,6 @@ class CombatLog {
             player.teleport(px, py);
             this.scene.syncCameraToPlayer?.();
             if (this.scene.isNet && this.scene.net?.connected) {
-                // LocalSim: push pose so interest/chunks follow
-                if (this.scene.net._pawn) {
-                    this.scene.net._pawn.x = px;
-                    this.scene.net._pawn.y = py;
-                }
                 this.scene._netSendMove?.(true);
             }
             this.push(`Teleported to ${tx}, ${ty}`);
@@ -837,7 +829,7 @@ class CombatLog {
                     }))
                     .filter(s => s.text)
                 : null,
-            t: this.scene.time.now,
+            t: this.scene._chatFadeNow?.() ?? this.scene.time.now,
             visualLines: 0,
             _wrapKey: "",
             _rows: null
@@ -1138,7 +1130,7 @@ class CombatLog {
         const totalVisual = this._measureAndTrim(wrapW, fontSize, lineH);
 
         // --- Chat stack: up to 10 visual lines, permanently above the compose slot ---
-        const now = this.scene.time.now;
+        const now = this.scene._chatFadeNow?.() ?? this.scene.time.now;
         const measured = [];
         for (const line of this.lines) {
             if (!this.composing && now - line.t >= this.fadeMs) continue;
@@ -1200,8 +1192,26 @@ class CombatLog {
         this._logImage.setOrigin(0, 1);
     }
 
+    /** Keep fade timestamps still across a pause menu so remaining lifetime is preserved. */
+    shiftFade(dt) {
+        const n = Number(dt);
+        if (!(n > 0)) return;
+        for (const line of this.lines) {
+            if (Number.isFinite(line.t)) line.t += n;
+        }
+        this._lastFadeLayout += n;
+        this._lastBlink += n;
+    }
+
     update() {
-        const now = this.scene.time?.now || 0;
+        const now = this.scene._chatFadeNow?.() ?? (this.scene.time?.now || 0);
+        if (this.scene._chatFadeHold != null && !this.composing) {
+            if (this._layoutDirty) {
+                this._layout();
+                this._layoutDirty = false;
+            }
+            return;
+        }
         if (this.composing) {
             if (this._layoutDirty) {
                 this._layout();

@@ -89,8 +89,16 @@ class PartySystem {
                     player
                 );
             });
-            player.on("pointerout", () => {
-                if (scene._tooltipTarget === player) scene.hideTooltip?.();
+            player.on("pointerout", (pointer) => {
+                if (scene._tooltipTarget !== player) return;
+                // Walk/attack frames and overlapping work objects fire a native
+                // pointerout even while the cursor is still on the creature AABB.
+                if (pointer && scene._pointerOnCreature?.(pointer, player)) return;
+                if (pointer && typeof creaturePointerHit === "function") {
+                    const wpt = scene.cameras?.main?.getWorldPoint?.(pointer.x, pointer.y);
+                    if (wpt && creaturePointerHit(player, wpt.x, wpt.y)) return;
+                }
+                scene.hideTooltip?.();
             });
         }
         if (!player.partyAI && player.role !== "wanderer") {
@@ -125,11 +133,37 @@ class PartySystem {
         pawn._iceVy = 0;
         body.enable = false;
         body.moves = false;
+        pawn._physX = pawn.x;
+        pawn._physY = pawn.y;
+    }
+
+    /** Stop leftover WASD walk on a pawn that just lost control. */
+    _idleOutgoingPawn(pawn) {
+        if (!pawn) return;
+        pawn._netFromX = pawn.x;
+        pawn._netFromY = pawn.y;
+        pawn._netTx = pawn.x;
+        pawn._netTy = pawn.y;
+        pawn._netSnapAt = performance.now();
+        pawn._netSnapDist = 0;
+        pawn._netMoving = false;
+        pawn._netVx = 0;
+        pawn._netVy = 0;
+        pawn._puppetMoving = false;
+        pawn._puppetStillMs = 999;
+        pawn._physX = pawn.x;
+        pawn._physY = pawn.y;
+        pawn.setVelocity?.(0, 0);
+        pawn._iceVx = 0;
+        pawn._iceVy = 0;
+        if (typeof PlayerLook !== "undefined") {
+            PlayerLook.play(pawn, pawn.facing || "down", false);
+        }
     }
 
     _isDedicatedNet() {
         const scene = this.scene;
-        return !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
+        return !!(scene.simAuth());
     }
 
     _bindHotkeys() {
@@ -201,8 +235,7 @@ class PartySystem {
                 return;
             }
             if (obj?.role === "settler") {
-                this.trySettlerClick(obj);
-                return;
+                if (this.trySettlerClick(obj)) return;
             }
             if (scene.party?.includes(obj) && obj !== scene.player) {
                 if (obj._resting) {
@@ -295,6 +328,7 @@ class PartySystem {
             from._iceVy = 0;
             if (typeof syncPawnPhysicsPose === "function") syncPawnPhysicsPose(from);
         }
+        this._idleOutgoingPawn(from);
         if (this._isDedicatedNet() && (pawn._netProne || pawn._downed || pawn._prone || pawn.isIncapacitated?.())) {
             const tx = pawn._netTx;
             const ty = pawn._netTy;
@@ -315,10 +349,21 @@ class PartySystem {
         pawn.syncWaistSlots?.();
         pawn.recomputeEquipmentEffects?.();
         // Taking control interrupts AI eat/tend so you don't inherit a channel bar
-        // and then lose it to a hotbar-slot mismatch.
+        // and then lose it to a hotbar-slot mismatch. Anyone mid-bite from this
+        // pawn's bags must also stop — the selected inventory is player-owned.
         pawn._cancelEat?.();
         if (pawn._tendChannel && !pawn._tendChannel.corpse) pawn._cancelTend?.();
+        this._interruptEatsFromPawn(pawn);
+        pawn._netEating = false;
+        if (pawn._netWorkChannel?.kind === "eat" || pawn._netWorkChannel?.kind === "tend") {
+            pawn._netWorkChannel = null;
+        }
+        pawn._hideOwnChannelBar?.();
         scene.hideChannelBar?.();
+        if (pawn._restWalk) {
+            pawn._restWalk = null;
+            scene._intendedSleep?.()?.delete?.(pawn.pawnId);
+        }
         if (scene.hotbar) {
             const hi = Math.max(0, Math.min((scene.hotbar.size || 5) - 1, pawn.hotbarIndex || 0));
             scene.hotbar.setSize?.(pawn.inventorySize || pawn.inventory?.length || 5);
@@ -355,6 +400,22 @@ class PartySystem {
         return true;
     }
 
+    _interruptEatsFromPawn(from) {
+        if (!from) return;
+        const fromId = from.pawnId;
+        for (const m of this.scene.party || []) {
+            if (!m || m === from) continue;
+            const src = m._eatChannel?.sourcePawn;
+            if (src === from || (fromId && src?.pawnId === fromId)) {
+                m._cancelEat?.();
+            }
+            const seek = m.partyAI?.eatSeek;
+            if (seek === from || (fromId && seek?.pawnId === fromId)) {
+                m.partyAI.setEatSeek?.(null);
+            }
+        }
+    }
+
     spawnCompanion(opts = {}) {
         const scene = this.scene;
         const P = typeof Party !== "undefined" ? Party : { CAP: 6 };
@@ -372,7 +433,15 @@ class PartySystem {
             : `party:${pawn.ownerId}`;
         pawn.pawnName = opts.name || (typeof CavemanNames !== "undefined" ? CavemanNames.generate() : "Og");
         pawn.hotbarIndex = opts.hotbarIndex || 0;
-        if (Array.isArray(opts.inventory)) pawn.inventory = opts.inventory;
+        if (Array.isArray(opts.inventory)) {
+            try {
+                pawn.inventory = JSON.parse(JSON.stringify(opts.inventory));
+            } catch (_) {
+                pawn.inventory = opts.inventory.map((s) => (
+                    s && s.id ? { id: s.id, quantity: s.quantity || 1 } : null
+                ));
+            }
+        }
         while (pawn.inventory.length < (pawn.inventorySize || 5)) pawn.inventory.push(null);
         if (opts.equipment) {
             const eq = JSON.parse(JSON.stringify(opts.equipment));
@@ -548,7 +617,7 @@ class PartySystem {
         const myId = scene.leader?.pawnId || scene.characterId;
         if (wanderer.refusedBy?.has(myId)) return false;
 
-        if (scene.isNet && scene.net?.connected && !scene.net.isLocal) {
+        if (scene.simAuth()) {
             scene.net.sendAction({
                 type: NetProtocol.Actions.RECRUIT,
                 wandererId: wanderer.pawnId
@@ -621,14 +690,6 @@ class PartySystem {
         wanderer.syncNameLabel?.();
         scene.partyPanel?.refresh?.();
         scene.combatLog?.push(`${name} joins you`);
-        if (scene.net?.isLocal) {
-            scene.net.sendAction?.({
-                type: NetProtocol.Actions.RECRUIT,
-                wandererId: wanderer.pawnId,
-                accepted: true,
-                pawn: this._pawnSnapshot(wanderer)
-            });
-        }
     }
 
     tryAllyClick(pawn, opts = {}) {
@@ -729,7 +790,7 @@ class PartySystem {
         }
         const stack = fromInv?.[slot];
         if (!this.canGiveTo(fromPawn, toPawn, stack)) return false;
-        if (scene.isNet && scene.net?.connected && !scene.net.isLocal) {
+        if (scene.simAuth()) {
             scene.net.sendAction({
                 type: NetProtocol.Actions.GIVE_ITEM,
                 fromPawnId: fromPawn.pawnId,
@@ -759,7 +820,7 @@ class PartySystem {
             return;
         }
         const name = pawn.displayName();
-        const dedicated = !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
+        const dedicated = !!(scene.simAuth());
         const spawn = opts.spawn != null ? !!opts.spawn : !dedicated;
         pawn.createDeathCorpse?.({ spawn, combatDeath: !!killer });
         scene.party = (scene.party || []).filter((p) => p !== pawn);
@@ -921,7 +982,14 @@ class PartySystem {
         const wild = oa ? b : a;
         if (ownerId && self && ownerId !== self) return false;
         if (!P?.ownerEngagedWithWild) return true;
-        return P.ownerEngagedWithWild(self || ownerId, wild, { lastHitMob: this.lastHitMob });
+        const other = new Set();
+        for (const entry of this.scene.remotePlayers?.values?.() || []) {
+            if (entry?.ownerId && entry.ownerId !== self) other.add(entry.ownerId);
+        }
+        return P.ownerEngagedWithWild(self || ownerId, wild, {
+            lastHitMob: this.lastHitMob,
+            otherOwnerIds: other
+        });
     }
 
     _findRemoteTarget(ownerId, pawnId) {
@@ -1038,14 +1106,14 @@ class PartySystem {
             if (typeof creaturePointerHit === "function") {
                 return creaturePointerHit(p, world.x, world.y);
             }
-            const hs = (p.hitboxSize || 8) + 4;
-            return Math.abs((p.x || 0) - world.x) < hs && Math.abs((p.y || 0) - world.y) < hs * 2;
+            const body = 16;
+            const x = p.x || 0;
+            const y = p.y || 0;
+            return world.x >= x && world.x <= x + body
+                && world.y >= y - body && world.y <= y;
         };
         for (const p of scene.party || []) {
             if (p && p !== scene.player && hit(p)) return p;
-        }
-        for (const p of scene.settlers || []) {
-            if (p && hit(p)) return p;
         }
         return null;
     }
@@ -1123,8 +1191,11 @@ class PartySystem {
             if (typeof creaturePointerHit === "function") {
                 return creaturePointerHit(p, world.x, world.y);
             }
-            const hs = (p.hitboxSize || 8) + 4;
-            return Math.abs((p.x || 0) - world.x) < hs && Math.abs((p.y || 0) - world.y) < hs * 2;
+            const body = 16;
+            const x = p.x || 0;
+            const y = p.y || 0;
+            return world.x >= x && world.x <= x + body
+                && world.y >= y - body && world.y <= y;
         };
         for (const w of this.wanderers) {
             if (w.role === "wanderer" && !w.hostile && hit(w)) return true;
@@ -1142,26 +1213,59 @@ class PartySystem {
     }
 
     /**
-     * What a recruited pawn is busy with right now (empty if idle).
+     * Who this pawn is tending, if it's someone else.
+     * Local channels have a patient sprite; sim-authored tend only sends a name/id.
+     */
+    _tendPatientLabel(pawn) {
+        if (!pawn) return null;
+        const selfId = pawn.pawnId || pawn.id;
+        const selfName = pawn.displayName?.() || pawn.pawnName || pawn.name || "";
+        const labelOf = (who) => {
+            if (!who || who === pawn) return null;
+            const id = who.pawnId || who.id;
+            if (id && selfId && id === selfId) return null;
+            return who.displayName?.() || who.pawnName || who.name || "ally";
+        };
+        const tend = pawn._tendChannel;
+        const fromSprite = labelOf(tend?.patient) || labelOf(pawn.partyAI?.tendSeek);
+        if (fromSprite) return fromSprite;
+        const net = pawn._netWorkChannel?.kind === "tend" ? pawn._netWorkChannel : null;
+        const id = tend?.patientId || net?.patientId || null;
+        const name = tend?.patientName || net?.patientName || null;
+        if (id && selfId && id === selfId) return null;
+        if (id) {
+            const found = this.scene?._pawnByNetId?.(id);
+            const fromFound = labelOf(found);
+            if (fromFound) return fromFound;
+        }
+        if (name && name !== selfName) return name;
+        return null;
+    }
+
+    /**
+     * What a recruited pawn is busy with right now.
+     * Settlers include Idle. Traveling companions follow or wait.
      * Used as a live tooltip source so the tip clears when the channel ends.
      */
     activityTooltip(pawn) {
         if (!pawn || pawn.isBodyDead?.()) return "";
+        const isSettler = pawn.role === "settler" || !!pawn.homeSettlementId;
 
         const tend = pawn._tendChannel;
-        if (tend && !tend.corpse) {
-            const who = tend.patient;
-            const other = who && who !== pawn;
-            const part = tend.targetHint?.partName || tend.target?.part?.name;
-            const n = Array.isArray(tend.targetHints) ? tend.targetHints.length : 0;
-            const patient = other ? (who.displayName?.() || "ally") : null;
+        const netTend = pawn._netWorkChannel?.kind === "tend";
+        if ((tend && !tend.corpse) || netTend || pawn.partyAI?.tendSeek) {
+            const patient = this._tendPatientLabel(pawn);
+            const part = tend?.targetHint?.partName || tend?.target?.part?.name;
+            const n = Array.isArray(tend?.targetHints) ? tend.targetHints.length : 0;
             if (n > 1) {
-                if (other) return `Tending ${patient} (${n} wounds)`;
+                if (patient) return `Tending ${patient} (${n} wounds)`;
                 return `Tending ${n} wounds`;
             }
-            if (other && part) return `Tending ${patient}'s ${part}`;
-            if (other) return `Tending ${patient}`;
+            if (patient && part) return `Tending ${patient}'s ${part}`;
+            if (patient) return `Tending ${patient}`;
             if (part) return `Tending ${part}`;
+            const act = pawn._settlerAct || pawn.partyAI?._settlerAct;
+            if (typeof act === "string" && /^Tending /.test(act) && act !== "Tending") return act;
             return "Tending";
         }
         if (pawn._skinChannel) return "Skinning";
@@ -1172,27 +1276,49 @@ class PartySystem {
             return recipe ? `Crafting ${recipe}` : "Crafting";
         }
         const eat = pawn._eatChannel;
-        if (eat) {
-            const foodName = this._itemLabel(eat.item, eat.itemId);
-            const patient = eat.patient && eat.patient !== pawn;
+        const netEat = pawn._netWorkChannel?.kind === "eat" || pawn._netEating;
+        if (eat || netEat) {
+            const foodName = this._itemLabel(
+                eat?.item,
+                eat?.itemId || pawn._netWorkChannel?.itemId
+            ) || pawn._eatTipName || "";
+            if (foodName) pawn._eatTipName = foodName;
+            const patient = eat?.patient && eat.patient !== pawn;
             if (patient) {
                 const pn = eat.patient.displayName?.() || "ally";
                 return foodName ? `Feeding ${pn} ${foodName}` : `Feeding ${pn}`;
             }
             return foodName ? `Eating ${foodName}` : "Eating";
         }
+        pawn._eatTipName = null;
         if (pawn.isVomiting?.()) return "Vomiting";
         if (this._isBeingTended(pawn)) return "Being tended";
-        if (pawn._chopBar || pawn._resting) {
-            const act = pawn.partyAI?._settlerAct;
+        if (pawn._chopBar || pawn._resting || pawn._restWalk) {
+            let act = pawn.partyAI?._settlerAct || pawn._settlerAct;
+            if (pawn._resting && typeof act === "string") {
+                act = act.replace(/^Going to sleep/i, "Sleeping");
+            }
             if (act && act !== "Idle") return act;
             if (pawn._chopBar) return "Chopping";
             return "Sleeping";
         }
         if (pawn.partyAI?.eatSeek) return "Getting food";
-        if (pawn.partyAI?._settlerAct) return pawn.partyAI._settlerAct;
+        const act = pawn._settlerAct || pawn.partyAI?._settlerAct;
+        if (act && act !== "Idle" && !/^Sleeping/i.test(act)) return act;
         if (pawn._downed || pawn._prone || pawn.isIncapacitated?.()) return "Downed";
-        return "";
+        if (isSettler) return "Idle";
+        const assist = pawn.partyAI?.assistTarget;
+        if (assist && !assist.isBodyDead?.()) return "Fighting";
+        if (pawn.isAttacking?.()) return "Fighting";
+        if (typeof Party !== "undefined" && Party.companionFollowLabel) {
+            return Party.companionFollowLabel({
+                follow: this.scene?.player,
+                leader: this.scene?.leader,
+                leaderDead: !!this.leaderDead,
+                self: pawn
+            });
+        }
+        return "Waiting";
     }
 
     /** Occupied hotbar, backpack, then equipment (head → waist → feet). */
@@ -1232,6 +1358,22 @@ class PartySystem {
         return rows.length ? { text: text || "", rows } : (text || "");
     }
 
+    hungerTooltip(pawn) {
+        if (!pawn) return null;
+        return {
+            kc: Number(pawn.kc) || 0,
+            sat: Number(pawn.saturation) || 0,
+            stomach: Math.max(1, Number(pawn.stomach) || 2000)
+        };
+    }
+
+    withSettlerTooltip(pawn, text) {
+        const hunger = this.hungerTooltip(pawn);
+        const held = this.withHeldTooltip(pawn, text);
+        if (held && typeof held === "object") return { ...held, hunger };
+        return { text: text || "", hunger };
+    }
+
     /** World-hover tip: wanderer recruit text, or name + activity (incl. Downed). */
     hoverTooltip(pawn) {
         if (!pawn || pawn.isBodyDead?.()) return "";
@@ -1247,7 +1389,7 @@ class PartySystem {
             } else {
                 text = busy ? `${name}\n${busy}` : (name || "Settler");
             }
-            return this.withHeldTooltip(pawn, text);
+            return this.withSettlerTooltip(pawn, text);
         }
         const inParty = pawn.role === "companion" || pawn.role === "leader"
             || (this.scene.party || []).includes(pawn);
@@ -1484,7 +1626,7 @@ class PartySystem {
     update(time, delta) {
         const scene = this.scene;
         if (scene._gamePaused && scene._isSingleplayerSession?.()) return;
-        const dedicated = !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
+        const dedicated = !!(scene.simAuth());
         if (!dedicated) this._rebuildDuelAssignments();
         if (!dedicated) this._alertRestersIfHunted();
 
@@ -1495,9 +1637,12 @@ class PartySystem {
         }
         for (const p of scene.settlers || []) {
             if (!p?.active) continue;
-            if (dedicated) this._puppetWanderer(p, delta);
+            // Settlers already puppet + tick melee in Player.update. Running
+            // `_puppetWanderer` too subtracted the attack timer twice and
+            // restarted the chopper mid-thrust every snapshot.
             p.update(time, delta);
             p.syncNameLabel?.();
+            if (typeof syncCreatureInputHit === "function") syncCreatureInputHit(p);
         }
         for (const w of this.wanderers) {
             if (!w?.active) continue;
@@ -1506,7 +1651,9 @@ class PartySystem {
                 this._puppetWanderer(w, delta);
             } else {
                 w.wandererAI?.update(delta);
-                if (w.isAttacking?.()) {
+                if (w._prone || w._downed || w.isIncapacitated?.() || w.isImmobile?.()) {
+                    if (w.isAttacking?.()) w._endAttack?.();
+                } else if (w.isAttacking?.()) {
                     const progress = w._attackProgress?.() ?? 0;
                     if (w.weaponSprite?.visible) w._updateWeaponSprite?.(progress);
                     if (w.unarmedSprite?.visible) w._updateUnarmedSprite?.(progress);
@@ -1536,61 +1683,106 @@ class PartySystem {
     _puppetWanderer(w, delta) {
         const tx = w._netTx;
         const ty = w._netTy;
+        const downed = !!(
+            w._netProne
+            || w._downed
+            || w._prone
+            || w.isIncapacitated?.()
+            || w.isImmobile?.()
+        );
         if (Number.isFinite(tx) && Number.isFinite(ty)) {
-            const fromX = Number.isFinite(w._netFromX) ? w._netFromX : w.x;
-            const fromY = Number.isFinite(w._netFromY) ? w._netFromY : w.y;
-            const err = Math.hypot(tx - fromX, ty - fromY);
-            if (err > 72 || !Number.isFinite(w._netSnapAt)) {
-                w.x = tx;
-                w.y = ty;
-            } else {
-                const snapDt = w._netSnapDt || (1000 / 15);
-                const age = performance.now() - w._netSnapAt;
-                let u = snapDt > 0 ? age / snapDt : 1;
-                if (u > 1) u = 1;
-                w.x = fromX + (tx - fromX) * u;
-                w.y = fromY + (ty - fromY) * u;
-            }
-            if (!w.isAttacking?.()) {
-                const snapDist = Number.isFinite(w._netSnapDist) ? w._netSnapDist : err;
-                const wantWalk = w._netMoving === true || snapDist > 1;
-                if (wantWalk) {
-                    w._puppetMoving = true;
-                    w._puppetStillMs = 0;
+            if (downed) {
+                w.facing = "right";
+                const bw = w.width || 16;
+                const bh = w.height || 16;
+                if (w._prone) {
+                    w.x = tx + bw * 0.5;
+                    w.y = ty - bh * 0.5;
                 } else {
-                    w._puppetStillMs = (w._puppetStillMs || 0) + (delta || 16);
-                    if (w._puppetStillMs > 100) w._puppetMoving = false;
+                    w.x = tx;
+                    w.y = ty;
                 }
-                const moving = !!w._puppetMoving;
-                if (moving) {
-                    const dx = tx - fromX;
-                    const dy = ty - fromY;
-                    if (Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2) {
-                        if (Math.abs(dx) > Math.abs(dy)) w.facing = dx > 0 ? "right" : "left";
-                        else w.facing = dy > 0 ? "down" : "up";
+                w._puppetMoving = false;
+            } else {
+                const fromX = Number.isFinite(w._netFromX) ? w._netFromX : w.x;
+                const fromY = Number.isFinite(w._netFromY) ? w._netFromY : w.y;
+                const err = Math.hypot(tx - fromX, ty - fromY);
+                if (err > 72 || !Number.isFinite(w._netSnapAt)) {
+                    w.x = tx;
+                    w.y = ty;
+                } else {
+                    const snapDt = w._netSnapDt || (1000 / 15);
+                    const age = performance.now() - w._netSnapAt;
+                    let u = snapDt > 0 ? age / snapDt : 1;
+                    if (u > 1) u = 1;
+                    w.x = fromX + (tx - fromX) * u;
+                    w.y = fromY + (ty - fromY) * u;
+                }
+                if (!w.isAttacking?.()) {
+                    const wildlifeFrozen = typeof Party !== "undefined" && Party.mobTimeScale
+                        ? !(Party.mobTimeScale(this.scene.tickSpeed) > 0)
+                        : !(Number(this.scene.tickSpeed) > 0);
+                    if (wildlifeFrozen) {
+                        w._puppetMoving = false;
+                        if (w.anims) {
+                            if (typeof w.anims.pause === "function") {
+                                if (w.anims.isPlaying && !w.anims.isPaused) w.anims.pause();
+                            } else {
+                                w.anims.timeScale = 0;
+                            }
+                        }
+                    } else {
+                        if (w.anims?.isPaused && typeof w.anims.resume === "function") {
+                            w.anims.resume();
+                        }
+                        const snapDist = Number.isFinite(w._netSnapDist) ? w._netSnapDist : err;
+                        const wantWalk = w._netMoving === true
+                            || (w._netMoving !== false && snapDist > 1);
+                        if (wantWalk) {
+                            w._puppetMoving = true;
+                            w._puppetStillMs = 0;
+                        } else {
+                            w._puppetStillMs = (w._puppetStillMs || 0) + (delta || 16);
+                            if (w._puppetStillMs > 100) w._puppetMoving = false;
+                        }
+                        const moving = !!w._puppetMoving;
+                        if (moving) {
+                            const dx = tx - fromX;
+                            const dy = ty - fromY;
+                            if (Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2) {
+                                if (Math.abs(dx) > Math.abs(dy)) w.facing = dx > 0 ? "right" : "left";
+                                else w.facing = dy > 0 ? "down" : "up";
+                            }
+                        }
+                        if (w.anims) {
+                            const ts = this.scene.tileSize || 16;
+                            const snapDtSec = Math.max(0.001, (w._netSnapDt || (1000 / 15)) / 1000);
+                            let tilesPerSec = moving ? snapDist / snapDtSec / ts : 0;
+                            if (moving && tilesPerSec < 0.05) {
+                                const tick = typeof Party !== "undefined" && Party.mobTimeScale
+                                    ? Party.mobTimeScale(this.scene.tickSpeed)
+                                    : 1;
+                                const stroll = w.hostile ? 1 : ((typeof Party !== "undefined" && Party.WANDER_WALK_MULT) || 0.28);
+                                tilesPerSec = (w.speed || 3.5) * stroll * tick;
+                            }
+                            w.anims.timeScale = moving && typeof Party !== "undefined" && Party.walkAnimTimeScale
+                                ? Party.walkAnimTimeScale(tilesPerSec)
+                                : moving
+                                    ? Math.max(0.15, Math.min(8, tilesPerSec / 3.5))
+                                    : 1;
+                        }
+                        if (typeof PlayerLook !== "undefined") PlayerLook.play(w, w.facing || "down", moving);
                     }
                 }
-                if (w.anims) {
-                    const ts = this.scene.tileSize || 16;
-                    const snapDtSec = Math.max(0.001, (w._netSnapDt || (1000 / 15)) / 1000);
-                    let tilesPerSec = moving ? snapDist / snapDtSec / ts : 0;
-                    if (moving && tilesPerSec < 0.05) {
-                        const tick = typeof Party !== "undefined" && Party.mobTimeScale
-                            ? Party.mobTimeScale(this.scene.tickSpeed)
-                            : 1;
-                        const stroll = w.hostile ? 1 : ((typeof Party !== "undefined" && Party.WANDER_WALK_MULT) || 0.28);
-                        tilesPerSec = (w.speed || 3.5) * stroll * tick;
-                    }
-                    w.anims.timeScale = moving && typeof Party !== "undefined" && Party.walkAnimTimeScale
-                        ? Party.walkAnimTimeScale(tilesPerSec)
-                        : moving
-                            ? Math.max(0.15, Math.min(8, tilesPerSec / 3.5))
-                            : 1;
-                }
-                if (typeof PlayerLook !== "undefined") PlayerLook.play(w, w.facing || "down", moving);
             }
         }
-        if (w.isAttacking?.()) {
+        if (typeof setCreatureProne === "function") {
+            setCreatureProne(w, downed && !w._bodyDead);
+        }
+        if (downed) {
+            w.facing = "right";
+            if (w.isAttacking?.()) w._endAttack?.();
+        } else if (w.isAttacking?.()) {
             const progress = w._attackProgress?.() ?? 0;
             if (w.weaponSprite?.visible) w._updateWeaponSprite?.(progress);
             if (w.unarmedSprite?.visible) w._updateUnarmedSprite?.(progress);
@@ -1598,7 +1790,8 @@ class PartySystem {
             if (w.attackTimer <= 0) w._endAttack?.();
         }
         w.setVelocity?.(0, 0);
-        w.setDepth(w.y | 0);
+        if (typeof applyCreatureSortDepth === "function") applyCreatureSortDepth(w);
+        else w.setDepth(w.y | 0);
         w.syncFxRoot?.();
     }
 
@@ -1671,6 +1864,7 @@ class PartySystem {
         scene.settlers = (scene.settlers || []).filter((p) => p !== pawn);
         pawn.role = "companion";
         pawn.homeSettlementId = null;
+        if (typeof syncCreatureInputHit === "function") syncCreatureInputHit(pawn);
         pawn.ownerId = scene.leader?.ownerId || pawn.ownerId || scene._netPlayerId;
         pawn.leaderId = scene.leader?.pawnId || pawn.leaderId;
         pawn.faction = (typeof Party !== "undefined" && Party.partyFactionId)
@@ -1678,6 +1872,7 @@ class PartySystem {
             : `party:${pawn.ownerId}`;
         if (!pawn.partyAI) pawn.partyAI = new PartyAI(pawn);
         pawn.partyAI.stopWork?.();
+        pawn._settlerAct = null;
         if (!this._isDedicatedNet()) this._enablePawnPhysics(pawn);
         pawn._physX = pawn.x;
         pawn._physY = pawn.y;
@@ -1695,6 +1890,7 @@ class PartySystem {
 
     _tickBandage() {
         const scene = this.scene;
+        if (scene.simAuth()) return;
         if (this._partyInCombat()) {
             this._cancelAutoTends();
             return;
@@ -1709,7 +1905,7 @@ class PartySystem {
                 continue;
             }
             if (pawn._resting || pawn._restWalk) {
-                const dedicated = !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
+                const dedicated = !!(scene.simAuth());
                 if (dedicated || !this._wakeRestingTender(pawn)) {
                     pawn.partyAI?.setTendSeek?.(null);
                     continue;
@@ -1757,7 +1953,16 @@ class PartySystem {
         if (pawn.partyAI?.tendSeek) return true;
         if (this._isTendTargeted(pawn)) return true;
         if (this._pickAutoTend(pawn)) return true;
-        return this._pawnNeedsTend(pawn) && this._partyHasBandage();
+        if (this._pawnNeedsTend(pawn) && this._partyHasBandage()) return true;
+        if (pawn._eatChannel || pawn.partyAI?.eatSeek) return true;
+        const P = typeof Party !== "undefined" ? Party : { AUTO_EAT_BELOW: 1000 };
+        const mal = !!pawn.anatomy?.hediff?.("malnutrition");
+        const sitting = this._eatSittings.get(pawn.pawnId);
+        const kc = pawn.kc || 0;
+        const stillHungry = sitting ? kc < sitting.until : (mal || kc < P.AUTO_EAT_BELOW);
+        if (!stillHungry) return false;
+        const ts = this.scene?.tileSize || 16;
+        return !!this._pickAutoEat(pawn, mal, ts);
     }
 
     _cancelAutoTends() {
@@ -1895,6 +2100,30 @@ class PartySystem {
         return !!(pawn._resting || pawn._downed || pawn._prone || pawn.isIncapacitated?.());
     }
 
+    /** Get up from a lean-to (or abort walking to one) to eat, then `_wokeFromRest` sends them back. */
+    _wakeRestingHungry(pawn) {
+        if (!pawn || pawn.isBodyDead?.() || pawn.isVomiting?.() || pawn.isIncapacitated?.()) return false;
+        if (pawn.isImmobile?.()) return false;
+        pawn.capacities = pawn.capacities || (pawn.anatomy ? new Capacities(pawn.anatomy) : null);
+        if (!pawn.capacities?.canManipulate?.()) return false;
+        const P = typeof Party !== "undefined" ? Party : { AUTO_EAT_BELOW: 1000 };
+        const mal = !!pawn.anatomy?.hediff?.("malnutrition");
+        const sitting = this._eatSittings.get(pawn.pawnId);
+        const kc = pawn.kc || 0;
+        if (!sitting && !mal && kc >= P.AUTO_EAT_BELOW) return false;
+        if (sitting && kc >= sitting.until) return false;
+        const scene = this.scene;
+        const ts = scene?.tileSize || 16;
+        if (!this._pickAutoEat(pawn, mal, ts)) return false;
+        if (pawn._resting) scene._wakePawn?.(pawn, { help: true });
+        else if (pawn._restWalk) {
+            pawn._restWalk = null;
+            scene._intendedSleep?.().delete(pawn.pawnId);
+            pawn._wokeFromRest = true;
+        }
+        return true;
+    }
+
     /** Get up from a lean-to (or abort walking to one) to tend a lying ally, then `_wokeFromRest` sends them back. */
     _wakeRestingTender(pawn) {
         if (!pawn || pawn.isBodyDead?.() || pawn.isVomiting?.() || pawn.isIncapacitated?.()) return false;
@@ -2011,7 +2240,8 @@ class PartySystem {
 
     _tickFood() {
         const scene = this.scene;
-        const dedicated = !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
+        if (scene.simAuth()) return;
+        const dedicated = !!(scene.simAuth());
         const P = typeof Party !== "undefined" ? Party : { AUTO_EAT_BELOW: 1000, AUTO_EAT_UNTIL: 1400, INTERACT_TILES: 4 };
         const ts = scene.tileSize || 16;
         if (this._partyInCombat()) {
@@ -2036,12 +2266,20 @@ class PartySystem {
                 pawn.partyAI?.setEatSeek?.(null);
                 continue;
             }
+            if (pawn._resting || pawn._restWalk) {
+                if (!this._wakeRestingHungry(pawn)) {
+                    pawn.partyAI?.setEatSeek?.(null);
+                    continue;
+                }
+            }
             if ((pawn.kc || 0) >= P.AUTO_EAT_BELOW) {
                 this._eatSittings.delete(pawn.pawnId);
                 pawn.partyAI?.setEatSeek?.(null);
                 continue;
             }
-            const mal = !!pawn.anatomy?.hediff?.("malnutrition");
+            const starving = typeof P.isStarving === "function"
+                ? P.isStarving(pawn)
+                : !(Number(pawn.kc) > 0);
             const sitting = this._eatSittings.get(pawn.pawnId);
             const until = sitting ? P.AUTO_EAT_UNTIL : P.AUTO_EAT_BELOW;
             if (sitting && pawn.kc >= until) {
@@ -2049,7 +2287,7 @@ class PartySystem {
                 pawn.partyAI?.setEatSeek?.(null);
                 continue;
             }
-            const pick = this._pickAutoEat(pawn, mal, ts);
+            const pick = this._pickAutoEat(pawn, starving, ts);
             if (!pick) {
                 pawn.partyAI?.setEatSeek?.(null);
                 continue;
@@ -2074,7 +2312,7 @@ class PartySystem {
                     until: poisonous ? pawn.kc + 1 : P.AUTO_EAT_UNTIL,
                     poisonStop: poisonous
                 });
-                if (scene.isNet && scene.net?.connected && !scene.net.isLocal) {
+                if (scene.simAuth()) {
                     scene.net.sendAction({
                         type: NetProtocol.Actions.PARTY_EAT,
                         eaterId: pawn.pawnId,
@@ -2147,6 +2385,10 @@ class PartySystem {
                 pawn.partyAI?.setEatSeek?.(null);
                 continue;
             }
+            if (pawn.partyAI?._settlerBusy?.()) {
+                pawn.partyAI?.setEatSeek?.(null);
+                continue;
+            }
             if (dedicated) {
                 pawn.partyAI?.setEatSeek?.(null);
                 continue;
@@ -2160,7 +2402,9 @@ class PartySystem {
                 pawn.partyAI?.setEatSeek?.(null);
                 continue;
             }
-            const mal = !!pawn.anatomy?.hediff?.("malnutrition");
+            const starving = typeof P.isStarving === "function"
+                ? P.isStarving(pawn)
+                : !(Number(pawn.kc) > 0);
             const sitting = this._eatSittings.get(pawn.pawnId);
             const until = sitting ? P.AUTO_EAT_UNTIL : P.AUTO_EAT_BELOW;
             if (sitting && pawn.kc >= until) {
@@ -2175,7 +2419,7 @@ class PartySystem {
                 1.25,
                 Number(pawn.partyAI?._workInteractTiles?.()) || 1
             ) + 0.7;
-            const pick = this._pickAutoEat(pawn, mal, ts, {
+            const pick = this._pickAutoEat(pawn, starving, ts, {
                 seekTiles,
                 interactTiles
             });
@@ -2289,7 +2533,7 @@ class PartySystem {
 
     _tickDirector(delta) {
         const scene = this.scene;
-        if (scene.isNet && scene.net?.connected && !scene.net.isLocal) return;
+        if (scene.simAuth()) return;
         const speed = Number(scene.tickSpeed);
         const ts = Number.isFinite(speed) && speed >= 0 ? speed : 1;
         this.directorCd -= (delta / 1000) * ts;
@@ -2447,23 +2691,6 @@ class PartySystem {
         chunk.meta.wanderers = remain;
     }
 
-    debugAddCompanion() {
-        const scene = this.scene;
-        const P = typeof Party !== "undefined" ? Party : { CAP: 6 };
-        if ((scene.party?.length || 0) >= P.CAP) {
-            scene.combatLog?.push("Party is full");
-            return;
-        }
-        const p = this.spawnCompanion({
-            x: (scene.player?.x || 0) + 20,
-            y: scene.player?.y || 0
-        });
-        if (p) {
-            this.applyRoughVitals(p);
-            scene.combatLog?.push(`${p.displayName()} joins you`);
-        }
-    }
-
     debugSpawnWanderer() {
         const scene = this.scene;
         const n = this._spawnOffscreenWanderers() || 0;
@@ -2521,15 +2748,17 @@ class PartySystem {
         const scene = this.scene;
         const members = you?.party || character?.party || [];
         const poses = scene.net?.world?.poses || {};
-        const dedicated = !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
+        const dedicated = !!(scene.simAuth());
         const guard = dedicated && scene._invSwapGuardUntil && performance.now() < scene._invSwapGuardUntil;
         const ids = new Set();
+        const settlerIds = new Set((you?.settlers || []).map((s) => s && s.id).filter(Boolean));
         const hasWorldPose = (typeof Party !== "undefined" && Party.hasWorldPose)
             ? (id) => Party.hasWorldPose(poses, id)
             : (id) => Number.isFinite(poses[id]?.x) && Number.isFinite(poses[id]?.y);
         let clusterSlot = 0;
         for (const m of members) {
             if (!m?.id) continue;
+            if (settlerIds.has(m.id)) continue;
             ids.add(m.id);
             const wanderer = this.wanderers.find((w) => w.pawnId === m.id);
             if (wanderer) this._promoteWanderer(wanderer);
@@ -2547,23 +2776,33 @@ class PartySystem {
                     if (typeof m.kc === "number") existing.kc = m.kc;
                     if (typeof m.saturation === "number") existing.saturation = m.saturation;
                     if (typeof m.stomach === "number") existing.stomach = m.stomach;
-                    if (dedicated) existing._netEating = !!m.eatChannel;
-                    if (dedicated && !m.eatChannel && existing._eatChannel?.serverAuth) {
-                        existing._eatChannel = null;
+                    if (dedicated) {
+                        existing._netEating = !!m.eatChannel;
+                        if (typeof scene._applyPawnChannelVisual === "function") {
+                            scene._applyPawnChannelVisual(existing, m.eatChannel || null, "eat");
+                            scene._applyPawnChannelVisual(existing, m.tendChannel || null, "tend");
+                        } else if (typeof scene._applyPawnEatVisual === "function") {
+                            scene._applyPawnEatVisual(existing, m.eatChannel || null);
+                        } else if (!m.eatChannel && existing._eatChannel?.serverAuth) {
+                            existing._eatChannel = null;
+                        }
+                        if (typeof m.activity === "string" && m.activity) {
+                            existing._settlerAct = m.activity;
+                            if (existing.partyAI) existing.partyAI._settlerAct = m.activity;
+                        }
                     }
                     const skipGear = guard && existing === scene.player;
-                    if (dedicated && !skipGear && Array.isArray(m.inventory)) {
+                    if (dedicated && !skipGear && (Array.isArray(m.inventory) || m.equipment || Array.isArray(m.overflow))) {
+                        const cloneStack = (s) => {
+                            if (!s) return null;
+                            if (typeof cloneItemStack === "function") return cloneItemStack(s);
+                            try { return JSON.parse(JSON.stringify(s)); } catch (_) { return { ...s }; }
+                        };
                         const sig = this._gearSig(m.inventory, m.equipment, m.hotbarIndex, m.overflow);
-                        if (sig !== existing._netGearSig) {
-                            existing.inventory = m.inventory;
-                            if (Array.isArray(m.overflow)) existing.overflow = m.overflow;
-                            if (m.equipment) existing.equipment = JSON.parse(JSON.stringify(m.equipment));
-                            if (typeof m.hotbarIndex === "number") existing.hotbarIndex = m.hotbarIndex;
-                            existing._netGearSig = sig;
-                        }
-                        existing.syncWaistSlots?.();
-                        existing.recomputeEquipmentEffects?.();
-                            if (existing === scene.player) {
+                        const applied = (typeof NetProtocol !== "undefined" && NetProtocol.applyNetPawnGear)
+                            ? NetProtocol.applyNetPawnGear(existing, m, cloneStack, sig)
+                            : false;
+                        if (applied && existing === scene.player) {
                             if (scene.hotbar) {
                                 scene.hotbar.setSize?.(existing.inventorySize || 5);
                                 scene.hotbar.setOverflowSize?.(existing.overflowSize || 0);
@@ -2627,19 +2866,18 @@ class PartySystem {
                 facing
             });
         }
-        if (dedicated && you?.party) {
-            const settlerIds = new Set((you.settlers || []).map((s) => s && s.id));
+        if (dedicated && (you?.party || you?.settlers)) {
             for (const p of [...(scene.party || [])]) {
                 if (!p || p === scene.leader) continue;
+                if (settlerIds.has(p.pawnId)) {
+                    scene.party = (scene.party || []).filter((m) => m !== p);
+                    p.role = "settler";
+                    if (!scene.settlers) scene.settlers = [];
+                    if (!scene.settlers.includes(p)) scene.settlers.push(p);
+                    if (typeof syncCreatureInputHit === "function") syncCreatureInputHit(p);
+                    continue;
+                }
                 if (!ids.has(p.pawnId) && !p.isBodyDead?.()) {
-                    if (settlerIds.has(p.pawnId)) {
-                        if (p.role === "settler") {
-                            scene.party = (scene.party || []).filter((m) => m !== p);
-                            if (!scene.settlers) scene.settlers = [];
-                            if (!scene.settlers.includes(p)) scene.settlers.push(p);
-                        }
-                        continue;
-                    }
                     this.onMemberDied(p, null, { spawn: false });
                 }
             }
@@ -2656,10 +2894,14 @@ class PartySystem {
         } else if (you?.leaderDead || you?.dead) {
             this.leaderDead = true;
         }
-        scene.partyPanel?.refresh?.();
+        if (scene.partyPanel?.tick) scene.partyPanel.tick();
+        else scene.partyPanel?.refresh?.();
     }
 
     _gearSig(inv, eq, hotbar, overflow) {
+        if (typeof NetProtocol !== "undefined" && NetProtocol.netGearSig) {
+            return NetProtocol.netGearSig(inv, eq, hotbar, overflow);
+        }
         try {
             return JSON.stringify({ inv, eq, hi: hotbar, ov: overflow });
         } catch (_) {
@@ -2677,11 +2919,22 @@ class PartySystem {
 
     applyNetPoses(rp) {
         const scene = this.scene;
-        if (!rp || !scene.isNet || scene.net?.isLocal) return;
+        if (!rp || !scene.simAuth()) return;
         const ctrl = scene.player;
         const restCtrl = !!(ctrl && (ctrl._resting || ctrl._restWalk || rp.resting));
-        if (scene.leader && scene.leader !== ctrl) {
-            this._setNetPose(scene.leader, rp.x, rp.y, rp.facing, rp.prone, rp);
+        const leadPawn = scene.leader
+            || (scene.party || []).find((p) => p && p.pawnId === rp.id);
+        if (leadPawn && leadPawn !== ctrl) {
+            this._setNetPose(leadPawn, rp.x, rp.y, rp.facing, rp.prone, rp);
+            if (typeof scene._applyPawnChannelVisual === "function") {
+                scene._applyPawnChannelVisual(leadPawn, rp.eatChannel || null, "eat");
+                scene._applyPawnChannelVisual(leadPawn, rp.tendChannel || null, "tend");
+            }
+            if (Object.prototype.hasOwnProperty.call(rp, "activity")) {
+                const act = typeof rp.activity === "string" && rp.activity ? rp.activity : null;
+                leadPawn._settlerAct = act;
+                if (leadPawn.partyAI) leadPawn.partyAI._settlerAct = act;
+            }
         }
         if (restCtrl && ctrl.pawnId === rp.id) {
             this._setNetPose(ctrl, rp.x, rp.y, rp.facing, rp.prone, rp);
@@ -2692,6 +2945,11 @@ class PartySystem {
             } else if (!ctrl._resting) {
                 setCreatureRest?.(ctrl, false);
             }
+        } else if (ctrl && ctrl.pawnId === rp.id && rp.prone != null) {
+            // Local wake clears `_resting` before the next snapshot, so restCtrl
+            // goes false and the pose path above never runs. Without this,
+            // `_netProne` stays true and blocks punches/swings until relog.
+            ctrl._netProne = !!rp.prone;
         }
         for (const mem of rp.party || []) {
             const pawn = (scene.party || []).find((p) => p.pawnId === mem.id);
@@ -2706,6 +2964,8 @@ class PartySystem {
                     } else if (!pawn._resting) {
                         setCreatureRest?.(pawn, false);
                     }
+                } else if (mem.prone != null) {
+                    pawn._netProne = !!mem.prone;
                 }
                 continue;
             }
@@ -2718,6 +2978,15 @@ class PartySystem {
                 } else {
                     setCreatureRest?.(pawn, false);
                 }
+            }
+            if (typeof scene._applyPawnChannelVisual === "function") {
+                scene._applyPawnChannelVisual(pawn, mem.eatChannel || null, "eat");
+                scene._applyPawnChannelVisual(pawn, mem.tendChannel || null, "tend");
+            }
+            if (Object.prototype.hasOwnProperty.call(mem, "activity")) {
+                const act = typeof mem.activity === "string" && mem.activity ? mem.activity : null;
+                pawn._settlerAct = act;
+                if (pawn.partyAI) pawn.partyAI._settlerAct = act;
             }
         }
     }

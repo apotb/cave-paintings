@@ -104,16 +104,35 @@
     function pieceDef(piece) {
         const base = KIND_DEFS[piece?.kind] || {};
         const fp = Array.isArray(piece?.footprint) ? piece.footprint : base.footprint;
+        const thing = thingById(piece?.id);
         return {
             id: piece.id,
             ...base,
-            footprint: fp || [1, 1]
+            footprint: fp || [1, 1],
+            interactOffset: thing?.interactOffset || piece?.interactOffset || null
         };
+    }
+
+    function thingById(id) {
+        if (!id) return null;
+        if (typeof DataStore !== "undefined" && DataStore.getThing) {
+            return DataStore.getThing(id) || null;
+        }
+        if (typeof require === "function") {
+            try {
+                const list = require("../data/Things.json");
+                return (list || []).find((t) => t && t.id === id) || null;
+            } catch (_) {
+                return null;
+            }
+        }
+        return null;
     }
 
     function footprintOf(tx, ty, rot, piece) {
         const def = pieceDef(piece);
         if (!Place) return [{ tx, ty }];
+        if (Place.placeOccupyTiles) return Place.placeOccupyTiles(tx, ty, rot, def);
         return Place.footprintTiles(tx, ty, rot, def.footprint);
     }
 

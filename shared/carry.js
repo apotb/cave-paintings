@@ -137,6 +137,16 @@
         return str;
     }
 
+    function speedFromEquip(equipment, getDef) {
+        let mul = 1;
+        const defOf = (id) => (typeof getDef === "function" ? getDef(id) : null);
+        for (const s of wornPieces(equipment)) {
+            if (!s?.id) continue;
+            mul += Number(defOf(s.id)?.equip?.effects?.speed || 0);
+        }
+        return mul;
+    }
+
     function carryCap(strength) {
         return (Number(strength) || 0) * 2;
     }
@@ -165,6 +175,75 @@
             hungerRate: 1.0 + 0.5 * m,
             cannotSprint: m > 0
         };
+    }
+
+    function pawnEncumbrance(pawn, getDef, opts = {}) {
+        const strength = Number.isFinite(Number(opts.strength))
+            ? Number(opts.strength)
+            : strengthFromEquip(pawn?.equipment, getDef, pawn?.baseStrength);
+        const mass = Number.isFinite(Number(opts.weight))
+            ? Number(opts.weight)
+            : gearMass(pawn?.inventory, pawn?.equipment, getDef, pawn?.overflow);
+        return encumbrance(mass, strength);
+    }
+
+    /**
+     * Human walk/sprint in px/s. Same rules as a controlled Player: over-strength
+     * cannot sprint, starved cannot sprint, two living legs to sprint, and
+     * encumbrance / worn speed / moving capacity all scale the walk.
+     */
+    function humanMoveSpeed(pawn, opts = {}) {
+        const getDef = typeof opts.getDef === "function" ? opts.getDef : null;
+        const enc = pawnEncumbrance(pawn, getDef, opts);
+        const livingLegs = Number(opts.livingLegs);
+        const legs = Number.isFinite(livingLegs)
+            ? livingLegs
+            : (pawn?.anatomy?.livingLegs?.() ?? 2);
+        const prone = !!(opts.prone ?? pawn?._prone ?? pawn?.prone);
+        const vomiting = !!(opts.vomiting ?? pawn?.isVomiting?.());
+        const tending = !!(opts.tending
+            || pawn?._tending
+            || pawn?._eatChannel
+            || pawn?._tendChannel
+            || pawn?._skinChannel
+            || pawn?._fleshChannel
+            || pawn?._brainChannel
+            || pawn?._craftChannel
+            || pawn?.eatChannel
+            || pawn?.tendChannel);
+        const attacking = !!(opts.attacking ?? pawn?.isAttacking?.());
+        const kc = Number(opts.kc ?? pawn?.kc) || 0;
+        const canSprint = legs >= 2
+            && !prone
+            && !vomiting
+            && !tending
+            && !enc.cannotSprint
+            && kc > 0;
+        const sprinting = !!opts.wantSprint && canSprint && !attacking && !tending && !vomiting;
+        let moveMul = pawn?.capacities?.moving?.();
+        if (!(Number(moveMul) > 0)) moveMul = 1;
+        moveMul = Math.max(0.05, Math.min(1.5, moveMul));
+        if (tending) moveMul *= 0.5;
+        if (attacking && opts.attackSlow !== false) moveMul *= 0.5;
+        const tile = Number(opts.tileSize) > 0 ? Number(opts.tileSize) : 16;
+        const walk = Number(opts.walkTiles) > 0 ? Number(opts.walkTiles) : 3.5;
+        const sprintF = Number(opts.sprintFactor) > 0 ? Number(opts.sprintFactor) : 1.5;
+        const equipOpt = Number(opts.equipSpeedMultiplier);
+        const equip = Number.isFinite(equipOpt)
+            ? equipOpt
+            : speedFromEquip(pawn?.equipment, getDef);
+        const terrain = Number(opts.terrainMult);
+        const tMul = Number.isFinite(terrain) ? terrain : 1;
+        const stroll = Number(opts.strollMul);
+        const sMul = Number.isFinite(stroll) ? stroll : 1;
+        const speed = walk * tile
+            * (sprinting ? sprintF : 1)
+            * enc.speedMultiplier
+            * equip
+            * moveMul
+            * tMul
+            * sMul;
+        return { speed, sprinting, canSprint, encumbrance: enc };
     }
 
     /**
@@ -367,9 +446,12 @@
         wornPieces,
         gearMass,
         strengthFromEquip,
+        speedFromEquip,
         carryCap,
         pickupCap,
         encumbrance,
+        pawnEncumbrance,
+        humanMoveSpeed,
         countFit,
         resolveCraftedWeights,
         resolveCraftedFuel

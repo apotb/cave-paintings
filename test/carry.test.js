@@ -42,6 +42,51 @@ test("encumbrance matches Player formula", () => {
     assert.ok(Math.abs(max.hungerRate - 1.5) < 1e-9);
 });
 
+test("humanMoveSpeed refuses sprint when encumbered", () => {
+    const getDef = (id) => DataStore.getItem(id);
+    const light = {
+        inventory: [],
+        equipment: { head: null, torso: null, legs: null, feet: null, back: null, waist: [] },
+        overflow: [],
+        kc: 800,
+        anatomy: { livingLegs: () => 2 },
+        capacities: { moving: () => 1 }
+    };
+    const heavy = {
+        ...light,
+        inventory: [{ id: "log", quantity: 12 }]
+    };
+    const walk = Carry.humanMoveSpeed(light, { getDef, wantSprint: false, tileSize: 16 });
+    const sprint = Carry.humanMoveSpeed(light, { getDef, wantSprint: true, tileSize: 16 });
+    const laden = Carry.humanMoveSpeed(heavy, { getDef, wantSprint: true, tileSize: 16 });
+    assert.equal(walk.sprinting, false);
+    assert.equal(sprint.sprinting, true);
+    assert.ok(sprint.speed > walk.speed);
+    assert.equal(laden.canSprint, false);
+    assert.equal(laden.sprinting, false);
+    assert.ok(laden.speed < walk.speed);
+    assert.equal(laden.speed, walk.speed * laden.encumbrance.speedMultiplier);
+});
+
+test("humanMoveSpeed halves walk when eating even if _tending is false", () => {
+    const pawn = {
+        inventory: [],
+        equipment: { head: null, torso: null, legs: null, feet: null, back: null, waist: [] },
+        overflow: [],
+        kc: 800,
+        anatomy: { livingLegs: () => 2 },
+        capacities: { moving: () => 1 },
+        _tending: false,
+        _eatChannel: { remaining: 1000, max: 1000 }
+    };
+    const idle = Carry.humanMoveSpeed(pawn, { wantSprint: true, tileSize: 16 });
+    pawn._eatChannel = null;
+    const free = Carry.humanMoveSpeed(pawn, { wantSprint: true, tileSize: 16 });
+    assert.equal(idle.sprinting, false);
+    assert.equal(free.sprinting, true);
+    assert.ok(idle.speed < free.speed * 0.6);
+});
+
 test("resolveCraftedWeights hide-stage averaging", () => {
     const cord = DataStore.getItem("leaf_cord");
     assert.ok(cord);

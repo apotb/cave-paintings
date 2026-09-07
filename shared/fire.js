@@ -509,11 +509,14 @@
     }
 
     function isSimmerIngredient(itemId) {
-        return itemId === "apple"
-            || itemId === "blueberry"
-            || itemId === "raw_beef"
-            || itemId === "raw_venison"
-            || itemId === "raw_pork";
+        const id = (typeof Hide !== "undefined" && Hide.canonicalItemId)
+            ? Hide.canonicalItemId(itemId)
+            : itemId;
+        return id === "apple"
+            || id === "blueberry"
+            || id === "raw_human_flesh"
+            || id === "raw_venison"
+            || id === "raw_pork";
     }
 
     function simmerFilledCount(entry) {

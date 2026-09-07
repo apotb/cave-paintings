@@ -67,7 +67,7 @@ class SceneNet extends Phaser.Scene {
 
         for (const item of [
             "apple", "blueberry", "blueberries", "roasted_apple",
-            "raw_beef", "roast_beef", "raw_venison", "roasted_venison", "raw_pork", "roasted_pork", "coconut",
+            "raw_human_flesh", "roasted_human_flesh", "raw_venison", "roasted_venison", "raw_pork", "roasted_pork", "coconut",
             "flint", "pebble", "deer_hide", "deer_hide_fleshed", "deer_hide_dry",
             "deer_hide_soaked", "deer_hide_dehaired", "deer_hide_brained", "deer_leather",
             "boar_hide", "boar_hide_fleshed", "boar_hide_dry",
@@ -584,7 +584,7 @@ class SceneNet extends Phaser.Scene {
             const angle = Math.atan2(world.y - this.pawn.y, world.x - this.pawn.x);
             const held = this.pawn.inventory?.[this.pawn.hotbarIndex];
             const foodIds = new Set([
-                "apple", "blueberry", "roasted_apple", "raw_beef", "roast_beef",
+                "apple", "blueberry", "roasted_apple", "raw_human_flesh", "roasted_human_flesh",
                 "raw_venison", "roasted_venison", "raw_pork", "roasted_pork", "cracked_coconut", "coconut_meal"
             ]);
             if (held && (held.food?.kc > 0 || foodIds.has(held.id))) {

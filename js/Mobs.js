@@ -145,7 +145,8 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
 
         this.createAnimations();
         this.playAnim(`idle-${this.facing}`);
-        this.setDepth(this.y | 0);
+        if (typeof applyCreatureSortDepth === "function") applyCreatureSortDepth(this);
+        else this.setDepth(this.y | 0);
     }
 
     /**
@@ -209,10 +210,12 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Unarmed fist fill. Humans (player sheet) use arm orange; others pitch black
-     * unless `fistColor` is set on the mob def (hex number).
+     * Unarmed thrust fill. Attack `color` (from body-plan verbs) wins, then
+     * `fistColor` on the mob def. Humans use arm orange; others default black.
      */
     fistColor() {
+        const fromAtk = this.currentAttack?.color;
+        if (Number.isFinite(fromAtk)) return fromAtk >>> 0;
         if (Number.isFinite(this.def?.fistColor)) return this.def.fistColor >>> 0;
         const key = this.def?.key || this.texture?.key;
         if (key === "player" || key === "human" || this.def?.id === "human") return 0xff8900;
@@ -267,7 +270,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
      * @returns {boolean} true if an attempt started
      */
     tryMeleeAttack(target, attack) {
-        if (!target || !attack || this._dead || this.isIncapacitated()) return false;
+        if (!target || !attack || this._dead || this.isIncapacitated() || this.isImmobile()) return false;
         if (this.isAttacking()) return false;
 
         this.capacities = new Capacities(this.anatomy);
@@ -495,7 +498,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         // bodyCenter() respects standing (origin 0,1) and prone (origin 0.5,0.5)
         const c = this.bodyCenter();
         const key = this.def?.key || this.texture?.key || "human";
-        const dedicated = !!(scene.isNet && scene.net?.connected && !scene.net.isLocal);
+        const dedicated = !!(scene.simAuth());
         const corpseId = `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
         const corpseOpts = {
             id: corpseId,
@@ -567,16 +570,32 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             : 1;
         if (!(tickScale > 0)) {
             this.setVelocity(0, 0);
+            if (prone && this.isAttacking()) this._endAttack();
             setCreatureProne(this, prone);
-            const d = this.y | 0;
-            if (this.depth !== d) this.setDepth(d);
+            if (!prone && this.anims) {
+                if (typeof this.anims.pause === "function") {
+                    if (this.anims.isPlaying && !this.anims.isPaused) this.anims.pause();
+                } else {
+                    this.anims.timeScale = 0;
+                }
+            }
+            if (typeof applyCreatureSortDepth === "function") applyCreatureSortDepth(this);
+            else {
+                const d = this.y | 0;
+                if (this.depth !== d) this.setDepth(d);
+            }
             this.reassignChunkIfNeeded();
             if (this.active) this.syncToEntry();
             return;
         }
         const aiDelta = delta * tickScale;
+        if (this.anims?.isPaused && typeof this.anims.resume === "function") {
+            this.anims.resume();
+        }
         this.ai?.update(aiDelta);
-        this._tickMeleeAttack(aiDelta);
+        if (prone) {
+            if (this.isAttacking()) this._endAttack();
+        } else this._tickMeleeAttack(aiDelta);
         // Half move while swinging (same idea as the player)
         if (this.isAttacking() && this.body?.velocity) {
             this.setVelocity(this.body.velocity.x * 0.5, this.body.velocity.y * 0.5);
@@ -599,8 +618,11 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             if (tps > 0.05) this.anims.timeScale = Party.walkAnimTimeScale(tps);
         }
 
-        const d = this.y | 0;
-        if (this.depth !== d) this.setDepth(d);
+        if (typeof applyCreatureSortDepth === "function") applyCreatureSortDepth(this);
+        else {
+            const d = this.y | 0;
+            if (this.depth !== d) this.setDepth(d);
+        }
         this.reassignChunkIfNeeded();
         if (!this.active) return;
         this.syncToEntry();
@@ -642,7 +664,7 @@ class DroppedItem extends Mob {
         }
 
         // Dedicated MP: server owns ground loot. LocalSim SP uses chunk.meta like offline.
-        if (scene.isNet && scene.net?.connected && !scene.net.isLocal) {
+        if (scene.simAuth()) {
             scene._netSendMove?.(true);
             scene.net.sendAction({
                 type: NetProtocol.Actions.SPAWN_DROP,
@@ -984,7 +1006,7 @@ class DroppedItem extends Mob {
     update(_time, delta) {
         if (!this.active) return;
         // Server-owned drops: don't despawn locally or rewrite chunk meta
-        if (this.entry?.netSync || (this.scene.isNet && !this.scene.net?.isLocal)) {
+        if (this.entry?.netSync || (this.scene.simAuth())) {
             return;
         }
         const speed = Number(this.scene.tickSpeed);
@@ -1032,7 +1054,7 @@ class DroppedItem extends Mob {
     tryPickup(pawn = null) {
         if (!this.active || !this.item || !(this.quantity > 0)) return false;
         const player = pawn || this.scene.player;
-        if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+        if (this.scene.simAuth()) {
             if (this.entry?.netSync && player === this.scene.player) {
                 this.scene.net.sendAction({
                     type: NetProtocol.Actions.PICKUP,

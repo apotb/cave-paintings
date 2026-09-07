@@ -35,6 +35,8 @@ test("standDist is inside short chopper reach", () => {
     const d = Chop.standDist(5);
     assert.ok(d >= 7 && d <= 10);
     assert.equal(Chop.aimHitsTrunk(0, d, -Math.PI / 2, 0, 0, 5), true);
+    const knapVisual = 5 + 2.8;
+    assert.ok(d <= knapVisual + 0.5, `work stand ${d} should sit inside knap thrust ${knapVisual}`);
     const padded = Chop.standDist(5, 4);
     assert.ok(padded > d);
     assert.equal(Chop.aimHitsTrunk(0, padded, -Math.PI / 2, 0, 0, 5), true);
@@ -60,6 +62,16 @@ test("applyChop reaches stump threshold", () => {
     assert.equal(r.felled, false);
     r = Chop.applyChop(entry, 0.7);
     assert.equal(r.felled, true);
+});
+
+test("fellToStump is not stillChoppable even with the old tree def", () => {
+    const def = { id: "tree", choppable: { stump: "tree_stump" } };
+    const entry = { id: "tree", uid: "t1", chopProgress: 0.9 };
+    Chop.fellToStump(entry, def);
+    assert.equal(entry.id, "tree_stump");
+    assert.equal(Chop.stillChoppable(def, entry), false);
+    assert.equal(Chop.stillChoppable({}, entry), false);
+    assert.equal(Number(entry.chopProgress), 1);
 });
 
 test("rollDrops is seeded", () => {

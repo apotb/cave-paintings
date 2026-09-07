@@ -5,7 +5,7 @@ test("abandoned camp structure gen", { timeout: 120000 }, () => {
 /**
  * Determinism / occupancy checks for abandoned-camp structure gen.
  */
-const WorldGen = require("../server/WorldGen");
+const WorldGen = require("../shared/sim/WorldGen");
 const Structures = require("../shared/structures");
 
 const seed = WorldGen.pickWorldSeed(20260814);

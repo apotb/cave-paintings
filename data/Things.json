@@ -211,6 +211,7 @@
         "name": "Wicker Basket",
         "key": "wicker_basket",
         "hitboxSize": 5,
+        "hitbox": [[10, 11], [6, 11]],
         "storage": {
             "slots": 8
         },
@@ -234,7 +235,9 @@
         "name": "Skinworking Bench",
         "key": "skinworking_bench",
         "hitboxSize": 5,
+        "hitbox": [[12, 10], [6, 14]],
         "craftStation": true,
+        "interactOffset": [0, 1],
         "rotations": [0, 90, 180, 270]
     },
     {

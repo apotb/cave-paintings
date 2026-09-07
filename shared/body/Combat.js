@@ -62,14 +62,51 @@
     }
 
     function combatLogColors() {
-        if (typeof CombatLog !== "undefined") {
-            return {
-                you: CombatLog.COLOR_YOU,
-                enemy: CombatLog.COLOR_ENEMY,
-                weapon: CombatLog.COLOR_WEAPON
-            };
+        const ally = (typeof CombatLog !== "undefined" && CombatLog.COLOR_YOU)
+            || Party?.COLOR_ALLY
+            || "#80e080";
+        const settler = (typeof CombatLog !== "undefined" && CombatLog.COLOR_SETTLER)
+            || Party?.COLOR_SETTLER
+            || "#7ec8ff";
+        const enemy = (typeof CombatLog !== "undefined" && CombatLog.COLOR_ENEMY)
+            || "#ef5a5a";
+        const weapon = (typeof CombatLog !== "undefined" && CombatLog.COLOR_WEAPON)
+            || "#f0a040";
+        return { you: ally, ally, settler, enemy, weapon };
+    }
+
+    /** Combat-log name color: party green, your settlers blue, everyone else red. */
+    function combatLogActorColor(entity, player, host) {
+        const colors = combatLogColors();
+        if (!entity) return colors.enemy;
+        const scene = host?.scene || entity.scene || player?.scene || host;
+        const named = scene?.partySys?.nameColorFor?.(entity);
+        if (named === (Party?.COLOR_ALLY || "#80e080") || named === colors.you) return colors.you;
+        if (named === (Party?.COLOR_SETTLER || "#7ec8ff") || named === colors.settler) return colors.settler;
+        if (named === (Party?.COLOR_ENEMY || "#ff6666") || named === colors.enemy) return colors.enemy;
+        if (entity === player || entity === scene?.leader || scene?.party?.includes?.(entity)) {
+            return colors.you;
         }
-        return { you: "#7ec8ff", enemy: "#ff9a7a", weapon: "#ffe08a" };
+        const oid = entity.ownerId || entity._remote?.ownerId;
+        const self = scene?.leader?.ownerId || scene?._netPlayerId || player?.ownerId || player?.id;
+        const parked = entity.role === "settler"
+            || !!entity.homeSettlementId
+            || scene?.settlers?.includes?.(entity);
+        if (parked && (!oid || oid === self)) return colors.settler;
+        return colors.enemy;
+    }
+
+    function parseAttackColor(v) {
+        if (v == null) return null;
+        if (typeof v === "number" && Number.isFinite(v)) return (v >>> 0) & 0xffffff;
+        if (typeof v === "string") {
+            const s = v.trim().replace(/^#/, "");
+            if (/^[0-9a-fA-F]{6}$/.test(s)) return parseInt(s, 16) >>> 0;
+            if (/^[0-9a-fA-F]{3}$/.test(s)) {
+                return parseInt(s[0] + s[0] + s[1] + s[1] + s[2] + s[2], 16) >>> 0;
+            }
+        }
+        return null;
     }
 
     function hediffsApi() {
@@ -186,6 +223,7 @@
                     const damage = Number(a.damage) || 1;
                     const wMult = Number(a.weightMultiplier) || 1;
                     const weight = ((damage * part.hp()) / cooldown) * wMult;
+                    const color = parseAttackColor(a.color);
                     attacks.push({
                         def: a,
                         sourcePart: part,
@@ -196,7 +234,8 @@
                         cooldown,
                         name: a.name || key,
                         range: Number(a.range) || 4,
-                        unarmed: true
+                        unarmed: true,
+                        ...(color != null ? { color } : {})
                     });
                 }
             }
@@ -291,6 +330,8 @@
             const player = host?.player || target.scene?.player;
             const vicIsYou = target === player;
             const colors = combatLogColors();
+            const atkColor = combatLogActorColor(attacker, player, host);
+            const vicColor = combatLogActorColor(target, player, host);
             const sparkAt = hitPoint(target);
 
             if (brokeApparel.length && typeof log?.push === "function") {
@@ -322,7 +363,7 @@
                         deflectName: itemName,
                         spark: sparkAt,
                         segments: [
-                            { text: vicIsYou ? "Your" : "The", color: vicIsYou ? colors.you : colors.enemy },
+                            { text: vicIsYou ? "Your" : "The", color: vicColor },
                             { text: itemName, color: colors.weapon },
                             { text: "deflected the blow" }
                         ]
@@ -463,11 +504,11 @@
                 log.push(null, {
                     ...logOpts,
                     segments: [
-                        { text: subj, color: isYou ? colors.you : colors.enemy },
+                        { text: subj, color: atkColor },
                         { text: verb },
                         { text: weaponName, color: colors.weapon },
                         { text: "into" },
-                        { text: vicPossessive, color: vicIsYou ? colors.you : colors.enemy },
+                        { text: vicPossessive, color: vicColor },
                         { text: victimPart.name },
                         { text: dmgStr, color: colors.weapon }
                     ]
@@ -480,7 +521,7 @@
                         ...logOpts,
                         destroyed: true,
                         segments: [
-                            { text: who, color: vicIsYou ? colors.you : colors.enemy },
+                            { text: who, color: vicColor },
                             { text: `${victimPart.name} was destroyed!` }
                         ]
                     });

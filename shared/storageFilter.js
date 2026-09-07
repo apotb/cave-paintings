@@ -21,9 +21,9 @@
         { id: "tool:chopper", name: "Chopper", cls: "chopper" },
         { id: "tool:knife", name: "Knife", cls: "knife" },
         { id: "tool:scraper", name: "Scraper", cls: "scraper" },
-        { id: "tool:spear_tip", name: "Spear Tip", cls: "spear_tip" }
+        { id: "tool:spear_tip", name: "Spear Tip", cls: "spear_tip", category: "materials/stone" }
     ];
-    const WOOD_IDS = { log: true, stick: true, leaf: true };
+    const WOOD_IDS = { log: true, stick: true, leaf: true, stick_frame: true };
     const STONE_IDS = { pebble: true, flint: true };
     const RAW_FRUIT_IDS = {
         blueberry: true,
@@ -39,8 +39,7 @@
             name: "Apparel",
             children: [
                 { id: "apparel/clothing", name: "Clothing" },
-                { id: "apparel/equipment", name: "Equipment" },
-                { id: "apparel/armor", name: "Armor" }
+                { id: "apparel/equipment", name: "Equipment" }
             ]
         },
         { id: "buildings", name: "Buildings" },
@@ -58,7 +57,6 @@
             id: "materials",
             name: "Materials",
             children: [
-                { id: "materials/fuel", name: "Fuel" },
                 { id: "materials/hides", name: "Hides" },
                 { id: "materials/leather", name: "Leather" },
                 { id: "materials/stone", name: "Stone" },
@@ -169,7 +167,6 @@
         }
         if ((roastIds && roastIds.has(id)) || (id && /^roast/i.test(id))) return "food/roasted";
         if (def.food && (def.cook || Number(def.food.kc) > 0 || RAW_FRUIT_IDS[id])) return "food/raw";
-        if (def.fuel) return "materials/fuel";
         return "junk";
     }
 
@@ -238,11 +235,17 @@
         return true;
     }
 
+    function toolClassCategory(clsOrKey) {
+        const row = TOOL_CLASSES.find((t) => t.cls === clsOrKey || t.id === clsOrKey);
+        return row?.category || "tools";
+    }
+
     function allows(filter, stack, getItem) {
         const def = defOf(stack, getItem) || (typeof getItem === "function" ? getItem(stackId(stack)) : null);
         const key = filterKey(stack, def);
         if (!key) return true;
-        const leafId = leafCategory(def, null);
+        const leafId = (key.startsWith("tool:") ? toolClassCategory(key) : null)
+            || leafCategory(def, null);
         const ancestors = ancestorIds(CATEGORY_TREE, leafId) || [leafId];
         return keyAllowed(filter, key, ancestors);
     }
@@ -257,11 +260,10 @@
             if (!node) continue;
             node.items.push({ id: def.id, name: def.name || def.id, key: def.key || null });
         }
-        const tools = findNode(root, "tools");
-        if (tools) {
-            for (const row of TOOL_CLASSES) {
-                tools.items.push({ id: row.id, name: row.name, key: null });
-            }
+        for (const row of TOOL_CLASSES) {
+            const leafId = row.category || "tools";
+            const node = findNode(root, leafId) || findNode(root, "tools");
+            if (node) node.items.push({ id: row.id, name: row.name, key: null });
         }
         const sortNode = (n) => {
             (n.items || []).sort(sortByName);
@@ -488,13 +490,46 @@
         return null;
     }
 
+    function basketFilter(b) {
+        return b?.storageFilter || b?.entry?.storageFilter;
+    }
+
+    function basketSlots(b) {
+        return b?.slots || b?.entry?.slots;
+    }
+
+    /**
+     * Higher is better. 0 means "do not move this stack to dest".
+     * Wrong-filter and higher-priority homes beat same-priority stack merging.
+     */
+    function transferScore(src, dest, stack, getItem) {
+        if (!src || !dest || src === dest || !stack?.id || !(Number(stack.quantity) > 0)) return 0;
+        const destFilt = basketFilter(dest);
+        if (!allows(destFilt, stack, getItem)) return 0;
+        const destSlots = basketSlots(dest);
+        if (!stackFits(destSlots, stack, getItem)) return 0;
+        const srcFilt = basketFilter(src);
+        const srcAllows = allows(srcFilt, stack, getItem);
+        const srcPri = priorityRank(normalize(srcFilt).priority);
+        const destPri = priorityRank(normalize(destFilt).priority);
+        const merge = existingStackRoom(destSlots, stack, getItem) > 0 ? 1 : 0;
+        if (!srcAllows) return 400 + destPri * 10 + merge;
+        if (destPri > srcPri) return 300 + destPri * 10 + merge;
+        if (destPri === srcPri) {
+            if (isEmpty(srcFilt) && !isEmpty(destFilt)) return 200 + merge;
+            if (isMergeableStack(stack) && stackRoom(stack, getItem) > 0 && merge) return 50;
+        }
+        return 0;
+    }
+
     function findMergeJob(baskets, getItem, fromX, fromY, opts = {}) {
         const claimed = typeof opts.isClaimed === "function" ? opts.isClaimed : () => false;
         const fx = Number(fromX) || 0;
         const fy = Number(fromY) || 0;
         let best = null;
+        let bestScore = -1;
         let bestD = Infinity;
-        const consider = (job, x, y, distScale) => {
+        const consider = (job, x, y, score, distScale) => {
             const key = mergeClaimKey(job);
             if (!key) return;
             job.claimKey = key;
@@ -502,37 +537,36 @@
                 if (key !== opts.claimKey) return;
             } else if (claimed(key)) return;
             const d = Math.hypot((Number(x) || 0) - fx, (Number(y) || 0) - fy) * (distScale || 1);
-            if (d < bestD) {
+            if (score > bestScore || (score === bestScore && d < bestD)) {
+                bestScore = score;
                 bestD = d;
                 best = job;
             }
         };
         const list = (baskets || []).filter(Boolean);
         for (const b of list) {
-            if (!needsCompact(b.slots, getItem)) continue;
-            consider({ kind: "pack", basket: b }, b.x, b.y, 0.5);
+            if (!needsCompact(basketSlots(b), getItem)) continue;
+            consider({ kind: "pack", basket: b }, b.x, b.y, 450, 0.5);
         }
         for (let a = 0; a < list.length; a++) {
             const src = list[a];
-            const srcPri = normalize(src.storageFilter).priority;
-            const slots = src.slots || [];
+            const slots = basketSlots(src) || [];
             for (let i = 0; i < slots.length; i++) {
                 const stack = slots[i];
-                if (!isMergeableStack(stack) || stackRoom(stack, getItem) <= 0) continue;
-                if (!allows(src.storageFilter, stack, getItem)) continue;
+                if (!stack?.id || !(Number(stack.quantity) > 0)) continue;
                 for (let b = 0; b < list.length; b++) {
                     if (a === b) continue;
                     const dest = list[b];
-                    if (normalize(dest.storageFilter).priority !== srcPri) continue;
-                    if (!allows(dest.storageFilter, stack, getItem)) continue;
-                    if (existingStackRoom(dest.slots, stack, getItem) <= 0) continue;
+                    const score = transferScore(src, dest, stack, getItem);
+                    if (!(score > 0)) continue;
                     consider({
                         kind: "move",
                         from: src,
                         fromIndex: i,
                         to: dest,
-                        stackId: stack.id
-                    }, src.x, src.y, 1);
+                        stackId: stack.id,
+                        reason: score >= 400 ? "wrong" : (score >= 200 ? "better" : "merge")
+                    }, src.x, src.y, score, 1);
                 }
             }
         }
@@ -611,6 +645,7 @@
         findMergeJob,
         stackFits,
         pickBasket,
+        transferScore,
         ancestorIds,
         findNode
     };

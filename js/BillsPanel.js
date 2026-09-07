@@ -17,6 +17,8 @@ class BillsPanel {
         this._maxScroll = 0;
         this._bodyX = 10;
         this._bodyY = 52;
+        this._refreshing = false;
+        this._lastShortageSig = "";
         this.root = scene.add.container(0, 0).setScrollFactor(0).setDepth(15150).setVisible(false);
         scene.uiLayer?.add(this.root);
         this._build();
@@ -77,12 +79,13 @@ class BillsPanel {
         const scene = this.scene;
         const w = opts.w || 64;
         const h = opts.h || 22;
-        const fill = opts.fill != null ? opts.fill : 0x120e0a;
+        const disabled = !!opts.disabled;
+        const fill = opts.fill != null ? opts.fill : (disabled ? 0x141210 : 0x120e0a);
         const fillPress = opts.fillPress != null ? opts.fillPress : 0x0a0806;
-        const outline = opts.stroke != null ? opts.stroke : 0x2a2218;
-        const color = opts.color || "#d4c4a8";
+        const outline = opts.stroke != null ? opts.stroke : (disabled ? 0x2a2622 : 0x2a2218);
+        const color = opts.color || (disabled ? "#6a6258" : "#d4c4a8");
         const bg = scene.add.rectangle(0, 0, w, h, fill, 1)
-            .setInteractive({ useHandCursor: true });
+            .setInteractive({ useHandCursor: !disabled, cursor: disabled ? "default" : undefined });
         const kids = [bg];
         let txt = null;
         let icon = null;
@@ -115,7 +118,10 @@ class BillsPanel {
             ? pixelUiStroke(scene.uiScale || 1) : 2);
         const paint = () => {
             const sw = strokeW();
-            if (pressing) {
+            if (disabled) {
+                bg.setFillStyle(fill, 1);
+                bg.setStrokeStyle(sw, outline);
+            } else if (pressing) {
                 bg.setFillStyle(fillPress, 1);
                 bg.setStrokeStyle(sw, 0xd4a84b);
             } else if (hovering) {
@@ -130,11 +136,15 @@ class BillsPanel {
         c._icon = icon;
         const tip = opts.tip ? String(opts.tip) : "";
         bg.on("pointerover", (pointer) => {
+            if (disabled) return;
             hovering = true;
             paint();
             if (tip) scene.showTooltip(() => tip, pointer.x, pointer.y, bg);
         });
-        bg.on("pointerout", () => {
+        bg.on("pointerout", (pointer) => {
+            if (this._refreshing) return;
+            const b = bg.getBounds?.();
+            if (b && pointer && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y)) return;
             hovering = false;
             pressing = false;
             paint();
@@ -142,12 +152,13 @@ class BillsPanel {
         });
         bg.on("pointerdown", (pointer, _lx, _ly, event) => {
             event?.stopPropagation?.();
-            if (pointer.rightButtonDown()) return;
+            if (disabled || pointer.rightButtonDown()) return;
             pressing = true;
             paint();
         });
         bg.on("pointerup", (pointer, _lx, _ly, event) => {
             event?.stopPropagation?.();
+            if (disabled) return;
             const was = pressing && hovering;
             pressing = false;
             paint();
@@ -217,6 +228,11 @@ class BillsPanel {
         const y = this.root.y + this._bodyY;
         return pointer.x >= x && pointer.x <= x + this._viewW
             && pointer.y >= y && pointer.y <= y + this._viewH;
+    }
+
+    _clipHit(hitArea, x, y) {
+        if (!Phaser.Geom.Rectangle.Contains(hitArea, x, y)) return false;
+        return this._pointerInBody(this.scene.input.activePointer);
     }
 
     _setScroll(y) {
@@ -321,19 +337,23 @@ class BillsPanel {
 
     open(settle, thing) {
         if (!settle || !thing?.entry?.uid) return;
+        const prev = this.thing;
         this.settle = settle;
         this.thing = thing;
         this.uid = thing.entry.uid;
         this.view = "list";
         this.detailsId = null;
         this._scroll = 0;
+        this._lastShortageSig = "";
         this.visible = true;
         this.root.setVisible(true);
         this.layout();
         this.refresh();
+        this.scene._refreshStationInteractMarks?.(prev, thing);
     }
 
     close() {
+        const prev = this.thing;
         this.visible = false;
         this.settle = null;
         this.thing = null;
@@ -343,6 +363,7 @@ class BillsPanel {
         this.root.setVisible(false);
         this.scrollTrack.setVisible(false);
         this.scrollThumb.setVisible(false);
+        this.scene._refreshStationInteractMarks?.(prev);
     }
 
     handleEsc() {
@@ -399,22 +420,12 @@ class BillsPanel {
     }
 
     _clearBody() {
-        const tip = this.scene._tooltipTarget;
-        if (tip) {
-            let cur = tip;
-            while (cur) {
-                if (cur === this.body || cur === this.root) {
-                    this.scene.hideTooltip?.();
-                    break;
-                }
-                cur = cur.parentContainer;
-            }
-        }
         this.body.removeAll(true);
     }
 
     refresh() {
         if (!this.visible || !this.settle) return;
+        this._refreshing = true;
         const s = this.scene.uiScale || 1;
         const name = this.thing?.meta?.name || this.thing?.entry?.id || "Station";
         this.title.setText("Bills");
@@ -428,6 +439,71 @@ class BillsPanel {
         this._maxScroll = Math.max(0, this._contentH - this._viewH);
         this._setScroll(Math.min(this._scroll, this._maxScroll));
         this._refreshMask();
+        this._refreshing = false;
+        this._lastShortageSig = this._shortageSig();
+        this._restoreHoverTip();
+    }
+
+    refreshLive() {
+        if (!this.visible || this.view !== "list" || !this.settle) return;
+        const sig = this._shortageSig();
+        if (sig === this._lastShortageSig) return;
+        this.refresh();
+    }
+
+    _countItem(id) {
+        return this.scene.settlementSys?.countItem?.(this.settle, id) || 0;
+    }
+
+    _shortageSig() {
+        return this._list().map((b) => {
+            const done = this._billComplete(b) ? 1 : 0;
+            const short = this._billShort(b) ? 1 : 0;
+            const qty = this._S()?.billQtyLabel?.(b, (id) => this._countItem(id)) || "";
+            return `${b.id}:${short}:${done}:${qty}`;
+        }).join("|");
+    }
+
+    _billComplete(bill) {
+        const S = this._S();
+        if (!S?.billIsComplete || !bill) return false;
+        return S.billIsComplete(bill, (id) => this._countItem(id));
+    }
+
+    _billShort(bill) {
+        const S = this._S();
+        if (!S?.billWantsMaterials || !S?.billHasMaterials || !bill) return false;
+        const countItem = (id) => this._countItem(id);
+        if (!S.billWantsMaterials(bill, countItem)) return false;
+        return !S.billHasMaterials(bill, {
+            countItem,
+            getItem: (id) => this.scene.getItem?.(id),
+            items: this.scene.items?.() || []
+        });
+    }
+
+    _restoreHoverTip() {
+        const scene = this.scene;
+        const p = scene.input?.activePointer;
+        if (!p || !this.visible) return;
+        const visit = (obj) => {
+            if (!obj?.active) return false;
+            if (obj.input?.enabled) {
+                const b = obj.getBounds?.();
+                if (b && Phaser.Geom.Rectangle.Contains(b, p.x, p.y)) {
+                    obj.emit("pointerover", p);
+                    return true;
+                }
+            }
+            const kids = obj.list;
+            if (Array.isArray(kids)) {
+                for (let i = kids.length - 1; i >= 0; i--) {
+                    if (visit(kids[i])) return true;
+                }
+            }
+            return false;
+        };
+        visit(this.body);
     }
 
     _label(text, x, y, size = 12, color = "#d4c4a8") {
@@ -438,6 +514,95 @@ class BillsPanel {
         });
         this.body.add(t);
         return t;
+    }
+
+    _rowLabel(text, x, y, size = 12, color = "#d4c4a8") {
+        const t = this.scene.add.text(x, y, text, {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: `${pixelUiFontSize(size, this.scene.uiScale || 1)}px`,
+            color
+        }).setOrigin(0, 0.5);
+        if (typeof applyPixelUiFont === "function") {
+            applyPixelUiFont(t, size, this.scene.uiScale || 1);
+        }
+        this.body.add(t);
+        return t;
+    }
+
+    _pixelGlyph(g, u, color, cells) {
+        g.fillStyle(0x000000, 1);
+        for (let i = 0; i < cells.length; i++) {
+            const x = cells[i][0] - 3;
+            const y = cells[i][1] - 3;
+            g.fillRect(x * u - u, y * u - u, 3 * u, 3 * u);
+        }
+        g.fillStyle(color, 1);
+        for (let i = 0; i < cells.length; i++) {
+            const x = cells[i][0] - 3;
+            const y = cells[i][1] - 3;
+            g.fillRect(x * u, y * u, u, u);
+        }
+    }
+
+    _addStatus(state, cx, cy, sc) {
+        const g = this.scene.add.graphics();
+        const u = Math.max(1, Math.round(sc));
+        g.setPosition(Math.round(cx), Math.round(cy));
+        if (state === "on") {
+            this._pixelGlyph(g, u, 0x5cbf63, [
+                [0, 3], [1, 4], [2, 5], [3, 4], [4, 3], [5, 2], [6, 1]
+            ]);
+        } else {
+            const cross = [];
+            for (let i = 0; i <= 6; i++) {
+                cross.push([i, i], [i, 6 - i]);
+            }
+            this._pixelGlyph(g, u, 0xc44c3c, cross);
+        }
+        this.body.add(g);
+        return g;
+    }
+
+    _rowColors(state) {
+        if (state === "on") return { fill: 0x1e3d1a, stroke: 0x5cbf63, text: "#d4e8d0" };
+        return { fill: 0x3a1816, stroke: 0xc44c3c, text: "#e8c0b8" };
+    }
+
+    _billItemTip(ing) {
+        const scene = this.scene;
+        if (!ing?.id || typeof scene.formatItemTooltip !== "function") return ing?.name || "";
+        const def = scene.getItem?.(ing.id);
+        if (!def) return ing.name || "";
+        return scene.formatItemTooltip(def, 1, null, { id: ing.id, quantity: 1 });
+    }
+
+    _row(x, y, w, h, state, onClick, tipFn) {
+        const c = this._rowColors(state);
+        const bg = this.scene.add.rectangle(x, y, w, h, c.fill, 1)
+            .setOrigin(0, 0)
+            .setStrokeStyle(1, c.stroke)
+            .setInteractive({
+                hitArea: new Phaser.Geom.Rectangle(0, 0, w, h),
+                hitAreaCallback: (area, lx, ly) => this._clipHit(area, lx, ly),
+                useHandCursor: true
+            });
+        bg.on("pointerover", (pointer) => {
+            if (typeof tipFn !== "function") return;
+            this.scene.showTooltip(() => tipFn() || "", pointer.x, pointer.y, bg);
+        });
+        bg.on("pointerout", (pointer) => {
+            if (this._refreshing) return;
+            const b = bg.getBounds?.();
+            if (b && pointer && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y)) return;
+            if (this.scene._tooltipTarget === bg) this.scene.hideTooltip?.();
+        });
+        bg.on("pointerup", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            if (!this._pointerInBody(pointer)) return;
+            onClick?.(pointer);
+        });
+        this.body.add(bg);
+        return bg;
     }
 
     _fillList(sc) {
@@ -470,9 +635,21 @@ class BillsPanel {
         const cardSw = Math.max(3, Math.round(3 * sc));
         const pad = Math.max(Math.round(6 * sc), Math.ceil(cardSw / 2) + 2);
         const rowH = pad + sq + gap + bh + pad;
-        const bg = this.scene.add.rectangle(inset, y, innerW, rowH, 0x1a1510, 1)
+        let textX = inset + pad + sq + gap;
+        const complete = this._billComplete(bill);
+        const short = !complete && this._billShort(bill);
+        const title = S?.billTitle?.(bill) || "Bill";
+        const titleY = y + Math.round(6 * sc);
+        const titleColor = (bill.paused || complete) ? "#8a7a62" : (short ? "#e07070" : "#d4c4a8");
+        const bgFill = bill.paused ? 0x5a4a10 : (complete ? 0x2c2c2a : (short ? 0x3a1210 : 0x1a1510));
+        const bgStroke = bill.paused ? 0xf0d060 : (complete ? 0x6e6e6a : (short ? 0xc44c3c : 0x3a2e26));
+        const bg = this.scene.add.rectangle(
+            inset, y, innerW, rowH,
+            bgFill,
+            1
+        )
             .setOrigin(0, 0)
-            .setStrokeStyle(cardSw, 0x3a2e26);
+            .setStrokeStyle(cardSw, bgStroke);
         this.body.add(bg);
 
         const ax = inset + pad + sq / 2;
@@ -487,18 +664,21 @@ class BillsPanel {
         this.body.add(up);
         this.body.add(down);
 
-        let textX = inset + pad + sq + gap;
-        const title = S?.billTitle?.(bill) || "Bill";
-        const titleY = y + Math.round(6 * sc);
         const iconKey = this._billIconKey(bill);
         if (iconKey) {
             const iconSize = Math.round(16 * sc);
             const icon = this.scene.add.image(textX + iconSize / 2, titleY + iconSize / 2, iconKey)
                 .setDisplaySize(iconSize, iconSize);
+            if (complete) icon.setTint(0x888888);
             this.body.add(icon);
             textX += iconSize + gap;
         }
-        const name = this._label(title, textX, titleY, 13, bill.paused ? "#8a7a62" : "#d4c4a8");
+        const right = inset + innerW - pad;
+        const xW = bh;
+        const sW = bh;
+        const detW = Math.round(64 * sc);
+        const renW = Math.round(64 * sc);
+        const name = this._label(title, textX, titleY, 13, titleColor);
         if (bill.paused) {
             const tw = Math.max(1, Math.round(name.width || name.displayWidth || 0));
             const th = name.height || name.displayHeight || pixelUiFontSize(13, sc);
@@ -512,11 +692,15 @@ class BillsPanel {
             ).setOrigin(0, 0.5);
             this.body.add(strike);
         }
-
-        const right = inset + innerW - pad;
-        const xW = bh;
-        const sW = bh;
-        const detW = Math.round(64 * sc);
+        if (short) {
+            this._label(
+                "NOT ENOUGH MATERIAL",
+                textX,
+                titleY + pixelUiFontSize(13, sc),
+                10,
+                "#e07070"
+            );
+        }
         const xBtn = this._btn(right - xW / 2, y + pad + bh / 2, "X", () => {
             this._commit(S.removeBill(this._list(), bill.id));
         }, {
@@ -535,7 +719,7 @@ class BillsPanel {
             fill: bill.paused ? 0x5a4a10 : 0x120e0a,
             stroke: bill.paused ? 0xf0d060 : 0x2a2218,
             color: bill.paused ? "#f0d060" : "#d4c4a8",
-            tip: "Suspend bill"
+            tip: bill.paused ? "Unsuspend bill" : "Suspend bill"
         });
         this._sizeBtn(sBtn, sW, bh, 12);
         this.body.add(sBtn);
@@ -549,38 +733,45 @@ class BillsPanel {
         this._sizeBtn(details, detW, bh, 12);
         this.body.add(details);
 
+        const rename = this._btn(
+            right - xW - gap - sW - gap - detW - gap - renW / 2,
+            y + pad + bh / 2,
+            "Rename",
+            () => this._promptRename(bill),
+            { w: renW, h: bh }
+        );
+        this._sizeBtn(rename, renW, bh, 12);
+        this.body.add(rename);
+
         const qtyY = y + pad + sq + gap + bh / 2;
         const modeLeft = textX;
         const modeRight = right;
-        if (bill.mode !== "forever") {
-            const small = bh;
-            const minus = this._btn(modeLeft + small / 2, qtyY, "-", () => this._nudgeQty(bill, -1), {
-                w: small, h: small
-            });
-            this._sizeBtn(minus, small, small, 14);
-            this.body.add(minus);
-            const qty = this._label(S.billQtyLabel(bill), modeLeft + small + gap, qtyY, 12, "#d4c4a8");
+        const small = bh;
+        const qtyW = Math.round(48 * sc);
+        const forever = bill.mode === "forever";
+        const minus = this._btn(modeLeft + small / 2, qtyY, "-", () => this._nudgeQty(bill, -1), {
+            w: small, h: small, disabled: forever
+        });
+        this._sizeBtn(minus, small, small, 14);
+        this.body.add(minus);
+        if (!forever) {
+            const qtyColor = complete ? "#e07070" : "#d4c4a8";
+            const qtyText = S.billQtyLabel(bill, (id) => this._countItem(id));
+            const qty = this._label(qtyText, modeLeft + small + gap, qtyY, 12, qtyColor);
             qty.setOrigin(0, 0.5);
-            const plus = this._btn(modeLeft + small + gap + Math.round(36 * sc) + small / 2, qtyY, "+", () => this._nudgeQty(bill, 1), {
-                w: small, h: small
-            });
-            this._sizeBtn(plus, small, small, 14);
-            this.body.add(plus);
-            const modeX = modeLeft + small * 2 + gap + Math.round(36 * sc) + gap;
-            const modeW = Math.max(bh, modeRight - modeX);
-            const mode = this._btn(modeX + modeW / 2, qtyY, S.billModeLabel(bill.mode), () => {
-                this._cycleMode(bill);
-            }, { w: modeW, h: bh });
-            this._sizeBtn(mode, modeW, bh, 12);
-            this.body.add(mode);
-        } else {
-            const modeW = Math.max(bh, modeRight - modeLeft);
-            const mode = this._btn(modeLeft + modeW / 2, qtyY, S.billModeLabel(bill.mode), () => {
-                this._cycleMode(bill);
-            }, { w: modeW, h: bh });
-            this._sizeBtn(mode, modeW, bh, 12);
-            this.body.add(mode);
         }
+        const plus = this._btn(modeLeft + small + gap + qtyW + small / 2, qtyY, "+", () => this._nudgeQty(bill, 1), {
+            w: small, h: small, disabled: forever
+        });
+        this._sizeBtn(plus, small, small, 14);
+        this.body.add(plus);
+        const modeX = modeLeft + small * 2 + gap + qtyW + gap;
+        const modeW = Math.max(bh, modeRight - modeX);
+        const mode = this._btn(modeX + modeW / 2, qtyY, S.billModeLabel(bill.mode), () => {
+            this._cycleMode(bill);
+        }, { w: modeW, h: bh });
+        this._sizeBtn(mode, modeW, bh, 12);
+        this.body.add(mode);
 
         return y + rowH + Math.round(6 * sc);
     }
@@ -599,6 +790,24 @@ class BillsPanel {
             return copy;
         });
         this._commit(next);
+    }
+
+    _promptRename(bill) {
+        const S = this._S();
+        if (!bill || !S) return;
+        const current = S.billTitle(bill) || "Bill";
+        const max = S.NAME_MAX || 24;
+        this.scene.settlementSys?._showNamePrompt?.((name) => {
+            const nextName = String(name || "").trim().slice(0, max);
+            this._commit(this._list().map((b) => (
+                b.id === bill.id ? { ...b, name: nextName || null } : b
+            )));
+        }, {
+            title: "Name this bill",
+            confirm: "Rename",
+            placeholder: current,
+            value: bill.name || current
+        });
     }
 
     _cycleMode(bill) {
@@ -659,7 +868,8 @@ class BillsPanel {
             recipeId: rec.id,
             method: rec.method,
             outputId: rec.outputId || null,
-            mode: "forever",
+            mode: "count",
+            n: 1,
             allowedIds: inputs.map((i) => i.id)
         });
         const list = S.billsOf(this.settle, this.uid);
@@ -713,27 +923,35 @@ class BillsPanel {
         }
         const allowed = bill.allowedIds;
         const allOn = !allowed || !allowed.length;
+        const rowH = Math.round(26 * sc);
+        const gap = Math.round(3 * sc);
+        const iconS = Math.round(14 * sc);
+        const statusX = inset + innerW - Math.round(12 * sc);
+        const allIds = inputs.map((i) => i.id);
         for (const ing of inputs) {
             const on = allOn || allowed.includes(ing.id);
-            const rowH = Math.round(28 * sc);
-            const bg = this.scene.add.rectangle(inset, y, innerW, rowH, on ? 0x1e3d1a : 0x1a1510, 1)
-                .setOrigin(0, 0)
-                .setStrokeStyle(1, on ? 0x5cbf63 : 0x2a2218)
-                .setInteractive({ useHandCursor: true });
-            bg.on("pointerup", (pointer, _lx, _ly, event) => {
-                event?.stopPropagation?.();
-                if (!this._pointerInBody(pointer) && pointer.y < this.root.y) return;
-                this._toggleIngredient(bill, ing.id, inputs.map((i) => i.id));
-            });
-            this.body.add(bg);
-            const mark = on ? "[x]" : "[ ]";
-            this._label(`${mark}  ${ing.name}`, inset + Math.round(8 * sc), y + 6 * sc, 12, on ? "#d4e8d0" : "#8a7a62");
-            if (ing.key && this.scene.textures.exists(ing.key)) {
-                const icon = this.scene.add.image(inset + innerW - Math.round(18 * sc), y + rowH / 2, ing.key)
-                    .setDisplaySize(Math.round(16 * sc), Math.round(16 * sc));
+            const itemState = on ? "on" : "off";
+            const itemColors = this._rowColors(itemState);
+            const itemMid = y + rowH / 2;
+            this._row(inset, y, innerW, rowH, itemState, () => {
+                this._toggleIngredient(bill, ing.id, allIds);
+            }, () => this._billItemTip(ing));
+            const ic = this._itemIconKey(ing.id)
+                || (ing.key && this.scene.textures.exists(ing.key) ? ing.key : null);
+            if (ic) {
+                const icon = this.scene.add.image(inset + Math.round(10 * sc), itemMid, ic)
+                    .setDisplaySize(iconS, iconS);
                 this.body.add(icon);
             }
-            y += rowH + Math.round(4 * sc);
+            this._rowLabel(
+                ing.name,
+                inset + Math.round(20 * sc),
+                itemMid,
+                12,
+                itemColors.text
+            );
+            this._addStatus(itemState, statusX, itemMid, sc);
+            y += rowH + gap;
         }
         return y + Math.round(8 * sc);
     }

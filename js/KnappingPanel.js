@@ -176,14 +176,15 @@ class KnappingPanel {
      */
     tryOpenAtRock(rock) {
         if (this.visible) return false;
-        if (!rock || rock.meta?.id !== "rock") return false;
+        const rockId = rock?.meta?.id;
+        const isAnvil = typeof Place !== "undefined" && Place.countsAsThing
+            ? Place.countsAsThing(rockId, "rock")
+            : rockId === "rock" || rockId === "settling_stone";
+        if (!rock || !isAnvil) return false;
         const pointer = this.scene.input?.activePointer;
         if (this.scene.pointerOverWorldUi?.(pointer)) return false;
         const player = this.scene.player;
         if (!player || player._bodyDead || player.isIncapacitated?.() || player._resting) return false;
-        // Close whatever menu is open, then start knapping
-        this.scene.closeOpenMenus?.();
-        this.scene.player?._cancelSkin?.();
 
         const r = (this.scene.tileSize || 16) * (player.interactionRange || 4);
         const dx = rock.x - player.x;
@@ -197,40 +198,61 @@ class KnappingPanel {
 
         // Reshape an existing knapped tool (needs saved silhouette)
         const rework = !!(held.knapIconData && (held.id === "stone_tool" || held.id === "flint_tool"));
+        let knapPrep = null;
         if (rework) {
             const pixels = Knapping.unpackIconData(held.knapIconData);
             if (!pixels) return false;
             const grid = Knapping.gridFromPixels(pixels);
             if (!grid || Knapping.mass(grid) < 1) return false;
-
-            this._rework = true;
-            this.blankItemId = held.id;
-            this.blankSlotIndex = slotIndex;
-            this.material = held.knapMaterial === "flint" || held.id === "flint_tool"
+            const material = held.knapMaterial === "flint" || held.id === "flint_tool"
                 ? "flint"
                 : "pebble";
-            this.textureKey = meta?.key || this.material;
-            this.grid = grid;
-            this.pixels = pixels;
-            this._reworkDurability = held.durability;
-            this._reworkQuality = held.knapQuality || null;
-            this._reworkToolClass = held.toolClass || null;
+            knapPrep = {
+                rework: true,
+                blankItemId: held.id,
+                blankSlotIndex: slotIndex,
+                material,
+                textureKey: meta?.key || material,
+                grid,
+                pixels,
+                _reworkDurability: held.durability,
+                _reworkQuality: held.knapQuality || null,
+                _reworkToolClass: held.toolClass || null
+            };
         } else {
             const knap = meta?.knapping;
             if (!knap?.material) return false;
-
-            this._rework = false;
-            this._reworkDurability = undefined;
-            this._reworkQuality = null;
-            this._reworkToolClass = null;
-            this.blankItemId = held.id;
-            this.blankSlotIndex = slotIndex;
-            this.material = knap.material === "flint" ? "flint" : "pebble";
-            this.textureKey = meta.key || this.material;
-            const blank = Knapping.blankFromTexture(this.scene, this.textureKey);
-            this.grid = blank.grid;
-            this.pixels = blank.pixels;
+            const material = knap.material === "flint" ? "flint" : "pebble";
+            const textureKey = meta.key || material;
+            const blank = Knapping.blankFromTexture(this.scene, textureKey);
+            knapPrep = {
+                rework: false,
+                blankItemId: held.id,
+                blankSlotIndex: slotIndex,
+                material,
+                textureKey,
+                grid: blank.grid,
+                pixels: blank.pixels,
+                _reworkDurability: undefined,
+                _reworkQuality: null,
+                _reworkToolClass: null
+            };
         }
+
+        // Close whatever menu is open, then start knapping
+        this.scene.closeOpenMenus?.();
+        this.scene.player?._cancelSkin?.();
+
+        this._rework = knapPrep.rework;
+        this.blankItemId = knapPrep.blankItemId;
+        this.blankSlotIndex = knapPrep.blankSlotIndex;
+        this.material = knapPrep.material;
+        this.textureKey = knapPrep.textureKey;
+        this.grid = knapPrep.grid;
+        this.pixels = knapPrep.pixels;
+        this._reworkDurability = knapPrep._reworkDurability;
+        this._reworkQuality = knapPrep._reworkQuality;
+        this._reworkToolClass = knapPrep._reworkToolClass;
 
         this._finished = false;
         this._shattered = false;
@@ -252,12 +274,11 @@ class KnappingPanel {
     }
 
     _isDedicated() {
-        return !!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
+        return !!(this.scene.simAuth());
     }
 
     _notifyKnap(op, extra = {}) {
         if (!this._isDedicated() || typeof NetProtocol === "undefined") return;
-        this.scene._invSwapGuardUntil = performance.now() + 1200;
         this.scene._netSendMove?.(true);
         this.scene.net.sendAction({
             type: NetProtocol.Actions.KNAP,
@@ -271,6 +292,13 @@ class KnappingPanel {
 
     _consumeBlankOnce() {
         if (this._blankConsumed || !this.blankItemId) return;
+        if (this._isDedicated()) {
+            // SimWorld spends the blank. Local consume + sim consume on the same
+            // inventory used to eat two pebbles and grant two tools.
+            this._blankConsumed = true;
+            this._notifyKnap("consume");
+            return;
+        }
         const player = this.scene.player;
         if (!player) return;
         // Prefer the held slot so the finished tool can go back there
@@ -283,7 +311,6 @@ class KnappingPanel {
         if (n > 0) {
             this._blankConsumed = true;
             this.scene.hotbar.dirty = true;
-            this._notifyKnap("consume");
         }
     }
 
@@ -502,6 +529,7 @@ class KnappingPanel {
 
         if (this._isDedicated()) {
             this._notifyKnap("finish", { stack: clone });
+            return true;
         }
 
         // Prefer the slot that held the blank (now empty after consume)

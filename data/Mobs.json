@@ -16,7 +16,7 @@
         "attacks": [],
         "drops": [
             {
-                "item": "raw_beef",
+                "item": "raw_human_flesh",
                 "min": 2,
                 "max": 4
             }
@@ -60,7 +60,7 @@
         "speed": 3.6,
         "wanderSpeed": 1.2,
         "hitboxSize": 8,
-        "ai": "aggressiveAnimal",
+        "ai": "neutralAnimal",
         "anim": {
             "frameWidth": 16,
             "frameHeight": 16

@@ -101,12 +101,49 @@ const WorldStore = (() => {
             spawn: { x: 8, y: 16 },
             clock: { gameDay: 1, gameMinutes: 8 * 60, tickSpeed: 1 },
             poses: {},
+            directorCd: {},
             settlements: [],
             settlers: [],
             chunks: {},
             favorite: false,
             lastPlayedAt: 0
         };
+    }
+
+    const DEFAULT_START_MINUTES = 8 * 60;
+
+    function looksPlayed(row) {
+        if (!row || typeof row !== "object") return false;
+        const stamped = Number(row.lastPlayedAt);
+        if (Number.isFinite(stamped) && stamped > 0) return true;
+        if (row.chunks && typeof row.chunks === "object" && Object.keys(row.chunks).length > 0) {
+            return true;
+        }
+        const day = Number(row.clock?.gameDay);
+        if (Number.isFinite(day) && day > 1) return true;
+        const mins = Number(row.clock?.gameMinutes);
+        if (Number.isFinite(mins) && mins !== DEFAULT_START_MINUTES) return true;
+        if (Array.isArray(row.settlers) && row.settlers.length > 0) return true;
+        if (Array.isArray(row.settlements) && row.settlements.length > 0) return true;
+        if (row.poses && typeof row.poses === "object" && Object.keys(row.poses).length > 0) {
+            return true;
+        }
+        return false;
+    }
+
+    /** Wall-clock ms of last in-game session, or 0 if the world was never entered. */
+    function lastPlayedAt(row) {
+        const stamped = Number(row?.lastPlayedAt);
+        if (Number.isFinite(stamped) && stamped > 0) return stamped;
+        if (looksPlayed(row)) {
+            const n = Number(row?.updatedAt);
+            if (Number.isFinite(n) && n > 0) return n;
+        }
+        if (row && !Object.prototype.hasOwnProperty.call(row, "lastPlayedAt")) {
+            const n = Number(row?.updatedAt);
+            if (Number.isFinite(n) && n > 0) return n;
+        }
+        return 0;
     }
 
     async function list() {
@@ -257,6 +294,9 @@ const WorldStore = (() => {
             spawn: raw.spawn || w.spawn,
             clock: raw.clock || w.clock,
             poses: raw.poses && typeof raw.poses === "object" ? clone(raw.poses) : {},
+            directorCd: raw.directorCd && typeof raw.directorCd === "object" && !Array.isArray(raw.directorCd)
+                ? clone(raw.directorCd)
+                : {},
             chunks: raw.chunks && typeof raw.chunks === "object" ? clone(raw.chunks) : {},
             favorite: !!raw.favorite,
             lastPlayedAt: Math.max(0, Number(raw.lastPlayedAt) || 0)
@@ -264,6 +304,7 @@ const WorldStore = (() => {
         w.id = uuid();
         w.createdAt = Date.now();
         w.updatedAt = w.createdAt;
+        if (!w.lastPlayedAt && looksPlayed(w)) w.lastPlayedAt = w.updatedAt;
         return w;
     }
 
@@ -314,6 +355,12 @@ const WorldStore = (() => {
         defaultWorld,
         randomSeed,
         seedIsPlayable,
-        findPlayableSeed
+        findPlayableSeed,
+        looksPlayed,
+        lastPlayedAt
     };
 })();
+
+if (typeof module === "object" && module.exports) {
+    module.exports = WorldStore;
+}

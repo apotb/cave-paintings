@@ -5,7 +5,7 @@ const Hediffs = require("../shared/body/Hediff");
 const BodyHealing = require("../shared/body/Healing");
 const BodyCombat = require("../shared/body/Combat");
 const Sleep = require("../shared/sleep");
-const { createPlayerCreature } = require("../server/SimCreature");
+const { createPlayerCreature } = require("../shared/sim/SimCreature");
 
 loadDefs();
 

@@ -89,19 +89,6 @@
         SETTLEMENT: "settlement"
     };
 
-    /**
-     * LocalSim SP: the Phaser client already mutated chunk.meta / inventory.
-     * Dedicated MP: SimWorld.handleAction owns these verbs.
-     */
-    const ClientAuthoredActions = Object.freeze([
-        Actions.PICKUP,
-        Actions.DROP,
-        Actions.SPAWN_DROP,
-        Actions.PLACE,
-        Actions.STORAGE,
-        Actions.SLEEP
-    ]);
-
     function msg(type, payload = {}) {
         return { v: PROTOCOL_VERSION, type, payload };
     }
@@ -129,15 +116,106 @@
         return `${victim} died`;
     }
 
+    function slotsHaveItems(slots) {
+        return Array.isArray(slots) && slots.some((s) => s && s.id);
+    }
+
+    function equipmentHasItems(eq) {
+        if (!eq || typeof eq !== "object") return false;
+        if (["head", "torso", "legs", "feet", "back"].some((k) => eq[k]?.id)) return true;
+        return Array.isArray(eq.waist) && eq.waist.some((s) => s && s.id);
+    }
+
+    function netGearSig(inv, eq, hotbar, overflow) {
+        try {
+            return JSON.stringify({ inv, eq, hi: hotbar, ov: overflow });
+        } catch (_) {
+            return "";
+        }
+    }
+
+    function _cloneGearStack(stack, cloneStack) {
+        if (!stack) return null;
+        if (typeof cloneStack === "function") return cloneStack(stack);
+        try {
+            return JSON.parse(JSON.stringify(stack));
+        } catch (_) {
+            return { ...stack };
+        }
+    }
+
+    /**
+     * Live snapshots always send inventory arrays, including all-null after a stash.
+     * Omitted fields must not wipe; present empty arrays must apply. A matching
+     * `_netGearSig` still applies when occupancy disagrees (a prior empty-over-filled
+     * skip used to stamp the empty sig without copying).
+     */
+    function netGearShouldApply(pawn, row, sig) {
+        if (!pawn || !row) return false;
+        const hasInv = Array.isArray(row.inventory);
+        const hasOver = Array.isArray(row.overflow);
+        const hasEq = !!(row.equipment && typeof row.equipment === "object");
+        if (!hasInv && !hasOver && !hasEq) return false;
+        if (sig && sig === pawn._netGearSig) {
+            if (hasInv && slotsHaveItems(row.inventory) !== slotsHaveItems(pawn.inventory)) {
+                return true;
+            }
+            if (hasOver && slotsHaveItems(row.overflow) !== slotsHaveItems(pawn.overflow)) {
+                return true;
+            }
+            if (hasEq && equipmentHasItems(row.equipment) !== equipmentHasItems(pawn.equipment)) {
+                return true;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    function applyNetPawnGear(pawn, row, cloneStack, sig) {
+        if (!netGearShouldApply(pawn, row, sig)) return false;
+        const clone = (s) => _cloneGearStack(s, cloneStack);
+        if (row.equipment && typeof row.equipment === "object") {
+            const eq = row.equipment;
+            pawn.equipment = {
+                head: clone(eq.head),
+                torso: clone(eq.torso),
+                legs: clone(eq.legs),
+                feet: clone(eq.feet),
+                back: clone(eq.back),
+                waist: Array.isArray(eq.waist) ? eq.waist.map(clone) : []
+            };
+            pawn.syncWaistSlots?.();
+        }
+        if (Array.isArray(row.inventory)) {
+            const size = Math.max(1, pawn.inventorySize || pawn.inventory?.length || 5);
+            const inv = row.inventory.slice(0, size).map(clone);
+            while (inv.length < size) inv.push(null);
+            pawn.inventory = inv;
+            if (typeof row.hotbarIndex === "number") pawn.hotbarIndex = row.hotbarIndex;
+        }
+        if (Array.isArray(row.overflow)) {
+            pawn.syncOverflowSize?.();
+            const cap = Math.max(0, Number(pawn.overflowSize) || 0);
+            const over = row.overflow.slice(0, cap).map(clone);
+            while (over.length < cap) over.push(null);
+            pawn.overflow = over;
+        }
+        pawn.recomputeEquipmentEffects?.();
+        if (sig) pawn._netGearSig = sig;
+        return true;
+    }
+
     return {
         PROTOCOL_VERSION,
         Types,
         Actions,
-        ClientAuthoredActions,
         msg,
         parse,
         encode,
         deathMessage,
+        netGearSig,
+        netGearShouldApply,
+        applyNetPawnGear,
         DEFAULT_PORT: 21826,
         MAX_PLAYERS: 8,
         SNAPSHOT_HZ: 15,

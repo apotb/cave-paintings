@@ -2,6 +2,7 @@
  * Title menu — Singleplayer / Multiplayer with client-owned characters (IndexedDB).
  */
 const TITLE_CAVE_STAMPS = ["deer", "hand", "hide", "spear", "stick"];
+const GAME_VERSION = "0.2.0";
 
 class SceneMenu extends Phaser.Scene {
     constructor() {
@@ -122,10 +123,6 @@ class SceneMenu extends Phaser.Scene {
         this._showRoot();
     }
 
-    _titleMusicVolume() {
-        return typeof Settings !== "undefined" ? Settings.musicGain() : 0.85;
-    }
-
     _hudUiScale() {
         const pref = typeof Settings !== "undefined" ? Settings.loadGuiScale() : 0;
         if (typeof Settings !== "undefined") {
@@ -172,20 +169,7 @@ class SceneMenu extends Phaser.Scene {
     }
 
     _applyTitleMusicVolume() {
-        try {
-            this._titleMusicTween?.stop?.();
-        } catch (_) {}
-        this._titleMusicTween = null;
-        const vol = this._titleMusicVolume();
-        const gain = this._titleGain;
-        const ctx = this.sound?.context;
-        if (!gain || !ctx) return;
-        try {
-            gain.gain.cancelScheduledValues(ctx.currentTime);
-            gain.gain.setValueAtTime(vol, ctx.currentTime);
-        } catch (_) {
-            try { gain.gain.value = vol; } catch (_) {}
-        }
+        if (typeof GameMusic !== "undefined") GameMusic.applyVolume();
     }
 
     _unbindVolumeSlider() {
@@ -193,123 +177,12 @@ class SceneMenu extends Phaser.Scene {
         this._volumeSlider = null;
     }
 
-    _discardHtmlTitleAudio() {
-        const el = this.game?._cpTitleAudio;
-        if (!el) return;
-        try { el.pause(); } catch (_) {}
-        try { el.removeAttribute("src"); el.load?.(); } catch (_) {}
-        this.game._cpTitleAudio = null;
-    }
-
     _startTitleMusic() {
-        this._discardHtmlTitleAudio();
-        if (!this.cache?.audio?.exists?.("title") || !this.sound) return;
-        this.sound.pauseOnBlur = false;
-        if (typeof patchPhaserAudioTabHitch === "function") patchPhaserAudioTabHitch(this.game);
-        this._unbindTitleUnlock();
-        this._titleMusicWanted = true;
-        this._bindTitleMusicVis();
-        const play = () => {
-            if (!this.sys || !this._titleMusicWanted) return;
-            const status = this.sys.settings?.status;
-            if (status == null || status >= Phaser.Scenes.SLEEPING) return;
-            this._unbindTitleUnlock();
-            this._playTitleNow({ fade: true });
-        };
-        if (this.sound.locked) {
-            this._onTitleUnlock = play;
-            this.sound.once("unlocked", this._onTitleUnlock);
-        } else {
-            play();
-        }
-    }
-
-    _playTitleNow(opts = {}) {
-        if (!this._titleMusicWanted) return;
-        const ctx = this.sound?.context;
-        const buf = this.cache?.audio?.get?.("title");
-        if (!ctx || !buf) return;
-        const fade = !!opts.fade;
-        const vol = this._titleMusicVolume();
-        if (this._titleSrc && this._titleGain) {
-            this._applyTitleMusicVolume();
-            return;
-        }
-        this._stopTitleGraph();
-        try {
-            const gain = ctx.createGain();
-            const dest = this.sound.destination || ctx.destination;
-            gain.connect(dest);
-            gain.gain.value = fade ? 0 : vol;
-            const src = ctx.createBufferSource();
-            src.buffer = buf;
-            src.loop = true;
-            src.connect(gain);
-            src.start(0);
-            this._titleSrc = src;
-            this._titleGain = gain;
-            if (fade) {
-                const now = ctx.currentTime;
-                gain.gain.setValueAtTime(0, now);
-                gain.gain.linearRampToValueAtTime(vol, now + 1.4);
-            }
-        } catch (_) {}
-    }
-
-    _stopTitleGraph() {
-        const src = this._titleSrc;
-        const gain = this._titleGain;
-        this._titleSrc = null;
-        this._titleGain = null;
-        if (src) {
-            try { src.onended = null; } catch (_) {}
-            try { src.stop(); } catch (_) {}
-            try { src.disconnect(); } catch (_) {}
-        }
-        if (gain) {
-            try { gain.disconnect(); } catch (_) {}
-        }
-    }
-
-    _bindTitleMusicVis() {
-        this._unbindTitleMusicVis();
-        this._onTitleVis = () => {
-            if (document.visibilityState !== "visible") return;
-            if (!this._titleMusicWanted) return;
-            const ctx = this.sound?.context;
-            if (!ctx) return;
-            if (ctx.state === "suspended" || ctx.state === "interrupted") {
-                try { ctx.resume(); } catch (_) {}
-            }
-        };
-        document.addEventListener("visibilitychange", this._onTitleVis);
-    }
-
-    _unbindTitleMusicVis() {
-        if (this._onTitleVis) {
-            try { document.removeEventListener("visibilitychange", this._onTitleVis); } catch (_) {}
-        }
-        this._onTitleVis = null;
-    }
-
-    _unbindTitleUnlock() {
-        if (this._onTitleUnlock && this.sound) {
-            try { this.sound.off("unlocked", this._onTitleUnlock); } catch (_) {}
-        }
-        this._onTitleUnlock = null;
+        if (typeof GameMusic !== "undefined") GameMusic.play(this, "title", { fade: true });
     }
 
     _stopTitleMusic() {
-        this._titleMusicWanted = false;
-        this._unbindTitleUnlock();
-        this._unbindTitleMusicVis();
-        try {
-            this._titleMusicTween?.stop?.();
-        } catch (_) {}
-        this._titleMusicTween = null;
-        this._stopTitleGraph();
-        this._discardHtmlTitleAudio();
-        try { this.sound?.stopByKey?.("title"); } catch (_) {}
+        if (typeof GameMusic !== "undefined") GameMusic.stop();
     }
 
     /** Nearest-neighbor + clamp wrap (POT textures otherwise REPEAT the opposite edge). */
@@ -913,7 +786,24 @@ class SceneMenu extends Phaser.Scene {
         this._optionsGuiScaleBtn = null;
         this._optionsFullscreenBtn = null;
         this.hostInput = this.passInput = this.nameInput = this.worldNameInput = this.seedInput = this.renameInput = null;
+        this._versionLabel = null;
         this._syncKeyboardForDom();
+        this._placeVersionLabel();
+    }
+
+    /** Quiet build mark in the title-scene corner; rebuilt after every `_clear`. */
+    _placeVersionLabel() {
+        const s = this._uiScale();
+        const pad = Math.round(10 * s);
+        const label = this.add.text(pad, this.scale.height - pad, `v${GAME_VERSION}`, {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: this._uiFont(8),
+            color: "#8a7a68"
+        }).setOrigin(0, 1).setDepth(20);
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(label, 8, s);
+        else if (typeof crispUiText === "function") crispUiText(label);
+        this._versionLabel = label;
+        this._sendCaveBehind();
     }
 
     _track(...nodes) {
@@ -1153,6 +1043,11 @@ class SceneMenu extends Phaser.Scene {
     }
 
     _lastPlayedTs(row) {
+        if (row && Object.prototype.hasOwnProperty.call(row, "chunks")
+            && typeof WorldStore !== "undefined"
+            && typeof WorldStore.lastPlayedAt === "function") {
+            return WorldStore.lastPlayedAt(row);
+        }
         if (row && Object.prototype.hasOwnProperty.call(row, "lastPlayedAt")) {
             const n = Number(row.lastPlayedAt);
             return Number.isFinite(n) && n > 0 ? n : 0;
@@ -1678,25 +1573,25 @@ class SceneMenu extends Phaser.Scene {
         const titleHalf = typeof pixelUiFontSize === "function"
             ? Math.round(pixelUiFontSize(32, s) / 2)
             : Math.round(16 * s);
-        const y0Off = titleHalf + gap + Math.round(btnH / 2);
-        const fsYOff = disk ? y0Off + btnH + gap : y0Off;
-        const volLabelTopOff = (disk ? fsYOff : y0Off) + Math.round(btnH / 2) + gap;
+        const fsYOff = disk ? btnH + gap : 0;
+        const volLabelTopOff = fsYOff + Math.round(btnH / 2) + gap;
         const sliderYOff = volLabelTopOff + labelSlot + inner;
         const folderYOff = sliderYOff + sliderH + handlePad + gap + Math.round(btnH / 2);
         const backYOff = disk ? folderYOff + btnH + gap : folderYOff;
-        const totalH = titleHalf + backYOff + Math.round(btnH / 2);
-        let titleY = Math.round(h / 2 - totalH / 2 + titleHalf);
-        const minY = titleHalf + pad;
-        const maxY = h - (totalH - titleHalf) - pad;
-        titleY = maxY >= minY ? Math.min(maxY, Math.max(minY, titleY)) : minY;
+        const minY0 = Math.round(h * 0.14) + titleHalf + gap + Math.round(btnH / 2);
+        const preferredY0 = Math.round(h * 0.42);
+        const maxY0 = h - pad - (backYOff + Math.round(btnH / 2));
+        let y0 = Math.max(minY0, preferredY0);
+        if (maxY0 >= minY0) y0 = Math.min(y0, maxY0);
+        else y0 = minY0;
         return {
-            w, h, s, disk, titleY,
-            y0: titleY + y0Off,
-            fsY: titleY + fsYOff,
-            volLabelY: titleY + volLabelTopOff,
-            sliderY: titleY + sliderYOff,
-            folderY: titleY + folderYOff,
-            backY: titleY + backYOff,
+            w, h, s, disk,
+            y0,
+            fsY: y0 + fsYOff,
+            volLabelY: y0 + volLabelTopOff,
+            sliderY: y0 + sliderYOff,
+            folderY: y0 + folderYOff,
+            backY: y0 + backYOff,
             sliderW: this._menuFormW()
         };
     }
@@ -1740,7 +1635,7 @@ class SceneMenu extends Phaser.Scene {
         this._phase = "options";
         const L = this._optionsLayout();
         const { w, h, s, disk } = L;
-        this._title("Options", L.titleY / h);
+        this._title("Options");
         this._optionsGuiScaleBtn = this._button(
             w / 2,
             L.y0,
@@ -1909,8 +1804,7 @@ class SceneMenu extends Phaser.Scene {
         this._clear();
         this._phase = "mpHelp";
         const w = this.scale.width;
-        const h = this.scale.height;
-        const title = this._title("Hosting a server", 0.14);
+        this._title("Hosting a server");
 
         const s = this._uiScale();
         const repoUrl = "https://github.com/apotb/cave-paintings";
@@ -1986,20 +1880,9 @@ class SceneMenu extends Phaser.Scene {
         const textH = y;
         const padX = Math.round(28 * s);
         const padY = Math.round(22 * s);
-        const titleGap = Math.round(18 * s);
-        const btnGap = Math.round(20 * s);
-        const btnH = this._buttonSizePreset("medium").height;
+        const { viewTop, footerY } = this._cardListView();
         const boxH = textH + padY * 2;
-        const stackH = title.height + titleGap + boxH + btnGap + btnH;
-        const fireH = 16 * 8;
-        const minTop = Math.round(16 * s);
-        const maxBottom = h - fireH;
-        let top = Math.round((h - stackH) / 2);
-        if (top < minTop) top = minTop;
-        if (top + stackH > maxBottom) top = Math.max(minTop, maxBottom - stackH);
-
-        title.setPosition(Math.round(w / 2 - title.width / 2), top);
-        const textTop = top + title.height + titleGap + padY;
+        const textTop = viewTop + padY;
         for (const n of body) n.y += textTop;
 
         const box = this.add.rectangle(
@@ -2014,12 +1897,7 @@ class SceneMenu extends Phaser.Scene {
         this._track(box);
         this._sendCaveBehind();
 
-        this._button(
-            Math.round(w / 2),
-            Math.round(textTop + textH + padY + btnGap + btnH / 2),
-            "Back",
-            () => this._showMpHost()
-        );
+        this._button(Math.round(w / 2), footerY, "Back", () => this._showMpHost());
     }
 
     _cancelMpProbe() {

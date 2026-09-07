@@ -38,3 +38,26 @@ test("wearInventorySlot mutates only the target index", () => {
     assert.ok(inv[0].durability < 10);
     assert.equal(inv[1].durability, 10);
 });
+
+test("breakChat colors the tool orange and names a settler in blue", () => {
+    const yours = Durability.breakChat("Sharp Stick", { you: true });
+    assert.equal(yours.text, "Your Sharp Stick broke");
+    assert.equal(yours.segments[0].text, "Your");
+    assert.equal(yours.segments[1].text, "Sharp Stick");
+    assert.equal(yours.segments[1].color, "#f0a040");
+    assert.equal(yours.segments[2].text, "broke");
+
+    const settler = Durability.breakChat("Flint Chopper", {
+        actorName: "Keka",
+        actorColor: "#7ec8ff"
+    });
+    assert.equal(settler.text, "Keka's Flint Chopper broke");
+    assert.equal(settler.segments[0].text, "Keka's");
+    assert.equal(settler.segments[0].color, "#7ec8ff");
+    assert.equal(settler.segments[1].text, "Flint Chopper");
+    assert.equal(settler.segments[1].color, "#f0a040");
+
+    const world = Durability.breakChat("Sharp Stick", { world: true });
+    assert.equal(world.text, "The Sharp Stick broke");
+    assert.equal(world.segments[1].color, "#f0a040");
+});

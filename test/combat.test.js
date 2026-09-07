@@ -1,7 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const BodyCombat = require("../shared/body/Combat");
-const { createPlayerCreature, createMobCreature } = require("../server/SimCreature");
+const { createPlayerCreature, createMobCreature } = require("../shared/sim/SimCreature");
 const { loadDefs, DataStore, seedRng, restoreRng } = require("./helpers/load");
 
 loadDefs();
@@ -64,6 +64,23 @@ test("applyHit injures a deer", () => {
     );
     assert.ok(after > before || deer.anatomy._dirty || deer.isBodyDead?.());
     restoreRng();
+});
+
+test("boar tusk verbs carry white attack color; bite and headbutt do not", () => {
+    const def = DataStore.getMob("boar");
+    const boar = createMobCreature(
+        { uid: "b1", id: "boar", x: 0, y: 0, homeX: 0, homeY: 0 },
+        def,
+        DataStore,
+        { worldMinuteIndex: () => 100 }
+    );
+    const atks = BodyCombat.collectAttacks(boar);
+    const tusks = atks.filter((a) => a.verb === "slashed" || a.verb === "gored");
+    assert.ok(tusks.length >= 2, "expected tusk slash and gore");
+    for (const a of tusks) assert.equal(a.color, 0xffffff);
+    const others = atks.filter((a) => a.verb !== "slashed" && a.verb !== "gored");
+    assert.ok(others.length >= 1);
+    for (const a of others) assert.equal(a.color, undefined);
 });
 
 test("meleeWeaponAverageDps is finite for a held spear def", () => {

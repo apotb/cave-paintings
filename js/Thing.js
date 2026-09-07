@@ -75,6 +75,8 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
                 this.addToUpdateList?.();
                 if (!this._animIsLive(key)) this.play(key);
             }
+            if (this.body) this._positionBody();
+            this._syncInteractMark();
             return;
         }
         if (this.anims?.isPlaying) this.stop();
@@ -82,10 +84,14 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
             const tex = Place.rotationTextureKey(this.meta.key, this.entry?.rot);
             if (this.scene.textures.exists(tex)) {
                 this.setTexture(tex);
+                if (this.body) this._positionBody();
+                this._syncInteractMark();
                 return;
             }
         }
         this.setTexture(this.meta.key);
+        if (this.body) this._positionBody();
+        this._syncInteractMark();
     }
 
     setup(hitboxSize=0) {
@@ -97,13 +103,20 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
     }
 
     createCollision() {
-        this.scene.physics.add.existing(this, true);
-        this._positionBody();
+        if (this.body && this.body.physicsType !== Phaser.Physics.Arcade.STATIC_BODY) {
+            this.scene.physics.world.remove(this.body);
+            this.body.destroy?.();
+            this.body = null;
+        }
+        if (!this.body) this.scene.physics.add.existing(this, true);
+        this.refreshBody = () => {
+            this._positionBody();
+            return this;
+        };
         this.body.enable = true;
         if (!this._inStaticGroup) {
             this.scene._things.add(this);
             this._inStaticGroup = true;
-            if (typeof indexThingSprite === "function") indexThingSprite(this.scene, this);
             if (!this._cellDestroyBound) {
                 this._cellDestroyBound = true;
                 this.once("destroy", () => {
@@ -111,31 +124,89 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
                 });
             }
         }
+        this._positionBody();
     }
 
     _positionBody() {
+        if (!this.body) return;
         const ts = this.scene?.tileSize || 16;
-        const fp = typeof Place !== "undefined" ? Place.footprintSize(this.meta) : [1, 1];
-        // Lean-tos only. Do not call refreshBody() — it copies the full sprite.
-        if (
-            (fp[0] > 1 || fp[1] > 1)
-            && typeof Place !== "undefined"
-            && this.entry
-            && Place.collisionWorldRect
-        ) {
+        // Do not call the Phaser refreshBody() — it copies the full sprite.
+        if (typeof Place !== "undefined" && this.entry && Place.collisionWorldRect) {
             const rect = Place.collisionWorldRect(this.entry, this.meta, ts);
             if (rect) {
                 const bw = rect.right - rect.left;
                 const bh = rect.bottom - rect.top;
-                const ox = rect.left - (this.x - this.width * 0.5);
-                const oy = rect.top - (this.y - this.height);
-                this.body.setSize(bw, bh).setOffset(ox, oy);
+                const ox = rect.left - (this.x - this.displayOriginX);
+                const oy = rect.top - (this.y - this.displayOriginY);
+                this._applyStaticSize(bw, bh, ox, oy);
                 return;
             }
         }
         const hs = this.hitboxSize;
-        this.body.setSize(hs, hs)
-            .setOffset((this.width - hs) * 0.5, this.height - hs);
+        this._applyStaticSize(hs, hs, (this.width - hs) * 0.5, this.height - hs);
+    }
+
+    _syncInteractMark() {
+        const ts = this.scene?.tileSize || 16;
+        const tile = typeof Place !== "undefined" && this.entry
+            ? Place.interactTileOf?.(this.entry, ts, this.meta)
+            : null;
+        const show = !!(tile && this.scene?._stationInteractVisible?.(this));
+        if (!show) {
+            if (this._interactMark) this._interactMark.setVisible(false);
+            return;
+        }
+        if (!this.scene?.add?.graphics) return;
+        const cx = tile.tx * ts + ts / 2;
+        const cy = tile.ty * ts + ts / 2;
+        let g = this._interactMark;
+        if (!g || !g.active) {
+            g = this.scene.add.graphics();
+            this.scene.mainLayer?.add(g);
+            this._interactMark = g;
+            if (!this._interactMarkBound) {
+                this._interactMarkBound = true;
+                this.once("destroy", () => this._destroyInteractMark());
+            }
+        }
+        g.clear();
+        g.fillStyle(0xffffff, 0.18);
+        g.fillCircle(0, 0, ts * 0.28);
+        g.lineStyle(1, 0xffffff, 0.9);
+        g.strokeCircle(0, 0, ts * 0.28);
+        g.setPosition(cx, cy);
+        g.setDepth(cy - ts);
+        g.setVisible(true);
+    }
+
+    _destroyInteractMark() {
+        if (this._interactMark) {
+            this._interactMark.destroy();
+            this._interactMark = null;
+        }
+    }
+
+    _applyStaticSize(bw, bh, ox, oy) {
+        const body = this.body;
+        if (!body) return;
+        const w = Math.max(1, Number(bw) || 1);
+        const h = Math.max(1, Number(bh) || 1);
+        // Third arg false: StaticBody.setSize defaults to centering on the sprite.
+        if (typeof body.setSize === "function") body.setSize(w, h, false);
+        else {
+            body.width = w;
+            body.height = h;
+        }
+        if (typeof body.setOffset === "function") body.setOffset(ox, oy);
+        else {
+            body.offset.x = ox;
+            body.offset.y = oy;
+        }
+        if (typeof body.reset === "function") body.reset(this.x, this.y);
+        else if (typeof body.updateCenter === "function") body.updateCenter();
+        if (typeof indexThingSprite === "function" && this._inStaticGroup) {
+            indexThingSprite(this.scene, this);
+        }
     }
 
     disableCollision() {
@@ -237,7 +308,7 @@ class LootableThing extends Thing {
         if (!loot || !this.entry || !pawn) return;
 
         // Dedicated MP: server owns lootables + inventory (YOU).
-        if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) {
+        if (this.scene.simAuth()) {
             if (pawn !== this.scene.player) return;
             this.scene._netSendMove?.(true);
             this.scene.net.sendAction({
@@ -361,6 +432,18 @@ class Campfire extends Thing {
         return dx * dx + dy * dy <= r * r;
     }
 
+    tooltipContents() {
+        const items = [];
+        const cat = this.getCatalyst();
+        if (cat?.id) items.push(cat);
+        const cook = this.getCook();
+        if (cook?.id) items.push(cook);
+        for (const s of this.entry?.simmer || []) {
+            if (s?.id) items.push(s);
+        }
+        return items;
+    }
+
     tooltipText() {
         const lines = [this.meta.name];
         const getItem = (id) => this.scene.getItem(id);
@@ -370,27 +453,23 @@ class Campfire extends Thing {
             const deg = Math.round(Number(this.entry.pitTemp) || Fire.AMBIENT_TEMP);
             lines.push(Fire.formatTemp(deg));
             if (this.isLit()) {
-                const mins = typeof Fire !== "undefined"
-                    ? Fire.burnMinutes(this.entry, getItem)
-                    : campfireBurnMinutes(getItem, this.entry.fuel, this.entry.burnRemaining);
+                const mins = Fire.burnMinutes(this.entry, getItem);
                 if (mins <= 0) lines.push("Burn time: <1h");
                 else lines.push(`Burn time: ${formatHours(Math.floor(mins / 60))}`);
             } else if (!this.hasFuel() || band === "cold") {
                 // Unlit empty pits always need fuel, even hot coals that would relight.
                 lines.push(this.hasFuel() ? "Needs firestarter" : "Needs fuel");
             }
-            return lines.join("\n");
-        }
-        if (this.isLit()) {
-            const mins = typeof Fire !== "undefined"
-                ? Fire.burnMinutes(this.entry, getItem)
-                : campfireBurnMinutes(getItem, this.entry.fuel, this.entry.burnRemaining);
+        } else if (this.isLit()) {
+            const mins = campfireBurnMinutes(getItem, this.entry.fuel, this.entry.burnRemaining);
             if (mins <= 0) lines.push("Burn time: <1h");
             else lines.push(`Burn time: ${formatHours(Math.floor(mins / 60))}`);
         } else {
             lines.push(this.hasFuel() ? "Needs firestarter" : "Needs fuel");
         }
-        return lines.join("\n");
+        const text = lines.join("\n");
+        const contents = this.tooltipContents();
+        return contents.length ? { text, rows: [contents] } : text;
     }
 
     /** Fuel still sitting in the input slots (not the unit already in the fire). */
@@ -520,6 +599,7 @@ class Campfire extends Thing {
     setCatalyst(stack) {
         const prevMethod = this.getCatalystMethod();
         this.entry.catalyst = stack;
+        if (!stack) this.entry.catalystReserved = false;
         const nextMethod = this.getCatalystMethod();
         // Only wipe progress when switching between different cook methods
         // (stick roast ↔ shell simmer). Removing/replacing the same tool pauses.
@@ -567,7 +647,7 @@ class Campfire extends Thing {
     }
 
     _wearRoastCatalyst(rate = 1) {
-        if (this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal) return;
+        if (this.scene.simAuth()) return;
         if (typeof Durability === "undefined") return;
         const stack = this.entry.catalyst;
         if (!stack) return;
@@ -579,8 +659,33 @@ class Campfire extends Thing {
         );
         if (!result.broke) return;
         const name = Durability.stackDisplayName(stack, def);
+        const cook = this.entry.cook;
+        if (cook?.id) {
+            const item = this.scene.getItem(cook.id);
+            if (item && typeof DroppedItem !== "undefined") {
+                const extras = typeof mealStackExtras === "function" ? mealStackExtras(cook) : null;
+                const spoilAt = typeof spoilAtForWorld === "function"
+                    ? spoilAtForWorld(cook, this.scene.worldMinuteIndex?.())
+                    : cook.spoilAt;
+                DroppedItem.spawn(
+                    this.scene,
+                    this.x,
+                    this.y + 12,
+                    item,
+                    cook.quantity || 1,
+                    spoilAt,
+                    extras
+                );
+            }
+            this.entry.cook = null;
+            this.entry.cookProgress = 0;
+            delete this.entry.roastBarMinutes;
+        }
         this.entry.catalyst = null;
-        this.scene.combatLog?.push(Durability.breakMessage(name, false));
+        this.entry.catalystReserved = false;
+        const weapon = (typeof CombatLog !== "undefined" && CombatLog.COLOR_WEAPON) || "#f0a040";
+        const chat = Durability.breakChat(name, { world: true, weaponColor: weapon });
+        this.scene.combatLog?.push(chat.text, { segments: chat.segments });
         this.scene.campfirePanel?.refresh?.();
         if (this.scene.hotbar) this.scene.hotbar.dirty = true;
     }
@@ -695,6 +800,8 @@ class Storage extends Thing {
 
         this.setInteractive({ cursor: "pointer" });
         this.on("pointerover", (pointer) => {
+            if (this.scene.storagePanel?.visible && this.scene.storagePanel.storage === this
+                && this.scene.pointerOverWorldUi?.(pointer)) return;
             this.scene.showTooltip(
                 () => this.tooltipText(),
                 pointer.x,
@@ -730,17 +837,46 @@ class Storage extends Thing {
         return dx * dx + dy * dy <= r * r;
     }
 
+    _slotCount() {
+        const slots = this.entry?.slots || [];
+        if (typeof Place !== "undefined") {
+            return Place.storageSlotCount(this.meta, this.entry) || slots.length || 8;
+        }
+        return slots.length || 8;
+    }
+
+    /** Occupied stacks, wrapped like the storage grid (basket 8 → two rows of 4). */
+    storageTooltipRows() {
+        const slots = this.entry?.slots || [];
+        const total = this._slotCount();
+        const cols = typeof Place !== "undefined"
+            ? Place.storageLayoutCols(total)
+            : Math.min(4, Math.max(1, total));
+        const items = [];
+        for (let i = 0; i < total; i++) {
+            const s = slots[i];
+            if (s?.id && (s.quantity == null || s.quantity > 0)) items.push(s);
+        }
+        if (!items.length) return [];
+        const rows = [];
+        for (let i = 0; i < items.length; i += cols) {
+            rows.push(items.slice(i, i + cols));
+        }
+        return rows;
+    }
+
     tooltipText() {
         const name = this.meta?.name || "Storage";
+        const total = this._slotCount();
         const slots = this.entry?.slots || [];
-        const total = typeof Place !== "undefined"
-            ? (Place.storageSlotCount(this.meta, this.entry) || slots.length || 8)
-            : (slots.length || 8);
         let used = 0;
-        for (const s of slots) {
+        for (let i = 0; i < total; i++) {
+            const s = slots[i];
             if (s && s.quantity > 0) used++;
         }
-        return `${name} (${used}/${total})`;
+        const text = `${name} (${used}/${total})`;
+        const rows = this.storageTooltipRows();
+        return rows.length ? { text, rows } : text;
     }
 
     getSlot(index) {
@@ -823,13 +959,14 @@ class DryingRack extends Storage {
         if (!stack) return `${name} (empty)`;
         const meta = this.scene.getItem(stack.id);
         const hideName = meta?.name || stack.id;
+        let text = `${name} (${hideName})`;
         if (typeof Hide !== "undefined" && Hide.isFleshedHide(meta)) {
             const prog = Hide.dryProgressOf(stack);
             const max = Hide.DRY_MINUTES || 1440;
             const pct = Math.max(0, Math.min(100, Math.floor((prog / max) * 100)));
-            return `${name} (${hideName}, ${pct}% dry)`;
+            text = `${name} (${hideName}, ${pct}% dry)`;
         }
-        return `${name} (${hideName})`;
+        return { text, rows: [[stack]] };
     }
 
     _syncHang(stack) {
@@ -918,9 +1055,12 @@ class LeanTo extends Thing {
                 this
             );
         });
-        this.on("pointerout", () => {
-            if (this.scene._hoverTarget === this) this.scene._hoverTarget = null;
-            if (this.scene._tooltipTarget === this) this.scene.hideTooltip();
+        this.on("pointerout", (pointer) => {
+            const scene = this.scene;
+            const p = pointer || scene?.input?.activePointer;
+            if (p && this._pointerStillOver(p)) return;
+            if (scene._hoverTarget === this) scene._hoverTarget = null;
+            if (scene._tooltipTarget === this) scene.hideTooltip();
         });
         this.on("pointerdown", (pointer) => {
             if (pointer.rightButtonDown()) return;
@@ -937,9 +1077,25 @@ class LeanTo extends Thing {
     }
 
     applyVisual() {
-        super.applyVisual();
+        let tex = this.meta?.key;
+        if (typeof Place !== "undefined" && Array.isArray(this.meta?.rotations) && this.meta.rotations.length) {
+            const rotTex = Place.rotationTextureKey(this.meta.key, this.entry?.rot);
+            if (this.scene.textures.exists(rotTex)) tex = rotTex;
+        }
+        if (this.meta?.anim || !tex || this.texture?.key !== tex) {
+            super.applyVisual();
+        }
         this.setDepth(this._floorDepth());
         this._syncFrame();
+    }
+
+    _pointerStillOver(pointer) {
+        const scene = this.scene;
+        if (!scene?.cameras?.main || !pointer) return false;
+        const b = this.getBounds?.();
+        if (!b) return false;
+        const wpt = scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        return Phaser.Geom.Rectangle.Contains(b, wpt.x, wpt.y);
     }
 
     _floorDepth() {
@@ -1098,6 +1254,7 @@ class SettlingStone extends Thing {
             if (scene.pointerOverWorldUi?.(pointer)) return;
             if (scene.restBlocksWorldUi?.()) return;
             if (!this.inRange()) return;
+            if (scene.knappingPanel?.tryOpenAtRock?.(this)) return;
             scene.settlementSys?.openFromStone?.(this);
         });
         this.on("destroy", () => {
@@ -1115,6 +1272,8 @@ class SettlingStone extends Thing {
     }
 
     tooltipText() {
+        const knap = this.scene._rockKnapTooltipText?.();
+        if (knap) return knap;
         const settle = this.scene.settlementSys?.byStoneUid?.(this.entry?.uid);
         return settle?.name || this.meta?.name || "Settling Stone";
     }

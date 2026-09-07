@@ -285,6 +285,9 @@ class StorageFilterPanel {
     }
 
     close() {
+        if (this.scene._isUnderStorageFilterPanel?.(this.scene._tooltipTarget)) {
+            this.scene.hideTooltip?.();
+        }
         this.visible = false;
         this.settle = null;
         this.thing = null;
@@ -345,22 +348,12 @@ class StorageFilterPanel {
     }
 
     _clearBody() {
-        const tip = this.scene._tooltipTarget;
-        if (tip) {
-            let cur = tip;
-            while (cur) {
-                if (cur === this.body || cur === this.root) {
-                    this.scene.hideTooltip?.();
-                    break;
-                }
-                cur = cur.parentContainer;
-            }
-        }
         this.body.removeAll(true);
     }
 
     refresh() {
         if (!this.visible || !this.thing) return;
+        this._refreshing = true;
         const s = this.scene.uiScale || 1;
         const SF = this._SF();
         const name = this.thing?.meta?.name || this.thing?.entry?.id || "Basket";
@@ -377,6 +370,8 @@ class StorageFilterPanel {
         this._maxScroll = Math.max(0, this._contentH - this._viewH);
         this._setScroll(Math.min(this._scroll, this._maxScroll));
         this._refreshMask();
+        this._refreshing = false;
+        this._restoreHoverTip();
     }
 
     _label(text, x, y, size = 12, color = "#d4c4a8") {
@@ -454,7 +449,54 @@ class StorageFilterPanel {
         return { fill: 0x3a1816, stroke: 0xc44c3c, text: "#e8c0b8" };
     }
 
-    _row(x, y, w, h, state, onClick) {
+    _filterItemTip(it) {
+        const scene = this.scene;
+        if (!it?.id || typeof scene.formatItemTooltip !== "function") return it?.name || "";
+        const id = String(it.id);
+        if (id.startsWith("tool:")) {
+            const cls = id.slice(5);
+            const def = scene.getItem("stone_tool") || { name: it.name };
+            return scene.formatItemTooltip(def, 1, null, {
+                id: "stone_tool",
+                toolClass: cls,
+                customName: it.name,
+                quantity: 1
+            });
+        }
+        const def = scene.getItem(id);
+        if (!def) return it.name || "";
+        return scene.formatItemTooltip(def, 1, null, { id, quantity: 1 });
+    }
+
+    _restoreHoverTip() {
+        const scene = this.scene;
+        const p = scene.input?.activePointer;
+        if (!p || !this.visible) return;
+        const obj = this.hoverObjAt(p);
+        if (obj) obj.emit("pointerover", p);
+    }
+
+    hoverObjAt(pointer) {
+        if (!pointer || !this.visible || !this._pointerInBody(pointer)) return null;
+        const visit = (obj) => {
+            if (!obj?.active) return null;
+            const kids = obj.list;
+            if (Array.isArray(kids)) {
+                for (let i = kids.length - 1; i >= 0; i--) {
+                    const hit = visit(kids[i]);
+                    if (hit) return hit;
+                }
+            }
+            if (obj.input?.enabled) {
+                const b = obj.getBounds?.();
+                if (b && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y)) return obj;
+            }
+            return null;
+        };
+        return visit(this.body);
+    }
+
+    _row(x, y, w, h, state, onClick, tipFn) {
         const c = this._rowColors(state);
         const bg = this.scene.add.rectangle(x, y, w, h, c.fill, 1)
             .setOrigin(0, 0)
@@ -464,6 +506,16 @@ class StorageFilterPanel {
                 hitAreaCallback: (area, lx, ly) => this._clipHit(area, lx, ly),
                 useHandCursor: true
             });
+        bg.on("pointerover", (pointer) => {
+            if (typeof tipFn !== "function") return;
+            this.scene.showTooltip(() => tipFn() || "", pointer.x, pointer.y, bg);
+        });
+        bg.on("pointerout", (pointer) => {
+            if (this._refreshing) return;
+            const b = bg.getBounds?.();
+            if (b && pointer && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y)) return;
+            if (this.scene._tooltipTarget === bg) this.scene.hideTooltip?.();
+        });
         bg.on("pointerup", (pointer, _lx, _ly, event) => {
             event?.stopPropagation?.();
             if (!this._pointerInBody(pointer)) return;
@@ -528,7 +580,7 @@ class StorageFilterPanel {
                 this._row(itemX, y, itemW, rowH, itemState, () => {
                     if (!SF) return;
                     this._commit(SF.toggleItem(this._filter(), tree, it.id));
-                });
+                }, () => this._filterItemTip(it));
                 const ic = this._iconKey(it);
                 const iconCx = itemX + Math.round(10 * sc);
                 if (ic) {

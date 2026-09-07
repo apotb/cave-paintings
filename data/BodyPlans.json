@@ -187,8 +187,8 @@
             }
         },
         "unarmedAttacks": {
-            "tusk_slash": { "name": "Tusk", "damage": 10, "type": "sharp", "verb": "slashed", "cooldown": 2.0, "weightMultiplier": 1, "range": 3 },
-            "tusk_stab": { "name": "Tusk", "damage": 10, "type": "sharp", "verb": "gored", "cooldown": 2.0, "weightMultiplier": 1, "range": 3 },
+            "tusk_slash": { "name": "Tusk", "damage": 10, "type": "sharp", "verb": "slashed", "cooldown": 2.0, "weightMultiplier": 1, "range": 3, "color": "#ffffff" },
+            "tusk_stab": { "name": "Tusk", "damage": 10, "type": "sharp", "verb": "gored", "cooldown": 2.0, "weightMultiplier": 1, "range": 3, "color": "#ffffff" },
             "bite": { "name": "Bite", "damage": 8, "type": "sharp", "verb": "sunk", "cooldown": 2.0, "weightMultiplier": 0.5, "range": 3, "injury": "bite" },
             "headbutt": { "name": "Headbutt", "damage": 6, "type": "blunt", "verb": "bashed", "cooldown": 2.0, "weightMultiplier": 0.2, "range": 3 }
         },

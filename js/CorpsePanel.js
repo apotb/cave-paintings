@@ -342,7 +342,7 @@ class CorpsePanel {
     }
 
     _dedicatedNet() {
-        return !!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
+        return !!(this.scene.simAuth());
     }
 
     /** Tell the dedicated server we took qty from a corpse slot. */

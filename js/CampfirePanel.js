@@ -285,17 +285,24 @@ class CampfirePanel {
         this._billUi = sys.makeWorldButton("Bills", () => {
             if (this.campfire) sys.openBills?.(this.campfire);
         });
+        this._fuelUi = sys.makeWorldButton("Fuel", () => {
+            if (this.campfire) sys.openFuelFilter?.(this.campfire);
+        });
         this.container.add(this._settleUi.btn);
         this.container.add(this._billUi.btn);
+        this.container.add(this._fuelUi.btn);
         this._settleUi.btn.setVisible(false);
         this._billUi.btn.setVisible(false);
+        this._fuelUi.btn.setVisible(false);
     }
 
     _syncSettle() {
         this.scene.settlementSys?.syncStationButton(this._settleUi, this.campfire);
         const added = this.scene.settlementSys?.isAdded(this.campfire);
         this._billUi?.btn.setVisible(!!added);
+        this._fuelUi?.btn.setVisible(!!added);
         this._placeActionRow();
+        this._placeBillFuelRow();
     }
 
     _stackFor(key) {
@@ -331,7 +338,7 @@ class CampfirePanel {
     }
 
     _isDedicated() {
-        return !!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
+        return !!(this.scene.simAuth());
     }
 
     _notifyCampfire(op, extra = {}) {
@@ -341,7 +348,6 @@ class CampfirePanel {
             entry.uid = `cf_${Math.round(this.campfire.x)}_${Math.round(this.campfire.y)}`;
         }
         if (op !== "attend" && op !== "leave") {
-            this.scene._invSwapGuardUntil = performance.now() + 1000;
             this.scene._netSendMove?.(true);
         }
         this.scene.net.sendAction({
@@ -414,8 +420,8 @@ class CampfirePanel {
             else if (view.key.startsWith('simmer:')) showSlot = simmerOpen;
 
             view.slot.setVisible(showSlot);
-            if (showSlot) view.slot.setInteractive({ cursor: 'pointer' });
-            else view.slot.disableInteractive();
+            if (showSlot) ensurePointerInteractive(view.slot);
+            else disableInteractiveIfOn(view.slot);
 
             const stack = showSlot ? this._stackFor(view.key) : null;
             const meta = stack ? this.scene.getItem(stack.id) : null;
@@ -462,7 +468,7 @@ class CampfirePanel {
         this._destroyEnabled = canDestroy;
         this.destroyBtn?.setVisible(canDestroy);
         if (canDestroy) this._syncDestroyHitArea(true);
-        else this.destroyRect?.disableInteractive();
+        else disableInteractiveIfOn(this.destroyRect);
         this._syncDestroyHover();
         this._placeActionRow();
         this.refreshHeatLabel();
@@ -631,10 +637,15 @@ class CampfirePanel {
         this._syncSettle();
         if (this._billUi) {
             this._billUi.rect.setSize(bw, bh);
-            this._billUi.btn.setPosition(0, actionY + bh + gap);
             if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(this._billUi.text, 14, this.scene);
             this._billUi.paint?.();
         }
+        if (this._fuelUi) {
+            this._fuelUi.rect.setSize(bw, bh);
+            if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(this._fuelUi.text, 14, this.scene);
+            this._fuelUi.paint?.();
+        }
+        this._placeBillFuelRow();
 
         if (this.heatText) {
             this.heatText.setStroke("#000000", Math.max(2, Math.round(3 * s)));
@@ -663,14 +674,32 @@ class CampfirePanel {
         });
     }
 
+    _placeBillFuelRow() {
+        const row = this._actionRow;
+        if (!row) return;
+        const pairY = row.y + row.bh + row.gap;
+        const bw = row.bw;
+        const gap = row.gap;
+        const billOn = !!this._billUi?.btn?.visible;
+        const fuelOn = !!this._fuelUi?.btn?.visible;
+        if (billOn && fuelOn) {
+            const total = bw + gap + bw;
+            this._billUi.btn.setPosition(-total / 2 + bw / 2, pairY);
+            this._fuelUi.btn.setPosition(total / 2 - bw / 2, pairY);
+            return;
+        }
+        if (billOn) this._billUi.btn.setPosition(0, pairY);
+        if (fuelOn) this._fuelUi.btn.setPosition(0, pairY);
+    }
+
     _syncDestroyHitArea(enable) {
         const bw = this._destroyBw || 90;
         const bh = this._destroyBh || 28;
         if (!enable) {
-            this.destroyRect?.disableInteractive();
+            disableInteractiveIfOn(this.destroyRect);
             return;
         }
-        this.destroyRect.setInteractive({ useHandCursor: true });
+        ensurePointerInteractive(this.destroyRect);
         if (this.destroyRect.input?.hitArea?.setTo) {
             this.destroyRect.input.hitArea.setTo(0, 0, bw, bh);
         }
@@ -873,6 +902,7 @@ class CampfirePanel {
             quantity: 1,
             ...(spoilAt != null ? { spoilAt } : {})
         };
+        if (stack.durability != null) one.durability = stack.durability;
         if (stack.customName) one.customName = stack.customName;
         if (stack.food) one.food = { ...stack.food };
         if (stack.ingredients) one.ingredients = stack.ingredients.slice();
@@ -922,6 +952,11 @@ class CampfirePanel {
         if (dest && this._catalystLocked()) return;
         if (dest && dest.id === stack.id) return;
 
+        if (this._isDedicated()) {
+            this._notifyCampfire("inv_to_slot", { inv: hotbarIndex, slot: "catalyst", amount: 1, bag: this._sourceBag === 'overflow' ? 'overflow' : 'hotbar' });
+            return;
+        }
+
         if (!dest) {
             this.campfire.setCatalyst(this._oneFromStack(stack));
             stack.quantity -= 1;
@@ -956,6 +991,11 @@ class CampfirePanel {
         const dest = this._stackFor(key);
         if (dest) return; // qty 1, no swap into occupied for simplicity unless empty
 
+        if (this._isDedicated()) {
+            this._notifyCampfire("inv_to_slot", { inv: hotbarIndex, slot: key, amount: 1, bag: this._sourceBag === 'overflow' ? 'overflow' : 'hotbar' });
+            return;
+        }
+
         this._setStack(key, this._oneFromStack(stack));
         stack.quantity -= 1;
         if (stack.quantity <= 0) inv[hotbarIndex] = null;
@@ -977,6 +1017,11 @@ class CampfirePanel {
 
         const dest = this._stackFor(key);
         if (dest && dest.id === stack.id) return;
+
+        if (this._isDedicated()) {
+            this._notifyCampfire("inv_to_slot", { inv: hotbarIndex, slot: key, amount: 1, bag: this._sourceBag === 'overflow' ? 'overflow' : 'hotbar' });
+            return;
+        }
 
         if (!dest) {
             this._setStack(key, this._oneFromStack(stack));
@@ -1032,6 +1077,26 @@ class CampfirePanel {
         const now = this.scene.worldMinuteIndex?.() ?? null;
         let moved = 0;
 
+        if (this._isDedicated()) {
+            if (!dest) {
+                moved = Math.min(stack.quantity, want);
+            } else if (dest.id === stack.id) {
+                const maxStack = Math.max(1, meta?.maxStack || 1);
+                const space = Math.max(0, maxStack - dest.quantity);
+                moved = Math.min(space, want, stack.quantity);
+            } else if (want >= stack.quantity) {
+                moved = stack.quantity;
+            }
+            if (!(moved > 0)) return;
+            this._notifyCampfire("inv_to_slot", {
+                inv: hotbarIndex,
+                slot: `fuel:${idx}`,
+                amount: moved,
+                bag: this._sourceBag === 'overflow' ? 'overflow' : 'hotbar'
+            });
+            return;
+        }
+
         if (!dest) {
             moved = Math.min(stack.quantity, want);
             if (!(moved > 0)) return;
@@ -1081,6 +1146,18 @@ class CampfirePanel {
         const now = this.scene.worldMinuteIndex?.() ?? null;
         let moved = stack.quantity;
 
+        if (this._isDedicated()) {
+            if (!(stack.customName || stack.food)) {
+                const want = pointer != null && typeof quickMoveAmount === "function"
+                    ? quickMoveAmount(stack.quantity, pointer, this.scene)
+                    : stack.quantity;
+                moved = Math.min(stack.quantity, want);
+            }
+            if (!(moved > 0)) return;
+            this._notifyCampfire("slot_to_inv", { slot: key, inv: -1, amount: moved });
+            return;
+        }
+
         if (stack.customName || stack.food) {
             if (!this._tryInsertStack(this._toInvStack(stack))) return;
             this._setStack(key, null);
@@ -1117,19 +1194,12 @@ class CampfirePanel {
         const qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
         const amount = fromKey.startsWith("fuel:") ? qty : 1;
         if (this._isDedicated()) {
-            if (amount >= qty) this._setStack(fromKey, null);
-            else {
-                stack.quantity -= amount;
-                this._setStack(fromKey, stack);
-            }
             this._notifyCampfire("slot_to_inv", {
                 slot: fromKey,
                 inv: -1,
                 amount,
                 toPawnId: target.pawnId
             });
-            this.layout();
-            this.scene.refreshTooltip();
             return true;
         }
         const piece = this._cloneStack(stack);
@@ -1194,6 +1264,32 @@ class CampfirePanel {
         const dest = inv[toHotbar];
         const now = this.scene.worldMinuteIndex?.() ?? null;
         let moved = stack.quantity;
+
+        if (this._isDedicated()) {
+            if (dest && dest.id === stack.id && !stack.customName && !dest.customName) {
+                const meta = this.scene.getItem(dest.id);
+                const maxStack = Math.max(1, meta?.maxStack || 1);
+                const space = maxStack - dest.quantity;
+                if (!(space > 0)) return;
+                moved = Math.min(space, stack.quantity);
+            } else if (dest && (fromKey === 'cook' || fromKey === 'catalyst' || fromKey.startsWith('simmer:'))) {
+                if (fromKey === 'catalyst') {
+                    const dMeta = this.scene.getItem(dest.id);
+                    if (!dMeta?.cook?.method) return;
+                }
+                if (fromKey.startsWith('simmer:') && !isSimmerIngredient(dest.id)) return;
+                moved = 1;
+            } else if (dest && fromKey !== 'cook' && fromKey !== 'catalyst' && !fromKey.startsWith('simmer:')) {
+                moved = stack.quantity;
+            }
+            this._notifyCampfire("slot_to_inv", {
+                slot: fromKey,
+                inv: toHotbar,
+                amount: moved,
+                bag: toBag
+            });
+            return;
+        }
 
         if (!dest) {
             inv[toHotbar] = this._toInvStack(stack);
@@ -1261,6 +1357,39 @@ class CampfirePanel {
         const a = this._stackFor(fromKey);
         if (!a) return;
         const b = this._stackFor(toKey);
+
+        if (this._isDedicated()) {
+            if (toKey === 'catalyst') {
+                const meta = this.scene.getItem(a.id);
+                if (!meta?.cook?.method) return;
+                if (b && b.id === a.id) return;
+                if (b && a.quantity > 1) return;
+            } else if (toKey.startsWith('simmer:')) {
+                if (!this._simmerSlotsOpen()) return;
+                if (!fromKey.startsWith('simmer:') && !this._isShellSimmer()) return;
+                if (!isSimmerIngredient(a.id)) return;
+                if (b && !(fromKey.startsWith('simmer:') && a.quantity <= 1)) return;
+            } else if (toKey === 'cook') {
+                if (!this._cookSlotOpen()) return;
+                if (!this._cookAccepts(a)) return;
+                if (b && b.id === a.id) return;
+                if (b && a.quantity > 1) return;
+            } else if (fromKey === 'cook' || fromKey === 'catalyst' || fromKey.startsWith('simmer:')) {
+                if (b && b.id === a.id && !a.customName) {
+                    const meta = this.scene.getItem(b.id);
+                    const maxStack = Math.max(1, meta?.maxStack || 1);
+                    if (b.quantity >= maxStack) return;
+                } else if (b) {
+                    if (!(b.quantity <= 1)) return;
+                    if (fromKey === 'catalyst') {
+                        const bMeta = this.scene.getItem(b.id);
+                        if (!bMeta?.cook?.method) return;
+                    }
+                }
+            }
+            this._notifyCampfire("slot_to_slot", { from: fromKey, to: toKey });
+            return;
+        }
 
         if (toKey === 'catalyst') {
             const meta = this.scene.getItem(a.id);
@@ -1377,6 +1506,7 @@ class CampfirePanel {
         if (this.destroyBtn?.visible && this.pointerOnDestroy(pointer)) return true;
         if (hit(this._settleUi?.rect, this._settleUi?.btn?.visible)) return true;
         if (hit(this._billUi?.rect, this._billUi?.btn?.visible)) return true;
+        if (hit(this._fuelUi?.rect, this._fuelUi?.btn?.visible)) return true;
         return false;
     }
 }

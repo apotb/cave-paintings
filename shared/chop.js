@@ -69,6 +69,8 @@
     function stillChoppable(def, entry) {
         if (!entry || entry.gone) return false;
         if (Number(entry.chopProgress) >= 1) return false;
+        const stump = stumpId(def);
+        if (stump && entry.id === stump) return false;
         return isChoppable(def);
     }
 
@@ -269,7 +271,9 @@
         if (!entry) return entry;
         const stump = stumpId(def);
         if (stump) entry.id = stump;
-        delete entry.chopProgress;
+        // Keep felled so stillChoppable stays false even if a caller still
+        // has the old tree def (entry.id already points at the stump).
+        entry.chopProgress = 1;
         delete entry.regrowAt;
         delete entry.regrowId;
         delete entry.gone;

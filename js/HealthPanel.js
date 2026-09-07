@@ -224,7 +224,7 @@ class HealthPanel {
         this._injScroll = 0;
         this.visible = true;
         this.root.setVisible(true);
-        this.refresh();
+        this.refresh({ force: true });
         this.scene.healthBtn?.setTexture("health_open");
     }
 
@@ -241,7 +241,7 @@ class HealthPanel {
         this._injScroll = 0;
         this.visible = true;
         this.root.setVisible(true);
-        this.refresh();
+        this.refresh({ force: true });
         this.scene.healthBtn?.setTexture("health_open");
     }
 
@@ -258,6 +258,12 @@ class HealthPanel {
             const hovering = p && Phaser.Geom.Rectangle.Contains(btn.getBounds(), p.x, p.y);
             btn.setTexture(hovering ? "health_hover" : "health");
         }
+    }
+
+    containsPointer(pointer) {
+        if (!this.visible || !this.root?.visible || !pointer) return false;
+        const b = this.bg?.getBounds?.();
+        return !!(b && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y));
     }
 
     toggle() {
@@ -467,6 +473,14 @@ class HealthPanel {
         return (r << 16) | (g << 8) | bl;
     }
 
+    _setTipCursor(obj, on) {
+        if (!obj?.input) return;
+        const next = !!on;
+        if (obj.input.enabled !== next) obj.input.enabled = next;
+        obj.input.useHandCursor = next;
+        obj.input.cursor = next ? "pointer" : "default";
+    }
+
     /**
      * @param {{ text: string, bleeding?: boolean, tip?: string|null }[]} lines
      */
@@ -480,13 +494,14 @@ class HealthPanel {
                 fontSize: "8px",
                 color: "#ddd0c0"
             }).setOrigin(0, 0));
-            text.setInteractive({ useHandCursor: false });
+            text.setInteractive({ useHandCursor: true, cursor: "pointer" });
             const row = { bg, text, bleeding: false, destroyed: false, tip: null };
             text.on("pointerover", (p) => {
                 if (!row.tip) return;
                 this.scene.showTooltip(() => row.tip || "", p.x, p.y, text);
             });
             text.on("pointerout", () => {
+                if (this._healthRefreshing) return;
                 if (this.scene._tooltipTarget === text) this.scene.hideTooltip?.();
             });
             this.injContent.add(bg);
@@ -496,18 +511,25 @@ class HealthPanel {
         for (let i = 0; i < this._injLines.length; i++) {
             const row = this._injLines[i];
             if (i < lines.length) {
-                row.text.setText(lines[i].text).setVisible(true);
+                const next = lines[i].text;
+                if (row.text.text !== next) row.text.setText(next);
+                row.text.setVisible(true);
                 row.bleeding = !!lines[i].bleeding;
                 row.destroyed = !!lines[i].destroyed;
                 row.tip = lines[i].tip || null;
                 row.bg.setVisible(row.bleeding || row.destroyed);
+                this._setTipCursor(row.text, !!row.tip);
             } else {
-                row.text.setText("").setVisible(false);
+                if (row.text.text) row.text.setText("");
+                row.text.setVisible(false);
                 row.bleeding = false;
                 row.destroyed = false;
                 row.tip = null;
                 row.bg.setVisible(false);
-                if (this.scene._tooltipTarget === row.text) this.scene.hideTooltip?.();
+                this._setTipCursor(row.text, false);
+                if (!this._healthRefreshing && this.scene._tooltipTarget === row.text) {
+                    this.scene.hideTooltip?.();
+                }
             }
         }
     }
@@ -519,7 +541,7 @@ class HealthPanel {
                 fontSize: "8px",
                 color: "#ddd0c0"
             }).setOrigin(0, 0));
-            row.setInteractive({ useHandCursor: false });
+            row.setInteractive({ useHandCursor: true, cursor: "pointer" });
             row.on("pointerover", (p) => {
                 this.scene.showTooltip(() => {
                     if (!row._capKey || row._capValue == null) return "";
@@ -536,6 +558,7 @@ class HealthPanel {
                 }, p.x, p.y, row);
             });
             row.on("pointerout", () => {
+                if (this._healthRefreshing) return;
                 if (this.scene._tooltipTarget === row) this.scene.hideTooltip?.();
             });
             this.capLayer.add(row);
@@ -546,15 +569,22 @@ class HealthPanel {
             if (i >= count) {
                 this._capRows[i]._capKey = null;
                 this._capRows[i]._capValue = null;
-                if (this.scene._tooltipTarget === this._capRows[i]) this.scene.hideTooltip?.();
+                if (!this._healthRefreshing && this.scene._tooltipTarget === this._capRows[i]) {
+                    this.scene.hideTooltip?.();
+                }
             }
         }
     }
 
-    refresh() {
+    refresh(opts = {}) {
         if (!this.visible) return;
+        const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+        if (!opts.force && now - (this._lastRefreshAt || 0) < 200) return;
+        this._lastRefreshAt = now;
         const body = this._inspectBody || this.scene.player?.anatomy;
         if (!body) return;
+
+        this._healthRefreshing = true;
 
         const caps = new Capacities(body);
         const c = caps.all();
@@ -587,18 +617,21 @@ class HealthPanel {
         for (let i = 0; i < rows.length; i++) {
             const def = rows[i];
             const row = this._capRows[i];
-            row.setText(`${def.label}: ${pct(def.value)}`);
             row._capKey = def.key;
             row._capValue = def.value;
+            const label = `${def.label}: ${pct(def.value)}`;
+            if (row.text !== label) row.setText(label);
             const canTip = !!def.key && (
                 def.key === "bloodLoss"
                 || (def.key === "pain" ? def.value > 0.001 : def.value < 0.999)
             );
-            if (row.input) row.input.enabled = canTip;
+            this._setTipCursor(row, canTip);
             if (row.input?.hitArea?.setSize) {
                 row.input.hitArea.setSize(Math.max(row.width, 1), Math.max(row.height, 1));
             }
-            if (!canTip && this.scene._tooltipTarget === row) this.scene.hideTooltip?.();
+            if (!canTip && !this._healthRefreshing && this.scene._tooltipTarget === row) {
+                this.scene.hideTooltip?.();
+            }
         }
 
         /** @type {{ text: string, bleeding?: boolean, tip?: string|null }[]} */
@@ -740,17 +773,46 @@ class HealthPanel {
         }
         this._setInjLines(lines);
         // Keep scroll position across refreshes (tickBodySystems); clamp in layout()
-
-        this.layout();
+        const s = this.scene.uiScale || 1;
+        const layoutSig = `${s}|${this._showsDoll(body) ? 1 : 0}|${lines.map((l) => l.text).join("\n")}`;
+        if (layoutSig !== this._layoutSig) {
+            this._layoutSig = layoutSig;
+            this.layout();
+        }
         // Doll tints are the heavy bit — do them next frame so the panel opens immediately
         this._queueOverlayRefresh();
+        this._healthRefreshing = false;
+        this._restoreHoverTip();
+    }
 
-        // Live-update open tooltip (hediff severity, capacity explain, …)
-        const tipTarget = this.scene._tooltipTarget;
-        if (tipTarget && this.scene.tooltip?.visible) {
-            const onInj = this._injLines.some((row) => row.text === tipTarget);
-            const onCap = this._capRows.includes(tipTarget);
-            if (onInj || onCap) this.scene.refreshTooltip?.();
+    _restoreHoverTip() {
+        const scene = this.scene;
+        const p = scene.input?.activePointer;
+        if (!p || !this.visible) return;
+        const t = scene._tooltipTarget;
+        if (t && scene.tooltip?.visible) {
+            const onInj = this._injLines.some((row) => row.text === t);
+            const onCap = this._capRows.includes(t);
+            if (onInj || onCap) {
+                scene.refreshTooltip?.();
+                return;
+            }
+        }
+        for (const row of this._capRows) {
+            if (!row.visible || !row.input?.enabled) continue;
+            const b = row.getBounds?.();
+            if (b && Phaser.Geom.Rectangle.Contains(b, p.x, p.y)) {
+                row.emit("pointerover", p);
+                return;
+            }
+        }
+        for (const line of this._injLines) {
+            if (!line.text.visible || !line.tip) continue;
+            const b = line.text.getBounds?.();
+            if (b && Phaser.Geom.Rectangle.Contains(b, p.x, p.y)) {
+                line.text.emit("pointerover", p);
+                return;
+            }
         }
     }
 

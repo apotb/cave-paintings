@@ -13,12 +13,12 @@ function defs() {
             food: { spoil: 48 }
         },
         roasted_apple: { id: "roasted_apple", food: { spoil: 48 } },
-        raw_beef: {
-            id: "raw_beef",
-            cook: { stick_roast: { result: "roast_beef", minutes: 15, temp: 550 } },
+        raw_human_flesh: {
+            id: "raw_human_flesh",
+            cook: { stick_roast: { result: "roasted_human_flesh", minutes: 15, temp: 550 } },
             food: { spoil: 12 }
         },
-        roast_beef: { id: "roast_beef", food: { spoil: 36 } },
+        roasted_human_flesh: { id: "roasted_human_flesh", food: { spoil: 36 } },
         sharp_stick: { id: "sharp_stick", cook: { method: "stick_roast" } },
         cracked_coconut: { id: "cracked_coconut", cook: { method: "shell_simmer", temp: 450 } },
         drying_rack: { id: "drying_rack", cook: { method: "smoke_hide" } }
@@ -75,20 +75,20 @@ test("leaf fire cannot roast meat; stick fire can", () => {
         id: "campfire",
         fuel: [{ id: "leaf", quantity: 20 }, null],
         catalyst: { id: "sharp_stick", quantity: 1 },
-        cook: { id: "raw_beef", quantity: 1 }
+        cook: { id: "raw_human_flesh", quantity: 1 }
     });
     Fire.lightPit(leafPit, getItem);
     for (let t = 1; t <= 25; t++) {
         Fire.tickPit(leafPit, getItem, t);
         Fire.tickCook(leafPit, getItem, { worldMinute: t });
     }
-    assert.equal(leafPit.cook.id, "raw_beef");
+    assert.equal(leafPit.cook.id, "raw_human_flesh");
     assert.ok((leafPit.cookProgress || 0) < 1);
 
     const stickPit = pit({
         fuel: [{ id: "stick", quantity: 20 }, null],
         catalyst: { id: "sharp_stick", quantity: 1 },
-        cook: { id: "raw_beef", quantity: 1 }
+        cook: { id: "raw_human_flesh", quantity: 1 }
     });
     Fire.lightPit(stickPit, getItem);
     let converted = false;
@@ -101,7 +101,7 @@ test("leaf fire cannot roast meat; stick fire can", () => {
         }
     }
     assert.equal(converted, true);
-    assert.equal(stickPit.cook.id, "roast_beef");
+    assert.equal(stickPit.cook.id, "roasted_human_flesh");
 });
 
 test("fuel empty → unlit smolder; auto-ignite only when still hot", () => {
@@ -155,7 +155,7 @@ test("residual heat can finish a roast after the pit goes unlit", () => {
         cookTemp: 600,
         canIgniteFuel: true,
         catalyst: { id: "sharp_stick", quantity: 1 },
-        cook: { id: "raw_beef", quantity: 1 },
+        cook: { id: "raw_human_flesh", quantity: 1 },
         cookProgress: 14.5,
         roastBarMinutes: 15
     });
@@ -163,7 +163,7 @@ test("residual heat can finish a roast after the pit goes unlit", () => {
     assert.equal(e.id, "unlit_campfire");
     const r = Fire.tickCook(e, getItem, { worldMinute: 1 });
     assert.equal(r.converted, true);
-    assert.equal(e.cook.id, "roast_beef");
+    assert.equal(e.cook.id, "roasted_human_flesh");
 });
 
 test("migrateEntry on a lit old save uses current fuel maxTemp", () => {
@@ -244,7 +244,7 @@ test("idle sip does not apply while food is in the cook slot", () => {
         pitTemp: 600,
         maxTemp: 600,
         burnRemaining: 5,
-        cook: { id: "raw_beef", quantity: 1 }
+        cook: { id: "raw_human_flesh", quantity: 1 }
     });
     const start = e.burnRemaining;
     Fire.tickPit(e, getItem, 1);
@@ -269,10 +269,10 @@ test("mergeTemp is quantity-weighted; missing temp is ambient not passthrough", 
     assert.equal(Fire.mergeTemp(1, 400, 1, 20), 210);
     assert.equal(Fire.mergeTemp(2, 400, 2, null), 210);
     assert.equal(Fire.mergeTemp(1, 400, 1, undefined), 210);
-    const dest = { id: "raw_beef", quantity: 1, temp: 400 };
+    const dest = { id: "raw_human_flesh", quantity: 1, temp: 400 };
     Fire.applyMergedStackTemp(dest, 1, 1, null);
     assert.equal(dest.temp, 210);
-    const cold = { id: "raw_beef", quantity: 1 };
+    const cold = { id: "raw_human_flesh", quantity: 1 };
     Fire.applyMergedStackTemp(cold, 1, 1, 20);
     assert.equal(cold.temp, undefined);
 });
@@ -300,14 +300,14 @@ test("cook heats stack.temp and result inherits it", () => {
         cookTemp: 600,
         canIgniteFuel: true,
         catalyst: { id: "sharp_stick", quantity: 1 },
-        cook: { id: "raw_beef", quantity: 1, temp: 600 },
+        cook: { id: "raw_human_flesh", quantity: 1, temp: 600 },
         cookProgress: 14.5,
         roastBarMinutes: 15
     });
     Fire.tickPit(hot, getItem, 1);
     const r = Fire.tickCook(hot, getItem, { worldMinute: 1 });
     assert.equal(r.converted, true);
-    assert.equal(hot.cook.id, "roast_beef");
+    assert.equal(hot.cook.id, "roasted_human_flesh");
     assert.ok(hot.cook.temp > 500, `roast inherits heat, got ${hot.cook.temp}`);
 });
 
@@ -362,7 +362,7 @@ test("simmer vessel reaches pit temp; ambient spoil cooling must not fight it", 
 });
 
 test("tickStackTemp cools off-fire food and drops the field at ambient", () => {
-    const stack = { id: "roast_beef", quantity: 1, temp: 22 };
+    const stack = { id: "roasted_human_flesh", quantity: 1, temp: 22 };
     for (let i = 0; i < 20; i++) Fire.tickStackTemp(stack);
     assert.equal(stack.temp, undefined);
     assert.equal(Fire.stackShowsTemp(stack), false);
@@ -370,7 +370,7 @@ test("tickStackTemp cools off-fire food and drops the field at ambient", () => {
 
 test("onCookChanged keeps stack heat when putting food back", () => {
     const e = pit({
-        cook: { id: "raw_beef", quantity: 1, temp: 400 }
+        cook: { id: "raw_human_flesh", quantity: 1, temp: 400 }
     });
     Fire.onCookChanged(e, "apple");
     assert.equal(e.cook.temp, 400);

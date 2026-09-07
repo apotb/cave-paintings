@@ -70,6 +70,12 @@ class EquipmentPanel {
         }
     }
 
+    containsPointer(pointer) {
+        if (!this.visible || !this.container?.visible || !pointer) return false;
+        const b = this.body?.getBounds?.();
+        return !!(b && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y));
+    }
+
     getSlotAt(x, y) {
         if (!this.visible) return null;
         for (const view of this.slotViews) {
@@ -206,23 +212,49 @@ class EquipmentPanel {
         }
     }
 
+    _slotKeys() {
+        const keys = ["head", "torso", "back", "legs", "feet"];
+        const waistCap = this.scene.player?.getWaistCapacity?.() || 0;
+        for (let i = 0; i < waistCap; i++) keys.push(`waist:${i}`);
+        return keys;
+    }
+
     refresh() {
+        const keys = this._slotKeys();
+        const sig = keys.join(",");
+        if (sig === this._slotKeySig && this.slotViews.length === keys.length) {
+            this._updateIcons();
+            this._restoreHoverTip();
+            return;
+        }
+        this._slotKeySig = sig;
+        this._equipRefreshing = true;
         this.slotsLayer.removeAll(true);
         this.slotViews = [];
 
-        const keys = ['head', 'torso', 'back', 'legs', 'feet'];
-        for (const key of keys) {
-            this._addSlotView(key);
-        }
-
-        const waistCap = this.scene.player.getWaistCapacity();
-        for (let i = 0; i < waistCap; i++) {
-            this._addSlotView(`waist:${i}`);
-        }
+        for (const key of keys) this._addSlotView(key);
 
         this._updateIcons();
         const s = this.scene.uiScale || 1;
         this._layoutSlots(this.body.displayWidth, this.body.displayHeight, s);
+        this._equipRefreshing = false;
+        this._restoreHoverTip();
+    }
+
+    _restoreHoverTip() {
+        const scene = this.scene;
+        const p = scene.input?.activePointer;
+        if (!p || !this.visible) return;
+        const t = scene._tooltipTarget;
+        if (t && scene.tooltip?.visible && this.slotViews.some((v) => v.slot === t)) {
+            scene.refreshTooltip?.();
+            return;
+        }
+        const key = this.getSlotAt(p.x, p.y);
+        if (!key) return;
+        const view = this.slotViews.find((v) => v.key === key);
+        if (!view?.slot) return;
+        view.slot.emit("pointerover", p);
     }
 
     _addSlotView(key) {
@@ -249,6 +281,7 @@ class EquipmentPanel {
             );
         });
         slot.on('pointerout', () => {
+            if (this._equipRefreshing) return;
             if (this.scene._tooltipTarget === slot) this.scene.hideTooltip();
         });
 

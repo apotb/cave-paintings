@@ -1,19 +1,23 @@
 /**
  * In-browser world session for Singleplayer — same NetClient surface as WebSocket MP.
- * Persists worlds via WorldStore; characters stay in CharacterStore (client-owned).
+ * Hosts SimWorld in-process (synchronous SimSession). Persists via WorldStore.
  */
 (function (root, factory) {
     if (typeof module === "object" && module.exports) {
         const NetProtocol = require("../../shared/protocol");
-        const Sleep = require("../../shared/sleep");
-        const Hunger = require("../../shared/hunger");
-        const Carry = require("../../shared/carry");
-        const Party = require("../../shared/party");
-        module.exports = factory(NetProtocol, Sleep, Hunger, Carry, Party);
+        const SimWorldMod = require("../../shared/sim/SimWorld");
+        const SimSession = require("../../shared/sim/SimSession");
+        module.exports = factory(NetProtocol, SimWorldMod, SimSession);
     } else {
-        root.LocalSim = factory(root.NetProtocol, root.Sleep, root.Hunger, root.Carry, root.Party);
+        root.LocalSim = factory(
+            root.NetProtocol,
+            { SimWorld: root.SimWorld },
+            root.SimSession
+        );
     }
-})(typeof globalThis !== "undefined" ? globalThis : this, function (NetProtocol, Sleep, Hunger, Carry, Party) {
+})(typeof globalThis !== "undefined" ? globalThis : this, function (NetProtocol, SimWorldMod, SimSession) {
+    const SimWorld = SimWorldMod.SimWorld || SimWorldMod;
+
 class LocalSim {
     /**
      * @param {{ world: object, character: object }} opts
@@ -28,22 +32,11 @@ class LocalSim {
         this.world = opts.world;
         this.character = opts.character;
         this.scene = null;
-        this._pawn = null;
-        this._party = [];
-        this._controlId = null;
-        this._knownChunks = new Set();
-        this._inflightChunks = new Set();
-        this._interestBusy = false;
-        this._interestAgain = false;
-        this._interestForce = false;
-        this._interestCx = null;
-        this._interestCy = null;
-        this._interestR = null;
+            this.session = null;
+            this.sim = null;
         this._tickTimer = null;
-        this._snapAcc = 0;
-        this._minuteAcc = 0;
+            this._persistTimer = null;
         this._lastTick = 0;
-        this._persistTimer = null;
         this._closed = false;
         this._paused = false;
         /** @type {Promise<void>} */
@@ -74,15 +67,42 @@ class LocalSim {
                 console.error(e);
             }
         }
+            for (const fn of this.handlers["*"] || []) {
+                try {
+                    fn(type, payload);
+                } catch (e) {
+                    console.error(e);
+                }
+            }
+    }
+
+    _wireCopy(payload) {
+        if (!payload || typeof payload !== "object") return payload;
+        try {
+            return JSON.parse(JSON.stringify(payload));
+        } catch (_) {
+            return payload;
+        }
     }
 
     _dispatch(type, payload) {
+        // SNAPSHOT already clones public slots/drops. JSON-cloning it 15Hz
+        // hitchs SP when a camp is full of baskets and haulers. Settlements
+        // are live sim objects — copy those so the client cannot mutate them.
+        let data = payload;
+        if (type === NetProtocol.Types.SNAPSHOT && payload && typeof payload === "object") {
+            if (payload.settlements) {
+                data = { ...payload, settlements: this._wireCopy(payload.settlements) };
+            }
+        } else {
+            data = this._wireCopy(payload);
+        }
         if (this._buffering && type !== NetProtocol.Types.WELCOME && type !== NetProtocol.Types.REJECT) {
-            this._queue.push({ type, payload });
+            this._queue.push({ type, payload: data });
             if (this._queue.length > 500) this._queue.shift();
             return;
         }
-        this.emit(type, payload);
+        this.emit(type, data);
     }
 
     flushAndListen() {
@@ -92,18 +112,71 @@ class LocalSim {
         for (const { type, payload } of q) this.emit(type, payload);
     }
 
-    /** SceneMain calls this after create so we can generate chunks with Chunk APIs. */
     attachScene(scene) {
         this.scene = scene;
-        const snaps = this.world?.wanderers;
-        if (Array.isArray(snaps) && snaps.length && scene.partySys) {
-            for (const w of snaps) {
-                if (!scene.partySys.wanderers.some((p) => p.pawnId === w.id)) {
-                    scene.partySys.spawnWanderer(w);
-                }
-            }
         }
-        this._kickInterest(true);
+
+        _send(_playerId, type, payload) {
+            this._dispatch(type, payload);
+        }
+
+        _mergeSave(blob) {
+            if (!blob || !this.world) return;
+            const data = this._wireCopy(blob);
+            if (!data || typeof data !== "object") return;
+            this.world.seed = data.seed;
+            this.world.genVersion = data.genVersion ?? 2;
+            this.world.spawn = data.spawn;
+            this.world.clock = data.clock;
+            this.world.poses = data.poses;
+            this.world.directorCd = data.directorCd;
+            this.world.wanderers = data.wanderers;
+            this.world.settlements = data.settlements;
+            this.world.settlers = data.settlers;
+            this.world.chunks = data.chunks;
+        }
+
+        _makePersist() {
+            const self = this;
+            return {
+                load: () => self.world,
+                save: (data) => {
+                    self._mergeSave(data);
+                },
+                clearPlayers: () => 0
+            };
+        }
+
+        async _ensureData() {
+            if (typeof DataStore === "undefined") return;
+            if (DataStore.isReady()) return;
+            if (this.scene) {
+                DataStore.initFromPhaserScene(this.scene);
+                if (DataStore.isReady()) return;
+            }
+            if (typeof fetch === "function") {
+                const load = (name) => fetch(`data/${name}`).then((r) => {
+                    if (!r.ok) throw new Error(`Failed to load data/${name}`);
+                    return r.json();
+                });
+                const [bodyPlans, injuries, hediffs, items, mobs, things, structures] = await Promise.all([
+                    load("BodyPlans.json"),
+                    load("Injuries.json"),
+                    load("Hediffs.json"),
+                    load("Items.json"),
+                    load("Mobs.json"),
+                    load("Things.json"),
+                    load("Structures.json").catch(() => null)
+                ]);
+                DataStore.initFromData({ bodyPlans, injuries, hediffs, items, mobs, things });
+                if (structures && typeof Structures !== "undefined") {
+                    Structures.loadConfig?.(structures);
+                }
+                return;
+            }
+            if (typeof DataStore.loadFromDisk === "function") {
+                DataStore.loadFromDisk();
+            }
     }
 
     async connect() {
@@ -112,904 +185,118 @@ class LocalSim {
         this._buffering = true;
         this._queue = [];
 
-        if (this.world.seed == null) {
-            let seed = (typeof WorldStore !== "undefined" && WorldStore.randomSeed)
-                ? WorldStore.randomSeed()
-                : ((typeof crypto !== "undefined" && crypto.getRandomValues)
-                    ? (crypto.getRandomValues(new Uint32Array(1))[0] >>> 0)
-                    : ((Math.random() * 0x100000000) >>> 0));
-            if (typeof WorldStore !== "undefined" && WorldStore.findPlayableSeed) {
-                seed = WorldStore.findPlayableSeed(seed);
-            } else if (typeof noise !== "undefined" && typeof octaveNoise2D === "function") {
-                while (true) {
-                    noise.seed(seed);
-                    const elevation = octaveNoise2D(0, 0, 2, 0.5, 2.5, 0);
-                    const river = Math.abs(octaveNoise2D(0, 0, 3, 1.2, 0.7, 2));
-                    if (elevation > -0.2 && elevation < 0.25 && river > 0.005) break;
-                    seed = (seed + 1) >>> 0;
+            await this._ensureData();
+
+            const persist = this._makePersist();
+            const hasChunks = this.world?.chunks && Object.keys(this.world.chunks).length > 0;
+            const hasSeed = this.world?.seed != null;
+            if (hasSeed && (hasChunks || this.world.genVersion === 2)) {
+                this.sim = SimWorld.loadFromData(this.world, {
+                    worldName: this.world.name,
+                    persist
+                });
+            } else {
+                this.sim = SimWorld.createNew({
+                    worldName: this.world?.name || "World",
+                    persist
+                });
+                if (hasSeed) {
+                    this.sim.seed = this.world.seed >>> 0;
+                    if (typeof WorldGen !== "undefined") WorldGen.applySeed(this.sim.seed);
                 }
             }
-            this.world.seed = seed;
-            await WorldStore.put(this.world);
-        }
-        if (typeof noise !== "undefined") noise.seed(this.world.seed);
-        if (typeof worldSeed !== "undefined") worldSeed = this.world.seed;
+            this.world.seed = this.sim.seed;
 
         const char = this.character;
         this.playerId = char.id;
         const savedPose = this.world.poses?.[char.id];
         const hasPose = Number.isFinite(savedPose?.x) && Number.isFinite(savedPose?.y);
-        // Temporary stand-in; SceneMain.ensureSpawnSign picks a free tile like respawn
-        const spawnX = this.world.spawn?.x ?? 8;
-        const spawnY = this.world.spawn?.y ?? 16;
-        this._pawn = {
-            id: char.id,
-            name: char.name || "Player",
-            x: hasPose ? savedPose.x : spawnX,
-            y: hasPose ? savedPose.y : spawnY,
-            facing: hasPose && savedPose.facing ? savedPose.facing : "down",
-            moveX: 0,
-            moveY: 0,
-            sprint: false,
-            kc: char.kc ?? 1200,
-            saturation: char.saturation ?? 0,
-            stomach: char.stomach ?? 1600,
-            inventory: Array.isArray(char.inventory)
-                ? JSON.parse(JSON.stringify(char.inventory))
-                : CharacterStore.emptyInv(5),
-            equipment: char.equipment
-                ? JSON.parse(JSON.stringify(char.equipment))
-                : { head: null, torso: null, legs: null, feet: null, back: null, waist: [] },
-            overflow: Array.isArray(char.overflow)
-                ? JSON.parse(JSON.stringify(char.overflow))
-                : [],
-            hotbarIndex: char.hotbarIndex || 0,
-            hp: char.hp ?? 100,
-            mhp: char.mhp ?? 100,
-            body: char.body ? JSON.parse(JSON.stringify(char.body)) : null,
-            look: typeof Look !== "undefined"
-                ? Look.normalizeLook(char.look)
-                : (char.look || null),
-            dead: false,
-            viewChunks: 6,
-            poseAuth: true
-        };
-        this._party = Array.isArray(char.party)
-            ? JSON.parse(JSON.stringify(char.party))
-            : [];
-        this._placeNewPartyNearPawn();
-        this._controlId = char.controlId || char.id;
 
-        if (!this.world.clock) {
-            this.world.clock = { gameDay: 1, gameMinutes: 8 * 60, tickSpeed: 1 };
-        }
+            let snap = char;
+            if (typeof CharacterStore !== "undefined" && CharacterStore.toJoinSnapshot) {
+                snap = CharacterStore.toJoinSnapshot(char) || char;
+            }
 
-        const welcome = {
-            playerId: this.playerId,
-            characterId: this.playerId,
-            seed: this.world.seed,
+            this.session = new SimSession({
+                sim: this.sim,
+                send: (id, type, payload) => this._send(id, type, payload)
+            });
+            this.session.addPlayer(this.playerId, char.name || "Player", snap, {
+                silentJoin: true
+            });
+
+            const welcome = this.session.welcomePayload(this.playerId, {
             worldName: this.world.name || "World",
-            clock: { ...this.world.clock },
-            spawn: this.world.spawn,
-            motd: "",
-            you: this._youPayload(),
             local: true,
-            /** No logout pose yet — client should run pickRandomSpawnTile. */
             firstSpawn: !hasPose
-        };
-
+            });
         this._dispatch(NetProtocol.Types.WELCOME, welcome);
-        this._lastTick = performance.now();
-        this._tickTimer = setInterval(() => this._tick(), 1000 / 60);
-        this._persistTimer = setInterval(() => this._persistWorld(), 30000);
+            this.session.afterJoin(this.playerId);
+
+            this._lastTick = (typeof performance !== "undefined" && performance.now)
+                ? performance.now()
+                : Date.now();
+            // Browser: Phaser SceneMain drives ticks (one loop). Node tests keep a timer.
+            this._useSceneTick = typeof window !== "undefined";
+            if (!this._useSceneTick) {
+                this._tickTimer = setInterval(() => this._tick(), 1000 / 60);
+            }
+            this._persistTimer = setInterval(() => this._persistWorld(), 30000);
 
         return welcome;
     }
 
-    /** Freeze world clock / hunger ticks (singleplayer pause menu). */
-    setPaused(paused) {
-        const on = !!paused;
-        if (this._paused === on) return;
-        this._paused = on;
-        if (on) {
-            if (this._tickTimer) {
-                clearInterval(this._tickTimer);
-                this._tickTimer = null;
-            }
-            return;
+        _tick() {
+            if (this._closed || !this.connected || this._paused || !this.session) return;
+            const now = (typeof performance !== "undefined" && performance.now)
+                ? performance.now()
+                : Date.now();
+            const dt = Math.min(100, Math.max(0, now - (this._lastTick || now)));
+            this._lastTick = now;
+            this.session.tick(dt);
         }
-        if (this._closed || !this.connected || this._tickTimer) return;
-        this._lastTick = performance.now();
-        this._tickTimer = setInterval(() => this._tick(), 1000 / 60);
-    }
 
-    auth() {
-        // connect() already authed from character snapshot
-    }
+        /** Phaser-driven tick (browser SP). No-ops when paused or using the Node timer. */
+        tickFromScene(dtMs) {
+            if (!this._useSceneTick) return;
+            if (this._closed || !this.connected || this._paused || !this.session) return;
+            this.session.tick(Math.min(100, Math.max(0, Number(dtMs) || 0)));
+        }
 
-    send(_type, _payload) {
-        // unused — sendMove/sendAction used instead
-    }
+        setPaused(paused) {
+            const on = !!paused;
+            if (this._paused === on) return;
+            this._paused = on;
+            if (this._useSceneTick) return;
+            if (on) {
+                if (this._tickTimer) {
+                    clearInterval(this._tickTimer);
+                    this._tickTimer = null;
+                }
+                return;
+            }
+            if (this._closed || !this.connected || this._tickTimer) return;
+            this._lastTick = (typeof performance !== "undefined" && performance.now)
+                ? performance.now()
+                : Date.now();
+            this._tickTimer = setInterval(() => this._tick(), 1000 / 60);
+        }
+
+        auth() {}
+
+        send(_type, _payload) {}
 
     sendMove(move) {
-        if (!this.connected || !this._pawn) return;
-        const p = this._pawn;
-        if (Number.isFinite(move.px) && Number.isFinite(move.py)) {
-            p.x = move.px;
-            p.y = move.py;
-            p.poseAuth = true;
-        }
-        if (move.facing) p.facing = move.facing;
-        p.sprint = !!move.sprint;
-        if (Number.isFinite(move.viewChunks)) {
-            p.viewChunks = Math.max(3, Math.min(24, Math.floor(move.viewChunks)));
-        }
-        const len = Math.hypot(move.x || 0, move.y || 0);
-        if (len > 0) {
-            p.moveX = move.x / len;
-            p.moveY = move.y / len;
-        } else {
-            p.moveX = 0;
-            p.moveY = 0;
-        }
-        if (move.pawnId) this._controlId = move.pawnId;
-        if (Array.isArray(move.partyPoses)) this._applyPartyPoses(move.partyPoses);
-        this._kickInterest(false);
+            if (!this.connected || !this.session) return;
+            this.session.setMove(this.playerId, move);
     }
 
     sendAction(action) {
-        if (!this.connected || !this._pawn) return;
-        const type = action?.type;
-        const p = this._pawn;
-        if ((NetProtocol.ClientAuthoredActions || []).indexOf(type) >= 0) {
-            // SP ground loot / buildings / rest are client-authored into chunk.meta.
-            return;
-        }
-        if (type === NetProtocol.Actions.SWITCH_CONTROL) {
-            this._pullFromScene();
-            if (action.pawnId) this._controlId = action.pawnId;
-            this._dispatch(NetProtocol.Types.YOU, this._youPayload());
-            return;
-        }
-        if (type === NetProtocol.Actions.RECRUIT) {
-            this._pullFromScene();
-            this._dispatch(NetProtocol.Types.YOU, this._youPayload());
-            return;
-        }
-        if (type === NetProtocol.Actions.PARTY_EAT || type === NetProtocol.Actions.GIVE_ITEM || type === NetProtocol.Actions.FEED) {
-            this._pullFromScene();
-            this._dispatch(NetProtocol.Types.YOU, this._youPayload());
-            return;
-        }
-        if (type === NetProtocol.Actions.RESYNC) {
-            this._knownChunks.clear();
-            this._inflightChunks.clear();
-            this._interestCx = null;
-            this._interestCy = null;
-            this._interestR = null;
-            this._kickInterest(true);
-            this._pullFromScene();
-            this._dispatch(NetProtocol.Types.YOU, this._youPayload());
-            return;
-        }
-        if (type === NetProtocol.Actions.HOTBAR) {
-            const i = Number(action.index);
-            if (Number.isInteger(i) && i >= 0 && i < p.inventory.length) p.hotbarIndex = i;
-            this._pullFromScene();
-            this._dispatch(NetProtocol.Types.YOU, this._youPayload());
-            return;
-        }
-        if (type === NetProtocol.Actions.CHAT) {
-            const text = String(action.text || "").slice(0, 200);
-            if (!text) return;
-            if (text.startsWith("/")) {
-                this._runCommand(text);
-                return;
-            }
-            this._dispatch(NetProtocol.Types.EVENT, {
-                kind: "chat",
-                text: `<${p.name}> ${text}`,
-                from: p.id
-            });
-            return;
-        }
-        if (type === NetProtocol.Actions.ATTACK) {
-            const pawnId = action.pawnId || p.id;
-            // SP companions already swing locally. Don't echo an attack event —
-            // `_pawn` is the focused character, so x/y would teleport the member.
-            if (pawnId && pawnId !== p.id) return;
-            p.attackTimer = 833;
-            p.attackAngle = Number(action.angle) || 0;
-            p.attackArt = this._attackArtForPlayer(p);
-            this._dispatch(NetProtocol.Types.EVENT, {
-                kind: "attack",
-                playerId: p.id,
-                pawnId,
-                x: p.x,
-                y: p.y,
-                angle: Number(action.angle) || 0,
-                facing: p.facing,
-                art: p.attackArt
-            });
-            return;
-        }
-        if (type === NetProtocol.Actions.DIE) {
-            p.dead = true;
-            p.hp = 0;
-            p.inventory = [null, null, null, null, null];
-            p.overflow = [];
-            p.equipment = { head: null, torso: null, legs: null, feet: null, back: null, waist: [] };
-            p.hotbarIndex = 0;
-            this._dispatch(NetProtocol.Types.YOU, this._youPayload());
-            return;
-        }
-        if (type === NetProtocol.Actions.RESPAWN) {
-            p.dead = false;
-            p.hp = p.mhp;
-            p.kc = 1200;
-            p.saturation = 0;
-            this._dispatch(NetProtocol.Types.YOU, this._youPayload());
-        }
-    }
-
-    _runCommand(text) {
-        const parts = text.trim().split(/\s+/);
-        const cmd = (parts[0] || "").toLowerCase();
-        const p = this._pawn;
-        if (!p) return;
-
-        const chat = (msg) => {
-            this._dispatch(NetProtocol.Types.EVENT, {
-                kind: "chat",
-                text: msg,
-                system: true
-            });
-        };
-
-        if (cmd === "/heal" || cmd === "/h") {
-            const pawn = this._controlledPawn() || p;
-            pawn.hp = pawn.mhp;
-            pawn.dead = false;
-            pawn.kc = pawn.stomach;
-            pawn.body = null;
-            this._dispatch(NetProtocol.Types.YOU, this._youPayload());
-            return;
-        }
-
-        if (cmd === "/regen") {
-            const now = Date.now();
-            const armed = Number(this._regenArmedAt) || 0;
-            if (!(armed > 0) || now - armed > 10000) {
-                this._regenArmedAt = now;
-                chat("Type /regen again within 10 seconds to regenerate the world.");
-                return;
-            }
-            this._regenArmedAt = 0;
-            this._regenWorld(p);
-            chat("World regenerated.");
-            return;
-        }
-
-        if (cmd === "/tick") {
-            if (!this.world.clock) {
-                this.world.clock = { gameDay: 1, gameMinutes: 8 * 60, tickSpeed: 1 };
-            }
-            const arg = parts[1];
-            if (arg == null || arg === "") {
-                chat(`Tick speed: ${this.world.clock.tickSpeed ?? 1}×`);
-                return;
-            }
-            const m = Number(arg);
-            if (!Number.isFinite(m) || m < 0) {
-                chat("Usage: /tick [speed]  (1 = normal, 60 ≈ 1 game hour/sec, 0 = pause)");
-                return;
-            }
-            this.world.clock.baseTickSpeed = m;
-            this.world.clock.tickSpeed = m;
-            this._minuteAcc = 0;
-            this._sendSnapshot();
-            chat(`${p.name} set tick speed to ${m}×`);
-            return;
-        }
-
-        if (cmd === "/time") {
-            if (!this.world.clock) {
-                this.world.clock = { gameDay: 1, gameMinutes: 8 * 60, tickSpeed: 1 };
-            }
-            const clock = this.world.clock;
-            if (parts.length < 2) {
-                const h = Math.floor((clock.gameMinutes || 0) / 60);
-                const m = (clock.gameMinutes || 0) % 60;
-                chat(
-                    `Day ${clock.gameDay || 1}  ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
-                );
-                return;
-            }
-            const h = Number(parts[1]);
-            const m = parts[2] != null ? Number(parts[2]) : 0;
-            if (!Number.isFinite(h) || h < 0 || h > 23 || !Number.isFinite(m) || m < 0 || m > 59) {
-                chat("Usage: /time [HH] [MM]");
-                return;
-            }
-            clock.gameMinutes = Math.floor(h) * 60 + Math.floor(m);
-            this._minuteAcc = 0;
-            this._sendSnapshot();
-            chat(
-                `${p.name} set the time to ${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor(m)).padStart(2, "0")}`
-            );
-            return;
-        }
-
-        if (cmd === "/tp" || cmd === "/teleport") {
-            // Client already teleports locally for LocalSim; keep pawn in sync if asked.
-            const usage = "Usage: /tp <x> <y>  (tile coords)";
-            if (parts.length < 3) {
-                chat(usage);
-                return;
-            }
-            const tx = Number(parts[1]);
-            const ty = Number(parts[2]);
-            if (!Number.isFinite(tx) || !Number.isFinite(ty)) {
-                chat(usage);
-                return;
-            }
-            const ts = 16;
-            // Bottom-middle of the 16px human sprite (origin is bottom-left)
-            p.x = tx * ts - ts / 2;
-            p.y = ty * ts;
-            this._dispatch(NetProtocol.Types.YOU, this._youPayload());
-            chat(`Teleported to ${tx}, ${ty}`);
-            return;
-        }
-
-        chat(`Unknown command: ${cmd}`);
-    }
-
-    /** Wipe stored chunks with the same seed; client clears visuals via world_regen + RESYNC. */
-    _regenWorld(byPlayer) {
-        const seed = (this.world.seed >>> 0) || 0;
-        this.world.seed = seed;
-        this.world.chunks = {};
-        this._knownChunks.clear();
-        if (typeof Structures !== "undefined") Structures.clearPending?.(this.world.seed);
-        if (typeof noise !== "undefined") noise.seed(this.world.seed);
-        if (typeof worldSeed !== "undefined") worldSeed = this.world.seed;
-
-        this._dispatch(NetProtocol.Types.EVENT, {
-            kind: "world_regen",
-            seed: this.world.seed,
-            by: byPlayer?.name || "Player"
-        });
-        this._persistWorld();
-    }
-
-    _tryDrop(action) {
-        const p = this._pawn;
-        const held = p.inventory[p.hotbarIndex];
-        if (!held?.id) return;
-        const amount = Math.max(1, Math.floor(Number(action.amount) || 1));
-        const qty = Math.min(amount, held.quantity || 1);
-        held.quantity = (held.quantity || 1) - qty;
-        if (held.quantity <= 0) p.inventory[p.hotbarIndex] = null;
-        const clock = this.world.clock || { gameDay: 1, gameMinutes: 8 * 60 };
-        const now = (Number(clock.gameDay) || 1) * 1440 + (Number(clock.gameMinutes) || 0);
-        this._spawnDrop({
-            id: held.id,
-            quantity: qty,
-            x: Number.isFinite(action.x) ? action.x : p.x,
-            y: Number.isFinite(action.y) ? action.y : p.y,
-            food: held.food,
-            customName: held.customName,
-            spoilAt: spoilAtForWorld(held, now),
-            temp: held.temp
-        });
-        this._dispatch(NetProtocol.Types.YOU, this._youPayload());
-    }
-
-    _spawnDrop(action) {
-        if (!this.world.chunks) this.world.chunks = {};
-        const ts = NetProtocol.TILE_SIZE || 16;
-        const cs = NetProtocol.CHUNK_SIZE || 8;
-        const px = cs * ts;
-        const x = Number(action.x) || this._pawn.x;
-        const y = Number(action.y) || this._pawn.y;
-        const cx = Math.floor(x / px);
-        const cy = Math.floor(y / px);
-        const key = `${cx},${cy}`;
-        if (!this.world.chunks[key]) {
-            this.world.chunks[key] = {
-                x: cx,
-                y: cy,
-                tiles: null,
-                things: [],
-                lootableThings: [],
-                drops: [],
-                mobs: [],
-                corpses: [],
-                bloodStains: []
-            };
-        }
-        const c = this.world.chunks[key];
-        if (!c.drops) c.drops = [];
-        c.drops.push({
-            uid: (crypto.randomUUID && crypto.randomUUID()) || `d-${Date.now()}`,
-            id: action.id,
-            quantity: Math.max(1, Math.floor(Number(action.quantity) || 1)),
-            x,
-            y,
-            food: action.food,
-            customName: action.customName,
-            spoilAt: action.spoilAt,
-            ...(action.temp != null ? { temp: action.temp } : {})
-        });
-    }
-
-    _pullFromScene() {
-        const pl = this.scene?.leader || this.scene?.player;
-        if (!pl || !this._pawn) return;
-        this.syncPawnFromClient({
-            inventory: pl.inventory,
-            overflow: pl.overflow,
-            equipment: pl.equipment,
-            hotbarIndex: pl.hotbarIndex,
-            kc: pl.kc,
-            saturation: pl.saturation,
-            stomach: pl.stomach,
-            body: pl.anatomy?.toJSON?.() ?? null,
-            hp: pl.hp,
-            mhp: pl.mhp,
-            x: pl.x,
-            y: pl.y,
-            facing: pl.facing
-        });
-        this._party = [];
-        for (const m of this.scene?.party || []) {
-            if (!m || m === pl || m.isBodyDead?.()) continue;
-            this._party.push({
-                id: m.pawnId,
-                name: m.pawnName,
-                look: m.look,
-                kc: m.kc,
-                saturation: m.saturation,
-                stomach: m.stomach,
-                inventory: m.inventory,
-                overflow: m.overflow,
-                equipment: m.equipment,
-                hotbarIndex: m.hotbarIndex,
-                body: m.anatomy?.toJSON?.() ?? null,
-                hp: m.hp,
-                mhp: m.mhp,
-                x: m.x,
-                y: m.y,
-                facing: m.facing
-            });
-        }
-        this._controlId = this.scene?.player?.pawnId || this._pawn.id;
-    }
-
-    _allPawns() {
-        return [this._pawn, ...(this._party || [])].filter(Boolean);
-    }
-
-    _controlledPawn() {
-        const id = this._controlId || this.scene?.player?.pawnId || this._pawn?.id;
-        if (id && this._pawn && id !== this._pawn.id) {
-            const mem = (this._party || []).find((m) => m.id === id);
-            if (mem) return mem;
-        }
-        return this._pawn;
-    }
-
-    _scenePawn(id) {
-        return (this.scene?.party || []).find((p) => p.pawnId === id) || null;
-    }
-
-    _hungerTickSettlers() {
-        const scene = this.scene;
-        if (!scene) return;
-        const getDef = (id) => scene.getItem?.(id) || null;
-        for (const pawn of scene.settlers || []) {
-            if (!pawn || pawn.isBodyDead?.()) continue;
-            const fed = (Number(pawn.kc) > 0) || (Number(pawn.saturation) > 0);
-            const enc = (Carry && Carry.encumbrance)
-                ? Carry.encumbrance(
-                    Carry.gearMass(pawn.inventory, pawn.equipment, getDef, pawn.overflow),
-                    pawn.strength || Carry.strengthFromEquip(pawn.equipment, getDef)
-                )
-                : { hungerRate: 1 };
-            const tick = Hunger.minuteDrain({
-                hunger: pawn.hunger || Hunger.DEFAULT_HUNGER,
-                sprinting: !!pawn.isSprinting,
-                encumbranceHungerRate: enc.hungerRate,
-                hungerRateFactor: pawn.capacities?.hungerRateFactor?.() || 1,
-                resting: !!pawn._resting
-            });
-            Hunger.applyStarve(pawn, tick);
-            pawn._malnutritionFed = fed;
-        }
-    }
-
-    /**
-     * Character party x,y is the previous world. Restore this world's logout
-     * poses; cluster recruits who have never been here next to the leader.
-     */
-    _placeNewPartyNearPawn() {
-        const p = this._pawn;
-        const poses = this.world?.poses || {};
-        if (!p || !Array.isArray(this._party)) return;
-        for (const m of this._party) {
-            if (!m?.id) continue;
-            const saved = poses[m.id];
-            if (!Number.isFinite(saved?.x) || !Number.isFinite(saved?.y)) continue;
-            m.x = saved.x;
-            m.y = saved.y;
-            if (typeof saved.facing === "string" && saved.facing) m.facing = saved.facing;
-        }
-        if (Party?.placeJoinParty) {
-            Party.placeJoinParty(p, this._party, poses, { tileSize: 16 });
-        }
-    }
-
-    _applyPartyPoses(poses) {
-        if (!Array.isArray(poses)) return;
-        if (!this._party) this._party = [];
-        for (const pose of poses) {
-            if (!pose?.id) continue;
-            let rec = this._party.find((p) => p.id === pose.id);
-            if (!rec) {
-                rec = { id: pose.id };
-                this._party.push(rec);
-            }
-            if (Number.isFinite(pose.x)) rec.x = pose.x;
-            if (Number.isFinite(pose.y)) rec.y = pose.y;
-            if (pose.facing) rec.facing = pose.facing;
-        }
-    }
-
-    /** Persist current pawn pose on the world (first spawn / logout). */
-    rememberPose() {
-        this._saveLogoutPose();
-    }
-
-    _saveLogoutPose() {
-        if (!this.world) return;
-        if (!this.world.poses || typeof this.world.poses !== "object") {
-            this.world.poses = {};
-        }
-        const extra = this.scene?.partySys?.posesMap?.() || {};
-        for (const [id, pose] of Object.entries(extra)) {
-            this.world.poses[id] = pose;
-        }
-        const p = this._pawn;
-        const pl = this.scene?.leader || this.scene?.player;
-        if (p && Number.isFinite(p.x)) {
-            const fromMap = extra[p.id];
-            this.world.poses[p.id] = {
-                x: p.x,
-                y: p.y,
-                facing: p.facing || "down",
-                resting: !!(fromMap?.resting ?? pl?._resting),
-                lastSleep: fromMap?.lastSleep || pl?.lastSleep || null
-            };
-        }
-        const sys = this.scene?.partySys;
-        if (sys?.wanderers?.length) {
-            this.world.wanderers = sys.wanderers
-                .filter((w) => w?.active && !w.isBodyDead?.())
-                .map((w) => sys.serializeWanderer(w));
-        } else {
-            this.world.wanderers = [];
-        }
-    }
-
-    _youPayload() {
-        const p = this._pawn;
-        if (!p) return null;
-        return {
-            id: p.id,
-            name: p.name,
-            x: p.x,
-            y: p.y,
-            facing: p.facing,
-            kc: p.kc,
-            saturation: p.saturation,
-            stomach: p.stomach,
-            inventory: p.inventory,
-            overflow: p.overflow,
-            equipment: p.equipment,
-            hotbarIndex: p.hotbarIndex,
-            body: p.body,
-            hp: p.hp,
-            mhp: p.mhp,
-            dead: p.dead,
-            look: p.look || null,
-            party: this._party || [],
-            controlId: this._controlId || p.id,
-            leaderDead: !!this.scene?.partySys?.leaderDead
-        };
-    }
-
-    _interestRadius() {
-        const floor = NetProtocol.INTEREST_CHUNKS || 6;
-        const view = this._pawn?.viewChunks ?? floor;
-        return Math.max(floor, Math.min(24, view + 1));
-    }
-
-    _interestKeys() {
-        const ts = NetProtocol.TILE_SIZE || 16;
-        const cs = NetProtocol.CHUNK_SIZE || 8;
-        const px = cs * ts;
-        const r = this._interestRadius();
-        const keys = new Set();
-        const pts = [this._pawn, ...(this._party || [])];
-        for (const p of pts) {
-            if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
-            const cx = Math.floor(p.x / px);
-            const cy = Math.floor(p.y / px);
-            for (let x = cx - r; x <= cx + r; x++) {
-                for (let y = cy - r; y <= cy + r; y++) keys.add(`${x},${y}`);
-            }
-        }
-        this.scene?.settlementSys?.interestKeys?.(keys);
-        return keys;
-    }
-
-    _kickInterest(force) {
-        if (force) this._interestForce = true;
-        if (this._interestBusy) {
-            this._interestAgain = true;
-            return;
-        }
-        if (!this._pawn) return;
-        this._syncInterest(!!this._interestForce);
-    }
-
-    _yieldFrame() {
-        return new Promise((resolve) => {
-            if (this.scene?.time?.delayedCall) this.scene.time.delayedCall(0, resolve);
-            else setTimeout(resolve, 0);
-        });
-    }
-
-    async _syncInterest(force) {
-        if (!this._pawn) return;
-        if (this._interestBusy) {
-            this._interestAgain = true;
-            if (force) this._interestForce = true;
-            return;
-        }
-        this._interestBusy = true;
-        this._interestForce = false;
-        const keys = this._interestKeys();
-        try {
-            for (const key of keys) {
-                const [cx, cy] = key.split(",").map(Number);
-                if (!force && this._knownChunks.has(key)) continue;
-                if (this._inflightChunks.has(key)) continue;
-                this._inflightChunks.add(key);
-                const existed = !!(this.world.chunks?.[key]?.tiles);
-                const payload = await this._ensureChunkPayload(cx, cy);
-                this._inflightChunks.delete(key);
-                if (!payload) continue;
-                this._knownChunks.add(key);
-                this._dispatch(NetProtocol.Types.CHUNK, payload);
-                if (!existed) await this._yieldFrame();
-            }
-        } finally {
-            this._interestBusy = false;
-            if (this._interestAgain) {
-                this._interestAgain = false;
-                this._kickInterest(false);
-            }
-        }
-    }
-
-    async _ensureStructureParents(cx, cy) {
-        if (typeof Structures === "undefined" || !Structures.parentFireChunks) return;
-        const seed = (this.world?.seed ?? (typeof worldSeed !== "undefined" ? worldSeed : 0)) >>> 0;
-        const ts = 16;
-        const keyAt = (typeof tileKeyFromNoise === "function")
-            ? (tx, ty) => tileKeyFromNoise(tx * ts, ty * ts)
-            : null;
-        if (!keyAt) return;
-        const parents = Structures.parentFireChunks(cx, cy, seed, keyAt);
-        for (const p of parents) {
-            if (p.cx === cx && p.cy === cy) continue;
-            const payload = await this._ensureChunkPayload(p.cx, p.cy);
-            const pkey = `${p.cx},${p.cy}`;
-            if (payload && !this._knownChunks.has(pkey)) {
-                this._knownChunks.add(pkey);
-                this._dispatch(NetProtocol.Types.CHUNK, payload);
-            }
-        }
-    }
-
-    async _ensureChunkPayload(cx, cy) {
-        if (!this.world.chunks) this.world.chunks = {};
-        const key = `${cx},${cy}`;
-        let meta = this.world.chunks[key];
-        if (meta?.tiles) {
-            return {
-                x: cx,
-                y: cy,
-                tiles: meta.tiles,
-                things: meta.things || [],
-                lootableThings: meta.lootableThings || [],
-                drops: meta.drops || [],
-                mobs: meta.mobs || [],
-                corpses: meta.corpses || [],
-                bloodStains: meta.bloodStains || []
-            };
-        }
-        await this._ensureStructureParents(cx, cy);
-        meta = this.world.chunks[key];
-        if (meta?.tiles) {
-            return {
-                x: cx,
-                y: cy,
-                tiles: meta.tiles,
-                things: meta.things || [],
-                lootableThings: meta.lootableThings || [],
-                drops: meta.drops || [],
-                mobs: meta.mobs || [],
-                corpses: meta.corpses || [],
-                bloodStains: meta.bloodStains || []
-            };
-        }
-        // Generate via live SceneMain Chunk when available
-        if (this.scene && typeof Chunk === "function") {
-            const chunk = new Chunk(this.scene, cx, cy, meta || undefined);
-            await chunk.generate();
-            meta = {
-                x: cx,
-                y: cy,
-                tiles: chunk.meta.tiles,
-                things: chunk.meta.things || [],
-                lootableThings: chunk.meta.lootableThings || [],
-                drops: chunk.meta.drops || [],
-                mobs: chunk.meta.mobs || [],
-                corpses: chunk.meta.corpses || [],
-                bloodStains: chunk.meta.bloodStains || []
-            };
-            this.world.chunks[key] = meta;
-            return {
-                x: cx,
-                y: cy,
-                tiles: meta.tiles,
-                things: meta.things,
-                lootableThings: meta.lootableThings,
-                drops: meta.drops,
-                mobs: meta.mobs,
-                corpses: meta.corpses,
-                bloodStains: meta.bloodStains
-            };
-        }
-        return null;
-    }
-
-    _tick() {
-        if (!this.connected || this._closed || this._paused) return;
-        const now = performance.now();
-        const dtMs = Math.min(100, now - this._lastTick);
-        this._lastTick = now;
-        const clock = this.world.clock;
-        const rawSpeed = Number(clock.tickSpeed);
-        const speed = Number.isFinite(rawSpeed) && rawSpeed >= 0 ? rawSpeed : 1;
-        this._minuteAcc += dtMs * speed;
-        while (this._minuteAcc >= 1000) {
-            this._minuteAcc -= 1000;
-            clock.gameMinutes = (clock.gameMinutes || 0) + 1;
-            if (clock.gameMinutes >= 1440) {
-                clock.gameMinutes = 0;
-                clock.gameDay = (clock.gameDay || 1) + 1;
-            }
-            // Light hunger tick (pull client vitals first so eating isn't overwritten)
-            this._pullFromScene();
-            const pawns = this._allPawns();
-            for (const pawn of pawns) {
-                if (!pawn || pawn.dead) continue;
-                const fed = (Number(pawn.kc) > 0) || (Number(pawn.saturation) > 0);
-                const scenePawn = this._scenePawn(pawn.id);
-                const getDef = (id) => this.scene?.getItem?.(id) || null;
-                const enc = (Carry && Carry.encumbrance)
-                    ? Carry.encumbrance(
-                        Carry.gearMass(pawn.inventory, pawn.equipment, getDef, pawn.overflow),
-                        scenePawn?.strength || Carry.strengthFromEquip(pawn.equipment, getDef)
-                    )
-                    : { hungerRate: 1 };
-                const tick = Hunger.minuteDrain({
-                    hunger: pawn.hunger || scenePawn?.hunger || Hunger.DEFAULT_HUNGER,
-                    sprinting: !!(scenePawn?.isSprinting || pawn.sprint),
-                    encumbranceHungerRate: enc.hungerRate,
-                    hungerRateFactor: scenePawn?.capacities?.hungerRateFactor?.() || 1,
-                    resting: !!(scenePawn?._resting)
-                });
-                Hunger.applyStarve(pawn, tick);
-                if (scenePawn) {
-                    scenePawn.kc = pawn.kc;
-                    scenePawn.saturation = pawn.saturation;
-                    scenePawn._malnutritionFed = fed;
-                }
-            }
-            this._hungerTickSettlers();
-            this._dispatch(NetProtocol.Types.YOU, this._youPayload());
-        }
-        this._snapAcc += dtMs;
-        if (this._snapAcc >= 1000 / (NetProtocol.SNAPSHOT_HZ || 15)) {
-            this._snapAcc = 0;
-            this._sendSnapshot();
-        }
-    }
-
-    _sendSnapshot() {
-        const p = this._pawn;
-        if (!p) return;
-        const drops = [];
-        const r = this._interestRadius();
-        const ts = NetProtocol.TILE_SIZE || 16;
-        const cs = NetProtocol.CHUNK_SIZE || 8;
-        const px = cs * ts;
-        const cx0 = Math.floor(p.x / px);
-        const cy0 = Math.floor(p.y / px);
-        for (let cx = cx0 - r; cx <= cx0 + r; cx++) {
-            for (let cy = cy0 - r; cy <= cy0 + r; cy++) {
-                const c = this.world.chunks?.[`${cx},${cy}`];
-                if (!c?.drops) continue;
-                for (const d of c.drops) {
-                    drops.push({
-                        uid: d.uid,
-                        id: d.id,
-                        quantity: d.quantity || 1,
-                        x: d.x,
-                        y: d.y,
-                        food: d.food,
-                        customName: d.customName,
-                        spoilAt: d.spoilAt,
-                        toolClass: d.toolClass,
-                        sharpness: d.sharpness,
-                        knapDamage: d.knapDamage,
-                        knapMaterial: d.knapMaterial,
-                        knapQuality: d.knapQuality,
-                        tooltipExtra: d.tooltipExtra,
-                        knapIconData: d.knapIconData,
-                        durability: d.durability,
-                        dryProgress: d.dryProgress,
-                        soakProgress: d.soakProgress,
-                        soakDoneAt: d.soakDoneAt,
-                        temp: d.temp,
-                        ingredients: d.ingredients,
-                        kind: d.kind,
-                        fillTint: d.fillTint,
-                        weight: d.weight
-                    });
-                }
-            }
-        }
-        this._dispatch(NetProtocol.Types.SNAPSHOT, {
-            clock: { ...this.world.clock },
-            players: [{
-                id: p.id,
-                name: p.name,
-                x: p.x,
-                y: p.y,
-                facing: p.facing,
-                sprint: p.sprint,
-                dead: p.dead,
-                prone: !!(p.dead || p.prone),
-                attacking: (p.attackTimer || 0) > 0,
-                attackAngle: p.attackAngle ?? null,
-                attackArt: (p.attackTimer || 0) > 0 ? (p.attackArt || null) : null,
-                look: p.look || null
-            }],
-            drops,
-            mobs: [],
-            youId: p.id
-        });
-        if (p.attackTimer > 0) p.attackTimer -= 1000 / (NetProtocol.SNAPSHOT_HZ || 15);
+            if (!this.connected || !this.session) return;
+            this.session.handleAction(this.playerId, action);
     }
 
     async _persistWorld() {
-        // Serialize persists so the 30s timer can't overlap Save and Quit / close.
         this._persistTail = this._persistTail.then(
             () => this._persistWorldNow(),
             () => this._persistWorldNow()
@@ -1018,115 +305,15 @@ class LocalSim {
     }
 
     async _persistWorldNow() {
-        if (!this.world?.id) return;
-        try {
-            if (!this._closed) {
-                this._pullFromScene();
-                this._saveLogoutPose();
-            }
-            // Only flush live scene chunks while the play scene is still up.
-            const scene = this.scene;
-            let sceneLive = false;
+            if (!this.world?.id && !this.world) return;
             try {
-                sceneLive = !!(scene?.sys && scene.sys.settings && scene.sys.isActive());
-            } catch (_) {
-                sceneLive = false;
-            }
-            if (sceneLive && scene.chunks) {
-                for (const chunk of Object.values(scene.chunks)) {
-                    if (!chunk?.isGenerated || !chunk.meta?.tiles) continue;
-                    try {
-                        chunk.flushMobs?.();
-                        chunk.flushDrops?.();
-                    } catch (e) {
-                        console.warn("[LocalSim] chunk flush failed", e);
-                        continue;
-                    }
-                    const key = `${chunk.x},${chunk.y}`;
-                    this.world.chunks[key] = {
-                        x: chunk.x,
-                        y: chunk.y,
-                        tiles: chunk.meta.tiles,
-                        things: chunk.meta.things || [],
-                        lootableThings: chunk.meta.lootableThings || [],
-                        drops: chunk.meta.drops || [],
-                        mobs: chunk.meta.mobs || [],
-                        corpses: chunk.meta.corpses || [],
-                        bloodStains: chunk.meta.bloodStains || [],
-                        wanderers: chunk.meta.wanderers || []
-                    };
+                this.sim?.saveAll?.();
+                if (this.world) this.world.lastPlayedAt = Date.now();
+                if (typeof WorldStore !== "undefined" && WorldStore.put && this.world?.id) {
+                    await WorldStore.put(this.world);
                 }
-            }
-            this.world.lastPlayedAt = Date.now();
-            this.scene?.settlementSys?.persistTo?.(this.world);
-            await WorldStore.put(this.world);
         } catch (e) {
             console.warn("[LocalSim] persist failed", e);
-        }
-    }
-
-    /**
-     * Best-effort swing art for remotes (LocalSim has no SimCreature combat).
-     * Uses scene item defs + held stack when available.
-     */
-    _attackArtForPlayer(p) {
-        const idx = p.hotbarIndex | 0;
-        const stack = Array.isArray(p.inventory) ? p.inventory[idx] : null;
-        if (!stack) return { unarmed: true, range: 4, max: 833 };
-        const meta = this.scene?.getItem?.(stack.id) || null;
-        let weapon = meta?.weapon;
-        let key = meta?.key || meta?.id || stack.id;
-        let knapSilhouette = false;
-        let knapIconData = stack.knapIconData || null;
-        if (stack.toolClass && Number(stack.knapDamage) > 0 && typeof Knapping !== "undefined") {
-            const knap = Knapping.weaponMetaFromStack(meta || { id: stack.id, name: stack.id }, stack);
-            if (knap?.weapon?.type === "melee") {
-                weapon = knap.weapon;
-                key = stack.knapIcon || knap.key || key;
-                knapSilhouette = !!weapon.knapSilhouette;
-            }
-        }
-        if (weapon?.type !== "melee") {
-            return { unarmed: true, range: 4, max: 833 };
-        }
-        // Offhand/unarmed verbs still look like fists — LocalSim can't know pickAttack;
-        // prefer weapon art when a melee weapon is held.
-        return {
-            unarmed: false,
-            key,
-            itemId: stack.id,
-            range: Number(weapon.range) || 12,
-            knapSilhouette,
-            knapIconData,
-            max: 833
-        };
-    }
-
-    /**
-     * Apply player inventory/vitals from SceneMain back into the session pawn
-     * so YOU / character save stay correct for client-authoritative SP gear.
-     */
-    syncPawnFromClient(partial) {
-        if (!this._pawn || !partial) return;
-        const p = this._pawn;
-        if (Array.isArray(partial.inventory)) p.inventory = partial.inventory;
-        if (Array.isArray(partial.overflow)) p.overflow = partial.overflow;
-        if (partial.equipment) p.equipment = partial.equipment;
-        if (typeof partial.hotbarIndex === "number") p.hotbarIndex = partial.hotbarIndex;
-        if (typeof partial.kc === "number") p.kc = partial.kc;
-        if (typeof partial.saturation === "number") p.saturation = partial.saturation;
-        if (typeof partial.stomach === "number") p.stomach = partial.stomach;
-        if (typeof partial.hp === "number") p.hp = partial.hp;
-        if (typeof partial.mhp === "number") p.mhp = partial.mhp;
-        if (partial.body !== undefined) p.body = partial.body;
-        if (partial.look) p.look = partial.look;
-        if (typeof partial.x === "number") p.x = partial.x;
-        if (typeof partial.y === "number") p.y = partial.y;
-        if (typeof partial.facing === "string" && partial.facing) p.facing = partial.facing;
-        if (Array.isArray(partial.party)) this._party = partial.party;
-        if (partial.controlId) this._controlId = partial.controlId;
-        if (typeof partial.leaderDead === "boolean" && this.scene?.partySys) {
-            this.scene.partySys.leaderDead = partial.leaderDead;
         }
     }
 
@@ -1142,17 +329,17 @@ class LocalSim {
         this._tickTimer = null;
         this._persistTimer = null;
         try {
-            this._pullFromScene();
-            this._saveLogoutPose();
-            const you = this._youPayload();
+                let you = null;
+                if (this.session && this.playerId) {
+                    you = this.session.removePlayer(this.playerId, { save: false });
+                }
             if (you) {
                 this.emit(NetProtocol.Types.SESSION_END, { reason: "disconnect", you });
             }
-            // Wait for any in-flight timer persist, then write a final snapshot.
             await this._persistWorld();
         } finally {
             this.scene = null;
-            this._pawn = null;
+                this.session = null;
         }
         this.emit("close", {});
     }

@@ -11,7 +11,9 @@
     }
 })(typeof globalThis !== "undefined" ? globalThis : this, function (Place) {
     const CAMP_TILES = 12;
-    const REST_TICK = 8;
+    const REST_TICK = 10;
+    /** Wall-clock ms everyone must stay down before REST_TICK applies. */
+    const REST_TICK_DELAY_MS = 3000;
     const HEAL_BONUS = 8;
     /** Stomach drain while lying in a lean-to (vs idle). */
     const HUNGER_RATE = 0.5;
@@ -96,6 +98,19 @@
         return Math.PI;
     }
 
+    /**
+     * AI (wanderers, followers, wildlife) should path around the whole bunk,
+     * not through the walkable laying spot into the wooden back.
+     */
+    function navAroundBeds(pawn) {
+        if (!pawn) return false;
+        if (pawn._resting || pawn._restWalk) return false;
+        if (typeof pawn.isControlled === "function" && pawn.isControlled()) return false;
+        if (pawn.role === "player") return false;
+        if (pawn.scene && pawn.scene.player === pawn) return false;
+        return true;
+    }
+
     /** Don't block a pawn walking into / lying in this lean-to. */
     function ignoresThingCollision(pawn, thing) {
         if (!pawn || !thing) return false;
@@ -178,6 +193,21 @@
         return { x: cx - ts * 0.5, y: feetY };
     }
 
+    /**
+     * Standing feet outside the open side, spread per bunk so two rest-walks
+     * do not share one pixel (and never path into the solid).
+     */
+    function restWalkStand(entry, slot, tileSize, thingDef) {
+        const beside = besideWorldPos(entry, tileSize, thingDef);
+        const ts = Number(tileSize) || 16;
+        const n = Math.max(1, slotCount(thingDef, entry));
+        const i = Math.max(0, Math.min(n - 1, Math.floor(Number(slot) || 0)));
+        const spread = (i - (n - 1) * 0.5) * ts * 0.9;
+        const r = Place ? Place.normalizeRot(entry?.rot) : 0;
+        if (r === 90 || r === 270) return { x: beside.x, y: beside.y + spread };
+        return { x: beside.x + spread, y: beside.y };
+    }
+
     function inCampRange(ax, ay, bx, by, tileSize) {
         const ts = Number(tileSize) || 16;
         const r = CAMP_TILES * ts;
@@ -257,10 +287,12 @@
         return out;
     }
 
-    function effectiveTickSpeed(base, everyoneLying) {
+    function effectiveTickSpeed(base, everyoneLying, lyingMs) {
         const b = Number(base);
         const baseN = Number.isFinite(b) && b >= 0 ? b : 1;
         if (!everyoneLying) return baseN;
+        const elapsed = Number(lyingMs);
+        if (Number.isFinite(elapsed) && elapsed < REST_TICK_DELAY_MS) return baseN;
         return Math.max(REST_TICK, baseN);
     }
 
@@ -321,6 +353,7 @@
     return {
         CAMP_TILES,
         REST_TICK,
+        REST_TICK_DELAY_MS,
         HEAL_BONUS,
         HUNGER_RATE,
         hungerMult,
@@ -328,6 +361,7 @@
         clearOccupantInChunkMap,
         SCALE,
         ARRIVE_PX,
+        navAroundBeds,
         ignoresThingCollision,
         collideProcess,
         isSleepThing,
@@ -343,6 +377,7 @@
         restRotation,
         sleeperWorldPos,
         besideWorldPos,
+        restWalkStand,
         inCampRange,
         inHarvestRange,
         salvageStacks,

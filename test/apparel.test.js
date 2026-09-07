@@ -3,7 +3,7 @@ const { loadDefs, DataStore, GameMath } = require("./helpers/load");
 const Apparel = require("../shared/apparel");
 const Durability = require("../shared/durability");
 const BodyCombat = require("../shared/body/Combat");
-const { createPlayerCreature } = require("../server/SimCreature");
+const { createPlayerCreature } = require("../shared/sim/SimCreature");
 
 loadDefs();
 

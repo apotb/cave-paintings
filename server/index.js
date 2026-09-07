@@ -16,7 +16,8 @@ const { WebSocketServer } = require("ws");
 const Protocol = require("../shared/protocol");
 const { uuid } = require("../shared/rng");
 const SaveIO = require("./SaveIO");
-const { SimWorld, chunkKey, worldToChunk } = require("./SimWorld");
+const { SimWorld, chunkKey, worldToChunk } = require("../shared/sim/SimWorld");
+const SimSession = require("../shared/sim/SimSession");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -114,6 +115,14 @@ function safeJoin(root, reqPath) {
     return full;
 }
 
+function worldPersist(worldName) {
+    return {
+        load: () => SaveIO.loadWorld(ROOT, worldName),
+        save: (data) => SaveIO.saveWorld(ROOT, worldName, data),
+        clearPlayers: () => SaveIO.clearPlayers(ROOT, worldName)
+    };
+}
+
 class GameServer {
     static IDLE_PAUSE_MS = 60 * 1000;
 
@@ -123,7 +132,16 @@ class GameServer {
         this.sim = SimWorld.loadOrCreate({
             root: ROOT,
             worldName,
-            props
+            props,
+            persist: worldPersist(worldName)
+        });
+        this.session = new SimSession({
+            sim: this.sim,
+            send: (playerId, type, payload) => {
+                const ws = this.playerSockets.get(playerId);
+                if (ws) this.send(ws, type, payload);
+            },
+            onEvent: (ev) => this._logSessionEvent(ev)
         });
         /** @type {Map<import('ws').WebSocket, { playerId: string, authed: boolean, knownChunks: Set<string>, lastMoveMs: number }>} */
         this.clients = new Map();
@@ -169,7 +187,7 @@ class GameServer {
             const leaving = this.sim.players.get(meta.playerId);
             const name = leaving?.name || meta.playerId;
             this.playerSockets.delete(meta.playerId);
-            const finalYou = this.sim.removePlayer(meta.playerId, { save: false });
+            const finalYou = this.session.removePlayer(meta.playerId, { save: false });
             if (finalYou) {
                 try {
                     this.send(ws, Protocol.Types.SESSION_END, {
@@ -207,21 +225,11 @@ class GameServer {
             const now = Date.now();
             if (now - meta.lastMoveMs < 1000 / Protocol.MOVE_HZ - 2) return;
             meta.lastMoveMs = now;
-            this.sim.setMove(meta.playerId, msg.payload || {});
+            this.session.setMove(meta.playerId, msg.payload || {});
             return;
         }
         if (msg.type === Protocol.Types.INPUT_ACTION) {
-            const action = msg.payload || {};
-            if (action.type === Protocol.Actions.RESYNC) {
-                meta.knownChunks = new Set();
-                this.syncChunks(ws, meta, true);
-                this.flushYou(meta.playerId);
-                return;
-            }
-            this.sim.handleAction(meta.playerId, action);
-            // Flush private you + targeted events soon
-            this.flushYou(meta.playerId);
-            this.flushEvents();
+            this.session.handleAction(meta.playerId, msg.payload || {});
         }
     }
 
@@ -267,32 +275,17 @@ class GameServer {
         const name = String(
             character?.name || payload.displayName || "Player"
         ).slice(0, 24) || "Player";
-        const pawn = this.sim.addPlayer(playerId, name, character);
+        const pawn = this.session.addPlayer(playerId, name, character);
         meta.playerId = playerId;
         meta.authed = true;
         meta.knownChunks = new Set();
         this.playerSockets.set(playerId, ws);
 
-        this.send(ws, Protocol.Types.WELCOME, {
-            playerId,
-            characterId: playerId,
-            seed: this.sim.seed,
+        this.send(ws, Protocol.Types.WELCOME, this.session.welcomePayload(playerId, {
             worldName: this.worldName,
-            clock: {
-                gameDay: this.sim.gameDay,
-                gameMinutes: this.sim.gameMinutes,
-                tickSpeed: this.sim.tickSpeed,
-                baseTickSpeed: Number.isFinite(this.sim.baseTickSpeed)
-                    ? this.sim.baseTickSpeed
-                    : this.sim.tickSpeed
-            },
-            spawn: this.sim.spawn,
-            motd: this.props.motd || "",
-            you: this.sim.youPayload(playerId),
-            wanderers: [...this.sim.wanderers.values()].map((w) => this.sim._publicWanderer(w)).filter(Boolean)
-        });
-        this.syncChunks(ws, meta, true);
-        this.send(ws, Protocol.Types.YOU, this.sim.youPayload(playerId));
+            motd: this.props.motd || ""
+        }));
+        this.session.afterJoin(playerId);
         this.broadcast(
             Protocol.Types.EVENT,
             { kind: "player_joined", playerId, name: pawn.name },
@@ -300,6 +293,19 @@ class GameServer {
         );
         console.log(`[+] ${pawn.name} (${playerId.slice(0, 8)}…) online (${this.playerSockets.size}/${max})`);
         this._resumeIdle();
+    }
+
+    _logSessionEvent(ev) {
+        if (ev.kind === "chat" && ev.system && ev.text && !ev.cmd) {
+            const text = String(ev.text);
+            if (!/\s(?:joined|left)\.?$/.test(text)) {
+                const toName = ev.to
+                    ? (this.sim.players.get(ev.to)?.name || String(ev.to).slice(0, 8))
+                    : null;
+                if (toName) console.log(`[sys → ${toName}] ${text}`);
+                else console.log(`[sys] ${text}`);
+            }
+        }
     }
 
     syncChunks(ws, meta, force = false) {
@@ -375,20 +381,7 @@ class GameServer {
             this._resumeIdle();
         }
 
-        this.sim.tick(dtMs);
-        this.flushEvents();
-
-        this._snapAcc += dtMs;
-        const snapEvery = 1000 / Protocol.SNAPSHOT_HZ;
-        if (this._snapAcc >= snapEvery) {
-            this._snapAcc %= snapEvery;
-            for (const [ws, meta] of this.clients) {
-                if (!meta.authed) continue;
-                this.syncChunks(ws, meta, false);
-                const snap = this.sim.snapshotFor(meta.playerId);
-                if (snap) this.send(ws, Protocol.Types.SNAPSHOT, snap);
-            }
-        }
+        this.session.tick(dtMs);
 
         const autoMin = Number(this.props["autosave-minutes"]) || 5;
         this._autoAcc += dtMs;
@@ -671,7 +664,12 @@ async function chooseWorld() {
             }
             try {
                 const props = SaveIO.writeProperties(ROOT, name, {});
-                const sim = SimWorld.createNew({ root: ROOT, worldName: name, props });
+                const sim = SimWorld.createNew({
+                    root: ROOT,
+                    worldName: name,
+                    props,
+                    persist: worldPersist(name)
+                });
                 SaveIO.saveWorld(ROOT, name, sim.toSaveData());
                 flash = `Created "${name}".`;
             } catch (e) {

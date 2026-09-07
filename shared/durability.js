@@ -126,8 +126,43 @@
     }
 
     function breakMessage(name, held) {
-        const n = name || "item";
-        return held ? `Your ${n} broke` : `The ${n} broke`;
+        return breakChat(name, held ? { you: true } : { world: true }).text;
+    }
+
+    const WEAPON_COLOR = "#f0a040";
+
+    function breakPossessive(name) {
+        const n = String(name || "Someone").trim() || "Someone";
+        return `${n}'s`;
+    }
+
+    /**
+     * Combat-log line for a broken tool.
+     * Tool name is weapon orange. "Your" for the controlled pawn; otherwise
+     * the actor's possessive (settler blue / party green from the caller).
+     */
+    function breakChat(name, opts = {}) {
+        const n = String(name || "item");
+        const weapon = opts.weaponColor || WEAPON_COLOR;
+        let who = "The";
+        let whoColor = null;
+        if (!opts.world) {
+            if (opts.you || !opts.actorName) {
+                who = "Your";
+            } else {
+                who = breakPossessive(opts.actorName);
+                whoColor = opts.actorColor || null;
+            }
+        }
+        const segments = [
+            whoColor ? { text: who, color: whoColor } : { text: who },
+            { text: n, color: weapon },
+            { text: "broke" }
+        ];
+        return {
+            text: `${who} ${n} broke`,
+            segments
+        };
     }
 
     /** Slot fill 0–1, or null when the bar should be hidden (100% / none). */
@@ -183,6 +218,7 @@
         wearInventorySlot,
         stackDisplayName,
         breakMessage,
+        breakChat,
         slotBarFraction,
         rampBarFillColor
     };

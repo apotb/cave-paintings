@@ -138,8 +138,10 @@ class StoragePanel {
                     p.x, p.y, slot
                 );
             });
-            slot.on("pointerout", () => {
-                if (this.scene._tooltipTarget === slot) this.scene.hideTooltip();
+            slot.on("pointerout", (pointer) => {
+                if (this.scene._tooltipTarget !== slot) return;
+                if (pointer && this.getSlotAt(pointer.x, pointer.y) === key) return;
+                this.scene.hideTooltip();
             });
 
             slot.on("pointerdown", (pointer) => {
@@ -306,7 +308,7 @@ class StoragePanel {
     }
 
     _isDedicated() {
-        return !!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
+        return !!(this.scene.simAuth());
     }
 
     _notifyStorage(op, extra = {}) {
@@ -379,8 +381,8 @@ class StoragePanel {
             const view = this.slotViews[i];
             const showSlot = i < n;
             view.slot.setVisible(showSlot);
-            if (showSlot) view.slot.setInteractive({ cursor: "pointer" });
-            else view.slot.disableInteractive();
+            if (showSlot) ensurePointerInteractive(view.slot);
+            else disableInteractiveIfOn(view.slot);
 
             const stack = showSlot ? this._stackFor(view.key) : null;
             const meta = stack ? this.scene.getItem(stack.id) : null;
@@ -411,7 +413,7 @@ class StoragePanel {
         this.takeBtn.setVisible(true);
         this.takeBtn.setAlpha(empty ? 1 : 0.35);
         if (empty) this._syncTakeHitArea(true);
-        else this.takeRect.disableInteractive();
+        else disableInteractiveIfOn(this.takeRect);
         this._syncTakeHover();
         this.refreshDryBar();
     }
@@ -530,10 +532,10 @@ class StoragePanel {
         const bw = this._takeBw || 78;
         const bh = this._takeBh || 28;
         if (!enable) {
-            this.takeRect.disableInteractive();
+            disableInteractiveIfOn(this.takeRect);
             return;
         }
-        this.takeRect.setInteractive({ useHandCursor: true });
+        ensurePointerInteractive(this.takeRect);
         if (this.takeRect.input?.hitArea?.setTo) {
             this.takeRect.input.hitArea.setTo(0, 0, bw, bh);
         }
@@ -617,25 +619,27 @@ class StoragePanel {
             if (!stack) return false;
             if (!this._acceptsStack(stack)) return false;
             const n = this._slotCount();
-            for (let pass = 0; pass < 2; pass++) {
-                for (let i = 0; i < n; i++) {
-                    const dest = this.storage.getSlot(i);
-                    if (pass === 0) {
-                        if (!dest || dest.id !== stack.id) continue;
-                        if (typeof isSpecialStack === "function" && (isSpecialStack(stack) || isSpecialStack(dest))) continue;
-                        const meta = this.scene.getItem(stack.id);
-                        const maxStack = Math.max(1, meta?.maxStack || 1);
-                        if (dest.quantity >= maxStack) continue;
-                        this._depositFromHotbar(String(i), hotbarIndex, pointer);
-                        return true;
-                    }
-                    if (!dest) {
-                        this._depositFromHotbar(String(i), hotbarIndex, pointer);
-                        return true;
-                    }
-                }
+            const want = pointer != null && typeof quickMoveAmount === "function"
+                ? quickMoveAmount(stack.quantity, pointer, this.scene)
+                : stack.quantity;
+            if (!(want > 0)) return false;
+            const slots = [];
+            for (let i = 0; i < n; i++) slots.push(this.storage.getSlot(i));
+            const meta = this.scene.getItem(stack.id);
+            const plan = typeof Place !== "undefined" && Place.planStorageDeposits
+                ? Place.planStorageDeposits(slots, stack, want, {
+                    maxStack: Math.max(1, meta?.maxStack || 1),
+                    slotMax: this._slotMax(),
+                    special: typeof isSpecialStack === "function" && isSpecialStack(stack),
+                    destSpecial: (dest) => typeof isSpecialStack === "function" && isSpecialStack(dest)
+                })
+                : [];
+            if (!plan.length) return false;
+            for (const step of plan) {
+                if (!inv[hotbarIndex]) break;
+                this._depositFromHotbar(String(step.index), hotbarIndex, pointer, step.amount);
             }
-            return false;
+            return true;
         } finally {
             this._sourceBag = 'hotbar';
         }
@@ -696,16 +700,17 @@ class StoragePanel {
         const meta = this.scene.getItem(stack.id);
         const dest = this._stackFor(key);
         const special = typeof isSpecialStack === "function" && isSpecialStack(stack);
-        const want = pointer != null && typeof quickMoveAmount === "function"
-            ? quickMoveAmount(stack.quantity, pointer, this.scene)
-            : stack.quantity;
+        const want = amountCap != null
+            ? amountCap
+            : (pointer != null && typeof quickMoveAmount === "function"
+                ? quickMoveAmount(stack.quantity, pointer, this.scene)
+                : stack.quantity);
         const slotMax = this._slotMax();
         const now = this.scene.worldMinuteIndex?.() ?? null;
         let moved = 0;
 
         if (!dest) {
             moved = Math.min(stack.quantity, want);
-            if (amountCap != null) moved = Math.min(moved, amountCap);
             if (slotMax > 0) moved = Math.min(moved, slotMax);
             if (!(moved > 0)) return;
             const piece = this._prepareOutgoing(stack);
@@ -719,7 +724,6 @@ class StoragePanel {
             if (slotMax > 0) space = Math.min(space, Math.max(0, slotMax - dest.quantity));
             if (space <= 0) return;
             moved = Math.min(space, want, stack.quantity);
-            if (amountCap != null) moved = Math.min(moved, amountCap);
             if (!(moved > 0)) return;
             dest.spoilAt = mergeSpoilAt(
                 dest.quantity, dest.spoilAt,

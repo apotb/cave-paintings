@@ -210,6 +210,25 @@ function pixelUiFontSize(basePx, scale) {
 }
 
 /**
+ * Enable a hand cursor without rebuilding Phaser's hit area.
+ * Re-calling setInteractive drops the object from the over-list for a frame,
+ * which flashes the cursor and cancels in-flight clicks.
+ */
+function ensurePointerInteractive(obj) {
+    if (!obj?.active) return;
+    if (obj.input?.enabled) {
+        obj.input.cursor = "pointer";
+        obj.input.useHandCursor = true;
+        return;
+    }
+    obj.setInteractive({ cursor: "pointer", useHandCursor: true });
+}
+
+function disableInteractiveIfOn(obj) {
+    if (obj?.input?.enabled) obj.disableInteractive();
+}
+
+/**
  * Draw Yoster at a snapped pixel size (scale 1). extraScale is only for
  * world HUD under camera zoom (pass 1/worldZoom) — never bake GUI scale into
  * GameObject.scale or the glyphs go bilinear-soft.
@@ -304,6 +323,48 @@ function placeUiText(text, x, y, originX = 0, originY = 0) {
     const top = Math.round(y - h * originY);
     text.setPosition(left + w * originX, top + h * originY);
     return text;
+}
+
+/** Lock camera scroll to the 1/zoom world grid so sprites share integer screen pixels. */
+function snapCameraScrollToPixels(cam, zoom) {
+    const z = zoom || cam?.zoom || 1;
+    if (!cam || !z) return cam;
+    cam.scrollX = Math.round(cam.scrollX * z) / z;
+    cam.scrollY = Math.round(cam.scrollY * z) / z;
+    return cam;
+}
+
+/**
+ * Snap a world XY onto an integer camera/screen pixel.
+ * Camera must already be placed for this frame.
+ */
+function snapWorldToScreenPixel(cam, x, y, zoom) {
+    const z = zoom || cam?.zoom || 1;
+    if (!cam || !z || !Number.isFinite(x) || !Number.isFinite(y)) return { x, y };
+    return {
+        x: cam.scrollX + Math.round((x - cam.scrollX) * z) / z,
+        y: cam.scrollY + Math.round((y - cam.scrollY) * z) / z
+    };
+}
+
+/**
+ * Place a world HUD object so its quad top-left sits on a screen pixel.
+ * Origin 0.5 + odd glyph width otherwise samples between texels and flickers.
+ */
+function placeWorldHudPixel(cam, obj, x, y, zoom) {
+    if (!obj) return obj;
+    if (!cam) {
+        obj.setPosition(x, y);
+        return obj;
+    }
+    const z = zoom || cam.zoom || 1;
+    const dw = obj.displayWidth || 0;
+    const dh = obj.displayHeight || 0;
+    const ox = (Number(obj.originX) || 0) * dw;
+    const oy = (Number(obj.originY) || 0) * dh;
+    const snapped = snapWorldToScreenPixel(cam, x - ox, y - oy, z);
+    obj.setPosition(snapped.x + ox, snapped.y + oy);
+    return obj;
 }
 
 /**
@@ -633,11 +694,14 @@ function getCookRecipe(getItem, inputId, method) {
     return recipe;
 }
 
-const SIMMER_INGREDIENTS = new Set(["apple", "blueberry", "raw_beef", "raw_venison", "raw_pork"]);
+const SIMMER_INGREDIENTS = new Set(["apple", "blueberry", "raw_human_flesh", "raw_venison", "raw_pork"]);
 const SIMMER_MINUTES_PER_SLOT = 5;
 
 function isSimmerIngredient(itemId) {
-    return SIMMER_INGREDIENTS.has(itemId);
+    const id = (typeof Hide !== "undefined" && Hide.canonicalItemId)
+        ? Hide.canonicalItemId(itemId)
+        : itemId;
+    return SIMMER_INGREDIENTS.has(id);
 }
 
 /**
@@ -648,7 +712,10 @@ function isSimmerIngredient(itemId) {
  * @returns {{ name: string, kind: string, kc: number, spoilHours: number, weight: number, fillTint: number }}
  */
 function getSimmerDishInfo(getItem, ingredientIds, coconutMeta) {
-    const ids = (ingredientIds || []).filter(Boolean);
+    const canon = (id) => (typeof Hide !== "undefined" && Hide.canonicalItemId)
+        ? Hide.canonicalItemId(id)
+        : id;
+    const ids = (ingredientIds || []).filter(Boolean).map(canon);
     const unique = [...new Set(ids)];
 
     let kind = "mash";
@@ -656,7 +723,7 @@ function getSimmerDishInfo(getItem, ingredientIds, coconutMeta) {
     let spoilHours = 24;
 
     const meats = [];
-    if (unique.includes("raw_beef")) meats.push("Beef");
+    if (unique.includes("raw_human_flesh")) meats.push("Human");
     if (unique.includes("raw_venison")) meats.push("Venison");
     if (unique.includes("raw_pork")) meats.push("Pork");
     const hasMeat = meats.length > 0;
@@ -1144,8 +1211,10 @@ function getTimeOfDayTint(minutes) {
 }
 
 /**
- * Standing click tests use a tall AABB from the feet. While lying, x/y is the
- * body center and that same box covers a whole extra tile (90°/270° lean-tos).
+ * Standing pawns use origin (0,1) at the feet. Hover/click must match the 16×16
+ * body (same as a mob's texture hit) — a box centered on the feet used to reach
+ * a full body-length into the ground. Walk/chop frames can shrink Phaser's
+ * native hit area, so this stays a stable AABB. While lying, x/y is the center.
  */
 function creaturePointerHit(sprite, worldX, worldY) {
     if (!sprite?.active) return false;
@@ -1156,18 +1225,25 @@ function creaturePointerHit(sprite, worldX, worldY) {
         const h = Math.max(4, (Number(sprite.displayHeight) || 16) * 0.45);
         return Math.abs(worldX - x) <= w && Math.abs(worldY - y) <= h;
     }
-    const hs = (Number(sprite.hitboxSize) || 8) + 4;
-    return Math.abs(worldX - x) < hs && Math.abs(worldY - y) < hs * 2;
+    const body = 16;
+    const ox = Number.isFinite(Number(sprite.originX)) ? Number(sprite.originX) : 0;
+    const oy = Number.isFinite(Number(sprite.originY)) ? Number(sprite.originY) : 1;
+    const left = x - body * ox;
+    const top = y - body * oy;
+    return worldX >= left && worldX <= left + body
+        && worldY >= top && worldY <= top + body;
 }
 
 /**
- * Resting pawns and the pawn you control are click-through so world Things
- * under them (campfire, basket, bench) can be hovered and opened.
+ * Resting pawns, the pawn you control, and parked settlers are click-through
+ * so world Things under them (campfire, basket, bench) can be hovered and opened.
+ * Traveling companions stay clickable so you can switch to them.
  */
 function syncCreatureInputHit(sprite) {
     if (!sprite) return;
     const self = sprite.scene?.player === sprite;
-    if (sprite._resting || self) {
+    const parkedSettler = sprite.role === "settler" && !!sprite.homeSettlementId;
+    if (sprite._resting || self || parkedSettler) {
         if (sprite.input) sprite.input.enabled = false;
         return;
     }
@@ -1271,6 +1347,9 @@ function setCreatureProne(sprite, prone) {
 
 /**
  * Lie in a lean-to: centered origin, facing along the bed, scaled down.
+ * Already-resting sprites keep their pose — setFrame/setInteractive every
+ * tick drops Phaser's pointer-over list, which hid every HUD tooltip and
+ * cancelled Craft's pointerup while lying in a bunk.
  */
 function setCreatureRest(sprite, resting, rot) {
     if (!sprite) return;
@@ -1297,6 +1376,23 @@ function setCreatureRest(sprite, resting, rot) {
             return;
         }
         setCreatureProne(sprite, false);
+        return;
+    }
+
+    const posed = !!(
+        sprite._resting
+        && sprite._prone
+        && sprite.originX === 0.5
+        && sprite.originY === 0.5
+    );
+    if (posed) {
+        if (sprite.rotation !== ang) sprite.setRotation(ang);
+        if (sprite.scaleX !== scale || sprite.scaleY !== scale) sprite.setScale(scale);
+        if (sprite.body) {
+            sprite.body.moves = false;
+            sprite.setVelocity?.(0, 0);
+        }
+        syncCreatureInputHit(sprite);
         return;
     }
 
@@ -1334,12 +1430,19 @@ function pinRestingCreature(sprite, scene) {
     if (entry && typeof Sleep !== "undefined") {
         const def = sc?.getThing?.(entry.id) || lean?.meta;
         const pos = Sleep.sleeperWorldPos(entry, spec.slot, sc?.tileSize || 16, def);
-        if (typeof sprite.teleport === "function") sprite.teleport(pos.x, pos.y);
-        else sprite.setPosition?.(pos.x, pos.y);
-        if (sprite.body) {
+        const dx = (Number(sprite.x) || 0) - pos.x;
+        const dy = (Number(sprite.y) || 0) - pos.y;
+        if (dx * dx + dy * dy > 0.02) {
+            if (typeof sprite.teleport === "function") sprite.teleport(pos.x, pos.y);
+            else sprite.setPosition?.(pos.x, pos.y);
+            if (sprite.body) {
+                sprite.body.moves = false;
+                sprite.body.setVelocity?.(0, 0);
+                sprite.body.reset?.(pos.x, pos.y);
+            }
+        } else if (sprite.body) {
             sprite.body.moves = false;
             sprite.body.setVelocity?.(0, 0);
-            sprite.body.reset?.(pos.x, pos.y);
         }
         sprite._physX = pos.x;
         sprite._physY = pos.y;
@@ -1352,7 +1455,11 @@ function pinRestingCreature(sprite, scene) {
 }
 
 function pawnIgnoresThing(pawn, thing) {
-    return typeof Sleep !== "undefined" && !!Sleep.ignoresThingCollision?.(pawn, thing);
+    if (typeof Sleep !== "undefined" && Sleep.ignoresThingCollision?.(pawn, thing)) return true;
+    const uid = thing?.uid || thing?.entry?.uid;
+    if (!uid) return false;
+    const ignore = pawn?._pathIgnoreUid || pawn?._chopIgnoreUid;
+    return !!(ignore && String(uid) === String(ignore));
 }
 
 function indexThingSprite(scene, thing) {
@@ -1482,7 +1589,26 @@ function pawnPoseBlocked(pawn, x, y, pad = 0) {
         }
         return false;
     });
-    return hit;
+    if (hit) return true;
+    if (typeof Sleep !== "undefined" && Sleep.navAroundBeds?.(pawn)
+        && typeof Place !== "undefined" && Place.footprintWorldRect) {
+        const ts = scene.tileSize || 16;
+        let bed = false;
+        forThingsNearAabb(scene, left - ts, right + ts, top - ts, bottom + ts, (t) => {
+            if (!Place.isSleepThing?.(t.meta, t.entry)) return false;
+            if (pawnIgnoresThing(pawn, t)) return false;
+            const rect = Place.footprintWorldRect(t.entry, t.meta, ts);
+            if (!rect) return false;
+            if (right > rect.left && left < rect.right
+                && bottom > rect.top && top < rect.bottom) {
+                bed = true;
+                return true;
+            }
+            return false;
+        });
+        if (bed) return true;
+    }
+    return false;
 }
 
 function findFreePawnPose(pawn, maxR = 80) {
@@ -1641,11 +1767,10 @@ function sleepZzzIsResting(host) {
 
 function sleepHealIsInjured(host) {
     if (!host) return false;
-    if (typeof host.injured === "boolean") return !!host.injured;
-    const body = host.anatomy;
     if (typeof Sleep !== "undefined" && Sleep.injuredForAutofill) {
-        return !!Sleep.injuredForAutofill(body);
+        if (host.anatomy && Sleep.injuredForAutofill(host.anatomy)) return true;
     }
+    if (typeof host.injured === "boolean") return !!host.injured;
     return false;
 }
 
@@ -1849,15 +1974,18 @@ function setPuppetProne(sprite, prone, opts = {}) {
         ? Sleep.restRotation(opts.restRot)
         : -Math.PI / 2;
     const scale = rest && typeof Sleep !== "undefined" ? Sleep.SCALE : 1;
-    const w = sprite.displayWidth || sprite.width || 16;
-    const h = sprite.displayHeight || sprite.height || 16;
+    if (want && sprite.texture?.frameTotal > 7) {
+        sprite.anims?.stop?.();
+        sprite.setFrame(7);
+    }
+    const fw = Number(sprite.frame?.width) || Number(sprite.width) || 16;
+    const fh = Number(sprite.frame?.height) || Number(sprite.height) || 16;
     // Feet-anchored puppets (mobs): shift to geometric body center while prone
-    const localX = opts.feetAnchored ? w * 0.5 : 0;
-    const localY = opts.feetAnchored ? -h * 0.5 : 0;
+    const localX = opts.feetAnchored ? fw * 0.5 : 0;
+    const localY = opts.feetAnchored ? -fh * 0.5 : 0;
     if (!!sprite._prone === want && !!sprite._resting === rest) {
         if (want) {
             sprite.anims?.stop?.();
-            if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
             sprite.setRotation(ang);
             sprite.setScale(scale);
             sprite.clearTint?.();
@@ -1872,7 +2000,6 @@ function setPuppetProne(sprite, prone, opts = {}) {
         sprite.setRotation(ang);
         sprite.setScale(scale);
         sprite.anims?.stop?.();
-        if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
         sprite.clearTint?.();
         sprite._prone = true;
         sprite._resting = rest;
@@ -1917,12 +2044,67 @@ function placeUnarmedThrustSprite(sprite, cx, cy, angle, range, progress, depthY
     if (depthY != null) sprite.setDepth(depthY + 1);
 }
 
-/** Y-sort a sleeper between the leaf floor (lean.y) and stick frame (lean.y + 2). */
+/**
+ * North edge of a lying body, slightly behind that scanline so a standing
+ * creature whose feet overlap the body always draws on top.
+ */
+function lyingSortDepth(worldY, height, centered) {
+    const h = Number(height) > 0 ? Number(height) : 16;
+    const y = Number(worldY) || 0;
+    const top = centered ? y - h * 0.5 : y - h;
+    return top - 0.5;
+}
+
+/**
+ * Y-sort a sleeper just above the leaf floor and under the stick frame.
+ * Using lean.y (the south feet) used to paint sleepers over every standing
+ * mob north of that edge.
+ */
 function sleepSortDepth(sprite, leanTo, slot) {
+    const slotOff = (Number(slot) || 0) * 0.01;
+    if (typeof leanTo?._floorDepth === "function") {
+        return leanTo._floorDepth() + 1 + slotOff;
+    }
     const leanY = Number(leanTo?.y);
-    const spriteY = Number(sprite?.y) || 0;
-    const base = Number.isFinite(leanY) ? leanY : spriteY + 16;
-    return base + 1 + (Number(slot) || 0) * 0.01;
+    const leanH = Number(leanTo?.displayHeight) || Number(leanTo?.height);
+    if (Number.isFinite(leanY) && leanH > 0) {
+        return leanY - leanH + slotOff;
+    }
+    const y = Number(sprite?.y) || 0;
+    const h = Number(sprite?.displayHeight) || Number(sprite?.height) || 16;
+    return lyingSortDepth(y, h, Number(sprite?.originY) === 0.5);
+}
+
+/**
+ * Standing: feet Y. Lying / sleeping: under any overlapping walker.
+ * `opts.y` / `opts.centered` override the sprite when depth lives on a
+ * feet-anchored container (net puppets).
+ */
+function creatureSortDepth(sprite, opts = {}) {
+    if (!sprite && opts.y == null) return 0;
+    if (opts.resting || sprite?._resting) {
+        const lean = opts.leanTo
+            || sprite?.scene?.findLeanToByUid?.(sprite.lastSleep?.uid);
+        return sleepSortDepth(sprite, lean, opts.slot ?? sprite?.lastSleep?.slot);
+    }
+    const y = Number(opts.y != null ? opts.y : sprite?.y) || 0;
+    if (opts.prone || sprite?._prone || sprite?._downed) {
+        const h = Number(opts.height)
+            || Number(sprite?.displayHeight)
+            || Number(sprite?.height)
+            || 16;
+        const centered = opts.centered != null
+            ? !!opts.centered
+            : Number(sprite?.originY) === 0.5;
+        return lyingSortDepth(y, h, centered);
+    }
+    return y | 0;
+}
+
+function applyCreatureSortDepth(target, opts) {
+    if (!target?.setDepth) return;
+    const d = creatureSortDepth(opts?.sprite || target, opts);
+    if (target.depth !== d) target.setDepth(d);
 }
 
 /** Short segment around the fist for hit tests. */

@@ -278,6 +278,8 @@ class Chunk {
 
     generate() {
         if (this.isGenerated) return Promise.resolve();
+        // SimWorld owns terrain. Wait for CHUNK instead of generating a parallel world.
+        if (this.scene.simAuth()) return Promise.resolve();
 
         this._ensureParentFireChunks();
 
@@ -342,7 +344,7 @@ class Chunk {
             const key = `${p.cx},${p.cy}`;
             let ch = this.scene.chunks?.[key];
             if (!ch) {
-                if (this.scene.isNet && this.scene.net?.isLocal) continue;
+                if (this.scene.simAuth()) continue;
                 if (this.scene.isNet) continue;
                 ch = new Chunk(this.scene, p.cx, p.cy);
                 this.scene.chunks[key] = ch;
@@ -440,6 +442,15 @@ class Chunk {
         const occupied = new Set();
         const markOccupied = (entry) => {
             if (!entry) return;
+            const def = this.scene.getThing?.(entry.id);
+            if (typeof Place !== "undefined" && Place.occupyTiles) {
+                for (const t of Place.occupyTiles(entry, ts, def)) {
+                    const lx = t.tx - this.x * cs;
+                    const ly = t.ty - this.y * cs;
+                    if (lx >= 0 && ly >= 0 && lx < cs && ly < cs) occupied.add(`${lx},${ly}`);
+                }
+                return;
+            }
             const lx = Math.round((entry.x - ts / 2 - chunkOx) / ts);
             const ly = Math.round((entry.y - ts - chunkOy) / ts);
             if (lx >= 0 && ly >= 0 && lx < cs && ly < cs) occupied.add(`${lx},${ly}`);
@@ -489,7 +500,7 @@ class Chunk {
      */
     populateNaturalMobs(rand) {
         // Dedicated MP: wildlife is server-authoritative. LocalSim SP seeds chunk meta.
-        if (this.scene.isNet && !this.scene.net?.isLocal) return;
+        if (this.scene.simAuth()) return;
         if (!this.meta.mobs) this.meta.mobs = [];
         const rules = (this.scene.mobsData?.() || []).filter(m => m?.id && m.spawn);
         if (!rules.length) return;
@@ -503,6 +514,15 @@ class Chunk {
         const blocked = new Set();
         const markBlocked = (entry) => {
             if (!entry) return;
+            const def = this.scene.getThing?.(entry.id);
+            if (typeof Place !== "undefined" && Place.occupyTiles) {
+                for (const t of Place.occupyTiles(entry, ts, def)) {
+                    const lx = t.tx - this.x * cs;
+                    const ly = t.ty - this.y * cs;
+                    if (lx >= 0 && ly >= 0 && lx < cs && ly < cs) blocked.add(`${lx},${ly}`);
+                }
+                return;
+            }
             const lx = Math.round((entry.x - ts / 2 - chunkOx) / ts);
             const ly = Math.round((entry.y - ts - chunkOy) / ts);
             if (lx >= 0 && ly >= 0 && lx < cs && ly < cs) blocked.add(`${lx},${ly}`);
@@ -787,7 +807,7 @@ class Chunk {
             this.things.add(thing);
         }
         if (!this.meta.lootableThings) this.meta.lootableThings = [];
-        const dedicated = !!(this.scene.isNet && this.scene.net?.connected && !this.scene.net.isLocal);
+        const dedicated = !!(this.scene.simAuth());
         for (const entry of this.meta.lootableThings) {
             // Dedicated: server owns regrow. Local catch-up desynced harvested bushes.
             if (!dedicated) this.scene.applyDueLootableRegrow?.(entry);
@@ -801,7 +821,7 @@ class Chunk {
 
     async makeMobs() {
         // Dedicated MP: server owns wildlife (SimCreature); show snapshot puppets only.
-        if (this.scene.isNet && !this.scene.net?.isLocal) {
+        if (this.scene.simAuth()) {
             return Promise.resolve();
         }
         if (!this.meta.mobs) this.meta.mobs = [];
@@ -820,7 +840,7 @@ class Chunk {
 
     async makeDrops() {
         // Dedicated MP: ground loot from snapshots. LocalSim SP uses chunk meta + snapshots.
-        if (this.scene.isNet && !this.scene.net?.isLocal) return Promise.resolve();
+        if (this.scene.simAuth()) return Promise.resolve();
         if (!this.meta.drops) this.meta.drops = [];
         const live = this.scene.droppedItems?.getChildren() || [];
         for (const entry of this.meta.drops) {
@@ -833,7 +853,7 @@ class Chunk {
 
     async makeCorpses() {
         // Dedicated MP: corpses from server snapshots (same as drops/mobs).
-        if (this.scene.isNet && !this.scene.net?.isLocal) return Promise.resolve();
+        if (this.scene.simAuth()) return Promise.resolve();
         if (!this.meta.corpses) this.meta.corpses = [];
         // Empty corpses despawn when the last item is taken (CorpsePanel → removeForever)
         const live = this.corpses?.getChildren() || [];
