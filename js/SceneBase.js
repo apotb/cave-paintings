@@ -14,16 +14,22 @@ class SceneBase extends Phaser.Scene {
         if (this.sys?.load && this.load !== this.sys.load) {
             this.load = this.sys.load;
         }
+        if (!this.textures.exists("null")) {
+            this.load.image("null", "assets/null.png");
+        }
         if (!this.cache?.audio?.exists?.("forest")) {
             this.load.audio("forest", "assets/audio/forest.ogg");
         }
         // Second Play → Leave → Play: textures/json already live in the game caches.
-        if (this.cache?.json?.exists?.("items") && this.cache?.json?.exists?.("structures") && this.textures?.exists("grass") && this.textures?.exists("slot")) {
+        if (this.cache?.json?.exists?.("items") && this.cache?.json?.exists?.("structures")
+            && this.cache?.json?.exists?.("techs") && this.textures?.exists("grass")
+            && this.textures?.exists("slot")) {
             return;
         }
         // Data
         this.load.json("items", "data/Items.json");
         this.load.json("things", "data/Things.json");
+        this.load.json("techs", "data/Techs.json");
         this.load.json("structures", "data/Structures.json");
         this.load.json("bodyPlans", "data/BodyPlans.json");
         this.load.json("injuries", "data/Injuries.json");
@@ -92,7 +98,8 @@ class SceneBase extends Phaser.Scene {
             "health_hover",
             "health_open",
             "status2",
-            "leader"
+            "leader",
+            "science"
         ];
         for (const ui of uis) {
             this.loadImage(ui, 'ui');
@@ -200,7 +207,8 @@ class SceneBase extends Phaser.Scene {
             "bone",
             "stick",
             "log",
-            "lean_to"
+            "lean_to",
+            "painting_circle"
         ];
         for (const item of items) {
             this.loadImage(item, 'items');

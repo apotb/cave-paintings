@@ -10,6 +10,7 @@ class PartyAI {
         this._stuckMs = 0;
         this._jamMs = 0;
         this._stillMs = 0;
+        this._heldSlide = null;
         this._jamPx = null;
         this._jamPy = null;
         this._lastPx = null;
@@ -71,6 +72,8 @@ class PartyAI {
         this._haulMergeId = null;
         this._workHold = false;
         this._busyJob = null;
+        this._researchPoll = 0;
+        this._clearPaintBar();
         this._settlerAct = null;
         this._path = null;
         this._pathGoalX = null;
@@ -119,7 +122,7 @@ class PartyAI {
     update(delta) {
         const pawn = this.pawn;
         const scene = pawn?.scene;
-        if (!pawn?.active || pawn.isBodyDead?.() || scene?._gamePaused) {
+        if (!pawn?.active || pawn.isBodyDead?.() || scene?._gamePaused || scene?._worldSimFrozen) {
             if (pawn?.isBodyDead?.()) this._releaseWorkClaim();
             pawn?.setVelocity?.(0, 0);
             return;
@@ -365,7 +368,7 @@ class PartyAI {
         const catchR = (P?.FOLLOW_CATCH ?? 4.8) * ts;
         const overlap = this._overlappingThing(pawn);
         this._nudgeIfDue(pawn, overlap);
-        const jammedOnThing = !!this._overlappingThing(pawn) || this._anyArcadeHit(pawn.body);
+        const jammedOnThing = !!this._overlappingThing(pawn);
         const closeEnough = distPlayer <= idleR
             || (this._holdFollow && distPlayer < catchR && !jammedOnThing)
             || (this._stuckMs > 280 && distPlayer < catchR && !jammedOnThing);
@@ -430,6 +433,8 @@ class PartyAI {
         this._lastWpDist = null;
         this._slideAt = 0;
         this._planAt = 0;
+        this._heldSlide = null;
+        this._unstuckAt = 0;
     }
 
     _separation(pawn, ts, wantTiles) {
@@ -587,71 +592,69 @@ class PartyAI {
         this._lastWpDist = steered.lastWpDist;
         let nx = steered.nx;
         let ny = steered.ny;
-        const dirBlocked = this._blockedInDir(pawn.body, nx, ny);
-        const snagged = !!overlap || dirBlocked || this._anyArcadeHit(pawn.body);
         const step = this._jamPx != null
             ? Math.hypot(pawn.x - this._jamPx, pawn.y - this._jamPy)
             : 99;
         this._jamPx = pawn.x;
         this._jamPy = pawn.y;
-        if (snagged && step < 0.55) {
-            this._stillMs = (this._stillMs || 0) + (delta || 16);
-            this._jamMs = (this._jamMs || 0) + (delta || 16);
-        } else if (!snagged) {
+        const minStep = Math.max(0.12, (delta || 16) * 0.025);
+        if (step >= minStep) {
             this._stillMs = 0;
             this._jamMs = 0;
-        } else {
-            this._stillMs = (this._stillMs || 0) + (delta || 16) * 0.6;
+        } else if (!steered.arrived) {
+            this._stillMs = (this._stillMs || 0) + (delta || 16);
             this._jamMs = (this._jamMs || 0) + (delta || 16);
-        }
-        if (typeof slidePawnAroundThings === "function" && snagged && this._stillMs > 120) {
-            const commit = now - (this._slideAt || 0) > 280;
-            const slide = slidePawnAroundThings(
-                pawn, nx, ny, settler ? 8 : 6,
-                commit && this._stillMs > 400,
-                this._avoidSide,
-                commit
-            );
-            if (slide) {
-                nx = slide.nx;
-                ny = slide.ny;
-                if (commit) this._slideAt = now;
-            }
-        }
-        if (snagged && this._stillMs > 900) {
-            const nowUnstick = pawn.scene?.time?.now || 0;
-            if (nowUnstick - (this._unstuckAt || 0) > 1600) {
-                this._unstuckAt = nowUnstick;
-                const free = typeof findFreePawnPose === "function"
-                    ? findFreePawnPose(pawn, 48)
-                    : null;
-                if (free && Math.hypot(free.x - pawn.x, free.y - pawn.y) > 2) {
-                    teleportPawnPose?.(pawn, free.x, free.y);
-                    this._stillMs = 0;
-                    this._jamMs = 0;
-                    this._path = null;
-                    this._pathGoalX = null;
-                    this._pathGoalY = null;
-                    return;
-                }
-            }
+        } else {
+            this._stillMs = 0;
+            this._jamMs = 0;
         }
         if (steered.arrived) {
             this._halt(pawn);
             return;
         }
-        if (!this._path || !this._path.length) {
-            if (!(settler && this._anyArcadeHit(pawn.body))) {
-                const sep = this._separation(pawn, ts);
-                const sl = Math.hypot(sep.sx, sep.sy);
-                if (sl > 0.15) {
-                    nx += (sep.sx / sl) * 0.35;
-                    ny += (sep.sy / sl) * 0.35;
-                    const nlen = Math.hypot(nx, ny) || 1;
-                    nx /= nlen;
-                    ny /= nlen;
+        const look = 4;
+        const poseHit = (px, py) => typeof pawnPoseBlocked === "function"
+            && pawnPoseBlocked(pawn, px, py, 0);
+        if (poseHit(pawn.x + nx * look, pawn.y + ny * look)) {
+            const xOk = !poseHit(pawn.x + nx * look, pawn.y);
+            const yOk = !poseHit(pawn.x, pawn.y + ny * look);
+            if (xOk && !yOk) {
+                ny = 0;
+                nx = nx ? (nx > 0 ? 1 : -1) : 0;
+                this._heldSlide = null;
+            } else if (yOk && !xOk) {
+                nx = 0;
+                ny = ny ? (ny > 0 ? 1 : -1) : 0;
+                this._heldSlide = null;
+            } else {
+                const held = this._heldSlide;
+                const heldOk = held && !poseHit(pawn.x + held.nx * look, pawn.y + held.ny * look);
+                if (heldOk) {
+                    nx = held.nx;
+                    ny = held.ny;
+                } else if (typeof slidePawnAroundThings === "function") {
+                    const slide = slidePawnAroundThings(
+                        pawn, nx, ny, 6, false, this._avoidSide, false
+                    );
+                    if (slide) {
+                        this._heldSlide = slide;
+                        nx = slide.nx;
+                        ny = slide.ny;
+                    } else {
+                        nx = 0;
+                        ny = 0;
+                    }
+                } else {
+                    nx = 0;
+                    ny = 0;
                 }
             }
+        } else {
+            this._heldSlide = null;
+        }
+        if (!nx && !ny) {
+            this._halt(pawn);
+            return;
         }
         pawn.isSprinting = !!sprint && pawn.kc > 0 && !pawn.getEncumbrance?.().cannotSprint;
         this._applyWalk(pawn, nx, ny, pawn.isSprinting);
@@ -827,8 +830,10 @@ class PartyAI {
             (scene.terrainSpeedMult?.(pawn.x, pawn.y - 1) ?? 1);
         if (moved) pawn.isSprinting = moved.sprinting;
         applyEntityVelocity?.(pawn, nx * speed, ny * speed, scene.game?.loop?.delta || 16, scene);
-        if (Math.abs(nx) > Math.abs(ny)) pawn.facing = nx > 0 ? "right" : "left";
-        else if (ny !== 0) pawn.facing = ny > 0 ? "down" : "up";
+        const ax = Math.abs(nx);
+        const ay = Math.abs(ny);
+        if (ax > ay + 0.22) pawn.facing = nx > 0 ? "right" : "left";
+        else if (ay > ax + 0.22) pawn.facing = ny > 0 ? "down" : "up";
         const tilesPerSec = speed / (scene.tileSize || 16);
         pawn.anims.timeScale = typeof Party !== "undefined" && Party.walkAnimTimeScale
             ? Party.walkAnimTimeScale(tilesPerSec)
@@ -852,6 +857,7 @@ class PartyAI {
         this._stuckMs = 0;
         this._jamMs = 0;
         this._stillMs = 0;
+        this._heldSlide = null;
         this._playIdle(pawn);
     }
 
@@ -868,6 +874,26 @@ class PartyAI {
     _endWorkHold() {
         this._workHold = false;
         this._busyJob = null;
+        this._clearPaintBar();
+    }
+
+    _clearPaintBar() {
+        this._paintTickMin = null;
+        const pawn = this.pawn;
+        if (pawn) pawn._paintChannel = null;
+    }
+
+    _setPaintBar(entry) {
+        const pawn = this.pawn;
+        if (!pawn) return;
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (entry && R?.inProgress?.(entry)) {
+            pawn._paintChannel = {
+                progress: Math.max(0, Math.min(1, Number(entry.paintProgress) || 0))
+            };
+            return;
+        }
+        pawn._paintChannel = null;
     }
 
     _settlerBusy() {
@@ -965,7 +991,7 @@ class PartyAI {
             return this._stationKey(plan.target?.fire || plan.target);
         }
         if (t === "leather") return this._leatherJobKey(plan.target);
-        if (t === "gather" || t === "chop") return this._thingKey(plan.target);
+        if (t === "gather" || t === "chop" || t === "research") return this._thingKey(plan.target);
         if (t === "haul") {
             if (plan.target?.claimKey) return plan.target.claimKey;
             const SF = typeof StorageFilter !== "undefined" ? StorageFilter : null;
@@ -1016,6 +1042,7 @@ class PartyAI {
         }
         else if (t === "gather") scan.gatherThing = null;
         else if (t === "chop") scan.chopTree = null;
+        else if (t === "research") scan.researchCircle = null;
         else if (t === "leather") scan.leatherWork = null;
         else if (t === "cook") scan.cookBill = null;
         else if (t === "cook_light") scan.unlitFire = null;
@@ -1157,8 +1184,8 @@ class PartyAI {
             return "Simmering";
         }
         if (fire && !S?.isCookTool?.(getItem, cat, method)) {
-            if (method === "stick_roast") return "Getting a roasting stick";
-            if (method === "smoke_hide") return "Getting a drying rack";
+            if (method === "stick_roast") return "Getting a Sharp Stick";
+            if (method === "smoke_hide") return "Getting a Drying Rack";
             return "Getting a cooking tool";
         }
         const foods = this._billIngredientPhrase(bill);
@@ -1257,8 +1284,28 @@ class PartyAI {
             return;
         }
 
+        const jobs = (S && settle) ? S.jobsFor(settle, pawn.pawnId || pawn.id) : null;
+        const jobOn = (type) => !S || !jobs || !!S.jobEnabled(jobs, type);
+
+        if (pawn._tendChannel && !pawn._tendChannel.corpse && !jobOn("doctor")) {
+            pawn._tendChannel = null;
+            this._endWorkHold();
+        }
+        if ((pawn._fleshChannel || pawn._brainChannel || pawn._craftChannel || pawn._skinChannel)
+            && !jobOn("leather")) {
+            pawn._fleshChannel = null;
+            pawn._brainChannel = null;
+            pawn._craftChannel = null;
+            pawn._skinChannel = null;
+            this._endWorkHold();
+        }
+
         if (pawn.isAttacking?.()) {
             this._halt(pawn);
+            if (!jobOn("chop")) {
+                this._forgetChopTarget();
+                return;
+            }
             if (this._workScan?.chopTree && !this._chopTargetValid(this._workScan.chopTree)) {
                 this._forgetChopTarget();
                 this._workScanMs = 280;
@@ -1292,6 +1339,10 @@ class PartyAI {
         }
 
         this.tendSeek = null;
+        if (this._busyJob?.type === "research") this._researchPoll = (this._researchPoll || 0) + 1;
+        else this._researchPoll = 0;
+        const pollNeeds = this._busyJob?.type === "research"
+            && this._researchPoll >= ((S && S.RESEARCH_NEEDS_TICKS) || 10);
         if (pawn._eatChannel) {
             this._halt(pawn);
             this._adoptClaim(settle, null);
@@ -1299,6 +1350,8 @@ class PartyAI {
             return;
         }
         if (!this._settlerBusy() && this._tickEatSeek(delta, ts)) {
+            this._researchPoll = 0;
+            this._endWorkHold();
             this._adoptClaim(settle, null);
             this._settlerAct = "Getting food";
             return;
@@ -1309,7 +1362,7 @@ class PartyAI {
             ? Sleep.injuredForAutofill(pawn.anatomy)
             : false;
         this._workScanMs = (this._workScanMs || 0) + delta;
-        const jobs = (S && settle) ? S.jobsFor(settle, pawn.pawnId || pawn.id) : null;
+        if (pollNeeds) this._workScanMs = 280;
         const haulOn = !!(S && jobs && S.enabledJobs(jobs).includes("haul"));
         if (!this._workScan || this._workScanMs >= 280) {
             this._workScanMs = 0;
@@ -1327,6 +1380,7 @@ class PartyAI {
                 haulMerge: (settle && haulOn) ? this._haulMerge(settle) : null,
                 gatherThing: settle ? this._gatherThing(settle) : null,
                 chopTree: settle ? this._chopTree(settle) : null,
+                researchCircle: settle ? this._researchCircle(settle) : null,
                 patients,
                 keepBandage,
                 bed: (settle && (night || injured)) ? this._freeBed(settle) : null,
@@ -1358,16 +1412,18 @@ class PartyAI {
             haulMerge: scan.haulMerge,
             gatherThing: scan.gatherThing,
             chopTree: scan.chopTree,
+            researchCircle: scan.researchCircle,
             stashBasket: stash.basket,
             hasStash: stash.has,
             stashUrgent: stash.urgent,
             mergeNeedsRoom: this._mergeNeedsRoom(scan.haulMerge),
             busy: this._settlerBusy(),
-            busyJob: this._busyJob || null
+            busyJob: this._busyJob || null,
+            reconsiderNeeds: pollNeeds
         });
         let plan = S ? S.planWork(planOpts()) : { type: "idle" };
-        const haulHold = this._workHold && (this._busyJob?.type === "haul" || this._busyJob?.type === "stash");
-        const delivering = !!(this._haulDest && this._haulHasCargo(settle, keepBandage) && (haulOn || haulHold));
+        const delivering = !!(this._haulDest && this._haulHasCargo(settle, keepBandage)
+            && (haulOn || this._busyJob?.type === "stash"));
         if (this._haulDest && !delivering) {
             this._haulDest = null;
             this._haulWhat = null;
@@ -1387,6 +1443,20 @@ class PartyAI {
         }
         if (S?.isBusyWork?.(plan.type)) this._beginWorkHold(plan);
         else if (!delivering && plan.type !== "chop") this._endWorkHold();
+        if (pollNeeds) this._researchPoll = 0;
+        if (pollNeeds && plan.type === "research" && this._tickEatSeek(delta, ts)) {
+            this._endWorkHold();
+            this._adoptClaim(settle, null);
+            this._settlerAct = "Getting food";
+            this._clearPaintBar();
+            return;
+        }
+        if (plan.type !== "chop" && pawn._chopIgnoreUid) {
+            this._chopArrived = false;
+            pawn._chopIgnoreUid = null;
+            this._chopStand = null;
+        }
+        if (plan.type !== "research") this._clearPaintBar();
         this._settlerAct = this._actLabel(plan, settle, keepBandage);
 
         if (plan.type && plan.type !== "idle") {
@@ -1444,6 +1514,10 @@ class PartyAI {
         }
         if (plan.type === "chop" && plan.target) {
             this._doChop(plan.target, settle, ts, delta);
+            return;
+        }
+        if (plan.type === "research" && plan.target) {
+            this._doResearch(plan.target, settle, ts, delta);
             return;
         }
         if (plan.type === "haul" && plan.target) {
@@ -1508,6 +1582,10 @@ class PartyAI {
         if (this._claimedByOther(settle, this._thingKey(scan.chopTree))
             || this._jobSkipped(this._thingKey(scan.chopTree))) {
             scan.chopTree = null;
+        }
+        if (this._claimedByOther(settle, this._thingKey(scan.researchCircle))
+            || this._jobSkipped(this._thingKey(scan.researchCircle))) {
+            scan.researchCircle = null;
         }
         if (this._claimedByOther(settle, this._bedKey(scan.bed))) scan.bed = null;
         if (scan.patients) {
@@ -1626,6 +1704,33 @@ class PartyAI {
 
     _goOrAbort(target, settle, key, ts, delta) {
         if (this._goToTarget(target, ts, delta)) return true;
+        this._abortIfStuck(settle, key);
+        return false;
+    }
+
+    /** Sim pickup with a dropId is 3 tiles; furniture stand-poses are tighter. */
+    _dropInRange(drop, ts) {
+        if (!drop) return false;
+        const cell = ts || 16;
+        return Math.hypot(this.pawn.x - drop.x, this.pawn.y - drop.y) <= cell * 3;
+    }
+
+    /**
+     * Walk at the pile itself. Drops often sit in stump/tree hitboxes, so the
+     * "stand just outside the hitbox" pose never arrives and settlers orbit.
+     */
+    _goToDrop(drop, settle, key, ts, delta) {
+        const pawn = this.pawn;
+        if (!drop) return false;
+        if (this._dropInRange(drop, ts)) {
+            this._halt(pawn);
+            return true;
+        }
+        this._markPathIgnore(drop);
+        this._walkToward(
+            pawn, drop.x, drop.y, ts, false, delta,
+            pawn._wadeWater ? { wade: true } : null
+        );
         this._abortIfStuck(settle, key);
         return false;
     }
@@ -1753,6 +1858,7 @@ class PartyAI {
             for (let i = 0; i < bills.length; i++) {
                 const bill = bills[i];
                 if (!S.billIsActive(bill, have)) continue;
+                if (bill.method === "smoke_hide") continue;
                 if (this._catalystReserved(f) && bill.method === "shell_simmer") continue;
                 const skipInputIds = this._reservedSimmerInputIds(f, bills, i, have, settle, S);
                 if (this._cookHasWork(f, bill, settle, S, skipInputIds)) {
@@ -1760,6 +1866,7 @@ class PartyAI {
                 }
             }
             const bill = S.activeBill(settle, uid, have);
+            if (bill?.method === "smoke_hide") return null;
             if (this._cookNeedsCleanup(f, settle, bill, S)) {
                 return { fire: f, bill: bill || this._leftoverCookBill(f) };
             }
@@ -2004,7 +2111,38 @@ class PartyAI {
                 break;
             }
         }
+        const fires = scene.settlementSys?.addedStations(settle, "campfire") || [];
+        for (const fire of fires) {
+            if (!fire?.active) continue;
+            const job = this._pickSmokeJob(fire, settle, S);
+            if (job) out.push(job);
+        }
         return out;
+    }
+
+    _pickSmokeJob(fire, settle, S) {
+        if (!fire || !S) return null;
+        const uid = fire.entry?.uid;
+        const have = (id) => this.pawn.scene.settlementSys?.countItem?.(settle, id) || 0;
+        const bills = S.billsOf(settle, uid);
+        for (let i = 0; i < bills.length; i++) {
+            const bill = bills[i];
+            if (bill.method !== "smoke_hide") continue;
+            if (!S.billIsActive(bill, have)) continue;
+            if (this._cookHasWork(fire, bill, settle, S)) {
+                return { kind: "smoke", fire, bill, station: fire, pri: 5 };
+            }
+        }
+        const leftover = { method: "smoke_hide", leftover: true };
+        const cook = fire.getCook?.();
+        const getItem = (id) => this.pawn.scene.getItem?.(id);
+        if (cook && (
+            S.cookInputReady(getItem, cook, leftover)
+            || S.cookOutputReady(getItem, cook, leftover)
+        )) {
+            return { kind: "smoke", fire, bill: leftover, station: fire, pri: 5 };
+        }
+        return null;
     }
 
     _rackHang(rack) {
@@ -2356,6 +2494,31 @@ class PartyAI {
         return best;
     }
 
+    _researchCircle(settle) {
+        const scene = this.pawn.scene;
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R) return null;
+        const list = scene.settlementSys?.paintingCirclesInRange?.(settle) || [];
+        const mine = this._myClaim(settle);
+        if (mine && mine.startsWith("thing:")) {
+            const held = list.find((t) => this._thingKey(t) === mine);
+            if (held?.active && !held.entry?.gone && !this._jobSkipped(mine)) return held;
+        }
+        let best = null;
+        let bestD = Infinity;
+        for (const t of list) {
+            if (!t?.active || t.entry?.gone) continue;
+            if (this._claimedByOther(settle, this._thingKey(t))) continue;
+            if (this._jobSkipped(this._thingKey(t))) continue;
+            const d = Math.hypot(this.pawn.x - t.x, this.pawn.y - t.y);
+            if (d < bestD) {
+                bestD = d;
+                best = t;
+            }
+        }
+        return best;
+    }
+
     _workInteractTiles() {
         const P = typeof Party !== "undefined" ? Party : null;
         const base = Number(this.pawn?.interactionRange) || P?.INTERACT_TILES || 4;
@@ -2497,6 +2660,29 @@ class PartyAI {
         this._markPathIgnore(target);
         const entry = target.entry || target;
         const def = target.meta || pawn.scene?.getThing?.(entry?.id);
+        const R = typeof Research !== "undefined" ? Research : null;
+        const paintStand = R?.isPaintingCircle?.(def, entry) && R.standWorldPos
+            ? (R.standWorldPos(entry) || R.standWorldPos(target))
+            : null;
+        if (paintStand) {
+            const slack = 3;
+            if (Math.hypot(pawn.x - paintStand.x, pawn.y - paintStand.y) <= slack) {
+                const facing = R.workFacing?.(entry);
+                if (facing) pawn.facing = facing;
+                pawn.x = paintStand.x;
+                pawn.y = paintStand.y;
+                pawn._physX = paintStand.x;
+                pawn._physY = paintStand.y;
+                pawn.body?.reset?.(paintStand.x, paintStand.y);
+                this._halt(pawn);
+                return true;
+            }
+            this._walkToward(
+                pawn, paintStand.x, paintStand.y, ts, false, delta,
+                pawn._wadeWater ? { wade: true, openRadius: 0 } : { openRadius: 0 }
+            );
+            return false;
+        }
         const stand = typeof Place !== "undefined" && Place.interactWorldPos
             ? Place.interactWorldPos(entry, ts || 16, def)
             : null;
@@ -2513,23 +2699,82 @@ class PartyAI {
             );
             return false;
         }
-        const p = this._approachPoint(target, ts);
-        const slack = 6;
-        const closeR = this._approachDist(target, ts) + slack;
-        const toStand = Math.hypot(pawn.x - p.x, pawn.y - p.y);
-        const toTarget = Math.hypot(
-            pawn.x - (Number(target.x) || 0),
-            pawn.y - (Number(target.y) || 0)
-        );
-        if (toStand <= slack || toTarget <= closeR) {
+        const tx = Number(target.x) || 0;
+        const ty = Number(target.y) || 0;
+        const cell = ts || 16;
+        const dist = Math.hypot(pawn.x - tx, pawn.y - ty);
+        if (dist <= cell * 2.4
+            && (!this._workBlockedToward(target, ts) || dist <= cell)) {
+            this._faceToward(pawn, tx, ty - 8);
             this._halt(pawn);
             return true;
         }
         this._walkToward(
-            pawn, p.x, p.y, ts, false, delta,
-            pawn._wadeWater ? { wade: true, openRadius: 0 } : { openRadius: 0 }
+            pawn, tx, ty, ts, false, delta,
+            pawn._wadeWater ? { wade: true } : null
         );
         return false;
+    }
+
+    _doResearch(thing, settle, ts, delta) {
+        const pawn = this.pawn;
+        const R = typeof Research !== "undefined" ? Research : null;
+        const entry = thing?.entry || thing;
+        if (!R || !entry || thing?.active === false) {
+            this._halt(pawn);
+            this._endWorkHold();
+            return;
+        }
+        const def = pawn.scene.getThing?.(entry.id) || thing.meta;
+        R.ensureEntry(entry, def);
+        if (!R.isEnabled(entry) || (!R.hasRoom(entry) && !R.inProgress(entry))) {
+            this._halt(pawn);
+            this._endWorkHold();
+            return;
+        }
+        const getItem = (id) => pawn.scene.getItem?.(id);
+        if (R.needsPigment(entry)) {
+            const found = this._findStack(settle, (s) => R.isPigment(getItem(s.id), s)
+                && R.allowsPigment(entry, s, getItem));
+            if (!found) {
+                this._halt(pawn);
+                this._endWorkHold();
+                return;
+            }
+            if (found.at !== pawn) {
+                this._clearPaintBar();
+                this._fetchCookPiece(found, ts, delta);
+                return;
+            }
+            if (!this._goOrAbort(thing, settle, this._thingKey(thing), ts, delta)) {
+                this._clearPaintBar();
+                return;
+            }
+            const piece = this._takeOne(found);
+            if (!piece || !R.startPaint(entry, piece.id)) {
+                if (piece) this._restorePiece(found, piece);
+                this._halt(pawn);
+                return;
+            }
+            thing.applyVisual?.();
+        }
+        if (!this._goOrAbort(thing, settle, this._thingKey(thing), ts, delta)) {
+            this._clearPaintBar();
+            return;
+        }
+        const now = pawn.scene.gameMinutes;
+        if (this._paintTickMin == null) this._paintTickMin = now;
+        let elapsed = R.minuteDelta(now, this._paintTickMin);
+        if (elapsed > 60) elapsed = 1;
+        this._paintTickMin = now;
+        if (elapsed > 0 && R.inProgress(entry)) {
+            const r = R.addPaintMinutes(entry, elapsed);
+            if (r.changed) thing.applyVisual?.();
+        }
+        this._setPaintBar(entry);
+        const facing = R.workFacing?.(entry);
+        if (facing) pawn.facing = facing;
+        this._halt(pawn);
     }
 
     _doGather(thing, settle, ts, delta) {
@@ -2737,6 +2982,24 @@ class PartyAI {
         return baskets[0] || null;
     }
 
+    _countStored(settle, itemId) {
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        const sys = this.pawn.scene.settlementSys;
+        if (!S || !sys) return 0;
+        return S.countStock(sys.addedBaskets(settle), itemId)
+            + S.countPawnStock(sys.settlersOf(settle.id), itemId);
+    }
+
+    _haulTakeQty(settle, stack) {
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!S?.haulTakeQty || !stack?.id) return Math.max(1, Number(stack?.quantity) || 1);
+        return S.haulTakeQty(
+            this._countStored(settle, stack.id),
+            S.stockTarget(settle, stack.id),
+            stack.quantity
+        );
+    }
+
     _haulDrop(settle) {
         const scene = this.pawn.scene;
         const S = typeof Settlement !== "undefined" ? Settlement : null;
@@ -2749,7 +3012,7 @@ class PartyAI {
             const held = drops.find((d) => d?.active && this._dropKey(d) === mine);
             if (held && this._settlerCanTakeDrop(held)) {
                 const stack = this._dropAsStack(held);
-                if (stack && this._pickHaulBasket(settle, stack)) return held;
+                if (stack && this._haulTakeQty(settle, stack) > 0 && this._pickHaulBasket(settle, stack)) return held;
             }
         }
         for (const d of drops) {
@@ -2759,7 +3022,7 @@ class PartyAI {
             if (this._jobSkipped(this._dropKey(d))) continue;
             if (!this._settlerCanTakeDrop(d)) continue;
             const stack = this._dropAsStack(d);
-            if (!stack || !this._pickHaulBasket(settle, stack)) continue;
+            if (!stack || this._haulTakeQty(settle, stack) <= 0 || !this._pickHaulBasket(settle, stack)) continue;
             const dist = Math.hypot(this.pawn.x - d.x, this.pawn.y - d.y);
             if (dist < bestD) {
                 bestD = dist;
@@ -2975,18 +3238,19 @@ class PartyAI {
             this._failHaul(settle, key);
             return;
         }
-        if (!this._goOrAbort(drop, settle, key, ts, delta)) return;
+        if (!this._goToDrop(drop, settle, key, ts, delta)) return;
         if (!this._settlerCanTakeDrop(drop)) {
             this._depositKeepGear(settle, !!this._workScan?.keepBandage);
         }
         const stack = this._dropAsStack(drop);
-        const basket = stack ? this._pickHaulBasket(settle, stack) : null;
+        const take = stack ? this._haulTakeQty(settle, stack) : 0;
+        const basket = take > 0 ? this._pickHaulBasket(settle, stack) : null;
         if (!this._settlerCanTakeDrop(drop) || !stack || !basket) {
             this._failHaul(settle, key);
             return;
         }
         const took = typeof drop.tryPickup === "function"
-            ? drop.tryPickup(pawn)
+            ? drop.tryPickup(pawn, take)
             : !!drop.pickUpBy?.(pawn);
         if (!took) {
             this._failHaul(settle, key);
@@ -3533,14 +3797,13 @@ class PartyAI {
 
         const cat = fire.getCatalyst?.();
         if (!S.isCookTool(getItem, cat, method)) {
-            if (cat && (cook || this._catalystReserved(fire))) {
+            if (cat && cook) {
                 this._halt(pawn);
                 return;
             }
-            if (cat && !cook) {
+            if (cat) {
                 if (!this._goToFireStand(fire, ts, delta)) return;
-                this._takeLeftoverStick(fire, settle, ts, delta);
-                return;
+                if (!this._takeLeftoverStick(fire, settle, ts, delta)) return;
             }
             const found = this._findCookTool(settle, S, method);
             if (!found) {
@@ -3704,6 +3967,10 @@ class PartyAI {
             return;
         }
         const kind = job.kind;
+        if (kind === "smoke" || job.bill?.method === "smoke_hide") {
+            this._doCook(job, settle, ts, delta);
+            return;
+        }
         if (kind === "bench") {
             this._doBenchBill(job, settle, ts, delta);
             return;
@@ -3838,7 +4105,7 @@ class PartyAI {
         }
         this.pawn._wadeWater = true;
         const key = this._dropKey(drop);
-        if (!this._goOrAbort(drop, settle, key, ts, delta)) return;
+        if (!this._goToDrop(drop, settle, key, ts, delta)) return;
         const took = typeof drop.tryPickup === "function"
             ? drop.tryPickup(this.pawn)
             : !!drop.pickUpBy?.(this.pawn);

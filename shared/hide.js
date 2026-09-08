@@ -135,6 +135,14 @@
     function slotAccepts(thingDef, itemDef) {
         const accept = thingDef?.storage?.accept;
         if (accept === "hide") return isHide(itemDef);
+        if (accept === "pigment") {
+            let R = typeof Research !== "undefined" ? Research : null;
+            if (!R && typeof require === "function") {
+                try { R = require("./research"); } catch (_) { R = null; }
+            }
+            if (R?.isPigment) return R.isPigment(itemDef);
+            return !!(itemDef?.pigment);
+        }
         if (isDryingRack(thingDef)) return isHide(itemDef);
         return true;
     }

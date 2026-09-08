@@ -789,7 +789,8 @@ class Chunk {
             } else if (this.scene.getThing(meta.id)?.craftStation) {
                 thing = new CraftStation(this.scene, meta);
             } else if (
-                Array.isArray(meta.slots)
+                (typeof Research !== "undefined" && Research.isPaintingCircle?.(this.scene.getThing(meta.id), meta))
+                || Array.isArray(meta.slots)
                 || this.scene.getThing(meta.id)?.storage
             ) {
                 thing = Storage.create(this.scene, meta);

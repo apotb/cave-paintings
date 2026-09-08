@@ -2171,3 +2171,147 @@ test("waking from a lean-to clears prone so the player can attack", () => {
     world.handleAction(pawn.id, { type: Protocol.Actions.ATTACK, angle: 0, pawnId: pawn.id });
     assert.ok(pawn.creature.attackTimer > 0, "should start a melee swing after waking");
 });
+
+function fillGrass(world) {
+    const n = 8 * 8;
+    for (const c of world.chunks.values()) {
+        c.tiles = Array(n).fill("grass");
+    }
+}
+
+test("cannot place painting circle outside owned settlement", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    fillGrass(world);
+    pawn.inventory[0] = { id: "painting_circle", quantity: 1 };
+    pawn.hotbarIndex = 0;
+    world.drainEvents();
+    world.handleAction(pawn.id, { type: Protocol.Actions.PLACE, tx: 2, ty: 1 });
+    assert.equal(pawn.inventory[0]?.id, "painting_circle");
+    const logs = world.drainEvents().filter((e) => e.kind === "combat_log");
+    assert.ok(logs.some((e) => /Must be placed in your settlement/.test(e.text || "")));
+});
+
+test("can place painting circle inside owned settlement", () => {
+    const Research = require("../shared/research");
+    const { world, pawn, Protocol } = createTestWorld();
+    fillGrass(world);
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    pawn.inventory[0] = { id: "painting_circle", quantity: 1 };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, { type: Protocol.Actions.PLACE, tx: 2, ty: 1 });
+    assert.ok(!pawn.inventory[0] || !(pawn.inventory[0].quantity > 0));
+    const chunk = originChunk(world);
+    const circle = (chunk.things || []).find((t) => t.id === "painting_circle");
+    assert.ok(circle);
+    assert.equal(circle.painted, 0);
+    assert.equal(circle.locked, undefined);
+    assert.equal(circle.slots, undefined);
+    assert.equal(circle.paintEnabled, true);
+    assert.equal(Research.hasTech(settle, "painting"), true);
+    assert.equal(world.isBlocked(circle.x, circle.y), false);
+});
+
+test("unlockTech spends from the settlement pool without changing painted counts", () => {
+    const Research = require("../shared/research");
+    const { world, pawn, Protocol } = createTestWorld();
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    const chunk = originChunk(world);
+    const a = { uid: "pc-a", id: "painting_circle", x: pawn.x, y: pawn.y, painted: 2 };
+    const b = { uid: "pc-b", id: "painting_circle", x: pawn.x + 8, y: pawn.y, painted: 2 };
+    Research.ensureEntry(a);
+    Research.ensureEntry(b);
+    chunk.things.push(a, b);
+    assert.equal(Research.recipeUnlocked("stick_frame", settle), false);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "unlockTech",
+        settlementId: settle.id,
+        techId: "basic_furniture"
+    });
+    assert.equal(Research.hasTech(settle, "basic_furniture"), true);
+    assert.equal(a.painted, 2);
+    assert.equal(b.painted, 2);
+    assert.equal(Research.paintedTotal([a, b]), 4);
+    assert.equal(Research.availableTotal([a, b], settle), 2);
+    assert.equal(Research.recipeUnlocked("stick_frame", settle), true);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "unlockTech",
+        settlementId: settle.id,
+        techId: "hand_axe"
+    });
+    assert.equal(Research.hasTech(settle, "hand_axe"), false);
+    assert.equal(Research.availableTotal([a, b], settle), 2);
+});
+
+test("cannot pick up a painting circle that would drop below spent research", () => {
+    const Research = require("../shared/research");
+    const { world, pawn, Protocol } = createTestWorld();
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    const chunk = originChunk(world);
+    const circles = [];
+    for (let i = 0; i < 4; i++) {
+        const e = {
+            uid: `pc-${i}`,
+            id: "painting_circle",
+            x: pawn.x + i * 8,
+            y: pawn.y,
+            painted: 6,
+            locked: 0
+        };
+        Research.ensureEntry(e);
+        circles.push(e);
+        chunk.things.push(e);
+    }
+    Research.unlock(settle, "writing");
+    Research.unlock(settle, "agriculture");
+    assert.equal(Research.spentPoints(settle), 20);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.STORAGE,
+        op: "pickup",
+        uid: "pc-0"
+    });
+    assert.ok(chunk.things.some((t) => t.uid === "pc-0"));
+    assert.equal(chunk.things.filter((t) => t.id === "painting_circle").length, 4);
+});
+
+test("can pick up a painting circle when remaining paintings cover spent research", () => {
+    const Research = require("../shared/research");
+    const { world, pawn, Protocol } = createTestWorld();
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    const chunk = originChunk(world);
+    const a = {
+        uid: "pc-keep-a",
+        id: "painting_circle",
+        x: pawn.x,
+        y: pawn.y,
+        painted: 6,
+        locked: 0
+    };
+    const b = {
+        uid: "pc-keep-b",
+        id: "painting_circle",
+        x: pawn.x + 8,
+        y: pawn.y,
+        painted: 6,
+        locked: 0
+    };
+    Research.ensureEntry(a);
+    Research.ensureEntry(b);
+    chunk.things.push(a, b);
+    Research.unlock(settle, "agriculture");
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.STORAGE,
+        op: "pickup",
+        uid: "pc-keep-a"
+    });
+    assert.equal(chunk.things.some((t) => t.uid === "pc-keep-a"), false);
+    assert.ok(chunk.things.some((t) => t.uid === "pc-keep-b"));
+    assert.ok(pawn.inventory.some((s) => s && s.id === "painting_circle"));
+    assert.equal(Research.paintedTotal([b]), 6);
+    assert.equal(Research.availableTotal([b], settle), 1);
+});

@@ -240,7 +240,7 @@ class CampfirePanel {
             if (!this._destroyEnabled) {
                 this.destroyRect.setFillStyle(BG, 1);
                 this.destroyRect.setStrokeStyle(strokeW, OUTLINE);
-                this.destroyText.setColor("#d4c4a8");
+                this.destroyText.setColor("#6a5a4a");
                 return;
             }
             if (this._destroyPressing) {
@@ -367,6 +367,7 @@ class CampfirePanel {
         if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
         if (this.scene.storagePanel?.visible) this.scene.storagePanel.close();
         if (this.scene.leanToPanel?.visible) this.scene.leanToPanel.close();
+        if (this.scene.paintingCirclePanel?.visible) this.scene.paintingCirclePanel.close();
         this.scene.closeCraftStationMenu?.();
 
         if (this.campfire && this.campfire !== campfire) this._notifyCampfire("leave");
@@ -466,9 +467,9 @@ class CampfirePanel {
 
         const canDestroy = !this.campfire.isLit?.();
         this._destroyEnabled = canDestroy;
-        this.destroyBtn?.setVisible(canDestroy);
-        if (canDestroy) this._syncDestroyHitArea(true);
-        else disableInteractiveIfOn(this.destroyRect);
+        this.destroyBtn?.setVisible(true);
+        this.destroyBtn?.setAlpha(canDestroy ? 1 : 0.35);
+        this._syncDestroyHitArea(true);
         this._syncDestroyHover();
         this._placeActionRow();
         this.refreshHeatLabel();
@@ -670,7 +671,7 @@ class CampfirePanel {
         this.scene.settlementSys?.placeAddActionRow(this._settleUi, this.destroyBtn, {
             y: row.y, gap: row.gap, addW: row.bh, actionW: row.bw,
             addOn: !!this._settleUi?.btn?.visible,
-            actionOn: !!this.destroyBtn?.visible
+            actionOn: this.visible
         });
     }
 
@@ -700,6 +701,10 @@ class CampfirePanel {
             return;
         }
         ensurePointerInteractive(this.destroyRect);
+        if (this.destroyRect.input) {
+            this.destroyRect.input.cursor = this._destroyEnabled ? "pointer" : "default";
+            this.destroyRect.input.useHandCursor = !!this._destroyEnabled;
+        }
         if (this.destroyRect.input?.hitArea?.setTo) {
             this.destroyRect.input.hitArea.setTo(0, 0, bw, bh);
         }

@@ -501,17 +501,22 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const netProg = typeof this._netWorkChannel?.progress === "number"
             ? this._netWorkChannel.progress
             : null;
+        const paintProg = typeof this._paintChannel?.progress === "number"
+            ? Phaser.Math.Clamp(this._paintChannel.progress, 0, 1)
+            : null;
         if (this.isControlled()) {
             this._hideOwnChannelBar();
             return;
         }
-        if (netProg == null && !ch) {
+        if (netProg == null && !ch && paintProg == null) {
             this._hideOwnChannelBar();
             return;
         }
         const frac = netProg != null
             ? Phaser.Math.Clamp(netProg, 0, 1)
-            : Phaser.Math.Clamp(1 - ch.remaining / ch.max, 0, 1);
+            : ch
+                ? Phaser.Math.Clamp(1 - ch.remaining / ch.max, 0, 1)
+                : paintProg;
         const scene = this.scene;
         if (typeof scene._ensureWorldHudBar === "function") {
             this._ownChannelBar = scene._ensureWorldHudBar(this._ownChannelBar);
@@ -3474,10 +3479,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this.role === "wanderer") return;
 
         const dt = delta || (this.scene.game.loop.delta || 16);
-        const paused = !!this.scene._gamePaused;
+        const paused = !!this.scene._gamePaused || !!this.scene._worldSimFrozen;
         const composing = !!this.scene.combatLog?.isComposing?.();
         const knapping = !!this.scene.knappingPanel?.visible;
         const naming = !!this.scene.settlementSys?.isNaming?.();
+        const researchOpen = !!this.scene.researchTreePanel?.visible;
         const controlled = this.isControlled?.();
 
         // SP pause freezes everyone; channels still finish if we got here in MP.
@@ -3558,13 +3564,14 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             } else {
                 this.syncSortDepth();
             }
+            this.syncPawnChannelBar?.();
             this.syncFxRoot?.();
             this.syncNameLabel?.();
             this._syncChatBubble?.();
             return;
         }
 
-        if (composing || knapping || naming) {
+        if (composing || knapping || naming || researchOpen) {
             this.setVelocity(0, 0);
             this._iceVx = 0;
             this._iceVy = 0;

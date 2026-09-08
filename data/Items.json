@@ -18,6 +18,7 @@
         "maxStack": 99,
         "weight": 0.02,
         "fillColor": "#3B6FE0",
+        "pigment": true,
         "food": {
             "kc": 10,
             "spoil": 24,
@@ -221,6 +222,8 @@
         "key": "cactus_flower",
         "maxStack": 99,
         "weight": 0.05,
+        "pigment": true,
+        "fillColor": "#D666D4",
         "beauty": 1,
         "equip": {
             "slot": "head",
@@ -583,6 +586,22 @@
         }
     },
     {
+        "id": "pitch",
+        "name": "Pitch",
+        "key": "pitch",
+        "maxStack": 99,
+        "weight": 0.04,
+        "storageCategory": "materials/wood",
+        "tooltip": [
+            "Binds a stone head to a spear shaft"
+        ],
+        "recipe": {
+            "REQUIRE_THING": "campfire",
+            "leaf": 12,
+            "stick": 3
+        }
+    },
+    {
         "id": "sharp_stick",
         "name": "Sharp Stick",
         "key": "sharp_stick",
@@ -768,7 +787,8 @@
                 "qty": 1,
                 "toolClass": "spear_tip"
             },
-            "leaf_cord": 2
+            "leaf_cord": 2,
+            "pitch": 1
         }
     },
     {
@@ -833,7 +853,8 @@
                 "qty": 1,
                 "toolClass": "spear_tip"
             },
-            "leaf_cord": 2
+            "leaf_cord": 2,
+            "pitch": 1
         }
     },
     {
@@ -1267,6 +1288,23 @@
                 "qty": 2,
                 "hideStage": "dried"
             }
+        }
+    },
+    {
+        "id": "painting_circle",
+        "name": "Painting Circle",
+        "key": "painting_circle",
+        "maxStack": 99,
+        "place": {
+            "thing": "painting_circle"
+        },
+        "tooltip": [
+            "Create paintings for research",
+            "Place in your settlement"
+        ],
+        "recipe": {
+            "pebble": 12,
+            "leaf_cord": 6
         }
     },
     {

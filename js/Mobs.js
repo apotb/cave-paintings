@@ -1049,9 +1049,11 @@ class DroppedItem extends Mob {
 
     /**
      * Try to move this drop into the player's inventory.
+     * @param {object|null} pawn
+     * @param {number|null} [maxQty] cap how many to take (settlers respecting stock)
      * @returns {boolean} true if any quantity was taken
      */
-    tryPickup(pawn = null) {
+    tryPickup(pawn = null, maxQty = null) {
         if (!this.active || !this.item || !(this.quantity > 0)) return false;
         const player = pawn || this.scene.player;
         if (this.scene.simAuth()) {
@@ -1122,7 +1124,9 @@ class DroppedItem extends Mob {
             { spoilAt: this.spoilAt, spoilLeft: this.spoilLeft },
             now
         );
-        const remaining = player.gainItem(this.item, this.quantity, spoilLeft, {
+        const cap = Math.floor(Number(maxQty) || 0);
+        const take = cap > 0 ? Math.min(before, cap) : before;
+        const leftover = player.gainItem(this.item, take, spoilLeft, {
             dryProgress: this.dryProgress,
             soakProgress: (() => {
                 const pickup = {
@@ -1134,13 +1138,11 @@ class DroppedItem extends Mob {
             })(),
             temp: this.temp
         });
-        if (remaining === before) return false;
+        if (leftover === take) return false;
         this.scene.hotbar.dirty = true;
-        if (remaining === 0) this.destroy();
-        else {
-            this.quantity = remaining;
-            this.syncToEntry();
-        }
+        this.quantity = before - (take - leftover);
+        if (this.quantity <= 0) this.destroy();
+        else this.syncToEntry();
         return true;
     }
 

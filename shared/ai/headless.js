@@ -656,6 +656,9 @@
             this._avoidSide = Math.random() < 0.5 ? -1 : 1;
             this._stuckMs = 0;
             this._jamMs = 0;
+            this._heldSlide = null;
+            this._walkCmdX = null;
+            this._walkCmdY = null;
             this._jamPx = null;
             this._jamPy = null;
             this._lastPx = null;
@@ -761,10 +764,14 @@
                 if (work?.walkTo && Number.isFinite(work.walkTo.x) && Number.isFinite(work.walkTo.y)) {
                     const gx = work.walkTo.x;
                     const gy = work.walkTo.y;
-                    if (this._pathGoalX != null
-                        && (Math.abs(this._pathGoalX - gx) > 24 || Math.abs((this._pathGoalY ?? 0) - gy) > 24)) {
+                    if (this._walkCmdX != null
+                        && (Math.abs(this._walkCmdX - gx) > 24 || Math.abs((this._walkCmdY ?? 0) - gy) > 24)) {
                         this._path = null;
+                        this._pathGoalX = null;
+                        this._pathGoalY = null;
                     }
+                    this._walkCmdX = gx;
+                    this._walkCmdY = gy;
                     const prevOpen = this._pathOpenRadius;
                     if (Object.prototype.hasOwnProperty.call(work, "openRadius")) {
                         this._pathOpenRadius = work.openRadius;
@@ -1149,10 +1156,8 @@
         _walkToward(tx, ty, sprint, world, delta) {
             const mob = this.mob;
             const settler = mob.role === "settler" || !!mob.homeSettlementId;
-            const embedded = !!this._overlappingThing(world)
-                || !!(world?.poseBlocked && world.poseBlocked(mob, mob.x, mob.y, 0));
-            if (embedded) this._nudgeOutOfThing(world, true);
-            const overlap = embedded ? this._overlappingThing(world) : null;
+            const overlap = this._overlappingThing(world);
+            if (overlap) this._nudgeOutOfThing(world, false);
             const from = { x: mob.x, y: mob.y };
             const pad = settler ? 2 : 1;
             const blocked = (x, y) => {
@@ -1165,7 +1170,7 @@
             let openRadius = this._pathOpenRadius;
             // Local window only — a long haul must not A* the whole 32-tile camp
             // every replan (that hitchs FPS when several settlers walk at once).
-            const local = Math.min(16, Math.max(8, Math.ceil(destDistTiles) + 6));
+            const local = Math.min(10, Math.max(8, Math.ceil(destDistTiles) + 6));
             if (settler) {
                 maxRange = local;
                 if (openRadius == null) openRadius = 2;
@@ -1176,7 +1181,7 @@
             const to = { x: tx, y: ty };
             const farLook = settler || destDistTiles > 12;
             const now = Date.now();
-            const allowReplan = !this._planAt || now - this._planAt >= 400;
+            const allowReplan = !this._planAt || now - this._planAt >= 800;
             const steered = Path.steerToward({
                 from,
                 to,
@@ -1204,39 +1209,76 @@
             this._lastPx = steered.lastFrom?.x;
             this._lastPy = steered.lastFrom?.y;
             this._lastWpDist = steered.lastWpDist;
+            const destD = Math.hypot(tx - mob.x, ty - mob.y);
+            // Jam = feet did not move. destD stalls on every detour (hauling
+            // around camp) and used to clear the path every 650ms → A* spike.
             const moved = this._jamPx != null
-                && Math.hypot(mob.x - this._jamPx, mob.y - this._jamPy) > 0.45;
+                ? Math.hypot(mob.x - this._jamPx, mob.y - this._jamPy)
+                : 1;
             this._jamPx = mob.x;
             this._jamPy = mob.y;
-            const jammed = !!overlap || (this._stuckMs > 280 && !moved);
-            if (jammed && !moved) this._jamMs = (this._jamMs || 0) + (delta || 16);
-            else this._jamMs = 0;
-            if (this._jamMs > 900 && this._nudgeOutOfThing(world, true)) {
+            if (steered.arrived || destD < 12 || moved > 0.25) {
                 this._jamMs = 0;
-                this._path = null;
-                this._pathGoalX = null;
-                this._pathGoalY = null;
-                return;
+            } else {
+                this._jamMs = (this._jamMs || 0) + (delta || 16);
+                if (this._jamMs > 650 && now - (this._unstuckAt || 0) > 800) {
+                    this._unstuckAt = now;
+                    this._jamMs = 0;
+                    if (overlap && (this._nudgeOutOfThing(world, true) || this._unstickPose(world))) {
+                        this._path = null;
+                        this._pathGoalX = null;
+                        this._pathGoalY = null;
+                        this._heldSlide = null;
+                        return;
+                    }
+                }
             }
             if (steered.arrived) {
-                this._idle();
+                mob.setDesiredVel?.(0, 0);
+                mob.isSprinting = false;
+                this._heldSlide = null;
+                this._jamMs = 0;
                 return;
             }
             let nx = steered.nx;
             let ny = steered.ny;
-            if (jammed && !moved && this._jamMs > 120) {
-                const slide = this._slideAround(nx, ny, world, pad);
-                if (slide) {
-                    nx = slide.nx;
-                    ny = slide.ny;
+            const look = 4;
+            const stepBlocked = blocked(mob.x + nx * look, mob.y + ny * look);
+            if (stepBlocked) {
+                const xOk = !blocked(mob.x + nx * look, mob.y);
+                const yOk = !blocked(mob.x, mob.y + ny * look);
+                if (xOk && !yOk) {
+                    ny = 0;
+                    nx = nx ? (nx > 0 ? 1 : -1) : 0;
+                    this._heldSlide = null;
+                } else if (yOk && !xOk) {
+                    nx = 0;
+                    ny = ny ? (ny > 0 ? 1 : -1) : 0;
+                    this._heldSlide = null;
+                } else {
+                    const held = this._heldSlide;
+                    const heldOk = held && !blocked(mob.x + held.nx * look, mob.y + held.ny * look);
+                    if (heldOk) {
+                        nx = held.nx;
+                        ny = held.ny;
+                    } else {
+                        const slide = this._slideAround(nx, ny, world, pad);
+                        if (slide) {
+                            this._heldSlide = slide;
+                            nx = slide.nx;
+                            ny = slide.ny;
+                        }
+                    }
                 }
+            } else {
+                this._heldSlide = null;
             }
-            if (!this._path || !this._path.length) {
-                const sep = this._separation();
+            if (settler) {
+                const sep = this._separation(0.45);
                 const sl = Math.hypot(sep.sx, sep.sy);
-                if (sl > 0.15) {
-                    nx += (sep.sx / sl) * 0.35;
-                    ny += (sep.sy / sl) * 0.35;
+                if (sl > 0.2) {
+                    nx += (sep.sx / sl) * 0.5;
+                    ny += (sep.sy / sl) * 0.5;
                     const nlen = Math.hypot(nx, ny) || 1;
                     nx /= nlen;
                     ny /= nlen;
@@ -1389,7 +1431,7 @@
             };
             const ox = mob.x;
             const oy = mob.y;
-            for (let r = 4; r <= 96; r += 4) {
+            for (let r = 4; r <= 48; r += 4) {
                 const n = Math.max(8, Math.round(r));
                 for (let i = 0; i < n; i++) {
                     const a = (i / n) * Math.PI * 2;
@@ -1500,8 +1542,10 @@
 
         _face(x, y) {
             const mob = this.mob;
-            if (Math.abs(x) > Math.abs(y)) mob.facing = x > 0 ? "right" : "left";
-            else if (y !== 0) mob.facing = y > 0 ? "down" : "up";
+            const ax = Math.abs(x);
+            const ay = Math.abs(y);
+            if (ax > ay + 0.22) mob.facing = x > 0 ? "right" : "left";
+            else if (ay > ax + 0.22) mob.facing = y > 0 ? "down" : "up";
         }
     }
 

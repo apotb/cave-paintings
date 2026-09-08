@@ -19,6 +19,7 @@
         itemsList: null,
         mobsList: null,
         thingsList: null,
+        techsList: null,
         _ready: false
     };
 
@@ -38,9 +39,19 @@
         store.itemsList = Array.isArray(payload.items) ? payload.items : [];
         store.mobsList = Array.isArray(payload.mobs) ? payload.mobs : [];
         store.thingsList = Array.isArray(payload.things) ? payload.things : [];
+        store.techsList = Array.isArray(payload.techs) ? payload.techs : [];
         store.itemsById = _indexById(store.itemsList);
         store.mobsById = _indexById(store.mobsList);
         store.thingsById = _indexById(store.thingsList);
+        if (typeof Research !== "undefined" && Research.setTechs) {
+            Research.setTechs(store.techsList);
+        } else {
+            try {
+                if (typeof require === "function") {
+                    require("./research").setTechs(store.techsList);
+                }
+            } catch (_) { /* optional in tests before research.js exists */ }
+        }
         const planCount = store.bodyPlans ? Object.keys(store.bodyPlans).length : 0;
         store._ready = planCount > 0;
         return store;
@@ -68,7 +79,8 @@
             hediffs: json.get("hediffs") || {},
             items: json.get("items") || [],
             mobs: json.get("mobs") || [],
-            things: json.get("things") || []
+            things: json.get("things") || [],
+            techs: json.get("techs") || []
         });
     }
 
@@ -88,7 +100,8 @@
             hediffs: read("Hediffs.json"),
             items: read("Items.json"),
             mobs: read("Mobs.json"),
-            things: read("Things.json")
+            things: read("Things.json"),
+            techs: read("Techs.json")
         });
     }
 

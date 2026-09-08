@@ -63,6 +63,19 @@
             }
             return loads;
         }
+        if (t.paintingCircle) {
+            const loads = [{
+                key: t.key,
+                path: `assets/things/${t.key}/${t.key}.png`
+            }];
+            for (let i = 1; i <= 6; i++) {
+                loads.push({
+                    key: `${t.key}_${i}`,
+                    path: `assets/things/${t.key}/${i}.png`
+                });
+            }
+            return loads;
+        }
         if (t.anim) {
             return [{
                 key: t.key,

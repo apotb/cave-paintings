@@ -907,6 +907,9 @@ class Storage extends Thing {
         if (typeof Hide !== "undefined" && Hide.isDryingRack(def, entry)) {
             return new DryingRack(scene, entry);
         }
+        if (typeof Research !== "undefined" && Research.isPaintingCircle?.(def, entry)) {
+            return new PaintingCircle(scene, entry);
+        }
         return new Storage(scene, entry);
     }
 }
@@ -1276,5 +1279,126 @@ class SettlingStone extends Thing {
         if (knap) return knap;
         const settle = this.scene.settlementSys?.byStoneUid?.(this.entry?.uid);
         return settle?.name || this.meta?.name || "Settling Stone";
+    }
+}
+
+class PaintingCircle extends Thing {
+    constructor(scene, entry) {
+        super(scene, entry.x, entry.y, entry.id, entry);
+        this.entry = entry;
+        if (typeof Research !== "undefined") Research.ensureEntry(this.entry, this.meta);
+        if (!this._paintOverlays) this._paintOverlays = [];
+        this.setInteractive({ cursor: "pointer" });
+        this.on("pointerover", (pointer) => {
+            if (this.scene.paintingCirclePanel?.visible && this.scene.paintingCirclePanel.circle === this
+                && this.scene.pointerOverWorldUi?.(pointer)) return;
+            this.scene.showTooltip(
+                () => this.tooltipText(),
+                pointer.x,
+                pointer.y,
+                this
+            );
+        });
+        this.on("pointerout", () => {
+            if (this.scene._hoverTarget === this) this.scene._hoverTarget = null;
+            if (this.scene._tooltipTarget === this) this.scene.hideTooltip();
+        });
+        this.on("pointerdown", (pointer) => {
+            if (pointer.rightButtonDown()) return;
+            if (this.scene.pointerOverWorldUi?.(pointer)) return;
+            if (this.scene.restBlocksWorldUi?.()) return;
+            if (!this.inRange()) return;
+            this.scene.paintingCirclePanel?.toggle(this);
+        });
+        this.on("destroy", () => {
+            this._destroyOverlays();
+            if (this.scene.paintingCirclePanel?.circle === this) {
+                this.scene.paintingCirclePanel.close();
+            }
+        });
+        this.applyVisual();
+    }
+
+    inRange(pawn) {
+        const p = pawn || this.scene.player;
+        if (!p) return false;
+        const dx = this.x - p.x;
+        const dy = this.y - p.y;
+        const r = this.scene.tileSize * (p.interactionRange || 4);
+        return dx * dx + dy * dy <= r * r;
+    }
+
+    _destroyOverlays() {
+        for (const img of this._paintOverlays || []) img?.destroy?.();
+        this._paintOverlays = [];
+    }
+
+    /** Floor decal: always under creatures (mainLayer), over tiles, under drops. */
+    _toFloorLayer() {
+        const layer = this.scene.groundLayer;
+        if (layer && this.displayList !== layer) layer.add(this);
+        this.setDepth(0.5);
+        for (let i = 0; i < (this._paintOverlays || []).length; i++) {
+            const img = this._paintOverlays[i];
+            if (!img) continue;
+            if (layer && img.displayList !== layer) layer.add(img);
+            img.setDepth(0.5 + (i + 1) * 0.01);
+        }
+    }
+
+    applyVisual() {
+        super.applyVisual();
+        if (typeof Research !== "undefined") Research.ensureEntry(this.entry, this.meta);
+        const n = typeof Research !== "undefined" ? Research.paintedCount(this.entry) : 0;
+        const keyBase = this.meta?.key || "painting_circle";
+        if (!this._paintOverlays) this._paintOverlays = [];
+        while (this._paintOverlays.length < 6) {
+            const img = this.scene.add.image(this.x, this.y, "slot")
+                .setOrigin(0.5, 1)
+                .setVisible(false);
+            this._paintOverlays.push(img);
+        }
+        for (let i = 0; i < 6; i++) {
+            const img = this._paintOverlays[i];
+            if (!img) continue;
+            img.setPosition(this.x, this.y);
+            const tex = typeof Research !== "undefined"
+                ? Research.overlayKey(i + 1, keyBase)
+                : `${keyBase}_${i + 1}`;
+            if (i < n && this.scene.textures.exists(tex)) {
+                img.setTexture(tex).setVisible(true);
+                const tint = typeof Research !== "undefined" && Research.overlayTint
+                    ? Research.overlayTint(this.entry, i, (id) => this.scene.getItem?.(id))
+                    : 0xffffff;
+                img.setTint(tint);
+            } else {
+                img.clearTint();
+                img.setVisible(false);
+            }
+        }
+        this._toFloorLayer();
+        if (this.body) this._positionBody();
+        this._syncInteractMark();
+    }
+
+    tooltipText() {
+        if (typeof Research !== "undefined") Research.ensureEntry(this.entry, this.meta);
+        const painted = typeof Research !== "undefined" ? Research.paintedCount(this.entry) : 0;
+        const max = (typeof Research !== "undefined" && Research.PAINT_MAX) || 6;
+        const name = this.meta?.name || "Painting Circle";
+        const lines = [`${name} (${painted}/${max})`];
+        const prog = Number(this.entry?.paintProgress) || 0;
+        if (this.entry?.paintStarted || prog > 0) {
+            const num = painted + 1;
+            lines.push(`Painting ${num} (${Math.floor(prog * 100)}%)`);
+        }
+        const pigmentId = typeof Research !== "undefined" ? Research.currentPigmentId(this.entry) : this.entry?.paintPigment;
+        if (pigmentId) {
+            const name = this.scene.getItem?.(pigmentId)?.name || pigmentId;
+            lines.push(`Pigment: ${name}`);
+        } else {
+            lines.push("Pigment: empty");
+        }
+        return lines.join("\n");
     }
 }

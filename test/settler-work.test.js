@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const { createTestWorld, originChunk } = require("./helpers/simWorld");
 const { loadDefs, restoreRng } = require("./helpers/load");
 const Settlement = require("../shared/settlement");
+const Research = require("../shared/research");
 const Place = require("../shared/place");
 const Hide = require("../shared/hide");
 const Sleep = require("../shared/sleep");
@@ -332,6 +333,40 @@ test("dedicated settler chops a nearby tree", () => {
     assert.match(pub.activity || "", /Chopping/i);
 });
 
+test("dedicated settler stops chopping as soon as chop is turned off", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{
+            id: "blank",
+            quantity: 1,
+            toolClass: "chopper",
+            knapQuality: "rough",
+            knapDamage: 8
+        }, null, null, null, null]
+    });
+    rec.hotbarIndex = 0;
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 1, leather: 0, gather: 0, haul: 0 };
+    const chunk = originChunk(world);
+    const tree = { uid: "tree-off", id: "tree", x: rec.x + 24, y: rec.y, chopProgress: 0 };
+    chunk.things.push(tree);
+    let chopping = false;
+    for (let i = 0; i < 80; i++) {
+        world.tick(50);
+        if (/Chopping/i.test(rec._settlerAct || "") || rec._busyJob?.type === "chop") {
+            chopping = true;
+            break;
+        }
+    }
+    assert.equal(chopping, true, "settler should start chopping");
+    settle.jobs[rec.id].chop = 0;
+    workOnce(world, rec);
+    assert.notEqual(rec._busyJob?.type, "chop");
+    assert.equal(rec._workHold, false);
+    assert.equal(/Chopping/i.test(rec._settlerAct || "Idle"), false);
+    assert.equal(rec._chopIgnoreUid, null);
+});
+
 test("chopper walks around a stump blocking the preferred stand", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {
@@ -524,6 +559,21 @@ test("dedicated settler does not chop past the log stock target", () => {
     assert.equal(Number(tree.chopProgress) || 0, 0);
 });
 
+test("settler picks up a haul drop sitting in a stump hitbox", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    addBasket(world, settle, rec.x, rec.y);
+    const chunk = originChunk(world);
+    const dx = rec.x + 24;
+    const dy = rec.y;
+    chunk.things.push({ uid: "stump-haul", id: "tree_stump", x: dx, y: dy });
+    chunk.drops.push({ uid: "log-stump", id: "log", quantity: 2, x: dx, y: dy });
+    workOnce(world, rec);
+    const held = rec.inventory.some((s) => s && s.id === "log");
+    const gone = !chunk.drops.some((d) => d.uid === "log-stump");
+    assert.ok(held || gone, "should pick up the log beside the stump");
+});
+
 test("dedicated settler hauls a ground drop into a basket", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn);
@@ -544,6 +594,43 @@ test("dedicated settler hauls a ground drop into a basket", () => {
     assert.ok(inInv || inBasket, "sticks should leave the ground");
 });
 
+test("dedicated settler does not haul sticks past the stock target", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    basket.slots[0] = { id: "stick", quantity: 30 };
+    const chunk = originChunk(world);
+    chunk.drops.push({ uid: "d-over", id: "stick", quantity: 8, x: rec.x, y: rec.y });
+    chunk.drops.push({ uid: "d-leaf", id: "leaf", quantity: 6, x: rec.x, y: rec.y });
+    workOnce(world, rec);
+    workOnce(world, rec);
+    workOnce(world, rec);
+    assert.ok(chunk.drops.some((d) => d.uid === "d-over"), "stick pile stays at the stock cap");
+    const sticks = [...(rec.inventory || []), ...(rec.overflow || []), ...(basket.slots || [])]
+        .reduce((n, s) => n + (s?.id === "stick" ? (s.quantity || 1) : 0), 0);
+    assert.ok(sticks <= 30, "should not stock sticks past the default 30");
+    const leaves = [...(rec.inventory || []), ...(rec.overflow || []), ...(basket.slots || [])]
+        .reduce((n, s) => n + (s?.id === "leaf" ? (s.quantity || 1) : 0), 0);
+    assert.ok(leaves > 0 || !chunk.drops.some((d) => d.uid === "d-leaf"), "leaves under stock still haul");
+});
+
+test("dedicated settler hauls only the leftover room under the stock target", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    basket.slots[0] = { id: "stick", quantity: 28 };
+    const chunk = originChunk(world);
+    chunk.drops.push({ uid: "d-part", id: "stick", quantity: 8, x: rec.x, y: rec.y });
+    workOnce(world, rec);
+    workOnce(world, rec);
+    workOnce(world, rec);
+    const sticks = [...(rec.inventory || []), ...(rec.overflow || []), ...(basket.slots || [])]
+        .reduce((n, s) => n + (s?.id === "stick" ? (s.quantity || 1) : 0), 0);
+    assert.equal(sticks, 30);
+    const leftover = chunk.drops.find((d) => d.uid === "d-part");
+    assert.equal(leftover?.quantity, 6);
+});
+
 test("dedicated settler does not haul when haul is off", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {
@@ -561,6 +648,30 @@ test("dedicated settler does not haul when haul is off", () => {
     assert.ok(rec.inventory.some((s) => s && s.id === "stick"), "carried sticks stay on the settler");
     assert.ok(!(basket.slots || []).some((s) => s && (s.id === "stick" || s.id === "leaf")));
     assert.equal(rec._settlerAct, "Idle");
+});
+
+test("dedicated settler stops hauling a drop as soon as haul is turned off", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1 };
+    addBasket(world, settle, rec.x, rec.y);
+    const chunk = originChunk(world);
+    chunk.drops.push({ uid: "d-stop", id: "stick", quantity: 3, x: rec.x + 80, y: rec.y });
+    let hauling = false;
+    for (let i = 0; i < 40; i++) {
+        world.tick(50);
+        if (rec._busyJob?.type === "haul" || /Haul/i.test(rec._settlerAct || "")) {
+            hauling = true;
+            break;
+        }
+    }
+    assert.equal(hauling, true, "settler should start walking to the drop");
+    settle.jobs[rec.id].haul = 0;
+    workOnce(world, rec);
+    assert.notEqual(rec._busyJob?.type, "haul");
+    assert.equal(rec._workHold, false);
+    assert.equal(/Haul/i.test(rec._settlerAct || "Idle"), false);
+    assert.ok(chunk.drops.some((d) => d.uid === "d-stop"), "should leave the drop on the ground");
 });
 
 test("dedicated settler loads one roast ingredient, not the whole stack", () => {
@@ -715,6 +826,89 @@ test("dedicated settler takes a reserved roasting stick when the roast has no fo
     assert.equal(settlerHas(rec, basket, "sharp_stick"), true);
 });
 
+test("dedicated settler swaps a drying rack for a coconut to simmer", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    basket.slots[0] = { id: "cracked_coconut", quantity: 1 };
+    basket.slots[1] = { id: "raw_pork", quantity: 3 };
+    const fire = addLitFire(world, settle, rec);
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.catalystReserved = false;
+    Settlement.addBill(settle, fire.uid, { recipeId: "simmer", mode: "forever", paused: false });
+    let acts = [];
+    for (let i = 0; i < 80; i++) {
+        world.tick(16);
+        if (rec._settlerAct) acts.push(rec._settlerAct);
+        if (fire.catalyst?.id === "cracked_coconut") break;
+    }
+    assert.equal(fire.catalyst?.id, "cracked_coconut", `acts=${[...new Set(acts)].join("|")} cat=${fire.catalyst?.id}`);
+    assert.equal(settlerHas(rec, basket, "drying_rack"), true);
+});
+
+test("dedicated settler swaps a drying rack for a sharp stick to roast", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    basket.slots[0] = { id: "apple", quantity: 2 };
+    basket.slots[1] = { id: "sharp_stick", quantity: 1, durability: 50 };
+    const fire = addLitFire(world, settle, rec);
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.catalystReserved = true;
+    Settlement.addBill(settle, fire.uid, { recipeId: "roast", mode: "forever", paused: false });
+    let stuck = 0;
+    for (let i = 0; i < 80; i++) {
+        world.tick(16);
+        if (rec._settlerAct === "Getting a Sharp Stick") stuck++;
+        if (fire.catalyst?.id === "sharp_stick") break;
+    }
+    assert.equal(fire.catalyst?.id, "sharp_stick");
+    assert.equal(settlerHas(rec, basket, "drying_rack"), true);
+    assert.ok(stuck < 60, `stayed on Getting a Sharp Stick for ${stuck} ticks`);
+});
+
+test("dedicated settler swaps a drying rack to simmer even if a roast bill is first", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    basket.slots[0] = { id: "cracked_coconut", quantity: 1 };
+    basket.slots[1] = { id: "raw_pork", quantity: 3 };
+    const fire = addLitFire(world, settle, rec);
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.catalystReserved = false;
+    Settlement.addBill(settle, fire.uid, { recipeId: "roast", mode: "forever", paused: false });
+    Settlement.addBill(settle, fire.uid, { recipeId: "simmer", mode: "forever", paused: false });
+    for (let i = 0; i < 80; i++) {
+        world.tick(16);
+        if (fire.catalyst?.id === "cracked_coconut") break;
+    }
+    assert.equal(fire.catalyst?.id, "cracked_coconut");
+    assert.equal(settlerHas(rec, basket, "drying_rack"), true);
+});
+
+test("dedicated settler swaps a drying rack to simmer when the flame is out", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    basket.slots[0] = { id: "cracked_coconut", quantity: 1 };
+    basket.slots[1] = { id: "raw_pork", quantity: 3 };
+    basket.slots[2] = { id: "stick", quantity: 8 };
+    const fire = addLitFire(world, settle, rec);
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.burnRemaining = 0;
+    fire.pitTemp = 80;
+    Settlement.addBill(settle, fire.uid, { recipeId: "simmer", mode: "forever", paused: false });
+    for (let i = 0; i < 80; i++) {
+        world.tick(16);
+        if (fire.catalyst?.id === "cracked_coconut") break;
+    }
+    assert.equal(fire.catalyst?.id, "cracked_coconut");
+});
+
 test("dedicated settler does not yank a roasting stick for simmer while food is on the spit", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
@@ -771,7 +965,7 @@ test("dedicated settler takes leftover sharp stick after the roast bill is done"
 test("dedicated settler loads a drying rack from a basket for smoke leather", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
-    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
     const basket = addBasket(world, settle, rec.x, rec.y);
     basket.slots[0] = { id: "drying_rack", quantity: 1 };
     basket.slots[1] = { id: "deer_hide_brained", quantity: 1 };
@@ -789,7 +983,7 @@ test("dedicated settler loads a drying rack from a basket for smoke leather", ()
 test("dedicated settler smokes brained boar hide even when a roast bill is first", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
-    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
     const basket = addBasket(world, settle, rec.x, rec.y);
     basket.slots[0] = { id: "drying_rack", quantity: 1 };
     basket.slots[1] = { id: "boar_hide_brained", quantity: 1 };
@@ -810,7 +1004,7 @@ test("dedicated settler smokes brained boar hide even when a roast bill is first
 test("dedicated settler takes a drying rack from a basket when the hide is still hanging", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
-    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
     const basket = addBasket(world, settle, rec.x, rec.y);
     basket.slots[0] = { id: "drying_rack", quantity: 1 };
     const hangRack = addStation(world, settle, "drying_rack", rec.x + 16, rec.y, "hang-rack");
@@ -827,7 +1021,7 @@ test("dedicated settler takes a drying rack from a basket when the hide is still
 test("dedicated settler does not pick up an empty placed drying rack to smoke leather", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
-    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
     const basket = addBasket(world, settle, rec.x, rec.y);
     basket.slots[0] = { id: "deer_hide_brained", quantity: 1 };
     addStation(world, settle, "drying_rack", rec.x, rec.y, "empty-rack");
@@ -837,6 +1031,21 @@ test("dedicated settler does not pick up an empty placed drying rack to smoke le
     for (let i = 0; i < 8; i++) workOnce(world, rec);
     assert.notEqual(fire.catalyst?.id, "drying_rack");
     assert.ok(world._findThingByUid("empty-rack")?.entry);
+});
+
+test("cook-only settler does not smoke leather", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    basket.slots[0] = { id: "drying_rack", quantity: 1 };
+    basket.slots[1] = { id: "deer_hide_brained", quantity: 1 };
+    const fire = addLitFire(world, settle, rec);
+    fire.catalyst = null;
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
+    for (let i = 0; i < 8; i++) workOnce(world, rec);
+    assert.equal(fire.catalyst, null);
+    assert.equal(fire.cook, null);
 });
 
 test("dedicated settler loads one simmer ingredient per slot", () => {
@@ -1138,6 +1347,8 @@ test("dedicated settler crafts at a bench over craftSeconds", () => {
             null, null
         ]
     });
+    Research.unlock(settle, "basic_furniture");
+    Research.unlock(settle, "skinworking");
     const bench = addBenchInFront(world, settle, rec, "bench1");
     Settlement.addBill(settle, bench.uid, { recipeId: "hide_pouch", mode: "forever", paused: false });
     workOnce(world, rec);
@@ -1166,6 +1377,8 @@ test("dedicated settler stands on the bench interact tile and faces north", () =
             null, null
         ]
     });
+    Research.unlock(settle, "basic_furniture");
+    Research.unlock(settle, "skinworking");
     const bench = addStation(world, settle, "skinworking_bench", rec.x, rec.y, "bench-spot");
     const def = world._thingDef("skinworking_bench");
     const stand = Place.interactWorldPos(bench, 16, def);
@@ -1212,6 +1425,8 @@ test("dedicated settler does not craft an extra item after a count-1 bench bill"
             null, null
         ]
     });
+    Research.unlock(settle, "basic_furniture");
+    Research.unlock(settle, "skinworking");
     const bench = addBenchInFront(world, settle, rec, "bench-count");
     Settlement.addBill(settle, bench.uid, {
         recipeId: "hide_pouch",
@@ -1242,6 +1457,8 @@ test("dedicated settler idles after a bench bill when pockets are full and stora
             { id: "pebble", quantity: 1 }
         ]
     });
+    Research.unlock(settle, "basic_furniture");
+    Research.unlock(settle, "skinworking");
     settle.jobs[rec.id].gather = 0;
     settle.jobs[rec.id].chop = 0;
     const bench = addBenchInFront(world, settle, rec, "bench-full");
@@ -1542,6 +1759,106 @@ test("dedicated settler walks around a campfire beside a vertical lean-to", () =
     );
 });
 
+test("two settlers walking to the same dest do not reverse every tick", () => {
+    const { world, pawn } = createTestWorld();
+    const { rec } = parkSettler(world, pawn, { x: 64, y: 96, id: "s1" });
+    const { rec: rec2 } = parkSettler(world, pawn, { x: 80, y: 96, id: "s2" });
+    rec2.homeSettlementId = rec.homeSettlementId;
+    const dest = { x: 72, y: 48 };
+    let reversals = 0;
+    let last1 = { x: rec.x, y: rec.y };
+    let last2 = { x: rec2.x, y: rec2.y };
+    let d1 = 0;
+    let d2 = 0;
+    for (let i = 0; i < 180; i++) {
+        stepSettlerWalk(world, rec, dest.x, dest.y, 16);
+        stepSettlerWalk(world, rec2, dest.x, dest.y, 16);
+        const n1 = Math.hypot(rec.x - last1.x, rec.y - last1.y);
+        const n2 = Math.hypot(rec2.x - last2.x, rec2.y - last2.y);
+        const toward1 = Math.hypot(dest.x - rec.x, dest.y - rec.y);
+        const toward2 = Math.hypot(dest.x - rec2.x, dest.y - rec2.y);
+        if (i > 8 && n1 > 0.2 && toward1 > d1 + 0.4) reversals++;
+        if (i > 8 && n2 > 0.2 && toward2 > d2 + 0.4) reversals++;
+        last1 = { x: rec.x, y: rec.y };
+        last2 = { x: rec2.x, y: rec2.y };
+        d1 = toward1;
+        d2 = toward2;
+    }
+    assert.ok(reversals < 12, `settlers reversed ${reversals} times (jiggle)`);
+});
+
+test("settler brain-tans when a campfire blocks the south stand pose", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "brain", quantity: 2 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
+    const rack = addStation(world, settle, "drying_rack", rec.x, rec.y, "rack-gap");
+    rack.slots[0] = { id: "deer_hide_dehaired", quantity: 1 };
+    addStation(world, settle, "campfire", rec.x, rec.y + 16, "fire-gap");
+    rec.x = rack.x;
+    rec.y = rack.y + 32;
+    const mob = world._ensureSettlerCreature(rec);
+    mob.x = rec.x;
+    mob.y = rec.y;
+    Settlement.addBill(settle, rack.uid, { recipeId: "brain_hide", mode: "forever", paused: false });
+    let started = false;
+    let reversals = 0;
+    let lastDy = 0;
+    for (let i = 0; i < 240; i++) {
+        const y0 = rec.y;
+        world.tick(16);
+        const dy = rec.y - y0;
+        if (lastDy && dy && Math.sign(dy) !== Math.sign(lastDy) && Math.abs(dy) > 0.4) reversals++;
+        if (Math.abs(dy) > 0.4) lastDy = dy;
+        if (rec._workChannel?.kind === "brain") {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, "should start tanning instead of chasing a stand pose");
+    assert.ok(reversals < 8, `ran back and forth ${reversals} times`);
+});
+
+test("settler fetches a brain from a basket before approaching the rack", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [null, null, null, null, null]
+    });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
+    const rack = addStation(world, settle, "drying_rack", rec.x, rec.y, "rack-fetch");
+    rack.slots[0] = { id: "deer_hide_dehaired", quantity: 1 };
+    const basket = addBasket(world, settle, rec.x, rec.y + 96, "brain-bin");
+    basket.slots[0] = { id: "brain", quantity: 2 };
+    rec.x = rack.x;
+    rec.y = rack.y + 32;
+    const mob = world._ensureSettlerCreature(rec);
+    mob.x = rec.x;
+    mob.y = rec.y;
+    Settlement.addBill(settle, rack.uid, { recipeId: "brain_hide", mode: "forever", paused: false });
+    let started = false;
+    let reversals = 0;
+    let lastDy = 0;
+    let heldBrain = false;
+    for (let i = 0; i < 360; i++) {
+        const y0 = rec.y;
+        world.tick(16);
+        const dy = rec.y - y0;
+        if (lastDy && dy && Math.sign(dy) !== Math.sign(lastDy) && Math.abs(dy) > 0.4) reversals++;
+        if (Math.abs(dy) > 0.4) lastDy = dy;
+        if ((rec.inventory || []).some((s) => s && s.id === "brain")) {
+            heldBrain = true;
+        }
+        if (rec._workChannel?.kind === "brain") {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(heldBrain, true, "should pick up a brain before tanning");
+    assert.equal(started, true, "should start tanning after the fetch");
+    assert.ok(reversals < 8, `ran back and forth ${reversals} times`);
+});
+
 test("settler walks around a lean-to to brain-tan at a rack", () => {
     const { world, pawn } = createTestWorld();
     const ts = 16;
@@ -1585,7 +1902,7 @@ test("settler walks around a lean-to to brain-tan at a rack", () => {
     assert.ok(d < 40, `should stand by the rack, d=${d.toFixed(1)}`);
 });
 
-test("cook walks around a lean-to to fetch brained hides for smoking", () => {
+test("tailor walks around a lean-to to fetch brained hides for smoking", () => {
     const { world, pawn } = createTestWorld();
     const ts = 16;
     const tx = 6;
@@ -1603,7 +1920,7 @@ test("cook walks around a lean-to to fetch brained hides for smoking", () => {
         y: box.bottom + 28,
         inventory: [null, null, null, null, null]
     });
-    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
     const fire = addLitFire(world, settle, rec, "smoke-fire");
     fire.catalyst = { id: "drying_rack", quantity: 1 };
     const rack = addStation(
@@ -1638,6 +1955,88 @@ test("dedicated settler pops out when standing inside a lean-to", () => {
         stepSettlerWalk(world, rec, 40, 96, 16);
     }
     assert.equal(world._partyPoseBlocked(cc, rec.x, rec.y), false);
+});
+
+test("eject does not yank a settler off a lean-to laying spot", () => {
+    const { world, pawn } = createTestWorld();
+    const def = world._thingDef("lean_to");
+    const tx = 3;
+    const ty = 3;
+    const pos = Place.footprintWorldPos(tx, ty, 0, def.footprint, 16);
+    const lean = addLeanTo(world, pos.x, pos.y, tx, ty, 0);
+    const occupy = Place.footprintWorldRect(lean, def, 16);
+    const { rec } = parkSettler(world, pawn, { x: occupy.right + 24, y: occupy.bottom + 24 });
+    const cc = world._ensureSettlerCreature(rec);
+    let spot = null;
+    for (let y = occupy.top + 1; y < occupy.bottom && !spot; y += 1) {
+        for (let x = occupy.left + 1; x < occupy.right; x += 1) {
+            const nav = world._partyPoseBlocked(cc, x, y);
+            const solid = world._partyPoseBlocked(cc, x, y, 0, { sleepNav: false });
+            if (nav && !solid) {
+                spot = { x, y };
+                break;
+            }
+        }
+    }
+    assert.ok(spot, "lean-to should have a laying spot that is nav-blocked but not solid");
+    rec.x = cc.x = spot.x;
+    rec.y = cc.y = spot.y;
+    assert.equal(world._partyPoseBlocked(cc, rec.x, rec.y), true);
+    const x0 = rec.x;
+    const y0 = rec.y;
+    for (let i = 0; i < 8; i++) {
+        world._queryGen = (world._queryGen || 0) + 1;
+        world._ejectOverlappingPose(rec, cc);
+    }
+    assert.equal(rec.x, x0);
+    assert.equal(rec.y, y0);
+});
+
+test("eject still pops a settler out of a cactus", () => {
+    const { world, pawn } = createTestWorld();
+    originChunk(world).things.push({ id: "cactus", x: 48, y: 48 });
+    const { rec } = parkSettler(world, pawn, { x: 40, y: 48 });
+    const cc = world._ensureSettlerCreature(rec);
+    assert.equal(world._partyPoseBlocked(cc, rec.x, rec.y, 0, { sleepNav: false }), true);
+    world._ejectOverlappingPose(rec, cc);
+    assert.equal(world._partyPoseBlocked(cc, rec.x, rec.y, 0, { sleepNav: false }), false);
+    assert.ok(Math.hypot(rec.x - 40, rec.y - 48) > 2);
+});
+
+test("walkToward does not teleport every tick on a lean-to laying spot", () => {
+    const { world, pawn } = createTestWorld();
+    const def = world._thingDef("lean_to");
+    const tx = 3;
+    const ty = 3;
+    const pos = Place.footprintWorldPos(tx, ty, 0, def.footprint, 16);
+    const lean = addLeanTo(world, pos.x, pos.y, tx, ty, 0);
+    const occupy = Place.footprintWorldRect(lean, def, 16);
+    const { rec } = parkSettler(world, pawn, { x: occupy.right + 24, y: occupy.bottom + 24 });
+    const cc = world._ensureSettlerCreature(rec);
+    let spot = null;
+    for (let y = occupy.top + 1; y < occupy.bottom && !spot; y += 1) {
+        for (let x = occupy.left + 1; x < occupy.right; x += 1) {
+            const nav = world._partyPoseBlocked(cc, x, y);
+            const solid = world._partyPoseBlocked(cc, x, y, 0, { sleepNav: false });
+            if (nav && !solid) {
+                spot = { x, y };
+                break;
+            }
+        }
+    }
+    assert.ok(spot, "lean-to should have a laying spot that is nav-blocked but not solid");
+    rec.x = cc.x = spot.x;
+    rec.y = cc.y = spot.y;
+    const dest = { x: occupy.right + 40, y: rec.y };
+    let maxJump = 0;
+    let last = { x: rec.x, y: rec.y };
+    for (let i = 0; i < 20; i++) {
+        stepSettlerWalk(world, rec, dest.x, dest.y, 16);
+        const jump = Math.hypot(rec.x - last.x, rec.y - last.y);
+        if (jump > maxJump) maxJump = jump;
+        last = { x: rec.x, y: rec.y };
+    }
+    assert.ok(maxJump < 8, `teleported ${maxJump.toFixed(1)}px in one tick`);
 });
 
 test("healthy settlers get up at 6:00", () => {
@@ -1922,6 +2321,40 @@ test("setFuelFilter persists on a settlement campfire", () => {
     assert.equal(pub.fuelFilter?.preferLogs, false);
 });
 
+test("setPaintFilter and setPaintEnabled persist on a painting circle", () => {
+    const Research = require("../shared/research");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    const chunk = originChunk(world);
+    const entry = {
+        uid: "pc-filt",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, world._thingDef("painting_circle"));
+    chunk.things.push(entry);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "setPaintFilter",
+        settlementId: settle.id,
+        uid: entry.uid,
+        filter: { offItems: ["blueberry"] }
+    });
+    assert.ok(entry.paintFilter?.offItems?.includes("blueberry"));
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "setPaintEnabled",
+        settlementId: settle.id,
+        uid: entry.uid,
+        enabled: false
+    });
+    assert.equal(entry.paintEnabled, false);
+    const pub = world._storagePublic(entry, chunk);
+    assert.equal(pub.paintEnabled, false);
+    assert.ok(pub.paintFilter?.offItems?.includes("blueberry"));
+});
+
 test("dedicated doctor stops when the patient has no injuries", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec: doctor } = parkSettler(world, pawn, {
@@ -1984,6 +2417,44 @@ test("dedicated doctor drops a healed patient instead of tending forever", () =>
     assert.equal(doctor._workChannel?.kind, "tend");
     part.injuries.length = 0;
     doctor._settlerScan = null;
+    workOnce(world, doctor);
+    assert.equal(doctor._workChannel, null);
+    assert.notEqual(doctor._busyJob?.type, "doctor");
+    assert.equal(/Tending/.test(doctor._settlerAct || "Idle"), false);
+});
+
+test("dedicated doctor stops tending as soon as doctor is turned off", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: doctor } = parkSettler(world, pawn, {
+        id: "doc",
+        inventory: [{ id: "leaf_cord", quantity: 2 }, null, null, null, null]
+    });
+    doctor.kc = 1600;
+    settle.jobs[doctor.id] = { doctor: 1, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const patient = world._settlerFromSnap({
+        id: "pat",
+        name: "Ugg",
+        x: doctor.x,
+        y: doctor.y,
+        ownerId: pawn.id,
+        homeSettlementId: settle.id,
+        kc: 1600,
+        inventory: [null, null, null, null, null]
+    });
+    settle.jobs[patient.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0 };
+    world.settlers.push(patient);
+    const creature = world._ensureSettlerCreature(patient);
+    const part = creature.anatomy.part("Left Arm") || creature.anatomy.core;
+    part.injure({
+        id: "cut",
+        severity: 8,
+        bleeding: true,
+        bleedRate: 0.06,
+        tended: false
+    });
+    workOnce(world, doctor);
+    assert.equal(doctor._workChannel?.kind, "tend");
+    settle.jobs[doctor.id].doctor = 0;
     workOnce(world, doctor);
     assert.equal(doctor._workChannel, null);
     assert.notEqual(doctor._busyJob?.type, "doctor");
@@ -2095,5 +2566,433 @@ test("settler gathers blueberries around two baskets instead of walking into the
     assert.equal(harvested, true, `should pick the bush, ended ${rec.x.toFixed(1)},${rec.y.toFixed(1)} act ${rec._settlerAct}`);
     assert.ok(overlappedMs < 400, `stuck overlapping a basket for ${overlappedMs}ms`);
     assert.ok(rec.y < 64, `should finish north of the baskets, y=${rec.y.toFixed(1)}`);
+});
+
+test("settler research consumes pigment on start and resumes without extra pigment", () => {
+    const Research = require("../shared/research");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{ id: "blueberry", quantity: 2 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-work",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, def);
+    chunk.things.push(entry);
+
+    let started = false;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if (entry.paintStarted) {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, "should consume pigment when painting starts");
+    assert.equal(rec.inventory[0]?.quantity, 1);
+    const stand = Research.standWorldPos(entry);
+    assert.ok(
+        Math.hypot(rec.x - stand.x, rec.y - stand.y) <= 1,
+        `should stand in the circle center, at ${rec.x.toFixed(1)},${rec.y.toFixed(1)} want ${stand.x},${stand.y}`
+    );
+    assert.equal(rec.facing, "up");
+    const qty = rec.inventory[0].quantity;
+    const prog = Number(entry.paintProgress) || 0;
+    const paintCh = world._publicSettler(rec).channel;
+    assert.equal(paintCh?.kind, "paint");
+    assert.equal(paintCh?.progress, prog);
+
+    settle.jobs[rec.id].research = 0;
+    workOnce(world, rec);
+    assert.notEqual(rec._busyJob?.type, "research");
+    assert.equal(rec._workHold, false);
+    assert.equal(/Painting/i.test(rec._settlerAct || "Idle"), false);
+    assert.equal(world._publicSettler(rec).channel, null);
+    const frozen = Number(entry.paintProgress) || 0;
+    world.gameMinutes += 60;
+    for (let i = 0; i < 8; i++) world.tick(50);
+    assert.equal(entry.paintStarted, true);
+    assert.equal(Number(entry.paintProgress) || 0, frozen, "disabled research must not keep painting");
+    assert.equal(rec.inventory[0]?.quantity, qty);
+    assert.equal(world._publicSettler(rec).channel, null);
+
+    settle.jobs[rec.id].research = 3;
+    for (let i = 0; i < 20; i++) world.tick(50);
+    assert.equal(rec.inventory[0]?.quantity, qty, "resume must not consume another pigment");
+    assert.equal(entry.paintStarted, true);
+    const resumeCh = world._publicSettler(rec).channel;
+    assert.equal(resumeCh?.kind, "paint");
+    assert.equal(resumeCh?.progress, Number(entry.paintProgress) || 0);
+
+    Research.addPaintMinutes(entry, Research.PAINT_MINUTES);
+    assert.equal(entry.painted, 1);
+    assert.equal(entry.paintStarted, false);
+    assert.ok(prog >= 0);
+
+    for (let i = 0; i < 80; i++) {
+        world.tick(50);
+        if (entry.paintStarted && rec.facing === "right") break;
+    }
+    assert.equal(entry.painted, 1);
+    assert.equal(entry.paintStarted, true);
+    assert.equal(rec.facing, "right");
+    assert.ok(
+        Math.hypot(rec.x - stand.x, rec.y - stand.y) <= 1,
+        "should stay in the circle center for the 2nd painting"
+    );
+});
+
+test("researcher leaves a painting to sleep instead of finishing it", () => {
+    const Research = require("../shared/research");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{ id: "blueberry", quantity: 2 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-sleep",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, def);
+    chunk.things.push(entry);
+    let started = false;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if (entry.paintStarted) {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, "should start painting");
+    const bed = { uid: "lt-res", id: "lean_to", x: rec.x + 64, y: rec.y, tx: 6, ty: 2, rot: 0 };
+    Place.ensureSleepEntry(bed, { sleep: { slots: 2 } });
+    chunk.things.push(bed);
+    world.gameMinutes = 1300;
+    rec.kc = 1600;
+    rec._researchPoll = 0;
+    workOnce(world, rec);
+    assert.equal(rec._busyJob?.type, "research");
+    assert.equal(!!rec._restWalk, false);
+    assert.equal(!!rec._resting, false);
+    rec._researchPoll = Settlement.RESEARCH_NEEDS_TICKS - 1;
+    workOnce(world, rec);
+    assert.ok(rec._restWalk || rec._resting, "should go to sleep after a needs poll");
+    assert.notEqual(rec._busyJob?.type, "research");
+    assert.equal(entry.paintStarted, true);
+});
+
+test("researcher leaves a painting to eat instead of finishing it", () => {
+    const Research = require("../shared/research");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [
+            { id: "blueberry", quantity: 1 },
+            { id: "apple", quantity: 2 },
+            null, null, null
+        ]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-eat",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, def);
+    chunk.things.push(entry);
+    let started = false;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if (entry.paintStarted) {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, "should start painting");
+    rec.kc = 200;
+    rec._eatSitting = null;
+    rec.eatChannel = null;
+    rec._researchPoll = 0;
+    workOnce(world, rec);
+    assert.equal(!!rec.eatChannel, false, "should not eat before a needs poll");
+    assert.equal(rec._busyJob?.type, "research");
+    rec._researchPoll = Settlement.RESEARCH_NEEDS_TICKS - 1;
+    workOnce(world, rec);
+    assert.ok(rec.eatChannel, "should eat after a needs poll");
+    assert.notEqual(rec._busyJob?.type, "research");
+    assert.equal(entry.paintStarted, true);
+});
+
+test("researcher leaves a painting for chop on a poll even if hungry", () => {
+    const Research = require("../shared/research");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [
+            { id: "blueberry", quantity: 2 },
+            {
+                id: "blank",
+                quantity: 1,
+                toolClass: "chopper",
+                knapQuality: "rough",
+                knapDamage: 8
+            },
+            { id: "apple", quantity: 2 },
+            null, null
+        ]
+    });
+    rec.hotbarIndex = 1;
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-chop",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, def);
+    chunk.things.push(entry);
+    let started = false;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if (entry.paintStarted) {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, "should start painting");
+    chunk.things.push({ uid: "tree-poll", id: "tree", x: rec.x + 32, y: rec.y, chopProgress: 0 });
+    settle.jobs[rec.id].chop = 3;
+    rec.kc = 200;
+    rec._eatSitting = null;
+    rec.eatChannel = null;
+    rec._settlerScan = null;
+    rec._settlerScanMs = 280;
+    rec._researchPoll = 0;
+    workOnce(world, rec);
+    assert.equal(rec._busyJob?.type, "research");
+    assert.equal(!!rec.eatChannel, false, "should not eat before a poll");
+    rec._researchPoll = Settlement.RESEARCH_NEEDS_TICKS - 1;
+    workOnce(world, rec);
+    assert.equal(rec._busyJob?.type, "chop");
+    assert.equal(!!rec.eatChannel, false, "chop must beat eating on a research poll");
+});
+
+test("researcher leaves a painting to haul a ground drop", () => {
+    const Research = require("../shared/research");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{ id: "blueberry", quantity: 2 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-haul",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, def);
+    chunk.things.push(entry);
+    let started = false;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if (entry.paintStarted) {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, "should start painting");
+    addBasket(world, settle, rec.x + 48, rec.y);
+    settle.jobs[rec.id].haul = 3;
+    chunk.drops.push({ uid: "d-res-haul", id: "stick", quantity: 3, x: rec.x + 24, y: rec.y });
+    rec._settlerScan = null;
+    rec._settlerScanMs = 280;
+    let hauled = false;
+    for (let i = 0; i < 80; i++) {
+        world.tick(50);
+        const held = (rec.inventory || []).some((s) => s && s.id === "stick");
+        const gone = !chunk.drops.some((d) => d.uid === "d-res-haul");
+        if (held || gone) {
+            hauled = true;
+            break;
+        }
+    }
+    assert.equal(hauled, true, "should leave the circle to haul");
+    assert.notEqual(rec._busyJob?.type, "research");
+});
+
+test("researcher dumps leftover inventory when haul is at least as important as research", () => {
+    const Research = require("../shared/research");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        hunger: 0,
+        inventory: [
+            { id: "blueberry", quantity: 3 },
+            null, null, null, null
+        ]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-dump",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, def);
+    chunk.things.push(entry);
+    let started = false;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if (entry.paintStarted) {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, "should start painting");
+    assert.ok(
+        (rec.inventory || []).some((s) => s && s.id === "blueberry" && s.quantity > 0),
+        "should still have leftover pigment"
+    );
+    addBasket(world, settle, rec.x + 48, rec.y);
+    settle.jobs[rec.id].haul = 3;
+    rec._settlerScan = null;
+    rec._settlerScanMs = 280;
+    rec._researchPoll = 0;
+    let dumped = false;
+    for (let i = 0; i < 80; i++) {
+        world.tick(50);
+        const berries = (rec.inventory || []).find((s) => s && s.id === "blueberry");
+        const left = berries ? berries.quantity : 0;
+        if (left === 0 || rec._busyJob?.type === "stash") {
+            dumped = true;
+            break;
+        }
+    }
+    assert.equal(dumped, true, "should leave the circle to dump leftover items");
+    assert.notEqual(rec._busyJob?.type, "research");
+});
+
+test("disabled painting circle is skipped by researchers", () => {
+    const Research = require("../shared/research");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{ id: "blueberry", quantity: 2 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-off",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, def);
+    Research.setEnabled(entry, false);
+    chunk.things.push(entry);
+    for (let i = 0; i < 40; i++) world.tick(50);
+    assert.equal(entry.paintStarted, false);
+    assert.equal(rec.inventory[0]?.quantity, 2);
+});
+
+test("researchers skip pigments the circle's materials filter forbids", () => {
+    const Research = require("../shared/research");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{ id: "blueberry", quantity: 1 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-filter",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, def);
+    Research.applyPaintFilter(entry, { offItems: ["blueberry"] });
+    chunk.things.push(entry);
+    for (let i = 0; i < 40; i++) world.tick(50);
+    assert.equal(entry.paintStarted, false);
+    assert.equal(rec.inventory[0]?.id, "blueberry");
+});
+
+test("researcher takes one pigment from a storage stack", () => {
+    const Research = require("../shared/research");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [null, null, null, null, null]
+    });
+    rec.kc = 1600;
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const basket = addBasket(world, settle, rec.x + 32, rec.y, "pigment-bin");
+    basket.slots[0] = { id: "blueberry", quantity: 8 };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-one",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, def);
+    chunk.things.push(entry);
+
+    let started = false;
+    for (let i = 0; i < 200; i++) {
+        world.tick(50);
+        if (entry.paintStarted) {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, `should start painting from storage pigment (act=${rec._settlerAct} inv=${JSON.stringify(rec.inventory)} bask=${JSON.stringify(basket.slots[0])})`);
+    assert.equal(basket.slots[0]?.id, "blueberry");
+    assert.equal(basket.slots[0]?.quantity, 7, "must leave the rest of the stack in storage");
+    const carried = (rec.inventory || []).filter((s) => s && s.id === "blueberry")
+        .reduce((n, s) => n + (Number(s.quantity) || 1), 0);
+    assert.equal(carried, 0, "consumed pigment must not leave extra berries on the settler");
 });
 

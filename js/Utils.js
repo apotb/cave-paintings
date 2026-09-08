@@ -855,6 +855,86 @@ function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
     if (overlay) overlay.setVisible(false).clearTint();
 }
 
+/** Full painting-circle icon (all 6 overlays) tinted with title-art red. */
+function ensurePaintingsUiIcon(scene) {
+    if (!scene?.textures) return null;
+    const R = typeof Research !== "undefined" ? Research : null;
+    const key = R?.UI_ICON_KEY || "painting_circle_ui";
+    if (scene.textures.exists(key)) return key;
+    const baseKey = "painting_circle";
+    if (!scene.textures.exists(baseKey)) return null;
+    const srcTex = scene.textures.get(baseKey);
+    const src = srcTex?.getSourceImage?.() || srcTex?.source?.[0]?.image;
+    if (!src?.width) return scene.textures.exists(baseKey) ? baseKey : null;
+    const w = src.width;
+    const h = src.height;
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return baseKey;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(src, 0, 0);
+    const tint = R?.UI_PAINT_TINT != null ? R.UI_PAINT_TINT : 0xaa1100;
+    const tr = (tint >> 16) & 255;
+    const tg = (tint >> 8) & 255;
+    const tb = tint & 255;
+    const tmp = document.createElement("canvas");
+    tmp.width = w;
+    tmp.height = h;
+    const tctx = tmp.getContext("2d");
+    if (!tctx) return baseKey;
+    tctx.imageSmoothingEnabled = false;
+    const max = (R && R.PAINT_MAX) || 6;
+    for (let i = 1; i <= max; i++) {
+        const ovKey = R?.overlayKey ? R.overlayKey(i, baseKey) : `${baseKey}_${i}`;
+        if (!scene.textures.exists(ovKey)) continue;
+        const ovTex = scene.textures.get(ovKey);
+        const ov = ovTex?.getSourceImage?.() || ovTex?.source?.[0]?.image;
+        if (!ov) continue;
+        tctx.clearRect(0, 0, w, h);
+        tctx.drawImage(ov, 0, 0);
+        const data = tctx.getImageData(0, 0, w, h);
+        const px = data.data;
+        for (let p = 0; p < px.length; p += 4) {
+            if (px[p + 3] === 0) continue;
+            px[p] = (px[p] * tr / 255) | 0;
+            px[p + 1] = (px[p + 1] * tg / 255) | 0;
+            px[p + 2] = (px[p + 2] * tb / 255) | 0;
+        }
+        tctx.putImageData(data, 0, 0);
+        ctx.drawImage(tmp, 0, 0);
+    }
+    scene.textures.addCanvas(key, canvas);
+    return key;
+}
+
+/** Data URL of the research-tab Paintings icon, for DOM overlays. */
+function paintingsUiIconDataUrl(scene) {
+    const key = typeof ensurePaintingsUiIcon === "function"
+        ? ensurePaintingsUiIcon(scene)
+        : null;
+    if (!key || !scene?.textures?.exists?.(key)) return null;
+    const tex = scene.textures.get(key);
+    const src = tex?.getSourceImage?.() || tex?.source?.[0]?.image;
+    if (!src) return null;
+    if (typeof src.toDataURL === "function") {
+        try { return src.toDataURL(); } catch (_) { /* tainted canvas */ }
+    }
+    try {
+        const c = document.createElement("canvas");
+        c.width = src.width || 16;
+        c.height = src.height || 16;
+        const ctx = c.getContext("2d");
+        if (!ctx) return null;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(src, 0, 0);
+        return c.toDataURL();
+    } catch (_) {
+        return null;
+    }
+}
+
 /** Drag ghost: shell + optional tinted fill (Container). */
 function createStackDragIcon(scene, x, y, stack, meta, scale) {
     const tint = mealFillTint(stack, id => scene.getItem(id));

@@ -85,6 +85,9 @@ test("campfire bills catalog is Roast, Simmer, and Smoke leather", () => {
     assert.equal(recipes[1].method, "shell_simmer");
     assert.equal(recipes[2].id, "smoke");
     assert.equal(recipes[2].method, "smoke_hide");
+    assert.equal(Settlement.billStationKindOf("smoke"), "campfire");
+    assert.equal(Settlement.billStationThingId("campfire"), "campfire");
+    assert.equal(Settlement.billRecipeTitle(Settlement.billRecipeById("smoke")), "Smoke leather");
     const items = [
         { id: "apple", name: "Apple", cook: { stick_roast: { result: "roasted_apple", minutes: 10 } } },
         { id: "raw_human_flesh", name: "Raw Human Flesh", cook: { stick_roast: { result: "roasted_human_flesh", minutes: 15 } } },
@@ -483,6 +486,14 @@ test("gather/chop stop at stock targets in added baskets", () => {
     assert.equal(Settlement.gatherShouldWork(0, 0), false);
 });
 
+test("haulTakeQty stops at the stock target and allows uncapped items", () => {
+    assert.equal(Settlement.haulTakeQty(30, 30, 8), 0);
+    assert.equal(Settlement.haulTakeQty(28, 30, 8), 2);
+    assert.equal(Settlement.haulTakeQty(0, 30, 3), 3);
+    assert.equal(Settlement.haulTakeQty(0, 0, 8), 8);
+    assert.equal(Settlement.haulTakeQty(40, 0, 5), 5);
+});
+
 test("chop job skips fruiting resource trees", () => {
     assert.equal(Settlement.fruitTreeId("apple_tree"), true);
     assert.equal(Settlement.fruitTreeId("coconut_tree"), true);
@@ -672,18 +683,35 @@ test("job tooltip lists work inside the column", () => {
     const cook = Settlement.jobTooltip("cook");
     assert.match(cook, /^Cook\n/);
     assert.match(cook, /^- Work at Campfire$/m);
+    assert.match(cook, /^- Light campfires$/m);
+    assert.match(cook, /^- Stoke fires$/m);
     assert.doesNotMatch(cook, /Roast at campfire/);
     assert.doesNotMatch(cook, /Smoke leather/);
     assert.equal(Settlement.jobLabel("leather"), "Tail");
     const hide = Settlement.jobTooltip("leather");
     assert.match(hide, /^Tailoring\n/);
     assert.match(hide, /^- Work at Drying Rack$/m);
-    assert.match(hide, /^- Work at Skinworking Bench$/m);
+    assert.match(hide, /^- Soak hides in water$/m);
+    assert.match(
+        hide,
+        /^- Take soaked hides from the ground\n- Smoke leather\n- Work at Skinworking Bench$/m
+    );
     assert.doesNotMatch(hide, /Flesh hides/);
     const gather = Settlement.jobTooltip("gather");
     assert.match(gather, /^Gather\n/);
     assert.match(gather, /^- Harvest plants$/m);
     assert.match(gather, /^- Gather resources$/m);
+    const haul = Settlement.jobTooltip("haul");
+    assert.match(haul, /^Haul\n/);
+    assert.match(haul, /^- Pick up ground items$/m);
+    assert.match(haul, /^- Stash carried items$/m);
+    assert.match(haul, /^- Restack storage$/m);
+    assert.match(haul, /^- Move items between storage$/m);
+    assert.doesNotMatch(haul, /basket/i);
+    assert.equal(Settlement.jobLabel("research"), "Res");
+    const res = Settlement.jobTooltip("research");
+    assert.match(res, /^Research\n- Fetch pigment\n- Work at Painting Circle$/);
+    assert.equal(Settlement.isAddableId("painting_circle"), false);
 });
 
 test("planWork: eat, night sleep, jobs, orphan idle", () => {
@@ -725,11 +753,20 @@ test("planWork: eat, night sleep, jobs, orphan idle", () => {
     jobs.leather = 0;
     jobs.haul = 0;
     jobs.chop = 0;
+    jobs.research = 0;
     assert.equal(Settlement.planWork({
         kc: 2000,
         jobs,
         gatherThing: { id: "stick_bush" }
     }).type, "gather");
+    const resJobs = Settlement.defaultJobs();
+    for (const j of Settlement.JOBS) resJobs[j] = 0;
+    resJobs.research = 3;
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs: resJobs,
+        researchCircle: { uid: "pc1" }
+    }).type, "research");
     const haulJobs = Settlement.defaultJobs();
     haulJobs.doctor = 0;
     haulJobs.cook = 0;
@@ -819,6 +856,237 @@ test("planWork defers eat and sleep until the current job finishes", () => {
     }).type, "haul");
 });
 
+test("planWork research stand yields to eat and sleep on a needs poll", () => {
+    const jobs = Settlement.defaultJobs();
+    jobs.doctor = 0;
+    jobs.cook = 0;
+    jobs.leather = 0;
+    jobs.gather = 0;
+    jobs.haul = 0;
+    jobs.chop = 0;
+    const circle = { uid: "pc1" };
+    const busyJob = { type: "research", target: circle };
+    const base = { jobs, researchCircle: circle, busy: true, busyJob };
+    assert.equal(Settlement.planWork({ ...base, kc: 200 }).type, "research");
+    assert.equal(Settlement.planWork({ ...base, kc: 200, reconsiderNeeds: true }).type, "eat");
+    assert.equal(Settlement.planWork({
+        ...base,
+        kc: 2000,
+        isNight: true,
+        bed: { slot: 0 }
+    }).type, "research");
+    assert.equal(Settlement.planWork({
+        ...base,
+        kc: 2000,
+        isNight: true,
+        bed: { slot: 0 },
+        reconsiderNeeds: true
+    }).type, "sleep");
+    assert.equal(Settlement.planWork({ ...base, kc: 2000, reconsiderNeeds: true }).type, "research");
+    assert.equal(Settlement.RESEARCH_NEEDS_TICKS, 10);
+});
+
+test("planWork research poll takes a higher-priority job before eat or sleep", () => {
+    const jobs = Settlement.defaultJobs();
+    for (const j of Settlement.JOBS) jobs[j] = 0;
+    jobs.research = 3;
+    jobs.chop = 3;
+    const circle = { uid: "pc1" };
+    const tree = { uid: "t1", id: "tree" };
+    const busyJob = { type: "research", target: circle };
+    const base = {
+        jobs,
+        researchCircle: circle,
+        chopTree: tree,
+        busy: true,
+        busyJob
+    };
+    assert.equal(Settlement.planWork(base).type, "research");
+    assert.equal(Settlement.planWork({ ...base, reconsiderNeeds: true }).type, "chop");
+    assert.equal(Settlement.planWork({
+        ...base,
+        kc: 200,
+        reconsiderNeeds: true
+    }).type, "chop");
+    assert.equal(Settlement.planWork({
+        ...base,
+        kc: 2000,
+        isNight: true,
+        bed: { slot: 0 },
+        reconsiderNeeds: true
+    }).type, "chop");
+    jobs.chop = 4;
+    jobs.research = 1;
+    assert.equal(Settlement.planWork({ ...base, kc: 2000, reconsiderNeeds: true }).type, "research");
+});
+
+test("planWork research stand yields to haul at equal priority", () => {
+    const jobs = Settlement.defaultJobs();
+    for (const j of Settlement.JOBS) jobs[j] = 0;
+    jobs.research = 3;
+    jobs.haul = 3;
+    const circle = { uid: "pc1" };
+    const drop = { uid: "d1", id: "stick" };
+    const busyJob = { type: "research", target: circle };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        researchCircle: circle,
+        haulDrop: drop,
+        busy: true,
+        busyJob
+    }).type, "haul");
+    jobs.haul = 4;
+    jobs.research = 1;
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        researchCircle: circle,
+        haulDrop: drop,
+        busy: true,
+        busyJob
+    }).type, "research");
+    jobs.haul = 3;
+    jobs.research = 3;
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        researchCircle: circle,
+        busy: true,
+        busyJob
+    }).type, "research");
+    const basket = { uid: "b1" };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        researchCircle: circle,
+        stashBasket: basket,
+        hasStash: true,
+        busy: true,
+        busyJob
+    }).type, "stash");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        researchCircle: circle,
+        stashBasket: basket,
+        hasStash: true,
+        stashUrgent: false,
+        busy: true,
+        busyJob,
+        reconsiderNeeds: true
+    }).type, "stash");
+    jobs.haul = 4;
+    jobs.research = 1;
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        researchCircle: circle,
+        stashBasket: basket,
+        hasStash: true,
+        busy: true,
+        busyJob
+    }).type, "research");
+});
+
+test("planWork research stand yields to leather at equal or higher priority", () => {
+    const jobs = Settlement.defaultJobs();
+    for (const j of Settlement.JOBS) jobs[j] = 0;
+    jobs.research = 3;
+    jobs.leather = 1;
+    const circle = { uid: "pc1" };
+    const tan = { kind: "work", bill: { method: "brain_hide" } };
+    const busyJob = { type: "research", target: circle };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        researchCircle: circle,
+        leatherWork: tan,
+        busy: true,
+        busyJob
+    }).type, "leather");
+    jobs.leather = 4;
+    jobs.research = 1;
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        researchCircle: circle,
+        leatherWork: tan,
+        busy: true,
+        busyJob
+    }).type, "research");
+    jobs.leather = 3;
+    jobs.research = 3;
+    const smoke = { kind: "smoke", bill: { method: "smoke_hide" } };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        researchCircle: circle,
+        leatherWork: smoke,
+        busy: true,
+        busyJob
+    }).type, "leather");
+});
+
+test("planWork drops a busy job as soon as that priority is turned off", () => {
+    const jobs = Settlement.defaultJobs();
+    jobs.doctor = 0;
+    jobs.cook = 0;
+    jobs.leather = 0;
+    jobs.gather = 0;
+    jobs.haul = 0;
+    jobs.research = 0;
+    jobs.chop = 0;
+    const tree = { uid: "t1", id: "tree" };
+    const chopJob = { type: "chop", target: tree };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        chopTree: tree,
+        busy: true,
+        busyJob: chopJob
+    }).type, "idle");
+    jobs.gather = 1;
+    const bush = { id: "sticks" };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        chopTree: tree,
+        gatherThing: bush,
+        busy: true,
+        busyJob: chopJob
+    }).type, "gather");
+    const cookJobs = Settlement.defaultJobs();
+    cookJobs.cook = 0;
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs: cookJobs,
+        cookBill: { fire: { uid: "cf1" } },
+        busy: true,
+        busyJob: { type: "cook_stoke", target: { uid: "cf1" } }
+    }).type, "idle");
+    const haulOff = Settlement.defaultJobs();
+    haulOff.haul = 0;
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs: haulOff,
+        busy: true,
+        busyJob: { type: "stash", target: { uid: "b1" } },
+        stashBasket: { uid: "b1" },
+        hasStash: true
+    }).type, "idle");
+    const researchOff = Settlement.defaultJobs();
+    researchOff.research = 0;
+    const circle = { uid: "pc1" };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs: researchOff,
+        researchCircle: circle,
+        busy: true,
+        busyJob: { type: "research", target: circle }
+    }).type, "idle");
+});
+
 test("planWork drops a finished leather hold instead of sewing forever", () => {
     const jobs = Settlement.defaultJobs();
     const bench = { kind: "bench", station: { uid: "b1" } };
@@ -867,6 +1135,13 @@ test("planWork cook stokes after lighting and bills", () => {
         stokeFire: fire
     }).type, "cook_stoke");
     assert.equal(Settlement.actLabel({ type: "cook_stoke" }), "Stoking the fire");
+    assert.equal(
+        Settlement.actLabel({
+            type: "cook",
+            target: { bill: { method: "stick_roast" }, fire: { id: "campfire", catalyst: null, fuel: [{ id: "stick", quantity: 1 }] } }
+        }),
+        "Getting a Sharp Stick"
+    );
     jobs.cook = 0;
     assert.equal(Settlement.planWork({
         kc: 2000,
@@ -985,6 +1260,31 @@ test("planWork dumps full pockets before other jobs, leftovers before idle", () 
         hasStash: true,
         stashUrgent: true
     }).type, "idle");
+    const paintJobs = Settlement.defaultJobs();
+    paintJobs.doctor = 0;
+    paintJobs.cook = 0;
+    paintJobs.leather = 0;
+    paintJobs.gather = 0;
+    paintJobs.chop = 0;
+    const circle = { uid: "pc1" };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs: paintJobs,
+        researchCircle: circle,
+        stashBasket: basket,
+        hasStash: true,
+        stashUrgent: false
+    }).type, "stash");
+    paintJobs.haul = 4;
+    paintJobs.research = 1;
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs: paintJobs,
+        researchCircle: circle,
+        stashBasket: basket,
+        hasStash: true,
+        stashUrgent: false
+    }).type, "research");
 });
 
 test("pickAutoEat extraBags from settlement baskets, not traveling party", () => {
@@ -1157,6 +1457,16 @@ test("actLabel names smoke and hidework by hide type, not the full allowlist", (
                     method: "smoke_hide",
                     allowedIds: ["deer_hide_brained", "boar_hide_brained"]
                 }
+            }
+        }, ctx),
+        "Smoking deer hide"
+    );
+    assert.equal(
+        Settlement.actLabel({
+            type: "leather",
+            target: {
+                kind: "smoke",
+                bill: { method: "smoke_hide", allowedIds: ["deer_hide_brained"] }
             }
         }, ctx),
         "Smoking deer hide"

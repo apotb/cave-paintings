@@ -17,14 +17,22 @@
     const IDLE_STAND_MIN_MS = 2000;
     const IDLE_STAND_MAX_MS = 6000;
     const NAME_MAX = 24;
-    const JOBS = ["doctor", "cook", "chop", "leather", "gather", "haul"];
+    function researchMod() {
+        if (typeof Research !== "undefined") return Research;
+        try {
+            if (typeof require === "function") return require("./research");
+        } catch (_) { /* optional */ }
+        return null;
+    }
+    const JOBS = ["doctor", "cook", "chop", "leather", "gather", "haul", "research"];
     const JOB_LABELS = {
         doctor: "Doc",
         cook: "Cook",
         leather: "Tail",
         haul: "Haul",
         gather: "Get",
-        chop: "Chop"
+        chop: "Chop",
+        research: "Res"
     };
     const JOB_NAMES = {
         doctor: "Doctor",
@@ -32,19 +40,36 @@
         leather: "Tailoring",
         haul: "Haul",
         gather: "Gather",
-        chop: "Chop"
+        chop: "Chop",
+        research: "Research"
     };
     /** Work inside each column. Station bills are one line; order is the bill list. */
     const JOB_WORK = {
         doctor: ["Tend the wounded"],
-        cook: ["Work at Campfire"],
+        cook: [
+            "Work at Campfire",
+            "Light campfires",
+            "Stoke fires"
+        ],
         chop: ["Chop trees"],
         leather: [
             "Work at Drying Rack",
+            "Soak hides in water",
+            "Take soaked hides from the ground",
+            "Smoke leather",
             "Work at Skinworking Bench"
         ],
         gather: ["Harvest plants", "Gather resources"],
-        haul: ["Haul to storage"]
+        haul: [
+            "Pick up ground items",
+            "Stash carried items",
+            "Restack storage",
+            "Move items between storage"
+        ],
+        research: [
+            "Fetch pigment",
+            "Work at Painting Circle"
+        ]
     };
     const STOCK_ITEMS = [
         "stick", "leaf", "log", "blueberry", "apple", "coconut",
@@ -106,6 +131,11 @@
             outputId: r.id,
             hideStage: r.hideStage
         }))
+    };
+    const BILL_STATION_THING = {
+        campfire: "campfire",
+        rack: "drying_rack",
+        craft: "skinworking_bench"
     };
     const ADDABLE = {
         campfire: true,
@@ -290,6 +320,9 @@
         s.bills = s.bills && typeof s.bills === "object" && !Array.isArray(s.bills) ? s.bills : {};
         s.stock = normalizeStock(s.stock);
         s.jobs = s.jobs && typeof s.jobs === "object" ? s.jobs : {};
+        const R = researchMod();
+        if (R?.ensureTechs) R.ensureTechs(s);
+        else if (!s.techs || typeof s.techs !== "object" || Array.isArray(s.techs)) s.techs = {};
         return s;
     }
 
@@ -406,6 +439,17 @@
             if (hit) return hit;
         }
         return null;
+    }
+
+    function billStationKindOf(recipeId) {
+        for (const [kind, list] of Object.entries(BILL_RECIPES)) {
+            if ((list || []).some((r) => r && r.id === recipeId)) return kind;
+        }
+        return null;
+    }
+
+    function billStationThingId(kind) {
+        return BILL_STATION_THING[kind] || null;
     }
 
     function cookInputsForMethod(items, method) {
@@ -1089,15 +1133,50 @@
         return (Math.floor(Number(have) || 0) < want);
     }
 
+    /**
+     * How many of a ground drop to haul. No stock target means take the stack.
+     * Otherwise take only what still fits under the limit (baskets + settlers,
+     * not other piles on the ground).
+     */
+    function haulTakeQty(have, target, qty) {
+        const n = Math.max(1, Math.floor(Number(qty) || 1));
+        const want = Math.floor(Number(target) || 0);
+        if (!(want > 0)) return n;
+        const room = want - Math.floor(Number(have) || 0);
+        if (room <= 0) return 0;
+        return Math.min(n, room);
+    }
+
     /** Night or untreated injury: stay in / go to a lean-to. Dawn + healthy: get up. */
     function settlerShouldSleep(isNight, injured) {
         return !!(isNight || injured);
     }
 
+    /** How often a long research stand re-checks jobs, eat, and sleep. */
+    const RESEARCH_NEEDS_TICKS = 10;
+
     function isBusyWork(type) {
         return type === "chop" || type === "gather" || type === "haul" || type === "stash"
             || type === "cook" || type === "cook_light" || type === "cook_stoke"
-            || type === "leather" || type === "doctor";
+            || type === "leather" || type === "doctor" || type === "research";
+    }
+
+    /** Job column for a plan / channel type, or null if it is not a settler job. */
+    function jobForWork(type) {
+        const t = String(type || "");
+        if (t === "cook" || t === "cook_light" || t === "cook_stoke") return "cook";
+        if (t === "stash") return "haul";
+        if (t === "tend") return "doctor";
+        if (t === "flesh" || t === "brain" || t === "craft" || t === "skin") return "leather";
+        if (t === "chop" || t === "gather" || t === "haul" || t === "leather"
+            || t === "doctor" || t === "research") return t;
+        return null;
+    }
+
+    function jobEnabled(row, typeOrName) {
+        const name = JOBS.includes(typeOrName) ? typeOrName : jobForWork(typeOrName);
+        if (!name) return true;
+        return normalizeJobs(row)[name] >= 1;
     }
 
     function isFirestarter(stack, getItem) {
@@ -1199,14 +1278,67 @@
     }
 
     /**
+     * Painting is leftover work. If haul is at least as important, leave the
+     * circle for dumps, ground piles, and wrong-bin stacks.
+     */
+    function haulInsteadOfResearch(row, state) {
+        const jobs = normalizeJobs(row);
+        if (!(jobs.haul >= 1)) return null;
+        if (jobs.research >= 1 && jobs.haul > jobs.research) return null;
+        if (state.stashUrgent && state.stashBasket) {
+            return { type: "stash", target: state.stashBasket };
+        }
+        const haulReason = state.haulMerge?.reason;
+        const haulWrong = !!state.haulMerge
+            && (haulReason === "wrong" || haulReason === "better");
+        if (haulWrong && state.mergeNeedsRoom && state.stashBasket) {
+            return { type: "stash", target: state.stashBasket };
+        }
+        if (haulWrong) return { type: "haul", target: state.haulMerge };
+        if (state.haulDrop || state.haulOutput || state.haulMerge) {
+            return { type: "haul", target: state.haulDrop || state.haulOutput || state.haulMerge };
+        }
+        if (state.hasStash && state.stashBasket) {
+            return { type: "stash", target: state.stashBasket };
+        }
+        return null;
+    }
+
+    /**
+     * Painting is leftover work. If tailoring is at least as important, leave
+     * the circle to tan, smoke, or sew.
+     */
+    function leatherInsteadOfResearch(row, state) {
+        const jobs = normalizeJobs(row);
+        if (!(jobs.leather >= 1)) return null;
+        if (jobs.research >= 1 && jobs.leather > jobs.research) return null;
+        if (state.leatherWork || state.benchBill) {
+            return { type: "leather", target: state.leatherWork || state.benchBill };
+        }
+        return null;
+    }
+
+    /**
      * Highest-priority next action for a parked settler. Phaser-free so tests
      * and both LocalSim / dedicated AI share one policy.
      */
     function planWork(state = {}) {
         const AUTO = Number(state.autoEatBelow) > 0 ? Number(state.autoEatBelow) : 1000;
         const busy = !!state.busy;
-        const busyJob = state.busyJob && isBusyWork(state.busyJob.type) ? state.busyJob : null;
-        if (busy && busyJob) {
+        const row = state.jobs || defaultJobs();
+        const night = !!state.isNight;
+        const injured = !!state.injured;
+        const busyJob = state.busyJob && isBusyWork(state.busyJob.type) && jobEnabled(row, state.busyJob.type)
+            ? state.busyJob
+            : null;
+        const poll = !!(busy && busyJob && state.reconsiderNeeds && busyJob.type === "research");
+        if (busy && busyJob && !poll) {
+            if (busyJob.type === "research") {
+                const haulFirst = haulInsteadOfResearch(row, state);
+                if (haulFirst) return haulFirst;
+                const leatherFirst = leatherInsteadOfResearch(row, state);
+                if (leatherFirst) return leatherFirst;
+            }
             // A finished count/until bill leaves a leather hold pointing at the bench.
             // Don't keep sewing just because the previous scan still had that job.
             if (busyJob.type !== "leather" || state.leatherWork || state.benchBill) {
@@ -1215,12 +1347,10 @@
         }
         if (!busy && (Number(state.kc) || 0) < AUTO && state.canEat !== false) return { type: "eat" };
         if (state.isOrphan) return { type: "idle" };
-        const night = !!state.isNight;
-        const injured = !!state.injured;
         if (!busy && settlerShouldSleep(night, injured) && state.bed) {
             return { type: "sleep", target: state.bed };
         }
-        const haulOn = enabledJobs(state.jobs || defaultJobs()).includes("haul");
+        const haulOn = enabledJobs(row).includes("haul");
         if (haulOn && state.stashUrgent && state.stashBasket) {
             return { type: "stash", target: state.stashBasket };
         }
@@ -1233,7 +1363,6 @@
         }
         if (haulWrong) return { type: "haul", target: state.haulMerge };
         if (!busy && settlerShouldSleep(night, injured)) return { type: "idle" };
-        const row = state.jobs || defaultJobs();
         for (const job of enabledJobs(row)) {
             if (job === "doctor" && (state.patients || []).length) {
                 return { type: "doctor", target: state.patients[0] };
@@ -1248,14 +1377,38 @@
             if (job === "leather" && (state.leatherWork || state.benchBill)) {
                 return { type: "leather", target: state.leatherWork || state.benchBill };
             }
-            if (job === "haul" && (state.haulDrop || state.haulOutput || state.haulMerge)) {
-                return { type: "haul", target: state.haulDrop || state.haulOutput || state.haulMerge };
+            if (job === "haul") {
+                if (state.haulDrop || state.haulOutput || state.haulMerge) {
+                    return { type: "haul", target: state.haulDrop || state.haulOutput || state.haulMerge };
+                }
+                if (state.hasStash && state.stashBasket) {
+                    return { type: "stash", target: state.stashBasket };
+                }
             }
             if (job === "gather" && state.gatherThing) return { type: "gather", target: state.gatherThing };
             if (job === "chop" && state.chopTree) return { type: "chop", target: state.chopTree };
+            if (job === "research" && state.researchCircle) {
+                if (poll) {
+                    if ((Number(state.kc) || 0) < AUTO && state.canEat !== false) {
+                        return { type: "eat" };
+                    }
+                    if (settlerShouldSleep(night, injured)) {
+                        if (state.bed) return { type: "sleep", target: state.bed };
+                        return { type: "idle" };
+                    }
+                }
+                return { type: "research", target: state.researchCircle };
+            }
         }
         if (haulOn && state.hasStash && state.stashBasket) {
             return { type: "stash", target: state.stashBasket };
+        }
+        if (poll) {
+            if ((Number(state.kc) || 0) < AUTO && state.canEat !== false) return { type: "eat" };
+            if (settlerShouldSleep(night, injured)) {
+                if (state.bed) return { type: "sleep", target: state.bed };
+                return { type: "idle" };
+            }
         }
         return { type: "idle" };
     }
@@ -1425,12 +1578,12 @@
             return "Simmering";
         }
         if (fire && !isCookTool(getItem, cat, method)) {
-            if (method === "stick_roast") return "Getting a roasting stick";
-            if (method === "smoke_hide") return "Getting a drying rack";
+            if (method === "stick_roast") return "Getting a Sharp Stick";
+            if (method === "smoke_hide") return "Getting a Drying Rack";
             return "Getting a cooking tool";
         }
         if (method === "stick_roast" && isCookTool(getItem, cat, method) && !cook && bill?.leftover) {
-            return "Taking a roasting stick";
+            return "Taking a Sharp Stick";
         }
         const foods = _billFoods(bill, getItem);
         if (method === "smoke_hide") {
@@ -1463,6 +1616,7 @@
         }
         if (method === "dehair_hide") return typed ? `Dehairing ${hide}` : "Dehairing hides";
         if (method === "brain_hide") return typed ? `Brain-tanning ${hide}` : "Brain-tanning hides";
+        if (method === "smoke_hide" || job?.kind === "smoke") return _cookActLabel(job, getItem);
         if (stationId === "drying_rack") return typed ? `Working ${hide}` : "Working hides";
         return typed ? `Working ${hide}` : "Working hides";
     }
@@ -1519,6 +1673,7 @@
             const tree = _thingName(plan.target, getThing);
             return tree ? `Chopping ${_an(tree)}` : "Chopping";
         }
+        if (t === "research") return "Painting";
         if (t === "leather") return _leatherActLabel(plan.target, getItem, getThing);
         if (t === "sleep") {
             const bed = plan.target?.entry || plan.target;
@@ -1665,6 +1820,7 @@
         STOCK_DEFAULTS,
         BILL_MODES,
         BILL_RECIPES,
+        BILL_STATION_THING,
         SIMMER_INGREDIENT_IDS,
         SIMMER_RESULT,
         SIMMER_MIN_SLOTS,
@@ -1708,6 +1864,8 @@
         addBill,
         billRecipesFor,
         billRecipeById,
+        billStationKindOf,
+        billStationThingId,
         cookInputsForMethod,
         billInputsFor,
         billAllowsInput,
@@ -1757,8 +1915,12 @@
         transferMode,
         shouldPin,
         gatherShouldWork,
+        haulTakeQty,
         settlerShouldSleep,
+        RESEARCH_NEEDS_TICKS,
         isBusyWork,
+        jobForWork,
+        jobEnabled,
         isFirestarter,
         cookCanLight,
         weaponDamage,

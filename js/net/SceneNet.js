@@ -15,6 +15,7 @@ class SceneNet extends Phaser.Scene {
     preload() {
         this.load.json("items", "data/Items.json");
         this.load.json("things", "data/Things.json");
+        this.load.json("techs", "data/Techs.json");
         this.load.json("mobs", "data/Mobs.json");
         if (typeof PlayerLook !== "undefined") PlayerLook.loadParts(this);
 
@@ -72,7 +73,7 @@ class SceneNet extends Phaser.Scene {
             "deer_hide_soaked", "deer_hide_dehaired", "deer_hide_brained", "deer_leather",
             "boar_hide", "boar_hide_fleshed", "boar_hide_dry",
             "boar_hide_soaked", "boar_hide_dehaired", "boar_hide_brained", "boar_leather",
-            "brain", "bone", "stick", "log", "lean_to",
+            "brain", "bone", "stick", "log", "lean_to", "painting_circle",
             "hide_pouch", "hide_bundle", "hide_tunic", "hide_loincloth",
             "leather_pouch", "leather_pack", "leather_tunic", "leather_kilt"
         ]) {
@@ -225,7 +226,7 @@ class SceneNet extends Phaser.Scene {
                 `${p.name}  HP ${Math.ceil(p.hp)}/${p.mhp}${p.dead ? " DEAD" : ""}`,
                 `Hunger ${Math.ceil(p.kc)}/${p.stomach}  Sat ${Math.ceil(p.saturation)}`,
                 inv,
-                "WASD move | Space attack | E pickup | Q drop | 1-5 hotbar | Enter chat | /heal"
+                "WASD move / Space attack / E pickup / Q drop / 1-5 hotbar / Enter chat, /heal"
             ].join("\n")
         );
     }

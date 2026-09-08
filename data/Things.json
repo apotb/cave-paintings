@@ -257,5 +257,12 @@
         "key": "settling_stone",
         "hitboxSize": 5,
         "settlement": true
+    },
+    {
+        "id": "painting_circle",
+        "name": "Painting Circle",
+        "key": "painting_circle",
+        "hitboxSize": 0,
+        "paintingCircle": true
     }
 ]

@@ -1,0 +1,485 @@
+[
+    {
+        "id": "gathering",
+        "name": "Gathering",
+        "era": "Paleolithic",
+        "quote": "Use your surroundings",
+        "cost": 0,
+        "startUnlocked": true,
+        "prereqs": [],
+        "unlocks": { "items": [], "jobs": ["gather"], "text": [] },
+        "children": ["cordage", "herbalism", "digging", "traps", "fishing", "agriculture"]
+    },
+    {
+        "id": "cordage",
+        "name": "Cordage",
+        "era": "Paleolithic",
+        "quote": "Knot bad",
+        "cost": 0,
+        "startUnlocked": true,
+        "prereqs": ["gathering"],
+        "unlocks": {
+            "items": ["leaf_cord", "leaf_wrap", "leaf_loincloth", "leaf_pouch", "leaf_sandals", "wooden_spear"],
+            "jobs": [],
+            "text": []
+        },
+        "children": ["camping", "basic_furniture"]
+    },
+    {
+        "id": "camping",
+        "name": "Camping",
+        "era": "Paleolithic",
+        "quote": "Embrace the elements",
+        "cost": 0,
+        "startUnlocked": true,
+        "prereqs": ["cordage"],
+        "unlocks": { "items": ["lean_to"], "jobs": [], "text": [] },
+        "children": ["hut"]
+    },
+    {
+        "id": "hut",
+        "name": "Hut",
+        "era": "Paleolithic",
+        "quote": "It's nice having walls",
+        "cost": 3,
+        "prereqs": ["camping", "basic_furniture"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Hut"] },
+        "children": []
+    },
+    {
+        "id": "basic_furniture",
+        "name": "Basic Furniture",
+        "era": "Paleolithic",
+        "quote": "Make yourself at home",
+        "cost": 2,
+        "prereqs": ["cordage"],
+        "unlocks": { "items": ["stick_frame", "wicker_basket"], "jobs": [], "text": [] },
+        "children": []
+    },
+    {
+        "id": "herbalism",
+        "name": "Herbalism",
+        "era": "Paleolithic",
+        "quote": "This might sting",
+        "cost": 2,
+        "prereqs": ["gathering"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Poultice"] },
+        "children": []
+    },
+    {
+        "id": "digging",
+        "name": "Digging",
+        "era": "Paleolithic",
+        "quote": "Very undesirable profession",
+        "cost": 3,
+        "prereqs": ["gathering"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Digging Stick"] },
+        "children": ["storage"]
+    },
+    {
+        "id": "storage",
+        "name": "Storage",
+        "era": "Paleolithic",
+        "quote": "Perfect for leftovers",
+        "cost": 2,
+        "prereqs": ["digging", "camping"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Storage Pit"] },
+        "children": []
+    },
+    {
+        "id": "traps",
+        "name": "Traps",
+        "era": "Paleolithic",
+        "quote": "Wait for dinner",
+        "cost": 2,
+        "prereqs": ["gathering", "cordage"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Snare"] },
+        "children": ["spike_traps", "pit_traps"]
+    },
+    {
+        "id": "spike_traps",
+        "name": "Spike Traps",
+        "era": "Mesolithic",
+        "quote": "Pointy end up",
+        "cost": 3,
+        "prereqs": ["traps", "hafting"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Spike Trap"] },
+        "children": []
+    },
+    {
+        "id": "pit_traps",
+        "name": "Pit Traps",
+        "era": "Mesolithic",
+        "cost": 3,
+        "prereqs": ["traps", "digging"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Pit Trap"] },
+        "children": []
+    },
+    {
+        "id": "fishing",
+        "name": "Fishing",
+        "era": "Mesolithic",
+        "quote": "Might need to adjust your palate",
+        "cost": 3,
+        "prereqs": ["gathering", "cordage"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Fishing job"] },
+        "children": ["nets"]
+    },
+    {
+        "id": "nets",
+        "name": "Nets",
+        "era": "Mesolithic",
+        "quote": "As if manual fishing wasn't lazy enough",
+        "cost": 3,
+        "prereqs": ["fishing"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Fishing Net"] },
+        "children": []
+    },
+    {
+        "id": "agriculture",
+        "name": "Agriculture",
+        "era": "Neolithic",
+        "quote": "I love dirt",
+        "cost": 5,
+        "prereqs": ["gathering", "digging"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Agronomy job"] },
+        "children": ["tree_sowing", "husbandry"]
+    },
+    {
+        "id": "tree_sowing",
+        "name": "Tree Sowing",
+        "era": "Neolithic",
+        "quote": "Early environmentalism",
+        "cost": 2,
+        "prereqs": ["agriculture", "digging"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Sow trees"] },
+        "children": []
+    },
+    {
+        "id": "husbandry",
+        "name": "Husbandry",
+        "era": "Neolithic",
+        "quote": "More mouths to feed",
+        "cost": 3,
+        "prereqs": ["agriculture"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Husbandry job"] },
+        "children": ["herding"]
+    },
+    {
+        "id": "herding",
+        "name": "Herding",
+        "era": "Neolithic",
+        "quote": "The circle of life",
+        "cost": 4,
+        "prereqs": ["husbandry"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Fence", "Fence Gate", "Pen Marker", "Trough"] },
+        "children": []
+    },
+    {
+        "id": "fire",
+        "name": "Fire",
+        "era": "Paleolithic",
+        "quote": "It's hot!",
+        "cost": 0,
+        "startUnlocked": true,
+        "prereqs": [],
+        "unlocks": { "items": ["sharp_stick"], "jobs": [], "text": [] },
+        "children": ["settlements", "cooking", "clay_forming", "adhesive"]
+    },
+    {
+        "id": "settlements",
+        "name": "Settlements",
+        "era": "Paleolithic",
+        "quote": "Precursor to society",
+        "cost": 0,
+        "startUnlocked": true,
+        "prereqs": ["fire"],
+        "unlocks": { "items": ["settling_stone"], "jobs": [], "text": [] },
+        "children": []
+    },
+    {
+        "id": "cooking",
+        "name": "Cooking",
+        "era": "Paleolithic",
+        "quote": "We can make eating fun",
+        "cost": 0,
+        "startUnlocked": true,
+        "prereqs": ["fire"],
+        "unlocks": { "items": ["cracked_coconut"], "jobs": [], "text": [] },
+        "children": ["feasts", "dogs", "smoking", "earth_oven"]
+    },
+    {
+        "id": "smoking",
+        "name": "Smoking",
+        "era": "Paleolithic",
+        "quote": "Decent meat preservation",
+        "cost": 2,
+        "prereqs": ["cooking"],
+        "unlocks": { "items": [], "jobs": [], "bills": ["smoke"], "text": [] },
+        "children": []
+    },
+    {
+        "id": "earth_oven",
+        "name": "Earth Oven",
+        "era": "Paleolithic",
+        "quote": "A hole lot of time saved",
+        "cost": 2,
+        "prereqs": ["cooking", "digging"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Earth Oven"] },
+        "children": []
+    },
+    {
+        "id": "feasts",
+        "name": "Feasts",
+        "era": "Paleolithic",
+        "quote": "Food makes the world go around",
+        "cost": 2,
+        "prereqs": ["cooking", "rituals"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Feast ritual"] },
+        "children": []
+    },
+    {
+        "id": "clay_forming",
+        "name": "Clay Forming",
+        "era": "Paleolithic",
+        "quote": "Shape the earth",
+        "cost": 3,
+        "prereqs": ["fire"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Clay forming"] },
+        "children": ["pit_kiln"]
+    },
+    {
+        "id": "pit_kiln",
+        "name": "Pit Kiln",
+        "era": "Paleolithic",
+        "quote": "Reaches incredibly high temperatures",
+        "cost": 2,
+        "prereqs": ["clay_forming", "digging"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Pit Kiln"] },
+        "children": ["pottery"]
+    },
+    {
+        "id": "adhesive",
+        "name": "Adhesive",
+        "era": "Paleolithic",
+        "quote": "Bounces kind of like rubber, sticks kind of like glue",
+        "cost": 2,
+        "prereqs": ["fire", "gathering"],
+        "unlocks": { "items": ["pitch"], "jobs": [], "text": [] },
+        "children": []
+    },
+    {
+        "id": "pottery",
+        "name": "Pottery",
+        "era": "Neolithic",
+        "quote": "For those who dislike coconuts",
+        "cost": 4,
+        "prereqs": ["pit_kiln", "agriculture"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Clay Pot"] },
+        "children": []
+    },
+    {
+        "id": "knapping",
+        "name": "Knapping",
+        "era": "Paleolithic",
+        "quote": "Less is more",
+        "cost": 0,
+        "startUnlocked": true,
+        "prereqs": [],
+        "unlocks": { "items": [], "jobs": [], "text": ["Knife knapping", "Scraper knapping", "Chopper knapping", "Awl knapping", "Spear tip knapping"] },
+        "children": ["hafting", "hand_axe"]
+    },
+    {
+        "id": "hafting",
+        "name": "Hafting",
+        "era": "Paleolithic",
+        "quote": "Sharper sticks",
+        "cost": 1,
+        "prereqs": ["knapping", "cordage", "adhesive"],
+        "unlocks": { "items": ["stone_spear", "flint_spear"], "jobs": [], "text": [] },
+        "children": ["bows", "throwing"]
+    },
+    {
+        "id": "throwing",
+        "name": "Throwing",
+        "era": "Paleolithic",
+        "quote": "I didn't really want that spear anyway",
+        "cost": 3,
+        "prereqs": ["hafting"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Atlatl", "Darts"] },
+        "children": []
+    },
+    {
+        "id": "bows",
+        "name": "Bows",
+        "era": "Mesolithic",
+        "quote": "Stay out of danger",
+        "cost": 4,
+        "prereqs": ["hafting", "blades"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Bow", "Arrow"] },
+        "children": []
+    },
+    {
+        "id": "dogs",
+        "name": "Dogs",
+        "era": "Paleolithic",
+        "quote": "Man's best friend",
+        "cost": 5,
+        "prereqs": ["cooking"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Tame wolves into dogs"] },
+        "children": []
+    },
+    {
+        "id": "hand_axe",
+        "name": "Hand-axe",
+        "era": "Paleolithic",
+        "quote": "Harder, better, faster, stronger",
+        "cost": 3,
+        "prereqs": ["knapping"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Hand-axe knapping"] },
+        "children": ["cleaver", "blades"]
+    },
+    {
+        "id": "cleaver",
+        "name": "Cleaver",
+        "era": "Paleolithic",
+        "quote": "Better butchering",
+        "cost": 2,
+        "prereqs": ["hand_axe"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Cleaver knapping"] },
+        "children": []
+    },
+    {
+        "id": "blades",
+        "name": "Blades",
+        "era": "Paleolithic",
+        "quote": "Knap stone into long flakes",
+        "cost": 2,
+        "prereqs": ["hand_axe"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Blade knapping"] },
+        "children": ["microliths"]
+    },
+    {
+        "id": "microliths",
+        "name": "Microliths",
+        "era": "Mesolithic",
+        "quote": "An advanced form of hitting a rock on another rock",
+        "cost": 4,
+        "prereqs": ["blades"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Microlith knapping"] },
+        "children": []
+    },
+    {
+        "id": "tanning",
+        "name": "Tanning",
+        "era": "Paleolithic",
+        "quote": "Hope you don't mind the sight of blood",
+        "cost": 0,
+        "startUnlocked": true,
+        "prereqs": [],
+        "unlocks": { "items": ["drying_rack"], "jobs": ["leather"], "text": [] },
+        "children": ["skinworking"]
+    },
+    {
+        "id": "skinworking",
+        "name": "Skinworking",
+        "era": "Paleolithic",
+        "quote": "Cover up with style",
+        "cost": 2,
+        "prereqs": ["tanning", "basic_furniture"],
+        "unlocks": { "items": ["skinworking_bench", "hide_pouch", "hide_bundle", "hide_tunic", "hide_loincloth"], "jobs": [], "text": [] },
+        "children": ["leatherworking"]
+    },
+    {
+        "id": "leatherworking",
+        "name": "Leatherworking",
+        "era": "Paleolithic",
+        "quote": "Ideal material for a hunter-gatherer's clothing",
+        "cost": 4,
+        "prereqs": ["skinworking", "fire"],
+        "unlocks": { "items": ["leather_pouch", "leather_pack", "leather_tunic", "leather_kilt"], "jobs": [], "text": [] },
+        "children": []
+    },
+    {
+        "id": "culture",
+        "name": "Culture",
+        "era": "Paleolithic",
+        "quote": "The way of our people",
+        "cost": 0,
+        "startUnlocked": true,
+        "prereqs": [],
+        "unlocks": { "items": [], "jobs": [], "text": [] },
+        "children": ["painting", "rituals", "burial"]
+    },
+    {
+        "id": "painting",
+        "name": "Painting",
+        "era": "Paleolithic",
+        "quote": "Very desirable profession",
+        "cost": 0,
+        "startUnlocked": true,
+        "prereqs": ["culture"],
+        "unlocks": { "items": ["painting_circle"], "jobs": ["research"], "text": [] },
+        "children": ["counting"]
+    },
+    {
+        "id": "counting",
+        "name": "Counting",
+        "era": "Paleolithic",
+        "quote": "Invent 1, 2 before buckling shoes",
+        "cost": 2,
+        "prereqs": ["painting"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Tally Stick"] },
+        "children": ["mathematics"]
+    },
+    {
+        "id": "mathematics",
+        "name": "Mathematics",
+        "era": "Neolithic",
+        "quote": "We could do a lot with this",
+        "cost": 7,
+        "prereqs": ["counting", "clay_forming"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Clay Tokens"] },
+        "children": ["writing"]
+    },
+    {
+        "id": "writing",
+        "name": "Writing",
+        "era": "Neolithic",
+        "quote": "Less ambiguous than paintings",
+        "cost": 15,
+        "prereqs": ["mathematics", "basic_furniture"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Clay Tablet", "Research Bench"] },
+        "children": []
+    },
+    {
+        "id": "rituals",
+        "name": "Rituals",
+        "era": "Paleolithic",
+        "quote": "It's not a cult",
+        "cost": 1,
+        "prereqs": ["culture"],
+        "unlocks": { "items": [], "jobs": [], "text": [] },
+        "children": []
+    },
+    {
+        "id": "burial",
+        "name": "Burial",
+        "era": "Paleolithic",
+        "quote": "Dead bodies smell bad",
+        "cost": 1,
+        "prereqs": ["culture", "digging"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Grave"] },
+        "children": ["afterlife"]
+    },
+    {
+        "id": "afterlife",
+        "name": "Afterlife",
+        "era": "Paleolithic",
+        "quote": "Our people have souls",
+        "cost": 2,
+        "prereqs": ["burial", "rituals"],
+        "unlocks": { "items": [], "jobs": [], "text": ["Funeral ritual"] },
+        "children": []
+    }
+]

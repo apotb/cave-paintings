@@ -33,6 +33,7 @@ class SceneMain extends SceneBase {
         this._lastYou = this.welcome?.you || null;
         this._onVisSave = null;
         this._gamePaused = false;
+        this._worldSimFrozen = false;
         this._chatFadeHold = null;
         this._worldBooting = !!(this.net?.isLocal || this.localWorldId);
         this._generatingUi = null;
@@ -65,9 +66,12 @@ class SceneMain extends SceneBase {
         this.partyPanel = null;
         this.settlementSys = null;
         this.settlementPanel = null;
+        this.researchTreePanel = null;
         this.billsPanel = null;
         this.storageFilterPanel = null;
         this.fuelFilterPanel = null;
+        this.pigmentFilterPanel = null;
+        this.paintingCirclePanel = null;
         this.chunks = null;
         this.droppedItems = null;
         this.corpses = null;
@@ -290,9 +294,12 @@ class SceneMain extends SceneBase {
         this.createDeathOverlay();
         this.partyPanel = new PartyPanel(this);
         this.settlementPanel = new SettlementPanel(this);
+        this.researchTreePanel = new ResearchTreePanel(this);
         this.billsPanel = new BillsPanel(this);
         this.storageFilterPanel = new StorageFilterPanel(this);
         this.fuelFilterPanel = new FuelFilterPanel(this);
+        this.pigmentFilterPanel = new PigmentFilterPanel(this);
+        this.paintingCirclePanel = new PaintingCirclePanel(this);
         this.applyUiScale();
         if (this._worldBooting) this._showGeneratingOverlay();
 
@@ -3295,6 +3302,8 @@ class SceneMain extends SceneBase {
             } else if (isSettle) {
                 if (typeof Place !== "undefined") Place.ensureSettlementEntry(entry);
                 if (src.settlementId) entry.settlementId = src.settlementId;
+            } else if (typeof Research !== "undefined" && Research.isPaintingCircle?.(def, src)) {
+                if (typeof Research.ensureEntry === "function") Research.ensureEntry(entry, def);
             } else {
                 entry.slots = Array.isArray(src.slots) ? src.slots : [null, null, null, null, null, null];
                 if (typeof Place !== "undefined") {
@@ -3316,6 +3325,16 @@ class SceneMain extends SceneBase {
             if (Array.isArray(src.occupants)) entry.occupants = src.occupants;
             this._netApplyStorageFilter(entry, src);
         }
+        if (typeof Research !== "undefined" && Research.isPaintingCircle?.(this.getThing(entry.id), entry)) {
+            if (src.painted != null) entry.painted = src.painted;
+            if (src.paintProgress != null) entry.paintProgress = src.paintProgress;
+            if (src.paintStarted != null) entry.paintStarted = !!src.paintStarted;
+            if (src.paintPigment !== undefined) entry.paintPigment = src.paintPigment;
+            if (Array.isArray(src.paintPigments)) entry.paintPigments = src.paintPigments.slice();
+            if (src.paintEnabled != null) entry.paintEnabled = src.paintEnabled !== false;
+            this._netApplyPaintFilter(entry, src);
+            Research.ensureEntry(entry, this.getThing(entry.id));
+        }
         this._netSyncStorageSprite(chunk, entry, x, y);
         const storeP = this.storagePanel;
         if (storeP?.visible) {
@@ -3327,6 +3346,12 @@ class SceneMain extends SceneBase {
         this.leanToPanel?.refresh?.();
         if (this.storageFilterPanel?.visible && this.storageFilterPanel.thing?.entry === entry) {
             this.storageFilterPanel.refresh();
+        }
+        if (this.pigmentFilterPanel?.visible && this.pigmentFilterPanel.thing?.entry === entry) {
+            this.pigmentFilterPanel.refresh();
+        }
+        if (this.paintingCirclePanel?.visible && this.paintingCirclePanel.circle?.entry === entry) {
+            this.paintingCirclePanel.layout();
         }
         this._reconcileSleepOccupants?.(entry);
     }
@@ -3345,6 +3370,14 @@ class SceneMain extends SceneBase {
         if (FF) FF.applyToEntry(entry, src.fuelFilter);
         else if (src.fuelFilter) entry.fuelFilter = src.fuelFilter;
         else delete entry.fuelFilter;
+    }
+
+    _netApplyPaintFilter(entry, src) {
+        if (!entry || !src || !Object.prototype.hasOwnProperty.call(src, "paintFilter")) return;
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (R?.applyPaintFilter) R.applyPaintFilter(entry, src.paintFilter);
+        else if (src.paintFilter) entry.paintFilter = src.paintFilter;
+        else delete entry.paintFilter;
     }
 
     _netSyncStorageSprite(chunk, entry, x, y) {
@@ -3366,7 +3399,7 @@ class SceneMain extends SceneBase {
                     ? (t instanceof LeanTo)
                     : isStation ? (t instanceof CraftStation)
                     : isSettle ? (typeof SettlingStone !== "undefined" && t instanceof SettlingStone)
-                    : (t instanceof Storage);
+                    : (t instanceof Storage || t instanceof PaintingCircle);
                 if (!matchType) continue;
                 if (t.entry === entry) { live = t; break; }
                 if (Math.abs(t.x - x) < 1.5 && Math.abs(t.y - y) < 1.5) { live = t; break; }
@@ -3377,6 +3410,7 @@ class SceneMain extends SceneBase {
             for (const t of chunk?.things?.getChildren?.() || []) {
                 if (!t?.active) continue;
                 if (t instanceof CraftStation || t instanceof Storage || t instanceof LeanTo
+                    || t instanceof PaintingCircle
                     || (typeof SettlingStone !== "undefined" && t instanceof SettlingStone)) continue;
                 const sameUid = !!(entry.uid && t.entry?.uid === entry.uid);
                 const samePos = Number.isFinite(x) && Number.isFinite(y)
@@ -3431,7 +3465,8 @@ class SceneMain extends SceneBase {
             || this.findLeanToByUid(uid)
             || this.settlementSys?.findThingByUid?.(uid)
             || (chunk?.things?.getChildren?.() || []).find((t) =>
-                (t instanceof Storage || t instanceof CraftStation || t instanceof LeanTo) && (
+                (t instanceof Storage || t instanceof CraftStation || t instanceof LeanTo
+                    || t instanceof PaintingCircle) && (
                     t.entry === entry
                     || (Number.isFinite(x) && Math.abs(t.x - x) < 1.5 && Math.abs(t.y - y) < 1.5)
                 )
@@ -3445,6 +3480,8 @@ class SceneMain extends SceneBase {
         }
         if (live) {
             if (this.storagePanel?.storage === live) this.storagePanel.close();
+            if (this.paintingCirclePanel?.circle === live) this.paintingCirclePanel.close();
+            if (this.pigmentFilterPanel?.thing === live) this.pigmentFilterPanel.close();
             if (this._isSameCraftStation(live)) this.closeCraftStationMenu();
             if (this.leanToPanel?.leanTo === live) this.leanToPanel.close();
             live.destroy();
@@ -3658,10 +3695,12 @@ class SceneMain extends SceneBase {
             || (p._prone && !p._resting));
         if (
             !this._gamePaused
+            && !this._worldSimFrozen
             && !this._worldBooting
             && !this.combatLog?.isComposing?.()
             && !this.settlementSys?.isNaming?.()
             && !this.knappingPanel?.visible
+            && !this.researchTreePanel?.visible
             && !downed
             && !p.isVomiting?.()
         ) {
@@ -3678,7 +3717,7 @@ class SceneMain extends SceneBase {
         this.net.sendMove({
             x,
             y,
-            sprint: !this._gamePaused && !this._worldBooting && !!p.isSprinting,
+            sprint: !this._gamePaused && !this._worldSimFrozen && !this._worldBooting && !!p.isSprinting,
             facing: p.facing || "down",
             px: pose.x,
             py: pose.y,
@@ -3851,11 +3890,12 @@ class SceneMain extends SceneBase {
         this._hideGeneratingOverlay?.();
         this._worldBooting = false;
         this._unbindNetClose();
-        if (this._gamePaused) {
+        if (this._gamePaused || this._worldSimFrozen) {
             try { this.net?.setPaused?.(false); } catch (_) {}
             try { this.physics?.world?.resume?.(); } catch (_) {}
             try { this.anims?.resumeAll?.(); } catch (_) {}
             this._gamePaused = false;
+            this._worldSimFrozen = false;
         }
         try { this._destroyPauseUi?.(); } catch (_) {}
         try { this.input?.setDefaultCursor?.("default"); } catch (_) {}
@@ -4198,8 +4238,19 @@ class SceneMain extends SceneBase {
             const kids = chunk.things?.getChildren?.() || [];
             for (const t of kids) {
                 if (!t?.active || t.entry?.gone) continue;
-                const frac = Number(t.entry?.chopProgress);
-                if (!(frac > 0) || frac >= 1) continue;
+                let frac = Number(t.entry?.chopProgress);
+                if (!(frac > 0) || frac >= 1) {
+                    frac = 0;
+                    const id = t.entry?.id;
+                    const isFire = id === "campfire" || id === "unlit_campfire";
+                    const panel = this.campfirePanel;
+                    const uiOpen = !!(panel?.visible && panel.campfire === t);
+                    if (isFire && !uiOpen && typeof Fire !== "undefined" && Fire.cookWorldBarFrac) {
+                        frac = Fire.cookWorldBarFrac(t.entry, (itemId) => this.getItem?.(itemId));
+                    }
+                }
+                if (!(frac > 0)) continue;
+                if (frac > 1) frac = 1;
                 if (view) {
                     if (t.x < view.x - pad || t.x > view.right + pad) continue;
                     if (t.y < view.y - pad || t.y > view.bottom + pad) continue;
@@ -4271,10 +4322,11 @@ class SceneMain extends SceneBase {
             return {
                 text: raw.text || "",
                 rows: Array.isArray(raw.rows) ? raw.rows : null,
+                lines: Array.isArray(raw.lines) ? raw.lines : null,
                 hunger: raw.hunger && typeof raw.hunger === "object" ? raw.hunger : null
             };
         }
-        return { text: raw || "", rows: null, hunger: null };
+        return { text: raw || "", rows: null, lines: null, hunger: null };
     }
 
     _splitTooltipText(text) {
@@ -4295,18 +4347,20 @@ class SceneMain extends SceneBase {
 
     _applyTooltipPayload() {
         const raw = this._tooltipSource ? this._tooltipSource() : "";
-        const { text, rows, hunger } = this._tooltipPayload(raw);
+        const { text, rows, lines, hunger } = this._tooltipPayload(raw);
         const useHunger = !!hunger;
         const split = useHunger ? this._splitTooltipText(text) : { head: text, tail: "" };
         const head = useHunger ? split.head : text;
         const tail = useHunger ? split.tail : "";
         const gearSig = this._gearRowsSig(rows);
+        const linesSig = this._tooltipLinesSig(lines);
+        const extraSig = lines?.length ? `L:${linesSig}` : `G:${gearSig}`;
         const hungerSig = this._hungerSig(hunger);
         if (
             this._tooltipDrawn
             && this.tooltipText.text === head
             && (this.tooltipSub?.text || "") === tail
-            && gearSig === this._tooltipGearSig
+            && extraSig === this._tooltipGearSig
             && hungerSig === this._tooltipHungerSig
         ) {
             return !!(head || tail || this._tooltipGearH || this._tooltipHungerH);
@@ -4316,7 +4370,8 @@ class SceneMain extends SceneBase {
             this.tooltipSub.setText(tail);
             this.tooltipSub.setVisible(!!tail);
         }
-        this._syncTooltipGear(rows, gearSig);
+        if (lines?.length) this._syncTooltipLines(lines, extraSig);
+        else this._syncTooltipGear(rows, extraSig);
         this._layoutTooltip(hunger);
         this._tooltipDrawn = true;
         return !!(head || tail || this._tooltipGearH || this._tooltipHungerH);
@@ -4376,8 +4431,10 @@ class SceneMain extends SceneBase {
             if (this.tooltipSub) this.tooltipSub.setPadding(pad);
         }
         this._syncTooltipHunger(hunger, this._hungerSig(hunger));
-        const tw = this.tooltipText.displayWidth || 0;
-        const th = this.tooltipText.displayHeight || 0;
+        const hasText = !!(this.tooltipText?.text);
+        this.tooltipText?.setVisible(hasText);
+        const tw = hasText ? (this.tooltipText.displayWidth || 0) : 0;
+        const th = hasText ? (this.tooltipText.displayHeight || 0) : 0;
         const sw = tail ? (this.tooltipSub.displayWidth || 0) : 0;
         const sh = tail ? (this.tooltipSub.displayHeight || 0) : 0;
         const gw = this._tooltipGearW || 0;
@@ -4426,6 +4483,10 @@ class SceneMain extends SceneBase {
     _gearRowsSig(rows) {
         const list = (rows || []).filter((r) => Array.isArray(r) && r.some((s) => s?.id));
         return list.map((r) => r.map((s) => this._heldStackSig(s)).join(",")).join("|");
+    }
+
+    _tooltipLinesSig(lines) {
+        return (lines || []).map((l) => `${l?.icon || ""}:${l?.label || ""}:${l?.value ?? ""}:${l?.hangMinus ? 1 : 0}`).join("|");
     }
 
     _clearTooltipGear() {
@@ -4500,6 +4561,87 @@ class SceneMain extends SceneBase {
         this._tooltipGearH = Math.max(0, y - rowGap);
     }
 
+    _syncTooltipLines(lines, sig = null) {
+        const next = sig != null ? sig : `L:${this._tooltipLinesSig(lines)}`;
+        if (next === this._tooltipGearSig) return;
+        this._clearTooltipGear();
+        this._tooltipGearSig = next;
+        const list = lines || [];
+        if (!list.length || !this.tooltipGear) return;
+
+        const s = this.uiScale || 1;
+        const pad = this._tooltipPadding;
+        const iconS = Math.round(16 * s);
+        const iconGap = Math.round(6 * s);
+        const rowH = Math.round(22 * s);
+        const valGap = Math.round(16 * s);
+        const textX = pad + iconS + iconGap;
+        const made = [];
+        let y = 0;
+        for (const line of list) {
+            const midY = y + rowH / 2;
+            const iconKey = line?.icon;
+            if (iconKey && this.textures.exists(iconKey)) {
+                const img = this.add.image(pad + iconS / 2, midY, iconKey)
+                    .setDisplaySize(iconS, iconS);
+                this.tooltipGear.add(img);
+            }
+            const label = crispUiText(this.add.text(textX, midY, String(line?.label || ""), {
+                fontFamily: PIXEL_UI_FONT,
+                fontSize: `${pixelUiFontSize(16, s)}px`,
+                color: "#ffffff",
+                stroke: "#000000",
+                strokeThickness: Math.max(2, Math.round(2 * s))
+            })).setOrigin(0, 0.5);
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(label, 16, s);
+            const hangMinus = !!line?.hangMinus;
+            const rawVal = String(line?.value ?? "");
+            const digitStr = hangMinus ? rawVal.replace(/^-/, "") : rawVal;
+            const val = crispUiText(this.add.text(textX, midY, digitStr, {
+                fontFamily: PIXEL_UI_FONT,
+                fontSize: `${pixelUiFontSize(16, s)}px`,
+                color: "#ffffff",
+                stroke: "#000000",
+                strokeThickness: Math.max(2, Math.round(2 * s))
+            })).setOrigin(1, 0.5);
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(val, 16, s);
+            let minus = null;
+            if (hangMinus) {
+                minus = crispUiText(this.add.text(textX, midY, "-", {
+                    fontFamily: PIXEL_UI_FONT,
+                    fontSize: `${pixelUiFontSize(16, s)}px`,
+                    color: "#ffffff",
+                    stroke: "#000000",
+                    strokeThickness: Math.max(2, Math.round(2 * s))
+                })).setOrigin(1, 0.5);
+                if (typeof applyPixelUiFont === "function") applyPixelUiFont(minus, 16, s);
+            }
+            this.tooltipGear.add(minus ? [label, val, minus] : [label, val]);
+            made.push({ label, val, minus, midY });
+            y += rowH;
+        }
+        let maxLabel = 0;
+        let maxVal = 0;
+        let maxMinus = 0;
+        for (const row of made) {
+            maxLabel = Math.max(maxLabel, row.label.displayWidth || 0);
+            maxVal = Math.max(maxVal, row.val.displayWidth || 0);
+            if (row.minus) maxMinus = Math.max(maxMinus, row.minus.displayWidth || 0);
+        }
+        const hasVal = made.some((row) => (row.val.text || "").length);
+        const valX = hasVal ? textX + maxLabel + valGap + maxMinus + maxVal : textX + maxLabel;
+        for (const row of made) {
+            if (hasVal) {
+                row.val.setPosition(valX, row.midY);
+                if (row.minus) row.minus.setPosition(valX - row.val.displayWidth, row.midY);
+            } else {
+                row.val.setVisible(false);
+            }
+        }
+        this._tooltipGearW = valX + pad;
+        this._tooltipGearH = Math.max(0, y);
+    }
+
     createTooltip() {
         this._tooltipPadding = 6;
 
@@ -4563,11 +4705,14 @@ class SceneMain extends SceneBase {
                     cur === this.deathOverlay ||
                     cur === this.partyPanel?.root ||
                     cur === this.settlementPanel?.root ||
+                    cur === this.researchTreePanel?.root ||
                     cur === this.billsPanel?.root ||
                     cur === this.storageFilterPanel?.root ||
                     cur === this.fuelFilterPanel?.root ||
+                    cur === this.pigmentFilterPanel?.root ||
                     cur === this.storagePanel?.container ||
                     cur === this.campfirePanel?.container ||
+                    cur === this.paintingCirclePanel?.container ||
                     cur === this.painBarZone ||
                     cur === this.kcBarZone ||
                     cur === this.weightBarZone ||
@@ -4719,6 +4864,13 @@ class SceneMain extends SceneBase {
 
             // Centered overlays sit above the left settlement panel (depth 15150 > 15100).
             // Check them first or the overlapping left strip fights the cursor and eats clicks.
+            const researchP = this.researchTreePanel;
+            if (researchP?.visible && researchP.containsPointer?.(pointer)) {
+                const row = researchP.hoverObjAt?.(pointer);
+                if (row) return row;
+                return researchP.frame || researchP.dim;
+            }
+
             const billsP = this.billsPanel;
             if (billsP?.visible && billsP.containsPointer?.(pointer)) {
                 return this._pickMaskedPanelHover(
@@ -4744,6 +4896,16 @@ class SceneMain extends SceneBase {
                 return this._pickMaskedPanelHover(
                     pointer, hits, fuelFP.bg,
                     (obj) => this._isUnderFuelFilterPanel(obj)
+                );
+            }
+
+            const paintFP = this.pigmentFilterPanel;
+            if (paintFP?.visible && paintFP.containsPointer?.(pointer)) {
+                const row = paintFP.hoverObjAt?.(pointer);
+                if (row) return row;
+                return this._pickMaskedPanelHover(
+                    pointer, hits, paintFP.bg,
+                    (obj) => this._isUnderPigmentFilterPanel(obj)
                 );
             }
 
@@ -4826,6 +4988,22 @@ class SceneMain extends SceneBase {
                     return leanP.destroyRect;
                 }
                 return leanP.actionRect;
+            }
+
+            const paintP = this.paintingCirclePanel;
+            if (paintP?.visible && paintP.containsPointer?.(pointer)) {
+                for (let i = hits.length - 1; i >= 0; i--) {
+                    const obj = hits[i];
+                    if (!obj?.active || !obj.input?.enabled) continue;
+                    if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
+                    if (this._isUnderPaintingCirclePanel(obj)) return obj;
+                }
+                if (this._pointerOnWorldBtn?.(paintP._enableUi, pointer)) return paintP._enableUi.rect;
+                if (this._pointerOnWorldBtn?.(paintP._matUi, pointer)) return paintP._matUi.rect;
+                if (this._pointerOnWorldBtn?.(paintP._removeUi, pointer)) return paintP._removeUi.rect;
+                const keepPaint = this._tooltipTarget || this._hoverTarget;
+                if (keepPaint?.active && this._isUnderPaintingCirclePanel(keepPaint)) return keepPaint;
+                return null;
             }
 
             if (this.pointerOnCraftTake?.(pointer) || this.pointerOnCraftSettle?.(pointer)
@@ -5018,6 +5196,17 @@ class SceneMain extends SceneBase {
             return false;
         };
 
+        this._isUnderPigmentFilterPanel = (obj) => {
+            const panel = this.pigmentFilterPanel;
+            if (!panel) return false;
+            let cur = obj;
+            while (cur) {
+                if (cur === panel.root || cur === panel.bg || cur === panel.body) return true;
+                cur = cur.parentContainer;
+            }
+            return false;
+        };
+
         this._isUnderCorpsePanel = (obj) => {
             const panel = this.corpsePanel;
             if (!panel) return false;
@@ -5088,6 +5277,23 @@ class SceneMain extends SceneBase {
             return false;
         };
 
+        this._isUnderPaintingCirclePanel = (obj) => {
+            const panel = this.paintingCirclePanel;
+            if (!panel) return false;
+            let cur = obj;
+            while (cur) {
+                if (cur === panel.container) return true;
+                if (cur === panel._enableUi?.btn || cur === panel._enableUi?.rect ||
+                    cur === panel._enableUi?.glyph) return true;
+                if (cur === panel._matUi?.btn || cur === panel._matUi?.rect ||
+                    cur === panel._matUi?.text) return true;
+                if (cur === panel._removeUi?.btn || cur === panel._removeUi?.rect ||
+                    cur === panel._removeUi?.text) return true;
+                cur = cur.parentContainer;
+            }
+            return false;
+        };
+
         this._isUnderCraftTake = (obj) => {
             let cur = obj;
             while (cur) {
@@ -5148,7 +5354,8 @@ class SceneMain extends SceneBase {
         };
 
         this._cursorFor = (obj) => {
-            if (this._isUnderStoragePanel?.(obj) || this._isUnderCampfirePanel?.(obj)) {
+            if (this._isUnderStoragePanel?.(obj) || this._isUnderCampfirePanel?.(obj)
+                || this._isUnderPaintingCirclePanel?.(obj)) {
                 return "pointer";
             }
             if (!obj?.input) return 'default';
@@ -5868,6 +6075,7 @@ class SceneMain extends SceneBase {
     _closeWorldUisForRest() {
         this.campfirePanel?.close?.();
         this.storagePanel?.close?.();
+        this.paintingCirclePanel?.close?.();
         this.corpsePanel?.close?.();
         this.closeCraftStationMenu();
         this.knappingPanel?.close?.();
@@ -5884,9 +6092,12 @@ class SceneMain extends SceneBase {
         if (this.leanToPanel?.containsPointer?.(pointer)) return true;
         if (this.storagePanel?.containsPointer?.(pointer)) return true;
         if (this.settlementPanel?.containsPointer?.(pointer)) return true;
+        if (this.researchTreePanel?.containsPointer?.(pointer)) return true;
         if (this.billsPanel?.containsPointer?.(pointer)) return true;
         if (this.storageFilterPanel?.containsPointer?.(pointer)) return true;
         if (this.fuelFilterPanel?.containsPointer?.(pointer)) return true;
+        if (this.pigmentFilterPanel?.containsPointer?.(pointer)) return true;
+        if (this.paintingCirclePanel?.containsPointer?.(pointer)) return true;
         if (this.settlementSys?.hudContains?.(pointer)) return true;
         if (this.pointerOnCraftTake?.(pointer)) return true;
         if (this.pointerOnCraftSettle?.(pointer)) return true;
@@ -6168,7 +6379,8 @@ class SceneMain extends SceneBase {
             || entry.id === "settling_stone"
             || (typeof Place !== "undefined" && Place.isSettlementThing(this.getThing(entry.id), entry))) {
             thing = new SettlingStone(this, entry);
-        } else if (Array.isArray(entry.slots) || this.getThing(entry.id)?.storage) {
+        } else if ((typeof Research !== "undefined" && Research.isPaintingCircle?.(this.getThing(entry.id), entry))
+            || Array.isArray(entry.slots) || this.getThing(entry.id)?.storage) {
             thing = Storage.create(this, entry);
         } else {
             thing = new Thing(this, entry.x, entry.y, entry.id, entry);
@@ -6356,7 +6568,7 @@ class SceneMain extends SceneBase {
     }
 
     _placeGhostBlocked() {
-        if (this._gamePaused || this.player?._bodyDead || this.player?._resting) return true;
+        if (this._gamePaused || this._worldSimFrozen || this.player?._bodyDead || this.player?._resting) return true;
         if (this.combatLog?.isComposing?.()) return true;
         if (this.settlementSys?.isNaming?.()) return true;
         if (this.knappingPanel?.visible) return true;
@@ -6445,6 +6657,13 @@ class SceneMain extends SceneBase {
             const { x, y } = this.tileCenter(tx, ty);
             if (S && !S.canPlace(this.settlementSys?.list || [], x, y, ts)) return false;
         }
+        if (typeof Research !== "undefined" && Research.isPaintingCircle?.(def)) {
+            const S = typeof Settlement !== "undefined" ? Settlement : null;
+            const { x, y } = this.tileCenter(tx, ty);
+            if (!S?.atPoint?.(this.settlementSys?.owned?.() || this.settlementSys?.list || [], x, y, ts, this.settlementSys?.ownerId?.())) {
+                return false;
+            }
+        }
         return true;
     }
 
@@ -6519,7 +6738,14 @@ class SceneMain extends SceneBase {
         }
         ghost.setPosition(gx, gy);
         const floorH = ghost.displayHeight || ghost.height || 16;
-        ghost.setDepth(gy - floorH - 1);
+        const floorDecal = typeof Research !== "undefined" && Research.isPaintingCircle?.(info.thingDef);
+        if (floorDecal && this.groundLayer) {
+            if (ghost.displayList !== this.groundLayer) this.groundLayer.add(ghost);
+            ghost.setDepth(0.5);
+        } else {
+            if (this.mainLayer && ghost.displayList !== this.mainLayer) this.mainLayer.add(ghost);
+            ghost.setDepth(gy - floorH - 1);
+        }
         ghost.setAlpha(0.5);
         ghost.setTint(valid ? 0xffffff : 0xff5555);
         ghost.setVisible(true);
@@ -6642,16 +6868,20 @@ class SceneMain extends SceneBase {
         if (!chunk || !chunk.isLoaded) return null;
         const def = this.getThing(thingId);
         if (!def) return null;
+        const isPaint = typeof Research !== "undefined" && Research.isPaintingCircle?.(def);
         const entry = {
             id: thingId,
             x,
             y,
-            rot: typeof Place !== "undefined" ? Place.normalizeRot(rot) : rot,
-            slots: typeof Place !== "undefined"
-                ? Place.emptySlots(def.storage?.slots || 1)
-                : [null, null, null, null, null, null, null, null]
+            rot: typeof Place !== "undefined" ? Place.normalizeRot(rot) : rot
         };
-        if (typeof Place !== "undefined") Place.ensureStorageEntry(entry, def);
+        if (!isPaint) {
+            entry.slots = typeof Place !== "undefined"
+                ? Place.emptySlots(def.storage?.slots || 1)
+                : [null, null, null, null, null, null, null, null];
+            if (typeof Place !== "undefined") Place.ensureStorageEntry(entry, def);
+        }
+        if (typeof Research !== "undefined") Research.ensureEntry(entry, def);
         chunk.meta.things.push(entry);
         const spr = Storage.create(this, entry);
         chunk.things.add(spr);
@@ -6709,6 +6939,7 @@ class SceneMain extends SceneBase {
         for (const chunk of Object.values(this.chunks || {})) {
             for (const t of chunk.things?.getChildren?.() || []) {
                 if (t instanceof Storage && t.entry?.uid === uid) return t;
+                if (t instanceof PaintingCircle && t.entry?.uid === uid) return t;
             }
         }
         return null;
@@ -6744,6 +6975,66 @@ class SceneMain extends SceneBase {
         }
         this.hotbar.dirty = true;
         return true;
+    }
+
+    tryRemovePaintingCircle(circle) {
+        if (!circle?.entry || !circle.inRange?.()) return false;
+        const sys = this.settlementSys;
+        if (sys?.circleRemoveBlockedReason?.(circle)) return false;
+        const entry = circle.entry;
+        const itemId = typeof Place !== "undefined"
+            ? Place.itemIdForThing(entry.id, this.items())
+            : entry.id;
+
+        if (this.simAuth()) {
+            this._netSendMove?.(true);
+            this.net.sendAction({
+                type: NetProtocol.Actions.STORAGE,
+                op: "pickup",
+                uid: entry.uid,
+                x: circle.x,
+                y: circle.y
+            });
+            this.paintingCirclePanel?.close();
+            return true;
+        }
+
+        this._dumpPaintingCirclePigment(circle);
+        const wx = circle.x;
+        const wy = circle.y;
+        this._removePaintingCircleThing(circle);
+        const meta = this.getItem(itemId);
+        if (meta) {
+            const left = this.player.gainItem(meta, 1);
+            if (left > 0) {
+                DroppedItem.spawn(this, wx, wy, meta, left);
+            }
+        }
+        this.hotbar.dirty = true;
+        return true;
+    }
+
+    _dumpPaintingCirclePigment(circle) {
+        const R = typeof Research !== "undefined" ? Research : null;
+        const id = R?.currentPigmentId?.(circle?.entry);
+        if (!id) return;
+        const meta = this.getItem(id);
+        if (meta) DroppedItem.spawn(this, circle.x, circle.y, meta, 1);
+    }
+
+    _removePaintingCircleThing(circle) {
+        if (!circle) return;
+        const entry = circle.entry;
+        const chunk = this.getChunkAtWorld(circle.x, circle.y - 1);
+        if (chunk?.meta?.things && entry) {
+            const i = chunk.meta.things.indexOf(entry);
+            if (i >= 0) chunk.meta.things.splice(i, 1);
+        }
+        if (this.paintingCirclePanel?.circle === circle) this.paintingCirclePanel.close();
+        if (this.pigmentFilterPanel?.thing === circle) this.pigmentFilterPanel.close();
+        this.settlementSys?.unlinkStation?.(entry?.uid);
+        this.settlementSys?.bumpWorkCache?.();
+        circle.destroy();
     }
 
     tryPickupCraftStation(station) {
@@ -9599,8 +9890,14 @@ class SceneMain extends SceneBase {
         return this.items().filter((m) => {
             if (!m?.recipe) return false;
             const req = m.recipe.REQUIRE_STATION ? String(m.recipe.REQUIRE_STATION) : null;
-            if (stationId) return req === stationId;
-            return !req;
+            if (stationId) {
+                if (req !== stationId) return false;
+            } else if (req) return false;
+            if (typeof Research !== "undefined" && Research.recipeUnlocked) {
+                const settle = this.settlementSys?.here?.(this.player) || null;
+                if (!Research.recipeUnlocked(m.id, settle)) return false;
+            }
+            return true;
         }).map((meta) => {
             const r = meta.recipe, ingredients = [];
             let requireThing = null, requireStation = null, quantity = 1;
@@ -10362,11 +10659,14 @@ class SceneMain extends SceneBase {
         if (this.campfirePanel?.visible) this.campfirePanel.close();
         if (this.storagePanel?.visible) this.storagePanel.close();
         if (this.leanToPanel?.visible) this.leanToPanel.close();
+        if (this.paintingCirclePanel?.visible) this.paintingCirclePanel.close();
         if (this.settlementSys?.isNaming?.()) this.settlementSys._hideNamePrompt();
+        if (this.researchTreePanel?.visible) this.researchTreePanel.close({ restore: false });
         if (this.settlementPanel?.visible) this.settlementSys?.closePanel?.();
         if (this.billsPanel?.visible) this.billsPanel.close();
         if (this.storageFilterPanel?.visible) this.storageFilterPanel.close();
         if (this.fuelFilterPanel?.visible) this.fuelFilterPanel.close();
+        if (this.pigmentFilterPanel?.visible) this.pigmentFilterPanel.close();
         if (this.combatLog?.composing) this.combatLog.closeChat(false);
     }
 
@@ -10380,14 +10680,43 @@ class SceneMain extends SceneBase {
             this.storagePanel?.visible ||
             this.leanToPanel?.visible ||
             this.settlementPanel?.visible ||
+            this.researchTreePanel?.visible ||
             this.billsPanel?.visible ||
             this.storageFilterPanel?.visible ||
-            this.fuelFilterPanel?.visible
+            this.fuelFilterPanel?.visible ||
+            this.pigmentFilterPanel?.visible ||
+            this.paintingCirclePanel?.visible
         );
     }
 
     _isSingleplayerSession() {
         return !!(this.net?.isLocal || this.localWorldId);
+    }
+
+    _setWorldSimFrozen(on) {
+        if (!this._isSingleplayerSession()) {
+            if (this._worldSimFrozen) this._applyWorldSimFrozen(false);
+            return;
+        }
+        const next = !!on;
+        if (next === !!this._worldSimFrozen) return;
+        this._applyWorldSimFrozen(next);
+    }
+
+    _applyWorldSimFrozen(on) {
+        this._worldSimFrozen = !!on;
+        if (on) {
+            this.net?.setPaused?.(true);
+            this.physics?.world?.pause?.();
+            this.anims?.pauseAll?.();
+            this._holdChatFade();
+            return;
+        }
+        if (this._gamePaused) return;
+        this.net?.setPaused?.(false);
+        this.physics?.world?.resume?.();
+        this.anims?.resumeAll?.();
+        this._releaseChatFade();
     }
 
     _isUnderPauseUi(obj) {
@@ -10588,6 +10917,7 @@ class SceneMain extends SceneBase {
 
     _openPauseMenu() {
         if (this._gamePaused || this._leavingGame) return;
+        this._gamePaused = true;
         this.closeOpenMenus();
         if (this.knappingPanel?.visible) this.knappingPanel.finishOrClose?.();
         this.hideTooltip?.();
@@ -10597,7 +10927,6 @@ class SceneMain extends SceneBase {
             try { prevHover.emit("pointerout", this.input.activePointer); } catch (_) {}
         }
 
-        this._gamePaused = true;
         this._holdChatFade();
         this._pausePage = "root";
         if (this._isSingleplayerSession()) {
@@ -11010,6 +11339,10 @@ class SceneMain extends SceneBase {
             this.settlementSys._hideNamePrompt();
             return;
         }
+        if (this.researchTreePanel?.visible) {
+            this.researchTreePanel.handleEsc();
+            return;
+        }
         if (this.billsPanel?.visible) {
             this.billsPanel.handleEsc();
             return;
@@ -11020,6 +11353,10 @@ class SceneMain extends SceneBase {
         }
         if (this.fuelFilterPanel?.visible) {
             this.fuelFilterPanel.handleEsc();
+            return;
+        }
+        if (this.pigmentFilterPanel?.visible) {
+            this.pigmentFilterPanel.handleEsc();
             return;
         }
         if (this.combatLog?.composing) return; // CombatLog closes chat
@@ -11182,9 +11519,11 @@ class SceneMain extends SceneBase {
         if (this.storagePanel?.visible) this.storagePanel.close();
         if (this.campfirePanel?.visible) this.campfirePanel.close();
         if (this.leanToPanel?.visible) this.leanToPanel.close();
+        if (this.paintingCirclePanel?.visible) this.paintingCirclePanel.close();
         if (this.billsPanel?.visible && this.billsPanel.thing !== thing) this.billsPanel.close();
         if (this.storageFilterPanel?.visible) this.storageFilterPanel.close();
         if (this.fuelFilterPanel?.visible) this.fuelFilterPanel.close();
+        if (this.pigmentFilterPanel?.visible) this.pigmentFilterPanel.close();
         const prev = this._craftStationThing;
         this._craftStationThing = thing;
         this._craftFromStation = true;
@@ -11253,6 +11592,7 @@ class SceneMain extends SceneBase {
         if (this.campfirePanel?.visible) this.campfirePanel.close();
         if (this.storagePanel?.visible) this.storagePanel.close();
         if (this.leanToPanel?.visible) this.leanToPanel.close();
+        if (this.paintingCirclePanel?.visible) this.paintingCirclePanel.close();
         if (this.craftMenuVisible) this.closeCraftMenu();
         if (this.healthPanel?.isInspecting?.()) this.healthPanel.close();
 
@@ -11518,9 +11858,11 @@ class SceneMain extends SceneBase {
             }
             this.partyPanel?.layout?.();
             this.settlementPanel?.layout?.();
+            this.researchTreePanel?.layout?.();
             this.billsPanel?.layout?.();
             this.storageFilterPanel?.layout?.();
             this.fuelFilterPanel?.layout?.();
+            this.pigmentFilterPanel?.layout?.();
             this.settlementSys?.layoutHud?.();
             this._layoutFpsMeter?.();
         }
@@ -11542,6 +11884,7 @@ class SceneMain extends SceneBase {
         if (this.campfirePanel?.visible) this.campfirePanel.layout();
         if (this.storagePanel?.visible) this.storagePanel.layout();
         if (this.leanToPanel?.visible) this.leanToPanel.layout();
+        if (this.paintingCirclePanel?.visible) this.paintingCirclePanel.layout();
         if (this.knappingPanel?.visible) this.knappingPanel.layout();
 
         this.player?.applyChatBubbleScale?.();
@@ -11610,10 +11953,13 @@ class SceneMain extends SceneBase {
             this._pumpChunkPaint();
             return;
         }
-        // SP pause freezes the sim; dedicated MP menu must keep receiving world updates
-        if (this._gamePaused && this._isSingleplayerSession()) {
+        // SP pause / research freeze freeze the sim; dedicated MP menu must keep receiving world updates
+        if ((this._gamePaused || this._worldSimFrozen) && this._isSingleplayerSession()) {
             this._hidePlaceGhost();
             this.combatLog?.update?.();
+            if (!this._gamePaused && this.researchTreePanel?.visible) {
+                this.researchTreePanel.refresh();
+            }
             return;
         }
 
@@ -11708,7 +12054,8 @@ class SceneMain extends SceneBase {
         const chatting = !!this.combatLog?.isComposing?.();
         const knapping = !!this.knappingPanel?.visible;
         const naming = !!this.settlementSys?.isNaming?.();
-        if (!chatting && !knapping && !naming && !this._gamePaused) {
+        const researchOpen = !!this.researchTreePanel?.visible;
+        if (!chatting && !knapping && !naming && !researchOpen && !this._gamePaused) {
             const ctrl = !!this.keys?.CTRL?.isDown;
             if (!ctrl) {
                 if (this.key1.isDown && this.hotbar.size >= 1) this.hotbar.changeSlot(0);
@@ -11735,6 +12082,7 @@ class SceneMain extends SceneBase {
         if (this.partySys) this.partySys.update(time, delta);
         else this.player.update(time, delta);
         this.settlementSys?.update?.(time, delta);
+        if (this.researchTreePanel?.visible) this.researchTreePanel.refresh();
         this.updatePlaceGhost();
         if (this.isNet) {
             if (this.net?.isLocal && !this._worldBooting) this.net.tickFromScene?.(delta);
@@ -11788,6 +12136,7 @@ class SceneMain extends SceneBase {
         this.campfirePanel?.update();
         this.storagePanel?.update();
         this.leanToPanel?.update();
+        this.paintingCirclePanel?.update();
         this._updateCraftStationMenu();
         this.corpsePanel?.update();
         this.updateLightVeil();

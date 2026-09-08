@@ -82,6 +82,14 @@ const HARVEST_RANGE_TILES = 4;
 
 const BLOCKED = WorldGen.BLOCKED;
 
+function _research() {
+    if (typeof Research !== "undefined") return Research;
+    try {
+        if (typeof require === "function") return require("../research");
+    } catch (_) { /* optional */ }
+    return null;
+}
+
 let _thingDefs = null;
 function thingDefs() {
     if (_thingDefs) return _thingDefs;
@@ -1727,6 +1735,39 @@ class SimWorld {
         return Settlement.ownedOf(this.settlements, ownerId);
     }
 
+    _paintingCirclesInRange(settle) {
+        const R = _research();
+        if (!R || !settle) return [];
+        const keys = Settlement.chunkKeysFor(settle, TS, 8) || [];
+        const out = [];
+        for (const key of keys) {
+            const c = this.chunks.get(key);
+            if (!c || !Array.isArray(c.things)) continue;
+            for (const e of c.things) {
+                if (!e || e.gone) continue;
+                if (!R.isPaintingCircle(this._thingDef(e.id), e)) continue;
+                if (!Settlement.inRange(settle, e.x, e.y, TS)) continue;
+                R.ensureEntry(e, this._thingDef(e.id));
+                out.push(e);
+            }
+        }
+        return out;
+    }
+
+    _unlockTech(settle, techId) {
+        const R = _research();
+        if (!R || !settle) return false;
+        const id = String(techId || "");
+        const tech = R.techById(id);
+        if (!tech) return false;
+        const circles = this._paintingCirclesInRange(settle);
+        const pts = R.pointsBreakdown(circles, { settle });
+        if (!R.canUnlock(settle, id, pts.total)) return false;
+        R.unlock(settle, id);
+        this._youDirty.add(settle.ownerId);
+        return true;
+    }
+
     _handleSettlement(p, action = {}) {
         const op = String(action.op || "");
         if (op === "found") {
@@ -1866,10 +1907,35 @@ class SimWorld {
             this._emitCampfire(found.chunk, found.entry);
             return;
         }
+        if (op === "setPaintFilter" && settle && settle.ownerId === p.id) {
+            const uid = String(action.uid || "");
+            const found = uid ? this._findThingByUid(uid) : null;
+            const R = _research();
+            if (!found || !R?.isPaintingCircle?.(this._thingDef(found.entry?.id), found.entry)) return;
+            if (!Settlement.inRange(settle, found.entry.x, found.entry.y, TS)) return;
+            R.applyPaintFilter(found.entry, action.filter);
+            this._emitStorage(found.chunk, found.entry);
+            return;
+        }
+        if (op === "setPaintEnabled" && settle && settle.ownerId === p.id) {
+            const uid = String(action.uid || "");
+            const found = uid ? this._findThingByUid(uid) : null;
+            const R = _research();
+            if (!found || !R?.isPaintingCircle?.(this._thingDef(found.entry?.id), found.entry)) return;
+            if (!Settlement.inRange(settle, found.entry.x, found.entry.y, TS)) return;
+            R.setEnabled(found.entry, action.enabled !== false);
+            this._emitStorage(found.chunk, found.entry);
+            return;
+        }
         if (op === "setJobs" && settle && settle.ownerId === p.id) {
             settle.jobs = settle.jobs || {};
             settle.jobs[action.pawnId] = Settlement.normalizeJobs(action.jobs);
+            SettlerWork.bumpWork?.(this);
             this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "unlockTech" && settle && settle.ownerId === p.id) {
+            this._unlockTech(settle, action.techId);
             return;
         }
         if (op === "setStock" && settle && settle.ownerId === p.id) {
@@ -3240,12 +3306,26 @@ class SimWorld {
         if (cache && cache.has(key)) return cache.get(key);
         const list = [];
         const bins = [];
+        const sleep = [];
         const c = this.chunks.get(key);
         if (c) {
             const ox = cx * CHUNK_PX;
             const oy = cy * CHUNK_PX;
             for (const things of [c.things, c.lootableThings]) {
                 for (const t of things || []) {
+                    const def = thingDefs().get(t.id);
+                    if (Place.isSleepThing?.(def, t)) {
+                        const fp = Place.footprintWorldRect?.(t, def, TS);
+                        if (fp) {
+                            sleep.push({
+                                t,
+                                left: fp.left,
+                                right: fp.right,
+                                top: fp.top,
+                                bottom: fp.bottom
+                            });
+                        }
+                    }
                     const rect = this._thingRect(t);
                     if (!rect) continue;
                     list.push(rect);
@@ -3262,7 +3342,7 @@ class SimWorld {
                 }
             }
         }
-        const packed = { list, bins };
+        const packed = { list, bins, sleep };
         if (cache) cache.set(key, packed);
         return packed;
     }
@@ -3346,6 +3426,7 @@ class SimWorld {
         if (this._aabbHitsThing(
             body.left - p, body.right + p, body.top - p, body.bottom + p, x, y, 64, creature
         )) return true;
+        if (opts.sleepNav === false) return false;
         return this._sleepFootprintHits(creature, body, p, x, y);
     }
 
@@ -3364,16 +3445,12 @@ class SimWorld {
         const bottom = body.bottom + pad;
         for (let dx = -chunkR; dx <= chunkR; dx++) {
             for (let dy = -chunkR; dy <= chunkR; dy++) {
-                const c = this.chunks.get(chunkKey(cx + dx, cy + dy));
-                if (!c || !Array.isArray(c.things)) continue;
-                for (let i = 0; i < c.things.length; i++) {
-                    const t = c.things[i];
+                const sleep = this._chunkThingIndex(cx + dx, cy + dy).sleep || [];
+                for (let i = 0; i < sleep.length; i++) {
+                    const rect = sleep[i];
+                    const t = rect.t;
                     if (!t || t.gone) continue;
-                    const def = thingDefs().get(t.id);
-                    if (!Place.isSleepThing?.(def, t)) continue;
                     if (Sleep.ignoresThingCollision?.(creature, t)) continue;
-                    const rect = Place.footprintWorldRect?.(t, def, TS);
-                    if (!rect) continue;
                     const tcx = (rect.left + rect.right) * 0.5;
                     const tcy = (rect.top + rect.bottom) * 0.5;
                     if (Math.abs(tcx - nearX) > r || Math.abs(tcy - nearY) > r) continue;
@@ -3388,9 +3465,12 @@ class SimWorld {
     }
 
     /** Nearest stand pose whose 8×8 body is clear of solids and blocked tiles. */
-    _findFreeCreaturePose(creature, ox, oy, maxR = 80) {
+    _findFreeCreaturePose(creature, ox, oy, maxR = 80, opts = {}) {
         if (!creature || !Number.isFinite(ox) || !Number.isFinite(oy)) return null;
-        const blocked = (x, y) => this._partyPoseBlocked(creature, x, y, 1, { load: false });
+        const blocked = (x, y) => this._partyPoseBlocked(creature, x, y, 1, {
+            load: false,
+            sleepNav: opts.sleepNav
+        });
         const step = 4;
         const reach = Math.max(step, Number(maxR) || 80);
         for (let r = step; r <= reach; r += step) {
@@ -3431,6 +3511,9 @@ class SimWorld {
      * If the body is inside a solid (or on a blocked tile), teleport to the
      * nearest open stand. Sleeping in a lean-to is allowed; the controlled
      * pawn is not yanked while you steer them.
+     *
+     * Laying-spot / bunk *nav* is not a reason to teleport — that expansion
+     * exists so AI paths around beds, not so we yank someone working beside one.
      */
     _ejectOverlappingPose(entity, creature) {
         const c = creature || entity?.creature || entity;
@@ -3446,24 +3529,51 @@ class SimWorld {
         const x = Number(entity?.x ?? c.x);
         const y = Number(entity?.y ?? c.y);
         if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
-        if (!this._partyPoseBlocked(c, x, y, 0, { load: false })) return false;
-        const free = this._findFreeCreaturePose(c, x, y, 80);
+        const blockOpts = { load: false, sleepNav: false };
+        if (!this._partyPoseBlocked(c, x, y, 0, blockOpts)) return false;
+        const commit = (px, py) => {
+            c.x = px;
+            c.y = py;
+            if (entity && entity !== c) {
+                entity.x = px;
+                entity.y = py;
+            }
+            const ai = c.ai;
+            if (ai) {
+                ai._path = null;
+                ai._pathGoalX = null;
+                ai._pathGoalY = null;
+                ai._stuckMs = 0;
+                ai._jamMs = 0;
+            }
+            return true;
+        };
+        const step = 6;
+        const dirs = [
+            [step, 0], [-step, 0], [0, step], [0, -step],
+            [step, step], [step, -step], [-step, step], [-step, -step]
+        ];
+        for (let i = 0; i < dirs.length; i++) {
+            const px = x + dirs[i][0];
+            const py = y + dirs[i][1];
+            if (!this._partyPoseBlocked(c, px, py, 0, blockOpts)) return commit(px, py);
+        }
+        const gen = this._queryGen || 0;
+        if (c._ejectHardGen != null && gen - c._ejectHardGen < 24) return false;
+        c._ejectHardGen = gen;
+        const free = this._findFreeCreaturePose(c, x, y, 80, { sleepNav: false });
         if (!free || (free.x === x && free.y === y)) return false;
-        c.x = free.x;
-        c.y = free.y;
-        if (entity && entity !== c) {
-            entity.x = free.x;
-            entity.y = free.y;
+        return commit(free.x, free.y);
+    }
+
+    /** Pop out of real solids only — not while walking or using a station. */
+    _maybeEjectIdleOverlap(rec, cc) {
+        if (!rec || !cc) return false;
+        if (rec._pathIgnoreUid || rec._chopIgnoreUid || rec._workChannel || rec._paintChannel) {
+            return false;
         }
-        const ai = c.ai;
-        if (ai) {
-            ai._path = null;
-            ai._pathGoalX = null;
-            ai._pathGoalY = null;
-            ai._stuckMs = 0;
-            ai._jamMs = 0;
-        }
-        return true;
+        if (Math.hypot(cc._desiredVx || 0, cc._desiredVy || 0) > 4) return false;
+        return this._ejectOverlappingPose(rec, cc);
     }
 
     _solidThingAt(wx, wy) {
@@ -4541,7 +4651,7 @@ class SimWorld {
             return;
         }
         if (cmd === "/set") {
-            const usage = "Usage: /set <thing>|null";
+            const usage = "Usage: /set <thing>/null";
             const rawId = parts.slice(1).join(" ").trim();
             if (!rawId) {
                 this.announceCmd(usage, { to: p.id });
@@ -5020,6 +5130,14 @@ class SimWorld {
         const id = String(action.id || "").slice(0, 64);
         const recipe = this._parseRecipe(id);
         if (!recipe) return;
+        const R = _research();
+        if (R?.recipeUnlocked) {
+            const settle = Settlement.atPoint(
+                this._ownedSettlements(p.ownerId || session.id),
+                p.x, p.y, TS, p.ownerId || session.id
+            );
+            if (!R.recipeUnlocked(id, settle)) return;
+        }
         const store = this._craftStorageFromAction(p, action);
         const extra = store?.entry?.slots || null;
         for (const ing of recipe.ingredients) {
@@ -6539,9 +6657,12 @@ class SimWorld {
         if (!best || !bestChunk) return;
         const now = this.worldMinuteIndex();
         Hide.pickupSoak(best, now);
-        const want = best.quantity || 1;
-        const left = this._give(p, best.id, want, this._stackExtrasFrom(best));
-        if (left >= want) return; // nothing fit — leave drop
+        const have = best.quantity || 1;
+        const cap = Math.floor(Number(action.quantity) || 0);
+        const want = cap > 0 ? Math.min(have, cap) : have;
+        const leftWhole = this._give(p, best.id, want, this._stackExtrasFrom(best));
+        const left = leftWhole + (have - want);
+        if (left >= have) return; // nothing fit — leave drop
         if (left > 0) best.quantity = left;
         else bestChunk.drops.splice(bestIdx, 1);
         this._dirtyPawnOwner(p);
@@ -7529,8 +7650,9 @@ class SimWorld {
     _isStorageEntry(t) {
         if (!t) return false;
         if (this._isCraftStationEntry(t)) return false;
-        if (Array.isArray(t.slots)) return true;
         const def = thingDefs().get(t.id);
+        if (_research()?.isPaintingCircle?.(def, t)) return false;
+        if (Array.isArray(t.slots)) return true;
         return !!def?.storage;
     }
 
@@ -7543,7 +7665,8 @@ class SimWorld {
     _isPlaceableEntry(t) {
         const def = thingDefs().get(t?.id);
         return this._isStorageEntry(t) || this._isCraftStationEntry(t) || this._isSleepEntry(t)
-            || Place.isSettlementThing(def, t);
+            || Place.isSettlementThing(def, t)
+            || !!_research()?.isPaintingCircle?.(def, t);
     }
 
     _storagePublic(entry, chunk = null) {
@@ -7593,6 +7716,27 @@ class SimWorld {
                 rot: Place.normalizeRot(entry.rot),
                 settlement: true,
                 settlementId: entry.settlementId || null
+            };
+        }
+        const R = _research();
+        if (R?.isPaintingCircle?.(def, entry)) {
+            R.ensureEntry(entry, def);
+            return {
+                uid: entry.uid,
+                id: entry.id,
+                x: entry.x,
+                y: entry.y,
+                cx: chunk?.cx,
+                cy: chunk?.cy,
+                rev: Number(entry.rev) || 0,
+                rot: Place.normalizeRot(entry.rot),
+                painted: entry.painted,
+                paintProgress: entry.paintProgress,
+                paintStarted: !!entry.paintStarted,
+                paintPigment: entry.paintPigment || null,
+                paintPigments: Array.isArray(entry.paintPigments) ? entry.paintPigments.slice() : [],
+                paintEnabled: entry.paintEnabled !== false,
+                paintFilter: R.persistPaintFilter ? R.persistPaintFilter(entry.paintFilter) : (entry.paintFilter || null)
             };
         }
         Place.ensureStorageEntry(entry, def);
@@ -7697,6 +7841,18 @@ class SimWorld {
             });
             return;
         }
+        const Research = _research();
+        if (Research?.isPaintingCircle?.(thingDef)) {
+            const hit = Settlement.atPoint(this._ownedSettlements(session.id), x, y, TS, session.id);
+            if (!hit) {
+                this.pushEvent({
+                    kind: "combat_log",
+                    text: "Must be placed in your settlement",
+                    to: session.id
+                });
+                return;
+            }
+        }
 
         held.quantity = Math.max(0, Math.floor(Number(held.quantity) || 1) - 1);
         if (!(held.quantity > 0)) p.inventory[invIndex] = null;
@@ -7755,6 +7911,20 @@ class SimWorld {
             return;
         }
 
+        if (Research?.isPaintingCircle?.(thingDef)) {
+            const entry = {
+                id: thingId,
+                x,
+                y,
+                rot,
+                uid: `pc_${Math.round(x)}_${Math.round(y)}`
+            };
+            Research.ensureEntry(entry, thingDef);
+            chunk.things.push(entry);
+            this._emitStorage(chunk, entry);
+            return;
+        }
+
         const entry = {
             id: thingId,
             x,
@@ -7764,6 +7934,7 @@ class SimWorld {
             slots: Place.emptySlots(thingDef.storage?.slots || 1)
         };
         Place.ensureStorageEntry(entry, thingDef);
+        _research()?.ensureEntry?.(entry, thingDef);
         chunk.things.push(entry);
         this._emitStorage(chunk, entry);
     }
@@ -8492,6 +8663,12 @@ class SimWorld {
         const def = thingDefs().get(entry.id);
         const op = String(action.op || "");
         if (op === "attend" || op === "leave") return;
+        const R = _research();
+        if (R?.isPaintingCircle?.(def, entry)) {
+            if (op !== "pickup") return;
+            this._tryPickupPaintingCircle(p, chunk, entry);
+            return;
+        }
         if (def?.craftStation) {
             if (op !== "pickup") return;
             const itemId = Place.itemIdForThing(entry.id, itemDefs());
@@ -8527,6 +8704,40 @@ class SimWorld {
         else return;
         this._emitStorage(chunk, entry);
         this._youDirty.add(p.id);
+    }
+
+    _coveringSettlements(entry) {
+        const out = [];
+        if (!entry) return out;
+        for (const s of this.settlements || []) {
+            if (s && Settlement.inRange(s, entry.x, entry.y, TS)) out.push(s);
+        }
+        return out;
+    }
+
+    _tryPickupPaintingCircle(p, chunk, entry) {
+        const R = _research();
+        if (!p || !chunk || !entry || !R) return;
+        R.ensureEntry(entry, this._thingDef(entry.id));
+        const covering = this._coveringSettlements(entry);
+        for (const settle of covering) {
+            if (!R.canRemoveCircle(settle, this._paintingCirclesInRange(settle), entry)) return;
+        }
+        const pigmentId = R.currentPigmentId(entry);
+        if (pigmentId) this._pushDrop(entry.x, entry.y, { id: pigmentId, quantity: 1 });
+        const itemId = Place.itemIdForThing(entry.id, itemDefs());
+        const leftover = this._give(p, itemId, 1);
+        if (leftover > 0) {
+            this._pushDrop(p.x, p.y, { id: itemId, quantity: leftover });
+        }
+        this._unlinkStationUid(entry.uid);
+        const i = chunk.things.indexOf(entry);
+        if (i >= 0) chunk.things.splice(i, 1);
+        this._emitStorageRemoved(chunk, entry);
+        for (const settle of covering) {
+            this._youDirty.add(settle.ownerId);
+        }
+        this._dirtyPawnOwner(p);
     }
 
     _hangIfRack(entry, stack) {
@@ -9844,7 +10055,6 @@ class SimWorld {
                 cc.role = rec.role === "settler" ? "companion" : (rec.role || "companion");
                 cc.homeSettlementId = rec.homeSettlementId || null;
                 this._bindPartyAI(cc);
-                this._ejectOverlappingPose(rec, cc);
                 const wasSwinging = !!cc.isAttacking?.();
                 cc.refreshCapacities?.();
                 cc.ai.update(dtMs, world);
@@ -9858,7 +10068,7 @@ class SimWorld {
                 if (!this._partyPoseBlocked(cc, cc.x, ny)) cc.y = ny;
                 rec.x = cc.x;
                 rec.y = cc.y;
-                this._ejectOverlappingPose(rec, cc);
+                this._maybeEjectIdleOverlap(rec, cc);
                 rec.vx = cc.vx || 0;
                 rec.vy = cc.vy || 0;
                 rec.sprint = !!cc.isSprinting;
@@ -9927,7 +10137,6 @@ class SimWorld {
             cc._chopIgnoreUid = rec._chopIgnoreUid || null;
             cc._pathIgnoreUid = rec._pathIgnoreUid || null;
             this._bindPartyAI(cc);
-            this._ejectOverlappingPose(rec, cc);
             cc.refreshCapacities?.();
             if (!(scale > 0)) {
                 cc.setDesiredVel?.(0, 0);
@@ -9967,7 +10176,7 @@ class SimWorld {
             if (!this._partyPoseBlocked(cc, cc.x, ny)) cc.y = ny;
             rec.x = cc.x;
             rec.y = cc.y;
-            this._ejectOverlappingPose(rec, cc);
+            this._maybeEjectIdleOverlap(rec, cc);
             rec.vx = cc.vx || 0;
             rec.vy = cc.vy || 0;
             rec.facing = cc.facing || rec.facing;

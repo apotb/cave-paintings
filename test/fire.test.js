@@ -419,6 +419,36 @@ test("a just-lit fire lights at least as embers before the pit heats", () => {
     assert.equal(Fire.lightRadiusForEntry({ pitTemp: Fire.AMBIENT_TEMP, id: "unlit_campfire" }), 0);
 });
 
+test("cookWorldBarFrac follows roast and simmer minutes", () => {
+    assert.equal(Fire.cookWorldBarFrac(null, getItem), 0);
+    const empty = pit({ id: "campfire", cookProgress: 0 });
+    assert.equal(Fire.cookWorldBarFrac(empty, getItem), 0);
+    const roast = pit({
+        id: "campfire",
+        catalyst: { id: "sharp_stick", quantity: 1 },
+        cook: { id: "apple", quantity: 1 },
+        cookProgress: 5,
+        roastBarMinutes: 10
+    });
+    assert.equal(Fire.cookWorldBarFrac(roast, getItem), 0.5);
+    const simmer = pit({
+        id: "campfire",
+        catalyst: { id: "cracked_coconut", quantity: 1 },
+        simmer: [{ id: "apple", quantity: 1 }, { id: "apple", quantity: 1 }, null, null],
+        cookProgress: 5,
+        simmerBarMinutes: 10
+    });
+    assert.equal(Fire.cookWorldBarFrac(simmer, getItem), 0.5);
+    const smoke = pit({
+        id: "campfire",
+        catalyst: { id: "drying_rack", quantity: 1 },
+        cook: { id: "raw_human_flesh", quantity: 1 },
+        cookProgress: 60,
+        roastBarMinutes: 240
+    });
+    assert.equal(Fire.cookWorldBarFrac(smoke, getItem), 0.25);
+});
+
 test("unlit campfires use a 0.1x light radius", () => {
     const hotUnlit = { pitTemp: 500, id: "unlit_campfire", burnRemaining: 0 };
     const hotLit = { pitTemp: 500, id: "campfire", burnRemaining: 8 };

@@ -474,3 +474,188 @@ test("steerToward goes around two baskets instead of walking into the gap", () =
     assert.ok(yPos < y - 12, `should finish north of the baskets, y=${yPos.toFixed(1)}`);
     assert.ok(overlapped < 20, `stuck overlapping a basket for ${overlapped} steps`);
 });
+
+test("steerToward keeps one stand when dest is tight instead of circling it", () => {
+    const TS = 16;
+    const fire = { x: 80, y: 80 };
+    const fireBox = {
+        left: fire.x - 4,
+        right: fire.x + 4,
+        top: fire.y - 7,
+        bottom: fire.y + 2
+    };
+    const lean = {
+        left: fire.x + 8,
+        right: fire.x + 22,
+        top: fire.y - 24,
+        bottom: fire.y + 24
+    };
+    function bodyAt(x, y) {
+        return { left: x + 4, right: x + 12, top: y - 8, bottom: y };
+    }
+    function overlaps(a, b, g) {
+        const p = g || 0;
+        return a.left - p < b.right && a.right + p > b.left
+            && a.top - p < b.bottom && a.bottom + p > b.top;
+    }
+    function blocked(x, y) {
+        const body = bodyAt(x, y);
+        return overlaps(body, lean, 2) || overlaps(body, fireBox, 2);
+    }
+    const from = { x: fire.x - 10, y: fire.y + 36 };
+    const to = { x: fire.x, y: fire.y };
+    assert.equal(blocked(from.x, from.y), false);
+
+    const first = Path.steerToward({
+        from, to, blocked, cellSize: TS, side: 1, dt: 16, maxRange: 16, openRadius: 2
+    });
+    assert.ok(first.pathGoal, "expected a stand");
+    const gx = first.pathGoal.x;
+    const gy = first.pathGoal.y;
+    let flips = 0;
+    let st = first;
+    for (let i = 0; i < 40; i++) {
+        const x = from.x + (i % 3) - 1;
+        const y = from.y + ((i * 2) % 5) - 2;
+        st = Path.steerToward({
+            from: { x, y },
+            to,
+            blocked,
+            cellSize: TS,
+            side: st.side,
+            path: st.path,
+            pathGoal: st.pathGoal,
+            stuckMs: 0,
+            lastWpDist: st.lastWpDist,
+            dt: 16,
+            maxRange: 16,
+            openRadius: 2
+        });
+        if (Math.hypot((st.pathGoal?.x || 0) - gx, (st.pathGoal?.y || 0) - gy) > 6) flips++;
+    }
+    assert.ok(flips < 3, `stand jumped ${flips} times (would spin around the fire)`);
+});
+
+test("steerToward with openRadius 0 keeps the exact dest instead of parking nearby", () => {
+    const TS = 16;
+    const wall = { left: 70, right: 90, top: 40, bottom: 90 };
+    function blocked(x, y) {
+        const left = x + 4;
+        const top = y - 8;
+        return left < wall.right && left + 8 > wall.left
+            && top < wall.bottom && top + 8 > wall.top;
+    }
+    const from = { x: 80, y: 120 };
+    const to = { x: 48, y: 64 };
+    assert.equal(blocked(from.x, from.y), false);
+    assert.equal(blocked(to.x, to.y), false);
+    let st = Path.steerToward({
+        from, to, blocked, cellSize: TS, side: 1, dt: 16, maxRange: 16, openRadius: 0
+    });
+    const gx = st.pathGoal?.x;
+    const gy = st.pathGoal?.y;
+    assert.ok(Math.hypot(gx - to.x, gy - to.y) < 8, "exact dest was relocated");
+    for (let i = 0; i < 20; i++) {
+        st = Path.steerToward({
+            from: { x: from.x + (i % 3), y: from.y },
+            to,
+            blocked,
+            cellSize: TS,
+            side: st.side,
+            path: st.path,
+            pathGoal: st.pathGoal,
+            stuckMs: 0,
+            lastWpDist: st.lastWpDist,
+            dt: 16,
+            maxRange: 16,
+            openRadius: 0
+        });
+        assert.ok(
+            Math.hypot((st.pathGoal?.x || 0) - to.x, (st.pathGoal?.y || 0) - to.y) < 10,
+            `dest hopped to ${st.pathGoal?.x},${st.pathGoal?.y}`
+        );
+    }
+});
+
+test("steerToward does not A* every frame when allowReplan is false", () => {
+    const TS = 16;
+    const wall = { left: 64, right: 96, top: 16, bottom: 80 };
+    let calls = 0;
+    function blocked(x, y) {
+        calls++;
+        const left = x + 4;
+        const top = y - 8;
+        return left < wall.right && left + 8 > wall.left
+            && top < wall.bottom && top + 8 > wall.top;
+    }
+    const from = { x: 80, y: 100 };
+    const to = { x: 80, y: 8 };
+    const first = Path.steerToward({
+        from, to, blocked, cellSize: TS, side: 1, dt: 16, maxRange: 16, allowReplan: true
+    });
+    calls = 0;
+    let st = first;
+    for (let i = 0; i < 40; i++) {
+        st = Path.steerToward({
+            from,
+            to,
+            blocked,
+            cellSize: TS,
+            side: st.side,
+            path: st.path,
+            pathGoal: st.pathGoal,
+            stuckMs: 2000,
+            lastWpDist: st.lastWpDist,
+            dt: 16,
+            maxRange: 16,
+            allowReplan: false
+        });
+    }
+    assert.ok(calls < 800, `blocked() ran ${calls} times without a replan window`);
+});
+
+test("planPath blocked() stays cheap across a 16-tile open field", () => {
+    let calls = 0;
+    function blocked() {
+        calls++;
+        return false;
+    }
+    const from = { x: 8, y: 16 };
+    const to = { x: 8 + 16 * 12, y: 16 };
+    const path = Path.planPath(from, to, blocked, { cellSize: 16, maxRange: 16, side: 1 });
+    assert.ok(path && path.length, "open-field planPath returned a route");
+    assert.ok(calls < 4000, `blocked() ran ${calls} times`);
+});
+
+test("steerToward does not A* just because the pawn overlaps a thing", () => {
+    const TS = 16;
+    function blocked(x, y) {
+        const c = Path.cellOf(x, y, TS);
+        return c.cy === 10 && c.cx >= 4 && c.cx <= 8;
+    }
+    const from = Path.cellStand(2, 10, TS);
+    const to = Path.cellStand(12, 10, TS);
+    const first = Path.steerToward({
+        from, to, blocked, cellSize: TS, side: 1, dt: 16, maxRange: 16
+    });
+    let probes = 0;
+    function counted(x, y) {
+        probes++;
+        return blocked(x, y);
+    }
+    const second = Path.steerToward({
+        from,
+        to,
+        blocked: counted,
+        cellSize: TS,
+        side: first.side,
+        dt: 16,
+        maxRange: 16,
+        path: first.path,
+        pathGoal: first.pathGoal,
+        overlapping: true
+    });
+    assert.equal(second.replanned, false);
+    assert.ok(second.path && second.path.length);
+    assert.ok(probes < 80, `overlap should not A* (${probes} blocked probes)`);
+});

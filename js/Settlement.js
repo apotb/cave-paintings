@@ -43,6 +43,12 @@ class SettlementSystem {
         bind(this.scene.billsPanel);
         bind(this.scene.storageFilterPanel);
         bind(this.scene.fuelFilterPanel);
+        bind(this.scene.pigmentFilterPanel);
+        bind(this.scene.researchTreePanel);
+        const tree = this.scene.researchTreePanel;
+        if (tree?.visible) tree.refresh();
+        const panel = this.scene.settlementPanel;
+        if (panel?.visible && panel.tab === "research" && !tree?.visible) panel.refresh();
     }
 
     persistTo(world) {
@@ -234,7 +240,7 @@ class SettlementSystem {
     }
 
     _worldIndex(settle) {
-        if (!settle) return { loot: [], chop: [], drops: [] };
+        if (!settle) return { loot: [], chop: [], paint: [], drops: [] };
         const now = this._nowMs();
         if (this._worldCache && this._worldCache.id === settle.id && now - this._worldCache.at < 400) {
             return this._worldCache;
@@ -243,6 +249,7 @@ class SettlementSystem {
         const ts = this.scene.tileSize || 16;
         const loot = [];
         const chop = [];
+        const paint = [];
         this._forEachThing((t) => {
             if (!t || t.entry?.gone) return;
             if (!S || !S.inRange(settle, t.x, t.y, ts)) return;
@@ -252,9 +259,73 @@ class SettlementSystem {
                 && !S?.chopSkipsTree?.(t.entry?.id || def?.id, def, t.entry)) {
                 chop.push(t);
             }
+    if (typeof Research !== "undefined" && Research.isPaintingCircle?.(def, t.entry)
+        && Research.isEnabled?.(t.entry)
+        && (Research.hasRoom(t.entry) || Research.inProgress(t.entry))) {
+                Research.ensureEntry(t.entry, def);
+                paint.push(t);
+            }
         }, settle);
-        this._worldCache = { id: settle.id, at: now, loot, chop, drops: this._collectDrops(settle, S, ts) };
+        this._worldCache = { id: settle.id, at: now, loot, chop, paint, drops: this._collectDrops(settle, S, ts) };
         return this._worldCache;
+    }
+
+    paintingCirclesInRange(settle) {
+        return this._worldIndex(settle).paint || [];
+    }
+
+    /** Painting circles in range that add to the settlement research pool. */
+    researchCircleEntries(settle) {
+        const R = typeof Research !== "undefined" ? Research : null;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!R || !S || !settle) return [];
+        const ts = this.scene.tileSize || 16;
+        const out = [];
+        this._forEachThing((t) => {
+            if (!t || t.entry?.gone) return;
+            const def = this.scene.getThing?.(t.entry?.id) || t.meta;
+            if (!R.isPaintingCircle(def, t.entry)) return;
+            if (!S.inRange(settle, t.x, t.y, ts)) return;
+            R.ensureEntry(t.entry, def);
+            out.push(t.entry);
+        }, settle);
+        return out;
+    }
+
+    circleRemoveBlockedReason(thing) {
+        const R = typeof Research !== "undefined" ? Research : null;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!R || !S || !thing?.entry) return null;
+        const ts = this.scene.tileSize || 16;
+        let reason = null;
+        for (const settle of this.list) {
+            if (!S.inRange(settle, thing.x, thing.y, ts)) continue;
+            const r = R.removeBlockedReason(settle, this.researchCircleEntries(settle), thing.entry);
+            if (r) reason = r;
+        }
+        return reason;
+    }
+
+    promptRemovePaintingCircle(thing, onOk) {
+        const R = typeof Research !== "undefined" ? Research : null;
+        const painted = R?.paintedCount ? R.paintedCount(thing?.entry) : 0;
+        const copy = R?.removeConfirmCopy
+            ? R.removeConfirmCopy(painted)
+            : {
+                question: "Are you sure you'd like to remove this Painting Circle?",
+                loseLead: painted > 0 ? "You'll lose:" : "",
+                paintings: painted
+            };
+        const iconSrc = typeof paintingsUiIconDataUrl === "function"
+            ? paintingsUiIconDataUrl(this.scene)
+            : null;
+        this.promptConfirm(copy.question, onOk, {
+            confirm: "Remove",
+            loseLead: copy.loseLead,
+            loseIconSrc: iconSrc,
+            loseCount: copy.paintings,
+            loseLabel: "Paintings"
+        });
     }
 
     bumpWorkCache() {
@@ -826,6 +897,135 @@ class SettlementSystem {
         try { this.scene.game?.canvas?.blur?.(); } catch (_) {}
     }
 
+    promptConfirm(message, onOk, opts = {}) {
+        if (this._destroyOverlay || this._nameOverlay) return;
+        const s = this.scene.uiScale || 1;
+        const fontPx = typeof pixelUiFontSize === "function" ? pixelUiFontSize(16, s) : Math.round(16 * s);
+        const stroke = Math.max(2, Math.round(2 * s));
+        const pad = Math.round(16 * s);
+        const padX = Math.round(18 * s);
+        const wrap = document.createElement("div");
+        wrap.style.cssText = [
+            "position:fixed", "inset:0", "z-index:10000",
+            "display:flex", "align-items:center", "justify-content:center",
+            "background:rgba(8,6,4,0.55)",
+            "pointer-events:auto"
+        ].join(";");
+        const box = document.createElement("div");
+        box.style.cssText = [
+            "background:#120e0a",
+            `border:${stroke}px solid #2a2218`,
+            `padding:${pad}px ${padX}px`,
+            `min-width:${Math.round(240 * s)}px`,
+            `max-width:${Math.round(360 * s)}px`
+        ].join(";");
+        const question = document.createElement("div");
+        question.textContent = String(message || "Are you sure?");
+        question.style.cssText = [
+            "color:#d4c4a8",
+            "font-family:PrimaryFont,monospace",
+            `font-size:${fontPx}px`,
+            "line-height:1.35"
+        ].join(";");
+        box.appendChild(question);
+        if (opts.loseLead && (opts.loseCount > 0 || opts.loseIconSrc)) {
+            const smallPx = typeof pixelUiFontSize === "function" ? pixelUiFontSize(14, s) : Math.round(14 * s);
+            const lead = document.createElement("div");
+            lead.textContent = String(opts.loseLead);
+            lead.style.cssText = [
+                "color:#d4c4a8",
+                "font-family:PrimaryFont,monospace",
+                `font-size:${smallPx}px`,
+                `margin-top:${Math.round(12 * s)}px`,
+                "line-height:1.35"
+            ].join(";");
+            box.appendChild(lead);
+            const loseRow = document.createElement("div");
+            loseRow.style.cssText = [
+                "display:flex",
+                "align-items:center",
+                `gap:${Math.round(6 * s)}px`,
+                `margin-top:${Math.round(6 * s)}px`
+            ].join(";");
+            if (opts.loseIconSrc) {
+                const img = document.createElement("img");
+                img.src = String(opts.loseIconSrc);
+                img.alt = String(opts.loseLabel || "Paintings");
+                const iconPx = Math.round(16 * s);
+                img.width = iconPx;
+                img.height = iconPx;
+                img.style.cssText = [
+                    `width:${iconPx}px`,
+                    `height:${iconPx}px`,
+                    "image-rendering:pixelated",
+                    "image-rendering:crisp-edges",
+                    "flex-shrink:0"
+                ].join(";");
+                loseRow.appendChild(img);
+            }
+            if (opts.loseLabel) {
+                const name = document.createElement("span");
+                name.textContent = String(opts.loseLabel);
+                name.style.cssText = [
+                    "color:#d4c4a8",
+                    "font-family:PrimaryFont,monospace",
+                    `font-size:${smallPx}px`,
+                    "flex:1"
+                ].join(";");
+                loseRow.appendChild(name);
+            }
+            const count = document.createElement("span");
+            count.textContent = String(opts.loseCount ?? "");
+            count.style.cssText = [
+                "color:#d4c4a8",
+                "font-family:PrimaryFont,monospace",
+                `font-size:${smallPx}px`
+            ].join(";");
+            loseRow.appendChild(count);
+            box.appendChild(loseRow);
+        }
+        const row = document.createElement("div");
+        row.style.cssText = [
+            "display:flex",
+            "justify-content:space-between",
+            "align-items:center",
+            `margin-top:${Math.round(14 * s)}px`,
+            "width:100%"
+        ].join(";");
+        const finish = (ok) => {
+            if (!this._destroyOverlay) return;
+            this._hideNamePrompt();
+            if (ok) onOk?.();
+        };
+        const cancelBtn = this._domOverlayBtn("Cancel", s, fontPx, stroke);
+        cancelBtn.onActivate = () => finish(false);
+        const okBtn = this._domOverlayBtn(String(opts.confirm || "Research"), s, fontPx, stroke);
+        okBtn.onActivate = () => finish(true);
+        row.appendChild(cancelBtn);
+        row.appendChild(okBtn);
+        box.appendChild(row);
+        wrap.appendChild(box);
+        wrap.addEventListener("mousedown", (e) => e.stopPropagation());
+        this._onNameKey = (e) => {
+            const isEsc = e.key === "Escape" || e.code === "Escape" || e.key === "Esc";
+            const isEnter = e.key === "Enter" || e.code === "Enter" || e.code === "NumpadEnter";
+            if (e.type === "keydown" && (isEsc || isEnter)) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation?.();
+                if (e.repeat) return;
+                finish(isEnter);
+            }
+        };
+        window.addEventListener("keydown", this._onNameKey, true);
+        window.addEventListener("keyup", this._onNameKey, true);
+        document.body.appendChild(wrap);
+        this._destroyOverlay = wrap;
+        this._lockWorldPointer();
+        this.scene.input?.keyboard?.resetKeys?.();
+        try { this.scene.game?.canvas?.blur?.(); } catch (_) {}
+    }
+
     destroySettle(settle) {
         if (!settle) return false;
         if (this.sendNet("destroy", { settlementId: settle.id })) {
@@ -1013,6 +1213,8 @@ class SettlementSystem {
         if (filt?.visible && filt.thing?.entry?.uid === uid) filt.close();
         const fuel = this.scene.fuelFilterPanel;
         if (fuel?.visible && fuel.thing?.entry?.uid === uid) fuel.close();
+        const paint = this.scene.pigmentFilterPanel;
+        if (paint?.visible && paint.thing?.entry?.uid === uid) paint.close();
         this.scene.settlementPanel?.refresh?.();
         return true;
     }
@@ -1050,6 +1252,7 @@ class SettlementSystem {
     }
 
     closePanel() {
+        this.scene.researchTreePanel?.close({ restore: false });
         this.scene.settlementPanel?.close();
         this._drawRange(null, false);
         this._paintHud?.();
@@ -1272,6 +1475,7 @@ class SettlementSystem {
         if (!this.canManage(settle) || !this.isAdded(thing)) return false;
         this.scene.storageFilterPanel?.close();
         this.scene.fuelFilterPanel?.close();
+        this.scene.pigmentFilterPanel?.close();
         this.scene.billsPanel?.open(settle, thing);
         return true;
     }
@@ -1282,6 +1486,7 @@ class SettlementSystem {
         if (!this.canManage(settle) || !this.isAdded(thing)) return false;
         this.scene.billsPanel?.close();
         this.scene.fuelFilterPanel?.close();
+        this.scene.pigmentFilterPanel?.close();
         this.scene.storageFilterPanel?.open(settle, thing);
         return true;
     }
@@ -1292,6 +1497,7 @@ class SettlementSystem {
         if (!this.canManage(settle) || !this.isAdded(thing)) return false;
         this.scene.billsPanel?.close();
         this.scene.storageFilterPanel?.close();
+        this.scene.pigmentFilterPanel?.close();
         this.scene.fuelFilterPanel?.open(settle, thing);
         return true;
     }
@@ -1317,13 +1523,20 @@ class SettlementSystem {
             color: "#d4c4a8"
         }).setOrigin(0.5);
         const btn = scene.add.container(0, 0, [rect, text]);
-        const ui = { btn, rect, text, _hovering: false, _pressing: false };
+        const ui = { btn, rect, text, _hovering: false, _pressing: false, _disabled: false };
         const strokeW = () => (typeof pixelUiWorldStroke === "function"
             ? pixelUiWorldStroke(scene)
             : 2 / (scene.worldZoom || 1));
         const paint = () => {
             if (!rect?.active || !rect.geom) return;
             const sw = strokeW();
+            if (ui._disabled) {
+                rect.setFillStyle(BG, 1);
+                rect.setStrokeStyle(sw, OUTLINE);
+                text.setColor("#6a5a4a");
+                return;
+            }
+            text.setColor("#d4c4a8");
             if (ui._pressing) {
                 rect.setFillStyle(BG_PRESS, 1);
                 rect.setStrokeStyle(sw, OUTLINE_PRESS);
@@ -1337,8 +1550,168 @@ class SettlementSystem {
         };
         ui.paint = paint;
         ui.setLabel = (s) => text.setText(s);
-        rect.on("pointerover", () => { ui._hovering = true; paint(); });
+        ui.setEnabled = (on) => {
+            ui._disabled = !on;
+            if (ui._disabled) {
+                ui._hovering = false;
+                ui._pressing = false;
+                if (rect.input) {
+                    rect.input.cursor = "default";
+                    rect.input.useHandCursor = false;
+                }
+            } else if (typeof ensurePointerInteractive === "function") {
+                ensurePointerInteractive(rect);
+                if (rect.input) {
+                    rect.input.cursor = "pointer";
+                    rect.input.useHandCursor = true;
+                }
+            } else if (rect.input) {
+                rect.input.cursor = "pointer";
+                rect.input.useHandCursor = true;
+            }
+            paint();
+        };
+        rect.on("pointerover", () => {
+            if (ui._disabled) return;
+            ui._hovering = true;
+            paint();
+        });
         rect.on("pointerout", () => { ui._hovering = false; ui._pressing = false; paint(); });
+        rect.on("pointerdown", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            if (pointer.rightButtonDown() || ui._disabled) return;
+            ui._pressing = true;
+            paint();
+        });
+        rect.on("pointerup", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            const was = ui._pressing && ui._hovering && !ui._disabled;
+            ui._pressing = false;
+            paint();
+            if (was) onClick?.();
+        });
+        paint();
+        return ui;
+    }
+
+    makeEnableButton(onClick) {
+        const scene = this.scene;
+        const BG_OFF = 0x3a1816;
+        const BG_OFF_PRESS = 0x24100f;
+        const OUTLINE_OFF = 0xc44c3c;
+        const OUTLINE_OFF_HOVER = 0xe8c0b8;
+        const BG_ON = 0x1e3d1a;
+        const BG_ON_PRESS = 0x12240f;
+        const OUTLINE_ON = 0x5cbf63;
+        const OUTLINE_ON_HOVER = 0x9ae08f;
+        const OUTLINE_PRESS = 0xd4a84b;
+        const size = 28;
+        const rect = scene.add.rectangle(0, 0, size, size, BG_ON, 1)
+            .setStrokeStyle(2, OUTLINE_ON)
+            .setInteractive({ useHandCursor: true });
+        const glyph = scene.add.graphics();
+        const btn = scene.add.container(0, 0, [rect, glyph]);
+        const ui = {
+            btn,
+            rect,
+            glyph,
+            _enabled: true,
+            _hovering: false,
+            _pressing: false,
+            _side: size
+        };
+        const strokeW = () => (typeof pixelUiWorldStroke === "function"
+            ? pixelUiWorldStroke(scene)
+            : 2 / (scene.worldZoom || 1));
+        const drawGlyph = () => {
+            if (!glyph?.active) return;
+            glyph.clear();
+            const n = ui._side;
+            const u = Math.max(1, Math.round(n / 14));
+            const cells = ui._enabled
+                ? [[0, 3], [1, 4], [2, 5], [3, 4], [4, 3], [5, 2], [6, 1]]
+                : (() => {
+                    const cross = [];
+                    for (let i = 0; i <= 6; i++) cross.push([i, i], [i, 6 - i]);
+                    return cross;
+                })();
+            const color = ui._enabled ? 0x5cbf63 : 0xc44c3c;
+            glyph.fillStyle(0x000000, 1);
+            for (let i = 0; i < cells.length; i++) {
+                const x = cells[i][0] - 3;
+                const y = cells[i][1] - 3;
+                glyph.fillRect(x * u - u, y * u - u, 3 * u, 3 * u);
+            }
+            glyph.fillStyle(color, 1);
+            for (let i = 0; i < cells.length; i++) {
+                const x = cells[i][0] - 3;
+                const y = cells[i][1] - 3;
+                glyph.fillRect(x * u, y * u, u, u);
+            }
+        };
+        const paint = () => {
+            if (!rect?.active || !rect.geom) return;
+            const sw = strokeW();
+            if (ui._enabled) {
+                if (ui._pressing) {
+                    rect.setFillStyle(BG_ON_PRESS, 1);
+                    rect.setStrokeStyle(sw, OUTLINE_PRESS);
+                } else if (ui._hovering) {
+                    rect.setFillStyle(BG_ON, 1);
+                    rect.setStrokeStyle(sw, OUTLINE_ON_HOVER);
+                } else {
+                    rect.setFillStyle(BG_ON, 1);
+                    rect.setStrokeStyle(sw, OUTLINE_ON);
+                }
+            } else if (ui._pressing) {
+                rect.setFillStyle(BG_OFF_PRESS, 1);
+                rect.setStrokeStyle(sw, OUTLINE_PRESS);
+            } else if (ui._hovering) {
+                rect.setFillStyle(BG_OFF, 1);
+                rect.setStrokeStyle(sw, OUTLINE_OFF_HOVER);
+            } else {
+                rect.setFillStyle(BG_OFF, 1);
+                rect.setStrokeStyle(sw, OUTLINE_OFF);
+            }
+            drawGlyph();
+        };
+        ui.paint = paint;
+        const tipText = () => ui._enabled ? "Enabled" : "Disabled";
+        ui.setEnabled = (on) => {
+            ui._enabled = !!on;
+            paint();
+            if (scene._tooltipTarget === rect) scene.refreshTooltip?.();
+        };
+        ui.setSize = (side) => {
+            if (!rect?.active || !rect.geom) return;
+            const n = Math.max(8, Number(side) || size);
+            ui._side = n;
+            rect.setSize(n, n);
+            if (rect.input) {
+                if (rect.input.hitArea?.setTo) rect.input.hitArea.setTo(0, 0, n, n);
+                else if (rect.input.hitArea?.setSize) rect.input.hitArea.setSize(n, n);
+            } else {
+                rect.setInteractive({ useHandCursor: true });
+            }
+            paint();
+        };
+        rect.on("pointerover", (pointer) => {
+            ui._hovering = true;
+            paint();
+            scene.showTooltip?.(tipText, pointer.x, pointer.y, rect);
+        });
+        rect.on("pointerout", (pointer) => {
+            if (pointer) {
+                const cam = scene.cameras?.main;
+                const pt = cam ? cam.getWorldPoint(pointer.x, pointer.y) : { x: pointer.x, y: pointer.y };
+                const b = rect.getBounds?.();
+                if (b && Phaser.Geom.Rectangle.Contains(b, pt.x, pt.y)) return;
+            }
+            ui._hovering = false;
+            ui._pressing = false;
+            paint();
+            if (scene._tooltipTarget === rect) scene.hideTooltip?.();
+        });
         rect.on("pointerdown", (pointer, _lx, _ly, event) => {
             event?.stopPropagation?.();
             if (pointer.rightButtonDown()) return;
@@ -1354,6 +1727,46 @@ class SettlementSystem {
         });
         paint();
         return ui;
+    }
+
+    canManageCircle(thing) {
+        const settle = this.here(this.scene.player);
+        if (!this.canManage(settle) || !thing?.entry) return false;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R?.isPaintingCircle?.(thing.meta || this.scene.getThing?.(thing.entry.id), thing.entry)) {
+            return false;
+        }
+        return this._inRangePawn(this.scene.player, settle)
+            && S.inRange(settle, thing.x, thing.y, this.scene.tileSize || 16);
+    }
+
+    openPaintFilter(thing) {
+        if (!thing?.entry?.uid) return false;
+        const settle = this.here(this.scene.player);
+        if (!this.canManageCircle(thing)) return false;
+        this.scene.billsPanel?.close();
+        this.scene.storageFilterPanel?.close();
+        this.scene.fuelFilterPanel?.close();
+        this.scene.pigmentFilterPanel?.open(settle, thing);
+        return true;
+    }
+
+    togglePaintEnabled(thing) {
+        if (!this.canManageCircle(thing) || !thing?.entry) return false;
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R) return false;
+        const next = !R.isEnabled(thing.entry);
+        R.setEnabled(thing.entry, next);
+        const settle = this.here(this.scene.player);
+        this.sendNet("setPaintEnabled", {
+            settlementId: settle?.id,
+            uid: thing.entry.uid,
+            enabled: next
+        });
+        thing.applyVisual?.();
+        this.bumpWorkCache();
+        return true;
     }
 
     makeStationButton(onClick) {
@@ -1608,6 +2021,7 @@ class SettlementSystem {
             if (this._hudTxt.text !== label) this._hudTxt.setText(label);
         }
         const panel = this.scene.settlementPanel;
+        const tree = this.scene.researchTreePanel;
         if (panel?.visible) {
             const open = panel.settle;
             if (!open || !this.byId(open.id) || !this._inRangePawn(this.scene.player, open)) {
@@ -1615,9 +2029,15 @@ class SettlementSystem {
             } else {
                 this._drawRange(open, true);
                 this._stockUiAcc = (this._stockUiAcc || 0) + (this.scene.game?.loop?.delta || 16);
-                if (panel.tab === "stock" && this._stockUiAcc > 600) {
+                if (tree?.visible && this._stockUiAcc > 600) {
+                    this._stockUiAcc = 0;
+                    tree.refresh();
+                } else if (panel.tab === "stock" && this._stockUiAcc > 600) {
                     this._stockUiAcc = 0;
                     panel.refreshStockLive();
+                } else if (panel.tab === "research" && !tree?.visible && this._stockUiAcc > 600) {
+                    this._stockUiAcc = 0;
+                    panel.refresh();
                 }
             }
         }
@@ -1652,6 +2072,15 @@ class SettlementSystem {
             if (!open || !this.byId(open.id) || !this._inRangePawn(this.scene.player, open)
                 || !this.isAdded(thing, open)) {
                 fuelF.close();
+            }
+        }
+        const paintF = this.scene.pigmentFilterPanel;
+        if (paintF?.visible) {
+            const open = paintF.settle;
+            const thing = paintF.thing;
+            if (!open || !this.byId(open.id) || !this._inRangePawn(this.scene.player, open)
+                || !this.canManageCircle(thing)) {
+                paintF.close();
             }
         }
         // Settlers are ticked from PartySystem.update so they share eat/tend/AI.

@@ -687,6 +687,34 @@
         return { changed: true, converted: true, rate, method: "shell_simmer" };
     }
 
+    /**
+     * 0–1 fill for the world bar above a campfire. 0 means hide (empty or
+     * no cook duration). Matches the panel bar: roast/smoke use recipe
+     * minutes, simmer uses simmerBarMinutes.
+     */
+    function cookWorldBarFrac(entry, getItem) {
+        if (!entry) return 0;
+        const progressAmt = Number(entry.cookProgress) || 0;
+        if (!(progressAmt > 0)) return 0;
+        migrateEntry(entry, getItem);
+        const method = catalystMethod(entry, getItem);
+        const simmerActive = method === "shell_simmer"
+            || hasSimmerContents(entry)
+            || ((entry.simmerBarMinutes || 0) > 0);
+        let minutes = 0;
+        if (simmerActive) {
+            const filled = simmerFilledCount(entry);
+            minutes = Number(entry.simmerBarMinutes)
+                || Math.max(filled, 2) * SIMMER_MINUTES_PER_SLOT;
+        } else {
+            const cook = entry.cook;
+            const recipe = method && cook?.id ? roastRecipe(getItem, cook.id, method) : null;
+            minutes = Number(entry.roastBarMinutes) || recipe?.minutes || 0;
+        }
+        if (!(minutes > 0)) return 0;
+        return clamp(progressAmt / minutes, 0, 1);
+    }
+
     function onCookChanged(entry, prevId) {
         if (!entry) return;
         if (!entry.cook || entry.cook.id !== prevId) {
@@ -729,6 +757,7 @@
         isSmoldering,
         isIdleSip,
         isCookAdvancing,
+        cookWorldBarFrac,
         burnMinutes,
         cookRate,
         roastRecipe,

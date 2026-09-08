@@ -732,9 +732,11 @@ class Hotbar {
             const p = this.scene.input.activePointer;
             if (hp?.visible && hp._pointerInInjView?.(p.x, p.y)) return;
             if (this.scene.settlementPanel?.containsPointer?.(p)) return;
+            if (this.scene.researchTreePanel?.containsPointer?.(p)) return;
             if (this.scene.billsPanel?.containsPointer?.(p)) return;
             if (this.scene.storageFilterPanel?.containsPointer?.(p)) return;
             if (this.scene.fuelFilterPanel?.containsPointer?.(p)) return;
+            if (this.scene.pigmentFilterPanel?.containsPointer?.(p)) return;
             if (this.scene.craftMenuVisible && this.scene._pointerOverCraftMenu?.(p)) return;
             // Shift+wheel is often reported as deltaX (browser "horizontal scroll")
             const delta = deltaY || deltaX;

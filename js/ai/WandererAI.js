@@ -26,7 +26,7 @@ class WandererAI {
     update(delta) {
         const pawn = this.pawn;
         const scene = pawn?.scene;
-        if (!pawn?.active || pawn.isBodyDead?.() || scene?._gamePaused) {
+        if (!pawn?.active || pawn.isBodyDead?.() || scene?._gamePaused || scene?._worldSimFrozen) {
             pawn?.setVelocity?.(0, 0);
             return;
         }

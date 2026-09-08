@@ -1625,7 +1625,7 @@ class PartySystem {
 
     update(time, delta) {
         const scene = this.scene;
-        if (scene._gamePaused && scene._isSingleplayerSession?.()) return;
+        if ((scene._gamePaused || scene._worldSimFrozen) && scene._isSingleplayerSession?.()) return;
         const dedicated = !!(scene.simAuth());
         if (!dedicated) this._rebuildDuelAssignments();
         if (!dedicated) this._alertRestersIfHunted();

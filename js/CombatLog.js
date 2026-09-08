@@ -158,7 +158,7 @@ class CombatLog {
         const parts = String(raw).trim().split(/\s+/);
         const cmd = (parts[0] || "").toLowerCase();
         const helpSyntax = {
-            debug: "/debug blood|chunks|combat_log|fps|location [show|hide]",
+            debug: "/debug blood/chunks/combat_log/fps/location [show/hide]",
             give: "/give <item> [qty]",
             heal: "/heal",
             help: "/help [command]",
@@ -166,7 +166,7 @@ class CombatLog {
             regen: "/regen",
             seed: "/seed",
             spawn: "/spawn <mob>",
-            set: "/set <thing>|null",
+            set: "/set <thing>/null",
             tick: "/tick [speed]",
             time: "/time [HH] [MM]",
             tp: "/tp <x> <y>",
@@ -337,7 +337,7 @@ class CombatLog {
             return;
         }
         if (cmd === "/set") {
-            const usage = "Usage: /set <thing>|null";
+            const usage = "Usage: /set <thing>/null";
             const rawId = parts.slice(1).join(" ").trim();
             if (!rawId) {
                 this.pushError(usage);
@@ -435,7 +435,7 @@ class CombatLog {
             return;
         }
         if (cmd === "/debug") {
-            const usage = "Usage: /debug blood|chunks|combat_log|fps|location [show|hide]";
+            const usage = "Usage: /debug blood/chunks/combat_log/fps/location [show/hide]";
             const topic = (parts[1] || "").toLowerCase();
             const action = (parts[2] || "").toLowerCase();
             if (topic === "fps") {

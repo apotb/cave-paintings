@@ -15,7 +15,7 @@
     const TILE = 16;
     const WAYPOINT_PX = 10;
     const GOAL_DRIFT_PX = 48;
-    const STUCK_MS = 400;
+    const STUCK_MS = 1100;
     const LOOK_PX = 24;
     const LOS_STEP = 3;
     const ARRIVE_PX = 2;
@@ -195,17 +195,10 @@
     function cellStandOpen(cx, cy, cell, blocked) {
         const pts = cellStandCandidates(cx, cy, cell);
         if (typeof blocked !== "function") return pts[0];
-        let best = null;
-        let bestClear = -1;
         for (let i = 0; i < pts.length; i++) {
-            if (blocked(pts[i].x, pts[i].y)) continue;
-            const n = clearance(pts[i].x, pts[i].y, blocked, 6);
-            if (n > bestClear) {
-                bestClear = n;
-                best = pts[i];
-            }
+            if (!blocked(pts[i].x, pts[i].y)) return pts[i];
         }
-        return best;
+        return null;
     }
 
     function clearance(x, y, blocked, r) {
@@ -364,9 +357,19 @@
                 if (ddx && ddy) {
                     if (!standAt(cx + ddx, cy) || !standAt(cx, cy + ddy)) continue;
                 }
-                if (fromStand && nbStand && !losClear(
-                    fromStand.x, fromStand.y, nbStand.x, nbStand.y, blocked, { fatPx: 3 }
-                )) continue;
+                if (fromStand && nbStand) {
+                    const mx = (fromStand.x + nbStand.x) * 0.5;
+                    const my = (fromStand.y + nbStand.y) * 0.5;
+                    const dx = nbStand.x - fromStand.x;
+                    const dy = nbStand.y - fromStand.y;
+                    const dist = hypot(dx, dy) || 1;
+                    const fat = 3;
+                    const pdx = -dy / dist;
+                    const pdy = dx / dist;
+                    if (blocked(mx, my)
+                        || blocked(mx + pdx * fat, my + pdy * fat)
+                        || blocked(mx - pdx * fat, my - pdy * fat)) continue;
+                }
                 const ng = gCur + 1;
                 if (gScore.has(k) && ng >= gScore.get(k)) continue;
                 gScore.set(k, ng);
@@ -491,37 +494,57 @@
         // Keep a still-valid route even if the follow target drifted — replanning
         // every 48px of leader motion is what hitchs FPS while you walk.
         const committed = !!(
-            path && path.length && !nextBlocked && !stuck && !overlapping
+            path && path.length && !nextBlocked && !stuck
         );
         let replanned = false;
         if (!committed) {
+            const rawDest = { x: dest.x, y: dest.y };
             let openR = input.openRadius != null ? input.openRadius : 4;
-            const destBlocked = blocked(dest.x, dest.y);
-            const destTight = !destBlocked && clearance(dest.x, dest.y, blocked, 6) < 3;
-            if (destBlocked || destTight) openR = Math.max(openR, 3);
-            dest = destBlocked || destTight
-                ? bestStand(from, dest, blocked, { cellSize: cell, openRadius: openR })
-                : openPoint(dest.x, dest.y, blocked, cell, side, openR, from);
+            const allowReplan = input.allowReplan !== false;
+            // Overlap is a slide, not a reason to A* the camp (baskets while chopping).
+            if (!allowReplan || overlapping) {
+                if (pathGoal) dest = { x: pathGoal.x, y: pathGoal.y };
+            } else {
+            const destBlocked = blocked(rawDest.x, rawDest.y);
+            const destTight = !destBlocked && clearance(rawDest.x, rawDest.y, blocked, 6) < 3;
+            const wantExact = input.openRadius === 0;
+            if (destBlocked || (destTight && !wantExact)) openR = Math.max(openR, 3);
+            const standSlack = Math.max(cell * 3, (openR + 1) * cell);
+            const stickyGoal = pathGoal
+                && !stuck
+                && hypot(pathGoal.x - rawDest.x, pathGoal.y - rawDest.y) <= standSlack
+                && !blocked(pathGoal.x, pathGoal.y);
+            if (stickyGoal) dest = { x: pathGoal.x, y: pathGoal.y };
+            else if (destBlocked || (destTight && !wantExact)) {
+                dest = bestStand(from, rawDest, blocked, { cellSize: cell, openRadius: openR });
+            } else if (wantExact) {
+                dest = rawDest;
+            } else {
+                dest = openPoint(rawDest.x, rawDest.y, blocked, cell, side, openR, from);
+            }
             const dist = hypot(dest.x - from.x, dest.y - from.y);
             const losMax = Math.min(dist, cell * Math.max(maxRange, 8));
-            const clearToDest = !overlapping && losClear(
+            const clearToDest = losClear(
                 from.x, from.y, dest.x, dest.y, blocked,
-                { stepPx: 3, maxDist: losMax, fatPx: 3 }
+                { stepPx: 8, maxDist: losMax, fatPx: 0 }
             );
-            const ahead = overlapping || blockedAhead(from, dest, blocked, lookPx);
+            const ahead = blockedAhead(from, dest, blocked, lookPx);
             const goalDrift = !pathGoal
                 || hypot(dest.x - pathGoal.x, dest.y - pathGoal.y) > GOAL_DRIFT_PX;
             const pathDone = !path || !path.length;
-            const allowReplan = input.allowReplan !== false;
             if (clearToDest && !stuck && !ahead && (pathDone || goalDrift)) {
                 path = null;
-            } else if (!allowReplan && path && path.length && !stuck) {
-                // Stale but usable — wait for the next replan window.
             } else {
                 let planned = planPath(from, dest, blocked, { cellSize: cell, maxRange, side });
                 if (stuck && (!planned || !planned.length)) {
-                    side = -side;
-                    planned = planPath(from, dest, blocked, { cellSize: cell, maxRange, side });
+                    const flipped = -side;
+                    const other = planPath(from, dest, blocked, {
+                        cellSize: cell, maxRange, side: flipped
+                    });
+                    if (other && other.length) {
+                        side = flipped;
+                        planned = other;
+                    }
                 }
                 path = planned;
                 pathGoal = dest;
@@ -531,6 +554,7 @@
                     const n = firstFreeNeighbor(from, blocked, cell, side);
                     if (n) path = [n];
                 }
+            }
             }
         }
 

@@ -18,6 +18,8 @@ class SettlementPanel {
         this._maxScroll = 0;
         this._bodyX = 10;
         this._bodyY = 62;
+        this._tabsLeft = 0;
+        this._tabsRight = 0;
         this._scrollDrag = null;
         this._refreshing = false;
         this._contentSigVal = null;
@@ -27,7 +29,7 @@ class SettlementPanel {
 
     _build() {
         const scene = this.scene;
-        this.bg = scene.add.rectangle(0, 0, 280, 220, 0x120e0a, 0.94)
+        this.bg = scene.add.rectangle(0, 0, 280, 260, 0x120e0a, 0.94)
             .setStrokeStyle(2, 0x2a2218)
             .setOrigin(0, 0)
             .setInteractive({ cursor: "default" });
@@ -55,6 +57,7 @@ class SettlementPanel {
         this.tabPeople = this._btn(0, 0, "People", () => this._setTab("people"));
         this.tabJobs = this._btn(0, 0, "Jobs", () => this._setTab("jobs"));
         this.tabStock = this._btn(0, 0, "Stock", () => this._setTab("stock"));
+        this.tabResearch = this._btn(0, 0, "Research", () => this._setTab("research"));
         this.body = scene.add.container(10, 64);
         this._maskGfx = scene.make.graphics({ x: 0, y: 0, add: false });
         // Bitmap mask (not stencil) so job/people tooltips are not washed out.
@@ -63,7 +66,7 @@ class SettlementPanel {
         this.scrollThumb = scene.add.rectangle(0, 0, 5, 20, 0x8a7260, 1).setOrigin(0, 0).setVisible(false);
         this.root.add([
             this.bg, this.title, this.destroyBtn, this.closeBtn,
-            this.tabPeople, this.tabJobs, this.tabStock, this.body,
+            this.tabPeople, this.tabJobs, this.tabStock, this.tabResearch, this.body,
             this.scrollTrack, this.scrollThumb
         ]);
     }
@@ -76,13 +79,13 @@ class SettlementPanel {
         });
         scene.input.on("pointerup", () => { this._scrollDrag = null; });
         scene.input.on("pointermove", (p) => {
-            if (!this.visible || !this._scrollDrag || this._maxScroll <= 0) return;
+            if (!this.visible || !this.root.visible || !this._scrollDrag || this._maxScroll <= 0) return;
             const travel = Math.max(1, this._viewH - this.scrollThumb.height);
             const dy = p.y - this._scrollDrag.startY;
             this._setScroll(this._scrollDrag.startScroll + (dy / travel) * this._maxScroll);
         });
         scene.input.on("wheel", (pointer, _over, _dx, dy) => {
-            if (!this.visible || this._maxScroll <= 0) return;
+            if (!this.visible || !this.root.visible || this._maxScroll <= 0) return;
             const p = pointer || scene.input.activePointer;
             if (!this._pointerInBody(p)) return;
             const step = Math.round(22 * (scene.uiScale || 1));
@@ -91,7 +94,7 @@ class SettlementPanel {
     }
 
     _pointerInBody(pointer) {
-        if (!pointer || !this.visible) return false;
+        if (!pointer || !this.visible || !this.root?.visible) return false;
         const x = this.root.x + this._bodyX;
         const y = this.root.y + this._bodyY;
         return pointer.x >= x && pointer.x <= x + this._viewW
@@ -219,6 +222,7 @@ class SettlementPanel {
         set(this.tabPeople, this.tab === "people");
         set(this.tabJobs, this.tab === "jobs");
         set(this.tabStock, this.tab === "stock");
+        set(this.tabResearch, this.tab === "research");
     }
 
     _setTab(tab) {
@@ -226,7 +230,7 @@ class SettlementPanel {
         this._scroll = 0;
         this._contentSigVal = null;
         this._syncTabs();
-        this.refresh();
+        this.layout();
     }
 
     open(settle) {
@@ -251,7 +255,37 @@ class SettlementPanel {
     layout() {
         const scene = this.scene;
         const s = scene.uiScale || 1;
-        const w = Math.round(300 * s);
+        if (typeof applyPixelUiFont === "function") {
+            applyPixelUiFont(this.title, 16, s);
+            applyPixelUiFont(this.destroyBtn._txt, 12, s);
+            applyPixelUiFont(this.closeBtn._txt, 12, s);
+            applyPixelUiFont(this.tabPeople._txt, 12, s);
+            applyPixelUiFont(this.tabJobs._txt, 12, s);
+            applyPixelUiFont(this.tabStock._txt, 12, s);
+            applyPixelUiFont(this.tabResearch._txt, 12, s);
+        }
+        const tabY = Math.round(44 * s);
+        const tabH = Math.round(22 * s);
+        const tabGap = Math.round(8 * s);
+        const tabPad = Math.round(6 * s);
+        let tabLeft = tabPad;
+        for (const tab of [this.tabPeople, this.tabJobs, this.tabStock, this.tabResearch]) {
+            const tw = Math.round((
+                tab === this.tabPeople ? 64
+                : tab === this.tabJobs ? 48
+                : tab === this.tabStock ? 54
+                : 78
+            ) * s);
+            this._fitBtnHit(tab, tw, tabH);
+            tab.setPosition(tabLeft + tw / 2, tabY);
+            tabLeft += tw + tabGap;
+        }
+        const peopleW = this.tabPeople._bg.width;
+        const researchW = this.tabResearch._bg.width;
+        this._tabsLeft = this.tabPeople.x - peopleW / 2;
+        this._tabsRight = this.tabResearch.x + researchW / 2;
+        const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
+        const w = this._tabsRight + Math.max(tabPad, sw);
         const h = Math.round(260 * s);
         this.bg.setSize(w, h);
         if (this.bg.input?.hitArea?.setSize) {
@@ -260,40 +294,28 @@ class SettlementPanel {
             this.bg.input.hitArea.setTo(0, 0, this.bg.width, this.bg.height);
         }
         this.root.setPosition(Math.round(16 * s), Math.round((scene.scale.height - h) / 2));
-        if (typeof applyPixelUiFont === "function") {
-            applyPixelUiFont(this.title, 16, s);
-            applyPixelUiFont(this.destroyBtn._txt, 12, s);
-            applyPixelUiFont(this.closeBtn._txt, 12, s);
-            applyPixelUiFont(this.tabPeople._txt, 12, s);
-            applyPixelUiFont(this.tabJobs._txt, 12, s);
-            applyPixelUiFont(this.tabStock._txt, 12, s);
-        }
         const headerY = Math.round(18 * s);
         this.title.setPosition(Math.round(12 * s), headerY);
-        this.destroyBtn.setPosition(w - 110 * s, headerY);
-        this.closeBtn.setPosition(w - 40 * s, headerY);
-        this.destroyBtn._bg.setSize(64 * s, 22 * s);
-        this.closeBtn._bg.setSize(52 * s, 22 * s);
-        const tabY = Math.round(44 * s);
-        const tabH = Math.round(22 * s);
-        const tabGap = Math.round(8 * s);
-        let tabLeft = Math.round(6 * s);
-        for (const tab of [this.tabPeople, this.tabJobs, this.tabStock]) {
-            const tw = Math.round((tab === this.tabPeople ? 68 : tab === this.tabJobs ? 56 : 60) * s);
-            tab._bg.setSize(tw, tabH);
-            tab.setPosition(tabLeft + tw / 2, tabY);
-            tabLeft += tw + tabGap;
-        }
-        this._bodyX = Math.round(10 * s);
+        const closeW = Math.round(52 * s);
+        const destW = Math.round(64 * s);
+        const headerBtnH = Math.round(22 * s);
+        this._fitBtnHit(this.destroyBtn, destW, headerBtnH);
+        this._fitBtnHit(this.closeBtn, closeW, headerBtnH);
+        this.closeBtn.setPosition(this._tabsRight - closeW / 2, headerY);
+        this.destroyBtn.setPosition(
+            this.closeBtn.x - closeW / 2 - tabGap - destW / 2,
+            headerY
+        );
+        this._bodyX = this._tabsLeft;
         this._bodyY = Math.round(62 * s);
-        this._viewW = w - this._bodyX - Math.round(8 * s);
+        this._viewW = this._tabsRight - this._tabsLeft + sw;
         this._viewH = h - this._bodyY - Math.round(8 * s);
         this.body.setPosition(this._bodyX, this._bodyY);
-        const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
         this.bg.setStrokeStyle(sw, 0x2a2218);
         this.destroyBtn._paint?.();
         this.closeBtn._paint?.();
         this._syncTabs();
+        this._contentSigVal = null;
         if (this.visible && this.settle) this.refresh();
         else {
             this._maxScroll = Math.max(0, this._contentH - this._viewH);
@@ -312,6 +334,7 @@ class SettlementPanel {
         const tab = this.tab || "people";
         const id = this.settle?.id || "";
         const sys = this.scene.settlementSys;
+        const layout = `${this._viewW}x${this._viewH}:${this.scene.uiScale || 1}`;
         if (tab === "jobs") {
             const here = sys?.settlersOf?.(this.settle.id) || [];
             const jobs = here.map((p) => {
@@ -322,16 +345,24 @@ class SettlementPanel {
                     return String(pid);
                 }
             }).join("|");
-            return `jobs:${id}:${jobs}`;
+            return `jobs:${id}:${jobs}:${layout}`;
         }
         if (tab === "stock") {
             const items = sys?.localStockItems?.(this.settle) || [];
-            return `stock:${id}:${items.join(",")}`;
+            return `stock:${id}:${items.join(",")}:${layout}`;
+        }
+        if (tab === "research") {
+            const R = typeof Research !== "undefined" ? Research : null;
+            const circles = sys?.paintingCirclesInRange?.(this.settle) || [];
+            const pts = R?.pointsBreakdown
+                ? R.pointsBreakdown(circles.map((t) => t.entry || t), { settle: this.settle })
+                : { total: 0 };
+            return `research:${id}:${pts.total}:${pts.spent || 0}:${layout}`;
         }
         const party = (this.scene.party || []).filter((p) => p && !p.isBodyDead?.());
         const here = sys?.settlersOf?.(this.settle.id) || [];
         const ids = (list) => list.map((p) => p.pawnId || p.id).join(",");
-        return `people:${id}:${ids(party)}:${ids(here)}`;
+        return `people:${id}:${ids(party)}:${ids(here)}:${layout}`;
     }
 
     _pointerStillOn(obj, pointer) {
@@ -378,6 +409,7 @@ class SettlementPanel {
         let contentH = 0;
         if (this.tab === "jobs") contentH = this._fillJobs(s);
         else if (this.tab === "stock") contentH = this._fillStock(s);
+        else if (this.tab === "research") contentH = this._fillResearch(s);
         else contentH = this._fillPeople(s);
         this._contentH = Math.max(contentH, 1);
         this._maxScroll = Math.max(0, this._contentH - this._viewH);
@@ -461,6 +493,7 @@ class SettlementPanel {
             const x = col * (colW + gap);
             const name = p.displayName?.() || p.pawnName || "?";
             const isLeader = p === scene.leader;
+            const controlled = !!(p.isControlled?.() || p === scene.player);
             const showSend = kind === "here" && others[0];
             const showDrop = kind === "party" && !isLeader;
             const showTake = kind === "here";
@@ -471,6 +504,7 @@ class SettlementPanel {
             const crownW = (isLeader && kind === "party") ? Math.round(12 * sc) : 0;
             const nameMax = Math.max(24, colW - btnsW - crownW - Math.round(6 * sc));
             const label = this._rowLabel(name, x, y, rowH, 12);
+            if (controlled) label.setColor("#b8ffb8");
             if (label.width > nameMax) {
                 let cut = name;
                 while (cut.length > 1 && label.width > nameMax) {
@@ -547,13 +581,15 @@ class SettlementPanel {
 
         const scene = this.scene;
         const nJobs = jobs.length;
-        const barW = Math.max(4, Math.round(5 * sc));
-        const tableW = Math.max(120, Math.round(this._viewW - barW - 4 * sc));
-        const nameW = Math.round(58 * sc);
-        const cellW = Math.max(18, Math.floor((tableW - nameW) / nJobs));
-        const gridW = nameW + cellW * nJobs;
-        const headerH = Math.round(18 * sc);
-        const rowH = Math.round(22 * sc);
+        const cellS = Math.round(20 * sc);
+        const rowH = cellS;
+        const nameW = Math.round(56 * sc);
+        const colX = [nameW];
+        for (let i = 0; i < nJobs; i++) colX.push(colX[i] + cellS);
+        const gridW = colX[nJobs];
+        const headerH = Math.round(32 * sc);
+        const yHi = Math.round(8 * sc);
+        const yLo = Math.round(21 * sc);
         const stroke = Math.max(1, Math.round(sc));
         const line = 0x2a2218;
         const headerBg = 0x1a1510;
@@ -566,8 +602,9 @@ class SettlementPanel {
 
         for (let i = 0; i < nJobs; i++) {
             const j = jobs[i];
-            const hx = nameW + i * cellW + cellW / 2;
-            const hit = scene.add.rectangle(nameW + i * cellW, 0, cellW, headerH, headerBg, 1)
+            const hx = colX[i] + cellS / 2;
+            const hy = (i % 2 === 0) ? yHi : yLo;
+            const hit = scene.add.rectangle(colX[i], 0, cellS, headerH, headerBg, 0)
                 .setOrigin(0, 0)
                 .setInteractive({ useHandCursor: true, cursor: "pointer" });
             hit.on("pointerover", (pointer) => {
@@ -581,7 +618,7 @@ class SettlementPanel {
                 if (scene._tooltipTarget === hit) scene.hideTooltip?.();
             });
             this.body.add(hit);
-            const ht = this._label(S?.jobLabel?.(j) || j, hx, headerH / 2, 10);
+            const ht = this._label(S?.jobLabel?.(j) || j, hx, hy, 10);
             ht.setOrigin(0.5, 0.5);
         }
 
@@ -591,15 +628,16 @@ class SettlementPanel {
             const name = (p.displayName?.() || "?").slice(0, 8);
             const nt = this._label(name, Math.round(4 * sc), rowY + rowH / 2, 11);
             nt.setOrigin(0, 0.5);
+            if (p.isControlled?.() || p === scene.player) nt.setColor("#b8ffb8");
             const jobRow = S ? S.jobsFor(this.settle, p.pawnId) : {};
             for (let i = 0; i < nJobs; i++) {
                 const j = jobs[i];
                 const pri = jobRow[j] || 0;
-                const cellX = nameW + i * cellW;
-                const bg = scene.add.rectangle(cellX, rowY, cellW, rowH, cellBg, 1)
+                const cellX = colX[i];
+                const bg = scene.add.rectangle(cellX, rowY, cellS, rowH, cellBg, 1)
                     .setOrigin(0, 0)
                     .setInteractive({ useHandCursor: true });
-                const txt = scene.add.text(cellX + cellW / 2, rowY + rowH / 2, pri ? String(pri) : "–", {
+                const txt = scene.add.text(cellX + cellS / 2, rowY + rowH / 2, pri ? String(pri) : "–", {
                     fontFamily: PIXEL_UI_FONT,
                     fontSize: `${pixelUiFontSize(11, sc)}px`,
                     color: "#d4c4a8"
@@ -637,6 +675,7 @@ class SettlementPanel {
                         ? (right ? S.cyclePriority(pri) : S.raisePriority(pri))
                         : 0;
                     S?.setJob(this.settle, p.pawnId, j, next);
+                    this.scene.settlementSys?.bumpWorkCache?.();
                     this.scene.settlementSys?.sendNet("setJobs", {
                         settlementId: this.settle.id,
                         pawnId: p.pawnId,
@@ -653,21 +692,24 @@ class SettlementPanel {
         const gridH = headerH + rowH * rows;
         const g = scene.add.graphics();
         g.lineStyle(stroke, line, 1);
-        g.strokeRect(stroke / 2, stroke / 2, gridW - stroke, gridH - stroke);
-        let vx = nameW;
-        g.lineBetween(vx, 0, vx, gridH);
-        for (let i = 1; i < nJobs; i++) {
-            vx = nameW + i * cellW;
-            g.lineBetween(vx, 0, vx, gridH);
+        const bodyH = rowH * rows;
+        g.strokeRect(stroke / 2, headerH + stroke / 2, gridW - stroke, bodyH - stroke);
+        for (let i = 0; i < nJobs; i++) {
+            g.lineBetween(colX[i], headerH, colX[i], gridH);
         }
-        let hy = headerH;
-        g.lineBetween(0, hy, gridW, hy);
         for (let r = 1; r < rows; r++) {
-            hy = headerH + r * rowH;
-            g.lineBetween(0, hy, gridW, hy);
+            const y = headerH + r * rowH;
+            g.lineBetween(0, y, gridW, y);
         }
         this.body.add(g);
         return gridH + 8 * sc;
+    }
+
+    _ensurePaintingsUiIcon() {
+        if (typeof ensurePaintingsUiIcon === "function") {
+            return ensurePaintingsUiIcon(this.scene) || this._itemIconKey("painting_circle");
+        }
+        return this._itemIconKey("painting_circle");
     }
 
     _itemIconKey(itemId) {
@@ -701,9 +743,14 @@ class SettlementPanel {
             this._label("Nothing gatherable in range.", 0, y, 11);
             return y + 18 * sc;
         }
-        const btnX = this._viewW > 80 ? this._viewW - Math.round(72 * sc) : 200 * sc;
         const btnW = Math.round(24 * sc);
         const btnH = Math.round(16 * sc);
+        const plusRight = Math.max(
+            btnW * 2 + Math.round(8 * sc),
+            Math.round((this._tabsRight || 0) - this._bodyX)
+        );
+        const plusX = plusRight - btnW / 2;
+        const minusX = plusX - Math.round(32 * sc);
         const iconS = Math.round(16 * sc);
         const iconGap = Math.round(4 * sc);
         const textX = iconS + iconGap;
@@ -720,10 +767,10 @@ class SettlementPanel {
             }
             const label = this._label(`${name}  0/0`, textX, midY, 11);
             label.setOrigin(0, 0.5);
-            const minus = this._btn(btnX, midY, "–", (pointer) => {
+            const minus = this._btn(minusX, midY, "–", (pointer) => {
                 this._nudgeStock(settle, id, -this._stockStep(pointer));
             }, true);
-            const plus = this._btn(btnX + Math.round(32 * sc), midY, "+", (pointer) => {
+            const plus = this._btn(plusX, midY, "+", (pointer) => {
                 this._nudgeStock(settle, id, this._stockStep(pointer));
             }, true);
             this._fitBtnHit(minus, btnW, btnH);
@@ -799,6 +846,100 @@ class SettlementPanel {
         else this.refresh();
     }
 
+    _researchEntries() {
+        const circles = this.scene.settlementSys?.paintingCirclesInRange?.(this.settle) || [];
+        return circles.map((t) => t.entry || t).filter(Boolean);
+    }
+
+    _fillResearch(sc) {
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R) {
+            this._label("Research is unavailable.", 0, 0, 12);
+            return 24 * sc;
+        }
+        R.ensureTechs(this.settle);
+        const pts = R.pointsBreakdown
+            ? R.pointsBreakdown(this._researchEntries(), { settle: this.settle })
+            : { paintings: 0, tokens: 0, books: 0, spent: 0, total: 0 };
+        const wrapW = Math.max(80, this._viewW - Math.round(12 * sc));
+        const rowH = Math.round(22 * sc);
+        const iconS = Math.round(16 * sc);
+        const iconGap = Math.round(4 * sc);
+        const textX = iconS + iconGap;
+        let y = 0;
+        const head = this._label(`Research points: ${pts.total}`, 0, y, 12);
+        y += Math.round(head.height + 10 * sc);
+        const spent = Math.max(0, Math.floor(Number(pts.spent) || 0));
+        const rows = [
+            ...((R.currencies && R.currencies()) || [
+                { id: "paintings", name: "Paintings", icon: "painting_circle" },
+                { id: "tokens", name: "Tokens", icon: "null" },
+                { id: "books", name: "Books", icon: "null" }
+            ]),
+            { id: "spent", name: "Research", icon: R.UI_SCIENCE_KEY || "science" }
+        ];
+        for (const row of rows) {
+            const midY = y + rowH / 2;
+            let iconKey = null;
+            if (row.id === "paintings") {
+                iconKey = this._ensurePaintingsUiIcon();
+            } else if (row.id === "spent") {
+                const key = row.icon || "science";
+                iconKey = this.scene.textures.exists(key) ? key : null;
+            } else {
+                iconKey = this._itemIconKey(row.icon || "null");
+            }
+            if (iconKey) {
+                const icon = this.scene.add.image(iconS / 2, midY, iconKey)
+                    .setDisplaySize(iconS, iconS);
+                this.body.add(icon);
+            }
+            this._rowLabel(row.name, textX, y, rowH, 12);
+            const n = row.id === "spent" ? String(spent) : String(pts[row.id] ?? 0);
+            const val = this._label(n, wrapW, midY, 12);
+            val.setOrigin(1, 0.5);
+            if (row.id === "spent") {
+                const minus = this._label("-", wrapW, midY, 12);
+                minus.setOrigin(1, 0.5);
+                minus.setX(wrapW - (val.displayWidth || 0));
+            }
+            y += rowH;
+        }
+        y += Math.round(14 * sc);
+        const bw = Math.round(188 * sc);
+        const bh = Math.round(24 * sc);
+        const btn = this._btn(wrapW / 2, y + bh / 2, "Open Research Menu", () => {
+            this.scene.researchTreePanel?.open(this.settle);
+        }, true);
+        btn._bg.setSize(bw, bh);
+        this._fitBtnHit(btn, bw, bh);
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(btn._txt, 12, sc);
+        this.body.add(btn);
+        return y + bh + 8 * sc;
+    }
+
+    _tryUnlock(tech) {
+        if (!tech || !this.settle) return;
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R) return;
+        const entries = this._researchEntries();
+        const pts = R.pointsBreakdown
+            ? R.pointsBreakdown(entries, { settle: this.settle })
+            : { total: R.availableTotal(entries, this.settle) };
+        if (!R.canUnlock(this.settle, tech.id, pts.total)) return;
+        this.scene.settlementSys?.sendNet("unlockTech", {
+            settlementId: this.settle.id,
+            techId: tech.id
+        });
+        R.unlock(this.settle, tech.id);
+        const tree = this.scene.researchTreePanel;
+        if (tree?.settle && tree.settle !== this.settle) R.unlock(tree.settle, tech.id);
+        this._contentSigVal = null;
+        if (tree) tree._sig = null;
+        this.refresh();
+        tree?.refresh?.();
+    }
+
     hoverObjAt(pointer) {
         if (!pointer || !this.visible || !this._pointerInBody(pointer)) return null;
         const visit = (obj) => {
@@ -820,7 +961,7 @@ class SettlementPanel {
     }
 
     containsPointer(pointer) {
-        if (!this.visible || !pointer) return false;
+        if (!this.visible || !this.root?.visible || !pointer) return false;
         const b = this.bg.getBounds();
         return Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y);
     }

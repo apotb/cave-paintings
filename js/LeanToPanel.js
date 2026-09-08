@@ -157,6 +157,7 @@ class LeanToPanel {
         if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
         if (this.scene.storagePanel?.visible) this.scene.storagePanel.close();
         if (this.scene.campfirePanel?.visible) this.scene.campfirePanel.close();
+        if (this.scene.paintingCirclePanel?.visible) this.scene.paintingCirclePanel.close();
         this.scene.closeCraftStationMenu?.();
         this.leanTo = leanTo;
         this.slot = Math.max(0, Math.floor(Number(slot) || 0));
