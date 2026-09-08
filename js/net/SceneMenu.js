@@ -38,7 +38,8 @@ function resolveLocalVersion() {
     if (_localVersionPromise) return _localVersionPromise;
     _localVersionPromise = (async () => {
         try {
-            const res = await fetch("package.json", { cache: "no-store" });
+            // Public copy of the app version — Vercel does not serve package.json.
+            const res = await fetch("version.json", { cache: "no-store" });
             if (!res.ok) {
                 _localVersionCache = null;
                 return null;
