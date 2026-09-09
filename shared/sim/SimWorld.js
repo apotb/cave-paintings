@@ -532,6 +532,7 @@ class SimWorld {
             solidThingAt: (x, y) => self._solidThingAt(x, y),
             thingRectsNear: (x, y, radius) => self._thingRectsNear(x, y, radius),
             getItem: (id) => itemDefs().get(id),
+            stuckDt: Number(self._aiStuckDt) > 0 ? self._aiStuckDt : 16,
             alertNearbyMobs: (victim, source) => self.alertNearbyMobs(victim, source),
             isControlled(mob) {
                 if (!mob) return false;
@@ -2902,17 +2903,9 @@ class SimWorld {
         w.x = c.x;
         w.y = c.y;
         c.applyDesiredVel(dtMs);
-        const dt = dtMs / 1000;
         const ox = w.x;
         const oy = w.y;
-        const swim = this._terrainSpeedMult(w.x, w.y - 1);
-        const nx = w.x + (c.vx || 0) * dt * swim;
-        const ny = w.y + (c.vy || 0) * dt * swim;
-        if (!this._partyPoseBlocked(c, nx, c.y)) c.x = nx;
-        if (!this._partyPoseBlocked(c, c.x, ny)) c.y = ny;
-        w.x = c.x;
-        w.y = c.y;
-        this._ejectOverlappingPose(w, c);
+        this._integrateWandererPose(w, c, dtMs);
         w._moved = Math.hypot(w.x - ox, w.y - oy) > 0.15
             || Math.hypot(c.vx || 0, c.vy || 0) > 2;
         c.x = w.x;
@@ -3074,20 +3067,37 @@ class SimWorld {
             c.vx = vx;
             c.vy = vy;
         }
-        const dt = dtMs / 1000;
-        const swim = this._terrainSpeedMult(w.x, w.y - 1);
-        const nx = w.x + vx * dt * swim;
-        const ny = w.y + vy * dt * swim;
-        if (!this._partyPoseBlocked(c, nx, c.y)) c.x = nx;
-        if (!this._partyPoseBlocked(c, c.x, ny)) c.y = ny;
-        w.x = c.x;
-        w.y = c.y;
-        this._ejectOverlappingPose(w, c);
+        this._integrateWandererPose(w, c, dtMs);
         w.facing = c.facing || w.facing;
         w._moved = Math.hypot(w.x - ox, w.y - oy) > 0.15
             || Math.hypot(c.vx || 0, c.vy || 0) > 2;
         c.x = w.x;
         c.y = w.y;
+    }
+
+    /**
+     * Collision samples stay small even when /tick (or sleep 12×) inflates dt.
+     * A 20× step used to skip through trees, look stuck, then teleport.
+     */
+    _integrateWandererPose(w, c, dtMs) {
+        const total = Math.max(0, Number(dtMs) || 0);
+        const vx = c.vx || 0;
+        const vy = c.vy || 0;
+        const sliceMs = 48;
+        let left = total;
+        while (left > 0) {
+            const slice = Math.min(left, sliceMs);
+            const dt = slice / 1000;
+            const swim = this._terrainSpeedMult(w.x, w.y - 1);
+            const nx = w.x + vx * dt * swim;
+            const ny = w.y + vy * dt * swim;
+            if (!this._partyPoseBlocked(c, nx, c.y)) c.x = nx;
+            if (!this._partyPoseBlocked(c, c.x, ny)) c.y = ny;
+            w.x = c.x;
+            w.y = c.y;
+            left -= slice;
+        }
+        this._ejectOverlappingPose(w, c);
     }
 
     /**
@@ -4494,6 +4504,7 @@ class SimWorld {
             pawn.kc = pawn.stomach;
             this._resetPawnAnatomy(p, pawn);
             this._youDirty.add(p.id);
+            this.announceCmd("Fully healed", { to: p.id });
             return;
         }
         if (cmd === "/wanderer") {
@@ -7251,6 +7262,13 @@ class SimWorld {
         const held = this._held(p);
         const meta = held?.id ? itemDefs().get(held.id) : null;
         if (meta?.use !== "light_fire") return;
+        const R = _research();
+        if (R?.techUnlocked) {
+            const oid = p.ownerId || session.id;
+            const owned = this._ownedSettlements(oid);
+            const settle = Settlement.atPoint(owned, p.x, p.y, TS, oid) || owned[0] || null;
+            if (!R.techUnlocked("fire", settle)) return;
+        }
 
         const range = TS * HARVEST_RANGE_TILES;
         const range2 = range * range;
@@ -9643,6 +9661,7 @@ class SimWorld {
     /** @param {number} dtMs */
     tick(dtMs) {
         this._simTickLive = true;
+        this._aiStuckDt = Number(dtMs) > 0 ? dtMs : 16;
         this._queryGen = (this._queryGen || 0) + 1;
         this._chunkRectCache = new Map();
         this._uidIndex = null;
@@ -11279,19 +11298,26 @@ class SimWorld {
                 }
                 if (Array.isArray(t?.slots)) {
                     const def = thingDefs().get(t.id);
-                    if (!Hide.isDryingRack(def, t)) {
-                        let changed = false;
-                        for (let i = 0; i < t.slots.length; i++) {
-                            const stack = t.slots[i];
-                            if (!stack) continue;
-                            const beforeTemp = stack.temp;
-                            const beforeId = stack.id;
-                            if (Fire.tickStackTemp(stack)) changed = true;
-                            this._spoilStackIfDue(stack);
-                            if (stack.temp !== beforeTemp || stack.id !== beforeId) changed = true;
+                    const isRack = Hide.isDryingRack(def, t);
+                    let changed = false;
+                    for (let i = 0; i < t.slots.length; i++) {
+                        const stack = t.slots[i];
+                        if (!stack) continue;
+                        if (isRack && Hide.pausesRackSpoil(itemDefs().get(stack.id))) continue;
+                        const beforeTemp = stack.temp;
+                        const beforeId = stack.id;
+                        if (isRack) {
+                            Spoil.migrateToSpoilAt(
+                                stack,
+                                this.worldMinuteIndex(),
+                                (id) => itemDefs().get(id)
+                            );
                         }
-                        if (changed && opts.emit) this._emitStorage(c, t);
+                        if (Fire.tickStackTemp(stack)) changed = true;
+                        this._spoilStackIfDue(stack);
+                        if (stack.temp !== beforeTemp || stack.id !== beforeId) changed = true;
                     }
+                    if (changed && opts.emit) this._emitStorage(c, t);
                 }
             }
         }

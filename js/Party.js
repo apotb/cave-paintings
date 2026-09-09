@@ -1707,11 +1707,34 @@ class PartySystem {
                 const fromX = Number.isFinite(w._netFromX) ? w._netFromX : w.x;
                 const fromY = Number.isFinite(w._netFromY) ? w._netFromY : w.y;
                 const err = Math.hypot(tx - fromX, ty - fromY);
-                if (err > 72 || !Number.isFinite(w._netSnapAt)) {
+                const P = typeof Party !== "undefined" ? Party : null;
+                const snapDt = w._netSnapDt || P?.snapshotIntervalMs?.() || (1000 / 15);
+                const teleport = P?.puppetTeleportPx?.({
+                    tickSpeed: this.scene.tickSpeed,
+                    tileSize: this.scene.tileSize,
+                    snapDtMs: snapDt
+                }) || 72;
+                const wantWalk = w._netMoving === true
+                    || (w._netMoving !== false && (Number.isFinite(w._netSnapDist) ? w._netSnapDist : err) > 1);
+                const pose = P?.puppetLerpXY?.({
+                    fromX,
+                    fromY,
+                    tx,
+                    ty,
+                    snapAt: w._netSnapAt,
+                    snapDtMs: snapDt,
+                    now: performance.now(),
+                    teleportPx: teleport,
+                    moving: wantWalk,
+                    heading: w.heading
+                });
+                if (pose) {
+                    w.x = pose.x;
+                    w.y = pose.y;
+                } else if (err > teleport || !Number.isFinite(w._netSnapAt)) {
                     w.x = tx;
                     w.y = ty;
                 } else {
-                    const snapDt = w._netSnapDt || (1000 / 15);
                     const age = performance.now() - w._netSnapAt;
                     let u = snapDt > 0 ? age / snapDt : 1;
                     if (u > 1) u = 1;
@@ -3001,8 +3024,11 @@ class PartySystem {
             pawn._netFromY = pawn.y;
             pawn._netTx = x;
             pawn._netTy = y;
-            pawn._netSnapAt = performance.now();
-            pawn._netSnapDt = 1000 / ((typeof NetProtocol !== "undefined" && NetProtocol.SNAPSHOT_HZ) || 15);
+            const now = performance.now();
+            pawn._netSnapDt = (typeof Party !== "undefined" && Party.puppetSnapGapMs)
+                ? Party.puppetSnapGapMs(pawn._netSnapAt, now)
+                : 1000 / ((typeof NetProtocol !== "undefined" && NetProtocol.SNAPSHOT_HZ) || 15);
+            pawn._netSnapAt = now;
         } else {
             if (Number.isFinite(x)) pawn._netTx = x;
             if (Number.isFinite(y)) pawn._netTy = y;

@@ -79,7 +79,7 @@ class LeanToPanel {
             if (!enabled) {
                 rect.setFillStyle(BG, 1);
                 rect.setStrokeStyle(strokeW, OUTLINE);
-                text.setColor("#d4c4a8");
+                text.setColor("#6a5a4a");
                 return;
             }
             if (this[state.pressingKey]) {
@@ -200,7 +200,6 @@ class LeanToPanel {
             ? true
             : emptySlot && !!pawn && !pawn.isBodyDead?.();
         this.actionBtn.setVisible(true);
-        this.actionBtn.setAlpha(this._actionEnabled ? 1 : 0.35);
         this._syncHitArea(this.actionRect, this._actionEnabled, this._actionBw, this._actionBh);
 
         this._destroyEnabled = allEmpty;

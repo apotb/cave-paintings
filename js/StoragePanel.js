@@ -130,7 +130,7 @@ class StoragePanel {
                         const meta = this.scene.getItem(stack.id);
                         const spoilPaused = typeof Hide !== "undefined"
                             && Hide.isDryingRack(this.storage?.meta, this.storage?.entry)
-                            && Hide.isHide(meta);
+                            && Hide.pausesRackSpoil(meta);
                         return this.scene.formatItemTooltip(
                             meta, stack.quantity, stack.spoilAt, stack, { spoilPaused }
                         );
@@ -224,7 +224,7 @@ class StoragePanel {
             if (!this._takeEnabled) {
                 this.takeRect.setFillStyle(BG, 1);
                 this.takeRect.setStrokeStyle(strokeW, OUTLINE);
-                this.takeText.setColor("#d4c4a8");
+                this.takeText.setColor("#6a5a4a");
                 return;
             }
             if (this._takePressing) {
@@ -412,7 +412,6 @@ class StoragePanel {
         const empty = !!this.storage.isEmpty?.();
         this._takeEnabled = empty;
         this.takeBtn.setVisible(true);
-        this.takeBtn.setAlpha(empty ? 1 : 0.35);
         if (empty) this._syncTakeHitArea(true);
         else disableInteractiveIfOn(this.takeRect);
         this._syncTakeHover();

@@ -209,6 +209,29 @@ function pixelUiFontSize(basePx, scale) {
     return Math.max(cell, Math.round(raw / cell) * cell);
 }
 
+/** Fit `frameW`×`frameH` inside a box without stretching. */
+function uiIconDisplaySize(frameW, frameH, maxW, maxH) {
+    const fw = Math.max(1, Number(frameW) || 1);
+    const fh = Math.max(1, Number(frameH) || 1);
+    const mw = Math.max(1, Number(maxW) || 1);
+    const mh = Math.max(1, Number(maxH) || 1);
+    const scale = Math.min(mw / fw, mh / fh);
+    return {
+        w: Math.max(1, Math.round(fw * scale)),
+        h: Math.max(1, Math.round(fh * scale))
+    };
+}
+
+/** Keep pixel-art aspect; do not squash into a square. */
+function fitUiIcon(img, maxW, maxH) {
+    if (!img) return img;
+    const fw = img.frame?.realWidth || img.frame?.width || img.width || 16;
+    const fh = img.frame?.realHeight || img.frame?.height || img.height || 16;
+    const size = uiIconDisplaySize(fw, fh, maxW, maxH);
+    img.setDisplaySize(size.w, size.h);
+    return img;
+}
+
 /**
  * Enable a hand cursor without rebuilding Phaser's hit area.
  * Re-calling setInteractive drops the object from the over-list for a frame,
@@ -905,6 +928,43 @@ function ensurePaintingsUiIcon(scene) {
         tctx.putImageData(data, 0, 0);
         ctx.drawImage(tmp, 0, 0);
     }
+    scene.textures.addCanvas(key, canvas);
+    return key;
+}
+
+/** Cave-paint hand stamp for the Culture research node. */
+function ensureCultureHandIcon(scene) {
+    if (!scene?.textures) return null;
+    const R = typeof Research !== "undefined" ? Research : null;
+    const key = R?.UI_CULTURE_HAND_KEY || "culture_hand";
+    if (scene.textures.exists(key)) return key;
+    const srcKey = R?.UI_TITLE_HAND_KEY || "title-hand";
+    if (!scene.textures.exists(srcKey)) return null;
+    const srcTex = scene.textures.get(srcKey);
+    const src = srcTex?.getSourceImage?.() || srcTex?.source?.[0]?.image;
+    if (!src?.width) return srcKey;
+    const w = src.width;
+    const h = src.height;
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return srcKey;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(src, 0, 0);
+    const tint = R?.UI_PAINT_TINT != null ? R.UI_PAINT_TINT : 0xaa1100;
+    const tr = (tint >> 16) & 255;
+    const tg = (tint >> 8) & 255;
+    const tb = tint & 255;
+    const data = ctx.getImageData(0, 0, w, h);
+    const px = data.data;
+    for (let p = 0; p < px.length; p += 4) {
+        if (px[p + 3] === 0) continue;
+        px[p] = (px[p] * tr / 255) | 0;
+        px[p + 1] = (px[p + 1] * tg / 255) | 0;
+        px[p + 2] = (px[p + 2] * tb / 255) | 0;
+    }
+    ctx.putImageData(data, 0, 0);
     scene.textures.addCanvas(key, canvas);
     return key;
 }
@@ -1949,6 +2009,144 @@ function tickSleepHealFx(host, scene, delta) {
     }
     _tickSleepFxBits(st, dt);
     if (!injured && !st?.bits?.length) host._healFx = null;
+}
+
+function clearPaintFlecks(host) {
+    const st = host?._paintFx;
+    if (!st) return;
+    for (const b of st.bits || []) {
+        try { b.obj?.destroy?.(); } catch (_) {}
+    }
+    host._paintFx = null;
+}
+
+function _tickPaintFleckBits(st, dt) {
+    if (!st?.bits) return;
+    for (let i = st.bits.length - 1; i >= 0; i--) {
+        const b = st.bits[i];
+        const obj = b.obj;
+        if (!obj?.active) {
+            st.bits.splice(i, 1);
+            continue;
+        }
+        b.t += dt;
+        const k = Math.min(1, b.t / b.life);
+        const ease = 1 - (1 - k) * (1 - k);
+        obj.setPosition(Math.round(b.x0 + b.dx * ease), Math.round(b.y0 + b.dy * ease));
+        obj.setAlpha(1 - k * k);
+        if (typeof b.depth === "number") obj.setDepth(b.depth);
+        if (k >= 1) {
+            try { b.onLand?.(); } catch (_) {}
+            obj.destroy();
+            st.bits.splice(i, 1);
+        }
+    }
+}
+
+function spawnPaintFleck(scene, st, opts) {
+    if (!scene?.add?.rectangle || !st) return null;
+    const size = Math.max(1, Math.round(Number(opts.size) || 1));
+    const x0 = Number(opts.x0) || 0;
+    const y0 = Number(opts.y0) || 0;
+    const color = (Number(opts.color) || 0xffffff) >>> 0;
+    const obj = scene.add.rectangle(Math.round(x0), Math.round(y0), size, size, color, 1);
+    obj.setOrigin(0.5, 0.5);
+    scene.mainLayer?.add(obj);
+    scene._uiCam?.ignore?.(obj);
+    const depth = Number(opts.depth);
+    if (Number.isFinite(depth)) obj.setDepth(depth);
+    st.bits.push({
+        obj,
+        t: 0,
+        life: Math.max(180, Number(opts.life) || 640),
+        x0,
+        y0,
+        dx: (Number(opts.x1) || 0) - x0,
+        dy: (Number(opts.y1) || 0) - y0,
+        depth: Number.isFinite(depth) ? depth : 0,
+        onLand: typeof opts.onLand === "function" ? opts.onLand : null
+    });
+    return obj;
+}
+
+function paintFxChannel(host) {
+    const local = host?._paintChannel;
+    if (local && typeof local.progress === "number") return local;
+    const net = host?._netWorkChannel;
+    if (net && net.kind === "paint" && typeof net.progress === "number") return net;
+    return null;
+}
+
+function paintFxCircle(host, scene) {
+    const ch = paintFxChannel(host);
+    const uid = ch?.uid;
+    if (uid) {
+        const hit = scene?.settlementSys?.findThingByUid?.(uid) || scene?.findStorageByUid?.(uid);
+        if (hit?.active) return hit;
+    }
+    const R = typeof Research !== "undefined" ? Research : null;
+    if (!R?.inProgress || !host || !scene?.settlementSys?._forEachThing) return null;
+    let best = null;
+    let bestD = 28 * 28;
+    const hx = Number(host.x) || 0;
+    const hy = Number(host.y) || 0;
+    scene.settlementSys._forEachThing((t) => {
+        if (!t?.active || !R.isPaintingCircle?.(t.meta, t.entry)) return;
+        if (!R.inProgress(t.entry)) return;
+        const d = (t.x - hx) * (t.x - hx) + (t.y - hy) * (t.y - hy);
+        if (d < bestD) {
+            bestD = d;
+            best = t;
+        }
+    });
+    return best;
+}
+
+function tickPaintFlecks(host, scene, delta) {
+    const ch = paintFxChannel(host);
+    let st = host?._paintFx;
+    if (!ch && !st?.bits?.length) {
+        if (host) host._paintFx = null;
+        return;
+    }
+    const dt = Math.max(0, Number(delta) || 16);
+    const R = typeof Research !== "undefined" ? Research : null;
+    const circle = ch ? paintFxCircle(host, scene) : null;
+    const painting = !!(ch && circle?.active && R?.inProgress?.(circle.entry));
+    if (painting) {
+        if (!st) st = host._paintFx = { wait: 40, bits: [] };
+        st.wait -= dt;
+        if (st.wait <= 0 && st.bits.length < 3) {
+            st.wait = 800 + Math.random() * 400;
+            const getItem = (id) => scene.getItem?.(id);
+            const pigmentId = ch.pigmentId || R.currentPigmentId?.(circle.entry);
+            const tint = R.pigmentTint?.(getItem?.(pigmentId), { id: pigmentId }) || 0xffffff;
+            const kind = R.pickPaintFleckKind?.(Math.random) || "base";
+            const color = R.paintFleckTint ? R.paintFleckTint(tint, kind) : tint;
+            const facing = R.workFacing?.(circle.entry) || host.facing || "up";
+            const wall = R.paintWallLocal?.(facing) || { x: 0, y: -14 };
+            const bc = typeof host.bodyCenter === "function"
+                ? host.bodyCenter()
+                : { x: (Number(host.x) || 0) + 8, y: (Number(host.y) || 0) - 8 };
+            const tx = circle.x + wall.x + (Math.random() * 2 - 1);
+            const ty = circle.y + wall.y + (Math.random() * 2 - 1);
+            const x0 = bc.x + (tx - bc.x) * 0.12 + (Math.random() * 2 - 1);
+            const y0 = bc.y + (ty - bc.y) * 0.12 + (Math.random() * 1.4 - 0.7);
+            spawnPaintFleck(scene, st, {
+                x0,
+                y0,
+                x1: tx,
+                y1: ty,
+                color,
+                size: Math.random() < 0.28 ? 2 : 1,
+                life: 520 + Math.random() * 220,
+                depth: Math.round(Math.max(Number(host.y) || 0, Number(circle.y) || 0)) + 2,
+                onLand: () => circle.pulseGhost?.()
+            });
+        }
+    }
+    _tickPaintFleckBits(st, dt);
+    if (!painting && !st?.bits?.length) host._paintFx = null;
 }
 
 function _spawnSleepGlyph(scene, ch, color, x0, y0, n, host) {

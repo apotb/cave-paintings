@@ -230,13 +230,30 @@
         return stack;
     }
 
+    function thawSpoil(stack, now) {
+        if (!stack || now == null) return stack;
+        if (stack.spoilLeft != null) {
+            stack.spoilAt = Math.round(Number(now)) + Math.max(0, Math.round(Number(stack.spoilLeft)));
+            delete stack.spoilLeft;
+            return stack;
+        }
+        if (stack.spoilAt != null) stack.spoilAt = Math.round(Number(stack.spoilAt));
+        return stack;
+    }
+
+    /** Hanging is the process only while a fleshed hide dries. Other stages just wait. */
+    function pausesRackSpoil(itemDef) {
+        return isFleshedHide(itemDef);
+    }
+
     function hangStack(stack, now, getItem) {
         if (!stack) return stack;
         const def = typeof getItem === "function" ? getItem(stack.id) : null;
         if (!isFleshedHide(def)) delete stack.dryProgress;
         else if (!(dryProgressOf(stack) > 0)) delete stack.dryProgress;
         delete stack.soakDoneAt;
-        freezeSpoil(stack, now);
+        if (pausesRackSpoil(def)) freezeSpoil(stack, now);
+        else thawSpoil(stack, now);
         const max = 1;
         if (stack.quantity > max) stack.quantity = max;
         return stack;
@@ -437,6 +454,8 @@
         mergeSoakDoneAt,
         soakMergeBlocked,
         freezeSpoil,
+        thawSpoil,
+        pausesRackSpoil,
         hangStack,
         scrapeStackFrom,
         fleshedStackFrom,

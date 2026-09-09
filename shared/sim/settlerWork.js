@@ -194,7 +194,9 @@ function setPaintBar(rec, entry) {
     if (!rec) return;
     if (entry && Research.inProgress(entry)) {
         rec._paintChannel = {
-            progress: Math.max(0, Math.min(1, Number(entry.paintProgress) || 0))
+            progress: Math.max(0, Math.min(1, Number(entry.paintProgress) || 0)),
+            uid: entry.uid || null,
+            pigmentId: entry.paintPigment ? String(entry.paintPigment) : null
         };
         return;
     }
@@ -489,16 +491,21 @@ function giveStack(world, rec, stack) {
 }
 
 function takeOne(found) {
+    return takeQty(found, 1);
+}
+
+function takeQty(found, want) {
     if (!found) return null;
     const stack = found.slots[found.index];
     if (!stack) return null;
     const qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
-    if (qty <= 1) {
+    const n = Math.max(1, Math.min(qty, Math.floor(Number(want) || 1)));
+    if (n >= qty) {
         found.slots[found.index] = null;
         return stack;
     }
-    stack.quantity = qty - 1;
-    return { ...stack, quantity: 1 };
+    stack.quantity = qty - n;
+    return { ...stack, quantity: n };
 }
 
 /** Player cook/simmer/catalyst slots only hold one item. */
@@ -828,11 +835,53 @@ function findStack(world, rec, settle, pred) {
     return null;
 }
 
-function stashScan(world, rec, settle, keepBandage) {
+function findHeld(rec, pred) {
+    const inv = rec.inventory || [];
+    const ii = inv.findIndex((s) => s && pred(s));
+    if (ii >= 0) return { slots: inv, index: ii, at: rec, kind: "inv", bag: "hotbar" };
+    const overflow = rec.overflow || [];
+    const oi = overflow.findIndex((s) => s && pred(s));
+    if (oi >= 0) return { slots: overflow, index: oi, at: rec, kind: "overflow", bag: "overflow" };
+    return null;
+}
+
+function findStored(world, rec, settle, pred) {
+    for (const b of basketsOf(world, settle)) {
+        const slots = b.slots || [];
+        const i = slots.findIndex((s) => s && pred(s));
+        if (i < 0) continue;
+        return { slots, index: i, at: b, kind: "basket", entry: b };
+    }
+    return null;
+}
+
+function heldPredQty(rec, pred) {
+    return Settlement.countPredQty(rec.inventory, pred)
+        + Settlement.countPredQty(rec.overflow, pred);
+}
+
+function keepGearOpts(keepBandageOrOpts) {
+    if (keepBandageOrOpts && typeof keepBandageOrOpts === "object") {
+        return {
+            keepBandage: !!keepBandageOrOpts.keepBandage,
+            keepPigment: !!keepBandageOrOpts.keepPigment,
+            isPigment: typeof keepBandageOrOpts.isPigment === "function"
+                ? keepBandageOrOpts.isPigment
+                : null
+        };
+    }
+    return {
+        keepBandage: !!keepBandageOrOpts,
+        keepPigment: false,
+        isPigment: null
+    };
+}
+
+function stashScan(world, rec, settle, keepBandageOrOpts) {
     const canStore = (s) => !!pickBasket(world, rec, settle, s);
-    const opts = { keepBandage: !!keepBandage };
+    const opts = keepGearOpts(keepBandageOrOpts);
     if (!Settlement.hasStashable(rec.inventory, rec.overflow, getItem, canStore, opts)) {
-        return { basket: null, has: false, urgent: false };
+        return { basket: null, has: false, urgent: false, hasFood: false };
     }
     const keep = Settlement.keepIndices(rec.inventory, getItem, opts);
     let basket = null;
@@ -848,12 +897,13 @@ function stashScan(world, rec, settle, keepBandage) {
     return {
         basket,
         has: !!basket,
-        urgent: !!Settlement.stashIsUrgent(rec.inventory, rec.overflow, getItem, canStore, opts)
+        urgent: !!Settlement.stashIsUrgent(rec.inventory, rec.overflow, getItem, canStore, opts),
+        hasFood: !!Settlement.hasStashableFood(rec.inventory, rec.overflow, getItem, canStore, opts)
     };
 }
 
-function depositKeepGear(world, rec, settle, keepBandage, dest = null) {
-    const keep = Settlement.keepIndices(rec.inventory, getItem, { keepBandage: !!keepBandage });
+function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
+    const keep = Settlement.keepIndices(rec.inventory, getItem, keepGearOpts(keepBandageOrOpts));
     const dump = (slots, skipKeep) => {
         if (!slots) return;
         for (let i = 0; i < slots.length; i++) {
@@ -1049,6 +1099,7 @@ function settlerPatients(world, rec, settle, claims) {
 }
 
 function unlitFire(world, rec, settle, claims) {
+    if (Research?.techUnlocked && !Research.techUnlocked("fire", settle)) return null;
     for (const f of stationsOf(world, settle, "campfire")) {
         if (f.id === "campfire" && world._campfireHasFuel(f) && (f.burnRemaining > 0 || f.pitTemp > 0)) {
             continue;
@@ -1098,7 +1149,12 @@ function lightOpts(world, rec, settle) {
     };
     scan(rec.inventory);
     for (const b of basketsOf(world, settle)) scan(b.slots);
-    return { hasFirestarter, hasFuel, hasGroundRecipe: false };
+    return {
+        hasFirestarter,
+        hasFuel,
+        hasGroundRecipe: false,
+        knowsFire: !Research?.techUnlocked || Research.techUnlocked("fire", settle)
+    };
 }
 
 function leftoverCookBill(fire) {
@@ -1225,7 +1281,7 @@ function reservedSimmerInputIds(world, rec, settle, fire, bills, roastIndex, hav
     if ((roast?.method || "stick_roast") !== "stick_roast") return skip;
     for (let j = roastIndex + 1; j < bills.length; j++) {
         const later = bills[j];
-        if (!Settlement.billIsActive(later, have)) continue;
+        if (!Settlement.billIsActive(later, have, settle)) continue;
         if (later.method !== "shell_simmer") continue;
         if (!cookHasWork(world, rec, settle, fire, later)) continue;
         const ids = Array.isArray(later.allowedIds) && later.allowedIds.length
@@ -1262,15 +1318,12 @@ function cookHasWork(world, rec, settle, fire, bill, opts = {}) {
         for (const b of basketsOf(world, settle)) countInv(b.slots);
         return !!(hasTool && stock >= 1);
     }
-    if (fire.cook) {
-        return Settlement.cookInputReady(getItem, fire.cook, bill)
-            || Settlement.cookOutputReady(getItem, fire.cook, bill);
-    }
+    if (fire.cook && Settlement.cookFitsBill(getItem, fire.cook, bill)) return true;
     const hasTool = Settlement.isCookTool(getItem, fire.catalyst, method)
         || !!findCookTool(world, rec, settle, method);
     const hasFood = !!findCookFood(world, rec, settle, bill, skipInputIds);
     if (hasTool && hasFood) return true;
-    if (skipInputIds && skipInputIds.size) return false;
+    if (opts.ignoreLeftover || (skipInputIds && skipInputIds.size)) return false;
     return shouldTakeLeftoverStick(world, rec, settle, fire, bill);
 }
 
@@ -1282,12 +1335,15 @@ function pickCookJob(world, rec, settle, f) {
         if (haveMemo[k] == null) haveMemo[k] = countItem(world, settle, k);
         return haveMemo[k];
     };
+    const canLeather = workJobOn(settle, rec, "leather");
     const bills = Settlement.billsOf(settle, f.uid);
     for (let i = 0; i < bills.length; i++) {
         const bill = bills[i];
-        if (!Settlement.billIsActive(bill, have)) continue;
-        if (bill.method === "smoke_hide") continue;
-        if (catalystReserved(f) && bill.method === "shell_simmer") continue;
+        if (!Settlement.billIsActive(bill, have, settle)) continue;
+        if (bill.method === "smoke_hide") {
+            if (canLeather && cookHasWork(world, rec, settle, f, bill)) return null;
+            continue;
+        }
         const skipInputIds = reservedSimmerInputIds(world, rec, settle, f, bills, i, have);
         if (cookHasWork(world, rec, settle, f, bill, { skipInputIds })) {
             return { fire: f, bill, entry: f, skipInputIds };
@@ -1320,9 +1376,15 @@ function pickSmokeJob(world, rec, settle, f) {
     const bills = Settlement.billsOf(settle, f.uid);
     for (let i = 0; i < bills.length; i++) {
         const bill = bills[i];
-        if (bill.method !== "smoke_hide") continue;
-        if (!Settlement.billIsActive(bill, have)) continue;
-        if (cookHasWork(world, rec, settle, f, bill)) return smokeJob(f, bill);
+        if (!Settlement.billIsActive(bill, have, settle)) continue;
+        const method = bill.method || "stick_roast";
+        if (method === "smoke_hide") {
+            if (cookHasWork(world, rec, settle, f, bill)) return smokeJob(f, bill);
+            continue;
+        }
+        if (method === "stick_roast" || method === "shell_simmer") {
+            if (cookHasWork(world, rec, settle, f, bill, { ignoreLeftover: true })) return null;
+        }
     }
     const leftover = leftoverSmokeBill();
     if (f.cook && (
@@ -1454,7 +1516,7 @@ function leatherWork(world, rec, settle, claims) {
     const jobs = [];
     for (const rack of stationsOf(world, settle, "rack")) {
         for (const bill of Settlement.billsOf(settle, rack.uid)) {
-            if (!Settlement.billIsActive(bill, have)) continue;
+            if (!Settlement.billIsActive(bill, have, settle)) continue;
             const job = rackBillJob(world, rec, settle, rack, bill);
             if (job) {
                 jobs.push(job);
@@ -1468,7 +1530,7 @@ function leatherWork(world, rec, settle, claims) {
     }
     for (const bench of stationsOf(world, settle, "craft")) {
         for (const bill of Settlement.billsOf(settle, bench.uid)) {
-            if (!Settlement.billIsActive(bill, have)) continue;
+            if (!Settlement.billIsActive(bill, have, settle)) continue;
             if (!benchHasWork(world, rec, settle, bill)) continue;
             jobs.push({ kind: "bench", station: bench, bill, pri: 8, entry: bench });
             break;
@@ -1504,10 +1566,14 @@ function scanWork(world, rec, settle, claims) {
     const patients = jobOn(enabled, "doctor") ? settlerPatients(world, rec, settle, claims) : [];
     const doctorOn = enabled.has("doctor");
     const keepBandage = !!(doctorOn && patients.length);
+    const circle = jobOn(enabled, "research") ? researchCircle(world, rec, settle, claims) : null;
+    const keepPigment = !!(circle && Research?.needsPigment?.(circle));
+    const isPigment = keepPigment ? pigmentPred(circle) : null;
+    const keepOpts = keepGearOpts({ keepBandage, keepPigment, isPigment });
     const night = Settlement.isNight(world.gameMinutes);
     const c = rec.creature || world.creatures.get(rec.id);
     const injured = Sleep.injuredForAutofill ? Sleep.injuredForAutofill(c?.anatomy) : false;
-    const stash = stashScan(world, rec, settle, keepBandage);
+    const stash = stashScan(world, rec, settle, keepOpts);
     return {
         unlitFire: jobOn(enabled, "cook") ? unlitFire(world, rec, settle, claims) : null,
         light: jobOn(enabled, "cook") ? lightOpts(world, rec, settle) : {
@@ -1526,9 +1592,11 @@ function scanWork(world, rec, settle, claims) {
         ) : null,
         gatherThing: jobOn(enabled, "gather") ? gatherThing(world, rec, settle, claims) : null,
         chopTree: jobOn(enabled, "chop") ? chopTree(world, rec, settle, claims) : null,
-        researchCircle: jobOn(enabled, "research") ? researchCircle(world, rec, settle, claims) : null,
+        researchCircle: circle,
         patients,
         keepBandage,
+        keepPigment,
+        isPigment,
         bed: (night || injured) ? freeBed(world, rec, settle, claims) : null,
         stash,
         night,
@@ -1597,6 +1665,54 @@ function fetchCookPiece(world, rec, settle, found) {
     }
     if (found.entry) emitEntry(world, found.entry);
     world._dirtyPawnOwner(rec);
+    return halt();
+}
+
+function fetchCookQty(world, rec, settle, found, want) {
+    if (!found) return halt();
+    if (found.at === rec) return null;
+    const walked = walkToFound(world, rec, found);
+    if (walked) return walked;
+    const cap = Math.max(1, Math.floor(Number(want) || 1));
+    const stack = takeQty(found, cap);
+    if (!stack) return halt();
+    const qty = Math.max(1, Number(stack.quantity) || 1);
+    const got = takeToPawn(world, rec, stack);
+    if (got < qty) restorePiece(found, { ...stack, quantity: qty - got });
+    if (got <= 0) return halt();
+    if (found.entry) emitEntry(world, found.entry);
+    world._dirtyPawnOwner(rec);
+    return halt();
+}
+
+function fetchEatStack(world, rec, settle, found) {
+    if (!found) return halt();
+    if (found.at === rec) return null;
+    const walked = walkToFound(world, rec, found);
+    if (walked) return walked;
+    const stack = found.slots[found.index];
+    if (!stack) return halt();
+    const food = world._foodForEat(stack);
+    const isMeal = world._isPartialFood(stack);
+    const sitting = rec._eatSitting;
+    const until = sitting?.until || AUTO_EAT_UNTIL;
+    const want = Party.eatTakeQty(rec.kc, until, food?.kc, stack.quantity, {
+        stomach: rec.stomach,
+        isMeal
+    });
+    const piece = takeQty(found, want);
+    if (!piece) return halt();
+    const got = takeToPawn(world, rec, piece);
+    if (got <= 0) {
+        restorePiece(found, piece);
+        return halt();
+    }
+    const left = (Number(piece.quantity) || 1) - got;
+    if (left > 0) restorePiece(found, { ...piece, quantity: left });
+    if (found.entry) emitEntry(world, found.entry);
+    world._dirtyPawnOwner(rec);
+    rec._settlerScan = null;
+    rec._settlerScanMs = SCAN_MS;
     return halt();
 }
 
@@ -1827,10 +1943,13 @@ function publicChannel(rec) {
     }
     const paint = rec?._paintChannel;
     if (paint && typeof paint.progress === "number") {
-        return {
+        const out = {
             kind: "paint",
             progress: Math.max(0, Math.min(1, Number(paint.progress) || 0))
         };
+        if (paint.uid) out.uid = paint.uid;
+        if (paint.pigmentId) out.pigmentId = paint.pigmentId;
+        return out;
     }
     return null;
 }
@@ -1841,8 +1960,8 @@ function setSettlerAct(rec, mob, label) {
     if (mob) mob._settlerAct = s;
 }
 
-function firstStashable(rec, keepBandage) {
-    const keep = Settlement.keepIndices(rec.inventory, getItem, { keepBandage: !!keepBandage });
+function firstStashable(rec, keepBandageOrOpts) {
+    const keep = Settlement.keepIndices(rec.inventory, getItem, keepGearOpts(keepBandageOrOpts));
     for (let i = 0; i < (rec.inventory || []).length; i++) {
         if (keep.has(i)) continue;
         const s = rec.inventory[i];
@@ -2122,11 +2241,11 @@ function doHaul(world, rec, settle, drop) {
     return halt();
 }
 
-function doStash(world, rec, settle, basket, keepBandage) {
+function doStash(world, rec, settle, basket, keepBandageOrOpts) {
     if (!basket) return halt();
     const walked = goOrWalk(world, rec, basket);
     if (walked) return walked;
-    depositKeepGear(world, rec, settle, keepBandage);
+    depositKeepGear(world, rec, settle, keepBandageOrOpts);
     StorageFilter.compactSlots(basket.slots, getItem, onMerge);
     emitEntry(world, basket);
     rec._haulDestUid = null;
@@ -2221,6 +2340,7 @@ function doStokeFire(world, rec, settle, fire) {
 }
 
 function doLightFire(world, rec, settle, fire) {
+    if (Research?.techUnlocked && !Research.techUnlocked("fire", settle)) return halt();
     if (!fire) return halt();
     const walked = goOrWalk(world, rec, fire);
     if (walked) return walked;
@@ -2266,41 +2386,76 @@ function doCook(world, rec, settle, job) {
         }
         stokeUntilKeep(world, rec, settle, fire);
         if (!world._campfireHasFuel(fire)) return halt();
+        if (fire.cook) {
+            const walked = goOrWalk(world, rec, fire);
+            if (walked) return walked;
+            const spit = fire.cook;
+            fire.cook = null;
+            if (!takeOffFire(world, rec, settle, spit)) {
+                fire.cook = spit;
+                return halt();
+            }
+            emitEntry(world, fire);
+            return finishPut(world, rec, settle);
+        }
         if (!Settlement.isCookTool(getItem, cat, method)) {
-            if (cat && (fire.cook || catalystReserved(fire))) return halt();
             if (cat) {
                 const walked = goOrWalk(world, rec, fire);
                 if (walked) return walked;
                 if (!takeFireCatalyst(world, rec, settle, fire)) return halt();
                 return halt();
             }
-            const found = findStack(world, rec, settle, (s) => Settlement.isCookTool(getItem, s, method));
+        }
+        if (!Array.isArray(fire.simmer)) fire.simmer = [null, null, null, null];
+        const toolPred = (s) => Settlement.isCookTool(getItem, s, method);
+        const ingPred = (s) => Settlement.cookInputReady(getItem, s, bill);
+        const needTool = !Settlement.isCookTool(getItem, fire.catalyst, method);
+        if (needTool && !findHeld(rec, toolPred)) {
+            const found = findStored(world, rec, settle, toolPred);
             if (!found) {
                 endWorkHold(rec);
                 return halt();
             }
-            if (found.at !== rec) return fetchCookPiece(world, rec, settle, found) || halt();
-            const walked = goOrWalk(world, rec, fire);
-            if (walked) return walked;
-            fire.catalyst = takeCookPiece(found);
-            emitEntry(world, fire);
-            world._dirtyPawnOwner(rec);
-            return halt();
+            return fetchCookPiece(world, rec, settle, found) || halt();
         }
-        if (!Array.isArray(fire.simmer)) fire.simmer = [null, null, null, null];
-        const empty = fire.simmer.findIndex((s) => !s);
-        if (empty >= 0) {
-            const found = findStack(world, rec, settle, (s) => Settlement.cookInputReady(getItem, s, bill));
-            if (!found) {
-                if (!(fire.simmer || []).some((s) => s)) endWorkHold(rec);
+        const empty = Settlement.simmerEmptyCount(fire);
+        const heldIng = heldPredQty(rec, ingPred);
+        if (empty > heldIng) {
+            const stored = findStored(world, rec, settle, ingPred);
+            if (stored) {
+                return fetchCookQty(world, rec, settle, stored, empty - heldIng) || halt();
+            }
+        }
+        if (needTool) {
+            const held = findHeld(rec, toolPred);
+            if (!held) {
+                endWorkHold(rec);
                 return halt();
             }
-            if (found.at !== rec) return fetchCookPiece(world, rec, settle, found) || halt();
             const walked = goOrWalk(world, rec, fire);
             if (walked) return walked;
-            fire.simmer[empty] = takeCookPiece(found);
+            fire.catalyst = takeCookPiece(held);
             emitEntry(world, fire);
             world._dirtyPawnOwner(rec);
+        }
+        if (Settlement.simmerEmptyCount(fire) > 0 && heldPredQty(rec, ingPred) > 0) {
+            const walked = goOrWalk(world, rec, fire);
+            if (walked) return walked;
+            let placed = 0;
+            while (Settlement.simmerEmptyCount(fire) > 0) {
+                const found = findHeld(rec, ingPred);
+                if (!found) break;
+                const slot = fire.simmer.findIndex((s) => !s);
+                if (slot < 0) break;
+                fire.simmer[slot] = takeCookPiece(found);
+                placed++;
+            }
+            if (placed) {
+                emitEntry(world, fire);
+                world._dirtyPawnOwner(rec);
+            }
+        } else if (empty > 0 && heldIng <= 0 && !findStored(world, rec, settle, ingPred)) {
+            if (!(fire.simmer || []).some((s) => s) && !needTool) endWorkHold(rec);
         }
         const facing = faceFire(rec, fire);
         return halt(facing ? { facing } : null);
@@ -2328,6 +2483,17 @@ function doCook(world, rec, settle, job) {
         }
         return finishPut(world, rec, settle);
     }
+    if (cook && !Settlement.cookFitsBill(getItem, cook, bill)) {
+        const walked = goOrWalk(world, rec, fire);
+        if (walked) return walked;
+        fire.cook = null;
+        if (!takeOffFire(world, rec, settle, cook)) {
+            fire.cook = cook;
+            return halt();
+        }
+        emitEntry(world, fire);
+        return finishPut(world, rec, settle);
+    }
     if (shouldTakeLeftoverStick(world, rec, settle, fire, bill)) {
         const walked = goOrWalk(world, rec, fire);
         if (walked) return walked;
@@ -2345,7 +2511,17 @@ function doCook(world, rec, settle, job) {
     if (!world._campfireHasFuel(fire)) return halt();
     const cat = fire.catalyst;
     if (!Settlement.isCookTool(getItem, cat, method)) {
-        if (cat && cook) return halt();
+        if (cook) {
+            const walked = goOrWalk(world, rec, fire);
+            if (walked) return walked;
+            fire.cook = null;
+            if (!takeOffFire(world, rec, settle, cook)) {
+                fire.cook = cook;
+                return halt();
+            }
+            emitEntry(world, fire);
+            return finishPut(world, rec, settle);
+        }
         if (cat) {
             const walked = goOrWalk(world, rec, fire);
             if (walked) return walked;
@@ -2544,7 +2720,7 @@ function doLeather(world, rec, settle, job) {
         const recId = job.bill.recipeId || job.bill.outputId;
         const recipe = recId ? world._parseRecipe(recId) : null;
         const have = (id) => countItem(world, settle, id);
-        if (!recipe || (job.bill && !Settlement.billIsActive(job.bill, have))) {
+        if (!recipe || (job.bill && !Settlement.billIsActive(job.bill, have, settle))) {
             stopLeather(world, rec, job, false);
             return halt();
         }
@@ -2884,7 +3060,7 @@ function doEat(world, rec, settle) {
         rec._eatSitting = null;
         return null;
     }
-    if (found.at !== rec) return fetchStack(world, rec, settle, found) || halt();
+    if (found.at !== rec) return fetchEatStack(world, rec, settle, found) || halt();
     const bag = found.bag === "overflow" ? "overflow" : "hotbar";
     const stack = found.slots[found.index];
     if (!stack) return null;
@@ -3008,8 +3184,12 @@ function tick(world, mob, delta) {
         rec._settlerScanMs = 0;
     }
     const scan = rec._settlerScan || {};
-    const stash = scan.stash || { basket: null, has: false, urgent: false };
-    const keepBandage = !!scan.keepBandage;
+    const keepOpts = keepGearOpts({
+        keepBandage: !!scan.keepBandage,
+        keepPigment: !!scan.keepPigment,
+        isPigment: scan.isPigment || null
+    });
+    const stash = stashScan(world, rec, settle, keepOpts);
     const haulOn = Settlement.enabledJobs(liveJobs).includes("haul");
     const delivering = !!(rec._haulDestUid && (stash.has || rec._haulMergeOnly)
         && (haulOn || rec._busyJob?.type === "stash"));
@@ -3052,6 +3232,7 @@ function tick(world, mob, delta) {
         researchCircle: scan.researchCircle,
         stashBasket: stash.basket,
         hasStash: stash.has,
+        hasFoodStash: stash.hasFood,
         stashUrgent: stash.urgent,
         mergeNeedsRoom: mergeNeedsRoom(rec, scan.haulMerge),
         busy: hold,
@@ -3084,7 +3265,7 @@ function tick(world, mob, delta) {
     else if (!delivering && plan.type !== "chop") endWorkHold(rec);
 
     const ctx = actCtx(world, rec, {
-        stashStack: firstStashable(rec, keepBandage),
+        stashStack: firstStashable(rec, keepOpts),
         haulWhat: rec._haulWhat
     });
     let label = Settlement.actLabel(plan, ctx);
@@ -3101,17 +3282,17 @@ function tick(world, mob, delta) {
         if (rec._haulMergeOnly) {
             const walked = goOrWalk(world, rec, dest);
             if (walked) return walked;
-            depositKeepGear(world, rec, settle, keepBandage, dest);
+            depositKeepGear(world, rec, settle, keepOpts, dest);
             rec._haulMergeOnly = false;
             rec._haulDestUid = null;
             endWorkHold(rec);
             return halt();
         }
-        return doStash(world, rec, settle, dest, keepBandage);
+        return doStash(world, rec, settle, dest, keepOpts);
     }
 
     if (plan.type === "stash" && plan.target) {
-        return doStash(world, rec, settle, plan.target, keepBandage);
+        return doStash(world, rec, settle, plan.target, keepOpts);
     }
     if (plan.type === "gather" && plan.target) return doGather(world, rec, plan.target);
     if (plan.type === "chop" && plan.target) return doChop(world, rec, settle, plan.target, delta);

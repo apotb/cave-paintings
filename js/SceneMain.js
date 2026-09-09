@@ -1209,8 +1209,13 @@ class SceneMain extends SceneBase {
             pawn._netFromY = pawn.y;
             pawn._netTx = row.x;
             pawn._netTy = row.y;
-            pawn._netSnapAt = performance.now();
-            pawn._netSnapDt = 1000 / ((typeof NetProtocol !== "undefined" && NetProtocol.SNAPSHOT_HZ) || 15);
+            {
+                const now = performance.now();
+                pawn._netSnapDt = (typeof Party !== "undefined" && Party.puppetSnapGapMs)
+                    ? Party.puppetSnapGapMs(pawn._netSnapAt, now)
+                    : 1000 / ((typeof NetProtocol !== "undefined" && NetProtocol.SNAPSHOT_HZ) || 15);
+                pawn._netSnapAt = now;
+            }
             pawn._netMoving = !!row.moving;
             pawn._netProne = !!row.prone;
             if (row.lastSleep) pawn.lastSleep = row.lastSleep;
@@ -1236,6 +1241,7 @@ class SceneMain extends SceneBase {
                     progress: row.channel.progress,
                     itemId: row.channel.itemId || prevCh?.itemId || null,
                     uid: row.channel.uid || prevCh?.uid || null,
+                    pigmentId: row.channel.pigmentId || prevCh?.pigmentId || null,
                     patientId: row.channel.patientId || prevCh?.patientId || null,
                     patientName: row.channel.patientName || prevCh?.patientName || null
                 };
@@ -1391,8 +1397,11 @@ class SceneMain extends SceneBase {
                 pawn._netFromY = pawn.y;
                 pawn._netTx = w.x;
                 pawn._netTy = w.y;
-                pawn._netSnapAt = performance.now();
-                pawn._netSnapDt = 1000 / ((typeof NetProtocol !== "undefined" && NetProtocol.SNAPSHOT_HZ) || 15);
+                const now = performance.now();
+                pawn._netSnapDt = (typeof Party !== "undefined" && Party.puppetSnapGapMs)
+                    ? Party.puppetSnapGapMs(pawn._netSnapAt, now)
+                    : 1000 / ((typeof NetProtocol !== "undefined" && NetProtocol.SNAPSHOT_HZ) || 15);
+                pawn._netSnapAt = now;
                 pawn._netMoving = typeof w.moving === "boolean"
                     ? w.moving
                     : !!(w.heading && (Math.abs(Number(w.heading.x)) + Math.abs(Number(w.heading.y)) > 0));
@@ -1887,8 +1896,11 @@ class SceneMain extends SceneBase {
                 entry.fromY = entry.y;
                 entry.tx = m.x;
                 entry.ty = m.y;
+                const prevAt = entry.snapAt;
                 entry.snapAt = now;
-                entry.snapDt = snapDt;
+                entry.snapDt = (typeof Party !== "undefined" && Party.puppetSnapGapMs)
+                    ? Party.puppetSnapGapMs(prevAt, now)
+                    : snapDt;
             }
             entry.kind = m.kind || entry.kind;
             if (m.name) entry.name = m.name;
@@ -1935,7 +1947,38 @@ class SceneMain extends SceneBase {
             const err = Math.hypot(entry.tx - entry.fromX, entry.ty - entry.fromY);
             const prevX = entry.x;
             const prevY = entry.y;
-            if (entry.prone || err > 72) {
+            const teleport = (typeof Party !== "undefined" && Party.puppetTeleportPx)
+                ? Party.puppetTeleportPx({
+                    tickSpeed: this.tickSpeed,
+                    tileSize,
+                    snapDtMs: snapDt,
+                    speedTiles: 3.5
+                })
+                : 72;
+            const pose = (typeof Party !== "undefined" && Party.puppetLerpXY)
+                ? Party.puppetLerpXY({
+                    fromX: entry.fromX,
+                    fromY: entry.fromY,
+                    tx: entry.tx,
+                    ty: entry.ty,
+                    snapAt: entry.snapAt,
+                    snapDtMs: snapDt,
+                    now,
+                    teleportPx: teleport,
+                    moving: entry.serverMoving !== false && err > 1,
+                    heading: null,
+                    speedPx: Math.hypot(entry.vx || 0, entry.vy || 0)
+                })
+                : null;
+            if (entry.prone) {
+                entry.x = entry.tx;
+                entry.y = entry.ty;
+                entry.fromX = entry.tx;
+                entry.fromY = entry.ty;
+            } else if (pose) {
+                entry.x = pose.x;
+                entry.y = pose.y;
+            } else if (err > teleport) {
                 entry.x = entry.tx;
                 entry.y = entry.ty;
                 entry.fromX = entry.tx;
@@ -2405,6 +2448,7 @@ class SceneMain extends SceneBase {
                 progress: Phaser.Math.Clamp(data.progress, 0, 1),
                 itemId: data.itemId || pawn._netWorkChannel?.itemId || null,
                 uid: data.uid || pawn._netWorkChannel?.uid || null,
+                pigmentId: data.pigmentId || pawn._netWorkChannel?.pigmentId || null,
                 patientId: data.patientId || pawn._netWorkChannel?.patientId || null,
                 patientName: data.patientName || pawn._netWorkChannel?.patientName || null
             };
@@ -4738,6 +4782,7 @@ class SceneMain extends SceneBase {
         /** Tip text depends on pointer pose (bunk slot, storage hover) — refresh without a new over-event. */
         this._tooltipFollowsPointer = (obj) => {
             if (!obj) return false;
+            if (obj._settlePersonTip) return true;
             if (typeof LeanTo !== "undefined" && obj instanceof LeanTo) return true;
             if (typeof Storage !== "undefined" && obj instanceof Storage) return true;
             if (this._isHoverPawn(obj) || obj.role === "settler") return true;
@@ -4913,6 +4958,12 @@ class SceneMain extends SceneBase {
             if (settleP?.visible && settleP.containsPointer?.(pointer)) {
                 const row = settleP.hoverObjAt?.(pointer);
                 if (row) return row;
+                // Pickup/setInteractive can drop Zone bounds for a frame.
+                // Keep the People-row tip while the cursor is still in the list.
+                const keep = this._tooltipTarget || this._hoverTarget;
+                if (keep?.active && keep._settlePersonTip && settleP._pointerInBody?.(pointer)) {
+                    return keep;
+                }
                 return this._pickMaskedPanelHover(
                     pointer, hits, settleP.bg,
                     (obj) => this._isUnderSettlementPanel(obj)
@@ -7631,6 +7682,21 @@ class SceneMain extends SceneBase {
         for (const entry of this.remotePlayers?.values?.() || []) tick(entry);
     }
 
+    _tickPaintFx(delta) {
+        const seen = new Set();
+        const tickPawn = (host) => {
+            if (!host || seen.has(host)) return;
+            seen.add(host);
+            if (typeof tickPaintFlecks === "function") tickPaintFlecks(host, this, delta);
+        };
+        for (const p of this.party || []) tickPawn(p);
+        for (const p of this.settlers || []) tickPawn(p);
+        if (this.player) tickPawn(this.player);
+        this.settlementSys?._forEachThing?.((t) => {
+            if (t && typeof t.tickPaintFx === "function") t.tickPaintFx(delta);
+        });
+    }
+
     _restEffectiveSpeed(base) {
         const b = Number.isFinite(base) ? base : (this._baseTickSpeed || 1);
         const living = (this.party || []).filter((p) => p && !p.isBodyDead?.());
@@ -7979,11 +8045,27 @@ class SceneMain extends SceneBase {
     }
 
     /**
+     * Settlement whose techs apply to the local player (standing in one, else home).
+     */
+    _playerResearchSettle() {
+        return this.settlementSys?.here?.(this.player)
+            || this.settlementSys?.owned?.()?.[0]
+            || null;
+    }
+
+    knowsFire() {
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R?.techUnlocked) return true;
+        return R.techUnlocked("fire", this._playerResearchSettle());
+    }
+
+    /**
      * True when Space + firestarter should light instead of attack:
      * cursor on/near an in-range unlit fueled campfire, or on/near stick/leaf
      * piles with enough materials in interaction range for a new fire.
      */
     canUseFirestarter() {
+        if (!this.knowsFire()) return false;
         const pointer = this.input?.activePointer;
         if (!pointer || !this.player) return false;
         const world = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
@@ -8030,6 +8112,7 @@ class SceneMain extends SceneBase {
     }
 
     tryUseFirestarter() {
+        if (!this.knowsFire()) return false;
         if (this.player?._resting) return false;
         if (this.simAuth()) {
             this._netSendMove?.(true);
@@ -8982,13 +9065,12 @@ class SceneMain extends SceneBase {
                     if (!isCamp && !isStorage) continue;
 
                     if (isStorage && Array.isArray(entry.slots)) {
-                        const skipSpoil = typeof Hide !== "undefined"
+                        const isRack = typeof Hide !== "undefined"
                             && Hide.isDryingRack(thingMeta, entry);
-                        if (!skipSpoil) {
-                            for (let i = 0; i < entry.slots.length; i++) {
-                                if (!entry.slots[i]) continue;
-                                entry.slots[i] = applyWorldStack(entry.slots[i]);
-                            }
+                        for (let i = 0; i < entry.slots.length; i++) {
+                            if (!entry.slots[i]) continue;
+                            if (isRack && Hide.pausesRackSpoil(getItem(entry.slots[i].id))) continue;
+                            entry.slots[i] = applyWorldStack(entry.slots[i]);
                         }
                     }
 
@@ -9059,8 +9141,10 @@ class SceneMain extends SceneBase {
                 }
                 for (const s of entry.slots || []) {
                     if (!s) continue;
-                    const skip = typeof Hide !== "undefined" && Hide.isDryingRack(this.getThing?.(entry.id), entry);
-                    if (!skip) migrateToSpoilAt(s, now, getItem);
+                    const isRack = typeof Hide !== "undefined"
+                        && Hide.isDryingRack(this.getThing?.(entry.id), entry);
+                    if (isRack && Hide.pausesRackSpoil(getItem(s.id))) continue;
+                    migrateToSpoilAt(s, now, getItem);
                 }
             }
         }
@@ -9303,13 +9387,17 @@ class SceneMain extends SceneBase {
 
         // Static tooltips only when not a custom-named meal
         if (!stack?.customName && Array.isArray(item.tooltip)) {
+            const settle = this._playerResearchSettle?.() || null;
+            const tips = (typeof Research !== "undefined" && Research.tooltipLines)
+                ? Research.tooltipLines(item, settle)
+                : item.tooltip;
             const dryPct = (typeof Hide !== "undefined" && Hide.isFleshedHide(item))
                 ? Hide.dryPercent(stack)
                 : null;
             const soakPct = (typeof Hide !== "undefined" && Hide.isFleshedHide(item) && stack)
                 ? Hide.soakPercent(stack, this.worldMinuteIndex?.() ?? null)
                 : null;
-            for (const line of item.tooltip) {
+            for (const line of tips) {
                 if (dryPct != null && dryPct > 0 && /dry/i.test(String(line))) {
                     lines.push(`${line} (${dryPct}% dry)`);
                 } else if (soakPct != null && soakPct > 0 && /water/i.test(String(line))) {
@@ -9698,8 +9786,7 @@ class SceneMain extends SceneBase {
         this.craftContainer.add(rect);
         this.craftContainer.add(text);
         if (!enabled) {
-            rect.setAlpha(0.35);
-            text.setAlpha(0.35);
+            text.setColor("#6a5a4a");
             return;
         }
         rect.setInteractive({ useHandCursor: true });
@@ -12091,6 +12178,7 @@ class SceneMain extends SceneBase {
             this._netUpdateMobs(delta);
         }
         this._tickSleepZzz?.(delta);
+        this._tickPaintFx?.(delta);
         this._tickRestClock?.(delta);
         this.combatLog?.update?.();
         this.updateFpsMeter?.(delta);

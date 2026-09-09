@@ -31,6 +31,14 @@
         return GameMath.clamp(v, a, b);
     }
 
+    /** Path jam/stuck is wall-clock. Scaled /tick deltas replan every few frames. */
+    function stuckClockDt(world, delta) {
+        const w = Number(world?.stuckDt);
+        if (w > 0) return w;
+        const d = Number(delta);
+        return d > 0 ? d : 16;
+    }
+
     class DoofusAI {
         constructor(mob) {
             this.mob = mob;
@@ -90,7 +98,7 @@
                     y,
                     blocked,
                     this._nav || { side: 1 },
-                    { dt: delta, rangeTiles: 6 }
+                    { dt: stuckClockDt(world, delta), rangeTiles: 6 }
                 );
                 this._nav = steered;
                 x = steered.nx;
@@ -1182,6 +1190,7 @@
             const farLook = settler || destDistTiles > 12;
             const now = Date.now();
             const allowReplan = !this._planAt || now - this._planAt >= 800;
+            const stuckDt = stuckClockDt(world, delta);
             const steered = Path.steerToward({
                 from,
                 to,
@@ -1194,7 +1203,8 @@
                 lastFrom: this._lastPx != null ? { x: this._lastPx, y: this._lastPy } : null,
                 lastWpDist: this._lastWpDist,
                 maxRange,
-                dt: delta,
+                dt: stuckDt,
+                stuckDt,
                 overlapping: !!overlap,
                 lookPx: farLook ? TILE * 2 : undefined,
                 openRadius,
@@ -1220,7 +1230,7 @@
             if (steered.arrived || destD < 12 || moved > 0.25) {
                 this._jamMs = 0;
             } else {
-                this._jamMs = (this._jamMs || 0) + (delta || 16);
+                this._jamMs = (this._jamMs || 0) + stuckDt;
                 if (this._jamMs > 650 && now - (this._unstuckAt || 0) > 800) {
                     this._unstuckAt = now;
                     this._jamMs = 0;

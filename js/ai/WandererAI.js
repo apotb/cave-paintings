@@ -121,7 +121,7 @@ class WandererAI {
             ) {
                 this._walkDest = { x: pawn.x + nx * 10 * ts, y: pawn.y + ny * 10 * ts };
             }
-            this._pather._walkToward(pawn, this._walkDest.x, this._walkDest.y, ts, false, aiDelta);
+            this._pather._walkToward(pawn, this._walkDest.x, this._walkDest.y, ts, false, delta);
             if (pawn.body) {
                 let vx = (pawn.body.velocity?.x || 0) * stroll * tickScale;
                 let vy = (pawn.body.velocity?.y || 0) * stroll * tickScale;

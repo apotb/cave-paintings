@@ -90,3 +90,60 @@ test("companionFollowLabel uses you for the leader and Waiting with no follow ta
         "Following Og"
     );
 });
+
+test("puppet lerp keeps walking across late snapshots at high tick speed", () => {
+    assert.ok(Party.puppetTeleportPx({ tickSpeed: 20, snapDtMs: 200 }) > 72);
+    const mid = Party.puppetLerpXY({
+        fromX: 0,
+        fromY: 0,
+        tx: 40,
+        ty: 0,
+        snapAt: 1000,
+        snapDtMs: 200,
+        now: 1100,
+        teleportPx: 200,
+        moving: true
+    });
+    assert.equal(mid.x, 20);
+    assert.equal(mid.snapped, false);
+
+    const late = Party.puppetLerpXY({
+        fromX: 0,
+        fromY: 0,
+        tx: 40,
+        ty: 0,
+        snapAt: 1000,
+        snapDtMs: 200,
+        now: 1400,
+        teleportPx: 200,
+        moving: true
+    });
+    assert.ok(late.x > 40, `should extrapolate past the last snap (x=${late.x})`);
+    assert.ok(late.x < 90, `should not run away (x=${late.x})`);
+
+    const snap = Party.puppetLerpXY({
+        fromX: 0,
+        fromY: 0,
+        tx: 400,
+        ty: 0,
+        snapAt: 1000,
+        snapDtMs: 200,
+        now: 1100,
+        teleportPx: 80,
+        moving: true
+    });
+    assert.equal(snap.x, 400);
+    assert.equal(snap.snapped, true);
+
+    assert.ok(Party.puppetSnapGapMs(1000, 1800) > 100);
+    assert.ok(Party.puppetSnapGapMs(1000, 1800) <= 1250);
+});
+
+test("eatTakeQty takes only enough discrete food to reach AUTO_EAT_UNTIL", () => {
+    assert.equal(Party.eatTakeQty(800, 1400, 220, 12, { stomach: 1600 }), 3);
+    assert.equal(Party.eatTakeQty(600, 1400, 220, 12, { stomach: 1600 }), 4);
+    assert.equal(Party.eatTakeQty(1390, 1400, 220, 12, { stomach: 1600 }), 1);
+    assert.equal(Party.eatTakeQty(800, 1400, 220, 2, { stomach: 1600 }), 2);
+    assert.equal(Party.eatTakeQty(800, 1400, 400, 8, { isMeal: true }), 1);
+    assert.equal(Party.eatTakeQty(1400, 1400, 220, 12, { stomach: 1600 }), 1);
+});

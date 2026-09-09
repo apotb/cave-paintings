@@ -568,40 +568,6 @@
         }
     },
     {
-        "id": "leaf_cord",
-        "name": "Leaf Cord",
-        "key": "leaf_cord",
-        "maxStack": 99,
-        "bandage": {
-            "tendQuality": 0.4,
-            "tendQualityMax": 0.7,
-            "channelSeconds": 5,
-            "batchSeverity": 20
-        },
-        "tooltip": [
-            "Press Space to bandage"
-        ],
-        "recipe": {
-            "leaf": 5
-        }
-    },
-    {
-        "id": "pitch",
-        "name": "Pitch",
-        "key": "pitch",
-        "maxStack": 99,
-        "weight": 0.04,
-        "storageCategory": "materials/wood",
-        "tooltip": [
-            "Binds a stone head to a spear shaft"
-        ],
-        "recipe": {
-            "REQUIRE_THING": "campfire",
-            "leaf": 12,
-            "stick": 3
-        }
-    },
-    {
         "id": "sharp_stick",
         "name": "Sharp Stick",
         "key": "sharp_stick",
@@ -651,6 +617,7 @@
         "cook": {
             "method": "stick_roast"
         },
+        "tooltipTech": "fire",
         "tooltip": [
             "Use on 15 sticks and 10 leaves to start a fire",
             "Prop on a campfire to roast raw food"
@@ -658,6 +625,40 @@
         "recipe": {
             "REQUIRE_THING": "rock",
             "stick": 1
+        }
+    },
+    {
+        "id": "leaf_cord",
+        "name": "Leaf Cord",
+        "key": "leaf_cord",
+        "maxStack": 99,
+        "bandage": {
+            "tendQuality": 0.4,
+            "tendQualityMax": 0.7,
+            "channelSeconds": 5,
+            "batchSeverity": 20
+        },
+        "tooltip": [
+            "Press Space to bandage"
+        ],
+        "recipe": {
+            "leaf": 5
+        }
+    },
+    {
+        "id": "pitch",
+        "name": "Pitch",
+        "key": "pitch",
+        "maxStack": 99,
+        "weight": 0.04,
+        "storageCategory": "materials/wood",
+        "tooltip": [
+            "Binds a stone head to a spear shaft"
+        ],
+        "recipe": {
+            "REQUIRE_THING": "campfire",
+            "leaf": 12,
+            "stick": 3
         }
     },
     {

@@ -62,12 +62,23 @@ class PaintingCirclePanel {
         this.scene.tryRemovePaintingCircle?.(this.circle);
     }
 
+    _circleIsFull() {
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R || !this.circle?.entry) return false;
+        R.ensureEntry(this.circle.entry, this.circle.meta);
+        return !R.hasRoom(this.circle.entry);
+    }
+
     _sync() {
         const sys = this.scene.settlementSys;
-        const ok = !!sys?.canManageCircle?.(this.circle);
+        const full = this._circleIsFull();
+        const ok = !!sys?.canManageCircle?.(this.circle) && !full;
         this._enableUi?.btn.setVisible(ok);
         this._matUi?.btn.setVisible(ok);
         this._removeUi?.btn.setVisible(!!this.circle);
+        if (full && this.scene.pigmentFilterPanel?.thing === this.circle) {
+            this.scene.pigmentFilterPanel.close();
+        }
         if (ok) {
             if (typeof ensurePointerInteractive === "function") {
                 ensurePointerInteractive(this._enableUi.rect);

@@ -1312,6 +1312,7 @@ class PaintingCircle extends Thing {
         });
         this.on("destroy", () => {
             this._destroyOverlays();
+            this._destroyPaintFx();
             if (this.scene.paintingCirclePanel?.circle === this) {
                 this.scene.paintingCirclePanel.close();
             }
@@ -1331,6 +1332,123 @@ class PaintingCircle extends Thing {
     _destroyOverlays() {
         for (const img of this._paintOverlays || []) img?.destroy?.();
         this._paintOverlays = [];
+        this._ghostSpr?.destroy?.();
+        this._ghostSpr = null;
+    }
+
+    _destroyPaintFx() {
+        const st = this._paintBurst;
+        if (st) {
+            for (const b of st.bits || []) {
+                try { b.obj?.destroy?.(); } catch (_) {}
+            }
+        }
+        this._paintBurst = null;
+        this._ghostSpr?.destroy?.();
+        this._ghostSpr = null;
+    }
+
+    _ensureGhost() {
+        if (this._ghostSpr?.active) return this._ghostSpr;
+        const spr = this.scene.add.image(this.x, this.y, "slot")
+            .setOrigin(0.5, 1)
+            .setVisible(false)
+            .setAlpha(0);
+        this._ghostSpr = spr;
+        const layer = this.scene.groundLayer;
+        if (layer) layer.add(spr);
+        spr.setDepth(0.57);
+        return spr;
+    }
+
+    pulseGhost() {
+        this._ghostPulse = 1;
+    }
+
+    _burstPaintFlecks(index) {
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R || typeof spawnPaintFleck !== "function") return;
+        const getItem = (id) => this.scene.getItem?.(id);
+        const tint = R.overlayTint
+            ? R.overlayTint(this.entry, index, getItem)
+            : 0xffffff;
+        const facing = R.workFacingForIndex
+            ? R.workFacingForIndex(index)
+            : "up";
+        const wall = R.paintWallLocal?.(facing) || { x: 0, y: -14 };
+        if (!this._paintBurst) this._paintBurst = { bits: [] };
+        const cx = this.x;
+        const cy = this.y - 8;
+        const n = 5 + (Math.random() < 0.5 ? 1 : 0);
+        for (let i = 0; i < n; i++) {
+            const kind = R.pickPaintFleckKind?.(Math.random) || "base";
+            const color = R.paintFleckTint ? R.paintFleckTint(tint, kind) : tint;
+            const tx = this.x + wall.x + (Math.random() * 2.4 - 1.2);
+            const ty = this.y + wall.y + (Math.random() * 2.4 - 1.2);
+            spawnPaintFleck(this.scene, this._paintBurst, {
+                x0: cx + (Math.random() * 2 - 1),
+                y0: cy + (Math.random() * 2 - 1),
+                x1: tx,
+                y1: ty,
+                color,
+                size: Math.random() < 0.4 ? 2 : 1,
+                life: 420 + Math.random() * 220,
+                depth: Math.round(this.y) + 2
+            });
+        }
+    }
+
+    tickPaintFx(delta) {
+        if (!this.active) return;
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R) return;
+        R.ensureEntry(this.entry, this.meta);
+        const n = R.paintedCount(this.entry);
+        if (this._fxPainted == null) this._fxPainted = n;
+        else if (n > this._fxPainted) {
+            this._burstPaintFlecks(n - 1);
+            this._fxPainted = n;
+        } else {
+            this._fxPainted = n;
+        }
+
+        const dt = Math.max(0, Number(delta) || 16);
+        this._ghostPulse = Math.max(0, (this._ghostPulse || 0) - dt / 180);
+        if (this._paintBurst) {
+            if (typeof _tickPaintFleckBits === "function") _tickPaintFleckBits(this._paintBurst, dt);
+            if (!this._paintBurst.bits?.length) this._paintBurst = null;
+        }
+
+        const inProg = R.inProgress(this.entry) && n < ((R.PAINT_MAX) || 6);
+        if (!inProg) {
+            if (this._ghostSpr) this._ghostSpr.setVisible(false);
+            return;
+        }
+        const ghost = this._ensureGhost();
+        const keyBase = this.meta?.key || "painting_circle";
+        const tex = R.overlayKey(n + 1, keyBase);
+        if (!this.scene.textures.exists(tex)) {
+            ghost.setVisible(false);
+            return;
+        }
+        const getItem = (id) => this.scene.getItem?.(id);
+        const pigmentId = R.currentPigmentId?.(this.entry) || this.entry?.paintPigment;
+        const tint = R.pigmentTint?.(getItem?.(pigmentId), { id: pigmentId }) || 0xffffff;
+        const prog = Number(this.entry?.paintProgress) || 0;
+        const pulse = this._ghostPulse || 0;
+        const now = this.scene.time?.now || 0;
+        const alpha = R.ghostOverlayAlpha
+            ? R.ghostOverlayAlpha(prog, now, pulse)
+            : 0.2 + 0.4 * prog;
+        ghost.setTexture(tex);
+        ghost.setTint(tint);
+        ghost.setPosition(this.x, this.y);
+        ghost.setScale(1 + 0.04 * pulse);
+        ghost.setAlpha(alpha);
+        ghost.setVisible(true);
+        const layer = this.scene.groundLayer;
+        if (layer && ghost.displayList !== layer) layer.add(ghost);
+        ghost.setDepth(0.57);
     }
 
     /** Floor decal: always under creatures (mainLayer), over tiles, under drops. */
@@ -1343,6 +1461,10 @@ class PaintingCircle extends Thing {
             if (!img) continue;
             if (layer && img.displayList !== layer) layer.add(img);
             img.setDepth(0.5 + (i + 1) * 0.01);
+        }
+        if (this._ghostSpr?.active) {
+            if (layer && this._ghostSpr.displayList !== layer) layer.add(this._ghostSpr);
+            this._ghostSpr.setDepth(0.57);
         }
     }
 
@@ -1396,7 +1518,7 @@ class PaintingCircle extends Thing {
         if (pigmentId) {
             const name = this.scene.getItem?.(pigmentId)?.name || pigmentId;
             lines.push(`Pigment: ${name}`);
-        } else {
+        } else if (typeof Research === "undefined" || Research.hasRoom(this.entry)) {
             lines.push("Pigment: empty");
         }
         return lines.join("\n");

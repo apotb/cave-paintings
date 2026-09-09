@@ -146,11 +146,11 @@ class CombatLog {
                 }
                 this.scene.player?.showChatBubble?.(msg, this.fadeMs);
             }
-        } else {
-            this._layoutDirty = true;
-            this._layout();
-            this._layoutDirty = false;
         }
+        // Always redraw so the last command doesn't stay painted on the compose row.
+        this._layoutDirty = true;
+        this._layout();
+        this._layoutDirty = false;
     }
 
     /** Slash commands (no speech bubble). */

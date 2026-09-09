@@ -132,6 +132,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this._ownChannelBar = null;
             if (typeof clearSleepFx === "function") clearSleepFx(this);
             else if (typeof clearSleepZzz === "function") clearSleepZzz(this);
+            if (typeof clearPaintFlecks === "function") clearPaintFlecks(this);
         });
     }
 
@@ -3412,19 +3413,43 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const fromX = Number.isFinite(this._netFromX) ? this._netFromX : this.x;
         const fromY = Number.isFinite(this._netFromY) ? this._netFromY : this.y;
         const err = Math.hypot(tx - fromX, ty - fromY);
+        const P = typeof Party !== "undefined" ? Party : null;
+        const snapDt = this._netSnapDt || P?.snapshotIntervalMs?.() || (1000 / 15);
+        const teleport = P?.puppetTeleportPx?.({
+            tickSpeed: this.scene?.tickSpeed,
+            tileSize: this.scene?.tileSize,
+            snapDtMs: snapDt,
+            speedTiles: 3.5
+        }) || 72;
         if (this.isAttacking()) {
             this.x = tx;
             this.y = ty;
-        } else if (err > 72 || !Number.isFinite(this._netSnapAt)) {
-            this.x = tx;
-            this.y = ty;
         } else {
-            const snapDt = this._netSnapDt || (1000 / 15);
-            const age = performance.now() - this._netSnapAt;
-            let u = snapDt > 0 ? age / snapDt : 1;
-            if (u > 1) u = 1;
-            this.x = fromX + (tx - fromX) * u;
-            this.y = fromY + (ty - fromY) * u;
+            const pose = P?.puppetLerpXY?.({
+                fromX,
+                fromY,
+                tx,
+                ty,
+                snapAt: this._netSnapAt,
+                snapDtMs: snapDt,
+                now: performance.now(),
+                teleportPx: teleport,
+                moving: this._netMoving !== false && (Number.isFinite(this._netSnapDist) ? this._netSnapDist : err) > 1,
+                heading: this.heading
+            });
+            if (pose) {
+                this.x = pose.x;
+                this.y = pose.y;
+            } else if (err > teleport || !Number.isFinite(this._netSnapAt)) {
+                this.x = tx;
+                this.y = ty;
+            } else {
+                const age = performance.now() - this._netSnapAt;
+                let u = snapDt > 0 ? age / snapDt : 1;
+                if (u > 1) u = 1;
+                this.x = fromX + (tx - fromX) * u;
+                this.y = fromY + (ty - fromY) * u;
+            }
         }
         // Walk/idle from the snapshot's server-to-server travel (constant for
         // the whole 15 Hz interval). Per-frame pixel delta flickers because

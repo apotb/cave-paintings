@@ -529,6 +529,13 @@ class PartyAI {
         pawn._wadeWater = false;
     }
 
+    _stuckClockDt(pawn, delta) {
+        const wall = Number(pawn?.scene?.game?.loop?.delta);
+        if (wall > 0) return wall;
+        const d = Number(delta);
+        return d > 0 ? d : 16;
+    }
+
     _walkToward(pawn, tx, ty, ts, sprint, delta, opts) {
         const settler = this._isSettler();
         const now = pawn.scene?.time?.now || 0;
@@ -563,6 +570,7 @@ class PartyAI {
         const to = { x: tx, y: ty };
         const farLook = settler || destDistTiles > 12;
         const allowReplan = !this._planAt || now - this._planAt >= 400;
+        const stuckDt = this._stuckClockDt(pawn, delta);
         const steered = nav.steerToward({
             from,
             to,
@@ -575,7 +583,8 @@ class PartyAI {
             lastFrom: this._lastPx != null ? { x: this._lastPx, y: this._lastPy } : null,
             lastWpDist: this._lastWpDist,
             maxRange,
-            dt: delta,
+            dt: stuckDt,
+            stuckDt,
             overlapping: !!overlap,
             lookPx: farLook ? (ts || 16) * 2 : undefined,
             openRadius,
@@ -597,13 +606,13 @@ class PartyAI {
             : 99;
         this._jamPx = pawn.x;
         this._jamPy = pawn.y;
-        const minStep = Math.max(0.12, (delta || 16) * 0.025);
+        const minStep = Math.max(0.12, stuckDt * 0.025);
         if (step >= minStep) {
             this._stillMs = 0;
             this._jamMs = 0;
         } else if (!steered.arrived) {
-            this._stillMs = (this._stillMs || 0) + (delta || 16);
-            this._jamMs = (this._jamMs || 0) + (delta || 16);
+            this._stillMs = (this._stillMs || 0) + stuckDt;
+            this._jamMs = (this._jamMs || 0) + stuckDt;
         } else {
             this._stillMs = 0;
             this._jamMs = 0;
@@ -889,7 +898,9 @@ class PartyAI {
         const R = typeof Research !== "undefined" ? Research : null;
         if (entry && R?.inProgress?.(entry)) {
             pawn._paintChannel = {
-                progress: Math.max(0, Math.min(1, Number(entry.paintProgress) || 0))
+                progress: Math.max(0, Math.min(1, Number(entry.paintProgress) || 0)),
+                uid: entry.uid || null,
+                pigmentId: entry.paintPigment ? String(entry.paintPigment) : null
             };
             return;
         }
@@ -1112,12 +1123,43 @@ class PartyAI {
         return low;
     }
 
+    _asKeepOpts(keepBandageOrOpts) {
+        if (keepBandageOrOpts && typeof keepBandageOrOpts === "object") {
+            return {
+                keepBandage: !!keepBandageOrOpts.keepBandage,
+                keepPigment: !!keepBandageOrOpts.keepPigment,
+                isPigment: typeof keepBandageOrOpts.isPigment === "function"
+                    ? keepBandageOrOpts.isPigment
+                    : null
+            };
+        }
+        const scan = this._workScan || {};
+        return {
+            keepBandage: keepBandageOrOpts != null ? !!keepBandageOrOpts : !!scan.keepBandage,
+            keepPigment: !!scan.keepPigment,
+            isPigment: scan.isPigment || null
+        };
+    }
+
+    _researchPigmentKeep(circle) {
+        const R = typeof Research !== "undefined" ? Research : null;
+        const entry = circle?.entry || circle;
+        const getItem = (id) => this.pawn.scene.getItem?.(id);
+        const keepPigment = !!(entry && R?.needsPigment?.(entry));
+        return {
+            keepPigment,
+            isPigment: keepPigment
+                ? (s) => !!(s && R.isPigment(getItem(s.id), s) && R.allowsPigment(entry, s, getItem))
+                : null
+        };
+    }
+
     _firstStashable(settle, keepBandage) {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         const pawn = this.pawn;
         if (!S?.keepIndices) return null;
         const getItem = (id) => pawn.scene.getItem?.(id);
-        const opts = { keepBandage: !!keepBandage };
+        const opts = this._asKeepOpts(keepBandage);
         const keep = S.keepIndices(pawn.inventory, getItem, opts);
         const take = (s) => (s && this._pickHaulBasket(settle, s) ? s : null);
         for (let i = 0; i < (pawn.inventory || []).length; i++) {
@@ -1370,6 +1412,9 @@ class PartyAI {
             const patients = settle ? this._settlerPatients(settle) : [];
             const doctorOn = !!(S && jobs && S.enabledJobs(jobs).includes("doctor"));
             const keepBandage = !!(doctorOn && patients.length);
+            const circle = settle ? this._researchCircle(settle) : null;
+            const pigmentKeep = this._researchPigmentKeep(circle);
+            const keepOpts = { keepBandage, ...pigmentKeep };
             this._workScan = {
                 unlitFire: settle ? this._unlitFire(settle) : null,
                 light: settle ? this._lightOpts(settle) : {},
@@ -1380,11 +1425,13 @@ class PartyAI {
                 haulMerge: (settle && haulOn) ? this._haulMerge(settle) : null,
                 gatherThing: settle ? this._gatherThing(settle) : null,
                 chopTree: settle ? this._chopTree(settle) : null,
-                researchCircle: settle ? this._researchCircle(settle) : null,
+                researchCircle: circle,
                 patients,
                 keepBandage,
+                keepPigment: pigmentKeep.keepPigment,
+                isPigment: pigmentKeep.isPigment,
                 bed: (settle && (night || injured)) ? this._freeBed(settle) : null,
-                stash: settle ? this._stashScan(settle, keepBandage) : {
+                stash: settle ? this._stashScan(settle, keepOpts) : {
                     basket: null, has: false, urgent: false
                 }
             };
@@ -1392,7 +1439,14 @@ class PartyAI {
         const scan = this._workScan || {};
         if (settle) this._repairScanClaims(settle, scan);
         const keepBandage = !!scan.keepBandage;
-        const stash = scan.stash || { basket: null, has: false, urgent: false };
+        const keepOpts = this._asKeepOpts({
+            keepBandage,
+            keepPigment: !!scan.keepPigment,
+            isPigment: scan.isPigment || null
+        });
+        const stash = settle
+            ? this._stashScan(settle, keepOpts)
+            : { basket: null, has: false, urgent: false, hasFood: false };
         const planOpts = () => ({
             kc: pawn.kc,
             autoEatBelow: (typeof Party !== "undefined" && Party.AUTO_EAT_BELOW) || 1000,
@@ -1415,6 +1469,7 @@ class PartyAI {
             researchCircle: scan.researchCircle,
             stashBasket: stash.basket,
             hasStash: stash.has,
+            hasFoodStash: stash.hasFood,
             stashUrgent: stash.urgent,
             mergeNeedsRoom: this._mergeNeedsRoom(scan.haulMerge),
             busy: this._settlerBusy(),
@@ -1790,6 +1845,8 @@ class PartyAI {
     }
 
     _unlitFire(settle) {
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (R?.techUnlocked && !R.techUnlocked("fire", settle)) return null;
         const fires = this.pawn.scene.settlementSys?.addedStations(settle, "campfire") || [];
         return fires.find((f) => f && !f.isLit?.()
             && !this._claimedByOther(settle, this._stationKey(f))
@@ -1843,13 +1900,21 @@ class PartyAI {
         scan(this.pawn.inventory);
         const fire = this._unlitFire(settle);
         if (fire?.hasFuel?.()) hasFuel = true;
-        return { hasFirestarter, hasFuel, hasGroundRecipe: false };
+        const R = typeof Research !== "undefined" ? Research : null;
+        return {
+            hasFirestarter,
+            hasFuel,
+            hasGroundRecipe: false,
+            knowsFire: !R?.techUnlocked || R.techUnlocked("fire", settle)
+        };
     }
 
     _cookBill(settle) {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         if (!S) return null;
         const fires = this.pawn.scene.settlementSys?.addedStations(settle, "campfire") || [];
+        const jobs = S.jobsFor(settle, this.pawn.pawnId || this.pawn.id);
+        const canLeather = S.jobEnabled(jobs, "leather");
         const tryFire = (f) => {
             if (!f) return null;
             const uid = f.entry?.uid;
@@ -1857,9 +1922,11 @@ class PartyAI {
             const bills = S.billsOf(settle, uid);
             for (let i = 0; i < bills.length; i++) {
                 const bill = bills[i];
-                if (!S.billIsActive(bill, have)) continue;
-                if (bill.method === "smoke_hide") continue;
-                if (this._catalystReserved(f) && bill.method === "shell_simmer") continue;
+                if (!S.billIsActive(bill, have, settle)) continue;
+                if (bill.method === "smoke_hide") {
+                    if (canLeather && this._cookHasWork(f, bill, settle, S)) return null;
+                    continue;
+                }
                 const skipInputIds = this._reservedSimmerInputIds(f, bills, i, have, settle, S);
                 if (this._cookHasWork(f, bill, settle, S, skipInputIds)) {
                     return { fire: f, bill, skipInputIds };
@@ -1932,7 +1999,7 @@ class PartyAI {
         if ((roast?.method || "stick_roast") !== "stick_roast") return skip;
         for (let j = roastIndex + 1; j < bills.length; j++) {
             const later = bills[j];
-            if (!S.billIsActive(later, have)) continue;
+            if (!S.billIsActive(later, have, settle)) continue;
             if (later.method !== "shell_simmer") continue;
             if (!this._cookHasWork(fire, later, settle, S)) continue;
             const ids = Array.isArray(later.allowedIds) && later.allowedIds.length
@@ -1945,7 +2012,7 @@ class PartyAI {
         return skip;
     }
 
-    _cookHasWork(fire, bill, settle, S, skipInputIds) {
+    _cookHasWork(fire, bill, settle, S, skipInputIds, opts = {}) {
         const getItem = (id) => this.pawn.scene.getItem?.(id);
         const method = bill.method || "stick_roast";
         if (method === "shell_simmer") {
@@ -1970,15 +2037,15 @@ class PartyAI {
             return !!(hasTool && stock >= 1);
         }
         const cook = fire.getCook?.();
-        if (cook) {
-            return S.cookInputReady(getItem, cook, bill)
-                || S.cookOutputReady(getItem, cook, bill);
-        }
+        const spitFits = S.cookFitsBill
+            ? S.cookFitsBill(getItem, cook, bill)
+            : !!(cook && (S.cookInputReady(getItem, cook, bill) || S.cookOutputReady(getItem, cook, bill)));
+        if (cook && spitFits) return true;
         const hasTool = S.isCookTool(getItem, fire.getCatalyst?.(), method)
             || !!this._findCookTool(settle, S, method);
         const hasFood = !!this._findCookFood(settle, bill, S, skipInputIds);
         if (hasTool && hasFood) return true;
-        if (skipInputIds && skipInputIds.size) return false;
+        if (opts.ignoreLeftover || (skipInputIds && skipInputIds.size)) return false;
         return this._shouldTakeLeftoverStick(fire, settle, bill, S);
     }
 
@@ -2092,7 +2159,7 @@ class PartyAI {
             if (!rack?.active) continue;
             const uid = rack.entry?.uid;
             for (const bill of S.billsOf(settle, uid)) {
-                if (!S.billIsActive(bill, have)) continue;
+                if (!S.billIsActive(bill, have, settle)) continue;
                 const job = this._rackBillJob(rack, bill, settle, S);
                 if (job) {
                     out.push(job);
@@ -2105,7 +2172,7 @@ class PartyAI {
             if (!bench?.active) continue;
             const uid = bench.entry?.uid;
             for (const bill of S.billsOf(settle, uid)) {
-                if (!S.billIsActive(bill, have)) continue;
+                if (!S.billIsActive(bill, have, settle)) continue;
                 if (!this._benchHasWork(bill, settle, S)) continue;
                 out.push({ kind: "bench", station: bench, bill, pri: 8 });
                 break;
@@ -2127,10 +2194,18 @@ class PartyAI {
         const bills = S.billsOf(settle, uid);
         for (let i = 0; i < bills.length; i++) {
             const bill = bills[i];
-            if (bill.method !== "smoke_hide") continue;
-            if (!S.billIsActive(bill, have)) continue;
-            if (this._cookHasWork(fire, bill, settle, S)) {
-                return { kind: "smoke", fire, bill, station: fire, pri: 5 };
+            if (!S.billIsActive(bill, have, settle)) continue;
+            const method = bill.method || "stick_roast";
+            if (method === "smoke_hide") {
+                if (this._cookHasWork(fire, bill, settle, S)) {
+                    return { kind: "smoke", fire, bill, station: fire, pri: 5 };
+                }
+                continue;
+            }
+            if (method === "stick_roast" || method === "shell_simmer") {
+                if (this._cookHasWork(fire, bill, settle, S, null, { ignoreLeftover: true })) {
+                    return null;
+                }
             }
         }
         const leftover = { method: "smoke_hide", leftover: true };
@@ -3267,9 +3342,9 @@ class PartyAI {
         const pawn = this.pawn;
         const getItem = (id) => pawn.scene.getItem?.(id);
         const canStore = (s) => !!this._pickHaulBasket(settle, s);
-        const opts = { keepBandage: !!keepBandage };
+        const opts = this._asKeepOpts(keepBandage);
         if (!S?.hasStashable || !S.hasStashable(pawn.inventory, pawn.overflow, getItem, canStore, opts)) {
-            return { basket: null, has: false, urgent: false };
+            return { basket: null, has: false, urgent: false, hasFood: false };
         }
         const keep = S.keepIndices(pawn.inventory, getItem, opts);
         let basket = null;
@@ -3285,7 +3360,9 @@ class PartyAI {
         return {
             basket,
             has: !!basket,
-            urgent: !!S.stashIsUrgent(pawn.inventory, pawn.overflow, getItem, canStore, opts)
+            urgent: !!S.stashIsUrgent(pawn.inventory, pawn.overflow, getItem, canStore, opts),
+            hasFood: !!(S.hasStashableFood
+                && S.hasStashableFood(pawn.inventory, pawn.overflow, getItem, canStore, opts))
         };
     }
 
@@ -3371,7 +3448,7 @@ class PartyAI {
         const ts = pawn.scene?.tileSize || 16;
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         const keep = S?.keepIndices
-            ? S.keepIndices(pawn.inventory, getItem, { keepBandage: !!keepBandage })
+            ? S.keepIndices(pawn.inventory, getItem, this._asKeepOpts(keepBandage))
             : new Set();
         const dump = (slots, skipKeep) => {
             if (!slots) return;
@@ -3511,6 +3588,12 @@ class PartyAI {
     }
 
     _doLightFire(fire, settle, ts, delta, endHold = false) {
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (R?.techUnlocked && !R.techUnlocked("fire", settle)) {
+            this._halt(this.pawn);
+            if (endHold) this._endWorkHold();
+            return;
+        }
         if (!fire?.active) {
             this._halt(this.pawn);
             if (endHold) this._endWorkHold();
@@ -3597,6 +3680,40 @@ class PartyAI {
         return true;
     }
 
+    _findHeld(pred) {
+        const pawn = this.pawn;
+        const inv = pawn.inventory || [];
+        const ii = inv.findIndex((s) => s && pred(s));
+        if (ii >= 0) return { slots: inv, index: ii, at: pawn };
+        const overflow = pawn.overflow || [];
+        const oi = overflow.findIndex((s) => s && pred(s));
+        if (oi >= 0) return { slots: overflow, index: oi, at: pawn };
+        return null;
+    }
+
+    _heldPredQty(pred) {
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (S?.countPredQty) {
+            return S.countPredQty(this.pawn.inventory, pred)
+                + S.countPredQty(this.pawn.overflow, pred);
+        }
+        let n = 0;
+        for (const s of [...(this.pawn.inventory || []), ...(this.pawn.overflow || [])]) {
+            if (s && pred(s)) n += Math.max(1, Number(s.quantity) || 1);
+        }
+        return n;
+    }
+
+    _simmerEmptyCount(fire) {
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (S?.simmerEmptyCount) return S.simmerEmptyCount(fire?.entry || fire);
+        let n = 0;
+        for (let i = 0; i < 4; i++) {
+            if (!fire.getSimmer?.(i)) n++;
+        }
+        return n;
+    }
+
     _findStack(settle, pred) {
         const inv = this.pawn.inventory || [];
         const ii = inv.findIndex((s) => s && pred(s));
@@ -3665,6 +3782,32 @@ class PartyAI {
         if (cur.id === piece.id) {
             cur.quantity = (Number(cur.quantity) || 1) + (Number(piece.quantity) || 1);
         }
+    }
+
+    _takeQty(found, want) {
+        if (!found) return null;
+        const stack = found.slots[found.index];
+        if (!stack) return null;
+        const qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
+        const n = Math.max(1, Math.min(qty, Math.floor(Number(want) || 1)));
+        if (n >= qty) {
+            found.slots[found.index] = null;
+            return stack;
+        }
+        stack.quantity = qty - n;
+        return { ...stack, quantity: n };
+    }
+
+    _fetchCookQty(found, want, ts, delta) {
+        if (!found) return null;
+        if (found.at !== this.pawn && !this._goToTarget(found.at, ts, delta)) return null;
+        const stack = this._takeQty(found, want);
+        if (!stack) return null;
+        if (found.at !== this.pawn && !this._givePawn(stack)) {
+            this._restorePiece(found, stack);
+            return null;
+        }
+        return stack;
     }
 
     _fetchCookPiece(found, ts, delta) {
@@ -3766,6 +3909,19 @@ class PartyAI {
             return;
         }
 
+        if (cook && !(S.cookFitsBill ? S.cookFitsBill(getItem, cook, bill) : (
+            S.cookInputReady(getItem, cook, bill) || S.cookOutputReady(getItem, cook, bill)
+        ))) {
+            if (!this._goToFireStand(fire, ts, delta)) return;
+            fire.setCook?.(null);
+            if (!this._takeOffFire(settle, cook)) {
+                fire.setCook?.(cook);
+                return;
+            }
+            this._endWorkHold();
+            return;
+        }
+
         if (this._shouldTakeLeftoverStick(fire, settle, bill, S)) {
             this._takeLeftoverStick(fire, settle, ts, delta);
             this._endWorkHold();
@@ -3777,7 +3933,8 @@ class PartyAI {
             return;
         }
 
-        if (cook && S.cookInputReady(getItem, cook, bill)) {
+        if (cook && S.cookInputReady(getItem, cook, bill)
+            && S.isCookTool(getItem, fire.getCatalyst?.(), method)) {
             if (!this._goToFireStand(fire, ts, delta)) return;
             if (!fire.isLit?.()) this._doLightFire(fire, settle, ts, delta);
             else this._stokeUntilKeep(fire, settle);
@@ -3797,8 +3954,14 @@ class PartyAI {
 
         const cat = fire.getCatalyst?.();
         if (!S.isCookTool(getItem, cat, method)) {
-            if (cat && cook) {
-                this._halt(pawn);
+            if (cook) {
+                if (!this._goToFireStand(fire, ts, delta)) return;
+                fire.setCook?.(null);
+                if (!this._takeOffFire(settle, cook)) {
+                    fire.setCook?.(cook);
+                    return;
+                }
+                this._endWorkHold();
                 return;
             }
             if (cat) {
@@ -3885,6 +4048,17 @@ class PartyAI {
             return;
         }
 
+        const spit = fire.getCook?.();
+        if (spit) {
+            if (!this._goToFireStand(fire, ts, delta)) return;
+            fire.setCook?.(null);
+            if (!this._takeOffFire(settle, spit)) {
+                fire.setCook?.(spit);
+                return;
+            }
+            return;
+        }
+
         if (!fire.isLit?.()) {
             this._doLightFire(fire, settle, ts, delta);
             return;
@@ -3896,11 +4070,10 @@ class PartyAI {
         }
         this._stokeUntilKeep(fire, settle);
 
+        const toolPred = (s) => S.isCookTool(getItem, s, method);
+        const ingPred = (s) => S.cookInputReady(getItem, s, bill);
+        const entry = fire.entry || fire;
         if (!S.isCookTool(getItem, cat, method)) {
-            if (cat && (fire.getCook?.() || this._catalystReserved(fire))) {
-                this._halt(pawn);
-                return;
-            }
             if (cat && !fire.hasSimmerContents?.()) {
                 if (!this._goToFireStand(fire, ts, delta)) return;
                 fire.setCatalyst?.(null);
@@ -3911,35 +4084,50 @@ class PartyAI {
                 this._halt(pawn);
                 return;
             }
-            const found = this._findStack(settle, (s) => S.isCookTool(getItem, s, method));
+        }
+        const needTool = !S.isCookTool(getItem, fire.getCatalyst?.(), method);
+        if (needTool && !this._findHeld(toolPred)) {
+            const found = this._findBasketStack(settle, toolPred);
             if (!found) {
                 this._halt(pawn);
                 return;
             }
-            if (found.at !== pawn) {
-                this._fetchCookPiece(found, ts, delta);
+            this._fetchCookPiece(found, ts, delta);
+            return;
+        }
+        const empty = S.simmerEmptyCount ? S.simmerEmptyCount(entry) : this._simmerEmptyCount(fire);
+        const heldIng = this._heldPredQty(ingPred);
+        if (empty > heldIng) {
+            const stored = this._findBasketStack(settle, ingPred);
+            if (stored) {
+                this._fetchCookQty(stored, empty - heldIng, ts, delta);
+                return;
+            }
+        }
+        if (needTool) {
+            const held = this._findHeld(toolPred);
+            if (!held) {
+                this._halt(pawn);
                 return;
             }
             if (!this._goToFireStand(fire, ts, delta)) return;
-            fire.setCatalyst?.(this._takeCookPiece(found));
+            fire.setCatalyst?.(this._takeCookPiece(held));
+        }
+        const emptyNow = S.simmerEmptyCount ? S.simmerEmptyCount(fire.entry || fire) : this._simmerEmptyCount(fire);
+        if (emptyNow > 0 && this._heldPredQty(ingPred) > 0) {
+            if (!this._goToFireStand(fire, ts, delta)) return;
+            while ((S.simmerEmptyCount ? S.simmerEmptyCount(fire.entry || fire) : this._simmerEmptyCount(fire)) > 0) {
+                const slot = this._simmerEmptyIndex(fire);
+                if (slot < 0) break;
+                const found = this._findHeld(ingPred);
+                if (!found) break;
+                const one = this._takeCookPiece(found);
+                if (!one) break;
+                fire.setSimmer?.(slot, one);
+            }
             return;
         }
-
-        const empty = this._simmerEmptyIndex(fire);
         const filled = fire.simmerFilledCount?.() || 0;
-        if (empty >= 0) {
-            const found = this._findStack(settle, (s) => S.cookInputReady(getItem, s, bill));
-            if (found) {
-                if (found.at !== pawn) {
-                    this._fetchCookPiece(found, ts, delta);
-                    return;
-                }
-                if (!this._goToFireStand(fire, ts, delta)) return;
-                const one = this._takeCookPiece(found);
-                if (one) fire.setSimmer?.(empty, one);
-                return;
-            }
-        }
         if (filled >= minSlots) {
             if (!this._goToFireStand(fire, ts, delta)) return;
             this._stokeUntilKeep(fire, settle);
@@ -4197,7 +4385,7 @@ class PartyAI {
             return;
         }
         const have = (id) => scene.settlementSys?.countItem?.(settle, id) || 0;
-        if (S && !S.billIsActive(bill, have)) {
+        if (S && !S.billIsActive(bill, have, settle)) {
             this._stopLeather(settle, job, false);
             return;
         }

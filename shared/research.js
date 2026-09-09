@@ -21,6 +21,9 @@
     const UI_ICON_KEY = "painting_circle_ui";
     /** Spent-points row in the research breakdown (`assets/ui/science.png`). */
     const UI_SCIENCE_KEY = "science";
+    /** Culture node: cave-paint hand from `assets/ui/title/hand.png`. */
+    const UI_TITLE_HAND_KEY = "title-hand";
+    const UI_CULTURE_HAND_KEY = "culture_hand";
     /** Research tab currencies. `icon` is an item id, or `"null"` for the missing-item placeholder. */
     const CURRENCIES = [
         { id: "paintings", name: "Paintings", icon: "painting_circle" },
@@ -84,9 +87,16 @@
         return false;
     }
 
+    /** World thing id to show next to a text unlock, or null for no icon. */
+    function unlockTextIcon(label) {
+        if (/\bknapping\b/i.test(String(label || ""))) return "rock";
+        return null;
+    }
+
     let _techs = null;
     let _byId = null;
     let _itemTech = null;
+    let _billTech = null;
 
     function _dataStore() {
         if (typeof DataStore !== "undefined") return DataStore;
@@ -100,11 +110,16 @@
         _techs = Array.isArray(list) ? list.filter((t) => t && t.id) : [];
         _byId = Object.create(null);
         _itemTech = Object.create(null);
+        _billTech = Object.create(null);
         for (const t of _techs) {
             _byId[t.id] = t;
             const items = t.unlocks?.items || [];
             for (const id of items) {
                 if (id && !_itemTech[id]) _itemTech[id] = t.id;
+            }
+            const bills = t.unlocks?.bills || [];
+            for (const id of bills) {
+                if (id && !_billTech[id]) _billTech[id] = t.id;
             }
         }
         return _techs;
@@ -147,10 +162,61 @@
     }
 
     /** Facing for the painting being worked (painted count is the next index). */
+    function workFacingForIndex(i) {
+        const n = WORK_FACING.length;
+        if (!(n > 0)) return "up";
+        const idx = Math.max(0, Math.min(n - 1, Math.floor(Number(i) || 0)));
+        return WORK_FACING[idx];
+    }
+
     function workFacing(entry) {
-        const i = paintedCount(entry);
-        if (i >= WORK_FACING.length) return WORK_FACING[WORK_FACING.length - 1];
-        return WORK_FACING[Math.max(0, i)];
+        return workFacingForIndex(paintedCount(entry));
+    }
+
+    /** Pixel offset from the circle origin (south-center) to the rim being painted. */
+    function paintWallLocal(facing) {
+        const dir = String(facing || "up");
+        if (dir === "right") return { x: 6, y: -8 };
+        if (dir === "down") return { x: 0, y: -3 };
+        if (dir === "left") return { x: -6, y: -8 };
+        return { x: 0, y: -14 };
+    }
+
+    function mixRgb(a, b, t) {
+        const k = Math.max(0, Math.min(1, Number(t) || 0));
+        const av = (Number(a) || 0) >>> 0;
+        const bv = (Number(b) || 0) >>> 0;
+        const ar = (av >> 16) & 255;
+        const ag = (av >> 8) & 255;
+        const ab = av & 255;
+        const br = (bv >> 16) & 255;
+        const bg = (bv >> 8) & 255;
+        const bb = bv & 255;
+        const r = Math.round(ar + (br - ar) * k);
+        const g = Math.round(ag + (bg - ag) * k);
+        const bl = Math.round(ab + (bb - ab) * k);
+        return ((r & 255) << 16) | ((g & 255) << 8) | (bl & 255);
+    }
+
+    function paintFleckTint(base, kind) {
+        const c = (Number(base) || 0) >>> 0;
+        if (kind === "light") return mixRgb(c, 0xffffff, 0.25);
+        if (kind === "dirt") return mixRgb(c, 0x2a1810, 0.4);
+        return c;
+    }
+
+    function pickPaintFleckKind(rng) {
+        const r = typeof rng === "function" ? Number(rng()) : Math.random();
+        if (r < 0.6) return "base";
+        if (r < 0.85) return "light";
+        return "dirt";
+    }
+
+    function ghostOverlayAlpha(progress, now, pulse) {
+        const p = Math.max(0, Math.min(1, Number(progress) || 0));
+        const breath = 0.5 + 0.5 * Math.sin((Number(now) || 0) / 700);
+        const pul = Math.max(0, Math.min(1, Number(pulse) || 0));
+        return Math.max(0.08, Math.min(0.85, 0.12 + 0.35 * p + 0.05 * breath + 0.14 * pul));
     }
 
     function overlayKey(i, thingKey) {
@@ -653,15 +719,56 @@
     }
 
     /**
+     * Start-unlocked / free techs count with no settlement. Otherwise `hasTech`.
+     */
+    function techUnlocked(techId, settle) {
+        if (!techId) return true;
+        const t = techById(techId);
+        if (!t) return true;
+        if (!settle) return !!(t.startUnlocked || !(Number(t.cost) > 0));
+        return hasTech(settle, techId);
+    }
+
+    /**
      * Items listed on a tech require that tech on `settle`.
      * Unlisted items are always known. With no settlement, only startUnlocked techs count.
      */
     function recipeUnlocked(itemId, settle) {
         const techId = recipeTechId(itemId);
         if (!techId) return true;
-        const t = techById(techId);
-        if (!settle) return !!(t?.startUnlocked || !(Number(t?.cost) > 0));
-        return hasTech(settle, techId);
+        return techUnlocked(techId, settle);
+    }
+
+    function tooltipLines(item, settle) {
+        const lines = Array.isArray(item?.tooltip) ? item.tooltip : [];
+        const techId = item?.tooltipTech || null;
+        if (techId && !techUnlocked(techId, settle)) return [];
+        return lines.filter((line) => typeof line === "string" && line);
+    }
+
+    function billTechId(billId) {
+        techs();
+        return (billId && _billTech && _billTech[billId]) || null;
+    }
+
+    /**
+     * Craft bills follow their output item. Bills listed on a tech (`unlocks.bills`)
+     * require that tech. Unlisted bills (Roast, rack steps) stay available.
+     */
+    function billUnlocked(idOrRec, settle) {
+        if (idOrRec == null) return true;
+        if (typeof idOrRec === "string") {
+            if (recipeTechId(idOrRec)) return recipeUnlocked(idOrRec, settle);
+            const techId = billTechId(idOrRec);
+            if (!techId) return true;
+            return techUnlocked(techId, settle);
+        }
+        const rec = idOrRec;
+        const recipeId = rec.recipeId || rec.id || null;
+        const outputId = rec.outputId || (rec.kind === "craft" ? (rec.recipeId || rec.outputId) : null);
+        if (outputId && recipeTechId(outputId)) return recipeUnlocked(outputId, settle);
+        if (recipeId && recipeTechId(recipeId)) return recipeUnlocked(recipeId, settle);
+        return billUnlocked(recipeId, settle);
     }
 
     function treeRows() {
@@ -1156,6 +1263,8 @@
         UI_PAINT_TINT,
         UI_ICON_KEY,
         UI_SCIENCE_KEY,
+        UI_TITLE_HAND_KEY,
+        UI_CULTURE_HAND_KEY,
         currencies,
         pointsTip,
         spentTipValue,
@@ -1163,6 +1272,7 @@
         techCostLabel,
         techTip,
         isActionUnlock,
+        unlockTextIcon,
         setTechs,
         techs,
         techById,
@@ -1170,6 +1280,11 @@
         isPaintingCircle,
         standWorldPos,
         workFacing,
+        workFacingForIndex,
+        paintWallLocal,
+        paintFleckTint,
+        pickPaintFleckKind,
+        ghostOverlayAlpha,
         overlayKey,
         parseFillColor,
         pigmentTint,
@@ -1220,6 +1335,10 @@
         unlock,
         recipeTechId,
         recipeUnlocked,
+        techUnlocked,
+        tooltipLines,
+        billTechId,
+        billUnlocked,
         eraShape,
         hexCap,
         nodeLeftX,

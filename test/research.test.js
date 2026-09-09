@@ -38,6 +38,7 @@ test("painting circle recipe is known; stick frame is gated on Basic Furniture",
     assert.equal(Research.recipeUnlocked("lean_to", s), true);
     assert.equal(Research.recipeUnlocked("drying_rack", s), true);
     assert.equal(Research.recipeUnlocked("sharp_stick", s), true);
+    assert.equal(Research.recipeUnlocked("campfire", s), true);
     assert.equal(Research.recipeUnlocked("stick_frame", s), false);
     assert.equal(Research.recipeUnlocked("wicker_basket", s), false);
     assert.equal(Research.recipeUnlocked("stick_frame", null), false);
@@ -48,12 +49,26 @@ test("painting circle recipe is known; stick frame is gated on Basic Furniture",
     assert.equal(Research.recipeUnlocked("stone_spear", s), false);
     assert.equal(Research.recipeUnlocked("flint_spear", s), false);
     assert.equal(Research.recipeUnlocked("pitch", s), false);
-    Research.unlock(s, "adhesive");
-    assert.equal(Research.recipeUnlocked("pitch", s), true);
-    assert.equal(Research.recipeUnlocked("stone_spear", s), false);
     Research.unlock(s, "hafting");
+    assert.equal(Research.recipeUnlocked("pitch", s), true);
     assert.equal(Research.recipeUnlocked("stone_spear", s), true);
     assert.equal(Research.recipeUnlocked("flint_spear", s), true);
+});
+
+test("Fire gates campfire and sharp-stick fire tips, not the sharp stick recipe", () => {
+    const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    const stick = DataStore.getItem("sharp_stick");
+    assert.equal(stick.tooltipTech, "fire");
+    assert.equal(Research.tooltipLines(stick, s).length, 2);
+    s.techs.fire = false;
+    assert.equal(Research.hasTech(s, "fire"), false);
+    assert.equal(Research.techUnlocked("fire", s), false);
+    assert.equal(Research.recipeUnlocked("campfire", s), false);
+    assert.equal(Research.recipeUnlocked("sharp_stick", s), true);
+    assert.deepEqual(Research.tooltipLines(stick, s), []);
+    s.techs.fire = true;
+    assert.equal(Research.recipeUnlocked("campfire", s), true);
+    assert.equal(Research.tooltipLines(stick, s).length, 2);
 });
 
 test("skinworking bench recipe is gated on Skinworking", () => {
@@ -70,6 +85,40 @@ test("skinworking bench recipe is gated on Skinworking", () => {
     assert.equal(Research.recipeUnlocked("leather_pouch", s), true);
 });
 
+test("station bills hide until their technology is unlocked", () => {
+    const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    assert.equal(Research.billUnlocked("roast", s), true);
+    assert.equal(Research.billUnlocked("simmer", s), true);
+    assert.equal(Research.billUnlocked("smoke", s), false);
+    assert.equal(Research.billUnlocked("smoke", null), false);
+    const smokeBill = Settlement.makeBill({ recipeId: "smoke", mode: "forever", paused: false });
+    assert.equal(Settlement.billIsActive(smokeBill), true);
+    assert.equal(Settlement.billIsActive(smokeBill, () => 0, s), true);
+    assert.deepEqual(
+        Settlement.billRecipesFor("campfire", s).map((r) => r.id),
+        ["roast", "simmer"]
+    );
+    Research.unlock(s, "smoking");
+    assert.equal(Research.billUnlocked("smoke", s), true);
+    assert.ok(Settlement.billRecipesFor("campfire", s).some((r) => r.id === "smoke"));
+
+    assert.equal(Research.billUnlocked("hide_pouch", s), false);
+    assert.equal(Settlement.billRecipesFor("craft", s).length, 0);
+    Research.unlock(s, "basic_furniture");
+    Research.unlock(s, "skinworking");
+    assert.equal(Research.billUnlocked("hide_pouch", s), true);
+    assert.equal(Research.billUnlocked({ id: "hide_pouch", kind: "craft", outputId: "hide_pouch" }, s), true);
+    const hideBills = Settlement.billRecipesFor("craft", s);
+    assert.ok(hideBills.some((r) => r.id === "hide_pouch"));
+    assert.ok(hideBills.some((r) => r.id === "hide_tunic"));
+    assert.equal(hideBills.some((r) => r.id === "leather_tunic"), false);
+    assert.equal(Research.billUnlocked("leather_tunic", s), false);
+    Research.unlock(s, "leatherworking");
+    assert.equal(Research.billUnlocked("leather_tunic", s), true);
+    assert.ok(Settlement.billRecipesFor("craft", s).some((r) => r.id === "leather_kilt"));
+    assert.ok(Settlement.billRecipesFor("rack", s).some((r) => r.id === "flesh_hide"));
+});
+
 test("action unlocks are not missing-item placeholders", () => {
     assert.equal(Research.isActionUnlock("Sow trees"), true);
     assert.equal(Research.isActionUnlock("Clay forming"), true);
@@ -82,6 +131,11 @@ test("action unlocks are not missing-item placeholders", () => {
     assert.equal(Research.isActionUnlock("Pit Kiln"), false);
     assert.equal(Research.isActionUnlock("Clay Pot"), false);
     assert.equal(Research.isActionUnlock("Fence"), false);
+    assert.equal(Research.unlockTextIcon("Knife knapping"), "rock");
+    assert.equal(Research.unlockTextIcon("Hand-axe knapping"), "rock");
+    assert.equal(Research.unlockTextIcon("Microlith knapping"), "rock");
+    assert.equal(Research.unlockTextIcon("Sow trees"), null);
+    assert.equal(Research.unlockTextIcon("Hut"), null);
 });
 
 test("tech unlocks list items, jobs, and planned text", () => {
@@ -106,15 +160,17 @@ test("tech unlocks list items, jobs, and planned text", () => {
     const smoke = Research.techById("smoking");
     assert.ok(smoke.unlocks.bills.includes("smoke"));
     assert.equal((smoke.unlocks.text || []).includes("Smoke meat"), false);
-    const adhesive = Research.techById("adhesive");
-    assert.ok(adhesive.unlocks.items.includes("pitch"));
-    assert.equal(adhesive.unlocks.items.includes("stone_spear"), false);
+    assert.equal(Research.techById("adhesive"), null);
+    assert.ok(Research.techById("hafting").unlocks.items.includes("pitch"));
     assert.ok(Research.techById("hafting").unlocks.items.includes("stone_spear"));
     assert.equal(Research.techById("hafting").unlocks.items.includes("wooden_spear"), false);
     assert.equal(Research.techById("traps").unlocks.text.includes("Snare"), true);
     assert.ok(Research.techById("spike_traps").unlocks.text.includes("Spike Trap"));
     assert.equal(Research.techById("counting").quote, "Invent 1, 2 before buckling shoes");
     assert.equal(Research.techById("mathematics").quote, "We could do a lot with this");
+    const fire = Research.techById("fire");
+    assert.ok(fire.unlocks.items.includes("campfire"));
+    assert.equal(fire.unlocks.items.includes("sharp_stick"), false);
 });
 
 test("painting circle has no walk collision", () => {
@@ -141,6 +197,16 @@ test("researchers stand in the circle center and face the painting they work", (
     assert.equal(Research.workFacing(entry), "left");
     entry.painted = 5;
     assert.equal(Research.workFacing(entry), "left");
+    assert.deepEqual(Research.paintWallLocal("up"), { x: 0, y: -14 });
+    assert.deepEqual(Research.paintWallLocal("right"), { x: 6, y: -8 });
+    const base = Research.pigmentTint(DataStore.getItem("blueberry"));
+    assert.equal(Research.paintFleckTint(base, "base"), base);
+    assert.notEqual(Research.paintFleckTint(base, "light"), base);
+    assert.notEqual(Research.paintFleckTint(base, "dirt"), base);
+    assert.ok(Research.ghostOverlayAlpha(1, 0, 0) > Research.ghostOverlayAlpha(0, 0, 0));
+    assert.ok(Research.ghostOverlayAlpha(0.4, 0, 1) > Research.ghostOverlayAlpha(0.4, 0, 0));
+    assert.equal(Research.workFacingForIndex(0), "up");
+    assert.equal(Research.workFacingForIndex(3), "down");
 });
 
 test("pigments are berries and flowers, not sticks", () => {
@@ -246,6 +312,19 @@ test("research points are a settlement pool, not per-circle spend", () => {
     assert.equal(Research.availableTotal(entries, s), 4);
 });
 
+test("full painting circles still count toward the settlement pool", () => {
+    const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    const full = { id: "painting_circle", uid: "full", painted: Research.PAINT_MAX };
+    const a = { id: "painting_circle", uid: "a", painted: 4 };
+    const b = { id: "painting_circle", uid: "b", painted: 4 };
+    for (const e of [full, a, b]) Research.ensureEntry(e);
+    assert.equal(Research.hasRoom(full), false);
+    assert.equal(Research.inProgress(full), false);
+    const pts = Research.pointsBreakdown([full, a, b], { settle: s });
+    assert.equal(pts.paintings, Research.PAINT_MAX + 8);
+    assert.equal(pts.total, Research.PAINT_MAX + 8);
+});
+
 test("cannot remove a painting circle that would drop below spent research", () => {
     const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
     const a = { id: "painting_circle", uid: "a", painted: 6 };
@@ -315,6 +394,11 @@ test("research currencies use the painting circle icon and empty slots for later
     assert.equal(Research.UI_PAINT_TINT, 0xaa1100);
     assert.equal(Research.UI_ICON_KEY, "painting_circle_ui");
     assert.equal(Research.UI_SCIENCE_KEY, "science");
+    assert.equal(Research.UI_TITLE_HAND_KEY, "title-hand");
+    assert.equal(Research.techById("gathering").icon, "blueberry");
+    assert.equal(Research.techById("tree_sowing").icon, "tree");
+    assert.equal(Research.techById("smoking").icon, "deer_leather");
+    assert.equal(Research.techById("culture").icon, "title-hand");
     assert.equal(Research.spentTipValue(5), "-5");
     assert.equal(Research.spentTipValue(0), "-0");
 });
@@ -387,13 +471,23 @@ test("tree layout is left-to-right with prereq edges", () => {
     assert.ok(layout.edges.some((e) => e.from === "cordage" && e.to === "traps"));
     assert.ok(layout.edges.some((e) => e.from === "cordage" && e.to === "fishing"));
     assert.ok(layout.edges.some((e) => e.from === "digging" && e.to === "agriculture"));
-    assert.ok(layout.edges.some((e) => e.from === "cooking" && e.to === "dogs"));
+    assert.equal(layout.edges.some((e) => e.from === "gathering" && e.to === "agriculture"), false);
+    assert.equal(layout.edges.some((e) => e.from === "gathering" && e.to === "traps"), false);
+    assert.equal(layout.edges.some((e) => e.from === "gathering" && e.to === "fishing"), false);
+    assert.equal(layout.edges.some((e) => e.from === "digging" && e.to === "tree_sowing"), false);
+    assert.ok(layout.edges.some((e) => e.from === "agriculture" && e.to === "tree_sowing"));
+    assert.ok(layout.edges.some((e) => e.from === "fire" && e.to === "settlements"));
+    assert.ok(layout.edges.some((e) => e.from === "cordage" && e.to === "settlements"));
+    assert.ok(layout.edges.some((e) => e.from === "tanning" && e.to === "settlements"));
     assert.ok(layout.edges.some((e) => e.from === "traps" && e.to === "spike_traps"));
     assert.ok(layout.edges.some((e) => e.from === "hafting" && e.to === "spike_traps"));
-    assert.ok(layout.edges.some((e) => e.from === "adhesive" && e.to === "hafting"));
+    assert.ok(layout.edges.some((e) => e.from === "knapping" && e.to === "hafting"));
+    assert.ok(layout.edges.some((e) => e.from === "cordage" && e.to === "hafting"));
+    assert.equal(layout.edges.some((e) => e.from === "adhesive" && e.to === "hafting"), false);
     assert.ok(layout.edges.some((e) => e.from === "painting" && e.to === "counting"));
     assert.ok(layout.edges.some((e) => e.from === "counting" && e.to === "mathematics"));
     assert.ok(layout.edges.some((e) => e.from === "skinworking" && e.to === "leatherworking"));
+    assert.ok(layout.edges.some((e) => e.from === "smoking" && e.to === "leatherworking"));
     const ids = new Set(layout.nodes.map((n) => n.id));
     for (const t of Research.techs()) assert.ok(ids.has(t.id), t.id);
 
@@ -506,7 +600,7 @@ test("tree layout is left-to-right with prereq edges", () => {
             );
         }
     }
-    const fireLeather = routed.find((r) => r.from === "fire" && r.to === "leatherworking");
-    assert.ok(fireLeather);
-    assert.equal(hitsNode(fireLeather.path, big.byId.skinworking), false);
+    const smokeLeather = routed.find((r) => r.from === "smoking" && r.to === "leatherworking");
+    assert.ok(smokeLeather);
+    assert.equal(hitsNode(smokeLeather.path, big.byId.skinworking), false);
 });

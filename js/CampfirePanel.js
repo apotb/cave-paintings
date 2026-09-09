@@ -468,7 +468,6 @@ class CampfirePanel {
         const canDestroy = !this.campfire.isLit?.();
         this._destroyEnabled = canDestroy;
         this.destroyBtn?.setVisible(true);
-        this.destroyBtn?.setAlpha(canDestroy ? 1 : 0.35);
         this._syncDestroyHitArea(true);
         this._syncDestroyHover();
         this._placeActionRow();

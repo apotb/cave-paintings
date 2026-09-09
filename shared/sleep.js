@@ -11,7 +11,7 @@
     }
 })(typeof globalThis !== "undefined" ? globalThis : this, function (Place) {
     const CAMP_TILES = 12;
-    const REST_TICK = 10;
+    const REST_TICK = 12;
     /** Wall-clock ms everyone must stay down before REST_TICK applies. */
     const REST_TICK_DELAY_MS = 3000;
     const HEAL_BONUS = 8;

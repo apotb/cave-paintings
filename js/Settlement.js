@@ -259,9 +259,9 @@ class SettlementSystem {
                 && !S?.chopSkipsTree?.(t.entry?.id || def?.id, def, t.entry)) {
                 chop.push(t);
             }
-    if (typeof Research !== "undefined" && Research.isPaintingCircle?.(def, t.entry)
-        && Research.isEnabled?.(t.entry)
-        && (Research.hasRoom(t.entry) || Research.inProgress(t.entry))) {
+            if (typeof Research !== "undefined" && Research.isPaintingCircle?.(def, t.entry)
+                && Research.isEnabled?.(t.entry)
+                && (Research.hasRoom(t.entry) || Research.inProgress(t.entry))) {
                 Research.ensureEntry(t.entry, def);
                 paint.push(t);
             }
@@ -270,11 +270,12 @@ class SettlementSystem {
         return this._worldCache;
     }
 
+    /** Circles settlers can still paint (enabled, and not already full). */
     paintingCirclesInRange(settle) {
         return this._worldIndex(settle).paint || [];
     }
 
-    /** Painting circles in range that add to the settlement research pool. */
+    /** Every painting circle in range — finished ones still count toward research. */
     researchCircleEntries(settle) {
         const R = typeof Research !== "undefined" ? Research : null;
         const S = typeof Settlement !== "undefined" ? Settlement : null;
@@ -1745,6 +1746,8 @@ class SettlementSystem {
         if (!thing?.entry?.uid) return false;
         const settle = this.here(this.scene.player);
         if (!this.canManageCircle(thing)) return false;
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (R && !R.hasRoom(thing.entry)) return false;
         this.scene.billsPanel?.close();
         this.scene.storageFilterPanel?.close();
         this.scene.fuelFilterPanel?.close();
@@ -1755,7 +1758,7 @@ class SettlementSystem {
     togglePaintEnabled(thing) {
         if (!this.canManageCircle(thing) || !thing?.entry) return false;
         const R = typeof Research !== "undefined" ? Research : null;
-        if (!R) return false;
+        if (!R || !R.hasRoom(thing.entry)) return false;
         const next = !R.isEnabled(thing.entry);
         R.setEnabled(thing.entry, next);
         const settle = this.here(this.scene.player);

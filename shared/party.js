@@ -67,6 +67,97 @@
     function settlerTimeScale(tickSpeed) {
         return mobTimeScale(tickSpeed);
     }
+    const SNAPSHOT_HZ = 15;
+    function snapshotIntervalMs() {
+        return 1000 / SNAPSHOT_HZ;
+    }
+    /**
+     * Real gap between two snapshots. High /tick or a heavy sleep clock can
+     * drop well below 15 Hz; pretending it is still 67ms makes puppets freeze
+     * then teleport.
+     */
+    function puppetSnapGapMs(prevAt, now) {
+        const fallback = snapshotIntervalMs();
+        const t0 = Number(prevAt);
+        const t1 = Number(now);
+        if (!Number.isFinite(t0) || !Number.isFinite(t1)) return fallback;
+        const gap = t1 - t0;
+        if (!(gap > 0)) return fallback;
+        return Math.max(fallback * 0.45, Math.min(gap, 1250));
+    }
+    /**
+     * Teleport cutoff for puppet poses. Stroll at 20× covers more than the
+     * old 72px window between snaps, which looked like hitching.
+     */
+    function puppetTeleportPx(opts = {}) {
+        const ts = Number(opts.tileSize) > 0 ? Number(opts.tileSize) : 16;
+        const tick = mobTimeScale(opts.tickSpeed);
+        const snapDt = Number(opts.snapDtMs) > 0 ? Number(opts.snapDtMs) : snapshotIntervalMs();
+        const tiles = Number(opts.speedTiles) > 0
+            ? Number(opts.speedTiles)
+            : 3.5 * WANDER_WALK_MULT;
+        const expected = tiles * Math.max(1, tick) * ts * (snapDt / 1000);
+        return Math.max(72, expected * 4);
+    }
+    /**
+     * Interpolate a puppet toward the latest snapshot, then keep walking in
+     * the last heading if the next snap is late.
+     */
+    function puppetLerpXY(opts = {}) {
+        const fromX = Number(opts.fromX);
+        const fromY = Number(opts.fromY);
+        const tx = Number(opts.tx);
+        const ty = Number(opts.ty);
+        if (!Number.isFinite(tx) || !Number.isFinite(ty)) {
+            return { x: fromX, y: fromY, snapped: false };
+        }
+        if (!Number.isFinite(fromX) || !Number.isFinite(fromY)) {
+            return { x: tx, y: ty, snapped: true };
+        }
+        const err = Math.hypot(tx - fromX, ty - fromY);
+        const snapAt = Number(opts.snapAt);
+        const snapDt = Number(opts.snapDtMs) > 0 ? Number(opts.snapDtMs) : snapshotIntervalMs();
+        const teleport = Number(opts.teleportPx) > 0 ? Number(opts.teleportPx) : 72;
+        if (!Number.isFinite(snapAt) || err > teleport) {
+            return { x: tx, y: ty, snapped: true };
+        }
+        const now = Number(opts.now);
+        const age = Number.isFinite(now) ? now - snapAt : snapDt;
+        const u = snapDt > 0 ? age / snapDt : 1;
+        if (u <= 1) {
+            return {
+                x: fromX + (tx - fromX) * u,
+                y: fromY + (ty - fromY) * u,
+                snapped: false
+            };
+        }
+        if (!opts.moving) return { x: tx, y: ty, snapped: false };
+        const overshoot = Math.min(Math.max(0, (age - snapDt) / 1000), 0.9);
+        const dx = tx - fromX;
+        const dy = ty - fromY;
+        const len = Math.hypot(dx, dy);
+        let nx = 0;
+        let ny = 0;
+        if (len > 0.5) {
+            nx = dx / len;
+            ny = dy / len;
+        } else {
+            const hx = Number(opts.heading?.x);
+            const hy = Number(opts.heading?.y);
+            const hl = Math.hypot(hx, hy);
+            if (!(hl > 0.1)) return { x: tx, y: ty, snapped: false };
+            nx = hx / hl;
+            ny = hy / hl;
+        }
+        const speed = len > 0.5 && snapDt > 0
+            ? len / (snapDt / 1000)
+            : (Number(opts.speedPx) > 0 ? Number(opts.speedPx) : 0);
+        return {
+            x: tx + nx * speed * overshoot,
+            y: ty + ny * speed * overshoot,
+            snapped: false
+        };
+    }
     /**
      * Latch follower sprint so they don't flicker on a distance ring around
      * the leader. Start past `FOLLOW_SPRINT` (or `FOLLOW_CATCH` while the
@@ -330,6 +421,28 @@
     /** Empty stomach — not the lingering malnutrition hediff after a bite. */
     function isStarving(pawn) {
         return !(Number(pawn?.kc) > 0);
+    }
+
+    /**
+     * How many discrete food items to take from a storage stack for one sitting.
+     * Leftover meals stay a single stack. Discrete food: enough to reach `until`
+     * kcal, capped by stomach room and stack size.
+     */
+    function eatTakeQty(kc, until, foodKc, stackQty, opts = {}) {
+        const n = Math.max(1, Math.floor(Number(stackQty) || 1));
+        if (opts.isMeal) return 1;
+        const per = Number(foodKc) || 0;
+        if (!(per > 0)) return 1;
+        const have = Number(kc) || 0;
+        const goal = Number(until) > 0 ? Number(until) : AUTO_EAT_UNTIL;
+        const stomach = Number(opts.stomach);
+        const needKc = Math.max(0, goal - have);
+        const room = Number.isFinite(stomach) && stomach > 0
+            ? Math.max(0, stomach - have)
+            : needKc;
+        const wantKc = Math.min(needKc, room > 0 ? room : needKc);
+        if (!(wantKc > 0)) return 1;
+        return Math.min(n, Math.max(1, Math.ceil(wantKc / per)));
     }
 
     /**
@@ -985,6 +1098,10 @@
         mobTimeScale,
         wandererTimeScale,
         settlerTimeScale,
+        snapshotIntervalMs,
+        puppetSnapGapMs,
+        puppetTeleportPx,
+        puppetLerpXY,
         walkAnimTimeScale,
         followWantSprint,
         companionFollowLabel,
@@ -1017,6 +1134,7 @@
         inInteractRange,
         isReservedAutoEat,
         isStarving,
+        eatTakeQty,
         pickAutoEat,
         nearestLiving,
         followBehind,

@@ -8,7 +8,8 @@
         "startUnlocked": true,
         "prereqs": [],
         "unlocks": { "items": [], "jobs": ["gather"], "text": [] },
-        "children": ["cordage", "herbalism", "digging", "traps", "fishing", "agriculture"]
+        "icon": "blueberry",
+        "children": ["cordage", "herbalism", "digging"]
     },
     {
         "id": "cordage",
@@ -23,7 +24,7 @@
             "jobs": [],
             "text": []
         },
-        "children": ["camping", "basic_furniture"]
+        "children": ["camping", "basic_furniture", "traps", "fishing"]
     },
     {
         "id": "camping",
@@ -74,7 +75,7 @@
         "cost": 3,
         "prereqs": ["gathering"],
         "unlocks": { "items": [], "jobs": [], "text": ["Digging Stick"] },
-        "children": ["storage"]
+        "children": ["storage", "agriculture"]
     },
     {
         "id": "storage",
@@ -92,7 +93,7 @@
         "era": "Paleolithic",
         "quote": "Wait for dinner",
         "cost": 2,
-        "prereqs": ["gathering", "cordage"],
+        "prereqs": ["cordage"],
         "unlocks": { "items": [], "jobs": [], "text": ["Snare"] },
         "children": ["spike_traps", "pit_traps"]
     },
@@ -121,7 +122,7 @@
         "era": "Mesolithic",
         "quote": "Might need to adjust your palate",
         "cost": 3,
-        "prereqs": ["gathering", "cordage"],
+        "prereqs": ["cordage"],
         "unlocks": { "items": [], "jobs": [], "text": ["Fishing job"] },
         "children": ["nets"]
     },
@@ -141,7 +142,7 @@
         "era": "Neolithic",
         "quote": "I love dirt",
         "cost": 5,
-        "prereqs": ["gathering", "digging"],
+        "prereqs": ["digging"],
         "unlocks": { "items": [], "jobs": [], "text": ["Agronomy job"] },
         "children": ["tree_sowing", "husbandry"]
     },
@@ -151,8 +152,9 @@
         "era": "Neolithic",
         "quote": "Early environmentalism",
         "cost": 2,
-        "prereqs": ["agriculture", "digging"],
+        "prereqs": ["agriculture"],
         "unlocks": { "items": [], "jobs": [], "text": ["Sow trees"] },
+        "icon": "tree",
         "children": []
     },
     {
@@ -183,8 +185,8 @@
         "cost": 0,
         "startUnlocked": true,
         "prereqs": [],
-        "unlocks": { "items": ["sharp_stick"], "jobs": [], "text": [] },
-        "children": ["settlements", "cooking", "clay_forming", "adhesive"]
+        "unlocks": { "items": ["campfire"], "jobs": [], "text": [] },
+        "children": ["settlements", "cooking", "clay_forming"]
     },
     {
         "id": "settlements",
@@ -193,7 +195,7 @@
         "quote": "Precursor to society",
         "cost": 0,
         "startUnlocked": true,
-        "prereqs": ["fire"],
+        "prereqs": ["fire", "cordage", "tanning"],
         "unlocks": { "items": ["settling_stone"], "jobs": [], "text": [] },
         "children": []
     },
@@ -216,6 +218,7 @@
         "cost": 2,
         "prereqs": ["cooking"],
         "unlocks": { "items": [], "jobs": [], "bills": ["smoke"], "text": [] },
+        "icon": "deer_leather",
         "children": []
     },
     {
@@ -259,16 +262,6 @@
         "children": ["pottery"]
     },
     {
-        "id": "adhesive",
-        "name": "Adhesive",
-        "era": "Paleolithic",
-        "quote": "Bounces kind of like rubber, sticks kind of like glue",
-        "cost": 2,
-        "prereqs": ["fire", "gathering"],
-        "unlocks": { "items": ["pitch"], "jobs": [], "text": [] },
-        "children": []
-    },
-    {
         "id": "pottery",
         "name": "Pottery",
         "era": "Neolithic",
@@ -295,8 +288,8 @@
         "era": "Paleolithic",
         "quote": "Sharper sticks",
         "cost": 1,
-        "prereqs": ["knapping", "cordage", "adhesive"],
-        "unlocks": { "items": ["stone_spear", "flint_spear"], "jobs": [], "text": [] },
+        "prereqs": ["knapping", "cordage"],
+        "unlocks": { "items": ["pitch", "stone_spear", "flint_spear"], "jobs": [], "text": [] },
         "children": ["bows", "throwing"]
     },
     {
@@ -396,7 +389,7 @@
         "era": "Paleolithic",
         "quote": "Ideal material for a hunter-gatherer's clothing",
         "cost": 4,
-        "prereqs": ["skinworking", "fire"],
+        "prereqs": ["skinworking", "smoking"],
         "unlocks": { "items": ["leather_pouch", "leather_pack", "leather_tunic", "leather_kilt"], "jobs": [], "text": [] },
         "children": []
     },
@@ -409,6 +402,7 @@
         "startUnlocked": true,
         "prereqs": [],
         "unlocks": { "items": [], "jobs": [], "text": [] },
+        "icon": "title-hand",
         "children": ["painting", "rituals", "burial"]
     },
     {

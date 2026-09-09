@@ -840,7 +840,7 @@ class BillsPanel {
         this._label("Add bill", inset + backW + Math.round(8 * sc), inset + bh / 2, 13)
             .setOrigin(0, 0.5);
         let y = inset + bh + Math.round(8 * sc);
-        const recipes = S?.billRecipesFor?.(this._kind()) || [];
+        const recipes = S?.billRecipesFor?.(this._kind(), this.settle) || [];
         if (!recipes.length) {
             const name = this.thing?.meta?.name || this.thing?.entry?.id || "Station";
             this._label(`No bills for ${name}`, inset, y, 12, "#8a7a62");

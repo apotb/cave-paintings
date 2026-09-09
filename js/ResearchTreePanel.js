@@ -556,8 +556,7 @@ class ResearchTreePanel {
     }
 
     _researchEntries() {
-        const circles = this.scene.settlementSys?.paintingCirclesInRange?.(this.settle) || [];
-        return circles.map((t) => t.entry || t).filter(Boolean);
+        return this.scene.settlementSys?.researchCircleEntries?.(this.settle) || [];
     }
 
     _points() {
@@ -813,10 +812,18 @@ class ResearchTreePanel {
                 ? Math.round(14 * s)
                 : Math.round(8 * s) + (shape === "hex" ? Math.round(cap * 0.55) : 0);
             const iconKey = this._techIconKey(tech);
-            const iconS = Math.round(24 * s);
+            const iconMaxW = Math.round(24 * s);
+            const iconMaxH = Math.max(iconMaxW, node.h - Math.round(10 * s));
+            let icon = null;
+            if (iconKey && scene.textures.exists(iconKey)) {
+                icon = scene.add.image(0, node.h / 2, iconKey);
+                if (typeof fitUiIcon === "function") fitUiIcon(icon, iconMaxW, iconMaxH);
+                else icon.setDisplaySize(iconMaxW, iconMaxW);
+            }
+            const iconW = icon ? icon.displayWidth : 0;
             const textMaxW = Math.max(
                 40,
-                node.w - sidePad * 2 - (iconKey ? iconS + Math.round(4 * s) : 0)
+                node.w - sidePad * 2 - (iconW ? iconW + Math.round(4 * s) : 0)
             );
             const name = scene.add.text(sidePad, 0, tech.name, {
                 fontFamily: PIXEL_UI_FONT,
@@ -842,12 +849,8 @@ class ResearchTreePanel {
             name.setY(y0);
             subTxt.setY(y0 + (name.height || 0) + lineGap);
             const kids = [rec.bg, name, subTxt];
-            if (iconKey) {
-                const icon = scene.add.image(
-                    node.w - sidePad - iconS / 2,
-                    node.h / 2,
-                    iconKey
-                ).setDisplaySize(iconS, iconS);
+            if (icon) {
+                icon.setX(node.w - sidePad - iconW / 2);
                 kids.push(icon);
             }
             go.add(kids);
@@ -1066,6 +1069,11 @@ class ResearchTreePanel {
     }
 
     _techIconKey(tech) {
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (tech?.icon) {
+            const key = this._resolveTechIcon(tech.icon);
+            if (key) return key;
+        }
         for (const id of tech?.unlocks?.items || []) {
             const key = this._itemIconKey(id);
             if (key && key !== "null" && this.scene.textures.exists(key)) return key;
@@ -1074,6 +1082,31 @@ class ResearchTreePanel {
             const key = this._billStation(id)?.icon;
             if (key && key !== "null" && this.scene.textures.exists(key)) return key;
         }
+        for (const t of tech?.unlocks?.text || []) {
+            const thingId = R?.unlockTextIcon?.(t);
+            if (!thingId) continue;
+            const key = this._itemIconKey(thingId);
+            if (key && key !== "null" && this.scene.textures.exists(key)) return key;
+        }
+        return null;
+    }
+
+    _resolveTechIcon(icon) {
+        const id = String(icon || "");
+        if (!id) return null;
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (id === (R?.UI_TITLE_HAND_KEY || "title-hand") || id === "hand") {
+            if (typeof ensureCultureHandIcon === "function") {
+                const key = ensureCultureHandIcon(this.scene);
+                if (key && this.scene.textures.exists(key)) return key;
+            }
+            if (this.scene.textures.exists(R?.UI_TITLE_HAND_KEY || "title-hand")) {
+                return R?.UI_TITLE_HAND_KEY || "title-hand";
+            }
+        }
+        const key = this._itemIconKey(id);
+        if (key && key !== "null" && this.scene.textures.exists(key)) return key;
+        if (this.scene.textures.exists(id)) return id;
         return null;
     }
 
@@ -1143,6 +1176,7 @@ class ResearchTreePanel {
 
     _unlockRows(tech) {
         const rows = [];
+        const R = typeof Research !== "undefined" ? Research : null;
         const missing = this.scene.textures.exists("null") ? "null" : null;
         for (const id of tech?.unlocks?.items || []) {
             if (!id) continue;
@@ -1167,9 +1201,12 @@ class ResearchTreePanel {
         for (const t of tech?.unlocks?.text || []) {
             if (!t) continue;
             const label = String(t);
+            const thingId = R?.unlockTextIcon?.(label);
             rows.push({
                 label,
-                icon: this._isUnlockWithoutIcon(label) ? null : missing
+                icon: thingId
+                    ? (this._itemIconKey(thingId) || missing)
+                    : (this._isUnlockWithoutIcon(label) ? null : missing)
             });
         }
         return rows;
@@ -1243,10 +1280,13 @@ class ResearchTreePanel {
         const iconS = Math.round(14 * s);
         let textX = x + Math.round(6 * s);
         if (iconKey && scene.textures.exists(iconKey)) {
-            const icon = scene.add.image(textX + iconS / 2, y + h / 2, iconKey)
-                .setDisplaySize(iconS, iconS);
+            const icon = scene.add.image(textX, y + h / 2, iconKey);
+            if (typeof fitUiIcon === "function") fitUiIcon(icon, iconS, h);
+            else icon.setDisplaySize(iconS, iconS);
+            const iconW = icon.displayWidth || iconS;
+            icon.setX(textX + iconW / 2);
             this.detailBody.add(icon);
-            textX += iconS + Math.round(6 * s);
+            textX += iconW + Math.round(6 * s);
         }
         this._addText(
             textX,

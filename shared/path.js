@@ -450,7 +450,9 @@
         const from = input.from;
         const blocked = memoBlocked(input.blocked);
         const cell = input.cellSize || TILE;
-        const dt = Number(input.dt) > 0 ? input.dt : 16;
+        const dt = Number(input.stuckDt) > 0
+            ? input.stuckDt
+            : (Number(input.dt) > 0 ? input.dt : 16);
         let side = input.side < 0 ? -1 : 1;
         let path = input.path && input.path.length ? input.path.slice() : null;
         let pathGoal = input.pathGoal || null;
@@ -614,7 +616,7 @@
             stuckMs: state && state.stuckMs,
             lastFrom: state && state.lastFrom,
             maxRange: range,
-            dt: opts && opts.dt,
+            dt: (opts && (opts.stuckDt || opts.dt)),
             overlapping: opts && opts.overlapping
         });
         steered.detour = true;

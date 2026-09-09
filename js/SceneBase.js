@@ -17,6 +17,9 @@ class SceneBase extends Phaser.Scene {
         if (!this.textures.exists("null")) {
             this.load.image("null", "assets/null.png");
         }
+        if (!this.textures.exists("title-hand")) {
+            this.load.image("title-hand", "assets/ui/title/hand.png");
+        }
         if (!this.cache?.audio?.exists?.("forest")) {
             this.load.audio("forest", "assets/audio/forest.ogg");
         }

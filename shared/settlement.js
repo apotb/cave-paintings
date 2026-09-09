@@ -93,6 +93,7 @@
     const SIMMER_INGREDIENT_IDS = ["apple", "blueberry", "raw_human_flesh", "raw_venison", "raw_pork"];
     const SIMMER_RESULT = "coconut_meal";
     const SIMMER_MIN_SLOTS = 2;
+    const SIMMER_SLOTS = 4;
     const HIDE_ANIMALS = ["deer", "boar"];
     const HIDE_STEPS = {
         flesh_hide: { inputStage: "raw", outputStage: "fleshed" },
@@ -429,8 +430,16 @@
             - countDropStock(drops, itemId));
     }
 
-    function billRecipesFor(stationKind) {
-        return (BILL_RECIPES[stationKind] || []).slice();
+    function billRecipesFor(stationKind, settle) {
+        const list = (BILL_RECIPES[stationKind] || []).slice();
+        if (arguments.length < 2) return list;
+        return list.filter((r) => billRecipeUnlocked(r, settle));
+    }
+
+    function billRecipeUnlocked(billOrRec, settle) {
+        const R = researchMod();
+        if (!R?.billUnlocked) return true;
+        return R.billUnlocked(billOrRec, settle);
     }
 
     function billRecipeById(recipeId) {
@@ -775,6 +784,29 @@
         return meta?.cook?.method === method;
     }
 
+    function simmerSlotsOf(fire) {
+        const slots = fire?.simmer || fire?.entry?.simmer;
+        return Array.isArray(slots) ? slots : [];
+    }
+
+    function simmerEmptyCount(fire) {
+        const slots = simmerSlotsOf(fire);
+        let n = 0;
+        for (let i = 0; i < SIMMER_SLOTS; i++) {
+            if (!slots[i]) n++;
+        }
+        return n;
+    }
+
+    function countPredQty(slots, pred) {
+        let n = 0;
+        for (const s of slots || []) {
+            if (!s || (pred && !pred(s))) continue;
+            n += Math.max(1, Math.floor(Number(s.quantity) || 1));
+        }
+        return n;
+    }
+
     function cookAllowsInput(bill, itemId, getItem) {
         if (billAllowsInput(bill, itemId)) return true;
         if (bill?.method !== "smoke_hide") return false;
@@ -843,6 +875,10 @@
             return hideStageOf(def, stack.id) === "leather";
         }
         return false;
+    }
+
+    function cookFitsBill(getItem, stack, bill) {
+        return cookInputReady(getItem, stack, bill) || cookOutputReady(getItem, stack, bill);
     }
 
     function billRecipeTitle(rec) {
@@ -1004,7 +1040,7 @@
         return n;
     }
 
-    function billIsActive(bill, haveOutput) {
+    function billIsActive(bill, haveOutput, settle) {
         if (!bill || bill.paused) return false;
         if (bill.mode === "forever") return true;
         if (bill.mode === "count") return (Number(bill.remaining) || 0) > 0;
@@ -1017,7 +1053,7 @@
 
     function activeBill(settle, stationUid, haveOutput) {
         for (const b of billsOf(settle, stationUid)) {
-            if (billIsActive(b, haveOutput)) return b;
+            if (billIsActive(b, haveOutput, settle)) return b;
         }
         return null;
     }
@@ -1179,6 +1215,21 @@
         return normalizeJobs(row)[name] >= 1;
     }
 
+    function sameCookJob(held, next) {
+        if (!held || !next) return false;
+        const hb = held.bill || null;
+        const nb = next.bill || null;
+        const fireA = held.fire?.uid || held.fire?.entry?.uid || held.entry?.uid || held.uid;
+        const fireB = next.fire?.uid || next.fire?.entry?.uid || next.entry?.uid || next.uid;
+        if (fireA && fireB && fireA !== fireB) return false;
+        if (hb?.id && nb?.id) return hb.id === nb.id;
+        if (hb?.leftover || nb?.leftover) {
+            return !!hb?.leftover && !!nb?.leftover
+                && (hb.method || "stick_roast") === (nb.method || "stick_roast");
+        }
+        return (hb?.recipeId || hb?.method || "") === (nb?.recipeId || nb?.method || "");
+    }
+
     function isFirestarter(stack, getItem) {
         if (!stack?.id) return false;
         const meta = typeof getItem === "function" ? getItem(stack.id) : null;
@@ -1186,6 +1237,7 @@
     }
 
     function cookCanLight(opts = {}) {
+        if (opts.knowsFire === false) return false;
         if (!opts.hasFirestarter) return false;
         return !!(opts.hasFuel || opts.hasGroundRecipe);
     }
@@ -1215,8 +1267,9 @@
     }
 
     /**
-     * Inventory indices settlers should keep on them: best melee, and optionally
-     * one bandage while a doctor job has patients. Worn equipment is not inventory.
+     * Inventory indices settlers should keep on them: best melee, optionally
+     * one bandage while a doctor job has patients, and one pigment while a
+     * painting circle still needs it. Worn equipment is not inventory.
      */
     function keepIndices(inventory, getItem, opts = {}) {
         const keep = new Set();
@@ -1243,6 +1296,23 @@
                 }
             }
         }
+        if (opts.keepPigment) {
+            const pred = typeof opts.isPigment === "function"
+                ? opts.isPigment
+                : (s) => {
+                    const R = researchMod();
+                    const meta = typeof getItem === "function" ? getItem(s?.id) : null;
+                    return !!(s && R?.isPigment?.(meta, s));
+                };
+            for (let i = 0; i < inv.length; i++) {
+                if (keep.has(i)) continue;
+                const s = inv[i];
+                if (s?.id && pred(s)) {
+                    keep.add(i);
+                    break;
+                }
+            }
+        }
         return keep;
     }
 
@@ -1254,6 +1324,31 @@
                 if (skipKeep && keep.has(i)) continue;
                 const s = slots[i];
                 if (s && store(s)) return true;
+            }
+            return false;
+        };
+        return check(inventory, true) || check(overflow, false);
+    }
+
+    function stackFoodKc(stack, getItem) {
+        if (!stack?.id) return 0;
+        const meta = typeof getItem === "function" ? getItem(stack.id) : null;
+        const food = {
+            ...(meta?.food || {}),
+            ...(stack.food && typeof stack.food === "object" ? stack.food : {})
+        };
+        return Number(food.kc) || 0;
+    }
+
+    /** Edible leftover that a basket will take — dump before painting so others can eat. */
+    function hasStashableFood(inventory, overflow, getItem, canStore, opts = {}) {
+        const keep = keepIndices(inventory, getItem, opts);
+        const store = typeof canStore === "function" ? canStore : () => true;
+        const check = (slots, skipKeep) => {
+            for (let i = 0; i < (slots || []).length; i++) {
+                if (skipKeep && keep.has(i)) continue;
+                const s = slots[i];
+                if (s && stackFoodKc(s, getItem) > 0 && store(s)) return true;
             }
             return false;
         };
@@ -1275,6 +1370,14 @@
     function storageLayoutCols(n) {
         const count = Math.max(1, Math.floor(Number(n) || 1));
         return Math.min(4, count);
+    }
+
+    /** Colony food in pockets — return it before painting so others can eat. */
+    function stashFoodInsteadOfResearch(state) {
+        if (state.hasFoodStash && state.stashBasket) {
+            return { type: "stash", target: state.stashBasket };
+        }
+        return null;
     }
 
     /**
@@ -1334,6 +1437,8 @@
         const poll = !!(busy && busyJob && state.reconsiderNeeds && busyJob.type === "research");
         if (busy && busyJob && !poll) {
             if (busyJob.type === "research") {
+                const foodFirst = stashFoodInsteadOfResearch(state);
+                if (foodFirst) return foodFirst;
                 const haulFirst = haulInsteadOfResearch(row, state);
                 if (haulFirst) return haulFirst;
                 const leatherFirst = leatherInsteadOfResearch(row, state);
@@ -1341,9 +1446,10 @@
             }
             // A finished count/until bill leaves a leather hold pointing at the bench.
             // Don't keep sewing just because the previous scan still had that job.
-            if (busyJob.type !== "leather" || state.leatherWork || state.benchBill) {
-                return busyJob;
-            }
+            // Same for cook: a paused or reordered bill must drop the roast hold.
+            const keepLeather = busyJob.type !== "leather" || state.leatherWork || state.benchBill;
+            const keepCook = busyJob.type !== "cook" || sameCookJob(busyJob.target, state.cookBill);
+            if (keepLeather && keepCook) return busyJob;
         }
         if (!busy && (Number(state.kc) || 0) < AUTO && state.canEat !== false) return { type: "eat" };
         if (state.isOrphan) return { type: "idle" };
@@ -1397,6 +1503,8 @@
                         return { type: "idle" };
                     }
                 }
+                const foodFirst = stashFoodInsteadOfResearch(state);
+                if (foodFirst) return foodFirst;
                 return { type: "research", target: state.researchCircle };
             }
         }
@@ -1824,6 +1932,7 @@
         SIMMER_INGREDIENT_IDS,
         SIMMER_RESULT,
         SIMMER_MIN_SLOTS,
+        SIMMER_SLOTS,
         HIDE_ANIMALS,
         HIDE_STEPS,
         BENCH_RECIPES,
@@ -1863,6 +1972,7 @@
         setBills,
         addBill,
         billRecipesFor,
+        billRecipeUnlocked,
         billRecipeById,
         billStationKindOf,
         billStationThingId,
@@ -1883,8 +1993,12 @@
         nearestWaterPoint,
         isSimmerIngredientId,
         isCookTool,
+        simmerEmptyCount,
+        countPredQty,
         cookInputReady,
         cookOutputReady,
+        cookFitsBill,
+        sameCookJob,
         billTitle,
         billRecipeTitle,
         cycleBillMode,
@@ -1926,6 +2040,7 @@
         weaponDamage,
         keepIndices,
         hasStashable,
+        hasStashableFood,
         stashIsUrgent,
         storageLayoutCols,
         planWork,

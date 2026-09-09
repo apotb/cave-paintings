@@ -31,6 +31,32 @@ test("settlers may only take dried hide or leather off a drying rack", () => {
     assert.equal(Hide.canTakeFromRack(leather), true);
 });
 
+test("drying rack pauses spoil only while fleshed hide is drying", () => {
+    const getItem = (id) => DataStore.getItem(id);
+    const now = 1000;
+    assert.equal(Hide.pausesRackSpoil(getItem("deer_hide_fleshed")), true);
+    assert.equal(Hide.pausesRackSpoil(getItem("deer_hide_dehaired")), false);
+    assert.equal(Hide.pausesRackSpoil(getItem("deer_hide")), false);
+    assert.equal(Hide.pausesRackSpoil(getItem("deer_hide_soaked")), false);
+    assert.equal(Hide.pausesRackSpoil(getItem("deer_hide_brained")), false);
+    assert.equal(Hide.pausesRackSpoil(getItem("deer_hide_dry")), false);
+
+    const drying = Hide.hangStack(
+        { id: "deer_hide_fleshed", quantity: 1, spoilAt: now + 180 },
+        now,
+        getItem
+    );
+    assert.equal(drying.spoilLeft, 180);
+    assert.equal(drying.spoilAt, undefined);
+
+    const waiting = ["deer_hide", "deer_hide_soaked", "deer_hide_dehaired", "deer_hide_brained"];
+    for (const id of waiting) {
+        const hung = Hide.hangStack({ id, quantity: 1, spoilLeft: 90 }, now, getItem);
+        assert.equal(hung.spoilAt, now + 90, `${id} should keep spoiling on the rack`);
+        assert.equal(hung.spoilLeft, undefined);
+    }
+});
+
 test("tickDryMinute advances fleshed hide then converts", () => {
     const fleshed = DataStore.getItem("deer_hide_fleshed") || DataStore.getItem("deer_hide_flesh");
     assert.ok(fleshed);

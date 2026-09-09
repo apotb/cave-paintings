@@ -335,6 +335,27 @@ test("campfire public stacks are copies, not the live pit slots", () => {
     assert.equal(fire.fuel[0].quantity, 4);
 });
 
+test("cannot light or relight a campfire until Fire is researched", () => {
+    const Research = require("../shared/research");
+    const { world, pawn, Protocol } = createTestWorld();
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    settle.techs.fire = false;
+    world.settlements.push(settle);
+    const chunk = originChunk(world);
+    const fire = testCampfire(pawn);
+    fire.id = "unlit_campfire";
+    fire.fuel[0] = { id: "stick", quantity: 8 };
+    chunk.things.push(fire);
+    pawn.inventory[0] = { id: "sharp_stick", quantity: 1, durability: 50 };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, { type: Protocol.Actions.LIGHT_FIRE, x: pawn.x, y: pawn.y });
+    assert.equal(fire.id, "unlit_campfire");
+    assert.equal(Research.techUnlocked("fire", settle), false);
+    settle.techs.fire = true;
+    world.handleAction(pawn.id, { type: Protocol.Actions.LIGHT_FIRE, x: pawn.x, y: pawn.y });
+    assert.equal(fire.id, "campfire");
+});
+
 test("campfire inv_to_slot takes a sharp stick from the hotbar", () => {
     const { world, pawn, Protocol } = createTestWorld();
     const chunk = originChunk(world);
@@ -579,6 +600,19 @@ test("/kms aliases /kill", () => {
     const { world, pawn, Protocol } = createTestWorld();
     world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/kms" });
     assert.equal(pawn.dead, true);
+});
+
+test("/heal restores body and announces", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.hp = 1;
+    pawn.kc = 0;
+    pawn.dead = false;
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/heal" });
+    assert.equal(pawn.hp, pawn.mhp);
+    assert.equal(pawn.kc, pawn.stomach);
+    assert.equal(pawn.dead, false);
+    const chats = world.drainEvents().filter((e) => e.kind === "chat");
+    assert.ok(chats.some((e) => e.text === "Fully healed" && e.cmd && e.to === pawn.id));
 });
 
 test("new world has an origin spawn sign", () => {
@@ -1039,6 +1073,39 @@ test("strolling wanderers do not worldgen an A* corridor", () => {
         `stroll should stay in the injected neighborhood (${world.chunks.size - before} new chunks)`
     );
     assert.ok(w.creature?.ai, "wanderer should keep stroll AI");
+});
+
+test("wanderer stroll at 20x does not hitch then teleport", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.connected = true;
+    world.tickSpeed = 20;
+    world.baseTickSpeed = 20;
+    const id = "w-hitch-20x";
+    world.wanderers.set(id, {
+        id,
+        name: "Hitch",
+        x: pawn.x + 24,
+        y: pawn.y,
+        facing: "right",
+        heading: { x: 1, y: 0 },
+        inventory: [null, null, null, null, null],
+        hostile: false,
+        recruitLocked: false,
+        refusedBy: []
+    });
+    const w = world.wanderers.get(id);
+    const xs = [];
+    for (let i = 0; i < 24; i++) {
+        world.tick(16);
+        xs.push(w.x);
+    }
+    const moved = Math.abs(xs[xs.length - 1] - xs[0]);
+    assert.ok(moved > 16, `should keep walking at 20× (moved ${moved.toFixed(1)})`);
+    let maxGap = 0;
+    for (let i = 1; i < xs.length; i++) {
+        maxGap = Math.max(maxGap, Math.abs(xs[i] - xs[i - 1]));
+    }
+    assert.ok(maxGap < 36, `steps should stay smooth, not freeze-then-jump (max ${maxGap.toFixed(1)})`);
 });
 
 test("resting companions do not keep a view-radius interest ring", () => {

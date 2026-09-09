@@ -353,9 +353,9 @@ class SettlementPanel {
         }
         if (tab === "research") {
             const R = typeof Research !== "undefined" ? Research : null;
-            const circles = sys?.paintingCirclesInRange?.(this.settle) || [];
+            const circles = sys?.researchCircleEntries?.(this.settle) || [];
             const pts = R?.pointsBreakdown
-                ? R.pointsBreakdown(circles.map((t) => t.entry || t), { settle: this.settle })
+                ? R.pointsBreakdown(circles, { settle: this.settle })
                 : { total: 0 };
             return `research:${id}:${pts.total}:${pts.spent || 0}:${layout}`;
         }
@@ -523,6 +523,7 @@ class SettlementPanel {
             const hitW = Math.max(8, colW - btnsW);
             const hit = scene.add.zone(x, y, hitW, rowH).setOrigin(0, 0);
             hit.setInteractive({ useHandCursor: true, cursor: "pointer" });
+            hit._settlePersonTip = true;
             hit.on("pointerover", (pointer) => {
                 if (!this._pointerInBody(pointer)) return;
                 scene.showTooltip(() => this._personActionTip(p), pointer.x, pointer.y, hit);
@@ -530,6 +531,8 @@ class SettlementPanel {
             hit.on("pointerout", (pointer) => {
                 if (this._refreshing) return;
                 if (this._pointerStillOn(hit, pointer)) return;
+                // World pickups rebuild Phaser's hit list and fire a false out.
+                if (this._pointerInBody(pointer)) return;
                 if (scene._tooltipTarget === hit) scene.hideTooltip?.();
             });
             this.body.add(hit);
@@ -847,8 +850,7 @@ class SettlementPanel {
     }
 
     _researchEntries() {
-        const circles = this.scene.settlementSys?.paintingCirclesInRange?.(this.settle) || [];
-        return circles.map((t) => t.entry || t).filter(Boolean);
+        return this.scene.settlementSys?.researchCircleEntries?.(this.settle) || [];
     }
 
     _fillResearch(sc) {

@@ -439,14 +439,14 @@ test("settlers sleeping at night does not change player tick speed", () => {
     assert.ok(allTravelResting > base);
 });
 
-test("rest clock waits 3s then runs at 10×", () => {
-    assert.equal(Sleep.REST_TICK, 10);
+test("rest clock waits 3s then runs at 12×", () => {
+    assert.equal(Sleep.REST_TICK, 12);
     assert.equal(Sleep.REST_TICK_DELAY_MS, 3000);
     assert.equal(Sleep.effectiveTickSpeed(1, true, 0), 1);
     assert.equal(Sleep.effectiveTickSpeed(1, true, 2999), 1);
-    assert.equal(Sleep.effectiveTickSpeed(1, true, 3000), 10);
+    assert.equal(Sleep.effectiveTickSpeed(1, true, 3000), 12);
     assert.equal(Sleep.effectiveTickSpeed(1, false, 5000), 1);
-    assert.equal(Sleep.effectiveTickSpeed(2, true, 3000), 10);
+    assert.equal(Sleep.effectiveTickSpeed(2, true, 3000), 12);
 });
 
 test("stock list only includes resources from local plants and trees", () => {
@@ -613,6 +613,7 @@ test("cook can light/relight when a firestarter is in storage", () => {
     assert.equal(Settlement.isFirestarter({ id: "fire_drill" }, getItem), true);
     assert.equal(Settlement.cookCanLight({ hasFirestarter: true, hasFuel: true }), true);
     assert.equal(Settlement.cookCanLight({ hasFirestarter: false, hasFuel: true }), false);
+    assert.equal(Settlement.cookCanLight({ hasFirestarter: true, hasFuel: true, knowsFire: false }), false);
 });
 
 test("destroy confirm lists people who will wander off together", () => {
@@ -1087,6 +1088,40 @@ test("planWork drops a busy job as soon as that priority is turned off", () => {
     }).type, "idle");
 });
 
+test("planWork drops a cook hold when the bill is paused or replaced", () => {
+    const jobs = Settlement.defaultJobs();
+    jobs.leather = 0;
+    jobs.haul = 0;
+    jobs.gather = 0;
+    jobs.chop = 0;
+    const fire = { uid: "cf1" };
+    const roast = { fire, bill: { id: "b1", recipeId: "roast", method: "stick_roast" } };
+    const simmer = { fire, bill: { id: "b2", recipeId: "simmer", method: "shell_simmer" } };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        cookBill: roast,
+        busy: true,
+        busyJob: { type: "cook", target: roast }
+    }).target.bill.id, "b1");
+    const switched = Settlement.planWork({
+        kc: 2000,
+        jobs,
+        cookBill: simmer,
+        busy: true,
+        busyJob: { type: "cook", target: roast }
+    });
+    assert.equal(switched.type, "cook");
+    assert.equal(switched.target.bill.id, "b2");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        cookBill: null,
+        busy: true,
+        busyJob: { type: "cook", target: roast }
+    }).type, "idle");
+});
+
 test("planWork drops a finished leather hold instead of sewing forever", () => {
     const jobs = Settlement.defaultJobs();
     const bench = { kind: "bench", station: { uid: "b1" } };
@@ -1171,7 +1206,21 @@ test("settlers keep the best weapon (and a bandage while tending) when stashing"
     assert.equal(withBandage.has(2), true);
     assert.equal(withBandage.has(3), true);
     assert.equal(withBandage.size, 2);
+    const withPigment = Settlement.keepIndices(
+        [{ id: "blueberry", quantity: 2 }, { id: "stick", quantity: 4 }, null, null, null],
+        getItem,
+        { keepPigment: true, isPigment: (s) => s.id === "blueberry" }
+    );
+    assert.equal(withPigment.has(0), true);
+    assert.equal(withPigment.has(1), false);
     const canStore = () => true;
+    assert.equal(Settlement.hasStashable(
+        [{ id: "blueberry", quantity: 1 }, null, null, null, null],
+        [],
+        getItem,
+        canStore,
+        { keepPigment: true, isPigment: (s) => s.id === "blueberry" }
+    ), false);
     assert.equal(Settlement.hasStashable(inv, [], getItem, canStore), true);
     assert.equal(Settlement.hasStashable(
         [{ id: "spear", quantity: 1 }, null, null, null, null],
@@ -1192,6 +1241,37 @@ test("settlers keep the best weapon (and a bandage while tending) when stashing"
         getItem,
         canStore
     ), true);
+    const foodItem = (id) => ({
+        stick: { id: "stick" },
+        roasted_human_flesh: { id: "roasted_human_flesh", food: { kc: 220 } },
+        blueberry: { id: "blueberry", food: { kc: 80 } }
+    }[id]);
+    assert.equal(Settlement.hasStashableFood(
+        [{ id: "roasted_human_flesh", quantity: 5 }, null, null, null, null],
+        [],
+        foodItem,
+        canStore
+    ), true);
+    assert.equal(Settlement.hasStashableFood(
+        [{ id: "stick", quantity: 4 }, null, null, null, null],
+        [],
+        foodItem,
+        canStore
+    ), false);
+    assert.equal(Settlement.hasStashableFood(
+        [{ id: "blueberry", quantity: 2 }, { id: "roasted_human_flesh", quantity: 4 }, null, null, null],
+        [],
+        foodItem,
+        canStore,
+        { keepPigment: true, isPigment: (s) => s.id === "blueberry" }
+    ), true);
+    assert.equal(Settlement.hasStashableFood(
+        [{ id: "blueberry", quantity: 2 }, null, null, null, null],
+        [],
+        foodItem,
+        canStore,
+        { keepPigment: true, isPigment: (s) => s.id === "blueberry" }
+    ), false);
 });
 
 test("planWork dumps full pockets before other jobs, leftovers before idle", () => {
@@ -1285,6 +1365,48 @@ test("planWork dumps full pockets before other jobs, leftovers before idle", () 
         hasStash: true,
         stashUrgent: false
     }).type, "research");
+});
+
+test("planWork dumps leftover food before research even if haul is lower priority", () => {
+    const jobs = Settlement.defaultJobs();
+    jobs.doctor = 0;
+    jobs.cook = 0;
+    jobs.leather = 0;
+    jobs.gather = 0;
+    jobs.chop = 0;
+    jobs.haul = 3;
+    jobs.research = 1;
+    const basket = { x: 8, y: 8, slots: [] };
+    const circle = { uid: "pc-food" };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        researchCircle: circle,
+        stashBasket: basket,
+        hasStash: true,
+        hasFoodStash: true,
+        stashUrgent: false
+    }).type, "stash");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        researchCircle: circle,
+        stashBasket: basket,
+        hasStash: true,
+        hasFoodStash: false,
+        stashUrgent: false
+    }).type, "research");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        researchCircle: circle,
+        busy: true,
+        busyJob: { type: "research", target: circle },
+        stashBasket: basket,
+        hasStash: true,
+        hasFoodStash: true,
+        stashUrgent: false
+    }).type, "stash");
 });
 
 test("pickAutoEat extraBags from settlement baskets, not traveling party", () => {
