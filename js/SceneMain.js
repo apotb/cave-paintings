@@ -3376,6 +3376,7 @@ class SceneMain extends SceneBase {
             if (src.paintPigment !== undefined) entry.paintPigment = src.paintPigment;
             if (Array.isArray(src.paintPigments)) entry.paintPigments = src.paintPigments.slice();
             if (src.paintEnabled != null) entry.paintEnabled = src.paintEnabled !== false;
+            if (src.tallyStick != null) entry.tallyStick = !!src.tallyStick;
             this._netApplyPaintFilter(entry, src);
             Research.ensureEntry(entry, this.getThing(entry.id));
         }
@@ -4530,7 +4531,7 @@ class SceneMain extends SceneBase {
     }
 
     _tooltipLinesSig(lines) {
-        return (lines || []).map((l) => `${l?.icon || ""}:${l?.label || ""}:${l?.value ?? ""}:${l?.hangMinus ? 1 : 0}`).join("|");
+        return (lines || []).map((l) => `${l?.icon || ""}:${l?.label || ""}:${l?.value ?? ""}:${l?.value2 ?? ""}:${l?.hangMinus ? 1 : 0}`).join("|");
     }
 
     _clearTooltipGear() {
@@ -4641,39 +4642,43 @@ class SceneMain extends SceneBase {
             const hangMinus = !!line?.hangMinus;
             const rawVal = String(line?.value ?? "");
             const digitStr = hangMinus ? rawVal.replace(/^-/, "") : rawVal;
-            const val = crispUiText(this.add.text(textX, midY, digitStr, {
-                fontFamily: PIXEL_UI_FONT,
-                fontSize: `${pixelUiFontSize(16, s)}px`,
-                color: "#ffffff",
-                stroke: "#000000",
-                strokeThickness: Math.max(2, Math.round(2 * s))
-            })).setOrigin(1, 0.5);
-            if (typeof applyPixelUiFont === "function") applyPixelUiFont(val, 16, s);
-            let minus = null;
-            if (hangMinus) {
-                minus = crispUiText(this.add.text(textX, midY, "-", {
+            const makeVal = (str) => {
+                const txt = crispUiText(this.add.text(textX, midY, str, {
                     fontFamily: PIXEL_UI_FONT,
                     fontSize: `${pixelUiFontSize(16, s)}px`,
                     color: "#ffffff",
                     stroke: "#000000",
                     strokeThickness: Math.max(2, Math.round(2 * s))
                 })).setOrigin(1, 0.5);
-                if (typeof applyPixelUiFont === "function") applyPixelUiFont(minus, 16, s);
-            }
-            this.tooltipGear.add(minus ? [label, val, minus] : [label, val]);
-            made.push({ label, val, minus, midY });
+                if (typeof applyPixelUiFont === "function") applyPixelUiFont(txt, 16, s);
+                return txt;
+            };
+            const val = makeVal(digitStr);
+            const val2Str = line?.value2 != null ? String(line.value2) : "";
+            const val2 = val2Str ? makeVal(val2Str) : null;
+            let minus = null;
+            if (hangMinus) minus = makeVal("-");
+            const kids = [label, val];
+            if (minus) kids.push(minus);
+            if (val2) kids.push(val2);
+            this.tooltipGear.add(kids);
+            made.push({ label, val, val2, minus, midY });
             y += rowH;
         }
         let maxLabel = 0;
         let maxVal = 0;
+        let maxVal2 = 0;
         let maxMinus = 0;
         for (const row of made) {
             maxLabel = Math.max(maxLabel, row.label.displayWidth || 0);
             maxVal = Math.max(maxVal, row.val.displayWidth || 0);
+            if (row.val2) maxVal2 = Math.max(maxVal2, row.val2.displayWidth || 0);
             if (row.minus) maxMinus = Math.max(maxMinus, row.minus.displayWidth || 0);
         }
         const hasVal = made.some((row) => (row.val.text || "").length);
+        const hasVal2 = made.some((row) => row.val2 && (row.val2.text || "").length);
         const valX = hasVal ? textX + maxLabel + valGap + maxMinus + maxVal : textX + maxLabel;
+        const val2X = hasVal2 ? valX + valGap + maxVal2 : valX;
         for (const row of made) {
             if (hasVal) {
                 row.val.setPosition(valX, row.midY);
@@ -4681,8 +4686,12 @@ class SceneMain extends SceneBase {
             } else {
                 row.val.setVisible(false);
             }
+            if (row.val2) {
+                if (hasVal2) row.val2.setPosition(val2X, row.midY);
+                else row.val2.setVisible(false);
+            }
         }
-        this._tooltipGearW = valX + pad;
+        this._tooltipGearW = (hasVal2 ? val2X : valX) + pad;
         this._tooltipGearH = Math.max(0, y);
     }
 
@@ -7051,6 +7060,7 @@ class SceneMain extends SceneBase {
         }
 
         this._dumpPaintingCirclePigment(circle);
+        this._dumpPaintingCircleTally(circle);
         const wx = circle.x;
         const wy = circle.y;
         this._removePaintingCircleThing(circle);
@@ -7071,6 +7081,77 @@ class SceneMain extends SceneBase {
         if (!id) return;
         const meta = this.getItem(id);
         if (meta) DroppedItem.spawn(this, circle.x, circle.y, meta, 1);
+    }
+
+    _dumpPaintingCircleTally(circle) {
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R?.hasTally?.(circle?.entry)) return;
+        const id = R.TALLY_ITEM_ID || "tally_stick";
+        const meta = this.getItem(id);
+        if (meta) DroppedItem.spawn(this, circle.x, circle.y, meta, 1);
+    }
+
+    _tallyItemId() {
+        return (typeof Research !== "undefined" && Research.TALLY_ITEM_ID) || "tally_stick";
+    }
+
+    _consumeHeldTallyStick() {
+        const player = this.player;
+        if (!player) return false;
+        const idx = player._heldSlotIndex?.() ?? this.hotbar?.activeIndex ?? 0;
+        const held = player.inventory?.[idx];
+        if (!held || held.id !== this._tallyItemId()) return false;
+        held.quantity = (held.quantity || 1) - 1;
+        if (!(held.quantity > 0)) player.inventory[idx] = null;
+        if (this.hotbar) this.hotbar.dirty = true;
+        return true;
+    }
+
+    tryInstallTallyStick(circle) {
+        if (!circle?.entry || !circle.inRange?.()) return false;
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R?.installTally || R.hasTally?.(circle.entry)) return false;
+        const held = this.player?.getHeldItem?.();
+        if (!held || held.id !== this._tallyItemId()) return false;
+        if (this.simAuth()) {
+            const settle = this.settlementSys?.here?.(this.player);
+            this.settlementSys?.sendNet("installTally", {
+                settlementId: settle?.id,
+                uid: circle.entry.uid
+            });
+            return true;
+        }
+        if (!this._consumeHeldTallyStick()) return false;
+        if (!R.installTally(circle.entry)) return false;
+        circle.applyVisual?.();
+        this.settlementSys?.bumpWorkCache?.();
+        return true;
+    }
+
+    tryRemoveTallyStick(circle) {
+        if (!circle?.entry || !circle.inRange?.()) return false;
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R?.hasTally?.(circle.entry)) return false;
+        if (this.settlementSys?.circleTallyRemoveBlockedReason?.(circle)) return false;
+        if (this.simAuth()) {
+            const settle = this.settlementSys?.here?.(this.player);
+            this.settlementSys?.sendNet("removeTally", {
+                settlementId: settle?.id,
+                uid: circle.entry.uid
+            });
+            return true;
+        }
+        if (!R.removeTally(circle.entry)) return false;
+        const meta = this.getItem(this._tallyItemId());
+        if (meta) {
+            const left = this.player.gainItem(meta, 1);
+            if (left > 0) DroppedItem.spawn(this, circle.x, circle.y, meta, left);
+        }
+        if (this.hotbar) this.hotbar.dirty = true;
+        circle.applyVisual?.();
+        this.settlementSys?.bumpWorkCache?.();
+        this.paintingCirclePanel?.layout?.();
+        return true;
     }
 
     _removePaintingCircleThing(circle) {
@@ -10235,8 +10316,8 @@ class SceneMain extends SceneBase {
     doCraft(recipe) {
         if (recipe.craftSeconds > 0) {
             const station = recipe.requireStation
-                ? this._findNearbyCraftStation(recipe.requireStation)
-                : this._craftStationThing;
+                ? (this._findNearbyCraftStation(recipe.requireStation) || this._craftStationThing)
+                : null;
             this.player.beginCraft?.(recipe, station);
             return;
         }

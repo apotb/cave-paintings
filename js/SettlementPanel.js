@@ -862,14 +862,14 @@ class SettlementPanel {
         R.ensureTechs(this.settle);
         const pts = R.pointsBreakdown
             ? R.pointsBreakdown(this._researchEntries(), { settle: this.settle })
-            : { paintings: 0, tokens: 0, books: 0, spent: 0, total: 0 };
+            : { paintings: 0, tallies: 0, tokens: 0, books: 0, spent: 0, total: 0 };
         const wrapW = Math.max(80, this._viewW - Math.round(12 * sc));
         const rowH = Math.round(22 * sc);
         const iconS = Math.round(16 * sc);
         const iconGap = Math.round(4 * sc);
         const textX = iconS + iconGap;
         let y = 0;
-        const head = this._label(`Research points: ${pts.total}`, 0, y, 12);
+        const head = this._label(`Research points: ${R.formatPoints ? R.formatPoints(pts.total) : pts.total}`, 0, y, 12);
         y += Math.round(head.height + 10 * sc);
         const spent = Math.max(0, Math.floor(Number(pts.spent) || 0));
         const rows = [
@@ -897,7 +897,9 @@ class SettlementPanel {
                 this.body.add(icon);
             }
             this._rowLabel(row.name, textX, y, rowH, 12);
-            const n = row.id === "spent" ? String(spent) : String(pts[row.id] ?? 0);
+            const n = row.id === "spent"
+                ? String(spent)
+                : (R.formatPoints ? R.formatPoints(pts[row.id] ?? 0) : String(pts[row.id] ?? 0));
             const val = this._label(n, wrapW, midY, 12);
             val.setOrigin(1, 0.5);
             if (row.id === "spent") {
@@ -933,9 +935,13 @@ class SettlementPanel {
             settlementId: this.settle.id,
             techId: tech.id
         });
-        R.unlock(this.settle, tech.id);
+        if (R.unlockChain) R.unlockChain(this.settle, tech.id);
+        else R.unlock(this.settle, tech.id);
         const tree = this.scene.researchTreePanel;
-        if (tree?.settle && tree.settle !== this.settle) R.unlock(tree.settle, tech.id);
+        if (tree?.settle && tree.settle !== this.settle) {
+            if (R.unlockChain) R.unlockChain(tree.settle, tech.id);
+            else R.unlock(tree.settle, tech.id);
+        }
         this._contentSigVal = null;
         if (tree) tree._sig = null;
         this.refresh();

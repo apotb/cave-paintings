@@ -261,7 +261,8 @@ class SettlementSystem {
             }
             if (typeof Research !== "undefined" && Research.isPaintingCircle?.(def, t.entry)
                 && Research.isEnabled?.(t.entry)
-                && (Research.hasRoom(t.entry) || Research.inProgress(t.entry))) {
+                && (Research.hasRoom(t.entry) || Research.inProgress(t.entry)
+                    || Research.needsTallyInstall?.(settle, t.entry))) {
                 Research.ensureEntry(t.entry, def);
                 paint.push(t);
             }
@@ -302,6 +303,20 @@ class SettlementSystem {
         for (const settle of this.list) {
             if (!S.inRange(settle, thing.x, thing.y, ts)) continue;
             const r = R.removeBlockedReason(settle, this.researchCircleEntries(settle), thing.entry);
+            if (r) reason = r;
+        }
+        return reason;
+    }
+
+    circleTallyRemoveBlockedReason(thing) {
+        const R = typeof Research !== "undefined" ? Research : null;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!R || !S || !thing?.entry) return null;
+        const ts = this.scene.tileSize || 16;
+        let reason = null;
+        for (const settle of this.list) {
+            if (!S.inRange(settle, thing.x, thing.y, ts)) continue;
+            const r = R.tallyRemoveBlockedReason?.(settle, this.researchCircleEntries(settle), thing.entry);
             if (r) reason = r;
         }
         return reason;

@@ -1141,15 +1141,20 @@ class PartyAI {
         };
     }
 
-    _researchPigmentKeep(circle) {
+    _researchPigmentKeep(circle, settle) {
         const R = typeof Research !== "undefined" ? Research : null;
         const entry = circle?.entry || circle;
         const getItem = (id) => this.pawn.scene.getItem?.(id);
+        const keepTally = !!(entry && R?.needsTallyInstall?.(settle, entry));
         const keepPigment = !!(entry && R?.needsPigment?.(entry));
+        const pigmentPredFn = keepPigment
+            ? (s) => !!(s && R.isPigment(getItem(s.id), s) && R.allowsPigment(entry, s, getItem))
+            : null;
         return {
-            keepPigment,
-            isPigment: keepPigment
-                ? (s) => !!(s && R.isPigment(getItem(s.id), s) && R.allowsPigment(entry, s, getItem))
+            keepPigment: keepPigment || keepTally,
+            isPigment: (keepPigment || keepTally)
+                ? (s) => (keepTally && s?.id === (R.TALLY_ITEM_ID || "tally_stick"))
+                    || !!(pigmentPredFn && pigmentPredFn(s))
                 : null
         };
     }
@@ -1413,7 +1418,7 @@ class PartyAI {
             const doctorOn = !!(S && jobs && S.enabledJobs(jobs).includes("doctor"));
             const keepBandage = !!(doctorOn && patients.length);
             const circle = settle ? this._researchCircle(settle) : null;
-            const pigmentKeep = this._researchPigmentKeep(circle);
+            const pigmentKeep = this._researchPigmentKeep(circle, settle);
             const keepOpts = { keepBandage, ...pigmentKeep };
             this._workScan = {
                 unlitFire: settle ? this._unlitFire(settle) : null,
@@ -2802,12 +2807,42 @@ class PartyAI {
         }
         const def = pawn.scene.getThing?.(entry.id) || thing.meta;
         R.ensureEntry(entry, def);
-        if (!R.isEnabled(entry) || (!R.hasRoom(entry) && !R.inProgress(entry))) {
+        if (!R.isEnabled(entry)) {
             this._halt(pawn);
             this._endWorkHold();
             return;
         }
         const getItem = (id) => pawn.scene.getItem?.(id);
+        const tallyId = R.TALLY_ITEM_ID || "tally_stick";
+        if (R.needsTallyInstall?.(settle, entry)) {
+            const found = this._findStack(settle, (s) => s?.id === tallyId);
+            if (found) {
+                if (found.at !== pawn) {
+                    this._clearPaintBar();
+                    this._fetchCookPiece(found, ts, delta);
+                    return;
+                }
+                if (!this._goOrAbort(thing, settle, this._thingKey(thing), ts, delta)) {
+                    this._clearPaintBar();
+                    return;
+                }
+                const piece = this._takeOne(found);
+                if (piece && R.installTally(entry)) {
+                    thing.applyVisual?.();
+                    const facing = R.workFacing?.(entry);
+                    if (facing) pawn.facing = facing;
+                    this._halt(pawn);
+                    return;
+                } else if (piece) {
+                    this._restorePiece(found, piece);
+                }
+            }
+        }
+        if (!R.hasRoom(entry) && !R.inProgress(entry)) {
+            this._halt(pawn);
+            this._endWorkHold();
+            return;
+        }
         if (R.needsPigment(entry)) {
             const found = this._findStack(settle, (s) => R.isPigment(getItem(s.id), s)
                 && R.allowsPigment(entry, s, getItem));

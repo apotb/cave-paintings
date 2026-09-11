@@ -211,7 +211,8 @@ class SceneBase extends Phaser.Scene {
             "stick",
             "log",
             "lean_to",
-            "painting_circle"
+            "painting_circle",
+            "tally_stick"
         ];
         for (const item of items) {
             this.loadImage(item, 'items');

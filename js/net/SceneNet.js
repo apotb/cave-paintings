@@ -73,7 +73,7 @@ class SceneNet extends Phaser.Scene {
             "deer_hide_soaked", "deer_hide_dehaired", "deer_hide_brained", "deer_leather",
             "boar_hide", "boar_hide_fleshed", "boar_hide_dry",
             "boar_hide_soaked", "boar_hide_dehaired", "boar_hide_brained", "boar_leather",
-            "brain", "bone", "stick", "log", "lean_to", "painting_circle",
+            "brain", "bone", "stick", "log", "lean_to", "painting_circle", "tally_stick",
             "hide_pouch", "hide_bundle", "hide_tunic", "hide_loincloth",
             "leather_pouch", "leather_pack", "leather_tunic", "leather_kilt"
         ]) {

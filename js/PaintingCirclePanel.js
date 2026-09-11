@@ -37,16 +37,42 @@ class PaintingCirclePanel {
         this._removeUi.rect?.on("pointerout", () => {
             if (this.scene._tooltipTarget === this._removeUi?.rect) this.scene.hideTooltip();
         });
+        this._tallyUi = sys.makeWorldButton("Take tally", () => this._tryTakeTally());
+        this._tallyUi.rect?.on("pointerover", (pointer) => {
+            const reason = this._tallyBlockedReason();
+            if (reason) {
+                this.scene.showTooltip(() => this._tallyBlockedReason() || "", pointer.x, pointer.y, this._tallyUi.rect);
+            }
+        });
+        this._tallyUi.rect?.on("pointerout", () => {
+            if (this.scene._tooltipTarget === this._tallyUi?.rect) this.scene.hideTooltip();
+        });
         this.container.add(this._enableUi.btn);
         this.container.add(this._matUi.btn);
+        this.container.add(this._tallyUi.btn);
         this.container.add(this._removeUi.btn);
         this._enableUi.btn.setVisible(false);
         this._matUi.btn.setVisible(false);
+        this._tallyUi.btn.setVisible(false);
         this._removeUi.btn.setVisible(false);
     }
 
     _blockedReason() {
         return this.scene.settlementSys?.circleRemoveBlockedReason?.(this.circle) || null;
+    }
+
+    _tallyBlockedReason() {
+        return this.scene.settlementSys?.circleTallyRemoveBlockedReason?.(this.circle) || null;
+    }
+
+    _hasTally() {
+        const R = typeof Research !== "undefined" ? Research : null;
+        return !!(R?.hasTally && this.circle?.entry && R.hasTally(this.circle.entry));
+    }
+
+    _tryTakeTally() {
+        if (!this.circle || this._tallyUi?._disabled) return;
+        this.scene.tryRemoveTallyStick?.(this.circle);
     }
 
     _tryRemove() {
@@ -75,6 +101,7 @@ class PaintingCirclePanel {
         const ok = !!sys?.canManageCircle?.(this.circle) && !full;
         this._enableUi?.btn.setVisible(ok);
         this._matUi?.btn.setVisible(ok);
+        this._tallyUi?.btn.setVisible(!!this.circle && this._hasTally());
         this._removeUi?.btn.setVisible(!!this.circle);
         if (full && this.scene.pigmentFilterPanel?.thing === this.circle) {
             this.scene.pigmentFilterPanel.close();
@@ -89,6 +116,20 @@ class PaintingCirclePanel {
         } else {
             this._enableUi?.rect?.disableInteractive?.();
             this._matUi?.rect?.disableInteractive?.();
+        }
+        if (this._tallyUi) {
+            const reason = this._tallyBlockedReason();
+            this._tallyUi.setEnabled?.(!reason);
+            if (this._tallyUi.btn?.visible && typeof ensurePointerInteractive === "function") {
+                ensurePointerInteractive(this._tallyUi.rect);
+            }
+            if (reason && this._tallyUi.rect?.input) {
+                this._tallyUi.rect.input.cursor = "default";
+                this._tallyUi.rect.input.useHandCursor = false;
+            }
+            if (!reason && this.scene._tooltipTarget === this._tallyUi.rect) {
+                this.scene.hideTooltip();
+            }
         }
         if (this._removeUi) {
             const reason = this._blockedReason();
@@ -135,6 +176,7 @@ class PaintingCirclePanel {
         this.container.setVisible(false);
         this._enableUi?.btn.setVisible(false);
         this._matUi?.btn.setVisible(false);
+        this._tallyUi?.btn.setVisible(false);
         this._removeUi?.btn.setVisible(false);
         this.scene.hideTooltip();
     }
@@ -154,6 +196,13 @@ class PaintingCirclePanel {
                 applyPixelUiWorldFont(this._matUi.text, 14, this.scene);
             }
             this._matUi.paint?.();
+        }
+        if (this._tallyUi) {
+            this._tallyUi.rect.setSize(bw, bh);
+            if (typeof applyPixelUiWorldFont === "function") {
+                applyPixelUiWorldFont(this._tallyUi.text, 14, this.scene);
+            }
+            this._tallyUi.paint?.();
         }
         if (this._removeUi) {
             this._removeUi.rect.setSize(bw, bh);
@@ -178,8 +227,13 @@ class PaintingCirclePanel {
             actionOn: !!this._matUi?.btn?.visible
         });
         const manageOn = !!this._enableUi?.btn?.visible || !!this._matUi?.btn?.visible;
-        const removeY = manageOn ? row.y + row.bh + row.gap : row.y;
-        this._removeUi?.btn.setPosition(0, removeY);
+        const tallyOn = !!this._tallyUi?.btn?.visible;
+        let y = manageOn ? row.y + row.bh + row.gap : row.y;
+        if (tallyOn) {
+            this._tallyUi.btn.setPosition(0, y);
+            y += row.bh + row.gap;
+        }
+        this._removeUi?.btn.setPosition(0, y);
     }
 
     update() {
@@ -198,6 +252,7 @@ class PaintingCirclePanel {
             && Phaser.Geom.Rectangle.Contains(rect.getBounds(), pt.x, pt.y));
         if (hit(this._enableUi?.rect, this._enableUi?.btn?.visible)) return true;
         if (hit(this._matUi?.rect, this._matUi?.btn?.visible)) return true;
+        if (hit(this._tallyUi?.rect, this._tallyUi?.btn?.visible)) return true;
         if (hit(this._removeUi?.rect, this._removeUi?.btn?.visible)) return true;
         return false;
     }

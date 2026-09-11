@@ -39,10 +39,10 @@
     },
     {
         "id": "hut",
-        "name": "Hut",
+        "name": "Huts",
         "era": "Paleolithic",
         "quote": "It's nice having walls",
-        "cost": 3,
+        "cost": 4,
         "prereqs": ["camping", "basic_furniture"],
         "unlocks": { "items": [], "jobs": [], "text": ["Hut"] },
         "children": []
@@ -121,8 +121,8 @@
         "name": "Fishing",
         "era": "Mesolithic",
         "quote": "Might need to adjust your palate",
-        "cost": 3,
-        "prereqs": ["cordage"],
+        "cost": 4,
+        "prereqs": ["cordage", "hafting"],
         "unlocks": { "items": [], "jobs": [], "text": ["Fishing job"] },
         "children": ["nets"]
     },
@@ -131,8 +131,8 @@
         "name": "Nets",
         "era": "Mesolithic",
         "quote": "As if manual fishing wasn't lazy enough",
-        "cost": 3,
-        "prereqs": ["fishing"],
+        "cost": 4,
+        "prereqs": ["fishing", "basic_furniture"],
         "unlocks": { "items": [], "jobs": [], "text": ["Fishing Net"] },
         "children": []
     },
@@ -141,8 +141,8 @@
         "name": "Agriculture",
         "era": "Neolithic",
         "quote": "I love dirt",
-        "cost": 5,
-        "prereqs": ["digging"],
+        "cost": 8,
+        "prereqs": ["storage", "herbalism", "digging"],
         "unlocks": { "items": [], "jobs": [], "text": ["Agronomy job"] },
         "children": ["tree_sowing", "husbandry"]
     },
@@ -162,8 +162,8 @@
         "name": "Husbandry",
         "era": "Neolithic",
         "quote": "More mouths to feed",
-        "cost": 3,
-        "prereqs": ["agriculture"],
+        "cost": 5,
+        "prereqs": ["agriculture", "dogs"],
         "unlocks": { "items": [], "jobs": [], "text": ["Husbandry job"] },
         "children": ["herding"]
     },
@@ -172,8 +172,8 @@
         "name": "Herding",
         "era": "Neolithic",
         "quote": "The circle of life",
-        "cost": 4,
-        "prereqs": ["husbandry"],
+        "cost": 6,
+        "prereqs": ["husbandry", "hut"],
         "unlocks": { "items": [], "jobs": [], "text": ["Fence", "Fence Gate", "Pen Marker", "Trough"] },
         "children": []
     },
@@ -195,7 +195,7 @@
         "quote": "Precursor to society",
         "cost": 0,
         "startUnlocked": true,
-        "prereqs": ["fire", "cordage", "tanning"],
+        "prereqs": ["fire"],
         "unlocks": { "items": ["settling_stone"], "jobs": [], "text": [] },
         "children": []
     },
@@ -266,7 +266,7 @@
         "name": "Pottery",
         "era": "Neolithic",
         "quote": "For those who dislike coconuts",
-        "cost": 4,
+        "cost": 6,
         "prereqs": ["pit_kiln", "agriculture"],
         "unlocks": { "items": [], "jobs": [], "text": ["Clay Pot"] },
         "children": []
@@ -287,10 +287,10 @@
         "name": "Hafting",
         "era": "Paleolithic",
         "quote": "Sharper sticks",
-        "cost": 1,
+        "cost": 2,
         "prereqs": ["knapping", "cordage"],
         "unlocks": { "items": ["pitch", "stone_spear", "flint_spear"], "jobs": [], "text": [] },
-        "children": ["bows", "throwing"]
+        "children": ["throwing"]
     },
     {
         "id": "throwing",
@@ -307,8 +307,8 @@
         "name": "Bows",
         "era": "Mesolithic",
         "quote": "Stay out of danger",
-        "cost": 4,
-        "prereqs": ["hafting", "blades"],
+        "cost": 5,
+        "prereqs": ["hafting", "microliths"],
         "unlocks": { "items": [], "jobs": [], "text": ["Bow", "Arrow"] },
         "children": []
     },
@@ -317,7 +317,7 @@
         "name": "Dogs",
         "era": "Paleolithic",
         "quote": "Man's best friend",
-        "cost": 5,
+        "cost": 3,
         "prereqs": ["cooking"],
         "unlocks": { "items": [], "jobs": [], "text": ["Tame wolves into dogs"] },
         "children": []
@@ -360,7 +360,7 @@
         "cost": 4,
         "prereqs": ["blades"],
         "unlocks": { "items": [], "jobs": [], "text": ["Microlith knapping"] },
-        "children": []
+        "children": ["bows"]
     },
     {
         "id": "tanning",
@@ -423,7 +423,7 @@
         "quote": "Invent 1, 2 before buckling shoes",
         "cost": 2,
         "prereqs": ["painting"],
-        "unlocks": { "items": [], "jobs": [], "text": ["Tally Stick"] },
+        "unlocks": { "items": ["tally_stick"], "jobs": [], "text": [] },
         "children": ["mathematics"]
     },
     {
@@ -431,18 +431,18 @@
         "name": "Mathematics",
         "era": "Neolithic",
         "quote": "We could do a lot with this",
-        "cost": 7,
-        "prereqs": ["counting", "clay_forming"],
+        "cost": 8,
+        "prereqs": ["counting", "clay_forming", "agriculture"],
         "unlocks": { "items": [], "jobs": [], "text": ["Clay Tokens"] },
         "children": ["writing"]
     },
     {
         "id": "writing",
-        "name": "Writing",
-        "era": "Neolithic",
+        "name": "Proto-Writing",
+        "era": "Chalcolithic",
         "quote": "Less ambiguous than paintings",
-        "cost": 15,
-        "prereqs": ["mathematics", "basic_furniture"],
+        "cost": 12,
+        "prereqs": ["mathematics", "pottery"],
         "unlocks": { "items": [], "jobs": [], "text": ["Clay Tablet", "Research Bench"] },
         "children": []
     },

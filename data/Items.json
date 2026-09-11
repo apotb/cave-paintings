@@ -1309,6 +1309,25 @@
         }
     },
     {
+        "id": "tally_stick",
+        "name": "Tally Stick",
+        "key": "tally_stick",
+        "maxStack": 99,
+        "weight": 0.3,
+        "tooltip": [
+            "Install on a Painting Circle",
+            "That circle's paintings are worth 1.5×"
+        ],
+        "recipe": {
+            "bone": 1,
+            "CRAFT_SECONDS": 8,
+            "REQUIRE_TOOL": {
+                "toolClass": "knife",
+                "wear": 5
+            }
+        }
+    },
+    {
         "id": "rot",
         "name": "Rot",
         "key": "rot",

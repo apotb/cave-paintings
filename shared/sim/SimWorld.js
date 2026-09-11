@@ -1764,9 +1764,69 @@ class SimWorld {
         const circles = this._paintingCirclesInRange(settle);
         const pts = R.pointsBreakdown(circles, { settle });
         if (!R.canUnlock(settle, id, pts.total)) return false;
-        R.unlock(settle, id);
+        if (R.unlockChain) R.unlockChain(settle, id);
+        else R.unlock(settle, id);
         this._youDirty.add(settle.ownerId);
         return true;
+    }
+
+    _tallyItemId() {
+        return _research()?.TALLY_ITEM_ID || "tally_stick";
+    }
+
+    _takeOneItem(p, itemId) {
+        if (!p || !itemId) return false;
+        const heldIdx = p.hotbarIndex ?? 0;
+        const held = p.inventory?.[heldIdx];
+        if (held?.id === itemId) {
+            held.quantity = (held.quantity || 1) - 1;
+            if (!(held.quantity > 0)) p.inventory[heldIdx] = null;
+            this._dirtyPawnOwner(p);
+            return true;
+        }
+        for (const inv of [p.inventory, p.overflow]) {
+            if (!Array.isArray(inv)) continue;
+            const i = inv.findIndex((s) => s && s.id === itemId);
+            if (i < 0) continue;
+            const stack = inv[i];
+            stack.quantity = (stack.quantity || 1) - 1;
+            if (!(stack.quantity > 0)) inv[i] = null;
+            this._dirtyPawnOwner(p);
+            return true;
+        }
+        return false;
+    }
+
+    _tryTallyOp(p, settle, action, op) {
+        const R = _research();
+        const uid = String(action.uid || "");
+        const found = uid ? this._findThingByUid(uid) : null;
+        if (!found || !R?.isPaintingCircle?.(this._thingDef(found.entry?.id), found.entry)) return;
+        if (!Settlement.inRange(settle, found.entry.x, found.entry.y, TS)) return;
+        R.ensureEntry(found.entry, this._thingDef(found.entry.id));
+        const actor = this._actionPawn(p, action) || p;
+        const itemId = this._tallyItemId();
+        if (op === "installTally") {
+            if (R.hasTally?.(found.entry)) return;
+            if (!this._takeOneItem(actor, itemId)) return;
+            if (!R.installTally(found.entry)) {
+                const left = this._give(actor, itemId, 1);
+                if (left > 0) this._pushDrop(actor.x, actor.y, { id: itemId, quantity: left });
+                return;
+            }
+            this._emitStorage(found.chunk, found.entry);
+            this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "removeTally") {
+            const circles = this._paintingCirclesInRange(settle);
+            if (R.tallyRemoveBlockedReason?.(settle, circles, found.entry)) return;
+            if (!R.removeTally(found.entry)) return;
+            const left = this._give(actor, itemId, 1);
+            if (left > 0) this._pushDrop(actor.x, actor.y, { id: itemId, quantity: left });
+            this._emitStorage(found.chunk, found.entry);
+            this._youDirty.add(p.id);
+        }
     }
 
     _handleSettlement(p, action = {}) {
@@ -1926,6 +1986,10 @@ class SimWorld {
             if (!Settlement.inRange(settle, found.entry.x, found.entry.y, TS)) return;
             R.setEnabled(found.entry, action.enabled !== false);
             this._emitStorage(found.chunk, found.entry);
+            return;
+        }
+        if ((op === "installTally" || op === "removeTally") && settle && settle.ownerId === p.id) {
+            this._tryTallyOp(p, settle, action, op);
             return;
         }
         if (op === "setJobs" && settle && settle.ownerId === p.id) {
@@ -7754,6 +7818,7 @@ class SimWorld {
                 paintPigment: entry.paintPigment || null,
                 paintPigments: Array.isArray(entry.paintPigments) ? entry.paintPigments.slice() : [],
                 paintEnabled: entry.paintEnabled !== false,
+                tallyStick: !!entry.tallyStick,
                 paintFilter: R.persistPaintFilter ? R.persistPaintFilter(entry.paintFilter) : (entry.paintFilter || null)
             };
         }
@@ -8743,6 +8808,9 @@ class SimWorld {
         }
         const pigmentId = R.currentPigmentId(entry);
         if (pigmentId) this._pushDrop(entry.x, entry.y, { id: pigmentId, quantity: 1 });
+        if (R.hasTally?.(entry)) {
+            this._pushDrop(entry.x, entry.y, { id: R.TALLY_ITEM_ID || "tally_stick", quantity: 1 });
+        }
         const itemId = Place.itemIdForThing(entry.id, itemDefs());
         const leftover = this._give(p, itemId, 1);
         if (leftover > 0) {

@@ -175,6 +175,24 @@ test("craft sharp_stick needs a nearby rock or settling stone", () => {
     assert.ok(!pawn.inventory.some((s) => s?.id === "stick"));
 });
 
+test("craft tally_stick spends bone and needs a held knife", () => {
+    const Research = require("../shared/research");
+    const { world, pawn, Protocol } = createTestWorld();
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    pawn.inventory[0] = { id: "stone_tool", quantity: 1, toolClass: "knife", knapDamage: 4 };
+    pawn.inventory[1] = { id: "bone", quantity: 1 };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "tally_stick" });
+    assert.equal(pawn.inventory.some((s) => s?.id === "tally_stick"), false);
+
+    Research.unlock(settle, "counting");
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "tally_stick" });
+    assert.ok(pawn.inventory.some((s) => s?.id === "tally_stick"));
+    assert.ok(!pawn.inventory.some((s) => s?.id === "bone"));
+    assert.equal(pawn.inventory[0]?.toolClass, "knife");
+});
+
 test("basket right-click take moves one cord, not the whole stack", () => {
     const { world, pawn, Protocol } = createTestWorld();
     const chunk = originChunk(world);
@@ -2313,6 +2331,49 @@ test("unlockTech spends from the settlement pool without changing painted counts
     assert.equal(Research.availableTotal([a, b], settle), 2);
 });
 
+test("unlockTech buys missing prereqs when points cover the chain", () => {
+    const Research = require("../shared/research");
+    const { world, pawn, Protocol } = createTestWorld();
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    const chunk = originChunk(world);
+    const a = { uid: "pc-chain", id: "painting_circle", x: pawn.x, y: pawn.y, painted: 6 };
+    Research.ensureEntry(a);
+    chunk.things.push(a);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "unlockTech",
+        settlementId: settle.id,
+        techId: "throwing"
+    });
+    assert.equal(Research.hasTech(settle, "hafting"), true);
+    assert.equal(Research.hasTech(settle, "throwing"), true);
+    assert.equal(Research.availableTotal([a], settle), 1);
+});
+
+test("unlockTech refuses fogged techs even with points and prereqs", () => {
+    const Research = require("../shared/research");
+    const { world, pawn, Protocol } = createTestWorld();
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    const chunk = originChunk(world);
+    const a = { uid: "pc-fog", id: "painting_circle", x: pawn.x, y: pawn.y, painted: 6 };
+    Research.ensureEntry(a);
+    chunk.things.push(a);
+    Research.unlock(settle, "herbalism");
+    Research.unlock(settle, "digging");
+    Research.unlock(settle, "storage");
+    assert.equal(Research.currentAge(settle), "Paleolithic");
+    assert.equal(Research.techFogged(settle, "agriculture"), true);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "unlockTech",
+        settlementId: settle.id,
+        techId: "agriculture"
+    });
+    assert.equal(Research.hasTech(settle, "agriculture"), false);
+});
+
 test("cannot pick up a painting circle that would drop below spent research", () => {
     const Research = require("../shared/research");
     const { world, pawn, Protocol } = createTestWorld();
@@ -2371,6 +2432,16 @@ test("can pick up a painting circle when remaining paintings cover spent researc
     Research.ensureEntry(b);
     chunk.things.push(a, b);
     Research.unlock(settle, "agriculture");
+    const c = {
+        uid: "pc-keep-c",
+        id: "painting_circle",
+        x: pawn.x + 16,
+        y: pawn.y,
+        painted: 6,
+        locked: 0
+    };
+    Research.ensureEntry(c);
+    chunk.things.push(c);
     world.handleAction(pawn.id, {
         type: Protocol.Actions.STORAGE,
         op: "pickup",
@@ -2379,6 +2450,93 @@ test("can pick up a painting circle when remaining paintings cover spent researc
     assert.equal(chunk.things.some((t) => t.uid === "pc-keep-a"), false);
     assert.ok(chunk.things.some((t) => t.uid === "pc-keep-b"));
     assert.ok(pawn.inventory.some((s) => s && s.id === "painting_circle"));
-    assert.equal(Research.paintedTotal([b]), 6);
-    assert.equal(Research.availableTotal([b], settle), 1);
+    assert.equal(Research.paintedTotal([b, c]), 12);
+    assert.equal(Research.availableTotal([b, c], settle), 4);
+});
+
+test("installTally consumes a held tally stick", () => {
+    const Research = require("../shared/research");
+    const { world, pawn, Protocol } = createTestWorld();
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    Research.unlock(settle, "counting");
+    const chunk = originChunk(world);
+    const entry = {
+        uid: "pc-install",
+        id: "painting_circle",
+        x: pawn.x,
+        y: pawn.y,
+        painted: 3
+    };
+    Research.ensureEntry(entry);
+    chunk.things.push(entry);
+    pawn.inventory[0] = { id: "tally_stick", quantity: 2 };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "installTally",
+        settlementId: settle.id,
+        uid: entry.uid
+    });
+    assert.equal(entry.tallyStick, true);
+    assert.equal(pawn.inventory[0]?.id, "tally_stick");
+    assert.equal(pawn.inventory[0]?.quantity, 1);
+    assert.equal(Research.circlePoints(entry), 4.5);
+    const pub = world._storagePublic(entry, chunk);
+    assert.equal(pub.tallyStick, true);
+});
+
+test("removeTally returns the stick to the pawn", () => {
+    const Research = require("../shared/research");
+    const { world, pawn, Protocol } = createTestWorld();
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    const chunk = originChunk(world);
+    const entry = {
+        uid: "pc-remove",
+        id: "painting_circle",
+        x: pawn.x,
+        y: pawn.y,
+        painted: 2,
+        tallyStick: true
+    };
+    Research.ensureEntry(entry);
+    chunk.things.push(entry);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "removeTally",
+        settlementId: settle.id,
+        uid: entry.uid
+    });
+    assert.equal(entry.tallyStick, false);
+    assert.ok(pawn.inventory.some((s) => s && s.id === "tally_stick"));
+    assert.equal(Research.circlePoints(entry), 2);
+});
+
+test("removeTally is blocked when remaining points would fall below spent research", () => {
+    const Research = require("../shared/research");
+    const { world, pawn, Protocol } = createTestWorld();
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    const chunk = originChunk(world);
+    const entry = {
+        uid: "pc-lock",
+        id: "painting_circle",
+        x: pawn.x,
+        y: pawn.y,
+        painted: 3,
+        tallyStick: true
+    };
+    Research.ensureEntry(entry);
+    chunk.things.push(entry);
+    Research.unlock(settle, "hut");
+    assert.equal(Research.spentPoints(settle), 4);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "removeTally",
+        settlementId: settle.id,
+        uid: entry.uid
+    });
+    assert.equal(entry.tallyStick, true);
+    assert.equal(pawn.inventory.some((s) => s && s.id === "tally_stick"), false);
 });

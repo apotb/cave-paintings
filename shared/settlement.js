@@ -67,6 +67,7 @@
             "Move items between storage"
         ],
         research: [
+            "Install tally stick",
             "Fetch pigment",
             "Work at Painting Circle"
         ]

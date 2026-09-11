@@ -11,11 +11,22 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
     const PAINT_MAX = 6;
     const PAINT_MINUTES = 720;
+    const TALLY_ITEM_ID = "tally_stick";
+    const TALLY_MULT_NUM = 3;
+    const TALLY_MULT_DEN = 2;
     /** 16×16 circle, origin south-center. Pawns use feet-left (0, 1). */
     const PAWN_W = 16;
     /** 1st painting north, 2–3 east, 4th south, 5–6 west. */
     const WORK_FACING = ["up", "right", "right", "down", "left", "left"];
     const ROOTS = ["gathering", "fire", "knapping", "tanning", "culture"];
+    const ERAS = ["Paleolithic", "Mesolithic", "Neolithic", "Chalcolithic"];
+    const FOG_COPY = "Your tribe isn't advanced enough to comprehend this.";
+    const ERA_ICONS = {
+        paleolithic: "campfire",
+        mesolithic: "null",
+        neolithic: "null",
+        chalcolithic: "null"
+    };
     /** Cave-paint red from `assets/ui/title` silhouettes. */
     const UI_PAINT_TINT = 0xaa1100;
     const UI_ICON_KEY = "painting_circle_ui";
@@ -27,6 +38,7 @@
     /** Research tab currencies. `icon` is an item id, or `"null"` for the missing-item placeholder. */
     const CURRENCIES = [
         { id: "paintings", name: "Paintings", icon: "painting_circle" },
+        { id: "tallies", name: "Tallies", icon: "tally_stick" },
         { id: "tokens", name: "Tokens", icon: "null" },
         { id: "books", name: "Books", icon: "null" }
     ];
@@ -40,9 +52,18 @@
         const p = pts || {};
         const spent = Math.max(0, Math.floor(Number(p.spent) || 0));
         return currencies()
-            .map((row) => `${row.name}  ${p[row.id] ?? 0}`)
+            .map((row) => `${row.name}  ${formatPoints(p[row.id] ?? 0)}`)
             .concat([`Research  -${spent}`])
             .join("\n");
+    }
+
+    /** Strip trailing .0; keep halves as 4.5. */
+    function formatPoints(n) {
+        const v = Number(n);
+        if (!Number.isFinite(v)) return "0";
+        const snapped = Math.round(v * TALLY_MULT_DEN) / TALLY_MULT_DEN;
+        if (Object.is(snapped, -0) || snapped === 0) return "0";
+        return Number.isInteger(snapped) ? String(snapped) : snapped.toFixed(1);
     }
 
     /** Right-aligned spent count: digits match the lines above; minus hangs left. */
@@ -222,6 +243,11 @@
     function overlayKey(i, thingKey) {
         const key = thingKey || "painting_circle";
         return `${key}_${i}`;
+    }
+
+    function tallyOverlayKey(thingKey) {
+        const key = thingKey || "painting_circle";
+        return `${key}_upgrade_stick`;
     }
 
     function clampPainted(n) {
@@ -409,6 +435,7 @@
         else entry.paintEnabled = !!entry.paintEnabled;
         applyPaintFilter(entry, entry.paintFilter);
         _syncPaintPigments(entry);
+        entry.tallyStick = !!entry.tallyStick;
         if (!entry.uid) {
             entry.uid = `pc_${Math.round(Number(entry.x) || 0)}_${Math.round(Number(entry.y) || 0)}`;
         }
@@ -419,13 +446,64 @@
         return clampPainted(entry?.painted);
     }
 
+    function hasTally(entry) {
+        return !!entry?.tallyStick;
+    }
+
+    function circlePoints(entry) {
+        const n = paintedCount(entry);
+        if (!hasTally(entry)) return n;
+        return (n * TALLY_MULT_NUM) / TALLY_MULT_DEN;
+    }
+
+    function circlePointsTotal(entries) {
+        let n = 0;
+        for (const e of entries || []) n += circlePoints(e);
+        return n;
+    }
+
+    function tallyBonus(entries) {
+        let n = 0;
+        for (const e of entries || []) {
+            if (hasTally(e)) n += paintedCount(e) / TALLY_MULT_DEN;
+        }
+        return n;
+    }
+
+    function needsTallyInstall(settle, entry) {
+        if (!entry) return false;
+        if (hasTally(entry)) return false;
+        if (settle && !hasTech(settle, "counting")) return false;
+        return true;
+    }
+
+    function installTally(entry) {
+        if (!entry || hasTally(entry)) return false;
+        ensureEntry(entry);
+        entry.tallyStick = true;
+        return true;
+    }
+
+    function removeTally(entry) {
+        if (!hasTally(entry)) return false;
+        entry.tallyStick = false;
+        return true;
+    }
+
+    function _sameCircle(a, b) {
+        const uid = b?.uid != null ? String(b.uid) : "";
+        if (uid && String(a?.uid || "") === uid) return true;
+        if (!uid && a === b) return true;
+        return false;
+    }
+
     function lockedCount(entry) {
         return 0;
     }
 
     /** This circle's contribution to the settlement pool (finished paintings). */
     function availableOn(entry) {
-        return paintedCount(entry);
+        return circlePoints(entry);
     }
 
     function hasRoom(entry) {
@@ -545,9 +623,8 @@
     }
 
     function availableTotal(entries, settle) {
-        const n = paintedTotal(entries);
-        if (!settle) return n;
-        return Math.max(0, n - spentPoints(settle));
+        if (!settle) return circlePointsTotal(entries);
+        return availablePoints(entries, { settle });
     }
 
     /**
@@ -557,15 +634,17 @@
      */
     function pointsBreakdown(entries, extra = {}) {
         const paintings = paintedTotal(entries);
+        const tallies = tallyBonus(entries);
         const tokens = Math.max(0, Math.floor(Number(extra?.tokens) || 0));
         const books = Math.max(0, Math.floor(Number(extra?.books ?? extra?.tablets) || 0));
-        const produced = paintings + tokens + 5 * books;
+        const produced = paintings + tallies + tokens + 5 * books;
         const settle = extra?.settle;
         const spent = settle
             ? spentPoints(settle)
             : Math.max(0, Math.floor(Number(extra?.spent) || 0));
         return {
             paintings,
+            tallies,
             tokens,
             books,
             spent,
@@ -596,12 +675,18 @@
     }
 
     function remainingAfterRemove(entries, entry) {
-        const uid = entry?.uid != null ? String(entry.uid) : "";
         let n = 0;
         for (const e of entries || []) {
-            if (uid && String(e?.uid || "") === uid) continue;
-            if (!uid && e === entry) continue;
-            n += paintedCount(e);
+            if (_sameCircle(e, entry)) continue;
+            n += circlePoints(e);
+        }
+        return n;
+    }
+
+    function remainingAfterUninstallTally(entries, entry) {
+        let n = 0;
+        for (const e of entries || []) {
+            n += _sameCircle(e, entry) ? paintedCount(e) : circlePoints(e);
         }
         return n;
     }
@@ -612,16 +697,37 @@
         return Math.max(0, spent - remainingAfterRemove(entries, entry));
     }
 
+    function tallyRemoveShortfall(settle, entries, entry) {
+        const spent = spentPoints(settle);
+        if (!(spent > 0) || !hasTally(entry)) return 0;
+        return Math.max(0, spent - remainingAfterUninstallTally(entries, entry));
+    }
+
     function canRemoveCircle(settle, entries, entry) {
         if (!entry) return false;
         return removeShortfall(settle, entries, entry) === 0;
     }
 
+    function canRemoveTally(settle, entries, entry) {
+        if (!entry || !hasTally(entry)) return false;
+        return tallyRemoveShortfall(settle, entries, entry) === 0;
+    }
+
+    function _shortfallReason(need) {
+        if (!(need > 0)) return null;
+        const label = formatPoints(need);
+        return `Need ${label} extra research point${need === 1 ? "" : "s"} to maintain research`;
+    }
+
     function removeBlockedReason(settle, entries, entry) {
         if (!entry) return null;
-        const need = removeShortfall(settle, entries, entry);
-        if (!(need > 0)) return null;
-        return `Need ${need} extra painting${need === 1 ? "" : "s"} to maintain research`;
+        return _shortfallReason(removeShortfall(settle, entries, entry));
+    }
+
+    function tallyRemoveBlockedReason(settle, entries, entry) {
+        if (!entry) return null;
+        if (!hasTally(entry)) return null;
+        return _shortfallReason(tallyRemoveShortfall(settle, entries, entry));
     }
 
     function removeConfirmCopy(painted) {
@@ -686,13 +792,56 @@
         return miss;
     }
 
+    function _techCost(t) {
+        return Math.max(0, Math.floor(Number(t?.cost) || 0));
+    }
+
+    /**
+     * Techs still needed to own `techId`, ancestors first. Already-owned nodes
+     * (and shared diamonds) are skipped.
+     */
+    function remainingUnlockIds(settle, techId, seen) {
+        const t = typeof techId === "string" ? techById(techId) : techId;
+        if (!t?.id) return [];
+        seen = seen || new Set();
+        if (seen.has(t.id)) return [];
+        seen.add(t.id);
+        if (settle && hasTech(settle, t.id)) return [];
+        const out = [];
+        for (const p of t.prereqs || []) out.push(...remainingUnlockIds(settle, p, seen));
+        out.push(t.id);
+        return out;
+    }
+
+    function remainingUnlockCost(settle, techId) {
+        if (settle) ensureTechs(settle);
+        let n = 0;
+        for (const id of remainingUnlockIds(settle, techId)) n += _techCost(techById(id));
+        return n;
+    }
+
+    function remainingCostLabel(settle, tech) {
+        const t = typeof tech === "string" ? techById(tech) : tech;
+        if (!t) return "0";
+        if (!settle || hasTech(settle, t.id)) return techCostLabel(t);
+        const n = remainingUnlockCost(settle, t.id);
+        if (!(n > 0)) return "Free";
+        return `${n} pt${n === 1 ? "" : "s"}`;
+    }
+
+    function _chainFogged(settle, techId) {
+        for (const id of remainingUnlockIds(settle, techId)) {
+            if (techFogged(settle, id)) return true;
+        }
+        return false;
+    }
+
     function canUnlock(settle, techId, available) {
         const t = techById(techId);
         if (!t || !settle) return false;
         if (hasTech(settle, t.id)) return false;
-        if (missingPrereqs(settle, t).length) return false;
-        const cost = Math.max(0, Math.floor(Number(t.cost) || 0));
-        return (Number(available) || 0) >= cost;
+        if (_chainFogged(settle, t.id)) return false;
+        return (Number(available) || 0) >= remainingUnlockCost(settle, t.id);
     }
 
     /** Disabled Research-button copy, or null if the tech can be bought (or is already done). */
@@ -700,10 +849,106 @@
         const t = techById(techId);
         if (!t || !settle) return null;
         if (hasTech(settle, t.id)) return null;
-        if (missingPrereqs(settle, t).length) return "Missing prerequisites";
-        const cost = Math.max(0, Math.floor(Number(t.cost) || 0));
+        if (_chainFogged(settle, t.id)) return FOG_COPY;
+        const cost = remainingUnlockCost(settle, t.id);
         if ((Number(available) || 0) < cost) return "Not enough research points";
         return null;
+    }
+
+    function _eraKey(era) {
+        return String(era || "").toLowerCase();
+    }
+
+    function eraIndex(era) {
+        const key = _eraKey(era);
+        const i = ERAS.findIndex((e) => _eraKey(e) === key);
+        return i;
+    }
+
+    function techsInEra(era) {
+        const key = _eraKey(era);
+        return techs().filter((t) => _eraKey(t.era) === key);
+    }
+
+    function eraProgress(settle, era) {
+        const list = techsInEra(era);
+        let done = 0;
+        for (const t of list) {
+            if (hasTech(settle, t.id)) done++;
+        }
+        const total = list.length;
+        const pct = total > 0 ? Math.round((100 * done) / total) : 0;
+        return { era, done, total, pct };
+    }
+
+    function qualifiesForEra(settle, index) {
+        const i = Math.floor(Number(index) || 0);
+        if (i <= 0) return true;
+        if (i >= ERAS.length) return false;
+        const cur = eraProgress(settle, ERAS[i]);
+        const needHalf = Math.ceil((cur.total || 0) * 0.5);
+        if (cur.total > 0 && cur.done >= needHalf) return true;
+        const prev = eraProgress(settle, ERAS[i - 1]);
+        if (prev.total > 0 && prev.done >= prev.total) return true;
+        return false;
+    }
+
+    /** Highest era the settlement qualifies for. Always at least Paleolithic. */
+    function currentAge(settle) {
+        if (settle) ensureTechs(settle);
+        let best = 0;
+        for (let i = 0; i < ERAS.length; i++) {
+            if (qualifiesForEra(settle, i)) best = i;
+        }
+        return ERAS[best];
+    }
+
+    function currentAgeIndex(settle) {
+        const name = currentAge(settle);
+        const i = eraIndex(name);
+        return i < 0 ? 0 : i;
+    }
+
+    function eraVisible(settle, era) {
+        const i = eraIndex(era);
+        if (i < 0) return true;
+        return i <= currentAgeIndex(settle) + 1;
+    }
+
+    function techFogged(settle, tech) {
+        const t = typeof tech === "string" ? techById(tech) : tech;
+        if (!t || !settle) return false;
+        return !eraVisible(settle, t.era);
+    }
+
+    function eraIcon(era) {
+        return ERA_ICONS[_eraKey(era)] || "null";
+    }
+
+    function visibleEras(settle) {
+        const cap = currentAgeIndex(settle) + 1;
+        return ERAS.filter((_, i) => i <= cap);
+    }
+
+    function ageBreakdown(settle) {
+        if (settle) ensureTechs(settle);
+        return visibleEras(settle).map((era) => {
+            const p = eraProgress(settle, era);
+            return {
+                era,
+                name: era,
+                done: p.done,
+                total: p.total,
+                pct: p.pct,
+                icon: eraIcon(era)
+            };
+        });
+    }
+
+    function ageTip(settle) {
+        return ageBreakdown(settle)
+            .map((r) => `${r.era}  ${r.done}/${r.total}  ${r.pct}%`)
+            .join("\n");
     }
 
     function unlock(settle, techId) {
@@ -711,6 +956,18 @@
         ensureTechs(settle);
         settle.techs[techId] = true;
         return true;
+    }
+
+    /** Unlock `techId` and every still-missing ancestor, prereqs first. */
+    function unlockChain(settle, techId) {
+        if (!settle || !techId) return false;
+        const ids = remainingUnlockIds(settle, techId);
+        if (!ids.length) return false;
+        let any = false;
+        for (const id of ids) {
+            if (unlock(settle, id)) any = true;
+        }
+        return any;
     }
 
     function recipeTechId(itemId) {
@@ -929,14 +1186,19 @@
     }
 
     function eraShape(era) {
-        const key = String(era || "").toLowerCase();
+        const key = _eraKey(era);
         if (key === "paleolithic") return "oval";
         if (key === "neolithic") return "hex";
+        if (key === "chalcolithic") return "trap";
         return "rect";
     }
 
     function hexCap(h, sw) {
         return Math.max(8, Math.round((Number(h) - (Number(sw) || 0)) * 0.3));
+    }
+
+    function trapCap(h, sw) {
+        return hexCap(h, sw);
     }
 
     /** Left outline X of a node at world `y` (pill / hex / rect). */
@@ -963,6 +1225,14 @@
             const span = Math.max(1, h * 0.5 - inset);
             const t = Math.min(1, Math.abs(ny - mid) / span);
             return x + inset + cap * t;
+        }
+        if (shape === "trap") {
+            const cap = trapCap(h, sw);
+            const y0 = top + inset;
+            const y1 = top + h - inset;
+            const span = Math.max(1, y1 - y0);
+            const t = Math.max(0, Math.min(1, (ny - y0) / span));
+            return x + inset + cap * (1 - t);
         }
         return x;
     }
@@ -992,6 +1262,14 @@
             const span = Math.max(1, h * 0.5 - inset);
             const t = Math.min(1, Math.abs(ny - mid) / span);
             return x + w - inset - cap * t;
+        }
+        if (shape === "trap") {
+            const cap = trapCap(h, sw);
+            const y0 = top + inset;
+            const y1 = top + h - inset;
+            const span = Math.max(1, y1 - y0);
+            const t = Math.max(0, Math.min(1, (ny - y0) / span));
+            return x + w - inset - cap * (1 - t);
         }
         return x + w;
     }
@@ -1059,36 +1337,80 @@
         return ys;
     }
 
+    function _isFarEdge(from, to, inset) {
+        const dc = Number(to?.col) - Number(from?.col);
+        if (Number.isFinite(dc)) return dc >= 2;
+        return (to.x - from.x - from.w) > inset * 3;
+    }
+
     /**
-     * Orthogonal path from (x0,y0) to dest-left (x1,y1) that stays in the dest
-     * gutter at `busX` and detours through row gaps when a straight Z would
-     * cut through another node.
+     * Penalize riding the source row across skipped columns. Adjacent hops
+     * keep the dest-gutter Z; long hops drop in the source gutter instead.
      */
-    function _routeAround(x0, y0, x1, y1, busX, obstacles, inset) {
-        const vx = busX;
-        const exitX = x0 + (vx >= x0 ? inset : -inset);
-        const attempts = [];
-        if (vx !== x0) attempts.push([[x0, y0], [vx, y0], [vx, y1], [x1, y1]]);
-        attempts.push([[x0, y0], [exitX, y0], [exitX, y1], [vx, y1], [x1, y1]]);
+    function _routeCost(pts, y0, y1) {
+        let cost = (pts.length - 1) * 4;
+        const destDy = Math.abs(y1 - y0);
+        for (let i = 1; i < pts.length; i++) {
+            const a = pts[i - 1];
+            const b = pts[i];
+            const dx = Math.abs(b[0] - a[0]);
+            const dy = Math.abs(b[1] - a[1]);
+            cost += dx + dy;
+            if (dy < 0.5 && dx > 100 && destDy > 8) {
+                const y = a[1];
+                if (Math.abs(y - y0) < 2) cost += dx * 8;
+            }
+        }
+        return cost;
+    }
+
+    function _gapAttempts(x0, y0, x1, y1, sx, vx, obstacles) {
         const lo = Math.min(y0, y1);
         const hi = Math.max(y0, y1);
         const slack = Math.max(80, hi - lo);
         const inSpan = [];
         const near = [];
-        for (const y of _gapYs(Math.min(x0, vx), Math.max(x0, vx), obstacles, 2)) {
+        for (const y of _gapYs(Math.min(sx, vx), Math.max(sx, vx), obstacles, 2)) {
             if (y >= lo - 4 && y <= hi + 4) inSpan.push(y);
             else if (y >= lo - slack && y <= hi + slack) near.push(y);
         }
-        inSpan.sort((a, b) => Math.abs(a - y0) - Math.abs(b - y0));
-        near.sort((a, b) => Math.abs(a - y0) - Math.abs(b - y0));
+        inSpan.sort((a, b) => Math.abs(a - y1) - Math.abs(b - y1));
+        near.sort((a, b) => Math.abs(a - y1) - Math.abs(b - y1));
+        const out = [];
         for (const y of inSpan.concat(near)) {
-            attempts.push([[x0, y0], [exitX, y0], [exitX, y], [vx, y], [vx, y1], [x1, y1]]);
+            out.push([[x0, y0], [sx, y0], [sx, y], [vx, y], [vx, y1], [x1, y1]]);
         }
-        attempts.push([[x0, y0], [x0, y1], [x1, y1]]);
+        return out;
+    }
+
+    /**
+     * Orthogonal path from (x0,y0) to dest-left (x1,y1). Near edges stay on
+     * the dest-gutter bus. Far edges drop in `srcBus` so the long run is at
+     * dest Y (or a clear row gap when dest Y is blocked).
+     */
+    function _routeAround(x0, y0, x1, y1, busX, obstacles, inset, srcBus) {
+        const vx = busX;
+        const hasSrc = srcBus != null && Number.isFinite(Number(srcBus));
+        const sx = hasSrc ? Number(srcBus) : x0 + (vx >= x0 ? inset : -inset);
+        const attempts = [];
+        if (vx !== x0) attempts.push([[x0, y0], [vx, y0], [vx, y1], [x1, y1]]);
+        attempts.push([[x0, y0], [sx, y0], [sx, y1], [vx, y1], [x1, y1]]);
+        for (const pts of _gapAttempts(x0, y0, x1, y1, sx, vx, obstacles)) {
+            attempts.push(pts);
+        }
+        let best = null;
+        let bestCost = Infinity;
         for (const pts of attempts) {
-            if (!_polyHits(pts, obstacles)) return pts;
+            if (_polyHits(pts, obstacles)) continue;
+            const c = _routeCost(pts, y0, y1);
+            if (c < bestCost) {
+                bestCost = c;
+                best = pts;
+            }
         }
-        return attempts[0];
+        if (best) return best;
+        const fallback = [[x0, y0], [x0, y1], [x1, y1]];
+        return _polyHits(fallback, obstacles) ? (attempts[0] || fallback) : fallback;
     }
 
     function _yOverlap(a0, a1, b0, b1) {
@@ -1104,6 +1426,20 @@
             if (r < to.x && r > left) left = r;
         }
         const minX = Math.min(maxX, left + 2);
+        return { minX, maxX };
+    }
+
+    /** Gap just to the right of `from`'s column, used as a local vertical bus. */
+    function _sourceGutterBounds(from, to, nodes) {
+        const minX = (from.x + from.w) + 2;
+        let maxX = to.x - 2;
+        for (const n of nodes || []) {
+            if (!n || n.id === from.id || n.id === to.id) continue;
+            if (n.x <= from.x + from.w) continue;
+            if (n.x >= to.x) continue;
+            maxX = Math.min(maxX, n.x - 2);
+        }
+        if (minX > maxX) return { minX: Math.min(minX, to.x - 4), maxX: to.x - 2 };
         return { minX, maxX };
     }
 
@@ -1150,12 +1486,19 @@
         const obstacles = (opts.obstacles || []).filter((n) => n && n !== from && n !== to
             && n.id !== from.id && n.id !== to.id);
         const busX = opts.busX != null ? Number(opts.busX) : _clearBusX(to, y0, y1, obstacles, inset);
-        return _routeAround(x0, y0, x1, y1, busX, obstacles, inset);
+        let srcBus = opts.srcBus;
+        if (srcBus == null && _isFarEdge(from, to, inset)) {
+            const g = _sourceGutterBounds(from, to, opts.obstacles || []);
+            srcBus = Math.min(g.maxX, Math.max(g.minX, from.x + from.w + Math.min(inset, 12)));
+        }
+        return _routeAround(x0, y0, x1, y1, busX, obstacles, inset, srcBus);
     }
 
     /**
      * Paths for every prereq edge. Children of the same parent share one vertical
-     * bus; overlapping runs from different parents are offset.
+     * bus; overlapping runs from different parents are offset. Edges that skip a
+     * column drop in the source gutter so the long run is at dest Y, which
+     * avoids riding the source row across the rest of the tree.
      */
     function layoutEdgePaths(layout, opts = {}) {
         const nodes = layout?.nodes || [];
@@ -1190,13 +1533,15 @@
             const x1 = nodeLeftX(to, y1, { stroke });
             const obstacles = nodes.filter((n) => n && n.id !== from.id && n.id !== to.id);
             const destBus = _clearBusX(to, y0, y1, obstacles, inset);
-            const gutter = _gutterBounds(from, to, nodes);
-            let minX = gutter.minX;
-            let maxX = gutter.maxX;
+            const far = _isFarEdge(from, to, inset);
+            const destGutter = _gutterBounds(from, to, nodes);
+            let minX = destGutter.minX;
+            let maxX = destGutter.maxX;
             if (minX > maxX) {
                 minX = Math.min(destBus, to.x - 4);
                 maxX = Math.max(destBus, to.x - 4);
             }
+            const srcGutter = far ? _sourceGutterBounds(from, to, nodes) : null;
             jobs.push({
                 fromId: from.id,
                 toId: to.id,
@@ -1205,6 +1550,12 @@
                 preferredX: destBus,
                 minX,
                 maxX,
+                far,
+                srcPreferredX: srcGutter
+                    ? Math.min(srcGutter.maxX, Math.max(srcGutter.minX, from.x + from.w + Math.min(inset, 12)))
+                    : null,
+                srcMinX: srcGutter ? srcGutter.minX : null,
+                srcMaxX: srcGutter ? srcGutter.maxX : null,
                 obstacles
             });
         }
@@ -1216,27 +1567,45 @@
         }
         const placed = [];
         const busOf = new Map();
-        for (const group of groups.values()) {
-            const y0 = Math.min(...group.map((j) => Math.min(j.y0, j.y1)));
-            const y1 = Math.max(...group.map((j) => Math.max(j.y0, j.y1)));
+        const srcBusOf = new Map();
+        const placeGroup = (group, preferredKey, minKey, maxKey, store, padFarDest) => {
+            let y0 = Math.min(...group.map((j) => Math.min(j.y0, j.y1)));
+            let y1 = Math.max(...group.map((j) => Math.max(j.y0, j.y1)));
+            if (padFarDest && group.some((j) => j.far)) {
+                const pad = Math.max(80, y1 - y0);
+                y0 -= pad;
+                y1 += pad;
+            }
             const proto = {
                 fromId: group[0].fromId,
                 toId: group[0].toId,
-                preferredX: group[0].preferredX,
-                minX: Math.max(...group.map((j) => j.minX)),
-                maxX: Math.min(...group.map((j) => j.maxX)),
+                preferredX: group[0][preferredKey],
+                minX: Math.max(...group.map((j) => j[minKey])),
+                maxX: Math.min(...group.map((j) => j[maxKey])),
                 y0,
                 y1
             };
             if (proto.minX > proto.maxX) {
-                proto.minX = group[0].minX;
-                proto.maxX = group[0].maxX;
+                proto.minX = group[0][minKey];
+                proto.maxX = group[0][maxKey];
             }
             const busX = _pickLaneX(proto, placed, laneGap, nodes);
             if (Math.abs(y1 - y0) >= 1) {
                 placed.push({ x: busX, y0, y1, fromId: proto.fromId });
             }
-            for (const job of group) busOf.set(job, busX);
+            for (const job of group) store.set(job, busX);
+        };
+        for (const group of groups.values()) {
+            placeGroup(group, "preferredX", "minX", "maxX", busOf, true);
+        }
+        const srcGroups = new Map();
+        for (const job of jobs) {
+            if (!job.far) continue;
+            if (!srcGroups.has(job.fromId)) srcGroups.set(job.fromId, []);
+            srcGroups.get(job.fromId).push(job);
+        }
+        for (const group of srcGroups.values()) {
+            placeGroup(group, "srcPreferredX", "srcMinX", "srcMaxX", srcBusOf, false);
         }
         const out = [];
         for (const job of jobs) {
@@ -1244,7 +1613,11 @@
             out.push({
                 from: job.fromId,
                 to: job.toId,
-                path: _routeAround(job.x0, job.y0, job.x1, job.y1, busX, job.obstacles, inset)
+                path: _routeAround(
+                    job.x0, job.y0, job.x1, job.y1,
+                    busX, job.obstacles, inset,
+                    srcBusOf.get(job)
+                )
             });
         }
         return out;
@@ -1259,7 +1632,10 @@
     return {
         PAINT_MAX,
         PAINT_MINUTES,
+        TALLY_ITEM_ID,
         ROOTS,
+        ERAS,
+        FOG_COPY,
         UI_PAINT_TINT,
         UI_ICON_KEY,
         UI_SCIENCE_KEY,
@@ -1267,9 +1643,13 @@
         UI_CULTURE_HAND_KEY,
         currencies,
         pointsTip,
+        formatPoints,
         spentTipValue,
         isFreeTech,
         techCostLabel,
+        remainingUnlockIds,
+        remainingUnlockCost,
+        remainingCostLabel,
         techTip,
         isActionUnlock,
         unlockTextIcon,
@@ -1286,6 +1666,7 @@
         pickPaintFleckKind,
         ghostOverlayAlpha,
         overlayKey,
+        tallyOverlayKey,
         parseFillColor,
         pigmentTint,
         overlayTint,
@@ -1304,6 +1685,13 @@
         togglePaintItem,
         togglePaintCategory,
         paintedCount,
+        hasTally,
+        circlePoints,
+        circlePointsTotal,
+        tallyBonus,
+        needsTallyInstall,
+        installTally,
+        removeTally,
         lockedCount,
         availableOn,
         hasRoom,
@@ -1322,8 +1710,11 @@
         spentPoints,
         paintedTotal,
         remainingAfterRemove,
+        remainingAfterUninstallTally,
         canRemoveCircle,
+        canRemoveTally,
         removeBlockedReason,
+        tallyRemoveBlockedReason,
         removeConfirmCopy,
         relockToSpent,
         defaultTechs,
@@ -1332,7 +1723,20 @@
         missingPrereqs,
         canUnlock,
         unlockBlockedReason,
+        eraIndex,
+        techsInEra,
+        eraProgress,
+        qualifiesForEra,
+        currentAge,
+        currentAgeIndex,
+        eraVisible,
+        techFogged,
+        eraIcon,
+        visibleEras,
+        ageBreakdown,
+        ageTip,
         unlock,
+        unlockChain,
         recipeTechId,
         recipeUnlocked,
         techUnlocked,
@@ -1341,6 +1745,7 @@
         billUnlocked,
         eraShape,
         hexCap,
+        trapCap,
         nodeLeftX,
         nodeRightX,
         treeRows,

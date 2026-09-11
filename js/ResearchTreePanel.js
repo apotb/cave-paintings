@@ -61,6 +61,19 @@ class ResearchTreePanel {
             if (this._pointerStillOn(this.pointsTxt, pointer)) return;
             if (scene._tooltipTarget === this.pointsTxt) scene.hideTooltip?.();
         });
+        this.ageTxt = scene.add.text(0, 0, "", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "12px",
+            color: "#d4c4a8"
+        }).setOrigin(0.5, 0.5).setInteractive({ useHandCursor: true });
+        this.ageTxt.on("pointerover", (pointer) => {
+            if (!this.visible) return;
+            scene.showTooltip(() => this._ageTip(), pointer.x, pointer.y, this.ageTxt);
+        });
+        this.ageTxt.on("pointerout", (pointer) => {
+            if (this._pointerStillOn(this.ageTxt, pointer)) return;
+            if (scene._tooltipTarget === this.ageTxt) scene.hideTooltip?.();
+        });
         this.closeBtn = this._btn("Close", () => this.close());
         this.pauseBtn = this._checkBtn("Pause game", () => this._togglePause());
         this.researchBtn = this._btn("Research", () => this._spendSelected());
@@ -85,7 +98,7 @@ class ResearchTreePanel {
         this.root.add([
             this.dim, this.frame, this.viewHit, this.world,
             this.detailBg, this.divider, this.detailBody, this.researchBtn,
-            this.pointsTxt, this.pauseBtn, this.closeBtn
+            this.pointsTxt, this.ageTxt, this.pauseBtn, this.closeBtn
         ]);
     }
 
@@ -561,7 +574,7 @@ class ResearchTreePanel {
 
     _points() {
         const R = typeof Research !== "undefined" ? Research : null;
-        if (!R?.pointsBreakdown) return { paintings: 0, tokens: 0, books: 0, spent: 0, total: 0 };
+        if (!R?.pointsBreakdown) return { paintings: 0, tallies: 0, tokens: 0, books: 0, spent: 0, total: 0 };
         return R.pointsBreakdown(this._researchEntries(), { settle: this.settle });
     }
 
@@ -632,13 +645,24 @@ class ResearchTreePanel {
     }
 
     _paintHeader() {
+        const R = typeof Research !== "undefined" ? Research : null;
         const pts = this._points();
-        const noun = pts.total === 1 ? "point" : "points";
-        this.pointsTxt.setText(`${pts.total} research ${noun}`);
+        const n = (typeof Research !== "undefined" && Research.formatPoints)
+            ? Research.formatPoints(pts.total)
+            : String(pts.total);
+        this.pointsTxt.setText(`${n} pts`);
         if (this.pointsTxt.input?.hitArea?.setSize) {
             this.pointsTxt.input.hitArea.setSize(
                 Math.max(this.pointsTxt.width, 1),
                 Math.max(this.pointsTxt.height, 1)
+            );
+        }
+        const age = (R?.currentAge && R.currentAge(this.settle)) || "Paleolithic";
+        this.ageTxt.setText(age);
+        if (this.ageTxt.input?.hitArea?.setSize) {
+            this.ageTxt.input.hitArea.setSize(
+                Math.max(this.ageTxt.width, 1),
+                Math.max(this.ageTxt.height, 1)
             );
         }
     }
@@ -671,8 +695,23 @@ class ResearchTreePanel {
             }
             const value = row.id === "spent"
                 ? String(Math.max(0, Math.floor(Number(pts.spent) || 0)))
-                : String(pts[row.id] ?? 0);
+                : ((R?.formatPoints && R.formatPoints(pts[row.id] ?? 0)) || String(pts[row.id] ?? 0));
             return { icon, label: row.name, value, hangMinus: row.id === "spent" };
+        });
+        return { text: "", lines };
+    }
+
+    _ageTip() {
+        const R = typeof Research !== "undefined" ? Research : null;
+        const rows = (R?.ageBreakdown && R.ageBreakdown(this.settle)) || [];
+        const lines = rows.map((row) => {
+            const icon = this._itemIconKey(row.icon || "null");
+            return {
+                icon,
+                label: row.era || row.name || "",
+                value: `${row.done}/${row.total}`,
+                value2: `${row.pct}%`
+            };
         });
         return { text: "", lines };
     }
@@ -767,30 +806,24 @@ class ResearchTreePanel {
         }
         for (const node of layout.nodes) {
             const tech = node.tech;
+            const fogged = !!(R.techFogged && R.techFogged(this.settle, tech));
             const unlocked = R.hasTech(this.settle, tech.id);
-            const miss = R.missingPrereqs(this.settle, tech);
             const cost = Math.max(0, Math.floor(Number(tech.cost) || 0));
-            const can = !unlocked && !miss.length && pts.total >= cost && cost > 0;
-            const locked = !unlocked && miss.length;
-            let fill = 0x16120e;
-            let stroke = 0x3a2e26;
-            let titleCol = "#6a5a4a";
-            let subCol = "#4a3e36";
+            const can = !!(R.canUnlock && R.canUnlock(this.settle, tech.id, pts.total));
+            let fill = 0x2a2218;
+            let stroke = 0x8a7260;
+            let titleCol = "#d4c4a8";
+            let subCol = "#8a7a62";
             if (unlocked) {
                 fill = 0x1e3324;
                 stroke = 0x6a9a70;
                 titleCol = "#c4dcc8";
                 subCol = "#8aaa90";
-            } else if (can) {
-                fill = 0x3a3220;
-                stroke = 0xd4b060;
-                titleCol = "#e8d4a0";
-                subCol = "#c4a060";
-            } else if (!locked) {
-                fill = 0x2a2218;
-                stroke = 0x8a7260;
-                titleCol = "#d4c4a8";
-                subCol = "#8a7a62";
+            } else if (!can) {
+                fill = 0x16120e;
+                stroke = 0x3a2e26;
+                titleCol = "#6a5a4a";
+                subCol = "#4a3e36";
             }
             const go = scene.add.container(node.x, node.y);
             const shape = this._eraShape(tech.era);
@@ -807,11 +840,11 @@ class ResearchTreePanel {
                 _pressing: false
             };
             rec.bg = this._makeNodeBg(scene, rec);
-            const cap = shape === "hex" ? this._hexCap(node.h, sw) : 0;
+            const cap = shape === "hex" || shape === "trap" ? this._shapeCap(shape, node.h, sw) : 0;
             const sidePad = shape === "oval"
                 ? Math.round(14 * s)
-                : Math.round(8 * s) + (shape === "hex" ? Math.round(cap * 0.55) : 0);
-            const iconKey = this._techIconKey(tech);
+                : Math.round(8 * s) + ((shape === "hex" || shape === "trap") ? Math.round(cap * 0.55) : 0);
+            const iconKey = fogged ? null : this._techIconKey(tech);
             const iconMaxW = Math.round(24 * s);
             const iconMaxH = Math.max(iconMaxW, node.h - Math.round(10 * s));
             let icon = null;
@@ -825,14 +858,17 @@ class ResearchTreePanel {
                 40,
                 node.w - sidePad * 2 - (iconW ? iconW + Math.round(4 * s) : 0)
             );
-            const name = scene.add.text(sidePad, 0, tech.name, {
+            const name = scene.add.text(sidePad, 0, fogged ? "???" : tech.name, {
                 fontFamily: PIXEL_UI_FONT,
                 fontSize: `${pixelUiFontSize(12, s)}px`,
                 color: titleCol,
                 wordWrap: { width: textMaxW }
             }).setOrigin(0, 0);
-            const sub = (R.techCostLabel && R.techCostLabel(tech))
-                || (cost > 0 ? `${cost} pt${cost === 1 ? "" : "s"}` : "Free");
+            const sub = fogged
+                ? "???"
+                : ((R.remainingCostLabel && R.remainingCostLabel(this.settle, tech))
+                    || (R.techCostLabel && R.techCostLabel(tech))
+                    || (cost > 0 ? `${cost} pt${cost === 1 ? "" : "s"}` : "Free"));
             const subTxt = scene.add.text(sidePad, 0, sub, {
                 fontFamily: PIXEL_UI_FONT,
                 fontSize: `${pixelUiFontSize(10, s)}px`,
@@ -935,12 +971,23 @@ class ResearchTreePanel {
         const key = String(era || "").toLowerCase();
         if (key === "paleolithic") return "oval";
         if (key === "neolithic") return "hex";
+        if (key === "chalcolithic") return "trap";
         return "rect";
     }
 
     _hexCap(h, sw) {
         if (typeof Research !== "undefined" && Research.hexCap) return Research.hexCap(h, sw);
         return Math.max(8, Math.round((h - (Number(sw) || 0)) * 0.3));
+    }
+
+    _trapCap(h, sw) {
+        if (typeof Research !== "undefined" && Research.trapCap) return Research.trapCap(h, sw);
+        return this._hexCap(h, sw);
+    }
+
+    _shapeCap(shape, h, sw) {
+        if (shape === "trap") return this._trapCap(h, sw);
+        return this._hexCap(h, sw);
     }
 
     _hexPoints(w, h, sw) {
@@ -959,6 +1006,26 @@ class ResearchTreePanel {
             { x: x0 + cap, y: y1 },
             { x: x0, y: midY }
         ];
+    }
+
+    _trapPoints(w, h, sw) {
+        const inset = (Number(sw) || 0) * 0.5;
+        const cap = this._trapCap(h, sw);
+        const x0 = inset;
+        const y0 = inset;
+        const x1 = w - inset;
+        const y1 = h - inset;
+        return [
+            { x: x0 + cap, y: y0 },
+            { x: x1 - cap, y: y0 },
+            { x: x1, y: y1 },
+            { x: x0, y: y1 }
+        ];
+    }
+
+    _shapePoints(shape, w, h, sw) {
+        if (shape === "trap") return this._trapPoints(w, h, sw);
+        return this._hexPoints(w, h, sw);
     }
 
     /** Stadium / pill: flat top and bottom, semicircle ends. */
@@ -997,7 +1064,7 @@ class ResearchTreePanel {
             bg.strokeRoundedRect(p.x, p.y, p.w, p.h, p.radius);
             return;
         }
-        const pts = this._hexPoints(w, h, sw);
+        const pts = this._shapePoints(shape, w, h, sw);
         bg.beginPath();
         bg.moveTo(pts[0].x, pts[0].y);
         for (let i = 1; i < pts.length; i++) bg.lineTo(pts[i].x, pts[i].y);
@@ -1030,7 +1097,7 @@ class ResearchTreePanel {
             hit.radius = h * 0.5;
             hitFn = (area, x, y) => this._pillContains(area, x, y);
         } else {
-            hit = new Phaser.Geom.Polygon(this._hexPoints(w, h, sw));
+            hit = new Phaser.Geom.Polygon(this._shapePoints(shape, w, h, sw));
             hitFn = Phaser.Geom.Polygon.Contains;
         }
         g.setInteractive({ hitArea: hit, hitAreaCallback: hitFn, useHandCursor: true, cursor: "pointer" });
@@ -1335,11 +1402,32 @@ class ResearchTreePanel {
             return;
         }
 
+        const fogged = !!(R.techFogged && R.techFogged(this.settle, tech));
+        if (fogged) {
+            this.researchBtn.setVisible(false);
+            this._researchDisabledReason = "";
+            if (scene._tooltipTarget === this.researchBtn._bg) scene.hideTooltip?.();
+            const copy = (R.FOG_COPY) || "Your tribe isn't advanced enough to comprehend this.";
+            this._addText(
+                this._detailX + this._detailW / 2,
+                this._detailY + this._detailH / 2,
+                copy,
+                14,
+                "#8a7a62",
+                0.5,
+                0.5,
+                wrapW
+            );
+            return;
+        }
+
         this.researchBtn.setVisible(true);
         const unlocked = !!(R.hasTech && R.hasTech(this.settle, tech.id));
         const pts = this._points();
         const can = !!(R.canUnlock && R.canUnlock(this.settle, tech.id, pts.total));
-        const cost = Math.max(0, Math.floor(Number(tech.cost) || 0));
+        const cost = (R.remainingUnlockCost
+            ? R.remainingUnlockCost(this.settle, tech.id)
+            : Math.max(0, Math.floor(Number(tech.cost) || 0)));
         if (unlocked) this.researchBtn._txt.setText("Researched");
         else this.researchBtn._txt.setText(cost > 0 ? `Research  ${cost}` : "Research");
         this.researchBtn._setEnabled(can);
@@ -1505,6 +1593,7 @@ class ResearchTreePanel {
         this._fitBtnHit(this.researchBtn, btnW, btnH);
         if (typeof applyPixelUiFont === "function") {
             applyPixelUiFont(this.pointsTxt, 12, s);
+            applyPixelUiFont(this.ageTxt, 12, s);
             applyPixelUiFont(this.closeBtn._txt, 12, s);
             applyPixelUiFont(this.researchBtn._txt, 14, s);
         }
@@ -1513,6 +1602,7 @@ class ResearchTreePanel {
         this._viewY = pad + Math.round(36 * s);
         this._viewW = Math.max(40, pad + frameW - inset - this._viewX);
         this._viewH = Math.max(40, pad + frameH - inset - this._viewY);
+        this.ageTxt.setPosition(this._viewX + this._viewW / 2, headerY);
         this.viewHit.setPosition(this._viewX, this._viewY).setSize(this._viewW, this._viewH);
         if (this.viewHit.input?.hitArea?.setSize) {
             this.viewHit.input.hitArea.setSize(this._viewW, this._viewH);
@@ -1525,6 +1615,7 @@ class ResearchTreePanel {
     hoverObjAt(pointer) {
         if (!pointer || !this.visible) return null;
         if (this._pointerStillOn(this.pointsTxt, pointer)) return this.pointsTxt;
+        if (this.ageTxt && this._pointerStillOn(this.ageTxt, pointer)) return this.ageTxt;
         if (this.pauseBtn?.visible && this.pauseBtn._bg && this._pointerStillOn(this.pauseBtn._bg, pointer)) {
             return this.pauseBtn._bg;
         }

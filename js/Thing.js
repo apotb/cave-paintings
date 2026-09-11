@@ -1308,6 +1308,10 @@ class PaintingCircle extends Thing {
             if (this.scene.pointerOverWorldUi?.(pointer)) return;
             if (this.scene.restBlocksWorldUi?.()) return;
             if (!this.inRange()) return;
+            if (this.scene.tryInstallTallyStick?.(this)) {
+                this.scene.paintingCirclePanel?.open(this);
+                return;
+            }
             this.scene.paintingCirclePanel?.toggle(this);
         });
         this.on("destroy", () => {
@@ -1332,6 +1336,8 @@ class PaintingCircle extends Thing {
     _destroyOverlays() {
         for (const img of this._paintOverlays || []) img?.destroy?.();
         this._paintOverlays = [];
+        this._tallySpr?.destroy?.();
+        this._tallySpr = null;
         this._ghostSpr?.destroy?.();
         this._ghostSpr = null;
     }
@@ -1462,6 +1468,10 @@ class PaintingCircle extends Thing {
             if (layer && img.displayList !== layer) layer.add(img);
             img.setDepth(0.5 + (i + 1) * 0.01);
         }
+        if (this._tallySpr?.active) {
+            if (layer && this._tallySpr.displayList !== layer) layer.add(this._tallySpr);
+            this._tallySpr.setDepth(0.505);
+        }
         if (this._ghostSpr?.active) {
             if (layer && this._ghostSpr.displayList !== layer) layer.add(this._ghostSpr);
             this._ghostSpr.setDepth(0.57);
@@ -1498,6 +1508,25 @@ class PaintingCircle extends Thing {
                 img.setVisible(false);
             }
         }
+        const tallyKey = typeof Research !== "undefined" && Research.tallyOverlayKey
+            ? Research.tallyOverlayKey(keyBase)
+            : "painting_circle_upgrade_stick";
+        const showTally = typeof Research !== "undefined" && Research.hasTally?.(this.entry)
+            && this.scene.textures.exists(tallyKey);
+        if (showTally) {
+            if (!this._tallySpr?.active) {
+                this._tallySpr?.destroy?.();
+                this._tallySpr = this.scene.add.image(this.x, this.y, tallyKey)
+                    .setOrigin(0.5, 1)
+                    .setVisible(true);
+            } else {
+                this._tallySpr.setTexture(tallyKey);
+                this._tallySpr.setPosition(this.x, this.y);
+                this._tallySpr.setVisible(true);
+            }
+        } else if (this._tallySpr) {
+            this._tallySpr.setVisible(false);
+        }
         this._toFloorLayer();
         if (this.body) this._positionBody();
         this._syncInteractMark();
@@ -1520,6 +1549,9 @@ class PaintingCircle extends Thing {
             lines.push(`Pigment: ${name}`);
         } else if (typeof Research === "undefined" || Research.hasRoom(this.entry)) {
             lines.push("Pigment: empty");
+        }
+        if (typeof Research !== "undefined" && Research.hasTally?.(this.entry)) {
+            lines.push("Tally Stick");
         }
         return lines.join("\n");
     }

@@ -3264,3 +3264,45 @@ test("researcher with haul enabled does not stash pigment back into storage", ()
     assert.equal(basket.slots[0]?.quantity, 7);
 });
 
+test("settler research installs a tally stick from a basket before painting", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [null, null, null, null, null]
+    });
+    Research.unlock(settle, "counting");
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const basket = addBasket(world, settle, rec.x + 32, rec.y, "tally-bin");
+    basket.slots[0] = { id: "tally_stick", quantity: 1 };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-tally",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y,
+        painted: 3
+    };
+    Research.ensureEntry(entry, def);
+    chunk.things.push(entry);
+
+    let installed = false;
+    for (let i = 0; i < 220; i++) {
+        world.tick(50);
+        if (entry.tallyStick) {
+            installed = true;
+            break;
+        }
+    }
+    assert.equal(installed, true, `should install tally stick, act=${rec._settlerAct} inv=${JSON.stringify(rec.inventory)} bask=${JSON.stringify(basket.slots[0])}`);
+    assert.equal(entry.tallyStick, true);
+    assert.equal(Research.circlePoints(entry), 4.5);
+    assert.equal(
+        (rec.inventory || []).some((s) => s && s.id === "tally_stick"),
+        false
+    );
+    assert.equal(basket.slots.some((s) => s && s.id === "tally_stick"), false);
+});
+

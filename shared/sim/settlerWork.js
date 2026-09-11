@@ -737,7 +737,8 @@ function paintingCirclesOf(world, settle) {
             if (!Research.isPaintingCircle(def, e)) continue;
             Research.ensureEntry(e, def);
             if (!Research.isEnabled(e)) continue;
-            if (!Research.hasRoom(e) && !Research.inProgress(e)) continue;
+            if (!Research.hasRoom(e) && !Research.inProgress(e)
+                && !Research.needsTallyInstall?.(settle, e)) continue;
             out.push(e);
         }
     }
@@ -1568,8 +1569,13 @@ function scanWork(world, rec, settle, claims) {
     const keepBandage = !!(doctorOn && patients.length);
     const circle = jobOn(enabled, "research") ? researchCircle(world, rec, settle, claims) : null;
     const keepPigment = !!(circle && Research?.needsPigment?.(circle));
-    const isPigment = keepPigment ? pigmentPred(circle) : null;
-    const keepOpts = keepGearOpts({ keepBandage, keepPigment, isPigment });
+    const keepTally = !!(circle && Research?.needsTallyInstall?.(settle, circle));
+    const pigmentPredFn = keepPigment ? pigmentPred(circle) : null;
+    const isPigment = (keepPigment || keepTally)
+        ? (s) => (keepTally && s?.id === (Research.TALLY_ITEM_ID || "tally_stick"))
+            || !!(pigmentPredFn && pigmentPredFn(s))
+        : null;
+    const keepOpts = keepGearOpts({ keepBandage, keepPigment: keepPigment || keepTally, isPigment });
     const night = Settlement.isNight(world.gameMinutes);
     const c = rec.creature || world.creatures.get(rec.id);
     const injured = Sleep.injuredForAutofill ? Sleep.injuredForAutofill(c?.anatomy) : false;
@@ -1595,7 +1601,7 @@ function scanWork(world, rec, settle, claims) {
         researchCircle: circle,
         patients,
         keepBandage,
-        keepPigment,
+        keepPigment: keepPigment || keepTally,
         isPigment,
         bed: (night || injured) ? freeBed(world, rec, settle, claims) : null,
         stash,
@@ -2856,7 +2862,45 @@ function doResearch(world, rec, settle, circle) {
     }
     const def = world._thingDef(entry.id);
     Research.ensureEntry(entry, def);
-    if (!Research.isEnabled(entry) || (!Research.hasRoom(entry) && !Research.inProgress(entry))) {
+    if (!Research.isEnabled(entry)) {
+        endWorkHold(rec);
+        return halt();
+    }
+    const tallyId = Research.TALLY_ITEM_ID || "tally_stick";
+    if (Research.needsTallyInstall?.(settle, entry)) {
+        const found = findStack(world, rec, settle, (s) => s?.id === tallyId);
+        if (found) {
+            if (found.at !== rec) {
+                clearPaintBar(rec);
+                return fetchStack(world, rec, settle, found) || halt();
+            }
+            const walked = goOrWalk(world, rec, entry);
+            if (walked) {
+                clearPaintBar(rec);
+                return walked;
+            }
+            const piece = takeOne(found);
+            if (piece && Research.installTally(entry)) {
+                emitEntry(world, entry);
+                world._dirtyPawnOwner(rec);
+                const facing = facePaint(rec, entry);
+                return halt(facing ? { facing } : null);
+            } else if (piece) {
+                restorePiece(found, piece);
+            }
+        } else {
+            const drop = (dropsOf(world, settle) || []).find((d) => d && d.id === tallyId);
+            if (drop) {
+                clearPaintBar(rec);
+                const walked = goToDrop(world, rec, drop);
+                if (walked) return walked;
+                world._tryPickup?.(rec, { dropId: drop.uid, quantity: 1 });
+                world._dirtyPawnOwner(rec);
+                return halt();
+            }
+        }
+    }
+    if (!Research.hasRoom(entry) && !Research.inProgress(entry)) {
         endWorkHold(rec);
         return halt();
     }

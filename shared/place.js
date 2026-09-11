@@ -74,6 +74,10 @@
                     path: `assets/things/${t.key}/${i}.png`
                 });
             }
+            loads.push({
+                key: `${t.key}_upgrade_stick`,
+                path: `assets/things/${t.key}/upgrade_stick.png`
+            });
             return loads;
         }
         if (t.anim) {

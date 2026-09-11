@@ -2831,7 +2831,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Timed station craft with a held tool (awl). Cancel if you swap / walk away.
+     * Timed craft with a held tool. Station recipes must stay in range of the
+     * bench; handheld recipes (tally stick) only need the tool.
      */
     beginCraft(recipe, station) {
         if (this._eatChannel) this._cancelEat();
@@ -2842,7 +2843,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
         if (this.isIncapacitated()) return false;
-        if (!station?.active || !station.inRange?.(this)) return false;
+        const needStation = !!(recipe?.requireStation || station);
+        if (needStation && (!station?.active || !station.inRange?.(this))) return false;
         if (!this.scene.canCraft?.(recipe, this)) return false;
         const item = this.getHeldItem();
         const wantClass = recipe.requireTool?.toolClass;
@@ -2884,8 +2886,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (
             slot !== this._craftChannel.slot
             || (wantClass && this.heldToolClass() !== wantClass)
-            || !station?.active
-            || !station.inRange?.(this)
+            || (station && (!station.active || !station.inRange?.(this)))
         ) {
             this._cancelCraft();
             return;

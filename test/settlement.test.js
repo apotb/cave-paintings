@@ -711,7 +711,7 @@ test("job tooltip lists work inside the column", () => {
     assert.doesNotMatch(haul, /basket/i);
     assert.equal(Settlement.jobLabel("research"), "Res");
     const res = Settlement.jobTooltip("research");
-    assert.match(res, /^Research\n- Fetch pigment\n- Work at Painting Circle$/);
+    assert.match(res, /^Research\n- Install tally stick\n- Fetch pigment\n- Work at Painting Circle$/);
     assert.equal(Settlement.isAddableId("painting_circle"), false);
 });
 
