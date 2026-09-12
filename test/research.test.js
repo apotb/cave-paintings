@@ -481,6 +481,58 @@ test("research points count paintings now and leave room for tokens and books", 
     assert.equal(Research.availablePoints([a], { tokens: 1, books: 2 }), 3 + 1 + 10);
 });
 
+test("orderLayers reduces crossings and keeps frozen blocks", () => {
+    const crossed = Research.orderLayers(
+        [["A", "B"], ["C", "D"]],
+        [{ from: "A", to: "D" }, { from: "B", to: "C" }]
+    );
+    const idx = (layers, id) => {
+        for (const layer of layers) {
+            const i = layer.indexOf(id);
+            if (i >= 0) return i;
+        }
+        return -1;
+    };
+    assert.equal(
+        (idx(crossed, "A") < idx(crossed, "B")) === (idx(crossed, "D") < idx(crossed, "C")),
+        true
+    );
+
+    const frozen = Research.orderLayers(
+        [["A", "B"], ["C", "D"]],
+        [{ from: "A", to: "D" }, { from: "B", to: "C" }],
+        { freeze: ["A", "B"] }
+    );
+    assert.deepEqual(frozen[0], ["A", "B"]);
+    assert.deepEqual(frozen[1], ["D", "C"]);
+
+    const blocked = Research.orderLayers(
+        [["A", "B", "X", "Y"], ["C", "D", "Z", "W"]],
+        [
+            { from: "A", to: "D" }, { from: "B", to: "C" },
+            { from: "X", to: "W" }, { from: "Y", to: "Z" }
+        ],
+        {
+            blockOf: {
+                A: "g", B: "g", C: "g", D: "g",
+                X: "k", Y: "k", Z: "k", W: "k"
+            }
+        }
+    );
+    const l0 = blocked[0];
+    assert.ok(
+        Math.max(l0.indexOf("A"), l0.indexOf("B"))
+        < Math.min(l0.indexOf("X"), l0.indexOf("Y")),
+        `blocks must stay stacked, got ${l0.join(",")}`
+    );
+    const skip = Research.orderLayers(
+        [["A"], ["B"], ["C", "D"]],
+        [{ from: "A", to: "D" }, { from: "B", to: "C" }]
+    );
+    assert.ok(skip[0].includes("A"));
+    assert.ok(skip[2].includes("C") && skip[2].includes("D"));
+});
+
 test("tree layout is left-to-right with prereq edges", () => {
     const layout = Research.treeLayout({
         boxW: 10, boxH: 10, colGap: 10, rowGap: 10, treeGap: 10, pad: 0
@@ -531,6 +583,16 @@ test("tree layout is left-to-right with prereq edges", () => {
     const ids = new Set(layout.nodes.map((n) => n.id));
     for (const t of Research.techs()) assert.ok(ids.has(t.id), t.id);
 
+    assert.ok(layout.byId.gathering.y < layout.byId.fire.y);
+    assert.ok(layout.byId.fire.y < layout.byId.knapping.y);
+    assert.ok(layout.byId.knapping.y < layout.byId.tanning.y);
+    assert.ok(layout.byId.tanning.y < layout.byId.culture.y);
+    assert.ok(
+        layout.byId.hafting.y <= layout.byId.hand_axe.y,
+        "hafting should sit at the top of the knapping band"
+    );
+    assert.ok(layout.byId.hafting.y < layout.byId.blades.y);
+
     const rituals = layout.byId.rituals;
     const burial = layout.byId.burial;
     const afterlife = layout.byId.afterlife;
@@ -571,6 +633,44 @@ test("tree layout is left-to-right with prereq edges", () => {
             verts.push({ x: a[0], y0: a[1], y1: b[1], from: r.from, to: r.to });
         }
     }
+    for (const r of routed) {
+        const path = r.path || [];
+        assert.ok(path.length >= 2, `${r.from}->${r.to} has a path`);
+        const a = path[0];
+        const b = path[1];
+        assert.equal(a[1], b[1], `${r.from}->${r.to} should leave horizontally`);
+        assert.ok(b[0] > a[0] + 2, `${r.from}->${r.to} should go right first, not up at the box`);
+    }
+    const hors = [];
+    for (const r of routed) {
+        const path = r.path || [];
+        for (let i = 1; i < path.length; i++) {
+            const a = path[i - 1];
+            const b = path[i];
+            if (a[1] !== b[1] || a[0] === b[0]) continue;
+            hors.push({
+                y: a[1],
+                x0: Math.min(a[0], b[0]),
+                x1: Math.max(a[0], b[0]),
+                from: r.from,
+                to: r.to
+            });
+        }
+    }
+    for (let i = 0; i < hors.length; i++) {
+        for (let j = i + 1; j < hors.length; j++) {
+            const a = hors[i];
+            const b = hors[j];
+            if (a.from === b.from) continue;
+            if (Math.abs(a.y - b.y) >= 6) continue;
+            const overlap = a.x0 < b.x1 && a.x1 > b.x0;
+            assert.equal(
+                overlap,
+                false,
+                `${a.from}->${a.to} overlaps ${b.from}->${b.to} at y=${a.y}`
+            );
+        }
+    }
     const gatherKids = ["cordage", "herbalism", "digging"];
     const gatherXs = new Set();
     for (const v of verts) {
@@ -581,6 +681,57 @@ test("tree layout is left-to-right with prereq edges", () => {
     const big = Research.treeLayout({
         boxW: 148, boxH: 52, colGap: 72, rowGap: 18, treeGap: 40, pad: 16
     });
+    const haftMid = big.byId.hafting.y + big.byId.hafting.h * 0.5;
+    for (const v of verts) {
+        if (v.from !== "cordage" || v.to !== "camping") continue;
+        const lo = Math.min(v.y0, v.y1);
+        const hi = Math.max(v.y0, v.y1);
+        assert.ok(
+            haftMid < lo - 4 || haftMid > hi + 4,
+            "cordage→camping bus should not reach hafting"
+        );
+    }
+    const trapKids = routed.filter((r) => r.from === "traps" && (r.to === "pit_traps" || r.to === "spike_traps"));
+    assert.equal(trapKids.length, 2);
+    const trapFirstX = new Set();
+    for (const r of trapKids) {
+        const path = r.path || [];
+        for (let i = 1; i < path.length; i++) {
+            const a = path[i - 1];
+            const b = path[i];
+            if (a[0] !== b[0] || a[1] === b[1]) continue;
+            trapFirstX.add(a[0]);
+            break;
+        }
+    }
+    assert.equal(trapFirstX.size, 1, "Traps children should share one outgoing bus");
+    const localPitch = 52 + 2 * 18;
+    for (let i = 0; i < verts.length; i++) {
+        for (let j = i + 1; j < verts.length; j++) {
+            const a = verts[i];
+            const b = verts[j];
+            if (a.from === b.from) continue;
+            const aFrom = big.byId[a.from];
+            const aTo = big.byId[a.to];
+            const bFrom = big.byId[b.from];
+            const bTo = big.byId[b.to];
+            if (!aFrom || !aTo || !bFrom || !bTo) continue;
+            const aLocal = (aTo.col - aFrom.col) === 1
+                && Math.abs((aFrom.y + aFrom.h * 0.5) - (aTo.y + aTo.h * 0.5)) < localPitch * 3;
+            const bLocal = (bTo.col - bFrom.col) === 1
+                && Math.abs((bFrom.y + bFrom.h * 0.5) - (bTo.y + bTo.h * 0.5)) < localPitch * 3;
+            if (!aLocal || !bLocal) continue;
+            if (Math.abs(a.x - b.x) >= 6) continue;
+            const overlap = Math.min(a.y0, a.y1) < Math.max(b.y0, b.y1)
+                && Math.max(a.y0, a.y1) > Math.min(b.y0, b.y1);
+            assert.equal(
+                overlap,
+                false,
+                `local ${a.from}->${a.to} overlaps ${b.from}->${b.to} at x≈${a.x}`
+            );
+        }
+    }
+
     const intoBurial = routed.filter((r) => r.to === "burial");
     assert.ok(intoBurial.length >= 2);
     for (const r of intoBurial) {
@@ -613,7 +764,7 @@ test("tree layout is left-to-right with prereq edges", () => {
             const a = verts[i];
             const b = verts[j];
             if (a.from === b.from) continue;
-            if (a.x !== b.x) continue;
+            if (Math.abs(a.x - b.x) >= 6) continue;
             const overlap = Math.min(a.y0, a.y1) < Math.max(b.y0, b.y1)
                 && Math.max(a.y0, a.y1) > Math.min(b.y0, b.y1);
             assert.equal(
@@ -624,7 +775,8 @@ test("tree layout is left-to-right with prereq edges", () => {
         }
     }
 
-    const hitsNode = (path, n) => {
+    const hitsNode = (path, n, pad) => {
+        const through = pad == null || pad <= 0;
         for (let i = 1; i < path.length; i++) {
             const a = path[i - 1];
             const b = path[i];
@@ -632,8 +784,13 @@ test("tree layout is left-to-right with prereq edges", () => {
             const right = Math.max(a[0], b[0]);
             const top = Math.min(a[1], b[1]);
             const bottom = Math.max(a[1], b[1]);
-            if (right > n.x + 1 && left < n.x + n.w - 1
-                && bottom > n.y + 1 && top < n.y + n.h - 1) {
+            if (through) {
+                if (right > n.x + 1 && left < n.x + n.w - 1
+                    && bottom > n.y + 1 && top < n.y + n.h - 1) {
+                    return true;
+                }
+            } else if (right > n.x - pad && left < n.x + n.w + pad
+                && bottom > n.y - pad && top < n.y + n.h + pad) {
                 return true;
             }
         }
@@ -643,9 +800,14 @@ test("tree layout is left-to-right with prereq edges", () => {
         for (const n of big.nodes) {
             if (n.id === r.from || n.id === r.to) continue;
             assert.equal(
-                hitsNode(r.path, n),
+                hitsNode(r.path, n, 0),
                 false,
                 `${r.from}->${r.to} goes through ${n.id}`
+            );
+            assert.equal(
+                hitsNode(r.path, n, 8),
+                false,
+                `${r.from}->${r.to} runs too close to ${n.id}`
             );
         }
     }
@@ -672,6 +834,32 @@ test("tree layout is left-to-right with prereq edges", () => {
     assert.ok(
         sourceRowSpan < destRowSpan || sourceRowSpan < (agri.x - herb.x - herb.w) * 0.4,
         `herbalism→agriculture should not ride herbalism's row across the tree (source=${sourceRowSpan} dest=${destRowSpan})`
+    );
+
+    const tanSkin = routed.find((r) => r.from === "tanning" && r.to === "skinworking");
+    assert.ok(tanSkin);
+    const tan = big.byId.tanning;
+    const tanMid = tan.y + tan.h * 0.5;
+    let tanDetour = 0;
+    for (let i = 1; i < tanSkin.path.length; i++) {
+        const a = tanSkin.path[i - 1];
+        const b = tanSkin.path[i];
+        if (a[1] !== b[1]) continue;
+        if (Math.abs(b[0] - a[0]) < 40) continue;
+        tanDetour = Math.max(tanDetour, Math.abs(a[1] - tanMid));
+    }
+    assert.ok(
+        tanDetour < 16,
+        `tanning→skinworking should stay on tanning's row until the dest gutter (detour=${tanDetour})`
+    );
+
+    const intoMicro = routed.filter((r) => r.to === "microliths");
+    assert.equal(intoMicro.length, 1);
+    const micro = big.byId.microliths;
+    const microEnd = intoMicro[0].path[intoMicro[0].path.length - 1];
+    assert.ok(
+        Math.abs(microEnd[1] - (micro.y + micro.h * 0.5)) < 1,
+        `sole prereq into microliths should attach at center (y=${microEnd[1]} mid=${micro.y + micro.h * 0.5})`
     );
 });
 

@@ -33,3 +33,5 @@ More animals -- lynx (neutral), auroch (scared)
 Icons in tooltips
 
 Needs beyond hunger: sleep, recreation, socialization, etc
+
+Tutorial tips -- Rimworld Tutorial Helper style?

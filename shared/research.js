@@ -1076,23 +1076,259 @@
         return col;
     }
 
-    /**
-     * Left-to-right RimWorld-style layout: column = prereq depth, trees stacked
-     * vertically in ROOTS order. `x`/`y`/`w`/`h` are in the given box units.
-     */
-    function treeLayout(opts = {}) {
-        techs();
-        const boxW = Math.max(1, Number(opts.boxW) || 1);
-        const boxH = Math.max(1, Number(opts.boxH) || 1);
-        const colGap = Math.max(0, Number(opts.colGap) || 0);
-        const rowGap = Math.max(0, Number(opts.rowGap) || 0);
-        const treeGap = Math.max(0, Number(opts.treeGap) || 0);
-        const pad = Math.max(0, Number(opts.pad) || 0);
-        const home = _homeTree();
-        const colMemo = Object.create(null);
-        const stack = new Set();
-        for (const t of techs()) _prereqCol(t.id, colMemo, stack);
+    function _layerPos(layers) {
+        const col = Object.create(null);
+        const pos = Object.create(null);
+        for (let c = 0; c < layers.length; c++) {
+            for (let i = 0; i < layers[c].length; i++) {
+                col[layers[c][i]] = c;
+                pos[layers[c][i]] = i;
+            }
+        }
+        return { col, pos };
+    }
 
+    function _treeRankMap(layers, blockOf) {
+        const rank = Object.create(null);
+        let n = 0;
+        for (const layer of layers) {
+            for (const id of layer) {
+                const b = blockOf[id] || id;
+                if (rank[b] == null) rank[b] = n++;
+            }
+        }
+        return rank;
+    }
+
+    function _insertDummyInLayer(layer, dummy, tree, blockOf, treeRank) {
+        const tr = treeRank[tree];
+        let pos = 0;
+        for (let i = 0; i < layer.length; i++) {
+            const r = treeRank[blockOf[layer[i]] || layer[i]];
+            if (r == null || (tr != null && r <= tr) || (tr == null && r == null)) pos = i + 1;
+        }
+        layer.splice(pos, 0, dummy);
+    }
+
+    function _withDummies(layers, edges, blockOfIn) {
+        const blockOf = Object.create(null);
+        for (const id of Object.keys(blockOfIn || {})) blockOf[id] = blockOfIn[id];
+        const L = (layers || []).map((layer) => layer.slice());
+        const { col } = _layerPos(L);
+        const treeRank = _treeRankMap(L, blockOf);
+        const proper = [];
+        const dummyIds = new Set();
+        let dummyN = 0;
+        for (const e of edges || []) {
+            const c0 = col[e.from];
+            const c1 = col[e.to];
+            if (c0 == null || c1 == null) continue;
+            if (c1 === c0 + 1) {
+                proper.push({ from: e.from, to: e.to });
+                continue;
+            }
+            if (c1 <= c0) continue;
+            const destBlock = blockOf[e.to] || e.to;
+            let prev = e.from;
+            for (let c = c0 + 1; c < c1; c++) {
+                const d = `__d${dummyN++}`;
+                dummyIds.add(d);
+                blockOf[d] = destBlock;
+                if (treeRank[destBlock] == null) treeRank[destBlock] = Object.keys(treeRank).length;
+                _insertDummyInLayer(L[c], d, destBlock, blockOf, treeRank);
+                col[d] = c;
+                proper.push({ from: prev, to: d });
+                prev = d;
+            }
+            proper.push({ from: prev, to: e.to });
+        }
+        return { layers: L, adj: proper, dummyIds, blockOf };
+    }
+
+    function _adjMaps(adj) {
+        const down = Object.create(null);
+        const up = Object.create(null);
+        for (const e of adj) {
+            (down[e.from] || (down[e.from] = [])).push(e.to);
+            (up[e.to] || (up[e.to] = [])).push(e.from);
+        }
+        return { down, up };
+    }
+
+    function _countLayerCrossings(left, right, adj) {
+        const lPos = Object.create(null);
+        const rPos = Object.create(null);
+        for (let i = 0; i < left.length; i++) lPos[left[i]] = i;
+        for (let i = 0; i < right.length; i++) rPos[right[i]] = i;
+        const pairs = [];
+        for (const e of adj) {
+            if (lPos[e.from] == null || rPos[e.to] == null) continue;
+            pairs.push([lPos[e.from], rPos[e.to]]);
+        }
+        let n = 0;
+        for (let i = 0; i < pairs.length; i++) {
+            for (let j = i + 1; j < pairs.length; j++) {
+                if ((pairs[i][0] - pairs[j][0]) * (pairs[i][1] - pairs[j][1]) < 0) n++;
+            }
+        }
+        return n;
+    }
+
+    function _countCrossings(layers, adj) {
+        let n = 0;
+        for (let c = 0; c < layers.length - 1; c++) {
+            n += _countLayerCrossings(layers[c], layers[c + 1], adj);
+        }
+        return n;
+    }
+
+    function _blockRuns(layer, blockOf) {
+        const hasBlocks = (layer || []).some((id) => blockOf[id]);
+        if (!hasBlocks) return [{ block: "_", ids: (layer || []).slice() }];
+        const runs = [];
+        for (const id of layer) {
+            const block = blockOf[id] || id;
+            if (!runs.length || runs[runs.length - 1].block !== block) {
+                runs.push({ block, ids: [id] });
+            } else {
+                runs[runs.length - 1].ids.push(id);
+            }
+        }
+        return runs;
+    }
+
+    function _sortRunByBary(ids, neighborPos, neigh, freeze) {
+        const bary = (id, i) => {
+            const ns = neigh[id] || [];
+            let s = 0;
+            let k = 0;
+            for (const n of ns) {
+                if (neighborPos[n] != null) {
+                    s += neighborPos[n];
+                    k++;
+                }
+            }
+            return k ? s / k : i;
+        };
+        const frozen = [];
+        const movable = [];
+        ids.forEach((id, i) => {
+            if (freeze.has(id)) frozen.push({ id, i });
+            else movable.push({ id, i, b: bary(id, i) });
+        });
+        movable.sort((a, b) => (a.b - b.b) || (a.i - b.i) || String(a.id).localeCompare(String(b.id)));
+        const slot = new Array(ids.length);
+        for (const f of frozen) slot[f.i] = f.id;
+        let m = 0;
+        for (let i = 0; i < slot.length; i++) {
+            if (slot[i] == null) slot[i] = movable[m++].id;
+        }
+        return slot;
+    }
+
+    function _sortLayerByBary(layer, neighborPos, neigh, blockOf, freeze) {
+        const out = [];
+        for (const run of _blockRuns(layer, blockOf)) {
+            out.push(..._sortRunByBary(run.ids, neighborPos, neigh, freeze));
+        }
+        return out;
+    }
+
+    function _transpose(layers, adj, blockOf, freeze) {
+        let moved = true;
+        let guard = 0;
+        while (moved && guard++ < 24) {
+            moved = false;
+            for (let c = 0; c < layers.length; c++) {
+                const layer = layers[c];
+                for (let i = 0; i < layer.length - 1; i++) {
+                    const a = layer[i];
+                    const b = layer[i + 1];
+                    if (freeze.has(a) && freeze.has(b)) continue;
+                    const ba = blockOf[a];
+                    const bb = blockOf[b];
+                    if (ba && bb && ba !== bb) continue;
+                    const left = c > 0 ? layers[c - 1] : null;
+                    const right = c < layers.length - 1 ? layers[c + 1] : null;
+                    let before = 0;
+                    if (left) before += _countLayerCrossings(left, layer, adj);
+                    if (right) before += _countLayerCrossings(layer, right, adj);
+                    layer[i] = b;
+                    layer[i + 1] = a;
+                    let after = 0;
+                    if (left) after += _countLayerCrossings(left, layer, adj);
+                    if (right) after += _countLayerCrossings(layer, right, adj);
+                    if (after < before) moved = true;
+                    else {
+                        layer[i] = a;
+                        layer[i + 1] = b;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Sugiyama crossing reduction. `layers[c]` is top-to-bottom ids in column c.
+     * Nodes with the same `blockOf` stay in contiguous bands; `freeze` ids keep
+     * their index inside a band. Long edges get dummy vertices, then stripped.
+     */
+    function orderLayers(layers, edges, opts = {}) {
+        const freeze = new Set(opts.freeze || []);
+        const seedBlocks = opts.blockOf || Object.create(null);
+        const sweeps = Math.max(1, Number(opts.sweeps) || 12);
+        const packed = _withDummies(layers, edges, seedBlocks);
+        const { adj, dummyIds } = packed;
+        const blockOf = packed.blockOf;
+        const { up, down } = _adjMaps(adj);
+        let L = packed.layers;
+        let best = L.map((layer) => layer.slice());
+        let bestC = _countCrossings(best, adj);
+        for (let s = 0; s < sweeps && bestC > 0; s++) {
+            for (let c = 1; c < L.length; c++) {
+                const pos = Object.create(null);
+                L[c - 1].forEach((id, i) => { pos[id] = i; });
+                L[c] = _sortLayerByBary(L[c], pos, up, blockOf, freeze);
+            }
+            _transpose(L, adj, blockOf, freeze);
+            let cr = _countCrossings(L, adj);
+            if (cr < bestC) {
+                bestC = cr;
+                best = L.map((layer) => layer.slice());
+            }
+            for (let c = L.length - 2; c >= 0; c--) {
+                const pos = Object.create(null);
+                L[c + 1].forEach((id, i) => { pos[id] = i; });
+                L[c] = _sortLayerByBary(L[c], pos, down, blockOf, freeze);
+            }
+            _transpose(L, adj, blockOf, freeze);
+            cr = _countCrossings(L, adj);
+            if (cr < bestC) {
+                bestC = cr;
+                best = L.map((layer) => layer.slice());
+            }
+        }
+        return best.map((layer) => layer.filter((id) => !dummyIds.has(id)));
+    }
+
+    function _seedTreeIds(root, home) {
+        const order = [];
+        const seen = new Set();
+        const walk = (id) => {
+            if (!id || seen.has(id) || home[id] !== root) return;
+            if (!techById(id)) return;
+            seen.add(id);
+            order.push(id);
+            for (const child of techById(id).children || []) walk(child);
+        };
+        walk(root);
+        for (const t of techs()) {
+            if (home[t.id] === root && !seen.has(t.id)) walk(t.id);
+        }
+        return order;
+    }
+
+    function _layoutRoots(home) {
         const roots = [];
         const seenRoot = new Set();
         for (const id of ROOTS) {
@@ -1107,36 +1343,88 @@
                 roots.push(t.id);
             }
         }
+        return roots;
+    }
+
+    /**
+     * Left-to-right RimWorld-style layout: column = prereq depth, trees stacked
+     * vertically in ROOTS order. `x`/`y`/`w`/`h` are in the given box units.
+     * Order inside a band is crossing-reduced; nodes do not change trees.
+     */
+    function treeLayout(opts = {}) {
+        techs();
+        const boxW = Math.max(1, Number(opts.boxW) || 1);
+        const boxH = Math.max(1, Number(opts.boxH) || 1);
+        const colGap = Math.max(0, Number(opts.colGap) || 0);
+        const rowGap = Math.max(0, Number(opts.rowGap) || 0);
+        const treeGap = Math.max(0, Number(opts.treeGap) || 0);
+        const pad = Math.max(0, Number(opts.pad) || 0);
+        const home = _homeTree();
+        const colMemo = Object.create(null);
+        const stack = new Set();
+        for (const t of techs()) _prereqCol(t.id, colMemo, stack);
+        const roots = _layoutRoots(home);
+
+        let maxCol = 0;
+        for (const t of techs()) {
+            const c = colMemo[t.id] || 0;
+            if (c > maxCol) maxCol = c;
+        }
+        const layers = [];
+        for (let c = 0; c <= maxCol; c++) layers.push([]);
+        const blockOf = Object.create(null);
+        for (const root of roots) {
+            for (const id of _seedTreeIds(root, home)) {
+                blockOf[id] = root;
+                layers[colMemo[id] || 0].push(id);
+            }
+        }
+        const prereqEdges = [];
+        for (const t of techs()) {
+            for (const p of t.prereqs || []) {
+                if (techById(p)) prereqEdges.push({ from: p, to: t.id });
+            }
+        }
+        const ordered = orderLayers(layers, prereqEdges, {
+            freeze: roots,
+            blockOf
+        });
+        const rank = Object.create(null);
+        for (const layer of ordered) {
+            let prev = null;
+            let i = 0;
+            for (const id of layer) {
+                const b = blockOf[id] || id;
+                if (b !== prev) {
+                    i = 0;
+                    prev = b;
+                }
+                rank[id] = i++;
+            }
+        }
 
         const nodes = [];
         const byId = Object.create(null);
         let yBase = 0;
         for (const root of roots) {
             const unitY = Object.create(null);
-            const acc = { y: 0 };
-            const place = (id) => {
-                if (unitY[id] != null) return unitY[id];
-                const t = techById(id);
-                const kids = (t?.children || []).filter((c) => home[c] === root && techById(c));
-                if (!kids.length) {
-                    unitY[id] = acc.y;
-                    acc.y += 1;
-                    return unitY[id];
-                }
-                const ys = kids.map(place);
-                unitY[id] = (Math.min(...ys) + Math.max(...ys)) / 2;
-                return unitY[id];
-            };
-            if (techById(root)) place(root);
-            for (const t of techs()) {
-                if (home[t.id] === root && unitY[t.id] == null) place(t.id);
-            }
             const cols = Object.create(null);
             for (const t of techs()) {
                 if (home[t.id] !== root) continue;
                 const c = colMemo[t.id] || 0;
                 if (!cols[c]) cols[c] = [];
                 cols[c].push(t.id);
+            }
+            for (const key of Object.keys(cols)) {
+                const list = cols[key].sort((a, b) =>
+                    ((rank[a] || 0) - (rank[b] || 0)) || String(a).localeCompare(String(b))
+                );
+                for (let i = 0; i < list.length; i++) unitY[list[i]] = i;
+            }
+            const kids = (techById(root)?.children || []).filter((c) => home[c] === root && techById(c));
+            if (kids.length && unitY[root] != null) {
+                const ys = kids.map((id) => unitY[id]).filter((y) => y != null);
+                if (ys.length) unitY[root] = (Math.min(...ys) + Math.max(...ys)) / 2;
             }
             for (const key of Object.keys(cols)) {
                 const list = cols[key].sort((a, b) =>
@@ -1274,239 +1562,368 @@
         return x + w;
     }
 
-    function _segHitsNode(x0, y0, x1, y1, n) {
-        if (!n) return false;
-        const left = Math.min(x0, x1);
-        const right = Math.max(x0, x1);
-        const top = Math.min(y0, y1);
-        const bottom = Math.max(y0, y1);
-        return right >= n.x && left <= n.x + n.w
-            && bottom >= n.y && top <= n.y + n.h;
-    }
-
-    function _polyHits(pts, obstacles) {
-        for (let i = 0; i < pts.length - 1; i++) {
-            const a = pts[i];
-            const b = pts[i + 1];
-            for (const n of obstacles) {
-                if (_segHitsNode(a[0], a[1], b[0], b[1], n)) return true;
-            }
-        }
-        return false;
-    }
-
-    function _clearBusX(to, y0, y1, obstacles, inset) {
-        const x1 = to.x;
-        let busX = x1 - inset;
-        const yTop = Math.min(y0, y1);
-        const yBot = Math.max(y0, y1);
-        const blocked = (x) => obstacles.some((n) => (
-            x >= n.x && x <= n.x + n.w
-            && yBot >= n.y && yTop <= n.y + n.h
-        ));
-        while (busX < x1 - 2 && blocked(busX)) busX += 1;
-        if (blocked(busX) || busX >= x1) busX = x1 - Math.min(inset, 4);
-        return busX;
-    }
-
-    function _gapYs(x0, x1, obstacles, pad) {
-        const left = Math.min(x0, x1);
-        const right = Math.max(x0, x1);
-        const spans = [];
-        for (const n of obstacles || []) {
-            if (!n) continue;
-            if (n.x + n.w < left || n.x > right) continue;
-            spans.push([n.y - pad, n.y + n.h + pad]);
-        }
-        spans.sort((a, b) => a[0] - b[0]);
+    function _mergeSpans(spans) {
+        const list = (spans || []).slice().sort((a, b) => a[0] - b[0]);
         const merged = [];
-        for (const s of spans) {
+        for (const s of list) {
             if (!merged.length || s[0] > merged[merged.length - 1][1]) merged.push(s.slice());
             else merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], s[1]);
         }
+        return merged;
+    }
+
+    function _gapYs(colNodes, pad) {
+        const p = Math.max(0, Number(pad) || 0);
+        const merged = _mergeSpans((colNodes || []).map((n) => [n.y - p, n.y + n.h + p]));
         const ys = [];
+        if (!merged.length) return ys;
+        ys.push(merged[0][0] - 8);
+        ys.push(merged[merged.length - 1][1] + 8);
         for (let i = 0; i < merged.length - 1; i++) {
             const a = merged[i][1];
             const b = merged[i + 1][0];
-            if (b - a > 4) ys.push((a + b) / 2);
-        }
-        if (merged.length) {
-            ys.push(merged[0][0] - 8);
-            ys.push(merged[merged.length - 1][1] + 8);
+            if (b - a > 1) ys.push((a + b) / 2);
         }
         return ys;
     }
 
-    function _isFarEdge(from, to, inset) {
-        const dc = Number(to?.col) - Number(from?.col);
-        if (Number.isFinite(dc)) return dc >= 2;
-        return (to.x - from.x - from.w) > inset * 3;
+    function _yBlocked(colNodes, y, pad, ignoreIds) {
+        const p = Math.max(0, Number(pad) || 0);
+        const ignore = ignoreIds || new Set();
+        return (colNodes || []).some((n) => (
+            n && !ignore.has(n.id)
+            && y > n.y - p && y < n.y + n.h + p
+        ));
     }
 
-    /**
-     * Penalize riding the source row across skipped columns. Adjacent hops
-     * keep the dest-gutter Z; long hops drop in the source gutter instead.
-     */
-    function _routeCost(pts, y0, y1) {
-        let cost = (pts.length - 1) * 4;
-        const destDy = Math.abs(y1 - y0);
-        for (let i = 1; i < pts.length; i++) {
-            const a = pts[i - 1];
-            const b = pts[i];
-            const dx = Math.abs(b[0] - a[0]);
-            const dy = Math.abs(b[1] - a[1]);
-            cost += dx + dy;
-            if (dy < 0.5 && dx > 100 && destDy > 8) {
-                const y = a[1];
-                if (Math.abs(y - y0) < 2) cost += dx * 8;
+    function _pickGapY(colNodes, targetY, pad, used, ignoreIds) {
+        const ty = Number(targetY) || 0;
+        const taken = (y) => (used || []).some((u) => Math.abs(u - y) < 1);
+        if (!_yBlocked(colNodes, ty, pad, ignoreIds) && !taken(ty)) return ty;
+        const cands = _gapYs(colNodes, pad);
+        if (!cands.length) return ty;
+        const open = cands.filter((y) => !taken(y));
+        const pool = open.length ? open : cands;
+        let best = pool[0];
+        let bestD = Math.abs(best - ty);
+        for (let i = 1; i < pool.length; i++) {
+            const d = Math.abs(pool[i] - ty);
+            if (d < bestD) {
+                bestD = d;
+                best = pool[i];
             }
         }
-        return cost;
+        return best;
     }
 
-    function _gapAttempts(x0, y0, x1, y1, sx, vx, obstacles) {
-        const lo = Math.min(y0, y1);
-        const hi = Math.max(y0, y1);
-        const slack = Math.max(80, hi - lo);
-        const inSpan = [];
-        const near = [];
-        for (const y of _gapYs(Math.min(sx, vx), Math.max(sx, vx), obstacles, 2)) {
-            if (y >= lo - 4 && y <= hi + 4) inSpan.push(y);
-            else if (y >= lo - slack && y <= hi + slack) near.push(y);
+    function _leftEdge(intervals) {
+        const order = (intervals || []).map((_, i) => i).sort((a, b) => {
+            const la = intervals[a].last ? 0 : 1;
+            const lb = intervals[b].last ? 0 : 1;
+            if (la !== lb) return la - lb;
+            const ay = Math.min(intervals[a].lo, intervals[a].hi);
+            const by = Math.min(intervals[b].lo, intervals[b].hi);
+            return (ay - by) || (a - b);
+        });
+        const tracks = [];
+        const color = new Array(intervals.length).fill(0);
+        for (const i of order) {
+            const lo = Math.min(intervals[i].lo, intervals[i].hi);
+            const hi = Math.max(intervals[i].lo, intervals[i].hi);
+            let t = 0;
+            for (; t < tracks.length; t++) {
+                if (tracks[t] < lo) break;
+            }
+            if (t === tracks.length) tracks.push(hi);
+            else tracks[t] = hi;
+            color[i] = t;
         }
-        inSpan.sort((a, b) => Math.abs(a - y1) - Math.abs(b - y1));
-        near.sort((a, b) => Math.abs(a - y1) - Math.abs(b - y1));
+        return color;
+    }
+
+    function _channelBounds(nodes, col, pad) {
+        const p = Math.max(2, Number(pad) || 2);
+        let geoMin = -Infinity;
+        let geoMax = Infinity;
+        for (const n of nodes || []) {
+            if (n.col === col) geoMin = Math.max(geoMin, n.x + n.w + p);
+            if (n.col === col + 1) geoMax = Math.min(geoMax, n.x - p);
+        }
+        if (!Number.isFinite(geoMin) || !Number.isFinite(geoMax)) {
+            for (const n of nodes || []) {
+                if (n.col === col && !Number.isFinite(geoMin)) geoMin = n.x + n.w + p;
+                if (n.col === col + 1 && !Number.isFinite(geoMax)) geoMax = n.x - p;
+            }
+        }
+        if (!Number.isFinite(geoMin)) geoMin = 0;
+        if (!Number.isFinite(geoMax)) geoMax = geoMin + 24;
+        if (geoMin > geoMax) {
+            const mid = (geoMin + geoMax) / 2;
+            geoMin = mid - 4;
+            geoMax = mid + 4;
+        }
+        const minX = geoMin + (geoMax - geoMin) * 0.4;
+        return { minX, maxX: geoMax, geoMin, geoMax };
+    }
+
+    function _trackX(track, minX, maxX, laneGap, nTracks) {
+        const n = Math.max(1, nTracks | 0);
+        const span = Math.max(0, maxX - minX);
+        const want = Math.max(3, Number(laneGap) || 6);
+        const gap = n > 1 && (n - 1) * want > span ? span / Math.max(1, n - 1) : want;
+        return Math.max(minX, Math.min(maxX, maxX - track * gap));
+    }
+
+    function _dedupePath(pts) {
         const out = [];
-        for (const y of inSpan.concat(near)) {
-            out.push([[x0, y0], [sx, y0], [sx, y], [vx, y], [vx, y1], [x1, y1]]);
+        for (const p of pts || []) {
+            if (!out.length) {
+                out.push([p[0], p[1]]);
+                continue;
+            }
+            const q = out[out.length - 1];
+            if (Math.abs(q[0] - p[0]) < 0.05 && Math.abs(q[1] - p[1]) < 0.05) continue;
+            if (out.length >= 2) {
+                const r = out[out.length - 2];
+                if ((Math.abs(q[0] - r[0]) < 0.05 && Math.abs(q[0] - p[0]) < 0.05)
+                    || (Math.abs(q[1] - r[1]) < 0.05 && Math.abs(q[1] - p[1]) < 0.05)) {
+                    out[out.length - 1] = [p[0], p[1]];
+                    continue;
+                }
+            }
+            out.push([p[0], p[1]]);
         }
         return out;
     }
 
-    /**
-     * Orthogonal path from (x0,y0) to dest-left (x1,y1). Near edges stay on
-     * the dest-gutter bus. Far edges drop in `srcBus` so the long run is at
-     * dest Y (or a clear row gap when dest Y is blocked).
-     */
-    function _routeAround(x0, y0, x1, y1, busX, obstacles, inset, srcBus) {
-        const vx = busX;
-        const hasSrc = srcBus != null && Number.isFinite(Number(srcBus));
-        const sx = hasSrc ? Number(srcBus) : x0 + (vx >= x0 ? inset : -inset);
-        const attempts = [];
-        if (vx !== x0) attempts.push([[x0, y0], [vx, y0], [vx, y1], [x1, y1]]);
-        attempts.push([[x0, y0], [sx, y0], [sx, y1], [vx, y1], [x1, y1]]);
-        for (const pts of _gapAttempts(x0, y0, x1, y1, sx, vx, obstacles)) {
-            attempts.push(pts);
+    function _clusterThresh(nodes) {
+        let h = 52;
+        if (nodes && nodes[0]) h = Number(nodes[0].h) || h;
+        const gaps = [];
+        const byCol = Object.create(null);
+        for (const n of nodes || []) {
+            const c = n.col;
+            if (!byCol[c]) byCol[c] = [];
+            byCol[c].push(n.y);
         }
-        let best = null;
-        let bestCost = Infinity;
-        for (const pts of attempts) {
-            if (_polyHits(pts, obstacles)) continue;
-            const c = _routeCost(pts, y0, y1);
-            if (c < bestCost) {
-                bestCost = c;
-                best = pts;
+        for (const list of Object.values(byCol)) {
+            list.sort((a, b) => a - b);
+            for (let i = 1; i < list.length; i++) {
+                const g = list[i] - list[i - 1] - h;
+                if (g > 0 && g < h * 3) gaps.push(g);
             }
         }
-        if (best) return best;
-        const fallback = [[x0, y0], [x0, y1], [x1, y1]];
-        return _polyHits(fallback, obstacles) ? (attempts[0] || fallback) : fallback;
+        let gap = 18;
+        if (gaps.length) {
+            gaps.sort((a, b) => a - b);
+            gap = gaps[Math.floor(gaps.length / 2)];
+        }
+        return { h, gap, clusterAt: 2 * (h + gap) };
     }
 
-    function _yOverlap(a0, a1, b0, b1) {
+    function _overlap1d(a0, a1, b0, b1) {
         return Math.min(a0, a1) < Math.max(b0, b1) && Math.max(a0, a1) > Math.min(b0, b1);
     }
 
-    function _gutterBounds(from, to, nodes) {
-        const maxX = to.x - 2;
-        let left = from.x + from.w;
-        for (const n of nodes || []) {
-            if (!n || n.id === to.id || n.id === from.id) continue;
-            const r = n.x + n.w;
-            if (r < to.x && r > left) left = r;
+    function _attachY(to, idx, count, avoidYs, laneGap) {
+        const n = Math.max(1, count);
+        const lo = to.y + 6;
+        const hi = to.y + to.h - 6;
+        const cands = [to.y + to.h * (idx + 1) / (n + 1)];
+        for (const t of [0.28, 0.72, 0.22, 0.78, 0.38, 0.62, 0.5]) {
+            cands.push(to.y + to.h * t);
         }
-        const minX = Math.min(maxX, left + 2);
-        return { minX, maxX };
+        const clear = (y) => (avoidYs || []).every((a) => Math.abs(a - y) >= laneGap);
+        for (const y of cands) {
+            if (y >= lo && y <= hi && clear(y)) return y;
+        }
+        return Math.max(lo, Math.min(hi, cands[0]));
     }
 
-    /** Gap just to the right of `from`'s column, used as a local vertical bus. */
-    function _sourceGutterBounds(from, to, nodes) {
-        const minX = (from.x + from.w) + 2;
-        let maxX = to.x - 2;
-        for (const n of nodes || []) {
-            if (!n || n.id === from.id || n.id === to.id) continue;
-            if (n.x <= from.x + from.w) continue;
-            if (n.x >= to.x) continue;
-            maxX = Math.min(maxX, n.x - 2);
+    /**
+     * Push apart remaining collinear strokes from different parents.
+     */
+    function _separateCollinear(routed, opts = {}) {
+        const gap = Math.max(4, Number(opts.gap) || 6);
+        const nodes = opts.nodes || [];
+        const pad = Math.max(0, Number(opts.pad) || 0);
+        const stroke = opts.stroke;
+        const byId = Object.create(null);
+        for (const n of nodes) {
+            if (n?.id) byId[n.id] = n;
         }
-        if (minX > maxX) return { minX: Math.min(minX, to.x - 4), maxX: to.x - 2 };
-        return { minX, maxX };
-    }
-
-    function _pickLaneX(job, placed, laneGap, obstacles) {
-        const y0 = job.y0;
-        const y1 = job.y1;
-        if (Math.abs(y1 - y0) < 1) return job.preferredX;
-        const hitsLane = (x) => placed.some((p) => (
-            p.fromId !== job.fromId
-            && Math.abs(p.x - x) < laneGap
-            && _yOverlap(y0, y1, p.y0, p.y1)
+        const hitsNode = (x0, y0, x1, y1, fromId, toId) => nodes.some((n) => (
+            n && n.id !== fromId && n.id !== toId
+            && Math.max(x0, x1) > n.x - pad && Math.min(x0, x1) < n.x + n.w + pad
+            && Math.max(y0, y1) > n.y - pad && Math.min(y0, y1) < n.y + n.h + pad
         ));
-        const hitsNode = (x) => (obstacles || []).some((n) => (
-            n
-            && n.id !== job.fromId
-            && n.id !== job.toId
-            && x >= n.x && x <= n.x + n.w
-            && Math.max(y0, y1) >= n.y && Math.min(y0, y1) <= n.y + n.h
-        ));
-        const ok = (x) => x >= job.minX && x <= job.maxX && !hitsLane(x) && !hitsNode(x);
-        if (ok(job.preferredX)) return job.preferredX;
-        for (let k = 1; k <= 48; k++) {
-            const left = job.preferredX - k * laneGap;
-            const right = job.preferredX + k * laneGap;
-            if (ok(left)) return left;
-            if (ok(right)) return right;
+        for (let round = 0; round < 8; round++) {
+            const verts = [];
+            const hors = [];
+            for (const r of routed || []) {
+                const path = r.path || [];
+                for (let i = 1; i < path.length; i++) {
+                    const a = path[i - 1];
+                    const b = path[i];
+                    const first = i === 1;
+                    const last = i === path.length - 1;
+                    if (Math.abs(a[0] - b[0]) < 0.5 && Math.abs(a[1] - b[1]) >= 1) {
+                        verts.push({
+                            r, i, x: a[0],
+                            y0: Math.min(a[1], b[1]),
+                            y1: Math.max(a[1], b[1]),
+                            from: r.from,
+                            to: r.to
+                        });
+                    } else if (Math.abs(a[1] - b[1]) < 0.5 && Math.abs(a[0] - b[0]) >= 1) {
+                        hors.push({
+                            r, i, y: a[1],
+                            x0: Math.min(a[0], b[0]),
+                            x1: Math.max(a[0], b[0]),
+                            from: r.from,
+                            to: r.to,
+                            pinned: first || last
+                        });
+                    }
+                }
+            }
+            let moved = false;
+            verts.sort((a, b) => (b.y1 - b.y0) - (a.y1 - a.y0));
+            for (const a of verts) {
+                const hit = verts.some((b) => (
+                    b !== a
+                    && a.from !== b.from
+                    && Math.abs(a.x - b.x) < gap
+                    && _overlap1d(a.y0, a.y1, b.y0, b.y1)
+                ));
+                if (!hit) continue;
+                let chosen = null;
+                for (let k = 1; k <= 24 && chosen == null; k++) {
+                    for (const x of [a.x - k * gap, a.x + k * gap]) {
+                        if (hitsNode(x, a.y0, x, a.y1, a.from, a.to)) continue;
+                        if (verts.some((b) => (
+                            b !== a
+                            && a.from !== b.from
+                            && Math.abs(x - b.x) < gap
+                            && _overlap1d(a.y0, a.y1, b.y0, b.y1)
+                        ))) continue;
+                        chosen = x;
+                        break;
+                    }
+                }
+                if (chosen == null) continue;
+                a.r.path[a.i - 1][0] = chosen;
+                a.r.path[a.i][0] = chosen;
+                a.x = chosen;
+                moved = true;
+            }
+            hors.sort((a, b) => (b.x1 - b.x0) - (a.x1 - a.x0));
+            for (const a of hors) {
+                if (a.pinned) continue;
+                const hit = hors.some((b) => (
+                    b !== a
+                    && a.from !== b.from
+                    && Math.abs(a.y - b.y) < gap
+                    && _overlap1d(a.x0, a.x1, b.x0, b.x1)
+                ));
+                if (!hit) continue;
+                let chosen = null;
+                for (let k = 1; k <= 24 && chosen == null; k++) {
+                    for (const y of [a.y - k * gap, a.y + k * gap]) {
+                        if (hitsNode(a.x0, y, a.x1, y, a.from, a.to)) continue;
+                        if (hors.some((b) => (
+                            b !== a
+                            && a.from !== b.from
+                            && Math.abs(y - b.y) < gap
+                            && _overlap1d(a.x0, a.x1, b.x0, b.x1)
+                        ))) continue;
+                        chosen = y;
+                        break;
+                    }
+                }
+                if (chosen == null) continue;
+                a.r.path[a.i - 1][1] = chosen;
+                a.r.path[a.i][1] = chosen;
+                a.y = chosen;
+                moved = true;
+            }
+            for (const a of hors) {
+                const last = a.i === a.r.path.length - 1;
+                if (!last) continue;
+                const dest = byId[a.to];
+                if (!dest) continue;
+                const incoming = (routed || []).filter((r) => r.to === a.to).length;
+                if (incoming <= 1) continue;
+                const hit = hors.some((b) => (
+                    b !== a
+                    && a.from !== b.from
+                    && Math.abs(a.y - b.y) < gap
+                    && _overlap1d(a.x0, a.x1, b.x0, b.x1)
+                ));
+                if (!hit) continue;
+                const yMin = dest.y + 6;
+                const yMax = dest.y + dest.h - 6;
+                let chosen = null;
+                for (let k = 1; k <= 12 && chosen == null; k++) {
+                    for (const y of [a.y - k * gap, a.y + k * gap]) {
+                        if (y < yMin || y > yMax) continue;
+                        if (hors.some((b) => (
+                            b !== a
+                            && a.from !== b.from
+                            && Math.abs(y - b.y) < gap
+                            && _overlap1d(a.x0, a.x1, b.x0, b.x1)
+                        ))) continue;
+                        chosen = y;
+                        break;
+                    }
+                }
+                if (chosen == null) continue;
+                a.r.path[a.i - 1][1] = chosen;
+                a.r.path[a.i][1] = chosen;
+                a.r.path[a.i][0] = nodeLeftX(dest, chosen, { stroke });
+                a.y = chosen;
+                moved = true;
+            }
+            if (!moved) break;
         }
-        return Math.min(job.maxX, Math.max(job.minX, job.preferredX));
+        for (const r of routed || []) r.path = _dedupePath(r.path);
     }
 
     /**
      * Orthogonal prereq path that always enters `to` on the left.
-     * Prefers a vertical bus just left of the dest so elbows don't cut through
-     * a box sitting between source and dest (Rituals → Afterlife vs Burial).
      */
     function edgePath(from, to, opts = {}) {
         if (!from || !to) return [];
-        const inset = Math.max(4, Number(opts.inset) || 20);
-        const stroke = opts.stroke;
-        const y0 = from.y + from.h * 0.5;
-        const y1 = opts.attachY != null ? Number(opts.attachY) : (to.y + to.h * 0.5);
-        const x0 = nodeRightX(from, y0, { stroke });
-        const x1 = nodeLeftX(to, y1, { stroke });
-        const obstacles = (opts.obstacles || []).filter((n) => n && n !== from && n !== to
-            && n.id !== from.id && n.id !== to.id);
-        const busX = opts.busX != null ? Number(opts.busX) : _clearBusX(to, y0, y1, obstacles, inset);
-        let srcBus = opts.srcBus;
-        if (srcBus == null && _isFarEdge(from, to, inset)) {
-            const g = _sourceGutterBounds(from, to, opts.obstacles || []);
-            srcBus = Math.min(g.maxX, Math.max(g.minX, from.x + from.w + Math.min(inset, 12)));
+        const nodes = opts.obstacles || [from, to];
+        const byId = Object.create(null);
+        for (const n of nodes) {
+            if (n?.id) byId[n.id] = n;
         }
-        return _routeAround(x0, y0, x1, y1, busX, obstacles, inset, srcBus);
+        byId[from.id] = from;
+        byId[to.id] = to;
+        const routed = layoutEdgePaths({
+            nodes,
+            byId,
+            edges: [{ from: from.id, to: to.id }]
+        }, opts);
+        return (routed[0] && routed[0].path) || [];
     }
 
     /**
-     * Paths for every prereq edge. Children of the same parent share one vertical
-     * bus; overlapping runs from different parents are offset. Edges that skip a
-     * column drop in the source gutter so the long run is at dest Y, which
-     * avoids riding the source row across the rest of the tree.
+     * Layered orthogonal routing. Every edge goes right out of the source,
+     * verticals live in the dest-side of each column gutter (left-edge
+     * interval coloring), skip-column hops travel in row gaps, and dest is
+     * always entered from the left.
      */
     function layoutEdgePaths(layout, opts = {}) {
         const nodes = layout?.nodes || [];
         const byId = layout?.byId || {};
         const edges = layout?.edges || [];
-        const inset = Math.max(4, Number(opts.inset) || 20);
         const laneGap = Math.max(3, Number(opts.laneGap) || 6);
         const stroke = opts.stroke;
+        const sw = Math.max(2, Number(stroke) || 2);
+        const boxPad = Math.max(8, sw + 6);
+        const { clusterAt } = _clusterThresh(nodes);
         const incoming = new Map();
         for (const e of edges) {
             if (!incoming.has(e.to)) incoming.set(e.to, []);
@@ -1516,110 +1933,202 @@
             list.sort((e1, e2) => {
                 const a = byId[e1.from];
                 const b = byId[e2.from];
-                return ((a?.y || 0) - (b?.y || 0)) || String(e1.from).localeCompare(e2.from);
+                return ((a?.y || 0) - (b?.y || 0)) || String(e1.from).localeCompare(String(e2.from));
             });
         }
+        const byCol = Object.create(null);
+        for (const n of nodes) {
+            const c = Number(n.col) || 0;
+            if (!byCol[c]) byCol[c] = [];
+            byCol[c].push(n);
+        }
         const jobs = [];
+        const usedByCol = Object.create(null);
         for (const e of edges) {
             const from = byId[e.from];
             const to = byId[e.to];
             if (!from || !to) continue;
             const group = incoming.get(e.to) || [e];
             const idx = Math.max(0, group.indexOf(e));
-            const attachY = to.y + to.h * (idx + 1) / (group.length + 1);
             const y0 = from.y + from.h * 0.5;
-            const y1 = attachY;
-            const x0 = nodeRightX(from, y0, { stroke });
-            const x1 = nodeLeftX(to, y1, { stroke });
-            const obstacles = nodes.filter((n) => n && n.id !== from.id && n.id !== to.id);
-            const destBus = _clearBusX(to, y0, y1, obstacles, inset);
-            const far = _isFarEdge(from, to, inset);
-            const destGutter = _gutterBounds(from, to, nodes);
-            let minX = destGutter.minX;
-            let maxX = destGutter.maxX;
-            if (minX > maxX) {
-                minX = Math.min(destBus, to.x - 4);
-                maxX = Math.max(destBus, to.x - 4);
+            let c0 = Number(from.col);
+            let c1 = Number(to.col);
+            if (!Number.isFinite(c0) || !Number.isFinite(c1) || c1 <= c0) {
+                c0 = 0;
+                c1 = 1;
             }
-            const srcGutter = far ? _sourceGutterBounds(from, to, nodes) : null;
-            jobs.push({
+            const avoid = (byCol[c1 - 1] || [])
+                .filter((n) => n.id !== from.id)
+                .map((n) => n.y + n.h * 0.5);
+            const y1 = opts.attachY != null
+                ? Number(opts.attachY)
+                : (edges.length === 1 || group.length === 1
+                    ? to.y + to.h * 0.5
+                    : _attachY(to, idx, group.length, avoid, laneGap));
+            const ys = [y0];
+            const ignore = new Set([from.id, to.id]);
+            for (let c = c0 + 1; c < c1; c++) {
+                if (!usedByCol[c]) usedByCol[c] = [];
+                const col = byCol[c] || [];
+                let y;
+                if (!_yBlocked(col, y0, boxPad, ignore)) y = y0;
+                else if (!_yBlocked(col, y1, boxPad, ignore)) y = y1;
+                else y = _pickGapY(col, y0, boxPad, usedByCol[c], ignore);
+                if (Math.abs(y - y0) >= 1 && Math.abs(y - y1) >= 1) usedByCol[c].push(y);
+                ys.push(y);
+            }
+            ys.push(y1);
+            const job = {
                 fromId: from.id,
                 toId: to.id,
-                destX: to.x,
-                x0, y0, x1, y1,
-                preferredX: destBus,
-                minX,
-                maxX,
-                far,
-                srcPreferredX: srcGutter
-                    ? Math.min(srcGutter.maxX, Math.max(srcGutter.minX, from.x + from.w + Math.min(inset, 12)))
-                    : null,
-                srcMinX: srcGutter ? srcGutter.minX : null,
-                srcMaxX: srcGutter ? srcGutter.maxX : null,
-                obstacles
-            });
+                from,
+                to,
+                c0,
+                c1,
+                ys,
+                x0: nodeRightX(from, y0, { stroke }),
+                x1: nodeLeftX(to, y1, { stroke }),
+                verts: []
+            };
+            for (let c = c0; c < c1; c++) {
+                const k = c - c0;
+                const ya = ys[k];
+                const yb = ys[k + 1];
+                if (Math.abs(yb - ya) < 1 && c < c1 - 1) continue;
+                job.verts.push({
+                    ch: c,
+                    y0: ya,
+                    y1: yb,
+                    fromId: from.id,
+                    last: c === c1 - 1
+                });
+            }
+            jobs.push(job);
         }
         const groups = new Map();
         for (const job of jobs) {
-            const key = `${job.fromId}:${job.destX}`;
-            if (!groups.has(key)) groups.set(key, []);
-            groups.get(key).push(job);
+            for (const v of job.verts) {
+                const key = `${v.fromId}:${v.ch}`;
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key).push(v);
+            }
         }
-        const placed = [];
-        const busOf = new Map();
-        const srcBusOf = new Map();
-        const placeGroup = (group, preferredKey, minKey, maxKey, store, padFarDest) => {
-            let y0 = Math.min(...group.map((j) => Math.min(j.y0, j.y1)));
-            let y1 = Math.max(...group.map((j) => Math.max(j.y0, j.y1)));
-            if (padFarDest && group.some((j) => j.far)) {
-                const pad = Math.max(80, y1 - y0);
-                y0 -= pad;
-                y1 += pad;
-            }
-            const proto = {
-                fromId: group[0].fromId,
-                toId: group[0].toId,
-                preferredX: group[0][preferredKey],
-                minX: Math.max(...group.map((j) => j[minKey])),
-                maxX: Math.min(...group.map((j) => j[maxKey])),
-                y0,
-                y1
-            };
-            if (proto.minX > proto.maxX) {
-                proto.minX = group[0][minKey];
-                proto.maxX = group[0][maxKey];
-            }
-            const busX = _pickLaneX(proto, placed, laneGap, nodes);
-            if (Math.abs(y1 - y0) >= 1) {
-                placed.push({ x: busX, y0, y1, fromId: proto.fromId });
-            }
-            for (const job of group) store.set(job, busX);
-        };
+        const intervalsByCh = new Map();
+        const owner = new Map();
         for (const group of groups.values()) {
-            placeGroup(group, "preferredX", "minX", "maxX", busOf, true);
+            group.sort((a, b) => Math.min(a.y0, a.y1) - Math.min(b.y0, b.y1));
+            let cur = [group[0]];
+            const flush = () => {
+                const lo = Math.min(...cur.map((v) => Math.min(v.y0, v.y1)));
+                const hi = Math.max(...cur.map((v) => Math.max(v.y0, v.y1)));
+                const ch = cur[0].ch;
+                if (!intervalsByCh.has(ch)) intervalsByCh.set(ch, []);
+                const iv = { lo, hi, ch, last: cur.some((v) => v.last) };
+                intervalsByCh.get(ch).push(iv);
+                for (const v of cur) owner.set(v, iv);
+            };
+            for (let i = 1; i < group.length; i++) {
+                const prev = cur[cur.length - 1];
+                const destGap = Math.abs(
+                    Math.max(group[i].y0, group[i].y1) - Math.max(prev.y0, prev.y1)
+                );
+                if (destGap > clusterAt) {
+                    flush();
+                    cur = [group[i]];
+                } else cur.push(group[i]);
+            }
+            flush();
         }
-        const srcGroups = new Map();
+        const xOf = new Map();
+        const boundsOf = new Map();
+        for (const [ch, list] of intervalsByCh) {
+            const colors = _leftEdge(list);
+            const bounds = _channelBounds(nodes, ch, boxPad);
+            boundsOf.set(ch, bounds);
+            let nTracks = 1;
+            for (const t of colors) nTracks = Math.max(nTracks, t + 1);
+            for (let i = 0; i < list.length; i++) {
+                xOf.set(list[i], _trackX(colors[i], bounds.minX, bounds.maxX, laneGap, nTracks));
+            }
+        }
+        const stub = Math.max(laneGap, 8);
+        const horiz = [];
         for (const job of jobs) {
-            if (!job.far) continue;
-            if (!srcGroups.has(job.fromId)) srcGroups.set(job.fromId, []);
-            srcGroups.get(job.fromId).push(job);
+            for (let k = 1; k < job.ys.length - 1; k++) {
+                const left = job.verts[k - 1];
+                const right = job.verts[k];
+                const x0 = xOf.get(owner.get(left));
+                const x1 = xOf.get(owner.get(right));
+                if (!Number.isFinite(x0) || !Number.isFinite(x1)) continue;
+                horiz.push({
+                    job,
+                    k,
+                    y: job.ys[k],
+                    lo: Math.min(x0, x1),
+                    hi: Math.max(x0, x1),
+                    fromId: job.fromId,
+                    col: job.c0 + k
+                });
+            }
         }
-        for (const group of srcGroups.values()) {
-            placeGroup(group, "srcPreferredX", "srcMinX", "srcMaxX", srcBusOf, false);
+        const hGroups = new Map();
+        for (const h of horiz) {
+            const key = `${h.col}:${Math.round(h.y)}`;
+            if (!hGroups.has(key)) hGroups.set(key, []);
+            hGroups.get(key).push(h);
+        }
+        for (const list of hGroups.values()) {
+            const byParent = new Map();
+            for (const h of list) {
+                if (!byParent.has(h.fromId)) byParent.set(h.fromId, []);
+                byParent.get(h.fromId).push(h);
+            }
+            const ivs = [];
+            const members = [];
+            for (const bunch of byParent.values()) {
+                ivs.push({
+                    lo: Math.min(...bunch.map((h) => h.lo)),
+                    hi: Math.max(...bunch.map((h) => h.hi))
+                });
+                members.push(bunch);
+            }
+            if (ivs.length < 2) continue;
+            const colors = _leftEdge(ivs);
+            const colNodes = byCol[list[0].col] || [];
+            const cands = _gapYs(colNodes, boxPad);
+            for (let i = 0; i < members.length; i++) {
+                if (colors[i] === 0) continue;
+                const prefer = members[i][0].y;
+                const taken = list.map((h) => h.y);
+                const y = cands.length
+                    ? _pickGapY(colNodes, prefer, boxPad, taken)
+                    : prefer + colors[i] * laneGap;
+                for (const h of members[i]) {
+                    h.job.ys[h.k] = y;
+                    h.y = y;
+                    if (h.job.verts[h.k - 1]) h.job.verts[h.k - 1].y1 = y;
+                    if (h.job.verts[h.k]) h.job.verts[h.k].y0 = y;
+                }
+            }
         }
         const out = [];
         for (const job of jobs) {
-            const busX = busOf.get(job);
-            out.push({
-                from: job.fromId,
-                to: job.toId,
-                path: _routeAround(
-                    job.x0, job.y0, job.x1, job.y1,
-                    busX, job.obstacles, inset,
-                    srcBusOf.get(job)
-                )
-            });
+            const pts = [[job.x0, job.ys[0]]];
+            for (const v of job.verts) {
+                const bounds = boundsOf.get(v.ch);
+                let x = xOf.get(owner.get(v));
+                if (!Number.isFinite(x)) x = job.x0 + stub;
+                if (v === job.verts[0]) {
+                    x = Math.max(x, job.x0 + stub);
+                    if (bounds) x = Math.min(bounds.maxX, Math.max(bounds.minX, x));
+                }
+                pts.push([x, v.y0]);
+                pts.push([x, v.y1]);
+            }
+            pts.push([job.x1, job.ys[job.ys.length - 1]]);
+            out.push({ from: job.fromId, to: job.toId, path: _dedupePath(pts) });
         }
+        _separateCollinear(out, { gap: laneGap, pad: boxPad, nodes, stroke });
         return out;
     }
 
@@ -1750,6 +2259,7 @@
         nodeRightX,
         treeRows,
         treeLayout,
+        orderLayers,
         edgePath,
         layoutEdgePaths,
         minuteDelta

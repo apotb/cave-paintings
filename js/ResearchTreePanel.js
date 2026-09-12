@@ -781,14 +781,15 @@ class ResearchTreePanel {
         this._contentH = layout.height;
         const pts = this._points();
         const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
+        const edgeSw = Math.max(2, sw);
         const inset = Math.max(10, Math.round(20 * s));
-        const laneGap = Math.max(4, Math.round(6 * s));
+        const laneGap = Math.max(edgeSw + 4, Math.round(8 * s));
         const routed = R.layoutEdgePaths
-            ? R.layoutEdgePaths(layout, { inset, laneGap, stroke: sw })
+            ? R.layoutEdgePaths(layout, { inset, laneGap, stroke: edgeSw })
             : [];
         const byEdge = new Map();
         for (const r of routed) byEdge.set(`${r.from}->${r.to}`, r.path);
-        this._edgeSw = Math.max(2, sw);
+        this._edgeSw = edgeSw;
         for (const e of layout.edges) {
             const a = layout.byId[e.from];
             const b = layout.byId[e.to];
