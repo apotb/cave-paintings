@@ -48,3 +48,16 @@ test("import stamps lastPlayedAt when the file looks played", () => {
     assert.ok(w.lastPlayedAt > 0);
     assert.equal(w.lastPlayedAt, w.updatedAt);
 });
+
+test("import keeps settlements, settlers, and wanderers", () => {
+    const json = WorldStore.exportJson({
+        name: "Camp",
+        settlements: [{ id: "s1", name: "Hearth" }],
+        settlers: [{ id: "og", name: "Og" }],
+        wanderers: [{ id: "w1", name: "Pass" }]
+    });
+    const w = WorldStore.importJson(json);
+    assert.equal(w.settlements[0].id, "s1");
+    assert.equal(w.settlers[0].id, "og");
+    assert.equal(w.wanderers[0].id, "w1");
+});

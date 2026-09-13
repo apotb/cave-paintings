@@ -394,3 +394,79 @@ test("LocalSim relog keeps parked gear even if character.party still lists them"
     assert.equal(row.equipment.torso.id, "leaf_wrap");
     await again.close();
 });
+
+function grassChunk(cx, cy) {
+    return {
+        x: cx,
+        y: cy,
+        tiles: Array(64).fill("grass"),
+        things: [],
+        lootableThings: [],
+        drops: [],
+        mobs: [],
+        corpses: [],
+        bloodStains: []
+    };
+}
+
+test("LocalSim streams chunks around the controlled companion, not only the leader", async () => {
+    const campX = -1224;
+    const campY = 4768;
+    const campCx = Math.floor(campX / 128);
+    const campCy = Math.floor(campY / 128);
+    const world = {
+        id: "w-split",
+        name: "Split",
+        genVersion: 2,
+        seed: 1,
+        chunks: {
+            "0,0": grassChunk(0, 0),
+            [`${campCx},${campCy}`]: grassChunk(campCx, campCy)
+        },
+        clock: { gameDay: 1, gameMinutes: 8 * 60, tickSpeed: 1 },
+        poses: {
+            p1p1p1p1: { x: 32, y: 32, facing: "down" },
+            buddy: { x: campX, y: campY, facing: "right" }
+        },
+        settlements: [],
+        settlers: []
+    };
+    const sim = new LocalSim({
+        world,
+        character: {
+            id: "p1p1p1p1",
+            name: "Tester",
+            controlId: "buddy",
+            inventory: [null, null, null, null, null],
+            party: [{
+                id: "buddy",
+                name: "Buddy",
+                x: campX,
+                y: campY,
+                inventory: [null, null, null, null, null]
+            }]
+        }
+    });
+    const chunkKeys = [];
+    sim.on(Protocol.Types.CHUNK, (meta) => {
+        chunkKeys.push(`${meta.x},${meta.y}`);
+    });
+    await sim.connect();
+    sim.flushAndListen();
+    assert.ok(
+        chunkKeys.includes(`${campCx},${campCy}`),
+        `expected camp chunk ${campCx},${campCy} among ${chunkKeys.slice(0, 8).join(",")}`
+    );
+    await sim.close();
+});
+
+test("LocalSim ensureChunksAround still streams while paused", async () => {
+    const sim = await makeSim();
+    sim.setPaused(true);
+    const keys = [];
+    sim.on(Protocol.Types.CHUNK, (meta) => keys.push(`${meta.x},${meta.y}`));
+    sim.flushAndListen();
+    sim.ensureChunksAround(400, 3600, 1);
+    assert.ok(keys.some((k) => k.split(",").map(Number)[0] >= 2), "requested neighborhood streamed");
+    await sim.close();
+});

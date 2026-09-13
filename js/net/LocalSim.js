@@ -291,6 +291,11 @@ class LocalSim {
             this.session.setMove(this.playerId, move);
     }
 
+    ensureChunksAround(wx, wy, radius) {
+        if (!this.connected || !this.session || !this.playerId) return;
+        this.session.ensureChunksAround(this.playerId, wx, wy, radius);
+    }
+
     sendAction(action) {
             if (!this.connected || !this.session) return;
             this.session.handleAction(this.playerId, action);
