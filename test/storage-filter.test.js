@@ -76,9 +76,10 @@ test("knapped stack uses toolClass key not unique silhouette", () => {
     const tools = SF.findNode(t, "tools");
     const ids = (tools.items || []).map((it) => it.id);
     assert.deepEqual(ids, [
-        "tool:awl", "bone", "tool:chopper", "flint_tool", "tool:knife",
-        "tool:scraper", "stone_tool"
+        "tool:awl", "bone", "tool:chopper", "digging_stick", "flint_tool",
+        "tool:knife", "tool:scraper", "stone_tool"
     ]);
+    assert.equal(SF.filterKey({ id: "digging_stick", toolClass: "digger" }, getItem("digging_stick")), "digging_stick");
     const stoneIds = (SF.findNode(t, "materials/stone").items || []).map((it) => it.id);
     assert.ok(stoneIds.includes("tool:spear_tip"));
     assert.equal(stoneIds.includes("tool:chopper"), false);
@@ -133,7 +134,9 @@ test("every item lands in exactly one leaf", () => {
         assert.ok(leaf, def.id);
         if (def.toolClass) {
             assert.equal(leaf, "tools");
-            assert.ok(seen.has(`tool:${def.toolClass}`), def.id);
+            if (SF.TOOL_CLASSES.some((t) => t.cls === def.toolClass)) {
+                assert.ok(seen.has(`tool:${def.toolClass}`), def.id);
+            }
         }
         assert.ok(seen.has(def.id), `${def.id} missing from tree (leaf ${leaf})`);
     }
@@ -151,6 +154,7 @@ test("every item lands in exactly one leaf", () => {
     assert.equal(SF.leafCategory(getItem("skinworking_bench"), null), "buildings");
     assert.equal(SF.leafCategory(getItem("settling_stone"), null), "buildings");
     assert.equal(SF.leafCategory(getItem("leaf_cord"), null), "medicine");
+    assert.equal(SF.leafCategory(getItem("digging_stick"), null), "tools");
     assert.equal(SF.leafCategory(getItem("stick_frame"), null), "materials/wood");
     assert.equal(SF.leafCategory(getItem("stick"), null), "materials/wood");
     const materialKids = (SF.findNode(t, "materials").children || []).map((n) => n.id);
