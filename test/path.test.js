@@ -161,6 +161,64 @@ test("steerToward on a committed path does not probe a far dest", () => {
     assert.equal(destProbes, 0, "committed follow must not dest-LOS 48 tiles out");
 });
 
+test("steerToward overlapping waits for allowReplan instead of probing dest", () => {
+    const TS = 16;
+    function blocked(x, y) {
+        const c = Path.cellOf(x, y, TS);
+        return c.cy === 10 && c.cx >= 4 && c.cx <= 8;
+    }
+    const from = Path.cellStand(2, 10, TS);
+    const to = Path.cellStand(12, 10, TS);
+    const first = Path.steerToward({
+        from, to, blocked, cellSize: TS, side: 1, dt: 16, maxRange: 16, overlapping: true
+    });
+    let probes = 0;
+    function counted(x, y) {
+        probes++;
+        return blocked(x, y);
+    }
+    const second = Path.steerToward({
+        from,
+        to,
+        blocked: counted,
+        cellSize: TS,
+        side: first.side,
+        dt: 16,
+        maxRange: 16,
+        path: first.path,
+        pathGoal: first.pathGoal,
+        overlapping: true,
+        allowReplan: false
+    });
+    assert.equal(second.replanned, false);
+    assert.ok(probes < 40, `replan window should skip dest probes (${probes})`);
+});
+
+test("steerToward does not dest-LOS a far blocked target", () => {
+    const TS = 16;
+    const from = { x: 32, y: 32 };
+    const to = { x: 32 + 80 * TS, y: 32 };
+    let farProbes = 0;
+    let totalProbes = 0;
+    function blocked(x, y) {
+        totalProbes++;
+        if (Math.abs(x - to.x) < TS && Math.abs(y - to.y) < TS) {
+            farProbes++;
+            return true;
+        }
+        return false;
+    }
+    for (let i = 0; i < 8; i++) {
+        const steered = Path.steerToward({
+            from, to, blocked, cellSize: TS, dt: 16, maxRange: 12
+        });
+        assert.equal(steered.arrived, false);
+        assert.ok(steered.nx > 0.9, "should still walk toward the far target");
+    }
+    assert.equal(farProbes, 0, `far blocked dest must not be probed (${farProbes})`);
+    assert.ok(totalProbes < 4000, `local window only (${totalProbes} blocked probes)`);
+});
+
 test("planPath skirts a vertical lean-to toward a dest on the closed-in side", () => {
     const TS = 16;
     const Place = require("../shared/place");

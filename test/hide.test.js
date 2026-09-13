@@ -63,6 +63,23 @@ test("haulers leave fleshed hides in water, not other drops", () => {
     assert.equal(Hide.leaveHaulInWater(stick, true), false);
 });
 
+test("hangStack only freeze-spoils fleshed hides", () => {
+    const now = 1000;
+    const getItem = (id) => DataStore.getItem(id);
+    const raw = Hide.hangStack({ id: "deer_hide", quantity: 1, spoilLeft: 120 }, now, getItem);
+    assert.equal(raw.spoilAt, 1120);
+    assert.equal(raw.spoilLeft, undefined);
+    assert.equal(Hide.pausesRackSpoil(getItem(raw.id)), false);
+    const fleshed = Hide.hangStack(
+        { id: "deer_hide_fleshed", quantity: 1, spoilAt: now + 200 },
+        now,
+        getItem
+    );
+    assert.equal(fleshed.spoilLeft, 200);
+    assert.equal(fleshed.spoilAt, undefined);
+    assert.equal(Hide.pausesRackSpoil(getItem(fleshed.id)), true);
+});
+
 test("canonicalItemId remaps old beef ids to human flesh", () => {
     assert.equal(Hide.canonicalItemId("raw_beef"), "raw_human_flesh");
     assert.equal(Hide.canonicalItemId("roast_beef"), "roasted_human_flesh");

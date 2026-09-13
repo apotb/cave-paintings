@@ -1,8 +1,9 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { createTestWorld, originChunk } = require("./helpers/simWorld");
+const { createTestWorld, originChunk, emptyChunk, chunkKey } = require("./helpers/simWorld");
 const { loadDefs, DataStore, restoreRng, seedRng } = require("./helpers/load");
 const Place = require("../shared/place");
+const Hide = require("../shared/hide");
 const BodyHealing = require("../shared/body/Healing");
 const BodyCombat = require("../shared/body/Combat");
 const Party = require("../shared/party");
@@ -575,6 +576,52 @@ test("corpse_skin with knife marks skinned", () => {
     assert.equal(skinEv.entry.y, pawn.y);
 });
 
+test("corpse_skin does not butcher a carcass", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "stick", quantity: 1, toolClass: "knife", durability: 40 };
+    pawn.hotbarIndex = 0;
+    const chunk = originChunk(world);
+    chunk.corpses.push({
+        id: "carcass-1",
+        x: pawn.x,
+        y: pawn.y,
+        mobId: "deer",
+        skinned: false,
+        stage: "carcass",
+        loot: [{ id: "bone", quantity: 2 }]
+    });
+    world.handleAction(pawn.id, { type: Protocol.Actions.CORPSE_SKIN, corpseId: "carcass-1" });
+    const entry = chunk.corpses[0];
+    assert.equal(entry.stage, "carcass");
+    assert.equal(entry.skinned, false);
+    assert.equal(entry.loot.length, 1);
+    assert.equal(entry.loot[0].id, "bone");
+    const skinEv = world.drainEvents().find((e) => e.kind === "corpse" && e.op === "skin");
+    assert.equal(skinEv, undefined);
+});
+
+test("corpse_skin does not butcher a corpse that has aged into a carcass", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "stick", quantity: 1, toolClass: "knife", durability: 40 };
+    pawn.hotbarIndex = 0;
+    const chunk = originChunk(world);
+    const now = world.worldMinuteIndex();
+    chunk.corpses.push({
+        id: "aged-1",
+        x: pawn.x,
+        y: pawn.y,
+        mobId: "deer",
+        skinned: false,
+        stage: "corpse",
+        diedAt: now - 12 * 60,
+        loot: []
+    });
+    world.handleAction(pawn.id, { type: Protocol.Actions.CORPSE_SKIN, corpseId: "aged-1" });
+    const entry = chunk.corpses[0];
+    assert.equal(entry.skinned, false);
+    assert.equal(entry.loot.length, 0);
+});
+
 test("/kms aliases /kill", () => {
     const { world, pawn, Protocol } = createTestWorld();
     world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/kms" });
@@ -974,6 +1021,31 @@ test("wanderer paths around a lean-to instead of walking the laying spot", () =>
     assert.ok(w.x > occupy.right - 4, `should pass east of the lean-to, x=${w.x.toFixed(1)}`);
 });
 
+test("wildlife does not path around sleep furniture", () => {
+    const Sleep = require("../shared/sleep");
+    const { world } = createTestWorld();
+    const entry = world._spawnMobAt("deer", 80, 80);
+    const deer = world.mobs.get(entry.uid);
+    assert.ok(deer);
+    assert.equal(Sleep.navAroundBeds(deer), false);
+    const id = "w-bed-nav";
+    world.wanderers.set(id, {
+        id,
+        name: "Walker",
+        x: 80,
+        y: 80,
+        facing: "right",
+        heading: { x: 1, y: 0 },
+        inventory: [null, null, null, null, null],
+        hostile: false,
+        recruitLocked: false,
+        refusedBy: []
+    });
+    const c = world._ensureWandererCreature(world.wanderers.get(id));
+    assert.equal(Sleep.navAroundBeds(c), true);
+    assert.equal(Sleep.navAroundBeds({ kind: "player", role: "companion" }), false);
+});
+
 test("recruiting a wanderer drops stroll AI so they follow instead of walking off", () => {
     const { world, pawn, Protocol } = createTestWorld();
     const { PartyAI, WandererStrollAI } = require("../shared/ai/headless");
@@ -1091,7 +1163,50 @@ test("far followers do not worldgen an A* corridor", () => {
     }
     assert.equal(corridor, 0, `follow A* should not WorldGen a corridor (${corridor} chunks)`);
     const dist = Math.hypot(follower.x - 32, follower.y - 32);
-    assert.ok(dist > 4, `follower should still walk toward the leader (moved ${dist.toFixed(1)}px)`);
+    assert.ok(dist < 4, `far follower should wait instead of trekking (moved ${dist.toFixed(1)}px)`);
+});
+
+test("view and interest stay on the controlled pawn when a member is far", () => {
+    const WorldGen = require("../shared/sim/WorldGen");
+    const { world, pawn } = createTestWorld();
+    pawn.connected = true;
+    pawn.viewChunks = 2;
+    pawn.x = 32 + 20 * 256;
+    pawn.y = 32;
+    const buddy = makeCompanion("camp-buddy", { x: 32, y: 32 });
+    pawn.party.push(buddy);
+    world._ensureCompanionCreature(pawn, buddy);
+    pawn.controlId = buddy.id;
+
+    const oceanCx = Math.floor(pawn.x / 128);
+    const oceanCy = Math.floor(pawn.y / 128);
+    for (let cx = oceanCx - 1; cx <= oceanCx + 1; cx++) {
+        for (let cy = oceanCy - 1; cy <= oceanCy + 1; cy++) {
+            const key = chunkKey(cx, cy);
+            if (!world.chunks.has(key)) world.chunks.set(key, emptyChunk(cx, cy));
+        }
+    }
+
+    const keys = world.viewChunkKeys(pawn);
+    const oceanKey = chunkKey(oceanCx, oceanCy);
+    const campKey = "0,0";
+    assert.equal(keys.has(oceanKey), false, "far leader chunk must not stream");
+    assert.equal(keys.has(campKey), true, "controlled camp chunk must stream");
+
+    let oceanGen = 0;
+    const orig = WorldGen.generateChunk;
+    WorldGen.generateChunk = function wrappedGenerateChunk(cx) {
+        if (cx >= 18) oceanGen++;
+        return orig.apply(this, arguments);
+    };
+    try {
+        world.tick(50);
+    } finally {
+        WorldGen.generateChunk = orig;
+    }
+    assert.equal(oceanGen, 0, `far leader should not WorldGen (${oceanGen} chunks)`);
+    const dist = Math.hypot(pawn.x - (32 + 20 * 256), pawn.y - 32);
+    assert.ok(dist < 4, `uncontrolled far leader should wait (moved ${dist.toFixed(1)}px)`);
 });
 
 test("addPlayer skips the join chat when silentJoin", () => {
@@ -1153,6 +1268,23 @@ test("snapshot omits wildlife outside sim radius", () => {
     const ids = (snap.mobs || []).map((m) => m.id);
     assert.ok(ids.includes(near.uid));
     assert.equal(ids.includes(far.uid), false);
+});
+
+test("snapshot keeps camp drops when the leader is far from the controlled pawn", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.connected = true;
+    const campX = -1224;
+    const campY = 4768;
+    const buddy = addTestCompanion(world, pawn, "buddy");
+    buddy.x = campX;
+    buddy.y = campY;
+    pawn.controlId = buddy.id;
+    world._pushDrop(campX, campY, { id: "stick", quantity: 3 });
+    const snap = world.snapshotFor(pawn.id);
+    assert.ok(
+        (snap.drops || []).some((d) => d && d.id === "stick"),
+        "drops beside the possessed pawn must stay in the snapshot"
+    );
 });
 
 test("snapshot marks a downed wanderer prone before death", () => {
@@ -2136,6 +2268,43 @@ test("hot food in a basket cools each world minute", () => {
     );
     for (let i = 0; i < 120; i++) world._worldMinute();
     assert.equal(basket.slots[0].temp, undefined);
+});
+
+test("raw hide on a drying rack still spoils", () => {
+    const { world, pawn } = createTestWorld();
+    const chunk = originChunk(world);
+    const rack = { uid: "rack_raw_spoil", id: "drying_rack", x: pawn.x, y: pawn.y };
+    Place.ensureStorageEntry(rack, DataStore.getThing("drying_rack"));
+    const now = world.worldMinuteIndex();
+    rack.slots[0] = Hide.hangStack(
+        { id: "deer_hide", quantity: 1, spoilLeft: 2 },
+        now,
+        (id) => DataStore.getItem(id)
+    );
+    chunk.things.push(rack);
+    assert.equal(rack.slots[0].spoilAt, now + 2);
+    world._worldMinute();
+    assert.equal(rack.slots[0].id, "deer_hide");
+    world._worldMinute();
+    assert.equal(rack.slots[0].id, "rot");
+});
+
+test("fleshed hide on a drying rack does not spoil while drying", () => {
+    const { world, pawn } = createTestWorld();
+    const chunk = originChunk(world);
+    const rack = { uid: "rack_flesh_dry", id: "drying_rack", x: pawn.x, y: pawn.y };
+    Place.ensureStorageEntry(rack, DataStore.getThing("drying_rack"));
+    const now = world.worldMinuteIndex();
+    rack.slots[0] = Hide.hangStack(
+        { id: "deer_hide_fleshed", quantity: 1, spoilLeft: 3 },
+        now,
+        (id) => DataStore.getItem(id)
+    );
+    chunk.things.push(rack);
+    for (let i = 0; i < 8; i++) world._worldMinute();
+    assert.equal(rack.slots[0].id, "deer_hide_fleshed");
+    assert.ok(rack.slots[0].dryProgress > 0);
+    assert.equal(rack.slots[0].spoilLeft, 3);
 });
 
 test("waking from a lean-to clears prone so the player can attack", () => {

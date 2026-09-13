@@ -629,8 +629,8 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
     }
 }
 
-/** Ground loot lifetime while its chunk is loaded (5 real minutes). */
-const DROP_LIFE_MS = 5 * 60 * 1000;
+/** Ground loot lifetime while its chunk is loaded (15 real minutes). */
+const DROP_LIFE_MS = 15 * 60 * 1000;
 
 function dropIconKey(scene, item, entry) {
     if (typeof Place !== "undefined" && Place.itemIconKey && scene?.getThing) {

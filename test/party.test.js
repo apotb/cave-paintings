@@ -64,6 +64,14 @@ test("followWantSprint matches a sprinting leader at catch range", () => {
     );
 });
 
+test("beyondFollowLeash parks map-wide chases but not local follow", () => {
+    const ts = 16;
+    const a = { x: 0, y: 0 };
+    assert.equal(Party.beyondFollowLeash(a, { x: 12 * ts, y: 0 }, ts), false);
+    assert.equal(Party.beyondFollowLeash(a, { x: Party.FOLLOW_LEASH * ts, y: 0 }, ts), false);
+    assert.equal(Party.beyondFollowLeash(a, { x: (Party.FOLLOW_LEASH + 1) * ts, y: 0 }, ts), true);
+});
+
 test("companionFollowLabel uses you for the leader and Waiting with no follow target", () => {
     const leader = { name: "Tester", isBodyDead: () => false };
     const og = { name: "Og", displayName: () => "Og", isBodyDead: () => false };

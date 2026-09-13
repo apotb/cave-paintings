@@ -81,9 +81,9 @@
             y /= len;
             if (Path?.steerHeading) {
                 const world = this._world || this._aiWorldRef;
-                const blocked = (px, py) => (world?.poseBlocked
-                    ? world.poseBlocked(mob, px, py)
-                    : (world?.isBlocked ? world.isBlocked(px, py) : false));
+                const blocked = (px, py) => (world?.isBlocked
+                    ? world.isBlocked(px, py)
+                    : (world?.poseBlocked ? world.poseBlocked(mob, px, py) : false));
                 const steered = Path.steerHeading(
                     { x: mob.x, y: mob.y },
                     x,
@@ -534,9 +534,9 @@
 
             const near = edgeDist <= Math.max(reach + 8, 14);
             if (!near && Path?.steerHeading) {
-                const blocked = (px, py) => (world?.poseBlocked
-                    ? world.poseBlocked(mob, px, py)
-                    : (world?.isBlocked ? world.isBlocked(px, py) : false));
+                const blocked = (px, py) => (world?.isBlocked
+                    ? world.isBlocked(px, py)
+                    : (world?.poseBlocked ? world.poseBlocked(mob, px, py) : false));
                 const steered = Path.steerHeading(
                     { x: mob.x, y: mob.y },
                     nx,
@@ -715,6 +715,18 @@
                 return;
             }
             const follow = world?.getFollowTarget?.(mob);
+            if (
+                !settler
+                && follow
+                && !follow.isBodyDead?.()
+                && Party?.beyondFollowLeash?.(mob, follow, TILE)
+            ) {
+                this._clearCombat();
+                this.tendSeek = null;
+                this.eatSeek = null;
+                this._idle();
+                return;
+            }
             if (settler) {
                 const home = world?.getSettlement?.(mob);
                 const next = world?.getAssistTarget?.(mob) || null;
@@ -1150,13 +1162,17 @@
             const mob = this.mob;
             const settler = mob.role === "settler" || !!mob.homeSettlementId;
             const embedded = !!this._overlappingThing(world)
-                || !!(world?.poseBlocked && world.poseBlocked(mob, mob.x, mob.y, 0));
+                || !!(world?.poseBlocked && world.poseBlocked(
+                    mob, mob.x, mob.y, 0, { sleepFootprint: false }
+                ));
             if (embedded) this._nudgeOutOfThing(world, true);
             const overlap = embedded ? this._overlappingThing(world) : null;
             const from = { x: mob.x, y: mob.y };
             const pad = settler ? 2 : 1;
+            const bunkNav = settler || mob.role === "wanderer";
             const blocked = (x, y) => {
-                if (world?.poseBlocked) return world.poseBlocked(mob, x, y, pad);
+                if (bunkNav && world?.poseBlocked) return world.poseBlocked(mob, x, y, pad);
+                if (world?.isBlocked) return world.isBlocked(x, y);
                 return this._agentBlocked(x, y, world);
             };
             if (!Path?.steerToward) return;
@@ -1176,7 +1192,13 @@
             const to = { x: tx, y: ty };
             const farLook = settler || destDistTiles > 12;
             const now = Date.now();
-            const allowReplan = !this._planAt || now - this._planAt >= 400;
+            if (this._replanPad == null) {
+                const id = String(mob.id || "");
+                let h = 0;
+                for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+                this._replanPad = Math.abs(h) % 220;
+            }
+            const allowReplan = !this._planAt || now - this._planAt >= 400 + this._replanPad;
             const steered = Path.steerToward({
                 from,
                 to,

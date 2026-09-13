@@ -334,7 +334,9 @@
     /**
      * Walk collision in world pixels.
      * 1×1: hs×hs at the feet, or a rotation-aware AABB from `hitbox`.
-     * Sleep: footprint minus the open/bedding side (walk onto the laying spot).
+     * Sleep 90/270: footprint minus the open/bedding side (walk onto the laying spot).
+     * Sleep 0/180: the whole footprint. Those frames are a roof + posts facing
+     * the camera; cutting an open lip lets you walk into the drawing.
      * Other multi-tile: a strip `hitboxSize` thick on the closed side.
      */
     function collisionWorldRect(entry, thingDef, tileSize) {
@@ -384,25 +386,23 @@
         const hs = box.h;
         if (thingDef?.sleep) {
             const r = normalizeRot(entry.rot);
-            const along = (r === 0 || r === 180) ? (right - left) : (bottom - top);
-            const pad = Math.min(2, Math.max(0, Math.floor((along - 12) / 2)));
+            // Horizontal frames (opening south/north) are a roof with posts on
+            // both ends. A south/north open lip is the interior of the sprite.
             if (r === 0 || r === 180) {
-                left += pad;
-                right -= pad;
-            } else {
-                top += pad;
-                bottom -= pad;
+                return { left, right, top, bottom };
             }
-            const cross = (r === 0 || r === 180) ? (bottom - top) : (right - left);
+            const along = bottom - top;
+            const pad = Math.min(2, Math.max(0, Math.floor((along - 12) / 2)));
+            top += pad;
+            bottom -= pad;
+            const cross = right - left;
             const wall = Math.max(3, Math.min(hs, cross - 1));
             const want = Number(thingDef.sleep.openInset);
             const open = Math.min(
                 Math.max(0, Number.isFinite(want) ? want : Math.floor(ts * 0.5)),
                 Math.max(0, cross - wall)
             );
-            if (r === 0) bottom -= open;
-            else if (r === 180) top += open;
-            else if (r === 90) left += open;
+            if (r === 90) left += open;
             else right -= open;
             return { left, right, top, bottom };
         }

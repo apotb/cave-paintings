@@ -6,7 +6,7 @@ function defs() {
     return {
         stick: { id: "stick", fuel: { kj: 5, temp: 600 } },
         leaf: { id: "leaf", fuel: { kj: 1, temp: 400 } },
-        log: { id: "log", fuel: { kj: 40, temp: 800 } },
+        log: { id: "log", fuel: { kj: 160, temp: 800 } },
         apple: {
             id: "apple",
             cook: { stick_roast: { result: "roasted_apple", minutes: 10, temp: 300 } },

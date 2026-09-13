@@ -2574,10 +2574,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
         if (this.isIncapacitated()) return false;
-        if (!corpse?.entry || corpse.entry.skinned || corpse.entry.stage === "carcass") return false;
+        const now = this.scene.worldMinuteIndex?.();
+        const skinnable = typeof CorpseDecay !== "undefined" && CorpseDecay.canSkin
+            ? CorpseDecay.canSkin(corpse?.entry, now)
+            : !!(corpse?.entry && !corpse.entry.skinned && corpse.entry.stage !== "carcass");
+        if (!corpse?.entry || !skinnable) return false;
         if (!corpse.inRange?.()) return false;
+        if (this.heldToolClass() !== "knife") return false;
         const item = this.getHeldItem();
-        if (!item || item.toolClass !== "knife") return false;
+        if (!item) return false;
 
         // Close loot UI while skinning
         if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
@@ -2611,15 +2616,16 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     _tickSkin(delta) {
         if (!this._skinChannel) return;
         const slot = this.scene.hotbar.activeIndex;
-        const held = this.getHeldItem();
         const corpse = this._skinChannel.corpse;
+        const now = this.scene.worldMinuteIndex?.();
+        const stillSkinnable = typeof CorpseDecay !== "undefined" && CorpseDecay.canSkin
+            ? CorpseDecay.canSkin(corpse?.entry, now)
+            : !!(corpse?.entry && !corpse.entry.skinned && corpse.entry.stage !== "carcass");
         if (
             slot !== this._skinChannel.slot
-            || !held
-            || held.toolClass !== "knife"
+            || this.heldToolClass() !== "knife"
             || !corpse?.active
-            || corpse.entry?.skinned
-            || corpse.entry?.stage === "carcass"
+            || !stillSkinnable
             || !corpse.inRange?.()
         ) {
             this._cancelSkin();

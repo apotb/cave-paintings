@@ -222,13 +222,33 @@
         return stack;
     }
 
+    /** World stack: keep spoilAt running. Inventory spoilLeft becomes an absolute due time. */
+    function thawSpoilForWorld(stack, now) {
+        if (!stack) return stack;
+        if (stack.spoilAt != null) {
+            delete stack.spoilLeft;
+            return stack;
+        }
+        if (stack.spoilLeft != null && now != null) {
+            stack.spoilAt = Math.round(Number(now)) + Math.max(0, Math.round(Number(stack.spoilLeft)));
+            delete stack.spoilLeft;
+        }
+        return stack;
+    }
+
+    /** Fleshed hides dry on a rack; other hung hides still rot. */
+    function pausesRackSpoil(itemDef) {
+        return isFleshedHide(itemDef);
+    }
+
     function hangStack(stack, now, getItem) {
         if (!stack) return stack;
         const def = typeof getItem === "function" ? getItem(stack.id) : null;
         if (!isFleshedHide(def)) delete stack.dryProgress;
         else if (!(dryProgressOf(stack) > 0)) delete stack.dryProgress;
         delete stack.soakDoneAt;
-        freezeSpoil(stack, now);
+        if (isFleshedHide(def)) freezeSpoil(stack, now);
+        else thawSpoilForWorld(stack, now);
         const max = 1;
         if (stack.quantity > max) stack.quantity = max;
         return stack;
@@ -429,6 +449,8 @@
         mergeSoakDoneAt,
         soakMergeBlocked,
         freezeSpoil,
+        thawSpoilForWorld,
+        pausesRackSpoil,
         hangStack,
         scrapeStackFrom,
         fleshedStackFrom,

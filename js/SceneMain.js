@@ -1644,6 +1644,7 @@ class SceneMain extends SceneBase {
         const frame = c.frame != null ? c.frame : 7;
         let spr = this.netCorpses.get(c.id);
         if (!spr || !spr.active) {
+            const stale = spr;
             const chunk = LivingMob.ensureChunkAt(this, c.x, c.y);
             if (!chunk) return null;
             const entry = {
@@ -1674,6 +1675,10 @@ class SceneMain extends SceneBase {
             if (!chunk.meta.corpses) chunk.meta.corpses = [];
             if (!chunk.meta.corpses.some((e) => e?.id === entry.id)) {
                 chunk.meta.corpses.push(entry);
+            }
+            if (stale && this.corpsePanel?.corpse === stale) {
+                this.corpsePanel.corpse = spr;
+                if (this.corpsePanel.visible) this.corpsePanel.syncFromEntry?.();
             }
             return spr;
         }
@@ -8691,13 +8696,17 @@ class SceneMain extends SceneBase {
                     if (!isCamp && !isStorage) continue;
 
                     if (isStorage && Array.isArray(entry.slots)) {
-                        const skipSpoil = typeof Hide !== "undefined"
-                            && Hide.isDryingRack(thingMeta, entry);
-                        if (!skipSpoil) {
-                            for (let i = 0; i < entry.slots.length; i++) {
-                                if (!entry.slots[i]) continue;
-                                entry.slots[i] = applyWorldStack(entry.slots[i]);
+                        for (let i = 0; i < entry.slots.length; i++) {
+                            if (!entry.slots[i]) continue;
+                            const itemDef = getItem(entry.slots[i].id);
+                            if (
+                                typeof Hide !== "undefined"
+                                && Hide.isDryingRack(thingMeta, entry)
+                                && Hide.pausesRackSpoil(itemDef)
+                            ) {
+                                continue;
                             }
+                            entry.slots[i] = applyWorldStack(entry.slots[i]);
                         }
                     }
 
@@ -8768,8 +8777,11 @@ class SceneMain extends SceneBase {
                 }
                 for (const s of entry.slots || []) {
                     if (!s) continue;
-                    const skip = typeof Hide !== "undefined" && Hide.isDryingRack(this.getThing?.(entry.id), entry);
-                    if (!skip) migrateToSpoilAt(s, now, getItem);
+                    const rack = typeof Hide !== "undefined"
+                        && Hide.isDryingRack(this.getThing?.(entry.id), entry);
+                    const itemDef = getItem(s.id);
+                    if (rack && Hide.pausesRackSpoil(itemDef)) continue;
+                    migrateToSpoilAt(s, now, getItem);
                 }
             }
         }
@@ -11640,17 +11652,26 @@ class SceneMain extends SceneBase {
         // not churn sprites every time you cross a chunk edge.
         const unloadR = this.cullDistance || loadR + 2;
         const genR = this.genDistance || unloadR;
-        // Sprite/physics streaming follows the camera pawn. The whole party as
-        // load anchors left every explored chunk loaded while companions lagged.
+        // Camera pawn plus nearby party (not map-split members). Anchoring the
+        // whole party loaded every explored chunk while companions lagged.
         const stream = [];
-        if (this.player?.active) {
+        const ts = this.tileSize || 16;
+        const pushAnchor = (p) => {
+            if (!p?.active || typeof p.posX !== "function") return;
             stream.push({
-                x: Math.floor(this.player.posX() / this.chunkSize),
-                y: Math.floor(this.player.posY() / this.chunkSize)
+                x: Math.floor(p.posX() / this.chunkSize),
+                y: Math.floor(p.posY() / this.chunkSize)
             });
-        } else if (snapped.length) {
-            stream.push(snapped[0]);
+        };
+        pushAnchor(this.player);
+        for (const p of this.party || []) {
+            if (!p || p === this.player) continue;
+            if (typeof Party !== "undefined" && Party.beyondFollowLeash?.(p, this.player, ts)) {
+                continue;
+            }
+            pushAnchor(p);
         }
+        if (!stream.length && snapped.length) stream.push(snapped[0]);
         for (const a of stream) {
             for (let x = a.x - genR; x <= a.x + genR; x++) {
                 for (let y = a.y - genR; y <= a.y + genR; y++) {
@@ -11688,22 +11709,21 @@ class SceneMain extends SceneBase {
             }
         }
 
-        let best = null;
-        let bestD = Infinity;
+        const pending = [];
         for (const a of stream) {
             for (let x = a.x - loadR; x <= a.x + loadR; x++) {
                 for (let y = a.y - loadR; y <= a.y + loadR; y++) {
                     const chunk = this.chunks[this.getKey(x, y)];
                     if (!chunk || chunk.isLoaded) continue;
                     const d = Math.max(Math.abs(a.x - x), Math.abs(a.y - y));
-                    if (d < bestD) {
-                        bestD = d;
-                        best = chunk;
-                    }
+                    pending.push({ chunk, d });
                 }
             }
         }
-        if (best) best.load();
+        pending.sort((a, b) => a.d - b.d);
+        const budget = Math.max(1, Math.min(32, this._chunkLoadBurst || 8));
+        this._chunkLoadBurst = 0;
+        for (let i = 0; i < pending.length && i < budget; i++) pending[i].chunk.load();
         this._pumpChunkPaint();
 
         if (!this._worldBooting && (!this._spawnSignPlaced || !this._playerSpawnPlaced)) this.ensureSpawnSign();

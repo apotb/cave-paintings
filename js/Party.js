@@ -383,6 +383,11 @@ class PartySystem {
             cam.centerOn(c.x, c.y);
         }
         scene.partyPanel?.refresh?.();
+        scene._chunkLoadBurst = 32;
+        if (scene.net?.ensureChunksAround && Number.isFinite(pawn.x) && Number.isFinite(pawn.y)) {
+            const r = Math.max(2, scene.genDistance || scene.renderDistance || 6);
+            scene.net.ensureChunksAround(pawn.x, pawn.y, r);
+        }
 
         if (pawn === scene.leader && this.leaderDead) {
             scene.deathOverlay?.setVisible(true);

@@ -189,6 +189,19 @@ class PartyAI {
 
         this._clearWadeIfAshore();
 
+        const P = typeof Party !== "undefined" ? Party : null;
+        if (
+            !this._isSettler()
+            && controlled
+            && P?.beyondFollowLeash?.(pawn, controlled, ts)
+        ) {
+            this.setAssist(null);
+            this.tendSeek = null;
+            this.eatSeek = null;
+            this._idleFollow(pawn);
+            return;
+        }
+
         if (this._isSettler()) {
             const dedicated = !!(scene.simAuth());
             if (dedicated) {

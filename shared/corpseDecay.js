@@ -41,6 +41,20 @@
         return "corpse";
     }
 
+    /** True once the body is a carcass (or should be), not a fresh corpse. */
+    function isCarcass(entry, now) {
+        if (!entry) return false;
+        if (entry.stage === "carcass") return true;
+        const st = stageFor(entry.diedAt, now);
+        return st === "carcass" || st === "gone";
+    }
+
+    /** Knife-skin only while it is still a fresh, unskinned corpse. */
+    function canSkin(entry, now) {
+        if (!entry || entry.skinned) return false;
+        return !isCarcass(entry, now);
+    }
+
     /** Stamp diedAt / stage on first tick so old saves get a full 12h. */
     function ensureDiedAt(entry, now) {
         if (!entry) return now;
@@ -152,6 +166,8 @@
         boneRange,
         carcassLootTable,
         stageFor,
+        isCarcass,
+        canSkin,
         ensureDiedAt,
         isPlayerCorpse,
         isDiscardedOnCarcass,
