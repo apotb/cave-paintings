@@ -90,7 +90,9 @@ class CorpsePanel {
         const body = new Body(this.scene, planId, null);
         body.loadJSON(entry.body);
         const name = entry.name || "Corpse";
-        const carcass = entry.stage === "carcass";
+        const carcass = typeof CorpseDecay !== "undefined" && CorpseDecay.isCarcass
+            ? CorpseDecay.isCarcass(entry, this.scene.worldMinuteIndex?.())
+            : entry.stage === "carcass";
         const label = name === "Corpse"
             ? (carcass ? "Carcass" : "Corpse")
             : `${name} (${carcass ? "carcass" : "corpse"})`;
@@ -124,7 +126,7 @@ class CorpsePanel {
                 this.container.setVisible(false);
                 this._clearSlots();
                 if (this._dedicatedNet()) this._notifyServerDismiss(corpse);
-                corpse.removeForever();
+                corpse.removeForever?.();
                 return;
             }
         }

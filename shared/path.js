@@ -245,7 +245,12 @@
         const cell = (opts && opts.cellSize) || TILE;
         const maxR = Number.isFinite(opts && opts.openRadius) ? Math.max(0, opts.openRadius) : 4;
         const step = Math.max(6, cell * 0.45);
-        const losOpts = { stepPx: 3, fatPx: 3 };
+        const losCap = Number(opts && opts.maxLos);
+        const losOpts = {
+            stepPx: 3,
+            fatPx: 3,
+            maxDist: Number.isFinite(losCap) && losCap > 0 ? losCap : cell * 16
+        };
         const candidates = [];
         if (!blocked(dest.x, dest.y)) candidates.push({ x: dest.x, y: dest.y, r: 0 });
         for (let r = 1; r <= maxR; r++) {
@@ -285,7 +290,9 @@
         blocked = memoBlocked(blocked);
         const cell = (opts && opts.cellSize) || TILE;
         const maxR = (opts && opts.maxRange) || 12;
-        const stepCap = Math.min(1600, Math.max(280, maxR * maxR));
+        // Local detours (wildlife range 6, follow 8–12) used to always pay 280
+        // A* steps — 15 walking deer was a 15ms hitch, 2 camp followers ~12ms.
+        const stepCap = Math.min(1600, Math.max(48, maxR * maxR));
         const side = (opts && opts.side) || 1;
         const start = cellOf(from.x, from.y, cell);
         const goal = cellOf(to.x, to.y, cell);
@@ -475,6 +482,9 @@
                 arrived: true
             };
         }
+        // A* / dest-LOS must stay in the local window. An ocean leader with
+        // camp followers used to dest-LOS thousands of tiles every tick.
+        dest = clipToRange(from.x, from.y, dest.x, dest.y, maxRange, cell);
 
         path = consumeWaypoints(from, path);
         if (path && path.length && blocked(path[0].x, path[0].y)) path.shift();
@@ -496,17 +506,13 @@
         // Keep a still-valid route even if the follow target drifted — replanning
         // every 48px of leader motion is what hitchs FPS while you walk.
         const committed = !!(
-            path && path.length && !nextBlocked && !stuck
+            path && path.length && !nextBlocked && !stuck && !overlapping
         );
         let replanned = false;
-        if (!committed) {
+        const allowReplan = input.allowReplan !== false;
+        if (!committed && allowReplan && (!overlapping || stuck)) {
             const rawDest = { x: dest.x, y: dest.y };
             let openR = input.openRadius != null ? input.openRadius : 4;
-            const allowReplan = input.allowReplan !== false;
-            // Overlap is a slide, not a reason to A* the camp (baskets while chopping).
-            if (!allowReplan || overlapping) {
-                if (pathGoal) dest = { x: pathGoal.x, y: pathGoal.y };
-            } else {
             const destBlocked = blocked(rawDest.x, rawDest.y);
             const destTight = !destBlocked && clearance(rawDest.x, rawDest.y, blocked, 6) < 3;
             const wantExact = input.openRadius === 0;
@@ -518,7 +524,11 @@
                 && !blocked(pathGoal.x, pathGoal.y);
             if (stickyGoal) dest = { x: pathGoal.x, y: pathGoal.y };
             else if (destBlocked || (destTight && !wantExact)) {
-                dest = bestStand(from, rawDest, blocked, { cellSize: cell, openRadius: openR });
+                dest = bestStand(from, rawDest, blocked, {
+                    cellSize: cell,
+                    openRadius: openR,
+                    maxLos: cell * Math.max(maxRange, 8)
+                });
             } else if (wantExact) {
                 dest = rawDest;
             } else {
@@ -526,11 +536,11 @@
             }
             const dist = hypot(dest.x - from.x, dest.y - from.y);
             const losMax = Math.min(dist, cell * Math.max(maxRange, 8));
-            const clearToDest = losClear(
+            const clearToDest = !overlapping && losClear(
                 from.x, from.y, dest.x, dest.y, blocked,
                 { stepPx: 8, maxDist: losMax, fatPx: 0 }
             );
-            const ahead = blockedAhead(from, dest, blocked, lookPx);
+            const ahead = overlapping || blockedAhead(from, dest, blocked, lookPx);
             const goalDrift = !pathGoal
                 || hypot(dest.x - pathGoal.x, dest.y - pathGoal.y) > GOAL_DRIFT_PX;
             const pathDone = !path || !path.length;
@@ -557,7 +567,8 @@
                     if (n) path = [n];
                 }
             }
-            }
+        } else if (!committed && pathGoal) {
+            dest = { x: pathGoal.x, y: pathGoal.y };
         }
 
         let gx = dest.x;

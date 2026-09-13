@@ -311,7 +311,9 @@ class GameServer {
     syncChunks(ws, meta, force = false) {
         const p = this.sim.players.get(meta.playerId);
         if (!p) return;
-        const keys = this.sim.interestChunkKeys(p.x, p.y, this.sim.interestRadius(p));
+        const keys = this.sim.viewChunkKeys
+            ? this.sim.viewChunkKeys(p)
+            : this.sim.interestChunkKeys(p.x, p.y, this.sim.interestRadius(p));
         for (const key of keys) {
             if (!force && meta.knownChunks.has(key)) continue;
             meta.knownChunks.add(key);

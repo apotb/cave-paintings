@@ -161,6 +161,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
 
         this.entry = entry;
         this.chunk = chunk;
+        this._hostScene = scene;
         this._colorTexKey = key;
 
         scene.add.existing(this);
@@ -193,13 +194,14 @@ class Corpse extends Phaser.GameObjects.Sprite {
             if (!this.inRange()) return;
             const player = scene.player;
             const held = player?.getHeldItem?.();
+            const knife = player?.heldToolClass?.() === "knife"
+                || held?.toolClass === "knife";
+            const now = scene.worldMinuteIndex?.();
+            const skinnable = typeof CorpseDecay !== "undefined" && CorpseDecay.canSkin
+                ? CorpseDecay.canSkin(this.entry, now)
+                : (!this.entry?.skinned && this.entry?.stage !== "carcass");
             // Knife + unskinned corpse (not carcass) → skin, then loot opens
-            if (
-                held?.toolClass === "knife"
-                && !this.entry?.skinned
-                && this.entry?.stage !== "carcass"
-                && typeof player.beginSkin === "function"
-            ) {
+            if (knife && skinnable && typeof player.beginSkin === "function") {
                 player.beginSkin(this);
                 return;
             }
@@ -209,7 +211,8 @@ class Corpse extends Phaser.GameObjects.Sprite {
         this.on("destroy", () => {
             if (scene._hoverTarget === this) scene._hoverTarget = null;
             if (scene._tooltipTarget === this) scene.hideTooltip();
-            if (scene.corpsePanel?.corpse === this) scene.corpsePanel.close();
+            // skipCompact: this sprite is already going away — don't re-enter removeForever
+            if (scene.corpsePanel?.corpse === this) scene.corpsePanel.close(true);
             if (chunk.corpses?.children) chunk.corpses.remove(this);
             if (scene.corpses?.children) scene.corpses.remove(this);
         });
@@ -247,6 +250,8 @@ class Corpse extends Phaser.GameObjects.Sprite {
     }
 
     isCarcass() {
+        const Decay = typeof CorpseDecay !== "undefined" ? CorpseDecay : null;
+        if (Decay?.isCarcass) return Decay.isCarcass(this.entry, this.scene?.worldMinuteIndex?.());
         return this.entry?.stage === "carcass";
     }
 
@@ -314,7 +319,11 @@ class Corpse extends Phaser.GameObjects.Sprite {
 
     /** Apply skinning: mark skinned and append butcher loot. */
     applySkin() {
-        if (!this.entry || this.entry.skinned || this.entry.stage === "carcass") return [];
+        const now = this.scene?.worldMinuteIndex?.();
+        const ok = typeof CorpseDecay !== "undefined" && CorpseDecay.canSkin
+            ? CorpseDecay.canSkin(this.entry, now)
+            : !!(this.entry && !this.entry.skinned && this.entry.stage !== "carcass");
+        if (!ok) return [];
         this.entry.skinned = true;
         Corpse.bloodBurst(this.scene, this.x, this.y);
         if (!this.entry.loot) this.entry.loot = [];
@@ -369,6 +378,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
 
     /** Persist dense non-null loot from a session array (may include holes). */
     setLootFromSession(session) {
+        if (!this.entry) return;
         this.entry.loot = (session || []).map(s => cloneItemStack(s)).filter(Boolean);
     }
 
@@ -379,17 +389,19 @@ class Corpse extends Phaser.GameObjects.Sprite {
 
     /** Remove from chunk meta and destroy sprite. */
     removeForever() {
-        const scene = this.scene;
+        if (this._removingForever) return;
+        this._removingForever = true;
+        const scene = this.scene || this._hostScene || this.chunk?.scene;
         const x = this.x;
         const y = this.y;
         const id = this.entry?.id;
-        if (scene.corpsePanel?.corpse === this) scene.corpsePanel.close(true);
-        if (this.chunk?.meta?.corpses) {
+        if (scene?.corpsePanel?.corpse === this) scene.corpsePanel.close(true);
+        if (this.chunk?.meta?.corpses && this.entry) {
             const i = this.chunk.meta.corpses.indexOf(this.entry);
             if (i >= 0) this.chunk.meta.corpses.splice(i, 1);
         }
-        if (id && scene.netCorpses?.has(id)) scene.netCorpses.delete(id);
+        if (id && scene?.netCorpses?.has(id)) scene.netCorpses.delete(id);
         Corpse.puffAway(scene, x, y);
-        this.destroy();
+        if (this.scene) this.destroy();
     }
 }

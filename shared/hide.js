@@ -230,18 +230,21 @@
         return stack;
     }
 
-    function thawSpoil(stack, now) {
-        if (!stack || now == null) return stack;
-        if (stack.spoilLeft != null) {
-            stack.spoilAt = Math.round(Number(now)) + Math.max(0, Math.round(Number(stack.spoilLeft)));
+    /** World stack: keep spoilAt running. Inventory spoilLeft becomes an absolute due time. */
+    function thawSpoilForWorld(stack, now) {
+        if (!stack) return stack;
+        if (stack.spoilAt != null) {
             delete stack.spoilLeft;
             return stack;
         }
-        if (stack.spoilAt != null) stack.spoilAt = Math.round(Number(stack.spoilAt));
+        if (stack.spoilLeft != null && now != null) {
+            stack.spoilAt = Math.round(Number(now)) + Math.max(0, Math.round(Number(stack.spoilLeft)));
+            delete stack.spoilLeft;
+        }
         return stack;
     }
 
-    /** Hanging is the process only while a fleshed hide dries. Other stages just wait. */
+    /** Fleshed hides dry on a rack; other hung hides still rot. */
     function pausesRackSpoil(itemDef) {
         return isFleshedHide(itemDef);
     }
@@ -252,8 +255,8 @@
         if (!isFleshedHide(def)) delete stack.dryProgress;
         else if (!(dryProgressOf(stack) > 0)) delete stack.dryProgress;
         delete stack.soakDoneAt;
-        if (pausesRackSpoil(def)) freezeSpoil(stack, now);
-        else thawSpoil(stack, now);
+        if (isFleshedHide(def)) freezeSpoil(stack, now);
+        else thawSpoilForWorld(stack, now);
         const max = 1;
         if (stack.quantity > max) stack.quantity = max;
         return stack;
@@ -454,7 +457,7 @@
         mergeSoakDoneAt,
         soakMergeBlocked,
         freezeSpoil,
-        thawSpoil,
+        thawSpoilForWorld,
         pausesRackSpoil,
         hangStack,
         scrapeStackFrom,

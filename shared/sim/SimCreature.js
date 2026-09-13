@@ -665,9 +665,11 @@ class SimCreature {
     }
 
     refreshCapacities() {
-        this.capacities = new Capacities(this.anatomy);
-        if (!this._dead && this.capacities.isDeadFromCapacities()) {
-            this.onBodyFatal(null, "capacity");
+        if (!this.capacities || this.anatomy?._dirty) {
+            this.capacities = new Capacities(this.anatomy);
+            if (!this._dead && this.capacities.isDeadFromCapacities()) {
+                this.onBodyFatal(null, "capacity");
+            }
         }
         this._prone = !this._dead && (this.isImmobile() || this.isIncapacitated());
         if (this._prone) this._endAttack();

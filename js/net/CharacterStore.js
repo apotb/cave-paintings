@@ -430,6 +430,7 @@ const CharacterStore = (() => {
             saturation: raw.saturation ?? c.saturation,
             stomach: raw.stomach ?? c.stomach,
             inventory: Array.isArray(raw.inventory) ? clone(raw.inventory) : c.inventory,
+            overflow: Array.isArray(raw.overflow) ? clone(raw.overflow) : c.overflow,
             equipment: raw.equipment ? clone(raw.equipment) : c.equipment,
             hotbarIndex: raw.hotbarIndex || 0,
             hp: raw.hp ?? c.hp,
@@ -446,8 +447,8 @@ const CharacterStore = (() => {
             techs: cloneTechs(raw.techs),
             techGrantRev: Math.max(0, Math.floor(Number(raw.techGrantRev) || 0))
         });
-        // Always new id on import so we don't clobber an existing char
-        c.id = uuid();
+        // Keep the exported id so world logout poses (keyed by character id) still apply.
+        c.id = (typeof raw.id === "string" && raw.id) ? raw.id : uuid();
         c.createdAt = Date.now();
         c.updatedAt = c.createdAt;
         return normalizeCharacterSpoil(c);
@@ -503,3 +504,7 @@ const CharacterStore = (() => {
         emptyInv
     };
 })();
+
+if (typeof module === "object" && module.exports) {
+    module.exports = CharacterStore;
+}

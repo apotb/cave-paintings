@@ -16,6 +16,9 @@
 
     const FOLLOW_BEHIND = 1.75;
     const FOLLOW_DETACH = 12;
+    // Don't trek across the map. Local camp/village follow still works;
+    // beyond this the member waits (party panel already treats 12 tiles as detached).
+    const FOLLOW_LEASH = 48;
     // Hysteresis: stay put until farther than CATCH, then walk until IDLE.
     const FOLLOW_IDLE = 2.6;
     const FOLLOW_CATCH = 4.8;
@@ -178,6 +181,18 @@
         if (!ent) return true;
         if (ent.isBodyDead?.()) return true;
         return !!(ent._bodyDead || ent.dead);
+    }
+
+    function followLeashPx(ts) {
+        const t = Number(ts) > 0 ? Number(ts) : 16;
+        return FOLLOW_LEASH * t;
+    }
+
+    function beyondFollowLeash(from, to, ts) {
+        if (!from || !to) return false;
+        const dx = (Number(from.x) || 0) - (Number(to.x) || 0);
+        const dy = (Number(from.y) || 0) - (Number(to.y) || 0);
+        return Math.hypot(dx, dy) > followLeashPx(ts);
     }
 
     /**
@@ -1073,6 +1088,7 @@
         COLOR_NEUTRAL,
         FOLLOW_BEHIND,
         FOLLOW_DETACH,
+        FOLLOW_LEASH,
         FOLLOW_IDLE,
         FOLLOW_CATCH,
         FOLLOW_SPRINT,
@@ -1104,6 +1120,8 @@
         puppetLerpXY,
         walkAnimTimeScale,
         followWantSprint,
+        followLeashPx,
+        beyondFollowLeash,
         companionFollowLabel,
         WANDERER_ALERT_TILES,
         GEAR_TABLE,

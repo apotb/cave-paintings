@@ -138,7 +138,7 @@ test("basket hitbox is wide at 0° and narrow at 90°", () => {
     assert.equal(contains(r0, x, y - 2), true);
 });
 
-test("lean-to collision is the wooden back, not the laying spot", () => {
+test("lean-to collision matches the wooden frame", () => {
     const def = thingDef("lean_to");
     const tx = 8;
     const ty = 8;
@@ -171,10 +171,25 @@ test("lean-to collision is the wooden back, not the laying spot", () => {
     const tiles0 = Place.entryFootprintTiles(e0, TS, def);
     const top0 = Math.min(...tiles0.map((t) => t.ty)) * TS;
     const bottom0 = (Math.max(...tiles0.map((t) => t.ty)) + 1) * TS;
+    const left0 = Math.min(...tiles0.map((t) => t.tx)) * TS;
+    const right0 = (Math.max(...tiles0.map((t) => t.tx)) + 1) * TS;
     const midX = (w0.left + w0.right) / 2;
-    assert.ok(w0.bottom < bottom0 - 4, "rot 0 open south laying spot is walkable");
-    assert.equal(contains(w0, midX, bottom0 - 2), false);
-    assert.equal(contains(w0, midX, top0 + 2), true);
+    assert.equal(w0.top, top0);
+    assert.equal(w0.bottom, bottom0);
+    assert.equal(contains(w0, midX, bottom0 - 2), true, "rot 0 south interior is solid");
+    assert.equal(contains(w0, midX, top0 + 2), true, "rot 0 roof is solid");
+    assert.equal(contains(w0, left0 + 2, bottom0 - 2), true, "rot 0 front posts are solid");
+    assert.equal(contains(w0, right0 - 2, bottom0 - 2), true, "rot 0 front posts are solid");
+
+    const pos180 = Place.footprintWorldPos(tx, ty, 180, def.footprint, TS);
+    const e180 = { id: "lean_to", tx, ty, rot: 180, x: pos180.x, y: pos180.y };
+    const w180 = Place.collisionWorldRect(e180, def, TS);
+    const tiles180 = Place.entryFootprintTiles(e180, TS, def);
+    const top180 = Math.min(...tiles180.map((t) => t.ty)) * TS;
+    const bottom180 = (Math.max(...tiles180.map((t) => t.ty)) + 1) * TS;
+    const mid180 = (w180.left + w180.right) / 2;
+    assert.equal(contains(w180, mid180, top180 + 2), true, "rot 180 roof is solid");
+    assert.equal(contains(w180, mid180, bottom180 - 2), true, "rot 180 back wall is solid");
 
     const occupy = Place.footprintWorldRect(e0, def, TS);
     assert.ok(occupy);

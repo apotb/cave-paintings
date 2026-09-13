@@ -102,21 +102,35 @@
             }
         }
 
-        syncChunks(playerId, force = false) {
-            const p = this.sim.players.get(playerId);
-            if (!p) return;
+        _sendChunkKeys(playerId, keys, force = false) {
             let known = this._known.get(playerId);
             if (!known) {
                 known = new Set();
                 this._known.set(playerId, known);
             }
-            const keys = this.sim.interestChunkKeys(p.x, p.y, this.sim.interestRadius(p));
             for (const key of keys) {
                 if (!force && known.has(key)) continue;
                 known.add(key);
                 const [cx, cy] = key.split(",").map(Number);
                 this._send(playerId, Protocol.Types.CHUNK, this.sim.chunkPayload(cx, cy));
             }
+        }
+
+        syncChunks(playerId, force = false) {
+            const p = this.sim.players.get(playerId);
+            if (!p) return;
+            const keys = this.sim.viewChunkKeys
+                ? this.sim.viewChunkKeys(p)
+                : this.sim.interestChunkKeys(p.x, p.y, this.sim.interestRadius(p));
+            this._sendChunkKeys(playerId, keys, force);
+        }
+
+        /** Stream tiles around a world point even while the sim tick is paused (world boot). */
+        ensureChunksAround(playerId, wx, wy, radius) {
+            if (!this.sim || !Number.isFinite(wx) || !Number.isFinite(wy)) return;
+            const r = Math.max(1, Math.floor(Number(radius) || 1));
+            this.sim._interestLoad(wx, wy, r);
+            this._sendChunkKeys(playerId, this.sim.interestChunkKeys(wx, wy, r), true);
         }
 
         flushYou(playerId) {

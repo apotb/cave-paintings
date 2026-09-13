@@ -75,8 +75,8 @@ const MELEE_RANGE = 28;
 const INTEREST = Protocol.INTEREST_CHUNKS;
 /** Wildlife AI + snapshot puppets: on-screen ring, not the full interest stream. */
 const SIM_CHUNKS = 4;
-/** Matches client DroppedItem — 5 real minutes while the chunk is "loaded". */
-const DROP_LIFE_MS = 5 * 60 * 1000;
+/** Matches client DroppedItem — 15 real minutes while the chunk is "loaded". */
+const DROP_LIFE_MS = 15 * 60 * 1000;
 /** Matches client Player.interactionRange (tiles). */
 const HARVEST_RANGE_TILES = 4;
 
@@ -532,7 +532,9 @@ class SimWorld {
             },
             isBlocked: (x, y) => self.isBlocked(x, y, { load: false }),
             tileBlocked: (x, y) => self._tileBlocked(x, y, { load: false }),
-            poseBlocked: (creature, x, y, pad) => self._partyPoseBlocked(creature, x, y, pad, { load: false }),
+            poseBlocked: (creature, x, y, pad, opts) => self._partyPoseBlocked(
+                creature, x, y, pad, Object.assign({ load: false }, opts)
+            ),
             terrainSpeedMult: (x, y) => self._terrainSpeedMult(x, y),
             getRestWalkDest(mob) {
                 const spec = mob?._restWalk;
@@ -3433,7 +3435,7 @@ class SimWorld {
 
     /**
      * Client Thing origin is (0.5, 1). Collision matches Place.collisionWorldRect
-     * (rotation-aware benches, open-side lean-tos). 1px pad matches Arcade slop.
+     * (rotation-aware benches, lean-to roofs/posts). 1px pad matches Arcade slop.
      */
     _thingRect(t) {
         if (!t || t.gone) return null;
@@ -3630,23 +3632,22 @@ class SimWorld {
         if (this._aabbHitsThing(
             body.left - p, body.right + p, body.top - p, body.bottom + p, x, y, 64, creature
         )) return true;
-        if (opts.sleepNav === false) return false;
+        if (opts.sleepFootprint === false || opts.sleepNav === false) return false;
         return this._sleepFootprintHits(creature, body, p, x, y);
     }
 
     /**
-     * Wanderers (and other AI) treat the whole bunk as solid so they path
-     * around instead of walking the laying spot into the wooden back.
+     * Sleep furniture rects near a pose, reused for every A* cell this tick.
      */
-    _sleepFootprintHits(creature, body, pad, nearX, nearY) {
-        if (!Sleep.navAroundBeds?.(creature)) return false;
-        const r = 64;
+    _sleepRectsAround(nearX, nearY) {
         const { cx, cy } = worldToChunk(nearX, nearY);
+        const key = chunkKey(cx, cy);
+        const cache = this._sleepRectCache || (this._sleepRectCache = new Map());
+        const hit = cache.get(key);
+        if (hit) return hit;
+        const r = 64;
         const chunkR = Math.max(1, Math.ceil(r / CHUNK_PX));
-        const left = body.left - pad;
-        const right = body.right + pad;
-        const top = body.top - pad;
-        const bottom = body.bottom + pad;
+        const rects = [];
         for (let dx = -chunkR; dx <= chunkR; dx++) {
             for (let dy = -chunkR; dy <= chunkR; dy++) {
                 const sleep = this._chunkThingIndex(cx + dx, cy + dy).sleep || [];
@@ -3654,58 +3655,63 @@ class SimWorld {
                     const rect = sleep[i];
                     const t = rect.t;
                     if (!t || t.gone) continue;
-                    if (Sleep.ignoresThingCollision?.(creature, t)) continue;
-                    const tcx = (rect.left + rect.right) * 0.5;
-                    const tcy = (rect.top + rect.bottom) * 0.5;
-                    if (Math.abs(tcx - nearX) > r || Math.abs(tcy - nearY) > r) continue;
-                    if (right > rect.left && left < rect.right
-                        && bottom > rect.top && top < rect.bottom) {
-                        return true;
-                    }
+                    rects.push({ t, rect });
                 }
             }
         }
-        return false;
+        cache.set(key, rects);
+        return rects;
+    }
+
+    /**
+     * Wanderers (and other humanoid AI) treat the whole bunk as solid so they
+     * path around instead of walking the laying spot into the wooden back.
+     */
+    _sleepFootprintHits(creature, body, pad, nearX, nearY) {
+        if (!Sleep.navAroundBeds?.(creature)) return false;
+        const r = 64;
+        const left = body.left - pad;
+        const right = body.right + pad;
+        const top = body.top - pad;
+        const bottom = body.bottom + pad;
+        const beds = this._sleepRectsAround(nearX, nearY);
+        let hit = false;
+        for (let i = 0; i < beds.length; i++) {
+            const t = beds[i].t;
+            const rect = beds[i].rect;
+            if (Sleep.ignoresThingCollision?.(creature, t)) continue;
+            const tcx = (rect.left + rect.right) * 0.5;
+            const tcy = (rect.top + rect.bottom) * 0.5;
+            if (Math.abs(tcx - nearX) > r || Math.abs(tcy - nearY) > r) continue;
+            if (right > rect.left && left < rect.right
+                && bottom > rect.top && top < rect.bottom) {
+                hit = true;
+                break;
+            }
+        }
+        return hit;
     }
 
     /** Nearest stand pose whose 8×8 body is clear of solids and blocked tiles. */
-    _findFreeCreaturePose(creature, ox, oy, maxR = 80, opts = {}) {
+    _findFreeCreaturePose(creature, ox, oy, maxR = 24, opts = {}) {
         if (!creature || !Number.isFinite(ox) || !Number.isFinite(oy)) return null;
         const blocked = (x, y) => this._partyPoseBlocked(creature, x, y, 1, {
             load: false,
+            sleepFootprint: opts.sleepFootprint,
             sleepNav: opts.sleepNav
         });
-        const step = 4;
-        const reach = Math.max(step, Number(maxR) || 80);
+        const step = 8;
+        const reach = Math.min(32, Math.max(step, Number(maxR) || 24));
+        let probes = 0;
+        const probeCap = 24;
         for (let r = step; r <= reach; r += step) {
-            const n = Math.max(8, Math.round(r));
+            const n = 8;
             for (let i = 0; i < n; i++) {
+                if (++probes > probeCap) return null;
                 const a = (i / n) * Math.PI * 2;
                 const x = ox + Math.cos(a) * r;
                 const y = oy + Math.sin(a) * r;
                 if (!blocked(x, y)) return { x, y };
-            }
-        }
-        const startTx = Math.floor(ox / TS);
-        const startTy = Math.floor((oy - 1) / TS);
-        const seen = new Set();
-        const q = [{ tx: startTx, ty: startTy, d: 0 }];
-        seen.add(`${startTx},${startTy}`);
-        const maxD = Math.max(2, Math.ceil(reach / TS));
-        const nbs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-        while (q.length) {
-            const cur = q.shift();
-            const x = cur.tx * TS + TS * 0.25;
-            const y = cur.ty * TS + TS;
-            if (!blocked(x, y)) return { x, y };
-            if (cur.d >= maxD) continue;
-            for (let i = 0; i < nbs.length; i++) {
-                const ntx = cur.tx + nbs[i][0];
-                const nty = cur.ty + nbs[i][1];
-                const k = `${ntx},${nty}`;
-                if (seen.has(k)) continue;
-                seen.add(k);
-                q.push({ tx: ntx, ty: nty, d: cur.d + 1 });
             }
         }
         return null;
@@ -3733,7 +3739,11 @@ class SimWorld {
         const x = Number(entity?.x ?? c.x);
         const y = Number(entity?.y ?? c.y);
         if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
-        const blockOpts = { load: false, sleepNav: false };
+        const now = (typeof performance !== "undefined" && performance.now)
+            ? performance.now()
+            : Date.now();
+        if (c._ejectCalmUntil && now < c._ejectCalmUntil) return false;
+        const blockOpts = { load: false, sleepFootprint: false, sleepNav: false };
         if (!this._partyPoseBlocked(c, x, y, 0, blockOpts)) return false;
         const commit = (px, py) => {
             c.x = px;
@@ -3762,11 +3772,14 @@ class SimWorld {
             const py = y + dirs[i][1];
             if (!this._partyPoseBlocked(c, px, py, 0, blockOpts)) return commit(px, py);
         }
-        const gen = this._queryGen || 0;
-        if (c._ejectHardGen != null && gen - c._ejectHardGen < 24) return false;
-        c._ejectHardGen = gen;
-        const free = this._findFreeCreaturePose(c, x, y, 80, { sleepNav: false });
-        if (!free || (free.x === x && free.y === y)) return false;
+        const free = this._findFreeCreaturePose(c, x, y, 24, {
+            sleepFootprint: false,
+            sleepNav: false
+        });
+        if (!free || (free.x === x && free.y === y)) {
+            c._ejectCalmUntil = now + 400;
+            return false;
+        }
         return commit(free.x, free.y);
     }
 
@@ -4472,25 +4485,22 @@ class SimWorld {
     }
 
     /**
-     * Chunk Chebyshev radius to keep generated around a party pawn.
-     * Only the controlled pawn streams a view frustum. Other members keep a
-     * 1-chunk pad (lean-to / campfire / local follow A*) so camp does not
-     * stay simulated as a second neighborhood.
+     * Stream and generate around the controlled pawn, plus a 1-chunk pad
+     * around nearby party members so their ground stays filled. Far members
+     * wait in place and do not keep a second neighborhood.
      */
-    _pawnInterestRadius(session, pawn) {
-        const full = this.interestRadius(session);
-        if (!pawn) return 1;
-        const controlId = session?.controlId || session?.id;
-        if (pawn.id === controlId) return full;
-        return 1;
-    }
-
     _loadPlayerInterest(p) {
         if (!p) return;
-        this._interestLoad(p.x, p.y, this._pawnInterestRadius(p, p));
-        for (const m of p.party || []) {
-            if (Number.isFinite(m.x)) this._interestLoad(m.x, m.y, this._pawnInterestRadius(p, m));
-        }
+        const control = this._actionPawn(p, { pawnId: p.controlId || p.id }) || p;
+        if (!Number.isFinite(control.x) || !Number.isFinite(control.y)) return;
+        this._interestLoad(control.x, control.y, this.interestRadius(p));
+        const padNear = (wx, wy) => {
+            if (!Number.isFinite(wx) || !Number.isFinite(wy)) return;
+            if (Party.beyondFollowLeash({ x: wx, y: wy }, control, TS)) return;
+            this._interestLoad(wx, wy, 1);
+        };
+        padNear(p.x, p.y);
+        for (const m of p.party || []) padNear(m.x, m.y);
     }
 
     /** True if (wx, wy) is within SIM_CHUNKS of a connected player's control pawn. */
@@ -4502,6 +4512,28 @@ class SimWorld {
             if (this._chunkChebyshev(wx, wy, control.x, control.y) <= r) return true;
         }
         return false;
+    }
+
+    /** Chunks around every connected control pawn. Spoil/fires use absolute
+     *  world minutes, so far map can wait until you walk back. */
+    _simChunks() {
+        const list = [];
+        const seen = new Set();
+        for (const p of this.players.values()) {
+            if (!p.connected) continue;
+            const control = this._actionPawn(p, { pawnId: p.controlId || p.id }) || p;
+            const { cx, cy } = worldToChunk(control.x, control.y);
+            for (let dx = -SIM_CHUNKS; dx <= SIM_CHUNKS; dx++) {
+                for (let dy = -SIM_CHUNKS; dy <= SIM_CHUNKS; dy++) {
+                    const key = chunkKey(cx + dx, cy + dy);
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    const c = this.chunks.get(key);
+                    if (c) list.push(c);
+                }
+            }
+        }
+        return list;
     }
 
     handleAction(playerId, action) {
@@ -4559,6 +4591,7 @@ class SimWorld {
         }
         if (type === Protocol.Actions.SWITCH_CONTROL) {
             if (this._setControlId(p, action.pawnId, { allowDead: true })) {
+                this._loadPlayerInterest(p);
                 this._youDirty.add(p.id);
             }
             return;
@@ -6796,19 +6829,21 @@ class SimWorld {
         return [{ id: "bone", min: 1, max: 2 }];
     }
 
-    _tryCorpseSkin(p, action = {}) {
+    _tryCorpseSkin(session, action = {}) {
+        const p = this._actionPawn(session, action) || session;
         if (!p || p.dead) return;
         if (Number.isFinite(action.x) && Number.isFinite(action.y)) {
             p.x = action.x;
             p.y = action.y;
-            p.poseAuth = true;
+            if (p === session) session.poseAuth = true;
         }
         const held = this._held(p);
-        if (!held || held.toolClass !== "knife") return;
+        const heldDef = held ? itemDefs().get(held.id) : null;
+        if (!held || Carry.stackToolClass(held, heldDef) !== "knife") return;
         const found = this._findCorpse(action.corpseId);
         if (!found) return;
         const { entry } = found;
-        if (entry.skinned || entry.stage === "carcass") return;
+        if (!CorpseDecay.canSkin(entry, this.worldMinuteIndex())) return;
         const dx = entry.x - p.x;
         const dy = entry.y - p.y;
         const r = TS * (HARVEST_RANGE_TILES + 2);
@@ -6849,6 +6884,7 @@ class SimWorld {
         }
         entry.skinned = true;
         this._wearHeld(p, 1);
+        this._youDirty.add(session.id);
         this.pushEvent({
             kind: "corpse",
             op: "skin",
@@ -7542,8 +7578,9 @@ class SimWorld {
         return slotDirty;
     }
 
-    _tickCampfires() {
-        for (const c of this.chunks.values()) {
+    _tickCampfires(chunks) {
+        const src = chunks || this.chunks.values();
+        for (const c of src) {
             if (!Array.isArray(c.things)) continue;
             for (const entry of c.things) {
                 if (!this._isCampfireEntry(entry)) continue;
@@ -7552,9 +7589,10 @@ class SimWorld {
         }
     }
 
-    _tickDryingRacks() {
+    _tickDryingRacks(chunks) {
         const getItem = (id) => itemDefs().get(id);
-        for (const c of this.chunks.values()) {
+        const src = chunks || this.chunks.values();
+        for (const c of src) {
             if (!Array.isArray(c.things)) continue;
             for (const entry of c.things) {
                 const def = thingDefs().get(entry?.id);
@@ -7566,8 +7604,9 @@ class SimWorld {
         }
     }
 
-    _tickWorldSpoil() {
-        for (const c of this.chunks.values()) this._spoilChunkContents(c, { emit: true });
+    _tickWorldSpoil(chunks) {
+        const src = chunks || this.chunks.values();
+        for (const c of src) this._spoilChunkContents(c, { emit: true });
     }
 
     _dropIsOnWater(drop) {
@@ -7594,8 +7633,9 @@ class SimWorld {
         }
     }
 
-    _tickSoakDrops() {
-        for (const c of this.chunks.values()) this._soakChunkDrops(c);
+    _tickSoakDrops(chunks) {
+        const src = chunks || this.chunks.values();
+        for (const c of src) this._soakChunkDrops(c);
     }
 
     _nearbyDropPiles(wx, wy, itemId) {
@@ -10157,6 +10197,7 @@ class SimWorld {
         this._aiStuckDt = Number(dtMs) > 0 ? dtMs : 16;
         this._queryGen = (this._queryGen || 0) + 1;
         this._chunkRectCache = new Map();
+        this._sleepRectCache = new Map();
         this._uidIndex = null;
         const dt = dtMs / 1000;
         for (const p of this.players.values()) {
@@ -10402,6 +10443,10 @@ class SimWorld {
             const rec = row.rec;
             const cc = row.creature;
             if (!cc) continue;
+            if (Party.beyondFollowLeash(rec, control, TS)) {
+                if (cc.ai) cc.ai.tendSeek = null;
+                continue;
+            }
             cc.x = rec.x;
             cc.y = rec.y;
             this._bindPartyAI(cc);
@@ -10465,6 +10510,10 @@ class SimWorld {
             const rec = row.rec;
             const cc = row.creature;
             if (!cc) continue;
+            if (Party.beyondFollowLeash(rec, control, TS)) {
+                if (cc.ai) cc.ai.eatSeek = null;
+                continue;
+            }
             cc.x = rec.x;
             cc.y = rec.y;
             this._bindPartyAI(cc);
@@ -10554,6 +10603,7 @@ class SimWorld {
                 const hit = rows.find((r) => r.rec.id === pid);
                 if (hit?.creature) hit.creature._beingTended = true;
             }
+            const controlRec = rows.find((row) => row.rec.id === controlId)?.rec || p;
             for (const row of uncontrolled) {
                 const cc = row.creature;
                 const rec = row.rec;
@@ -10570,6 +10620,16 @@ class SimWorld {
                 cc.role = rec.role === "settler" ? "companion" : (rec.role || "companion");
                 cc.homeSettlementId = rec.homeSettlementId || null;
                 this._bindPartyAI(cc);
+                if (Party.beyondFollowLeash(rec, controlRec, TS)) {
+                    cc.setDesiredVel?.(0, 0);
+                    cc.vx = 0;
+                    cc.vy = 0;
+                    rec.vx = 0;
+                    rec.vy = 0;
+                    rec.sprint = false;
+                    continue;
+                }
+                this._ejectOverlappingPose(rec, cc);
                 const wasSwinging = !!cc.isAttacking?.();
                 cc.refreshCapacities?.();
                 cc.ai.update(dtMs, world);
@@ -10579,8 +10639,12 @@ class SimWorld {
                 const oy = rec.y;
                 const nx = cc.x + (cc.vx || 0) * dt;
                 const ny = cc.y + (cc.vy || 0) * dt;
-                if (!this._partyPoseBlocked(cc, nx, cc.y)) cc.x = nx;
-                if (!this._partyPoseBlocked(cc, cc.x, ny)) cc.y = ny;
+                if (!this._partyPoseBlocked(cc, nx, cc.y, 0, { load: false, sleepFootprint: false })) {
+                    cc.x = nx;
+                }
+                if (!this._partyPoseBlocked(cc, cc.x, ny, 0, { load: false, sleepFootprint: false })) {
+                    cc.y = ny;
+                }
                 rec.x = cc.x;
                 rec.y = cc.y;
                 this._maybeEjectIdleOverlap(rec, cc);
@@ -11116,6 +11180,7 @@ class SimWorld {
                 this._finishMobDeath(mob, null);
                 continue;
             }
+            if (!this._inSimRange(mob.x, mob.y)) continue;
             if (BodyHealing?.minuteTick) {
                 BodyHealing.minuteTick(mob, mob.ctx);
             }
@@ -11126,12 +11191,13 @@ class SimWorld {
                 mob.anatomy._dirty = false;
             }
         }
-        this._tickSoakDrops();
-        this._tickLootableRegrows();
-        this._tickCampfires();
-        this._tickDryingRacks();
-        this._tickWorldSpoil();
-        this._tickCorpseDecay();
+        const simChunks = this._simChunks();
+        this._tickSoakDrops(simChunks);
+        this._tickLootableRegrows(simChunks);
+        this._tickCampfires(simChunks);
+        this._tickDryingRacks(simChunks);
+        this._tickWorldSpoil(simChunks);
+        this._tickCorpseDecay(simChunks);
         if (Apparel.isDayBoundary(this.worldMinuteIndex())) {
             for (const p of this.players.values()) {
                 if (!p.connected || p.dead) continue;
@@ -11169,9 +11235,10 @@ class SimWorld {
     }
 
     /** Corpse → carcass after 12h, carcass → gone after 30d. Runs for all chunks. */
-    _tickCorpseDecay() {
+    _tickCorpseDecay(chunks) {
         const now = this.worldMinuteIndex();
-        for (const c of this.chunks.values()) {
+        const src = chunks || this.chunks.values();
+        for (const c of src) {
             if (!Array.isArray(c.corpses) || !c.corpses.length) continue;
             for (let i = c.corpses.length - 1; i >= 0; i--) {
                 const entry = c.corpses[i];
@@ -11192,9 +11259,10 @@ class SimWorld {
     }
 
     /** Respawn due world lootables (sticks, bushes, …). */
-    _tickLootableRegrows() {
+    _tickLootableRegrows(chunks) {
         const now = this.worldMinuteIndex();
-        for (const c of this.chunks.values()) {
+        const src = chunks || this.chunks.values();
+        for (const c of src) {
             if (!Array.isArray(c.lootableThings)) continue;
             for (const entry of c.lootableThings) {
                 if (!entry || entry.regrowAt == null || now < entry.regrowAt) continue;
@@ -11555,7 +11623,7 @@ class SimWorld {
     }
 
     /**
-     * Ground loot despawn — same 5 real minutes as client DroppedItem.
+     * Ground loot despawn — same 15 real minutes as client DroppedItem.
      * Only ticks in chunks inside any connected player's interest radius
      * (server analogue of a loaded chunk).
      */
@@ -11564,10 +11632,7 @@ class SimWorld {
         const loaded = new Set();
         for (const p of this.players.values()) {
             if (!p.connected) continue;
-            const r = this.interestRadius(p);
-            for (const c of this._chunksNear(p.x, p.y, r)) {
-                loaded.add(c);
-            }
+            for (const c of this._viewChunks(p)) loaded.add(c);
         }
         if (!loaded.size) return;
 
@@ -11855,6 +11920,40 @@ class SimWorld {
         return keys;
     }
 
+    /**
+     * Chunk keys to stream to a session: the view around the control pawn,
+     * plus a 1-chunk pad around nearby (not map-split) party members.
+     */
+    viewChunkKeys(p) {
+        const keys = new Set();
+        if (!p) return keys;
+        const control = this._actionPawn(p, { pawnId: p.controlId || p.id }) || p;
+        if (!Number.isFinite(control.x) || !Number.isFinite(control.y)) return keys;
+        const add = (wx, wy, r) => {
+            if (!Number.isFinite(wx) || !Number.isFinite(wy)) return;
+            for (const k of this.interestChunkKeys(wx, wy, r)) keys.add(k);
+        };
+        add(control.x, control.y, this.interestRadius(p));
+        const padNear = (wx, wy) => {
+            if (!Number.isFinite(wx) || !Number.isFinite(wy)) return;
+            if (Party.beyondFollowLeash({ x: wx, y: wy }, control, TS)) return;
+            add(wx, wy, 1);
+        };
+        padNear(p.x, p.y);
+        for (const m of p.party || []) padNear(m.x, m.y);
+        return keys;
+    }
+
+    /** Existing chunks covered by viewChunkKeys (no worldgen). */
+    _viewChunks(p) {
+        const out = [];
+        for (const key of this.viewChunkKeys(p)) {
+            const c = this.chunks.get(key);
+            if (c) out.push(c);
+        }
+        return out;
+    }
+
     _poseMotion(rec, session = null) {
         if (rec?.dead || rec?.prone || rec?._resting || rec?.creature?._prone || rec?.creature?._resting) {
             return { vx: 0, vy: 0, moving: false };
@@ -11951,13 +12050,18 @@ class SimWorld {
                 })
             });
         }
-        // Non-finite pose would make _chunksNear return [] and clients would
-        // briefly think every corpse vanished (sparkle storm on death).
-        const vx = Number.isFinite(viewer.x) ? viewer.x : 0;
-        const vy = Number.isFinite(viewer.y) ? viewer.y : 0;
+        // Snapshot the camera pawn's neighborhood. Using the session leader
+        // made camp drops vanish when you possessed a companion far away.
+        // Non-finite pose would make viewChunkKeys skip every add() and
+        // clients would briefly think every corpse vanished (sparkle storm).
+        const control = this._actionPawn(viewer, { pawnId: viewer.controlId || viewer.id }) || viewer;
+        const vx = Number.isFinite(control.x) ? control.x : (Number.isFinite(viewer.x) ? viewer.x : 0);
+        const vy = Number.isFinite(control.y) ? control.y : (Number.isFinite(viewer.y) ? viewer.y : 0);
         const { cx, cy } = worldToChunk(vx, vy);
-        const interest = this.interestRadius(viewer);
-        const near = this._chunksNear(vx, vy, interest, { load: false });
+        let near = this._viewChunks(viewer);
+        if (!near.length) {
+            near = this._chunksNear(vx, vy, this.interestRadius(viewer), { load: false });
+        }
         const drops = [];
         const corpses = [];
         const campfires = [];
@@ -11996,7 +12100,7 @@ class SimWorld {
         const mobs = [];
         for (const mob of this.mobs.values()) {
             if (!mob || mob.isBodyDead()) continue;
-            if (this._chunkChebyshev(mob.x, mob.y, vx, vy) > SIM_CHUNKS) continue;
+            if (!this._inSimRange(mob.x, mob.y)) continue;
             const frozen = !(this._mobTimeScale() > 0);
             const moving = !frozen && Math.hypot(mob.vx || 0, mob.vy || 0) > 2;
             const row = {

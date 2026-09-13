@@ -99,8 +99,9 @@
     }
 
     /**
-     * AI (wanderers, followers, wildlife) should path around the whole bunk,
-     * not through the walkable laying spot into the wooden back.
+     * Wanderers and settlers path around the whole bunk so they don't walk the
+     * laying spot into the wooden back. Party followers and wildlife use thing
+     * hitboxes only — camp beds as solids makes nearby A* hitch.
      */
     function navAroundBeds(pawn) {
         if (!pawn) return false;
@@ -108,7 +109,8 @@
         if (typeof pawn.isControlled === "function" && pawn.isControlled()) return false;
         if (pawn.role === "player") return false;
         if (pawn.scene && pawn.scene.player === pawn) return false;
-        return true;
+        const role = pawn.role;
+        return role === "wanderer" || role === "settler";
     }
 
     /** Don't block a pawn walking into / lying in this lean-to. */

@@ -1426,7 +1426,7 @@
         "maxStack": 99,
         "weight": 2,
         "fuel": {
-            "kj": 40,
+            "kj": 160,
             "temp": 800
         }
     },

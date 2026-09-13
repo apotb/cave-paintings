@@ -102,6 +102,7 @@ const WorldStore = (() => {
             clock: { gameDay: 1, gameMinutes: 8 * 60, tickSpeed: 1 },
             poses: {},
             directorCd: {},
+            wanderers: [],
             settlements: [],
             settlers: [],
             researchSpentByOwner: {},
@@ -298,6 +299,9 @@ const WorldStore = (() => {
             directorCd: raw.directorCd && typeof raw.directorCd === "object" && !Array.isArray(raw.directorCd)
                 ? clone(raw.directorCd)
                 : {},
+            wanderers: Array.isArray(raw.wanderers) ? clone(raw.wanderers) : [],
+            settlements: Array.isArray(raw.settlements) ? clone(raw.settlements) : [],
+            settlers: Array.isArray(raw.settlers) ? clone(raw.settlers) : [],
             chunks: raw.chunks && typeof raw.chunks === "object" ? clone(raw.chunks) : {},
             researchSpentByOwner: raw.researchSpentByOwner && typeof raw.researchSpentByOwner === "object"
                 && !Array.isArray(raw.researchSpentByOwner)
