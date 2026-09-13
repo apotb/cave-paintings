@@ -183,3 +183,18 @@ test("lean-to collision is the wooden back, not the laying spot", () => {
     assert.equal(occupy.right - occupy.left, 32);
     assert.equal(occupy.bottom - occupy.top, 16);
 });
+
+test("itemIconKey uses null when the item has no texture", () => {
+    const have = new Set(["stick", "null", "lean_to_0"]);
+    const has = (k) => have.has(k);
+    assert.equal(Place.itemIconKey({ id: "stick", key: "stick" }, () => null, has), "stick");
+    assert.equal(Place.itemIconKey({ id: "hut", key: "hut" }, () => null, has), "null");
+    assert.equal(
+        Place.itemIconKey(
+            { id: "lean_to", key: "lean_to", place: { thing: "lean_to" } },
+            () => ({ id: "lean_to", key: "lean_to", rotations: [0, 90, 180, 270] }),
+            has
+        ),
+        "lean_to_0"
+    );
+});

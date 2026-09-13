@@ -75,6 +75,16 @@
         noiseApi().seed(seed);
     }
 
+    const CLAY_HOST = { gravel: true, sand: true, snow_beach: true };
+    const CLAY_THRESH = 0.58;
+    const CLAY_FREQ = 6;
+
+    function clayRichness(tx, ty) {
+        const inv = 1 / NOISE_SCALE;
+        const n = octaveNoise2D(tx * inv * CLAY_FREQ, ty * inv * CLAY_FREQ, 3, 0.5, 2.0, 3);
+        return (n + 1) * 0.5;
+    }
+
     function generateTileKey(tx, ty, rand) {
         const inv = 1 / NOISE_SCALE;
         const nx = tx * inv;
@@ -82,7 +92,15 @@
         const elevation = octaveNoise2D(nx, ny, 2, 0.5, 2.5, 0);
         const temperature = octaveNoise2D(nx, ny, 3, 0.2, 4.2, 1);
         const river = Math.abs(octaveNoise2D(nx, ny, 3, 1.2, 0.7, 2));
+        const clay = clayRichness(tx, ty);
         const randValue = rand();
+
+        function finish(key, things, loot) {
+            if (CLAY_HOST[key] && clay > CLAY_THRESH) {
+                return { key, things: ["clay_patch"], loot: [] };
+            }
+            return { key, things: things || [], loot: loot || [] };
+        }
 
         if (river < 0.005) return { key: "water", things: [], loot: [] };
         if (elevation < -0.2) {
@@ -91,22 +109,22 @@
         if (river < 0.0065 && elevation < 0.14) {
             const loot = [];
             if (randValue < 0.03) loot.push("flint");
-            return { key: "gravel", things: [], loot };
+            return finish("gravel", [], loot);
         }
         if (elevation < -0.19) {
             if (river < 0.005) return { key: "water", things: [], loot: [] };
             if (river < 0.0065) {
                 const loot = [];
                 if (randValue < 0.03) loot.push("flint");
-                return { key: "gravel", things: [], loot };
+                return finish("gravel", [], loot);
             }
-            if (temperature < -0.25) return { key: "snow_beach", things: [], loot: [] };
+            if (temperature < -0.25) return finish("snow_beach", [], []);
             const things = [];
             const loot = [];
             if (randValue < 0.05) things.push("palm_tree");
             else if (randValue < 0.065) loot.push("coconut_tree");
             else if (randValue < 0.07) loot.push("sticks");
-            return { key: "sand", things, loot };
+            return finish("sand", things, loot);
         }
         if (elevation < 0.15) {
             if (temperature < -0.25) {
@@ -135,7 +153,7 @@
             if (randValue < 0.05) things.push("cactus");
             else if (randValue < 0.055) loot.push("flowering_cactus");
             else if (randValue < 0.056) things.push("rock");
-            return { key: "sand", things, loot };
+            return finish("sand", things, loot);
         }
         if (elevation < 0.25) {
             const things = [];
@@ -387,9 +405,13 @@
         TS,
         CHUNK_PX,
         BLOCKED,
+        CLAY_HOST,
+        CLAY_THRESH,
         pickWorldSeed,
         applySeed,
         generateChunk,
+        generateTileKey,
+        clayRichness,
         octaveNoise2D,
         tileKeyAt
     };

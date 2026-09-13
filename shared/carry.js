@@ -25,6 +25,45 @@
         return (stack && stack.toolClass) || def?.toolClass || null;
     }
 
+    /** REQUIRE_TOOL.toolClass may be a string or an array (knife or scraper). */
+    function parseRequireTool(v) {
+        if (!v) return null;
+        if (typeof v === "string") {
+            return { toolClass: v, toolClasses: [v], wear: 0 };
+        }
+        if (typeof v !== "object") return null;
+        const wear = Math.max(0, Number(v.wear) || 0);
+        let classes = [];
+        if (Array.isArray(v.toolClasses) && v.toolClasses.length) {
+            classes = v.toolClasses.map(String).filter(Boolean);
+        } else if (Array.isArray(v.toolClass)) {
+            classes = v.toolClass.map(String).filter(Boolean);
+        } else if (v.toolClass) {
+            classes = [String(v.toolClass)];
+        }
+        return {
+            toolClass: classes[0] || null,
+            toolClasses: classes,
+            wear
+        };
+    }
+
+    function recipeToolClasses(rt) {
+        if (!rt) return [];
+        if (Array.isArray(rt.toolClasses) && rt.toolClasses.length) {
+            return rt.toolClasses.map(String).filter(Boolean);
+        }
+        const parsed = parseRequireTool(rt);
+        return parsed?.toolClasses || [];
+    }
+
+    function heldMatchesRecipeTool(held, def, rt) {
+        const classes = recipeToolClasses(rt);
+        if (!classes.length) return true;
+        const cls = stackToolClass(held, def);
+        return !!(cls && classes.includes(cls));
+    }
+
     /** Stackable def tools are consumed 1× per craft instead of durability wear. */
     function isSingleUseTool(stack, def) {
         if (!stack) return false;
@@ -440,6 +479,9 @@
         RECIPE_META_KEYS,
         isRecipeMetaKey,
         stackToolClass,
+        parseRequireTool,
+        recipeToolClasses,
+        heldMatchesRecipeTool,
         isSingleUseTool,
         unitWeight,
         stackMass,

@@ -331,6 +331,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.attackHitSet = new Set();
         this._attackWoreHeld = false;
         this._attackChoppedTree = false;
+        this._attackDugPatch = false;
         this.facing = this.facingFromAngle(this.attackAngle);
         if (this.scene.isNet && this.scene.net?.connected) {
             this.scene._netSendMove?.(true);
@@ -1579,15 +1580,31 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     _pickMeleeAttack(angle) {
-        if (typeof Chop !== "undefined" && typeof BodyCombat !== "undefined") {
+        if (typeof BodyCombat !== "undefined") {
             const held = this.getHeldItem();
-            if (Chop.chopFraction(held) > 0) {
+            const getItem = (id) => this.scene.getItem?.(id);
+            if (typeof Dig !== "undefined" && Dig.isDigger?.(held, getItem) && this._hasDiggingTech()) {
+                const dig = Dig.pickDigFromAttacks(BodyCombat.collectAttacks(this));
+                const c = this.bodyCenter();
+                if (dig && this.scene.aimHitsDiggableTile?.(c, angle)) return dig;
+            }
+            if (typeof Chop !== "undefined" && Chop.chopFraction(held) > 0) {
                 const chop = Chop.pickChopFromAttacks(BodyCombat.collectAttacks(this));
                 const c = this.bodyCenter();
                 if (chop && this.scene.aimHitsChoppableTrunk?.(c, angle)) return chop;
             }
         }
         return BodyCombat.pickAttack(this);
+    }
+
+    _hasDiggingTech() {
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R?.hasTech) return false;
+        const holder = this.scene._playerResearchHolder?.()
+            || this.scene.leader
+            || this.scene.player
+            || null;
+        return !!(holder && R.hasTech(holder, "digging"));
     }
 
     /** Rebuild held-weapon meta from a server attack-art payload. */
@@ -1671,6 +1688,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.attackHitSet = new Set();
         this._attackWoreHeld = false;
         this._attackChoppedTree = false;
+        this._attackDugPatch = false;
         this.facing = this.facingFromAngle(angle);
         if (!opts.silentNet) this.scene.hideWorldTooltip?.();
 
@@ -1996,7 +2014,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             }
             radius = 4;
         }
-        if (!seg && !(typeof Chop !== "undefined" && Chop.isChopAttack(attack))) return;
+        if (!seg && !(typeof Chop !== "undefined" && Chop.isChopAttack(attack))
+            && !(typeof Dig !== "undefined" && Dig.isDigAttack(attack))) return;
 
         const group = this.scene.damageables;
         if (seg && group) {
@@ -2019,6 +2038,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
 
         this._tryChopHit(seg);
+        this._tryDigHit(seg);
     }
 
     _tryChopHit(seg) {
@@ -2049,6 +2069,41 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._attackChoppedTree = true;
         this.attackHitSet.add(best);
         this.scene.applyLocalChop?.(best, frac, this);
+        if (!this.currentAttack.unarmed && !this._attackWoreHeld) {
+            this.wearHeld(1);
+            this._attackWoreHeld = true;
+        }
+    }
+
+    _tryDigHit(seg) {
+        if (this._attackDugPatch) return;
+        if (typeof Dig === "undefined" || !Dig.isDigAttack(this.currentAttack)) return;
+        if (!this._hasDiggingTech()) return;
+        const getItem = (id) => this.scene.getItem?.(id);
+        const frac = Dig.digFraction(this.getHeldItem(), getItem);
+        if (!(frac > 0)) return;
+        const patches = this.scene.diggableThingsNear?.(this.x, this.y, Dig.AIM_REACH + 16) || [];
+        const c = this.bodyCenter();
+        const aimSeg = Dig.aimSegment(c.x, c.y, this.attackAngle, Dig.AIM_REACH);
+        let best = null;
+        let bestD = Infinity;
+        for (const t of patches) {
+            if (!t || this.attackHitSet.has(t)) continue;
+            const hit = (seg && Dig.trunkHitsSegment(seg, t.x, t.y, Dig.HITBOX, Dig.HIT_RADIUS))
+                || Dig.trunkHitsSegment(aimSeg, t.x, t.y, Dig.HITBOX, Dig.HIT_RADIUS);
+            if (!hit) continue;
+            const dx = t.x - this.x;
+            const dy = t.y - this.y;
+            const d = dx * dx + dy * dy;
+            if (d < bestD) {
+                best = t;
+                bestD = d;
+            }
+        }
+        if (!best) return;
+        this._attackDugPatch = true;
+        this.attackHitSet.add(best);
+        this.scene.applyLocalDig?.(best, frac, this);
         if (!this.currentAttack.unarmed && !this._attackWoreHeld) {
             this.wearHeld(1);
             this._attackWoreHeld = true;
@@ -2847,8 +2902,14 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (needStation && (!station?.active || !station.inRange?.(this))) return false;
         if (!this.scene.canCraft?.(recipe, this)) return false;
         const item = this.getHeldItem();
-        const wantClass = recipe.requireTool?.toolClass;
-        if (wantClass && this.heldToolClass() !== wantClass) return false;
+        const rt = recipe.requireTool;
+        if (typeof Carry !== "undefined" && Carry.heldMatchesRecipeTool) {
+            const def = item ? this.scene.getItem?.(item.id) : null;
+            if (!Carry.heldMatchesRecipeTool(item, def, rt)) return false;
+        } else {
+            const wantClass = rt?.toolClass;
+            if (wantClass && this.heldToolClass() !== wantClass) return false;
+        }
 
         const seconds = Math.max(0.1, Number(recipe.craftSeconds) || 1);
         const scale = this.capacities.manipulationDurationScale();
@@ -2865,7 +2926,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             slot: this._heldSlotIndex(),
             station,
             recipe,
-            toolClass: wantClass || null
+            toolClass: rt?.toolClass || null,
+            requireTool: rt || null
         };
         this._showChannelBar(0);
         return true;
@@ -2883,9 +2945,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const station = this._craftChannel.station;
         const recipe = this._craftChannel.recipe;
         const wantClass = this._craftChannel.toolClass;
+        const rt = this._craftChannel.requireTool || recipe?.requireTool;
+        const held = this.getHeldItem();
+        const heldDef = held ? this.scene.getItem?.(held.id) : null;
+        const toolOk = (typeof Carry !== "undefined" && Carry.heldMatchesRecipeTool)
+            ? Carry.heldMatchesRecipeTool(held, heldDef, rt)
+            : (!wantClass || this.heldToolClass() === wantClass);
         if (
             slot !== this._craftChannel.slot
-            || (wantClass && this.heldToolClass() !== wantClass)
+            || !toolOk
             || (station && (!station.active || !station.inRange?.(this)))
         ) {
             this._cancelCraft();

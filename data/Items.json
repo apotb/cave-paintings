@@ -727,6 +727,69 @@
         }
     },
     {
+        "id": "digging_stick",
+        "name": "Digging Stick",
+        "key": "digging_stick",
+        "maxStack": 1,
+        "durability": 50,
+        "weightFixed": true,
+        "weight": 0.9,
+        "toolClass": "digger",
+        "digPower": 0.05,
+        "weapon": {
+            "type": "melee",
+            "range": 5,
+            "hitStart": 0.25,
+            "hitEnd": 0.75,
+            "attacks": [
+                {
+                    "id": "dig_thrust",
+                    "name": "Point (Dig)",
+                    "damage": 3,
+                    "type": "blunt",
+                    "verb": "thrust",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 1.0,
+                    "source": "hand"
+                },
+                {
+                    "id": "shaft_poke",
+                    "name": "Shaft (Poke)",
+                    "damage": 2,
+                    "type": "blunt",
+                    "verb": "poked",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 0.25,
+                    "source": "hand"
+                },
+                {
+                    "id": "other_fist",
+                    "name": "Fist",
+                    "damage": 6,
+                    "type": "blunt",
+                    "verb": "swung",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 0.15,
+                    "source": "otherHand",
+                    "unarmed": "punch",
+                    "range": 4
+                }
+            ]
+        },
+        "tooltip": [
+            "Uses leverage to dig up valuable natural resources"
+        ],
+        "recipe": {
+            "REQUIRE_THING": "rock",
+            "log": 1,
+            "CRAFT_SECONDS": 12,
+            "REQUIRE_TOOL": {
+                "toolClass": ["knife", "scraper"],
+                "wear": 5
+            }
+        }
+    },
+    {
         "id": "stone_spear",
         "name": "Stone Spear",
         "key": "stone_spear",
@@ -1344,5 +1407,12 @@
             "kj": 40,
             "temp": 800
         }
+    },
+    {
+        "id": "clay",
+        "name": "Clay",
+        "key": "clay",
+        "maxStack": 99,
+        "weight": 0.8
     }
 ]

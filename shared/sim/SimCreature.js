@@ -477,6 +477,7 @@ class SimCreature {
         this.attackHitSet = new Set();
         this._attackWoreHeld = false;
         this._attackChoppedTree = false;
+        this._attackDugPatch = false;
         this.facing = this.facingFromAngle(ang);
         this.attackArt = this.getAttackArt();
         return true;
@@ -521,6 +522,7 @@ class SimCreature {
         this.attackHitSet = new Set();
         this._attackWoreHeld = false;
         this._attackChoppedTree = false;
+        this._attackDugPatch = false;
         this.facing = this.facingFromAngle(ang);
         this.attackArt = this.getAttackArt();
         return true;
@@ -572,6 +574,7 @@ class SimCreature {
 
         if (this.kind === "player") {
             this.ctx.sim?._tryChopFromMelee?.(this, seg, radius);
+            this.ctx.sim?._tryDigFromMelee?.(this, seg, radius);
         }
     }
 

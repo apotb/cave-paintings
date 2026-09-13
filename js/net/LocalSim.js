@@ -133,6 +133,11 @@ class LocalSim {
             this.world.wanderers = data.wanderers;
             this.world.settlements = data.settlements;
             this.world.settlers = data.settlers;
+            this.world.researchSpentByOwner = (data.researchSpentByOwner
+                && typeof data.researchSpentByOwner === "object"
+                && !Array.isArray(data.researchSpentByOwner))
+                ? data.researchSpentByOwner
+                : (this.world.researchSpentByOwner || {});
             this.world.chunks = data.chunks;
         }
 

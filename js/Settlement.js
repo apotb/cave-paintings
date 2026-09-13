@@ -132,6 +132,8 @@ class SettlementSystem {
         return S ? S.ownedOf(this.list, oid) : this.list.filter((s) => s.ownerId === oid);
     }
 
+
+
     here(pawn) {
         const p = pawn || this.scene.player;
         if (!p) return null;
@@ -187,6 +189,10 @@ class SettlementSystem {
         return this._worldIndex(settle).chop;
     }
 
+    diggablesInRange(settle) {
+        return this._worldIndex(settle).dig || [];
+    }
+
     _nowMs() {
         return this.scene.time?.now || performance.now();
     }
@@ -240,7 +246,7 @@ class SettlementSystem {
     }
 
     _worldIndex(settle) {
-        if (!settle) return { loot: [], chop: [], paint: [], drops: [] };
+        if (!settle) return { loot: [], chop: [], dig: [], paint: [], drops: [] };
         const now = this._nowMs();
         if (this._worldCache && this._worldCache.id === settle.id && now - this._worldCache.at < 400) {
             return this._worldCache;
@@ -249,6 +255,7 @@ class SettlementSystem {
         const ts = this.scene.tileSize || 16;
         const loot = [];
         const chop = [];
+        const dig = [];
         const paint = [];
         this._forEachThing((t) => {
             if (!t || t.entry?.gone) return;
@@ -259,15 +266,18 @@ class SettlementSystem {
                 && !S?.chopSkipsTree?.(t.entry?.id || def?.id, def, t.entry)) {
                 chop.push(t);
             }
+            if (typeof Dig !== "undefined" && Dig.stillDiggable?.(def, t.entry)) {
+                dig.push(t);
+            }
             if (typeof Research !== "undefined" && Research.isPaintingCircle?.(def, t.entry)
                 && Research.isEnabled?.(t.entry)
                 && (Research.hasRoom(t.entry) || Research.inProgress(t.entry)
-                    || Research.needsTallyInstall?.(settle, t.entry))) {
+                    || Research.needsTallyInstall?.(this.scene._playerResearchHolder?.(), t.entry))) {
                 Research.ensureEntry(t.entry, def);
                 paint.push(t);
             }
         }, settle);
-        this._worldCache = { id: settle.id, at: now, loot, chop, paint, drops: this._collectDrops(settle, S, ts) };
+        this._worldCache = { id: settle.id, at: now, loot, chop, dig, paint, drops: this._collectDrops(settle, S, ts) };
         return this._worldCache;
     }
 
@@ -299,13 +309,12 @@ class SettlementSystem {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         if (!R || !S || !thing?.entry) return null;
         const ts = this.scene.tileSize || 16;
-        let reason = null;
-        for (const settle of this.list) {
-            if (!S.inRange(settle, thing.x, thing.y, ts)) continue;
-            const r = R.removeBlockedReason(settle, this.researchCircleEntries(settle), thing.entry);
-            if (r) reason = r;
-        }
-        return reason;
+        const covering = (this.list || []).some((settle) => S.inRange(settle, thing.x, thing.y, ts));
+        if (!covering) return null;
+        const holder = this.scene._playerResearchHolder?.();
+        const circles = this.scene._ownerResearchCircles?.() || [];
+        const extra = this.scene._playerResearchExtra?.();
+        return R.removeBlockedReason(holder, circles, thing.entry, extra) || null;
     }
 
     circleTallyRemoveBlockedReason(thing) {
@@ -313,13 +322,12 @@ class SettlementSystem {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         if (!R || !S || !thing?.entry) return null;
         const ts = this.scene.tileSize || 16;
-        let reason = null;
-        for (const settle of this.list) {
-            if (!S.inRange(settle, thing.x, thing.y, ts)) continue;
-            const r = R.tallyRemoveBlockedReason?.(settle, this.researchCircleEntries(settle), thing.entry);
-            if (r) reason = r;
-        }
-        return reason;
+        const covering = (this.list || []).some((settle) => S.inRange(settle, thing.x, thing.y, ts));
+        if (!covering) return null;
+        const holder = this.scene._playerResearchHolder?.();
+        const circles = this.scene._ownerResearchCircles?.() || [];
+        const extra = this.scene._playerResearchExtra?.();
+        return R.tallyRemoveBlockedReason?.(holder, circles, thing.entry, extra) || null;
     }
 
     promptRemovePaintingCircle(thing, onOk) {

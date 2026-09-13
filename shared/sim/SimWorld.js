@@ -90,6 +90,14 @@ function _research() {
     return null;
 }
 
+function _dig() {
+    if (typeof Dig !== "undefined") return Dig;
+    try {
+        if (typeof require === "function") return require("../dig");
+    } catch (_) { /* optional */ }
+    return null;
+}
+
 let _thingDefs = null;
 function thingDefs() {
     if (_thingDefs) return _thingDefs;
@@ -178,6 +186,7 @@ class SimWorld {
         this.wanderers = new Map();
         this.settlements = [];
         this.settlers = [];
+        this.researchSpentByOwner = Object.create(null);
         /** @type {Map<string, number>} playerId -> seconds until next passerby pack */
         this._directorCd = new Map();
         this._duelMap = new Map();
@@ -879,6 +888,10 @@ class SimWorld {
             if (rec) w.wanderers.set(rec.id, rec);
         }
         w.settlements = (data.settlements || []).map((s) => Settlement.ensureSettlement(s));
+        const spentRaw = data.researchSpentByOwner;
+        w.researchSpentByOwner = (spentRaw && typeof spentRaw === "object" && !Array.isArray(spentRaw))
+            ? { ...spentRaw }
+            : Object.create(null);
         w.settlers = [];
         for (const snap of data.settlers || []) {
             const rec = w._settlerFromSnap(snap);
@@ -1063,6 +1076,9 @@ class SimWorld {
                 .filter((w) => w && !w.dead)
                 .map((w) => this._publicWanderer(w)),
             settlements: this.settlements || [],
+            researchSpentByOwner: this.researchSpentByOwner && typeof this.researchSpentByOwner === "object"
+                ? { ...this.researchSpentByOwner }
+                : {},
             settlers: (this.settlers || []).filter((s) => s && !s.dead).map((s) => this._persistSettler(s)),
             chunks
         };
@@ -1297,6 +1313,12 @@ class SimWorld {
         if (character.controlId) p.controlId = character.controlId;
         if (character.lastSleep) p.lastSleep = character.lastSleep;
         if (typeof character.resting === "boolean") p._joinRestHint = !!character.resting;
+        if (character.techs && typeof character.techs === "object" && !Array.isArray(character.techs)) {
+            p.techs = { ...character.techs };
+        }
+        if (character.techGrantRev != null) {
+            p.techGrantRev = Math.max(0, Math.floor(Number(character.techGrantRev) || 0));
+        }
         if (p.hp <= 0) {
             p.dead = true;
         }
@@ -1356,7 +1378,9 @@ class SimWorld {
             look: Look.normalizeLook(null),
             party: [],
             controlId: id,
-            ownerId: id
+            ownerId: id,
+            techs: Object.create(null),
+            techGrantRev: 0
         };
     }
 
@@ -1736,6 +1760,70 @@ class SimWorld {
         return Settlement.ownedOf(this.settlements, ownerId);
     }
 
+    _researchHolder(ownerId) {
+        if (!ownerId) return null;
+        const p = this.players.get(ownerId);
+        if (!p) return null;
+        this._migrateOwnerResearch(ownerId);
+        _research()?.ensureTechs?.(p);
+        return p;
+    }
+
+    _migrateOwnerResearch(ownerId) {
+        if (!ownerId) return;
+        if (!this.researchSpentByOwner || typeof this.researchSpentByOwner !== "object") {
+            this.researchSpentByOwner = Object.create(null);
+        }
+        const p = this.players.get(ownerId);
+        const R = _research();
+        if (!p || !R?.adoptSettlementTechs) return;
+        const adopted = R.adoptSettlementTechs(p, this._ownedSettlements(ownerId));
+        if (this.researchSpentByOwner[ownerId] == null) {
+            this.researchSpentByOwner[ownerId] = adopted;
+        }
+    }
+
+    _researchSpent(ownerId) {
+        const n = this.researchSpentByOwner?.[ownerId];
+        return Math.max(0, Math.floor(Number(n) || 0));
+    }
+
+    _addResearchSpent(ownerId, n) {
+        if (!ownerId) return;
+        this._migrateOwnerResearch(ownerId);
+        const add = Math.max(0, Math.floor(Number(n) || 0));
+        if (!(add > 0)) return;
+        this.researchSpentByOwner[ownerId] = this._researchSpent(ownerId) + add;
+    }
+
+    _researchExtra(ownerId) {
+        return {
+            spent: this._researchSpent(ownerId),
+            settle: this._researchHolder(ownerId)
+        };
+    }
+
+    _ownerResearchCircles(ownerId) {
+        const out = [];
+        const seen = new Set();
+        for (const s of this._ownedSettlements(ownerId)) {
+            for (const e of this._paintingCirclesInRange(s)) {
+                const k = e.uid || `${e.x},${e.y}`;
+                if (seen.has(k)) continue;
+                seen.add(k);
+                out.push(e);
+            }
+        }
+        return out;
+    }
+
+    _researchPoints(ownerId) {
+        const R = _research();
+        if (!R?.pointsBreakdown) return { paintings: 0, tallies: 0, spent: 0, produced: 0, available: 0, total: 0 };
+        this._migrateOwnerResearch(ownerId);
+        return R.pointsBreakdown(this._ownerResearchCircles(ownerId), this._researchExtra(ownerId));
+    }
+
     _paintingCirclesInRange(settle) {
         const R = _research();
         if (!R || !settle) return [];
@@ -1757,16 +1845,19 @@ class SimWorld {
 
     _unlockTech(settle, techId) {
         const R = _research();
-        if (!R || !settle) return false;
+        const ownerId = settle?.ownerId;
+        const holder = this._researchHolder(ownerId);
+        if (!R || !holder) return false;
         const id = String(techId || "");
         const tech = R.techById(id);
         if (!tech) return false;
-        const circles = this._paintingCirclesInRange(settle);
-        const pts = R.pointsBreakdown(circles, { settle });
-        if (!R.canUnlock(settle, id, pts.total)) return false;
-        if (R.unlockChain) R.unlockChain(settle, id);
-        else R.unlock(settle, id);
-        this._youDirty.add(settle.ownerId);
+        const pts = this._researchPoints(ownerId);
+        if (!R.canUnlock(holder, id, pts.available ?? pts.total)) return false;
+        const cost = R.remainingUnlockCost(holder, id);
+        if (R.unlockChain) R.unlockChain(holder, id);
+        else R.unlock(holder, id);
+        this._addResearchSpent(ownerId, cost);
+        this._youDirty.add(ownerId);
         return true;
     }
 
@@ -1819,8 +1910,10 @@ class SimWorld {
             return;
         }
         if (op === "removeTally") {
-            const circles = this._paintingCirclesInRange(settle);
-            if (R.tallyRemoveBlockedReason?.(settle, circles, found.entry)) return;
+            const oid = settle.ownerId;
+            const holder = this._researchHolder(oid);
+            const circles = this._ownerResearchCircles(oid);
+            if (R.tallyRemoveBlockedReason?.(holder, circles, found.entry, this._researchExtra(oid))) return;
             if (!R.removeTally(found.entry)) return;
             const left = this._give(actor, itemId, 1);
             if (left > 0) this._pushDrop(actor.x, actor.y, { id: itemId, quantity: left });
@@ -5063,10 +5156,12 @@ class SimWorld {
             else if (k === "REQUIRE_STATION") requireStation = String(v || "") || null;
             else if (k === "CRAFT_SECONDS") craftSeconds = Math.max(0, Number(v) || 0);
             else if (k === "REQUIRE_TOOL") {
-                requireTool = {
-                    toolClass: v?.toolClass ? String(v.toolClass) : null,
-                    wear: Math.max(0, Number(v?.wear) || 0)
-                };
+                requireTool = Carry.parseRequireTool
+                    ? Carry.parseRequireTool(v)
+                    : {
+                        toolClass: v?.toolClass ? String(v.toolClass) : null,
+                        wear: Math.max(0, Number(v?.wear) || 0)
+                    };
             } else if (typeof Carry !== "undefined" && Carry.isRecipeMetaKey && Carry.isRecipeMetaKey(k)) {
                 continue;
             } else if (v && typeof v === "object") {
@@ -5207,11 +5302,8 @@ class SimWorld {
         if (!recipe) return;
         const R = _research();
         if (R?.recipeUnlocked) {
-            const settle = Settlement.atPoint(
-                this._ownedSettlements(p.ownerId || session.id),
-                p.x, p.y, TS, p.ownerId || session.id
-            );
-            if (!R.recipeUnlocked(id, settle)) return;
+            const holder = this._researchHolder(p.ownerId || session.id);
+            if (!R.recipeUnlocked(id, holder)) return;
         }
         const store = this._craftStorageFromAction(p, action);
         const extra = store?.entry?.slots || null;
@@ -5220,10 +5312,10 @@ class SimWorld {
         }
         if (recipe.requireThing && !this._hasNearbyThing(p, recipe.requireThing)) return;
         if (recipe.requireStation && !this._hasNearbyThing(p, recipe.requireStation)) return;
-        if (recipe.requireTool?.toolClass) {
+        if (Carry.recipeToolClasses?.(recipe.requireTool)?.length) {
             const held = this._held(p);
             const def = held ? itemDefs().get(held.id) : null;
-            if (Carry.stackToolClass(held, def) !== recipe.requireTool.toolClass) return;
+            if (!Carry.heldMatchesRecipeTool(held, def, recipe.requireTool)) return;
         }
 
         let tipQuality = null;
@@ -5258,7 +5350,7 @@ class SimWorld {
     }
 
     _consumeCraftTool(p, recipe) {
-        if (!recipe.requireTool?.toolClass) return;
+        if (!(Carry.recipeToolClasses?.(recipe.requireTool)?.length)) return;
         const held = this._held(p);
         const def = held ? itemDefs().get(held.id) : null;
         if (Carry.isSingleUseTool(held, def)) {
@@ -5319,11 +5411,24 @@ class SimWorld {
     _pickPlayerAttack(creature, angle) {
         if (!creature) return null;
         const held = creature.getHeldItem?.();
+        const getItem = (id) => itemDefs().get(id);
+        const DigApi = _dig();
+        if (DigApi?.isDigger?.(held, getItem) && this._pawnHasDigging(creature)) {
+            const dig = DigApi.pickDigFromAttacks(BodyCombat.collectAttacks(creature));
+            if (dig && this._aimHitsDiggable(creature, angle)) return dig;
+        }
         if (Chop.chopFraction(held) > 0) {
             const chop = Chop.pickChopFromAttacks(BodyCombat.collectAttacks(creature));
             if (chop && this._aimHitsChoppable(creature, angle)) return chop;
         }
         return BodyCombat.pickAttack(creature);
+    }
+
+    _pawnHasDigging(creature) {
+        const R = _research();
+        if (!R?.hasTech || !creature) return false;
+        const holder = this._researchHolder(creature.ownerId || creature.id);
+        return !!(holder && R.hasTech(holder, "digging"));
     }
 
     _aimHitsChoppable(creature, angle) {
@@ -5422,6 +5527,107 @@ class SimWorld {
             chopProgress: result.felled ? null : result.progress,
             felled: !!result.felled,
             list: bestList === "lootable" ? "lootable" : "things"
+        });
+    }
+
+    _aimHitsDiggable(creature, angle) {
+        const DigApi = _dig();
+        if (!creature || !DigApi) return false;
+        const c = creature.bodyCenter?.() || { x: creature.x, y: creature.y };
+        const seg = DigApi.aimSegment(c.x, c.y, angle, DigApi.AIM_REACH);
+        let hit = false;
+        this._eachNearbyDiggable(creature.x, creature.y, (e) => {
+            if (hit) return;
+            if (DigApi.trunkHitsSegment(seg, e.x, e.y, DigApi.HITBOX, DigApi.HIT_RADIUS)) hit = true;
+        });
+        return hit;
+    }
+
+    _eachNearbyDiggable(wx, wy, fn) {
+        const DigApi = _dig();
+        if (!DigApi) return;
+        const range = (DigApi.AIM_REACH || 20) + 16;
+        const r2 = range * range;
+        for (const c of this._chunksNear(wx, wy, 1)) {
+            if (!Array.isArray(c.things)) continue;
+            for (const e of c.things) {
+                if (!e || e.gone || !e.id) continue;
+                const def = thingDefs().get(e.id);
+                if (!DigApi.stillDiggable(def, e)) continue;
+                const dx = (Number(e.x) || 0) - wx;
+                const dy = (Number(e.y) || 0) - wy;
+                if (dx * dx + dy * dy > r2) continue;
+                fn(e, def, c);
+            }
+        }
+    }
+
+    _removeThingEntry(chunk, entry) {
+        if (!chunk || !entry) return;
+        entry.gone = true;
+        const i = (chunk.things || []).indexOf(entry);
+        if (i >= 0) chunk.things.splice(i, 1);
+    }
+
+    _tryDigFromMelee(creature, swingSeg) {
+        if (!creature || creature.kind !== "player") return;
+        if (creature._attackDugPatch) return;
+        const DigApi = _dig();
+        if (!DigApi?.isDigAttack?.(creature.currentAttack)) return;
+        if (!this._pawnHasDigging(creature)) return;
+        const held = creature.getHeldItem?.();
+        const getItem = (id) => itemDefs().get(id);
+        const frac = DigApi.digFraction(held, getItem);
+        if (!(frac > 0)) return;
+        const c = creature.bodyCenter?.() || { x: creature.x, y: creature.y };
+        const digSeg = DigApi.aimSegment(c.x, c.y, creature.attackAngle, DigApi.AIM_REACH);
+        let best = null;
+        let bestDef = null;
+        let bestChunk = null;
+        let bestD = Infinity;
+        this._eachNearbyDiggable(creature.x, creature.y, (e, def, chunk) => {
+            if (creature.attackHitSet?.has(e)) return;
+            const hit = DigApi.trunkHitsSegment(digSeg, e.x, e.y, DigApi.HITBOX, DigApi.HIT_RADIUS)
+                || (swingSeg && DigApi.trunkHitsSegment(swingSeg, e.x, e.y, DigApi.HITBOX, DigApi.HIT_RADIUS));
+            if (!hit) return;
+            const dx = e.x - creature.x;
+            const dy = e.y - creature.y;
+            const d = dx * dx + dy * dy;
+            if (d < bestD) {
+                best = e;
+                bestDef = def;
+                bestChunk = chunk;
+                bestD = d;
+            }
+        });
+        if (!best || !bestChunk) return;
+        if (!creature.attackHitSet) creature.attackHitSet = new Set();
+        creature.attackHitSet.add(best);
+        creature._attackDugPatch = true;
+        const result = DigApi.applyDig(best, bestDef, frac);
+        if (!creature._attackWoreHeld) {
+            this._wearPlayerHeld(creature.id, 1);
+            creature._attackWoreHeld = true;
+        }
+        const itemId = bestDef?.diggable?.item || "clay";
+        if (result.give > 0) {
+            this._pushDrop(best.x, best.y, { id: itemId, quantity: result.give });
+        }
+        if (result.done) this._removeThingEntry(bestChunk, best);
+        this.pushEvent({
+            kind: "dig",
+            playerId: creature.id,
+            cx: bestChunk.cx,
+            cy: bestChunk.cy,
+            x: best.x,
+            y: best.y,
+            uid: best.uid || null,
+            id: best.id,
+            digProgress: result.done ? 1 : result.progress,
+            digTaken: best.digTaken || 0,
+            lastDigAt: best.lastDigAt || Date.now(),
+            give: result.give,
+            dug: !!result.done
         });
     }
 
@@ -7328,10 +7534,8 @@ class SimWorld {
         if (meta?.use !== "light_fire") return;
         const R = _research();
         if (R?.techUnlocked) {
-            const oid = p.ownerId || session.id;
-            const owned = this._ownedSettlements(oid);
-            const settle = Settlement.atPoint(owned, p.x, p.y, TS, oid) || owned[0] || null;
-            if (!R.techUnlocked("fire", settle)) return;
+            const holder = this._researchHolder(p.ownerId || session.id);
+            if (!R.techUnlocked("fire", holder)) return;
         }
 
         const range = TS * HARVEST_RANGE_TILES;
@@ -8804,7 +9008,10 @@ class SimWorld {
         R.ensureEntry(entry, this._thingDef(entry.id));
         const covering = this._coveringSettlements(entry);
         for (const settle of covering) {
-            if (!R.canRemoveCircle(settle, this._paintingCirclesInRange(settle), entry)) return;
+            const oid = settle.ownerId;
+            const holder = this._researchHolder(oid);
+            const circles = this._ownerResearchCircles(oid);
+            if (!R.canRemoveCircle(holder, circles, entry, this._researchExtra(oid))) return;
         }
         const pigmentId = R.currentPigmentId(entry);
         if (pigmentId) this._pushDrop(entry.x, entry.y, { id: pigmentId, quantity: 1 });
@@ -11620,6 +11827,8 @@ class SimWorld {
     youPayload(playerId) {
         const p = this.players.get(playerId);
         if (!p) return null;
+        this._migrateOwnerResearch(playerId);
+        _research()?.ensureTechs?.(p);
         this._spoilPlayerGear(p);
         for (const m of p.party || []) {
             if (!m?.dead) this._spoilPlayerGear(m);
@@ -11693,6 +11902,9 @@ class SimWorld {
                 };
             }),
             controlId: p.controlId || p.id,
+            techs: p.techs && typeof p.techs === "object" ? { ...p.techs } : {},
+            techGrantRev: p.techGrantRev ?? 0,
+            researchSpent: this._researchSpent(p.id),
             settlements: this._ownedSettlements(p.id),
             settlers: (this.settlers || [])
                 .filter((s) => s && !s.dead && s.ownerId === p.id)

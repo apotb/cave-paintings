@@ -104,6 +104,7 @@ const WorldStore = (() => {
             directorCd: {},
             settlements: [],
             settlers: [],
+            researchSpentByOwner: {},
             chunks: {},
             favorite: false,
             lastPlayedAt: 0
@@ -298,6 +299,10 @@ const WorldStore = (() => {
                 ? clone(raw.directorCd)
                 : {},
             chunks: raw.chunks && typeof raw.chunks === "object" ? clone(raw.chunks) : {},
+            researchSpentByOwner: raw.researchSpentByOwner && typeof raw.researchSpentByOwner === "object"
+                && !Array.isArray(raw.researchSpentByOwner)
+                ? clone(raw.researchSpentByOwner)
+                : {},
             favorite: !!raw.favorite,
             lastPlayedAt: Math.max(0, Number(raw.lastPlayedAt) || 0)
         });

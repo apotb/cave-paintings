@@ -59,7 +59,7 @@
             "Smoke leather",
             "Work at Skinworking Bench"
         ],
-        gather: ["Harvest plants", "Gather resources"],
+        gather: ["Harvest plants", "Gather resources", "Dig clay"],
         haul: [
             "Pick up ground items",
             "Stash carried items",
@@ -74,9 +74,9 @@
     };
     const STOCK_ITEMS = [
         "stick", "leaf", "log", "blueberry", "apple", "coconut",
-        "pebble", "flint", "cactus_flower"
+        "pebble", "flint", "cactus_flower", "clay"
     ];
-    const STOCK_DEFAULTS = { stick: 30, leaf: 20, log: 12 };
+    const STOCK_DEFAULTS = { stick: 30, leaf: 20, log: 12, clay: 25 };
     /** Harvested forms that still mean the fruit/flower will return. */
     const STOCK_REGROW_ALWAYS = {
         cactus: "cactus_flower",
@@ -254,6 +254,7 @@
         if (!def) return ids;
         const thingId = def.id || def.key || entry?.id;
         if (def.lootable?.item) add(def.lootable.item);
+        if (def.diggable?.item) add(def.diggable.item);
         add(STOCK_REGROW_ALWAYS[thingId]);
         if (entry?.regrowAt) add(STOCK_REGROW_IF_PLANTED[thingId]);
         if (def.choppable) {
@@ -322,9 +323,6 @@
         s.bills = s.bills && typeof s.bills === "object" && !Array.isArray(s.bills) ? s.bills : {};
         s.stock = normalizeStock(s.stock);
         s.jobs = s.jobs && typeof s.jobs === "object" ? s.jobs : {};
-        const R = researchMod();
-        if (R?.ensureTechs) R.ensureTechs(s);
-        else if (!s.techs || typeof s.techs !== "object" || Array.isArray(s.techs)) s.techs = {};
         return s;
     }
 
@@ -1193,7 +1191,7 @@
     const RESEARCH_NEEDS_TICKS = 10;
 
     function isBusyWork(type) {
-        return type === "chop" || type === "gather" || type === "haul" || type === "stash"
+        return type === "chop" || type === "gather" || type === "dig" || type === "haul" || type === "stash"
             || type === "cook" || type === "cook_light" || type === "cook_stoke"
             || type === "leather" || type === "doctor" || type === "research";
     }
@@ -1207,6 +1205,7 @@
         if (t === "flesh" || t === "brain" || t === "craft" || t === "skin") return "leather";
         if (t === "chop" || t === "gather" || t === "haul" || t === "leather"
             || t === "doctor" || t === "research") return t;
+        if (t === "dig") return "gather";
         return null;
     }
 
@@ -1493,6 +1492,7 @@
                 }
             }
             if (job === "gather" && state.gatherThing) return { type: "gather", target: state.gatherThing };
+            if (job === "gather" && state.digThing) return { type: "dig", target: state.digThing };
             if (job === "chop" && state.chopTree) return { type: "chop", target: state.chopTree };
             if (job === "research" && state.researchCircle) {
                 if (poll) {
@@ -1545,11 +1545,7 @@
 
     function _haulNoun(stack, getItem) {
         const name = _itemName(stack, getItem);
-        if (!name) return "";
-        const low = _lc(name);
-        const n = Math.max(1, Number(stack?.quantity) || 1);
-        if (n > 1 && !low.endsWith("s")) return `${low}s`;
-        return low;
+        return name ? _lc(name) : "";
     }
 
     function _thingName(thing, getThing) {
@@ -1782,6 +1778,7 @@
             const tree = _thingName(plan.target, getThing);
             return tree ? `Chopping ${_an(tree)}` : "Chopping";
         }
+        if (t === "dig") return "Digging clay";
         if (t === "research") return "Painting";
         if (t === "leather") return _leatherActLabel(plan.target, getItem, getThing);
         if (t === "sleep") {

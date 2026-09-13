@@ -458,6 +458,11 @@ test("stock list only includes resources from local plants and trees", () => {
         lootable: { item: "cactus_flower" }
     });
     assert.ok(flower.includes("cactus_flower"));
+    const clay = Settlement.stockItemsFromThing({
+        id: "clay_patch",
+        diggable: { item: "clay", yield: 25 }
+    });
+    assert.ok(clay.includes("clay"));
     const grassTree = Settlement.stockItemsFromThing({ id: "tree", choppable: { stump: "tree_stump" } });
     assert.ok(grassTree.includes("log"));
     assert.ok(grassTree.includes("stick"));
@@ -514,19 +519,24 @@ test("chop job skips fruiting resource trees", () => {
 
 test("stock counts settler inventories so gather/chop stop before deposit", () => {
     const settle = Settlement.createSettlement({ x: 0, y: 0 });
-    settle.stock = Settlement.normalizeStock({ log: 10, stick: 8 });
+    settle.stock = Settlement.normalizeStock({ log: 10, stick: 8, clay: 25 });
     const baskets = [{ slots: [{ id: "log", quantity: 4 }] }];
     const pawns = [
         { inventory: [{ id: "log", quantity: 3 }, { id: "stick", quantity: 8 }], overflow: [] },
-        { inventory: [{ id: "log", quantity: 3 }], overflow: [{ id: "log", quantity: 1 }] }
+        { inventory: [{ id: "log", quantity: 3 }, { id: "clay", quantity: 25 }], overflow: [{ id: "log", quantity: 1 }] }
     ];
     const logs = Settlement.countStock(baskets, "log") + Settlement.countPawnStock(pawns, "log");
     const sticks = Settlement.countStock(baskets, "stick") + Settlement.countPawnStock(pawns, "stick");
+    const clay = Settlement.countStock(baskets, "clay") + Settlement.countPawnStock(pawns, "clay");
     assert.equal(logs, 11);
     assert.equal(sticks, 8);
+    assert.equal(clay, 25);
     assert.equal(Settlement.gatherShouldWork(logs, settle.stock.log), false);
+    assert.equal(Settlement.gatherShouldWork(clay, settle.stock.clay), false);
     assert.equal(Settlement.stockShort(settle, baskets, "log", pawns), 0);
+    assert.equal(Settlement.stockShort(settle, baskets, "clay", pawns), 0);
     assert.equal(Settlement.gatherShouldWork(Settlement.countStock(baskets, "log"), settle.stock.log), true);
+    assert.equal(Settlement.gatherShouldWork(Settlement.countStock(baskets, "clay"), settle.stock.clay), true);
 });
 
 test("stock counts ground drops in range so chop/gather stop", () => {
@@ -702,6 +712,7 @@ test("job tooltip lists work inside the column", () => {
     assert.match(gather, /^Gather\n/);
     assert.match(gather, /^- Harvest plants$/m);
     assert.match(gather, /^- Gather resources$/m);
+    assert.match(gather, /^- Dig clay$/m);
     const haul = Settlement.jobTooltip("haul");
     assert.match(haul, /^Haul\n/);
     assert.match(haul, /^- Pick up ground items$/m);
@@ -1501,19 +1512,20 @@ test("actLabel names gather, chop, haul, doctor, and idle jobs", () => {
     const ctx = { getItem, getThing };
     assert.equal(
         Settlement.actLabel({ type: "gather", target: { id: "sticks" } }, ctx),
-        "Gathering sticks"
+        "Gathering stick"
     );
     assert.equal(
         Settlement.actLabel({ type: "chop", target: { id: "tree" } }, ctx),
         "Chopping a tree"
     );
+    assert.equal(Settlement.actLabel({ type: "dig" }, ctx), "Digging clay");
     assert.equal(
         Settlement.actLabel({ type: "haul", target: { id: "stick", quantity: 2 } }, ctx),
-        "Hauling sticks"
+        "Hauling stick"
     );
     assert.equal(
         Settlement.actLabel({ type: "stash" }, { getItem, stashStack: { id: "stick", quantity: 4 } }),
-        "Hauling sticks"
+        "Hauling stick"
     );
     assert.equal(
         Settlement.actLabel({ type: "doctor", target: { name: "Ugg" } }),

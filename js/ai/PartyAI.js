@@ -1003,6 +1003,7 @@ class PartyAI {
         }
         if (t === "leather") return this._leatherJobKey(plan.target);
         if (t === "gather" || t === "chop" || t === "research") return this._thingKey(plan.target);
+        if (t === "dig") return null;
         if (t === "haul") {
             if (plan.target?.claimKey) return plan.target.claimKey;
             const SF = typeof StorageFilter !== "undefined" ? StorageFilter : null;
@@ -1052,6 +1053,7 @@ class PartyAI {
             scan.haulMerge = null;
         }
         else if (t === "gather") scan.gatherThing = null;
+        else if (t === "dig") scan.digThing = null;
         else if (t === "chop") scan.chopTree = null;
         else if (t === "research") scan.researchCircle = null;
         else if (t === "leather") scan.leatherWork = null;
@@ -1116,11 +1118,7 @@ class PartyAI {
 
     _haulNoun(stack) {
         const name = this._itemName(stack);
-        if (!name) return "";
-        const low = this._lc(name);
-        const n = Math.max(1, Number(stack?.quantity) || 1);
-        if (n > 1 && !low.endsWith("s")) return `${low}s`;
-        return low;
+        return name ? this._lc(name) : "";
     }
 
     _asKeepOpts(keepBandageOrOpts) {
@@ -1429,6 +1427,7 @@ class PartyAI {
                 haulDrop: (settle && haulOn) ? this._haulDrop(settle) : null,
                 haulMerge: (settle && haulOn) ? this._haulMerge(settle) : null,
                 gatherThing: settle ? this._gatherThing(settle) : null,
+                digThing: settle ? this._digThing(settle) : null,
                 chopTree: settle ? this._chopTree(settle) : null,
                 researchCircle: circle,
                 patients,
@@ -1470,6 +1469,7 @@ class PartyAI {
             haulDrop: scan.haulDrop,
             haulMerge: scan.haulMerge,
             gatherThing: scan.gatherThing,
+            digThing: scan.digThing,
             chopTree: scan.chopTree,
             researchCircle: scan.researchCircle,
             stashBasket: stash.basket,
@@ -1570,6 +1570,10 @@ class PartyAI {
         }
         if (plan.type === "gather" && plan.target) {
             this._doGather(plan.target, settle, ts, delta);
+            return;
+        }
+        if (plan.type === "dig" && plan.target) {
+            this._doDig(plan.target, settle, ts, delta);
             return;
         }
         if (plan.type === "chop" && plan.target) {
@@ -1849,9 +1853,16 @@ class PartyAI {
         return out;
     }
 
+    _researchHolder() {
+        return this.pawn.scene?._playerResearchHolder?.()
+            || this.pawn.scene?.leader
+            || this.pawn.scene?.player
+            || null;
+    }
+
     _unlitFire(settle) {
         const R = typeof Research !== "undefined" ? Research : null;
-        if (R?.techUnlocked && !R.techUnlocked("fire", settle)) return null;
+        if (R?.techUnlocked && !R.techUnlocked("fire", this._researchHolder())) return null;
         const fires = this.pawn.scene.settlementSys?.addedStations(settle, "campfire") || [];
         return fires.find((f) => f && !f.isLit?.()
             && !this._claimedByOther(settle, this._stationKey(f))
@@ -1910,7 +1921,7 @@ class PartyAI {
             hasFirestarter,
             hasFuel,
             hasGroundRecipe: false,
-            knowsFire: !R?.techUnlocked || R.techUnlocked("fire", settle)
+            knowsFire: !R?.techUnlocked || R.techUnlocked("fire", this._researchHolder())
         };
     }
 
@@ -2574,6 +2585,28 @@ class PartyAI {
         return best;
     }
 
+    _digThing(settle) {
+        const scene = this.pawn.scene;
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R?.hasTech?.(this._researchHolder(), "digging")) return null;
+        if (!this._findDigger(settle)) return null;
+        if (!this._clayWantsDig(settle)) return null;
+        const list = scene.settlementSys?.diggablesInRange?.(settle) || [];
+        let best = null;
+        let bestD = Infinity;
+        for (const t of list) {
+            if (!t?.active || t.entry?.gone) continue;
+            if (this._jobSkipped(this._thingKey(t))) continue;
+            if (!this._digTargetValid(t)) continue;
+            const d = Math.hypot(this.pawn.x - t.x, this.pawn.y - t.y);
+            if (d < bestD) {
+                bestD = d;
+                best = t;
+            }
+        }
+        return best;
+    }
+
     _researchCircle(settle) {
         const scene = this.pawn.scene;
         const R = typeof Research !== "undefined" ? Research : null;
@@ -3052,6 +3085,131 @@ class PartyAI {
         for (let i = 0; i < (pawn.inventory || []).length; i++) {
             const s = pawn.inventory[i];
             if (s && this._isChopper(s)) {
+                pawn.hotbarIndex = i;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    _isDigger(stack) {
+        const getItem = (id) => this.pawn?.scene?.getItem?.(id);
+        return typeof Dig !== "undefined" && !!Dig.isDigger?.(stack, getItem);
+    }
+
+    _findDigger(settle) {
+        return this._findStack(settle, (s) => this._isDigger(s));
+    }
+
+    _digDef(thing) {
+        const scene = this.pawn?.scene;
+        return scene?.getThing?.(thing?.entry?.id) || thing?.meta || null;
+    }
+
+    _digTargetValid(thing) {
+        if (!thing?.active || thing.entry?.gone) return false;
+        if (typeof Dig === "undefined") return false;
+        return !!Dig.stillDiggable?.(this._digDef(thing), thing.entry);
+    }
+
+    _forgetDigTarget() {
+        if (this._workScan) this._workScan.digThing = null;
+        this._chopStand = null;
+        this._chopStandKey = null;
+        this._chopArrived = false;
+        this._chopMissMs = 0;
+        if (this._busyJob?.type === "dig") this._endWorkHold();
+        this.pawn?.scene?.settlementSys?.bumpWorkCache?.();
+    }
+
+    _clayWantsDig(settle) {
+        const scene = this.pawn?.scene;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!scene?.settlementSys || !S) return false;
+        const have = typeof scene.settlementSys.countItem === "function"
+            ? scene.settlementSys.countItem(settle, "clay")
+            : scene.settlementSys.countBaskets(settle, "clay");
+        return S.gatherShouldWork(have, S.stockTarget(settle, "clay"));
+    }
+
+    _doDig(thing, settle, ts, delta) {
+        const pawn = this.pawn;
+        if (!this._digTargetValid(thing)) {
+            this._halt(pawn);
+            this._forgetDigTarget();
+            return;
+        }
+        if (!this._clayWantsDig(settle)) {
+            this._halt(pawn);
+            this._forgetDigTarget();
+            return;
+        }
+        if (pawn.isAttacking?.()) {
+            this._halt(pawn);
+            return;
+        }
+        if (!this._equipDigTool()) {
+            const found = this._findDigger(settle);
+            if (!found) {
+                this._halt(pawn);
+                this._forgetDigTarget();
+                return;
+            }
+            this._fetchStack(found, ts, delta);
+            return;
+        }
+        const stand = this._digStandPoint(thing, ts);
+        const c = pawn.bodyCenter?.() || { x: pawn.x, y: pawn.y };
+        const dAim = Math.hypot(c.x - stand.aimX, c.y - stand.aimY);
+        const enter = Math.max(5, (ts || 16) * 0.4);
+        const leave = enter + 4;
+        if (this._chopArrived && dAim > leave) this._chopArrived = false;
+        if (!this._chopArrived && dAim <= enter) this._chopArrived = true;
+        if (this._chopArrived && this._digWouldHit(thing)) {
+            this._chopMissMs = 0;
+            this._halt(pawn);
+            const dig = (typeof Dig !== "undefined" && typeof BodyCombat !== "undefined")
+                ? Dig.pickDigFromAttacks(BodyCombat.collectAttacks(pawn))
+                : null;
+            if (!dig) return;
+            pawn.tryMeleeAttack?.(thing, dig);
+            return;
+        }
+        if (!this._chopArrived) {
+            this._chopMissMs = 0;
+            this._walkBodyToward(pawn, stand.aimX, stand.aimY, ts, false, delta, { openRadius: 0 });
+            if (this._abortIfStuck(settle, this._thingKey(thing))) this._forgetDigTarget();
+            return;
+        }
+        this._chopMissMs = (this._chopMissMs || 0) + (delta || 16);
+        if (this._chopMissMs > 900 || this._abortIfStuck(settle, this._thingKey(thing))) {
+            this._forgetDigTarget();
+        }
+        this._halt(pawn);
+    }
+
+    _digWouldHit(thing) {
+        if (!thing || typeof Dig === "undefined") return false;
+        const pawn = this.pawn;
+        const c = pawn.bodyCenter?.() || { x: pawn.x, y: pawn.y };
+        const angle = Math.atan2(thing.y - c.y, thing.x - c.x);
+        return Dig.aimHitsTile(c.x, c.y, angle, thing.x, thing.y);
+    }
+
+    _digStandPoint(thing, ts) {
+        const pawn = this.pawn;
+        const c = pawn.bodyCenter?.() || { x: pawn.x, y: pawn.y };
+        if (typeof Dig !== "undefined" && Dig.ringStand) {
+            return Dig.ringStand(c.x, c.y, thing.x, thing.y, 0);
+        }
+        return this._chopStandPoint(thing, ts);
+    }
+
+    _equipDigTool() {
+        const pawn = this.pawn;
+        for (let i = 0; i < (pawn.inventory || []).length; i++) {
+            const s = pawn.inventory[i];
+            if (s && this._isDigger(s)) {
                 pawn.hotbarIndex = i;
                 return true;
             }
@@ -3624,7 +3782,7 @@ class PartyAI {
 
     _doLightFire(fire, settle, ts, delta, endHold = false) {
         const R = typeof Research !== "undefined" ? Research : null;
-        if (R?.techUnlocked && !R.techUnlocked("fire", settle)) {
+        if (R?.techUnlocked && !R.techUnlocked("fire", this._researchHolder())) {
             this._halt(this.pawn);
             if (endHold) this._endWorkHold();
             return;

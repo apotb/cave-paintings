@@ -1,5 +1,5 @@
 /**
- * Fullscreen RimWorld-style research tree. Opened from the settlement Research tab.
+ * Fullscreen RimWorld-style research tree. Opened from the settlement Tech tab.
  * Left pane inspects the selected project; the tree occupies the remaining width.
  */
 class ResearchTreePanel {
@@ -14,6 +14,10 @@ class ResearchTreePanel {
         this._keyPan = { left: false, right: false, up: false, down: false };
         this._contentW = 0;
         this._contentH = 0;
+        this._contentMinX = 0;
+        this._contentMinY = 0;
+        this._contentMaxX = 0;
+        this._contentMaxY = 0;
         this._viewX = 0;
         this._viewY = 0;
         this._viewW = 0;
@@ -510,20 +514,74 @@ class ResearchTreePanel {
         this._applyPan();
     }
 
+    _includeEdgeBounds() {
+        const hw = Math.max(1, (this._edgeSw || 2) * 0.5 + 1);
+        let minX = this._contentMinX;
+        let minY = this._contentMinY;
+        let maxX = this._contentMaxX;
+        let maxY = this._contentMaxY;
+        for (const e of this._edgeDraw || []) {
+            for (const p of e.path || []) {
+                const x = Number(p[0]);
+                const y = Number(p[1]);
+                if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+                minX = Math.min(minX, x - hw);
+                minY = Math.min(minY, y - hw);
+                maxX = Math.max(maxX, x + hw);
+                maxY = Math.max(maxY, y + hw);
+            }
+        }
+        this._contentMinX = minX;
+        this._contentMinY = minY;
+        this._contentMaxX = maxX;
+        this._contentMaxY = maxY;
+        this._contentW = Math.max(0, maxX - minX);
+        this._contentH = Math.max(0, maxY - minY);
+    }
+
+    _contentBox() {
+        const minX = Number(this._contentMinX) || 0;
+        const minY = Number(this._contentMinY) || 0;
+        const maxX = Number.isFinite(this._contentMaxX) ? this._contentMaxX : (this._contentW || 0);
+        const maxY = Number.isFinite(this._contentMaxY) ? this._contentMaxY : (this._contentH || 0);
+        return {
+            minX,
+            minY,
+            maxX,
+            maxY,
+            w: Math.max(0, maxX - minX),
+            h: Math.max(0, maxY - minY)
+        };
+    }
+
+    _panPad() {
+        const s = this.scene.uiScale || 1;
+        return Math.max(36, Math.round(48 * s));
+    }
+
     _centerView() {
         const z = this._zoom || 1;
-        this._panX = (this._viewW - this._contentW * z) / 2;
-        this._panY = (this._viewH - this._contentH * z) / 2;
+        const box = this._contentBox();
+        this._panX = (this._viewW - box.w * z) / 2 - box.minX * z;
+        this._panY = (this._viewH - box.h * z) / 2 - box.minY * z;
     }
 
     _clampPan() {
         const z = this._zoom || 1;
-        const scaledW = this._contentW * z;
-        const scaledH = this._contentH * z;
-        if (scaledW <= this._viewW) this._panX = (this._viewW - scaledW) / 2;
-        else this._panX = Math.min(0, Math.max(this._viewW - scaledW, this._panX));
-        if (scaledH <= this._viewH) this._panY = (this._viewH - scaledH) / 2;
-        else this._panY = Math.min(0, Math.max(this._viewH - scaledH, this._panY));
+        const pad = this._panPad();
+        const box = this._contentBox();
+        const clampAxis = (pan, view, cmin, cmax) => {
+            let minPan = view - pad - cmax * z;
+            let maxPan = pad - cmin * z;
+            if (minPan > maxPan) {
+                const t = minPan;
+                minPan = maxPan;
+                maxPan = t;
+            }
+            return Phaser.Math.Clamp(pan, minPan, maxPan);
+        };
+        this._panX = clampAxis(this._panX, this._viewW, box.minX, box.maxX);
+        this._panY = clampAxis(this._panY, this._viewH, box.minY, box.maxY);
     }
 
     _applyPan() {
@@ -568,14 +626,20 @@ class ResearchTreePanel {
         this._maskGfx.fillRect(this._viewX, this._viewY, this._viewW, this._viewH);
     }
 
+    _techHolder() {
+        return this.scene._playerResearchHolder?.() || this.settle;
+    }
+
     _researchEntries() {
-        return this.scene.settlementSys?.researchCircleEntries?.(this.settle) || [];
+        return this.scene._ownerResearchCircles?.()
+            || this.scene.settlementSys?.researchCircleEntries?.(this.settle)
+            || [];
     }
 
     _points() {
         const R = typeof Research !== "undefined" ? Research : null;
-        if (!R?.pointsBreakdown) return { paintings: 0, tallies: 0, tokens: 0, books: 0, spent: 0, total: 0 };
-        return R.pointsBreakdown(this._researchEntries(), { settle: this.settle });
+        if (!R?.pointsBreakdown) return { paintings: 0, tallies: 0, tokens: 0, books: 0, spent: 0, available: 0, total: 0 };
+        return R.pointsBreakdown(this._researchEntries(), this.scene._playerResearchExtra?.() || {});
     }
 
     open(settle) {
@@ -626,10 +690,10 @@ class ResearchTreePanel {
     _contentSig() {
         const pts = this._points();
         let techs = "";
-        try { techs = JSON.stringify(this.settle?.techs || {}); } catch (_) { techs = ""; }
+        try { techs = JSON.stringify(this._techHolder()?.techs || {}); } catch (_) { techs = ""; }
         const s = this.scene.uiScale || 1;
         const size = `${this.scene.scale.width}x${this.scene.scale.height}:${s}`;
-        return `${this.settle?.id || ""}:${pts.total}:${techs}:${size}`;
+        return `${pts.total}:${pts.spent || 0}:${techs}:${size}`;
     }
 
     refresh() {
@@ -657,7 +721,7 @@ class ResearchTreePanel {
                 Math.max(this.pointsTxt.height, 1)
             );
         }
-        const age = (R?.currentAge && R.currentAge(this.settle)) || "Paleolithic";
+        const age = (R?.currentAge && R.currentAge(this._techHolder())) || "Paleolithic";
         this.ageTxt.setText(age);
         if (this.ageTxt.input?.hitArea?.setSize) {
             this.ageTxt.input.hitArea.setSize(
@@ -703,7 +767,7 @@ class ResearchTreePanel {
 
     _ageTip() {
         const R = typeof Research !== "undefined" ? Research : null;
-        const rows = (R?.ageBreakdown && R.ageBreakdown(this.settle)) || [];
+        const rows = (R?.ageBreakdown && R.ageBreakdown(this._techHolder())) || [];
         const lines = rows.map((row) => {
             const icon = this._itemIconKey(row.icon || "null");
             return {
@@ -766,7 +830,7 @@ class ResearchTreePanel {
             this._fillDetail();
             return;
         }
-        R.ensureTechs(this.settle);
+        R.ensureTechs(this._techHolder());
         const boxW = Math.round(164 * s);
         const boxH = Math.round(52 * s);
         const layout = R.treeLayout({
@@ -779,6 +843,10 @@ class ResearchTreePanel {
         });
         this._contentW = layout.width;
         this._contentH = layout.height;
+        this._contentMinX = 0;
+        this._contentMinY = 0;
+        this._contentMaxX = layout.width;
+        this._contentMaxY = layout.height;
         const pts = this._points();
         const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
         const edgeSw = Math.max(2, sw);
@@ -802,15 +870,16 @@ class ResearchTreePanel {
                 from: e.from,
                 to: e.to,
                 path,
-                done: R.hasTech(this.settle, e.from)
+                done: R.hasTech(this._techHolder(), e.from)
             });
         }
+        this._includeEdgeBounds();
         for (const node of layout.nodes) {
             const tech = node.tech;
-            const fogged = !!(R.techFogged && R.techFogged(this.settle, tech));
-            const unlocked = R.hasTech(this.settle, tech.id);
+            const fogged = !!(R.techFogged && R.techFogged(this._techHolder(), tech));
+            const unlocked = R.hasTech(this._techHolder(), tech.id);
             const cost = Math.max(0, Math.floor(Number(tech.cost) || 0));
-            const can = !!(R.canUnlock && R.canUnlock(this.settle, tech.id, pts.total));
+            const can = !!(R.canUnlock && R.canUnlock(this._techHolder(), tech.id, pts.available ?? pts.total));
             let fill = 0x2a2218;
             let stroke = 0x8a7260;
             let titleCol = "#d4c4a8";
@@ -867,8 +936,7 @@ class ResearchTreePanel {
             }).setOrigin(0, 0);
             const sub = fogged
                 ? "???"
-                : ((R.remainingCostLabel && R.remainingCostLabel(this.settle, tech))
-                    || (R.techCostLabel && R.techCostLabel(tech))
+                : ((R.techCostLabel && R.techCostLabel(tech))
                     || (cost > 0 ? `${cost} pt${cost === 1 ? "" : "s"}` : "Free"));
             const subTxt = scene.add.text(sidePad, 0, sub, {
                 fontFamily: PIXEL_UI_FONT,
@@ -1403,13 +1471,13 @@ class ResearchTreePanel {
             return;
         }
 
-        const fogged = !!(R.techFogged && R.techFogged(this.settle, tech));
+        const fogged = !!(R.techFogged && R.techFogged(this._techHolder(), tech));
         if (fogged) {
             this.researchBtn.setVisible(false);
             this._researchDisabledReason = "";
             if (scene._tooltipTarget === this.researchBtn._bg) scene.hideTooltip?.();
             const copy = (R.FOG_COPY) || "Your tribe isn't advanced enough to comprehend this.";
-            this._addText(
+            const fogTxt = this._addText(
                 this._detailX + this._detailW / 2,
                 this._detailY + this._detailH / 2,
                 copy,
@@ -1419,21 +1487,38 @@ class ResearchTreePanel {
                 0.5,
                 wrapW
             );
+            const tipFn = () => (R.FOG_TIP) || "";
+            if (typeof ensurePointerInteractive === "function") ensurePointerInteractive(fogTxt);
+            else fogTxt.setInteractive({ useHandCursor: true, cursor: "pointer" });
+            if (fogTxt.input) {
+                fogTxt.input.cursor = "pointer";
+                fogTxt.input.useHandCursor = true;
+            }
+            fogTxt.on("pointerover", (pointer) => {
+                if (!this.visible) return;
+                const text = tipFn();
+                if (text) scene.showTooltip(tipFn, pointer.x, pointer.y, fogTxt);
+            });
+            fogTxt.on("pointerout", (pointer) => {
+                if (this._pointerStillOn(fogTxt, pointer)) return;
+                if (scene._tooltipTarget === fogTxt) scene.hideTooltip?.();
+            });
+            this._detailHits.push(fogTxt);
             return;
         }
 
         this.researchBtn.setVisible(true);
-        const unlocked = !!(R.hasTech && R.hasTech(this.settle, tech.id));
+        const unlocked = !!(R.hasTech && R.hasTech(this._techHolder(), tech.id));
         const pts = this._points();
-        const can = !!(R.canUnlock && R.canUnlock(this.settle, tech.id, pts.total));
+        const can = !!(R.canUnlock && R.canUnlock(this._techHolder(), tech.id, pts.available ?? pts.total));
         const cost = (R.remainingUnlockCost
-            ? R.remainingUnlockCost(this.settle, tech.id)
+            ? R.remainingUnlockCost(this._techHolder(), tech.id)
             : Math.max(0, Math.floor(Number(tech.cost) || 0)));
         if (unlocked) this.researchBtn._txt.setText("Researched");
         else this.researchBtn._txt.setText(cost > 0 ? `Research  ${cost}` : "Research");
         this.researchBtn._setEnabled(can);
         this._researchDisabledReason = (R.unlockBlockedReason
-            && R.unlockBlockedReason(this.settle, tech.id, pts.total)) || "";
+            && R.unlockBlockedReason(this._techHolder(), tech.id, pts.available ?? pts.total)) || "";
         if (this._researchDisabledReason && this.researchBtn._bg.input) {
             this.researchBtn._bg.input.cursor = "pointer";
             this.researchBtn._bg.input.useHandCursor = true;
@@ -1480,7 +1565,7 @@ class ResearchTreePanel {
             const ph = this._addText(innerX, y, "Prerequisites", 10, "#8a7a62");
             y += Math.round(ph.height + 6 * s);
             for (const pre of prereqs) {
-                const have = !!(R.hasTech && R.hasTech(this.settle, pre.id));
+                const have = !!(R.hasTech && R.hasTech(this._techHolder(), pre.id));
                 this._addListRow(
                     innerX,
                     y,

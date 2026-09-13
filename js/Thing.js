@@ -7,10 +7,24 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         this.entry = entry || null;
         this._inStaticGroup = false;
         this.setOrigin(0.5, 1);
-        this.setDepth(this.y);
-        scene.mainLayer.add(this);
+        // Clay sits on groundLayer with painting circles: over tiles (0),
+        // under drops (1), under pawns on mainLayer. Do not use y-depth —
+        // chunk tile RTs also live here at depth 0.
+        if (meta?.diggable && scene.groundLayer) {
+            scene.groundLayer.add(this);
+            this.setDepth(0.5);
+        } else {
+            this.setDepth(this.y);
+            scene.mainLayer?.add(this);
+        }
         this.setup(meta.hitboxSize);
         this.applyVisual();
+        if (meta?.diggable) {
+            this.once("destroy", () => {
+                this._holeSpr?.destroy();
+                this._holeSpr = null;
+            });
+        }
     }
 
     static textureKeyFor(scene, meta, rot) {
@@ -92,6 +106,43 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         this.setTexture(this.meta.key);
         if (this.body) this._positionBody();
         this._syncInteractMark();
+        this._syncDigHole();
+    }
+
+    _syncDigHole() {
+        if (!this.meta?.diggable) return;
+        const damaged = (Number(this.entry?.digTaken) || 0) > 0
+            || (Number(this.entry?.digProgress) || 0) > 0;
+        if (!damaged) {
+            if (this._holeSpr) this._holeSpr.setVisible(false);
+            return;
+        }
+        const scene = this.scene;
+        const layer = scene.groundLayer || scene.mainLayer;
+        if (!this._holeSpr) {
+            if (!scene.textures?.exists("hole")) return;
+            this._holeSpr = scene.add.image(this.x, this.y, "hole");
+            this._holeSpr.setOrigin(0.5, 1);
+            layer?.add(this._holeSpr);
+        }
+        this._holeSpr.setPosition(this.x, this.y);
+        this._holeSpr.setVisible(true);
+        this._holeSpr.setDepth(0.51);
+        this._placeHoleUnderDrops(layer);
+    }
+
+    /**
+     * groundLayer draws in list order (depth is ignored). `add()` appends, so a
+     * later hole would cover clay piles. Keep it just above the deposit sprite.
+     */
+    _placeHoleUnderDrops(layer) {
+        const hole = this._holeSpr;
+        const list = layer?.list;
+        if (!hole || !Array.isArray(list)) return;
+        const hi = list.indexOf(hole);
+        if (hi >= 0) list.splice(hi, 1);
+        const pi = list.indexOf(this);
+        list.splice(pi >= 0 ? pi + 1 : list.length, 0, hole);
     }
 
     setup(hitboxSize=0) {

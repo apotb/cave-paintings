@@ -11,6 +11,7 @@
         const Sleep = require("../sleep");
         const Hide = require("../hide");
         const Chop = require("../chop");
+        const Dig = require("../dig");
         const Carry = require("../carry");
         const Party = require("../party");
         const Spoil = require("../spoil");
@@ -20,18 +21,18 @@
         const DataStore = require("../DataStore");
         const Research = require("../research");
         module.exports = factory(
-            Settlement, StorageFilter, FuelFilter, Place, Sleep, Hide, Chop, Carry, Party,
+            Settlement, StorageFilter, FuelFilter, Place, Sleep, Hide, Chop, Dig, Carry, Party,
             Spoil, Fire, BodyHealing, BodyCombat, DataStore, Research
         );
     } else {
         root.SettlerWork = factory(
             root.Settlement, root.StorageFilter, root.FuelFilter, root.Place, root.Sleep, root.Hide,
-            root.Chop, root.Carry, root.Party, root.Spoil || root.NetSpoil, root.Fire,
+            root.Chop, root.Dig, root.Carry, root.Party, root.Spoil || root.NetSpoil, root.Fire,
             root.BodyHealing, root.BodyCombat, root.DataStore, root.Research
         );
     }
 })(typeof globalThis !== "undefined" ? globalThis : this, function (
-    Settlement, StorageFilter, FuelFilter, Place, Sleep, Hide, Chop, Carry, Party,
+    Settlement, StorageFilter, FuelFilter, Place, Sleep, Hide, Chop, Dig, Carry, Party,
     Spoil, Fire, BodyHealing, BodyCombat, DataStore, Research
 ) {
 
@@ -46,6 +47,15 @@ const AUTO_EAT_UNTIL = Party.AUTO_EAT_UNTIL || 1400;
 
 function getItem(id) {
     return DataStore.getItem(id);
+}
+
+function researchHolder(world, rec, settle) {
+    const oid = rec?.ownerId || rec?.leaderId || settle?.ownerId;
+    if (world && typeof world._researchHolder === "function" && oid) {
+        const h = world._researchHolder(oid);
+        if (h) return h;
+    }
+    return rec || settle || null;
 }
 
 /**
@@ -399,6 +409,7 @@ function planClaimKey(plan) {
     }
     if (t === "leather") return leatherJobKey(plan.target);
     if (t === "gather" || t === "chop" || t === "research") return thingKey(plan.target);
+    if (t === "dig") return null;
     if (t === "haul") {
         if (plan.target?.claimKey) return plan.target.claimKey;
         if (plan.target?.kind && StorageFilter.mergeClaimKey) {
@@ -430,6 +441,7 @@ function voidPlan(scan, plan) {
         scan.haulDrop = null;
         scan.haulMerge = null;
     } else if (t === "gather") scan.gatherThing = null;
+    else if (t === "dig") scan.digThing = null;
     else if (t === "chop") scan.chopTree = null;
     else if (t === "research") scan.researchCircle = null;
     else if (t === "leather") scan.leatherWork = null;
@@ -721,6 +733,24 @@ function choppablesOf(world, settle) {
         for (const e of c.lootableThings || []) consider(e, c, "lootable");
     }
     q.choppables = out;
+    return out;
+}
+
+function diggablesOf(world, settle) {
+    const q = settleQ(world, settle);
+    if (q.diggables) return q.diggables;
+    const out = [];
+    if (!Dig) return out;
+    for (const c of settleChunks(world, settle)) {
+        for (const e of c.things || []) {
+            if (!e || e.gone || !e.id) continue;
+            if (!inRange(settle, e.x, e.y)) continue;
+            const def = world._thingDef(e.id);
+            if (!Dig.stillDiggable(def, e)) continue;
+            out.push({ entry: e, def, chunk: c });
+        }
+    }
+    q.diggables = out;
     return out;
 }
 
@@ -1024,6 +1054,32 @@ function chopTree(world, rec, settle, claims) {
     return best;
 }
 
+function clayWantsDig(world, settle) {
+    return Settlement.gatherShouldWork(
+        countItem(world, settle, "clay"),
+        Settlement.stockTarget(settle, "clay")
+    );
+}
+
+function digThing(world, rec, settle, claims) {
+    if (!Dig || !Research?.hasTech?.(researchHolder(world, rec, settle), "digging")) return null;
+    if (!findStack(world, rec, settle, (s) => Dig.isDigger(s, getItem))) return null;
+    if (!clayWantsDig(world, settle)) return null;
+    const list = diggablesOf(world, settle);
+    let best = null;
+    let bestD = Infinity;
+    for (const t of list) {
+        const key = thingKey(t.entry);
+        if (isSkipped(rec, key)) continue;
+        const d = Math.hypot(rec.x - t.entry.x, rec.y - t.entry.y);
+        if (d < bestD) {
+            bestD = d;
+            best = t.entry;
+        }
+    }
+    return best;
+}
+
 function freeBed(world, rec, settle, claims) {
     let best = null;
     let bestD = Infinity;
@@ -1100,7 +1156,7 @@ function settlerPatients(world, rec, settle, claims) {
 }
 
 function unlitFire(world, rec, settle, claims) {
-    if (Research?.techUnlocked && !Research.techUnlocked("fire", settle)) return null;
+    if (Research?.techUnlocked && !Research.techUnlocked("fire", researchHolder(world, rec, settle))) return null;
     for (const f of stationsOf(world, settle, "campfire")) {
         if (f.id === "campfire" && world._campfireHasFuel(f) && (f.burnRemaining > 0 || f.pitTemp > 0)) {
             continue;
@@ -1154,7 +1210,7 @@ function lightOpts(world, rec, settle) {
         hasFirestarter,
         hasFuel,
         hasGroundRecipe: false,
-        knowsFire: !Research?.techUnlocked || Research.techUnlocked("fire", settle)
+        knowsFire: !Research?.techUnlocked || Research.techUnlocked("fire", researchHolder(world, rec, settle))
     };
 }
 
@@ -1597,6 +1653,7 @@ function scanWork(world, rec, settle, claims) {
             { isClaimed: (key) => claimedByOther(claims, key, rec.id) || isSkipped(rec, key) }
         ) : null,
         gatherThing: jobOn(enabled, "gather") ? gatherThing(world, rec, settle, claims) : null,
+        digThing: jobOn(enabled, "gather") ? digThing(world, rec, settle, claims) : null,
         chopTree: jobOn(enabled, "chop") ? chopTree(world, rec, settle, claims) : null,
         researchCircle: circle,
         patients,
@@ -2346,7 +2403,7 @@ function doStokeFire(world, rec, settle, fire) {
 }
 
 function doLightFire(world, rec, settle, fire) {
-    if (Research?.techUnlocked && !Research.techUnlocked("fire", settle)) return halt();
+    if (Research?.techUnlocked && !Research.techUnlocked("fire", researchHolder(world, rec, settle))) return halt();
     if (!fire) return halt();
     const walked = goOrWalk(world, rec, fire);
     if (walked) return walked;
@@ -2824,7 +2881,7 @@ function clearChopApproach(rec, c) {
         rec._chopSidestep = false;
         rec._chopOrbit = 0;
         rec._chopMissMs = 0;
-        if (rec._busyJob?.type === "chop") endWorkHold(rec);
+        if (rec._busyJob?.type === "chop" || rec._busyJob?.type === "dig") endWorkHold(rec);
     }
     if (c) c._chopIgnoreUid = null;
 }
@@ -2867,7 +2924,7 @@ function doResearch(world, rec, settle, circle) {
         return halt();
     }
     const tallyId = Research.TALLY_ITEM_ID || "tally_stick";
-    if (Research.needsTallyInstall?.(settle, entry)) {
+    if (Research.needsTallyInstall?.(researchHolder(world, rec, settle), entry)) {
         const found = findStack(world, rec, settle, (s) => s?.id === tallyId);
         if (found) {
             if (found.at !== rec) {
@@ -2996,6 +3053,79 @@ function doChop(world, rec, settle, tree, delta) {
     rec._chopMissMs = (rec._chopMissMs || 0) + dt;
     if (rec._chopMissMs > 900) {
         dropChopTarget(rec, tree);
+        return halt();
+    }
+    return halt();
+}
+
+function digTargetLive(world, patch) {
+    if (!patch || patch.gone) return false;
+    if (!Dig) return false;
+    const def = world._thingDef(patch.id);
+    return Dig.stillDiggable(def, patch);
+}
+
+function dropDigTarget(rec, patch, skip = true) {
+    clearChopApproach(rec, rec.creature);
+    if (rec._settlerScan) rec._settlerScan.digThing = null;
+    rec._settlerScanMs = SCAN_MS;
+    if (skip && patch) skipJob(rec, thingKey(patch));
+    if (rec._busyJob?.type === "dig") endWorkHold(rec);
+}
+
+function doDig(world, rec, settle, patch, delta) {
+    if (!digTargetLive(world, patch)) {
+        dropDigTarget(rec, patch);
+        return halt();
+    }
+    if (!clayWantsDig(world, settle)) {
+        dropDigTarget(rec, null, false);
+        return halt();
+    }
+    const found = findStack(world, rec, settle, (s) => Dig.isDigger(s, getItem));
+    if (!found) {
+        dropDigTarget(rec, null, false);
+        return halt();
+    }
+    if (found.at !== rec) return fetchStack(world, rec, settle, found) || halt();
+    rec.hotbarIndex = found.index;
+    const c = rec.creature || world._ensureSettlerCreature(rec);
+    if (c) {
+        c.inventory = rec.inventory;
+        c.hotbarIndex = rec.hotbarIndex;
+        c.homeSettlementId = rec.homeSettlementId;
+        c.ownerId = rec.ownerId;
+    }
+    if (c?.isAttacking?.()) return halt();
+    const hs = Dig.hitboxSize();
+    const body = c?.bodyCenter?.() || { x: rec.x, y: rec.y };
+    const ang = Math.atan2(patch.y - body.y, patch.x - body.x);
+    const hits = !!Dig.aimHitsTile(body.x, body.y, ang, patch.x, patch.y);
+    const pose = chopStandFeet(world, rec, c, patch, hs);
+    const enter = 6;
+    const leave = 10;
+    if (rec._chopArrived && pose.dAim > leave) rec._chopArrived = false;
+    if (!rec._chopArrived && pose.dAim <= enter) rec._chopArrived = true;
+    const ai = c?.ai;
+    if ((ai?._jamMs || 0) > 900 || (ai?._stuckMs || 0) > 1800) {
+        dropDigTarget(rec, patch);
+        return halt();
+    }
+    if (hits && rec._chopArrived) {
+        rec._chopMissMs = 0;
+        const dig = Dig.pickDigFromAttacks?.(BodyCombat.collectAttacks(c)) || null;
+        if (dig && c?.tryMeleeAttack) c.tryMeleeAttack(patch, dig);
+        else if (c?.startMeleeAttack) c.startMeleeAttack(ang);
+        return halt();
+    }
+    if (!rec._chopArrived) {
+        rec._chopMissMs = 0;
+        return walkTo(pose.feetX, pose.feetY, { openRadius: 0 });
+    }
+    const dt = Number(delta) > 0 ? Number(delta) : 16;
+    rec._chopMissMs = (rec._chopMissMs || 0) + dt;
+    if (rec._chopMissMs > 900) {
+        dropDigTarget(rec, patch);
         return halt();
     }
     return halt();
@@ -3272,6 +3402,7 @@ function tick(world, mob, delta) {
         haulDrop: scan.haulDrop,
         haulMerge: scan.haulMerge,
         gatherThing: scan.gatherThing,
+        digThing: scan.digThing,
         chopTree: scan.chopTree,
         researchCircle: scan.researchCircle,
         stashBasket: stash.basket,
@@ -3314,7 +3445,7 @@ function tick(world, mob, delta) {
     });
     let label = Settlement.actLabel(plan, ctx);
     if (delivering) label = Settlement.actLabel({ type: "stash" }, ctx);
-    if (plan.type !== "chop") clearChopApproach(rec, rec.creature || mob);
+    if (plan.type !== "chop" && plan.type !== "dig") clearChopApproach(rec, rec.creature || mob);
     if (plan.type !== "research") clearPaintBar(rec);
     setSettlerAct(rec, mob, label);
 
@@ -3339,6 +3470,7 @@ function tick(world, mob, delta) {
         return doStash(world, rec, settle, plan.target, keepOpts);
     }
     if (plan.type === "gather" && plan.target) return doGather(world, rec, plan.target);
+    if (plan.type === "dig" && plan.target) return doDig(world, rec, settle, plan.target, delta);
     if (plan.type === "chop" && plan.target) return doChop(world, rec, settle, plan.target, delta);
     if (plan.type === "research" && plan.target) return doResearch(world, rec, settle, plan.target);
     if (plan.type === "haul" && plan.target) {

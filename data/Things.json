@@ -264,5 +264,15 @@
         "key": "painting_circle",
         "hitboxSize": 0,
         "paintingCircle": true
+    },
+    {
+        "id": "clay_patch",
+        "name": "Clay Deposit",
+        "key": "clay_patch",
+        "hitboxSize": 0,
+        "diggable": {
+            "item": "clay",
+            "yield": 25
+        }
     }
 ]

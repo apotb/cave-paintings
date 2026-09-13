@@ -57,7 +57,7 @@ class SettlementPanel {
         this.tabPeople = this._btn(0, 0, "People", () => this._setTab("people"));
         this.tabJobs = this._btn(0, 0, "Jobs", () => this._setTab("jobs"));
         this.tabStock = this._btn(0, 0, "Stock", () => this._setTab("stock"));
-        this.tabResearch = this._btn(0, 0, "Research", () => this._setTab("research"));
+        this.tabResearch = this._btn(0, 0, "Tech", () => this._setTab("research"));
         this.body = scene.add.container(10, 64);
         this._maskGfx = scene.make.graphics({ x: 0, y: 0, add: false });
         // Bitmap mask (not stencil) so job/people tooltips are not washed out.
@@ -269,13 +269,9 @@ class SettlementPanel {
         const tabGap = Math.round(8 * s);
         const tabPad = Math.round(6 * s);
         let tabLeft = tabPad;
+        const tabInnerPad = Math.round(16 * s);
         for (const tab of [this.tabPeople, this.tabJobs, this.tabStock, this.tabResearch]) {
-            const tw = Math.round((
-                tab === this.tabPeople ? 64
-                : tab === this.tabJobs ? 48
-                : tab === this.tabStock ? 54
-                : 78
-            ) * s);
+            const tw = Math.round(tab._txt.width) + tabInnerPad;
             this._fitBtnHit(tab, tw, tabH);
             tab.setPosition(tabLeft + tw / 2, tabY);
             tabLeft += tw + tabGap;
@@ -353,11 +349,15 @@ class SettlementPanel {
         }
         if (tab === "research") {
             const R = typeof Research !== "undefined" ? Research : null;
-            const circles = sys?.researchCircleEntries?.(this.settle) || [];
+            const holder = this.scene._playerResearchHolder?.() || this.settle;
+            const circles = this.scene._ownerResearchCircles?.() || [];
+            const extra = this.scene._playerResearchExtra?.() || {};
             const pts = R?.pointsBreakdown
-                ? R.pointsBreakdown(circles, { settle: this.settle })
+                ? R.pointsBreakdown(circles, extra)
                 : { total: 0 };
-            return `research:${id}:${pts.total}:${pts.spent || 0}:${layout}`;
+            let techs = "";
+            try { techs = JSON.stringify(holder?.techs || {}); } catch (_) { techs = ""; }
+            return `research:${pts.total}:${pts.spent || 0}:${techs}:${layout}`;
         }
         const party = (this.scene.party || []).filter((p) => p && !p.isBodyDead?.());
         const here = sys?.settlersOf?.(this.settle.id) || [];
@@ -849,8 +849,18 @@ class SettlementPanel {
         else this.refresh();
     }
 
+    _researchHolder() {
+        return this.scene._playerResearchHolder?.() || this.settle;
+    }
+
     _researchEntries() {
-        return this.scene.settlementSys?.researchCircleEntries?.(this.settle) || [];
+        return this.scene._ownerResearchCircles?.()
+            || this.scene.settlementSys?.researchCircleEntries?.(this.settle)
+            || [];
+    }
+
+    _researchExtra() {
+        return this.scene._playerResearchExtra?.() || {};
     }
 
     _fillResearch(sc) {
@@ -859,9 +869,9 @@ class SettlementPanel {
             this._label("Research is unavailable.", 0, 0, 12);
             return 24 * sc;
         }
-        R.ensureTechs(this.settle);
+        R.ensureTechs(this._researchHolder());
         const pts = R.pointsBreakdown
-            ? R.pointsBreakdown(this._researchEntries(), { settle: this.settle })
+            ? R.pointsBreakdown(this._researchEntries(), this._researchExtra())
             : { paintings: 0, tallies: 0, tokens: 0, books: 0, spent: 0, total: 0 };
         const wrapW = Math.max(80, this._viewW - Math.round(12 * sc));
         const rowH = Math.round(22 * sc);
@@ -926,23 +936,21 @@ class SettlementPanel {
         if (!tech || !this.settle) return;
         const R = typeof Research !== "undefined" ? Research : null;
         if (!R) return;
+        const holder = this._researchHolder();
         const entries = this._researchEntries();
+        const extra = this._researchExtra();
         const pts = R.pointsBreakdown
-            ? R.pointsBreakdown(entries, { settle: this.settle })
-            : { total: R.availableTotal(entries, this.settle) };
-        if (!R.canUnlock(this.settle, tech.id, pts.total)) return;
+            ? R.pointsBreakdown(entries, extra)
+            : { total: R.availableTotal(entries, extra) };
+        if (!R.canUnlock(holder, tech.id, pts.available ?? pts.total)) return;
         this.scene.settlementSys?.sendNet("unlockTech", {
             settlementId: this.settle.id,
             techId: tech.id
         });
-        if (R.unlockChain) R.unlockChain(this.settle, tech.id);
-        else R.unlock(this.settle, tech.id);
-        const tree = this.scene.researchTreePanel;
-        if (tree?.settle && tree.settle !== this.settle) {
-            if (R.unlockChain) R.unlockChain(tree.settle, tech.id);
-            else R.unlock(tree.settle, tech.id);
-        }
+        if (R.unlockChain) R.unlockChain(holder, tech.id);
+        else R.unlock(holder, tech.id);
         this._contentSigVal = null;
+        const tree = this.scene.researchTreePanel;
         if (tree) tree._sig = null;
         this.refresh();
         tree?.refresh?.();

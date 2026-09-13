@@ -440,7 +440,9 @@ class SceneMain extends SceneBase {
             leaderDead: !!extra.leaderDead,
             party: extra.party || [],
             lastSleep: pl.lastSleep || null,
-            resting: !!pl._resting
+            resting: !!pl._resting,
+            techs: pl.techs && typeof pl.techs === "object" ? { ...pl.techs } : (this.character?.techs || {}),
+            techGrantRev: pl.techGrantRev ?? this.character?.techGrantRev ?? 0
         };
     }
 
@@ -677,6 +679,21 @@ class SceneMain extends SceneBase {
         if (typeof you.kc === "number") youPawn.kc = you.kc;
         if (typeof you.saturation === "number") youPawn.saturation = you.saturation;
         if (typeof you.stomach === "number") youPawn.stomach = you.stomach;
+        if (you.techs && typeof you.techs === "object" && !Array.isArray(you.techs)) {
+            youPawn.techs = you.techs;
+            if (this.player && this.player !== youPawn) this.player.techs = you.techs;
+            if (this.leader && this.leader !== youPawn) this.leader.techs = you.techs;
+        }
+        if (you.techGrantRev != null) {
+            youPawn.techGrantRev = you.techGrantRev;
+            if (this.player) this.player.techGrantRev = you.techGrantRev;
+            if (this.leader) this.leader.techGrantRev = you.techGrantRev;
+        }
+        if (typeof you.researchSpent === "number") {
+            youPawn.researchSpent = you.researchSpent;
+            if (this.player) this.player.researchSpent = you.researchSpent;
+            if (this.leader) this.leader.researchSpent = you.researchSpent;
+        }
         if (this.simAuth()) {
             this._applyPawnChannelVisual(youPawn, you.eatChannel || null, "eat");
             this._applyPawnChannelVisual(youPawn, you.tendChannel || null, "tend");
@@ -2388,6 +2405,9 @@ class SceneMain extends SceneBase {
         if (ev.kind === "chop") {
             this._netApplyChopEvent(ev);
         }
+        if (ev.kind === "dig") {
+            this._netApplyDigEvent(ev);
+        }
         if (ev.kind === "corpse") {
             this._netApplyCorpseEvent(ev);
         }
@@ -2834,6 +2854,35 @@ class SceneMain extends SceneBase {
         return false;
     }
 
+    diggableThingsNear(wx, wy, rangePx) {
+        const r = Number(rangePx);
+        const range = Number.isFinite(r) && r > 0 ? r : 48;
+        const r2 = range * range;
+        const out = [];
+        for (const chunk of Object.values(this.chunks || {})) {
+            const kids = chunk.things?.getChildren?.() || [];
+            for (const t of kids) {
+                if (!t?.active || t.entry?.gone) continue;
+                const def = this.getThing(t.entry?.id) || t.meta;
+                if (typeof Dig === "undefined" || !Dig.stillDiggable?.(def, t.entry)) continue;
+                const dx = t.x - wx;
+                const dy = t.y - wy;
+                if (dx * dx + dy * dy <= r2) out.push(t);
+            }
+        }
+        return out;
+    }
+
+    aimHitsDiggableTile(center, angle) {
+        if (typeof Dig === "undefined" || !center) return false;
+        const seg = Dig.aimSegment(center.x, center.y, angle, Dig.AIM_REACH);
+        const patches = this.diggableThingsNear(center.x, center.y, Dig.AIM_REACH + 16);
+        for (const t of patches) {
+            if (Dig.trunkHitsSegment(seg, t.x, t.y, Dig.HITBOX, Dig.HIT_RADIUS)) return true;
+        }
+        return false;
+    }
+
     applyLocalChop(thing, frac, actor) {
         const entry = thing?.entry;
         if (!entry || typeof Chop === "undefined") return null;
@@ -2857,6 +2906,28 @@ class SceneMain extends SceneBase {
         this.hideTooltip?.();
         this.markLightDirty?.();
         this.settlementSys?.bumpWorkCache?.();
+        return result;
+    }
+
+    applyLocalDig(thing, frac, actor) {
+        const entry = thing?.entry;
+        if (!entry || typeof Dig === "undefined") return null;
+        const def = this.getThing(entry.id) || thing.meta;
+        if (!Dig.isDiggable(def)) return null;
+        const result = Dig.applyDig(entry, def, frac);
+        thing._syncDigHole?.();
+        const itemId = def.diggable?.item || "clay";
+        if (result.give > 0) {
+            const meta = this.getItem(itemId);
+            if (meta) DroppedItem.spawn(this, entry.x, entry.y, meta, result.give);
+        }
+        if (result.done) {
+            entry.gone = true;
+            if (thing?.active) thing.destroy();
+            this.hideTooltip?.();
+            this.markLightDirty?.();
+            this.settlementSys?.bumpWorkCache?.();
+        }
         return result;
     }
 
@@ -2941,6 +3012,63 @@ class SceneMain extends SceneBase {
             this.hideTooltip?.();
             this.markLightDirty?.();
             this.settlementSys?.bumpWorkCache?.();
+        }
+    }
+
+    _netApplyDigEvent(ev) {
+        if (!ev || !this.simAuth()) return;
+        const x = Number(ev.x);
+        const y = Number(ev.y);
+        const keys = [];
+        if (Number.isInteger(ev.cx) && Number.isInteger(ev.cy)) {
+            for (let dx = -1; dx <= 1; dx++) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    keys.push(this.getKey(ev.cx + dx, ev.cy + dy));
+                }
+            }
+        }
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+            keys.push(this.getKey(
+                Math.floor(x / this.chunkPx()),
+                Math.floor((y - 1) / this.chunkPx())
+            ));
+        }
+        const match = (e) => this._chopEventMatch(e, ev);
+        let chunk = null;
+        let entry = null;
+        for (const k of keys) {
+            const c = this.chunks[k];
+            if (!c?.meta) continue;
+            const lst = c.meta.things;
+            if (!Array.isArray(lst)) continue;
+            const found = lst.find(match);
+            if (found) {
+                chunk = c;
+                entry = found;
+                break;
+            }
+        }
+        if (entry) {
+            if (ev.digProgress != null) entry.digProgress = ev.digProgress;
+            if (ev.digTaken != null) entry.digTaken = ev.digTaken;
+            if (ev.lastDigAt != null) entry.lastDigAt = ev.lastDigAt;
+            else entry.lastDigAt = Date.now();
+            const live = (chunk.things?.getChildren?.() || []).find(
+                (t) => t?.entry === entry || (t?.entry && match(t.entry))
+            ) || null;
+            live?._syncDigHole?.();
+            if (ev.dug) {
+                entry.gone = true;
+                const lst = chunk.meta?.things;
+                if (Array.isArray(lst)) {
+                    const i = lst.indexOf(entry);
+                    if (i >= 0) lst.splice(i, 1);
+                }
+                if (live?.active) live.destroy();
+                this.hideTooltip?.();
+                this.markLightDirty?.();
+                this.settlementSys?.bumpWorkCache?.();
+            }
         }
     }
 
@@ -4293,6 +4421,9 @@ class SceneMain extends SceneBase {
                     if (isFire && !uiOpen && typeof Fire !== "undefined" && Fire.cookWorldBarFrac) {
                         frac = Fire.cookWorldBarFrac(t.entry, (itemId) => this.getItem?.(itemId));
                     }
+                    if (!(frac > 0) && typeof Dig !== "undefined" && Dig.barVisible?.(t.entry, Date.now())) {
+                        frac = Number(t.entry?.digProgress) || 0;
+                    }
                 }
                 if (!(frac > 0)) continue;
                 if (frac > 1) frac = 1;
@@ -5423,6 +5554,9 @@ class SceneMain extends SceneBase {
             if (obj.meta?.id === "rock") {
                 return this._rockKnapTooltipText() ? "pointer" : "default";
             }
+            if (obj.meta?.diggable) {
+                return this._heldHasDigPower() ? "pointer" : "default";
+            }
             if (obj.input.cursor) return obj.input.cursor;
             if (obj.input.useHandCursor) return 'pointer';
             return 'default';
@@ -6022,6 +6156,23 @@ class SceneMain extends SceneBase {
         });
     }
 
+    wireDigTooltip(thing) {
+        if (!thing?.meta?.diggable) return;
+        thing.setInteractive({ cursor: "default", pixelPerfect: false });
+        thing.on("pointerover", (pointer) => {
+            this.showTooltip(
+                () => this._digTooltipText(thing),
+                pointer.x,
+                pointer.y,
+                thing
+            );
+        });
+        thing.on("pointerout", () => {
+            if (this._hoverTarget === thing) this._hoverTarget = null;
+            if (this._tooltipTarget === thing) this.hideTooltip();
+        });
+    }
+
     _worldDisplayName() {
         const n = this.worldName || this.welcome?.worldName;
         return (n && String(n).trim()) || "World";
@@ -6206,6 +6357,28 @@ class SceneMain extends SceneBase {
         const meta = this.getItem(held.id);
         if (!meta?.knapping?.material) return "";
         return "Click to knap";
+    }
+
+    _heldHasDigPower() {
+        if (typeof Dig === "undefined") return false;
+        const held = this.player?.getHeldItem?.();
+        if (!held || !(held.quantity > 0)) return false;
+        return Dig.digFraction(held, (id) => this.getItem?.(id)) > 0;
+    }
+
+    _digTooltipText(thing) {
+        if (typeof Dig === "undefined") return "";
+        const held = this.player?.getHeldItem?.();
+        if (Dig.depositTooltip) {
+            return Dig.depositTooltip(
+                thing?.meta,
+                thing?.entry,
+                held,
+                (id) => this.getItem?.(id)
+            ) || "";
+        }
+        if (!this._heldHasDigPower()) return "";
+        return Dig.tooltipName?.(thing?.meta, thing?.entry) || thing?.meta?.name || "Clay Deposit";
     }
 
     /** Load all chunks covering tile coords [-radius, radius]². */
@@ -6450,6 +6623,8 @@ class SceneMain extends SceneBase {
                     entry.tooltip = this._spawnSignTooltip();
                 }
                 this.wireThingTooltip?.(thing);
+            } else if (thing.meta?.diggable) {
+                this.wireDigTooltip?.(thing);
             }
         }
         chunk.things.add(thing);
@@ -8126,7 +8301,47 @@ class SceneMain extends SceneBase {
     }
 
     /**
-     * Settlement whose techs apply to the local player (standing in one, else home).
+     * Character whose techs apply to the local player.
+     */
+    _playerResearchHolder() {
+        const pl = this.leader || this.player;
+        if (!pl) return null;
+        const R = typeof Research !== "undefined" ? Research : null;
+        R?.ensureTechs?.(pl);
+        return pl;
+    }
+
+    _playerResearchSpent() {
+        const pl = this.leader || this.player;
+        return Math.max(0, Math.floor(Number(pl?.researchSpent) || 0));
+    }
+
+    _ownerResearchCircles() {
+        const sys = this.settlementSys;
+        if (!sys?.researchCircleEntries) return [];
+        const owned = sys.owned?.() || [];
+        const out = [];
+        const seen = new Set();
+        for (const s of owned) {
+            for (const e of sys.researchCircleEntries(s) || []) {
+                const k = e?.uid || `${e?.x},${e?.y}`;
+                if (seen.has(k)) continue;
+                seen.add(k);
+                out.push(e);
+            }
+        }
+        return out;
+    }
+
+    _playerResearchExtra() {
+        return {
+            spent: this._playerResearchSpent(),
+            settle: this._playerResearchHolder()
+        };
+    }
+
+    /**
+     * Settlement whose camp menu is in range (standing in one, else home).
      */
     _playerResearchSettle() {
         return this.settlementSys?.here?.(this.player)
@@ -8137,7 +8352,7 @@ class SceneMain extends SceneBase {
     knowsFire() {
         const R = typeof Research !== "undefined" ? Research : null;
         if (!R?.techUnlocked) return true;
-        return R.techUnlocked("fire", this._playerResearchSettle());
+        return R.techUnlocked("fire", this._playerResearchHolder());
     }
 
     /**
@@ -9408,6 +9623,10 @@ class SceneMain extends SceneBase {
         }
         const chopLine = typeof Chop !== "undefined" ? Chop.chopPercentLine(stack) : null;
         if (chopLine) lines.push(chopLine);
+        const digLine = typeof Dig !== "undefined"
+            ? Dig.digPercentLine(stack, (id) => this.getItem?.(id))
+            : null;
+        if (digLine) lines.push(digLine);
         // Skip legacy knap "Damage:" lines — weapons show DPS from verbs (like spears)
         let knapFlavor = stack?.tooltipExtra;
         if (
@@ -9468,9 +9687,9 @@ class SceneMain extends SceneBase {
 
         // Static tooltips only when not a custom-named meal
         if (!stack?.customName && Array.isArray(item.tooltip)) {
-            const settle = this._playerResearchSettle?.() || null;
+            const holder = this._playerResearchHolder?.() || null;
             const tips = (typeof Research !== "undefined" && Research.tooltipLines)
-                ? Research.tooltipLines(item, settle)
+                ? Research.tooltipLines(item, holder)
                 : item.tooltip;
             const dryPct = (typeof Hide !== "undefined" && Hide.isFleshedHide(item))
                 ? Hide.dryPercent(stack)
@@ -9665,8 +9884,8 @@ class SceneMain extends SceneBase {
                     const thing = this.getThing(recipe.requireStation);
                     lines.push(`Requires ${thing?.name || recipe.requireStation}`);
                 }
-                if (recipe.requireTool?.toolClass) {
-                    lines.push(`Requires held ${this._craftToolClassLabel(recipe.requireTool.toolClass)}`);
+                if (recipe.requireTool && this._craftRequireToolLabel(recipe.requireTool)) {
+                    lines.push(`Requires held ${this._craftRequireToolLabel(recipe.requireTool)}`);
                 }
 
                 return lines.join('\n');
@@ -9910,6 +10129,7 @@ class SceneMain extends SceneBase {
             if (key && this.textures.exists(key)) return key;
         }
         if (recipe.key && this.textures.exists(recipe.key)) return recipe.key;
+        if (this.textures.exists("null")) return "null";
         return "slot";
     }
 
@@ -10062,8 +10282,8 @@ class SceneMain extends SceneBase {
                 if (req !== stationId) return false;
             } else if (req) return false;
             if (typeof Research !== "undefined" && Research.recipeUnlocked) {
-                const settle = this.settlementSys?.here?.(this.player) || null;
-                if (!Research.recipeUnlocked(m.id, settle)) return false;
+                const holder = this._playerResearchHolder?.() || null;
+                if (!Research.recipeUnlocked(m.id, holder)) return false;
             }
             return true;
         }).map((meta) => {
@@ -10076,10 +10296,12 @@ class SceneMain extends SceneBase {
                 else if (k === "REQUIRE_STATION") requireStation = String(v);
                 else if (k === "CRAFT_SECONDS") craftSeconds = Math.max(0, Number(v) || 0);
                 else if (k === "REQUIRE_TOOL") {
-                    requireTool = {
-                        toolClass: v?.toolClass ? String(v.toolClass) : null,
-                        wear: Math.max(0, Number(v?.wear) || 0)
-                    };
+                    requireTool = (typeof Carry !== "undefined" && Carry.parseRequireTool)
+                        ? Carry.parseRequireTool(v)
+                        : {
+                            toolClass: v?.toolClass ? String(v.toolClass) : null,
+                            wear: Math.max(0, Number(v?.wear) || 0)
+                        };
                 } else if (this._isRecipeMetaKey(k)) continue;
                 else if (v && typeof v === "object") {
                     ingredients.push({
@@ -10131,15 +10353,32 @@ class SceneMain extends SceneBase {
         return toolClass || "tool";
     }
 
+    _craftRequireToolLabel(requireTool) {
+        const classes = (typeof Carry !== "undefined" && Carry.recipeToolClasses)
+            ? Carry.recipeToolClasses(requireTool)
+            : (requireTool?.toolClass ? [requireTool.toolClass] : []);
+        if (!classes.length) return "";
+        const names = classes.map((c) => this._craftToolClassLabel(c));
+        if (names.length === 1) return names[0];
+        if (names.length === 2) return `${names[0]} or ${names[1]}`;
+        return `${names.slice(0, -1).join(", ")}, or ${names[names.length - 1]}`;
+    }
+
     _heldMatchesCraftTool(requireTool, pawn) {
-        if (!requireTool?.toolClass) return true;
         const who = pawn || this.player;
+        if (typeof Carry !== "undefined" && Carry.heldMatchesRecipeTool) {
+            const held = who?.getHeldItem?.();
+            const def = held ? this.getItem(held.id) : null;
+            return Carry.heldMatchesRecipeTool(held, def, requireTool);
+        }
+        if (!requireTool?.toolClass) return true;
         return who?.heldToolClass?.() === requireTool.toolClass;
     }
 
     /** Wear a knapped tool, or consume 1 from a stackable single-use tool (bone). */
     _consumeCraftTool(recipe, pawn) {
-        if (!recipe.requireTool?.toolClass) return;
+        if (!(typeof Carry !== "undefined" && Carry.recipeToolClasses?.(recipe.requireTool)?.length)
+            && !recipe.requireTool?.toolClass) return;
         const who = pawn || this.player;
         const held = who?.getHeldItem?.();
         const def = held ? this.getItem(held.id) : null;

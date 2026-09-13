@@ -772,8 +772,20 @@ class Chunk {
             const y = (i / cs) | 0;
             this.rt.draw(key, x * ts, y * ts);
         }
-        this.scene.groundLayer.add(this.rt);
+        const layer = this.scene.groundLayer;
+        layer.add(this.rt);
         this.rt.setVisible(true);
+        // Paint is queued and often runs after makeThings. A later add() would
+        // cover floor decals (clay) even though they are already in the layer.
+        // Keep the tile RT just above the water backdrop, under drops/decals.
+        const list = layer.list;
+        if (Array.isArray(list)) {
+            const i = list.indexOf(this.rt);
+            if (i >= 0) list.splice(i, 1);
+            const water = this.scene._waterSprite;
+            const wi = water ? list.indexOf(water) : -1;
+            list.splice(Math.max(0, wi + 1), 0, this.rt);
+        }
         return Promise.resolve();
     }
 

@@ -94,6 +94,9 @@
             const hangKey = t.hangingKey || `${t.key}_hanging`;
             loads.push({ key: hangKey, path: `assets/things/${hangKey}.png` });
         }
+        if (t.diggable) {
+            loads.push({ key: "hole", path: "assets/things/hole.png" });
+        }
         return loads;
     }
 
@@ -130,19 +133,26 @@
      * Inventory / craft / hotbar texture for an item.
      * Dedicated item art (`itemDef.key`) wins when that texture exists;
      * rotatable placeables otherwise use the 0° world sprite (`${thingKey}_0`).
+     * Missing art uses `null`.
      */
     function itemIconKey(itemDef, getThing, hasTexture) {
+        const pick = (key) => {
+            if (!key) return "";
+            if (typeof hasTexture !== "function") return key;
+            return hasTexture(key) ? key : "";
+        };
         const fallback = itemDef?.key || itemDef?.id || "";
-        if (fallback && typeof hasTexture === "function" && hasTexture(fallback)) {
-            return fallback;
-        }
+        const owned = pick(fallback);
+        if (owned) return owned;
         const thingId = placeThingId(itemDef);
-        if (!thingId) return fallback;
-        const thingDef = typeof getThing === "function" ? getThing(thingId) : getThing;
-        if (canRotate(thingDef) && thingDef.key) {
-            return rotationTextureKey(thingDef.key, 0);
+        if (thingId) {
+            const thingDef = typeof getThing === "function" ? getThing(thingId) : getThing;
+            if (canRotate(thingDef) && thingDef.key) {
+                const rot = pick(rotationTextureKey(thingDef.key, 0));
+                if (rot) return rot;
+            }
         }
-        return fallback;
+        return pick("null") || fallback;
     }
 
     function ensureCraftStationEntry(entry) {

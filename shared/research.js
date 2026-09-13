@@ -21,6 +21,11 @@
     const ROOTS = ["gathering", "fire", "knapping", "tanning", "culture"];
     const ERAS = ["Paleolithic", "Mesolithic", "Neolithic", "Chalcolithic"];
     const FOG_COPY = "Your tribe isn't advanced enough to comprehend this.";
+    const FOG_TIP = [
+        "Advance tech level by:",
+        "A: Research 50% of the next level's tech",
+        "B: Research all tech at the current level"
+    ].join("\n");
     const ERA_ICONS = {
         paleolithic: "campfire",
         mesolithic: "null",
@@ -77,7 +82,7 @@
         return !(Math.max(0, Math.floor(Number(t.cost) || 0)) > 0);
     }
 
-    /** "Free" for starter techs, otherwise "3 pts" even after unlock. */
+    /** Tree-node cost: "Free" for starter techs, otherwise this tech's own "3 pts". */
     function techCostLabel(tech) {
         if (isFreeTech(tech)) return "Free";
         const cost = Math.max(0, Math.floor(Number(tech?.cost) || 0));
@@ -103,14 +108,16 @@
     function isActionUnlock(label) {
         const s = String(label || "").trim();
         if (!s) return true;
-        if (/\b(job|jobs|knapping|ritual|forming|sowing)\b/i.test(s)) return true;
+        if (/\b(job|jobs|knapping|ritual|forming|sowing|tab)\b/i.test(s)) return true;
         if (/^(sow|tame|train|smoke)\b/i.test(s)) return true;
         return false;
     }
 
     /** World thing id to show next to a text unlock, or null for no icon. */
     function unlockTextIcon(label) {
-        if (/\bknapping\b/i.test(String(label || ""))) return "rock";
+        const s = String(label || "");
+        if (/\bknapping\b/i.test(s)) return "rock";
+        if (/\bclay forming\b/i.test(s)) return "clay";
         return null;
     }
 
@@ -630,7 +637,10 @@
     /**
      * Settlement pool: painting circles (and later tokens/books) add points;
      * unlocked tech costs subtract. Circles are not spent individually.
-     * `total` is what you can still spend. Pass `extra.settle` or `extra.spent`.
+     * Pass `extra.spent` (this-world ledger) and/or `extra.settle` (tech holder).
+     * `spent` is the holder's tech costs (tooltip Research row). `available` is
+     * produced minus this world's ledger (unlock budget). `total` is produced
+     * minus those tech costs and may be negative.
      */
     function pointsBreakdown(entries, extra = {}) {
         const paintings = paintedTotal(entries);
@@ -638,10 +648,9 @@
         const tokens = Math.max(0, Math.floor(Number(extra?.tokens) || 0));
         const books = Math.max(0, Math.floor(Number(extra?.books ?? extra?.tablets) || 0));
         const produced = paintings + tallies + tokens + 5 * books;
-        const settle = extra?.settle;
-        const spent = settle
-            ? spentPoints(settle)
-            : Math.max(0, Math.floor(Number(extra?.spent) || 0));
+        const ledger = _extraSpent(extra?.settle, extra);
+        const spent = extra?.settle ? spentPoints(extra.settle) : ledger;
+        const available = produced - ledger;
         return {
             paintings,
             tallies,
@@ -649,12 +658,20 @@
             books,
             spent,
             produced,
-            total: Math.max(0, produced - spent)
+            available,
+            total: produced - spent
         };
     }
 
     function availablePoints(entries, extra) {
-        return pointsBreakdown(entries, extra).total;
+        return pointsBreakdown(entries, extra).available;
+    }
+
+    function _extraSpent(holder, extra) {
+        if (extra && Object.prototype.hasOwnProperty.call(extra, "spent")) {
+            return Math.max(0, Math.floor(Number(extra.spent) || 0));
+        }
+        return spentPoints(holder);
     }
 
     /** Sum of unlocked tech costs (the paintings you must keep). */
@@ -691,26 +708,26 @@
         return n;
     }
 
-    function removeShortfall(settle, entries, entry) {
-        const spent = spentPoints(settle);
+    function removeShortfall(settle, entries, entry, extra) {
+        const spent = _extraSpent(settle, extra);
         if (!(spent > 0)) return 0;
         return Math.max(0, spent - remainingAfterRemove(entries, entry));
     }
 
-    function tallyRemoveShortfall(settle, entries, entry) {
-        const spent = spentPoints(settle);
+    function tallyRemoveShortfall(settle, entries, entry, extra) {
+        const spent = _extraSpent(settle, extra);
         if (!(spent > 0) || !hasTally(entry)) return 0;
         return Math.max(0, spent - remainingAfterUninstallTally(entries, entry));
     }
 
-    function canRemoveCircle(settle, entries, entry) {
+    function canRemoveCircle(settle, entries, entry, extra) {
         if (!entry) return false;
-        return removeShortfall(settle, entries, entry) === 0;
+        return removeShortfall(settle, entries, entry, extra) === 0;
     }
 
-    function canRemoveTally(settle, entries, entry) {
+    function canRemoveTally(settle, entries, entry, extra) {
         if (!entry || !hasTally(entry)) return false;
-        return tallyRemoveShortfall(settle, entries, entry) === 0;
+        return tallyRemoveShortfall(settle, entries, entry, extra) === 0;
     }
 
     function _shortfallReason(need) {
@@ -719,15 +736,15 @@
         return `Need ${label} extra research point${need === 1 ? "" : "s"} to maintain research`;
     }
 
-    function removeBlockedReason(settle, entries, entry) {
+    function removeBlockedReason(settle, entries, entry, extra) {
         if (!entry) return null;
-        return _shortfallReason(removeShortfall(settle, entries, entry));
+        return _shortfallReason(removeShortfall(settle, entries, entry, extra));
     }
 
-    function tallyRemoveBlockedReason(settle, entries, entry) {
+    function tallyRemoveBlockedReason(settle, entries, entry, extra) {
         if (!entry) return null;
         if (!hasTally(entry)) return null;
-        return _shortfallReason(tallyRemoveShortfall(settle, entries, entry));
+        return _shortfallReason(tallyRemoveShortfall(settle, entries, entry, extra));
     }
 
     function removeConfirmCopy(painted) {
@@ -751,12 +768,37 @@
     }
 
     /** Strip techs that used to be free at camp found. Bump when adding another revoke. */
-    const TECH_GRANT_REV = 1;
+    const TECH_GRANT_REV = 3;
 
-    function _revokeStaleStartUnlocks(next) {
-        const t = techById("hafting");
-        if (!t || t.startUnlocked || !(Number(t.cost) > 0)) return;
-        if (next.hafting) next.hafting = false;
+    function _defsReadyForGrantRev() {
+        return !!(techById("hafting") || techById("hearth") || techById("settlements"));
+    }
+
+    function _remapLegacySettlements(next) {
+        const hearth = techById("hearth");
+        const settlements = techById("settlements");
+        if (
+            hearth
+            && (hearth.startUnlocked || !(Number(hearth.cost) > 0))
+            && settlements
+            && !settlements.startUnlocked
+            && Number(settlements.cost) > 0
+            && next.settlements
+        ) {
+            next.hearth = true;
+            next.settlements = false;
+        }
+    }
+
+    function _revokeStaleStartUnlocks(next, fromRev) {
+        const from = Math.floor(Number(fromRev) || 0);
+        if (from < 1) {
+            const hafting = techById("hafting");
+            if (hafting && !hafting.startUnlocked && Number(hafting.cost) > 0 && next.hafting) {
+                next.hafting = false;
+            }
+        }
+        if (from < 3) _remapLegacySettlements(next);
     }
 
     function ensureTechs(settle) {
@@ -768,12 +810,45 @@
             if (next[id] == null) next[id] = true;
         }
         const rev = Math.floor(Number(settle.techGrantRev) || 0);
-        if (rev < TECH_GRANT_REV) {
-            _revokeStaleStartUnlocks(next);
+        if (rev < TECH_GRANT_REV && _defsReadyForGrantRev()) {
+            _revokeStaleStartUnlocks(next, rev);
             settle.techGrantRev = TECH_GRANT_REV;
         }
         settle.techs = next;
         return next;
+    }
+
+    /**
+     * Copy camp techs onto the player once, then drop `s.techs`.
+     * Returns the spent cost of those settlement techs (free/start skipped).
+     */
+    function adoptSettlementTechs(player, settlements) {
+        if (!player) return 0;
+        ensureTechs(player);
+        let spent = 0;
+        const counted = new Set();
+        for (const s of settlements || []) {
+            if (!s) continue;
+            const raw = s.techs && typeof s.techs === "object" && !Array.isArray(s.techs)
+                ? s.techs
+                : null;
+            if (raw) {
+                const map = { ...raw };
+                const rev = Math.floor(Number(s.techGrantRev) || 0);
+                if (rev < TECH_GRANT_REV) _revokeStaleStartUnlocks(map, rev);
+                _remapLegacySettlements(map);
+                for (const [id, on] of Object.entries(map)) {
+                    if (!on) continue;
+                    player.techs[id] = true;
+                    const t = techById(id);
+                    if (!t || isFreeTech(t) || counted.has(id)) continue;
+                    counted.add(id);
+                    spent += _techCost(t);
+                }
+            }
+            delete s.techs;
+        }
+        return spent;
     }
 
     function hasTech(settle, id) {
@@ -820,6 +895,7 @@
         return n;
     }
 
+    /** Research-button total: this tech plus every still-missing ancestor. */
     function remainingCostLabel(settle, tech) {
         const t = typeof tech === "string" ? techById(tech) : tech;
         if (!t) return "0";
@@ -1970,11 +2046,14 @@
             for (let c = c0 + 1; c < c1; c++) {
                 if (!usedByCol[c]) usedByCol[c] = [];
                 const col = byCol[c] || [];
+                const mine = usedByCol[c].find((u) => u.fromId === from.id);
+                const foreign = usedByCol[c].filter((u) => u.fromId !== from.id).map((u) => u.y);
                 let y;
-                if (!_yBlocked(col, y0, boxPad, ignore)) y = y0;
-                else if (!_yBlocked(col, y1, boxPad, ignore)) y = y1;
-                else y = _pickGapY(col, y0, boxPad, usedByCol[c], ignore);
-                if (Math.abs(y - y0) >= 1 && Math.abs(y - y1) >= 1) usedByCol[c].push(y);
+                if (mine) y = mine.y;
+                else if (!_yBlocked(col, y0, boxPad, ignore) && foreign.every((u) => Math.abs(u - y0) >= 1)) y = y0;
+                else if (!_yBlocked(col, y1, boxPad, ignore) && foreign.every((u) => Math.abs(u - y1) >= 1)) y = y1;
+                else y = _pickGapY(col, y0, boxPad, foreign, ignore);
+                if (!mine) usedByCol[c].push({ y, fromId: from.id });
                 ys.push(y);
             }
             ys.push(y1);
@@ -2145,6 +2224,7 @@
         ROOTS,
         ERAS,
         FOG_COPY,
+        FOG_TIP,
         UI_PAINT_TINT,
         UI_ICON_KEY,
         UI_SCIENCE_KEY,
@@ -2228,6 +2308,7 @@
         relockToSpent,
         defaultTechs,
         ensureTechs,
+        adoptSettlementTechs,
         hasTech,
         missingPrereqs,
         canUnlock,

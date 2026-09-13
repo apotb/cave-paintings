@@ -872,6 +872,8 @@ function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
     }
     if (textures.exists(key)) {
         base.setTexture(key).setScale(scale).clearTint().setVisible(true);
+    } else if (textures.exists("null")) {
+        base.setTexture("null").setScale(scale).clearTint().setVisible(true);
     } else {
         base.setVisible(false);
     }
@@ -1012,7 +1014,10 @@ function createStackDragIcon(scene, x, y, stack, meta, scale) {
     } else if (stack?.knapIcon && scene.textures.exists(stack.knapIcon)) {
         key = stack.knapIcon;
     }
-    if (!scene.textures.exists(key)) return null;
+    if (!scene.textures.exists(key)) {
+        key = scene.textures.exists("null") ? "null" : "";
+    }
+    if (!key || !scene.textures.exists(key)) return null;
     const img = scene.add.image(x, y, key)
         .setOrigin(0.5, 0.5)
         .setScale(scale)

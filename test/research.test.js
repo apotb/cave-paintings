@@ -11,6 +11,11 @@ test("start unlocked techs are on a new settlement", () => {
     const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
     assert.equal(Research.hasTech(s, "painting"), true);
     assert.equal(Research.hasTech(s, "gathering"), true);
+    assert.equal(Research.hasTech(s, "hearth"), true);
+    assert.equal(Research.hasTech(s, "settlements"), false);
+    assert.equal(!!Research.techById("hearth").startUnlocked, true);
+    assert.equal(!!Research.techById("settlements").startUnlocked, false);
+    assert.equal(Research.recipeUnlocked("settling_stone", s), true);
     assert.equal(Research.hasTech(s, "hafting"), false);
     assert.ok(Number(Research.techById("hafting").cost) > 0);
     assert.equal(!!Research.techById("hafting").startUnlocked, false);
@@ -22,12 +27,63 @@ test("start unlocked techs are on a new settlement", () => {
 
 test("legacy free Hafting is revoked but can still be researched", () => {
     const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    Research.ensureTechs(s);
     s.techs.hafting = true;
     s.techGrantRev = 0;
     Research.ensureTechs(s);
     assert.equal(Research.hasTech(s, "hafting"), false);
     Research.unlock(s, "hafting");
     assert.equal(Research.hasTech(s, "hafting"), true);
+});
+
+test("grant rev bump does not strip researched Hafting", () => {
+    const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    Research.ensureTechs(s);
+    Research.unlock(s, "hafting");
+    s.techGrantRev = 2;
+    Research.ensureTechs(s);
+    assert.equal(Research.hasTech(s, "hafting"), true);
+});
+
+test("legacy free Settlements remaps to Hearth and can still be researched", () => {
+    const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    Research.ensureTechs(s);
+    s.techs.settlements = true;
+    s.techs.hearth = false;
+    s.techGrantRev = 1;
+    Research.ensureTechs(s);
+    assert.equal(Research.hasTech(s, "hearth"), true);
+    assert.equal(Research.hasTech(s, "settlements"), false);
+    Research.unlock(s, "settlements");
+    assert.equal(Research.hasTech(s, "settlements"), true);
+    const old = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    Research.ensureTechs(old);
+    old.techs.settlements = true;
+    old.techs.hearth = false;
+    old.techGrantRev = 0;
+    Research.ensureTechs(old);
+    assert.equal(Research.hasTech(old, "hearth"), true);
+    assert.equal(Research.hasTech(old, "settlements"), false);
+    const stuck = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    Research.ensureTechs(stuck);
+    stuck.techs.settlements = true;
+    stuck.techGrantRev = 2;
+    Research.ensureTechs(stuck);
+    assert.equal(Research.hasTech(stuck, "hearth"), true);
+    assert.equal(Research.hasTech(stuck, "settlements"), false);
+});
+
+test("adopt camp techs does not keep leftover free Settlements", () => {
+    const player = { id: "p1" };
+    const camp = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    Research.ensureTechs(player);
+    player.techGrantRev = 3;
+    camp.techs = { settlements: true, painting: true, fire: true };
+    camp.techGrantRev = 3;
+    Research.adoptSettlementTechs(player, [camp]);
+    assert.equal(Research.hasTech(player, "hearth"), true);
+    assert.equal(Research.hasTech(player, "settlements"), false);
+    assert.equal(Research.hasTech(player, "painting"), true);
 });
 
 test("painting circle recipe is known; stick frame is gated on Basic Furniture", () => {
@@ -128,6 +184,9 @@ test("action unlocks are not missing-item placeholders", () => {
     assert.equal(Research.isActionUnlock("Knife knapping"), true);
     assert.equal(Research.isActionUnlock("Smoke meat"), true);
     assert.equal(Research.isActionUnlock("Microlith knapping"), true);
+    assert.equal(Research.isActionUnlock("Manage tab"), true);
+    assert.equal(Research.isActionUnlock("Ritual job"), true);
+    assert.equal(Research.isActionUnlock("Burin knapping"), true);
     assert.equal(Research.isActionUnlock("Pit Kiln"), false);
     assert.equal(Research.isActionUnlock("Clay Pot"), false);
     assert.equal(Research.isActionUnlock("Fence"), false);
@@ -136,6 +195,7 @@ test("action unlocks are not missing-item placeholders", () => {
     assert.equal(Research.unlockTextIcon("Microlith knapping"), "rock");
     assert.equal(Research.unlockTextIcon("Sow trees"), null);
     assert.equal(Research.unlockTextIcon("Hut"), null);
+    assert.equal(Research.unlockTextIcon("Clay forming"), "clay");
 });
 
 test("tech unlocks list items, jobs, and planned text", () => {
@@ -169,6 +229,11 @@ test("tech unlocks list items, jobs, and planned text", () => {
     assert.equal(Research.techById("counting").quote, "Invent 1, 2 before buckling shoes");
     assert.ok(Research.techById("counting").unlocks.items.includes("tally_stick"));
     assert.equal((Research.techById("counting").unlocks.text || []).includes("Tally Stick"), false);
+    assert.ok(Research.techById("digging").unlocks.items.includes("digging_stick"));
+    assert.equal((Research.techById("digging").unlocks.text || []).includes("Digging Stick"), false);
+    assert.deepEqual(Research.techById("clay_forming").prereqs, ["fire", "digging"]);
+    assert.equal(Research.techById("clay_forming").icon, "clay");
+    assert.equal(Research.unlockTextIcon("Clay forming"), "clay");
     assert.equal(Research.techById("mathematics").quote, "We could do a lot with this");
     const fire = Research.techById("fire");
     assert.ok(fire.unlocks.items.includes("campfire"));
@@ -442,22 +507,24 @@ test("research node tooltip puts cost or Free on the header line", () => {
     const pit = Research.techById("pit_traps");
     assert.equal(
         Research.techTip(pit, { missingNames: ["Traps", "Digging"] }),
-        "Pit Traps / 3 pts / Mesolithic\nNeeds Traps, Digging"
+        "Pit Traps / 3 pts / Mesolithic\n'AHHHH!!'\nNeeds Traps, Digging"
     );
 });
 
 test("remaining unlock cost includes unfinished prereqs once each", () => {
     const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
-    assert.equal(Research.remainingUnlockCost(s, "throwing"), 5);
+    assert.equal(Research.remainingUnlockCost(s, "throwing"), 6);
+    assert.equal(Research.remainingCostLabel(s, "throwing"), "6 pts");
+    assert.equal(Research.techCostLabel(Research.techById("throwing")), "3 pts");
     assert.deepEqual(Research.remainingUnlockIds(s, "throwing"), ["hafting", "throwing"]);
-    assert.equal(Research.canUnlock(s, "throwing", 4), false);
-    assert.equal(Research.canUnlock(s, "throwing", 5), true);
+    assert.equal(Research.canUnlock(s, "throwing", 5), false);
+    assert.equal(Research.canUnlock(s, "throwing", 6), true);
     assert.equal(Research.unlockChain(s, "throwing"), true);
     assert.equal(Research.hasTech(s, "hafting"), true);
     assert.equal(Research.hasTech(s, "throwing"), true);
     assert.equal(Research.remainingUnlockCost(s, "throwing"), 0);
     assert.equal(Research.remainingCostLabel(s, "throwing"), "3 pts");
-    assert.equal(Research.spentPoints(s), 5);
+    assert.equal(Research.spentPoints(s), 6);
 });
 
 test("research points tooltip lists each currency count", () => {
@@ -543,21 +610,32 @@ test("tree layout is left-to-right with prereq edges", () => {
     assert.ok(layout.byId.cordage.x > layout.byId.gathering.x);
     assert.ok(layout.byId.pit_traps.col > layout.byId.traps.col);
     assert.ok(layout.edges.some((e) => e.from === "digging" && e.to === "pit_traps"));
+    assert.ok(layout.edges.some((e) => e.from === "digging" && e.to === "clay_forming"));
+    assert.ok(layout.edges.some((e) => e.from === "fire" && e.to === "clay_forming"));
     assert.ok(layout.edges.some((e) => e.from === "traps" && e.to === "pit_traps"));
     assert.ok(layout.edges.some((e) => e.from === "cordage" && e.to === "traps"));
-    assert.ok(layout.edges.some((e) => e.from === "cordage" && e.to === "fishing"));
+    assert.equal(layout.edges.some((e) => e.from === "cordage" && e.to === "fishing"), false);
     assert.ok(layout.edges.some((e) => e.from === "hafting" && e.to === "fishing"));
     assert.ok(layout.edges.some((e) => e.from === "fishing" && e.to === "nets"));
     assert.ok(layout.edges.some((e) => e.from === "basic_furniture" && e.to === "nets"));
-    assert.ok(layout.edges.some((e) => e.from === "digging" && e.to === "agriculture"));
+    assert.equal(layout.edges.some((e) => e.from === "digging" && e.to === "agriculture"), false);
     assert.ok(layout.edges.some((e) => e.from === "storage" && e.to === "agriculture"));
     assert.ok(layout.edges.some((e) => e.from === "herbalism" && e.to === "agriculture"));
+    assert.ok(layout.edges.some((e) => e.from === "grinding" && e.to === "agriculture"));
+    assert.ok(layout.edges.some((e) => e.from === "digging" && e.to === "grinding"));
+    assert.ok(layout.edges.some((e) => e.from === "basic_furniture" && e.to === "grinding"));
     assert.equal(layout.edges.some((e) => e.from === "gathering" && e.to === "agriculture"), false);
     assert.equal(layout.edges.some((e) => e.from === "gathering" && e.to === "traps"), false);
     assert.equal(layout.edges.some((e) => e.from === "gathering" && e.to === "fishing"), false);
     assert.equal(layout.edges.some((e) => e.from === "digging" && e.to === "tree_sowing"), false);
     assert.ok(layout.edges.some((e) => e.from === "agriculture" && e.to === "tree_sowing"));
-    assert.ok(layout.edges.some((e) => e.from === "fire" && e.to === "settlements"));
+    assert.ok(layout.edges.some((e) => e.from === "fire" && e.to === "hearth"));
+    assert.equal(layout.edges.some((e) => e.from === "fire" && e.to === "settlements"), false);
+    assert.ok(layout.edges.some((e) => e.from === "hut" && e.to === "settlements"));
+    assert.ok(layout.edges.some((e) => e.from === "storage" && e.to === "settlements"));
+    assert.ok(layout.edges.some((e) => e.from === "hearth" && e.to === "settlements"));
+    assert.ok(layout.edges.some((e) => e.from === "fire" && e.to === "smoking"));
+    assert.equal(layout.edges.some((e) => e.from === "cooking" && e.to === "smoking"), false);
     assert.equal(layout.edges.some((e) => e.from === "cordage" && e.to === "settlements"), false);
     assert.equal(layout.edges.some((e) => e.from === "tanning" && e.to === "settlements"), false);
     assert.ok(layout.edges.some((e) => e.from === "traps" && e.to === "spike_traps"));
@@ -573,12 +651,25 @@ test("tree layout is left-to-right with prereq edges", () => {
     assert.ok(layout.edges.some((e) => e.from === "microliths" && e.to === "bows"));
     assert.equal(layout.edges.some((e) => e.from === "blades" && e.to === "bows"), false);
     assert.ok(layout.edges.some((e) => e.from === "dogs" && e.to === "husbandry"));
-    assert.ok(layout.edges.some((e) => e.from === "hut" && e.to === "herding"));
+    assert.ok(layout.edges.some((e) => e.from === "settlements" && e.to === "herding"));
+    assert.equal(layout.edges.some((e) => e.from === "hut" && e.to === "herding"), false);
+    assert.ok(layout.edges.some((e) => e.from === "knapping" && e.to === "burin"));
+    assert.ok(layout.edges.some((e) => e.from === "culture" && e.to === "ornament"));
+    assert.ok(layout.edges.some((e) => e.from === "rituals" && e.to === "idolatry"));
+    assert.ok(layout.edges.some((e) => e.from === "burin" && e.to === "idolatry"));
+    assert.ok(layout.edges.some((e) => e.from === "ornament" && e.to === "music"));
+    assert.ok(layout.edges.some((e) => e.from === "burin" && e.to === "music"));
+    assert.ok(layout.edges.some((e) => e.from === "afterlife" && e.to === "ancestors"));
+    assert.ok(layout.edges.some((e) => e.from === "afterlife" && e.to === "shrine"));
+    assert.ok(layout.edges.some((e) => e.from === "hut" && e.to === "shrine"));
+    assert.equal(layout.byId.hut.shape, "rect");
+    assert.equal(layout.byId.settlements.shape, "hex");
+    assert.equal(layout.byId.hearth.shape, "oval");
     assert.ok(layout.edges.some((e) => e.from === "pottery" && e.to === "writing"));
     assert.equal(layout.edges.some((e) => e.from === "basic_furniture" && e.to === "writing"), false);
     assert.equal(layout.byId.writing.shape, "trap");
     assert.equal(layout.byId.fishing.shape, "rect");
-    assert.deepEqual(Research.techById("hafting").children, ["throwing"]);
+    assert.deepEqual(Research.techById("hafting").children, ["throwing", "fishing"]);
     assert.ok(Research.techById("microliths").children.includes("bows"));
     const ids = new Set(layout.nodes.map((n) => n.id));
     for (const t of Research.techs()) assert.ok(ids.has(t.id), t.id);
@@ -705,6 +796,29 @@ test("tree layout is left-to-right with prereq edges", () => {
         }
     }
     assert.equal(trapFirstX.size, 1, "Traps children should share one outgoing bus");
+    const camp = big.byId.camping;
+    const digSkip = routed.filter((r) => (
+        r.from === "digging" && ["storage", "grinding", "pit_traps"].includes(r.to)
+    ));
+    assert.ok(digSkip.length >= 2, "Digging should skip over Camping toward storage/grinding/pits");
+    const digSkipYs = new Set();
+    for (const r of digSkip) {
+        const path = r.path || [];
+        for (let i = 1; i < path.length; i++) {
+            const a = path[i - 1];
+            const b = path[i];
+            if (a[1] !== b[1] || a[0] === b[0]) continue;
+            const lo = Math.min(a[0], b[0]);
+            const hi = Math.max(a[0], b[0]);
+            if (hi < camp.x || lo > camp.x + camp.w) continue;
+            digSkipYs.add(Math.round(a[1]));
+        }
+    }
+    assert.equal(
+        digSkipYs.size,
+        1,
+        `Digging skip hops through Camping's column should share one row (ys=${[...digSkipYs].join(",")})`
+    );
     const localPitch = 52 + 2 * 18;
     for (let i = 0; i < verts.length; i++) {
         for (let j = i + 1; j < verts.length; j++) {
@@ -870,10 +984,32 @@ test("retuned tech costs, names, and eras", () => {
     assert.equal(Research.techById("husbandry").cost, 5);
     assert.deepEqual(Research.techById("husbandry").prereqs, ["agriculture", "dogs"]);
     assert.equal(Research.techById("herding").cost, 6);
-    assert.deepEqual(Research.techById("herding").prereqs, ["husbandry", "hut"]);
+    assert.equal(Research.techById("hut").era, "Mesolithic");
+    assert.deepEqual(Research.techById("herding").prereqs, ["husbandry", "settlements"]);
     assert.equal(Research.techById("pottery").cost, 6);
     assert.equal(Research.techById("agriculture").cost, 8);
-    assert.deepEqual(Research.techById("agriculture").prereqs, ["storage", "herbalism", "digging"]);
+    assert.deepEqual(Research.techById("agriculture").prereqs, ["storage", "herbalism", "grinding"]);
+    assert.equal(Research.techById("hand_axe").cost, 2);
+    assert.equal(Research.techById("blades").cost, 3);
+    assert.equal(Research.techById("hearth").name, "Hearth");
+    assert.equal(Research.techById("hearth").cost, 0);
+    assert.ok(Research.techById("hearth").unlocks.items.includes("settling_stone"));
+    assert.equal(Research.techById("settlements").era, "Neolithic");
+    assert.equal(Research.techById("settlements").cost, 6);
+    assert.deepEqual(Research.techById("settlements").prereqs, ["hut", "storage", "hearth"]);
+    assert.ok(Research.techById("settlements").unlocks.text.includes("Manage tab"));
+    assert.equal(Research.techById("burin").cost, 2);
+    assert.equal(Research.techById("ornament").cost, 1);
+    assert.equal(Research.techById("idolatry").quote, "Still not a cult");
+    assert.equal(Research.techById("music").quote, "Music to my ears");
+    assert.equal(Research.techById("ancestors").quote, "Their spirits live on");
+    assert.equal(Research.techById("grinding").era, "Mesolithic");
+    assert.equal(Research.techById("grinding").cost, 3);
+    assert.equal(Research.techById("shrine").era, "Mesolithic");
+    assert.equal(Research.techById("shrine").cost, 4);
+    assert.ok(Research.techById("rituals").unlocks.text.includes("Ritual job"));
+    assert.deepEqual(Research.techById("pit_kiln").prereqs, ["clay_forming"]);
+    assert.deepEqual(Research.techById("smoking").prereqs, ["fire"]);
     assert.equal(Research.techById("mathematics").cost, 8);
     assert.ok(Research.techById("mathematics").prereqs.includes("agriculture"));
     assert.equal(Research.techById("writing").name, "Proto-Writing");
@@ -883,10 +1019,10 @@ test("retuned tech costs, names, and eras", () => {
     assert.equal(Research.techById("bows").cost, 5);
     assert.deepEqual(Research.techById("bows").prereqs, ["hafting", "microliths"]);
     assert.equal(Research.techById("fishing").cost, 4);
-    assert.deepEqual(Research.techById("fishing").prereqs, ["cordage", "hafting"]);
+    assert.deepEqual(Research.techById("fishing").prereqs, ["hafting"]);
     assert.equal(Research.techById("nets").cost, 4);
     assert.deepEqual(Research.techById("nets").prereqs, ["fishing", "basic_furniture"]);
-    assert.equal(Research.techById("hafting").cost, 2);
+    assert.equal(Research.techById("hafting").cost, 3);
 });
 
 test("era shapes include chalcolithic trapezoid and mesolithic rect", () => {
@@ -916,6 +1052,10 @@ test("new settlements are Paleolithic and fog later ages", () => {
     assert.equal(Research.techFogged(s, "writing"), true);
     assert.equal(Research.canUnlock(s, "agriculture", 99), false);
     assert.equal(Research.unlockBlockedReason(s, "agriculture", 99), Research.FOG_COPY);
+    assert.equal(
+        Research.FOG_TIP,
+        "Advance tech level by:\nA: Research 50% of the next level's tech\nB: Research all tech at the current level"
+    );
     const rows = Research.ageBreakdown(s);
     assert.deepEqual(rows.map((r) => r.era), ["Paleolithic", "Mesolithic"]);
     assert.equal(Research.eraIcon("Paleolithic"), "campfire");
@@ -932,13 +1072,12 @@ test("new settlements are Paleolithic and fog later ages", () => {
 test("age advances at ceil 50% of an era or 100% of the previous", () => {
     const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
     const meso = Research.techsInEra("Mesolithic");
-    assert.equal(meso.length, 6);
+    assert.equal(meso.length, 9);
     const need = Math.ceil(meso.length * 0.5);
-    assert.equal(need, 3);
-    Research.unlock(s, meso[0].id);
-    Research.unlock(s, meso[1].id);
+    assert.equal(need, 5);
+    for (let i = 0; i < need - 1; i++) Research.unlock(s, meso[i].id);
     assert.equal(Research.currentAge(s), "Paleolithic");
-    Research.unlock(s, meso[2].id);
+    Research.unlock(s, meso[need - 1].id);
     assert.equal(Research.currentAge(s), "Mesolithic");
     assert.equal(Research.eraVisible(s, "Neolithic"), true);
     assert.equal(Research.techFogged(s, "agriculture"), false);
@@ -969,6 +1108,24 @@ test("tally stick recipe is gated on Counting and carves bone with a knife", () 
     assert.equal(Research.recipeUnlocked("tally_stick", null), false);
     Research.unlock(s, "counting");
     assert.equal(Research.recipeUnlocked("tally_stick", s), true);
+});
+
+test("digging stick recipe is gated on Digging and needs knife or scraper", () => {
+    const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    const item = DataStore.getItem("digging_stick");
+    assert.ok(item);
+    assert.equal(item.maxStack, 1);
+    assert.equal(item.weight, 0.9);
+    assert.equal(item.weightFixed, true);
+    assert.equal(item.digPower, 0.05);
+    assert.equal(item.recipe.log, 1);
+    assert.equal(item.recipe.REQUIRE_THING, "rock");
+    assert.deepEqual(item.recipe.REQUIRE_TOOL.toolClass, ["knife", "scraper"]);
+    assert.equal(item.recipe.REQUIRE_TOOL.wear, 5);
+    assert.equal(Research.recipeUnlocked("digging_stick", s), false);
+    assert.equal(Research.recipeUnlocked("digging_stick", null), false);
+    Research.unlock(s, "digging");
+    assert.equal(Research.recipeUnlocked("digging_stick", s), true);
 });
 
 test("tally stick multiplies a circle's paintings by 1.5", () => {
@@ -1013,3 +1170,71 @@ test("uninstalling a tally stick is blocked when spent would exceed remaining po
     assert.equal(Research.hasTally(a), false);
     assert.equal(Research.circlePoints(a), 3);
 });
+
+test("new settlement does not store techs until used as a holder", () => {
+    const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    assert.equal(s.techs, undefined);
+});
+
+test("adoptSettlementTechs unions camp techs onto the player and drops camp techs", () => {
+    const player = { id: "p1" };
+    const a = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    const b = Settlement.createSettlement({ x: 40, y: 0, ownerId: "p1" });
+    Research.unlock(a, "hafting");
+    Research.unlock(b, "basic_furniture");
+    const spent = Research.adoptSettlementTechs(player, [a, b]);
+    assert.equal(Research.hasTech(player, "hafting"), true);
+    assert.equal(Research.hasTech(player, "basic_furniture"), true);
+    assert.equal(Research.hasTech(player, "painting"), true);
+    assert.equal(a.techs, undefined);
+    assert.equal(b.techs, undefined);
+    assert.equal(spent, Research.techById("hafting").cost + Research.techById("basic_furniture").cost);
+});
+
+test("pointsBreakdown extra.spent overrides holder spentPoints", () => {
+    const s = {};
+    Research.unlock(s, "basic_furniture");
+    const circle = { id: "painting_circle", uid: "pool", painted: 6 };
+    Research.ensureEntry(circle);
+    const fromHolder = Research.pointsBreakdown([circle], { settle: s });
+    const fromLedger = Research.pointsBreakdown([circle], { spent: 0 });
+    assert.equal(fromHolder.spent, 2);
+    assert.equal(fromLedger.spent, 0);
+    assert.equal(fromLedger.total, 6);
+    assert.equal(Research.canRemoveCircle(s, [circle], circle, { spent: 0 }), true);
+    assert.equal(Research.canRemoveCircle(s, [circle], circle, { spent: 8 }), false);
+});
+
+test("new-world ledger spend stays 0 while known techs pull the total below 0", () => {
+    const player = { id: "p1" };
+    Research.unlock(player, "basic_furniture");
+    const cost = Research.spentPoints(player);
+    const empty = Research.pointsBreakdown([], { spent: 0, settle: player });
+    assert.equal(empty.spent, cost);
+    assert.equal(empty.available, 0);
+    assert.equal(empty.total, -cost);
+    assert.equal(Research.formatPoints(empty.total), "-2");
+    assert.equal(Research.pointsTip(empty), "Paintings  0\nTallies  0\nTokens  0\nBooks  0\nResearch  -2");
+    assert.equal(Research.canUnlock(player, "herbalism", empty.available), false);
+    const circle = { id: "painting_circle", uid: "catch-up", painted: 2 };
+    Research.ensureEntry(circle);
+    const withPaint = Research.pointsBreakdown([circle], { spent: 0, settle: player });
+    assert.equal(withPaint.spent, cost);
+    assert.equal(withPaint.available, 2);
+    assert.equal(withPaint.total, 0);
+    assert.equal(Research.canUnlock(player, "herbalism", withPaint.available), true);
+    const overspent = Research.pointsBreakdown([circle], { spent: 5 });
+    assert.equal(overspent.total, -3);
+    assert.equal(overspent.available, -3);
+    assert.equal(Research.formatPoints(overspent.total), "-3");
+});
+
+test("known techs stay unlocked with 0 world points", () => {
+    const player = { id: "p1" };
+    Research.unlock(player, "basic_furniture");
+    assert.equal(Research.recipeUnlocked("stick_frame", player), true);
+    const pts = Research.pointsBreakdown([], { spent: 0 });
+    assert.equal(pts.total, 0);
+    assert.equal(Research.canUnlock(player, "herbalism", pts.available ?? pts.total), false);
+});
+

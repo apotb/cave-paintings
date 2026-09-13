@@ -210,6 +210,8 @@ class SceneBase extends Phaser.Scene {
             "bone",
             "stick",
             "log",
+            "digging_stick",
+            "clay",
             "lean_to",
             "painting_circle",
             "tally_stick"

@@ -99,7 +99,9 @@ const CharacterStore = (() => {
             lastPlayedAt: 0,
             party: [],
             controlId: null,
-            leaderDead: false
+            leaderDead: false,
+            techs: {},
+            techGrantRev: 0
         };
     }
 
@@ -127,6 +129,15 @@ const CharacterStore = (() => {
     function cloneOverflow(arr) {
         if (!Array.isArray(arr)) return [];
         return arr.map(cloneStack);
+    }
+
+    function cloneTechs(raw) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+        const out = {};
+        for (const [k, v] of Object.entries(raw)) {
+            if (v) out[String(k)] = true;
+        }
+        return out;
     }
 
     function cloneEquipment(eq) {
@@ -340,7 +351,9 @@ const CharacterStore = (() => {
             controlId: character.controlId || character.id,
             leaderDead: !!character.leaderDead,
             lastSleep: character.lastSleep || null,
-            resting: !!character.resting
+            resting: !!character.resting,
+            techs: cloneTechs(character.techs),
+            techGrantRev: Math.max(0, Math.floor(Number(character.techGrantRev) || 0))
         };
         normalizeCharacterSpoil(snap);
         return snap;
@@ -381,6 +394,12 @@ const CharacterStore = (() => {
             next.lastSleep = you.lastSleep || null;
         }
         if (typeof you.resting === "boolean") next.resting = !!you.resting;
+        if (you.techs && typeof you.techs === "object" && !Array.isArray(you.techs)) {
+            next.techs = cloneTechs(you.techs);
+        }
+        if (you.techGrantRev != null) {
+            next.techGrantRev = Math.max(0, Math.floor(Number(you.techGrantRev) || 0));
+        }
         next.updatedAt = Date.now();
         next.lastPlayedAt = next.updatedAt;
         normalizeCharacterSpoil(next);
@@ -423,7 +442,9 @@ const CharacterStore = (() => {
             controlId: raw.controlId || null,
             leaderDead: !!raw.leaderDead,
             lastSleep: raw.lastSleep || null,
-            resting: !!raw.resting
+            resting: !!raw.resting,
+            techs: cloneTechs(raw.techs),
+            techGrantRev: Math.max(0, Math.floor(Number(raw.techGrantRev) || 0))
         });
         // Always new id on import so we don't clobber an existing char
         c.id = uuid();

@@ -333,6 +333,202 @@ test("dedicated settler chops a nearby tree", () => {
     assert.match(pub.activity || "", /Chopping/i);
 });
 
+test("gather settler digs clay with an existing stick and does not craft one", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1200,
+        inventory: [
+            { id: "digging_stick", quantity: 1, durability: 50 },
+            { id: "log", quantity: 1 },
+            { id: "stone_tool", quantity: 1, toolClass: "knife", knapDamage: 4 },
+            null,
+            null
+        ]
+    });
+    rec.hotbarIndex = 0;
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0 };
+    assert.equal(settle.stock.clay, 25);
+    settle.stock.stick = 0;
+    settle.stock.leaf = 0;
+    Research.unlock(pawn, "digging");
+    const chunk = originChunk(world);
+    chunk.things.push({ uid: "rock-dig", id: "rock", x: rec.x - 24, y: rec.y });
+    const patch = { uid: "clay-g", id: "clay_patch", x: rec.x + 40, y: rec.y, digProgress: 0 };
+    chunk.things.push(patch);
+    let dug = false;
+    for (let i = 0; i < 200; i++) {
+        world.tick(50);
+        if ((Number(patch.digProgress) || 0) > 0) {
+            dug = true;
+            break;
+        }
+    }
+    assert.equal(dug, true, "gather settler should dig an existing clay patch");
+    assert.equal(
+        rec.inventory.filter((s) => s?.id === "digging_stick").length,
+        1,
+        "settler must not craft a second digging stick"
+    );
+    const pile = chunk.drops.find((d) => d.id === "clay");
+    assert.ok(pile, "clay should drop on the ground");
+});
+
+test("gather settler without a digging stick does not craft one", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1200,
+        inventory: [
+            { id: "log", quantity: 1 },
+            { id: "stone_tool", quantity: 1, toolClass: "knife", knapDamage: 4 },
+            null, null, null
+        ]
+    });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0 };
+    Research.unlock(pawn, "digging");
+    const chunk = originChunk(world);
+    chunk.things.push({ uid: "rock-nocraft", id: "rock", x: rec.x, y: rec.y });
+    chunk.things.push({ uid: "clay-nocraft", id: "clay_patch", x: rec.x + 24, y: rec.y });
+    for (let i = 0; i < 40; i++) world.tick(50);
+    assert.equal(
+        rec.inventory.some((s) => s?.id === "digging_stick"),
+        false
+    );
+    assert.equal(Number(chunk.things.find((t) => t.uid === "clay-nocraft")?.digProgress) || 0, 0);
+});
+
+test("two gatherers may share one clay patch", () => {
+    const patch = { uid: "clay-share", id: "clay_patch", x: 48, y: 32 };
+    const planA = Settlement.planWork({
+        kc: 1200,
+        jobs: { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0, research: 0 },
+        digThing: patch,
+        canEat: false
+    });
+    const planB = Settlement.planWork({
+        kc: 1200,
+        jobs: { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0, research: 0 },
+        digThing: patch,
+        canEat: false
+    });
+    assert.equal(planA.type, "dig");
+    assert.equal(planB.type, "dig");
+    assert.equal(planA.target, patch);
+    assert.equal(planB.target, patch);
+});
+
+test("gather settler leaves Digging clay when the digging stick breaks", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [null, null, null, null, null]
+    });
+    rec.kc = 1600;
+    rec.hotbarIndex = 0;
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0, research: 0 };
+    Research.unlock(pawn, "digging");
+    Research.unlock(settle, "digging");
+    const chunk = originChunk(world);
+    const patch = {
+        uid: "clay-broke",
+        id: "clay_patch",
+        x: rec.x + 16,
+        y: rec.y,
+        digProgress: 0.4,
+        digTaken: 10
+    };
+    chunk.things.push(patch);
+    rec._workHold = true;
+    rec._busyJob = { type: "dig", target: patch };
+    rec._settlerScan = { digThing: patch };
+    rec._settlerAct = "Digging clay";
+    if (rec.creature) rec.creature._settlerAct = "Digging clay";
+    for (let i = 0; i < 30; i++) world.tick(50);
+    assert.notEqual(rec._busyJob?.type, "dig", "dig hold should drop without a stick");
+    assert.notEqual(rec._settlerAct, "Digging clay");
+});
+
+test("gather settler does not dig clay past the stock target", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "digging_stick", quantity: 1, durability: 50 },
+            null, null, null, null
+        ]
+    });
+    rec.kc = 1600;
+    rec.hotbarIndex = 0;
+    settle.stock = Settlement.normalizeStock({ clay: 4, stick: 0, leaf: 0, log: 0 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0, research: 0 };
+    Research.unlock(pawn, "digging");
+    Research.unlock(settle, "digging");
+    const chunk = originChunk(world);
+    chunk.drops.push({ uid: "clay-cap", id: "clay", quantity: 4, x: rec.x, y: rec.y });
+    const patch = { uid: "clay-stock", id: "clay_patch", x: rec.x + 24, y: rec.y, digProgress: 0 };
+    chunk.things.push(patch);
+    for (let i = 0; i < 60; i++) world.tick(50);
+    assert.equal(Number(patch.digProgress) || 0, 0);
+    assert.notEqual(rec._settlerAct, "Digging clay");
+});
+
+test("gather settler counts carried clay toward the stock target", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "digging_stick", quantity: 1, durability: 50 },
+            { id: "clay", quantity: 25 },
+            null, null, null
+        ]
+    });
+    rec.kc = 1600;
+    rec.hotbarIndex = 0;
+    settle.stock = Settlement.normalizeStock({ clay: 25, stick: 0, leaf: 0, log: 0 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0, research: 0 };
+    Research.unlock(pawn, "digging");
+    Research.unlock(settle, "digging");
+    const chunk = originChunk(world);
+    const patch = { uid: "clay-haul", id: "clay_patch", x: rec.x + 24, y: rec.y, digProgress: 0 };
+    chunk.things.push(patch);
+    for (let i = 0; i < 60; i++) world.tick(50);
+    assert.equal(Number(patch.digProgress) || 0, 0, "clay in a settler's pockets should cap digging");
+    assert.notEqual(rec._settlerAct, "Digging clay");
+});
+
+test("gather settler stops digging once clay stock is already full", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "digging_stick", quantity: 1, durability: 50 },
+            null, null, null, null
+        ]
+    });
+    rec.kc = 1600;
+    rec.hotbarIndex = 0;
+    settle.stock = Settlement.normalizeStock({ clay: 25, stick: 0, leaf: 0, log: 0 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0, research: 0 };
+    Research.unlock(pawn, "digging");
+    Research.unlock(settle, "digging");
+    const basket = addBasket(world, settle, rec.x, rec.y, "clay-full");
+    basket.slots[0] = { id: "clay", quantity: 25 };
+    const chunk = originChunk(world);
+    const patch = {
+        uid: "clay-mid",
+        id: "clay_patch",
+        x: rec.x + 16,
+        y: rec.y,
+        digProgress: 0.4,
+        digTaken: 10
+    };
+    chunk.things.push(patch);
+    rec._workHold = true;
+    rec._busyJob = { type: "dig", target: patch };
+    rec._settlerScan = { digThing: patch };
+    rec._settlerAct = "Digging clay";
+    if (rec.creature) rec.creature._settlerAct = "Digging clay";
+    for (let i = 0; i < 20; i++) world.tick(50);
+    assert.notEqual(rec._busyJob?.type, "dig");
+    assert.notEqual(rec._settlerAct, "Digging clay");
+    assert.equal(Number(patch.digProgress), 0.4);
+});
+
 test("dedicated settler stops chopping as soon as chop is turned off", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {
@@ -1036,7 +1232,7 @@ test("dedicated settler loads a drying rack from a basket for smoke leather", ()
     basket.slots[1] = { id: "deer_hide_brained", quantity: 1 };
     const fire = addLitFire(world, settle, rec);
     fire.catalyst = null;
-    Research.unlock(settle, "smoking");
+    Research.unlock(pawn, "smoking");
     Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
     workOnce(world, rec);
     workOnce(world, rec);
@@ -1055,7 +1251,7 @@ test("dedicated settler smokes brained boar hide even when a roast bill is first
     basket.slots[1] = { id: "boar_hide_brained", quantity: 1 };
     const fire = addLitFire(world, settle, rec);
     fire.catalyst = null;
-    Research.unlock(settle, "smoking");
+    Research.unlock(pawn, "smoking");
     Settlement.addBill(settle, fire.uid, { recipeId: "roast", mode: "forever", paused: false });
     Settlement.addBill(settle, fire.uid, {
         recipeId: "smoke",
@@ -1079,7 +1275,7 @@ test("dedicated settler smokes leather above roast even with food already on the
     const fire = addLitFire(world, settle, rec);
     fire.cook = { id: "apple", quantity: 1 };
     fire.catalystReserved = true;
-    Research.unlock(settle, "smoking");
+    Research.unlock(pawn, "smoking");
     Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
     Settlement.addBill(settle, fire.uid, { recipeId: "roast", mode: "forever", paused: false });
     rec._busyJob = { type: "cook", target: { fire, bill: Settlement.billsOf(settle, fire.uid)[1] } };
@@ -1099,7 +1295,7 @@ test("dedicated settler takes a drying rack from a basket when the hide is still
     hangRack.slots[0] = { id: "deer_hide_brained", quantity: 1 };
     const fire = addLitFire(world, settle, rec);
     fire.catalyst = null;
-    Research.unlock(settle, "smoking");
+    Research.unlock(pawn, "smoking");
     Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
     for (let i = 0; i < 8; i++) workOnce(world, rec);
     assert.equal(fire.catalyst?.id, "drying_rack", "should take the spare rack from storage");
@@ -1116,7 +1312,7 @@ test("dedicated settler does not pick up an empty placed drying rack to smoke le
     addStation(world, settle, "drying_rack", rec.x, rec.y, "empty-rack");
     const fire = addLitFire(world, settle, rec);
     fire.catalyst = null;
-    Research.unlock(settle, "smoking");
+    Research.unlock(pawn, "smoking");
     Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
     for (let i = 0; i < 8; i++) workOnce(world, rec);
     assert.notEqual(fire.catalyst?.id, "drying_rack");
@@ -1132,7 +1328,7 @@ test("cook-only settler does not smoke leather", () => {
     basket.slots[1] = { id: "deer_hide_brained", quantity: 1 };
     const fire = addLitFire(world, settle, rec);
     fire.catalyst = null;
-    Research.unlock(settle, "smoking");
+    Research.unlock(pawn, "smoking");
     Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
     for (let i = 0; i < 8; i++) workOnce(world, rec);
     assert.equal(fire.catalyst, null);
@@ -1497,8 +1693,8 @@ test("dedicated settler crafts at a bench over craftSeconds", () => {
             null, null
         ]
     });
-    Research.unlock(settle, "basic_furniture");
-    Research.unlock(settle, "skinworking");
+    Research.unlock(pawn, "basic_furniture");
+    Research.unlock(pawn, "skinworking");
     const bench = addBenchInFront(world, settle, rec, "bench1");
     Settlement.addBill(settle, bench.uid, { recipeId: "hide_pouch", mode: "forever", paused: false });
     workOnce(world, rec);
@@ -1527,8 +1723,8 @@ test("dedicated settler stands on the bench interact tile and faces north", () =
             null, null
         ]
     });
-    Research.unlock(settle, "basic_furniture");
-    Research.unlock(settle, "skinworking");
+    Research.unlock(pawn, "basic_furniture");
+    Research.unlock(pawn, "skinworking");
     const bench = addStation(world, settle, "skinworking_bench", rec.x, rec.y, "bench-spot");
     const def = world._thingDef("skinworking_bench");
     const stand = Place.interactWorldPos(bench, 16, def);
@@ -1575,8 +1771,8 @@ test("dedicated settler does not craft an extra item after a count-1 bench bill"
             null, null
         ]
     });
-    Research.unlock(settle, "basic_furniture");
-    Research.unlock(settle, "skinworking");
+    Research.unlock(pawn, "basic_furniture");
+    Research.unlock(pawn, "skinworking");
     const bench = addBenchInFront(world, settle, rec, "bench-count");
     Settlement.addBill(settle, bench.uid, {
         recipeId: "hide_pouch",
@@ -1607,8 +1803,8 @@ test("dedicated settler idles after a bench bill when pockets are full and stora
             { id: "pebble", quantity: 1 }
         ]
     });
-    Research.unlock(settle, "basic_furniture");
-    Research.unlock(settle, "skinworking");
+    Research.unlock(pawn, "basic_furniture");
+    Research.unlock(pawn, "skinworking");
     settle.jobs[rec.id].gather = 0;
     settle.jobs[rec.id].chop = 0;
     const bench = addBenchInFront(world, settle, rec, "bench-full");
@@ -2079,7 +2275,7 @@ test("tailor walks around a lean-to to fetch brained hides for smoking", () => {
         "rack-smoke"
     );
     rack.slots[0] = { id: "deer_hide_brained", quantity: 1 };
-    Research.unlock(settle, "smoking");
+    Research.unlock(pawn, "smoking");
     Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
     let loaded = false;
     let northOfLean = false;
@@ -3270,7 +3466,7 @@ test("settler research installs a tally stick from a basket before painting", ()
         kc: 1600,
         inventory: [null, null, null, null, null]
     });
-    Research.unlock(settle, "counting");
+    Research.unlock(pawn, "counting");
     settle.jobs[rec.id] = {
         doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
     };
