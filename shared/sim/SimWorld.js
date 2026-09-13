@@ -11124,6 +11124,26 @@ class SimWorld {
         return keys;
     }
 
+    /**
+     * Chunk keys to stream to a session: full view around the control pawn,
+     * 1-chunk pad around the rest of the party (matches _loadPlayerInterest).
+     */
+    viewChunkKeys(p) {
+        const keys = new Set();
+        if (!p) return keys;
+        const add = (wx, wy, r) => {
+            if (!Number.isFinite(wx) || !Number.isFinite(wy)) return;
+            for (const k of this.interestChunkKeys(wx, wy, r)) keys.add(k);
+        };
+        const control = this._actionPawn(p, { pawnId: p.controlId || p.id }) || p;
+        add(control.x, control.y, this.interestRadius(p));
+        add(p.x, p.y, this._pawnInterestRadius(p, p));
+        for (const m of p.party || []) {
+            add(m.x, m.y, this._pawnInterestRadius(p, m));
+        }
+        return keys;
+    }
+
     _poseMotion(rec, session = null) {
         if (rec?.dead || rec?.prone || rec?._resting || rec?.creature?._prone || rec?.creature?._resting) {
             return { vx: 0, vy: 0, moving: false };

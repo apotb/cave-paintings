@@ -10059,7 +10059,8 @@ class SceneMain extends SceneBase {
         const ocy = Math.floor(wy / px);
         const r = Math.max(0, radius | 0);
         if (this.simAuth() && Number.isFinite(wx) && Number.isFinite(wy)) {
-            this._netSendMove?.(true);
+            if (this.net?.ensureChunksAround) this.net.ensureChunksAround(wx, wy, r);
+            else this._netSendMove?.(true);
         }
         const cells = [];
         for (let y = ocy - r; y <= ocy + r; y++) {
@@ -10090,7 +10091,10 @@ class SceneMain extends SceneBase {
                 }
             }
             if (!waiting && cells.every((c) => this.chunks[c.key]?.isLoaded)) return;
-            if (this.simAuth()) this._netSendMove?.(true);
+            if (this.simAuth()) {
+                if (this.net?.ensureChunksAround) this.net.ensureChunksAround(wx, wy, r);
+                else this._netSendMove?.(true);
+            }
             await this._yieldWorldBoot();
         }
     }
