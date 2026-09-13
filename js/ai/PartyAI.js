@@ -1413,8 +1413,7 @@ class PartyAI {
             this._workScanMs = 0;
             if (settle) this._pruneWorkClaims(settle);
             const patients = settle ? this._settlerPatients(settle) : [];
-            const doctorOn = !!(S && jobs && S.enabledJobs(jobs).includes("doctor"));
-            const keepBandage = !!(doctorOn && patients.length);
+            const keepBandage = false;
             const circle = settle ? this._researchCircle(settle) : null;
             const pigmentKeep = this._researchPigmentKeep(circle, settle);
             const keepOpts = { keepBandage, ...pigmentKeep };
@@ -1820,6 +1819,8 @@ class PartyAI {
     _dropPatient(patient, skip = true) {
         const key = this._pawnWorkKey(patient, "tend");
         if (skip) this._skipJob(key);
+        const settle = this._settlement();
+        if (settle) this._medReserves(settle).release(this._workerId());
         if (this._workScan?.patients) {
             this._workScan.patients = this._workScan.patients.filter((p) => p !== patient);
             if (!this._workScan.patients.length) this._workScan.keepBandage = false;
@@ -1839,14 +1840,16 @@ class PartyAI {
         const scene = this.pawn.scene;
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         const ts = scene.tileSize || 16;
-        if (!this._findStack(settle, (s) => !!scene.getItem?.(s.id)?.bandage)) return [];
         const out = [];
         const consider = (p) => {
             if (!p || p === this.pawn || p.isBodyDead?.()) return;
             if (!S.inRange(settle, p.x, p.y, ts)) return;
             const tendKey = this._pawnWorkKey(p, "tend");
             if (this._claimedByOther(settle, tendKey) || this._jobSkipped(tendKey)) return;
-            if (this._patientNeedsTend(p)) out.push(p);
+            if (!this._patientNeedsTend(p)) return;
+            const sources = this._listMedicineSources(settle, p);
+            if (!sources.some((s) => this._sourceAvail(settle, s) > 0)) return;
+            out.push(p);
         };
         for (const p of scene.settlementSys?.settlersOf(settle.id) || []) consider(p);
         for (const p of scene.party || []) consider(p);
@@ -1892,8 +1895,20 @@ class PartyAI {
 
     _fuelSources(settle) {
         const sources = [{ slots: this.pawn.inventory, at: this.pawn }];
+        const reserves = this._medReserves(settle);
+        const pawnId = this._workerId();
         for (const b of this.pawn.scene.settlementSys?.addedBaskets(settle) || []) {
-            sources.push({ slots: b.slots, at: b, entry: b.entry || b });
+            const uid = b.uid || b.entry?.uid;
+            const raw = b.slots || [];
+            const slots = raw.map((s, i) => {
+                if (!s) return s;
+                if (!uid) return s;
+                const avail = reserves.available(`basket:${uid}:${i}`, s.quantity, pawnId);
+                if (!(avail > 0)) return null;
+                if (avail === (Number(s.quantity) || 1)) return s;
+                return { ...s, quantity: avail };
+            });
+            sources.push({ slots, at: b, entry: b.entry || b });
         }
         return sources;
     }
@@ -3258,13 +3273,18 @@ class PartyAI {
             + S.countPawnStock(sys.settlersOf(settle.id), itemId);
     }
 
-    _haulTakeQty(settle, stack) {
+    _haulTakeQty(settle, stack, drop = null) {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         if (!S?.haulTakeQty || !stack?.id) return Math.max(1, Number(stack?.quantity) || 1);
+        let qty = Math.max(1, Number(stack.quantity) || 1);
+        if (drop) {
+            qty = this._medReserves(settle).available(this._dropKey(drop), qty, this._workerId());
+            if (!(qty > 0)) return 0;
+        }
         return S.haulTakeQty(
             this._countStored(settle, stack.id),
             S.stockTarget(settle, stack.id),
-            stack.quantity
+            qty
         );
     }
 
@@ -3280,7 +3300,7 @@ class PartyAI {
             const held = drops.find((d) => d?.active && this._dropKey(d) === mine);
             if (held && this._settlerCanTakeDrop(held)) {
                 const stack = this._dropAsStack(held);
-                if (stack && this._haulTakeQty(settle, stack) > 0 && this._pickHaulBasket(settle, stack)) return held;
+                if (stack && this._haulTakeQty(settle, stack, held) > 0 && this._pickHaulBasket(settle, stack)) return held;
             }
         }
         for (const d of drops) {
@@ -3290,7 +3310,7 @@ class PartyAI {
             if (this._jobSkipped(this._dropKey(d))) continue;
             if (!this._settlerCanTakeDrop(d)) continue;
             const stack = this._dropAsStack(d);
-            if (!stack || this._haulTakeQty(settle, stack) <= 0 || !this._pickHaulBasket(settle, stack)) continue;
+            if (!stack || this._haulTakeQty(settle, stack, d) <= 0 || !this._pickHaulBasket(settle, stack)) continue;
             const dist = Math.hypot(this.pawn.x - d.x, this.pawn.y - d.y);
             if (dist < bestD) {
                 bestD = dist;
@@ -3511,7 +3531,7 @@ class PartyAI {
             this._depositKeepGear(settle, !!this._workScan?.keepBandage);
         }
         const stack = this._dropAsStack(drop);
-        const take = stack ? this._haulTakeQty(settle, stack) : 0;
+        const take = stack ? this._haulTakeQty(settle, stack, drop) : 0;
         const basket = take > 0 ? this._pickHaulBasket(settle, stack) : null;
         if (!this._settlerCanTakeDrop(drop) || !stack || !basket) {
             this._failHaul(settle, key);
@@ -3573,6 +3593,142 @@ class PartyAI {
         if (!this._haulDest) this._endWorkHold();
     }
 
+    _medReserves(settle) {
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!S?.medicineReservesFor) return { available: (_k, q) => q, set() {}, reduce() {}, release() {} };
+        return S.medicineReservesFor(this.pawn.scene, settle?.id);
+    }
+
+    _medicineKey(found) {
+        if (!found) return null;
+        if (found.kind === "drop" && found.drop) return this._dropKey(found.drop);
+        const uid = found.entry?.uid || found.at?.uid || found.at?.entry?.uid;
+        if (found.kind === "basket" && uid != null) return `basket:${uid}:${found.index}`;
+        return null;
+    }
+
+    _sourceAvail(settle, found) {
+        const stack = found?.slots?.[found.index] || found?.stack;
+        const qty = Math.max(0, Math.floor(Number(stack?.quantity) || 0));
+        if (!(qty > 0)) return 0;
+        const key = this._medicineKey(found);
+        if (!key) return qty;
+        if (found.kind === "drop" && found.drop && this._claimedByOther(settle, this._dropKey(found.drop))) {
+            return 0;
+        }
+        return this._medReserves(settle).available(key, qty, this._workerId());
+    }
+
+    _listMedicineSources(settle, patient) {
+        const pawn = this.pawn;
+        const scene = pawn.scene;
+        const getItem = (id) => scene.getItem?.(id);
+        const out = [];
+        const addPawn = (who, kind) => {
+            if (!who) return;
+            const add = (slots, bag) => {
+                for (let i = 0; i < (slots || []).length; i++) {
+                    const s = slots[i];
+                    if (!s?.id || !getItem(s.id)?.bandage) continue;
+                    out.push({
+                        slots, index: i, at: who, kind, bag, stack: s, id: s.id, entry: null, drop: null
+                    });
+                }
+            };
+            add(who.inventory, "hotbar");
+            add(who.overflow, "overflow");
+        };
+        addPawn(pawn, "inv");
+        if (patient && patient !== pawn) addPawn(patient, "patient");
+        const sys = scene.settlementSys;
+        const baskets = (sys?.addedBaskets(settle) || []).slice().sort((a, b) => {
+            const da = Math.hypot(pawn.x - (a.x || 0), pawn.y - (a.y || 0));
+            const db = Math.hypot(pawn.x - (b.x || 0), pawn.y - (b.y || 0));
+            return da - db;
+        });
+        for (const b of baskets) {
+            const slots = b.slots || [];
+            const spr = (b.uid && sys.findThingByUid?.(b.uid)) || b;
+            for (let i = 0; i < slots.length; i++) {
+                const s = slots[i];
+                if (!s?.id || !getItem(s.id)?.bandage) continue;
+                out.push({
+                    slots, index: i, at: spr, kind: "basket", bag: "basket",
+                    stack: s, id: s.id, entry: b.entry || b, drop: null
+                });
+            }
+        }
+        const ts = scene.tileSize || 16;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        const drops = (sys?.dropsInRange?.(settle) || [])
+            .filter((d) => d?.active && d.id && getItem(d.id)?.bandage)
+            .sort((a, b) => Math.hypot(pawn.x - a.x, pawn.y - a.y) - Math.hypot(pawn.x - b.x, pawn.y - b.y));
+        for (const d of drops) {
+            if (S && !S.inRange(settle, d.x, d.y, ts)) continue;
+            if (this._claimedByOther(settle, this._dropKey(d))) continue;
+            const stack = this._dropAsStack(d);
+            out.push({
+                slots: [stack], index: 0, at: d, kind: "drop", bag: "drop",
+                stack, id: d.id, entry: null, drop: d
+            });
+        }
+        return out;
+    }
+
+    _assignMedicineTakes(settle, sources, itemId, wantQty) {
+        let left = Math.max(0, Math.floor(Number(wantQty) || 0));
+        const takes = [];
+        if (!(left > 0) || !itemId) return takes;
+        for (const src of sources) {
+            if (left <= 0) break;
+            if (src.id !== itemId) continue;
+            const avail = this._sourceAvail(settle, src);
+            if (avail <= 0) continue;
+            const n = Math.min(avail, left);
+            takes.push({ ...src, qty: n, key: this._medicineKey(src) });
+            left -= n;
+        }
+        return takes;
+    }
+
+    _heldBandageCount(itemId) {
+        let n = 0;
+        for (const s of this.pawn.inventory || []) {
+            if (s?.id === itemId) n += Math.max(1, Number(s.quantity) || 1);
+        }
+        for (const s of this.pawn.overflow || []) {
+            if (s?.id === itemId) n += Math.max(1, Number(s.quantity) || 1);
+        }
+        return n;
+    }
+
+    _fetchMedicineTake(settle, take, ts, delta) {
+        const pawn = this.pawn;
+        if (!take || take.kind === "inv") return true;
+        const tendKey = this._pawnWorkKey(take.at, "tend");
+        if (take.kind === "drop") {
+            if (!this._goToDrop(take.drop, settle, this._dropKey(take.drop), ts, delta)) return false;
+            const took = typeof take.drop.tryPickup === "function"
+                ? take.drop.tryPickup(pawn, take.qty)
+                : !!take.drop.pickUpBy?.(pawn);
+            if (!took) return false;
+            if (take.key) this._medReserves(settle).reduce(this._workerId(), take.key, take.qty);
+            pawn.scene.settlementSys?.bumpWorkCache?.();
+            return true;
+        }
+        const walkKey = take.kind === "patient" ? tendKey : this._stashKey(take.entry || take.at);
+        if (!this._goOrAbort(take.at, settle, walkKey, ts, delta)) return false;
+        const piece = this._takeQty(take, take.qty);
+        if (!piece) return false;
+        if (!this._givePawn(piece)) {
+            this._restorePiece(take, piece);
+            return false;
+        }
+        if (take.key) this._medReserves(settle).reduce(this._workerId(), take.key, take.qty);
+        pawn.scene.settlementSys?.bumpWorkCache?.();
+        return true;
+    }
+
     _doDoctor(patient, settle, ts, delta) {
         const pawn = this.pawn;
         const scene = pawn.scene;
@@ -3584,30 +3740,68 @@ class PartyAI {
             this._halt(pawn);
             return;
         }
-        const found = this._findStack(settle, (s) => !!scene.getItem?.(s.id)?.bandage);
-        if (!found) {
-            if (this._workScan) {
-                this._workScan.patients = [];
-                this._workScan.keepBandage = false;
-            }
+        const anatomy = patient.anatomy;
+        if (!anatomy) {
+            this._dropPatient(patient, false);
             this._adoptClaim(settle, null);
             this._halt(pawn);
             return;
         }
-        if (found.at !== pawn) {
-            if (!this._goOrAbort(found.at, settle, tendKey, ts, delta)) {
-                if (this._jobSkipped(tendKey)) this._dropPatient(patient, false);
-                return;
+        const getItem = (id) => scene.getItem?.(id);
+        const poulticeMeta = getItem("poultice");
+        const cordMeta = getItem("leaf_cord");
+        const sources = this._listMedicineSources(settle, patient);
+        const poulticeHave = sources
+            .filter((s) => s.id === "poultice")
+            .reduce((n, s) => n + this._sourceAvail(settle, s), 0);
+        const plan = BodyHealing.planMedicineTakes(anatomy, poulticeHave, {
+            poulticeBatch: Number(poulticeMeta?.bandage?.batchSeverity) || 20,
+            cordBatch: Number(cordMeta?.bandage?.batchSeverity) || 0
+        });
+        const pTakes = this._assignMedicineTakes(settle, sources, "poultice", plan.poultice);
+        const cTakes = this._assignMedicineTakes(settle, sources, "leaf_cord", plan.cord);
+        const allTakes = pTakes.concat(cTakes);
+        const bestHeld = BodyHealing.pickBestBandage([
+            { slots: pawn.inventory || [], bag: "hotbar", source: pawn, at: pawn },
+            { slots: pawn.overflow || [], bag: "overflow", source: pawn, at: pawn }
+        ], getItem);
+        if (!allTakes.length && !bestHeld) {
+            if (this._workScan) {
+                this._workScan.patients = [];
+                this._workScan.keepBandage = false;
             }
-            this._depositKeepGear(settle, true);
-            if (!this._fetchStack(found, ts, 0)) {
-                this._dropPatient(patient);
-                this._adoptClaim(settle, null);
-                this._halt(pawn);
-            }
+            this._dropPatient(patient, false);
+            this._adoptClaim(settle, null);
+            this._halt(pawn);
             return;
         }
-        pawn.hotbarIndex = found.index;
+        this._medReserves(settle).set(
+            this._workerId(),
+            allTakes.filter((t) => t.key).map((t) => ({ key: t.key, qty: t.qty }))
+        );
+        const heldP = this._heldBandageCount("poultice");
+        const heldC = this._heldBandageCount("leaf_cord");
+        if (heldP < plan.poultice || heldC < plan.cord) {
+            const next = allTakes.find((t) => t.kind !== "inv");
+            if (next) {
+                if (!this._fetchMedicineTake(settle, next, ts, delta)) {
+                    if (this._jobSkipped(tendKey)) this._dropPatient(patient, false);
+                    return;
+                }
+                return;
+            }
+        }
+        const found = BodyHealing.pickBestBandage([
+            { slots: pawn.inventory || [], bag: "hotbar", source: pawn, at: pawn },
+            { slots: pawn.overflow || [], bag: "overflow", source: pawn, at: pawn }
+        ], getItem);
+        if (!found) {
+            this._dropPatient(patient);
+            this._adoptClaim(settle, null);
+            this._halt(pawn);
+            return;
+        }
+        if (found.bag === "hotbar") pawn.hotbarIndex = found.slot;
         const P = typeof Party !== "undefined" ? Party : null;
         const inRange = P?.inInteractRange
             ? P.inInteractRange(pawn, patient, ts)
@@ -3624,9 +3818,9 @@ class PartyAI {
         this._halt(pawn);
         if (pawn._tendChannel && !pawn._tendChannel.corpse) return;
         const started = pawn.beginTend?.(patient, {
-            slot: found.index,
-            bag: "hotbar",
-            sourcePawn: pawn,
+            slot: found.slot,
+            bag: found.bag,
+            sourcePawn: found.source || pawn,
             silent: true
         });
         if (!started) {
@@ -3841,13 +4035,20 @@ class PartyAI {
         if (FF?.findFuelTake) {
             const take = FF.findFuelTake(entry.fuelFilter, this._fuelSources(settle), entry, getItem);
             if (!take) return false;
-            const stack = take.slots[take.index];
+            const src = take.src;
+            const slots = (src?.entry && Array.isArray(src.entry.slots))
+                ? src.entry.slots
+                : (src?.at === this.pawn
+                    ? this.pawn.inventory
+                    : (src?.at && Array.isArray(src.at.slots) ? src.at.slots : take.slots));
+            const stack = slots?.[take.index];
+            if (!stack?.id) return false;
             stack.quantity = (Number(stack.quantity) || 1) - 1;
-            if (!(stack.quantity > 0)) take.slots[take.index] = null;
+            if (!(stack.quantity > 0)) slots[take.index] = null;
             const slot = FF.addFuelUnit(entry, take.id);
             if (slot < 0) {
                 stack.quantity = (Number(stack.quantity) || 0) + 1;
-                take.slots[take.index] = stack;
+                slots[take.index] = stack;
                 return false;
             }
             fire.setFuel?.(slot, entry.fuel[slot]);

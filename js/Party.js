@@ -2229,30 +2229,24 @@ class PartySystem {
 
     _pickBandage(tender, patient, selfOnly) {
         const scene = this.scene;
-        const skipHeld = scene.player && scene.hotbar
-            ? { pawn: scene.player, slot: scene.hotbar.activeIndex }
+        const player = scene.player;
+        const skipHeld = player && scene.hotbar
+            ? { pawn: player, slot: scene.hotbar.activeIndex }
             : null;
+        const allowHeld = !!(patient && player && (patient === player || patient.id === player.id));
         const pawns = selfOnly ? [tender] : [tender, patient];
+        const bags = [];
         const seen = new Set();
         for (const p of pawns) {
             if (!p || seen.has(p)) continue;
             seen.add(p);
-            const bags = [
-                { bag: "hotbar", slots: p.inventory || [] },
-                { bag: "overflow", slots: p.overflow || [] }
-            ];
-            for (const { bag, slots } of bags) {
-                for (let i = 0; i < slots.length; i++) {
-                    const stack = slots[i];
-                    if (!stack) continue;
-                    if (skipHeld && p === skipHeld.pawn && bag === "hotbar" && i === skipHeld.slot) continue;
-                    const meta = scene.getItem(stack.id);
-                    if (!meta?.bandage) continue;
-                    return { source: p, slot: i, bag, stack };
-                }
-            }
+            bags.push({ bag: "hotbar", slots: p.inventory || [], source: p, at: p });
+            bags.push({ bag: "overflow", slots: p.overflow || [], source: p, at: p });
         }
-        return null;
+        return BodyHealing.pickBestBandage(bags, (id) => scene.getItem(id), (bag, i) => {
+            if (!skipHeld || allowHeld) return false;
+            return bag.source === skipHeld.pawn && bag.bag === "hotbar" && i === skipHeld.slot;
+        });
     }
 
     _pickAutoTend(tender, opts = {}) {

@@ -4,7 +4,7 @@ Fishing -- will also open a tutorial tip to learn about fishing mechanics
 
 Schedule tab for settlement
 
-Assign tab for settlement -- manage weapons and apparel
+Assign tab for settlement -- manage weapons, apparel, medical policy
 
 Rock types -- more than pebble vs flint (obsidian, quartz, basalt, sandstone). Different knap feel / quality, some better for blades, some blunt for plant stuff. Later gate for tools a pebble shouldn't make.
 

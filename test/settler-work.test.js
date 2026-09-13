@@ -3502,3 +3502,335 @@ test("settler research installs a tally stick from a basket before painting", ()
     assert.equal(basket.slots.some((s) => s && s.id === "tally_stick"), false);
 });
 
+function qtyOf(slots, id) {
+    let n = 0;
+    for (const s of slots || []) {
+        if (s?.id === id) n += Math.max(1, Number(s.quantity) || 1);
+    }
+    return n;
+}
+
+function addHomeSettler(world, pawn, settle, opts = {}) {
+    const rec = world._settlerFromSnap({
+        id: opts.id || "settler2",
+        name: opts.name || "Other",
+        x: opts.x ?? pawn.x,
+        y: opts.y ?? pawn.y,
+        ownerId: pawn.id,
+        homeSettlementId: settle.id,
+        kc: opts.kc ?? 1600,
+        inventory: opts.inventory || [null, null, null, null, null]
+    });
+    settle.jobs = settle.jobs || {};
+    settle.jobs[rec.id] = opts.jobs || {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0
+    };
+    world.settlers.push(rec);
+    world._ensureSettlerCreature(rec);
+    return rec;
+}
+
+function injureCuts(creature, specs) {
+    for (const spec of specs) {
+        const part = creature.anatomy.part(spec.part) || creature.anatomy.core;
+        part.injure({
+            id: "cut",
+            severity: spec.severity ?? 8,
+            bleeding: true,
+            bleedRate: 0.06,
+            tended: false
+        });
+    }
+}
+
+function doctorOnly(settle, rec) {
+    settle.jobs[rec.id] = {
+        doctor: 1, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0
+    };
+}
+
+test("dedicated doctor takes two poultices for two large wounds, not the whole stack", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: doctor } = parkSettler(world, pawn, {
+        id: "doc",
+        inventory: [null, null, null, null, null]
+    });
+    doctor.kc = 1600;
+    doctorOnly(settle, doctor);
+    const patient = addHomeSettler(world, pawn, settle, { id: "pat", name: "Ugg", x: doctor.x, y: doctor.y });
+    injureCuts(world._ensureSettlerCreature(patient), [
+        { part: "Left Arm", severity: 20 },
+        { part: "Right Arm", severity: 20 }
+    ]);
+    const basket = addBasket(world, settle, doctor.x, doctor.y, "med");
+    basket.slots[0] = { id: "poultice", quantity: 10 };
+    workOnce(world, doctor);
+    assert.equal(qtyOf(doctor.inventory, "poultice"), 2);
+    assert.equal(qtyOf(basket.slots, "poultice"), 8);
+    workOnce(world, doctor);
+    assert.equal(doctor._workChannel?.kind, "tend");
+    assert.equal(doctor._workChannel?.itemId, "poultice");
+});
+
+test("dedicated doctor fills a poultice shortfall with cord from another basket", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: doctor } = parkSettler(world, pawn, {
+        id: "doc",
+        inventory: [null, null, null, null, null]
+    });
+    doctor.kc = 1600;
+    doctorOnly(settle, doctor);
+    const patient = addHomeSettler(world, pawn, settle, { id: "pat", name: "Ugg", x: doctor.x, y: doctor.y });
+    injureCuts(world._ensureSettlerCreature(patient), [
+        { part: "Left Arm", severity: 20 },
+        { part: "Right Arm", severity: 20 }
+    ]);
+    const a = addBasket(world, settle, doctor.x, doctor.y, "poul-a");
+    const b = addBasket(world, settle, doctor.x + 8, doctor.y, "cord-b");
+    a.slots[0] = { id: "poultice", quantity: 1 };
+    b.slots[0] = { id: "leaf_cord", quantity: 8 };
+    workOnce(world, doctor);
+    assert.equal(qtyOf(doctor.inventory, "poultice"), 1);
+    assert.equal(qtyOf(a.slots, "poultice"), 0);
+    assert.equal(qtyOf(doctor.inventory, "leaf_cord"), 0);
+    workOnce(world, doctor);
+    assert.equal(qtyOf(doctor.inventory, "poultice"), 1);
+    assert.equal(qtyOf(doctor.inventory, "leaf_cord"), 1);
+    assert.equal(qtyOf(b.slots, "leaf_cord"), 7);
+    workOnce(world, doctor);
+    assert.equal(doctor._workChannel?.kind, "tend");
+    assert.equal(doctor._workChannel?.itemId, "poultice");
+});
+
+test("dedicated doctor takes poultice from a basket with Medicine filtered off", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: doctor } = parkSettler(world, pawn, {
+        id: "doc",
+        inventory: [null, null, null, null, null]
+    });
+    doctor.kc = 1600;
+    doctorOnly(settle, doctor);
+    const patient = addHomeSettler(world, pawn, settle, { id: "pat", x: doctor.x, y: doctor.y });
+    injureCuts(world._ensureSettlerCreature(patient), [{ part: "Left Arm", severity: 8 }]);
+    const basket = addBasket(world, settle, doctor.x, doctor.y, "no-med");
+    basket.storageFilter = {
+        priority: "normal",
+        offCategories: ["medicine"]
+    };
+    basket.slots[0] = { id: "poultice", quantity: 3 };
+    workOnce(world, doctor);
+    assert.equal(qtyOf(doctor.inventory, "poultice"), 1);
+    assert.equal(qtyOf(basket.slots, "poultice"), 2);
+});
+
+test("dedicated doctor uses the patient's poultice before walking to a basket", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: doctor } = parkSettler(world, pawn, {
+        id: "doc",
+        inventory: [null, null, null, null, null]
+    });
+    doctor.kc = 1600;
+    doctorOnly(settle, doctor);
+    const patient = addHomeSettler(world, pawn, settle, {
+        id: "pat",
+        x: doctor.x,
+        y: doctor.y,
+        inventory: [{ id: "poultice", quantity: 1 }, null, null, null, null]
+    });
+    injureCuts(world._ensureSettlerCreature(patient), [{ part: "Left Arm", severity: 8 }]);
+    const basket = addBasket(world, settle, doctor.x + 96, doctor.y, "far-med");
+    basket.slots[0] = { id: "poultice", quantity: 4 };
+    workOnce(world, doctor);
+    assert.equal(qtyOf(patient.inventory, "poultice"), 0);
+    assert.equal(qtyOf(doctor.inventory, "poultice"), 1);
+    assert.equal(qtyOf(basket.slots, "poultice"), 4);
+    workOnce(world, doctor);
+    assert.equal(doctor._workChannel?.kind, "tend");
+});
+
+test("dedicated doctor does not take poultice from a third settler", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: doctor } = parkSettler(world, pawn, {
+        id: "doc",
+        inventory: [null, null, null, null, null]
+    });
+    doctor.kc = 1600;
+    doctorOnly(settle, doctor);
+    const patient = addHomeSettler(world, pawn, settle, { id: "pat", x: doctor.x, y: doctor.y });
+    injureCuts(world._ensureSettlerCreature(patient), [{ part: "Left Arm", severity: 8 }]);
+    const other = addHomeSettler(world, pawn, settle, {
+        id: "bystander",
+        x: doctor.x,
+        y: doctor.y,
+        inventory: [{ id: "poultice", quantity: 2 }, null, null, null, null]
+    });
+    workOnce(world, doctor);
+    assert.equal(qtyOf(other.inventory, "poultice"), 2);
+    assert.equal(qtyOf(doctor.inventory, "poultice"), 0);
+    assert.notEqual(doctor._workChannel?.kind, "tend");
+});
+
+test("dedicated doctor picks poultice off the ground after pockets and baskets", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: doctor } = parkSettler(world, pawn, {
+        id: "doc",
+        inventory: [null, null, null, null, null]
+    });
+    doctor.kc = 1600;
+    doctorOnly(settle, doctor);
+    const patient = addHomeSettler(world, pawn, settle, { id: "pat", x: doctor.x, y: doctor.y });
+    injureCuts(world._ensureSettlerCreature(patient), [{ part: "Left Arm", severity: 8 }]);
+    const chunk = originChunk(world);
+    chunk.drops.push({ uid: "poul-drop", id: "poultice", quantity: 2, x: doctor.x, y: doctor.y });
+    workOnce(world, doctor);
+    assert.equal(qtyOf(doctor.inventory, "poultice"), 1);
+    const left = chunk.drops.find((d) => d.uid === "poul-drop");
+    assert.equal(left?.quantity, 1);
+    workOnce(world, doctor);
+    assert.equal(doctor._workChannel?.kind, "tend");
+});
+
+test("dedicated doctor prefers the nearest basket of poultice", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: doctor } = parkSettler(world, pawn, {
+        id: "doc",
+        inventory: [null, null, null, null, null]
+    });
+    doctor.kc = 1600;
+    doctorOnly(settle, doctor);
+    const patient = addHomeSettler(world, pawn, settle, { id: "pat", x: doctor.x, y: doctor.y });
+    injureCuts(world._ensureSettlerCreature(patient), [{ part: "Left Arm", severity: 8 }]);
+    const nearB = addBasket(world, settle, doctor.x + 32, doctor.y, "near-poul");
+    const farB = addBasket(world, settle, doctor.x + 160, doctor.y, "far-poul");
+    nearB.slots[0] = { id: "poultice", quantity: 3 };
+    farB.slots[0] = { id: "poultice", quantity: 5 };
+    let took = false;
+    for (let i = 0; i < 400; i++) {
+        world.tick(16);
+        if (qtyOf(doctor.inventory, "poultice") > 0) {
+            took = true;
+            break;
+        }
+    }
+    assert.equal(took, true, "should fetch poultice from a basket");
+    assert.equal(qtyOf(nearB.slots, "poultice"), 2);
+    assert.equal(qtyOf(farB.slots, "poultice"), 5);
+});
+
+test("two doctors cannot take the same reserved poultice units", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: doctor } = parkSettler(world, pawn, {
+        id: "doc",
+        inventory: [null, null, null, null, null]
+    });
+    doctor.kc = 1600;
+    doctorOnly(settle, doctor);
+    const other = addHomeSettler(world, pawn, settle, {
+        id: "doc2",
+        x: doctor.x,
+        y: doctor.y,
+        jobs: { doctor: 1, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0 }
+    });
+    other.kc = 1600;
+    const patient = addHomeSettler(world, pawn, settle, { id: "pat", x: doctor.x, y: doctor.y });
+    injureCuts(world._ensureSettlerCreature(patient), [{ part: "Left Arm", severity: 8 }]);
+    const basket = addBasket(world, settle, doctor.x + 96, doctor.y, "shared-poul");
+    basket.slots[0] = { id: "poultice", quantity: 1 };
+    workOnce(world, doctor);
+    const key = `basket:${basket.uid}:0`;
+    const reserves = Settlement.medicineReservesFor(world, settle.id);
+    assert.equal(reserves.available(key, 1, other.id), 0);
+    workOnce(world, other);
+    assert.equal(qtyOf(other.inventory, "poultice"), 0);
+    assert.equal(qtyOf(basket.slots, "poultice"), 1);
+});
+
+test("a hauler skips poultice units a doctor has reserved", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: doctor } = parkSettler(world, pawn, {
+        id: "doc",
+        inventory: [null, null, null, null, null]
+    });
+    doctor.kc = 1600;
+    doctorOnly(settle, doctor);
+    const hauler = addHomeSettler(world, pawn, settle, {
+        id: "haul",
+        x: doctor.x + 96,
+        y: doctor.y,
+        jobs: { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1 }
+    });
+    hauler.kc = 1600;
+    const patient = addHomeSettler(world, pawn, settle, { id: "pat", x: doctor.x, y: doctor.y });
+    injureCuts(world._ensureSettlerCreature(patient), [{ part: "Left Arm", severity: 8 }]);
+    addBasket(world, settle, hauler.x, hauler.y, "haul-dest");
+    const chunk = originChunk(world);
+    chunk.drops.push({ uid: "poul-haul", id: "poultice", quantity: 1, x: hauler.x, y: hauler.y });
+    workOnce(world, doctor);
+    workOnce(world, hauler);
+    assert.equal(qtyOf(hauler.inventory, "poultice"), 0);
+    assert.ok(chunk.drops.some((d) => d.uid === "poul-haul" && d.quantity === 1));
+});
+
+test("the player can still pick up a reserved poultice pile", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const { settle, rec: doctor } = parkSettler(world, pawn, {
+        id: "doc",
+        inventory: [null, null, null, null, null]
+    });
+    doctor.kc = 1600;
+    doctorOnly(settle, doctor);
+    const patient = addHomeSettler(world, pawn, settle, { id: "pat", x: doctor.x, y: doctor.y });
+    injureCuts(world._ensureSettlerCreature(patient), [{ part: "Left Arm", severity: 8 }]);
+    const chunk = originChunk(world);
+    const dropX = doctor.x + 80;
+    chunk.drops.push({ uid: "poul-player", id: "poultice", quantity: 2, x: dropX, y: doctor.y });
+    workOnce(world, doctor);
+    const key = "drop:poul-player";
+    assert.ok(Settlement.medicineReservesFor(world, settle.id).reservedByOthers(key, "player") > 0);
+    pawn.x = dropX;
+    pawn.y = doctor.y;
+    world.handleAction(pawn.id, { type: Protocol.Actions.PICKUP, dropId: "poul-player" });
+    assert.equal(chunk.drops.some((d) => d.uid === "poul-player"), false);
+    assert.ok(pawn.inventory.some((s) => s && s.id === "poultice"));
+    workOnce(world, doctor);
+    assert.equal(qtyOf(doctor.inventory, "poultice"), 0);
+    assert.notEqual(doctor._workChannel?.kind, "tend");
+});
+
+test("a stoker skips poultice units a doctor has reserved", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: doctor } = parkSettler(world, pawn, {
+        id: "doc",
+        inventory: [null, null, null, null, null]
+    });
+    doctor.kc = 1600;
+    doctorOnly(settle, doctor);
+    const patient = addHomeSettler(world, pawn, settle, { id: "pat", x: doctor.x, y: doctor.y });
+    injureCuts(world._ensureSettlerCreature(patient), [
+        { part: "Left Arm", severity: 20 },
+        { part: "Right Arm", severity: 20 }
+    ]);
+    const fire = addKeepFire(world, settle, doctor, "poul-fire");
+    fire.x = doctor.x + 96;
+    fire.y = doctor.y;
+    fire.fuel = [null, null];
+    fire.burnRemaining = 0;
+    FuelFilter.applyToEntry(fire, {
+        alwaysOn: true,
+        preferLogs: false,
+        onItems: ["poultice"]
+    });
+    const basket = addBasket(world, settle, fire.x, fire.y, "poul-fuel");
+    basket.slots[0] = { id: "poultice", quantity: 10 };
+    const stoker = addHomeSettler(world, pawn, settle, {
+        id: "stoker",
+        x: fire.x,
+        y: fire.y,
+        jobs: { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 }
+    });
+    stoker.kc = 1600;
+    workOnce(world, doctor);
+    workN(world, stoker);
+    assert.equal(qtyOf(basket.slots, "poultice"), 2);
+});
+

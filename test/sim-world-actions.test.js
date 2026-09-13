@@ -2285,6 +2285,113 @@ test("settler auto-eats food already in inventory", () => {
     assert.equal(ch.kind, "eat");
 });
 
+function qtyInv(pawn, id) {
+    let n = 0;
+    for (const s of pawn.inventory || []) {
+        if (s?.id === id) n += Math.max(1, Number(s.quantity) || 1);
+    }
+    return n;
+}
+
+test("companion prefers poultice over cord in pockets and ignores a ground pile", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.controlId = pawn.id;
+    const doctor = addTestCompanion(world, pawn, "doc");
+    doctor.kc = 1200;
+    doctor.inventory[0] = { id: "leaf_cord", quantity: 2 };
+    doctor.inventory[1] = { id: "poultice", quantity: 1 };
+    const patient = addTestCompanion(world, pawn, "pat");
+    patient.name = "Ugg";
+    patient.x = doctor.x;
+    patient.y = doctor.y;
+    patient.kc = 1200;
+    cutArm(patient.creature);
+    const chunk = originChunk(world);
+    chunk.drops.push({ uid: "foot-poul", id: "poultice", quantity: 9, x: doctor.x, y: doctor.y });
+    const started = tickUntil(world, () => !!doctor.tendChannel, 24);
+    assert.equal(started, true);
+    assert.equal(doctor.tendChannel.itemId, "poultice");
+    assert.equal(qtyInv(doctor, "poultice") + qtyInv(patient, "poultice"), 1);
+    assert.ok(chunk.drops.some((d) => d.uid === "foot-poul" && d.quantity === 9));
+});
+
+test("companion with empty pockets does not tend from a ground pile at their feet", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.controlId = pawn.id;
+    const doctor = addTestCompanion(world, pawn, "doc");
+    doctor.kc = 1200;
+    const patient = addTestCompanion(world, pawn, "pat");
+    patient.x = doctor.x;
+    patient.y = doctor.y;
+    patient.kc = 1200;
+    cutArm(patient.creature);
+    originChunk(world).drops.push({ uid: "foot-poul", id: "poultice", quantity: 4, x: doctor.x, y: doctor.y });
+    const started = tickUntil(world, () => !!doctor.tendChannel, 24);
+    assert.equal(started, false);
+});
+
+test("companion tending the player may spend the player's held poultice", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.controlId = pawn.id;
+    pawn.hotbarIndex = 0;
+    pawn.inventory[0] = { id: "poultice", quantity: 1 };
+    pawn.kc = 1200;
+    cutArm(pawn.creature);
+    const doctor = addTestCompanion(world, pawn, "doc");
+    doctor.kc = 1200;
+    doctor.x = pawn.x;
+    doctor.y = pawn.y;
+    const started = tickUntil(world, () => !!doctor.tendChannel, 24);
+    assert.equal(started, true);
+    assert.equal(doctor.tendChannel.patientId, pawn.id);
+    assert.equal(doctor.tendChannel.itemId, "poultice");
+    assert.equal(doctor.tendChannel.fromId, pawn.id);
+});
+
+test("companion tending someone else must not spend the player's held poultice", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.controlId = pawn.id;
+    pawn.hotbarIndex = 0;
+    pawn.inventory[0] = { id: "poultice", quantity: 2 };
+    pawn.kc = 1200;
+    const doctor = addTestCompanion(world, pawn, "doc");
+    doctor.kc = 1200;
+    const patient = addTestCompanion(world, pawn, "pat");
+    patient.x = doctor.x;
+    patient.y = doctor.y;
+    patient.kc = 1200;
+    cutArm(patient.creature);
+    const started = tickUntil(world, () => !!doctor.tendChannel, 24);
+    assert.equal(started, false);
+    assert.equal(pawn.inventory[0]?.id, "poultice");
+    assert.equal(pawn.inventory[0]?.quantity, 2);
+});
+
+test("cord Space tend covers one wound per use", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.controlId = pawn.id;
+    const doctor = addTestCompanion(world, pawn, "doc");
+    doctor.kc = 1200;
+    doctor.inventory[0] = { id: "leaf_cord", quantity: 2 };
+    const patient = addTestCompanion(world, pawn, "pat");
+    patient.x = doctor.x;
+    patient.y = doctor.y;
+    patient.kc = 1200;
+    const left = patient.creature.anatomy.part("Left Arm") || patient.creature.anatomy.core;
+    const right = patient.creature.anatomy.part("Right Arm") || patient.creature.anatomy.core;
+    left.injure({ id: "cut", severity: 8, bleeding: true, bleedRate: 0.06, tended: false });
+    right.injure({ id: "cut", severity: 8, bleeding: true, bleedRate: 0.06, tended: false });
+    const started = tickUntil(world, () => !!doctor.tendChannel, 24);
+    assert.equal(started, true);
+    const done = tickUntil(world, () => {
+        const a = left.injuries?.[0];
+        const b = right.injuries?.[0];
+        return !!(a && b && (a.tended !== b.tended));
+    }, 160);
+    assert.equal(done, true, "one cord should tend a single wound");
+    assert.equal(doctor.inventory[0]?.quantity, 1);
+});
+
 test("companion auto-tends a wounded packmate in range", () => {
     const { world, pawn } = createTestWorld();
     pawn.controlId = pawn.id;

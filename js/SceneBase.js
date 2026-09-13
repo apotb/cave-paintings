@@ -182,6 +182,7 @@ class SceneBase extends Phaser.Scene {
             "cactus_flower",
             "blueberries",
             "leaf_cord",
+            "poultice",
             "sharp_stick",
             "wooden_spear",
             "stone_spear",

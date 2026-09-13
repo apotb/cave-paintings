@@ -635,16 +635,35 @@
         "key": "leaf_cord",
         "maxStack": 99,
         "bandage": {
-            "tendQuality": 0.4,
-            "tendQualityMax": 0.7,
+            "tendQuality": 0.35,
+            "tendQualityMax": 0.50,
             "channelSeconds": 5,
-            "batchSeverity": 20
+            "batchSeverity": 0
         },
         "tooltip": [
-            "Press Space to bandage"
+            "Press Space to bandage",
+            "Click an ally to bandage them"
         ],
         "recipe": {
             "leaf": 5
+        }
+    },
+    {
+        "id": "poultice",
+        "name": "Poultice",
+        "key": "poultice",
+        "maxStack": 99,
+        "bandage": {
+            "tendQuality": 0.65,
+            "tendQualityMax": 0.85,
+            "channelSeconds": 5,
+            "batchSeverity": 20
+        },
+        "recipe": {
+            "REQUIRE_THING": "rock",
+            "leaf_cord": 1,
+            "leaf": 8,
+            "QUANTITY": 2
         }
     },
     {

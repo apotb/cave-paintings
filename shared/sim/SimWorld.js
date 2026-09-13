@@ -10234,20 +10234,13 @@ class SimWorld {
     _pawnHasBandage(m, skipHeld = null) {
         if (!m) return null;
         const bags = [
-            { bag: "hotbar", slots: m.inventory || [] },
-            { bag: "overflow", slots: m.overflow || [] }
+            { bag: "hotbar", slots: m.inventory || [], source: m, at: m },
+            { bag: "overflow", slots: m.overflow || [], source: m, at: m }
         ];
-        for (const { bag, slots } of bags) {
-            for (let i = 0; i < slots.length; i++) {
-                const stack = slots[i];
-                if (!stack?.id) continue;
-                if (skipHeld && m.id === skipHeld.id && bag === "hotbar" && i === skipHeld.slot) continue;
-                if (itemDefs().get(stack.id)?.bandage) {
-                    return { source: m, slot: i, bag, stack };
-                }
-            }
-        }
-        return null;
+        return BodyHealing.pickBestBandage(bags, (id) => itemDefs().get(id), (bag, i) => {
+            if (!skipHeld) return false;
+            return m.id === skipHeld.id && bag.bag === "hotbar" && i === skipHeld.slot;
+        });
     }
 
     _partyNeedsAutoTend(session) {
@@ -10358,16 +10351,26 @@ class SimWorld {
             if (this._partyTendBusy(p, members, tender)) continue;
             const target = BodyHealing.pickTendTarget(anatomy);
             if (!target) continue;
+            const skipFor = (patient) => {
+                if (control && patient && (patient.id === control.id || patient === control)) return null;
+                return skipHeld;
+            };
             const bleeding = !!(target.inj?.bleeding || target.destroyed);
             if (p === tender || p.id === tender.id) {
-                const bandage = this._pawnHasBandage(tender, skipHeld);
+                const bandage = this._pawnHasBandage(tender, skipFor(p));
                 if (bandage) selfJob = { patient: p, bleeding, inRange: true, ...bandage, target };
                 continue;
             }
             const dist = Math.hypot((Number(p.x) || 0) - (Number(tender.x) || 0),
                 (Number(p.y) || 0) - (Number(tender.y) || 0));
             if (dist > seek) continue;
-            const bandage = this._pawnHasBandage(tender, skipHeld) || this._pawnHasBandage(p, skipHeld);
+            const skip = skipFor(p);
+            const a = this._pawnHasBandage(tender, skip);
+            const b = this._pawnHasBandage(p, skip);
+            const score = (pick) => pick
+                ? BodyHealing.bandageScore(itemDefs().get(pick.stack?.id))
+                : -1;
+            const bandage = score(a) >= score(b) ? a : b;
             if (!bandage) continue;
             const inRange = Party.inInteractRange(tender, p, TS);
             const job = { patient: p, bleeding, dist, inRange, ...bandage, target };

@@ -9,7 +9,7 @@
         "prereqs": [],
         "unlocks": { "items": [], "jobs": ["gather"], "text": [] },
         "icon": "blueberry",
-        "children": ["cordage", "herbalism", "digging"]
+        "children": ["cordage", "digging"]
     },
     {
         "id": "cordage",
@@ -24,7 +24,7 @@
             "jobs": [],
             "text": []
         },
-        "children": ["camping", "basic_furniture", "traps"]
+        "children": ["camping", "basic_furniture", "traps", "herbalism"]
     },
     {
         "id": "camping",
@@ -63,8 +63,8 @@
         "era": "Paleolithic",
         "quote": "This might sting",
         "cost": 2,
-        "prereqs": ["gathering"],
-        "unlocks": { "items": [], "jobs": [], "text": ["Poultice"] },
+        "prereqs": ["cordage"],
+        "unlocks": { "items": ["poultice"], "jobs": [], "text": [] },
         "children": []
     },
     {

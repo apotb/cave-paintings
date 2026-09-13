@@ -71,6 +71,77 @@ test("pickTendTargets finds the wound", () => {
     assert.ok(batch[0].inj);
 });
 
+test("pickTendTargets with batchSeverity 0 covers one wound only", () => {
+    const owner = makeOwner();
+    const arm = owner.anatomy.part("Left Arm") || owner.anatomy.core;
+    const other = owner.anatomy.part("Right Arm") || owner.anatomy.core;
+    arm.injure({
+        id: "cut",
+        severity: 8,
+        bleeding: true,
+        bleedRate: 0.06,
+        tended: false
+    });
+    other.injure({
+        id: "cut",
+        severity: 8,
+        bleeding: true,
+        bleedRate: 0.06,
+        tended: false
+    });
+    const one = BodyHealing.pickTendTargets(owner.anatomy, { batchSeverity: 0 });
+    assert.equal(one.length, 1);
+    const batch = BodyHealing.pickTendTargets(owner.anatomy, { batchSeverity: 20 });
+    assert.equal(batch.length, 2);
+});
+
+test("bandageUsesNeeded counts a poultice batch plus an infection", () => {
+    const owner = makeOwner();
+    const arm = owner.anatomy.part("Left Arm") || owner.anatomy.core;
+    const other = owner.anatomy.part("Right Arm") || owner.anatomy.core;
+    arm.injure({
+        id: "cut",
+        severity: 8,
+        bleeding: true,
+        bleedRate: 0.06,
+        tended: false
+    });
+    other.injure({
+        id: "cut",
+        severity: 8,
+        bleeding: true,
+        bleedRate: 0.06,
+        tended: false
+    });
+    Hediffs.startInfection(owner, owner.anatomy, "Torso", owner.anatomy.ctx);
+    assert.equal(BodyHealing.bandageUsesNeeded(owner.anatomy, 20), 2);
+    const plan = BodyHealing.planMedicineTakes(owner.anatomy, 1, {
+        poulticeBatch: 20,
+        cordBatch: 0
+    });
+    assert.equal(plan.poultice, 1);
+    assert.equal(plan.poulticeNeeded, 2);
+    assert.equal(plan.cord, 1);
+});
+
+test("pickBestBandage prefers poultice over leaf cord", () => {
+    const getItem = (id) => DataStore.getItem(id);
+    const bags = [
+        {
+            bag: "hotbar",
+            slots: [
+                { id: "leaf_cord", quantity: 4 },
+                { id: "poultice", quantity: 1 },
+                null, null, null
+            ],
+            source: "doc"
+        }
+    ];
+    const pick = BodyHealing.pickBestBandage(bags, getItem);
+    assert.equal(pick.stack.id, "poultice");
+    assert.equal(pick.slot, 1);
+});
+
 test("rollTendQuality respects self-tend factor", () => {
     const q = BodyHealing.rollTendQuality(
         0.4, 0.7,

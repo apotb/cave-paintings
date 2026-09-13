@@ -1380,16 +1380,20 @@
         }
         if (bestD > 0 && bestI >= 0) keep.add(bestI);
         if (opts.keepBandage) {
+            let bestI = -1;
+            let bestS = -1;
             for (let i = 0; i < inv.length; i++) {
                 if (keep.has(i)) continue;
                 const s = inv[i];
                 if (!s?.id) continue;
                 const meta = typeof getItem === "function" ? getItem(s.id) : null;
-                if (meta?.bandage) {
-                    keep.add(i);
-                    break;
+                const score = bandageScore(meta);
+                if (score > bestS) {
+                    bestS = score;
+                    bestI = i;
                 }
             }
+            if (bestI >= 0) keep.add(bestI);
         }
         if (opts.keepPigment) {
             const pred = typeof opts.isPigment === "function"
@@ -2005,6 +2009,84 @@
         };
     }
 
+    /**
+     * Quantity reservations on a basket slot or ground drop.
+     * Not persisted — runtime only. AI-only (player may still take reserved units).
+     */
+    function createMedicineReserves() {
+        const list = [];
+        return {
+            reservedByOthers(key, pawnId) {
+                if (!key) return 0;
+                let n = 0;
+                for (const r of list) {
+                    if (r.key === key && r.pawnId !== pawnId) n += r.qty;
+                }
+                return n;
+            },
+            available(key, qty, pawnId) {
+                const have = Math.max(0, Math.floor(Number(qty) || 0));
+                if (!key) return have;
+                return Math.max(0, have - this.reservedByOthers(key, pawnId));
+            },
+            set(pawnId, entries) {
+                this.release(pawnId);
+                if (!pawnId) return;
+                for (const e of entries || []) {
+                    const qty = Math.max(0, Math.floor(Number(e?.qty) || 0));
+                    if (!e?.key || !(qty > 0)) continue;
+                    list.push({ pawnId, key: e.key, qty });
+                }
+            },
+            reduce(pawnId, key, qty) {
+                if (!pawnId || !key) return;
+                let left = Math.max(0, Math.floor(Number(qty) || 0));
+                for (const r of list) {
+                    if (left <= 0) break;
+                    if (r.pawnId !== pawnId || r.key !== key) continue;
+                    const take = Math.min(r.qty, left);
+                    r.qty -= take;
+                    left -= take;
+                }
+                for (let i = list.length - 1; i >= 0; i--) {
+                    if (list[i].pawnId === pawnId && list[i].qty <= 0) list.splice(i, 1);
+                }
+            },
+            release(pawnId) {
+                if (!pawnId) return;
+                for (let i = list.length - 1; i >= 0; i--) {
+                    if (list[i].pawnId === pawnId) list.splice(i, 1);
+                }
+            },
+            prune(aliveIds) {
+                const live = aliveIds instanceof Set ? aliveIds : new Set(aliveIds || []);
+                for (let i = list.length - 1; i >= 0; i--) {
+                    if (!live.has(list[i].pawnId)) list.splice(i, 1);
+                }
+            }
+        };
+    }
+
+    function medicineReservesFor(host, settleId) {
+        if (!host) return createMedicineReserves();
+        if (!host._medicineReserves) host._medicineReserves = new Map();
+        const id = settleId != null ? String(settleId) : "_";
+        let r = host._medicineReserves.get(id);
+        if (!r) {
+            r = createMedicineReserves();
+            host._medicineReserves.set(id, r);
+        }
+        return r;
+    }
+
+    function bandageScore(meta) {
+        const b = meta?.bandage;
+        if (!b) return -1;
+        return (Number(b.tendQuality) || 0) * 1000
+            + (Number(b.tendQualityMax) || 0) * 10
+            + (Number(b.batchSeverity) || 0);
+    }
+
     return {
         RADIUS_TILES,
         WALK_TRANSFER_TILES,
@@ -2148,6 +2230,8 @@
         idleRoamDistTiles,
         idleRoamPoint,
         createWorkClaims,
+        createMedicineReserves,
+        medicineReservesFor,
         cardinalHeading,
         pawnDisplayName,
         destroyConfirmCopy

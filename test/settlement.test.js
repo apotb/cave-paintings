@@ -1238,7 +1238,8 @@ test("settlers keep the best weapon (and a bandage while tending) when stashing"
         stick: { id: "stick" },
         spear: { id: "spear", weapon: { type: "melee", melee: { damage: 10 } } },
         pebble_blade: { id: "pebble_blade", weapon: { type: "melee", melee: { damage: 3 } } },
-        leaf_cord: { id: "leaf_cord", bandage: { tendQuality: 0.4 } }
+        leaf_cord: { id: "leaf_cord", bandage: { tendQuality: 0.35, tendQualityMax: 0.5, batchSeverity: 0 } },
+        poultice: { id: "poultice", bandage: { tendQuality: 0.65, tendQualityMax: 0.85, batchSeverity: 20 } }
     }[id]);
     const inv = [
         { id: "stick", quantity: 4 },
@@ -1254,6 +1255,19 @@ test("settlers keep the best weapon (and a bandage while tending) when stashing"
     assert.equal(withBandage.has(2), true);
     assert.equal(withBandage.has(3), true);
     assert.equal(withBandage.size, 2);
+    const mixed = [
+        { id: "leaf_cord", quantity: 4 },
+        { id: "poultice", quantity: 1 },
+        { id: "spear", quantity: 1 },
+        null, null
+    ];
+    const dumped = Settlement.keepIndices(mixed, getItem);
+    assert.equal(dumped.has(0), false);
+    assert.equal(dumped.has(1), false);
+    assert.equal(dumped.has(2), true);
+    const bestMed = Settlement.keepIndices(mixed, getItem, { keepBandage: true });
+    assert.equal(bestMed.has(1), true);
+    assert.equal(bestMed.has(0), false);
     const withPigment = Settlement.keepIndices(
         [{ id: "blueberry", quantity: 2 }, { id: "stick", quantity: 4 }, null, null, null],
         getItem,

@@ -245,6 +245,7 @@ test("every item lands in exactly one leaf", () => {
     assert.equal(SF.leafCategory(getItem("settling_stone"), null), "buildings");
     assert.equal(SF.leafCategory(getItem("tally_stick"), null), "buildings");
     assert.equal(SF.leafCategory(getItem("leaf_cord"), null), "medicine");
+    assert.equal(SF.leafCategory(getItem("poultice"), null), "medicine");
     assert.equal(SF.leafCategory(getItem("digging_stick"), null), "tools");
     assert.equal(SF.leafCategory(getItem("stick_frame"), null), "materials/wood");
     assert.equal(SF.leafCategory(getItem("stick"), null), "materials/wood");
@@ -276,7 +277,7 @@ test("every item lands in exactly one leaf", () => {
     assert.ok((buildings.items || []).some((it) => it.id === "wicker_basket"));
     assert.ok((buildings.items || []).some((it) => it.id === "tally_stick"));
     const medicine = SF.findNode(t, "medicine");
-    assert.deepEqual((medicine.items || []).map((it) => it.id), ["leaf_cord"]);
+    assert.deepEqual((medicine.items || []).map((it) => it.id), ["leaf_cord", "poultice"]);
     const apparelKids = (SF.findNode(t, "apparel").children || []).map((n) => n.id);
     assert.deepEqual(apparelKids, ["apparel/clothing", "apparel/equipment"]);
     assert.equal(SF.findNode(t, "apparel/armor"), null);

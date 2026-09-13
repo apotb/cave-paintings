@@ -99,6 +99,29 @@ test("resolveCraftedWeights hide-stage averaging", () => {
     assert.ok(Math.abs(cord.weight - 0.05) < 1e-9);
 });
 
+test("poultice inherits split recipe weight and fuel", () => {
+    const poultice = DataStore.getItem("poultice");
+    const cord = DataStore.getItem("leaf_cord");
+    assert.equal(cord.bandage.tendQuality, 0.35);
+    assert.equal(cord.bandage.tendQualityMax, 0.5);
+    assert.equal(cord.bandage.batchSeverity, 0);
+    assert.equal(poultice.bandage.tendQuality, 0.65);
+    assert.equal(poultice.bandage.tendQualityMax, 0.85);
+    assert.equal(poultice.bandage.batchSeverity, 20);
+    assert.equal(poultice.recipe.QUANTITY, 2);
+    assert.equal(poultice.recipe.leaf_cord, 1);
+    assert.equal(poultice.recipe.leaf, 8);
+    assert.equal(poultice.recipe.REQUIRE_THING, "rock");
+    assert.deepEqual(cord.tooltip, [
+        "Press Space to bandage",
+        "Click an ally to bandage them"
+    ]);
+    assert.equal(poultice.tooltip, undefined);
+    assert.ok(Math.abs(poultice.weight - 0.07) < 1e-9);
+    assert.equal(poultice.fuel.kj, 7);
+    assert.equal(poultice.fuel.temp, 400);
+});
+
 test("resolveCraftedFuel derives kj and max temp from ingredients", () => {
     const cord = DataStore.getItem("leaf_cord");
     assert.equal(cord.fuel.kj, 5);

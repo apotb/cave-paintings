@@ -91,6 +91,9 @@ test("painting circle recipe is known; stick frame is gated on Basic Furniture",
     assert.equal(Research.recipeUnlocked("painting_circle", s), true);
     assert.equal(Research.recipeUnlocked("stick", s), true);
     assert.equal(Research.recipeUnlocked("leaf_cord", s), true);
+    assert.equal(Research.recipeUnlocked("poultice", s), false);
+    Research.unlock(s, "herbalism");
+    assert.equal(Research.recipeUnlocked("poultice", s), true);
     assert.equal(Research.recipeUnlocked("lean_to", s), true);
     assert.equal(Research.recipeUnlocked("drying_rack", s), true);
     assert.equal(Research.recipeUnlocked("sharp_stick", s), true);
@@ -208,6 +211,9 @@ test("tech unlocks list items, jobs, and planned text", () => {
     assert.ok(cord.unlocks.items.includes("wooden_spear"));
     const gather = Research.techById("gathering");
     assert.ok(gather.unlocks.jobs.includes("gather"));
+    const herbalism = Research.techById("herbalism");
+    assert.ok(herbalism.unlocks.items.includes("poultice"));
+    assert.equal((herbalism.unlocks.text || []).includes("Poultice"), false);
     const skin = Research.techById("skinworking");
     assert.ok(skin.unlocks.items.includes("skinworking_bench"));
     assert.equal(skin.unlocks.items[0], "skinworking_bench");
@@ -667,6 +673,8 @@ test("tree layout is left-to-right with prereq edges", () => {
     assert.equal(layout.edges.some((e) => e.from === "digging" && e.to === "agriculture"), false);
     assert.ok(layout.edges.some((e) => e.from === "storage" && e.to === "agriculture"));
     assert.ok(layout.edges.some((e) => e.from === "herbalism" && e.to === "agriculture"));
+    assert.ok(layout.edges.some((e) => e.from === "cordage" && e.to === "herbalism"));
+    assert.equal(layout.edges.some((e) => e.from === "gathering" && e.to === "herbalism"), false);
     assert.ok(layout.edges.some((e) => e.from === "grinding" && e.to === "agriculture"));
     assert.ok(layout.edges.some((e) => e.from === "digging" && e.to === "grinding"));
     assert.ok(layout.edges.some((e) => e.from === "basic_furniture" && e.to === "grinding"));
@@ -808,7 +816,7 @@ test("tree layout is left-to-right with prereq edges", () => {
             );
         }
     }
-    const gatherKids = ["cordage", "herbalism", "digging"];
+    const gatherKids = ["cordage", "digging"];
     const gatherXs = new Set();
     for (const v of verts) {
         if (v.from === "gathering" && gatherKids.includes(v.to)) gatherXs.add(v.x);

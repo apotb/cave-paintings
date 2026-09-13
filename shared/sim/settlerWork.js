@@ -293,6 +293,7 @@ function releaseWork(world, mob) {
     const settle = findSettle(world, rec);
     const claims = settle ? claimsFor(world, settle) : null;
     claims?.release(rec.id);
+    if (settle) reservesOf(world, settle).release(rec.id);
     rec._haulDestUid = null;
     rec._haulMergeOnly = false;
     rec._workChannel = null;
@@ -822,10 +823,13 @@ function countItem(world, settle, itemId) {
 function haulDropQty(world, rec, settle, drop) {
     const stack = dropAsStack(drop);
     if (!stack) return 0;
+    const key = dropKey(drop);
+    const avail = reservesOf(world, settle).available(key, stack.quantity, rec.id);
+    if (!(avail > 0)) return 0;
     return Settlement.haulTakeQty(
         countStored(world, settle, stack.id),
         Settlement.stockTarget(settle, stack.id),
-        stack.quantity
+        avail
     );
 }
 
@@ -868,6 +872,186 @@ function findStack(world, rec, settle, pred) {
         return { slots, index: i, at: b, kind: "basket", entry: b };
     }
     return null;
+}
+
+function dist2(a, b) {
+    return Math.hypot((Number(a?.x) || 0) - (Number(b?.x) || 0), (Number(a?.y) || 0) - (Number(b?.y) || 0));
+}
+
+function reservesOf(world, settle) {
+    return Settlement.medicineReservesFor(world, settle?.id);
+}
+
+function medicineKey(found) {
+    if (!found) return null;
+    if (found.kind === "drop" && found.drop) return dropKey(found.drop);
+    if (found.kind === "basket" && found.entry?.uid != null) {
+        return `basket:${found.entry.uid}:${found.index}`;
+    }
+    return null;
+}
+
+function poulticeBatch() {
+    const n = Number(getItem("poultice")?.bandage?.batchSeverity);
+    return Number.isFinite(n) ? n : 20;
+}
+
+function cordBatch() {
+    const n = Number(getItem("leaf_cord")?.bandage?.batchSeverity);
+    return Number.isFinite(n) ? n : 0;
+}
+
+function sourceAvail(world, rec, settle, found, pawnId) {
+    const stack = found?.slots?.[found.index] || found?.stack;
+    const qty = Math.max(0, Math.floor(Number(stack?.quantity) || 0));
+    if (!(qty > 0)) return 0;
+    const key = medicineKey(found);
+    if (!key) return qty;
+    const claims = claimsFor(world, settle);
+    if (found.kind === "drop" && found.drop && claimedByOther(claims, dropKey(found.drop), pawnId)) {
+        return 0;
+    }
+    return reservesOf(world, settle).available(key, qty, pawnId);
+}
+
+function listMedicineSources(world, rec, settle, patient, claims) {
+    const out = [];
+    const addPawn = (pawn, kind) => {
+        if (!pawn) return;
+        const add = (slots, bag) => {
+            for (let i = 0; i < (slots || []).length; i++) {
+                const s = slots[i];
+                if (!s?.id || !getItem(s.id)?.bandage) continue;
+                out.push({
+                    slots,
+                    index: i,
+                    at: pawn,
+                    kind,
+                    bag,
+                    stack: s,
+                    id: s.id,
+                    entry: null,
+                    drop: null
+                });
+            }
+        };
+        add(pawn.inventory, "hotbar");
+        add(pawn.overflow, "overflow");
+    };
+    addPawn(rec, "inv");
+    if (patient && patient !== rec && patient.id !== rec.id) addPawn(patient, "patient");
+    const baskets = (basketsOf(world, settle) || []).slice()
+        .sort((a, b) => dist2(rec, a) - dist2(rec, b));
+    for (const b of baskets) {
+        const slots = b.slots || [];
+        for (let i = 0; i < slots.length; i++) {
+            const s = slots[i];
+            if (!s?.id || !getItem(s.id)?.bandage) continue;
+            out.push({
+                slots,
+                index: i,
+                at: b,
+                kind: "basket",
+                bag: "basket",
+                stack: s,
+                id: s.id,
+                entry: b,
+                drop: null
+            });
+        }
+    }
+    const drops = (dropsOf(world, settle) || [])
+        .filter((d) => d?.id && getItem(d.id)?.bandage)
+        .sort((a, b) => dist2(rec, a) - dist2(rec, b));
+    for (const d of drops) {
+        if (claimedByOther(claims, dropKey(d), rec.id)) continue;
+        const stack = dropAsStack(d);
+        out.push({
+            slots: [stack],
+            index: 0,
+            at: d,
+            kind: "drop",
+            bag: "drop",
+            stack,
+            id: d.id,
+            entry: null,
+            drop: d
+        });
+    }
+    return out;
+}
+
+function assignMedicineTakes(world, rec, settle, sources, itemId, wantQty) {
+    let left = Math.max(0, Math.floor(Number(wantQty) || 0));
+    const takes = [];
+    if (!(left > 0) || !itemId) return takes;
+    for (const src of sources) {
+        if (left <= 0) break;
+        if (src.id !== itemId) continue;
+        const avail = sourceAvail(world, rec, settle, src, rec.id);
+        if (avail <= 0) continue;
+        const n = Math.min(avail, left);
+        takes.push({ ...src, qty: n, key: medicineKey(src) });
+        left -= n;
+    }
+    return takes;
+}
+
+function heldBandageCount(rec, itemId) {
+    let n = 0;
+    for (const s of rec.inventory || []) {
+        if (s?.id === itemId) n += Math.max(1, Number(s.quantity) || 1);
+    }
+    for (const s of rec.overflow || []) {
+        if (s?.id === itemId) n += Math.max(1, Number(s.quantity) || 1);
+    }
+    return n;
+}
+
+function pickDoctorBandage(rec) {
+    return BodyHealing.pickBestBandage(
+        [
+            { slots: rec.inventory || [], bag: "hotbar", at: rec, kind: "inv", source: rec },
+            { slots: rec.overflow || [], bag: "overflow", at: rec, kind: "overflow", source: rec }
+        ],
+        getItem
+    );
+}
+
+function fetchMedicineTake(world, rec, settle, take) {
+    if (!take || take.kind === "inv") return null;
+    if (take.kind === "drop") {
+        const walked = goToDrop(world, rec, take.drop);
+        if (walked) return walked;
+        const before = heldBandageCount(rec, take.id);
+        world._tryPickup?.(rec, { dropId: take.drop.uid, quantity: take.qty });
+        const got = Math.max(0, heldBandageCount(rec, take.id) - before);
+        if (got > 0) {
+            if (take.key) reservesOf(world, settle).reduce(rec.id, take.key, got);
+            world._queryGen = (world._queryGen || 0) + 1;
+            world._dirtyPawnOwner(rec);
+        }
+        return halt();
+    }
+    const walked = take.kind === "patient"
+        ? goOrWalk(world, rec, take.at)
+        : walkToFound(world, rec, take);
+    if (walked) return walked;
+    const piece = takeQty(take, take.qty);
+    if (!piece) return halt();
+    const got = takeToPawn(world, rec, piece);
+    if (!(got > 0)) {
+        restorePiece(take, piece);
+        return halt();
+    }
+    if (got < (Number(piece.quantity) || 1)) {
+        restorePiece(take, { ...piece, quantity: (Number(piece.quantity) || 1) - got });
+    }
+    if (take.entry) emitEntry(world, take.entry);
+    if (take.key) reservesOf(world, settle).reduce(rec.id, take.key, got);
+    world._dirtyPawnOwner(rec);
+    if (take.kind === "patient" && take.at) world._dirtyPawnOwner(take.at);
+    return halt();
 }
 
 function findHeld(rec, pred) {
@@ -1129,6 +1313,8 @@ function patientNeedsTend(world, pawn) {
 
 function dropPatient(world, rec, patient, skip = false) {
     if (skip && patient) skipJob(rec, pawnWorkKey(patient, "tend"));
+    const settle = findSettle(world, rec);
+    if (settle) reservesOf(world, settle).release(rec.id);
     if (rec?._settlerScan?.patients) {
         const id = patient?.id;
         rec._settlerScan.patients = rec._settlerScan.patients.filter(
@@ -1141,14 +1327,16 @@ function dropPatient(world, rec, patient, skip = false) {
 }
 
 function settlerPatients(world, rec, settle, claims) {
-    if (!findStack(world, rec, settle, (s) => !!getItem(s.id)?.bandage)) return [];
     const out = [];
     const consider = (p) => {
         if (!p || p === rec || p.id === rec.id || p.dead) return;
         if (!inRange(settle, p.x, p.y)) return;
         const key = pawnWorkKey(p, "tend");
         if (claimedByOther(claims, key, rec.id) || isSkipped(rec, key)) return;
-        if (patientNeedsTend(world, p)) out.push(p);
+        if (!patientNeedsTend(world, p)) return;
+        const sources = listMedicineSources(world, rec, settle, p, claims);
+        if (!sources.some((s) => sourceAvail(world, rec, settle, s, rec.id) > 0)) return;
+        out.push(p);
     };
     for (const s of settlersOf(world, settle)) consider(s);
     const owner = world.players.get(rec.ownerId);
@@ -1175,8 +1363,18 @@ function unlitFire(world, rec, settle, claims) {
 
 function fuelSources(world, rec, settle) {
     const sources = [{ slots: rec.inventory, at: rec }];
+    const reserves = reservesOf(world, settle);
     for (const b of basketsOf(world, settle)) {
-        sources.push({ slots: b.slots, at: b, entry: b });
+        const uid = b.uid;
+        const slots = (b.slots || []).map((s, i) => {
+            if (!s) return s;
+            if (!uid) return s;
+            const avail = reserves.available(`basket:${uid}:${i}`, s.quantity, rec.id);
+            if (!(avail > 0)) return null;
+            if (avail === (Number(s.quantity) || 1)) return s;
+            return { ...s, quantity: avail };
+        });
+        sources.push({ slots, at: b, entry: b });
     }
     return sources;
 }
@@ -1625,8 +1823,7 @@ function scanWork(world, rec, settle, claims) {
     const jobs = Settlement.jobsFor(settle, rec.id);
     const enabled = new Set(Settlement.enabledJobs(jobs));
     const patients = jobOn(enabled, "doctor") ? settlerPatients(world, rec, settle, claims) : [];
-    const doctorOn = enabled.has("doctor");
-    const keepBandage = !!(doctorOn && patients.length);
+    const keepBandage = false;
     const circle = jobOn(enabled, "research") ? researchCircle(world, rec, settle, claims) : null;
     const keepPigment = !!(circle && Research?.needsPigment?.(circle));
     const keepTally = !!(circle && Research?.needsTallyInstall?.(settle, circle));
@@ -2179,8 +2376,11 @@ function findChannelPatient(world, rec, id) {
 
 function channelStillValid(world, rec, ch) {
     if (!ch) return false;
-    if (rec.hotbarIndex !== ch.slot) return false;
-    const held = rec.inventory?.[ch.slot] || null;
+    const tendOverflow = ch.kind === "tend" && ch.bag === "overflow";
+    if (!tendOverflow && rec.hotbarIndex !== ch.slot) return false;
+    const held = tendOverflow
+        ? (rec.overflow?.[ch.slot] || null)
+        : (rec.inventory?.[ch.slot] || null);
     if (ch.kind === "flesh") {
         const rack = world._findThingByUid(ch.uid)?.entry;
         if (!rack || !near(rec.x, rec.y, rack.x, rack.y)) return false;
@@ -2244,6 +2444,7 @@ function finishWorkChannel(world, rec, ch) {
             patientId: ch.patientId,
             fromPawnId: rec.id,
             slot: ch.slot,
+            bag: ch.bag,
             itemId: ch.itemId,
             targets: ch.targetHints
         });
@@ -2354,6 +2555,14 @@ function doMerge(world, rec, settle, job) {
     return halt();
 }
 
+function liveFuelSlots(take, rec) {
+    const src = take?.src;
+    if (src?.entry && Array.isArray(src.entry.slots)) return src.entry.slots;
+    if (src?.at === rec) return rec.inventory;
+    if (src?.at && Array.isArray(src.at.slots)) return src.at.slots;
+    return take?.slots;
+}
+
 function stokeFuel(world, rec, settle, fire) {
     if (!fire || !FuelFilter) return false;
     const take = FuelFilter.findFuelTake(
@@ -2363,13 +2572,15 @@ function stokeFuel(world, rec, settle, fire) {
         getItem
     );
     if (!take) return false;
-    const stack = take.slots[take.index];
+    const slots = liveFuelSlots(take, rec);
+    const stack = slots?.[take.index];
+    if (!stack?.id) return false;
     stack.quantity = (Number(stack.quantity) || 1) - 1;
-    if (!(stack.quantity > 0)) take.slots[take.index] = null;
+    if (!(stack.quantity > 0)) slots[take.index] = null;
     const slot = FuelFilter.addFuelUnit(fire, take.id);
     if (slot < 0) {
         stack.quantity = (Number(stack.quantity) || 0) + 1;
-        take.slots[take.index] = stack;
+        slots[take.index] = stack;
         return false;
     }
     if (take.src?.entry || take.src?.at) {
@@ -3144,8 +3355,27 @@ function doDoctor(world, rec, settle, patient) {
         dropPatient(world, rec, patient, false);
         return halt();
     }
-    const found = findStack(world, rec, settle, (s) => !!getItem(s.id)?.bandage);
-    if (!found) {
+    const owner = world.players.get(rec.ownerId) || rec;
+    const patientC = world._creatureForPawn?.(owner, patient)
+        || pawnCreature(world, patient);
+    const anatomy = patientC?.anatomy;
+    if (!anatomy) {
+        dropPatient(world, rec, patient, true);
+        return halt();
+    }
+    const claims = claimsFor(world, settle);
+    const sources = listMedicineSources(world, rec, settle, patient, claims);
+    const poulticeHave = sources
+        .filter((s) => s.id === "poultice")
+        .reduce((n, s) => n + sourceAvail(world, rec, settle, s, rec.id), 0);
+    const plan = BodyHealing.planMedicineTakes(anatomy, poulticeHave, {
+        poulticeBatch: poulticeBatch(),
+        cordBatch: cordBatch()
+    });
+    const pTakes = assignMedicineTakes(world, rec, settle, sources, "poultice", plan.poultice);
+    const cTakes = assignMedicineTakes(world, rec, settle, sources, "leaf_cord", plan.cord);
+    const allTakes = pTakes.concat(cTakes);
+    if (!allTakes.length && !pickDoctorBandage(rec)) {
         if (rec._settlerScan) {
             rec._settlerScan.patients = [];
             rec._settlerScan.keepBandage = false;
@@ -3153,8 +3383,24 @@ function doDoctor(world, rec, settle, patient) {
         dropPatient(world, rec, patient, false);
         return halt();
     }
-    if (found.at !== rec) return fetchStack(world, rec, settle, found) || halt();
-    rec.hotbarIndex = found.index;
+    const reserveEntries = allTakes
+        .filter((t) => t.key)
+        .map((t) => ({ key: t.key, qty: t.qty }));
+    reservesOf(world, settle).set(rec.id, reserveEntries);
+
+    const heldP = heldBandageCount(rec, "poultice");
+    const heldC = heldBandageCount(rec, "leaf_cord");
+    if (heldP < plan.poultice || heldC < plan.cord) {
+        const next = allTakes.find((t) => t.kind !== "inv");
+        if (next) return fetchMedicineTake(world, rec, settle, next) || halt();
+    }
+
+    const found = pickDoctorBandage(rec);
+    if (!found) {
+        dropPatient(world, rec, patient, false);
+        return halt();
+    }
+    rec.hotbarIndex = found.bag === "hotbar" ? found.slot : rec.hotbarIndex;
     const walked = goOrWalk(world, rec, patient);
     if (walked) {
         const c = rec.creature || world._ensureSettlerCreature?.(rec);
@@ -3165,15 +3411,7 @@ function doDoctor(world, rec, settle, patient) {
         }
         return walked;
     }
-    const owner = world.players.get(rec.ownerId) || rec;
-    const patientC = world._creatureForPawn?.(owner, patient)
-        || pawnCreature(world, patient);
-    const anatomy = patientC?.anatomy;
-    if (!anatomy) {
-        dropPatient(world, rec, patient, true);
-        return halt();
-    }
-    const stack = rec.inventory[found.index];
+    const stack = found.stack;
     const meta = stack ? getItem(stack.id) : null;
     if (!meta?.bandage) {
         dropPatient(world, rec, patient, false);
@@ -3195,7 +3433,8 @@ function doDoctor(world, rec, settle, patient) {
         kind: "tend",
         remaining: max,
         max,
-        slot: found.index,
+        slot: found.slot,
+        bag: found.bag,
         patientId: patient.id,
         patientName: patient.name || patient.pawnName || null,
         itemId: stack.id,

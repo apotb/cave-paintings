@@ -572,6 +572,107 @@
             return out;
         },
 
+        bandageScore(meta) {
+            const b = meta?.bandage;
+            if (!b) return -1;
+            return (Number(b.tendQuality) || 0) * 1000
+                + (Number(b.tendQualityMax) || 0) * 10
+                + (Number(b.batchSeverity) || 0);
+        },
+
+        pickBestBandage(bags, getItem, skip) {
+            let best = null;
+            let bestScore = -1;
+            for (const bag of bags || []) {
+                const slots = bag?.slots || [];
+                for (let i = 0; i < slots.length; i++) {
+                    if (typeof skip === "function" && skip(bag, i, slots[i])) continue;
+                    const stack = slots[i];
+                    if (!stack?.id) continue;
+                    const meta = typeof getItem === "function" ? getItem(stack.id) : null;
+                    const score = this.bandageScore(meta);
+                    if (score < 0) continue;
+                    if (score > bestScore) {
+                        bestScore = score;
+                        best = {
+                            source: bag.source || bag.pawn || bag.at || null,
+                            slot: i,
+                            bag: bag.bag || "hotbar",
+                            stack,
+                            slots,
+                            at: bag.at,
+                            kind: bag.kind,
+                            entry: bag.entry || null
+                        };
+                    }
+                }
+            }
+            return best;
+        },
+
+        _tendSpecKey(spec) {
+            if (!spec) return null;
+            if (spec.hediff) return spec.hediff;
+            if (spec.destroyed) return spec.destroyed;
+            if (spec.inj) return spec.inj;
+            return spec;
+        },
+
+        bandageUsesNeeded(body, batchSeverity, opts = {}) {
+            if (!body) return 0;
+            const counted = opts.counted instanceof Set ? opts.counted : new Set();
+            const extraSkip = typeof opts.skip === "function" ? opts.skip : null;
+            const skip = (spec) => {
+                if (extraSkip?.(spec)) return true;
+                const k = this._tendSpecKey(spec);
+                return !!(k && counted.has(k));
+            };
+            let n = 0;
+            for (;;) {
+                const targets = this.pickTendTargets(body, { batchSeverity, skip });
+                if (!targets.length) break;
+                n += 1;
+                for (const t of targets) {
+                    const k = this._tendSpecKey(t);
+                    if (k) counted.add(k);
+                }
+                if (n > 64) break;
+            }
+            return n;
+        },
+
+        planMedicineTakes(body, poulticeHave, opts = {}) {
+            const pBatch = Number.isFinite(Number(opts.poulticeBatch))
+                ? Number(opts.poulticeBatch)
+                : 20;
+            const cBatch = Number.isFinite(Number(opts.cordBatch))
+                ? Number(opts.cordBatch)
+                : 0;
+            const have = Math.max(0, Math.floor(Number(poulticeHave) || 0));
+            const needP = this.bandageUsesNeeded(body, pBatch);
+            const takeP = Math.min(have, needP);
+            const poulticeCounted = new Set();
+            for (let i = 0; i < takeP; i++) {
+                const skip = (spec) => {
+                    const k = this._tendSpecKey(spec);
+                    return !!(k && poulticeCounted.has(k));
+                };
+                const targets = this.pickTendTargets(body, { batchSeverity: pBatch, skip });
+                if (!targets.length) break;
+                for (const t of targets) {
+                    const k = this._tendSpecKey(t);
+                    if (k) poulticeCounted.add(k);
+                }
+            }
+            const needC = this.bandageUsesNeeded(body, cBatch, {
+                skip: (spec) => {
+                    const k = this._tendSpecKey(spec);
+                    return !!(k && poulticeCounted.has(k));
+                }
+            });
+            return { poultice: takeP, cord: needC, poulticeNeeded: needP };
+        },
+
         rollTendQuality(base = 0.4, max = 0.7, math = GameMath, opts = null) {
             const m = math || GameMath;
             const b = Math.max(0, Number(base) || 0);
