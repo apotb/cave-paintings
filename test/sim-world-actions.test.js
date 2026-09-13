@@ -1387,6 +1387,176 @@ test("knap consume+finish spends one pebble and grants one tool", () => {
     assert.equal(pebbles, 2);
 });
 
+test("form consume+finish spends one clay and grants a figurine", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const Forming = require("../shared/forming");
+    pawn.inventory[0] = { id: "clay", quantity: 3 };
+    pawn.techs = { clay_forming: true };
+    const grid = Forming.fallbackMound();
+    const pack = Forming.pack(grid);
+    const form = { type: Protocol.Actions.FORM, slot: 0, id: "clay", pawnId: pawn.id, startMass: Forming.mass(grid) };
+    world.handleAction(pawn.id, { ...form, op: "consume" });
+    world.handleAction(pawn.id, { ...form, op: "consume" });
+    assert.equal(pawn.inventory[0]?.quantity, 2, "second consume must not eat another clay");
+    world.handleAction(pawn.id, {
+        ...form,
+        op: "finish",
+        stack: { id: "clay_figurine", formClass: "deity", formVoxels: pack }
+    });
+    const figs = pawn.inventory.filter((s) => s && s.id === "clay_figurine");
+    const clays = pawn.inventory.reduce((n, s) => n + (s?.id === "clay" ? (s.quantity || 0) : 0), 0);
+    assert.equal(figs.length, 1);
+    assert.equal(figs[0].quantity, 1);
+    assert.ok(figs[0].formVoxels);
+    assert.equal(figs[0].formClass, "lump");
+    assert.equal(figs[0].customName, undefined);
+    assert.equal(clays, 2);
+});
+
+test("form consume on a figurine can abort back into the same slot", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const Forming = require("../shared/forming");
+    const grid = Forming.fallbackMound();
+    const stack = Forming.makeStack("lump", grid, Forming.mass(grid));
+    pawn.inventory[0] = { ...stack, quantity: 1 };
+    pawn.techs = { clay_forming: true };
+    const form = { type: Protocol.Actions.FORM, slot: 0, id: "clay_figurine", pawnId: pawn.id, startMass: stack.formStartMass };
+    world.handleAction(pawn.id, { ...form, op: "consume" });
+    assert.equal(pawn.inventory[0], null);
+    assert.ok(pawn._formSession?.rework);
+    world.handleAction(pawn.id, { ...form, op: "abort" });
+    assert.equal(pawn.inventory[0]?.id, "clay_figurine");
+    assert.equal(pawn.inventory[0]?.formVoxels, stack.formVoxels);
+    assert.equal(pawn._formSession, null);
+});
+
+test("form consume+finish on a figurine replaces it", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const Forming = require("../shared/forming");
+    const grid = Forming.fallbackMound();
+    const stack = Forming.makeStack("lump", grid, Forming.mass(grid));
+    pawn.inventory[0] = { ...stack, quantity: 1 };
+    pawn.techs = { clay_forming: true };
+    const next = Forming.cloneGrid(grid);
+    next[8][8][8] = true;
+    const pack = Forming.pack(next);
+    const form = { type: Protocol.Actions.FORM, slot: 0, id: "clay_figurine", pawnId: pawn.id, startMass: stack.formStartMass };
+    world.handleAction(pawn.id, { ...form, op: "consume" });
+    world.handleAction(pawn.id, {
+        ...form,
+        op: "finish",
+        stack: { id: "clay_figurine", formClass: "lump", formVoxels: pack }
+    });
+    const figs = pawn.inventory.filter((s) => s && s.id === "clay_figurine");
+    assert.equal(figs.length, 1);
+    assert.equal(figs[0].formVoxels, pack);
+    assert.equal(pawn._formSession, null);
+});
+
+test("form finish names a defined figurine and leaves a first lump unnamed", () => {
+    const Forming = require("../shared/forming");
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.techs = { clay_forming: true };
+    const humanGrid = Forming.emptyGrid();
+    for (let x = 7; x <= 9; x++) {
+        for (let y = 0; y <= 8; y++) humanGrid[x][y][8] = true;
+    }
+    humanGrid[7][0][8] = true;
+    humanGrid[9][0][8] = true;
+    pawn.inventory[0] = { id: "clay", quantity: 1 };
+    const form = {
+        type: Protocol.Actions.FORM,
+        slot: 0,
+        id: "clay",
+        pawnId: pawn.id,
+        startMass: Forming.mass(humanGrid)
+    };
+    world.handleAction(pawn.id, { ...form, op: "consume" });
+    world.handleAction(pawn.id, {
+        ...form,
+        op: "finish",
+        stack: { id: "clay_figurine", formVoxels: Forming.pack(humanGrid) }
+    });
+    const fig = pawn.inventory.find((s) => s && s.id === "clay_figurine");
+    assert.ok(fig);
+    assert.equal(fig.formClass, "human");
+    assert.equal(fig.customName, "Clay Human Figurine");
+    assert.equal(!!fig.formCustom, false);
+});
+
+test("form finish keeps a custom name and rewrites a class default", () => {
+    const Forming = require("../shared/forming");
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.techs = { clay_forming: true };
+    const humanGrid = Forming.emptyGrid();
+    for (let x = 7; x <= 9; x++) {
+        for (let y = 0; y <= 8; y++) humanGrid[x][y][8] = true;
+    }
+    humanGrid[7][0][8] = true;
+    humanGrid[9][0][8] = true;
+    const animalGrid = Forming.emptyGrid();
+    for (let x = 4; x <= 11; x++) {
+        for (let y = 2; y <= 4; y++) {
+            for (let z = 7; z <= 9; z++) animalGrid[x][y][z] = true;
+        }
+    }
+    animalGrid[5][0][7] = true;
+    animalGrid[5][1][7] = true;
+    animalGrid[5][0][9] = true;
+    animalGrid[5][1][9] = true;
+    animalGrid[10][0][7] = true;
+    animalGrid[10][1][7] = true;
+    animalGrid[10][0][9] = true;
+    animalGrid[10][1][9] = true;
+    const held = Forming.makeStack("human", humanGrid, Forming.mass(humanGrid));
+    Forming.applyFinishName(held, {});
+    held.customName = "Bob";
+    held.formCustom = true;
+    pawn.inventory[0] = { ...held, quantity: 1 };
+    const form = {
+        type: Protocol.Actions.FORM,
+        slot: 0,
+        id: "clay_figurine",
+        pawnId: pawn.id,
+        startMass: held.formStartMass
+    };
+    world.handleAction(pawn.id, { ...form, op: "consume" });
+    world.handleAction(pawn.id, {
+        ...form,
+        op: "finish",
+        stack: {
+            id: "clay_figurine",
+            formVoxels: Forming.pack(animalGrid),
+            customName: "Bob",
+            formCustom: true
+        }
+    });
+    const bob = pawn.inventory.find((s) => s && s.id === "clay_figurine");
+    assert.equal(bob.formClass, "animal");
+    assert.equal(bob.customName, "Bob");
+    assert.equal(bob.formCustom, true);
+
+    const def = Forming.makeStack("human", humanGrid, Forming.mass(humanGrid));
+    Forming.applyFinishName(def, {});
+    pawn.inventory[0] = { ...def, quantity: 1 };
+    pawn.techs = { clay_forming: true };
+    world.handleAction(pawn.id, { ...form, op: "consume" });
+    world.handleAction(pawn.id, {
+        ...form,
+        op: "finish",
+        stack: {
+            id: "clay_figurine",
+            formVoxels: Forming.pack(animalGrid),
+            customName: "Clay Human Figurine",
+            formCustom: false
+        }
+    });
+    const renamed = pawn.inventory.find((s) => s && s.id === "clay_figurine");
+    assert.equal(renamed.formClass, "animal");
+    assert.equal(renamed.customName, "Clay Animal Figurine");
+    assert.equal(!!renamed.formCustom, false);
+});
+
 function addTestCompanion(world, pawn, id = "buddy") {
     const rec = world._companionFromSnap(pawn, {
         id,
@@ -2365,6 +2535,112 @@ test("can place painting circle inside owned settlement", () => {
     assert.equal(circle.paintEnabled, true);
     assert.equal(Research.hasTech(settle, "painting"), true);
     assert.equal(world.isBlocked(circle.x, circle.y), false);
+});
+
+test("places a finished figurine and pickup restores voxels", () => {
+    const Forming = require("../shared/forming");
+    const { world, pawn, Protocol } = createTestWorld();
+    fillGrass(world);
+    const grid = Forming.emptyGrid();
+    for (let x = 7; x <= 9; x++) {
+        for (let y = 0; y <= 8; y++) grid[x][y][8] = true;
+    }
+    grid[7][0][8] = true;
+    grid[9][0][8] = true;
+    const stack = Forming.makeStack("human", grid, Forming.mass(grid));
+    pawn.inventory[0] = { ...stack, quantity: 1 };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, { type: Protocol.Actions.PLACE, tx: 2, ty: 1 });
+    assert.ok(!pawn.inventory[0] || !(pawn.inventory[0].quantity > 0));
+    const chunk = originChunk(world);
+    const fig = (chunk.things || []).find((t) => t.id === "clay_figurine");
+    assert.ok(fig);
+    assert.equal(fig.formClass, "human");
+    assert.equal(fig.formVoxels, stack.formVoxels);
+    assert.equal(fig.slots, undefined);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.STORAGE,
+        op: "pickup",
+        uid: fig.uid,
+        x: fig.x,
+        y: fig.y
+    });
+    assert.equal((chunk.things || []).some((t) => t.id === "clay_figurine"), false);
+    const back = pawn.inventory.find((s) => s && s.id === "clay_figurine");
+    assert.ok(back);
+    assert.equal(back.formVoxels, stack.formVoxels);
+    assert.equal(back.formClass, "human");
+});
+
+test("place figurine rot does not rewrite voxels", () => {
+    const Forming = require("../shared/forming");
+    const { world, pawn, Protocol } = createTestWorld();
+    fillGrass(world);
+    const grid = Forming.emptyGrid();
+    grid[9][1][8] = true;
+    for (let i = 0; i < 20; i++) grid[7][i % 8][7] = true;
+    const stack = Forming.makeStack("human", grid, Forming.mass(grid));
+    pawn.inventory[0] = { ...stack, quantity: 1 };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, { type: Protocol.Actions.PLACE, tx: 2, ty: 1, rot: 90 });
+    const chunk = originChunk(world);
+    const fig = (chunk.things || []).find((t) => t.id === "clay_figurine");
+    assert.ok(fig);
+    assert.equal(fig.rot, 90);
+    assert.equal(fig.formVoxels, stack.formVoxels);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.STORAGE,
+        op: "pickup",
+        uid: fig.uid,
+        x: fig.x,
+        y: fig.y
+    });
+    const back = pawn.inventory.find((s) => s && s.id === "clay_figurine");
+    assert.ok(back);
+    assert.equal(back.formVoxels, stack.formVoxels);
+});
+
+test("legacy baked place yaw is undone on pickup", () => {
+    const Forming = require("../shared/forming");
+    const { world, pawn, Protocol } = createTestWorld();
+    fillGrass(world);
+    const grid = Forming.emptyGrid();
+    grid[9][1][8] = true;
+    for (let i = 0; i < 20; i++) grid[7][i % 8][7] = true;
+    const stack = Forming.makeStack("human", grid, Forming.mass(grid));
+    const yawed = Forming.rotatePackYaw(stack.formVoxels, 90);
+    pawn.inventory[0] = { ...stack, quantity: 1 };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, { type: Protocol.Actions.PLACE, tx: 2, ty: 1, rot: 0 });
+    const chunk = originChunk(world);
+    const fig = (chunk.things || []).find((t) => t.id === "clay_figurine");
+    assert.ok(fig);
+    fig.formVoxels = yawed;
+    fig.rot = 90;
+    delete fig.formPose;
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.STORAGE,
+        op: "pickup",
+        uid: fig.uid,
+        x: fig.x,
+        y: fig.y
+    });
+    const back = pawn.inventory.find((s) => s && s.id === "clay_figurine");
+    assert.ok(back);
+    assert.equal(back.formVoxels, stack.formVoxels);
+});
+
+test("lump figurines are not placed", () => {
+    const Forming = require("../shared/forming");
+    const { world, pawn, Protocol } = createTestWorld();
+    fillGrass(world);
+    const stack = Forming.makeStack("lump", Forming.fallbackMound(), 20);
+    pawn.inventory[0] = { ...stack, quantity: 1 };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, { type: Protocol.Actions.PLACE, tx: 2, ty: 1 });
+    assert.equal(pawn.inventory[0]?.id, "clay_figurine");
+    const chunk = originChunk(world);
+    assert.equal((chunk.things || []).some((t) => t.id === "clay_figurine"), false);
 });
 
 test("unlockTech spends from the settlement pool without changing painted counts", () => {

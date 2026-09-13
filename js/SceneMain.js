@@ -57,6 +57,7 @@ class SceneMain extends SceneBase {
         this.corpsePanel = null;
         this.healthPanel = null;
         this.knappingPanel = null;
+        this.clayFormingPanel = null;
         this.deathOverlay = null;
         this.player = null;
         this.leader = null;
@@ -291,6 +292,7 @@ class SceneMain extends SceneBase {
         this.corpsePanel = new CorpsePanel(this);
         this.healthPanel = new HealthPanel(this);
         this.knappingPanel = new KnappingPanel(this);
+        this.clayFormingPanel = new ClayFormingPanel(this);
         this.createDeathOverlay();
         this.partyPanel = new PartyPanel(this);
         this.settlementPanel = new SettlementPanel(this);
@@ -753,6 +755,10 @@ class SceneMain extends SceneBase {
         }
     }
 
+    _sculptUiOpen() {
+        return !!(this.knappingPanel?.visible || this.clayFormingPanel?.visible);
+    }
+
     /**
      * True while a UI fully owns local gear and must not be stomped by YOU.
      * Craft is excluded: recipes are clicks only (no local gear edits) — blocking YOU
@@ -761,7 +767,7 @@ class SceneMain extends SceneBase {
      * holding inventory for a second, which used to restore hotbar counts.
      */
     _inventoryUiOwnsGear() {
-        return !!this.knappingPanel?.visible;
+        return this._sculptUiOpen();
     }
 
     /**
@@ -1611,6 +1617,11 @@ class SceneMain extends SceneBase {
         assign("knapQuality", d.knapQuality);
         assign("tooltipExtra", d.tooltipExtra);
         assign("knapIconData", d.knapIconData);
+        assign("formClass", d.formClass);
+        assign("formVoxels", d.formVoxels);
+        assign("formStartMass", d.formStartMass);
+        assign("formCustom", d.formCustom ? true : null);
+        assign("beauty", d.beauty);
         assign("kind", d.kind);
         assign("fillTint", d.fillTint);
         assign("durability", d.durability);
@@ -1640,6 +1651,12 @@ class SceneMain extends SceneBase {
         spr.knapQuality = e.knapQuality;
         spr.tooltipExtra = e.tooltipExtra;
         spr.knapIconData = e.knapIconData;
+        spr.formClass = e.formClass;
+        spr.formVoxels = e.formVoxels;
+        spr.formStartMass = e.formStartMass;
+        if (e.formCustom) spr.formCustom = true;
+        else delete spr.formCustom;
+        spr.beauty = e.beauty;
         spr.kind = e.kind;
         spr.fillTint = e.fillTint;
         spr.durability = e.durability;
@@ -3390,7 +3407,9 @@ class SceneMain extends SceneBase {
                 || this.getThing?.(t.id)?.craftStation
                 || this.getThing?.(t.id)?.sleep
                 || this.getThing?.(t.id)?.settlement
+                || this.getThing?.(t.id)?.figurine
                 || t.id === "settling_stone"
+                || t.id === "clay_figurine"
                 || Array.isArray(t.occupants);
             if (!store) return false;
             return Math.abs(Number(t.x) - x) < 1.5 && Math.abs(Number(t.y) - y) < 1.5;
@@ -3458,9 +3477,10 @@ class SceneMain extends SceneBase {
             const isStation = !!(src.craftStation || def?.craftStation);
             const isSleep = !!(src.sleep || def?.sleep || Array.isArray(src.occupants));
             const isSettle = !!(src.settlement || def?.settlement || src.id === "settling_stone");
+            const isFig = !!(src.figurine || def?.figurine || src.id === "clay_figurine");
             entry = {
-                uid: src.uid || opts.uid || `${isSleep ? "sl" : isStation ? "cs" : isSettle ? "ss" : "st"}_${Math.round(x)}_${Math.round(y)}`,
-                id: src.id || (isSleep ? "lean_to" : isStation ? "skinworking_bench" : isSettle ? "settling_stone" : "wicker_basket"),
+                uid: src.uid || opts.uid || `${isSleep ? "sl" : isStation ? "cs" : isSettle ? "ss" : isFig ? "fg" : "st"}_${Math.round(x)}_${Math.round(y)}`,
+                id: src.id || (isSleep ? "lean_to" : isStation ? "skinworking_bench" : isSettle ? "settling_stone" : isFig ? "clay_figurine" : "wicker_basket"),
                 x,
                 y,
                 rot: typeof Place !== "undefined" ? Place.normalizeRot(src.rot) : (src.rot || 0),
@@ -3476,6 +3496,9 @@ class SceneMain extends SceneBase {
                 if (src.settlementId) entry.settlementId = src.settlementId;
             } else if (typeof Research !== "undefined" && Research.isPaintingCircle?.(def, src)) {
                 if (typeof Research.ensureEntry === "function") Research.ensureEntry(entry, def);
+            } else if (def?.figurine || src.figurine || src.id === "clay_figurine") {
+                if (typeof Place !== "undefined") Place.ensureFigurineEntry(entry);
+                this._netApplyFigurineFields(entry, src);
             } else {
                 entry.slots = Array.isArray(src.slots) ? src.slots : [null, null, null, null, null, null];
                 if (typeof Place !== "undefined") {
@@ -3496,6 +3519,7 @@ class SceneMain extends SceneBase {
             if (Array.isArray(src.slots)) entry.slots = src.slots;
             if (Array.isArray(src.occupants)) entry.occupants = src.occupants;
             this._netApplyStorageFilter(entry, src);
+            this._netApplyFigurineFields(entry, src);
         }
         if (typeof Research !== "undefined" && Research.isPaintingCircle?.(this.getThing(entry.id), entry)) {
             if (src.painted != null) entry.painted = src.painted;
@@ -3529,6 +3553,16 @@ class SceneMain extends SceneBase {
         this._reconcileSleepOccupants?.(entry);
     }
 
+    _netApplyFigurineFields(entry, src) {
+        if (!entry || !src) return;
+        const def = this.getThing(entry.id || src.id);
+        if (!(def?.figurine || src.figurine || entry.id === "clay_figurine" || src.id === "clay_figurine")) {
+            return;
+        }
+        const extras = typeof mealStackExtras === "function" ? mealStackExtras(src) : null;
+        if (extras) Object.assign(entry, extras);
+    }
+
     _netApplyStorageFilter(entry, src) {
         if (!entry || !src || !Object.prototype.hasOwnProperty.call(src, "storageFilter")) return;
         const SF = typeof StorageFilter !== "undefined" ? StorageFilter : null;
@@ -3559,12 +3593,15 @@ class SceneMain extends SceneBase {
         const isStation = !!(def?.craftStation);
         const isSleep = !!(def?.sleep || Array.isArray(entry.occupants));
         const isSettle = !!(def?.settlement || entry.id === "settling_stone");
+        const isFig = !!(def?.figurine || entry.id === "clay_figurine");
         let live = isSleep
             ? this.findLeanToByUid(entry.uid)
             : isStation
             ? this.findCraftStationByUid(entry.uid)
             : isSettle
             ? this.settlementSys?.findThingByUid?.(entry.uid)
+            : isFig
+            ? this.findFigurineByUid(entry.uid)
             : this.findStorageByUid(entry.uid);
         if (!live) {
             for (const t of chunk?.things?.getChildren?.() || []) {
@@ -3572,6 +3609,7 @@ class SceneMain extends SceneBase {
                     ? (t instanceof LeanTo)
                     : isStation ? (t instanceof CraftStation)
                     : isSettle ? (typeof SettlingStone !== "undefined" && t instanceof SettlingStone)
+                    : isFig ? (typeof ClayFigurine !== "undefined" && t instanceof ClayFigurine)
                     : (t instanceof Storage || t instanceof PaintingCircle);
                 if (!matchType) continue;
                 if (t.entry === entry) { live = t; break; }
@@ -3584,6 +3622,7 @@ class SceneMain extends SceneBase {
                 if (!t?.active) continue;
                 if (t instanceof CraftStation || t instanceof Storage || t instanceof LeanTo
                     || t instanceof PaintingCircle
+                    || (typeof ClayFigurine !== "undefined" && t instanceof ClayFigurine)
                     || (typeof SettlingStone !== "undefined" && t instanceof SettlingStone)) continue;
                 const sameUid = !!(entry.uid && t.entry?.uid === entry.uid);
                 const samePos = Number.isFinite(x) && Number.isFinite(y)
@@ -3614,9 +3653,22 @@ class SceneMain extends SceneBase {
                 ? new LeanTo(this, entry)
                 : isStation ? new CraftStation(this, entry)
                 : isSettle ? new SettlingStone(this, entry)
+                : isFig ? new ClayFigurine(this, entry)
                 : Storage.create(this, entry);
             chunk.things.add(spr);
         }
+    }
+
+    findFigurineByUid(uid) {
+        if (!uid) return null;
+        for (const chunk of Object.values(this.chunks || {})) {
+            for (const t of chunk.things?.getChildren?.() || []) {
+                if (typeof ClayFigurine !== "undefined" && t instanceof ClayFigurine && t.entry?.uid === uid) {
+                    return t;
+                }
+            }
+        }
+        return null;
     }
 
     findCraftStationByUid(uid) {
@@ -3636,10 +3688,12 @@ class SceneMain extends SceneBase {
         const live = this.findStorageByUid(uid)
             || this.findCraftStationByUid(uid)
             || this.findLeanToByUid(uid)
+            || this.findFigurineByUid(uid)
             || this.settlementSys?.findThingByUid?.(uid)
             || (chunk?.things?.getChildren?.() || []).find((t) =>
                 (t instanceof Storage || t instanceof CraftStation || t instanceof LeanTo
-                    || t instanceof PaintingCircle) && (
+                    || t instanceof PaintingCircle
+                    || (typeof ClayFigurine !== "undefined" && t instanceof ClayFigurine)) && (
                     t.entry === entry
                     || (Number.isFinite(x) && Math.abs(t.x - x) < 1.5 && Math.abs(t.y - y) < 1.5)
                 )
@@ -3871,8 +3925,8 @@ class SceneMain extends SceneBase {
             && !this._worldSimFrozen
             && !this._worldBooting
             && !this.combatLog?.isComposing?.()
-            && !this.settlementSys?.isNaming?.()
-            && !this.knappingPanel?.visible
+            && !isHudTextOpen(this)
+            && !this._sculptUiOpen()
             && !this.researchTreePanel?.visible
             && !downed
             && !p.isVomiting?.()
@@ -4651,6 +4705,8 @@ class SceneMain extends SceneBase {
             stack.quantity || 1,
             stack.knapIcon || "",
             stack.knapIconData ? "k" : "",
+            stack.formIcon || "",
+            stack.formVoxels ? "f" : "",
             stack.fillTint || "",
             (stack.ingredients || []).map((x) => x?.id || "").join(",")
         ].join(":");
@@ -4886,6 +4942,10 @@ class SceneMain extends SceneBase {
                     cur === this.healthPanel?.root ||
                     cur === this.knappingPanel?.container ||
                     cur === this.knappingPanel?.helpBtn ||
+                    cur === this.clayFormingPanel?.container ||
+                    cur === this.clayFormingPanel?.helpBtn ||
+                    cur === this.clayFormingPanel?.saveBtn ||
+                    cur === this.clayFormingPanel?.loadBtn ||
                     cur === this.deathOverlay ||
                     cur === this.partyPanel?.root ||
                     cur === this.settlementPanel?.root ||
@@ -4925,6 +4985,7 @@ class SceneMain extends SceneBase {
             if (obj._settlePersonTip) return true;
             if (typeof LeanTo !== "undefined" && obj instanceof LeanTo) return true;
             if (typeof Storage !== "undefined" && obj instanceof Storage) return true;
+            if (obj === this.player && this.partySys?.selfHeldActionTooltip?.(obj)) return true;
             if (this._isHoverPawn(obj) || obj.role === "settler") return true;
             return false;
         };
@@ -4964,7 +5025,7 @@ class SceneMain extends SceneBase {
         this.showTooltip = (textOrFn, x, y, target=null) => {
             // Combat / name-camp overlay suppress world (thing/mob/drop) tooltips, not side UI
             if (
-                (this.player?.blocksTooltips?.() || this.settlementSys?.isNaming?.())
+                (this.player?.blocksTooltips?.() || isHudTextOpen(this))
                 && !this._isUiTooltipTarget(target)
             ) return;
             // Native Phaser over-events still fire on the work object (tree, bush,
@@ -4985,6 +5046,7 @@ class SceneMain extends SceneBase {
             const tipLayer = this.tooltipLayer || this.uiLayer;
             tipLayer?.bringToTop?.(this.tooltip);
             this.positionTooltip(x, y);
+            if (typeof ClayForming !== "undefined") ClayForming.syncHudTooltip(this);
         };
 
         this.refreshTooltip = () => {
@@ -4997,6 +5059,7 @@ class SceneMain extends SceneBase {
             }
             const shown = this._applyTooltipPayload();
             this.tooltip.setVisible(shown);
+            if (typeof ClayForming !== "undefined") ClayForming.syncHudTooltip(this);
         };
 
         this.hideTooltip = () => {
@@ -5008,12 +5071,14 @@ class SceneMain extends SceneBase {
             this.tooltipSub?.setText("");
             this.tooltipSub?.setVisible(false);
             this.tooltip.setVisible(false);
+            this.tooltip.setAlpha(1);
+            if (typeof ClayForming !== "undefined") ClayForming.hideHudTooltip();
         };
 
         this._pickHoverTarget = (pointer) => {
             const hits = this.input.hitTestPointer(pointer);
 
-            // Knapping modal blocks world behind it (help uses pixelPerfect like main HUD)
+            // Knapping modal blocks world behind it (help uses idle-pixel hit like main HUD)
             const knap = this.knappingPanel;
             if (knap?.visible && knap.backdrop) {
                 const overKnap = Phaser.Geom.Rectangle.Contains(
@@ -5027,6 +5092,21 @@ class SceneMain extends SceneBase {
                         if (this._isUnderKnappingPanel(obj)) return obj;
                     }
                     return knap.backdrop;
+                }
+            }
+            const form = this.clayFormingPanel;
+            if (form?.visible && form.backdrop) {
+                const overForm = Phaser.Geom.Rectangle.Contains(
+                    form.backdrop.getBounds(), pointer.x, pointer.y
+                );
+                if (overForm) {
+                    for (let i = hits.length - 1; i >= 0; i--) {
+                        const obj = hits[i];
+                        if (!obj?.active || !obj.input?.enabled) continue;
+                        if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
+                        if (this._isUnderFormingPanel(obj)) return obj;
+                    }
+                    return form.backdrop;
                 }
             }
 
@@ -5262,6 +5342,15 @@ class SceneMain extends SceneBase {
             const downedAlly = this.partySys?.downedAllyUnderPointer?.(pointer);
             if (downedAlly) return downedAlly;
 
+            const me = this.player;
+            if (
+                me
+                && this.partySys?.selfHeldActionTooltip?.(me)
+                && this._pointerOnCreature(pointer, me)
+            ) {
+                return me;
+            }
+
             // Standing companions beat trees under the cursor so chop/gather
             // animations don't flicker the tip. Parked settlers do not — baskets
             // and stations need to stay clickable while people work at them.
@@ -5303,6 +5392,32 @@ class SceneMain extends SceneBase {
                     || cur === panel.helpBtn
                     || cur === panel.gridHit
                     || cur === panel.btnRotate?.label
+                    || cur === panel.btnFinish?.label
+                ) {
+                    return true;
+                }
+                cur = cur.parentContainer;
+            }
+            return false;
+        };
+
+        this._isUnderFormingPanel = (obj) => {
+            const panel = this.clayFormingPanel;
+            if (!panel) return false;
+            let cur = obj;
+            while (cur) {
+                if (
+                    cur === panel.container
+                    || cur === panel.backdrop
+                    || cur === panel.helpBtn
+                    || cur === panel.saveBtn
+                    || cur === panel.loadBtn
+                    || cur === panel.btnAdd?.label
+                    || cur === panel.btnMove?.label
+                    || cur === panel.btnDelete?.label
+                    || cur === panel.btnRotate?.label
+                    || cur === panel.btnUndo?.label
+                    || cur === panel.btnMore?.label
                     || cur === panel.btnFinish?.label
                 ) {
                     return true;
@@ -5550,11 +5665,9 @@ class SceneMain extends SceneBase {
                 return "pointer";
             }
             if (!obj?.input) return 'default';
-            // Rocks: hand cursor only when "Click to knap" tip would show
-            if (obj.meta?.id === "rock") {
-                return this._rockKnapTooltipText() ? "pointer" : "default";
-            }
             if (obj.meta?.diggable) {
+                // Empty GO.cursor: Phaser setCursor would flash the arrow between deposits.
+                obj.input.cursor = "";
                 return this._heldHasDigPower() ? "pointer" : "default";
             }
             if (obj.input.cursor) return obj.input.cursor;
@@ -5590,7 +5703,7 @@ class SceneMain extends SceneBase {
             this._hoverPtrCell = ptrCell;
             const blockWorld = !!(
                 this.player?.blocksTooltips?.()
-                || this.settlementSys?.isNaming?.()
+                || isHudTextOpen(this)
             );
 
             if (this._wasTooltipBlocked && !blockWorld) {
@@ -5605,15 +5718,19 @@ class SceneMain extends SceneBase {
 
             // Don't let a world sprite steal an active HUD hover (lean-to while
             // lying in it used to pointerout Craft/hotbar/health and hide tips).
+            // Pixel-locked HUD icons keep the idle-sprite mask — don't inflate
+            // to the frame AABB or the hover outline would stick after first over.
             if (
                 this._isUiTooltipTarget(this._hoverTarget)
                 && this._objectShown?.(this._hoverTarget)
                 && (!top || !this._isUiTooltipTarget(top))
             ) {
                 const prev = this._hoverTarget;
-                const b = prev.getBounds?.();
-                if (b && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y)) {
-                    top = prev;
+                if (!prev._lockPixelHitKey) {
+                    const b = prev.getBounds?.();
+                    if (b && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y)) {
+                        top = prev;
+                    }
                 }
             }
 
@@ -5629,7 +5746,10 @@ class SceneMain extends SceneBase {
                         const b = prev.getBounds?.();
                         if (b) {
                             if (this._isUiTooltipTarget(prev)) {
-                                if (Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y)) top = prev;
+                                if (!prev._lockPixelHitKey
+                                    && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y)) {
+                                    top = prev;
+                                }
                             } else {
                                 const wpt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
                                 if (Phaser.Geom.Rectangle.Contains(b, wpt.x, wpt.y)) top = prev;
@@ -5690,6 +5810,7 @@ class SceneMain extends SceneBase {
             nx = Phaser.Math.Clamp(nx, 0, Math.max(0, maxX));
             ny = Phaser.Math.Clamp(ny, 0, Math.max(0, maxY));
             this.tooltip.setPosition(nx, ny);
+            if (typeof ClayForming !== "undefined") ClayForming.syncHudTooltip(this);
         };
 
         this.input.on("pointermove", (pointer) => {
@@ -6158,8 +6279,12 @@ class SceneMain extends SceneBase {
 
     wireDigTooltip(thing) {
         if (!thing?.meta?.diggable) return;
-        thing.setInteractive({ cursor: "default", pixelPerfect: false });
+        // Don't bake cursor: "default" — Phaser applies GO.cursor on native over
+        // and that flashes the arrow when moving across a clay bank.
+        thing.setInteractive({ pixelPerfect: false });
+        if (thing.input) thing.input.cursor = "";
         thing.on("pointerover", (pointer) => {
+            this.input?.setDefaultCursor?.(this._cursorFor?.(thing) || "default");
             this.showTooltip(
                 () => this._digTooltipText(thing),
                 pointer.x,
@@ -6180,29 +6305,6 @@ class SceneMain extends SceneBase {
 
     _spawnSignTooltip() {
         return [`Welcome to ${this._worldDisplayName()}!`];
-    }
-
-    /** Rock: click to knap + hover tip while holding pebble/flint. */
-    wireRockKnapping(thing) {
-        if (!thing || thing.meta?.id !== "rock") return;
-        // Default arrow; _cursorFor switches to pointer only when knap tip is active
-        thing.setInteractive({ cursor: "default", pixelPerfect: false });
-        thing.on("pointerdown", (pointer) => {
-            if (this.pointerOverWorldUi?.(pointer)) return;
-            this.knappingPanel?.tryOpenAtRock?.(thing);
-        });
-        thing.on("pointerover", (pointer) => {
-            this.showTooltip(
-                () => this._rockKnapTooltipText(),
-                pointer.x,
-                pointer.y,
-                thing
-            );
-        });
-        thing.on("pointerout", () => {
-            if (this._hoverTarget === thing) this._hoverTarget = null;
-            if (this._tooltipTarget === thing) this.hideTooltip();
-        });
     }
 
     /** Skinworking bench (and later craft stations): click opens the C-key craft menu, filtered. */
@@ -6290,6 +6392,7 @@ class SceneMain extends SceneBase {
         this.corpsePanel?.close?.();
         this.closeCraftStationMenu();
         this.knappingPanel?.close?.();
+        this.clayFormingPanel?.close?.();
     }
 
     /**
@@ -6346,17 +6449,6 @@ class SceneMain extends SceneBase {
             if (b && Phaser.Geom.Rectangle.Contains(b, pt.x, pt.y)) return slot;
         }
         return null;
-    }
-
-    _rockKnapTooltipText() {
-        const held = this.player?.getHeldItem?.();
-        if (!held || !(held.quantity > 0)) return "";
-        if (held.knapIconData && (held.id === "stone_tool" || held.id === "flint_tool")) {
-            return "Click to reshape";
-        }
-        const meta = this.getItem(held.id);
-        if (!meta?.knapping?.material) return "";
-        return "Click to knap";
     }
 
     _heldHasDigPower() {
@@ -6615,10 +6707,11 @@ class SceneMain extends SceneBase {
         } else if ((typeof Research !== "undefined" && Research.isPaintingCircle?.(this.getThing(entry.id), entry))
             || Array.isArray(entry.slots) || this.getThing(entry.id)?.storage) {
             thing = Storage.create(this, entry);
+        } else if (this.getThing(entry.id)?.figurine || entry.id === "clay_figurine") {
+            thing = new ClayFigurine(this, entry);
         } else {
             thing = new Thing(this, entry.x, entry.y, entry.id, entry);
-            if (entry.id === "rock") this.wireRockKnapping?.(thing);
-            else if (entry.id === "sign") {
+            if (entry.id === "sign") {
                 if (entry.spawnHint && this._spawnSignTooltip) {
                     entry.tooltip = this._spawnSignTooltip();
                 }
@@ -6795,7 +6888,9 @@ class SceneMain extends SceneBase {
         const held = this.player?.getHeldItem?.();
         if (!held || !(held.quantity > 0)) return null;
         const itemDef = this.getItem(held.id);
-        const thingId = typeof Place !== "undefined" ? Place.placeThingId(itemDef) : itemDef?.place?.thing;
+        const thingId = typeof Place !== "undefined"
+            ? Place.heldPlaceThingId(itemDef, held)
+            : itemDef?.place?.thing;
         if (!thingId) return null;
         const thingDef = this.getThing(thingId);
         if (!thingDef) return null;
@@ -6805,8 +6900,8 @@ class SceneMain extends SceneBase {
     _placeGhostBlocked() {
         if (this._gamePaused || this._worldSimFrozen || this.player?._bodyDead || this.player?._resting) return true;
         if (this.combatLog?.isComposing?.()) return true;
-        if (this.settlementSys?.isNaming?.()) return true;
-        if (this.knappingPanel?.visible) return true;
+        if (isHudTextOpen(this)) return true;
+        if (this._sculptUiOpen()) return true;
         return false;
     }
 
@@ -6960,7 +7055,14 @@ class SceneMain extends SceneBase {
             ? Place.rotationTextureKey(info.thingDef.key, rot)
             : info.thingDef.key;
         const ghost = this._ensurePlaceGhost();
-        if (hangKey && this.textures.exists(hangKey)) ghost.setTexture(hangKey);
+        if (info.thingDef?.figurine) {
+            const placeKey = (typeof ClayForming !== "undefined")
+                ? (ClayForming.ensurePlaceIcon(this, info.held, rot) || info.held.formPlaceIcon)
+                : info.held.formPlaceIcon;
+            if (placeKey && this.textures.exists(placeKey)) ghost.setTexture(placeKey);
+            else if (this.textures.exists("clay")) ghost.setTexture("clay");
+            else if (this.textures.exists(info.thingDef.key)) ghost.setTexture(info.thingDef.key);
+        } else if (hangKey && this.textures.exists(hangKey)) ghost.setTexture(hangKey);
         else if (this.textures.exists(rotTex)) ghost.setTexture(rotTex);
         else if (this.textures.exists(info.thingDef.key)) ghost.setTexture(info.thingDef.key);
         let gx = x;
@@ -6973,7 +7075,8 @@ class SceneMain extends SceneBase {
         }
         ghost.setPosition(gx, gy);
         const floorH = ghost.displayHeight || ghost.height || 16;
-        const floorDecal = typeof Research !== "undefined" && Research.isPaintingCircle?.(info.thingDef);
+        const floorDecal = (typeof Research !== "undefined" && Research.isPaintingCircle?.(info.thingDef))
+            || !!info.thingDef?.figurine;
         if (floorDecal && this.groundLayer) {
             if (ghost.displayList !== this.groundLayer) this.groundLayer.add(ghost);
             ghost.setDepth(0.5);
@@ -7089,7 +7192,9 @@ class SceneMain extends SceneBase {
             ? this.placeCraftStation(tile.tx, tile.ty, info.thingId, rot)
             : (info.thingDef.settlement
                 ? this.placeSettlement(tile.tx, tile.ty, rot)
-                : this.placeStorage(tile.tx, tile.ty, info.thingId, rot));
+                : info.thingDef.figurine
+                    ? this.placeFigurine(tile.tx, tile.ty, info, rot)
+                    : this.placeStorage(tile.tx, tile.ty, info.thingId, rot));
         if (!placed) return false;
         this.player.loseItem(info.held, 1);
         if (!(info.held.quantity > 0)) this.resetPlaceRot();
@@ -7121,6 +7226,56 @@ class SceneMain extends SceneBase {
         const spr = Storage.create(this, entry);
         chunk.things.add(spr);
         return spr;
+    }
+
+    placeFigurine(tx, ty, info, rot = 0) {
+        if (!this.canPlaceAt(tx, ty)) return null;
+        const { x, y } = this.tileCenter(tx, ty);
+        const chunk = this.getChunkAtWorld(x, y - 1);
+        if (!chunk || !chunk.isLoaded) return null;
+        const held = info?.held;
+        if (!held?.formVoxels) return null;
+        if (typeof Place !== "undefined" && !Place.canPlaceFigurine(held)) return null;
+        const entry = {
+            id: info.thingId || "clay_figurine",
+            x,
+            y,
+            rot: typeof Place !== "undefined" ? Place.normalizeRot(rot) : rot
+        };
+        entry.formPose = 1;
+        if (typeof Place !== "undefined") Place.ensureFigurineEntry(entry);
+        const extras = typeof mealStackExtras === "function" ? mealStackExtras(held) : null;
+        if (extras) Object.assign(entry, extras);
+        if (typeof ClayForming !== "undefined") ClayForming.ensurePlaceIcon(this, entry, entry.rot);
+        chunk.meta.things.push(entry);
+        const spr = new ClayFigurine(this, entry);
+        chunk.things.add(spr);
+        return spr;
+    }
+
+    tryPickupFigurine(thing) {
+        if (!thing?.entry || !thing.inRange?.()) return false;
+        const entry = thing.entry;
+        const extras = typeof mealStackExtras === "function" ? mealStackExtras(entry) : null;
+        const stackId = "clay_figurine";
+        const meta = this.getItem(stackId);
+        if (!meta) return false;
+        const x = thing.x;
+        const y = thing.y;
+        const chunk = this.getChunkAtWorld(x, y - 1);
+        const list = chunk?.meta?.things;
+        if (Array.isArray(list)) {
+            const i = list.indexOf(entry);
+            if (i >= 0) list.splice(i, 1);
+        }
+        thing.destroy();
+        this.hideTooltip?.();
+        const left = this.player.gainItem(meta, 1, undefined, extras);
+        if (left > 0) {
+            DroppedItem.spawn(this, x, y, meta, left, undefined, extras);
+        }
+        this.hotbar.dirty = true;
+        return true;
     }
 
     placeSleep(tx, ty, thingId, rot = 0) {
@@ -9523,7 +9678,7 @@ class SceneMain extends SceneBase {
         }
 
         if (typeof Stats !== "undefined") {
-            for (const line of Stats.tooltipLines(item)) lines.push(line);
+            for (const line of Stats.tooltipLines(item, stack)) lines.push(line);
         }
 
         if (item.bandage) {
@@ -10621,7 +10776,7 @@ class SceneMain extends SceneBase {
     createButtons() {
         const s = this.uiScale || 1;
         this.craft = this.add.image(44 * s, this.scale.height / 2, 'craft');
-        this.craft.setInteractive({ cursor: 'pointer', pixelPerfect: true });
+        lockPixelHit(this.craft, 'craft', { cursor: 'pointer' });
         this.craft.on('pointerdown', (pointer) => {
             if (pointer?.button != null && pointer.button !== 0) return;
             this.toggleCraftMenu();
@@ -10636,7 +10791,7 @@ class SceneMain extends SceneBase {
         this.uiLayer.add(this.craft);
 
         this.healthBtn = this.add.image(44 * s, this.scale.height / 2 + 104 * s, "health");
-        this.healthBtn.setInteractive({ cursor: "pointer", pixelPerfect: true });
+        lockPixelHit(this.healthBtn, "health", { cursor: "pointer" });
         this.healthBtn.on("pointerdown", () => this.toggleHealthMenu());
         this.healthBtn.on("pointerover", () => {
             if (!this.healthPanel?.visible) this.healthBtn.setTexture("health_hover");
@@ -10648,7 +10803,7 @@ class SceneMain extends SceneBase {
         this.uiLayer.add(this.healthBtn);
 
         this.equipmentBtn = this.add.image(44 * s, this.scale.height / 2 - 104 * s, 'equipment');
-        this.equipmentBtn.setInteractive({ cursor: 'pointer', pixelPerfect: true });
+        lockPixelHit(this.equipmentBtn, 'equipment', { cursor: 'pointer' });
         this.equipmentBtn.on('pointerdown', () => this.toggleEquipmentMenu());
         this.equipmentBtn.on('pointerover', () => {
             if (!this.equipmentPanel?.visible) this.equipmentBtn.setTexture('equipment_hover');
@@ -10662,7 +10817,7 @@ class SceneMain extends SceneBase {
         // Help (hover for controls; hold-click shows pressed art only)
         this._helpPressed = false;
         this.help = this.add.image(this.scale.width - 32 * s, this.scale.height - 32 * s, 'help');
-        this.help.setInteractive({ useHandCursor: true, pixelPerfect: true });
+        lockPixelHit(this.help, 'help', { useHandCursor: true });
         this.help.on('pointerover', (p) => {
             if (!this._helpPressed) this.help.setTexture('help_hover');
             this.showTooltip(() => this._helpTooltipText(), p.x, p.y, this.help);
@@ -10688,7 +10843,7 @@ class SceneMain extends SceneBase {
         if (!this[flagName] || !image) return;
         this[flagName] = false;
         const p = this.input.activePointer;
-        const over = Phaser.Geom.Rectangle.Contains(image.getBounds(), p.x, p.y);
+        const over = pointerHitsInteractive(image, p);
         const hoverKey = `${key}_hover`;
         image.setTexture(over ? hoverKey : key);
     }
@@ -11068,6 +11223,7 @@ class SceneMain extends SceneBase {
         if (this.leanToPanel?.visible) this.leanToPanel.close();
         if (this.paintingCirclePanel?.visible) this.paintingCirclePanel.close();
         if (this.settlementSys?.isNaming?.()) this.settlementSys._hideNamePrompt();
+        if (typeof CraftTemplateUi !== "undefined") CraftTemplateUi.closeAll();
         if (this.researchTreePanel?.visible) this.researchTreePanel.close({ restore: false });
         if (this.settlementPanel?.visible) this.settlementSys?.closePanel?.();
         if (this.billsPanel?.visible) this.billsPanel.close();
@@ -11327,6 +11483,7 @@ class SceneMain extends SceneBase {
         this._gamePaused = true;
         this.closeOpenMenus();
         if (this.knappingPanel?.visible) this.knappingPanel.finishOrClose?.();
+        if (this.clayFormingPanel?.visible) this.clayFormingPanel.finishOrClose?.();
         this.hideTooltip?.();
         const prevHover = this._hoverTarget;
         this._hoverTarget = null;
@@ -11742,6 +11899,10 @@ class SceneMain extends SceneBase {
     _handleEscapeKey() {
         if (this._leavingGame || this._worldBooting) return;
         if (!Phaser.Input.Keyboard.JustDown(this.keyEsc)) return;
+        if (typeof CraftTemplateUi !== "undefined" && CraftTemplateUi.isOpen()) {
+            CraftTemplateUi.handleEsc();
+            return;
+        }
         if (this.settlementSys?.isNaming?.()) {
             this.settlementSys._hideNamePrompt();
             return;
@@ -11771,6 +11932,10 @@ class SceneMain extends SceneBase {
             this.knappingPanel.finishOrClose?.();
             return;
         }
+        if (this.clayFormingPanel?.visible) {
+            this.clayFormingPanel.handleEsc?.();
+            return;
+        }
         if (this._gamePaused) {
             if (this._pausePage === "options") {
                 this._pausePage = "root";
@@ -11789,8 +11954,8 @@ class SceneMain extends SceneBase {
 
     toggleHealthMenu() {
         if (!this.healthPanel) return;
-        if (this.knappingPanel?.visible) return;
-        if (this.settlementSys?.isNaming?.()) return;
+        if (this._sculptUiOpen()) return;
+        if (isHudTextOpen(this)) return;
         // Any health view open (own or corpse inspect) → close panel only
         if (this.healthPanel.visible) {
             this.healthPanel.close();
@@ -11878,15 +12043,15 @@ class SceneMain extends SceneBase {
         if (this._isUnderCraftMenu?.(this._hoverTarget)) this._hoverTarget = null;
         if (!was) return;
         const p = this.input.activePointer;
-        const hovering = Phaser.Geom.Rectangle.Contains(this.craft.getBounds(), p.x, p.y);
+        const hovering = pointerHitsInteractive(this.craft, p);
         this.craft.setTexture(hovering ? 'craft_hover' : 'craft');
         // Dedicated: apply any YOU gear that arrived while craft UI was open
         this._flushPendingYouGear?.();
     }
 
     toggleCraftMenu() {
-        if (this.knappingPanel?.visible) return;
-        if (this.settlementSys?.isNaming?.()) return;
+        if (this._sculptUiOpen()) return;
+        if (isHudTextOpen(this)) return;
         const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
         if (now - (this._craftToggleAt || 0) < 80) return;
         this._craftToggleAt = now;
@@ -11909,8 +12074,8 @@ class SceneMain extends SceneBase {
     }
 
     toggleCraftStationMenu(thing) {
-        if (!thing || this.knappingPanel?.visible) return;
-        if (this.settlementSys?.isNaming?.()) return;
+        if (!thing || this._sculptUiOpen()) return;
+        if (isHudTextOpen(this)) return;
         if (this.player?._resting) return;
         if (this.craftMenuVisible && this._craftFromStation && (
             !this._craftStationThing || this._isSameCraftStation(thing)
@@ -11974,8 +12139,8 @@ class SceneMain extends SceneBase {
 
     toggleEquipmentMenu() {
         if (!this.equipmentPanel) return;
-        if (this.knappingPanel?.visible) return;
-        if (this.settlementSys?.isNaming?.()) return;
+        if (this._sculptUiOpen()) return;
+        if (isHudTextOpen(this)) return;
         this.equipmentPanel.toggle();
     }
 
@@ -12292,7 +12457,8 @@ class SceneMain extends SceneBase {
         if (this.storagePanel?.visible) this.storagePanel.layout();
         if (this.leanToPanel?.visible) this.leanToPanel.layout();
         if (this.paintingCirclePanel?.visible) this.paintingCirclePanel.layout();
-        if (this.knappingPanel?.visible) this.knappingPanel.layout();
+        if (this.knappingPanel) this.knappingPanel.layout();
+        if (this.clayFormingPanel) this.clayFormingPanel.layout();
 
         this.player?.applyChatBubbleScale?.();
         for (const p of this.party || []) {
@@ -12459,8 +12625,8 @@ class SceneMain extends SceneBase {
 
         // Process input (menus / hotbar / chat blocked while knapping — R/Esc stay in panel)
         const chatting = !!this.combatLog?.isComposing?.();
-        const knapping = !!this.knappingPanel?.visible;
-        const naming = !!this.settlementSys?.isNaming?.();
+        const knapping = this._sculptUiOpen();
+        const naming = isHudTextOpen(this);
         const researchOpen = !!this.researchTreePanel?.visible;
         if (!chatting && !knapping && !naming && !researchOpen && !this._gamePaused) {
             const ctrl = !!this.keys?.CTRL?.isDown;
@@ -12486,6 +12652,7 @@ class SceneMain extends SceneBase {
 
         // Update party (controlled + companions + wanderers)
         this.knappingPanel?.update?.();
+        this.clayFormingPanel?.update?.();
         if (this.partySys) this.partySys.update(time, delta);
         else this.player.update(time, delta);
         this.settlementSys?.update?.(time, delta);

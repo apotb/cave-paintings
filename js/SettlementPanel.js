@@ -21,6 +21,9 @@ class SettlementPanel {
         this._tabsLeft = 0;
         this._tabsRight = 0;
         this._scrollDrag = null;
+        this._jobDrag = null;
+        this._jobDragPend = null;
+        this._jobRows = [];
         this._refreshing = false;
         this._contentSigVal = null;
         this._build();
@@ -77,8 +80,12 @@ class SettlementPanel {
         this.scrollThumb.on("pointerdown", (p) => {
             this._scrollDrag = { startY: p.y, startScroll: this._scroll };
         });
-        scene.input.on("pointerup", () => { this._scrollDrag = null; });
+        scene.input.on("pointerup", () => {
+            this._scrollDrag = null;
+            this._endJobDrag();
+        });
         scene.input.on("pointermove", (p) => {
+            this._onJobDragMove(p);
             if (!this.visible || !this.root.visible || !this._scrollDrag || this._maxScroll <= 0) return;
             const travel = Math.max(1, this._viewH - this.scrollThumb.height);
             const dy = p.y - this._scrollDrag.startY;
@@ -86,6 +93,7 @@ class SettlementPanel {
         });
         scene.input.on("wheel", (pointer, _over, _dx, dy) => {
             if (!this.visible || !this.root.visible || this._maxScroll <= 0) return;
+            if (this._jobDrag) return;
             const p = pointer || scene.input.activePointer;
             if (!this._pointerInBody(p)) return;
             const step = Math.round(22 * (scene.uiScale || 1));
@@ -226,6 +234,7 @@ class SettlementPanel {
     }
 
     _setTab(tab) {
+        this._clearJobDrag();
         this.tab = tab;
         this._scroll = 0;
         this._contentSigVal = null;
@@ -244,6 +253,7 @@ class SettlementPanel {
     }
 
     close() {
+        this._clearJobDrag();
         this.visible = false;
         this.settle = null;
         this.root.setVisible(false);
@@ -312,6 +322,7 @@ class SettlementPanel {
         this.closeBtn._paint?.();
         this._syncTabs();
         this._contentSigVal = null;
+        this._clearJobDrag();
         if (this.visible && this.settle) this.refresh();
         else {
             this._maxScroll = Math.max(0, this._contentH - this._viewH);
@@ -324,6 +335,8 @@ class SettlementPanel {
         this.body.removeAll(true);
         this._rows = [];
         this._stockRows = [];
+        this._jobRows = [];
+        this._jobRowIds = [];
     }
 
     _contentSig() {
@@ -394,6 +407,7 @@ class SettlementPanel {
 
     refresh() {
         if (!this.visible || !this.settle) return;
+        if (this._jobDrag) return;
         const scene = this.scene;
         const s = scene.uiScale || 1;
         this.title.setText(this.settle.name || "Camp");
@@ -625,22 +639,35 @@ class SettlementPanel {
             ht.setOrigin(0.5, 0.5);
         }
 
+        this._jobHeaderH = headerH;
+        this._jobRowH = rowH;
+        this._jobRowIds = [];
+        this._jobRows = [];
+
         for (let r = 0; r < here.length; r++) {
             const p = here[r];
+            const pid = p.pawnId || p.id;
             const rowY = headerH + r * rowH;
+            const row = scene.add.container(0, rowY);
+            if (typeof row.setSize === "function") row.setSize(gridW, rowH);
             const name = (p.displayName?.() || "?").slice(0, 8);
-            const nt = this._label(name, Math.round(4 * sc), rowY + rowH / 2, 11);
-            nt.setOrigin(0, 0.5);
+            const nt = scene.add.text(Math.round(4 * sc), rowH / 2, name, {
+                fontFamily: PIXEL_UI_FONT,
+                fontSize: `${pixelUiFontSize(11, sc)}px`,
+                color: "#d4c4a8"
+            }).setOrigin(0, 0.5);
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(nt, 11, sc);
             if (p.isControlled?.() || p === scene.player) nt.setColor("#b8ffb8");
-            const jobRow = S ? S.jobsFor(this.settle, p.pawnId) : {};
+            row.add(nt);
+            const jobRow = S ? S.jobsFor(this.settle, pid) : {};
             for (let i = 0; i < nJobs; i++) {
                 const j = jobs[i];
                 const pri = jobRow[j] || 0;
                 const cellX = colX[i];
-                const bg = scene.add.rectangle(cellX, rowY, cellS, rowH, cellBg, 1)
+                const bg = scene.add.rectangle(cellX, 0, cellS, rowH, cellBg, 1)
                     .setOrigin(0, 0)
                     .setInteractive({ useHandCursor: true });
-                const txt = scene.add.text(cellX + cellS / 2, rowY + rowH / 2, pri ? String(pri) : "–", {
+                const txt = scene.add.text(cellX + cellS / 2, rowH / 2, pri ? String(pri) : "–", {
                     fontFamily: PIXEL_UI_FONT,
                     fontSize: `${pixelUiFontSize(11, sc)}px`,
                     color: "#d4c4a8"
@@ -664,6 +691,7 @@ class SettlementPanel {
                     paint();
                 });
                 bg.on("pointerdown", (pointer) => {
+                    if (this._jobDrag || this._jobDragPend) return;
                     if (!this._pointerInBody(pointer)) return;
                     pressing = true;
                     paint();
@@ -672,23 +700,42 @@ class SettlementPanel {
                     const was = pressing && hovering;
                     pressing = false;
                     paint();
+                    if (this._jobDrag || this._jobDragPend) return;
                     if (!was || !this._pointerInBody(pointer)) return;
                     const right = !!(pointer.rightButtonReleased?.() || pointer.button === 2);
                     const next = S
                         ? (right ? S.cyclePriority(pri) : S.raisePriority(pri))
                         : 0;
-                    S?.setJob(this.settle, p.pawnId, j, next);
+                    S?.setJob(this.settle, pid, j, next);
                     this.scene.settlementSys?.bumpWorkCache?.();
                     this.scene.settlementSys?.sendNet("setJobs", {
                         settlementId: this.settle.id,
-                        pawnId: p.pawnId,
-                        jobs: this.settle.jobs?.[p.pawnId]
+                        pawnId: pid,
+                        jobs: this.settle.jobs?.[pid]
                     });
                     this.refresh();
                 });
-                this.body.add(bg);
-                this.body.add(txt);
+                row.add(bg);
+                row.add(txt);
             }
+            const nameHit = scene.add.rectangle(0, 0, nameW, rowH, 0x000000, 0)
+                .setOrigin(0, 0)
+                .setInteractive({ useHandCursor: true, cursor: "pointer" });
+            nameHit.on("pointerdown", (pointer, _lx, _ly, event) => {
+                event?.stopPropagation?.();
+                if (pointer.rightButtonDown?.() || pointer.button === 2) return;
+                if (!this._pointerInBody(pointer)) return;
+                this._jobDragPend = {
+                    pawnId: pid,
+                    from: r,
+                    x: pointer.x,
+                    y: pointer.y
+                };
+            });
+            row.add(nameHit);
+            this.body.add(row);
+            this._jobRowIds.push(pid);
+            this._jobRows.push({ pawnId: pid, row, from: r });
         }
 
         const rows = here.length;
@@ -705,7 +752,109 @@ class SettlementPanel {
             g.lineBetween(0, y, gridW, y);
         }
         this.body.add(g);
+        this._jobGridGfx = g;
         return gridH + 8 * sc;
+    }
+
+    /** Keep the dragged row above its neighbors but under the grid lines. */
+    _floatJobRow(row) {
+        const list = this.body?.list;
+        if (!row || !Array.isArray(list)) return;
+        const ri = list.indexOf(row);
+        if (ri < 0) return;
+        list.splice(ri, 1);
+        const gi = list.indexOf(this._jobGridGfx);
+        list.splice(gi >= 0 ? gi : list.length, 0, row);
+    }
+
+    _jobIndexAtPointer(pointer) {
+        const n = this._jobRowIds?.length || 0;
+        if (!(n > 0) || !pointer) return 0;
+        const headerH = this._jobHeaderH || 0;
+        const rowH = this._jobRowH || 1;
+        const localY = pointer.y - (this.root.y + this._bodyY) + this._scroll;
+        const y = localY - headerH;
+        return Phaser.Math.Clamp(Math.floor(y / rowH), 0, n - 1);
+    }
+
+    _jobPreviewIds() {
+        const ids = (this._jobRowIds || []).slice();
+        const drag = this._jobDrag;
+        if (!drag) return ids;
+        const from = drag.from;
+        if (from < 0 || from >= ids.length) return ids;
+        const [id] = ids.splice(from, 1);
+        ids.splice(drag.to, 0, id);
+        return ids;
+    }
+
+    _layoutJobRows(ids) {
+        const headerH = this._jobHeaderH || 0;
+        const rowH = this._jobRowH || 0;
+        const byId = new Map((this._jobRows || []).map((rec) => [rec.pawnId, rec]));
+        (ids || []).forEach((id, i) => {
+            const rec = byId.get(id);
+            rec?.row?.setY(headerH + i * rowH);
+        });
+    }
+
+    _onJobDragMove(pointer) {
+        if (!this.visible || !this.root?.visible || this.tab !== "jobs") return;
+        if (this._jobDragPend && !this._jobDrag) {
+            const pend = this._jobDragPend;
+            const s = this.scene.uiScale || 1;
+            const dist = Phaser.Math.Distance.Between(pend.x, pend.y, pointer.x, pointer.y);
+            if (dist >= Math.max(4, Math.round(6 * s))) this._beginJobDrag();
+        }
+        if (!this._jobDrag) return;
+        if (this._maxScroll > 0) {
+            const edge = Math.round(16 * (this.scene.uiScale || 1));
+            const top = this.root.y + this._bodyY;
+            const bot = top + this._viewH;
+            if (pointer.y < top + edge) this._setScroll(this._scroll - Math.round(8 * (this.scene.uiScale || 1)));
+            else if (pointer.y > bot - edge) this._setScroll(this._scroll + Math.round(8 * (this.scene.uiScale || 1)));
+        }
+        const to = this._jobIndexAtPointer(pointer);
+        if (to === this._jobDrag.to) return;
+        this._jobDrag.to = to;
+        this._layoutJobRows(this._jobPreviewIds());
+        const rec = (this._jobRows || []).find((r) => r.pawnId === this._jobDrag.pawnId);
+        this._floatJobRow(rec?.row);
+    }
+
+    _beginJobDrag() {
+        const pend = this._jobDragPend;
+        if (!pend || this._jobDrag) return;
+        this.scene.hideTooltip?.();
+        this._jobDrag = { pawnId: pend.pawnId, from: pend.from, to: pend.from };
+        const rec = (this._jobRows || []).find((r) => r.pawnId === pend.pawnId);
+        rec?.row?.setAlpha(0.8);
+        this._floatJobRow(rec?.row);
+        this.scene.input?.setDefaultCursor?.("pointer");
+    }
+
+    _endJobDrag() {
+        this._jobDragPend = null;
+        const drag = this._jobDrag;
+        if (!drag) return;
+        this._jobDrag = null;
+        const rec = (this._jobRows || []).find((r) => r.pawnId === drag.pawnId);
+        rec?.row?.setAlpha(1);
+        if (drag.from === drag.to) {
+            this._layoutJobRows(this._jobRowIds);
+            return;
+        }
+        this.scene.settlementSys?.setJobOrder?.(this.settle, drag.pawnId, drag.to);
+        this._contentSigVal = null;
+        this.refresh();
+    }
+
+    _clearJobDrag() {
+        this._jobDragPend = null;
+        if (!this._jobDrag) return;
+        const rec = (this._jobRows || []).find((r) => r.pawnId === this._jobDrag.pawnId);
+        rec?.row?.setAlpha(1);
+        this._jobDrag = null;
     }
 
     _ensurePaintingsUiIcon() {
@@ -738,22 +887,20 @@ class SettlementPanel {
         const items = sys?.localStockItems?.(this.settle) || [];
         const settle = this.settle;
         settle.stock = S ? S.normalizeStock(settle.stock) : (settle.stock || {});
+        const barW = Math.max(4, Math.round(5 * sc));
+        const innerW = Math.max(80, Math.round(this._viewW - barW - 4 * sc));
         let y = 0;
-        const wrapW = Math.max(80, this._viewW - Math.round(12 * sc));
+        const wrapW = innerW;
         const header = this._label("Set desired amount to store", 0, y, 11, wrapW);
         y += Math.max(18 * sc, Math.round(header.height + 6 * sc));
         if (!items.length) {
             this._label("Nothing gatherable in range.", 0, y, 11);
             return y + 18 * sc;
         }
-        const btnW = Math.round(24 * sc);
-        const btnH = Math.round(16 * sc);
-        const plusRight = Math.max(
-            btnW * 2 + Math.round(8 * sc),
-            Math.round((this._tabsRight || 0) - this._bodyX)
-        );
-        const plusX = plusRight - btnW / 2;
-        const minusX = plusX - Math.round(32 * sc);
+        const btnS = Math.round(16 * sc);
+        const btnGap = Math.round(4 * sc);
+        const plusX = innerW - btnS / 2;
+        const minusX = plusX - btnS - btnGap;
         const iconS = Math.round(16 * sc);
         const iconGap = Math.round(4 * sc);
         const textX = iconS + iconGap;
@@ -776,8 +923,12 @@ class SettlementPanel {
             const plus = this._btn(plusX, midY, "+", (pointer) => {
                 this._nudgeStock(settle, id, this._stockStep(pointer));
             }, true);
-            this._fitBtnHit(minus, btnW, btnH);
-            this._fitBtnHit(plus, btnW, btnH);
+            this._fitBtnHit(minus, btnS, btnS);
+            this._fitBtnHit(plus, btnS, btnS);
+            if (typeof applyPixelUiFont === "function") {
+                applyPixelUiFont(minus._txt, 10, sc);
+                applyPixelUiFont(plus._txt, 10, sc);
+            }
             minus._ctrlClick = true;
             plus._ctrlClick = true;
             minus._paint?.();

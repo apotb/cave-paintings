@@ -174,9 +174,9 @@ class PartySystem {
             const tag = t && t.tagName ? String(t.tagName).toUpperCase() : "";
             if (tag === "INPUT" || tag === "TEXTAREA" || t?.isContentEditable) return;
             if (scene.combatLog?.isComposing?.()) return;
-            if (scene.settlementSys?.isNaming?.()) return;
+            if (isHudTextOpen(scene)) return;
             if (scene._gamePaused) return;
-            if (scene.knappingPanel?.visible) return;
+            if (scene.knappingPanel?.visible || scene.clayFormingPanel?.visible) return;
 
             const digit = this._ctrlPartyIndex(event);
             if (event.ctrlKey && !event.metaKey && digit != null) {
@@ -213,8 +213,14 @@ class PartySystem {
         const scene = this.scene;
         if (this._pointerBound) return;
         this._pointerBound = true;
+        scene.input.on("pointerdown", (pointer) => {
+            if (scene.pointerOverWorldUi?.(pointer) || scene._pointerOverHudChrome?.(pointer)) return;
+            if (pointer.rightButtonDown?.()) return;
+            if (scene._gamePaused || scene._sculptUiOpen?.()) return;
+            this.trySelfHeldAction(scene.player, pointer);
+        });
         scene.input.on("gameobjectdown", (_pointer, obj) => {
-            if (scene.pointerOverWorldUi?.(_pointer)) return;
+            if (scene.pointerOverWorldUi?.(_pointer) || scene._pointerOverHudChrome?.(_pointer)) return;
             if (_pointer.rightButtonDown?.()) return;
             const careAlly = this._partyMemberUnderPointer(_pointer);
             if (
@@ -225,6 +231,7 @@ class PartySystem {
                 this.tryAllyClick(careAlly);
                 return;
             }
+            if (this.trySelfHeldAction(scene.player, _pointer)) return;
             const switchAlly = this.worldSwitchTarget(_pointer);
             if (switchAlly && typeof LeanTo !== "undefined" && obj instanceof LeanTo) {
                 this.tryAllyClick(switchAlly);
@@ -308,6 +315,7 @@ class PartySystem {
         if (pawn.isBodyDead?.() && pawn !== scene.leader) return false;
 
         scene.knappingPanel?.close?.();
+        scene.clayFormingPanel?.close?.();
         scene.restorePlayerPhysicsPos?.();
         scene.player = pawn;
         if (typeof syncCreatureInputHit === "function") {
@@ -728,6 +736,34 @@ class PartySystem {
         }
         if (pawn === me) return false;
         return this.switchControl(pawn);
+    }
+
+    /** Click your own pawn to knap / form whatever you're holding. */
+    trySelfHeldAction(pawn, pointer) {
+        const scene = this.scene;
+        if (!pawn || pawn !== scene.player) return false;
+        if (pointer && (scene.pointerOverWorldUi?.(pointer) || scene._pointerOverHudChrome?.(pointer))) return false;
+        if (pointer && !scene._pointerOnCreature?.(pointer, pawn)) return false;
+        if (pawn._bodyDead || pawn.isIncapacitated?.() || pawn._resting) return false;
+        if (scene.knappingPanel?.visible || scene.clayFormingPanel?.visible) return false;
+        if (scene.knappingPanel?.tryOpen?.()) return true;
+        if (scene.clayFormingPanel?.tryOpen?.()) return true;
+        return false;
+    }
+
+    selfHeldActionTooltip(pawn) {
+        const scene = this.scene;
+        if (!pawn || pawn !== scene.player) return "";
+        if (pawn._bodyDead || pawn.isIncapacitated?.() || pawn._resting) return "";
+        const held = pawn.getHeldItem?.();
+        if (!held || !(held.quantity > 0)) return "";
+        if (scene.knappingPanel?.canOpenHeld?.(held)) {
+            return held.knapIconData ? "Click yourself to reshape" : "Click yourself to knap";
+        }
+        if (scene.clayFormingPanel?.canOpenHeld?.(held)) {
+            return "Click yourself to form";
+        }
+        return "";
     }
 
     partyDropTarget(pointer) {
@@ -1396,7 +1432,13 @@ class PartySystem {
         if (inParty) {
             const text = busy ? `${name}\n${busy}` : name;
             if (pawn.isControlled?.()) {
+                const selfTip = this.selfHeldActionTooltip(pawn);
                 const downed = !!(pawn._downed || pawn._prone || pawn.isIncapacitated?.());
+                if (selfTip) {
+                    const idle = !busy || busy === "Waiting" || busy === "Idle";
+                    if (!idle) return `${name}\n${busy}\n${selfTip}`;
+                    return name ? `${name}\n${selfTip}` : selfTip;
+                }
                 if (!busy && !downed) return "";
                 return busy ? text : (name ? `${name}\nDowned` : "Downed");
             }

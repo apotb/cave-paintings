@@ -240,7 +240,7 @@
             "material": "pebble"
         },
         "tooltip": [
-            "Click a rock while holding to knap"
+            "Click yourself to knap"
         ]
     },
     {
@@ -253,7 +253,7 @@
             "material": "flint"
         },
         "tooltip": [
-            "Click a rock while holding to knap"
+            "Click yourself to knap"
         ]
     },
     {
@@ -264,7 +264,8 @@
         "weight": 0.3,
         "durability": 150,
         "tooltip": [
-            "Knapped from a pebble"
+            "Knapped from a pebble",
+            "Click yourself to reshape"
         ]
     },
     {
@@ -275,7 +276,8 @@
         "weight": 0.3,
         "durability": 200,
         "tooltip": [
-            "Knapped from flint"
+            "Knapped from flint",
+            "Click yourself to reshape"
         ]
     },
     {
@@ -1377,6 +1379,7 @@
         "key": "tally_stick",
         "maxStack": 99,
         "weight": 0.3,
+        "storageCategory": "buildings",
         "tooltip": [
             "Install on a Painting Circle",
             "That circle's paintings are worth 1.5×"
@@ -1413,6 +1416,26 @@
         "name": "Clay",
         "key": "clay",
         "maxStack": 99,
-        "weight": 0.8
+        "weight": 0.8,
+        "storageCategory": "materials",
+        "tooltipTech": "clay_forming",
+        "tooltip": [
+            "Click yourself to form"
+        ]
+    },
+    {
+        "id": "clay_figurine",
+        "name": "Clay Figurine",
+        "key": "clay",
+        "maxStack": 1,
+        "weight": 0.8,
+        "storageCategory": "art",
+        "place": {
+            "thing": "clay_figurine"
+        },
+        "tooltipTech": "clay_forming",
+        "tooltip": [
+            "Click yourself to form"
+        ]
     }
 ]

@@ -1,5 +1,3 @@
-Clay forming mechanics
-
 Agriculture -- will unlock a tutorial tip that you can open to learn about soil and farming mechanics
 
 Fishing -- will also open a tutorial tip to learn about fishing mechanics

@@ -107,8 +107,8 @@ class CombatLog {
 
     openChat(initialDraft = "") {
         if (this.composing) return;
-        if (this.scene.knappingPanel?.visible) return;
-        if (this.scene.settlementSys?.isNaming?.()) return;
+        if (this.scene.knappingPanel?.visible || this.scene.clayFormingPanel?.visible) return;
+        if (isHudTextOpen(this.scene)) return;
         this.composing = true;
         this.draft = String(initialDraft || "");
         this._draftStash = "";
@@ -686,7 +686,7 @@ class CombatLog {
 
     _handleGlobalKey(event) {
         if (this._isTextTarget(event)) return;
-        if (this.scene.settlementSys?.isNaming?.()) return;
+        if (isHudTextOpen(this.scene)) return;
 
         if (!this.composing) {
             // T opens chat; / opens with a slash already typed (ignore key-repeat)

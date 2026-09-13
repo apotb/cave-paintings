@@ -808,9 +808,7 @@ class Chunk {
                 thing = Storage.create(this.scene, meta);
             } else {
                 thing = new Thing(this.scene, meta.x, meta.y, meta.id, meta);
-                if (meta.id === "rock") {
-                    this.scene.wireRockKnapping?.(thing);
-                } else if (meta.id === "sign") {
+                if (meta.id === "sign") {
                     if (meta.spawnHint && this.scene._spawnSignTooltip) {
                         meta.tooltip = this.scene._spawnSignTooltip();
                     }

@@ -90,6 +90,14 @@ function _research() {
     return null;
 }
 
+function _forming() {
+    if (typeof Forming !== "undefined") return Forming;
+    try {
+        if (typeof require === "function") return require("../forming");
+    } catch (_) { /* optional */ }
+    return null;
+}
+
 function _dig() {
     if (typeof Dig !== "undefined") return Dig;
     try {
@@ -1972,6 +1980,7 @@ class SimWorld {
             if (!dropSettle.jobs) dropSettle.jobs = {};
             dropSettle.jobs[mem.id] = Settlement.defaultJobs();
             this.settlers.push(mem);
+            this._syncJobOrder(dropSettle);
             SettlerWork.releaseWork(this, mem);
             const cc = this._ensureSettlerCreature(mem);
             if (cc?.ai) {
@@ -1992,9 +2001,12 @@ class SimWorld {
             const rec = this.settlers.find((s) => s.id === action.pawnId);
             if (!rec || rec.ownerId !== p.id) return;
             if ((p.party || []).length + 1 >= Party.CAP) return;
+            const fromId = rec.homeSettlementId;
             this.settlers = this.settlers.filter((s) => s !== rec);
             rec.role = "companion";
             rec.homeSettlementId = null;
+            const from = fromId ? this.settlements.find((s) => s.id === fromId) : null;
+            if (from) this._syncJobOrder(from);
             if (rec._resting || rec.resting || rec._restWalk) {
                 this._wakePawn(p, rec, { manual: true });
             }
@@ -2017,6 +2029,8 @@ class SimWorld {
                 rec.x = dest.x + 12;
                 rec.y = dest.y + 8;
             }
+            if (from) this._syncJobOrder(from);
+            this._syncJobOrder(dest);
             this._youDirty.add(p.id);
             return;
         }
@@ -2092,6 +2106,13 @@ class SimWorld {
             this._youDirty.add(p.id);
             return;
         }
+        if (op === "setJobOrder" && settle && settle.ownerId === p.id) {
+            settle.jobOrder = Array.isArray(action.jobOrder) ? action.jobOrder : [];
+            this._syncJobOrder(settle);
+            SettlerWork.bumpWork?.(this);
+            this._youDirty.add(p.id);
+            return;
+        }
         if (op === "unlockTech" && settle && settle.ownerId === p.id) {
             this._unlockTech(settle, action.techId);
             return;
@@ -2100,6 +2121,22 @@ class SimWorld {
             settle.stock = Settlement.normalizeStock(action.stock);
             this._youDirty.add(p.id);
             return;
+        }
+    }
+
+    _syncJobOrder(settle) {
+        if (!settle || !Settlement?.normalizeJobOrder) return;
+        const ids = (this.settlers || [])
+            .filter((s) => s && !s.dead && s.homeSettlementId === settle.id)
+            .map((s) => s.id);
+        Settlement.normalizeJobOrder(settle, ids);
+        if (Settlement.applyJobOrderToList) {
+            this.settlers = Settlement.applyJobOrderToList(
+                this.settlers || [],
+                settle.id,
+                settle.jobOrder,
+                { idOf: (s) => s.id }
+            );
         }
     }
 
@@ -4562,6 +4599,10 @@ class SimWorld {
             this._tryKnap(p, action);
             return;
         }
+        if (type === Protocol.Actions.FORM) {
+            this._tryForm(p, action);
+            return;
+        }
         if (type === Protocol.Actions.PICKUP) {
             this._tryPickup(p, action);
             return;
@@ -5636,6 +5677,7 @@ class SimWorld {
             s.customName || s.food || s.ingredients?.length || s.toolClass
             || s.knapIconData || s.knapDamage != null || s.knapQuality
             || s.durability != null
+            || s.formClass || s.formVoxels
         ));
     }
 
@@ -5655,7 +5697,27 @@ class SimWorld {
         if (src.knapMaterial) out.knapMaterial = src.knapMaterial;
         if (src.knapQuality) out.knapQuality = src.knapQuality;
         if (src.tooltipExtra) out.tooltipExtra = src.tooltipExtra;
-        if (src.knapIconData) out.knapIconData = src.knapIconData;
+        if (src.formClass) {
+            const Forming = _forming();
+            out.formClass = Forming ? Forming.sanitizeClass(src.formClass) : src.formClass;
+        }
+        if (src.formVoxels) {
+            const pack = _forming()?.sanitizePack(src.formVoxels);
+            if (pack) out.formVoxels = pack;
+        }
+        if (src.formStartMass != null) {
+            const n = Math.floor(Number(src.formStartMass));
+            if (Number.isFinite(n) && n > 0) {
+                const Forming = _forming();
+                const min = Forming?.MIN_MASS || 12;
+                out.formStartMass = Math.min(4096, Math.max(min, n));
+            }
+        }
+        if (src.beauty != null) {
+            const b = Number(src.beauty);
+            if (Number.isFinite(b)) out.beauty = b;
+        }
+        if (src.formCustom) out.formCustom = true;
         if (src.spoilLeft != null) out.spoilLeft = src.spoilLeft;
         if (src.spoilAt != null) out.spoilAt = src.spoilAt;
         if (src.weight != null) {
@@ -5700,6 +5762,19 @@ class SimWorld {
         if (extras.knapQuality) slot.knapQuality = extras.knapQuality;
         if (extras.tooltipExtra) slot.tooltipExtra = extras.tooltipExtra;
         if (extras.knapIconData) slot.knapIconData = extras.knapIconData;
+        if (extras.formClass) slot.formClass = extras.formClass;
+        if (extras.formVoxels) slot.formVoxels = extras.formVoxels;
+        if (extras.formStartMass != null) slot.formStartMass = extras.formStartMass;
+        if (extras.beauty != null) {
+            const b = Number(extras.beauty);
+            if (Number.isFinite(b)) slot.beauty = b;
+        }
+        if (extras.formCustom) slot.formCustom = true;
+        else delete slot.formCustom;
+        if (extras.weight != null) {
+            const w = Number(extras.weight);
+            if (Number.isFinite(w) && w > 0) slot.weight = w;
+        }
         if (extras.spoilLeft != null) slot.spoilLeft = extras.spoilLeft;
         if (extras.spoilAt != null) slot.spoilAt = extras.spoilAt;
         if (extras.durability != null) slot.durability = extras.durability;
@@ -5883,6 +5958,92 @@ class SimWorld {
                 );
             }
             this._insertUniqueStack(p, stack, session.slot);
+        }
+    }
+
+    _sanitizeFormStack(raw, startMass, idolatry, prev = null) {
+        const Forming = _forming();
+        if (!Forming || !raw || typeof raw !== "object") return null;
+        const pack = Forming.sanitizePack(raw.formVoxels);
+        if (!pack) return null;
+        const grid = Forming.unpack(pack);
+        if (!grid) return null;
+        const fail = Forming.shatterCheck(grid);
+        if (fail.shattered) return null;
+        const result = Forming.classify(grid, { idolatry: !!idolatry });
+        const stack = Forming.makeStack(result.formClass, grid, startMass);
+        return Forming.applyFinishName(stack, {
+            prev,
+            pendingName: raw.customName,
+            pendingCustom: raw.formCustom
+        });
+    }
+
+    _tryForm(session, action = {}) {
+        const Forming = _forming();
+        if (!Forming) return;
+        const p = this._actionPawn(session, action);
+        if (!p || p.dead) return;
+        const op = String(action.op || "");
+        const slot = Math.floor(Number(action.slot));
+        const inv = p.inventory;
+        if (!Array.isArray(inv)) return;
+
+        if (op === "consume") {
+            if (p._formSession) return;
+            if (!Number.isInteger(slot) || slot < 0 || slot >= inv.length) return;
+            const held = inv[slot];
+            if (!held || !(held.quantity > 0)) return;
+            const R = _research();
+            const holder = this._researchHolder(p.ownerId || session.id);
+            if (R?.techUnlocked && !R.techUnlocked("clay_forming", holder)) return;
+            const wantId = action.id ? String(action.id) : held.id;
+            if (held.id !== wantId) return;
+            const reworkPack = held.id === "clay_figurine"
+                ? Forming.sanitizePack(held.formVoxels)
+                : null;
+            const rework = !!reworkPack;
+            if (!rework && held.id !== "clay") return;
+            const original = rework ? this._cloneGearStack(held, 1) : null;
+            held.quantity = (held.quantity || 1) - 1;
+            if (held.quantity <= 0) inv[slot] = null;
+            const startMass = Math.max(
+                Forming.MIN_MASS,
+                Math.min(4096, Math.floor(
+                    Number(action.startMass) || Number(held.formStartMass) || Forming.MIN_MASS
+                ))
+            );
+            p._formSession = { slot, startMass, rework, original };
+            this._youDirty.add(p.id);
+            return;
+        }
+
+        if (op === "addClay") {
+            if (!p._formSession) return;
+            if (!this._takeOneItem(p, "clay")) return;
+            this._youDirty.add(p.id);
+            return;
+        }
+
+        if (op === "abort") {
+            const form = p._formSession;
+            p._formSession = null;
+            if (form?.rework && form.original) {
+                this._insertUniqueStack(p, form.original, form.slot);
+            }
+            return;
+        }
+
+        if (op === "finish") {
+            const form = p._formSession;
+            if (!form) return;
+            p._formSession = null;
+            const R = _research();
+            const holder = this._researchHolder(p.ownerId || session.id);
+            const idolatry = !!(R?.techUnlocked && R.techUnlocked("idolatry", holder));
+            const stack = this._sanitizeFormStack(action.stack, form.startMass, idolatry, form.original);
+            if (!stack) return;
+            this._insertUniqueStack(p, stack, form.slot);
         }
     }
 
@@ -7938,6 +8099,7 @@ class SimWorld {
         if (this._isCraftStationEntry(t)) return false;
         const def = thingDefs().get(t.id);
         if (_research()?.isPaintingCircle?.(def, t)) return false;
+        if (Place.isFigurineThing(def, t)) return false;
         if (Array.isArray(t.slots)) return true;
         return !!def?.storage;
     }
@@ -7952,6 +8114,7 @@ class SimWorld {
         const def = thingDefs().get(t?.id);
         return this._isStorageEntry(t) || this._isCraftStationEntry(t) || this._isSleepEntry(t)
             || Place.isSettlementThing(def, t)
+            || Place.isFigurineThing(def, t)
             || !!_research()?.isPaintingCircle?.(def, t);
     }
 
@@ -8026,6 +8189,23 @@ class SimWorld {
                 paintFilter: R.persistPaintFilter ? R.persistPaintFilter(entry.paintFilter) : (entry.paintFilter || null)
             };
         }
+        if (Place.isFigurineThing(def, entry)) {
+            Place.ensureFigurineEntry(entry);
+            _forming()?.detachLegacyPlaceYaw?.(entry);
+            const extras = this._stackExtrasFrom(entry) || {};
+            return {
+                uid: entry.uid,
+                id: entry.id,
+                x: entry.x,
+                y: entry.y,
+                cx: chunk?.cx,
+                cy: chunk?.cy,
+                rev: Number(entry.rev) || 0,
+                rot: Place.normalizeRot(entry.rot),
+                figurine: true,
+                ...extras
+            };
+        }
         Place.ensureStorageEntry(entry, def);
         return {
             uid: entry.uid,
@@ -8092,7 +8272,7 @@ class SimWorld {
         const held = p.inventory?.[invIndex];
         if (!held?.id || !(held.quantity > 0)) return;
         const itemDef = itemDefs().get(held.id);
-        const thingId = Place.placeThingId(itemDef);
+        const thingId = Place.heldPlaceThingId(itemDef, held);
         if (!thingId) return;
         const thingDef = thingDefs().get(thingId);
         if (!thingDef) return;
@@ -8139,6 +8319,10 @@ class SimWorld {
                 });
                 return;
             }
+        }
+        const figExtras = Place.isFigurineThing(thingDef) ? this._stackExtrasFrom(held) : null;
+        if (Place.isFigurineThing(thingDef) && (!figExtras?.formVoxels || !Place.canPlaceFigurine(held))) {
+            return;
         }
 
         held.quantity = Math.max(0, Math.floor(Number(held.quantity) || 1) - 1);
@@ -8207,6 +8391,21 @@ class SimWorld {
                 uid: `pc_${Math.round(x)}_${Math.round(y)}`
             };
             Research.ensureEntry(entry, thingDef);
+            chunk.things.push(entry);
+            this._emitStorage(chunk, entry);
+            return;
+        }
+
+        if (Place.isFigurineThing(thingDef)) {
+            const entry = {
+                id: thingId,
+                x,
+                y,
+                rot,
+                formPose: 1
+            };
+            Place.ensureFigurineEntry(entry);
+            this._applyStackExtras(entry, figExtras);
             chunk.things.push(entry);
             this._emitStorage(chunk, entry);
             return;
@@ -8956,6 +9155,11 @@ class SimWorld {
             this._tryPickupPaintingCircle(p, chunk, entry);
             return;
         }
+        if (Place.isFigurineThing(def, entry)) {
+            if (op !== "pickup") return;
+            this._tryPickupFigurine(p, chunk, entry);
+            return;
+        }
         if (def?.craftStation) {
             if (op !== "pickup") return;
             const itemId = Place.itemIdForThing(entry.id, itemDefs());
@@ -9030,6 +9234,19 @@ class SimWorld {
         for (const settle of covering) {
             this._youDirty.add(settle.ownerId);
         }
+        this._dirtyPawnOwner(p);
+    }
+
+    _tryPickupFigurine(p, chunk, entry) {
+        if (!p || !chunk || !entry) return;
+        _forming()?.detachLegacyPlaceYaw?.(entry);
+        const extras = this._stackExtrasFrom(entry);
+        const stack = { id: "clay_figurine", quantity: 1 };
+        this._applyStackExtras(stack, extras);
+        this._insertUniqueStack(p, stack);
+        const i = chunk.things.indexOf(entry);
+        if (i >= 0) chunk.things.splice(i, 1);
+        this._emitStorageRemoved(chunk, entry);
         this._dirtyPawnOwner(p);
     }
 
@@ -9766,6 +9983,7 @@ class SimWorld {
         p.dead = true;
         p.hp = 0;
         p._knapSession = null;
+        p._formSession = null;
         this._cancelChannels(p);
         this._clearVomit(p);
         p.pendingAttackAngle = null;

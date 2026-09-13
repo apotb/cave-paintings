@@ -438,7 +438,7 @@ class ResearchTreePanel {
         };
         window.addEventListener("keydown", (e) => {
             if (!this.visible) return;
-            if (this.scene.combatLog?.isComposing?.() || this.scene.settlementSys?.isNaming?.()) return;
+            if (this.scene.combatLog?.isComposing?.() || isHudTextOpen(this.scene)) return;
             if (e.repeat && apply(e, true)) {
                 e.preventDefault();
                 return;
@@ -599,7 +599,7 @@ class ResearchTreePanel {
         }
         if (this._drag?.middle) return;
         const scene = this.scene;
-        if (scene.combatLog?.isComposing?.() || scene.settlementSys?.isNaming?.()) return;
+        if (scene.combatLog?.isComposing?.() || isHudTextOpen(scene)) return;
         const held = this._keyPan || {};
         const cursors = scene.cursors;
         const keys = scene.keys;
@@ -1219,7 +1219,7 @@ class ResearchTreePanel {
             if (key && key !== "null" && this.scene.textures.exists(key)) return key;
         }
         for (const t of tech?.unlocks?.text || []) {
-            const thingId = R?.unlockTextIcon?.(t);
+            const thingId = R?.unlockTextIcon?.(typeof t === "object" ? t.label : t);
             if (!thingId) continue;
             const key = this._itemIconKey(thingId);
             if (key && key !== "null" && this.scene.textures.exists(key)) return key;
@@ -1334,15 +1334,25 @@ class ResearchTreePanel {
                 tip: this._billStationTip(id)
             });
         }
-        for (const t of tech?.unlocks?.text || []) {
-            if (!t) continue;
-            const label = String(t);
+        const holder = this._techHolder?.() || null;
+        const textRows = (R?.unlockTextEntries)
+            ? R.unlockTextEntries(tech, holder)
+            : (tech?.unlocks?.text || []).map((t) => ({ label: String(t), header: false }));
+        for (const row of textRows) {
+            if (!row?.label) continue;
+            if (row.header) {
+                rows.push({ label: row.label, icon: null, dim: true, strike: false });
+                continue;
+            }
+            const label = row.label;
             const thingId = R?.unlockTextIcon?.(label);
             rows.push({
                 label,
                 icon: thingId
                     ? (this._itemIconKey(thingId) || missing)
-                    : (this._isUnlockWithoutIcon(label) ? null : missing)
+                    : (this._isUnlockWithoutIcon(label) ? null : missing),
+                dim: !!row.locked,
+                strike: !!row.locked
             });
         }
         return rows;
@@ -1362,7 +1372,7 @@ class ResearchTreePanel {
         return txt;
     }
 
-    _addListRow(x, y, w, h, label, iconKey, onClick, dim, tip, color) {
+    _addListRow(x, y, w, h, label, iconKey, onClick, dim, tip, color, strike) {
         const scene = this.scene;
         const s = scene.uiScale || 1;
         const clickable = typeof onClick === "function";
@@ -1421,19 +1431,33 @@ class ResearchTreePanel {
             else icon.setDisplaySize(iconS, iconS);
             const iconW = icon.displayWidth || iconS;
             icon.setX(textX + iconW / 2);
+            if (strike) icon.setTint(0x888888);
             this.detailBody.add(icon);
             textX += iconW + Math.round(6 * s);
         }
-        this._addText(
+        const txt = this._addText(
             textX,
             y + h / 2,
             label,
             12,
-            color || (dim ? "#6a5a4a" : "#d4c4a8"),
+            color || (dim || strike ? "#6a5a4a" : "#d4c4a8"),
             0,
             0.5,
             Math.max(20, w - (textX - x) - Math.round(6 * s))
         );
+        if (strike) {
+            const tw = Math.max(1, Math.round(txt.width || txt.displayWidth || 0));
+            const th = txt.height || txt.displayHeight || pixelUiFontSize(12, s);
+            const line = scene.add.rectangle(
+                txt.x,
+                txt.y,
+                tw,
+                Math.max(2, Math.round(2 * s)),
+                0x6a5a4a,
+                1
+            ).setOrigin(0, 0.5);
+            this.detailBody.add(line);
+        }
         return h;
     }
 
@@ -1546,7 +1570,9 @@ class ResearchTreePanel {
             const uh = this._addText(innerX, y, "Unlocks", 10, "#8a7a62");
             y += Math.round(uh.height + 6 * s);
             for (const row of unlocks) {
-                this._addListRow(innerX, y, wrapW, rowH, row.label, row.icon, null, false, row.tip);
+                this._addListRow(
+                    innerX, y, wrapW, rowH, row.label, row.icon, null, !!row.dim, row.tip, null, !!row.strike
+                );
                 y += rowH;
             }
             y += Math.round(10 * s);

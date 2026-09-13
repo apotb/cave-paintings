@@ -799,9 +799,13 @@ function researchCircle(world, rec, settle, claims) {
 }
 
 function settlersOf(world, settle) {
-    return (world.settlers || []).filter(
+    const list = (world.settlers || []).filter(
         (s) => s && !s.dead && s.homeSettlementId === settle.id
     );
+    if (Settlement?.sortByJobOrder && settle) {
+        return Settlement.sortByJobOrder(settle, list, (s) => s.id);
+    }
+    return list;
 }
 
 function countStored(world, settle, itemId) {

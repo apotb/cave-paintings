@@ -6,6 +6,8 @@ const Settings = {
     GUI_SCALE_KEY: "cp_gui_scale",
     MUSIC_VOLUME_KEY: "cp_music_volume",
     MUSIC_VOLUME_DEFAULT: 85,
+    FORM_TEMPLATES_KEY: (typeof CraftTemplates !== "undefined" && CraftTemplates.STORAGE_KEY)
+        || "cp_form_templates",
     _optionsCache: null,
 
     _disk() {
@@ -25,10 +27,16 @@ const Settings = {
             this._optionsCache = api.getOptions() || {
                 guiScale: 0,
                 musicVolume: this.MUSIC_VOLUME_DEFAULT,
-                fullscreen: false
+                fullscreen: false,
+                formTemplates: []
             };
         } catch (_) {
-            this._optionsCache = { guiScale: 0, musicVolume: this.MUSIC_VOLUME_DEFAULT, fullscreen: false };
+            this._optionsCache = {
+                guiScale: 0,
+                musicVolume: this.MUSIC_VOLUME_DEFAULT,
+                fullscreen: false,
+                formTemplates: []
+            };
         }
         return this._optionsCache;
     },
@@ -115,6 +123,36 @@ const Settings = {
 
     noteFullscreen(on) {
         if (this._optionsCache) this._optionsCache.fullscreen = !!on;
+    },
+
+    _sanitizeFormTemplates(raw) {
+        const CT = typeof CraftTemplates !== "undefined" ? CraftTemplates : null;
+        const F = typeof Forming !== "undefined" ? Forming : null;
+        if (!CT || !F) return [];
+        return CT.sanitizeList(raw, F);
+    },
+
+    loadFormTemplates() {
+        const disk = this._readDisk();
+        if (disk) return this._sanitizeFormTemplates(disk.formTemplates);
+        try {
+            const raw = JSON.parse(localStorage.getItem(this.FORM_TEMPLATES_KEY) || "[]");
+            return this._sanitizeFormTemplates(raw);
+        } catch (_) {}
+        return [];
+    },
+
+    saveFormTemplates(list) {
+        const clean = this._sanitizeFormTemplates(list);
+        if (this._readDisk()) {
+            this._optionsCache.formTemplates = clean;
+            this._writeDisk();
+            return clean;
+        }
+        try {
+            localStorage.setItem(this.FORM_TEMPLATES_KEY, JSON.stringify(clean));
+        } catch (_) {}
+        return clean;
     },
 
     fullscreenButtonLabel(on) {

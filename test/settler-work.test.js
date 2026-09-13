@@ -1476,11 +1476,11 @@ test("dedicated settler hauls forbidden items into a matching basket", () => {
     const wood = addBasket(world, settle, rec.x + 8, rec.y, "wood");
     apparel.storageFilter = {
         priority: "normal",
-        offCategories: ["materials", "food", "tools", "weapons", "junk", "buildings", "medicine"]
+        offCategories: ["materials", "food", "tools", "weapons", "junk", "buildings", "medicine", "art"]
     };
     wood.storageFilter = {
         priority: "normal",
-        offCategories: ["apparel", "food", "tools", "weapons", "junk", "buildings", "medicine"]
+        offCategories: ["apparel", "food", "tools", "weapons", "junk", "buildings", "medicine", "art"]
     };
     apparel.slots[0] = { id: "leaf_wrap", quantity: 1 };
     apparel.slots[1] = { id: "stick", quantity: 5 };
@@ -1504,11 +1504,11 @@ test("idle settler hauls a late deposit without another job first", () => {
     const wood = addBasket(world, settle, rec.x + 8, rec.y, "wood");
     apparel.storageFilter = {
         priority: "normal",
-        offCategories: ["materials", "food", "tools", "weapons", "junk", "buildings", "medicine"]
+        offCategories: ["materials", "food", "tools", "weapons", "junk", "buildings", "medicine", "art"]
     };
     wood.storageFilter = {
         priority: "normal",
-        offCategories: ["apparel", "food", "tools", "weapons", "junk", "buildings", "medicine"]
+        offCategories: ["apparel", "food", "tools", "weapons", "junk", "buildings", "medicine", "art"]
     };
     workOnce(world, rec);
     assert.equal(rec._settlerAct, "Idle");
@@ -1543,11 +1543,11 @@ test("full-pocket settler stashes then hauls forbidden items", () => {
     const wood = addBasket(world, settle, rec.x + 8, rec.y, "wood");
     apparel.storageFilter = {
         priority: "normal",
-        offCategories: ["materials", "food", "tools", "weapons", "junk", "buildings", "medicine"]
+        offCategories: ["materials", "food", "tools", "weapons", "junk", "buildings", "medicine", "art"]
     };
     wood.storageFilter = {
         priority: "normal",
-        offCategories: ["apparel", "food", "tools", "weapons", "junk", "buildings", "medicine"]
+        offCategories: ["apparel", "food", "tools", "weapons", "junk", "buildings", "medicine", "art"]
     };
     apparel.slots[0] = { id: "stick", quantity: 4 };
     for (let i = 0; i < 10; i++) workOnce(world, rec);
@@ -1817,7 +1817,7 @@ test("dedicated settler idles after a bench bill when pockets are full and stora
     hides.storageFilter = {
         priority: "normal",
         offCategories: [
-            "apparel", "food", "tools", "weapons", "junk", "buildings", "medicine",
+            "apparel", "food", "tools", "weapons", "junk", "buildings", "medicine", "art",
             "materials/leather", "materials/stone", "materials/wood"
         ]
     };

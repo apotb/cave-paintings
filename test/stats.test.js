@@ -17,3 +17,11 @@ test("items without beauty omit the stat from tooltips", () => {
     assert.equal(Stats.valueOf(stick, "beauty"), 0);
     assert.deepEqual(Stats.tooltipLines(stick), []);
 });
+
+test("stack beauty overrides the item def", () => {
+    const def = DataStore.getItem("clay_figurine");
+    assert.deepEqual(Stats.tooltipLines(def), []);
+    assert.deepEqual(Stats.tooltipLines(def, { beauty: 2 }), ["Beauty: +2.0"]);
+    assert.deepEqual(Stats.tooltipLines(def, { beauty: 0 }), []);
+    assert.equal(Stats.valueOf(def, "beauty", { beauty: 1 }), 1);
+});

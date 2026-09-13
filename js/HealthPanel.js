@@ -255,7 +255,7 @@ class HealthPanel {
         const p = this.scene.input?.activePointer;
         const btn = this.scene.healthBtn;
         if (btn) {
-            const hovering = p && Phaser.Geom.Rectangle.Contains(btn.getBounds(), p.x, p.y);
+            const hovering = pointerHitsInteractive(btn, p);
             btn.setTexture(hovering ? "health_hover" : "health");
         }
     }

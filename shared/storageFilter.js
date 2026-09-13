@@ -21,10 +21,19 @@
         { id: "tool:chopper", name: "Chopper", cls: "chopper" },
         { id: "tool:knife", name: "Knife", cls: "knife" },
         { id: "tool:scraper", name: "Scraper", cls: "scraper" },
-        { id: "tool:spear_tip", name: "Spear Tip", cls: "spear_tip", category: "materials/stone" }
+        { id: "tool:spear_tip", name: "Spear Tip", cls: "spear_tip", category: "materials/stone" },
+        { id: "tool:blank", name: "Flake", cls: "blank", category: "materials/stone" }
     ];
     const WOOD_IDS = { log: true, stick: true, leaf: true, stick_frame: true };
     const STONE_IDS = { pebble: true, flint: true };
+    const HIDE_STAGES = [
+        { id: "raw", name: "Raw" },
+        { id: "fleshed", name: "Fleshed" },
+        { id: "dried", name: "Dried" },
+        { id: "soaked", name: "Soaked" },
+        { id: "dehaired", name: "Dehaired" },
+        { id: "brained", name: "Brained" }
+    ];
     const RAW_FRUIT_IDS = {
         blueberry: true,
         coconut: true,
@@ -32,6 +41,13 @@
     };
     const MEAL_IDS = { coconut_meal: true };
     const BLANK_TOOL_IDS = { stone_tool: true, flint_tool: true };
+    const TREE_SKIP_IDS = { stone_tool: true, flint_tool: true, clay_figurine: true };
+    const FORM_CLASSES = [
+        { id: "art:animal", name: "Animal Figurine", cls: "animal" },
+        { id: "art:human", name: "Human Figurine", cls: "human" },
+        { id: "art:deity", name: "Deity Figurine", cls: "deity" },
+        { id: "art:lump", name: "Clay Lump", cls: "lump", key: "clay" }
+    ];
 
     const CATEGORY_TREE = [
         {
@@ -57,7 +73,10 @@
             id: "materials",
             name: "Materials",
             children: [
-                { id: "materials/hides", name: "Hides" },
+                { id: "materials/hides", name: "Hides", children: HIDE_STAGES.map((s) => ({
+                    id: `materials/hides/${s.id}`,
+                    name: s.name
+                })) },
                 { id: "materials/leather", name: "Leather" },
                 { id: "materials/stone", name: "Stone" },
                 { id: "materials/wood", name: "Wood" }
@@ -65,7 +84,12 @@
         },
         { id: "medicine", name: "Medicine" },
         { id: "tools", name: "Tools" },
-        { id: "weapons", name: "Weapons" }
+        { id: "weapons", name: "Weapons" },
+        {
+            id: "art",
+            name: "Art",
+            children: []
+        }
     ];
 
     function sortByName(a, b) {
@@ -136,18 +160,22 @@
     }
 
     function filterKey(stack, def) {
-        // Knapped class lives on the stack (chopper, knife, scraper, awl, spear tip).
+        // Knapped class lives on the stack (chopper, knife, scraper, awl, spear tip, flake).
         // Item-def classes (bone as a single-use awl) stay their own item.
         const cls = stack?.toolClass;
         if (cls && TOOL_CLASSES.some((t) => t.cls === cls)) return `tool:${cls}`;
-        return stackId(stack) || def?.id || null;
+        const form = stack?.formClass;
+        if (form && FORM_CLASSES.some((t) => t.cls === form)) return `art:${form}`;
+        const id = stackId(stack) || def?.id || null;
+        if (BLANK_TOOL_IDS[id]) return "tool:blank";
+        return id;
     }
 
     function leafCategory(def, roastIds) {
         if (!def) return "junk";
         if (typeof def.storageCategory === "string" && def.storageCategory) return def.storageCategory;
         const id = def.id;
-        if (def.place?.thing) return "buildings";
+        if (id === "clay_figurine") return "art";
         if (def.bandage) return "medicine";
         if (def.toolClass || BLANK_TOOL_IDS[id]) return "tools";
         if (def.weapon) return "weapons";
@@ -159,7 +187,12 @@
         if (RAW_FRUIT_IDS[id]) return "food/raw";
         const hideStage = def.hide?.stage;
         if (hideStage === "leather" || (id && String(id).endsWith("_leather"))) return "materials/leather";
-        if (def.hide) return "materials/hides";
+        if (def.hide) {
+            if (hideStage && HIDE_STAGES.some((s) => s.id === hideStage)) {
+                return `materials/hides/${hideStage}`;
+            }
+            return "materials/hides";
+        }
         if (WOOD_IDS[id]) return "materials/wood";
         if (STONE_IDS[id]) return "materials/stone";
         if (MEAL_IDS[id] || (def.ingredients && def.ingredients.length) || def.food?.ingredients) {
@@ -167,6 +200,7 @@
         }
         if ((roastIds && roastIds.has(id)) || (id && /^roast/i.test(id))) return "food/roasted";
         if (def.food && (def.cook || Number(def.food.kc) > 0 || RAW_FRUIT_IDS[id])) return "food/raw";
+        if (def.place?.thing) return "buildings";
         return "junk";
     }
 
@@ -245,6 +279,7 @@
         const key = filterKey(stack, def);
         if (!key) return true;
         const leafId = (key.startsWith("tool:") ? toolClassCategory(key) : null)
+            || (key.startsWith("art:") ? "art" : null)
             || leafCategory(def, null);
         const ancestors = ancestorIds(CATEGORY_TREE, leafId) || [leafId];
         return keyAllowed(filter, key, ancestors);
@@ -255,6 +290,7 @@
         const roast = roastResultIds(list);
         const root = cloneTree(CATEGORY_TREE);
         for (const def of list) {
+            if (TREE_SKIP_IDS[def.id]) continue;
             const leafId = leafCategory(def, roast);
             const node = findNode(root, leafId) || findNode(root, "junk");
             if (!node) continue;
@@ -264,6 +300,10 @@
             const leafId = row.category || "tools";
             const node = findNode(root, leafId) || findNode(root, "tools");
             if (node) node.items.push({ id: row.id, name: row.name, key: null });
+        }
+        for (const row of FORM_CLASSES) {
+            const node = findNode(root, "art") || findNode(root, "junk");
+            if (node) node.items.push({ id: row.id, name: row.name, key: row.key || null });
         }
         const sortNode = (n) => {
             (n.items || []).sort(sortByName);
@@ -368,6 +408,7 @@
     function isMergeableStack(stack) {
         if (!stack || !(Number(stack.quantity) > 0)) return false;
         if (stack.customName || stack.food || stack.ingredients || stack.toolClass) return false;
+        if (stack.formClass || stack.formVoxels) return false;
         return true;
     }
 
@@ -615,6 +656,7 @@
         PRIORITIES,
         PRIORITY_LABELS,
         TOOL_CLASSES,
+        HIDE_STAGES,
         CATEGORY_TREE,
         emptyFilter,
         normalize,

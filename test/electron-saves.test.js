@@ -54,6 +54,29 @@ describe("electron/saves", () => {
         assert.equal(fs.fullscreen, true);
     });
 
+    it("preserves forming templates in options.json", async () => {
+        const Forming = require("../shared/forming");
+        const g = Forming.emptyGrid();
+        for (let x = 6; x <= 10; x++) {
+            for (let y = 0; y <= 4; y++) {
+                for (let z = 6; z <= 10; z++) g[x][y][z] = true;
+            }
+        }
+        const packed = Forming.pack(g);
+        const next = await saves.writeOptions(root, {
+            guiScale: 1,
+            musicVolume: 50,
+            formTemplates: [
+                { id: "t1", name: "Wolf", packed, savedAt: 9 },
+                { name: "nope", packed: "@@@" }
+            ]
+        });
+        assert.equal(next.formTemplates.length, 1);
+        assert.equal(next.formTemplates[0].name, "Wolf");
+        const got = saves.readOptions(root);
+        assert.equal(got.formTemplates[0].packed, packed);
+    });
+
     it("migrates legacy characters/worlds into save/", async () => {
         const userData = fs.mkdtempSync(path.join(os.tmpdir(), "cp-legacy-"));
         const saveRoot = path.join(userData, "save");

@@ -5,6 +5,8 @@
 const fs = require("fs");
 const fsp = fs.promises;
 const path = require("path");
+const Forming = require("../shared/forming");
+const CraftTemplates = require("../shared/craftTemplates");
 
 const KINDS = new Set(["characters", "worlds"]);
 const ID_RE = /^[A-Za-z0-9._-]+$/;
@@ -34,7 +36,7 @@ function optionsPath(root) {
 }
 
 function defaultOptions() {
-    return { guiScale: 0, musicVolume: MUSIC_VOLUME_DEFAULT, fullscreen: false };
+    return { guiScale: 0, musicVolume: MUSIC_VOLUME_DEFAULT, fullscreen: false, formTemplates: [] };
 }
 
 function normalizeOptions(raw) {
@@ -47,7 +49,8 @@ function normalizeOptions(raw) {
         musicVolume: Number.isFinite(vol)
             ? Math.max(0, Math.min(100, Math.round(vol)))
             : base.musicVolume,
-        fullscreen: !!raw.fullscreen
+        fullscreen: !!raw.fullscreen,
+        formTemplates: CraftTemplates.sanitizeList(raw.formTemplates, Forming)
     };
 }
 

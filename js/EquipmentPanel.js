@@ -43,8 +43,8 @@ class EquipmentPanel {
     }
 
     open() {
-        if (this.scene.knappingPanel?.visible) return;
-        if (this.scene.settlementSys?.isNaming?.()) return;
+        if (this.scene.knappingPanel?.visible || this.scene.clayFormingPanel?.visible) return;
+        if (isHudTextOpen(this.scene)) return;
         // Side menus exclude each other; world UIs (corpse / campfire) can stay open
         if (this.scene.craftMenuVisible) this.scene.closeCraftMenu();
         if (this.scene.healthPanel?.visible) this.scene.healthPanel.close();
@@ -65,7 +65,7 @@ class EquipmentPanel {
         if (this.scene.equipmentBtn) {
             const p = this.scene.input.activePointer;
             const btn = this.scene.equipmentBtn;
-            const hovering = Phaser.Geom.Rectangle.Contains(btn.getBounds(), p.x, p.y);
+            const hovering = pointerHitsInteractive(btn, p);
             btn.setTexture(hovering ? 'equipment_hover' : 'equipment');
         }
     }

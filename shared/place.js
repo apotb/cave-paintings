@@ -16,6 +16,33 @@
         return typeof id === "string" && id ? id : null;
     }
 
+    function isFigurineThing(thingDef, entry) {
+        return !!(thingDef?.figurine || thingDef?.id === "clay_figurine" || entry?.id === "clay_figurine");
+    }
+
+    /** Animal / human / deity figurines only — lumps stay in-hand. */
+    function canPlaceFigurine(held) {
+        const cls = String(held?.formClass || "");
+        return cls === "animal" || cls === "human" || cls === "deity";
+    }
+
+    function heldPlaceThingId(itemDef, held) {
+        const id = placeThingId(itemDef);
+        if (id === "clay_figurine" || held?.id === "clay_figurine") {
+            return canPlaceFigurine(held) ? "clay_figurine" : null;
+        }
+        return id;
+    }
+
+    function ensureFigurineEntry(entry) {
+        if (!entry) return entry;
+        entry.rot = normalizeRot(entry.rot);
+        if (!entry.uid) {
+            entry.uid = `fg_${Math.round(Number(entry.x) || 0)}_${Math.round(Number(entry.y) || 0)}`;
+        }
+        return entry;
+    }
+
     function normalizeRot(rot) {
         let n = Math.round(Number(rot) || 0);
         n = ((n % 360) + 360) % 360;
@@ -41,6 +68,7 @@
     }
 
     function thingImageLoads(t) {
+        if (t?.figurine) return [];
         if (!t?.key) return [];
         if (Array.isArray(t.rotations) && t.rotations.length) {
             const loads = [];
@@ -101,6 +129,7 @@
     }
 
     function canRotate(thingDef) {
+        if (isFigurineThing(thingDef)) return true;
         return Array.isArray(thingDef?.rotations) && thingDef.rotations.length > 0;
     }
 
@@ -621,6 +650,10 @@
     return {
         BLOCKED,
         placeThingId,
+        heldPlaceThingId,
+        canPlaceFigurine,
+        isFigurineThing,
+        ensureFigurineEntry,
         normalizeRot,
         rotateCW,
         rotateCCW,

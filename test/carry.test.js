@@ -31,6 +31,12 @@ test("knapped stack uses def.weight", () => {
     assert.equal(Carry.unitWeight(knap, def), 1.5);
 });
 
+test("figurine stack uses voxel-scaled weight", () => {
+    const def = { weight: 0.8 };
+    const fig = { id: "clay_figurine", formClass: "human", weight: 0.4 };
+    assert.equal(Carry.unitWeight(fig, def), 0.4);
+});
+
 test("encumbrance matches Player formula", () => {
     const none = Carry.encumbrance(10, 15);
     assert.equal(none.hungerRate, 1);

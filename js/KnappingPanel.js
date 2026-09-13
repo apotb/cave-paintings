@@ -1,5 +1,5 @@
 /**
- * Centered freeform knapping GUI — chip a pebble/flint against a rock.
+ * Centered freeform knapping GUI — chip a pebble/flint (click yourself).
  * Blank is only consumed after the first chip; Close (no chips) returns free.
  * Finished tools can be reopened to reshape (rotate free; chip risks destroy).
  */
@@ -20,9 +20,12 @@ class KnappingPanel {
         this._rework = false;
         this._rotated = false;
 
-        this.cellPx = 14;
+        this.cellPxBase = 14;
+        this.cellPx = this.cellPxBase;
+        this.panelW = 420;
+        this.panelH = 354;
         this._previewKey = "knap_session_preview";
-        this.container = scene.add.container(0, 0).setVisible(false).setDepth(120).setScrollFactor(0);
+        this.container = scene.add.container(0, 0).setVisible(false).setDepth(16000).setScrollFactor(0);
         scene.uiLayer?.add(this.container);
 
         // Backdrop blocks the world. Panel chrome is NOT interactive — same reason
@@ -70,10 +73,10 @@ class KnappingPanel {
         this.btnRotate = this._makeBtn(-70, 142, "Rotate", () => this.rotate());
         this.btnFinish = this._makeBtn(70, 142, "Close", () => this.finishOrClose());
 
-        // Same pattern as SceneMain.createButtons() help: uiLayer sibling + pixelPerfect
+        // Same pattern as SceneMain.createButtons() help: uiLayer sibling + idle-pixel hit
         this._helpPressed = false;
         this.helpBtn = scene.add.image(0, 0, "help_alt");
-        this.helpBtn.setInteractive({ useHandCursor: true, pixelPerfect: true });
+        lockPixelHit(this.helpBtn, "help_alt", { useHandCursor: true });
         this.helpBtn.on("pointerover", (p) => {
             if (!this._helpPressed) this.helpBtn.setTexture("help_alt_hover");
             this.scene.showTooltip(() => this._helpTooltipText(), p.x, p.y, this.helpBtn);
@@ -86,7 +89,7 @@ class KnappingPanel {
             this._helpPressed = true;
             this.helpBtn.setTexture("help_alt_open");
         });
-        this.helpBtn.setOrigin(0.5, 0.5).setScale(3).setDepth(130).setVisible(false);
+        this.helpBtn.setOrigin(0.5, 0.5).setScale(3).setDepth(16010).setVisible(false);
         scene.uiLayer.add(this.helpBtn);
 
         this.container.add([
@@ -129,8 +132,7 @@ class KnappingPanel {
         if (!this._helpPressed || !this.helpBtn) return;
         this._helpPressed = false;
         const p = this.scene.input.activePointer;
-        const hits = this.scene.input.hitTestPointer(p) || [];
-        const over = hits.includes(this.helpBtn);
+        const over = pointerHitsInteractive(this.helpBtn, p);
         this.helpBtn.setTexture(over ? "help_alt_hover" : "help_alt");
     }
 
@@ -154,90 +156,78 @@ class KnappingPanel {
     }
 
     layout() {
+        const s = this.scene.uiScale || 1;
         const cam = this.scene.cameras.main;
         const cx = cam.width * 0.5;
         const cy = cam.height * 0.5;
         this.container.setPosition(cx, cy);
         this.backdrop.setSize(cam.width + 40, cam.height + 40);
-        // Knapping stays 1:1 with the chip grid — GUI scale must not enlarge text alone.
-        this.title.setFontSize(pixelUiFontSize(24, 1));
-        this.preview.setFontSize(pixelUiFontSize(16, 1));
-        this.btnRotate?.label.setFontSize(pixelUiFontSize(16, 1));
-        this.btnFinish?.label.setFontSize(pixelUiFontSize(16, 1));
-        // Screen-space top-right of the 420×354 panel
+        if (this.backdrop.input?.hitArea?.setSize) {
+            this.backdrop.input.hitArea.setSize(cam.width + 40, cam.height + 40);
+        }
+
+        const panelW = this.panelW * s;
+        const panelH = this.panelH * s;
+        this.panelBg.setSize(panelW, panelH);
+        this.panelBg.setStrokeStyle(
+            typeof pixelUiStroke === "function" ? pixelUiStroke(s) : Math.max(2, Math.round(2 * s)),
+            0x6a5a45
+        );
+
+        this.cellPx = this.cellPxBase * s;
+        const gridSize = this.cellPx * Knapping.SIZE;
+        const wellY = Math.round(-10 * s);
+        const wellPad = 4 * s;
+        this.gridWell.setPosition(0, wellY).setSize(gridSize + wellPad, gridSize + wellPad);
+        this.gridImage.setPosition(0, wellY);
+        this.gridHit.setPosition(0, wellY).setSize(gridSize, gridSize);
+        if (this.gridHit.input?.hitArea?.setSize) {
+            this.gridHit.input.hitArea.setSize(gridSize, gridSize);
+        }
+
+        this.title.setPosition(0, Math.round(-147 * s));
+        this.preview.setPosition(0, Math.round(118 * s));
+        if (typeof this.preview.setWordWrapWidth === "function") {
+            this.preview.setWordWrapWidth(Math.round(380 * s));
+        } else {
+            this.preview.setStyle({ wordWrap: { width: Math.round(380 * s) } });
+        }
+        this.btnRotate.label.setPosition(Math.round(-70 * s), Math.round(142 * s));
+        this.btnFinish.label.setPosition(Math.round(70 * s), Math.round(142 * s));
+        if (typeof applyPixelUiFont === "function") {
+            applyPixelUiFont(this.title, 24, s);
+            applyPixelUiFont(this.preview, 16, s);
+            applyPixelUiFont(this.btnRotate.label, 16, s);
+            applyPixelUiFont(this.btnFinish.label, 16, s);
+        } else {
+            this.title.setFontSize(pixelUiFontSize(24, s));
+            this.preview.setFontSize(pixelUiFontSize(16, s));
+            this.btnRotate.label.setFontSize(pixelUiFontSize(16, s));
+            this.btnFinish.label.setFontSize(pixelUiFontSize(16, s));
+        }
+
+        const inset = Math.round(32 * s);
         this.helpBtn
-            ?.setScale(3)
-            .setPosition(cx + 210 - 32, cy - 177 + 32);
+            ?.setScale(3 * s)
+            .setPosition(cx + panelW / 2 - inset, cy - panelH / 2 + inset);
+
+        if (this.visible) this._redraw();
     }
 
     /**
-     * Called when player clicks a rock while holding a blank or finished tool.
+     * Open knapping while holding a blank or finished tool (click yourself).
      * @returns {boolean}
      */
-    tryOpenAtRock(rock) {
+    tryOpen() {
         if (this.visible) return false;
-        const rockId = rock?.meta?.id;
-        const isAnvil = typeof Place !== "undefined" && Place.countsAsThing
-            ? Place.countsAsThing(rockId, "rock")
-            : rockId === "rock" || rockId === "settling_stone";
-        if (!rock || !isAnvil) return false;
         const pointer = this.scene.input?.activePointer;
         if (this.scene.pointerOverWorldUi?.(pointer)) return false;
         const player = this.scene.player;
         if (!player || player._bodyDead || player.isIncapacitated?.() || player._resting) return false;
 
-        const r = (this.scene.tileSize || 16) * (player.interactionRange || 4);
-        const dx = rock.x - player.x;
-        const dy = rock.y - player.y;
-        if (dx * dx + dy * dy > r * r) return false;
-
         const held = player.getHeldItem();
-        if (!held || !(held.quantity > 0)) return false;
-        const meta = this.scene.getItem(held.id);
-        const slotIndex = this.scene.hotbar?.activeIndex ?? -1;
-
-        // Reshape an existing knapped tool (needs saved silhouette)
-        const rework = !!(held.knapIconData && (held.id === "stone_tool" || held.id === "flint_tool"));
-        let knapPrep = null;
-        if (rework) {
-            const pixels = Knapping.unpackIconData(held.knapIconData);
-            if (!pixels) return false;
-            const grid = Knapping.gridFromPixels(pixels);
-            if (!grid || Knapping.mass(grid) < 1) return false;
-            const material = held.knapMaterial === "flint" || held.id === "flint_tool"
-                ? "flint"
-                : "pebble";
-            knapPrep = {
-                rework: true,
-                blankItemId: held.id,
-                blankSlotIndex: slotIndex,
-                material,
-                textureKey: meta?.key || material,
-                grid,
-                pixels,
-                _reworkDurability: held.durability,
-                _reworkQuality: held.knapQuality || null,
-                _reworkToolClass: held.toolClass || null
-            };
-        } else {
-            const knap = meta?.knapping;
-            if (!knap?.material) return false;
-            const material = knap.material === "flint" ? "flint" : "pebble";
-            const textureKey = meta.key || material;
-            const blank = Knapping.blankFromTexture(this.scene, textureKey);
-            knapPrep = {
-                rework: false,
-                blankItemId: held.id,
-                blankSlotIndex: slotIndex,
-                material,
-                textureKey,
-                grid: blank.grid,
-                pixels: blank.pixels,
-                _reworkDurability: undefined,
-                _reworkQuality: null,
-                _reworkToolClass: null
-            };
-        }
+        const knapPrep = this._prepHeld(held);
+        if (!knapPrep) return false;
 
         // Close whatever menu is open, then start knapping
         this.scene.closeOpenMenus?.();
@@ -271,6 +261,62 @@ class KnappingPanel {
         this.scene.hideTooltip?.();
         this.scene.hideWorldTooltip?.();
         return true;
+    }
+
+    canOpenHeld(held) {
+        return !!this._prepHeld(held, { probe: true });
+    }
+
+    _prepHeld(held, opts = {}) {
+        if (!held || !(held.quantity > 0)) return null;
+        const meta = this.scene.getItem(held.id);
+        const slotIndex = this.scene.hotbar?.activeIndex ?? -1;
+        const rework = !!(held.knapIconData && (held.id === "stone_tool" || held.id === "flint_tool"));
+        if (rework) {
+            if (opts.probe) return { rework: true };
+            const pixels = Knapping.unpackIconData(held.knapIconData);
+            if (!pixels) return null;
+            const grid = Knapping.gridFromPixels(pixels);
+            if (!grid || Knapping.mass(grid) < 1) return null;
+            const material = held.knapMaterial === "flint" || held.id === "flint_tool"
+                ? "flint"
+                : "pebble";
+            return {
+                rework: true,
+                blankItemId: held.id,
+                blankSlotIndex: slotIndex,
+                material,
+                textureKey: meta?.key || material,
+                grid,
+                pixels,
+                _reworkDurability: held.durability,
+                _reworkQuality: held.knapQuality || null,
+                _reworkToolClass: held.toolClass || null
+            };
+        }
+        const knap = meta?.knapping;
+        if (!knap?.material) return null;
+        if (opts.probe) return { rework: false };
+        const material = knap.material === "flint" ? "flint" : "pebble";
+        const textureKey = meta.key || material;
+        const blank = Knapping.blankFromTexture(this.scene, textureKey);
+        return {
+            rework: false,
+            blankItemId: held.id,
+            blankSlotIndex: slotIndex,
+            material,
+            textureKey,
+            grid: blank.grid,
+            pixels: blank.pixels,
+            _reworkDurability: undefined,
+            _reworkQuality: null,
+            _reworkToolClass: null
+        };
+    }
+
+    /** @deprecated Use tryOpen(); knapping is click-self, not click-rock. */
+    tryOpenAtRock(_rock) {
+        return this.tryOpen();
     }
 
     _isDedicated() {

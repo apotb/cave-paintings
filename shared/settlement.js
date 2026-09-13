@@ -323,6 +323,9 @@
         s.bills = s.bills && typeof s.bills === "object" && !Array.isArray(s.bills) ? s.bills : {};
         s.stock = normalizeStock(s.stock);
         s.jobs = s.jobs && typeof s.jobs === "object" ? s.jobs : {};
+        s.jobOrder = Array.isArray(s.jobOrder)
+            ? s.jobOrder.map((id) => String(id || "")).filter(Boolean)
+            : [];
         return s;
     }
 
@@ -1071,6 +1074,98 @@
         const name = JOB_NAMES[job] || jobLabel(job);
         const work = JOB_WORK[job] || [];
         return [name, ...work.map((line) => `- ${line}`)].join("\n");
+    }
+
+    function pawnIdOf(p) {
+        if (!p) return "";
+        return String(p.pawnId || p.id || "");
+    }
+
+    function normalizeJobOrder(settle, pawnIds) {
+        const have = [];
+        const haveSet = new Set();
+        for (const id of pawnIds || []) {
+            const s = String(id || "");
+            if (!s || haveSet.has(s)) continue;
+            haveSet.add(s);
+            have.push(s);
+        }
+        const raw = Array.isArray(settle?.jobOrder) ? settle.jobOrder : [];
+        const out = [];
+        const seen = new Set();
+        for (const id of raw) {
+            const s = String(id || "");
+            if (!s || seen.has(s) || !haveSet.has(s)) continue;
+            seen.add(s);
+            out.push(s);
+        }
+        for (const s of have) {
+            if (seen.has(s)) continue;
+            seen.add(s);
+            out.push(s);
+        }
+        if (settle) settle.jobOrder = out;
+        return out;
+    }
+
+    function sortByJobOrder(settle, pawns, idOf) {
+        const list = Array.isArray(pawns) ? pawns.slice() : [];
+        const takeId = typeof idOf === "function" ? idOf : pawnIdOf;
+        const ids = list.map((p) => String(takeId(p) || ""));
+        const order = normalizeJobOrder(settle, ids);
+        const rank = new Map(order.map((id, i) => [id, i]));
+        list.sort((a, b) => {
+            const ia = rank.get(String(takeId(a) || "")) ?? 0;
+            const ib = rank.get(String(takeId(b) || "")) ?? 0;
+            return ia - ib;
+        });
+        return list;
+    }
+
+    function moveJobOrder(settle, pawnId, toIndex, pawnIds) {
+        const order = normalizeJobOrder(settle, pawnIds);
+        const id = String(pawnId || "");
+        const from = order.indexOf(id);
+        if (from < 0) return order;
+        const to = Math.max(0, Math.min(order.length - 1, Math.floor(Number(toIndex) || 0)));
+        if (from === to) return order;
+        order.splice(from, 1);
+        order.splice(to, 0, id);
+        if (settle) settle.jobOrder = order;
+        return order;
+    }
+
+    function applyJobOrderToList(list, settleId, order, opts = {}) {
+        const arr = Array.isArray(list) ? list : [];
+        const sid = String(settleId || "");
+        const idOf = typeof opts.idOf === "function" ? opts.idOf : pawnIdOf;
+        const homeOf = typeof opts.homeOf === "function"
+            ? opts.homeOf
+            : (p) => p?.homeSettlementId;
+        const byId = new Map();
+        for (const p of arr) {
+            if (String(homeOf(p) || "") !== sid) continue;
+            const id = String(idOf(p) || "");
+            if (id && !byId.has(id)) byId.set(id, p);
+        }
+        const ordered = [];
+        const used = new Set();
+        for (const raw of Array.isArray(order) ? order : []) {
+            const id = String(raw || "");
+            const p = byId.get(id);
+            if (!p || used.has(id)) continue;
+            used.add(id);
+            ordered.push(p);
+        }
+        for (const [id, p] of byId) {
+            if (used.has(id)) continue;
+            ordered.push(p);
+        }
+        let i = 0;
+        return arr.map((p) => {
+            if (String(homeOf(p) || "") !== sid) return p;
+            return ordered[i++] || p;
+        });
     }
 
     function jobsFor(settle, pawnId) {
@@ -2014,6 +2109,11 @@
         jobTooltip,
         jobsFor,
         setJob,
+        pawnIdOf,
+        normalizeJobOrder,
+        sortByJobOrder,
+        moveJobOrder,
+        applyJobOrderToList,
         ownedOf,
         atPoint,
         unlinkStation,

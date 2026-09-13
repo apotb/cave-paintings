@@ -143,9 +143,46 @@ class SettlementSystem {
     }
 
     settlersOf(settleId) {
-        return (this.scene.settlers || []).filter(
+        const list = (this.scene.settlers || []).filter(
             (p) => p && !p.isBodyDead?.() && p.homeSettlementId === settleId
         );
+        const settle = this.byId(settleId);
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!S?.sortByJobOrder || !settle) return list;
+        return S.sortByJobOrder(settle, list, (p) => p.pawnId || p.id);
+    }
+
+    _syncJobOrder(settle) {
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!S?.normalizeJobOrder || !settle) return;
+        const ids = (this.scene.settlers || [])
+            .filter((p) => p && !p.isBodyDead?.() && p.homeSettlementId === settle.id)
+            .map((p) => p.pawnId || p.id);
+        S.normalizeJobOrder(settle, ids);
+        if (S.applyJobOrderToList) {
+            this.scene.settlers = S.applyJobOrderToList(
+                this.scene.settlers || [],
+                settle.id,
+                settle.jobOrder,
+                { idOf: (p) => p.pawnId || p.id }
+            );
+        }
+    }
+
+    setJobOrder(settle, pawnId, toIndex) {
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!S?.moveJobOrder || !settle || !pawnId) return false;
+        const ids = this.settlersOf(settle.id).map((p) => p.pawnId || p.id);
+        const before = (settle.jobOrder || []).join(",");
+        S.moveJobOrder(settle, pawnId, toIndex, ids);
+        this._syncJobOrder(settle);
+        if ((settle.jobOrder || []).join(",") === before) return false;
+        this.sendNet("setJobOrder", {
+            settlementId: settle.id,
+            jobOrder: settle.jobOrder
+        });
+        this.bumpWorkCache();
+        return true;
     }
 
     workClaims(settle) {
@@ -1120,6 +1157,7 @@ class SettlementSystem {
         if (typeof Settlement !== "undefined") {
             target.jobs[pawn.pawnId] = Settlement.defaultJobs();
         }
+        this._syncJobOrder(target);
         if (wasControl) scene.partySys?.switchControl?.(scene.leader);
         scene.net?._pullFromScene?.();
         scene.partyPanel?.refresh?.();
@@ -1140,6 +1178,7 @@ class SettlementSystem {
         const fromName = from?.name || "";
         this.sendNet("pick", { pawnId: pawn.pawnId });
         scene.partySys?.adoptSettler?.(pawn);
+        if (from) this._syncJobOrder(from);
         scene.partyPanel?.refresh?.();
         scene.settlementPanel?.refresh?.();
         if (fromName) this._logPawnSettle(pawn, "was picked up from", fromName);
@@ -1168,6 +1207,8 @@ class SettlementSystem {
             pawn.y = dest.y + 8;
             pawn.setVelocity?.(0, 0);
         }
+        this._syncJobOrder(from);
+        this._syncJobOrder(dest);
         scene.settlementPanel?.refresh?.();
         this._logPawnSettle(pawn, "is bound for", dest.name);
         return true;
@@ -1264,8 +1305,8 @@ class SettlementSystem {
 
     openPanel(settle) {
         const scene = this.scene;
-        if (scene.knappingPanel?.visible) return;
-        if (this.isNaming?.()) return;
+        if (scene.knappingPanel?.visible || scene.clayFormingPanel?.visible) return;
+        if (isHudTextOpen(scene)) return;
         // Side menus exclude each other; world UIs (campfire / basket / lean-to) stay open
         if (scene.craftMenuVisible) scene.closeCraftMenu();
         if (scene.equipmentPanel?.visible) scene.equipmentPanel.close();

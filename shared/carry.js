@@ -121,6 +121,10 @@
     function unitWeight(stack, def) {
         const knap = !!(stack?.toolClass || stack?.knapMaterial);
         if (knap) return Math.max(0, Number(def?.weight) || 0);
+        if (stack?.formClass || stack?.formVoxels) {
+            const override = Number(stack?.weight);
+            if (Number.isFinite(override) && override > 0) return override;
+        }
         // Meals carry a computed mass. Never trust stack.weight on world drops
         // (Phaser Arcade `weight` is 0/1 and was zeroing / undercounting logs).
         const meal = !!(stack?.food || (stack?.ingredients && stack.ingredients.length));

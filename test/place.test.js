@@ -198,3 +198,23 @@ test("itemIconKey uses null when the item has no texture", () => {
         "lean_to_0"
     );
 });
+
+test("only finished figurines are held-placeable", () => {
+    const items = require("../data/Items.json");
+    const things = require("../data/Things.json");
+    const figItem = items.find((i) => i && i.id === "clay_figurine");
+    const figThing = things.find((t) => t && t.id === "clay_figurine");
+    assert.equal(figItem.place.thing, "clay_figurine");
+    assert.equal(figThing.figurine, true);
+    assert.equal(figThing.hitboxSize, 0);
+    assert.deepEqual(Place.thingImageLoads(figThing), []);
+    assert.equal(Place.placeThingId(figItem), "clay_figurine");
+    assert.equal(Place.heldPlaceThingId(figItem, { id: "clay_figurine", formClass: "human" }), "clay_figurine");
+    assert.equal(Place.heldPlaceThingId(figItem, { id: "clay_figurine", formClass: "animal" }), "clay_figurine");
+    assert.equal(Place.heldPlaceThingId(figItem, { id: "clay_figurine", formClass: "deity" }), "clay_figurine");
+    assert.equal(Place.heldPlaceThingId(figItem, { id: "clay_figurine", formClass: "lump" }), null);
+    assert.equal(Place.heldPlaceThingId(figItem, { id: "clay_figurine" }), null);
+    assert.equal(Place.heldPlaceThingId({ id: "clay" }, { id: "clay" }), null);
+    assert.equal(Place.collisionWorldRect({ id: "clay_figurine", x: 8, y: 16 }, figThing, 16), null);
+    assert.equal(Place.canRotate(figThing), true);
+});

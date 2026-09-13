@@ -70,6 +70,43 @@ test("left click raises job priority; right click cycles the old way", () => {
     assert.equal(Settlement.cyclePriority(4), 0);
 });
 
+test("jobOrder keeps known pawns, drops gone ones, and appends newcomers", () => {
+    const settle = Settlement.createSettlement({ x: 0, y: 0 });
+    settle.jobOrder = ["b", "gone", "a"];
+    assert.deepEqual(Settlement.normalizeJobOrder(settle, ["a", "b", "c"]), ["b", "a", "c"]);
+    assert.deepEqual(settle.jobOrder, ["b", "a", "c"]);
+});
+
+test("moveJobOrder relocates a settler in the jobs list", () => {
+    const settle = Settlement.createSettlement({ x: 0, y: 0 });
+    const ids = ["ann", "bo", "cy"];
+    Settlement.normalizeJobOrder(settle, ids);
+    assert.deepEqual(Settlement.moveJobOrder(settle, "cy", 0, ids), ["cy", "ann", "bo"]);
+    assert.deepEqual(Settlement.moveJobOrder(settle, "cy", 2, ids), ["ann", "bo", "cy"]);
+    assert.deepEqual(Settlement.moveJobOrder(settle, "ann", 1, ["ann", "bo", "cy"]), ["bo", "ann", "cy"]);
+});
+
+test("sortByJobOrder and applyJobOrderToList follow the jobs list", () => {
+    const settle = Settlement.createSettlement({ x: 0, y: 0 });
+    settle.jobOrder = ["c", "a"];
+    const pawns = [
+        { id: "a", homeSettlementId: settle.id },
+        { id: "b", homeSettlementId: settle.id },
+        { id: "c", homeSettlementId: settle.id }
+    ];
+    const sorted = Settlement.sortByJobOrder(settle, pawns);
+    assert.deepEqual(sorted.map((p) => p.id), ["c", "a", "b"]);
+    const mixed = [
+        { id: "x", homeSettlementId: "other" },
+        pawns[0],
+        { id: "y", homeSettlementId: "other" },
+        pawns[1],
+        pawns[2]
+    ];
+    const applied = Settlement.applyJobOrderToList(mixed, settle.id, ["c", "a", "b"]);
+    assert.deepEqual(applied.map((p) => p.id), ["x", "c", "y", "a", "b"]);
+});
+
 test("recruit parks into settlement when travel is full", () => {
     assert.equal(Settlement.recruitParksWhenFull(6, true, 6), true);
     assert.equal(Settlement.recruitParksWhenFull(6, false, 6), false);

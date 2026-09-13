@@ -388,7 +388,14 @@ class StorageFilterPanel {
     }
 
     _iconKey(row) {
-        if (row?.id && String(row.id).startsWith("tool:")) return null;
+        const id = String(row?.id || "");
+        // Synthetic class rows: only draw an icon when the row names a real texture.
+        // Figurine classes keep the icon column empty instead of the "null" placeholder.
+        if (id.startsWith("tool:") || id.startsWith("art:")) {
+            const k = row?.key;
+            if (k && k !== "null" && this.scene.textures.exists(k)) return k;
+            return null;
+        }
         const def = this.scene.getItem?.(row?.id) || row;
         if (typeof Place !== "undefined" && Place.itemIconKey) {
             const key = Place.itemIconKey(

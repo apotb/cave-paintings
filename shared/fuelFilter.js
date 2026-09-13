@@ -145,7 +145,10 @@
         }));
         const stripTools = (nodes) => {
             for (const n of nodes || []) {
-                n.items = (n.items || []).filter((it) => !String(it.id || "").startsWith("tool:"));
+                n.items = (n.items || []).filter((it) => {
+                    const id = String(it.id || "");
+                    return !id.startsWith("tool:") && !id.startsWith("art:");
+                });
                 if (n.children) stripTools(n.children);
             }
         };

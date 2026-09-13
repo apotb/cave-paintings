@@ -274,5 +274,12 @@
             "item": "clay",
             "yield": 25
         }
+    },
+    {
+        "id": "clay_figurine",
+        "name": "Clay Figurine",
+        "key": "clay",
+        "hitboxSize": 0,
+        "figurine": true
     }
 ]

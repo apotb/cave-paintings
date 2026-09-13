@@ -115,10 +115,42 @@
 
     /** World thing id to show next to a text unlock, or null for no icon. */
     function unlockTextIcon(label) {
-        const s = String(label || "");
+        const s = typeof label === "string" ? label : String(label?.label || label || "");
         if (/\bknapping\b/i.test(s)) return "rock";
-        if (/\bclay forming\b/i.test(s)) return "clay";
+        if (/\bforming\b/i.test(s)) return "clay";
         return null;
+    }
+
+    function unlockTextLabel(entry) {
+        if (entry && typeof entry === "object") return String(entry.label || "");
+        return String(entry || "");
+    }
+
+    function requireHeaderLabel(header) {
+        const raw = String(header || "").trim();
+        if (!raw) return "";
+        return /^if\s+/i.test(raw) ? raw : `If ${raw}`;
+    }
+
+    /**
+     * Flatten unlocks.text (strings + conditional objects) for the research panel.
+     * Conditional rows stay visible; `locked` is true until `require` is researched.
+     */
+    function unlockTextEntries(tech, settle) {
+        const rows = [];
+        for (const t of tech?.unlocks?.text || []) {
+            if (!t) continue;
+            if (typeof t === "object") {
+                const req = t.require;
+                const locked = !!(req && (!settle || !hasTech(settle, req)));
+                if (t.header) rows.push({ label: requireHeaderLabel(t.header), header: true, locked });
+                const label = unlockTextLabel(t);
+                if (label) rows.push({ label, header: false, locked });
+                continue;
+            }
+            rows.push({ label: String(t), header: false, locked: false });
+        }
+        return rows;
     }
 
     let _techs = null;
@@ -356,7 +388,7 @@
         for (const it of items || []) {
             const id = it?.id ? String(it.id) : "";
             if (!id || seen.has(id)) continue;
-            if (id.startsWith("tool:")) continue;
+            if (id.startsWith("tool:") || id.startsWith("art:")) continue;
             if (!isPigment(it, it)) continue;
             seen.add(id);
             out.push({ id, name: it.name || id, key: it.key || null });
@@ -377,7 +409,10 @@
         }));
         const stripTools = (nodes) => {
             for (const n of nodes || []) {
-                n.items = (n.items || []).filter((it) => !String(it.id || "").startsWith("tool:"));
+                n.items = (n.items || []).filter((it) => {
+                    const id = String(it.id || "");
+                    return !id.startsWith("tool:") && !id.startsWith("art:");
+                });
                 if (n.children) stripTools(n.children);
             }
         };
@@ -2242,6 +2277,8 @@
         techTip,
         isActionUnlock,
         unlockTextIcon,
+        unlockTextLabel,
+        unlockTextEntries,
         setTechs,
         techs,
         techById,

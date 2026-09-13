@@ -683,6 +683,10 @@ class DroppedItem extends Mob {
                 knapQuality: stackExtras?.knapQuality,
                 tooltipExtra: stackExtras?.tooltipExtra,
                 knapIconData: stackExtras?.knapIconData,
+                formClass: stackExtras?.formClass,
+                formVoxels: stackExtras?.formVoxels,
+                formStartMass: stackExtras?.formStartMass,
+                beauty: stackExtras?.beauty,
                 durability: stackExtras?.durability,
                 dryProgress: stackExtras?.dryProgress,
                 soakProgress: stackExtras?.soakProgress,
@@ -806,6 +810,11 @@ class DroppedItem extends Mob {
         if (stackExtras?.tooltipExtra) entry.tooltipExtra = stackExtras.tooltipExtra;
         if (stackExtras?.knapIconData) entry.knapIconData = stackExtras.knapIconData;
         if (stackExtras?.knapQuality) entry.knapQuality = stackExtras.knapQuality;
+        if (stackExtras?.formClass) entry.formClass = stackExtras.formClass;
+        if (stackExtras?.formVoxels) entry.formVoxels = stackExtras.formVoxels;
+        if (stackExtras?.formStartMass != null) entry.formStartMass = stackExtras.formStartMass;
+        if (stackExtras?.formCustom) entry.formCustom = true;
+        if (stackExtras?.beauty != null) entry.beauty = stackExtras.beauty;
         if (stackExtras?.durability != null) entry.durability = stackExtras.durability;
         if (stackExtras?.dryProgress != null) entry.dryProgress = stackExtras.dryProgress;
         if (stackExtras?.soakProgress != null) entry.soakProgress = stackExtras.soakProgress;
@@ -852,6 +861,10 @@ class DroppedItem extends Mob {
         if (entry.tooltipExtra) this.tooltipExtra = entry.tooltipExtra;
         if (entry.knapIconData) this.knapIconData = entry.knapIconData;
         if (entry.knapQuality) this.knapQuality = entry.knapQuality;
+        if (entry.formClass) this.formClass = entry.formClass;
+        if (entry.formVoxels) this.formVoxels = entry.formVoxels;
+        if (entry.formStartMass != null) this.formStartMass = entry.formStartMass;
+        if (entry.beauty != null) this.beauty = entry.beauty;
         if (entry.durability != null) this.durability = entry.durability;
         if (entry.dryProgress != null) this.dryProgress = entry.dryProgress;
         if (entry.soakProgress != null) this.soakProgress = entry.soakProgress;
@@ -868,6 +881,16 @@ class DroppedItem extends Mob {
                 this.knapIcon = knapKey;
                 this.setTexture(knapKey);
             }
+        } else if (this.formVoxels && typeof ClayForming !== "undefined") {
+            const formKey = ClayForming.ensureFormTexture(scene, {
+                formVoxels: this.formVoxels,
+                formClass: this.formClass,
+                formIcon: entry.formIcon
+            });
+            if (formKey && scene.textures.exists(formKey)) {
+                this.formIcon = formKey;
+                this.setTexture(formKey);
+            }
         }
 
         scene.add.existing(this);
@@ -883,7 +906,8 @@ class DroppedItem extends Mob {
 
         this.setOrigin(0, 1);
         this.setDepth(1);
-        this.setScale(0.7);
+        if (typeof applyItemIconScale === "function") applyItemIconScale(this, 0.7);
+        else this.setScale(0.7);
 
         this.setDamping(true);
         this.setDrag(200, 200);
@@ -953,6 +977,10 @@ class DroppedItem extends Mob {
         if (this.tooltipExtra) this.entry.tooltipExtra = this.tooltipExtra;
         if (this.knapIconData) this.entry.knapIconData = this.knapIconData;
         if (this.knapQuality) this.entry.knapQuality = this.knapQuality;
+        if (this.formClass) this.entry.formClass = this.formClass;
+        if (this.formVoxels) this.entry.formVoxels = this.formVoxels;
+        if (this.formStartMass != null) this.entry.formStartMass = this.formStartMass;
+        if (this.beauty != null) this.entry.beauty = this.beauty;
         if (this.durability != null) this.entry.durability = this.durability;
         else delete this.entry.durability;
         if (this.dryProgress != null) this.entry.dryProgress = this.dryProgress;
@@ -1090,6 +1118,10 @@ class DroppedItem extends Mob {
                 ...(this.tooltipExtra ? { tooltipExtra: this.tooltipExtra } : {}),
                 ...(this.knapIconData ? { knapIconData: this.knapIconData } : {}),
                 ...(this.knapQuality ? { knapQuality: this.knapQuality } : {}),
+                ...(this.formClass ? { formClass: this.formClass } : {}),
+                ...(this.formVoxels ? { formVoxels: this.formVoxels } : {}),
+                ...(this.formStartMass != null ? { formStartMass: this.formStartMass } : {}),
+                ...(this.beauty != null ? { beauty: this.beauty } : {}),
                 ...(this.durability != null ? { durability: this.durability } : {}),
                 ...(this.dryProgress != null ? { dryProgress: this.dryProgress } : {}),
                 ...(this.soakProgress != null ? { soakProgress: this.soakProgress } : {}),
@@ -1161,6 +1193,10 @@ class DroppedItem extends Mob {
             knapIconData: this.knapIconData,
             tooltipExtra: this.tooltipExtra,
             knapQuality: this.knapQuality,
+            formClass: this.formClass,
+            formVoxels: this.formVoxels,
+            formStartMass: this.formStartMass,
+            beauty: this.beauty,
             durability: this.durability,
             dryProgress: this.dryProgress,
             soakProgress: this.soakProgress ?? this.entry?.soakProgress,

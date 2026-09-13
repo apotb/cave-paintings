@@ -2312,9 +2312,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     _gainIntoArray(arr, cap, item, remaining, incomingSpoil, extras, fitNow) {
         const maxStack = Math.max(1, item.maxStack || 1);
+        const incomingUnique = typeof isSpecialStack === "function"
+            ? isSpecialStack(extras)
+            : !!(extras?.customName || extras?.food || extras?.ingredients
+                || extras?.toolClass || extras?.formClass || extras?.formVoxels);
         for (const slot of arr) {
+            if (incomingUnique) break;
             if (!slot || slot.id !== item.id || slot.quantity >= maxStack) continue;
-            if (slot.customName || slot.food || slot.ingredients || slot.toolClass) continue;
+            if (slot.customName || slot.food || slot.ingredients || slot.toolClass
+                || slot.formClass || slot.formVoxels) continue;
             const space = maxStack - slot.quantity;
             const toAdd = Math.min(space, remaining, fitNow());
             if (!(toAdd > 0)) break;
@@ -2335,6 +2341,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             const toAdd = Math.min(maxStack, remaining, fitNow());
             if (!(toAdd > 0)) break;
             const stack = makeItemStack(item, toAdd, incomingSpoil);
+            if (extras) {
+                const fields = typeof mealStackExtras === "function"
+                    ? mealStackExtras({ id: item.id, ...extras })
+                    : extras;
+                if (fields) Object.assign(stack, fields);
+            }
             const dry = Math.floor(Number(extras?.dryProgress) || 0);
             if (dry > 0) stack.dryProgress = dry;
             const soak = Math.floor(Number(extras?.soakProgress) || 0);
@@ -2509,8 +2521,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this._blockSpaceAutofire = true;
             return;
         }
-        if (typeof Place !== "undefined" && Place.placeThingId(meta)) {
+        if (this.scene._heldPlaceableDef?.()) {
             this.scene.tryPlaceHeld?.();
+            this._blockSpaceAutofire = true;
+            return;
+        }
+        if (item.id === "clay" || item.id === "clay_figurine") {
             this._blockSpaceAutofire = true;
             return;
         }
@@ -3328,8 +3344,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this.beginTend();
             return "use";
         }
-        if (typeof Place !== "undefined" && Place.placeThingId(meta)) {
+        if (this.scene._heldPlaceableDef?.()) {
             this.scene.tryPlaceHeld?.();
+            return "use";
+        }
+        if (item.id === "clay" || item.id === "clay_figurine") {
             return "use";
         }
         // Melee + firestarter (sharp stick): light when aiming at piles / unlit fire
@@ -3575,8 +3594,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const dt = delta || (this.scene.game.loop.delta || 16);
         const paused = !!this.scene._gamePaused || !!this.scene._worldSimFrozen;
         const composing = !!this.scene.combatLog?.isComposing?.();
-        const knapping = !!this.scene.knappingPanel?.visible;
-        const naming = !!this.scene.settlementSys?.isNaming?.();
+        const knapping = !!(this.scene.knappingPanel?.visible || this.scene.clayFormingPanel?.visible);
+        const naming = isHudTextOpen(this.scene);
         const researchOpen = !!this.scene.researchTreePanel?.visible;
         const controlled = this.isControlled?.();
 

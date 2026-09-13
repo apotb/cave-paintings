@@ -14,6 +14,15 @@ function getPlayer() {
     return getScene().player;
 }
 
+/** Settlement name prompt or forming template overlay — freeze world/HUD keys. */
+function isHudTextOpen(scene) {
+    try {
+        if (scene?.settlementSys?.isNaming?.()) return true;
+        if (typeof CraftTemplateUi !== "undefined" && CraftTemplateUi.isOpen()) return true;
+    } catch (_) {}
+    return false;
+}
+
 /**
  * Returns the number of chunks.
  * @return  {Number}        Number of chunks.
@@ -249,6 +258,40 @@ function ensurePointerInteractive(obj) {
 
 function disableInteractiveIfOn(obj) {
     if (obj?.input?.enabled) obj.disableInteractive();
+}
+
+/**
+ * Pixel-perfect hits locked to `textureKey`, even after setTexture to a
+ * hover/open outline. Phaser's built-in pixelPerfect samples the *current*
+ * texture, so the outline would grow the hit mask after the first hover.
+ */
+function lockPixelHit(obj, textureKey, opts = {}) {
+    if (!obj?.scene?.textures || !textureKey) return obj;
+    const scene = obj.scene;
+    const fw = obj.frame?.realWidth || obj.frame?.width || obj.width || 16;
+    const fh = obj.frame?.realHeight || obj.frame?.height || obj.height || 16;
+    const frameName = obj.frame?.name;
+    const alphaTolerance = opts.alphaTolerance ?? 1;
+    const config = {
+        hitArea: new Phaser.Geom.Rectangle(0, 0, fw, fh),
+        hitAreaCallback: (_area, x, y) => {
+            const a = scene.textures.getPixelAlpha(Math.floor(x), Math.floor(y), textureKey, frameName);
+            return a >= alphaTolerance;
+        }
+    };
+    if (opts.useHandCursor) config.useHandCursor = true;
+    if (opts.cursor) config.cursor = opts.cursor;
+    else if (!opts.useHandCursor) config.cursor = "pointer";
+    obj.setInteractive(config);
+    obj._lockPixelHitKey = textureKey;
+    return obj;
+}
+
+/** True if Phaser's hit test still includes `obj` (honors lockPixelHit). */
+function pointerHitsInteractive(obj, pointer) {
+    if (!obj?.active || obj.visible === false || !obj.input?.enabled || !pointer) return false;
+    const hits = obj.scene?.input?.hitTestPointer?.(pointer);
+    return Array.isArray(hits) && hits.includes(obj);
 }
 
 /**
@@ -828,6 +871,26 @@ function mealFillTint(stack, getItem) {
     return null;
 }
 
+/** Item sprites are authored at 16×16. Formed-clay bakes (and any other
+ *  oversized canvas) use this so `scale` still means "as if it were 16px". */
+const ITEM_ICON_NATIVE_PX = 16;
+
+function itemIconDrawScale(imageOrWidth, scale) {
+    const w = (imageOrWidth && typeof imageOrWidth === "object")
+        ? (Number(imageOrWidth.width) || ITEM_ICON_NATIVE_PX)
+        : (Number(imageOrWidth) || ITEM_ICON_NATIVE_PX);
+    const s = Number(scale);
+    if (!(s > 0) || !(w > 0)) return scale;
+    return s * (ITEM_ICON_NATIVE_PX / w);
+}
+
+function applyItemIconScale(image, scale) {
+    if (!image) return scale;
+    const next = itemIconDrawScale(image, scale);
+    image.setScale(next);
+    return next;
+}
+
 function stackIconKey(meta, stack, scene) {
     if (typeof Place !== "undefined" && Place.itemIconKey && scene?.getThing) {
         const key = Place.itemIconKey(
@@ -853,12 +916,13 @@ function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
     }
     const tint = mealFillTint(stack, getItem);
     if (tint != null && overlay && textures.exists(COCONUT_FILL_KEY) && textures.exists(COCONUT_SHELL_KEY)) {
-        base.setTexture(COCONUT_SHELL_KEY).setScale(scale).clearTint().setVisible(true);
+        base.setTexture(COCONUT_SHELL_KEY).clearTint().setVisible(true);
+        applyItemIconScale(base, scale);
         overlay.setTexture(COCONUT_FILL_KEY)
-            .setScale(scale)
             .setPosition(base.x, base.y)
             .setTint(tint)
             .setVisible(true);
+        applyItemIconScale(overlay, scale);
         return;
     }
     // Knapped tools: silhouette cut from the pebble/flint sprite
@@ -867,13 +931,21 @@ function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
         const scene = base.scene;
         const knapKey = Knapping.ensureToolTexture(scene, stack);
         if (knapKey && textures.exists(knapKey)) key = knapKey;
+    } else if (stack.formVoxels && typeof ClayForming !== "undefined") {
+        const scene = base.scene;
+        const formKey = ClayForming.ensureFormTexture(scene, stack);
+        if (formKey && textures.exists(formKey)) key = formKey;
+    } else if (stack.formIcon && textures.exists(stack.formIcon)) {
+        key = stack.formIcon;
     } else if (stack.knapIcon && textures.exists(stack.knapIcon)) {
         key = stack.knapIcon;
     }
     if (textures.exists(key)) {
-        base.setTexture(key).setScale(scale).clearTint().setVisible(true);
+        base.setTexture(key).clearTint().setVisible(true);
+        applyItemIconScale(base, scale);
     } else if (textures.exists("null")) {
-        base.setTexture("null").setScale(scale).clearTint().setVisible(true);
+        base.setTexture("null").clearTint().setVisible(true);
+        applyItemIconScale(base, scale);
     } else {
         base.setVisible(false);
     }
@@ -1001,8 +1073,10 @@ function paintingsUiIconDataUrl(scene) {
 function createStackDragIcon(scene, x, y, stack, meta, scale) {
     const tint = mealFillTint(stack, id => scene.getItem(id));
     if (tint != null && scene.textures.exists(COCONUT_FILL_KEY)) {
-        const shell = scene.add.image(0, 0, COCONUT_SHELL_KEY).setOrigin(0.5, 0.5).setScale(scale);
-        const fill = scene.add.image(0, 0, COCONUT_FILL_KEY).setOrigin(0.5, 0.5).setScale(scale).setTint(tint);
+        const shell = scene.add.image(0, 0, COCONUT_SHELL_KEY).setOrigin(0.5, 0.5);
+        applyItemIconScale(shell, scale);
+        const fill = scene.add.image(0, 0, COCONUT_FILL_KEY).setOrigin(0.5, 0.5).setTint(tint);
+        applyItemIconScale(fill, scale);
         const cont = scene.add.container(x, y, [shell, fill]).setDepth(1000).setAlpha(0.9);
         scene.uiLayer.add(cont);
         return cont;
@@ -1011,6 +1085,11 @@ function createStackDragIcon(scene, x, y, stack, meta, scale) {
     if (stack?.knapIconData && typeof Knapping !== "undefined") {
         const knapKey = Knapping.ensureToolTexture(scene, stack);
         if (knapKey) key = knapKey;
+    } else if (stack?.formVoxels && typeof ClayForming !== "undefined") {
+        const formKey = ClayForming.ensureFormTexture(scene, stack);
+        if (formKey) key = formKey;
+    } else if (stack?.formIcon && scene.textures.exists(stack.formIcon)) {
+        key = stack.formIcon;
     } else if (stack?.knapIcon && scene.textures.exists(stack.knapIcon)) {
         key = stack.knapIcon;
     }
@@ -1020,9 +1099,9 @@ function createStackDragIcon(scene, x, y, stack, meta, scale) {
     if (!key || !scene.textures.exists(key)) return null;
     const img = scene.add.image(x, y, key)
         .setOrigin(0.5, 0.5)
-        .setScale(scale)
         .setDepth(1000)
         .setAlpha(0.9);
+    applyItemIconScale(img, scale);
     scene.uiLayer.add(img);
     return img;
 }
@@ -1178,8 +1257,12 @@ function mealStackExtras(stack) {
         || stack.soakDoneAt != null
         || (stack.temp != null && Number(stack.temp) > 20)
         || knap
+        || stack.formClass
+        || stack.formVoxels
+        || (Number(stack.beauty) > 0)
     );
     if (!hasExtras) return null;
+    const form = formStackExtras(stack);
     return {
         customName: stack.customName,
         food: stack.food ? { ...stack.food } : undefined,
@@ -1192,8 +1275,22 @@ function mealStackExtras(stack) {
         soakProgress: stack.soakProgress,
         soakDoneAt: stack.soakDoneAt,
         ...(stack.temp != null && Number(stack.temp) > 20 ? { temp: stack.temp } : {}),
-        ...(knap || {})
+        ...(knap || {}),
+        ...(form || {})
     };
+}
+
+/** Clay figurine instance fields (unique voxels — do not merge stacks). */
+function formStackExtras(stack) {
+    if (!stack?.formClass && !stack?.formVoxels) return null;
+    const out = {};
+    if (stack.formClass) out.formClass = stack.formClass;
+    if (stack.formVoxels) out.formVoxels = stack.formVoxels;
+    if (stack.formStartMass != null) out.formStartMass = stack.formStartMass;
+    if (stack.beauty != null) out.beauty = stack.beauty;
+    if (stack.tooltipExtra) out.tooltipExtra = stack.tooltipExtra;
+    if (stack.formCustom) out.formCustom = true;
+    return out;
 }
 
 /** Knapped tool instance fields (unique stats — do not merge stacks). */
@@ -1232,6 +1329,8 @@ function hasStackExtras(dropOrStack) {
         || dropOrStack?.knapDamage != null
         || dropOrStack?.knapIconData
         || dropOrStack?.knapQuality
+        || dropOrStack?.formClass
+        || dropOrStack?.formVoxels
         || dropOrStack?.durability != null
         || dropOrStack?.temp != null
     );
@@ -1274,6 +1373,8 @@ function isSpecialStack(stack) {
         || stack.knapDamage != null
         || stack.knapIconData
         || stack.durability != null
+        || stack.formClass
+        || stack.formVoxels
     ));
 }
 

@@ -58,6 +58,7 @@
         EQUIP_SWAP: "equip_swap",
         /** Consume a knapping blank / grant the finished tool (dedicated MP). */
         KNAP: "knap",
+        FORM: "form",
         RESPAWN: "respawn",
         /** Client anatomy death — server clears gear so YOU cannot restore dumped loot. */
         DIE: "die",

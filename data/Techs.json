@@ -270,7 +270,19 @@
         "cost": 3,
         "prereqs": ["fire", "digging"],
         "icon": "clay",
-        "unlocks": { "items": [], "jobs": [], "text": ["Clay forming"] },
+        "unlocks": {
+            "items": [],
+            "jobs": [],
+            "text": [
+                "Human Figurine forming",
+                "Animal Figurine forming",
+                {
+                    "require": "idolatry",
+                    "header": "If Idolatry unlocked:",
+                    "label": "Deity Figurine forming"
+                }
+            ]
+        },
         "children": ["pit_kiln"]
     },
     {
@@ -515,7 +527,18 @@
         "quote": "Still not a cult",
         "cost": 2,
         "prereqs": ["rituals", "burin"],
-        "unlocks": { "items": [], "jobs": [], "text": ["Figurine"] },
+        "unlocks": {
+            "items": [],
+            "jobs": [],
+            "text": [
+                "Figurine",
+                {
+                    "require": "clay_forming",
+                    "header": "If Clay Forming unlocked:",
+                    "label": "Deity Figurine forming"
+                }
+            ]
+        },
         "children": []
     },
     {

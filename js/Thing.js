@@ -10,9 +10,9 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         // Clay sits on groundLayer with painting circles: over tiles (0),
         // under drops (1), under pawns on mainLayer. Do not use y-depth —
         // chunk tile RTs also live here at depth 0.
-        if (meta?.diggable && scene.groundLayer) {
+        if ((meta?.diggable || meta?.figurine) && scene.groundLayer) {
             scene.groundLayer.add(this);
-            this.setDepth(0.5);
+            this.setDepth(meta?.figurine ? 0.55 : 0.5);
         } else {
             this.setDepth(this.y);
             scene.mainLayer?.add(this);
@@ -94,6 +94,10 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
             return;
         }
         if (this.anims?.isPlaying) this.stop();
+        if (this.meta?.figurine) {
+            this._applyFigurineVisual();
+            return;
+        }
         if (typeof Place !== "undefined" && Array.isArray(this.meta.rotations) && this.meta.rotations.length) {
             const tex = Place.rotationTextureKey(this.meta.key, this.entry?.rot);
             if (this.scene.textures.exists(tex)) {
@@ -107,6 +111,20 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         if (this.body) this._positionBody();
         this._syncInteractMark();
         this._syncDigHole();
+    }
+
+    _applyFigurineVisual() {
+        const scene = this.scene;
+        const entry = this.entry || {};
+        let key = entry.formPlaceIcon || "";
+        if (entry.formVoxels && typeof ClayForming !== "undefined") {
+            key = ClayForming.ensurePlaceIcon(scene, entry, entry.rot) || key;
+        }
+        if (key && scene.textures.exists(key)) this.setTexture(key);
+        else if (scene.textures.exists("clay")) this.setTexture("clay");
+        else if (this.meta?.key && scene.textures.exists(this.meta.key)) this.setTexture(this.meta.key);
+        if (this.body) this._positionBody();
+        this._syncInteractMark();
     }
 
     _syncDigHole() {
@@ -279,6 +297,80 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         this.meta = thing;
         this.applyVisual();
         this.setup(thing.hitboxSize);
+    }
+}
+
+/**
+ * Placed clay sculpture. `entry` is in chunk.meta.things and keeps the voxel stack.
+ */
+class ClayFigurine extends Thing {
+    constructor(scene, entry) {
+        super(scene, entry.x, entry.y, entry.id, entry);
+        this.entry = entry;
+        this.setInteractive({ cursor: "pointer", pixelPerfect: false });
+        this.on("pointerdown", (pointer) => {
+            if (this.scene.pointerOverWorldUi?.(pointer)) return;
+            if (this.scene.partySys?.pointerBlocksLoot?.(pointer)) return;
+            if (this.scene.partySys?.trySelfHeldAction?.(this.scene.player, pointer)) return;
+            this.pickUp();
+        });
+        this.on("pointerover", (pointer) => {
+            this.scene.showTooltip(
+                () => this.tooltipText(),
+                pointer.x,
+                pointer.y,
+                this
+            );
+        });
+        this.on("pointerout", () => {
+            if (this.scene._hoverTarget === this) this.scene._hoverTarget = null;
+            if (this.scene._tooltipTarget === this) this.scene.hideTooltip();
+        });
+    }
+
+    tooltipText() {
+        const entry = this.entry || {};
+        const item = this.scene.getItem?.(entry.id || "clay_figurine") || null;
+        const name = entry.customName || item?.name || this.meta?.name || "Clay Figurine";
+        const lines = [name];
+        let stack = entry;
+        if (entry.beauty == null && entry.formClass && typeof Forming !== "undefined") {
+            stack = { beauty: Forming.BEAUTY[Forming.sanitizeClass(entry.formClass)] };
+        }
+        if (typeof Stats !== "undefined") {
+            for (const line of Stats.tooltipLines(item, stack)) lines.push(line);
+        }
+        if (entry.tooltipExtra) lines.push(entry.tooltipExtra);
+        return lines.join("\n");
+    }
+
+    inRange(pawn = null) {
+        const who = pawn || this.scene.player;
+        if (!who) return false;
+        const dx = this.x - who.x;
+        const dy = this.y - who.y;
+        const r = this.scene.tileSize * (who.interactionRange || 4);
+        return dx * dx + dy * dy <= r * r;
+    }
+
+    pickUp() {
+        const scene = this.scene;
+        const pawn = scene.player;
+        if (!pawn || !this.entry) return;
+        if (!this.inRange(pawn)) return;
+        if (scene.simAuth()) {
+            scene._netSendMove?.(true);
+            scene.net.sendAction({
+                type: NetProtocol.Actions.STORAGE,
+                op: "pickup",
+                uid: this.entry.uid,
+                x: this.x,
+                y: this.y,
+                pawnId: pawn.pawnId
+            });
+            return;
+        }
+        scene.tryPickupFigurine?.(this);
     }
 }
 
@@ -1308,7 +1400,6 @@ class SettlingStone extends Thing {
             if (scene.pointerOverWorldUi?.(pointer)) return;
             if (scene.restBlocksWorldUi?.()) return;
             if (!this.inRange()) return;
-            if (scene.knappingPanel?.tryOpenAtRock?.(this)) return;
             scene.settlementSys?.openFromStone?.(this);
         });
         this.on("destroy", () => {
@@ -1326,8 +1417,6 @@ class SettlingStone extends Thing {
     }
 
     tooltipText() {
-        const knap = this.scene._rockKnapTooltipText?.();
-        if (knap) return knap;
         const settle = this.scene.settlementSys?.byStoneUid?.(this.entry?.uid);
         return settle?.name || this.meta?.name || "Settling Stone";
     }

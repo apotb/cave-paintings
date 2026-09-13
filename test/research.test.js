@@ -195,6 +195,10 @@ test("action unlocks are not missing-item placeholders", () => {
     assert.equal(Research.unlockTextIcon("Microlith knapping"), "rock");
     assert.equal(Research.unlockTextIcon("Sow trees"), null);
     assert.equal(Research.unlockTextIcon("Hut"), null);
+    assert.equal(Research.isActionUnlock("Human Figurine forming"), true);
+    assert.equal(Research.unlockTextIcon("Human Figurine forming"), "clay");
+    assert.equal(Research.unlockTextIcon("Animal Figurine forming"), "clay");
+    assert.equal(Research.unlockTextIcon("Deity Figurine forming"), "clay");
     assert.equal(Research.unlockTextIcon("Clay forming"), "clay");
 });
 
@@ -233,7 +237,49 @@ test("tech unlocks list items, jobs, and planned text", () => {
     assert.equal((Research.techById("digging").unlocks.text || []).includes("Digging Stick"), false);
     assert.deepEqual(Research.techById("clay_forming").prereqs, ["fire", "digging"]);
     assert.equal(Research.techById("clay_forming").icon, "clay");
-    assert.equal(Research.unlockTextIcon("Clay forming"), "clay");
+    const clayText = Research.techById("clay_forming").unlocks.text;
+    assert.equal(clayText.includes("Clay forming"), false);
+    assert.ok(clayText.includes("Human Figurine forming"));
+    assert.ok(clayText.includes("Animal Figurine forming"));
+    const s0 = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    Research.ensureTechs(s0);
+    const clayRows = Research.unlockTextEntries(Research.techById("clay_forming"), s0);
+    assert.deepEqual(clayRows.map((r) => r.label), [
+        "Human Figurine forming",
+        "Animal Figurine forming",
+        "If Idolatry unlocked:",
+        "Deity Figurine forming"
+    ]);
+    assert.equal(clayRows[2].header, true);
+    assert.equal(clayRows[2].locked, true);
+    assert.equal(clayRows[3].locked, true);
+    s0.techs.idolatry = true;
+    const clayWithIdol = Research.unlockTextEntries(Research.techById("clay_forming"), s0);
+    assert.deepEqual(clayWithIdol.map((r) => r.label), [
+        "Human Figurine forming",
+        "Animal Figurine forming",
+        "If Idolatry unlocked:",
+        "Deity Figurine forming"
+    ]);
+    assert.equal(clayWithIdol[2].locked, false);
+    assert.equal(clayWithIdol[3].locked, false);
+    const idolRows = Research.unlockTextEntries(Research.techById("idolatry"), s0);
+    assert.ok(idolRows.some((r) => r.label === "Figurine"));
+    const deityLocked = idolRows.find((r) => r.label === "Deity Figurine forming");
+    assert.ok(deityLocked);
+    assert.equal(deityLocked.locked, true);
+    assert.ok(idolRows.some((r) => r.label === "If Clay Forming unlocked:" && r.header && r.locked));
+    s0.techs.clay_forming = true;
+    const idolWithClay = Research.unlockTextEntries(Research.techById("idolatry"), s0);
+    assert.ok(idolWithClay.some((r) => r.label === "If Clay Forming unlocked:" && r.header && !r.locked));
+    assert.equal(idolWithClay.find((r) => r.label === "Deity Figurine forming")?.locked, false);
+    const clayItem = DataStore.getItem("clay");
+    assert.deepEqual(Research.tooltipLines(clayItem, s0), ["Click yourself to form"]);
+    const figItem = DataStore.getItem("clay_figurine");
+    assert.deepEqual(Research.tooltipLines(figItem, s0), ["Click yourself to form"]);
+    const s1 = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p2" });
+    assert.deepEqual(Research.tooltipLines(clayItem, s1), []);
+    assert.deepEqual(Research.tooltipLines(figItem, s1), []);
     assert.equal(Research.techById("mathematics").quote, "We could do a lot with this");
     const fire = Research.techById("fire");
     assert.ok(fire.unlocks.items.includes("campfire"));
