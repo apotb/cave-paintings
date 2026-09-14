@@ -5217,12 +5217,6 @@ class SceneMain extends SceneBase {
             if (settleP?.visible && settleP.containsPointer?.(pointer)) {
                 const row = settleP.hoverObjAt?.(pointer);
                 if (row) return row;
-                // Pickup/setInteractive can drop Zone bounds for a frame.
-                // Keep the People-row tip while the cursor is still in the list.
-                const keep = this._tooltipTarget || this._hoverTarget;
-                if (keep?.active && keep._settlePersonTip && settleP._pointerInBody?.(pointer)) {
-                    return keep;
-                }
                 return this._pickMaskedPanelHover(
                     pointer, hits, settleP.bg,
                     (obj) => this._isUnderSettlementPanel(obj)

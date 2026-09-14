@@ -545,8 +545,6 @@ class SettlementPanel {
             hit.on("pointerout", (pointer) => {
                 if (this._refreshing) return;
                 if (this._pointerStillOn(hit, pointer)) return;
-                // World pickups rebuild Phaser's hit list and fire a false out.
-                if (this._pointerInBody(pointer)) return;
                 if (scene._tooltipTarget === hit) scene.hideTooltip?.();
             });
             this.body.add(hit);
@@ -573,18 +571,16 @@ class SettlementPanel {
 
     _personActionTip(p) {
         if (!p || p.isBodyDead?.()) return "";
-        const controlled = !!(p.isControlled?.() || p === this.scene.player);
-        let text = "";
-        if (!controlled) {
-            text = this.scene.partySys?.activityTooltip?.(p) || "";
-            if (!text) {
-                if (p.partyAI?.assistTarget && !p.partyAI.assistTarget.isBodyDead?.()) text = "Fighting";
-                else text = "Idle";
-            }
+        const partySys = this.scene.partySys;
+        if (p.role === "settler" && partySys?.hoverTooltip) {
+            return partySys.hoverTooltip(p);
         }
-        const rows = this.scene.partySys?.heldTooltipRows?.(p);
-        if (rows?.length) return { text, rows };
-        return text;
+        const name = p.displayName?.() || p.pawnName || "";
+        const controlled = !!(p.isControlled?.() || p === this.scene.player);
+        const busy = controlled ? "" : (partySys?.activityTooltip?.(p) || "");
+        const text = busy ? `${name}\n${busy}` : name;
+        if (partySys?.withSettlerTooltip) return partySys.withSettlerTooltip(p, text);
+        return partySys?.withHeldTooltip?.(p, text) || text;
     }
 
     _fillJobs(sc) {
