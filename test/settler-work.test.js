@@ -1381,7 +1381,7 @@ test("cook-only settler does not smoke leather", () => {
     assert.equal(fire.cook, null);
 });
 
-test("queued smoke bills still run before Smoking is unlocked", () => {
+test("queued smoke bills run without researching Smoking", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
     settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };

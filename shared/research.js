@@ -26,6 +26,7 @@
         "A: Research 50% of the next level's tech",
         "B: Research all tech at the current level"
     ].join("\n");
+    const WIP_COPY = "WIP";
     const ERA_ICONS = {
         paleolithic: "campfire",
         mesolithic: "null",
@@ -80,6 +81,15 @@
         const t = tech || {};
         if (t.startUnlocked) return true;
         return !(Math.max(0, Math.floor(Number(t.cost) || 0)) > 0);
+    }
+
+    /** Unfinished tree nodes: red, not researchable. Later eras default WIP. */
+    function techIsWip(tech) {
+        const t = typeof tech === "string" ? techById(tech) : tech;
+        if (!t) return false;
+        if (t.wip) return true;
+        const era = _eraKey(t.era);
+        return era === "neolithic" || era === "chalcolithic";
     }
 
     /** Tree-node cost: "Free" for starter techs, otherwise this tech's own "3 pts". */
@@ -991,11 +1001,18 @@
         return false;
     }
 
-    function canUnlock(settle, techId, available) {
+    function canUnlock(settle, techId, available, opts) {
         const t = techById(techId);
         if (!t || !settle) return false;
         if (hasTech(settle, t.id)) return false;
+        const ignoreWip = !!(opts && opts.ignoreWip);
+        if (!ignoreWip && techIsWip(t)) return false;
         if (_chainFogged(settle, t.id)) return false;
+        if (!ignoreWip) {
+            for (const id of remainingUnlockIds(settle, t.id)) {
+                if (techIsWip(id)) return false;
+            }
+        }
         return (Number(available) || 0) >= remainingUnlockCost(settle, t.id);
     }
 
@@ -1005,6 +1022,10 @@
         if (!t || !settle) return null;
         if (hasTech(settle, t.id)) return null;
         if (_chainFogged(settle, t.id)) return FOG_COPY;
+        if (techIsWip(t)) return WIP_COPY;
+        for (const id of remainingUnlockIds(settle, t.id)) {
+            if (techIsWip(id)) return WIP_COPY;
+        }
         const cost = remainingUnlockCost(settle, t.id);
         if ((Number(available) || 0) < cost) return "Not enough research points";
         return null;
@@ -2304,6 +2325,7 @@
         ERAS,
         FOG_COPY,
         FOG_TIP,
+        WIP_COPY,
         UI_PAINT_TINT,
         UI_ICON_KEY,
         UI_SCIENCE_KEY,
@@ -2314,6 +2336,7 @@
         formatPoints,
         spentTipValue,
         isFreeTech,
+        techIsWip,
         techCostLabel,
         remainingUnlockIds,
         remainingUnlockCost,

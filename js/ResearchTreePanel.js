@@ -877,9 +877,15 @@ class ResearchTreePanel {
         for (const node of layout.nodes) {
             const tech = node.tech;
             const fogged = !!(R.techFogged && R.techFogged(this._techHolder(), tech));
+            const wip = !!(R.techIsWip && R.techIsWip(tech));
             const unlocked = R.hasTech(this._techHolder(), tech.id);
             const cost = Math.max(0, Math.floor(Number(tech.cost) || 0));
-            const can = !!(R.canUnlock && R.canUnlock(this._techHolder(), tech.id, pts.available ?? pts.total));
+            const can = !!(R.canUnlock && R.canUnlock(
+                this._techHolder(),
+                tech.id,
+                pts.available ?? pts.total,
+                { ignoreWip: true }
+            ));
             let fill = 0x2a2218;
             let stroke = 0x8a7260;
             let titleCol = "#d4c4a8";
@@ -895,6 +901,7 @@ class ResearchTreePanel {
                 titleCol = "#6a5a4a";
                 subCol = "#4a3e36";
             }
+            if (wip && !fogged) titleCol = "#c45c54";
             const go = scene.add.container(node.x, node.y);
             const shape = this._eraShape(tech.era);
             const rec = {
@@ -1496,37 +1503,42 @@ class ResearchTreePanel {
         }
 
         const fogged = !!(R.techFogged && R.techFogged(this._techHolder(), tech));
-        if (fogged) {
+        const wip = !!(R.techIsWip && R.techIsWip(tech));
+        if (fogged || wip) {
             this.researchBtn.setVisible(false);
             this._researchDisabledReason = "";
             if (scene._tooltipTarget === this.researchBtn._bg) scene.hideTooltip?.();
-            const copy = (R.FOG_COPY) || "Your tribe isn't advanced enough to comprehend this.";
+            const copy = fogged
+                ? ((R.FOG_COPY) || "Your tribe isn't advanced enough to comprehend this.")
+                : ((R.WIP_COPY) || "WIP");
             const fogTxt = this._addText(
                 this._detailX + this._detailW / 2,
                 this._detailY + this._detailH / 2,
                 copy,
                 14,
-                "#8a7a62",
+                fogged ? "#8a7a62" : "#c45c54",
                 0.5,
                 0.5,
                 wrapW
             );
-            const tipFn = () => (R.FOG_TIP) || "";
-            if (typeof ensurePointerInteractive === "function") ensurePointerInteractive(fogTxt);
-            else fogTxt.setInteractive({ useHandCursor: true, cursor: "pointer" });
-            if (fogTxt.input) {
-                fogTxt.input.cursor = "pointer";
-                fogTxt.input.useHandCursor = true;
+            if (fogged) {
+                const tipFn = () => (R.FOG_TIP) || "";
+                if (typeof ensurePointerInteractive === "function") ensurePointerInteractive(fogTxt);
+                else fogTxt.setInteractive({ useHandCursor: true, cursor: "pointer" });
+                if (fogTxt.input) {
+                    fogTxt.input.cursor = "pointer";
+                    fogTxt.input.useHandCursor = true;
+                }
+                fogTxt.on("pointerover", (pointer) => {
+                    if (!this.visible) return;
+                    const text = tipFn();
+                    if (text) scene.showTooltip(tipFn, pointer.x, pointer.y, fogTxt);
+                });
+                fogTxt.on("pointerout", (pointer) => {
+                    if (this._pointerStillOn(fogTxt, pointer)) return;
+                    if (scene._tooltipTarget === fogTxt) scene.hideTooltip?.();
+                });
             }
-            fogTxt.on("pointerover", (pointer) => {
-                if (!this.visible) return;
-                const text = tipFn();
-                if (text) scene.showTooltip(tipFn, pointer.x, pointer.y, fogTxt);
-            });
-            fogTxt.on("pointerout", (pointer) => {
-                if (this._pointerStillOn(fogTxt, pointer)) return;
-                if (scene._tooltipTarget === fogTxt) scene.hideTooltip?.();
-            });
             this._detailHits.push(fogTxt);
             return;
         }

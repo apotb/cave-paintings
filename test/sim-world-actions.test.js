@@ -3027,21 +3027,21 @@ test("unlockTech spends from the settlement pool without changing painted counts
     Research.ensureEntry(a);
     Research.ensureEntry(b);
     chunk.things.push(a, b);
-    assert.equal(Research.recipeUnlocked("stick_frame", pawn), false);
+    assert.equal(Research.recipeUnlocked("stick_frame", pawn), true);
     world.handleAction(pawn.id, {
         type: Protocol.Actions.SETTLEMENT,
         op: "unlockTech",
         settlementId: settle.id,
-        techId: "basic_furniture"
+        techId: "herbalism"
     });
-    assert.equal(Research.hasTech(pawn, "basic_furniture"), true);
+    assert.equal(Research.hasTech(pawn, "herbalism"), true);
     assert.equal(settle.techs, undefined);
     assert.equal(world.researchSpentByOwner[pawn.id], 2);
     assert.equal(a.painted, 2);
     assert.equal(b.painted, 2);
     assert.equal(Research.paintedTotal([a, b]), 4);
     assert.equal(Research.pointsBreakdown([a, b], { spent: world.researchSpentByOwner[pawn.id] }).total, 2);
-    assert.equal(Research.recipeUnlocked("stick_frame", pawn), true);
+    assert.equal(Research.recipeUnlocked("poultice", pawn), true);
     world.handleAction(pawn.id, {
         type: Protocol.Actions.SETTLEMENT,
         op: "unlockTech",
@@ -3066,15 +3066,15 @@ test("unlockTech buys missing prereqs when points cover the chain", () => {
         type: Protocol.Actions.SETTLEMENT,
         op: "unlockTech",
         settlementId: settle.id,
-        techId: "throwing"
+        techId: "skinworking"
     });
-    assert.equal(Research.hasTech(pawn, "hafting"), true);
-    assert.equal(Research.hasTech(pawn, "throwing"), true);
-    assert.equal(world.researchSpentByOwner[pawn.id], 6);
-    assert.equal(Research.pointsBreakdown([a], { spent: world.researchSpentByOwner[pawn.id] }).total, 0);
+    assert.equal(Research.hasTech(pawn, "basic_furniture"), true);
+    assert.equal(Research.hasTech(pawn, "skinworking"), true);
+    assert.equal(world.researchSpentByOwner[pawn.id], 2);
+    assert.equal(Research.pointsBreakdown([a], { spent: world.researchSpentByOwner[pawn.id] }).total, 4);
 });
 
-test("unlockTech refuses fogged techs even with points and prereqs", () => {
+test("unlockTech refuses WIP techs even with points and prereqs", () => {
     const Research = require("../shared/research");
     const { world, pawn, Protocol } = createTestWorld();
     const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
@@ -3087,6 +3087,7 @@ test("unlockTech refuses fogged techs even with points and prereqs", () => {
     Research.unlock(pawn, "digging");
     Research.unlock(pawn, "storage");
     assert.equal(Research.currentAge(pawn), "Paleolithic");
+    assert.equal(Research.techIsWip("agriculture"), true);
     assert.equal(Research.techFogged(pawn, "agriculture"), true);
     world.handleAction(pawn.id, {
         type: Protocol.Actions.SETTLEMENT,
@@ -3301,7 +3302,7 @@ test("two owned camps pool circles so picking up one camp's circle can still cov
         type: Protocol.Actions.SETTLEMENT,
         op: "unlockTech",
         settlementId: home.id,
-        techId: "basic_furniture"
+        techId: "herbalism"
     });
     assert.equal(world.researchSpentByOwner[pawn.id], 2);
     world.handleAction(pawn.id, {
@@ -3319,8 +3320,8 @@ test("new world keeps brought knowledge and does not charge historical tech cost
     const { world, pawn, Protocol } = createTestWorld();
     const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
     world.settlements.push(settle);
-    Research.unlock(pawn, "basic_furniture");
-    assert.equal(Research.recipeUnlocked("stick_frame", pawn), true);
+    Research.unlock(pawn, "herbalism");
+    assert.equal(Research.recipeUnlocked("poultice", pawn), true);
     const emptyPts = world._researchPoints(pawn.id);
     assert.equal(emptyPts.spent, Research.spentPoints(pawn));
     assert.equal(emptyPts.available, 0);
@@ -3334,10 +3335,10 @@ test("new world keeps brought knowledge and does not charge historical tech cost
         type: Protocol.Actions.SETTLEMENT,
         op: "unlockTech",
         settlementId: settle.id,
-        techId: "herbalism"
+        techId: "counting"
     });
+    assert.equal(Research.hasTech(pawn, "counting"), true);
     assert.equal(Research.hasTech(pawn, "herbalism"), true);
-    assert.equal(Research.hasTech(pawn, "basic_furniture"), true);
     assert.equal(world.researchSpentByOwner[pawn.id], 2);
 });
 
