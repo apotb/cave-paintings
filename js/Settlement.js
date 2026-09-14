@@ -303,7 +303,8 @@ class SettlementSystem {
                 && !S?.chopSkipsTree?.(t.entry?.id || def?.id, def, t.entry)) {
                 chop.push(t);
             }
-            if (typeof Dig !== "undefined" && Dig.stillDiggable?.(def, t.entry)) {
+            if (typeof Dig !== "undefined" && Dig.isDeposit?.(def)
+                && Dig.stillDiggable?.(def, t.entry)) {
                 dig.push(t);
             }
             if (typeof Research !== "undefined" && Research.isPaintingCircle?.(def, t.entry)

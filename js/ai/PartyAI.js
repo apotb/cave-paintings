@@ -3137,7 +3137,8 @@ class PartyAI {
     _digTargetValid(thing) {
         if (!thing?.active || thing.entry?.gone) return false;
         if (typeof Dig === "undefined") return false;
-        return !!Dig.stillDiggable?.(this._digDef(thing), thing.entry);
+        const def = this._digDef(thing);
+        return !!Dig.isDeposit?.(def) && !!Dig.stillDiggable?.(def, thing.entry);
     }
 
     _forgetDigTarget() {

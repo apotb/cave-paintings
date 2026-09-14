@@ -172,6 +172,27 @@
         return [n, n];
     }
 
+    function rangeOf(raw) {
+        if (Array.isArray(raw) && raw.length >= 2) {
+            return [Math.floor(Number(raw[0]) || 0), Math.floor(Number(raw[1]) || 0)];
+        }
+        const n = Math.floor(Number(raw) || 0);
+        return [n, n];
+    }
+
+    /** `{ stick: [6, 10], leaf: [8, 14] }` → rolled stacks. */
+    function rollNamedDrops(table, rng) {
+        const out = [];
+        if (!table || typeof table !== "object") return out;
+        for (const id of Object.keys(table)) {
+            if (!id) continue;
+            const [lo, hi] = rangeOf(table[id]);
+            const n = rollBetween(rng, lo, hi);
+            if (n > 0) out.push({ id, quantity: n });
+        }
+        return out;
+    }
+
     /**
      * @param {object} def  Things.json row for the tree's current id
      * @param {function} [rng]  0–1
@@ -307,6 +328,7 @@
         trunkHitsSegment,
         aimHitsTrunk,
         rollDrops,
+        rollNamedDrops,
         scatterFellPiles,
         applyChop,
         fellToStump,

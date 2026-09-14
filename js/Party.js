@@ -743,7 +743,7 @@ class PartySystem {
         return this.switchControl(pawn);
     }
 
-    /** Click your own pawn to knap / form whatever you're holding. */
+    /** Click your own pawn to form clay you're holding. */
     trySelfHeldAction(pawn, pointer) {
         const scene = this.scene;
         if (!pawn || pawn !== scene.player) return false;
@@ -751,7 +751,6 @@ class PartySystem {
         if (pointer && !scene._pointerOnCreature?.(pointer, pawn)) return false;
         if (pawn._bodyDead || pawn.isIncapacitated?.() || pawn._resting) return false;
         if (scene.knappingPanel?.visible || scene.clayFormingPanel?.visible) return false;
-        if (scene.knappingPanel?.tryOpen?.()) return true;
         if (scene.clayFormingPanel?.tryOpen?.()) return true;
         return false;
     }
@@ -762,11 +761,8 @@ class PartySystem {
         if (pawn._bodyDead || pawn.isIncapacitated?.() || pawn._resting) return "";
         const held = pawn.getHeldItem?.();
         if (!held || !(held.quantity > 0)) return "";
-        if (scene.knappingPanel?.canOpenHeld?.(held)) {
-            return held.knapIconData ? "Click yourself to reshape" : "Click yourself to knap";
-        }
         if (scene.clayFormingPanel?.canOpenHeld?.(held)) {
-            return "Click yourself to form";
+            return held.id === "clay" ? "Click yourself to form clay" : "Click yourself to form";
         }
         return "";
     }
@@ -2541,6 +2537,7 @@ class PartySystem {
                 extraBags,
                 interactTiles: extra.interactTiles,
                 seekTiles: extra.seekTiles,
+                getItem: (id) => scene.getItem(id),
                 getFood: (stack) => {
                     const meta = scene.getItem(stack.id);
                     const food = { ...(meta?.food || {}) };
@@ -2573,12 +2570,17 @@ class PartySystem {
                     const reserved = food.autoEat === "malnourished" || stack.id === "cracked_coconut";
                     if (reserved && !allowPoison) continue;
                     const spoil = Number(stack.spoilAt ?? stack.spoilLeft ?? Infinity);
+                    const prepared = (typeof StorageFilter !== "undefined" && StorageFilter.isPreparedFood)
+                        ? !!StorageFilter.isPreparedFood(stack, meta)
+                        : !!(stack.customName || stack.ingredients?.length
+                            || stack.id === "coconut_meal" || /^roast/i.test(String(stack.id || "")));
                     candidates.push({
                         pawn: p,
                         slot: i,
                         bag,
                         stack,
                         spoil,
+                        prepared,
                         own: p === eater,
                         poison,
                         dist: d,
@@ -2588,6 +2590,7 @@ class PartySystem {
             }
         }
         candidates.sort((a, b) => {
+            if (a.prepared !== b.prepared) return a.prepared ? -1 : 1;
             if (a.spoil !== b.spoil) return a.spoil - b.spoil;
             if (a.own !== b.own) return a.own ? -1 : 1;
             return 0;

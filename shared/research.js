@@ -126,6 +126,50 @@
         return String(entry || "");
     }
 
+    /**
+     * Implemented knap shapes with help copy. Later techs (hand-axe, burin, …)
+     * stay off the menu until they have a classifier + a row here.
+     */
+    const KNAP_TECHNIQUES = [
+        { label: "Knife knapping", toolClass: "knife", help: "Knife — tapered blade with some body (not forked)" },
+        { label: "Scraper knapping", toolClass: "scraper", help: "Scraper — wide flat flake (thin), little/no taper" },
+        { label: "Chopper knapping", toolClass: "chopper", help: "Chopper — big solid leftover (don't thin it into a flake)" },
+        { label: "Awl knapping", toolClass: "awl", help: "Awl — small pierce spike / butt with a point" },
+        { label: "Spear tip knapping", toolClass: "spear_tip", help: "Spear tip — long and thin" }
+    ];
+
+    function knappingTechniqueByLabel(label) {
+        const s = String(label || "");
+        for (const row of KNAP_TECHNIQUES) {
+            if (row.label === s) return row;
+        }
+        return null;
+    }
+
+    /** Unlocked implemented knap classes for this research holder. */
+    function knappingTechniques(settle) {
+        const unlocked = Object.create(null);
+        for (const row of KNAP_TECHNIQUES) unlocked[row.toolClass] = false;
+        for (const t of techs()) {
+            if (!t?.id || !techUnlocked(t.id, settle)) continue;
+            for (const text of t.unlocks?.text || []) {
+                const row = knappingTechniqueByLabel(unlockTextLabel(text));
+                if (row) unlocked[row.toolClass] = true;
+            }
+        }
+        return unlocked;
+    }
+
+    function knappingHelpLines(settle) {
+        const unlocked = knappingTechniques(settle);
+        const lines = [];
+        for (const row of KNAP_TECHNIQUES) {
+            if (unlocked[row.toolClass]) lines.push(row.help);
+        }
+        lines.push("Flake — unclear leftover chip");
+        return lines;
+    }
+
     function requireHeaderLabel(header) {
         const raw = String(header || "").trim();
         if (!raw) return "";
@@ -2279,6 +2323,8 @@
         unlockTextIcon,
         unlockTextLabel,
         unlockTextEntries,
+        knappingTechniques,
+        knappingHelpLines,
         setTechs,
         techs,
         techById,

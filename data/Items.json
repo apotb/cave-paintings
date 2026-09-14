@@ -240,7 +240,7 @@
             "material": "pebble"
         },
         "tooltip": [
-            "Click yourself to knap"
+            "Click a rock while holding to knap"
         ]
     },
     {
@@ -253,7 +253,7 @@
             "material": "flint"
         },
         "tooltip": [
-            "Click yourself to knap"
+            "Click a rock while holding to knap"
         ]
     },
     {
@@ -671,15 +671,17 @@
         "name": "Pitch",
         "key": "pitch",
         "maxStack": 99,
+        "weightFixed": true,
         "weight": 0.04,
         "storageCategory": "materials/wood",
         "tooltip": [
+            "Wood tar cooked down at a fire",
             "Binds a stone head to a spear shaft"
         ],
         "recipe": {
             "REQUIRE_THING": "campfire",
-            "leaf": 12,
-            "stick": 3
+            "stick": 8,
+            "CRAFT_SECONDS": 20
         }
     },
     {
@@ -745,69 +747,6 @@
             "sharp_stick": 1,
             "stick": 2,
             "leaf_cord": 6
-        }
-    },
-    {
-        "id": "digging_stick",
-        "name": "Digging Stick",
-        "key": "digging_stick",
-        "maxStack": 1,
-        "durability": 50,
-        "weightFixed": true,
-        "weight": 0.9,
-        "toolClass": "digger",
-        "digPower": 0.05,
-        "weapon": {
-            "type": "melee",
-            "range": 5,
-            "hitStart": 0.25,
-            "hitEnd": 0.75,
-            "attacks": [
-                {
-                    "id": "dig_thrust",
-                    "name": "Point (Dig)",
-                    "damage": 3,
-                    "type": "blunt",
-                    "verb": "thrust",
-                    "cooldown": 2.0,
-                    "weightMultiplier": 1.0,
-                    "source": "hand"
-                },
-                {
-                    "id": "shaft_poke",
-                    "name": "Shaft (Poke)",
-                    "damage": 2,
-                    "type": "blunt",
-                    "verb": "poked",
-                    "cooldown": 2.0,
-                    "weightMultiplier": 0.25,
-                    "source": "hand"
-                },
-                {
-                    "id": "other_fist",
-                    "name": "Fist",
-                    "damage": 6,
-                    "type": "blunt",
-                    "verb": "swung",
-                    "cooldown": 2.0,
-                    "weightMultiplier": 0.15,
-                    "source": "otherHand",
-                    "unarmed": "punch",
-                    "range": 4
-                }
-            ]
-        },
-        "tooltip": [
-            "Uses leverage to dig up valuable natural resources"
-        ],
-        "recipe": {
-            "REQUIRE_THING": "rock",
-            "log": 1,
-            "CRAFT_SECONDS": 12,
-            "REQUIRE_TOOL": {
-                "toolClass": ["knife", "scraper"],
-                "wear": 5
-            }
         }
     },
     {
@@ -940,6 +879,70 @@
             },
             "leaf_cord": 2,
             "pitch": 1
+        }
+    },
+    {
+        "id": "digging_stick",
+        "name": "Digging Stick",
+        "key": "digging_stick",
+        "maxStack": 1,
+        "durability": 50,
+        "weightFixed": true,
+        "weight": 0.9,
+        "toolClass": "digger",
+        "digPower": 0.05,
+        "weapon": {
+            "type": "melee",
+            "range": 5,
+            "hitStart": 0.25,
+            "hitEnd": 0.75,
+            "attacks": [
+                {
+                    "id": "dig_thrust",
+                    "name": "Point (Dig)",
+                    "damage": 3,
+                    "type": "blunt",
+                    "verb": "thrust",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 1.0,
+                    "source": "hand"
+                },
+                {
+                    "id": "shaft_poke",
+                    "name": "Shaft (Poke)",
+                    "damage": 2,
+                    "type": "blunt",
+                    "verb": "poked",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 0.25,
+                    "source": "hand"
+                },
+                {
+                    "id": "other_fist",
+                    "name": "Fist",
+                    "damage": 6,
+                    "type": "blunt",
+                    "verb": "swung",
+                    "cooldown": 2.0,
+                    "weightMultiplier": 0.15,
+                    "source": "otherHand",
+                    "unarmed": "punch",
+                    "range": 4
+                }
+            ]
+        },
+        "tooltip": [
+            "Uses leverage to dig up resources",
+            "Can remove bushes and tree stumps"
+        ],
+        "recipe": {
+            "REQUIRE_THING": "rock",
+            "log": 1,
+            "CRAFT_SECONDS": 12,
+            "REQUIRE_TOOL": {
+                "toolClass": ["knife", "scraper"],
+                "wear": 5
+            }
         }
     },
     {
@@ -1439,7 +1442,7 @@
         "storageCategory": "materials",
         "tooltipTech": "clay_forming",
         "tooltip": [
-            "Click yourself to form"
+            "Click yourself to form clay"
         ]
     },
     {

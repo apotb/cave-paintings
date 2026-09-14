@@ -236,6 +236,16 @@ test("every item lands in exactly one leaf", () => {
     assert.equal(SF.leafCategory(getItem("hide_bundle"), null), "apparel/equipment");
     assert.equal(SF.leafCategory(getItem("leather_pack"), null), "apparel/equipment");
     assert.equal(SF.leafCategory(getItem("coconut_meal"), null), "food/meals");
+    assert.equal(SF.isPreparedFood({ id: "coconut_meal" }, getItem("coconut_meal")), true);
+    assert.equal(SF.isPreparedFood({ id: "roasted_apple" }, getItem("roasted_apple")), true);
+    assert.equal(SF.isPreparedFood({
+        id: "coconut_meal",
+        customName: "Simmered Meal",
+        ingredients: ["apple"]
+    }, getItem("coconut_meal")), true);
+    assert.equal(SF.isPreparedFood({ id: "apple" }, getItem("apple")), false);
+    assert.equal(SF.isPreparedFood({ id: "blueberry" }, getItem("blueberry")), false);
+    assert.equal(SF.isPreparedFood({ id: "raw_venison" }, getItem("raw_venison")), false);
     assert.equal(SF.leafCategory(getItem("rot"), null), "junk");
     assert.equal(SF.leafCategory(getItem("brain"), null), "junk");
     assert.equal(SF.leafCategory(getItem("lean_to"), null), "buildings");

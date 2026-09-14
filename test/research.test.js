@@ -110,6 +110,11 @@ test("painting circle recipe is known; stick frame is gated on Basic Furniture",
     assert.equal(Research.recipeUnlocked("pitch", s), false);
     Research.unlock(s, "hafting");
     assert.equal(Research.recipeUnlocked("pitch", s), true);
+    const pitch = DataStore.getItem("pitch");
+    assert.equal(pitch.recipe.REQUIRE_THING, "campfire");
+    assert.equal(pitch.recipe.stick, 8);
+    assert.equal(pitch.recipe.leaf, undefined);
+    assert.equal(pitch.recipe.CRAFT_SECONDS, 20);
     assert.equal(Research.recipeUnlocked("stone_spear", s), true);
     assert.equal(Research.recipeUnlocked("flint_spear", s), true);
 });
@@ -234,6 +239,9 @@ test("tech unlocks list items, jobs, and planned text", () => {
     assert.ok(Research.techById("hafting").unlocks.items.includes("pitch"));
     assert.ok(Research.techById("hafting").unlocks.items.includes("stone_spear"));
     assert.equal(Research.techById("hafting").unlocks.items.includes("wooden_spear"), false);
+    assert.equal(Research.techById("knapping").unlocks.text.includes("Spear tip knapping"), false);
+    assert.ok(Research.techById("knapping").unlocks.text.includes("Knife knapping"));
+    assert.ok(Research.techById("hafting").unlocks.text.includes("Spear tip knapping"));
     assert.equal(Research.techById("traps").unlocks.text.includes("Snare"), true);
     assert.ok(Research.techById("spike_traps").unlocks.text.includes("Spike Trap"));
     assert.equal(Research.techById("counting").quote, "Invent 1, 2 before buckling shoes");
@@ -280,7 +288,7 @@ test("tech unlocks list items, jobs, and planned text", () => {
     assert.ok(idolWithClay.some((r) => r.label === "If Clay Forming unlocked:" && r.header && !r.locked));
     assert.equal(idolWithClay.find((r) => r.label === "Deity Figurine forming")?.locked, false);
     const clayItem = DataStore.getItem("clay");
-    assert.deepEqual(Research.tooltipLines(clayItem, s0), ["Click yourself to form"]);
+    assert.deepEqual(Research.tooltipLines(clayItem, s0), ["Click yourself to form clay"]);
     const figItem = DataStore.getItem("clay_figurine");
     assert.deepEqual(Research.tooltipLines(figItem, s0), ["Click yourself to form"]);
     const s1 = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p2" });
@@ -290,6 +298,36 @@ test("tech unlocks list items, jobs, and planned text", () => {
     const fire = Research.techById("fire");
     assert.ok(fire.unlocks.items.includes("campfire"));
     assert.equal(fire.unlocks.items.includes("sharp_stick"), false);
+});
+
+test("knapping help lists only unlocked techniques", () => {
+    const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    Research.ensureTechs(s);
+    const starter = Research.knappingTechniques(s);
+    assert.equal(starter.knife, true);
+    assert.equal(starter.scraper, true);
+    assert.equal(starter.chopper, true);
+    assert.equal(starter.awl, true);
+    assert.equal(starter.spear_tip, false);
+    const lines = Research.knappingHelpLines(s);
+    assert.deepEqual(lines, [
+        "Knife — tapered blade with some body (not forked)",
+        "Scraper — wide flat flake (thin), little/no taper",
+        "Chopper — big solid leftover (don't thin it into a flake)",
+        "Awl — small pierce spike / butt with a point",
+        "Flake — unclear leftover chip"
+    ]);
+    Research.unlock(s, "hafting");
+    assert.equal(Research.knappingTechniques(s).spear_tip, true);
+    const withHaft = Research.knappingHelpLines(s);
+    assert.ok(withHaft.includes("Spear tip — long and thin"));
+    assert.equal(withHaft[withHaft.length - 1], "Flake — unclear leftover chip");
+    Research.unlock(s, "hand_axe");
+    assert.equal(
+        Research.knappingHelpLines(s).some((l) => /hand-axe/i.test(l)),
+        false,
+        "unimplemented techniques stay out of the knapping help"
+    );
 });
 
 test("painting circle has no walk collision", () => {

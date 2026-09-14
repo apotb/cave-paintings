@@ -263,6 +263,82 @@ test("dig melee needs Digging tech, merge-drops clay, and removes the patch", ()
     assert.equal(pawn.inventory[0].durability, 50 - hits);
 });
 
+test("dig melee removes a stump in half the hits of clay and drops nothing", () => {
+    const Research = require("../shared/research");
+    const Dig = require("../shared/dig");
+    const { world, pawn } = createTestWorld();
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    Research.unlock(pawn, "digging");
+    pawn.inventory[0] = { id: "digging_stick", quantity: 1, durability: 50 };
+    pawn.hotbarIndex = 0;
+    const stump = { uid: "stump-1", id: "tree_stump", x: pawn.x + 8, y: pawn.y, digProgress: 0 };
+    originChunk(world).things.push(stump);
+    const creature = world.creatures.get(pawn.id);
+    assert.ok(creature);
+    creature.currentAttack = { id: "dig_thrust", def: { id: "dig_thrust" } };
+    creature.attackAngle = 0;
+    const def = DataStore.getThing("tree_stump");
+    let hits = 0;
+    while (Dig.stillDiggable(def, stump) && hits < 40) {
+        creature._attackDugPatch = false;
+        creature._attackWoreHeld = false;
+        creature.attackHitSet = new Set();
+        world._tryDigFromMelee(creature, null);
+        hits++;
+    }
+    assert.equal(hits, 10);
+    assert.equal(stump.gone, true);
+    assert.equal(originChunk(world).things.includes(stump), false);
+    assert.equal(originChunk(world).drops.length, 0);
+    assert.equal(pawn.inventory[0].durability, 40);
+});
+
+test("dig melee uproots grass, snow, and blueberry bushes in 5 hits with stick and leaf drops", () => {
+    const Research = require("../shared/research");
+    const Dig = require("../shared/dig");
+    const cases = [
+        { id: "bush", list: "things", fruit: null },
+        { id: "snow_bush", list: "things", fruit: null },
+        { id: "blueberry_bush", list: "lootableThings", fruit: "blueberry" }
+    ];
+    for (const spec of cases) {
+        const { world, pawn } = createTestWorld();
+        const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+        world.settlements.push(settle);
+        Research.unlock(pawn, "digging");
+        pawn.inventory[0] = { id: "digging_stick", quantity: 1, durability: 50 };
+        pawn.hotbarIndex = 0;
+        const bush = { uid: `bush-${spec.id}`, id: spec.id, x: pawn.x + 8, y: pawn.y, digProgress: 0 };
+        originChunk(world)[spec.list].push(bush);
+        const creature = world.creatures.get(pawn.id);
+        assert.ok(creature);
+        creature.currentAttack = { id: "dig_thrust", def: { id: "dig_thrust" } };
+        creature.attackAngle = 0;
+        const def = DataStore.getThing(spec.id);
+        let hits = 0;
+        while (Dig.stillDiggable(def, bush) && hits < 40) {
+            creature._attackDugPatch = false;
+            creature._attackWoreHeld = false;
+            creature.attackHitSet = new Set();
+            world._tryDigFromMelee(creature, null);
+            hits++;
+        }
+        assert.equal(hits, 5, spec.id);
+        assert.equal(bush.gone, true, spec.id);
+        assert.equal(originChunk(world)[spec.list].includes(bush), false, spec.id);
+        const drops = originChunk(world).drops;
+        const qty = (id) => drops.filter((d) => d.id === id).reduce((n, d) => n + d.quantity, 0);
+        assert.ok(qty("stick") >= 6 && qty("stick") <= 10, `${spec.id} sticks`);
+        assert.ok(qty("leaf") >= 8 && qty("leaf") <= 14, `${spec.id} leaves`);
+        assert.equal(qty("log"), 0, spec.id);
+        assert.equal(qty("clay"), 0, spec.id);
+        if (spec.fruit) assert.equal(qty(spec.fruit), 5, spec.id);
+        else assert.equal(qty("blueberry"), 0, spec.id);
+        assert.equal(pawn.inventory[0].durability, 45, spec.id);
+    }
+});
+
 test("basket right-click take moves one cord, not the whole stack", () => {
     const { world, pawn, Protocol } = createTestWorld();
     const chunk = originChunk(world);
@@ -1510,12 +1586,19 @@ test("knap consume+finish spends one pebble and grants one tool", () => {
     world.handleAction(pawn.id, {
         ...knap,
         op: "finish",
-        stack: { id: "stone_tool", toolClass: "knife", knapDamage: 4, customName: "Knife" }
+        stack: {
+            id: "stone_tool",
+            toolClass: "knife",
+            knapDamage: 4,
+            customName: "Knife",
+            knapIconData: "AAAAAAAA"
+        }
     });
     const tools = pawn.inventory.filter((s) => s && s.id === "stone_tool");
     const pebbles = pawn.inventory.reduce((n, s) => n + (s?.id === "pebble" ? (s.quantity || 0) : 0), 0);
     assert.equal(tools.length, 1);
     assert.equal(tools[0].quantity, 1);
+    assert.equal(tools[0].knapIconData, "AAAAAAAA");
     assert.equal(pebbles, 2);
 });
 
@@ -2313,6 +2396,20 @@ test("companion auto-eats from an unselected companion's bag", () => {
     assert.equal(buddy.eatChannel.fromId, carry.id);
     assert.equal(buddy.eatChannel.bag, "hotbar");
     assert.equal(buddy.eatChannel.slot, 0);
+});
+
+test("companion prefers roasted food in a nearby bag over raw in hand", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.controlId = pawn.id;
+    const buddy = addTestCompanion(world, pawn);
+    const carry = addTestCompanion(world, pawn, "carry");
+    buddy.kc = 800;
+    buddy.inventory[0] = berries();
+    carry.inventory[0] = { id: "roasted_apple", quantity: 1 };
+    const started = tickUntil(world, () => !!buddy.eatChannel);
+    assert.equal(started, true, "companion should open eatChannel");
+    assert.equal(buddy.eatChannel.fromId, carry.id);
+    assert.equal(buddy.eatChannel.itemId, "roasted_apple");
 });
 
 test("switching to a pawn interrupts eats from that inventory", () => {

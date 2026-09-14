@@ -204,6 +204,17 @@
         return "junk";
     }
 
+    /** Meals and roasted food — preferred auto-eat tier over raw. */
+    function isPreparedFood(stack, def, roastIds) {
+        if (stack?.customName || (Array.isArray(stack?.ingredients) && stack.ingredients.length)) {
+            return true;
+        }
+        const resolved = def || stack || null;
+        if (!resolved) return false;
+        const leaf = leafCategory(resolved, roastIds);
+        return leaf === "food/meals" || leaf === "food/roasted";
+    }
+
     function emptyFilter() {
         return {
             priority: "normal",
@@ -666,6 +677,7 @@
         filterKey,
         stackId,
         leafCategory,
+        isPreparedFood,
         roastResultIds,
         allows,
         buildTree,

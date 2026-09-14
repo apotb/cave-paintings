@@ -187,6 +187,7 @@ class SceneBase extends Phaser.Scene {
             "wooden_spear",
             "stone_spear",
             "flint_spear",
+            "pitch",
             "stick_frame",
             "leaf_wrap",
             "leaf_loincloth",

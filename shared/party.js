@@ -461,11 +461,35 @@
     }
 
     /**
-     * Best auto-eat stack in the party. In-range meals win; otherwise anything
-     * within seek range (so a hungry companion can walk in). Never takes from
+     * Best auto-eat stack in the party. Prepared food (meals / roasted) beats
+     * raw; within a tier, soonest spoil wins. Walk to prepared food in seek
+     * range rather than eating raw already in hand. Never takes from
      * `skipPawnId` (the currently controlled pawn).
      * @returns {{ pawn, slot, bag, stack, dist, inRange, poison }|null}
      */
+    function storageFilterApi() {
+        if (typeof globalThis !== "undefined" && globalThis.StorageFilter) {
+            return globalThis.StorageFilter;
+        }
+        if (typeof require === "function") {
+            try {
+                return require("./storageFilter");
+            } catch (_) { /* browser without StorageFilter yet */ }
+        }
+        return null;
+    }
+
+    function isPreparedEat(stack, getItem) {
+        const SF = storageFilterApi();
+        if (SF && typeof SF.isPreparedFood === "function") {
+            const def = typeof getItem === "function" ? getItem(stack?.id) : null;
+            return !!SF.isPreparedFood(stack, def);
+        }
+        if (stack?.customName || (stack?.ingredients && stack.ingredients.length)) return true;
+        const id = String(stack?.id || "");
+        return id === "coconut_meal" || /^roast/i.test(id);
+    }
+
     function pickAutoEat(eater, members, opts = {}) {
         if (!eater) return null;
         const ts = Number(opts.tileSize) || 16;
@@ -475,6 +499,7 @@
         const skipId = opts.skipHeld?.id;
         const skipSlot = opts.skipHeld?.slot;
         const getFood = opts.getFood;
+        const getItem = opts.getItem;
         const allowPoison = !!opts.allowPoison;
         const ex = Number(eater.x) || 0;
         const ey = Number(eater.y) || 0;
@@ -510,6 +535,7 @@
                         bag,
                         stack,
                         spoil,
+                        prepared: isPreparedEat(stack, getItem),
                         own: isSelf,
                         poison,
                         dist: d,
@@ -520,8 +546,9 @@
         }
         extraBagCandidates(eater, opts.extraBags, opts, candidates);
         candidates.sort((a, b) => {
-            if (a.inRange !== b.inRange) return a.inRange ? -1 : 1;
+            if (a.prepared !== b.prepared) return a.prepared ? -1 : 1;
             if (a.spoil !== b.spoil) return a.spoil - b.spoil;
+            if (a.inRange !== b.inRange) return a.inRange ? -1 : 1;
             if (a.own !== b.own) return a.own ? -1 : 1;
             return a.dist - b.dist;
         });
@@ -555,6 +582,7 @@
                     bag: bag.bag || "basket",
                     stack,
                     spoil,
+                    prepared: isPreparedEat(stack, opts.getItem),
                     own: false,
                     poison,
                     dist: d,

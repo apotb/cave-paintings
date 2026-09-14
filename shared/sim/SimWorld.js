@@ -5623,15 +5623,21 @@ class SimWorld {
         const range = (DigApi.AIM_REACH || 20) + 16;
         const r2 = range * range;
         for (const c of this._chunksNear(wx, wy, 1)) {
-            if (!Array.isArray(c.things)) continue;
-            for (const e of c.things) {
-                if (!e || e.gone || !e.id) continue;
-                const def = thingDefs().get(e.id);
-                if (!DigApi.stillDiggable(def, e)) continue;
-                const dx = (Number(e.x) || 0) - wx;
-                const dy = (Number(e.y) || 0) - wy;
-                if (dx * dx + dy * dy > r2) continue;
-                fn(e, def, c);
+            const lists = [
+                { name: "things", arr: c.things },
+                { name: "lootable", arr: c.lootableThings }
+            ];
+            for (const { name, arr } of lists) {
+                if (!Array.isArray(arr)) continue;
+                for (const e of arr) {
+                    if (!e || e.gone || !e.id) continue;
+                    const def = thingDefs().get(e.id);
+                    if (!DigApi.stillDiggable(def, e)) continue;
+                    const dx = (Number(e.x) || 0) - wx;
+                    const dy = (Number(e.y) || 0) - wy;
+                    if (dx * dx + dy * dy > r2) continue;
+                    fn(e, def, c, name);
+                }
             }
         }
     }
@@ -5639,8 +5645,10 @@ class SimWorld {
     _removeThingEntry(chunk, entry) {
         if (!chunk || !entry) return;
         entry.gone = true;
-        const i = (chunk.things || []).indexOf(entry);
-        if (i >= 0) chunk.things.splice(i, 1);
+        for (const name of ["things", "lootableThings"]) {
+            const i = (chunk[name] || []).indexOf(entry);
+            if (i >= 0) chunk[name].splice(i, 1);
+        }
     }
 
     _tryDigFromMelee(creature, swingSeg) {
@@ -5683,11 +5691,20 @@ class SimWorld {
             this._wearPlayerHeld(creature.id, 1);
             creature._attackWoreHeld = true;
         }
-        const itemId = bestDef?.diggable?.item || "clay";
-        if (result.give > 0) {
+        const itemId = bestDef?.diggable?.item;
+        if (itemId && result.give > 0) {
             this._pushDrop(best.x, best.y, { id: itemId, quantity: result.give });
         }
-        if (result.done) this._removeThingEntry(bestChunk, best);
+        if (result.done) {
+            const drops = DigApi.rollDrops?.(bestDef, () => this.rng()) || [];
+            const piles = DigApi.scatterDrops?.(drops, best.x, best.y, () => this.rng())
+                || Chop.scatterFellPiles?.(drops, best.x, best.y, () => this.rng())
+                || [];
+            for (const p of piles) {
+                this._pushDrop(p.x, p.y, { id: p.id, quantity: p.quantity }, { noMerge: true });
+            }
+            this._removeThingEntry(bestChunk, best);
+        }
         this.pushEvent({
             kind: "dig",
             playerId: creature.id,
@@ -5730,6 +5747,10 @@ class SimWorld {
         if (src.knapMaterial) out.knapMaterial = src.knapMaterial;
         if (src.knapQuality) out.knapQuality = src.knapQuality;
         if (src.tooltipExtra) out.tooltipExtra = src.tooltipExtra;
+        if (src.knapIconData) {
+            const icon = this._sanitizeKnapIconData(src.knapIconData);
+            if (icon) out.knapIconData = icon;
+        }
         if (src.formClass) {
             const Forming = _forming();
             out.formClass = Forming ? Forming.sanitizeClass(src.formClass) : src.formClass;
@@ -10268,6 +10289,7 @@ class SimWorld {
             allowPoison: Party.isStarving(eater),
             skipPawnId: control?.id || null,
             skipHeld: control ? { id: control.id, slot: control.hotbarIndex ?? 0 } : null,
+            getItem: (id) => itemDefs().get(id),
             getFood: (stack) => this._foodForEat(stack)
         });
     }

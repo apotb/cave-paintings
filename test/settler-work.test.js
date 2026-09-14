@@ -178,6 +178,29 @@ test("public settler eat channel includes the food id", () => {
     assert.equal(ch?.itemId, "blueberry");
 });
 
+test("settler walks to roasted food in a basket instead of eating raw in hand", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "blueberry", quantity: 4 }, null, null, null, null]
+    });
+    rec.kc = 200;
+    const basket = addBasket(world, settle, rec.x + 32, rec.y);
+    basket.slots[0] = { id: "roasted_apple", quantity: 1 };
+    let ateRoast = false;
+    for (let i = 0; i < 120; i++) {
+        world.tick(50);
+        if (rec.eatChannel?.itemId === "roasted_apple") {
+            ateRoast = true;
+            break;
+        }
+    }
+    assert.equal(
+        ateRoast,
+        true,
+        `should eat roasted apple (act=${rec._settlerAct} ch=${rec.eatChannel?.itemId} inv=${JSON.stringify(rec.inventory)} bask=${JSON.stringify(basket.slots[0])})`
+    );
+});
+
 test("dedicated settler stashes cargo into a matching basket", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {
@@ -371,6 +394,29 @@ test("gather settler digs clay with an existing stick and does not craft one", (
     );
     const pile = chunk.drops.find((d) => d.id === "clay");
     assert.ok(pile, "clay should drop on the ground");
+});
+
+test("gather settler does not dig stumps", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1200,
+        inventory: [
+            { id: "digging_stick", quantity: 1, durability: 50 },
+            null, null, null, null
+        ]
+    });
+    rec.hotbarIndex = 0;
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0 };
+    settle.stock.clay = 25;
+    settle.stock.stick = 0;
+    settle.stock.leaf = 0;
+    Research.unlock(pawn, "digging");
+    const stump = { uid: "stump-g", id: "tree_stump", x: rec.x + 24, y: rec.y, digProgress: 0 };
+    originChunk(world).things.push(stump);
+    for (let i = 0; i < 80; i++) world.tick(50);
+    assert.equal(Number(stump.digProgress) || 0, 0);
+    assert.equal(!!stump.gone, false);
+    assert.ok(originChunk(world).things.includes(stump));
 });
 
 test("gather settler without a digging stick does not craft one", () => {

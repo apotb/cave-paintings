@@ -60,6 +60,39 @@ test("diggable tile uses a 16px hit box even when walkable", () => {
     assert.equal(Dig.tooltipName({ name: "Clay Deposit", diggable: { yield: 25 } }, {}), "Clay Deposit");
 });
 
+test("stumps take half clay health and drop nothing", () => {
+    const clay = DataStore.getThing("clay_patch");
+    const stump = DataStore.getThing("tree_stump");
+    const snow = DataStore.getThing("snow_tree_stump");
+    const palm = DataStore.getThing("coconut_tree_stump");
+    assert.equal(Dig.healthOf(clay), 1);
+    assert.equal(Dig.isDeposit(clay), true);
+    assert.equal(Dig.healthOf(stump), 0.5);
+    assert.equal(Dig.isDeposit(stump), false);
+    assert.equal(Dig.isDiggable(stump), true);
+    assert.equal(Dig.healthOf(snow), 0.5);
+    assert.equal(Dig.healthOf(palm), 0.5);
+    const getItem = (id) => DataStore.getItem(id);
+    const stick = { id: "digging_stick" };
+    assert.equal(Dig.depositTooltip(stump, {}, stick, getItem), "");
+    const entry = { id: "tree_stump", digProgress: 0 };
+    const frac = Dig.digFraction(stick, getItem);
+    let hits = 0;
+    let last = null;
+    while (Dig.stillDiggable(stump, entry) && hits < 40) {
+        last = Dig.applyDig(entry, stump, frac, 1000);
+        hits++;
+        assert.equal(last.give, 0);
+        assert.equal(Dig.depositTooltip(stump, entry, stick, getItem), "");
+    }
+    assert.equal(hits, 10);
+    assert.equal(last.done, true);
+    assert.equal(entry.digProgress, 1);
+    assert.equal(Dig.stillDiggable(stump, entry), false);
+    const Place = require("../shared/place");
+    assert.equal(Place.thingImageLoads(stump).some((l) => l.key === "hole"), false);
+});
+
 test("REQUIRE_TOOL accepts knife or scraper", () => {
     const rt = Carry.parseRequireTool({ toolClass: ["knife", "scraper"], wear: 5 });
     assert.deepEqual(rt.toolClasses, ["knife", "scraper"]);
@@ -118,6 +151,39 @@ test("WorldGen clay banks sit on gravel sand snow_beach and beat flint", () => {
     }
     assert.ok(clayOnHost / hostTiles > 0.08, "clay should form medium banks on host tiles");
     assert.ok(clayOnHost / hostTiles < 0.75, "clay should not cover every host tile");
+});
+
+test("bushes including snow take a quarter of clay health and drop sticks and leaves", () => {
+    const getItem = (id) => DataStore.getItem(id);
+    const stick = { id: "digging_stick" };
+    const frac = Dig.digFraction(stick, getItem);
+    const ids = ["bush", "snow_bush", "blueberry_bush"];
+    for (const id of ids) {
+        const def = DataStore.getThing(id);
+        assert.equal(Dig.healthOf(def), 0.25, id);
+        assert.equal(Dig.isDeposit(def), false, id);
+        assert.equal(Dig.isDiggable(def), true, id);
+        assert.equal(Dig.depositTooltip(def, {}, stick, getItem), "");
+        const entry = { id, digProgress: 0 };
+        let hits = 0;
+        let last = null;
+        while (Dig.stillDiggable(def, entry) && hits < 40) {
+            last = Dig.applyDig(entry, def, frac, 1000);
+            hits++;
+            assert.equal(last.give, 0);
+        }
+        assert.equal(hits, 5, id);
+        assert.equal(last.done, true, id);
+        const drops = Dig.rollDrops(def, () => 0);
+        const byId = Object.fromEntries(drops.map((d) => [d.id, d.quantity]));
+        assert.equal(byId.stick, 6, id);
+        assert.equal(byId.leaf, 8, id);
+        assert.equal(byId.log, undefined, id);
+        if (id === "blueberry_bush") assert.equal(byId.blueberry, 5);
+        else assert.equal(byId.blueberry, undefined, id);
+        const Place = require("../shared/place");
+        assert.equal(Place.thingImageLoads(def).some((l) => l.key === "hole"), false, id);
+    }
 });
 
 test("clay_patch loads the hole overlay sprite", () => {

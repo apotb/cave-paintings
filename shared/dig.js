@@ -52,6 +52,18 @@
         return !!(def && def.diggable);
     }
 
+    /** Clay (and similar) deposits that yield an item — not stumps. */
+    function isDeposit(def) {
+        if (!def?.diggable) return false;
+        if (def.diggable.item) return true;
+        return Math.max(0, Math.floor(Number(def.diggable.yield) || 0)) > 0;
+    }
+
+    function healthOf(def) {
+        const n = Number(def?.diggable?.health);
+        return n > 0 ? n : 1;
+    }
+
     function stillDiggable(def, entry) {
         if (!entry || entry.gone) return false;
         if (Number(entry.digProgress) >= 1) return false;
@@ -75,12 +87,14 @@
     function tooltipName(def, entry) {
         const name = def?.name || "Clay Deposit";
         const y = yieldOf(def);
+        if (!(y > 0)) return name;
         const taken = Math.max(0, Math.floor(Number(entry?.digTaken) || 0));
         if (!(taken > 0) && !(Number(entry?.digProgress) > 0)) return name;
         return `${name} (${Math.max(0, y - taken)}/${y})`;
     }
 
     function depositTooltip(def, entry, stack, getItem) {
+        if (!isDeposit(def)) return "";
         if (!(digFraction(stack, getItem) > 0)) return "";
         return tooltipName(def, entry);
     }
@@ -136,6 +150,7 @@
      */
     function applyDig(entry, def, frac, nowMs) {
         const yieldN = yieldOf(def);
+        const health = healthOf(def);
         const prev = Number(entry?.digProgress) || 0;
         if (!entry || !(frac > 0)) {
             return {
@@ -145,7 +160,7 @@
                 remaining: remainingOf(def, entry)
             };
         }
-        const next = Math.min(1, prev + frac);
+        const next = Math.min(1, prev + frac / health);
         entry.digProgress = next;
         const taken = Math.max(0, Math.floor(Number(entry.digTaken) || 0));
         const give = Math.max(0, Math.round(yieldN * next) - taken);
@@ -169,6 +184,25 @@
         return null;
     }
 
+    function rollDrops(def, rng) {
+        const table = def?.diggable?.drops;
+        const out = Chop?.rollNamedDrops ? Chop.rollNamedDrops(table, rng).slice() : [];
+        const fruitId = def?.lootable?.item;
+        const fruitN = Math.max(0, Math.floor(Number(def?.lootable?.yield) || 0));
+        if (fruitId && fruitN > 0) out.push({ id: fruitId, quantity: fruitN });
+        return out;
+    }
+
+    function scatterDrops(drops, x, y, rng) {
+        if (Chop?.scatterFellPiles) return Chop.scatterFellPiles(drops, x, y, rng);
+        return (drops || []).map((d) => ({
+            id: d.id,
+            quantity: d.quantity,
+            x: Number(x) || 0,
+            y: Number(y) || 0
+        }));
+    }
+
     return {
         HITBOX,
         HIT_RADIUS,
@@ -180,6 +214,8 @@
         digPercentLine,
         isDigAttack,
         isDiggable,
+        isDeposit,
+        healthOf,
         stillDiggable,
         hitboxSize,
         yieldOf,
@@ -193,6 +229,8 @@
         standDist,
         ringStand,
         applyDig,
-        pickDigFromAttacks
+        pickDigFromAttacks,
+        rollDrops,
+        scatterDrops
     };
 });

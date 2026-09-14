@@ -2938,13 +2938,28 @@ class SceneMain extends SceneBase {
         if (!Dig.isDiggable(def)) return null;
         const result = Dig.applyDig(entry, def, frac);
         thing._syncDigHole?.();
-        const itemId = def.diggable?.item || "clay";
-        if (result.give > 0) {
+        const itemId = def.diggable?.item;
+        if (itemId && result.give > 0) {
             const meta = this.getItem(itemId);
             if (meta) DroppedItem.spawn(this, entry.x, entry.y, meta, result.give);
         }
         if (result.done) {
+            const drops = Dig.rollDrops?.(def, () => Math.random()) || [];
+            const piles = Dig.scatterDrops?.(drops, entry.x, entry.y, () => Math.random()) || [];
+            for (const p of piles) {
+                const meta = this.getItem(p.id);
+                if (meta && p.quantity > 0) {
+                    DroppedItem.spawn(this, p.x, p.y, meta, p.quantity, undefined, null, true);
+                }
+            }
             entry.gone = true;
+            const chunk = thing.chunk || this.getChunkAtWorld?.(entry.x, entry.y - 1);
+            for (const name of ["things", "lootableThings"]) {
+                const lst = chunk?.meta?.[name];
+                if (!Array.isArray(lst)) continue;
+                const i = lst.indexOf(entry);
+                if (i >= 0) lst.splice(i, 1);
+            }
             if (thing?.active) thing.destroy();
             this.hideTooltip?.();
             this.markLightDirty?.();
@@ -3058,17 +3073,22 @@ class SceneMain extends SceneBase {
         const match = (e) => this._chopEventMatch(e, ev);
         let chunk = null;
         let entry = null;
+        let listName = "things";
         for (const k of keys) {
             const c = this.chunks[k];
             if (!c?.meta) continue;
-            const lst = c.meta.things;
-            if (!Array.isArray(lst)) continue;
-            const found = lst.find(match);
-            if (found) {
-                chunk = c;
-                entry = found;
-                break;
+            for (const name of ["things", "lootableThings"]) {
+                const lst = c.meta[name];
+                if (!Array.isArray(lst)) continue;
+                const found = lst.find(match);
+                if (found) {
+                    chunk = c;
+                    entry = found;
+                    listName = name;
+                    break;
+                }
             }
+            if (entry) break;
         }
         if (entry) {
             if (ev.digProgress != null) entry.digProgress = ev.digProgress;
@@ -3081,7 +3101,7 @@ class SceneMain extends SceneBase {
             live?._syncDigHole?.();
             if (ev.dug) {
                 entry.gone = true;
-                const lst = chunk.meta?.things;
+                const lst = chunk.meta?.[listName];
                 if (Array.isArray(lst)) {
                     const i = lst.indexOf(entry);
                     if (i >= 0) lst.splice(i, 1);
@@ -4519,7 +4539,21 @@ class SceneMain extends SceneBase {
         const color = this._channelBarFillColor(frac);
         g.clear().setVisible(true);
         g.setScale(1 / zoom);
-        g.setPosition(thing.x, thing.y - (thing.height || 16) - 2);
+        const frameH = Number(thing.frame?.height) || Number(thing.height) || 16;
+        const scaleY = Math.abs(Number(thing.scaleY) || 1) || 1;
+        const spriteH = frameH * scaleY;
+        let inset = (typeof textureOpaqueTopInset === "function"
+            ? textureOpaqueTopInset(this, thing)
+            : 0) * scaleY;
+        const id = thing?.entry?.id || thing?.meta?.id || "";
+        if (!(inset > 0) && /stump/i.test(id)) {
+            const visual = Math.max(Number(thing.hitboxSize) || 5, 8);
+            inset = Math.max(0, spriteH - visual);
+        }
+        const barY = (typeof GameMath !== "undefined" && GameMath.worldHudBarY)
+            ? GameMath.worldHudBarY(thing.y, spriteH, inset, 2)
+            : thing.y - spriteH - 2;
+        g.setPosition(thing.x, barY);
         this._drawBar(g, -Math.floor(w / 2), -h, w, h, frac, 0x000000, 0x222222, color, 2);
     }
 
@@ -5083,7 +5117,7 @@ class SceneMain extends SceneBase {
         this._pickHoverTarget = (pointer) => {
             const hits = this.input.hitTestPointer(pointer);
 
-            // Knapping modal blocks world behind it (help uses idle-pixel hit like main HUD)
+            // Knapping modal blocks world behind it (help uses pixel hit like main HUD)
             const knap = this.knappingPanel;
             if (knap?.visible && knap.backdrop) {
                 const overKnap = Phaser.Geom.Rectangle.Contains(
@@ -5670,7 +5704,11 @@ class SceneMain extends SceneBase {
                 return "pointer";
             }
             if (!obj?.input) return 'default';
-            if (obj.meta?.diggable) {
+            // Rocks: hand cursor only when "Click to knap" tip would show
+            if (obj.meta?.id === "rock") {
+                return this._rockKnapTooltipText() ? "pointer" : "default";
+            }
+            if (obj.meta?.diggable?.item) {
                 // Empty GO.cursor: Phaser setCursor would flash the arrow between deposits.
                 obj.input.cursor = "";
                 return this._heldHasDigPower() ? "pointer" : "default";
@@ -5723,8 +5761,8 @@ class SceneMain extends SceneBase {
 
             // Don't let a world sprite steal an active HUD hover (lean-to while
             // lying in it used to pointerout Craft/hotbar/health and hide tips).
-            // Pixel-locked HUD icons keep the idle-sprite mask — don't inflate
-            // to the frame AABB or the hover outline would stick after first over.
+            // Pixel-hit HUD icons use the current sprite mask — don't inflate
+            // to the frame AABB or transparent padding would stick the hover.
             if (
                 this._isUiTooltipTarget(this._hoverTarget)
                 && this._objectShown?.(this._hoverTarget)
@@ -6283,11 +6321,13 @@ class SceneMain extends SceneBase {
     }
 
     wireDigTooltip(thing) {
-        if (!thing?.meta?.diggable) return;
+        if (!thing?.meta?.diggable?.item) return;
         // Don't bake cursor: "default" — Phaser applies GO.cursor on native over
         // and that flashes the arrow when moving across a clay bank.
         thing.setInteractive({ pixelPerfect: false });
         if (thing.input) thing.input.cursor = "";
+        if (thing._digTooltipWired) return;
+        thing._digTooltipWired = true;
         thing.on("pointerover", (pointer) => {
             this.input?.setDefaultCursor?.(this._cursorFor?.(thing) || "default");
             this.showTooltip(
@@ -6310,6 +6350,40 @@ class SceneMain extends SceneBase {
 
     _spawnSignTooltip() {
         return [`Welcome to ${this._worldDisplayName()}!`];
+    }
+
+    /** Rock: click to knap + hover tip while holding pebble/flint. */
+    wireRockKnapping(thing) {
+        if (!thing || thing.meta?.id !== "rock") return;
+        // Default arrow; _cursorFor switches to pointer only when knap tip is active
+        thing.setInteractive({ cursor: "default", pixelPerfect: false });
+        thing.on("pointerdown", (pointer) => {
+            if (this.pointerOverWorldUi?.(pointer)) return;
+            this.knappingPanel?.tryOpenAtRock?.(thing);
+        });
+        thing.on("pointerover", (pointer) => {
+            this.showTooltip(
+                () => this._rockKnapTooltipText(),
+                pointer.x,
+                pointer.y,
+                thing
+            );
+        });
+        thing.on("pointerout", () => {
+            if (this._hoverTarget === thing) this._hoverTarget = null;
+            if (this._tooltipTarget === thing) this.hideTooltip();
+        });
+    }
+
+    _rockKnapTooltipText() {
+        const held = this.player?.getHeldItem?.();
+        if (!held || !(held.quantity > 0)) return "";
+        if (held.knapIconData && (held.id === "stone_tool" || held.id === "flint_tool")) {
+            return "Click to reshape";
+        }
+        const meta = this.getItem(held.id);
+        if (!meta?.knapping?.material) return "";
+        return "Click to knap";
     }
 
     /** Skinworking bench (and later craft stations): click opens the C-key craft menu, filtered. */
@@ -6716,12 +6790,13 @@ class SceneMain extends SceneBase {
             thing = new ClayFigurine(this, entry);
         } else {
             thing = new Thing(this, entry.x, entry.y, entry.id, entry);
-            if (entry.id === "sign") {
+            if (entry.id === "rock") this.wireRockKnapping?.(thing);
+            else if (entry.id === "sign") {
                 if (entry.spawnHint && this._spawnSignTooltip) {
                     entry.tooltip = this._spawnSignTooltip();
                 }
                 this.wireThingTooltip?.(thing);
-            } else if (thing.meta?.diggable) {
+            } else if (thing.meta?.diggable?.item) {
                 this.wireDigTooltip?.(thing);
             }
         }
@@ -10561,11 +10636,19 @@ class SceneMain extends SceneBase {
     }
 
     hasNearbyThing(id, pawn) {
+        return !!this._findNearbyThing(id, pawn);
+    }
+
+    _findNearbyThing(id, pawn) {
+        if (!id) return null;
         const who = pawn || this.player;
-        const r = this.tileSize * (who?.interactionRange || 4);
+        if (!who) return null;
+        const r = this.tileSize * (who.interactionRange || 4);
         const r2 = r * r;
         const px = who.x;
         const py = who.y;
+        let best = null;
+        let bestD = Infinity;
         for (const chunk of this._loadedChunks || []) {
             if (!chunk.isLoaded) continue;
             for (const thing of chunk.things?.getChildren?.() || []) {
@@ -10576,10 +10659,14 @@ class SceneMain extends SceneBase {
                     : have !== id) continue;
                 const dx = thing.x - px;
                 const dy = thing.y - py;
-                if (dx * dx + dy * dy <= r2) return true;
+                const d2 = dx * dx + dy * dy;
+                if (d2 <= r2 && d2 < bestD) {
+                    best = thing;
+                    bestD = d2;
+                }
             }
         }
-        return false;
+        return best;
     }
 
     nearbyCraftStationIds() {
@@ -10720,9 +10807,12 @@ class SceneMain extends SceneBase {
 
     doCraft(recipe) {
         if (recipe.craftSeconds > 0) {
-            const station = recipe.requireStation
-                ? (this._findNearbyCraftStation(recipe.requireStation) || this._craftStationThing)
-                : null;
+            let station = null;
+            if (recipe.requireStation) {
+                station = this._findNearbyCraftStation(recipe.requireStation) || this._craftStationThing;
+            } else if (recipe.requireThing) {
+                station = this._findNearbyThing(recipe.requireThing);
+            }
             this.player.beginCraft?.(recipe, station);
             return;
         }

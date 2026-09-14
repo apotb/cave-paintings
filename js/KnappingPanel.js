@@ -73,7 +73,7 @@ class KnappingPanel {
         this.btnRotate = this._makeBtn(-70, 142, "Rotate", () => this.rotate());
         this.btnFinish = this._makeBtn(70, 142, "Close", () => this.finishOrClose());
 
-        // Same pattern as SceneMain.createButtons() help: uiLayer sibling + idle-pixel hit
+        // Same pattern as SceneMain.createButtons() help: uiLayer sibling + pixel hit
         this._helpPressed = false;
         this.helpBtn = scene.add.image(0, 0, "help_alt");
         lockPixelHit(this.helpBtn, "help_alt", { useHandCursor: true });
@@ -117,14 +117,24 @@ class KnappingPanel {
     }
 
     _helpTooltipText() {
+        const holder = this.scene._playerResearchHolder?.() || this.scene.player;
+        if (typeof Research !== "undefined" && Research.knappingHelpLines) {
+            return Research.knappingHelpLines(holder).join("\n");
+        }
         return [
             "Knife — tapered blade with some body (not forked)",
             "Scraper — wide flat flake (thin), little/no taper",
             "Chopper — big solid leftover (don't thin it into a flake)",
             "Awl — small pierce spike / butt with a point",
-            "Spear tip — long and thin",
             "Flake — unclear leftover chip"
         ].join("\n");
+    }
+
+    _knapUnlocked() {
+        const holder = this.scene._playerResearchHolder?.() || this.scene.player;
+        return typeof Research !== "undefined" && Research.knappingTechniques
+            ? Research.knappingTechniques(holder)
+            : null;
     }
 
     /** Same idea as SceneMain._releasePressButton for help / help_alt. */
@@ -215,21 +225,30 @@ class KnappingPanel {
     }
 
     /**
-     * Open knapping while holding a blank or finished tool (click yourself).
+     * Called when the player clicks a rock (or settling stone) while holding
+     * a blank or finished tool.
      * @returns {boolean}
      */
-    tryOpen() {
+    tryOpenAtRock(rock) {
         if (this.visible) return false;
+        const rockId = rock?.meta?.id;
+        const isAnvil = typeof Place !== "undefined" && Place.countsAsThing
+            ? Place.countsAsThing(rockId, "rock")
+            : rockId === "rock" || rockId === "settling_stone";
+        if (!rock || !isAnvil) return false;
         const pointer = this.scene.input?.activePointer;
         if (this.scene.pointerOverWorldUi?.(pointer)) return false;
         const player = this.scene.player;
         if (!player || player._bodyDead || player.isIncapacitated?.() || player._resting) return false;
 
-        const held = player.getHeldItem();
-        const knapPrep = this._prepHeld(held);
+        const r = (this.scene.tileSize || 16) * (player.interactionRange || 4);
+        const dx = rock.x - player.x;
+        const dy = rock.y - player.y;
+        if (dx * dx + dy * dy > r * r) return false;
+
+        const knapPrep = this._prepHeld(player.getHeldItem());
         if (!knapPrep) return false;
 
-        // Close whatever menu is open, then start knapping
         this.scene.closeOpenMenus?.();
         this.scene.player?._cancelSkin?.();
 
@@ -312,11 +331,6 @@ class KnappingPanel {
             _reworkQuality: null,
             _reworkToolClass: null
         };
-    }
-
-    /** @deprecated Use tryOpen(); knapping is click-self, not click-rock. */
-    tryOpenAtRock(_rock) {
-        return this.tryOpen();
     }
 
     _isDedicated() {
@@ -405,7 +419,7 @@ class KnappingPanel {
             this.preview.setText("");
             return;
         }
-        const result = Knapping.classify(this.grid, this.material);
+        const result = Knapping.classify(this.grid, this.material, this._knapUnlocked());
         this.preview.setText(result.preview);
     }
 
@@ -515,14 +529,14 @@ class KnappingPanel {
         this._consumeBlankOnce();
         let stack = null;
         try {
-            const result = Knapping.classify(this.grid, this.material);
+            const result = Knapping.classify(this.grid, this.material, this._knapUnlocked());
             stack = Knapping.makeToolStack(result, {
                 grid: this.grid,
                 pixels: this.pixels,
                 scene: this.scene
             });
         } catch (_) {
-            const result = Knapping.classify(this.grid, this.material);
+            const result = Knapping.classify(this.grid, this.material, this._knapUnlocked());
             stack = Knapping.makeToolStack(result, {
                 grid: this.grid,
                 pixels: this.pixels,

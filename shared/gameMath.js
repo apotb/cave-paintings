@@ -58,6 +58,17 @@
         return Math.round(Number(now) || 0) + Math.max(1, Math.floor(base * factor));
     }
 
+    /**
+     * World Y for a HUD bar above a feet-origin sprite, skipping empty
+     * texture padding (stumps live in the old 32px tree canvas).
+     */
+    function worldHudBarY(feetY, spriteH, opaqueTopInset, gap) {
+        const h = Number(spriteH) > 0 ? Number(spriteH) : 16;
+        const inset = clamp(Number(opaqueTopInset) || 0, 0, h);
+        const g = Number.isFinite(Number(gap)) ? Number(gap) : 2;
+        return (Number(feetY) || 0) - (h - inset) - g;
+    }
+
     return {
         setRng,
         random,
@@ -65,6 +76,7 @@
         between,
         floatBetween,
         pick,
-        jitteredRegrowAt
+        jitteredRegrowAt,
+        worldHudBarY
     };
 });

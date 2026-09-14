@@ -10,7 +10,7 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         // Clay sits on groundLayer with painting circles: over tiles (0),
         // under drops (1), under pawns on mainLayer. Do not use y-depth —
         // chunk tile RTs also live here at depth 0.
-        if ((meta?.diggable || meta?.figurine) && scene.groundLayer) {
+        if ((meta?.diggable?.item || meta?.figurine) && scene.groundLayer) {
             scene.groundLayer.add(this);
             this.setDepth(meta?.figurine ? 0.55 : 0.5);
         } else {
@@ -19,7 +19,7 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         }
         this.setup(meta.hitboxSize);
         this.applyVisual();
-        if (meta?.diggable) {
+        if (meta?.diggable?.item) {
             this.once("destroy", () => {
                 this._holeSpr?.destroy();
                 this._holeSpr = null;
@@ -128,7 +128,7 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
     }
 
     _syncDigHole() {
-        if (!this.meta?.diggable) return;
+        if (!this.meta?.diggable?.item) return;
         const damaged = (Number(this.entry?.digTaken) || 0) > 0
             || (Number(this.entry?.digProgress) || 0) > 0;
         if (!damaged) {
@@ -297,6 +297,7 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         this.meta = thing;
         this.applyVisual();
         this.setup(thing.hitboxSize);
+        if (this.meta?.diggable?.item) this.scene.wireDigTooltip?.(this);
     }
 }
 
@@ -421,7 +422,7 @@ class LootableThing extends Thing {
         super.morph(id);
         if (this.meta.lootable) {
             this.setInteractive({ cursor: "pointer" });
-        } else {
+        } else if (!this.meta?.diggable?.item) {
             this.disableInteractive();
         }
     }
@@ -1400,6 +1401,7 @@ class SettlingStone extends Thing {
             if (scene.pointerOverWorldUi?.(pointer)) return;
             if (scene.restBlocksWorldUi?.()) return;
             if (!this.inRange()) return;
+            if (scene.knappingPanel?.tryOpenAtRock?.(this)) return;
             scene.settlementSys?.openFromStone?.(this);
         });
         this.on("destroy", () => {

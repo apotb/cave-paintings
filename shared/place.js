@@ -122,7 +122,7 @@
             const hangKey = t.hangingKey || `${t.key}_hanging`;
             loads.push({ key: hangKey, path: `assets/things/${hangKey}.png` });
         }
-        if (t.diggable) {
+        if (t.diggable?.item) {
             loads.push({ key: "hole", path: "assets/things/hole.png" });
         }
         return loads;

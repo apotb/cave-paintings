@@ -91,7 +91,14 @@
         "id": "bush",
         "name": "Bush",
         "key": "bush",
-        "hitboxSize": 0
+        "hitboxSize": 0,
+        "diggable": {
+            "health": 0.25,
+            "drops": {
+                "stick": [6, 10],
+                "leaf": [8, 14]
+            }
+        }
     },
     {
         "id": "blueberry_bush",
@@ -103,13 +110,27 @@
             "yield": 5,
             "transform": "bush",
             "regrowMinutes": 1440
+        },
+        "diggable": {
+            "health": 0.25,
+            "drops": {
+                "stick": [6, 10],
+                "leaf": [8, 14]
+            }
         }
     },
     {
         "id": "snow_bush",
         "name": "Snow Bush",
         "key": "snow_bush",
-        "hitboxSize": 0
+        "hitboxSize": 0,
+        "diggable": {
+            "health": 0.25,
+            "drops": {
+                "stick": [6, 10],
+                "leaf": [8, 14]
+            }
+        }
     },
     {
         "id": "rock",
@@ -192,19 +213,28 @@
         "id": "tree_stump",
         "name": "Tree Stump",
         "key": "tree_stump",
-        "hitboxSize": 5
+        "hitboxSize": 5,
+        "diggable": {
+            "health": 0.5
+        }
     },
     {
         "id": "snow_tree_stump",
         "name": "Snow Tree Stump",
         "key": "snow_tree_stump",
-        "hitboxSize": 5
+        "hitboxSize": 5,
+        "diggable": {
+            "health": 0.5
+        }
     },
     {
         "id": "coconut_tree_stump",
         "name": "Palm Stump",
         "key": "coconut_tree_stump",
-        "hitboxSize": 5
+        "hitboxSize": 5,
+        "diggable": {
+            "health": 0.5
+        }
     },
     {
         "id": "wicker_basket",

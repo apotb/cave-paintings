@@ -313,7 +313,7 @@
         "cost": 0,
         "startUnlocked": true,
         "prereqs": [],
-        "unlocks": { "items": [], "jobs": [], "text": ["Knife knapping", "Scraper knapping", "Chopper knapping", "Awl knapping", "Spear tip knapping"] },
+        "unlocks": { "items": [], "jobs": [], "text": ["Knife knapping", "Scraper knapping", "Chopper knapping", "Awl knapping"] },
         "children": ["hafting", "hand_axe", "burin"]
     },
     {
@@ -323,7 +323,7 @@
         "quote": "Sharper sticks",
         "cost": 3,
         "prereqs": ["knapping", "cordage"],
-        "unlocks": { "items": ["pitch", "stone_spear", "flint_spear"], "jobs": [], "text": [] },
+        "unlocks": { "items": ["pitch", "stone_spear", "flint_spear"], "jobs": [], "text": ["Spear tip knapping"] },
         "children": ["throwing", "fishing"]
     },
     {

@@ -255,6 +255,9 @@
         const thingId = def.id || def.key || entry?.id;
         if (def.lootable?.item) add(def.lootable.item);
         if (def.diggable?.item) add(def.diggable.item);
+        if (def.diggable?.drops) {
+            for (const id of Object.keys(def.diggable.drops)) add(id);
+        }
         add(STOCK_REGROW_ALWAYS[thingId]);
         if (entry?.regrowAt) add(STOCK_REGROW_IF_PLANTED[thingId]);
         if (def.choppable) {

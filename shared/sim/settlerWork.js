@@ -747,7 +747,7 @@ function diggablesOf(world, settle) {
             if (!e || e.gone || !e.id) continue;
             if (!inRange(settle, e.x, e.y)) continue;
             const def = world._thingDef(e.id);
-            if (!Dig.stillDiggable(def, e)) continue;
+            if (!Dig.isDeposit(def) || !Dig.stillDiggable(def, e)) continue;
             out.push({ entry: e, def, chunk: c });
         }
     }
@@ -3277,7 +3277,7 @@ function digTargetLive(world, patch) {
     if (!patch || patch.gone) return false;
     if (!Dig) return false;
     const def = world._thingDef(patch.id);
-    return Dig.stillDiggable(def, patch);
+    return Dig.isDeposit(def) && Dig.stillDiggable(def, patch);
 }
 
 function dropDigTarget(rec, patch, skip = true) {
@@ -3453,14 +3453,60 @@ function doSleep(world, rec, bed) {
     return halt();
 }
 
-function isAutoEatFood(world, rec, stack) {
-    const food = world._foodForEat(stack);
-    if (!(Number(food?.kc) > 0)) return false;
-    const starving = Party.isStarving(rec);
-    const poison = Number(food.foodPoisonChance ?? 0) > 0;
-    if (poison && !starving) return false;
-    if (Party.isReservedAutoEat(stack, food) && !starving) return false;
-    return true;
+function eatExtraBags(world, rec, settle) {
+    const bags = [];
+    for (const b of basketsOf(world, settle)) {
+        bags.push({
+            x: b.x,
+            y: b.y,
+            slots: b.slots || [],
+            bag: "basket",
+            host: b,
+            entry: b
+        });
+    }
+    return bags;
+}
+
+function foundFromEatPick(rec, pick) {
+    if (!pick) return null;
+    if (pick.extra) {
+        const entry = pick.extra.entry || pick.extra.host || pick.pawn;
+        const slots = pick.extra.slots || entry?.slots || [];
+        return {
+            slots,
+            index: pick.slot,
+            at: entry,
+            kind: "basket",
+            entry,
+            bag: "basket"
+        };
+    }
+    const bag = pick.bag === "overflow" ? "overflow" : "hotbar";
+    const slots = bag === "overflow" ? (rec.overflow || []) : (rec.inventory || []);
+    return {
+        slots,
+        index: pick.slot,
+        at: rec,
+        kind: bag === "overflow" ? "overflow" : "inv",
+        bag
+    };
+}
+
+function pickEatStack(world, rec, settle) {
+    const seekTiles = Number(settle?.radiusTiles) > 0
+        ? Number(settle.radiusTiles)
+        : (Settlement.RADIUS_TILES || 32);
+    const pick = Party.pickAutoEat(rec, [rec], {
+        tileSize: TS,
+        seekTiles,
+        interactTiles: INTERACT_TILES,
+        allowPoison: Party.isStarving(rec),
+        getItem,
+        getFood: (s) => world._foodForEat(s),
+        extraBags: eatExtraBags(world, rec, settle)
+    });
+    return foundFromEatPick(rec, pick);
 }
 
 function doEat(world, rec, settle) {
@@ -3472,7 +3518,7 @@ function doEat(world, rec, settle) {
         return null;
     }
     if (!sitting && kc >= AUTO_EAT) return null;
-    const found = findStack(world, rec, settle, (s) => isAutoEatFood(world, rec, s));
+    const found = pickEatStack(world, rec, settle);
     if (!found) {
         rec._eatSitting = null;
         return null;
@@ -3508,8 +3554,8 @@ function doEat(world, rec, settle) {
     world.pushEvent?.({
         kind: "channel",
         playerId: session?.id || rec.ownerId || rec.id,
-        pawnId: rec.id,
         channel: "eat",
+        pawnId: rec.id,
         itemId: stack.id,
         progress: 0
     });

@@ -155,3 +155,64 @@ test("eatTakeQty takes only enough discrete food to reach AUTO_EAT_UNTIL", () =>
     assert.equal(Party.eatTakeQty(800, 1400, 400, 8, { isMeal: true }), 1);
     assert.equal(Party.eatTakeQty(1400, 1400, 220, 12, { stomach: 1600 }), 1);
 });
+
+test("pickAutoEat prefers prepared food over raw even when raw is in hand", () => {
+    const eater = {
+        id: "s",
+        x: 0,
+        y: 0,
+        inventory: [{ id: "apple", quantity: 1, food: { kc: 80 }, spoilLeft: 10 }],
+        overflow: []
+    };
+    const pick = Party.pickAutoEat(eater, [eater], {
+        tileSize: 16,
+        seekTiles: 32,
+        interactTiles: 1,
+        getFood: (s) => s.food,
+        extraBags: [{
+            x: 16 * 8,
+            y: 0,
+            slots: [{ id: "roasted_apple", quantity: 1, food: { kc: 150 }, spoilLeft: 400 }],
+            bag: "basket"
+        }]
+    });
+    assert.equal(pick.stack.id, "roasted_apple");
+    assert.equal(pick.inRange, false);
+});
+
+test("pickAutoEat prefers soonest-spoil prepared food across meals and roasted", () => {
+    const eater = {
+        id: "s",
+        x: 0,
+        y: 0,
+        inventory: [
+            {
+                id: "coconut_meal",
+                quantity: 1,
+                customName: "Simmered Meal",
+                ingredients: ["apple"],
+                food: { kc: 400 },
+                spoilLeft: 200
+            },
+            { id: "roasted_apple", quantity: 1, food: { kc: 150 }, spoilLeft: 20 }
+        ],
+        overflow: []
+    };
+    const pick = Party.pickAutoEat(eater, [eater], { getFood: (s) => s.food });
+    assert.equal(pick.stack.id, "roasted_apple");
+});
+
+test("pickAutoEat prefers soonest-spoil raw when no prepared food exists", () => {
+    const eater = {
+        id: "s",
+        x: 0,
+        y: 0,
+        inventory: [
+            { id: "apple", quantity: 1, food: { kc: 80 }, spoilLeft: 500 },
+            { id: "blueberry", quantity: 2, food: { kc: 10 }, spoilLeft: 30 }
+        ],
+        overflow: []
+    };
+    const pick = Party.pickAutoEat(eater, [eater], { getFood: (s) => s.food });
+    assert.equal(pick.stack.id, "blueberry");
+});

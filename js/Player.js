@@ -2908,8 +2908,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Timed craft with a held tool. Station recipes must stay in range of the
-     * bench; handheld recipes (tally stick) only need the tool.
+     * Timed craft with a held tool. Station and nearby-thing recipes
+     * (skinworking bench, campfire pitch) must stay in range; handheld
+     * recipes (tally stick) only need the tool.
      */
     beginCraft(recipe, station) {
         if (this._eatChannel) this._cancelEat();
@@ -2920,8 +2921,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
         if (this.isIncapacitated()) return false;
-        const needStation = !!(recipe?.requireStation || station);
-        if (needStation && (!station?.active || !station.inRange?.(this))) return false;
+        const needPlace = !!(recipe?.requireStation || recipe?.requireThing || station);
+        if (needPlace && (!station?.active || !station.inRange?.(this))) return false;
         if (!this.scene.canCraft?.(recipe, this)) return false;
         const item = this.getHeldItem();
         const rt = recipe.requireTool;
@@ -2973,10 +2974,16 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const toolOk = (typeof Carry !== "undefined" && Carry.heldMatchesRecipeTool)
             ? Carry.heldMatchesRecipeTool(held, heldDef, rt)
             : (!wantClass || this.heldToolClass() === wantClass);
+        let placeGone = false;
+        if (station) {
+            placeGone = !station.active || !station.inRange?.(this);
+        } else if (recipe?.requireStation || recipe?.requireThing) {
+            placeGone = true;
+        }
         if (
             slot !== this._craftChannel.slot
             || !toolOk
-            || (station && (!station.active || !station.inRange?.(this)))
+            || placeGone
         ) {
             this._cancelCraft();
             return;

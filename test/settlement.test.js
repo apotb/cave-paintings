@@ -4,6 +4,9 @@ const Settlement = require("../shared/settlement");
 const Place = require("../shared/place");
 const Sleep = require("../shared/sleep");
 const Party = require("../shared/party");
+const { loadDefs, DataStore } = require("./helpers/load");
+
+loadDefs();
 
 test("planStorageDeposits fills matching stacks then empty slots", () => {
     const slots = [
@@ -513,6 +516,13 @@ test("stock list only includes resources from local plants and trees", () => {
     assert.ok(!bush.includes("blueberry"));
     const harvestedBush = Settlement.stockItemsFromThing({ id: "bush" }, { regrowAt: 99 });
     assert.ok(harvestedBush.includes("blueberry"));
+    const snowBush = Settlement.stockItemsFromThing(DataStore.getThing("snow_bush"));
+    assert.ok(snowBush.includes("stick"));
+    assert.ok(snowBush.includes("leaf"));
+    assert.ok(!snowBush.includes("blueberry"));
+    const grassBush = Settlement.stockItemsFromThing(DataStore.getThing("bush"));
+    assert.ok(grassBush.includes("stick"));
+    assert.ok(grassBush.includes("leaf"));
     assert.deepEqual(
         Settlement.filterStockItems(new Set(["cactus_flower", "stick", "log"])),
         ["stick", "log", "cactus_flower"]

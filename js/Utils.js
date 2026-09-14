@@ -261,21 +261,24 @@ function disableInteractiveIfOn(obj) {
 }
 
 /**
- * Pixel-perfect hits locked to `textureKey`, even after setTexture to a
- * hover/open outline. Phaser's built-in pixelPerfect samples the *current*
- * texture, so the outline would grow the hit mask after the first hover.
+ * Pixel-perfect hits on the *current* texture (idle / hover / open).
+ * The outline on hover/click art counts, so split glyphs like save/load
+ * don't drop the tooltip when the pointer slides onto the outline.
+ * `_lockPixelHitKey` still marks these so hover keep-alive does not use
+ * the full frame AABB (transparent padding would stick the hover).
  */
 function lockPixelHit(obj, textureKey, opts = {}) {
     if (!obj?.scene?.textures || !textureKey) return obj;
     const scene = obj.scene;
     const fw = obj.frame?.realWidth || obj.frame?.width || obj.width || 16;
     const fh = obj.frame?.realHeight || obj.frame?.height || obj.height || 16;
-    const frameName = obj.frame?.name;
     const alphaTolerance = opts.alphaTolerance ?? 1;
     const config = {
         hitArea: new Phaser.Geom.Rectangle(0, 0, fw, fh),
         hitAreaCallback: (_area, x, y) => {
-            const a = scene.textures.getPixelAlpha(Math.floor(x), Math.floor(y), textureKey, frameName);
+            const key = obj.texture?.key || textureKey;
+            const frame = obj.frame?.name;
+            const a = scene.textures.getPixelAlpha(Math.floor(x), Math.floor(y), key, frame);
             return a >= alphaTolerance;
         }
     };
@@ -285,6 +288,30 @@ function lockPixelHit(obj, textureKey, opts = {}) {
     obj.setInteractive(config);
     obj._lockPixelHitKey = textureKey;
     return obj;
+}
+
+/** Rows of fully transparent pixels from the top of a texture frame. Cached. */
+function textureOpaqueTopInset(scene, sprite) {
+    const key = sprite?.texture?.key;
+    if (!scene?.textures?.getPixelAlpha || !key) return 0;
+    const frameName = sprite.frame?.name;
+    const w = Math.max(1, Math.round(Number(sprite.frame?.cutWidth || sprite.frame?.width || sprite.width) || 1));
+    const h = Math.max(1, Math.round(Number(sprite.frame?.cutHeight || sprite.frame?.height || sprite.height) || 1));
+    const cache = scene._opaqueTopCache || (scene._opaqueTopCache = new Map());
+    const cacheKey = `${key}:${frameName}:${w}x${h}`;
+    if (cache.has(cacheKey)) return cache.get(cacheKey);
+    let inset = 0;
+    outer: for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            if (scene.textures.getPixelAlpha(x, y, key, frameName) > 8) {
+                inset = y;
+                break outer;
+            }
+        }
+        if (y === h - 1) inset = 0;
+    }
+    cache.set(cacheKey, inset);
+    return inset;
 }
 
 /** True if Phaser's hit test still includes `obj` (honors lockPixelHit). */

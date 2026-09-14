@@ -672,8 +672,9 @@ const Knapping = {
     /**
      * @param {boolean[][]} grid
      * @param {"pebble"|"flint"} material
+     * @param {Record<string, boolean>|null} [unlocked]  omitted = all implemented classes
      */
-    classify(grid, material = "pebble") {
+    classify(grid, material = "pebble", unlocked = null) {
         const mass = this.mass(grid);
         const box = this._aabb(grid);
         const elong = Math.max(box.w, box.h) / Math.max(1, Math.min(box.w, box.h));
@@ -684,6 +685,7 @@ const Knapping = {
         const fork = this._forkRatio(grid);
         const fill = mass / Math.max(1, box.w * box.h);
         const matMult = material === "flint" ? 1.25 : 1;
+        const allow = (cls) => !unlocked || !!unlocked[cls];
 
         // Order matters. Awl before spear/knife so butt+spike isn't stolen.
         // Spear = long fairly even shaft; knife = tapered blade with body.
@@ -691,8 +693,9 @@ const Knapping = {
         const minSide = Math.min(box.w, box.h);
         const maxSide = Math.max(box.w, box.h);
         if (
+            allow("awl")
             // Small pierce spike (T / butt+point). AABB taper misses stems off the long axis.
-            tip >= 0.55
+            && tip >= 0.55
             && mass >= 5
             && mass <= 24
             && maxSide <= 11
@@ -704,7 +707,8 @@ const Knapping = {
         ) {
             toolClass = "awl";
         } else if (
-            elong >= 2.15
+            allow("spear_tip")
+            && elong >= 2.15
             && tip >= 0.52
             && taper < 0.65
             && minSide <= 5
@@ -714,7 +718,8 @@ const Knapping = {
         ) {
             toolClass = "spear_tip";
         } else if (
-            tip >= 0.48
+            allow("knife")
+            && tip >= 0.48
             && taper >= 0.22
             && elong >= 1.3
             && elong < 2.15
@@ -728,8 +733,9 @@ const Knapping = {
         ) {
             toolClass = "knife";
         } else if (
+            allow("scraper")
             // Wide flat flake — must be thin or it steals every chopper core
-            edge >= 8
+            && edge >= 8
             && taper < 0.28
             && thickness < 1.2
             && mass >= 14
@@ -740,8 +746,9 @@ const Knapping = {
         ) {
             toolClass = "scraper";
         } else if (
+            allow("chopper")
             // Heavy core leftover — thickness≥1.2 almost never fired on 16×16 silhouettes
-            mass >= 28
+            && mass >= 28
             && fill >= 0.4
             && elong < 2.15
             && taper < 0.4

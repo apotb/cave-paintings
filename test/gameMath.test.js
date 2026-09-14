@@ -40,3 +40,10 @@ test("jitteredRegrowAt is 85–115% of base", () => {
     assert.equal(lo, now + 85);
     assert.ok(hi >= now + 114 && hi <= now + 115);
 });
+
+test("worldHudBarY sits on opaque pixels, not empty stump padding", () => {
+    assert.equal(GameMath.worldHudBarY(100, 32, 0, 2), 66);
+    assert.equal(GameMath.worldHudBarY(100, 32, 27, 2), 93);
+    assert.equal(GameMath.worldHudBarY(100, 32, 25, 2), 91);
+    assert.equal(GameMath.worldHudBarY(100, 16, 0, 2), 82);
+});
