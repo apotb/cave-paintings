@@ -167,6 +167,20 @@ function emptyInv(size = 5) {
     return Array.from({ length: size }, () => null);
 }
 
+/** One corpse id per world. A second copy of the same death used to survive dismiss and reload. */
+function dedupeCorpses(list, seen) {
+    const ids = seen || new Set();
+    const out = [];
+    for (const corpse of list || []) {
+        if (!corpse) continue;
+        const id = corpse.id;
+        if (id && ids.has(id)) continue;
+        if (id) ids.add(id);
+        out.push(corpse);
+    }
+    return out;
+}
+
 class SimWorld {
     /**
      * @param {{ root?: string, worldName?: string, props?: object, persist?: { load?: Function, save?: Function, clearPlayers?: Function } }} opts
@@ -854,6 +868,7 @@ class SimWorld {
         w.rng = mulberry32(w.seed >>> 0);
         GameMath.setRng(() => w.rng());
         WorldGen.applySeed(w.seed);
+        const seenCorpseIds = new Set();
         for (const [key, meta] of Object.entries(data.chunks || {})) {
             const cx = meta.x ?? meta.cx;
             const cy = meta.y ?? meta.cy;
@@ -884,7 +899,7 @@ class SimWorld {
                 lootableThings: meta.lootableThings || [],
                 drops,
                 mobs: meta.mobs || [],
-                corpses: meta.corpses || [],
+                corpses: dedupeCorpses(meta.corpses, seenCorpseIds),
                 bloodStains: meta.bloodStains || [],
                 generated: true
             };
@@ -3478,7 +3493,8 @@ class SimWorld {
         if (lx < 0 || ly < 0 || lx >= CS || ly >= CS) return true;
         const tile = c.tiles[lx + ly * CS];
         if (!tile || !BLOCKED.has(tile)) return false;
-        if (opts.swim && (tile === "water" || tile === "ice")) return false;
+        if (tile === "water" && opts.swim) return false;
+        if (tile === "ice" && opts.swim && opts.crossIce !== false) return false;
         return true;
     }
 
@@ -3623,8 +3639,11 @@ class SimWorld {
     }
 
     _partyPoseBlocked(creature, x, y, pad = 0, opts = {}) {
-        if (this._tileBlocked(x, y, {
-            swim: Party.traversesWater?.(creature),
+        // Feet origin (0, 1). A pose on a tile's bottom edge belongs to that
+        // tile, matching Path.cellOf and the client.
+        if (this._tileBlocked(x, y - 1, {
+            swim: !!Party.traversesWater?.(creature),
+            crossIce: creature?.role === "wanderer",
             load: opts.load
         })) return true;
         const body = this._creatureBodyAt(creature, x, y);
@@ -5599,6 +5618,7 @@ class SimWorld {
             uid: best.uid || null,
             id: best.id,
             chopProgress: result.felled ? null : result.progress,
+            lastChopAt: result.felled ? null : (best.lastChopAt || Date.now()),
             felled: !!result.felled,
             list: bestList === "lootable" ? "lootable" : "things"
         });
@@ -6651,6 +6671,27 @@ class SimWorld {
                 : this.worldMinuteIndex(),
             stage: opts.stage === "carcass" ? "carcass" : "corpse"
         };
+        const existing = entry.id
+            ? c.corpses.find((e) => e && e.id === entry.id)
+            : null;
+        if (existing) {
+            existing.x = entry.x;
+            existing.y = entry.y;
+            existing.key = entry.key;
+            existing.look = entry.look;
+            existing.frame = entry.frame;
+            existing.name = entry.name;
+            existing.loot = entry.loot;
+            existing.body = entry.body;
+            existing.bodyPlan = entry.bodyPlan;
+            existing.mobId = entry.mobId;
+            existing.skinned = entry.skinned;
+            existing.playerCorpse = entry.playerCorpse;
+            existing.diedAt = entry.diedAt;
+            existing.stage = entry.stage;
+            this.pushEvent({ kind: "corpse", op: "add", cx, cy, entry: existing });
+            return existing;
+        }
         c.corpses.push(entry);
         this.pushEvent({ kind: "corpse", op: "add", cx, cy, entry });
         return entry;
@@ -10790,7 +10831,13 @@ class SimWorld {
                 && Math.hypot(rec.x - ox, rec.y - oy) < 0.2
                 && (Math.abs(cc.vx) > 4 || Math.abs(cc.vy) > 4)
             ) {
-                if (this._escapeOverlappingThing(rec)) {
+                const clipped = !rec._workChannel && !rec._paintChannel
+                    && this._partyPoseBlocked(cc, cc.x, cc.y, 0, {
+                        load: false, sleepFootprint: false, sleepNav: false
+                    });
+                if (clipped) {
+                    this._ejectOverlappingPose(rec, cc);
+                } else if (this._escapeOverlappingThing(rec)) {
                     const step = 3.5 * TS * dt;
                     const hx = rec._escapeH?.nx || 0;
                     const hy = rec._escapeH?.ny || 0;

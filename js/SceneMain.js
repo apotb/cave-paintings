@@ -2679,6 +2679,18 @@ class SceneMain extends SceneBase {
         mob.destroy();
     }
 
+    /** Drop a corpse id from client chunk copies so a reload cannot revive it. */
+    _dropCorpseFromChunkMeta(id) {
+        if (!id) return;
+        for (const chunk of Object.values(this.chunks || {})) {
+            const list = chunk?.meta?.corpses;
+            if (!Array.isArray(list)) continue;
+            for (let i = list.length - 1; i >= 0; i--) {
+                if (list[i]?.id === id) list.splice(i, 1);
+            }
+        }
+    }
+
     /** Immediate corpse add/remove from dedicated server (before next snapshot). */
     _netApplyCorpseEvent(ev) {
         if (!ev || !this.simAuth()) return;
@@ -2691,6 +2703,7 @@ class SceneMain extends SceneBase {
                 Corpse.puffAway?.(this, spr.x, spr.y);
                 spr.destroy();
             }
+            this._dropCorpseFromChunkMeta(ev.id);
             return;
         }
         if ((ev.op === "loot" || ev.op === "skin" || ev.op === "carcass") && ev.entry?.id) {
@@ -3029,6 +3042,8 @@ class SceneMain extends SceneBase {
             } else if (ev.chopProgress != null) {
                 entry.chopProgress = ev.chopProgress;
             }
+            if (ev.lastChopAt != null) entry.lastChopAt = ev.lastChopAt;
+            else if (!ev.felled) entry.lastChopAt = Date.now();
             const live = (chunk.things?.getChildren?.() || []).find(
                 (t) => t?.entry === entry || (t?.entry && match(t.entry))
             ) || null;
@@ -4490,7 +4505,9 @@ class SceneMain extends SceneBase {
             const kids = chunk.things?.getChildren?.() || [];
             for (const t of kids) {
                 if (!t?.active || t.entry?.gone) continue;
-                let frac = Number(t.entry?.chopProgress);
+                let frac = (typeof Chop !== "undefined" && Chop.barVisible?.(t.entry, Date.now()))
+                    ? (Number(t.entry?.chopProgress) || 0)
+                    : 0;
                 if (!(frac > 0) || frac >= 1) {
                     frac = 0;
                     const id = t.entry?.id;
@@ -11145,7 +11162,11 @@ class SceneMain extends SceneBase {
         // Dedicated: spawn a pending local corpse with a shared id so you can
         // see/loot it immediately; server adopts that id on DIE.
         const deathCorpse = spawnCorpse
-            ? leader.createDeathCorpse({ spawn: true, combatDeath: !!killer })
+            ? leader.createDeathCorpse({
+                spawn: true,
+                combatDeath: !!killer,
+                persist: !dedicated
+            })
             : leader.createDeathCorpse({ spawn: false, combatDeath: !!killer });
         if (dedicated && deathCorpse?.entry) {
             deathCorpse.entry.netSync = true;

@@ -1277,37 +1277,65 @@
             let nx = steered.nx;
             let ny = steered.ny;
             const look = 4;
-            const stepBlocked = blocked(mob.x + nx * look, mob.y + ny * look);
-            if (stepBlocked) {
-                const xOk = !blocked(mob.x + nx * look, mob.y);
-                const yOk = !blocked(mob.x, mob.y + ny * look);
-                if (xOk && !yOk) {
-                    ny = 0;
-                    nx = nx ? (nx > 0 ? 1 : -1) : 0;
+            const shoreDx = this._shoreX != null ? mob.x - this._shoreX : 0;
+            const shoreDy = this._shoreY != null ? mob.y - this._shoreY : 0;
+            this._shoreX = mob.x;
+            this._shoreY = mob.y;
+            if (Math.abs(shoreDx) > 0.2 || Math.abs(shoreDy) > 0.2) {
+                const prev = this._shorePrefer || {};
+                this._shorePrefer = {
+                    x: Math.abs(shoreDx) > 0.2 ? Math.sign(shoreDx) : (prev.x || 0),
+                    y: Math.abs(shoreDy) > 0.2 ? Math.sign(shoreDy) : (prev.y || 0)
+                };
+            }
+            const slid = Path.commitWallSlide?.(
+                from, nx, ny, blocked, { bank: this._bankSlide },
+                { look, goal: to, cell: TILE, prefer: this._shorePrefer }
+            );
+            if (slid) {
+                nx = slid.nx;
+                ny = slid.ny;
+                this._bankSlide = slid.bank;
+                if (slid.bank) {
                     this._heldSlide = null;
-                } else if (yOk && !xOk) {
-                    nx = 0;
-                    ny = ny ? (ny > 0 ? 1 : -1) : 0;
-                    this._heldSlide = null;
+                    this._bankTravel = (this._bankTravel || 0) + Math.hypot(shoreDx, shoreDy);
+                    if (!this._bankFlipped && this._bankTravel > TILE * 12) {
+                        slid.bank.dir *= -1;
+                        if (slid.bank.axis === "y") ny = slid.bank.dir;
+                        else nx = slid.bank.dir;
+                        this._bankFlipped = true;
+                        this._bankTravel = 0;
+                    }
                 } else {
-                    const held = this._heldSlide;
-                    const heldOk = held && !blocked(mob.x + held.nx * look, mob.y + held.ny * look);
-                    if (heldOk) {
-                        nx = held.nx;
-                        ny = held.ny;
-                    } else {
-                        const slide = this._slideAround(nx, ny, world, pad);
-                        if (slide) {
-                            this._heldSlide = slide;
-                            nx = slide.nx;
-                            ny = slide.ny;
-                        }
+                    this._bankTravel = 0;
+                    this._bankFlipped = false;
+                }
+            } else if (blocked(mob.x + nx * look, mob.y + ny * look)) {
+                this._bankSlide = null;
+                this._bankTravel = 0;
+                this._bankFlipped = false;
+                const held = this._heldSlide;
+                const heldOk = held && !blocked(mob.x + held.nx * look, mob.y + held.ny * look);
+                if (heldOk) {
+                    nx = held.nx;
+                    ny = held.ny;
+                } else {
+                    const slide = this._slideAround(nx, ny, world, pad);
+                    if (slide) {
+                        this._heldSlide = slide;
+                        nx = slide.nx;
+                        ny = slide.ny;
                     }
                 }
             } else {
                 this._heldSlide = null;
+                this._bankSlide = null;
+                this._bankTravel = 0;
+                this._bankFlipped = false;
             }
             if (settler) {
+                const preNx = nx;
+                const preNy = ny;
                 const sep = this._separation(0.45);
                 const sl = Math.hypot(sep.sx, sep.sy);
                 if (sl > 0.2) {
@@ -1316,6 +1344,10 @@
                     const nlen = Math.hypot(nx, ny) || 1;
                     nx /= nlen;
                     ny /= nlen;
+                }
+                if (blocked(mob.x + nx * look, mob.y + ny * look)) {
+                    nx = preNx;
+                    ny = preNy;
                 }
             }
             this._walk(nx, ny, sprint);

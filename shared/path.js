@@ -564,7 +564,13 @@
                 replanned = true;
                 if (!path || !path.length) {
                     const n = firstFreeNeighbor(from, blocked, cell, side);
-                    if (n) path = [n];
+                    const want = input.to || dest;
+                    // A neighbor behind us is how a walled-off ford turns into
+                    // walking inland, then charging the water again.
+                    if (n && hypot(n.x - want.x, n.y - want.y) + cell * 0.5
+                        < hypot(from.x - want.x, from.y - want.y)) {
+                        path = [n];
+                    }
                 }
             }
         } else if (!committed && pathGoal) {
@@ -592,6 +598,86 @@
             arrived: false,
             replanned
         };
+    }
+
+    /**
+     * Slide along a blocked step and keep that direction. Taking the sign of
+     * the heading each tick reverses at the goal's cross-axis and walks a
+     * settler into a river and straight back out.
+     * Returns null when neither axis is open; the caller picks a corner slide.
+     */
+    function commitWallSlide(from, nx, ny, blocked, state, opts) {
+        const look = (opts && opts.look) || 4;
+        const cell = (opts && opts.cell) || TILE;
+        const goal = opts && opts.goal;
+        const prefer = opts && opts.prefer;
+        const hit = (x, y) => blocked(x, y);
+        const opening = (bank) => {
+            if (!bank || !goal) return true;
+            if (bank.axis === "y") {
+                const toward = Math.sign(goal.x - from.x);
+                if (!toward) return true;
+                return !hit(from.x + toward * cell * 0.75, from.y);
+            }
+            const toward = Math.sign(goal.y - from.y);
+            if (!toward) return true;
+            return !hit(from.x, from.y + toward * cell * 0.75);
+        };
+        const bankNow = state && state.bank;
+        if (!hit(from.x + nx * look, from.y + ny * look)) {
+            if (bankNow && !opening(bankNow)) {
+                const px = bankNow.axis === "x" ? from.x + bankNow.dir * look : from.x;
+                const py = bankNow.axis === "y" ? from.y + bankNow.dir * look : from.y;
+                if (!hit(px, py)) {
+                    return bankNow.axis === "y"
+                        ? { nx: 0, ny: bankNow.dir, bank: bankNow }
+                        : { nx: bankNow.dir, ny: 0, bank: bankNow };
+                }
+            }
+            return { nx, ny, bank: null };
+        }
+        const xOk = !hit(from.x + nx * look, from.y);
+        const yOk = !hit(from.x, from.y + ny * look);
+        const bank = state && state.bank;
+        const hold = (axis, heading, goalDelta, blockedDelta) => {
+            if (bank && bank.axis === axis && bank.dir) {
+                const px = axis === "x" ? from.x + bank.dir * look : from.x;
+                const py = axis === "y" ? from.y + bank.dir * look : from.y;
+                if (!hit(px, py)) return bank.dir;
+            }
+            // Goal straight across the wall: the heading's cross-axis sign
+            // points back toward the nearest point on the bank and flips the
+            // settler around. Keep the way they were already walking.
+            const across = blockedDelta != null
+                && Math.abs(blockedDelta) + cell * 0.25 >= Math.abs(goalDelta || 0);
+            const pref = prefer && prefer[axis];
+            let dir = heading > 0.05 ? 1 : (heading < -0.05 ? -1 : 1);
+            if (across && pref) dir = pref > 0 ? 1 : -1;
+            else if (!across && goalDelta != null && Math.abs(goalDelta) > cell) {
+                dir = goalDelta > 0 ? 1 : -1;
+            }
+            const px = axis === "x" ? from.x + dir * look : from.x;
+            const py = axis === "y" ? from.y + dir * look : from.y;
+            if (hit(px, py)) dir = -dir;
+            return dir;
+        };
+        if (xOk && !yOk) {
+            const dir = hold(
+                "x", nx,
+                goal ? goal.x - from.x : null,
+                goal ? goal.y - from.y : null
+            );
+            return { nx: dir, ny: 0, bank: { axis: "x", dir } };
+        }
+        if (yOk && !xOk) {
+            const dir = hold(
+                "y", ny,
+                goal ? goal.y - from.y : null,
+                goal ? goal.x - from.x : null
+            );
+            return { nx: 0, ny: dir, bank: { axis: "y", dir } };
+        }
+        return null;
     }
 
     function steerHeading(from, nx, ny, blocked, state, opts) {
@@ -638,6 +724,7 @@
         TILE,
         LOOK_PX,
         losClear,
+        commitWallSlide,
         clipToRange,
         blockedAhead,
         planPath,

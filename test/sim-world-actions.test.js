@@ -2015,6 +2015,38 @@ test("companion does not join another party's wildlife aggro", () => {
     assert.ok((buddy.creature?.attackTimer || 0) === 0);
 });
 
+test("reloading a world keeps one corpse when the same death was saved twice", () => {
+    const { world, pawn } = createTestWorld();
+    const chunk = originChunk(world);
+    const corpse = {
+        id: "c-dup",
+        x: pawn.x + 8,
+        y: pawn.y - 8,
+        key: "human",
+        name: "Tester",
+        loot: [{ id: "stick", quantity: 1 }],
+        diedAt: 10,
+        stage: "corpse",
+        playerCorpse: true
+    };
+    chunk.corpses.push(corpse);
+    world._pushCorpse({ ...corpse, loot: [{ id: "stick", quantity: 2 }] });
+    assert.equal(chunk.corpses.filter((e) => e.id === "c-dup").length, 1);
+    assert.equal(chunk.corpses.find((e) => e.id === "c-dup").loot[0].quantity, 2);
+    const saved = world.toSaveData();
+    const host = Object.values(saved.chunks).find((c) =>
+        (c.corpses || []).some((e) => e && e.id === "c-dup")
+    );
+    assert.ok(host, "save should include the corpse");
+    host.corpses.push({ ...corpse, loot: [{ id: "stick", quantity: 1 }] });
+    const again = world.constructor.loadFromData(saved, {});
+    let n = 0;
+    for (const c of again.chunks.values()) {
+        n += (c.corpses || []).filter((e) => e && e.id === "c-dup").length;
+    }
+    assert.equal(n, 1);
+});
+
 test("wildlife corpse is authored at the downed body center", () => {
     const { world, pawn } = createTestWorld();
     const entry = world._spawnMobAt("deer", pawn.x + 16, pawn.y);

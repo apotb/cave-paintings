@@ -614,7 +614,7 @@ class SettlementSystem {
         const input = document.createElement("input");
         input.maxLength = Number(opts.maxLength) > 0
             ? Math.floor(Number(opts.maxLength))
-            : ((typeof Settlement !== "undefined" && Settlement.NAME_MAX) || 24);
+            : ((typeof Settlement !== "undefined" && Settlement.NAME_MAX) || 20);
         input.placeholder = placeholder;
         if (opts.value != null && String(opts.value).trim()) {
             input.value = String(opts.value).trim().slice(0, input.maxLength);
@@ -1466,7 +1466,37 @@ class SettlementSystem {
         const y = fpsBottom + Math.round(6 * s) + hudH / 2;
         this.hudBtn.setPosition(Math.round(scene.scale.width / 2), Math.round(y));
         this._paintHud?.();
-        if (typeof applyPixelUiFont === "function") applyPixelUiFont(this._hudTxt, 16, s);
+        this._syncHudLabel(this.here(scene.player)?.name || this._hudTxt?.text);
+    }
+
+    /** Full name on the top button; step the pixel font down until it fits. */
+    _syncHudLabel(name) {
+        const txt = this._hudTxt;
+        const bg = this._hudBg;
+        if (!txt?.active || !bg) return;
+        const s = this.scene.uiScale || 1;
+        const label = String(name || "Camp");
+        const inset = Math.round(16 * s);
+        const maxW = Math.max(8, (bg.width || Math.round(160 * s)) - inset);
+        const sig = `${label}|${Math.round(maxW)}|${s}`;
+        if (this._hudLabelSig === sig) return;
+        this._hudLabelSig = sig;
+        if (txt.text !== label) txt.setText(label);
+        const cell = typeof PIXEL_FONT_CELL === "number" ? PIXEL_FONT_CELL : 8;
+        let px = typeof pixelUiFontSize === "function" ? pixelUiFontSize(16, s) : 16;
+        while (px > cell) {
+            txt.setFontSize(`${px}px`);
+            if ((txt.width || 0) <= maxW) break;
+            px -= cell;
+        }
+        txt.setFontSize(`${px}px`);
+        if (typeof crispUiText === "function") crispUiText(txt);
+        const w = txt.width || 0;
+        if (w > maxW) {
+            const need = Math.ceil(w + inset);
+            bg.setSize(need, bg.height);
+            if (bg.input?.hitArea?.setSize) bg.input.hitArea.setSize(need, bg.height);
+        }
     }
 
     interestKeys(into) {
@@ -1490,8 +1520,9 @@ class SettlementSystem {
     rename(settle, name) {
         if (!settle) return;
         const S = typeof Settlement !== "undefined" ? Settlement : null;
-        const from = S ? S.clampName(settle.name) : String(settle.name || "Camp").slice(0, 24);
-        const to = S ? S.clampName(name) : String(name || "Camp").slice(0, 24);
+        const cap = S?.NAME_MAX || 20;
+        const from = S ? S.clampName(settle.name) : String(settle.name || "Camp").slice(0, cap);
+        const to = S ? S.clampName(name) : String(name || "Camp").slice(0, cap);
         if (this.sendNet("rename", { settlementId: settle.id, name: to })) {
             settle.name = to;
             this.scene.settlementPanel?.refresh?.();
@@ -2083,11 +2114,7 @@ class SettlementSystem {
         const hudWas = !!this.hudBtn?.visible;
         this.hudBtn?.setVisible(show);
         if (show !== hudWas) this.scene._layoutFpsMeter?.();
-        if (this._hudTxt && settle) {
-            const n = settle.name || "Camp";
-            const label = n.length > 18 ? `${n.slice(0, 17)}…` : n;
-            if (this._hudTxt.text !== label) this._hudTxt.setText(label);
-        }
+        if (this._hudTxt && settle) this._syncHudLabel(settle.name || "Camp");
         const panel = this.scene.settlementPanel;
         const tree = this.scene.researchTreePanel;
         if (panel?.visible) {

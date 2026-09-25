@@ -531,7 +531,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
                 y: c.y,
                 corpse: { ...corpseOpts, loot: worldLoot }
             });
-            const corpse = Corpse.spawn(scene, corpseOpts);
+            const corpse = Corpse.spawn(scene, { ...corpseOpts, persist: false });
             if (corpse?.entry) {
                 corpse.entry.netSync = true;
                 corpse.entry.pendingServer = true;

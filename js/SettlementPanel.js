@@ -291,8 +291,26 @@ class SettlementPanel {
         this._tabsLeft = this.tabPeople.x - peopleW / 2;
         this._tabsRight = this.tabResearch.x + researchW / 2;
         const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
-        const w = this._tabsRight + Math.max(tabPad, sw);
         const h = Math.round(260 * s);
+        const headerY = Math.round(18 * s);
+        const titleX = Math.round(12 * s);
+        this.title.setPosition(titleX, headerY);
+        const nameCap = (typeof Settlement !== "undefined" && Settlement.NAME_MAX) || 20;
+        const nameNow = this.settle?.name || "Camp";
+        this.title.setFixedSize(0, 0);
+        this.title.setText("W".repeat(nameCap));
+        const nameSlot = Math.ceil(this.title.width);
+        this.title.setText(nameNow);
+        this.title.setFixedSize(nameSlot, 0);
+        const closeW = Math.round(52 * s);
+        const destW = Math.round(64 * s);
+        const headerBtnH = Math.round(22 * s);
+        const headerGap = Math.round(10 * s);
+        const rightInset = Math.max(tabPad, sw);
+        this._fitBtnHit(this.destroyBtn, destW, headerBtnH);
+        this._fitBtnHit(this.closeBtn, closeW, headerBtnH);
+        const headerW = titleX + nameSlot + headerGap + destW + tabGap + closeW + rightInset;
+        const w = Math.max(this._tabsRight + rightInset, headerW);
         this.bg.setSize(w, h);
         if (this.bg.input?.hitArea?.setSize) {
             this.bg.input.hitArea.setSize(this.bg.width, this.bg.height);
@@ -300,21 +318,14 @@ class SettlementPanel {
             this.bg.input.hitArea.setTo(0, 0, this.bg.width, this.bg.height);
         }
         this.root.setPosition(Math.round(16 * s), Math.round((scene.scale.height - h) / 2));
-        const headerY = Math.round(18 * s);
-        this.title.setPosition(Math.round(12 * s), headerY);
-        const closeW = Math.round(52 * s);
-        const destW = Math.round(64 * s);
-        const headerBtnH = Math.round(22 * s);
-        this._fitBtnHit(this.destroyBtn, destW, headerBtnH);
-        this._fitBtnHit(this.closeBtn, closeW, headerBtnH);
-        this.closeBtn.setPosition(this._tabsRight - closeW / 2, headerY);
+        this.closeBtn.setPosition(w - rightInset - closeW / 2, headerY);
         this.destroyBtn.setPosition(
             this.closeBtn.x - closeW / 2 - tabGap - destW / 2,
             headerY
         );
         this._bodyX = this._tabsLeft;
         this._bodyY = Math.round(62 * s);
-        this._viewW = this._tabsRight - this._tabsLeft + sw;
+        this._viewW = w - this._bodyX - rightInset;
         this._viewH = h - this._bodyY - Math.round(8 * s);
         this.body.setPosition(this._bodyX, this._bodyY);
         this.bg.setStrokeStyle(sw, 0x2a2218);

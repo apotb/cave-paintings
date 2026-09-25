@@ -27,6 +27,7 @@
     const HIT_RADIUS = 3;
     const AIM_REACH = 20;
     const BAR_RANGE = 48;
+    const BAR_HIDE_MS = 3000;
 
     function knapQualityMult(quality) {
         return QUALITY_MULT[quality] || 1;
@@ -276,13 +277,24 @@
         return out;
     }
 
-    function applyChop(entry, frac) {
+    function barVisible(entry, nowMs) {
+        if (!entry) return false;
+        const prog = Number(entry.chopProgress) || 0;
+        if (!(prog > 0) || prog >= 1) return false;
+        const last = Number(entry.lastChopAt) || 0;
+        if (!(last > 0)) return false;
+        const now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+        return now - last < BAR_HIDE_MS;
+    }
+
+    function applyChop(entry, frac, nowMs) {
         if (!entry || !(frac > 0)) {
             return { progress: Number(entry?.chopProgress) || 0, felled: false };
         }
         const prev = Number(entry.chopProgress) || 0;
         const next = Math.min(1, prev + frac);
         entry.chopProgress = next;
+        entry.lastChopAt = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
         const felled = next >= 1 - 1e-6;
         if (felled) entry.chopProgress = 1;
         return { progress: entry.chopProgress, felled };
@@ -314,6 +326,7 @@
         HIT_RADIUS,
         AIM_REACH,
         BAR_RANGE,
+        BAR_HIDE_MS,
         chopFraction,
         isChopper,
         chopPercentLine,
@@ -331,6 +344,7 @@
         rollNamedDrops,
         scatterFellPiles,
         applyChop,
+        barVisible,
         fellToStump,
         pickChopFromAttacks
     };

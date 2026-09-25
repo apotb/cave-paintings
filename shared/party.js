@@ -1092,9 +1092,14 @@
         return { rx, ry };
     }
 
-    /** Passersby swim; settlers wade only while soaking hides. */
+    /**
+     * Water is a slowdown, not a wall. Passersby also cross ice.
+     * Settlers wade any time; the soak job still sets `_wadeWater`.
+     */
     function traversesWater(entity) {
-        return entity?.role === "wanderer" || !!entity?._wadeWater;
+        if (!entity) return false;
+        if (entity.role === "wanderer" || entity._wadeWater) return true;
+        return entity.role === "settler" || !!entity.homeSettlementId;
     }
 
     /** Downed / dead / corpse — walk and clicks pass through. */

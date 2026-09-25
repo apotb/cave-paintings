@@ -77,7 +77,9 @@ class Corpse extends Phaser.GameObjects.Sprite {
             diedAt,
             stage
         };
-        chunk.meta.corpses.push(entry);
+        // Sim-owned worlds author the corpse themselves. A local copy in
+        // chunk meta survives dismiss and shows up again on the next join.
+        if (opts.persist !== false) chunk.meta.corpses.push(entry);
         if (!chunk.isLoaded) return null;
         return new Corpse(scene, entry, chunk);
     }

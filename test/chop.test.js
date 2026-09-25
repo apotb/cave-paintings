@@ -56,6 +56,14 @@ test("ringStand stays on the approach side and never on the trunk", () => {
     assert.ok(Math.abs(south.aimX) < 0.01);
 });
 
+test("chop bar hides 3 seconds after the last hit", () => {
+    const entry = { id: "tree", chopProgress: 0 };
+    Chop.applyChop(entry, 0.2, 1000);
+    assert.equal(Chop.barVisible(entry, 1000 + 500), true);
+    assert.equal(Chop.barVisible(entry, 1000 + 4000), false);
+    assert.equal(entry.lastChopAt, 1000);
+});
+
 test("applyChop reaches stump threshold", () => {
     const entry = { id: "tree", chopProgress: 0 };
     let r = Chop.applyChop(entry, 0.4);

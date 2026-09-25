@@ -685,6 +685,34 @@ test("planPath blocked() stays cheap across a 16-tile open field", () => {
     assert.ok(calls < 4000, `blocked() ran ${calls} times`);
 });
 
+test("wall slide holds one direction when the goal is straight across a river", () => {
+    const wallX = 96;
+    const blocked = (x) => x >= wallX;
+    let x = 92;
+    let y = 70;
+    let bank = null;
+    let prev = 0;
+    let flips = 0;
+    for (let i = 0; i < 40; i++) {
+        const dx = 160 - x;
+        const dy = 80 - y;
+        const len = Math.hypot(dx, dy) || 1;
+        const slid = Path.commitWallSlide(
+            { x, y }, dx / len, dy / len, blocked, { bank },
+            { look: 4, goal: { x: 160, y: 80 }, cell: 16, prefer: { x: 1, y: 1 } }
+        );
+        assert.ok(slid, "one axis stays open");
+        bank = slid.bank;
+        assert.ok(x + slid.nx * 4 < wallX, "slide does not step into the river");
+        if (slid.bank && prev && slid.bank.dir !== prev) flips++;
+        if (slid.bank) prev = slid.bank.dir;
+        x += slid.nx * 3;
+        y += slid.ny * 3;
+    }
+    assert.equal(flips, 0);
+    assert.ok(Math.abs(y - 78) > 20, `walked along the bank, y=${y}`);
+});
+
 test("steerToward does not A* just because the pawn overlaps a thing", () => {
     const TS = 16;
     function blocked(x, y) {

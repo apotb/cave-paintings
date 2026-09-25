@@ -1933,6 +1933,22 @@
             && Math.max(x0, x1) > n.x - pad && Math.min(x0, x1) < n.x + n.w + pad
             && Math.max(y0, y1) > n.y - pad && Math.min(y0, y1) < n.y + n.h + pad
         ));
+        // A vertical can slide inside the gutter it already occupies. It must
+        // not jump to the right of the node it is feeding, or the run crosses
+        // that column and enters from the right.
+        const gutterLimits = (x, y0, y1, fromId) => {
+            let minX = -Infinity;
+            let maxX = Infinity;
+            for (const n of nodes) {
+                if (!n || n.id === fromId) continue;
+                if (!_overlap1d(y0, y1, n.y - pad, n.y + n.h + pad)) continue;
+                const left = n.x - pad;
+                const right = n.x + n.w + pad;
+                if (right <= x + 0.5) minX = Math.max(minX, right);
+                else if (left >= x - 0.5) maxX = Math.min(maxX, left);
+            }
+            return { minX, maxX };
+        };
         for (let round = 0; round < 8; round++) {
             const verts = [];
             const hors = [];
@@ -1973,9 +1989,11 @@
                     && _overlap1d(a.y0, a.y1, b.y0, b.y1)
                 ));
                 if (!hit) continue;
+                const lim = gutterLimits(a.x, a.y0, a.y1, a.from);
                 let chosen = null;
                 for (let k = 1; k <= 24 && chosen == null; k++) {
                     for (const x of [a.x - k * gap, a.x + k * gap]) {
+                        if (x < lim.minX || x > lim.maxX) continue;
                         if (hitsNode(x, a.y0, x, a.y1, a.from, a.to)) continue;
                         if (verts.some((b) => (
                             b !== a

@@ -2458,6 +2458,7 @@ class PartySystem {
                 continue;
             }
             if ((pawn.kc || 0) >= P.AUTO_EAT_BELOW) {
+                if (this._eatSittings.has(pawn.pawnId)) pawn._returnFood = true;
                 this._eatSittings.delete(pawn.pawnId);
                 pawn.partyAI?.setEatSeek?.(null);
                 continue;
@@ -2468,6 +2469,7 @@ class PartySystem {
             const sitting = this._eatSittings.get(pawn.pawnId);
             const until = sitting ? P.AUTO_EAT_UNTIL : P.AUTO_EAT_BELOW;
             if (sitting && pawn.kc >= until) {
+                pawn._returnFood = true;
                 this._eatSittings.delete(pawn.pawnId);
                 pawn.partyAI?.setEatSeek?.(null);
                 continue;

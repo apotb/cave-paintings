@@ -988,10 +988,12 @@ function assignMedicineTakes(world, rec, settle, sources, itemId, wantQty) {
     for (const src of sources) {
         if (left <= 0) break;
         if (src.id !== itemId) continue;
+        const key = medicineKey(src);
+        if (key && isSkipped(rec, key)) continue;
         const avail = sourceAvail(world, rec, settle, src, rec.id);
         if (avail <= 0) continue;
         const n = Math.min(avail, left);
-        takes.push({ ...src, qty: n, key: medicineKey(src) });
+        takes.push({ ...src, qty: n, key });
         left -= n;
     }
     return takes;
@@ -1018,11 +1020,29 @@ function pickDoctorBandage(rec) {
     );
 }
 
+function abandonMedicineTake(world, rec, settle, take) {
+    if (!take?.key) return;
+    reservesOf(world, settle).reduce(rec.id, take.key, take.qty);
+    skipJob(rec, take.key);
+}
+
+function medicineWalkStuck(world, rec) {
+    const c = rec.creature || world.creatures?.get?.(rec.id);
+    const ai = c?.ai;
+    return (ai?._jamMs || 0) > 900 || (ai?._stuckMs || 0) > 1800;
+}
+
 function fetchMedicineTake(world, rec, settle, take) {
     if (!take || take.kind === "inv") return null;
     if (take.kind === "drop") {
         const walked = goToDrop(world, rec, take.drop);
-        if (walked) return walked;
+        if (walked) {
+            if (medicineWalkStuck(world, rec)) {
+                abandonMedicineTake(world, rec, settle, take);
+                return halt();
+            }
+            return walked;
+        }
         const before = heldBandageCount(rec, take.id);
         world._tryPickup?.(rec, { dropId: take.drop.uid, quantity: take.qty });
         const got = Math.max(0, heldBandageCount(rec, take.id) - before);
@@ -1030,18 +1050,30 @@ function fetchMedicineTake(world, rec, settle, take) {
             if (take.key) reservesOf(world, settle).reduce(rec.id, take.key, got);
             world._queryGen = (world._queryGen || 0) + 1;
             world._dirtyPawnOwner(rec);
+        } else {
+            abandonMedicineTake(world, rec, settle, take);
         }
         return halt();
     }
     const walked = take.kind === "patient"
         ? goOrWalk(world, rec, take.at)
         : walkToFound(world, rec, take);
-    if (walked) return walked;
+    if (walked) {
+        if (medicineWalkStuck(world, rec)) {
+            abandonMedicineTake(world, rec, settle, take);
+            return halt();
+        }
+        return walked;
+    }
     const piece = takeQty(take, take.qty);
-    if (!piece) return halt();
+    if (!piece) {
+        abandonMedicineTake(world, rec, settle, take);
+        return halt();
+    }
     const got = takeToPawn(world, rec, piece);
     if (!(got > 0)) {
         restorePiece(take, piece);
+        abandonMedicineTake(world, rec, settle, take);
         return halt();
     }
     if (got < (Number(piece.quantity) || 1)) {
@@ -1314,7 +1346,10 @@ function patientNeedsTend(world, pawn) {
 function dropPatient(world, rec, patient, skip = false) {
     if (skip && patient) skipJob(rec, pawnWorkKey(patient, "tend"));
     const settle = findSettle(world, rec);
-    if (settle) reservesOf(world, settle).release(rec.id);
+    if (settle) {
+        reservesOf(world, settle).release(rec.id);
+        claimsFor(world, settle)?.release(rec.id);
+    }
     if (rec?._settlerScan?.patients) {
         const id = patient?.id;
         rec._settlerScan.patients = rec._settlerScan.patients.filter(
@@ -1347,13 +1382,33 @@ function settlerPatients(world, rec, settle, claims) {
     return out;
 }
 
+function fireNeedsLight(fire) {
+    if (!fire) return false;
+    if (Fire.isBurning(fire)) return false;
+    if (fire.id === "campfire" && ((Number(fire.burnRemaining) > 0) || (Number(fire.pitTemp) > 0))) {
+        return false;
+    }
+    return true;
+}
+
+/** Fuel already in the pit, or a stack this fire's filter will accept. */
+function fireCanFuel(world, rec, settle, fire) {
+    if (!fire) return false;
+    if (world._campfireHasFuel(fire)) return true;
+    if (!FuelFilter?.findFuelTake) return false;
+    return !!FuelFilter.findFuelTake(
+        fire.fuelFilter,
+        fuelSources(world, rec, settle),
+        fire,
+        getItem
+    );
+}
+
 function unlitFire(world, rec, settle, claims) {
     if (Research?.techUnlocked && !Research.techUnlocked("fire", researchHolder(world, rec, settle))) return null;
     for (const f of stationsOf(world, settle, "campfire")) {
-        if (f.id === "campfire" && world._campfireHasFuel(f) && (f.burnRemaining > 0 || f.pitTemp > 0)) {
-            continue;
-        }
-        if (f.id === "campfire" && Fire.isBurning(f)) continue;
+        if (!fireNeedsLight(f)) continue;
+        if (!fireCanFuel(world, rec, settle, f)) continue;
         const key = stationKey(f);
         if (claimedByOther(claims, key, rec.id) || isSkipped(rec, key)) continue;
         return f;
@@ -1396,18 +1451,17 @@ function stokeFire(world, rec, settle, claims) {
 
 function lightOpts(world, rec, settle) {
     let hasFirestarter = false;
-    let hasFuel = false;
     const scan = (slots) => {
         for (const s of slots || []) {
             if (Settlement.isFirestarter(s, getItem)) hasFirestarter = true;
-            const meta = s ? getItem(s.id) : null;
-            if (meta?.fuel || FuelFilter?.isFuelStack?.(s, getItem) || s?.id === "stick" || s?.id === "log") {
-                hasFuel = true;
-            }
         }
     };
     scan(rec.inventory);
     for (const b of basketsOf(world, settle)) scan(b.slots);
+    let hasFuel = false;
+    for (const f of stationsOf(world, settle, "campfire")) {
+        if (fireCanFuel(world, rec, settle, f)) hasFuel = true;
+    }
     return {
         hasFirestarter,
         hasFuel,
@@ -1561,6 +1615,7 @@ function cookHasWork(world, rec, settle, fire, bill, opts = {}) {
         if (Settlement.cookOutputReady(getItem, cat, bill)) return true;
         const filled = (fire.simmer || []).filter(Boolean).length;
         if (filled >= (Settlement.SIMMER_MIN_SLOTS || 2) && Settlement.isCookTool(getItem, cat, method)) {
+            if (fireNeedsLight(fire) && !fireCanFuel(world, rec, settle, fire)) return false;
             return true;
         }
         const hasTool = Settlement.isCookTool(getItem, cat, method)
@@ -1575,13 +1630,18 @@ function cookHasWork(world, rec, settle, fire, bill, opts = {}) {
         countInv(rec.inventory);
         countInv(rec.overflow);
         for (const b of basketsOf(world, settle)) countInv(b.slots);
-        return !!(hasTool && stock >= 1);
+        if (!(hasTool && stock >= 1)) return false;
+        if (fireNeedsLight(fire) && !fireCanFuel(world, rec, settle, fire)) return false;
+        return true;
     }
     if (fire.cook && Settlement.cookFitsBill(getItem, fire.cook, bill)) return true;
     const hasTool = Settlement.isCookTool(getItem, fire.catalyst, method)
         || !!findCookTool(world, rec, settle, method);
     const hasFood = !!findCookFood(world, rec, settle, bill, skipInputIds);
-    if (hasTool && hasFood) return true;
+    if (hasTool && hasFood) {
+        if (fireNeedsLight(fire) && !fireCanFuel(world, rec, settle, fire)) return false;
+        return true;
+    }
     if (opts.ignoreLeftover || (skipInputIds && skipInputIds.size)) return false;
     return shouldTakeLeftoverStick(world, rec, settle, fire, bill);
 }
@@ -1949,6 +2009,56 @@ function fetchCookQty(world, rec, settle, found, want) {
     return halt();
 }
 
+function isPreparedStack(stack) {
+    if (!stack?.id) return false;
+    return !!StorageFilter.isPreparedFood?.(stack, getItem(stack.id));
+}
+
+function heldPrepared(rec) {
+    const out = [];
+    const scan = (slots) => {
+        for (let i = 0; i < (slots || []).length; i++) {
+            if (slots[i] && isPreparedStack(slots[i])) out.push({ slots, index: i });
+        }
+    };
+    scan(rec?.inventory);
+    scan(rec?.overflow);
+    return out;
+}
+
+/** Put leftover meals and roasts back so the next job doesn't walk off with them. */
+function returnPreparedFood(world, rec, settle) {
+    const held = heldPrepared(rec);
+    if (!held.length) {
+        rec._returnFood = false;
+        return null;
+    }
+    let target = null;
+    for (const h of held) {
+        target = pickBasket(world, rec, settle, h.slots[h.index]);
+        if (target) break;
+    }
+    if (!target) {
+        rec._returnFood = false;
+        return null;
+    }
+    const walked = goOrWalk(world, rec, target);
+    if (walked) return walked;
+    for (const h of heldPrepared(rec)) {
+        const stack = h.slots[h.index];
+        if (!stack) continue;
+        const b = pickBasket(world, rec, settle, stack);
+        if (!b) continue;
+        if (b !== target && !storageNear(rec, b)) continue;
+        if (!insertInEntry(world, b, stack)) continue;
+        h.slots[h.index] = null;
+        emitEntry(world, b);
+    }
+    rec._returnFood = false;
+    world._dirtyPawnOwner(rec);
+    return null;
+}
+
 function fetchEatStack(world, rec, settle, found) {
     if (!found) return halt();
     if (found.at === rec) return null;
@@ -2098,7 +2208,8 @@ function stationStandFeet(world, rec, c, target) {
 function goOrWalk(world, rec, target) {
     if (!target) return halt();
     const c = rec.creature || world?._ensureSettlerCreature?.(rec);
-    markPathIgnore(rec, c, target, world);
+    if (rec) rec._pathIgnoreUid = null;
+    if (c) c._pathIgnoreUid = null;
     const def = world?._thingDef?.(target.id);
     const paintStand = paintStandOf(target);
     if (paintStand) {
@@ -2133,23 +2244,32 @@ function goOrWalk(world, rec, target) {
         }
         return walkTo(stand.x, stand.y, { openRadius: 0 });
     }
-    // Benches/circles have a real stand tile. Everything else is usable from
-    // INTERACT_TILES. Do not chase a ring pose "just outside the hitbox":
-    // that dest often lands in the next fire/stump and they run back and forth.
-    // If another solid sits on the line, keep walking around it; once the
-    // line is clear or they are within a tile, work.
+    // Baskets and stations stay solid. Work from interact range when the
+    // line is clear. If the thing itself is in the way, stand beside it
+    // instead of walking into the sprite. Already overlapping still counts
+    // so a settler who spawned on a basket can use it, then pathing gets
+    // them out once the job is something else.
     const tx = Number(target.x) || 0;
     const ty = Number(target.y) || 0;
-    const dist = Math.hypot((Number(rec.x) || 0) - tx, (Number(rec.y) || 0) - ty);
-    if (near(rec.x, rec.y, tx, ty)
-        && (!blockedToward(world, rec, c, tx, ty) || dist <= TS)) {
+    const overlapping = !!(c && world?._partyPoseBlocked?.(c, rec.x, rec.y, 0));
+    if (overlapping && near(rec.x, rec.y, tx, ty)) {
         faceToward(rec, tx, ty - 8);
         return null;
     }
-    return walkTo(tx, ty);
+    if (!overlapping && near(rec.x, rec.y, tx, ty)
+        && !blockedToward(world, rec, c, tx, ty, target.uid)) {
+        faceToward(rec, tx, ty - 8);
+        return null;
+    }
+    const pose = stationStandFeet(world, rec, c, target);
+    if (!overlapping && Math.hypot((Number(rec.x) || 0) - pose.feetX, (Number(rec.y) || 0) - pose.feetY) <= 10) {
+        faceToward(rec, tx, ty - 8);
+        return null;
+    }
+    return walkTo(pose.feetX, pose.feetY, { openRadius: 0 });
 }
 
-function blockedToward(world, rec, c, tx, ty) {
+function blockedToward(world, rec, c, tx, ty, ignoreUid) {
     if (!c || typeof world?._partyPoseBlocked !== "function") return false;
     const px = Number(rec.x) || 0;
     const py = Number(rec.y) || 0;
@@ -2157,12 +2277,19 @@ function blockedToward(world, rec, c, tx, ty) {
     const dy = ty - py;
     const dist = Math.hypot(dx, dy);
     if (!(dist > 4)) return false;
+    const prev = c._pathIgnoreUid;
+    if (ignoreUid) c._pathIgnoreUid = ignoreUid;
     const steps = Math.max(2, Math.ceil(dist / 4));
+    let hit = false;
     for (let i = 1; i < steps; i++) {
         const t = i / steps;
-        if (world._partyPoseBlocked(c, px + dx * t, py + dy * t, 2)) return true;
+        if (world._partyPoseBlocked(c, px + dx * t, py + dy * t, 2)) {
+            hit = true;
+            break;
+        }
     }
-    return false;
+    c._pathIgnoreUid = prev || null;
+    return hit;
 }
 
 function knapQualityDurationScale(quality) {
@@ -2537,12 +2664,17 @@ function doMerge(world, rec, settle, job) {
     if (!src || !dest) return halt();
     const walked = goOrWalk(world, rec, src);
     if (walked) return walked;
-    const stack = src.slots?.[job.fromIndex];
-    if (!stack) return halt();
     const key = StorageFilter.mergeClaimKey(job) || job.claimKey;
+    const stack = src.slots?.[job.fromIndex];
+    if (!stack || (job.stackId && stack.id !== job.stackId)) {
+        skipJob(rec, key);
+        endWorkHold(rec);
+        return halt();
+    }
     const took = takeToPawn(world, rec, stack);
     if (!(took > 0)) {
         skipJob(rec, key);
+        endWorkHold(rec);
         return halt();
     }
     const left = Math.max(0, (Number(stack.quantity) || 1) - took);
@@ -2620,6 +2752,10 @@ function doStokeFire(world, rec, settle, fire) {
 function doLightFire(world, rec, settle, fire) {
     if (Research?.techUnlocked && !Research.techUnlocked("fire", researchHolder(world, rec, settle))) return halt();
     if (!fire) return halt();
+    if (!fireCanFuel(world, rec, settle, fire)) {
+        endWorkHold(rec);
+        return halt();
+    }
     const walked = goOrWalk(world, rec, fire);
     if (walked) return walked;
     const facing = faceFire(rec, fire);
@@ -2663,7 +2799,8 @@ function doCook(world, rec, settle, job) {
             return doLightFire(world, rec, settle, fire);
         }
         stokeUntilKeep(world, rec, settle, fire);
-        if (!world._campfireHasFuel(fire)) return halt();
+        // The unit already burning has left the slot. Keep cooking through it.
+        if (!world._campfireHasFuel(fire) && !(Number(fire.burnRemaining) > 0)) return halt();
         if (fire.cook) {
             const walked = goOrWalk(world, rec, fire);
             if (walked) return walked;
@@ -2786,7 +2923,8 @@ function doCook(world, rec, settle, job) {
         return doLightFire(world, rec, settle, fire);
     }
     stokeUntilKeep(world, rec, settle, fire);
-    if (!world._campfireHasFuel(fire)) return halt();
+    // The unit already burning has left the slot. Keep cooking through it.
+    if (!world._campfireHasFuel(fire) && !(Number(fire.burnRemaining) > 0)) return halt();
     const cat = fire.catalyst;
     if (!Settlement.isCookTool(getItem, cat, method)) {
         if (cook) {
@@ -3380,20 +3518,26 @@ function doDoctor(world, rec, settle, patient) {
             rec._settlerScan.patients = [];
             rec._settlerScan.keepBandage = false;
         }
-        dropPatient(world, rec, patient, false);
+        const gaveUp = sources.some((s) => {
+            const key = medicineKey(s);
+            return key && isSkipped(rec, key);
+        });
+        dropPatient(world, rec, patient, gaveUp);
         return halt();
     }
-    const reserveEntries = allTakes
-        .filter((t) => t.key)
-        .map((t) => ({ key: t.key, qty: t.qty }));
-    reservesOf(world, settle).set(rec.id, reserveEntries);
-
     const heldP = heldBandageCount(rec, "poultice");
     const heldC = heldBandageCount(rec, "leaf_cord");
-    if (heldP < plan.poultice || heldC < plan.cord) {
-        const next = allTakes.find((t) => t.kind !== "inv");
-        if (next) return fetchMedicineTake(world, rec, settle, next) || halt();
+    const next = (heldP < plan.poultice || heldC < plan.cord)
+        ? allTakes.find((t) => t.kind !== "inv")
+        : null;
+    if (next) {
+        const reserveEntries = allTakes
+            .filter((t) => t.key)
+            .map((t) => ({ key: t.key, qty: t.qty }));
+        reservesOf(world, settle).set(rec.id, reserveEntries);
+        return fetchMedicineTake(world, rec, settle, next) || halt();
     }
+    reservesOf(world, settle).release(rec.id);
 
     const found = pickDoctorBandage(rec);
     if (!found) {
@@ -3515,12 +3659,14 @@ function doEat(world, rec, settle) {
     const sitting = rec._eatSitting;
     if (sitting && kc >= sitting.until) {
         rec._eatSitting = null;
+        if (heldPrepared(rec).length) rec._returnFood = true;
         return null;
     }
     if (!sitting && kc >= AUTO_EAT) return null;
     const found = pickEatStack(world, rec, settle);
     if (!found) {
         rec._eatSitting = null;
+        if (heldPrepared(rec).length) rec._returnFood = true;
         return null;
     }
     if (found.at !== rec) return fetchEatStack(world, rec, settle, found) || halt();
@@ -3602,6 +3748,7 @@ function tick(world, mob, delta) {
                 const bench = world._findThingByUid(ch.uid)?.entry;
                 if (bench) return haltAtBench(rec, bench);
             }
+            if (ch.kind === "tend") reservesOf(world, settle).release(rec.id);
             return halt();
         }
     }
@@ -3631,6 +3778,7 @@ function tick(world, mob, delta) {
     const claims = claimsFor(world, settle);
     const alive = new Set(settlersOf(world, settle).map((s) => s.id));
     claims?.prune(alive);
+    reservesOf(world, settle).prune(alive);
 
     rec._settlerScanMs = (rec._settlerScanMs || 0) + (Number(delta) || 16);
     if (!rec._settlerScan || rec._settlerScanMs >= SCAN_MS) {
@@ -3670,6 +3818,16 @@ function tick(world, mob, delta) {
             endWorkHold(rec);
             setSettlerAct(rec, mob, rec.eatChannel ? "Eating" : "Getting food");
             return eat;
+        }
+    }
+    if (rec._returnFood) {
+        const back = returnPreparedFood(world, rec, settle);
+        if (back) {
+            const meal = heldPrepared(rec)[0];
+            setSettlerAct(rec, mob, Settlement.actLabel({ type: "stash" }, actCtx(world, rec, {
+                stashStack: meal ? meal.slots[meal.index] : null
+            })));
+            return back;
         }
     }
 
@@ -3724,6 +3882,8 @@ function tick(world, mob, delta) {
             return eat;
         }
     }
+
+    if (plan.type !== "doctor") reservesOf(world, settle).release(rec.id);
 
     if (Settlement.isBusyWork(plan.type)) beginWorkHold(rec, plan);
     else if (!delivering && plan.type !== "chop") endWorkHold(rec);

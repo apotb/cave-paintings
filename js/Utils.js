@@ -418,25 +418,48 @@ function placeUiText(text, x, y, originX = 0, originY = 0) {
     return text;
 }
 
-/** Lock camera scroll to the 1/zoom world grid so sprites share integer screen pixels. */
+/**
+ * Fractional part of Phaser's camera translation.
+ * preRender does floor(view/2 + 0.5) then scales by zoom, so an odd viewport
+ * (typical on a Mac) leaves every quad on a half pixel. Nearest filtering
+ * then draws horizontal bands, and chunk edges miss so water shows through.
+ */
+function cameraPixelFrac(viewSize, zoom) {
+    const z = zoom || 1;
+    const half = (Number(viewSize) || 0) * 0.5;
+    const origin = Math.floor(half + 0.5);
+    const shift = origin - z * half;
+    return shift - Math.floor(shift);
+}
+
+/** Lock camera scroll so world pixels land on whole screen pixels after zoom. */
 function snapCameraScrollToPixels(cam, zoom) {
     const z = zoom || cam?.zoom || 1;
     if (!cam || !z) return cam;
-    cam.scrollX = Math.round(cam.scrollX * z) / z;
-    cam.scrollY = Math.round(cam.scrollY * z) / z;
+    const snap = (scroll, viewSize) => {
+        const frac = cameraPixelFrac(viewSize, z);
+        return (Math.round(scroll * z - frac) + frac) / z;
+    };
+    cam.scrollX = snap(cam.scrollX, cam.width);
+    cam.scrollY = snap(cam.scrollY, cam.height);
     return cam;
 }
 
 /**
- * Snap a world XY onto an integer camera/screen pixel.
+ * Snap a world XY onto the same screen-pixel grid as the camera.
  * Camera must already be placed for this frame.
  */
 function snapWorldToScreenPixel(cam, x, y, zoom) {
     const z = zoom || cam?.zoom || 1;
     if (!cam || !z || !Number.isFinite(x) || !Number.isFinite(y)) return { x, y };
+    const snap = (scroll, world, viewSize) => {
+        const frac = cameraPixelFrac(viewSize, z);
+        const rel = Math.round((world - scroll) * z + frac) - frac;
+        return scroll + rel / z;
+    };
     return {
-        x: cam.scrollX + Math.round((x - cam.scrollX) * z) / z,
-        y: cam.scrollY + Math.round((y - cam.scrollY) * z) / z
+        x: snap(cam.scrollX, x, cam.width),
+        y: snap(cam.scrollY, y, cam.height)
     };
 }
 
@@ -1831,7 +1854,11 @@ function pawnTileBlocked(pawn, x, y) {
     const key = scene._tileKeyAt?.(tx, ty);
     if (!key) return false;
     if (typeof Place !== "undefined" && Place.BLOCKED && Place.BLOCKED[key]) {
-        if ((key === "water" || key === "ice") && typeof Party !== "undefined" && Party.traversesWater?.(pawn)) {
+        if (key === "water" && typeof Party !== "undefined" && Party.traversesWater?.(pawn)) {
+            return false;
+        }
+        if (key === "ice" && pawn?.role === "wanderer"
+            && typeof Party !== "undefined" && Party.traversesWater?.(pawn)) {
             return false;
         }
         return true;

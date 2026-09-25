@@ -868,9 +868,16 @@ class Chunk {
         if (!this.meta.corpses) this.meta.corpses = [];
         // Empty corpses despawn when the last item is taken (CorpsePanel → removeForever)
         const live = this.corpses?.getChildren() || [];
+        const sceneLive = this.scene.corpses?.getChildren?.() || [];
         for (const entry of this.meta.corpses) {
             if (!entry) continue;
-            if (live.some(c => c.entry === entry)) continue;
+            if (live.some(c => c.entry === entry || (entry.id && c.entry?.id === entry.id))) continue;
+            const already = sceneLive.find((c) => c?.active && entry.id && c.entry?.id === entry.id);
+            if (already) {
+                already.chunk = this;
+                this.corpses.add(already);
+                continue;
+            }
             new Corpse(this.scene, entry, this);
         }
         return Promise.resolve();

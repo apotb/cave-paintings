@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { createTestWorld, originChunk } = require("./helpers/simWorld");
+const { createTestWorld, originChunk, chunkKey } = require("./helpers/simWorld");
 const { loadDefs, restoreRng } = require("./helpers/load");
 const Settlement = require("../shared/settlement");
 const Research = require("../shared/research");
@@ -2694,6 +2694,113 @@ test("fuel filter can deny logs so settlers use sticks", () => {
     assert.equal(basket.slots[1]?.quantity, 8);
 });
 
+function unlockFire(world, pawn) {
+    const holder = world._researchHolder(pawn.id) || pawn;
+    holder.techs = holder.techs && typeof holder.techs === "object" ? holder.techs : {};
+    holder.techs.fire = true;
+}
+
+function addColdFire(world, settle, rec, uid, x) {
+    const fire = addStation(world, settle, "campfire", x, rec.y, uid);
+    fire.id = "unlit_campfire";
+    fire.fuel = [null, null];
+    fire.burnRemaining = 0;
+    fire.pitTemp = 20;
+    fire.maxTemp = 20;
+    return fire;
+}
+
+test("cook does not walk to relight when the only fuel is rejected", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    cookOnlyJobs(settle, rec);
+    unlockFire(world, pawn);
+    rec.inventory[0] = { id: "sharp_stick", quantity: 1 };
+    const fire = addColdFire(world, settle, rec, "fire-cold", rec.x + 80);
+    FuelFilter.applyToEntry(fire, { alwaysOn: true, preferLogs: true, offItems: ["stick", "log"] });
+    const basket = addBasket(world, settle, rec.x, rec.y, "fuel-basket");
+    basket.slots[0] = { id: "stick", quantity: 20 };
+    const step = workOnce(world, rec);
+    assert.equal(step?.walkTo, undefined);
+    assert.notEqual(rec._settlerAct, "Lighting a fire");
+    assert.equal(fire.id, "unlit_campfire");
+    assert.equal(basket.slots[0]?.quantity, 20);
+
+    Settlement.addBill(settle, fire.uid, {
+        kind: "cook",
+        method: "stick_roast",
+        allowedIds: ["apple"],
+        paused: false,
+        mode: "forever"
+    });
+    basket.slots[1] = { id: "apple", quantity: 4 };
+    const cooking = workOnce(world, rec);
+    assert.equal(cooking?.walkTo, undefined);
+    assert.notEqual(rec._settlerAct, "Lighting a fire");
+    assert.equal(fire.id, "unlit_campfire");
+    assert.equal(basket.slots[0]?.quantity, 20);
+    assert.equal(basket.slots[1]?.quantity, 4);
+});
+
+test("cook relights a cold campfire that already holds fuel", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    cookOnlyJobs(settle, rec);
+    unlockFire(world, pawn);
+    rec.inventory[0] = { id: "sharp_stick", quantity: 1 };
+    const fire = addColdFire(world, settle, rec, "fire-pit", rec.x + 16);
+    fire.fuel = [{ id: "stick", quantity: 1 }, null];
+    FuelFilter.applyToEntry(fire, { alwaysOn: false, preferLogs: false, offItems: ["stick", "log"] });
+    const basket = addBasket(world, settle, rec.x, rec.y, "fuel-basket");
+    basket.slots[0] = { id: "stick", quantity: 20 };
+    workN(world, rec);
+    assert.equal(fire.id, "campfire");
+    assert.ok(fire.burnRemaining > 0);
+    assert.equal(basket.slots[0]?.quantity, 20);
+});
+
+test("cook lights a cold campfire when allowed fuel is in storage", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    cookOnlyJobs(settle, rec);
+    unlockFire(world, pawn);
+    rec.inventory[0] = { id: "sharp_stick", quantity: 1 };
+    const fire = addColdFire(world, settle, rec, "fire-ok", rec.x + 16);
+    const basket = addBasket(world, settle, rec.x, rec.y, "fuel-basket");
+    basket.slots[0] = { id: "stick", quantity: 20 };
+    workN(world, rec);
+    assert.equal(fire.id, "campfire");
+    assert.ok(fire.burnRemaining > 0);
+    assert.ok((basket.slots[0]?.quantity || 0) < 20);
+});
+
+test("cook at priority 4 loads food while the campfire is burning with an empty fuel slot", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 4, chop: 0, leather: 0, gather: 0, haul: 0, research: 0
+    };
+    const fire = addLitFire(world, settle, rec, "fire-burn");
+    fire.fuel = [null, null];
+    fire.burnRemaining = 25;
+    fire.pitTemp = 500;
+    const basket = addBasket(world, settle, rec.x, rec.y, "food-basket");
+    basket.slots[0] = { id: "apple", quantity: 3 };
+    Settlement.addBill(settle, fire.uid, {
+        recipeId: "roast",
+        allowedIds: ["apple"],
+        paused: false,
+        mode: "forever"
+    });
+    workN(world, rec, 12);
+    assert.equal(fire.cook?.id, "apple");
+    assert.equal(basket.slots[0]?.quantity, 2);
+});
+
 test("setFuelFilter persists on a settlement campfire", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn);
@@ -2895,6 +3002,60 @@ test("player tool break says Your and colors the tool orange", () => {
     const tool = line.segments.find((s) => s.text === "Sharp Stick");
     assert.ok(tool);
     assert.equal(tool.color, "#f0a040");
+});
+
+test("settler stashes into a basket ahead without staying inside it", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        x: 80,
+        y: 128,
+        inventory: [{ id: "stick", quantity: 4 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1 };
+    const basket = addBasket(world, settle, 80, 80);
+    let overlappedMs = 0;
+    let stashed = false;
+    for (let i = 0; i < 400; i++) {
+        world.tick(16);
+        const cc = world._ensureSettlerCreature(rec);
+        if (world._partyPoseBlocked(cc, rec.x, rec.y, 0)) overlappedMs += 16;
+        if ((basket.slots || []).some((s) => s && s.id === "stick" && s.quantity >= 4)) {
+            stashed = true;
+            break;
+        }
+    }
+    assert.equal(
+        stashed,
+        true,
+        `should stash the sticks (at ${rec.x.toFixed(1)},${rec.y.toFixed(1)} act=${rec._settlerAct})`
+    );
+    assert.ok(overlappedMs < 200, `overlapped the basket for ${overlappedMs}ms`);
+    const cc = world._ensureSettlerCreature(rec);
+    assert.equal(
+        world._partyPoseBlocked(cc, rec.x, rec.y, 0),
+        false,
+        "should finish standing outside the basket"
+    );
+});
+
+test("settler clipped into a basket gets pushed out while walking past it", () => {
+    const { world, pawn } = createTestWorld();
+    const chunk = originChunk(world);
+    const { settle, rec } = parkSettler(world, pawn, { x: 80, y: 80, kc: 1600 });
+    settle.stock = { blueberry: 40 };
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0 };
+    addBasket(world, settle, 80, 80);
+    chunk.lootableThings.push({ uid: "bb-past", id: "blueberry_bush", x: 80, y: 16 });
+    let left = false;
+    for (let i = 0; i < 90; i++) {
+        world.tick(16);
+        const cc = world._ensureSettlerCreature(rec);
+        if (!world._partyPoseBlocked(cc, rec.x, rec.y, 0)) {
+            left = true;
+            break;
+        }
+    }
+    assert.equal(left, true, `still inside the basket at ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`);
 });
 
 test("settler rest-walks around a basket instead of running into it", () => {
@@ -3331,6 +3492,43 @@ test("settler takes only the food they need from storage", () => {
     assert.ok(maxHeld <= want, `should not pocket the whole stack (held ${maxHeld}, want ${want})`);
     assert.ok(minBasket >= 12 - want, `basket should keep the rest (min ${minBasket})`);
     assert.equal(countId(rec.inventory, "roasted_human_flesh"), 0);
+});
+
+test("settler puts a leftover meal back before other work", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 800;
+    rec.stomach = 1600;
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0, research: 0
+    };
+    const basket = addBasket(world, settle, rec.x + 48, rec.y, "meal-basket");
+    basket.slots[0] = {
+        id: "coconut_meal",
+        quantity: 1,
+        ingredients: [{ id: "cracked_coconut", quantity: 1 }],
+        food: { kc: 900 }
+    };
+    originChunk(world).lootableThings.push({
+        uid: "sticks-after-meal",
+        id: "sticks",
+        x: rec.x + 80,
+        y: rec.y
+    });
+    let leftover = null;
+    for (let i = 0; i < 400; i++) {
+        world.tick(50);
+        leftover = (basket.slots || []).find((s) => s && s.id === "coconut_meal") || null;
+        const held = (rec.inventory || []).some((s) => s && s.id === "coconut_meal")
+            || (rec.overflow || []).some((s) => s && s.id === "coconut_meal");
+        if (rec.kc >= 1400 && leftover && !held) break;
+    }
+    const held = (rec.inventory || []).some((s) => s && s.id === "coconut_meal")
+        || (rec.overflow || []).some((s) => s && s.id === "coconut_meal");
+    assert.ok(rec.kc >= 1400, `should finish eating (kc=${rec.kc})`);
+    assert.equal(held, false, "leftover meal should leave their pockets");
+    assert.ok(leftover, "leftover meal should be back in the basket");
+    assert.ok((leftover.food?.kc || 0) > 0 && leftover.food.kc < 900, `partial meal kc=${leftover?.food?.kc}`);
 });
 
 test("researcher dumps leftover food before painting even when haul is lower priority", () => {
@@ -3878,5 +4076,168 @@ test("a stoker skips poultice units a doctor has reserved", () => {
     workOnce(world, doctor);
     workN(world, stoker);
     assert.equal(qtyOf(basket.slots, "poultice"), 2);
+});
+
+test("a doctor with full pockets does not keep a basket poultice reserved", () => {
+    const { world, pawn } = createTestWorld();
+    const full = [
+        { id: "stick", quantity: 1 },
+        { id: "stick", quantity: 1 },
+        { id: "stick", quantity: 1 },
+        { id: "stick", quantity: 1 },
+        { id: "stick", quantity: 1 }
+    ];
+    const { settle, rec: doctor } = parkSettler(world, pawn, {
+        id: "doc",
+        inventory: full
+    });
+    doctor.kc = 1600;
+    doctor.overflow = [];
+    doctorOnly(settle, doctor);
+    const patient = addHomeSettler(world, pawn, settle, { id: "pat", x: doctor.x, y: doctor.y });
+    injureCuts(world._ensureSettlerCreature(patient), [{ part: "Left Arm", severity: 8 }]);
+    const basket = addBasket(world, settle, doctor.x, doctor.y, "full-poul");
+    basket.slots[0] = { id: "poultice", quantity: 1 };
+    const other = addHomeSettler(world, pawn, settle, {
+        id: "doc2",
+        x: doctor.x,
+        y: doctor.y,
+        jobs: { doctor: 1, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0 }
+    });
+    other.kc = 1600;
+    workOnce(world, doctor);
+    const key = `basket:${basket.uid}:0`;
+    const reserves = Settlement.medicineReservesFor(world, settle.id);
+    assert.equal(reserves.available(key, 1, other.id), 1);
+    assert.equal(qtyOf(basket.slots, "poultice"), 1);
+    workOnce(world, doctor);
+    workOnce(world, other);
+    assert.equal(qtyOf(other.inventory, "poultice"), 1);
+    assert.equal(qtyOf(basket.slots, "poultice"), 0);
+});
+
+test("a doctor who stops treating releases the basket poultice", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: doctor } = parkSettler(world, pawn, {
+        id: "doc",
+        inventory: [null, null, null, null, null]
+    });
+    doctor.kc = 1600;
+    doctorOnly(settle, doctor);
+    const patient = addHomeSettler(world, pawn, settle, { id: "pat", x: doctor.x, y: doctor.y });
+    injureCuts(world._ensureSettlerCreature(patient), [{ part: "Left Arm", severity: 8 }]);
+    const basket = addBasket(world, settle, doctor.x + 96, doctor.y, "leave-poul");
+    basket.slots[0] = { id: "poultice", quantity: 1 };
+    workOnce(world, doctor);
+    const key = `basket:${basket.uid}:0`;
+    const reserves = Settlement.medicineReservesFor(world, settle.id);
+    assert.equal(reserves.available(key, 1, "someone-else"), 0);
+    settle.jobs[doctor.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1 };
+    workOnce(world, doctor);
+    assert.equal(reserves.available(key, 1, "someone-else"), 1);
+    assert.equal(qtyOf(basket.slots, "poultice"), 1);
+});
+
+test("a hauler who cannot carry a basket stack stops reserving that slot", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        id: "full-haul",
+        inventory: [
+            { id: "apple", quantity: 1 },
+            { id: "apple", quantity: 1 },
+            { id: "apple", quantity: 1 },
+            { id: "apple", quantity: 1 },
+            { id: "apple", quantity: 1 }
+        ]
+    });
+    rec.kc = 1600;
+    rec.overflow = [];
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1 };
+    const apparel = addBasket(world, settle, rec.x, rec.y, "apparel-stuck");
+    const wood = addBasket(world, settle, rec.x, rec.y, "wood-stuck");
+    apparel.storageFilter = {
+        priority: "normal",
+        offCategories: ["materials", "food", "tools", "weapons", "junk", "buildings", "medicine", "art"]
+    };
+    wood.storageFilter = {
+        priority: "normal",
+        offCategories: ["apparel", "food", "tools", "weapons", "junk", "buildings", "medicine", "art"]
+    };
+    apparel.slots[0] = { id: "stick", quantity: 5 };
+    const other = addHomeSettler(world, pawn, settle, {
+        id: "open-haul",
+        x: rec.x,
+        y: rec.y,
+        jobs: { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1 }
+    });
+    other.kc = 1600;
+    workOnce(world, rec);
+    workOnce(world, rec);
+    const claims = world._settlerClaims?.get(settle.id);
+    const held = claims?.held(rec.id) || "";
+    assert.equal(held.startsWith(`merge:${apparel.uid}`), false);
+    workOnce(world, other);
+    const sticksInApparel = (apparel.slots || []).some((s) => s && s.id === "stick");
+    const sticksMoved = (wood.slots || []).some((s) => s && s.id === "stick")
+        || other.inventory.some((s) => s && s.id === "stick");
+    assert.equal(sticksInApparel, false);
+    assert.equal(sticksMoved, true);
+});
+
+test("hauler wades a river to fetch a drop instead of jiggling on the bank", () => {
+    const CS = 8;
+    const { world, pawn } = createTestWorld({ pawn: { x: 40, y: 80, viewChunks: 1 } });
+    const paint = (cx, cy) => {
+        const tiles = Array.from({ length: CS * CS }, () => "grass");
+        for (let ly = 0; ly < CS; ly++) {
+            for (let lx = 0; lx < CS; lx++) {
+                const tx = cx * CS + lx;
+                const ty = cy * CS + ly;
+                if (tx === 6) tiles[lx + ly * CS] = "water";
+            }
+        }
+        return {
+            cx, cy, tiles,
+            things: [], lootableThings: [], drops: [], mobs: [], corpses: [], bloodStains: []
+        };
+    };
+    for (let cx = -2; cx <= 3; cx++) {
+        for (let cy = -2; cy <= 3; cy++) world.chunks.set(chunkKey(cx, cy), paint(cx, cy));
+    }
+    world._ensureChunk = (cx, cy) => {
+        let c = world.chunks.get(chunkKey(cx, cy));
+        if (!c) {
+            c = paint(cx, cy);
+            world.chunks.set(chunkKey(cx, cy), c);
+        }
+        return c;
+    };
+    const { settle, rec } = parkSettler(world, pawn, { x: 40, y: 80 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1, research: 0 };
+    const home = world.chunks.get(chunkKey(0, 0));
+    const basket = { uid: "basket1", id: "wicker_basket", x: 32, y: 80 };
+    Place.ensureStorageEntry(basket, world._thingDef("wicker_basket"));
+    home.things.push(basket);
+    settle.stationUids = ["basket1"];
+    world.chunks.get(chunkKey(1, 0)).drops.push({
+        uid: "apple1", id: "apple", quantity: 1, x: 160, y: 80, lifeMs: 9e9
+    });
+    let prevY = rec.y;
+    let dir = 0;
+    let flips = 0;
+    for (let i = 0; i < 200; i++) {
+        world.tick(50);
+        const step = rec.y - prevY;
+        const sign = step > 0.4 ? 1 : (step < -0.4 ? -1 : 0);
+        if (sign && dir && sign !== dir) flips++;
+        if (sign) dir = sign;
+        prevY = rec.y;
+        if ((rec.inventory || []).some((s) => s && s.id === "apple")) break;
+    }
+    assert.ok(
+        (rec.inventory || []).some((s) => s && s.id === "apple"),
+        `settler should wade the river and pick up the apple, ended at ${rec.x},${rec.y}`
+    );
+    assert.ok(flips < 8, `river approach reversed ${flips} times`);
 });
 

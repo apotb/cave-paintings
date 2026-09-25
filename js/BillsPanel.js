@@ -796,7 +796,7 @@ class BillsPanel {
         const S = this._S();
         if (!bill || !S) return;
         const current = S.billTitle(bill) || "Bill";
-        const max = S.NAME_MAX || 24;
+        const max = S.NAME_MAX || 20;
         this.scene.settlementSys?._showNamePrompt?.((name) => {
             const nextName = String(name || "").trim().slice(0, max);
             this._commit(this._list().map((b) => (

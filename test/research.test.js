@@ -800,6 +800,45 @@ test("tree layout is left-to-right with prereq edges", () => {
     });
     assert.equal(throughBurial, false);
 
+    const panelLayout = Research.treeLayout({
+        boxW: 164, boxH: 52, colGap: 72, rowGap: 18, treeGap: 40, pad: 16
+    });
+    const panelRouted = Research.layoutEdgePaths(panelLayout, { inset: 20, laneGap: 8, stroke: 2 });
+    const crossesNode = (path, node, fromId, toId) => {
+        if (!node || node.id === fromId || node.id === toId) return false;
+        for (let i = 1; i < path.length; i++) {
+            const a = path[i - 1];
+            const b = path[i];
+            const left = Math.min(a[0], b[0]);
+            const right = Math.max(a[0], b[0]);
+            const top = Math.min(a[1], b[1]);
+            const bottom = Math.max(a[1], b[1]);
+            if (right > node.x + 2 && left < node.x + node.w - 2
+                && bottom > node.y + 2 && top < node.y + node.h - 2) return true;
+        }
+        return false;
+    };
+    for (const r of panelRouted) {
+        const dest = panelLayout.byId[r.to];
+        const path = r.path || [];
+        assert.ok(path.length >= 2, `${r.from}->${r.to}`);
+        const prev = path[path.length - 2];
+        const last = path[path.length - 1];
+        assert.ok(
+            prev[0] < dest.x + 4,
+            `${r.from}->${r.to} should approach from the left, prev x=${prev[0]} dest x=${dest.x}`
+        );
+        assert.ok(Math.abs(prev[1] - last[1]) < 1, `${r.from}->${r.to} should enter horizontally`);
+        assert.ok(last[0] < dest.x + dest.w * 0.5, `${r.from}->${r.to} should meet the left side`);
+        for (const node of panelLayout.nodes) {
+            assert.equal(
+                crossesNode(path, node, r.from, r.to),
+                false,
+                `${r.from}->${r.to} crosses ${node.id}`
+            );
+        }
+    }
+
     const routed = Research.layoutEdgePaths(
         Research.treeLayout({
             boxW: 148, boxH: 52, colGap: 72, rowGap: 18, treeGap: 40, pad: 16

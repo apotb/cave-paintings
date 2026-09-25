@@ -16,7 +16,7 @@
     const IDLE_ROAM_MAX = 4.6;
     const IDLE_STAND_MIN_MS = 2000;
     const IDLE_STAND_MAX_MS = 6000;
-    const NAME_MAX = 24;
+    const NAME_MAX = 20;
     function researchMod() {
         if (typeof Research !== "undefined") return Research;
         try {

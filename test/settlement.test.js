@@ -8,6 +8,12 @@ const { loadDefs, DataStore } = require("./helpers/load");
 
 loadDefs();
 
+test("settlement names clamp to 20 characters", () => {
+    assert.equal(Settlement.NAME_MAX, 20);
+    assert.equal(Settlement.clampName("x".repeat(40)).length, 20);
+    assert.equal(Settlement.clampName("  Camp  "), "Camp");
+});
+
 test("planStorageDeposits fills matching stacks then empty slots", () => {
     const slots = [
         { id: "leaf", quantity: 90 },
@@ -306,8 +312,8 @@ test("soak bill has no work without water; prefers nearest water", () => {
     assert.equal(dry, null);
 });
 
-test("settlers only traverse water while wading to soak", () => {
-    assert.equal(Party.traversesWater({ role: "settler" }), false);
+test("settlers wade water; it is a slowdown rather than a wall", () => {
+    assert.equal(Party.traversesWater({ role: "settler" }), true);
     assert.equal(Party.traversesWater({ role: "settler", _wadeWater: true }), true);
     assert.equal(Party.traversesWater({ role: "wanderer" }), true);
     assert.equal(Party.traversesWater({ role: "companion" }), false);
