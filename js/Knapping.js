@@ -477,6 +477,108 @@ const Knapping = {
         return { w: maxX - minX + 1, h: maxY - minY + 1, minX, minY, maxX, maxY };
     },
 
+    /**
+     * Length and width along the stone's long axis, so a diagonal blade
+     * counts as long and thin. Axis-aligned shapes stay on the AABB path.
+     * @returns {{ length: number, width: number, elong: number, taper: number, fork: number }|null}
+     */
+    _orientedExtent(grid) {
+        const cells = [];
+        const n = this.SIZE;
+        for (let y = 0; y < n; y++) {
+            for (let x = 0; x < n; x++) {
+                if (grid[y][x]) cells.push([x + 0.5, y + 0.5]);
+            }
+        }
+        if (cells.length < 2) return null;
+
+        let cx = 0;
+        let cy = 0;
+        for (const [x, y] of cells) {
+            cx += x;
+            cy += y;
+        }
+        cx /= cells.length;
+        cy /= cells.length;
+
+        let xx = 0;
+        let yy = 0;
+        let xy = 0;
+        for (const [x, y] of cells) {
+            const dx = x - cx;
+            const dy = y - cy;
+            xx += dx * dx;
+            yy += dy * dy;
+            xy += dx * dy;
+        }
+        const ang = 0.5 * Math.atan2(2 * xy, xx - yy);
+        const ux = Math.cos(ang);
+        const uy = Math.sin(ang);
+
+        let minU = Infinity;
+        let maxU = -Infinity;
+        let minV = Infinity;
+        let maxV = -Infinity;
+        const proj = [];
+        for (const [x, y] of cells) {
+            const dx = x - cx;
+            const dy = y - cy;
+            const u = dx * ux + dy * uy;
+            const v = -dx * uy + dy * ux;
+            if (u < minU) minU = u;
+            if (u > maxU) maxU = u;
+            if (v < minV) minV = v;
+            if (v > maxV) maxV = v;
+            proj.push([u, v]);
+        }
+
+        const length = (maxU - minU) + 1;
+        const width = (maxV - minV) + 1;
+        const bins = Math.max(1, Math.round(maxU - minU) + 1);
+        const slices = Array.from({ length: bins }, () => []);
+        const span = Math.max(1e-6, maxU - minU);
+        for (const [u, v] of proj) {
+            let i = Math.round(((u - minU) / span) * (bins - 1));
+            if (i < 0) i = 0;
+            else if (i >= bins) i = bins - 1;
+            slices[i].push(v);
+        }
+
+        const q = Math.max(1, Math.floor(bins / 4));
+        let left = 0;
+        let right = 0;
+        for (let i = 0; i < q; i++) left += slices[i].length;
+        for (let i = bins - q; i < bins; i++) right += slices[i].length;
+        left /= q;
+        right /= q;
+        const tipW = Math.min(left, right);
+        const bodyW = Math.max(left, right);
+        const taper = bodyW < 1.5 ? 0 : Math.max(0, Math.min(1, 1 - tipW / bodyW));
+
+        let multi = 0;
+        let total = 0;
+        for (const vs of slices) {
+            if (!vs.length) continue;
+            vs.sort((a, b) => a - b);
+            let runs = 1;
+            for (let i = 1; i < vs.length; i++) {
+                // Centers 1 apart are neighbors. A diagonal step is ~1.4.
+                // One empty cell between them is 2, same split as an upright row.
+                if (vs[i] - vs[i - 1] >= 2) runs++;
+            }
+            total++;
+            if (runs >= 2) multi++;
+        }
+
+        return {
+            length,
+            width,
+            elong: length / Math.max(1, width),
+            taper,
+            fork: total ? multi / total : 0
+        };
+    },
+
     _distToEdge(grid) {
         const n = this.SIZE;
         const dist = Array.from({ length: n }, () => new Array(n).fill(Infinity));
@@ -677,21 +779,35 @@ const Knapping = {
     classify(grid, material = "pebble", unlocked = null) {
         const mass = this.mass(grid);
         const box = this._aabb(grid);
-        const elong = Math.max(box.w, box.h) / Math.max(1, Math.min(box.w, box.h));
+        const aabbMin = Math.min(box.w, box.h);
+        const aabbMax = Math.max(box.w, box.h);
+        let elong = aabbMax / Math.max(1, aabbMin);
+        let minSide = aabbMin;
+        let maxSide = aabbMax;
         const tip = this._tipScore(grid);
         const edge = this._edgeScore(grid);
         const thickness = this._distToEdge(grid);
-        const taper = this._taperScore(grid);
-        const fork = this._forkRatio(grid);
+        let taper = this._taperScore(grid);
+        let fork = this._forkRatio(grid);
         const fill = mass / Math.max(1, box.w * box.h);
         const matMult = material === "flint" ? 1.25 : 1;
         const allow = (cls) => !unlocked || !!unlocked[cls];
 
+        // Diagonal (and other tilted) silhouettes: the upright box looks square.
+        // Only switch when the long-axis view is clearly longer, so upright
+        // knives and choppers keep the same scores.
+        const axis = this._orientedExtent(grid);
+        if (axis && axis.elong > elong + 0.15) {
+            elong = axis.elong;
+            minSide = axis.width;
+            maxSide = axis.length;
+            taper = axis.taper;
+            fork = axis.fork;
+        }
+
         // Order matters. Awl before spear/knife so butt+spike isn't stolen.
         // Spear = long fairly even shaft; knife = tapered blade with body.
         let toolClass = "blank";
-        const minSide = Math.min(box.w, box.h);
-        const maxSide = Math.max(box.w, box.h);
         if (
             allow("awl")
             // Small pierce spike (T / butt+point). AABB taper misses stems off the long axis.
