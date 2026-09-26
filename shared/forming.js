@@ -604,7 +604,7 @@
         return stack;
     }
 
-    /** Finished sculptures (not lumps or raw clay) can be placed in the world. */
+    /** Defined sculptures get a class name. A first-finish lump stays unnamed. */
     function canPlaceClass(cls) {
         const s = sanitizeClass(cls);
         return s === "animal" || s === "human" || s === "deity";

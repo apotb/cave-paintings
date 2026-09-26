@@ -20,10 +20,10 @@
         return !!(thingDef?.figurine || thingDef?.id === "clay_figurine" || entry?.id === "clay_figurine");
     }
 
-    /** Animal / human / deity figurines only — lumps stay in-hand. */
+    /** Sculptures and unclassified lumps. Raw clay has no figurine stack. */
     function canPlaceFigurine(held) {
         const cls = String(held?.formClass || "");
-        return cls === "animal" || cls === "human" || cls === "deity";
+        return cls === "" || cls === "lump" || cls === "animal" || cls === "human" || cls === "deity";
     }
 
     function heldPlaceThingId(itemDef, held) {

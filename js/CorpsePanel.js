@@ -21,6 +21,34 @@ class CorpsePanel {
             .setStrokeStyle(2, 0x6b5344)
             .setInteractive({ cursor: "default" });
         this.container.add(this.bg);
+        // Left-click on the panel chrome (not a slot) closes. The background
+        // sits above the body and was eating the second click.
+        this.bg.on("pointerdown", (pointer) => {
+            if (!pointer || pointer.rightButtonDown?.()) return;
+            if (!this.visible) return;
+            this.close();
+        });
+        // Game-object handlers run first. This sees the full hit list, so a
+        // body click still closes when some other sprite is the top target.
+        scene.input.on("pointerdown", (pointer) => {
+            if (!this._armedToClose || !this.visible || !this.corpse) return;
+            if (!pointer || pointer.rightButtonDown?.()) return;
+            if (this._pointerOnSlot(pointer)) return;
+            if (this.scene.healthPanel?.containsPointer?.(pointer)) return;
+            if (this.scene.equipmentPanel?.containsPointer?.(pointer)) return;
+            if (this.scene.partyPanel?.containsPointer?.(pointer)) return;
+            // The cursor tip is already on this body. Close even if a higher
+            // sprite (loot chrome, a stacked copy) takes the native click.
+            const tip = this.scene._tooltipTarget;
+            const hover = this.scene._hoverTarget;
+            if (tip === this.corpse || hover === this.corpse || this.sameCorpse(tip) || this.sameCorpse(hover)) {
+                this.close();
+                return;
+            }
+            if (this.scene.pointerOverWorldUi?.(pointer)) return;
+            if (!this._pointerOnOpenCorpse(pointer)) return;
+            this.close();
+        });
 
         this.slotsLayer = scene.add.container(0, 0);
         this.container.add(this.slotsLayer);
@@ -39,16 +67,68 @@ class CorpsePanel {
         scene.input.on("pointerup", (pointer) => this._onPointerUp(pointer));
     }
 
+    /** Same sprite, same entry id, or a stacked respawn at the same point. */
+    sameCorpse(corpse) {
+        if (!this.corpse || !corpse) return false;
+        if (this.corpse === corpse) return true;
+        const a = this.corpse.entry?.id;
+        const b = corpse.entry?.id;
+        if (a && b && a === b) return true;
+        const dx = (Number(this.corpse.x) || 0) - (Number(corpse.x) || 0);
+        const dy = (Number(this.corpse.y) || 0) - (Number(corpse.y) || 0);
+        return dx * dx + dy * dy < 0.25;
+    }
+
+    /** World point on the lying body (not the loot grid above it). */
+    _pointOnCorpse(wpt) {
+        const corpse = this.corpse;
+        if (!corpse?.active || !wpt) return false;
+        const b = corpse.getBounds?.();
+        return !!(b && Phaser.Geom.Rectangle.Contains(b, wpt.x, wpt.y));
+    }
+
+    _worldPoint(pointer) {
+        const cam = this.scene.cameras?.main;
+        if (!cam || !pointer) return null;
+        return cam.getWorldPoint(pointer.x, pointer.y);
+    }
+
+    /** True when the pointer is over a loot slot, so take/drag still wins. */
+    _pointerOnSlot(pointer) {
+        const wpt = this._worldPoint(pointer);
+        if (!wpt) return false;
+        for (const view of this.slotViews) {
+            const b = view.slot?.getBounds?.();
+            if (b && Phaser.Geom.Rectangle.Contains(b, wpt.x, wpt.y)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Body click while the menu is already open. Uses the full hit list so a
+     * higher sprite (panel chrome, a stacked copy) cannot hide the corpse.
+     */
+    _pointerOnOpenCorpse(pointer) {
+        const hits = this.scene.input?.hitTestPointer?.(pointer) || [];
+        if (hits.includes(this.corpse)) return true;
+        for (const hit of hits) {
+            if (hit !== this.corpse && this.sameCorpse(hit)) return true;
+        }
+        return this._pointOnCorpse(this._worldPoint(pointer));
+    }
+
     toggle(corpse) {
-        if (this.visible && this.corpse === corpse) this.close();
+        if (this.visible && this.sameCorpse(corpse)) this.close();
         else this.open(corpse);
     }
 
     update() {
-        if (!this.visible || !this.corpse) return;
-        if (!this.corpse.active || !this.corpse.inRange?.()) {
+        if (this.visible && this.corpse && (!this.corpse.active || !this.corpse.inRange?.())) {
             this.close();
         }
+        // Sampled after input, so a click that just opened the menu does not
+        // also count as the click that closes it.
+        this._armedToClose = this.visible;
     }
 
     open(corpse) {
@@ -654,6 +734,8 @@ class CorpsePanel {
         const cam = this.scene.cameras?.main;
         if (!cam) return false;
         const wpt = cam.getWorldPoint(pointer.x, pointer.y);
+        // The body stays clickable through the panel so toggle-close still runs.
+        if (this._pointOnCorpse(wpt)) return false;
         return Phaser.Geom.Rectangle.Contains(this.bg.getBounds(), wpt.x, wpt.y);
     }
 

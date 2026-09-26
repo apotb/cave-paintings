@@ -1374,7 +1374,9 @@ class PartyAI {
         if (this.assistTarget) {
             this._adoptClaim(settle, null);
             if (pawn._eatChannel) pawn._eatChannel = null;
-            this._settlerAct = "Fighting";
+            const who = this.assistTarget.displayName?.() || this.assistTarget.name || "";
+            this._settlerAct = String(who).trim() ? `Attacking ${String(who).trim()}` : "Attacking";
+            pawn._settlerAct = this._settlerAct;
             this._tickCombat(delta, ts);
             return;
         }

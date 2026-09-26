@@ -700,10 +700,23 @@ test("dedicated MP pins settler chunks while owner is offline", () => {
     assert.ok(keys.includes("0,0"));
 });
 
-test("other players cannot open settlement UI (owner-only atPoint)", () => {
+test("YOU settlement merge keeps another player's camp", () => {
+    const theirs = Settlement.createSettlement({ ownerId: "other", x: 0, y: 0, name: "Theirs" });
+    const mine = Settlement.createSettlement({ ownerId: "me", x: 800, y: 0, name: "Mine" });
+    const renamed = { ...mine, name: "Renamed" };
+    const merged = Settlement.mergeOwned([theirs, mine], [renamed], "me");
+    assert.equal(merged.length, 2);
+    assert.equal(merged.find((s) => s.ownerId === "other")?.name, "Theirs");
+    assert.equal(merged.find((s) => s.id === mine.id)?.name, "Renamed");
+    const dropped = Settlement.mergeOwned(merged, [], "me");
+    assert.deepEqual(dropped.map((s) => s.ownerId), ["other"]);
+});
+
+test("owner-filtered atPoint ignores another player's camp", () => {
     const list = [Settlement.createSettlement({ ownerId: "owner", x: 0, y: 0 })];
     assert.ok(Settlement.atPoint(list, 0, 0, 16, "owner"));
     assert.equal(Settlement.atPoint(list, 0, 0, 16, "intruder"), null);
+    assert.equal(Settlement.atPoint(list, 0, 0, 16)?.ownerId, "owner");
 });
 
 test("idle home stand does not overlap the stone hitbox", () => {

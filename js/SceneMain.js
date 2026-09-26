@@ -736,11 +736,8 @@ class SceneMain extends SceneBase {
         if (you.party || you.controlId) {
             this.partySys?.applyJoinParty?.(you, this.character);
         }
-        if (you.settlements && this.settlementSys) {
-            this.settlementSys.loadFromWorld({
-                settlements: you.settlements,
-                settlers: you.settlers || []
-            });
+        if (Array.isArray(you.settlements) && this.settlementSys) {
+            this.settlementSys.mergeOwnedSettlements(you.settlements);
         }
         if (Array.isArray(you.settlers)) {
             for (const row of you.settlers) {
@@ -1184,8 +1181,7 @@ class SceneMain extends SceneBase {
         const sys = this.settlementSys;
         if (!sys) return;
         if (Array.isArray(snap.settlements)) {
-            const mine = snap.settlements.filter((s) => s.ownerId === sys.ownerId());
-            if (mine.length || sys.list.length) sys.list = mine.map((s) =>
+            sys.list = snap.settlements.map((s) =>
                 (typeof Settlement !== "undefined" ? Settlement.ensureSettlement(s) : s)
             );
             sys.rebindOpenPanels?.();
@@ -1298,6 +1294,18 @@ class SceneMain extends SceneBase {
             this._applyPawnNetAttack(pawn, row);
             if (row.ownerId && row.ownerId !== oid) {
                 pawn.faction = `party:${row.ownerId}`;
+            }
+            const youName = this.player?.pawnName
+                || this.player?.displayName?.()
+                || this.playerName
+                || "";
+            const attackingYou = typeof row.activity === "string"
+                && !!youName
+                && row.activity === `Attacking ${youName}`;
+            const hostile = !!row.hostile || attackingYou;
+            if (pawn.hostile !== hostile) {
+                pawn.hostile = hostile;
+                pawn.syncNameLabel?.();
             }
         }
         this.settlers = (this.settlers || []).filter((p) => {
@@ -5240,20 +5248,31 @@ class SceneMain extends SceneBase {
                 );
             }
 
-            // Corpse loot panel (world-space) blocks behind it
+            // Corpse loot panel (world-space). Slots keep their tips; the body
+            // underneath must stay the hover target so a second click still
+            // reads "(corpse)" and toggles the menu shut.
             const corpseP = this.corpsePanel;
             if (corpseP?.visible && corpseP.bg) {
                 const wpt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
-                const overCorpse = Phaser.Geom.Rectangle.Contains(
+                const overPanel = Phaser.Geom.Rectangle.Contains(
                     corpseP.bg.getBounds(), wpt.x, wpt.y
                 );
-                if (overCorpse) {
-                    for (let i = hits.length - 1; i >= 0; i--) {
-                        const obj = hits[i];
-                        if (!obj?.active || !obj.input?.enabled) continue;
-                        if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
-                        if (this._isUnderCorpsePanel(obj)) return obj;
+                const body = corpseP.corpse;
+                const bodyBounds = body?.active ? body.getBounds?.() : null;
+                const overBody = !!(bodyBounds && Phaser.Geom.Rectangle.Contains(
+                    bodyBounds, wpt.x, wpt.y
+                ));
+                if (overPanel || overBody) {
+                    if (overPanel) {
+                        for (let i = hits.length - 1; i >= 0; i--) {
+                            const obj = hits[i];
+                            if (!obj?.active || !obj.input?.enabled) continue;
+                            if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
+                            if (obj === corpseP.bg) continue;
+                            if (this._isUnderCorpsePanel(obj)) return obj;
+                        }
                     }
+                    if (overBody) return body;
                     return corpseP.bg;
                 }
             }

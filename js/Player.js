@@ -455,9 +455,17 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             return;
         }
         const name = this.displayName();
-        if (label.text !== name) label.setText(name);
+        const textChanged = label.text !== name;
+        if (textChanged) label.setText(name);
         const color = this.scene.partySys?.nameColorFor?.(this) || "#ffffff";
-        if (label.style?.color !== color) label.setColor(color);
+        // Font rebuilds repaint from the last fill. style.color can already
+        // match while the glyphs are still the previous color, so track it.
+        const scaleKey = this._nameLabelScaleKey || "";
+        if (textChanged || this._nameFill !== color || this._nameFillKey !== scaleKey) {
+            label.setColor(color);
+            this._nameFill = color;
+            this._nameFillKey = scaleKey;
+        }
         this._recruitTip?.setVisible(false);
         this._syncNameCrown();
         this._syncNameHudPos();

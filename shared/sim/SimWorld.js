@@ -1724,6 +1724,7 @@ class SimWorld {
             activity: (typeof s._settlerAct === "string" && s._settlerAct)
                 ? s._settlerAct
                 : null,
+            hostile: this._settlerCampHostile(s),
             kc: Number(s.kc) || 0,
             saturation: Number(s.saturation) || 0,
             stomach: Number(s.stomach) || 1600,
@@ -4221,6 +4222,8 @@ class SimWorld {
         }
         const settle = (this.settlements || []).find((s) => s && s.id === mob.homeSettlementId);
         if (!settle) return null;
+        const raider = this._settlementRaider(settle, mob);
+        if (raider) return raider;
         const duel = this._duelMap?.get(Party.pawnIdOf(mob) || mob.id);
         if (duel && !duel.isBodyDead?.() && this._hostileInSettlement(settle, duel, mob)) {
             return duel;
@@ -4255,6 +4258,118 @@ class SimWorld {
             consider(this._ensureWandererCreature(w) || w);
         }
         return best;
+    }
+
+    /** Name shown while a settler is chasing someone. */
+    _attackingAct(target) {
+        const name = target?.displayName?.() || target?.name || "";
+        const who = String(name).trim();
+        return who ? `Attacking ${who}` : "Attacking";
+    }
+
+    /** Different owners always count, even if a faction string was rewritten. */
+    _ownersDiffer(a, b) {
+        const ao = Party.ownerIdOf?.(a) || a?.ownerId || null;
+        const bo = Party.ownerIdOf?.(b) || b?.ownerId || null;
+        return !!(ao && bo && ao !== bo);
+    }
+
+    _pointInSettlement(settle, x, y, padTiles = 0) {
+        if (!settle || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+        const base = Number(settle.radiusTiles) > 0
+            ? Number(settle.radiusTiles)
+            : (Settlement.RADIUS_TILES || 32);
+        const r = base + (Number(padTiles) || 0);
+        return Math.hypot(x - Number(settle.x) || 0, y - Number(settle.y) || 0) / TS <= r + 0.05;
+    }
+
+    /**
+     * Feet the camp should measure. The creature pose can lag the session
+     * the player is actually standing on.
+     */
+    _attackerInside(settle, ent) {
+        if (!ent || !settle) return false;
+        const pts = [];
+        if (Number.isFinite(ent.x) && Number.isFinite(ent.y)) pts.push(ent.x, ent.y);
+        const session = this.players.get(ent.id)
+            || (ent.ownerId ? this.players.get(ent.ownerId) : null);
+        if (session && !session.dead) {
+            const controlId = session.controlId || session.id;
+            if (session.id === ent.id || controlId === ent.id) {
+                if (Number.isFinite(session.x) && Number.isFinite(session.y)) {
+                    pts.push(session.x, session.y);
+                }
+            } else {
+                const mem = (session.party || []).find((m) => m && m.id === ent.id);
+                if (mem && Number.isFinite(mem.x) && Number.isFinite(mem.y)) {
+                    pts.push(mem.x, mem.y);
+                }
+            }
+        }
+        // A swing can land a step past the circle while you're still on the camp.
+        for (let i = 0; i < pts.length; i += 2) {
+            if (this._pointInSettlement(settle, pts[i], pts[i + 1], 1.25)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * A hit on one settler turns the whole camp onto that attacker.
+     * They keep chasing only while the attacker stays inside the settlement.
+     */
+    _aggroSettlement(victim, attacker) {
+        if (!victim || !attacker || attacker === victim) return;
+        if (attacker.isBodyDead?.() || attacker._dead || attacker.dead) return;
+        if (!this._ownersDiffer(victim, attacker) && Party.sameFaction?.(victim, attacker)) return;
+        const homeId = victim.homeSettlementId
+            || this._findOwnedPawn(victim.id)?.homeSettlementId;
+        if (!homeId) return;
+        const settle = (this.settlements || []).find((s) => s && s.id === homeId);
+        if (!settle) return;
+        if (!attacker.id) return;
+        if (!this._settlementAggro) this._settlementAggro = new Map();
+        this._settlementAggro.set(settle.id, attacker.id);
+        const label = this._attackingAct(attacker);
+        for (const rec of this.settlers || []) {
+            if (!rec || rec.dead || rec.homeSettlementId !== settle.id) continue;
+            const cc = this._ensureSettlerCreature(rec);
+            if (!cc || cc.isBodyDead?.()) continue;
+            if (typeof Sleep !== "undefined" && Sleep.capableToFight && !Sleep.capableToFight(cc)) {
+                continue;
+            }
+            SettlerWork.interruptForCombat(this, rec);
+            cc.ai?.setAssist?.(attacker);
+            cc._settlerAct = label;
+            rec._settlerAct = label;
+        }
+    }
+
+    /** Camp is chasing someone, so their names read as enemies. */
+    _settlerCampHostile(rec) {
+        const id = rec?.homeSettlementId && this._settlementAggro?.get(rec.homeSettlementId);
+        if (!id) return false;
+        const ent = this.creatures.get(id);
+        return !!(ent && !ent.isBodyDead?.() && !ent._dead && !ent.dead);
+    }
+
+    /** Attacker this camp is chasing, or null once they leave or die. */
+    _settlementRaider(settle, settler) {
+        const id = this._settlementAggro?.get(settle?.id);
+        if (!id) return null;
+        const ent = this.creatures.get(id)
+            || this._ensurePlayerCreature(this.players.get(id));
+        const friendly = ent && !this._ownersDiffer(settler, ent) && Party.sameFaction?.(settler, ent);
+        const drop = !ent
+            || ent.isBodyDead?.()
+            || ent._dead
+            || ent.dead
+            || friendly
+            || !this._attackerInside(settle, ent);
+        if (drop) {
+            this._settlementAggro.delete(settle.id);
+            return null;
+        }
+        return ent;
     }
 
     /**
@@ -8912,6 +9027,8 @@ class SimWorld {
             this._occupySlot(session, pawn, entry, spec.slot);
             return;
         }
+        // No session: the owner is offline. Camp settlers still walk themselves.
+        if (!session) return;
         const controlId = session.controlId || session.id;
         if (pawn.id === controlId) return;
         // Uncontrolled rest-walk is PartyAI._walkToward (same as SP).
@@ -8919,6 +9036,7 @@ class SimWorld {
 
     _tickSleepWalks(dtMs) {
         const dt = dtMs / 1000;
+        const stepped = new Set();
         for (const session of this.players.values()) {
             if (!session.connected) continue;
             const traveling = new Set(
@@ -8926,6 +9044,7 @@ class SimWorld {
             );
             for (const pawn of this._ownedPawns(session)) {
                 if (!pawn || pawn.dead) continue;
+                stepped.add(pawn.id);
                 if (pawn._restWalk) this._stepRestWalk(session, pawn, dt);
                 else if (pawn._resting) {
                     pawn.vx = 0;
@@ -8944,6 +9063,24 @@ class SimWorld {
                     if (!assist && !this._shouldDelaySleep(session, pawn)) {
                         this._tryReturnToBed(session, pawn);
                     }
+                }
+            }
+        }
+        // Camp settlers keep walking to bed after their owner logs off.
+        for (const rec of this.settlers || []) {
+            if (!rec || rec.dead || stepped.has(rec.id)) continue;
+            if (rec._restWalk) this._stepRestWalk(null, rec, dt);
+            else if (rec._resting || rec.resting) {
+                rec.vx = 0;
+                rec.vy = 0;
+                const c = rec.creature || this.creatures.get(rec.id);
+                if (c) {
+                    c.x = rec.x;
+                    c.y = rec.y;
+                    c.vx = 0;
+                    c.vy = 0;
+                    c.setDesiredVel?.(0, 0);
+                    c._resting = true;
                 }
             }
         }
@@ -9119,6 +9256,9 @@ class SimWorld {
         if (!attacker || attacker === victimCreature) return;
         const victim = this._findOwnedPawn(victimCreature.id);
         if (!victim) return;
+        if (victim.homeSettlementId || victimCreature.homeSettlementId || victimCreature.role === "settler") {
+            this._aggroSettlement(victimCreature, attacker);
+        }
         const session = this._sessionOfPawn(victim);
         this._wakeAbleResters(session, attacker, victim);
         this._partySetAssist(session, attacker);

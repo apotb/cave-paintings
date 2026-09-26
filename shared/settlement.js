@@ -1190,6 +1190,24 @@
         return (list || []).filter((s) => s && s.ownerId === ownerId);
     }
 
+    /**
+     * Fold a YOU payload's camps (this player only) into the client list.
+     * Camps owned by someone else stay until the next world snapshot.
+     */
+    function mergeOwned(list, owned, ownerId) {
+        const incoming = (owned || []).filter((s) => s && s.id);
+        const incomingIds = new Set(incoming.map((s) => s.id));
+        const next = [];
+        for (const s of list || []) {
+            if (!s?.id) continue;
+            if (incomingIds.has(s.id)) continue;
+            if (ownerId && s.ownerId === ownerId) continue;
+            next.push(s);
+        }
+        for (const s of incoming) next.push(s);
+        return next;
+    }
+
     function atPoint(list, x, y, tileSize, ownerId) {
         const hits = [];
         for (const s of list || []) {
@@ -1836,7 +1854,10 @@
         const getItem = ctx.getItem || (() => null);
         const getThing = ctx.getThing || (() => null);
         const t = plan?.type;
-        if (t === "fight") return "Fighting";
+        if (t === "fight") {
+            const who = ctx.targetName || pawnDisplayName(plan?.target);
+            return who && who !== "Someone" ? `Attacking ${who}` : "Attacking";
+        }
         if (t === "eat") return "Getting food";
         if (t === "cook_light") return "Lighting a fire";
         if (t === "cook_stoke") return "Stoking the fire";
@@ -2200,6 +2221,7 @@
         moveJobOrder,
         applyJobOrderToList,
         ownedOf,
+        mergeOwned,
         atPoint,
         unlinkStation,
         removeStation,

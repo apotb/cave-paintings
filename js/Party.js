@@ -1093,16 +1093,38 @@ class PartySystem {
         const neu = P?.COLOR_NEUTRAL || "#ffffff";
         if (!pawn) return neu;
         if (pawn.role === "wanderer") return pawn.hostile ? enemy : neu;
-        if (this.scene.party?.includes(pawn) || pawn === this.scene.leader) return ally;
         const oid = pawn.ownerId || pawn._remote?.ownerId;
         const self = this.scene.leader?.ownerId || this.scene._netPlayerId;
         const parked = pawn.role === "settler"
             || !!pawn.homeSettlementId
             || this.scene.settlers?.includes?.(pawn);
+        // Another camp chasing you stays enemy-red for the whole fight.
+        // Own settlers stay settler-blue even while they fight wildlife.
+        if (parked && oid && oid !== self && (pawn.hostile || this._attackingLocalPlayer(pawn))) {
+            return enemy;
+        }
+        if (this.scene.party?.includes(pawn) || pawn === this.scene.leader) return ally;
         if (parked && (!oid || oid === self)) return settler;
         if (oid && this.pvpAggro.has(oid)) return enemy;
         if (pawn.hostile) return enemy;
         return neu;
+    }
+
+    /** Settler activity names the local character, so this camp is on you. */
+    _attackingLocalPlayer(pawn) {
+        const act = pawn?._settlerAct || pawn?.partyAI?._settlerAct || "";
+        if (typeof act !== "string" || !act.startsWith("Attacking ")) return false;
+        const who = act.slice("Attacking ".length).trim();
+        if (!who) return false;
+        const scene = this.scene;
+        const names = [
+            scene?.player?.pawnName,
+            scene?.player?.displayName?.(),
+            scene?.leader?.pawnName,
+            scene?.leader?.displayName?.(),
+            scene?.playerName
+        ];
+        return names.some((n) => n && String(n).trim() === who);
     }
 
     _holdingBandage() {
@@ -1404,7 +1426,17 @@ class PartySystem {
         };
     }
 
+    /** Another character's settler. Gear and hunger stay off the tooltip. */
+    settlerIsForeign(pawn) {
+        const oid = pawn?.ownerId || pawn?._remote?.ownerId;
+        const self = this.scene.leader?.ownerId
+            || this.scene._netPlayerId
+            || this.scene.characterId;
+        return !!(oid && self && oid !== self);
+    }
+
     withSettlerTooltip(pawn, text) {
+        if (this.settlerIsForeign(pawn)) return { text: text || "" };
         const hunger = this.hungerTooltip(pawn);
         const held = this.withHeldTooltip(pawn, text);
         if (held && typeof held === "object") return { ...held, hunger };

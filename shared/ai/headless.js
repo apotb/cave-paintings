@@ -720,7 +720,9 @@
                 mob.setDesiredVel?.(0, 0);
                 return;
             }
-            if (world?.leaderDead?.(mob)) {
+            // Camp settlers keep working when their owner is offline or dead.
+            // Party members still wait on a dead leader.
+            if (!settler && world?.leaderDead?.(mob)) {
                 this._clearCombat();
                 mob.setDesiredVel?.(0, 0);
                 return;
@@ -749,7 +751,10 @@
                         return;
                     }
                     this.assistTarget = next;
-                    this.mob._settlerAct = "Fighting";
+                    const who = next.displayName?.() || next.name || "";
+                    this.mob._settlerAct = String(who).trim()
+                        ? `Attacking ${String(who).trim()}`
+                        : "Attacking";
                     this._tickCombat(delta, world, home || { x: mob.x, y: mob.y });
                     return;
                 }

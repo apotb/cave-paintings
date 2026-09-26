@@ -1972,7 +1972,7 @@ test("settler joins a boar fight at camp without crashing", () => {
     });
     const cc = world._ensureSettlerCreature(rec);
     assert.equal(cc.ai?.assistTarget, boar);
-    assert.equal(cc._settlerAct, "Fighting");
+    assert.equal(cc._settlerAct, `Attacking ${boar.displayName()}`);
 });
 
 test("companion attacks a hostile animal on the leader", () => {
@@ -3035,17 +3035,21 @@ test("legacy baked place yaw is undone on pickup", () => {
     assert.equal(back.formVoxels, stack.formVoxels);
 });
 
-test("lump figurines are not placed", () => {
+test("unclassified lump figurines can be placed", () => {
     const Forming = require("../shared/forming");
     const { world, pawn, Protocol } = createTestWorld();
     fillGrass(world);
     const stack = Forming.makeStack("lump", Forming.fallbackMound(), 20);
+    delete stack.customName;
     pawn.inventory[0] = { ...stack, quantity: 1 };
     pawn.hotbarIndex = 0;
     world.handleAction(pawn.id, { type: Protocol.Actions.PLACE, tx: 2, ty: 1 });
-    assert.equal(pawn.inventory[0]?.id, "clay_figurine");
+    assert.ok(!pawn.inventory[0] || !(pawn.inventory[0].quantity > 0));
     const chunk = originChunk(world);
-    assert.equal((chunk.things || []).some((t) => t.id === "clay_figurine"), false);
+    const fig = (chunk.things || []).find((t) => t.id === "clay_figurine");
+    assert.ok(fig);
+    assert.equal(fig.formClass, "lump");
+    assert.equal(fig.formVoxels, stack.formVoxels);
 });
 
 test("unlockTech spends from the settlement pool without changing painted counts", () => {

@@ -2485,7 +2485,7 @@ test("sleeping settler gets up to fight a hostile in the settlement", () => {
     for (let i = 0; i < 10; i++) world.tick(50);
     assert.equal(!!rec._resting, false, "settler should leave the bunk");
     assert.equal(cc.ai?.assistTarget, boar);
-    assert.equal(cc._settlerAct, "Fighting");
+    assert.equal(cc._settlerAct, `Attacking ${boar.displayName()}`);
 });
 
 test("eating settler drops the meal to fight a hostile in camp", () => {
@@ -2503,7 +2503,90 @@ test("eating settler drops the meal to fight a hostile in camp", () => {
     for (let i = 0; i < 10; i++) world.tick(50);
     assert.equal(rec.eatChannel, null, "eating should cancel");
     assert.equal(cc.ai?.assistTarget, boar);
-    assert.equal(cc._settlerAct, "Fighting");
+    assert.equal(cc._settlerAct, `Attacking ${boar.displayName()}`);
+});
+
+test("hitting one settler aggros the whole camp until the attacker leaves", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { x: 48, y: 48 });
+    settle.ownerId = "absent";
+    settle.radiusTiles = 8;
+    rec.ownerId = "absent";
+    const rec2 = world._settlerFromSnap({
+        id: "settler2",
+        name: "Second",
+        x: 96,
+        y: 48,
+        ownerId: "absent",
+        homeSettlementId: settle.id,
+        inventory: [null, null, null, null, null]
+    });
+    settle.jobs[rec2.id] = Settlement.defaultJobs();
+    world.settlers.push(rec2);
+    rec2._resting = true;
+    rec2.resting = true;
+    const cc = world._ensureSettlerCreature(rec);
+    const cc2 = world._ensureSettlerCreature(rec2);
+    cc.ownerId = "absent";
+    cc2.ownerId = "absent";
+    cc2._resting = true;
+    pawn.x = rec.x + 10;
+    pawn.y = rec.y;
+    const you = world._ensurePlayerCreature(pawn);
+    you.x = pawn.x;
+    you.y = pawn.y;
+    cc.takeDamage(8, you);
+    for (let i = 0; i < 6; i++) world.tick(50);
+    assert.equal(cc.ai?.assistTarget, you);
+    assert.equal(cc2.ai?.assistTarget, you);
+    assert.equal(!!rec2._resting, false, "the other settler should get out of bed");
+    assert.equal(cc._settlerAct, "Attacking Tester");
+    assert.equal(rec._settlerAct, "Attacking Tester");
+    assert.equal(world._publicSettler(rec2).activity, "Attacking Tester");
+    assert.equal(world._publicSettler(rec).hostile, true);
+    assert.equal(world._publicSettler(rec2).hostile, true);
+    const ts = 16;
+    pawn.x = settle.x + (settle.radiusTiles + 3) * ts;
+    pawn.y = settle.y;
+    you.x = pawn.x;
+    you.y = pawn.y;
+    for (let i = 0; i < 4; i++) world.tick(50);
+    assert.equal(cc.ai?.assistTarget || null, null);
+    assert.equal(cc2.ai?.assistTarget || null, null);
+    assert.equal(world._publicSettler(rec).hostile, false);
+    assert.equal(world._publicSettler(rec2).hostile, false);
+});
+
+test("camp names stay hostile while the attacker is still in the settlement", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { x: 48, y: 48 });
+    settle.ownerId = "absent";
+    settle.radiusTiles = 8;
+    rec.ownerId = "absent";
+    const cc = world._ensureSettlerCreature(rec);
+    cc.ownerId = "absent";
+    pawn.x = rec.x + 10;
+    pawn.y = rec.y;
+    const you = world._ensurePlayerCreature(pawn);
+    you.x = pawn.x;
+    you.y = pawn.y;
+    cc.takeDamage(8, you);
+    // Faction string rewritten to the attacker, but the camp is still theirs.
+    cc.faction = you.faction;
+    // Creature pose lags outside; the player is still standing in the camp.
+    you.x = settle.x + (settle.radiusTiles + 6) * 16;
+    you.y = settle.y;
+    for (let i = 0; i < 20; i++) world.tick(50);
+    assert.equal(cc.ai?.assistTarget, you);
+    assert.equal(world._publicSettler(rec).hostile, true);
+    assert.equal(rec._settlerAct, "Attacking Tester");
+    // A step past the circle (melee at the edge) still counts.
+    pawn.x = settle.x + (settle.radiusTiles + 1) * 16;
+    pawn.y = settle.y;
+    you.x = pawn.x;
+    you.y = pawn.y;
+    for (let i = 0; i < 4; i++) world.tick(50);
+    assert.equal(world._publicSettler(rec).hostile, true);
 });
 
 test("sleeping settler ignores hostiles outside the settlement radius", () => {
@@ -4239,5 +4322,63 @@ test("hauler wades a river to fetch a drop instead of jiggling on the bank", () 
         `settler should wade the river and pick up the apple, ended at ${rec.x},${rec.y}`
     );
     assert.ok(flips < 8, `river approach reversed ${flips} times`);
+});
+
+test("offline owner's settler can go to sleep without a session", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    settle.ownerId = "absent";
+    rec.ownerId = "absent";
+    const cc = world._ensureSettlerCreature(rec);
+    cc.ownerId = "absent";
+    const chunk = originChunk(world);
+    const entry = { uid: "lt-off", id: "lean_to", x: rec.x + 80, y: rec.y, tx: 7, ty: 2, rot: 0 };
+    Place.ensureSleepEntry(entry, { sleep: { slots: 2 } });
+    chunk.things.push(entry);
+    world.gameMinutes = 1300;
+    rec.kc = 1600;
+    assert.doesNotThrow(() => workOnce(world, rec));
+    assert.ok(rec._restWalk, "should start walking to the bunk");
+    assert.equal(rec._settlerAct, "Going to sleep in a lean-to");
+    const slot = rec._restWalk.slot;
+    const stand = Sleep.restWalkStand(entry, slot, 16, { sleep: { slots: 2 } });
+    rec.x = stand.x;
+    rec.y = stand.y;
+    cc.x = stand.x;
+    cc.y = stand.y;
+    assert.doesNotThrow(() => world._tickSleepWalks(16));
+    assert.equal(rec._resting, true);
+    assert.equal(entry.occupants[slot], rec.id);
+});
+
+test("settler keeps hauling when the settlement owner is offline", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { x: 48, y: 48 });
+    settle.ownerId = "absent";
+    rec.ownerId = "absent";
+    const cc = world._ensureSettlerCreature(rec);
+    cc.ownerId = "absent";
+    cc.role = "settler";
+    cc.homeSettlementId = settle.id;
+    assert.equal(world.players.has("absent"), false);
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1, research: 0
+    };
+    const chunk = originChunk(world);
+    const basket = { uid: "basket-off", id: "wicker_basket", x: 40, y: 48 };
+    Place.ensureStorageEntry(basket, world._thingDef("wicker_basket"));
+    chunk.things.push(basket);
+    settle.stationUids = ["basket-off"];
+    chunk.drops.push({
+        uid: "apple-off", id: "apple", quantity: 1, x: 80, y: 48, lifeMs: 9e9
+    });
+    for (let i = 0; i < 80; i++) {
+        world.tick(50);
+        if ((rec.inventory || []).some((s) => s && s.id === "apple")) break;
+    }
+    assert.ok(
+        (rec.inventory || []).some((s) => s && s.id === "apple"),
+        `offline owner's settler should haul, ended at ${rec.x},${rec.y} act=${rec._settlerAct}`
+    );
 });
 

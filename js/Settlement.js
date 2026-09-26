@@ -33,6 +33,20 @@ class SettlementSystem {
         this.rebindOpenPanels();
     }
 
+    /**
+     * YOU gear updates include only this character's camps. Keep everyone
+     * else's so the visit button doesn't drop until the next world snapshot.
+     */
+    mergeOwnedSettlements(owned) {
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        const merged = S?.mergeOwned
+            ? S.mergeOwned(this.list, owned, this.ownerId())
+            : (owned || []);
+        this.list = merged.map((s) => (S?.ensureSettlement ? S.ensureSettlement(s) : s));
+        this.scene.settlers = this.scene.settlers || [];
+        this.rebindOpenPanels();
+    }
+
     rebindOpenPanels() {
         const bind = (panel) => {
             if (!panel?.visible || !panel.settle) return;
@@ -110,6 +124,12 @@ class SettlementSystem {
         scene.party = (scene.party || []).filter((p) => p !== pawn);
         pawn.role = "settler";
         pawn.homeSettlementId = snap.homeSettlementId || null;
+        if (snap.ownerId) {
+            pawn.ownerId = snap.ownerId;
+            pawn.faction = (typeof Party !== "undefined" && Party.partyFactionId)
+                ? Party.partyFactionId(snap.ownerId)
+                : `party:${snap.ownerId}`;
+        }
         if (typeof syncCreatureInputHit === "function") syncCreatureInputHit(pawn);
         if (!scene.settlers) scene.settlers = [];
         scene.settlers.push(pawn);
@@ -140,6 +160,15 @@ class SettlementSystem {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         if (!S) return null;
         return S.atPoint(this.owned(), p.x, p.y, this.scene.tileSize || 16, this.ownerId());
+    }
+
+    /** Camp under this pawn, including one owned by someone else. */
+    campAt(pawn) {
+        const p = pawn || this.scene.player;
+        if (!p) return null;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!S) return null;
+        return S.atPoint(this.list, p.x, p.y, this.scene.tileSize || 16);
     }
 
     settlersOf(settleId) {
@@ -1171,6 +1200,9 @@ class SettlementSystem {
         const scene = this.scene;
         const P = typeof Party !== "undefined" ? Party : { CAP: 6 };
         if (!pawn) return false;
+        if (pawn.ownerId && pawn.ownerId !== this.ownerId()) return false;
+        const fromGate = settle || this.byId(pawn.homeSettlementId);
+        if (fromGate && !this.canManage(fromGate)) return false;
         if ((scene.party?.length || 0) >= (P.CAP || 6)) {
             scene.combatLog?.push("Party is full");
             return false;
@@ -1295,7 +1327,6 @@ class SettlementSystem {
     openFromStone(stone) {
         const settle = this.byStoneUid(stone?.entry?.uid);
         if (!settle) return;
-        if (settle.ownerId !== this.ownerId()) return;
         const panel = this.scene.settlementPanel;
         if (panel?.visible && panel.settle?.id === settle.id) {
             this.closePanel();
@@ -1328,7 +1359,7 @@ class SettlementSystem {
         const panel = this.scene.settlementPanel;
         if (panel?.visible) this.closePanel();
         else {
-            const s = this.here(this.scene.player);
+            const s = this.campAt(this.scene.player);
             if (s) this.openPanel(s);
         }
     }
@@ -1466,7 +1497,7 @@ class SettlementSystem {
         const y = fpsBottom + Math.round(6 * s) + hudH / 2;
         this.hudBtn.setPosition(Math.round(scene.scale.width / 2), Math.round(y));
         this._paintHud?.();
-        this._syncHudLabel(this.here(scene.player)?.name || this._hudTxt?.text);
+        this._syncHudLabel(this.campAt(scene.player)?.name || this._hudTxt?.text);
     }
 
     /** Full name on the top button; step the pixel font down until it fits. */
@@ -2109,7 +2140,7 @@ class SettlementSystem {
 
     update() {
         this.ensureHud();
-        const settle = this.here(this.scene.player);
+        const settle = this.campAt(this.scene.player);
         const show = !!settle;
         const hudWas = !!this.hudBtn?.visible;
         this.hudBtn?.setVisible(show);

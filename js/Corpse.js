@@ -184,13 +184,24 @@ class Corpse extends Phaser.GameObjects.Sprite {
         scene.corpses.add(this);
 
         this.on("pointerover", (pointer) => {
-            scene.showTooltip(() => this.tooltipText(), pointer.x, pointer.y, this);
+            // A stacked respawn can sit on this sprite and steal the press.
+            // Keep the open body's label so the tip doesn't flip to (carcass).
+            const panel = scene.corpsePanel;
+            const shown = (panel?.visible && panel.sameCorpse?.(this)) ? panel.corpse : this;
+            scene.showTooltip(() => shown.tooltipText(), pointer.x, pointer.y, this);
         });
         this.on("pointerout", () => {
             if (scene._hoverTarget === this) scene._hoverTarget = null;
             if (scene._tooltipTarget === this) scene.hideTooltip();
         });
         this.on("pointerdown", (pointer) => {
+            const panel = scene.corpsePanel;
+            // Second click on an open body always closes, before skinning or
+            // the "pointer is over the loot panel" guard can swallow it.
+            if (panel?.visible && panel.sameCorpse?.(this)) {
+                panel.close();
+                return;
+            }
             if (scene.pointerOverWorldUi?.(pointer)) return;
             if (scene.restBlocksWorldUi?.()) return;
             if (!this.inRange()) return;
@@ -202,12 +213,12 @@ class Corpse extends Phaser.GameObjects.Sprite {
             const skinnable = typeof CorpseDecay !== "undefined" && CorpseDecay.canSkin
                 ? CorpseDecay.canSkin(this.entry, now)
                 : (!this.entry?.skinned && this.entry?.stage !== "carcass");
-            // Knife + unskinned corpse (not carcass) → skin, then loot opens
+            // Knife + unskinned corpse (not carcass) → skin, then loot opens.
+            // A failed channel (already busy) must still toggle the menu shut.
             if (knife && skinnable && typeof player.beginSkin === "function") {
-                player.beginSkin(this);
-                return;
+                if (player.beginSkin(this)) return;
             }
-            scene.corpsePanel?.toggle?.(this);
+            panel?.toggle?.(this);
         });
 
         this.on("destroy", () => {

@@ -42,7 +42,7 @@ class SettlementPanel {
             color: "#d4c4a8"
         }).setOrigin(0, 0.5).setInteractive({ useHandCursor: true });
         this.title.on("pointerdown", () => {
-            if (!this.settle) return;
+            if (!this.settle || !this._manageOpen()) return;
             const current = this.settle.name || "Camp";
             scene.settlementSys?._showNamePrompt?.((name) => {
                 scene.settlementSys.rename(this.settle, name);
@@ -233,7 +233,12 @@ class SettlementPanel {
         set(this.tabResearch, this.tab === "research");
     }
 
+    _manageOpen() {
+        return !!this.scene.settlementSys?.canManage?.(this.settle);
+    }
+
     _setTab(tab) {
+        if (!this._manageOpen() && tab !== "people") return;
         this._clearJobDrag();
         this.tab = tab;
         this._scroll = 0;
@@ -245,6 +250,7 @@ class SettlementPanel {
     open(settle) {
         this.settle = settle;
         this.visible = true;
+        if (!this._manageOpen()) this.tab = "people";
         this._scroll = 0;
         this._contentSigVal = null;
         this.root.setVisible(true);
@@ -274,22 +280,39 @@ class SettlementPanel {
             applyPixelUiFont(this.tabStock._txt, 12, s);
             applyPixelUiFont(this.tabResearch._txt, 12, s);
         }
+        const manage = this._manageOpen();
+        if (!manage && this.tab !== "people") this.tab = "people";
+        if (manage) this.title.setInteractive({ useHandCursor: true });
+        else this.title.disableInteractive();
+        const showTab = (tab, on) => {
+            tab?.setVisible(on);
+            if (tab?._bg?.input) tab._bg.input.enabled = !!on;
+        };
+        showTab(this.tabPeople, true);
+        showTab(this.tabJobs, manage);
+        showTab(this.tabStock, manage);
+        showTab(this.tabResearch, manage);
+        this.destroyBtn.setVisible(manage);
+        if (this.destroyBtn._bg?.input) this.destroyBtn._bg.input.enabled = manage;
         const tabY = Math.round(44 * s);
         const tabH = Math.round(22 * s);
         const tabGap = Math.round(8 * s);
         const tabPad = Math.round(6 * s);
         let tabLeft = tabPad;
         const tabInnerPad = Math.round(16 * s);
-        for (const tab of [this.tabPeople, this.tabJobs, this.tabStock, this.tabResearch]) {
+        const tabs = manage
+            ? [this.tabPeople, this.tabJobs, this.tabStock, this.tabResearch]
+            : [this.tabPeople];
+        for (const tab of tabs) {
             const tw = Math.round(tab._txt.width) + tabInnerPad;
             this._fitBtnHit(tab, tw, tabH);
             tab.setPosition(tabLeft + tw / 2, tabY);
             tabLeft += tw + tabGap;
         }
         const peopleW = this.tabPeople._bg.width;
-        const researchW = this.tabResearch._bg.width;
+        const lastTab = tabs[tabs.length - 1];
         this._tabsLeft = this.tabPeople.x - peopleW / 2;
-        this._tabsRight = this.tabResearch.x + researchW / 2;
+        this._tabsRight = lastTab.x + lastTab._bg.width / 2;
         const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
         const h = Math.round(260 * s);
         const headerY = Math.round(18 * s);
@@ -309,7 +332,8 @@ class SettlementPanel {
         const rightInset = Math.max(tabPad, sw);
         this._fitBtnHit(this.destroyBtn, destW, headerBtnH);
         this._fitBtnHit(this.closeBtn, closeW, headerBtnH);
-        const headerW = titleX + nameSlot + headerGap + destW + tabGap + closeW + rightInset;
+        const headerMid = manage ? headerGap + destW + tabGap : headerGap;
+        const headerW = titleX + nameSlot + headerMid + closeW + rightInset;
         const w = Math.max(this._tabsRight + rightInset, headerW);
         this.bg.setSize(w, h);
         if (this.bg.input?.hitArea?.setSize) {
@@ -483,6 +507,15 @@ class SettlementPanel {
         const colW = Math.max(80, Math.floor((innerW - gap) / 2));
         const rowH = Math.round(24 * sc);
         let y = 0;
+        if (!this._manageOpen()) {
+            if (!here.length) {
+                this._rowLabel("(none)", Math.round(8 * sc), y, rowH, 12);
+                y += rowH;
+            } else {
+                y = this._fillPeopleGrid(here, y, colW, gap, rowH, sc, "here");
+            }
+            return y + 8 * sc;
+        }
         this._rowLabel("Party", 0, y, rowH, 12);
         y += rowH;
         y = this._fillPeopleGrid(party, y, colW, gap, rowH, sc, "party");
@@ -519,9 +552,10 @@ class SettlementPanel {
             const name = p.displayName?.() || p.pawnName || "?";
             const isLeader = p === scene.leader;
             const controlled = !!(p.isControlled?.() || p === scene.player);
-            const showSend = kind === "here" && others[0];
+            const manage = sys.canManage(this.settle);
+            const showSend = manage && kind === "here" && others[0];
             const showDrop = kind === "party" && !isLeader;
-            const showTake = kind === "here";
+            const showTake = manage && kind === "here";
             let btns = 0;
             if (showDrop || showTake) btns += 1;
             if (showSend) btns += 1;

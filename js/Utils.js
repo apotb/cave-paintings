@@ -2103,7 +2103,49 @@ function clearSleepFx(host) {
     clearSleepHealFx(host);
 }
 
-function _tickSleepFxBits(st, dt) {
+/**
+ * Above the sleeper, and above a lean-to's stick frame (feet Y + 2).
+ * A flat depth loses to that frame whenever the shelter sits further down the map.
+ */
+function sleepFxSortDepth(host, scene) {
+    const pos = sleepZzzHostPos(host);
+    let y = Number(pos?.y);
+    if (!Number.isFinite(y)) y = Number(host?.y);
+    if (!Number.isFinite(y)) y = Number(host?.root?.y) || 0;
+    let cover = y + 42;
+    const uid = host?.lastSleep?.uid;
+    const lean = uid ? scene?.findLeanToByUid?.(uid) : null;
+    if (lean && Number.isFinite(Number(lean.y))) {
+        cover = Math.max(cover, Number(lean.y) + 6);
+    }
+    return cover | 0;
+}
+
+function sleepGlyphPlacement(host, scene) {
+    const above = !!scene?.isPartyWorldHud?.(host);
+    const uid = host?.lastSleep?.uid;
+    const lean = uid ? scene?.findLeanToByUid?.(uid) : null;
+    // The stick frame shares the world layer and sorts at the shelter's feet.
+    // Marks have to live in that same layer, above the frame, or the roof covers them.
+    if (lean || !above) return { above: false, depth: sleepFxSortDepth(host, scene) };
+    return { above: true, depth: 52 };
+}
+
+function placeSleepGlyph(obj, host, scene) {
+    if (!obj?.active || !scene) return;
+    const place = sleepGlyphPlacement(host, scene);
+    if (typeof scene._placeWorldHud === "function") {
+        scene._placeWorldHud(obj, place.depth, place.above);
+        return;
+    }
+    if (place.above && typeof scene._liftAboveVeil === "function") {
+        scene._liftAboveVeil(obj, place.depth);
+        return;
+    }
+    if (obj.depth !== place.depth) obj.setDepth(place.depth);
+}
+
+function _tickSleepFxBits(st, dt, host, scene) {
     if (!st?.bits) return;
     for (let i = st.bits.length - 1; i >= 0; i--) {
         const b = st.bits[i];
@@ -2117,7 +2159,8 @@ function _tickSleepFxBits(st, dt) {
         const ease = 1 - (1 - k) * (1 - k);
         obj.setPosition(b.x0 + b.dx * ease, b.y0 + b.dy * ease);
         obj.setAlpha(1 - k * k);
-        obj.setDepth(52);
+        if (host && scene) placeSleepGlyph(obj, host, scene);
+        else if (typeof b.depth === "number" && obj.depth !== b.depth) obj.setDepth(b.depth);
         if (k >= 1) {
             obj.destroy();
             st.bits.splice(i, 1);
@@ -2145,7 +2188,7 @@ function tickSleepZzz(host, scene, delta) {
             _spawnSleepZ(host, scene, st, pos);
         }
     }
-    _tickSleepFxBits(st, dt);
+    _tickSleepFxBits(st, dt, host, scene);
     if (!resting && !st.bits.length) host._zzz = null;
 }
 
@@ -2167,7 +2210,7 @@ function tickSleepHealFx(host, scene, delta) {
             _spawnSleepPlus(host, scene, st, pos);
         }
     }
-    _tickSleepFxBits(st, dt);
+    _tickSleepFxBits(st, dt, host, scene);
     if (!injured && !st?.bits?.length) host._healFx = null;
 }
 
@@ -2329,16 +2372,7 @@ function _spawnSleepGlyph(scene, ch, color, x0, y0, n, host) {
     } catch (_) {}
     const size = [0.62, 0.76, 0.96][n];
     txt.setScale(size / zoom);
-    const above = !!scene.isPartyWorldHud?.(host);
-    if (typeof scene._placeWorldHud === "function") {
-        scene._placeWorldHud(txt, above ? 52 : ((host?.y | 0) + 42), above);
-    } else if (above && typeof scene._liftAboveVeil === "function") {
-        scene._liftAboveVeil(txt, 52);
-    } else {
-        scene.mainLayer?.add(txt);
-        scene._uiCam?.ignore(txt);
-        txt.setDepth(52);
-    }
+    placeSleepGlyph(txt, host, scene);
     return txt;
 }
 
