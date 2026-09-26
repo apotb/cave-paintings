@@ -235,7 +235,7 @@ class CombatLog {
                 });
                 return;
             }
-            this.scene.partySys?.debugSpawnWanderer?.();
+            this.pushError("Wanderers are owned by the world sim.");
             return;
         }
         if (cmd === "/kms") {
@@ -318,22 +318,15 @@ class CombatLog {
                 this.push("No player to spawn at.");
                 return;
             }
-            // Dedicated MP: server owns wildlife (SNAPSHOT.mobs). Local spawn would freeze.
-            if (this.scene.simAuth()) {
-                this.scene._netSendMove?.(true);
-                this.scene.net.sendAction({
-                    type: NetProtocol.Actions.CHAT,
-                    text: `/spawn ${id}`
-                });
+            if (!this.scene.simAuth()) {
+                this.pushError("Wildlife is owned by the world sim.");
                 return;
             }
-            // Player origin is bottom-left; spawn so feet line up
-            const mob = LivingMob.spawn(this.scene, id, player.x, player.y);
-            if (!mob) {
-                this.pushError(`Failed to spawn ${def.name || id} (chunk not ready?).`);
-                return;
-            }
-            this.push(`Spawned ${def.name || id}`);
+            this.scene._netSendMove?.(true);
+            this.scene.net.sendAction({
+                type: NetProtocol.Actions.CHAT,
+                text: `/spawn ${id}`
+            });
             return;
         }
         if (cmd === "/set") {

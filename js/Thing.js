@@ -371,7 +371,6 @@ class ClayFigurine extends Thing {
             });
             return;
         }
-        scene.tryPickupFigurine?.(this);
     }
 }
 
@@ -465,42 +464,6 @@ class LootableThing extends Thing {
             });
             return;
         }
-
-        const harvestedId = this.meta.id;
-        const item = this.scene.getItem(loot.item);
-        const remaining = pawn.gainItem(item, loot.yield);
-        if (remaining > 0) DroppedItem.spawn(this.scene, this.x, this.y, item, remaining);
-        if (pawn === this.scene.player) this.scene.hideTooltip();
-
-        const transform = loot.transform;
-        const regrowMinutes = Number(loot.regrowMinutes);
-        const canRegrow = regrowMinutes > 0 && typeof this.scene.jitteredRegrowAt === "function";
-
-        if (transform) {
-            this.entry.id = transform;
-            if (canRegrow) {
-                this.entry.regrowId = harvestedId;
-                this.entry.regrowAt = this.scene.jitteredRegrowAt(regrowMinutes);
-            } else {
-                delete this.entry.regrowId;
-                delete this.entry.regrowAt;
-                delete this.entry.gone;
-            }
-            this.morph(transform);
-            return;
-        }
-
-        // Debris: vanish; optionally leave a gone stub for later respawn
-        if (canRegrow) {
-            this.entry.gone = true;
-            this.entry.regrowId = harvestedId;
-            this.entry.regrowAt = this.scene.jitteredRegrowAt(regrowMinutes);
-            this.destroy();
-            return;
-        }
-
-        this._removeEntry();
-        this.destroy();
     }
 }
 

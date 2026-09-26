@@ -41,10 +41,6 @@ function worldPath(root, worldName) {
     return path.join(worldDir(root, worldName), "world.json");
 }
 
-function playerPath(root, worldName, playerId) {
-    return path.join(playersDir(root, worldName), `${playerId}.json`);
-}
-
 function readProperties(root, worldName) {
     const file = propsPath(root, worldName);
     const out = { ...DEFAULT_PROPS, "world-name": worldName };
@@ -82,26 +78,7 @@ function saveWorld(root, worldName, data) {
     fs.writeFileSync(worldPath(root, worldName), JSON.stringify(data), "utf8");
 }
 
-function loadPlayer(root, worldName, playerId) {
-    const file = playerPath(root, worldName, playerId);
-    if (!fs.existsSync(file)) return null;
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-}
-
-function savePlayer(root, worldName, playerId, data) {
-    ensureDir(playersDir(root, worldName));
-    fs.writeFileSync(playerPath(root, worldName, playerId), JSON.stringify(data, null, 2), "utf8");
-}
-
-function listPlayerIds(root, worldName) {
-    const dir = playersDir(root, worldName);
-    if (!fs.existsSync(dir)) return [];
-    return fs.readdirSync(dir)
-        .filter((f) => f.endsWith(".json"))
-        .map((f) => f.replace(/\.json$/, ""));
-}
-
-/** Wipe player files when the world is regenerated so poses don't belong to a dead map. */
+/** Wipe legacy player files when the world is regenerated so poses don't belong to a dead map. */
 function clearPlayers(root, worldName) {
     const dir = playersDir(root, worldName);
     if (!fs.existsSync(dir)) return 0;
@@ -184,17 +161,12 @@ module.exports = {
     MAX_WORLDS,
     ensureDir,
     worldDir,
-    playersDir,
     propsPath,
     worldPath,
-    playerPath,
     readProperties,
     writeProperties,
     loadWorld,
     saveWorld,
-    loadPlayer,
-    savePlayer,
-    listPlayerIds,
     clearPlayers,
     listWorlds,
     nextDefaultWorldName,

@@ -766,7 +766,6 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this._hitKiller = _attacker;
             this._hitKillerAt = this.scene?.time?.now ?? 0;
             if (this.role === "wanderer") {
-                this.wandererAI?.onDamaged?.(_attacker);
                 this.hostile = true;
                 this.recruitLocked = true;
                 this.scene.partySys?.alertNearbyWanderers?.(this, _attacker);
@@ -787,7 +786,6 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._refreshDownedState();
         this.scene.healthPanel?.refresh?.();
         if (!(_result?.damage > 0)) return;
-        this.scene?._onSleepCombatHit?.(this, _attacker);
         if (this._restWalk) {
             this._restWalk = null;
             this.scene?._intendedSleep?.().delete(this.pawnId);
@@ -1962,11 +1960,6 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             }
         }
         return best;
-    }
-
-    /** @deprecated Prefer _knapExtremeCellAlongAim(ang, true) */
-    _knapTipCellAlongAim(ang) {
-        return this._knapExtremeCellAlongAim(ang, true);
     }
 
     /**
@@ -3652,18 +3645,16 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this._bodyDead) return;
 
         if (!controlled) {
-            const dedicated = !!(this.scene.simAuth());
-            if (dedicated) {
-                const tendLock = !!(this._tendChannel && !this._tendChannel.corpse)
-                    || !!this.scene.partySys?._isTendTargeted?.(this);
-                const prone = !!(
-                    this._netProne
-                    || this._downed
-                    || this.isImmobile?.()
-                    || this.isIncapacitated?.()
-                );
-                if (tendLock) this.setVelocity?.(0, 0);
-                else this._puppetFromNet(dt);
+            const tendLock = !!(this._tendChannel && !this._tendChannel.corpse)
+                || !!this.scene.partySys?._isTendTargeted?.(this);
+            const prone = !!(
+                this._netProne
+                || this._downed
+                || this.isImmobile?.()
+                || this.isIncapacitated?.()
+            );
+            if (tendLock) this.setVelocity?.(0, 0);
+            else this._puppetFromNet(dt);
                 if (this._resting) {
                     if (typeof pinRestingCreature === "function") pinRestingCreature(this, this.scene);
                     else setCreatureRest?.(this, true, this.lastSleep?.rot);
@@ -3686,27 +3677,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 this._syncChatBubble?.();
                 return;
             }
-            if (this.isAttacking()) this._tickAttack(dt, true);
-            this.partyAI?.update(dt);
-            if (this._wakeIframes > 0) this._wakeIframes--;
-            this._skipMove = false;
-            if (this.body && !this._resting) {
-                const canWalk = !this.isIncapacitated() && !this.isImmobile() && !this.isVomiting();
-                this.body.moves = canWalk;
-            }
-            if (this._resting && typeof pinRestingCreature === "function") {
-                pinRestingCreature(this, this.scene);
-            } else {
-                this.syncSortDepth();
-            }
-            this.syncPawnChannelBar?.();
-            this.syncFxRoot?.();
-            this.syncNameLabel?.();
-            this._syncChatBubble?.();
-            return;
-        }
 
-        if (composing || knapping || naming || researchOpen) {
+            if (composing || knapping || naming || researchOpen) {
             this.setVelocity(0, 0);
             this._iceVx = 0;
             this._iceVy = 0;

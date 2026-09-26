@@ -544,7 +544,7 @@ class PartySystem {
                 : [{ id: "pebble", quantity: 2 }, { id: "stick", quantity: 3 }, { id: "leaf", quantity: 4 }, null, null];
             while (pawn.inventory.length < 5) pawn.inventory.push(null);
         }
-        pawn.wandererAI = new WandererAI(pawn);
+        pawn.wandererAI = null;
         this._wirePawn(pawn);
         if (this._isDedicatedNet() && pawn.body) {
             pawn.body.enable = false;
@@ -586,7 +586,7 @@ class PartySystem {
         const len = Math.hypot(h.x, h.y) || 1;
         pawn.heading = { x: h.x / len, y: h.y / len };
         pawn.facing = h.x > 0 ? "right" : h.x < 0 ? "left" : h.y > 0 ? "down" : "up";
-        pawn.wandererAI = typeof WandererAI !== "undefined" ? new WandererAI(pawn) : null;
+        pawn.wandererAI = null;
         if (this._isDedicatedNet() && pawn.body) {
             pawn.body.enable = false;
             pawn.body.moves = false;
@@ -914,7 +914,6 @@ class PartySystem {
             const dx = w.x - victim.x;
             const dy = w.y - victim.y;
             if (dx * dx + dy * dy > rangeSq) continue;
-            w.wandererAI?.onDamaged?.(source);
             w.hostile = true;
             w.recruitLocked = true;
             if (typeof Party !== "undefined") Party.setWildAggroOwner?.(w, source);
@@ -1678,7 +1677,6 @@ class PartySystem {
         }
         if (this._restCombatAlerted) return;
         this._restCombatAlerted = true;
-        this.scene._wakeAbleResters?.(hunter, this.scene.player);
     }
 
     notePlayerHit(target) {
@@ -1686,7 +1684,6 @@ class PartySystem {
         if (target === this.scene.leader || target === this.scene.player) return;
         this.lastHitMob = target;
         this.lastHitAt = this.scene.time?.now || 0;
-        this.scene._wakeAbleResters?.(target, this.scene.player);
         const oid = target.ownerId || target._remote?.ownerId;
         if (!oid && typeof Party !== "undefined") {
             Party.setWildAggroOwner?.(target, this.scene.player);
@@ -1701,9 +1698,6 @@ class PartySystem {
     update(time, delta) {
         const scene = this.scene;
         if ((scene._gamePaused || scene._worldSimFrozen) && scene._isSingleplayerSession?.()) return;
-        const dedicated = !!(scene.simAuth());
-        if (!dedicated) this._rebuildDuelAssignments();
-        if (!dedicated) this._alertRestersIfHunted();
 
         for (const p of scene.party || []) {
             if (!p?.active) continue;
@@ -1722,31 +1716,12 @@ class PartySystem {
         for (const w of this.wanderers) {
             if (!w?.active) continue;
             if (w._bodyDead) continue;
-            if (dedicated) {
-                this._puppetWanderer(w, delta);
-            } else {
-                w.wandererAI?.update(delta);
-                if (w._prone || w._downed || w.isIncapacitated?.() || w.isImmobile?.()) {
-                    if (w.isAttacking?.()) w._endAttack?.();
-                } else if (w.isAttacking?.()) {
-                    const progress = w._attackProgress?.() ?? 0;
-                    if (w.weaponSprite?.visible) w._updateWeaponSprite?.(progress);
-                    if (w.unarmedSprite?.visible) w._updateUnarmedSprite?.(progress);
-                    w._meleeHitCheck?.(progress);
-                    const scale = typeof Party !== "undefined" && Party.mobTimeScale
-                        ? Party.mobTimeScale(scene.tickSpeed)
-                        : 1;
-                    w.attackTimer -= delta * scale;
-                    if (w.attackTimer <= 0) w._endAttack?.();
-                }
-            }
+            this._puppetWanderer(w, delta);
             w.syncNameLabel?.();
         }
         this._tickBandage();
         this._tickFood();
-        this.scene.tickSleepWalks?.(delta);
         this._tickDirector(delta);
-        if (!dedicated) this._despawnWanderersAtEdge();
         if (scene.partyPanel?.tick) scene.partyPanel.tick();
         else {
             scene.partyPanel?.refresh?.();

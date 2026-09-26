@@ -224,15 +224,6 @@ class SceneMain extends SceneBase {
         this._baseTickSpeed = 1;
         this._restSpeedElapsedMs = 0;
         this._worldMinuteEvent = null;
-        // Don't apply welcome clock yet — clockText / lightGfx are created below.
-        if (!this.isNet) {
-        this._worldMinuteEvent = this.time.addEvent({
-            delay: 1000,
-            callback: this.worldMinuteTick,
-            callbackScope: this,
-            loop: true
-        });
-        }
 
         // Collisions
         this._things = this.physics.add.staticGroup();
@@ -1491,24 +1482,13 @@ class SceneMain extends SceneBase {
         const cap = this.tickSpeed > 1 ? 60 : 8;
         if (steps > cap) steps = 1; // huge jump: snap once, don't melt CPU
         for (let i = 0; i < steps; i++) {
-            // Net sessions: hunger drain is owned by LocalSim / dedicated server (YOU).
-            if (!(this.isNet && this.net?.connected)) {
-                this._hungerTickAll();
-            } else if (this.simAuth() && this.player) {
-                // LocalSim skips hungerTick; still refresh the fed snapshot each minute
-                // so malnutrition (and /heal's sticky flag) advances correctly.
+            // LocalSim skips hungerTick; still refresh the fed snapshot each minute
+            // so malnutrition (and /heal's sticky flag) advances correctly.
+            if (this.simAuth() && this.player) {
                 this._forEachHungerPawn((p) => {
                     p._malnutritionFed =
                         (Number(p.kc) > 0) || (Number(p.saturation) > 0);
                 });
-            }
-            this.tickSoakDrops();
-            if (!(this.simAuth())) {
-                this.tickSpoilage();
-                this.tickCorpseDecay();
-                this.tickCampfires();
-                this.tickDryingRacks();
-                this.tickLootableRegrows();
             }
             this.tickBodySystems();
             this.tickBloodStains();
@@ -8166,23 +8146,6 @@ class SceneMain extends SceneBase {
         return speed;
     }
 
-    _tickRestClock(delta) {
-        if (this.simAuth()) return;
-        const living = (this.party || []).filter((p) => p && !p.isBodyDead?.());
-        const everyone = living.length > 0 && living.every((p) => p._resting);
-        const delay = (typeof Sleep !== "undefined" && Sleep.REST_TICK_DELAY_MS) || 3000;
-        if (!everyone) {
-            if (this._restSpeedElapsedMs) {
-                this._restSpeedElapsedMs = 0;
-                this.applyRestClock();
-            }
-            return;
-        }
-        const before = this._restSpeedElapsedMs || 0;
-        this._restSpeedElapsedMs = before + (Number(delta) || 0);
-        if (before < delay && this._restSpeedElapsedMs >= delay) this.applyRestClock();
-    }
-
     _tickSleepZzz(delta) {
         const seen = new Set();
         const tick = (host) => {
@@ -8218,16 +8181,6 @@ class SceneMain extends SceneBase {
         });
     }
 
-    _restEffectiveSpeed(base) {
-        const b = Number.isFinite(base) ? base : (this._baseTickSpeed || 1);
-        const living = (this.party || []).filter((p) => p && !p.isBodyDead?.());
-        const everyone = living.length > 0 && living.every((p) => p._resting);
-        const lyingMs = everyone ? (this._restSpeedElapsedMs || 0) : 0;
-        if (typeof Sleep !== "undefined") return Sleep.effectiveTickSpeed(b, everyone, lyingMs);
-        const delay = 3000;
-        return everyone && lyingMs >= delay ? Math.max(10, b) : b;
-    }
-
     _tryWakePlayer() {
         const pawn = this.player;
         if (!pawn?._resting) return;
@@ -8239,61 +8192,6 @@ class SceneMain extends SceneBase {
             });
         }
         this._wakePawn(pawn, { manual: true });
-    }
-
-    tickSleepWalks(delta) {
-        if (this.simAuth()) return;
-        this.tickSleepWalksFor(this.party, delta);
-        this.tickSleepWalksFor(this.settlers, delta);
-    }
-
-    tickSleepWalksFor(list, delta) {
-        const ts = this.tileSize || 16;
-        for (const pawn of list || []) {
-            if (!pawn?.active || pawn.isBodyDead?.() || !pawn.body) continue;
-            if (pawn._restWalk) {
-                const spec = pawn._restWalk;
-                const lean = this.findLeanToByUid(spec.uid);
-                const entry = lean?.entry;
-                if (!entry) {
-                    pawn._restWalk = null;
-                    this._sleepLog(`${pawn.pawnName || "They"} can't rest there`);
-                    continue;
-                }
-                const def = this.getThing(entry.id);
-                const stand = Sleep.restWalkStand
-                    ? Sleep.restWalkStand(entry, spec.slot, ts, def)
-                    : null;
-                const pos = Sleep.sleeperWorldPos(entry, spec.slot, ts, def);
-                const c = pawn.bodyCenter?.() || { x: pawn.x, y: pawn.y };
-                const arrive = Sleep.ARRIVE_PX || 16;
-                const dStand = stand
-                    ? Math.hypot(pawn.x - stand.x, pawn.y - stand.y)
-                    : Infinity;
-                const dBunk = Math.hypot(c.x - pos.x, c.y - pos.y);
-                if (dStand < arrive || dBunk < arrive) {
-                    this._occupySlot(pawn, entry, spec.slot);
-                    continue;
-                }
-                if (pawn.isControlled?.()) continue;
-                const dest = stand || pos;
-                if (pawn.partyAI?._walkBodyToward && !stand) {
-                    pawn.partyAI._walkBodyToward(pawn, dest.x, dest.y, ts, false, delta);
-                } else {
-                    pawn.partyAI?._walkToward?.(pawn, dest.x, dest.y, ts, false, delta);
-                }
-            } else if (pawn._resting) {
-                pawn.setVelocity?.(0, 0);
-                if (typeof pinRestingCreature === "function") pinRestingCreature(pawn, this);
-                else {
-                    const spec = pawn.lastSleep;
-                    const lean = spec ? this.findLeanToByUid(spec.uid) : null;
-                    setCreatureRest?.(pawn, true, spec?.rot ?? lean?.entry?.rot);
-                }
-            } else if (pawn._wokeFromRest && !pawn.partyAI?.assistTarget) {
-                if (!this.partySys?._shouldDelaySleep?.(pawn)) this._tryReturnToBed(pawn);
-            }
-        }
     }
 
     _sleepSlotClaimed(entry, slot, exceptId) {
@@ -8378,39 +8276,6 @@ class SceneMain extends SceneBase {
     }
 
     /** Stand capable resters in camp so they can defend, then return to bed after. */
-    _wakeAbleResters(enemy, origin) {
-        if (this.simAuth()) return;
-        if (!enemy || enemy.isBodyDead?.()) return;
-        const from = origin || this.player;
-        const ts = this.tileSize || 16;
-        const camp = (typeof Sleep !== "undefined" ? Sleep.CAMP_TILES : 12) * ts;
-        const ox = from?.x ?? 0;
-        const oy = from?.y ?? 0;
-        for (const p of this.party || []) {
-            if (!p || p.isBodyDead?.()) continue;
-            if (!p._resting) continue;
-            if (typeof Sleep !== "undefined" && !Sleep.capableToFight(p)) continue;
-            if (Math.hypot(p.x - ox, p.y - oy) > camp) continue;
-            this._wakePawn(p, { help: true });
-            p.partyAI?.setAssist?.(enemy);
-        }
-        if (this.partySys) {
-            this.partySys.lastHitMob = enemy;
-            this.partySys.lastHitAt = this.time?.now || Date.now();
-        }
-    }
-
-    _onSleepCombatHit(victim, attacker) {
-        if (this.simAuth()) return;
-        if (!victim || victim.isBodyDead?.()) return;
-        if (attacker && typeof Party !== "undefined" && Party.sameFaction?.(victim, attacker)) return;
-        if (!attacker || attacker === victim) return;
-        if (!this._isLocalPartyPawn(victim)) return;
-        this._wakeAbleResters(attacker, victim);
-        if (!victim._resting) victim.partyAI?.setAssist?.(attacker);
-    }
-
-    /** Ground drops within the player's interaction range, nearest first. */
     nearbyDrops() {
         const r = this.tileSize * this.player.interactionRange;
         const r2 = r * r;
@@ -8493,40 +8358,6 @@ class SceneMain extends SceneBase {
         if (!t) return false;
         const c = this.tileCenter(t.tx, t.ty);
         return this._isWaterAt(c.x, c.y - 1);
-    }
-
-    tickSoakDrops() {
-        if (typeof Hide === "undefined") return;
-        // Dedicated MP: soak conversion is server-authored (snapshots).
-        if (this.simAuth()) return;
-        const now = this.worldMinuteIndex();
-        const getItem = (id) => this.getItem(id);
-        const liveDrops = this.droppedItems?.getChildren?.() || [];
-        for (const chunk of Object.values(this.chunks || {})) {
-            const drops = chunk.meta?.drops;
-            if (!Array.isArray(drops)) continue;
-            for (const entry of drops) {
-                if (!entry) continue;
-                const live = liveDrops.find((d) => d.active && d.entry === entry);
-                const onWater = this._dropIsOnWater(live || entry);
-                const prevId = entry.id;
-                const { converted } = Hide.tickSoakDrop(entry, now, getItem, onWater);
-                if (live) {
-                    live.soakProgress = entry.soakProgress;
-                    live.soakDoneAt = entry.soakDoneAt;
-                    if (converted && entry.id !== prevId) {
-                        const meta = getItem(entry.id);
-                        if (meta) {
-                            live.item = meta;
-                            const iconKey = meta.key || entry.id;
-                            if (iconKey && this.textures.exists(iconKey)) live.setTexture(iconKey);
-                        }
-                    }
-                    live.syncToEntry?.();
-                }
-            }
-        }
-        if (this.tooltip?.visible) this.refreshTooltip();
     }
 
     _pickDropNearAim(drops, aim, itemId) {
@@ -8738,50 +8569,6 @@ class SceneMain extends SceneBase {
         return !!fire;
     }
 
-    tickCampfires() {
-        let lightChanged = false;
-
-        for (const fire of this.getCampfires()) {
-            if (fire.burnMinute()) lightChanged = true;
-        }
-        if (lightChanged) {
-            // worldMinuteTick already drew the veil this minute; bump the cache
-            // so the new heat band is punched immediately instead of next tick.
-            this.markLightDirty();
-            this.updateLightVeil();
-        }
-    }
-
-    tickDryingRacks() {
-        if (typeof Hide === "undefined") return;
-        const getItem = (id) => this.getItem(id);
-        for (const chunk of Object.values(this.chunks || {})) {
-            const things = chunk.meta?.things;
-            if (!Array.isArray(things)) continue;
-            for (const entry of things) {
-                if (!entry) continue;
-                const def = this.getThing(entry.id);
-                if (!Hide.isDryingRack(def, entry)) continue;
-                const { changed } = Hide.tickRackEntry(entry, getItem);
-                if (!changed) continue;
-                const live = this.findStorageByUid(entry.uid)
-                    || (chunk.things?.getChildren?.() || []).find((t) =>
-                        t instanceof Storage && (
-                            t.entry === entry
-                            || (Math.abs(t.x - entry.x) < 1.5 && Math.abs(t.y - entry.y) < 1.5)
-                        )
-                    );
-                live?.applyVisual?.();
-                if (this.storagePanel?.visible && this.storagePanel.storage?.entry === entry) {
-                    this.storagePanel.refresh();
-                }
-                if (this.tooltip?.visible && this._tooltipTarget === live) {
-                    this.refreshTooltip();
-                }
-            }
-        }
-    }
-
     updateClockText() {
         if (!this.clockText?.active || !this.clockText.scene) return;
         const h = Math.floor(this.gameMinutes / 60);
@@ -8802,32 +8589,7 @@ class SceneMain extends SceneBase {
         const m = Number(mult);
         if (!Number.isFinite(m) || m < 0) return this.tickSpeed;
         if (!opts.fromRest) this._baseTickSpeed = m;
-        if (this.simAuth()) {
-            this.tickSpeed = m;
-            return this.tickSpeed;
-        }
-        const speed = opts.fromRest ? m : this._restEffectiveSpeed(this._baseTickSpeed);
-        this.tickSpeed = speed;
-        const localClock = this.net?.isLocal
-            ? (this.net.world?.clock || this.net.sim?.world?.clock)
-            : null;
-        if (localClock) {
-            localClock.baseTickSpeed = this._baseTickSpeed;
-            localClock.tickSpeed = speed;
-        }
-        if (this.isNet) return this.tickSpeed;
-        if (this._worldMinuteEvent) {
-            this._worldMinuteEvent.remove(false);
-            this._worldMinuteEvent = null;
-        }
-        if (speed > 0) {
-            this._worldMinuteEvent = this.time.addEvent({
-                delay: Math.max(1, 1000 / speed),
-                callback: this.worldMinuteTick,
-                callbackScope: this,
-                loop: true
-            });
-        }
+        this.tickSpeed = m;
         return this.tickSpeed;
     }
 
@@ -8845,95 +8607,6 @@ class SceneMain extends SceneBase {
      * If entry.regrowAt is due, restore id / clear gone flags (no sprites).
      * @returns {boolean} true if entry was updated
      */
-    applyDueLootableRegrow(entry) {
-        if (!entry || entry.regrowAt == null) return false;
-        if (this.worldMinuteIndex() < entry.regrowAt) return false;
-        const id = entry.regrowId || entry.id;
-        if (!id) return false;
-        entry.id = id;
-        delete entry.gone;
-        delete entry.regrowAt;
-        delete entry.regrowId;
-        return true;
-    }
-
-    /** Finish a due regrow on a loaded chunk (morph or respawn sprite). */
-    finishLootableRegrow(chunk, entry) {
-        if (!this.applyDueLootableRegrow(entry)) return;
-        const live = chunk.things?.getChildren?.().find(t => t.entry === entry);
-        if (live && typeof live.morph === "function") {
-            live.morph(entry.id);
-        } else if (chunk.isLoaded) {
-            chunk.things.add(new LootableThing(this, entry, chunk));
-        }
-        this.markLightDirty?.();
-    }
-
-    /** Scan loaded chunks only — unloaded catch up in makeThings. */
-    tickLootableRegrows() {
-        const now = this.worldMinuteIndex();
-        for (const chunk of Object.values(this.chunks || {})) {
-            if (!chunk?.isLoaded || !chunk.meta?.lootableThings) continue;
-            for (const entry of chunk.meta.lootableThings) {
-                if (entry.regrowAt == null || now < entry.regrowAt) continue;
-                this.finishLootableRegrow(chunk, entry);
-            }
-        }
-    }
-
-    worldMinuteTick() {
-        if (this.isPaused) return;
-        // Multiplayer clock is applied from server snapshots
-        if (this.isNet) return;
-
-        this.gameMinutes += 1;
-        if (this.gameMinutes >= 24 * 60) {
-            this.gameMinutes = 0;
-            this.gameDay += 1;
-        }
-        this.updateClockText();
-        this.updateTimeTint();
-
-        this._hungerTickAll();
-        this.tickSoakDrops();
-        this.tickSpoilage();
-        this.tickCorpseDecay();
-        this.tickCampfires();
-        this.tickDryingRacks();
-        this.tickLootableRegrows();
-        this.tickBodySystems();
-        this.tickBloodStains();
-        this.tickApparelDailyWear();
-    }
-
-    tickApparelDailyWear() {
-        if (this.simAuth()) return;
-        if (typeof Apparel === "undefined" || typeof Durability === "undefined") return;
-        if (!Apparel.isDayBoundary(this.worldMinuteIndex())) return;
-        const rng = () => (typeof GameMath !== "undefined" ? GameMath.random() : Math.random());
-        const getItem = (id) => this.getItem?.(id);
-        const pawns = [
-            this.player,
-            ...(this.party || []),
-            ...(this.settlers || []),
-            ...(this.partySys?.wanderers || [])
-        ];
-        const seen = new Set();
-        for (const pawn of pawns) {
-            if (!pawn || seen.has(pawn) || pawn.isBodyDead?.()) continue;
-            seen.add(pawn);
-            if (!pawn.equipment) continue;
-            const broke = Apparel.applyDailyWear(pawn.equipment, getItem, rng, Durability);
-            if (!broke.length) continue;
-            pawn.afterApparelWear?.();
-            const yours = pawn === this.player;
-            for (const piece of broke) {
-                const who = yours ? "Your" : `${pawn.displayName?.() || "Their"}'s`;
-                this.combatLog?.push?.(`${who} ${piece.name} fell apart`);
-            }
-        }
-    }
-
     _forEachHungerPawn(fn) {
         const seen = new Set();
         const visit = (p) => {
@@ -8944,10 +8617,6 @@ class SceneMain extends SceneBase {
         visit(this.player);
         for (const p of this.party || []) visit(p);
         for (const p of this.settlers || []) visit(p);
-    }
-
-    _hungerTickAll() {
-        this._forEachHungerPawn((p) => p.hungerTick?.());
     }
 
     tickBodySystems() {
@@ -9450,242 +9119,6 @@ class SceneMain extends SceneBase {
      * Corpse → carcass after 12h, carcass → gone after 30d.
      * Dedicated MP: server owns this (events + snapshots).
      */
-    tickCorpseDecay() {
-        if (this.simAuth()) return;
-        const Decay = typeof CorpseDecay !== "undefined" ? CorpseDecay : null;
-        if (!Decay) return;
-        const now = this.worldMinuteIndex();
-        for (const chunk of Object.values(this.chunks || {})) {
-            const list = chunk?.meta?.corpses;
-            if (!Array.isArray(list) || !list.length) continue;
-            for (let i = list.length - 1; i >= 0; i--) {
-                const entry = list[i];
-                if (!entry) continue;
-                Decay.ensureDiedAt(entry, now);
-                const next = Decay.stageFor(entry.diedAt, now);
-                if (next === "gone") {
-                    this._decayRemoveCorpse(chunk, entry);
-                    continue;
-                }
-                if (next === "carcass" && entry.stage !== "carcass") {
-                    this._convertCorpseToCarcass(chunk, entry, now);
-                }
-            }
-        }
-    }
-
-    tickSpoilage() {
-        const now = this.worldMinuteIndex();
-        const rot = this.getItem("rot");
-        let dirty = false;
-        let cookDirty = false;
-        let corpsePanelDirty = false;
-        const getItem = (id) => this.getItem(id);
-        // Dedicated MP: server owns character spoilLeft (YOU). LocalSim / offline tick locally.
-        const skipPlayerSpoil = this.simAuth();
-
-        const applyWorldStack = (stack, cool = true) => {
-            if (!stack) return stack;
-            if (cool && typeof Fire !== "undefined") Fire.tickStackTemp(stack);
-            migrateToSpoilAt(stack, now, getItem);
-            const { stack: next, changed } = spoilStackIfDue(stack, now, rot);
-            if (changed) dirty = true;
-            return next;
-        };
-
-        const applyCharacterStack = (stack) => {
-            if (!stack) return stack;
-            if (typeof Fire !== "undefined") Fire.tickStackTemp(stack);
-            migrateToSpoilLeft(stack, now, getItem);
-            tickSpoilLeft(stack);
-            const { stack: next, changed } = spoilStackIfDue(stack, now, rot);
-            if (changed) dirty = true;
-            return next;
-        };
-
-        if (!skipPlayerSpoil) {
-            const pawns = (this.party && this.party.length) ? this.party : [this.player];
-            for (const pawn of pawns) {
-                if (!pawn || pawn.isBodyDead?.()) continue;
-                const inv = pawn.inventory;
-                if (Array.isArray(inv)) {
-                    for (let i = 0; i < inv.length; i++) {
-                        if (inv[i]) inv[i] = applyCharacterStack(inv[i]);
-                    }
-                }
-                const eq = pawn.equipment;
-                if (eq) {
-                    for (const key of ["head", "torso", "legs", "feet", "back"]) {
-                        if (eq[key]) eq[key] = applyCharacterStack(eq[key]);
-                    }
-                    if (Array.isArray(eq.waist)) {
-                        for (let i = 0; i < eq.waist.length; i++) {
-                            if (eq.waist[i]) eq.waist[i] = applyCharacterStack(eq.waist[i]);
-                        }
-                    }
-                }
-                const over = pawn.overflow;
-                if (Array.isArray(over)) {
-                    for (let i = 0; i < over.length; i++) {
-                        if (over[i]) over[i] = applyCharacterStack(over[i]);
-                    }
-                }
-            }
-        }
-
-        const liveDrops = this.droppedItems?.getChildren?.() || [];
-        for (const chunk of Object.values(this.chunks || {})) {
-            const drops = chunk.meta?.drops;
-            if (Array.isArray(drops)) {
-                for (const entry of drops) {
-                    if (!entry) continue;
-                    const live = liveDrops.find((d) => d.active && d.entry === entry);
-                    const onWater = this._dropIsOnWater(live || entry);
-                    const def = getItem(entry.id);
-                    if (typeof Fire !== "undefined") {
-                        Fire.tickStackTemp(entry);
-                        if (live) {
-                            if (entry.temp != null) live.temp = entry.temp;
-                            else delete live.temp;
-                        }
-                    }
-                    if (typeof Hide !== "undefined" && Hide.pausesDropDespawn(entry, def, onWater)) {
-                        continue;
-                    }
-                    migrateToSpoilAt(entry, now, getItem);
-                    if (live) {
-                        if (entry.spoilAt != null) live.spoilAt = entry.spoilAt;
-                        else delete live.spoilAt;
-                    }
-                    if (entry.spoilAt == null) continue;
-                    if (Math.round(now) < Math.round(entry.spoilAt)) continue;
-                    dirty = true;
-                    const qty = entry.quantity;
-                    if (!rot) {
-                        delete entry.spoilAt;
-                        if (live) delete live.spoilAt;
-                        continue;
-                    }
-                    const beforeId = entry.id;
-                    entry.id = rot.id;
-                    entry.quantity = qty;
-                    delete entry.spoilAt;
-                    delete entry.spoilLeft;
-                    delete entry.spoilMinutes;
-                    delete entry.customName;
-                    delete entry.food;
-                    delete entry.ingredients;
-                    delete entry.weight;
-                    delete entry.kind;
-                    delete entry.fillTint;
-                    if (live) {
-                        live.item = rot;
-                        delete live.spoilAt;
-                        live.quantity = qty;
-                        if (beforeId !== rot.id) live.setTexture(rot.key);
-                        live.syncToEntry?.();
-                    }
-                }
-            }
-
-            const corpses = chunk.meta?.corpses;
-            if (Array.isArray(corpses)) {
-                for (const corpseEntry of corpses) {
-                    if (!Array.isArray(corpseEntry?.loot)) continue;
-                    let lootChanged = false;
-                    for (let i = 0; i < corpseEntry.loot.length; i++) {
-                        if (!corpseEntry.loot[i]) continue;
-                        const prevId = corpseEntry.loot[i].id;
-                        const prevAt = corpseEntry.loot[i].spoilAt;
-                        corpseEntry.loot[i] = applyWorldStack(corpseEntry.loot[i]);
-                        const cur = corpseEntry.loot[i];
-                        if (cur?.id !== prevId || cur?.spoilAt !== prevAt) lootChanged = true;
-                    }
-                    if (lootChanged) {
-                        dirty = true;
-                        const panel = this.corpsePanel;
-                        if (panel?.visible && panel.corpse?.entry === corpseEntry) {
-                            corpsePanelDirty = true;
-                        }
-                    }
-                }
-            }
-
-            const things = chunk.meta?.things;
-            if (Array.isArray(things)) {
-                for (const entry of things) {
-                    if (!entry) continue;
-                    const thingMeta = this.getThing?.(entry.id);
-                    const isCamp = thingMeta?.campfire
-                        || entry.id === "campfire"
-                        || entry.id === "unlit_campfire"
-                        || entry.cook !== undefined
-                        || entry.catalyst !== undefined
-                        || Array.isArray(entry.simmer);
-                    const isStorage = !!(thingMeta?.storage || Array.isArray(entry.slots));
-                    if (!isCamp && !isStorage) continue;
-
-                    if (isStorage && Array.isArray(entry.slots)) {
-                        for (let i = 0; i < entry.slots.length; i++) {
-                            if (!entry.slots[i]) continue;
-                            const itemDef = getItem(entry.slots[i].id);
-                            if (
-                                typeof Hide !== "undefined"
-                                && Hide.isDryingRack(thingMeta, entry)
-                                && Hide.pausesRackSpoil(itemDef)
-                            ) {
-                                continue;
-                            }
-                            entry.slots[i] = applyWorldStack(entry.slots[i]);
-                        }
-                    }
-
-                    if (!isCamp) continue;
-
-                    if (entry.cook) {
-                        const prevId = entry.cook.id;
-                        entry.cook = applyWorldStack(entry.cook, false);
-                        if (entry.cook?.id !== prevId) {
-                            entry.cookProgress = 0;
-                            cookDirty = true;
-                        }
-                    }
-                    if (entry.catalyst) {
-                        const prevId = entry.catalyst.id;
-                        // In-fire slots follow pit heat; ambient cooling desynced
-                        // dedicated (spoil-after-burn) from singleplayer (spoil-first).
-                        entry.catalyst = applyWorldStack(entry.catalyst, false);
-                        if (entry.catalyst?.id !== prevId) cookDirty = true;
-                    }
-                    if (Array.isArray(entry.simmer)) {
-                        for (let i = 0; i < entry.simmer.length; i++) {
-                            if (!entry.simmer[i]) continue;
-                            const prevId = entry.simmer[i].id;
-                            entry.simmer[i] = applyWorldStack(entry.simmer[i], false);
-                            if (entry.simmer[i]?.id !== prevId) cookDirty = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        if (corpsePanelDirty) {
-            const panel = this.corpsePanel;
-            if (panel?.visible && panel.corpse?.entry) {
-                panel.syncFromEntry?.();
-            }
-        }
-
-        if (dirty) {
-            this.hotbar.dirty = true;
-            if (this.equipmentPanel?.visible) this.equipmentPanel.refresh();
-        }
-        if (cookDirty) this.campfirePanel?.refresh();
-        if (this.storagePanel?.visible) this.storagePanel.refresh();
-        if (this.tooltip?.visible) this.refreshTooltip();
-    }
-
-    /** Migrate spoil timers on all chunk meta (drops, corpses, campfires). */
     migrateWorldSpoilAt() {
         const now = this.worldMinuteIndex();
         const getItem = (id) => this.getItem(id);
@@ -9713,40 +9146,6 @@ class SceneMain extends SceneBase {
                     if (rack && Hide.pausesRackSpoil(itemDef)) continue;
                     migrateToSpoilAt(s, now, getItem);
                 }
-            }
-        }
-    }
-
-    /** Migrate/ensure spoilLeft on character stacks (after clock is known). */
-    ensureSpoilLeft(stacks) {
-        if (!stacks) return;
-        const now = this.worldMinuteIndex();
-        const getItem = (id) => this.getItem(id);
-        const migrate = (typeof Spoil !== "undefined" && Spoil.migrateCharacterStacks)
-            || (typeof migrateCharacterStacks === "function" ? migrateCharacterStacks : null);
-        if (migrate) migrate(stacks, now, getItem);
-        }
-
-    /** @deprecated Use ensureSpoilLeft */
-    ensureSpoilAt(stacks) {
-        this.ensureSpoilLeft(stacks);
-    }
-
-    /** @deprecated */
-    ensureSpoilMinutes(stacks) {
-        this.ensureSpoilLeft(stacks);
-    }
-
-    /** Rename legacy item ids in inventory/loot stacks (e.g. wood_spear → wooden_spear). */
-    _migrateLegacyItemIds(stacks) {
-        if (!stacks) return;
-        for (const stack of stacks) {
-            if (!stack?.id) continue;
-            if (typeof Hide !== "undefined") Hide.migrateStackItemId?.(stack);
-            else if (stack.id === "wood_spear") stack.id = "wooden_spear";
-            else if (stack.id === "raw_beef") stack.id = "raw_human_flesh";
-            else if (stack.id === "roast_beef" || stack.id === "roast_human_flesh") {
-                stack.id = "roasted_human_flesh";
             }
         }
     }
@@ -12813,23 +12212,12 @@ class SceneMain extends SceneBase {
         }
         this._tickSleepZzz?.(delta);
         this._tickPaintFx?.(delta);
-        this._tickRestClock?.(delta);
-        this.combatLog?.update?.();
+        this.updateLocationDebug?.();
         this.updateFpsMeter?.(delta);
         this.updateLocationDebug?.();
         // In case a YOU arrived while knapping/craft was open and close missed a flush
         this._flushPendingYouGear?.();
 
-        // Wildlife: SimWorld owns AI. Snapshot puppets live in netMobs.
-        if (!this.simAuth()) {
-            const mobs = this.mobs.getChildren();
-            for (let i = mobs.length - 1; i >= 0; i--) {
-                const mob = mobs[i];
-                if (mob?.active && typeof mob.update === "function") {
-                    mob.update(time, delta);
-                }
-            }
-        }
         const drops = this.droppedItems.getChildren();
         for (let i = drops.length - 1; i >= 0; i--) {
             const drop = drops[i];

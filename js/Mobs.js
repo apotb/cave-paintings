@@ -108,14 +108,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         chunk.ensureSpriteGroups?.();
         chunk.mobs.add(this);
 
-        const AiClass = typeof MobAI !== "undefined" ? MobAI[this.def.ai] : null;
-        this.ai = AiClass ? new AiClass(this) : null;
-        // Restore combat aggro across save/load / chunk unload
-        if (this.ai && entry.hostile) {
-            this.ai.hostile = true;
-            this.ai.timeSinceHitPlayer = 0;
-            this.ai._deaggroTimer = 0;
-        }
+        this.ai = null;
 
         this.unarmedSprite = null;
         this.attackTimer = 0;
@@ -538,8 +531,6 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
                 corpse.entry.pendingAt = performance.now();
             }
             if (corpse && scene.netCorpses) scene.netCorpses.set(corpseId, corpse);
-        } else {
-            Corpse.spawn(scene, corpseOpts);
         }
 
         if (this.chunk?.meta?.mobs) {

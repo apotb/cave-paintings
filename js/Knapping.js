@@ -49,11 +49,6 @@ const Knapping = {
         return { grid: this._ensureConnected(grid), pixels };
     },
 
-    /** @deprecated use blankFromTexture */
-    gridFromTexture(scene, textureKey) {
-        return this.blankFromTexture(scene, textureKey).grid;
-    },
-
     /**
      * Sample texture into SIZE×SIZE RGBA (nearest).
      * @returns {Uint8ClampedArray|null}

@@ -18,11 +18,6 @@
         return Math.round(hours * 60);
     }
 
-    /** @deprecated Use spoilDurationMinutes */
-    function defaultSpoilMinutes(item) {
-        return spoilDurationMinutes(item);
-    }
-
     /** Fresh remaining minutes for a character stack. */
     function defaultSpoilLeft(item) {
         const dur = spoilDurationMinutes(item);
@@ -219,7 +214,6 @@
 
     return {
         spoilDurationMinutes,
-        defaultSpoilMinutes,
         defaultSpoilLeft,
         defaultSpoilAt,
         remainingSpoilMinutes,
