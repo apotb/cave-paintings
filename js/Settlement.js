@@ -62,7 +62,9 @@ class SettlementSystem {
         const tree = this.scene.researchTreePanel;
         if (tree?.visible) tree.refresh();
         const panel = this.scene.settlementPanel;
-        if (panel?.visible && panel.tab === "research" && !tree?.visible) panel.refresh();
+        if (panel?.visible && (panel.tab === "people" || (panel.tab === "research" && !tree?.visible))) {
+            panel.refresh();
+        }
     }
 
     persistTo(world) {
@@ -571,6 +573,7 @@ class SettlementSystem {
         const settle = S.createSettlement({
             name,
             ownerId: this.ownerId(),
+            ownerName: scene.leader?.displayName?.() || scene.playerName || "",
             x,
             y,
             tx,

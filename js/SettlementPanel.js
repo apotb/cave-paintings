@@ -389,7 +389,8 @@ class SettlementPanel {
                     return String(pid);
                 }
             }).join("|");
-            return `jobs:${id}:${jobs}:${layout}`;
+            const controlId = this.scene.player?.pawnId || this.scene.player?.id || "";
+            return `jobs:${id}:${jobs}:${controlId}:${layout}`;
         }
         if (tab === "stock") {
             const items = sys?.localStockItems?.(this.settle) || [];
@@ -410,7 +411,10 @@ class SettlementPanel {
         const party = (this.scene.party || []).filter((p) => p && !p.isBodyDead?.());
         const here = sys?.settlersOf?.(this.settle.id) || [];
         const ids = (list) => list.map((p) => p.pawnId || p.id).join(",");
-        return `people:${id}:${ids(party)}:${ids(here)}:${layout}`;
+        const lead = this._visitLeader();
+        const leadSig = lead ? `${lead.online ? 1 : 0}:${lead.name}` : "";
+        const controlId = this.scene.player?.pawnId || this.scene.player?.id || "";
+        return `people:${id}:${ids(party)}:${ids(here)}:${leadSig}:${controlId}:${layout}`;
     }
 
     _pointerStillOn(obj, pointer) {
@@ -508,9 +512,12 @@ class SettlementPanel {
         const rowH = Math.round(24 * sc);
         let y = 0;
         if (!this._manageOpen()) {
+            y = this._fillVisitLeader(y, rowH, innerW, sc);
             if (!here.length) {
-                this._rowLabel("(none)", Math.round(8 * sc), y, rowH, 12);
-                y += rowH;
+                if (!y) {
+                    this._rowLabel("(none)", Math.round(8 * sc), y, rowH, 12);
+                    y += rowH;
+                }
             } else {
                 y = this._fillPeopleGrid(here, y, colW, gap, rowH, sc, "here");
             }
@@ -530,6 +537,69 @@ class SettlementPanel {
             y = this._fillPeopleGrid(here, y, colW, gap, rowH, sc, "here");
         }
         return y + 8 * sc;
+    }
+
+    /**
+     * Owner of a camp you are visiting. Name is their main character.
+     * Online comes from the world snapshot, with the live remote as a fallback.
+     */
+    _visitLeader() {
+        const settle = this.settle;
+        if (!settle?.ownerId || this._manageOpen()) return null;
+        const scene = this.scene;
+        const ownerId = settle.ownerId;
+        const selfId = scene.settlementSys?.ownerId?.();
+        let online = typeof settle.ownerOnline === "boolean" ? !!settle.ownerOnline : null;
+        let live = "";
+        if (ownerId === selfId) {
+            if (online == null) online = true;
+            live = scene.leader?.displayName?.() || scene.playerName || "";
+        } else {
+            const remote = scene.remotePlayers?.get?.(ownerId);
+            if (remote) {
+                if (online == null) online = true;
+                live = remote.displayName || "";
+            }
+        }
+        const name = String(live || settle.ownerName || "").trim();
+        if (!name) return null;
+        return { name, online: !!online };
+    }
+
+    /** First line of a visited camp: presence dot, character name, crown. */
+    _fillVisitLeader(y, rowH, innerW, sc) {
+        const lead = this._visitLeader();
+        if (!lead) return y;
+        const scene = this.scene;
+        const online = !!lead.online;
+        const ink = online ? "#7dff7d" : "#8a8278";
+        const dotR = Math.max(2, Math.round(3 * sc));
+        const pad = Math.round(2 * sc);
+        const dot = scene.add.graphics();
+        dot.fillStyle(online ? 0x7dff7d : 0x8a8278, 1);
+        dot.fillCircle(pad + dotR, y + rowH / 2, dotR);
+        this.body.add(dot);
+        const nameX = pad + dotR * 2 + Math.round(4 * sc);
+        const crownW = scene.textures?.exists("leader") ? Math.round(16 * sc) : 0;
+        const nameMax = Math.max(24, innerW - nameX - crownW - Math.round(4 * sc));
+        const label = this._rowLabel(lead.name, nameX, y, rowH, 12);
+        if (label.width > nameMax) {
+            let cut = lead.name;
+            while (cut.length > 1 && label.width > nameMax) {
+                cut = cut.slice(0, -1);
+                label.setText(`${cut}…`);
+            }
+        }
+        label.setColor(ink);
+        if (crownW && scene.textures?.exists("leader")) {
+            const crown = scene.add.image(
+                nameX + Math.min(label.width, nameMax) + Math.round(3 * sc),
+                y + rowH / 2,
+                "leader"
+            ).setOrigin(0, 0.5).setScale(sc);
+            this.body.add(crown);
+        }
+        return y + rowH;
     }
 
     _fillPeopleGrid(list, y0, colW, gap, rowH, sc, kind) {

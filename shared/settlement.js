@@ -317,6 +317,7 @@
         s.id = s.id || uid();
         s.name = clampName(s.name);
         s.ownerId = s.ownerId || opts.ownerId || null;
+        s.ownerName = String(s.ownerName || opts.ownerName || "").trim().slice(0, 24);
         s.x = Number(s.x) || 0;
         s.y = Number(s.y) || 0;
         s.tx = Number.isInteger(s.tx) ? s.tx : Math.floor(s.x / 16);
@@ -337,6 +338,7 @@
             id: opts.id || uid(),
             name: opts.name,
             ownerId: opts.ownerId,
+            ownerName: opts.ownerName,
             x: opts.x,
             y: opts.y,
             tx: opts.tx,

@@ -8,6 +8,15 @@ const { loadDefs, DataStore } = require("./helpers/load");
 
 loadDefs();
 
+test("settlement keeps the owner's character name", () => {
+    const named = Settlement.createSettlement({ ownerId: "p", ownerName: "  Ash  " });
+    assert.equal(named.ownerName, "Ash");
+    assert.equal(named.ownerId, "p");
+    const long = Settlement.ensureSettlement({ ownerName: "x".repeat(40) });
+    assert.equal(long.ownerName.length, 24);
+    assert.equal(Settlement.ensureSettlement({}).ownerName, "");
+});
+
 test("settlement names clamp to 20 characters", () => {
     assert.equal(Settlement.NAME_MAX, 20);
     assert.equal(Settlement.clampName("x".repeat(40)).length, 20);

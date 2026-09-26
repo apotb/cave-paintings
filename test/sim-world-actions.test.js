@@ -3378,3 +3378,36 @@ test("new world keeps brought knowledge and does not charge historical tech cost
     assert.equal(world.researchSpentByOwner[pawn.id], 2);
 });
 
+test("visited camps carry the owner's character name and live online flag", () => {
+    const { world, pawn } = createTestWorld({ playerId: "viewer" });
+    const camp = Settlement.createSettlement({
+        ownerId: "owner",
+        ownerName: "stale",
+        x: 4000,
+        y: 0,
+        name: "Far"
+    });
+    camp.ownerOnline = true;
+    world.settlements.push(camp);
+    const owner = world.addPlayer("owner", "Account", { name: "Ash" }, { silentJoin: true });
+    assert.equal(owner.name, "Ash");
+    assert.equal(camp.ownerName, "Ash");
+
+    let row = world.snapshotFor(pawn.id).settlements.find((s) => s.id === camp.id);
+    assert.equal(row.ownerName, "Ash");
+    assert.equal(row.ownerOnline, true);
+    assert.equal(camp.ownerOnline, undefined);
+    assert.equal(world.toSaveData().settlements.find((s) => s.id === camp.id).ownerOnline, undefined);
+
+    owner.name = "Birch";
+    row = world.snapshotFor(pawn.id).settlements.find((s) => s.id === camp.id);
+    assert.equal(row.ownerName, "Birch");
+    assert.equal(camp.ownerName, "Birch");
+
+    owner.connected = false;
+    row = world.snapshotFor(pawn.id).settlements.find((s) => s.id === camp.id);
+    assert.equal(row.ownerOnline, false);
+    assert.equal(row.ownerName, "Birch");
+    assert.equal(camp.ownerName, "Birch");
+});
+

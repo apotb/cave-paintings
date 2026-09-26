@@ -1165,6 +1165,7 @@ class SimWorld {
             this._reconcilePartyAndSettlers(existing);
             this._youDirty.add(playerId);
             this._ensureDirectorCd(existing.id, (existing.party?.length || 0) + 1);
+            this._rememberOwnerName(existing);
             return existing;
         }
         const p = this._freshPawn(playerId, displayName);
@@ -1190,7 +1191,42 @@ class SimWorld {
         if (!opts.silentJoin) {
             this.pushEvent({ kind: "chat", text: `${p.name} joined`, system: true });
         }
+        this._rememberOwnerName(p);
         return p;
+    }
+
+    /** Keep each camp's leader label on the owner's main character name. */
+    _rememberOwnerName(p) {
+        if (!p?.id) return;
+        const name = String(p.name || "").trim().slice(0, 24);
+        if (!name) return;
+        for (const s of this.settlements || []) {
+            if (s?.ownerId === p.id) s.ownerName = name;
+        }
+    }
+
+    /**
+     * Camps for the wire. `ownerOnline` is live presence only — it stays off
+     * the saved settlement so a logout cannot freeze someone as online.
+     */
+    _publicSettlements() {
+        const out = [];
+        for (const s of this.settlements || []) {
+            if (!s) continue;
+            const owner = s.ownerId ? this.players.get(s.ownerId) : null;
+            const online = !!(owner && owner.connected);
+            if (online && owner.name) {
+                const name = String(owner.name).trim().slice(0, 24);
+                if (name) s.ownerName = name;
+            }
+            if ("ownerOnline" in s) delete s.ownerOnline;
+            out.push({
+                ...s,
+                ownerName: s.ownerName || "",
+                ownerOnline: online
+            });
+        }
+        return out;
     }
 
     /** Rejoin: restore last logout pose for this character on this world. */
@@ -8588,6 +8624,7 @@ class SimWorld {
             const settle = Settlement.createSettlement({
                 name,
                 ownerId: session.id,
+                ownerName: session.name,
                 x, y, tx, ty
             });
             settle.stoneUid = entry.uid;
@@ -12351,7 +12388,7 @@ class SimWorld {
             mobs,
             wanderers: [...this.wanderers.values()].map((w) => this._publicWanderer(w)),
             settlers: (this.settlers || []).filter((s) => s && !s.dead).map((s) => this._publicSettler(s)),
-            settlements: this.settlements || [],
+            settlements: this._publicSettlements(),
             chunkCursor: { cx, cy },
             youId: viewerId
         };
