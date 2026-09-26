@@ -201,6 +201,86 @@ test("settler walks to roasted food in a basket instead of eating raw in hand", 
     );
 });
 
+test("full-pocket settler hauls one item to the nearest storage then gets food", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "pebble", quantity: 1 },
+            { id: "flint", quantity: 1 },
+            { id: "leaf", quantity: 1 },
+            { id: "log", quantity: 1 },
+            { id: "stick", quantity: 1 }
+        ]
+    });
+    rec.kc = 200;
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 0
+    };
+    const near = addBasket(world, settle, rec.x + 16, rec.y, "near-stash");
+    const food = addBasket(world, settle, rec.x + 96, rec.y, "food-basket");
+    for (let i = 0; i < food.slots.length; i++) {
+        food.slots[i] = { id: "roasted_apple", quantity: 1 };
+    }
+    let hauled = false;
+    let ate = false;
+    for (let i = 0; i < 240; i++) {
+        world.tick(50);
+        if (/Haul/i.test(rec._settlerAct || "")) hauled = true;
+        const stashed = (near.slots || []).some((s) => s && s.id === "pebble");
+        if (stashed) hauled = true;
+        if (rec.eatChannel?.itemId === "roasted_apple") {
+            ate = true;
+            break;
+        }
+    }
+    const nearIds = (near.slots || []).filter((s) => s && s.id).map((s) => s.id);
+    const foodHasGear = (food.slots || []).some((s) => s && s.id && s.id !== "roasted_apple");
+    assert.equal(ate, true, `should eat after making a pocket (act=${rec._settlerAct} near=${nearIds.join(",")})`);
+    assert.equal(hauled, true, "should haul before eating");
+    assert.deepEqual(nearIds, ["pebble"], "nearest storage gets one carried stack");
+    assert.equal(foodHasGear, false, "full food basket is not the dump target");
+    assert.equal(
+        rec.inventory.filter((s) => s && s.id && s.id !== "roasted_apple").length,
+        4,
+        "only one pocket is cleared"
+    );
+});
+
+test("full pockets do not block food that still stacks", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "blueberry", quantity: 4, spoilAt: 5000 },
+            { id: "pebble", quantity: 1 },
+            { id: "flint", quantity: 1 },
+            { id: "leaf", quantity: 1 },
+            { id: "log", quantity: 1 }
+        ]
+    });
+    rec.kc = 200;
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 0
+    };
+    const stash = addBasket(world, settle, rec.x + 16, rec.y, "empty-stash");
+    const food = addBasket(world, settle, rec.x + 24, rec.y, "berry-basket");
+    food.slots[0] = { id: "blueberry", quantity: 3, spoilAt: 10 };
+    let ate = false;
+    for (let i = 0; i < 80; i++) {
+        world.tick(50);
+        if (rec.eatChannel?.itemId === "blueberry") {
+            ate = true;
+            break;
+        }
+    }
+    assert.equal(ate, true, `should eat blueberries (act=${rec._settlerAct})`);
+    assert.equal(
+        (stash.slots || []).some((s) => s && s.id),
+        false,
+        "open stack room means no haul"
+    );
+    assert.ok(rec.inventory.some((s) => s && s.id === "pebble"), "pebble stays in hand");
+});
+
 test("dedicated settler stashes cargo into a matching basket", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {
@@ -2067,6 +2147,79 @@ function stepSettlerWalk(world, rec, tx, ty, dt = 16) {
     rec.y = cc.y;
 }
 
+test("hauler walks around a tree instead of turning back into open ground", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        x: 40,
+        y: 120,
+        inventory: [{ id: "stick", quantity: 4 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1, research: 0
+    };
+    const basket = addBasket(world, settle, 40, 40);
+    const chunk = originChunk(world);
+    chunk.things.push({ uid: "s1", id: "tree_stump", x: 40, y: 88 });
+    chunk.things.push({ uid: "s2", id: "tree_stump", x: 56, y: 72 });
+    chunk.things.push({ uid: "s3", id: "tree", x: 24, y: 72 });
+    let anchorX = rec.x;
+    let anchorY = rec.y;
+    let stillMs = 0;
+    let worstStill = 0;
+    let stashed = false;
+    for (let i = 0; i < 500; i++) {
+        world.tick(16);
+        if (Math.hypot(rec.x - anchorX, rec.y - anchorY) >= 8) {
+            worstStill = Math.max(worstStill, stillMs);
+            stillMs = 0;
+            anchorX = rec.x;
+            anchorY = rec.y;
+        } else {
+            stillMs += 16;
+        }
+        if ((basket.slots || []).some((s) => s && s.id === "stick")) {
+            stashed = true;
+            break;
+        }
+    }
+    worstStill = Math.max(worstStill, stillMs);
+    assert.equal(stashed, true, `should stash the sticks (at ${rec.x.toFixed(1)},${rec.y.toFixed(1)} act=${rec._settlerAct})`);
+    assert.ok(worstStill < 1200, `stood still for ${worstStill}ms while hauling`);
+});
+
+test("settler follows the path around a row of lean-tos instead of skating back", () => {
+    const { world, pawn } = createTestWorld();
+    const def = world._thingDef("lean_to");
+    const chunk = originChunk(world);
+    let south = 0;
+    for (let i = 0; i < 5; i++) {
+        const tx = 2 + i * 3;
+        const ty = 8;
+        const pos = Place.footprintWorldPos(tx, ty, 0, def.footprint, 16);
+        const entry = { uid: "row" + i, id: "lean_to", x: pos.x, y: pos.y, tx, ty, rot: 0 };
+        chunk.things.push(entry);
+        south = Math.max(south, Place.collisionWorldRect(entry, def, 16).bottom);
+    }
+    const { rec } = parkSettler(world, pawn, { x: 96, y: south + 40 });
+    const dest = { x: 96, y: south - 48 };
+    let minX = rec.x;
+    let reversed = 0;
+    for (let i = 0; i < 360; i++) {
+        const before = rec.x;
+        stepSettlerWalk(world, rec, dest.x, dest.y, 16);
+        if (rec.y > south + 8) {
+            if (rec.x < minX) minX = rec.x;
+            else if (rec.x > before + 0.5 && rec.x > minX + 24) reversed++;
+        }
+        if (Math.hypot(dest.x - rec.x, dest.y - rec.y) < 18) break;
+    }
+    assert.ok(
+        Math.hypot(dest.x - rec.x, dest.y - rec.y) < 20,
+        `should reach the far side, ended ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`
+    );
+    assert.equal(reversed, 0, "skated back along the lean-tos");
+});
+
 test("dedicated settler walks around a lean-to instead of sticking to it", () => {
     const { world, pawn } = createTestWorld();
     const { rec } = parkSettler(world, pawn, { x: 40, y: 96 });
@@ -3085,6 +3238,34 @@ test("player tool break says Your and colors the tool orange", () => {
     const tool = line.segments.find((s) => s.text === "Sharp Stick");
     assert.ok(tool);
     assert.equal(tool.color, "#f0a040");
+});
+
+test("settler deposits into a basket beside a stump instead of jiggling", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        x: 64,
+        y: 80,
+        inventory: [{ id: "stick", quantity: 15 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1 };
+    const basket = addBasket(world, settle, 80, 96);
+    originChunk(world).things.push({ uid: "stump-by-basket", id: "tree_stump", x: 80, y: 80 });
+    let flips = 0;
+    let prev = 0;
+    let stashed = false;
+    for (let i = 0; i < 200; i++) {
+        world.tick(16);
+        const vx = rec.creature?.vx || 0;
+        if (prev && vx * prev < -400) flips++;
+        if (Math.abs(vx) > 10) prev = vx;
+        const qty = (basket.slots || []).reduce((n, s) => n + (s && s.id === "stick" ? s.quantity : 0), 0);
+        if (qty >= 15) {
+            stashed = true;
+            break;
+        }
+    }
+    assert.equal(stashed, true, `should deposit (at ${rec.x.toFixed(1)},${rec.y.toFixed(1)} act=${rec._settlerAct})`);
+    assert.ok(flips < 6, `jiggled ${flips} times beside the basket`);
 });
 
 test("settler stashes into a basket ahead without staying inside it", () => {

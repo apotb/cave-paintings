@@ -2079,7 +2079,7 @@ function fetchEatStack(world, rec, settle, found) {
     const got = takeToPawn(world, rec, piece);
     if (got <= 0) {
         restorePiece(found, piece);
-        return halt();
+        return { eatBlocked: true };
     }
     const left = (Number(piece.quantity) || 1) - got;
     if (left > 0) restorePiece(found, { ...piece, quantity: left });
@@ -2167,14 +2167,6 @@ function stationStandFeet(world, rec, c, target) {
         const feetY = aimY + ((Number(rec.y) || 0) - body.y);
         return { feetX, feetY, aimX, aimY };
     };
-    const free = (aimX, aimY) => {
-        const feetX = aimX + ((Number(rec.x) || 0) - body.x);
-        const feetY = aimY + ((Number(rec.y) || 0) - body.y);
-        if (typeof world?._partyPoseBlocked === "function" && c) {
-            return !world._partyPoseBlocked(c, feetX, feetY, 0);
-        }
-        return true;
-    };
     let dx = body.x - (Number(target.x) || 0);
     let dy = body.y - (Number(target.y) || 0);
     const radial = Math.hypot(dx, dy);
@@ -2187,21 +2179,36 @@ function stationStandFeet(world, rec, c, target) {
     }
     const preferX = (Number(target.x) || 0) + dx * dist;
     const preferY = (Number(target.y) || 0) + dy * dist;
+    // Walk collision uses a pad. A point that is clear at pad 0 but inside
+    // that pad gets replaced by a far "open" cell, and the settler jiggles
+    // there instead of using the chest.
+    const free = (aimX, aimY) => {
+        const feetX = aimX + ((Number(rec.x) || 0) - body.x);
+        const feetY = aimY + ((Number(rec.y) || 0) - body.y);
+        if (typeof world?._partyPoseBlocked === "function" && c) {
+            return !world._partyPoseBlocked(c, feetX, feetY, 2);
+        }
+        return true;
+    };
     if (free(preferX, preferY)) return pack(preferX, preferY);
+    const tx = Number(target.x) || 0;
+    const ty = Number(target.y) || 0;
     let best = null;
     let bestD = Infinity;
-    for (let i = 0; i < 8; i++) {
-        const a = (i / 8) * Math.PI * 2;
-        const aimX = (Number(target.x) || 0) + Math.cos(a) * dist;
-        const aimY = (Number(target.y) || 0) + Math.sin(a) * dist;
-        if (!free(aimX, aimY)) continue;
-        const d = Math.hypot(body.x - aimX, body.y - aimY);
-        if (d < bestD) {
-            bestD = d;
-            best = { aimX, aimY };
+    for (const r of [dist, dist + 8]) {
+        for (let i = 0; i < 16; i++) {
+            const a = (i / 16) * Math.PI * 2;
+            const aimX = tx + Math.cos(a) * r;
+            const aimY = ty + Math.sin(a) * r;
+            if (!free(aimX, aimY)) continue;
+            const d = Math.hypot(body.x - aimX, body.y - aimY);
+            if (d < bestD) {
+                bestD = d;
+                best = { aimX, aimY };
+            }
         }
+        if (best) return pack(best.aimX, best.aimY);
     }
-    if (best) return pack(best.aimX, best.aimY);
     return pack(preferX, preferY);
 }
 
@@ -3637,23 +3644,131 @@ function foundFromEatPick(rec, pick) {
     };
 }
 
-function pickEatStack(world, rec, settle) {
+function eatSeekOpts(world, rec, settle, extraBags) {
     const seekTiles = Number(settle?.radiusTiles) > 0
         ? Number(settle.radiusTiles)
         : (Settlement.RADIUS_TILES || 32);
-    const pick = Party.pickAutoEat(rec, [rec], {
+    const opts = {
         tileSize: TS,
         seekTiles,
         interactTiles: INTERACT_TILES,
         allowPoison: Party.isStarving(rec),
         getItem,
-        getFood: (s) => world._foodForEat(s),
-        extraBags: eatExtraBags(world, rec, settle)
-    });
+        getFood: (s) => world._foodForEat(s)
+    };
+    if (extraBags) opts.extraBags = extraBags;
+    return opts;
+}
+
+function pickEatStack(world, rec, settle) {
+    const pick = Party.pickAutoEat(
+        rec,
+        [rec],
+        eatSeekOpts(world, rec, settle, eatExtraBags(world, rec, settle))
+    );
     return foundFromEatPick(rec, pick);
 }
 
-function doEat(world, rec, settle) {
+/** True when at least one of `stack` can land in pockets or overflow. */
+function canTakeEatPiece(rec, stack) {
+    if (!stack?.id) return false;
+    const one = { ...stack, quantity: 1 };
+    return hasCarryRoom(rec, one) && canCarry(rec, one, 1);
+}
+
+function carriedDumpCandidates(rec, keepOpts) {
+    const keep = Settlement.keepIndices(rec.inventory, getItem, keepGearOpts(keepOpts));
+    const out = [];
+    const push = (slots, keptAt) => {
+        for (let i = 0; i < (slots || []).length; i++) {
+            const stack = slots[i];
+            if (!stack?.id) continue;
+            out.push({ slots, index: i, stack, kept: !!keptAt(i) });
+        }
+    };
+    push(rec.inventory, (i) => keep.has(i));
+    push(rec.overflow, () => false);
+    return out;
+}
+
+/** Whole stack must leave the pocket. A partial merge does not free the slot. */
+function stackFullyFits(slots, stack) {
+    if (!stack?.id || !Array.isArray(slots)) return false;
+    const qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
+    if (StorageFilter.existingStackRoom(slots, stack, getItem) >= qty) return true;
+    return slots.some((s) => !s);
+}
+
+/**
+ * Nearest storage that can take a carried stack outright.
+ * Non-kept gear first so a weapon stays in hand when something else will do.
+ */
+function nearestEatDump(world, rec, settle, keepOpts) {
+    const items = carriedDumpCandidates(rec, keepOpts);
+    const baskets = basketsOf(world, settle);
+    const pick = (allowKept) => {
+        let best = null;
+        let bestD = Infinity;
+        for (const b of baskets) {
+            if (!b) continue;
+            const d = Math.hypot(
+                (Number(rec.x) || 0) - (Number(b.x) || 0),
+                (Number(rec.y) || 0) - (Number(b.y) || 0)
+            );
+            if (d > bestD) continue;
+            let fit = null;
+            for (const item of items) {
+                if (item.kept && !allowKept) continue;
+                if (!StorageFilter.allows(b.storageFilter, item.stack, getItem)) continue;
+                if (!stackFullyFits(b.slots, item.stack)) continue;
+                fit = item;
+                break;
+            }
+            if (!fit) continue;
+            if (d === bestD && best) continue;
+            best = { basket: b, item: fit };
+            bestD = d;
+        }
+        return best;
+    };
+    return pick(false) || pick(true);
+}
+
+function makeRoomForEat(world, rec, settle, keepOpts) {
+    const dump = nearestEatDump(world, rec, settle, keepOpts);
+    if (!dump?.basket || !dump.item?.stack) return null;
+    const labelStack = dump.item.stack;
+    const walked = goOrWalk(world, rec, dump.basket);
+    if (walked) return { ...walked, eatHaul: labelStack };
+    const slots = dump.item.slots;
+    const live = slots?.[dump.item.index];
+    if (!live?.id || live.id !== labelStack.id) return null;
+    const before = Math.max(1, Number(live.quantity) || 1);
+    const ok = insertInEntry(world, dump.basket, live);
+    if (ok || !(Number(live.quantity) > 0)) slots[dump.item.index] = null;
+    else if ((Number(live.quantity) || 0) >= before) return null;
+    emitEntry(world, dump.basket);
+    world._dirtyPawnOwner?.(rec);
+    rec._settlerScan = null;
+    rec._settlerScanMs = SCAN_MS;
+    return halt({ eatHaul: labelStack });
+}
+
+function eatFromHand(world, rec, settle) {
+    return foundFromEatPick(rec, Party.pickAutoEat(rec, [rec], eatSeekOpts(world, rec, settle)));
+}
+
+function eatAct(world, rec, result) {
+    if (rec.eatChannel) return "Eating";
+    if (result?.eatHaul) {
+        return Settlement.actLabel({ type: "stash" }, actCtx(world, rec, {
+            stashStack: result.eatHaul
+        }));
+    }
+    return "Getting food";
+}
+
+function doEat(world, rec, settle, keepOpts) {
     if (rec.eatChannel) return halt();
     const kc = Number(rec.kc) || 0;
     const sitting = rec._eatSitting;
@@ -3663,13 +3778,27 @@ function doEat(world, rec, settle) {
         return null;
     }
     if (!sitting && kc >= AUTO_EAT) return null;
-    const found = pickEatStack(world, rec, settle);
+    let found = pickEatStack(world, rec, settle);
     if (!found) {
         rec._eatSitting = null;
         if (heldPrepared(rec).length) rec._returnFood = true;
         return null;
     }
-    if (found.at !== rec) return fetchEatStack(world, rec, settle, found) || halt();
+    if (found.at !== rec) {
+        const stack = found.slots?.[found.index];
+        const fetched = stack && canTakeEatPiece(rec, stack)
+            ? fetchEatStack(world, rec, settle, found)
+            : { eatBlocked: true };
+        if (fetched?.eatBlocked) {
+            const room = makeRoomForEat(world, rec, settle, keepOpts);
+            if (room) return room;
+            const held = eatFromHand(world, rec, settle);
+            if (!held || held.at !== rec) return null;
+            found = held;
+        } else {
+            return fetched || halt();
+        }
+    }
     const bag = found.bag === "overflow" ? "overflow" : "hotbar";
     const stack = found.slots[found.index];
     if (!stack) return null;
@@ -3812,11 +3941,11 @@ function tick(world, mob, delta) {
 
     const hold = isWorkHold(rec) || delivering;
     if (!hold) {
-        const eat = doEat(world, rec, settle);
+        const eat = doEat(world, rec, settle, keepOpts);
         if (eat) {
             rec._researchPoll = 0;
             endWorkHold(rec);
-            setSettlerAct(rec, mob, rec.eatChannel ? "Eating" : "Getting food");
+            setSettlerAct(rec, mob, eatAct(world, rec, eat));
             return eat;
         }
     }
@@ -3875,10 +4004,10 @@ function tick(world, mob, delta) {
     if (pollNeeds) rec._researchPoll = 0;
 
     if (pollNeeds && plan.type === "research") {
-        const eat = doEat(world, rec, settle);
+        const eat = doEat(world, rec, settle, keepOpts);
         if (eat) {
             endWorkHold(rec);
-            setSettlerAct(rec, mob, rec.eatChannel ? "Eating" : "Getting food");
+            setSettlerAct(rec, mob, eatAct(world, rec, eat));
             return eat;
         }
     }

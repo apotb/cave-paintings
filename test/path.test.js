@@ -685,6 +685,38 @@ test("planPath blocked() stays cheap across a 16-tile open field", () => {
     assert.ok(calls < 4000, `blocked() ran ${calls} times`);
 });
 
+test("wall slide drops a bank that walks away once the step ahead is clear", () => {
+    function blocked(x) {
+        return x > 30;
+    }
+    const from = { x: 20, y: 88 };
+    const len = Math.hypot(20, -28);
+    const slid = Path.commitWallSlide(
+        from, 20 / len, -28 / len, blocked,
+        { bank: { axis: "y", dir: 1 } },
+        { look: 4, goal: { x: 40, y: 60 }, cell: 16 }
+    );
+    assert.ok(slid, "the step toward the goal is open");
+    assert.ok(slid.ny < 0, `kept walking away, ny=${slid && slid.ny}`);
+});
+
+test("wall slide follows the path around a lean-to instead of the goal axis", () => {
+    function blocked(x, y) {
+        return y < 150;
+    }
+    const from = { x: 22, y: 157 };
+    const dx = 4 - from.x;
+    const dy = 144 - from.y;
+    const len = Math.hypot(dx, dy);
+    const slid = Path.commitWallSlide(
+        from, dx / len, dy / len, blocked,
+        { bank: null },
+        { look: 4, goal: { x: 96, y: 96 }, cell: 16, prefer: { x: -1, y: -1 } }
+    );
+    assert.ok(slid, "the way along the shelter is open");
+    assert.ok(slid.nx < 0, `slid toward the goal instead of the path, nx=${slid && slid.nx}`);
+});
+
 test("wall slide holds one direction when the goal is straight across a river", () => {
     const wallX = 96;
     const blocked = (x) => x >= wallX;

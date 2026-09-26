@@ -623,9 +623,23 @@
             if (!toward) return true;
             return !hit(from.x, from.y + toward * cell * 0.75);
         };
+        // A step that lengthens the walk is the settler skating into open
+        // grass beside a stump. A river ford is the other way: the diagonal
+        // stays blocked, so the bank below is left alone.
+        const stepAway = (axis, dir) => {
+            if (!goal || !dir) return false;
+            const px = axis === "x" ? from.x + dir * look : from.x;
+            const py = axis === "y" ? from.y + dir * look : from.y;
+            const before = Math.hypot(goal.x - from.x, goal.y - from.y);
+            const after = Math.hypot(goal.x - px, goal.y - py);
+            return after > before + look * 0.25;
+        };
         const bankNow = state && state.bank;
         if (!hit(from.x + nx * look, from.y + ny * look)) {
-            if (bankNow && !opening(bankNow)) {
+            const opposes = bankNow && (
+                bankNow.axis === "x" ? bankNow.dir * nx < -0.05 : bankNow.dir * ny < -0.05
+            );
+            if (bankNow && !opposes && !opening(bankNow) && !stepAway(bankNow.axis, bankNow.dir)) {
                 const px = bankNow.axis === "x" ? from.x + bankNow.dir * look : from.x;
                 const py = bankNow.axis === "y" ? from.y + bankNow.dir * look : from.y;
                 if (!hit(px, py)) {
@@ -651,11 +665,14 @@
             const across = blockedDelta != null
                 && Math.abs(blockedDelta) + cell * 0.25 >= Math.abs(goalDelta || 0);
             const pref = prefer && prefer[axis];
-            let dir = heading > 0.05 ? 1 : (heading < -0.05 ? -1 : 1);
+            // A path around a lean-to heads away from the goal's x. Sliding
+            // toward that x walks the long face of the shelter and back.
+            let dir = heading > 0.05 ? 1 : (heading < -0.05 ? -1 : 0);
             if (across && pref) dir = pref > 0 ? 1 : -1;
-            else if (!across && goalDelta != null && Math.abs(goalDelta) > cell) {
+            else if (!dir && goalDelta != null && Math.abs(goalDelta) > cell) {
                 dir = goalDelta > 0 ? 1 : -1;
             }
+            if (!dir) dir = pref > 0 ? 1 : (pref < 0 ? -1 : 1);
             const px = axis === "x" ? from.x + dir * look : from.x;
             const py = axis === "y" ? from.y + dir * look : from.y;
             if (hit(px, py)) dir = -dir;

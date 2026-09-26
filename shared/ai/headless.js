@@ -1212,6 +1212,47 @@
             const to = { x: tx, y: ty };
             const farLook = settler || destDistTiles > 12;
             const now = Date.now();
+            const stuckDt = stuckClockDt(world, delta);
+            // A one-pixel bounce beside a stump shrinks the waypoint distance
+            // often enough that stuckMs never asks for a new route. If neither
+            // the goal nor the feet have moved on, drop the path and try the
+            // other side.
+            const goalShift = this._progGoalX == null
+                ? Infinity
+                : Math.hypot(tx - this._progGoalX, ty - this._progGoalY);
+            let progressed = false;
+            if (goalShift > 24) {
+                this._progGoalX = tx;
+                this._progGoalY = ty;
+                this._progBest = destDistTiles;
+                this._progX = mob.x;
+                this._progY = mob.y;
+                progressed = true;
+            } else if (destDistTiles < (this._progBest || Infinity) - 0.25) {
+                this._progBest = destDistTiles;
+                this._progX = mob.x;
+                this._progY = mob.y;
+                progressed = true;
+            } else if (Math.hypot(mob.x - (this._progX ?? mob.x), mob.y - (this._progY ?? mob.y)) > TILE) {
+                this._progX = mob.x;
+                this._progY = mob.y;
+                progressed = true;
+            }
+            if (progressed) this._progMs = 0;
+            else this._progMs = (this._progMs || 0) + stuckDt;
+            if (!progressed && destDistTiles > 0.8 && this._progMs > 900) {
+                this._path = null;
+                this._pathGoalX = null;
+                this._pathGoalY = null;
+                this._bankSlide = null;
+                this._heldSlide = null;
+                this._avoidSide = -this._avoidSide;
+                this._planAt = 0;
+                this._progMs = 0;
+                this._progBest = destDistTiles;
+                this._progX = mob.x;
+                this._progY = mob.y;
+            }
             if (this._replanPad == null) {
                 const id = String(mob.id || "");
                 let h = 0;
@@ -1219,7 +1260,6 @@
                 this._replanPad = Math.abs(h) % 220;
             }
             const allowReplan = !this._planAt || now - this._planAt >= 400 + this._replanPad;
-            const stuckDt = stuckClockDt(world, delta);
             const steered = Path.steerToward({
                 from,
                 to,
