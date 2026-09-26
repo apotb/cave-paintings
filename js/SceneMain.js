@@ -12212,7 +12212,7 @@ class SceneMain extends SceneBase {
         }
         this._tickSleepZzz?.(delta);
         this._tickPaintFx?.(delta);
-        this.updateLocationDebug?.();
+        this.combatLog?.update?.();
         this.updateFpsMeter?.(delta);
         this.updateLocationDebug?.();
         // In case a YOU arrived while knapping/craft was open and close missed a flush
