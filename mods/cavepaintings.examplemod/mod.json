@@ -2,6 +2,7 @@
   "id": "cavepaintings.examplemod",
   "name": "Example Mod",
   "author": "Cave Paintings",
+  "description": "For aspiring modders",
   "version": "1.0.0",
   "gameVersion": ">=0.3.2",
   "dependencies": [],

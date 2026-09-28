@@ -323,6 +323,7 @@
                 id: manifest && manifest.id,
                 name: manifest && (manifest.name || manifest.id) || dir || "",
                 version: manifest && manifest.version != null ? String(manifest.version) : "",
+                description: manifest && manifest.description != null ? String(manifest.description) : "",
                 gameVersion: manifest && manifest.gameVersion != null ? String(manifest.gameVersion) : "",
                 dependencies: manifest && Array.isArray(manifest.dependencies) ? manifest.dependencies.slice() : [],
                 loadPriority: manifest && Number.isFinite(Number(manifest.loadPriority)) ? Number(manifest.loadPriority) : 0,
@@ -539,7 +540,8 @@
             noteBoot,
             needsReload,
             reloadRequired,
-            rowStatus
+            rowStatus,
+            version
         };
     }
 

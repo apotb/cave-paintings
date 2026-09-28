@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("cavePaintings", {
     openFolder: () => ipcRenderer.invoke("saves:openFolder"),
     openModsFolder: () => ipcRenderer.invoke("mods:openFolder"),
     listMods: () => ipcRenderer.invoke("mods:list"),
+    createMod: (body) => ipcRenderer.invoke("mods:create", body),
     readMod: (id, rel) => ipcRenderer.invoke("mods:read", id, rel),
     getEnabledMods: () => ipcRenderer.invoke("mods:enabled:get"),
     setEnabledMods: (body) => ipcRenderer.invoke("mods:enabled:set", body),

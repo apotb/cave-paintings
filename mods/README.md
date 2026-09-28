@@ -35,6 +35,7 @@ Every file under `data/` is optional. A missing script is an error only when `mo
   "id": "yourname.mod",
   "name": "Your Mod",
   "author": "Your Name",
+  "description": "Optional. Shown when you hover the mod.",
   "version": "1.0.0",
   "gameVersion": ">=0.3.2",
   "dependencies": [],
@@ -49,6 +50,8 @@ Every file under `data/` is optional. A missing script is an error only when `mo
 `gameVersion` is compared with [version.json](../version.json). Operators are `>=`, `>`, `<=`, `<`, and `=`, then `x.y.z`. A bare version means `=`.
 
 `name` is the label in the Mods screen. `author` and `version` are stored with the mod. The save and the join check use `version`.
+
+`description` is optional. The Mods screen shows it when you hover the mod.
 
 `loadPriority` defaults to `0`. Among mods whose dependencies are already satisfied, a lower number loads first. Equal priority breaks ties by `id`.
 

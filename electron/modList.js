@@ -1,8 +1,16 @@
 /**
  * List mod folders without merging or executing them.
  * One bad mod.json becomes that row's error. Other folders still appear.
+ * createUserMod writes a new one-file mod under the user mods folder.
  */
 const path = require("path");
+const modsPath = require("./modsPath");
+const Scaffold = require("../shared/mods/scaffold");
+
+function manifestDescription(manifest) {
+    if (!manifest || manifest.description == null) return "";
+    return String(manifest.description);
+}
 
 function scanModRoots(roots, fs) {
     const found = [];
@@ -50,6 +58,7 @@ function scanModRoots(roots, fs) {
                     version: manifest.version == null ? "" : String(manifest.version),
                     gameVersion: manifest.gameVersion == null ? "" : String(manifest.gameVersion),
                     dependencies: [],
+                    description: manifestDescription(manifest),
                     error: `${manifest.id || name}: dependencies must be an array of mod id strings`
                 });
                 continue;
@@ -61,6 +70,7 @@ function scanModRoots(roots, fs) {
                 gameVersion: manifest.gameVersion == null ? "" : String(manifest.gameVersion),
                 dependencies: Array.isArray(manifest.dependencies) ? manifest.dependencies.slice() : [],
                 loadPriority: Number.isFinite(Number(manifest.loadPriority)) ? Number(manifest.loadPriority) : 0,
+                description: manifestDescription(manifest),
                 dir: name,
                 source: "installed",
                 error: ""
@@ -91,6 +101,26 @@ function readEnabledFile(fs, file) {
     }
 }
 
+function createUserMod(fs, opts) {
+    const fields = opts || {};
+    const problem = Scaffold.formProblem(fields);
+    if (problem) return { ok: false, reason: problem };
+    const gameVersion = String(fields.gameVersion || "").trim();
+    if (!/^>=\d+\.\d+\.\d+$/.test(gameVersion)) {
+        return { ok: false, reason: Scaffold.REASONS.gameVersion };
+    }
+    const id = Scaffold.resolvedId(fields);
+    const dup = Scaffold.duplicateProblem(id, scanModRoots(fields.roots || [], fs));
+    if (dup) return { ok: false, reason: dup };
+    const dir = modsPath.insideRoot(fields.userMods, path.join(fields.userMods, id));
+    if (!dir) return { ok: false, reason: Scaffold.REASONS.idShape };
+    if (fs.existsSync(dir)) return { ok: false, reason: Scaffold.REASONS.duplicateDir };
+    const manifest = Scaffold.buildManifest({ ...fields, id, gameVersion });
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "mod.json"), Scaffold.manifestText(manifest), "utf8");
+    return { ok: true, id };
+}
+
 function writeEnabledFile(fs, file, body) {
     const ids = Array.isArray(body && body.ids) ? body.ids.filter((id) => typeof id === "string") : [];
     fs.mkdirSync(require("path").dirname(file), { recursive: true });
@@ -98,4 +128,4 @@ function writeEnabledFile(fs, file, body) {
     return { ids };
 }
 
-module.exports = { scanModRoots, readEnabledFile, writeEnabledFile };
+module.exports = { scanModRoots, readEnabledFile, writeEnabledFile, createUserMod };

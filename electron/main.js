@@ -5,6 +5,7 @@ const { pathToFileURL } = require("url");
 const saves = require("./saves");
 const modsPath = require("./modsPath");
 const modList = require("./modList");
+const ModScaffold = require("../shared/mods/scaffold");
 
 const PRODUCT = "Cave Paintings";
 const SCHEME = "app";
@@ -141,6 +142,23 @@ function registerSaveIpc() {
     ipcMain.handle("mods:read", wrap((id, rel) => readModFile(id, rel)));
     ipcMain.handle("mods:enabled:get", wrap(() => readEnabledMods()));
     ipcMain.handle("mods:enabled:set", wrap((body) => writeEnabledMods(body)));
+    ipcMain.handle("mods:create", wrap((body) => {
+        const { userMods, repoMods, packaged } = modRoots();
+        const roots = packaged ? [userMods] : [repoMods, userMods];
+        const gameVersion = ModScaffold.gameVersionSpec(app.getVersion());
+        if (!gameVersion) return { ok: false, reason: ModScaffold.REASONS.gameVersion };
+        const src = body || {};
+        return modList.createUserMod(fs, {
+            userMods,
+            roots,
+            name: src.name,
+            author: src.author,
+            version: src.version,
+            description: src.description,
+            internal: src.internal,
+            gameVersion
+        });
+    }));
     ipcMain.handle("mods:openFolder", wrap(async () => {
         const dir = modRoots().userMods;
         await fs.promises.mkdir(dir, { recursive: true });

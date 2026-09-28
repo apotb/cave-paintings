@@ -259,6 +259,8 @@ class SceneMenu extends Phaser.Scene {
             case "characters":
             case "worlds":
                 return 420;
+            case "createMod":
+                return 520;
             default:
                 return 360;
         }
@@ -676,6 +678,11 @@ class SceneMenu extends Phaser.Scene {
             worldName: this.worldNameInput?.value,
             seed: this.seedInput?.value,
             renameName: this.renameInput?.value,
+            modName: this.modNameInput?.value,
+            modAuthor: this.modAuthorInput?.value,
+            modVersion: this.modVersionInput?.value,
+            modDescription: this.modDescriptionInput?.value,
+            modId: this.modIdInput?.value,
             faceIdx: this._createFaceIdx,
             look: this._createLook,
             lookPart: this._createLookPart
@@ -683,7 +690,7 @@ class SceneMenu extends Phaser.Scene {
     }
 
     _menuInputKeys() {
-        return ["hostInput", "passInput", "nameInput", "worldNameInput", "seedInput", "renameInput"];
+        return ["hostInput", "passInput", "nameInput", "worldNameInput", "seedInput", "renameInput", "modNameInput", "modAuthorInput", "modVersionInput", "modDescriptionInput", "modIdInput"];
     }
 
     _snapshotDomFocus() {
@@ -782,7 +789,11 @@ class SceneMenu extends Phaser.Scene {
                     window.location.reload();
                     return;
                 }
+                this._modsNotice = "";
                 this._leaveMods();
+                return;
+            case "createMod":
+                this._showMods();
                 return;
             case "rename":
                 if (this._renameKind === "world") this._showWorlds();
@@ -841,6 +852,9 @@ class SceneMenu extends Phaser.Scene {
                 break;
             case "mods":
                 this._showMods();
+                break;
+            case "createMod":
+                this._showCreateMod({ drafts, relayout: true });
                 break;
             case "rename":
                 this._showRename({
@@ -914,6 +928,7 @@ class SceneMenu extends Phaser.Scene {
         this._optionsGuiScaleBtn = null;
         this._optionsFullscreenBtn = null;
         this.hostInput = this.passInput = this.nameInput = this.worldNameInput = this.seedInput = this.renameInput = null;
+        this.modNameInput = this.modAuthorInput = this.modVersionInput = this.modDescriptionInput = this.modIdInput = null;
         this._versionLabel = null;
         this._updateLabel = null;
         this._updateUnderline = null;
@@ -3305,19 +3320,25 @@ class SceneMenu extends Phaser.Scene {
         const rows = await ModStore.discover();
         const saved = await ModStore.enabled();
         if (!this.sys?.isActive?.()) return;
+        if (typeof ModStore.version === "function" && typeof ModScaffold !== "undefined") {
+            const gameVer = await ModStore.version();
+            if (!this.sys?.isActive?.()) return;
+            this._modGameSpec = ModScaffold.gameVersionSpec(gameVer);
+        }
         this._modRows = rows;
         this._renderMods(rows, saved.ids);
     }
 
     _modTipText(row) {
         const deps = (row.dependencies || []).filter((dep) => typeof dep === "string");
-        const lines = [
-            `id: ${row.id || "—"}`,
+        const lines = [`id: ${row.id || "—"}`];
+        if (row.description) lines.push(String(row.description));
+        lines.push(
             `version: ${row.version || "—"}`,
             `gameVersion: ${row.gameVersion || "—"}`,
             `dependencies: ${deps.length ? deps.join(", ") : "none"}`,
             `source: ${row.source === "uploaded" ? "Uploaded" : "Base"}`
-        ];
+        );
         if (row.error) lines.push(row.error);
         return lines.join("\n");
     }
@@ -3431,7 +3452,8 @@ class SceneMenu extends Phaser.Scene {
             notice.textContent = text || "";
             notice.style.color = color || "#d4a84b";
         };
-        if (needsReload) setNotice("Changes saved. Reload to apply.", "#d4a84b");
+        if (this._modsNotice) setNotice(this._modsNotice, "#d4a84b");
+        else if (needsReload) setNotice("Changes saved. Reload to apply.", "#d4a84b");
 
         const columns = document.createElement("div");
         columns.style.cssText = "display:flex;gap:16px;flex:1;min-height:0;";
@@ -3442,6 +3464,7 @@ class SceneMenu extends Phaser.Scene {
 
         const move = (row, on) => {
             hideTip();
+            this._modsNotice = "";
             ModStore.enable(row.id, on).then((result) => {
                 if (!result.ok) {
                     setNotice(result.reason || "Mod change rejected", "#e06060");
@@ -3455,6 +3478,7 @@ class SceneMenu extends Phaser.Scene {
         };
         const removeRow = (row) => {
             hideTip();
+            this._modsNotice = "";
             if (row.source !== "uploaded" || !row.id) {
                 setNotice("Base mods are removed from the mods folder.", "#e06060");
                 return;
@@ -3550,10 +3574,16 @@ class SceneMenu extends Phaser.Scene {
                 window.location.reload();
                 return;
             }
+            this._modsNotice = "";
             this._leaveMods();
         };
+        const openCreate = () => {
+            this._modsNotice = "";
+            this._showCreateMod();
+        };
+        let upload = null;
         if (canUpload) {
-            const upload = document.createElement("input");
+            upload = document.createElement("input");
             upload.type = "file";
             upload.webkitdirectory = true;
             upload.multiple = true;
@@ -3562,25 +3592,183 @@ class SceneMenu extends Phaser.Scene {
                 const files = Array.from(upload.files || []);
                 upload.value = "";
                 if (!files.length) return;
+                this._modsNotice = "";
                 ModStore.addUpload(files, rows).then(() => this._showMods()).catch((err) => {
                     setNotice(String(err.message || err), "#e06060");
                 });
             });
             panel.appendChild(upload);
-            const gap = this._buttonSizePreset("medium").width + Math.round(16 * s);
-            this._button(w / 2 - gap / 2, btnY, "Add Mod", () => upload.click());
-            this._button(w / 2 + gap / 2, btnY, finishLabel, finishMods);
-        } else if (electronMods) {
-            const finishW = this._buttonSizePreset("medium").width;
-            const openW = Math.round(220 * s);
-            const gap = (openW + finishW) / 2 + Math.round(16 * s);
-            this._button(w / 2 - gap / 2, btnY, "Open Mods Folder", () => {
-                window.cavePaintings.openModsFolder().catch((e) => console.warn(e));
-            }, { width: openW });
-            this._button(w / 2 + gap / 2, btnY, finishLabel, finishMods);
-        } else {
-            this._button(w / 2, btnY, finishLabel, finishMods);
         }
+        const specs = [];
+        if (canUpload && upload) {
+            specs.push({ label: "Add Mod", onClick: () => upload.click() });
+        } else if (electronMods) {
+            specs.push({
+                label: "Open Mods Folder",
+                width: Math.round(220 * s),
+                onClick: () => {
+                    window.cavePaintings.openModsFolder().catch((e) => console.warn(e));
+                }
+            });
+        }
+        specs.push({ label: finishLabel, onClick: finishMods });
+        specs.push({
+            label: "Create Mod",
+            width: Math.round(180 * s),
+            onClick: openCreate
+        });
+        const rowGap = Math.round(16 * s);
+        const widths = specs.map((spec) => spec.width || this._buttonSizePreset("medium").width);
+        const total = widths.reduce((sum, width) => sum + width, 0) + rowGap * Math.max(0, specs.length - 1);
+        let left = w / 2 - total / 2;
+        specs.forEach((spec, i) => {
+            const width = widths[i];
+            this._button(left + width / 2, btnY, spec.label, spec.onClick, spec.width ? { width } : {});
+            left += width + rowGap;
+        });
+    }
+
+    _showCreateMod({ drafts = null, relayout = false } = {}) {
+        this._clear();
+        this._phase = "createMod";
+        const w = this.scale.width;
+        const h = this.scale.height;
+        this._title("Create Mod");
+        this._status(0.94);
+        const s = this._uiScale();
+        const formW = this._menuFormW();
+        const formLeft = Math.round(w / 2 - formW / 2);
+        const labelH = Math.round(18 * s);
+        const rowGap = Math.round(10 * s);
+        const formToBtn = Math.round(16 * s);
+        const btnH = this._buttonSizePreset("medium").height;
+        const inputGuess = Math.round(40 * s);
+        const titleBottom = Math.round(h * 0.14 + Math.round(24 * s));
+        const fields = [
+            { key: "modNameInput", label: "Display name", value: drafts?.modName != null ? drafts.modName : "", max: 48 },
+            { key: "modAuthorInput", label: "Author", value: drafts?.modAuthor != null ? drafts.modAuthor : "", max: 48 },
+            { key: "modVersionInput", label: "Version", value: drafts?.modVersion != null ? drafts.modVersion : "1.0.0", max: 32 },
+            { key: "modDescriptionInput", label: "Description", value: drafts?.modDescription != null ? drafts.modDescription : "", max: 160 },
+            { key: "modIdInput", label: "Internal name", value: drafts?.modId != null ? drafts.modId : "", max: 80 }
+        ];
+        const columnH = fields.length * (labelH + inputGuess + rowGap) + formToBtn + btnH;
+        const availTop = titleBottom + Math.round(8 * s);
+        const fire = this._menuCampfire;
+        const fireTop = fire?.active && fire.height
+            ? Math.round(h - fire.height * (fire.scaleY || 1))
+            : h;
+        const availBot = Math.min(h - Math.round(48 * s), fireTop - Math.round(8 * s));
+        let y = availTop + Math.max(0, Math.floor((Math.max(0, availBot - availTop) - columnH) / 2));
+        for (const field of fields) {
+            this._track(this.add.text(formLeft, y, field.label, {
+                fontFamily: PIXEL_UI_FONT,
+                fontSize: this._uiFont(14),
+                color: "#c0b0a0"
+            }).setOrigin(0, 0));
+            y += labelH;
+            const input = this._domInput(formLeft, y, formW, "", field.value, { maxLength: field.max });
+            this[field.key] = input;
+            this._clearStatusOnInput(input);
+            y += (input.offsetHeight || inputGuess) + rowGap;
+        }
+        const refreshIdPlaceholder = () => {
+            if (!this.modIdInput || typeof ModScaffold === "undefined") return;
+            this.modIdInput.placeholder = ModScaffold.suggestId(this.modAuthorInput?.value, this.modNameInput?.value);
+        };
+        this.modNameInput?.addEventListener("input", refreshIdPlaceholder);
+        this.modAuthorInput?.addEventListener("input", refreshIdPlaceholder);
+        refreshIdPlaceholder();
+        this.modIdInput.id = "cp-mod-internal";
+        if (!document.getElementById("cp-mod-id-style")) {
+            const style = document.createElement("style");
+            style.id = "cp-mod-id-style";
+            style.textContent = "#cp-mod-internal::placeholder { color: #8a7a68; opacity: 1; }";
+            document.head.appendChild(style);
+        }
+        if (!relayout) this.modNameInput?.focus();
+        const btnY = Math.round(y - rowGap + formToBtn + btnH / 2);
+        const pairGap = this._buttonSizePreset("medium").width + Math.round(16 * s);
+        this._button(w / 2 - pairGap / 2, btnY, "Back", () => this._showMods());
+        this._button(w / 2 + pairGap / 2, btnY, "Create", () => this._submitCreateMod());
+        if (this.status) {
+            this.status.setPosition(w / 2, Math.min(h - 16, btnY + btnH / 2 + 22));
+        }
+    }
+
+    async _submitCreateMod() {
+        if (this._creatingMod) return;
+        const showError = (text) => {
+            this.status?.setColor?.("#e06060");
+            this.status?.setText(text || "");
+        };
+        if (typeof ModScaffold === "undefined") {
+            showError("Mod creation is unavailable.");
+            return;
+        }
+        const src = {
+            name: this.modNameInput?.value,
+            author: this.modAuthorInput?.value,
+            version: this.modVersionInput?.value,
+            description: this.modDescriptionInput?.value,
+            internal: this.modIdInput?.value,
+            gameVersion: this._modGameSpec || ""
+        };
+        const problem = ModScaffold.formProblem(src);
+        if (problem) {
+            showError(problem);
+            return;
+        }
+        if (!src.gameVersion) {
+            showError(ModScaffold.REASONS.gameVersion);
+            return;
+        }
+        const id = ModScaffold.resolvedId(src);
+        const dup = ModScaffold.duplicateProblem(id, this._modRows || []);
+        if (dup) {
+            showError(dup);
+            return;
+        }
+        this._creatingMod = true;
+        try {
+            const api = window.cavePaintings;
+            if (typeof api?.createMod === "function") {
+                const result = await api.createMod({
+                    name: src.name,
+                    author: src.author,
+                    version: src.version,
+                    description: src.description,
+                    internal: src.internal
+                });
+                if (!result || !result.ok) {
+                    showError(result && result.reason || "Mod creation failed.");
+                    return;
+                }
+                this._modsNotice = `Created ${result.id}`;
+            } else {
+                const manifest = ModScaffold.buildManifest({ ...src, id });
+                this._downloadModZip(manifest);
+                this._modsNotice = `Downloaded ${id}.zip`;
+            }
+            await this._showMods();
+        } catch (err) {
+            showError(String(err && err.message || err));
+        } finally {
+            this._creatingMod = false;
+        }
+    }
+
+    _downloadModZip(manifest) {
+        const bytes = ModScaffold.modZip(manifest);
+        const blob = new Blob([bytes], { type: "application/zip" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${manifest.id}.zip`;
+        link.style.display = "none";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
     }
 
     async _startSingleplayer(world) {
@@ -3700,6 +3888,7 @@ class SceneMenu extends Phaser.Scene {
         }
         this._dom = this._dom.filter((o) => o && !o.tagName);
         this.hostInput = this.passInput = this.nameInput = this.worldNameInput = this.seedInput = this.renameInput = null;
+        this.modNameInput = this.modAuthorInput = this.modVersionInput = this.modDescriptionInput = this.modIdInput = null;
         this._syncKeyboardForDom();
     }
 
