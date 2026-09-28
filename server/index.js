@@ -18,6 +18,7 @@ const { uuid } = require("../shared/rng");
 const SaveIO = require("./SaveIO");
 const { SimWorld, chunkKey, worldToChunk } = require("../shared/sim/SimWorld");
 const SimSession = require("../shared/sim/SimSession");
+const Content = require("../shared/mods/content");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -27,7 +28,8 @@ function parseArgs(argv) {
         port: null,
         serveClient: false,
         tlsCert: null,
-        tlsKey: null
+        tlsKey: null,
+        mods: null
     };
     const positional = [];
     for (let i = 2; i < argv.length; i++) {
@@ -37,6 +39,7 @@ function parseArgs(argv) {
         else if (a === "--serve-client") out.serveClient = true;
         else if (a === "--tls-cert" && argv[i + 1]) out.tlsCert = argv[++i];
         else if (a === "--tls-key" && argv[i + 1]) out.tlsKey = argv[++i];
+        else if (a === "--mods" && argv[i + 1]) out.mods = argv[++i];
         else if (!a.startsWith("-")) positional.push(a);
     }
     // `npm start --world NAME` does not put --world on argv; npm sets this env.
@@ -129,6 +132,7 @@ class GameServer {
     constructor({ worldName, props }) {
         this.worldName = worldName;
         this.props = props;
+        Content.loadSimScripts();
         this.sim = SimWorld.loadOrCreate({
             root: ROOT,
             worldName,
@@ -261,6 +265,12 @@ class GameServer {
             ws.close();
             return;
         }
+        const join = Content.acceptJoin(payload.content);
+        if (!join.ok) {
+            this.send(ws, Protocol.Types.REJECT, { reason: join.reason });
+            ws.close();
+            return;
+        }
         let playerId = String(payload.characterId || payload.playerId || "").slice(0, 64);
         if (!playerId || playerId.length < 8) playerId = uuid();
         // Already connected?
@@ -283,7 +293,9 @@ class GameServer {
 
         this.send(ws, Protocol.Types.WELCOME, this.session.welcomePayload(playerId, {
             worldName: this.worldName,
-            motd: this.props.motd || ""
+            motd: this.props.motd || "",
+            mods: Content.simMods(),
+            contentHash: Content.simHash()
         }));
         this.session.afterJoin(playerId);
         this.broadcast(
@@ -780,6 +792,15 @@ function createRequestHandler(game, { serveClient, useTls }) {
 async function startServer() {
     clearConsole();
     const args = parseArgs(process.argv);
+    try {
+        Content.boot({
+            root: ROOT,
+            modsDir: args.mods || path.join(ROOT, "mods")
+        });
+    } catch (err) {
+        console.error(err && err.stack ? err.stack : err);
+        process.exit(1);
+    }
     SaveIO.ensureDir(path.join(ROOT, "saves"));
 
     let worldName = args.world;
@@ -1018,4 +1039,8 @@ async function startServer() {
     });
 }
 
-main();
+if (require.main === module) {
+    main();
+}
+
+module.exports = { GameServer };

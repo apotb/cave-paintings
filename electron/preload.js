@@ -9,6 +9,11 @@ contextBridge.exposeInMainWorld("cavePaintings", {
     getOptions: () => ipcRenderer.sendSync("saves:options:get"),
     putOptions: (opts) => ipcRenderer.invoke("saves:options:put", opts),
     openFolder: () => ipcRenderer.invoke("saves:openFolder"),
+    openModsFolder: () => ipcRenderer.invoke("mods:openFolder"),
+    listMods: () => ipcRenderer.invoke("mods:list"),
+    readMod: (id, rel) => ipcRenderer.invoke("mods:read", id, rel),
+    getEnabledMods: () => ipcRenderer.invoke("mods:enabled:get"),
+    setEnabledMods: (body) => ipcRenderer.invoke("mods:enabled:set", body),
     getVersion: () => {
         try {
             return ipcRenderer.sendSync("app:version") || "";

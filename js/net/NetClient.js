@@ -122,7 +122,7 @@ class NetClient {
     }
 
     /**
-     * @param {{ playerId?: string, displayName?: string, password?: string, characterId?: string, character?: object }} opts
+     * @param {{ playerId?: string, displayName?: string, password?: string, characterId?: string, character?: object, content?: { hash: string, mods: { id: string, version: string }[] } }} opts
      */
     auth(opts = {}) {
         const {
@@ -130,16 +130,29 @@ class NetClient {
             displayName,
             password,
             characterId,
-            character
+            character,
+            content
         } = opts;
-        this.send(NetProtocol.Types.AUTH, {
+        const payload = {
             protocol: NetProtocol.PROTOCOL_VERSION,
             playerId: characterId || playerId,
             characterId: characterId || playerId,
             displayName: displayName || character?.name || "Player",
             password: password || "",
             character: character || null
-        });
+        };
+        if (content && typeof content === "object") {
+            payload.content = {
+                hash: String(content.hash || ""),
+                mods: Array.isArray(content.mods)
+                    ? content.mods.map((mod) => ({
+                        id: String(mod?.id || ""),
+                        version: String(mod?.version == null ? "" : mod.version)
+                    }))
+                    : []
+            };
+        }
+        this.send(NetProtocol.Types.AUTH, payload);
     }
 
     send(type, payload) {

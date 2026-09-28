@@ -14,6 +14,7 @@ class SceneBase extends Phaser.Scene {
         if (this.sys?.load && this.load !== this.sys.load) {
             this.load = this.sys.load;
         }
+        if (typeof ModClient !== "undefined") ModClient.queueScripts(this);
         if (!this.textures.exists("null")) {
             this.load.image("null", "assets/null.png");
         }
@@ -24,6 +25,8 @@ class SceneBase extends Phaser.Scene {
             this.load.audio("forest", "assets/audio/forest.ogg");
         }
         // Second Play → Leave → Play: textures/json already live in the game caches.
+        // Queue any resolved item/thing textures the warm cache does not have yet.
+        if (typeof Content !== "undefined") Content.queueTextures(this);
         if (this.cache?.json?.exists?.("items") && this.cache?.json?.exists?.("structures")
             && this.cache?.json?.exists?.("techs") && this.textures?.exists("grass")
             && this.textures?.exists("slot")) {

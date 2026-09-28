@@ -1,0 +1,8 @@
+[
+  {
+    "id": "marker",
+    "name": "Example Marker",
+    "key": "marker",
+    "hitboxSize": 5
+  }
+]

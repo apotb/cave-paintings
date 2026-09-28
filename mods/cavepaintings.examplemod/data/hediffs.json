@@ -1,0 +1,11 @@
+{
+  "chill": {
+    "id": "chill",
+    "name": "Example Chill",
+    "initialSeverity": 0.2,
+    "severityPerDay": -1,
+    "stages": [
+      { "minSeverity": 0, "painOffset": 0 }
+    ]
+  }
+}

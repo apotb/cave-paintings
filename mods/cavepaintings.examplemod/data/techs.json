@@ -1,0 +1,13 @@
+[
+  {
+    "id": "studies",
+    "name": "Example Studies",
+    "era": "Paleolithic",
+    "quote": "An example of research",
+    "cost": 1,
+    "prereqs": ["gathering"],
+    "unlocks": {
+      "items": ["token"]
+    }
+  }
+]

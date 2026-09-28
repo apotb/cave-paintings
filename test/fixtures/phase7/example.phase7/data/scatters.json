@@ -1,0 +1,9 @@
+[
+  {
+    "id": "example.phase7.pebbles",
+    "tiles": ["grass"],
+    "thingId": "rock",
+    "chance": 1,
+    "salt": 11
+  }
+]

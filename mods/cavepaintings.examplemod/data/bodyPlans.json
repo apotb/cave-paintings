@@ -1,0 +1,12 @@
+{
+  "body": {
+    "id": "body",
+    "name": "Example Body",
+    "healRate": 1,
+    "painShockThreshold": 0.8,
+    "core": "Torso",
+    "parts": {
+      "Torso": { "mhp": 20, "coverage": 1 }
+    }
+  }
+}

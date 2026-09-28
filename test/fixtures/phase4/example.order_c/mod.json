@@ -1,0 +1,8 @@
+{
+  "id": "example.order_c",
+  "name": "Order C",
+  "version": "1.0.0",
+  "gameVersion": ">=0.3.1",
+  "dependencies": [],
+  "loadPriority": 0
+}

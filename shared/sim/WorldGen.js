@@ -228,11 +228,15 @@
     }
 
     let _mobSpawnRules = null;
+    let _mobSpawnGen = -1;
     function mobSpawnRules() {
-        if (_mobSpawnRules) return _mobSpawnRules;
+        const gen = Number(DataStore?.generation) || 0;
+        if (_mobSpawnRules && _mobSpawnGen === gen) return _mobSpawnRules;
+        _mobSpawnRules = null;
         const raw = DataStore?._store?.mobsList;
         if (!Array.isArray(raw) || !raw.length) return [];
         _mobSpawnRules = raw.filter((m) => m?.id && m.spawn);
+        _mobSpawnGen = gen;
         return _mobSpawnRules;
     }
 
@@ -382,6 +386,8 @@
         const mobs = populateNaturalMobs(
             cx, cy, tiles, things, lootableThings, stamped, rand
         );
+        // After the chunk stream is finished. Scatter rolls are per coordinate.
+        applyScatters(cx, cy, worldSeed, tiles, things, lootableThings);
 
         return {
             cx,
@@ -399,6 +405,55 @@
 
     const BLOCKED = new Set(["water", "ice"]);
 
+    function scatterApi() {
+        if (typeof ModScatters !== "undefined") return ModScatters;
+        try {
+            if (typeof require === "function") return require("../mods/scatters");
+        } catch (_) { /* optional */ }
+        return null;
+    }
+
+    /**
+     * Private roll for one tile. Does not advance the chunk mulberry32 stream.
+     * Same seed, salt, and coordinate always return the same value.
+     */
+    function scatterRoll(tx, ty, worldSeed, salt) {
+        const mixed = (worldSeed ^ salt) >>> 0;
+        return mulberry32(hash2D(tx | 0, ty | 0, mixed))();
+    }
+
+    function applyScatters(cx, cy, worldSeed, tiles, things, lootableThings) {
+        const rows = scatterApi()?.list?.() || [];
+        for (const scatter of rows) {
+            const allow = new Set(scatter.tiles);
+            for (let i = 0; i < CS * CS; i++) {
+                if (!allow.has(tiles[i])) continue;
+                const lx = i % CS;
+                const ly = (i / CS) | 0;
+                const tx = cx * CHUNK_PX + lx * TS;
+                const ty = cy * CHUNK_PX + ly * TS;
+                if (scatterRoll(tx, ty, worldSeed, scatter.salt) >= scatter.chance) continue;
+                const before = things.length;
+                pushDecor(things, tx, ty, scatter.thingId);
+                if (things.length === before) continue;
+                const added = things[things.length - 1];
+                const clash = things.slice(0, -1).some((row) => row.uid === added.uid)
+                    || (lootableThings || []).some((row) => row.uid === added.uid);
+                if (clash) things.pop();
+            }
+        }
+    }
+
+    function addScatter(spec, modId) {
+        const api = scatterApi();
+        if (!api) throw new Error("Scatter registry is not loaded");
+        return api.register(modId || spec?.modId || "", spec);
+    }
+
+    function removeScatter(id) {
+        return !!scatterApi()?.remove?.(id);
+    }
+
     return {
         NOISE_SCALE,
         CS,
@@ -411,6 +466,9 @@
         applySeed,
         generateChunk,
         generateTileKey,
+        addScatter,
+        removeScatter,
+        scatterRoll,
         clayRichness,
         octaveNoise2D,
         tileKeyAt

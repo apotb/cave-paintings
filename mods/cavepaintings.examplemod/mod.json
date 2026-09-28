@@ -1,0 +1,9 @@
+{
+  "id": "cavepaintings.examplemod",
+  "name": "Example Mod",
+  "author": "Cave Paintings",
+  "version": "1.0.0",
+  "gameVersion": ">=0.3.2",
+  "dependencies": [],
+  "loadPriority": 0
+}

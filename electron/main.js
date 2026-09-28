@@ -1,7 +1,10 @@
 const { app, BrowserWindow, Menu, protocol, ipcMain, shell, net } = require("electron");
+const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
 const saves = require("./saves");
+const modsPath = require("./modsPath");
+const modList = require("./modList");
 
 const PRODUCT = "Cave Paintings";
 const SCHEME = "app";
@@ -35,21 +38,73 @@ function savesRoot() {
     return path.join(app.getPath("userData"), "save");
 }
 
+function modRoots() {
+    const userMods = path.join(app.getPath("userData"), "mods");
+    const repoMods = path.join(gameRoot, "mods");
+    return { userMods, repoMods, packaged: app.isPackaged };
+}
+
 function resolveGameFile(requestUrl) {
-    let u;
-    try {
-        u = new URL(requestUrl);
-    } catch {
-        return null;
+    const roots = modRoots();
+    return modsPath.resolveGameFile(requestUrl, {
+        gameRoot,
+        scheme: SCHEME,
+        packaged: roots.packaged,
+        userMods: roots.userMods,
+        repoMods: roots.repoMods
+    });
+}
+
+function listMods() {
+    const { userMods, repoMods, packaged } = modRoots();
+    const roots = packaged ? [userMods] : [repoMods, userMods];
+    return modList.scanModRoots(roots, fs);
+}
+
+function enabledModsFile() {
+    return path.join(app.getPath("userData"), "mods-enabled.json");
+}
+
+function readEnabledMods() {
+    return modList.readEnabledFile(fs, enabledModsFile());
+}
+
+function writeEnabledMods(body) {
+    return modList.writeEnabledFile(fs, enabledModsFile(), body);
+}
+
+function modDirById(id) {
+    const { userMods, repoMods, packaged } = modRoots();
+    const roots = packaged ? [userMods] : [repoMods, userMods];
+    let match = null;
+    for (const root of roots) {
+        if (!fs.existsSync(root)) continue;
+        for (const name of fs.readdirSync(root)) {
+            const dir = path.join(root, name);
+            const manifestFile = path.join(dir, "mod.json");
+            if (!fs.existsSync(manifestFile)) continue;
+            let manifest;
+            try {
+                manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+            } catch (_) {
+                continue;
+            }
+            if (manifest.id !== id) continue;
+            if (match) throw new Error(`Duplicate mod id "${id}"`);
+            match = dir;
+        }
     }
-    if (u.protocol !== `${SCHEME}:`) return null;
-    let pathname = decodeURIComponent(u.pathname || "/");
-    if (!pathname || pathname === "/") pathname = "/index.html";
-    const rel = pathname.replace(/^\/+/, "");
-    const target = path.normalize(path.join(gameRoot, rel));
-    const inside = path.relative(gameRoot, target);
-    if (!inside || inside.startsWith("..") || path.isAbsolute(inside)) return null;
-    return target;
+    return match;
+}
+
+function readModFile(id, rel) {
+    const dir = modDirById(id);
+    if (!dir) throw new Error("not found");
+    const parts = modsPath.safeRelative(rel);
+    if (!parts) throw new Error("not found");
+    const file = modsPath.insideRoot(dir, path.join(dir, ...parts));
+    if (!file || !fs.existsSync(file) || !fs.statSync(file).isFile()) throw new Error("not found");
+    return fs.readFileSync(file, "utf8");
 }
 
 function registerProtocol() {
@@ -82,6 +137,17 @@ function registerSaveIpc() {
         }
     });
     ipcMain.handle("saves:options:put", wrap((opts) => saves.writeOptions(savesRoot(), opts)));
+    ipcMain.handle("mods:list", wrap(() => listMods()));
+    ipcMain.handle("mods:read", wrap((id, rel) => readModFile(id, rel)));
+    ipcMain.handle("mods:enabled:get", wrap(() => readEnabledMods()));
+    ipcMain.handle("mods:enabled:set", wrap((body) => writeEnabledMods(body)));
+    ipcMain.handle("mods:openFolder", wrap(async () => {
+        const dir = modRoots().userMods;
+        await fs.promises.mkdir(dir, { recursive: true });
+        const err = await shell.openPath(dir);
+        if (err) throw new Error(err);
+        return dir;
+    }));
     ipcMain.handle("saves:openFolder", wrap(async () => {
         const dir = await saves.ensureRoot(savesRoot());
         const err = await shell.openPath(dir);

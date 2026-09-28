@@ -700,7 +700,9 @@ class SettlementPanel {
 
     _fillJobs(sc) {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
-        const jobs = S?.JOBS || ["doctor", "cook", "chop", "leather", "gather", "haul"];
+        const jobs = (typeof S?.jobIds === "function" ? S.jobIds() : null)
+            || S?.JOBS
+            || ["doctor", "cook", "chop", "leather", "gather", "haul"];
         const here = this.scene.settlementSys.settlersOf(this.settle.id);
         if (!here.length) {
             this._label("Drop people off to assign jobs.", 0, 0, 12);

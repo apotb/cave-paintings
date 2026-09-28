@@ -421,6 +421,17 @@ function planClaimKey(plan) {
     if (t === "doctor") return pawnWorkKey(plan.target, "tend");
     if (t === "sleep") return bedKey(plan.target);
     if (t === "stash") return stashKey(plan.target);
+    const owned = jobsApi().forType(t);
+    const claimId = plan.target?.uid || plan.target?.id;
+    if (owned && claimId) return `${t}:${claimId}`;
+    return null;
+}
+
+function jobsApi() {
+    if (typeof ModJobs !== "undefined") return ModJobs;
+    try {
+        if (typeof require === "function") return require("../mods/jobs");
+    } catch (_) { /* optional */ }
     return null;
 }
 
@@ -3988,7 +3999,9 @@ function tick(world, mob, delta) {
         mergeNeedsRoom: mergeNeedsRoom(rec, scan.haulMerge),
         busy: hold,
         busyJob: rec._busyJob || null,
-        reconsiderNeeds: pollNeeds
+        reconsiderNeeds: pollNeeds,
+        world,
+        rec
     });
 
     let plan = Settlement.planWork(planOpts());
@@ -4047,8 +4060,18 @@ function tick(world, mob, delta) {
     if (plan.type === "stash" && plan.target) {
         return doStash(world, rec, settle, plan.target, keepOpts);
     }
-    if (plan.type === "gather" && plan.target) return doGather(world, rec, plan.target);
-    if (plan.type === "dig" && plan.target) return doDig(world, rec, settle, plan.target, delta);
+    const registeredJob = jobsApi().forType(plan.type);
+    if (registeredJob?.perform) {
+        return registeredJob.perform({
+            world,
+            rec,
+            settle,
+            plan,
+            delta,
+            runGather: () => doGather(world, rec, plan.target),
+            runDig: () => doDig(world, rec, settle, plan.target, delta)
+        });
+    }
     if (plan.type === "chop" && plan.target) return doChop(world, rec, settle, plan.target, delta);
     if (plan.type === "research" && plan.target) return doResearch(world, rec, settle, plan.target);
     if (plan.type === "haul" && plan.target) {

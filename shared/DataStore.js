@@ -20,7 +20,8 @@
         mobsList: null,
         thingsList: null,
         techsList: null,
-        _ready: false
+        _ready: false,
+        generation: 0
     };
 
     function _indexById(list) {
@@ -59,10 +60,12 @@
 
     /**
      * Browser: pull from Phaser cache.json keys used by SceneBase.
-     * Safe to call multiple times; ignores empty/missing cache.
+     * Before finalize, an empty store may be filled from the cache.
+     * After generation is set, the cache is not authority and this returns the store.
      * @param {Phaser.Scene} scene
      */
     function initFromPhaserScene(scene) {
+        if (store.generation) return store;
         const json = scene?.cache?.json;
         if (!json) {
             console.warn("DataStore.initFromPhaserScene: no cache.json");
@@ -114,6 +117,11 @@
         return !!store._ready;
     }
 
+    function bumpGeneration() {
+        store.generation = (store.generation || 0) + 1;
+        return store.generation;
+    }
+
     function getBodyPlan(id) {
         if (!store.bodyPlans) return null;
         return store.bodyPlans[id] || null;
@@ -160,6 +168,8 @@
         loadFromDisk,
         initFromData,
         isReady,
+        bumpGeneration,
+        get generation() { return store.generation || 0; },
         getBodyPlan,
         getInjuryDefs,
         getHediffDefs,

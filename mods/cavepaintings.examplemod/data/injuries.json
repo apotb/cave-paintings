@@ -1,0 +1,12 @@
+{
+  "nick": {
+    "id": "nick",
+    "name": "Example Nick",
+    "type": "sharp",
+    "painPerSeverity": 0.01,
+    "bleedRate": 0,
+    "canScar": false,
+    "delicate": false,
+    "infectionChance": 0
+  }
+}

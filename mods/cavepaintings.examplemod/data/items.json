@@ -1,0 +1,12 @@
+[
+  {
+    "id": "token",
+    "name": "Example Token",
+    "key": "token",
+    "maxStack": 99,
+    "weight": 0.1,
+    "tooltip": "An example item",
+    "place": { "thing": "marker" },
+    "recipe": { "stick": 1 }
+  }
+]

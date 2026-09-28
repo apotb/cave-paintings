@@ -5,6 +5,7 @@ const path = require("path");
 const GameMath = require("../../shared/gameMath");
 const { mulberry32 } = require("../../shared/rng");
 const DataStore = require("../../shared/DataStore");
+const Content = require("../../shared/mods/content");
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -12,7 +13,7 @@ let loaded = false;
 
 function loadDefs() {
     if (!loaded) {
-        DataStore.loadFromDisk(ROOT);
+        Content.boot({ mods: false, root: ROOT });
         const Carry = require("../../shared/carry");
         Carry.resolveCraftedWeights(DataStore._store.itemsList);
         Carry.resolveCraftedFuel(DataStore._store.itemsList);

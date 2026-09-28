@@ -24,6 +24,20 @@
         } catch (_) { /* optional */ }
         return null;
     }
+    function jobApi() {
+        if (typeof ModJobs !== "undefined") return ModJobs;
+        try {
+            if (typeof require === "function") return require("./mods/jobs");
+        } catch (_) { /* optional */ }
+        return null;
+    }
+    function knownJobIds() {
+        const ids = JOBS.slice();
+        for (const job of jobApi()?.list?.() || []) {
+            if (job?.id && !ids.includes(job.id)) ids.push(job.id);
+        }
+        return ids;
+    }
     const JOBS = ["doctor", "cook", "chop", "leather", "gather", "haul", "research"];
     const JOB_LABELS = {
         doctor: "Doc",
@@ -173,14 +187,22 @@
 
     function defaultJobs() {
         const row = {};
-        for (const j of JOBS) row[j] = 3;
+        const api = jobApi();
+        for (const j of knownJobIds()) {
+            if (JOBS.includes(j)) {
+                row[j] = 3;
+                continue;
+            }
+            const pri = Math.floor(Number(api?.get?.(j)?.defaultPriority));
+            row[j] = pri >= 0 && pri <= 4 ? pri : 3;
+        }
         return row;
     }
 
     function normalizeJobs(raw) {
         const row = defaultJobs();
         if (!raw || typeof raw !== "object") return row;
-        for (const j of JOBS) {
+        for (const j of knownJobIds()) {
             const n = Math.floor(Number(raw[j]));
             if (n >= 1 && n <= 4) row[j] = n;
             else if (raw[j] == null || raw[j] === "" || raw[j] === 0 || raw[j] === false) row[j] = 0;
@@ -208,7 +230,7 @@
         const jobs = normalizeJobs(row);
         let best = null;
         let bestP = 99;
-        for (const j of JOBS) {
+        for (const j of knownJobIds()) {
             const p = jobs[j];
             if (!(p >= 1 && p <= 4)) continue;
             if (p < bestP) {
@@ -221,7 +243,7 @@
 
     function enabledJobs(row) {
         const jobs = normalizeJobs(row);
-        return JOBS.filter((j) => jobs[j] >= 1).sort((a, b) => jobs[a] - jobs[b]);
+        return knownJobIds().filter((j) => jobs[j] >= 1).sort((a, b) => jobs[a] - jobs[b]);
     }
 
     function defaultStock() {
@@ -1072,10 +1094,19 @@
     }
 
     function jobLabel(job) {
-        return JOB_LABELS[job] || String(job || "");
+        if (JOB_LABELS[job]) return JOB_LABELS[job];
+        return jobApi()?.get?.(job)?.label || String(job || "");
     }
 
     function jobTooltip(job) {
+        if (!JOB_NAMES[job]) {
+            const reg = jobApi()?.get?.(job);
+            if (reg) {
+                const name = reg.name || reg.label || job;
+                const work = reg.work || [];
+                return [name, ...work.map((line) => `- ${line}`)].join("\n");
+            }
+        }
         const name = JOB_NAMES[job] || jobLabel(job);
         const work = JOB_WORK[job] || [];
         return [name, ...work.map((line) => `- ${line}`)].join("\n");
@@ -1180,7 +1211,7 @@
     function setJob(settle, pawnId, job, pri) {
         if (!settle.jobs) settle.jobs = {};
         const row = normalizeJobs(settle.jobs[pawnId]);
-        if (JOBS.includes(job)) {
+        if (knownJobIds().includes(job)) {
             const n = Math.floor(Number(pri));
             row[job] = n >= 1 && n <= 4 ? n : 0;
         }
@@ -1309,9 +1340,12 @@
     const RESEARCH_NEEDS_TICKS = 10;
 
     function isBusyWork(type) {
-        return type === "chop" || type === "gather" || type === "dig" || type === "haul" || type === "stash"
+        if (type === "chop" || type === "gather" || type === "dig" || type === "haul" || type === "stash"
             || type === "cook" || type === "cook_light" || type === "cook_stoke"
-            || type === "leather" || type === "doctor" || type === "research";
+            || type === "leather" || type === "doctor" || type === "research") return true;
+        const id = jobForWork(type);
+        const job = id && jobApi()?.get?.(id);
+        return !!(job && job.busy);
     }
 
     /** Job column for a plan / channel type, or null if it is not a settler job. */
@@ -1324,11 +1358,13 @@
         if (t === "chop" || t === "gather" || t === "haul" || t === "leather"
             || t === "doctor" || t === "research") return t;
         if (t === "dig") return "gather";
+        const job = jobApi()?.forType?.(t) || jobApi()?.get?.(t);
+        if (job) return job.id;
         return null;
     }
 
     function jobEnabled(row, typeOrName) {
-        const name = JOBS.includes(typeOrName) ? typeOrName : jobForWork(typeOrName);
+        const name = knownJobIds().includes(typeOrName) ? typeOrName : jobForWork(typeOrName);
         if (!name) return true;
         return normalizeJobs(row)[name] >= 1;
     }
@@ -1592,6 +1628,12 @@
         if (haulWrong) return { type: "haul", target: state.haulMerge };
         if (!busy && settlerShouldSleep(night, injured)) return { type: "idle" };
         for (const job of enabledJobs(row)) {
+            const registered = jobApi()?.get?.(job);
+            if (registered?.plan) {
+                const planned = registered.plan(state);
+                if (planned?.type) return planned;
+                continue;
+            }
             if (job === "doctor" && (state.patients || []).length) {
                 return { type: "doctor", target: state.patients[0] };
             }
@@ -1613,8 +1655,6 @@
                     return { type: "stash", target: state.stashBasket };
                 }
             }
-            if (job === "gather" && state.gatherThing) return { type: "gather", target: state.gatherThing };
-            if (job === "gather" && state.digThing) return { type: "dig", target: state.digThing };
             if (job === "chop" && state.chopTree) return { type: "chop", target: state.chopTree };
             if (job === "research" && state.researchCircle) {
                 if (poll) {
@@ -1852,10 +1892,37 @@
      * Human-readable settler job line for tooltips. Phaser-free so sim
      * snapshots and client AI share one string.
      */
+    function gatherActLabel(plan, ctx = {}) {
+        if (plan?.type === "dig") return "Digging clay";
+        const getItem = ctx.getItem || (() => null);
+        const getThing = ctx.getThing || (() => null);
+        const thing = plan?.target;
+        const loot = _lootable(thing, getThing);
+        const lootId = loot?.item;
+        const lootName = _itemName(lootId, getItem);
+        if (lootName) {
+            const yieldN = Math.max(1, Number(loot.yield) || 1);
+            return `Gathering ${_haulNoun({ id: lootId, quantity: yieldN }, getItem)}`;
+        }
+        const plant = _thingName(thing, getThing);
+        return plant ? `Gathering from ${_an(plant)}` : "Gathering";
+    }
+
+    function gatherPlan(state) {
+        if (state?.gatherThing) return { type: "gather", target: state.gatherThing };
+        if (state?.digThing) return { type: "dig", target: state.digThing };
+        return null;
+    }
+
     function actLabel(plan, ctx = {}) {
         const getItem = ctx.getItem || (() => null);
         const getThing = ctx.getThing || (() => null);
         const t = plan?.type;
+        const registered = jobApi()?.forType?.(t);
+        if (registered?.actLabel) {
+            const text = registered.actLabel(plan, ctx);
+            if (text) return text;
+        }
         if (t === "fight") {
             const who = ctx.targetName || pawnDisplayName(plan?.target);
             return who && who !== "Someone" ? `Attacking ${who}` : "Attacking";
@@ -1887,23 +1954,12 @@
             const noun = _haulNoun(ctx.stashStack, getItem) || ctx.haulWhat;
             return noun ? `Hauling ${noun}` : "Hauling";
         }
-        if (t === "gather") {
-            const thing = plan.target;
-            const loot = _lootable(thing, getThing);
-            const lootId = loot?.item;
-            const lootName = _itemName(lootId, getItem);
-            if (lootName) {
-                const yieldN = Math.max(1, Number(loot.yield) || 1);
-                return `Gathering ${_haulNoun({ id: lootId, quantity: yieldN }, getItem)}`;
-            }
-            const plant = _thingName(thing, getThing);
-            return plant ? `Gathering from ${_an(plant)}` : "Gathering";
-        }
+        if (t === "gather") return gatherActLabel(plan, ctx);
         if (t === "chop") {
             const tree = _thingName(plan.target, getThing);
             return tree ? `Chopping ${_an(tree)}` : "Chopping";
         }
-        if (t === "dig") return "Digging clay";
+        if (t === "dig") return gatherActLabel(plan, ctx);
         if (t === "research") return "Painting";
         if (t === "leather") return _leatherActLabel(plan.target, getItem, getThing);
         if (t === "sleep") {
@@ -1917,6 +1973,22 @@
         if (t === "idle" || !t) return "Idle";
         return "Idle";
     }
+
+    jobApi()?.registerJob?.("core", {
+        id: "gather",
+        label: "Get",
+        name: "Gather",
+        work: JOB_WORK.gather.slice(),
+        defaultPriority: 3,
+        busy: true,
+        planTypes: ["gather", "dig"],
+        plan: gatherPlan,
+        perform(ctx) {
+            if (ctx?.plan?.type === "dig") return ctx.runDig?.();
+            return ctx.runGather?.();
+        },
+        actLabel: gatherActLabel
+    });
 
     function cardinalHeading(rng) {
         const dirs = [
@@ -2137,6 +2209,7 @@
         HIDE_ANIMALS,
         HIDE_STEPS,
         BENCH_RECIPES,
+        jobIds: knownJobIds,
         ADDABLE,
         uid,
         clampName,

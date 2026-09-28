@@ -37,40 +37,9 @@ function octaveNoise2D(x, y, octaves=1, persistence=1.0, lacunarity=1.0, seed=0)
     return total / maxValue;
 }
 
-/** Tile texture key from noise only (no decor). Used by the spawn preview. */
+/** Tile texture key from WorldGen (no decor roll). */
 function tileKeyFromNoise(px, py) {
-    const inv = 1 / NOISE_SCALE;
-    const nx = px * inv;
-    const ny = py * inv;
-    const elevation = octaveNoise2D(nx, ny, 2, 0.5, 2.5, 0);
-    const temperature = octaveNoise2D(nx, ny, 3, 0.2, 4.2, 1);
-    const river = Math.abs(octaveNoise2D(nx, ny, 3, 1.2, 0.7, 2));
-    if (river < 0.005) return "water";
-    if (elevation < -0.2) return temperature < -0.4 ? "ice" : "water";
-    if (river < 0.0065 && elevation < 0.14) return "gravel";
-    if (elevation < -0.19) {
-        if (river < 0.005) return "water";
-        if (river < 0.0065) return "gravel";
-        if (temperature < -0.25) return "snow_beach";
-        return "sand";
-    }
-    if (elevation < 0.15) {
-        if (temperature < -0.25) return "snow";
-        if (temperature < 0.25) return "grass";
-        return "sand";
-    }
-    if (elevation < 0.25) {
-        if (temperature < -0.25) return "snow_hill";
-        if (temperature < 0.25) return "grass_hill";
-        return "sand_hill";
-    }
-    if (elevation < 0.55) {
-        if (temperature < -0.25) return "snow_mountain";
-        if (temperature < 0.25) return "mountain";
-        return "mesa";
-    }
-    if (elevation < 0.7) return "mountain";
-    return "snow_mountain";
+    return WorldGen.generateTileKey(px, py, () => 1).key;
 }
 
 class Chunk {

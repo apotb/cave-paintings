@@ -90,6 +90,30 @@ function _research() {
     return null;
 }
 
+function _contentApi() {
+    if (typeof Content !== "undefined") return Content;
+    try {
+        if (typeof require === "function") return require("../mods/content");
+    } catch (_) { /* optional */ }
+    return null;
+}
+
+function _actionsApi() {
+    if (typeof ModActions !== "undefined") return ModActions;
+    try {
+        if (typeof require === "function") return require("../mods/actions");
+    } catch (_) { /* optional */ }
+    return null;
+}
+
+function _kindsApi() {
+    if (typeof ModKinds !== "undefined") return ModKinds;
+    try {
+        if (typeof require === "function") return require("../mods/kinds");
+    } catch (_) { /* optional */ }
+    return null;
+}
+
 function _forming() {
     if (typeof Forming !== "undefined") return Forming;
     try {
@@ -106,9 +130,16 @@ function _dig() {
     return null;
 }
 
+function _defGeneration() {
+    return Number(DataStore.generation) || 0;
+}
+
 let _thingDefs = null;
+let _thingDefsGen = -1;
 function thingDefs() {
-    if (_thingDefs) return _thingDefs;
+    const gen = _defGeneration();
+    if (_thingDefs && _thingDefsGen === gen) return _thingDefs;
+    _thingDefs = null;
     const map = new Map();
     const list = DataStore._store?.thingsList;
     if (Array.isArray(list)) {
@@ -116,13 +147,19 @@ function thingDefs() {
             if (t?.id) map.set(t.id, t);
         }
     }
-    if (map.size) _thingDefs = map;
+    if (map.size) {
+        _thingDefs = map;
+        _thingDefsGen = gen;
+    }
     return map;
 }
 
 let _mobDefs = null;
+let _mobDefsGen = -1;
 function mobDefs() {
-    if (_mobDefs) return _mobDefs;
+    const gen = _defGeneration();
+    if (_mobDefs && _mobDefsGen === gen) return _mobDefs;
+    _mobDefs = null;
     const map = new Map();
     const list = DataStore._store?.mobsList;
     if (Array.isArray(list)) {
@@ -130,13 +167,19 @@ function mobDefs() {
             if (m?.id) map.set(m.id, m);
         }
     }
-    if (map.size) _mobDefs = map;
+    if (map.size) {
+        _mobDefs = map;
+        _mobDefsGen = gen;
+    }
     return map;
 }
 
 let _itemDefs = null;
+let _itemDefsGen = -1;
 function itemDefs() {
-    if (_itemDefs) return _itemDefs;
+    const gen = _defGeneration();
+    if (_itemDefs && _itemDefsGen === gen) return _itemDefs;
+    _itemDefs = null;
     const raw = DataStore._store?.itemsList;
     if (!Array.isArray(raw) || !raw.length) return new Map();
     Carry.resolveCraftedWeights?.(raw);
@@ -149,6 +192,7 @@ function itemDefs() {
         if (map.has(to) && !map.has(from)) map.set(from, map.get(to));
     }
     _itemDefs = map;
+    _itemDefsGen = gen;
     return map;
 }
 
@@ -209,6 +253,10 @@ class SimWorld {
         this.settlements = [];
         this.settlers = [];
         this.researchSpentByOwner = Object.create(null);
+        /** Mod-owned save blob. Not part of the sim hash. */
+        this.modData = {};
+        /** Load-time save warnings. Not a join REJECT. */
+        this.contentWarnings = [];
         /** @type {Map<string, number>} playerId -> seconds until next passerby pack */
         this._directorCd = new Map();
         this._duelMap = new Map();
@@ -922,7 +970,60 @@ class SimWorld {
             const rec = w._settlerFromSnap(snap);
             if (rec) w.settlers.push(rec);
         }
+        w.modData = data.modData && typeof data.modData === "object" && !Array.isArray(data.modData)
+            ? { ...data.modData }
+            : {};
+        w.contentWarnings = w._contentLoadWarnings(data);
+        for (const line of w.contentWarnings) {
+            if (typeof console !== "undefined" && console.warn) console.warn(line);
+        }
         return w;
+    }
+
+    /**
+     * Missing `mods` means a base-game save. A missing id warns and leaves world
+     * content in place. A hash mismatch warns only when every saved id is loaded.
+     */
+    _contentLoadWarnings(data) {
+        if (!data || !Array.isArray(data.mods)) return [];
+        const content = _contentApi();
+        const loaded = content?.simMods?.() || [];
+        const loadedIds = new Set(loaded.map((mod) => mod?.id).filter(Boolean));
+        const missing = [];
+        for (const mod of data.mods) {
+            if (!mod?.id) continue;
+            if (loadedIds.has(mod.id)) continue;
+            const version = mod.version == null ? "" : String(mod.version);
+            missing.push(`${mod.id}@${version}`);
+        }
+        if (missing.length) {
+            return missing.map((label) =>
+                `Missing mod ${label}. World content from that mod is left in place.`
+            );
+        }
+        const savedHash = data.contentHash == null ? "" : String(data.contentHash);
+        let current = "";
+        if (content?.isFinalized?.() && typeof content.simHash === "function") {
+            current = content.simHash();
+        }
+        if (savedHash === current) return [];
+        return [
+            `Saved simulation content does not match the loaded mods (saved hash ${savedHash}, loaded hash ${current}). World content is left in place.`
+        ];
+    }
+
+    _contentIdentity() {
+        const content = _contentApi();
+        if (content?.isFinalized?.() && typeof content.simHash === "function") {
+            return {
+                mods: (content.simMods?.() || []).map((mod) => ({
+                    id: mod.id,
+                    version: mod.version
+                })),
+                contentHash: content.simHash()
+            };
+        }
+        return { mods: [], contentHash: "" };
     }
 
     _pickSpawn() {
@@ -1105,7 +1206,11 @@ class SimWorld {
                 ? { ...this.researchSpentByOwner }
                 : {},
             settlers: (this.settlers || []).filter((s) => s && !s.dead).map((s) => this._persistSettler(s)),
-            chunks
+            chunks,
+            modData: this.modData && typeof this.modData === "object" && !Array.isArray(this.modData)
+                ? { ...this.modData }
+                : {},
+            ...this._contentIdentity()
         };
     }
 
@@ -1377,6 +1482,9 @@ class SimWorld {
         if (character.techs && typeof character.techs === "object" && !Array.isArray(character.techs)) {
             p.techs = { ...character.techs };
         }
+        if (Array.isArray(character.quarantine)) {
+            p.quarantine = character.quarantine.filter((s) => s && s.id);
+        }
         if (character.techGrantRev != null) {
             p.techGrantRev = Math.max(0, Math.floor(Number(character.techGrantRev) || 0));
         }
@@ -1385,12 +1493,20 @@ class SimWorld {
         }
         this._migratePlayerSpoilLeft(p);
         for (const m of p.party || []) this._migratePlayerSpoilLeft(m);
+        this._keepKnownTechs(p);
         this._ensureEquipment(p);
+        // Pull before inventory/overflow size sync. That sync drops stacks past
+        // the equipped bag size onto the ground, which would lose unknown gear.
+        this._pullUnknownGear(p);
         this._syncPlayerInvSize(p);
+        this._restoreQuarantine(p);
         this._enforceCarryCap(p);
         for (const m of p.party || []) {
+            this._keepKnownTechs(m);
             this._ensureEquipment(m);
+            this._pullUnknownGear(m);
             this._syncPlayerInvSize(m);
+            this._restoreQuarantine(m);
             this._enforceCarryCap(m);
         }
         if (this.players.has(p.id) || p.creature) {
@@ -1441,8 +1557,100 @@ class SimWorld {
             controlId: id,
             ownerId: id,
             techs: Object.create(null),
-            techGrantRev: 0
+            techGrantRev: 0,
+            quarantine: []
         };
+    }
+
+    _knownItem(id) {
+        return !!(id && itemDefs().get(id));
+    }
+
+    _knownTechMap(techs) {
+        const out = Object.create(null);
+        if (!techs || typeof techs !== "object" || Array.isArray(techs)) return out;
+        const research = _research();
+        for (const [id, on] of Object.entries(techs)) {
+            if (!on || !id) continue;
+            if (research?.techById?.(id)) out[id] = true;
+        }
+        return out;
+    }
+
+    _keepKnownTechs(p) {
+        if (!p) return;
+        p.techs = this._knownTechMap(p.techs);
+    }
+
+    /**
+     * Unknown gear leaves active slots so it cannot be swung as unarmed fallback.
+     * Call before inventory and overflow size sync, which drops extra stacks.
+     */
+    _pullUnknownGear(p) {
+        if (!p) return;
+        const bin = Array.isArray(p.quarantine) ? p.quarantine.filter((s) => s && s.id) : [];
+        const pull = (stack) => {
+            if (!stack?.id) return stack || null;
+            if (this._knownItem(stack.id)) return stack;
+            bin.push(stack);
+            return null;
+        };
+        if (Array.isArray(p.inventory)) p.inventory = p.inventory.map((s) => pull(s));
+        if (Array.isArray(p.overflow)) {
+            const next = [];
+            for (const s of p.overflow) {
+                if (!s) continue;
+                const kept = pull(s);
+                if (kept) next.push(kept);
+            }
+            p.overflow = next;
+        }
+        const eq = p.equipment;
+        if (eq && typeof eq === "object") {
+            for (const key of ["head", "torso", "legs", "feet", "back"]) {
+                eq[key] = pull(eq[key]);
+            }
+            if (Array.isArray(eq.waist)) {
+                const waist = [];
+                for (const s of eq.waist) {
+                    if (!s) continue;
+                    const kept = pull(s);
+                    if (kept) waist.push(kept);
+                }
+                eq.waist = waist;
+            }
+        }
+        p.quarantine = bin;
+    }
+
+    /** Stacks whose defs exist again move into empty inventory slots. */
+    _restoreQuarantine(p) {
+        if (!p) return;
+        if (!Array.isArray(p.inventory)) p.inventory = emptyInv(5);
+        const bin = Array.isArray(p.quarantine) ? p.quarantine : [];
+        const stay = [];
+        for (const stack of bin) {
+            if (!stack?.id) continue;
+            if (!this._knownItem(stack.id)) {
+                stay.push(stack);
+                continue;
+            }
+            const meta = itemDefs().get(stack.id);
+            const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
+            let qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
+            while (qty > 0) {
+                const idx = p.inventory.findIndex((s) => !s);
+                if (idx < 0) {
+                    stay.push({ ...stack, quantity: qty });
+                    qty = 0;
+                    break;
+                }
+                const take = Math.min(maxStack, qty);
+                p.inventory[idx] = { ...stack, quantity: take };
+                qty -= take;
+            }
+        }
+        p.quarantine = stay;
     }
 
     _companionFromSnap(owner, m) {
@@ -1473,7 +1681,11 @@ class SimWorld {
             role: "companion",
             lastSleep: m.lastSleep || null,
             _resting: false,
-            _joinRestHint: !!m.resting
+            _joinRestHint: !!m.resting,
+            techs: m.techs && typeof m.techs === "object" && !Array.isArray(m.techs)
+                ? { ...m.techs }
+                : Object.create(null),
+            quarantine: Array.isArray(m.quarantine) ? m.quarantine.filter((s) => s && s.id) : []
         };
         this._restoreLogoutPose(rec);
         this._ensureCompanionCreature(owner, rec);
@@ -4892,7 +5104,9 @@ class SimWorld {
         }
         if (type === Protocol.Actions.COMMAND) {
             this._runCommand(p, String(action.text || ""), action);
+            return;
         }
+        _actionsApi()?.dispatch?.(this, p, action);
     }
 
     _runCommand(p, text, action = {}) {
@@ -5143,6 +5357,8 @@ class SimWorld {
             Place.ensureStorageEntry(entry, def);
             return { lootable: false, entry };
         }
+        const custom = _kindsApi()?.applyInitEntry?.(def, x, y);
+        if (custom) return custom;
         return { lootable: false, entry: { id: def.id, x, y } };
     }
 
@@ -12421,6 +12637,7 @@ class SimWorld {
             inventory: p.inventory,
             overflow: p.overflow,
             equipment: p.equipment,
+            quarantine: Array.isArray(p.quarantine) ? p.quarantine.slice() : [],
             hotbarIndex: p.hotbarIndex,
             body,
             hp: p.hp,
@@ -12455,6 +12672,7 @@ class SimWorld {
                     equipment: this._clonePersistEquipment(
                         this._equipmentWithItems(m.equipment, c?.equipment)
                     ),
+                    quarantine: Array.isArray(m.quarantine) ? m.quarantine.slice() : [],
                     hotbarIndex: m.hotbarIndex,
                     body: m.body || c?.anatomy?.toJSON?.() || null,
                     hp: m.hp,

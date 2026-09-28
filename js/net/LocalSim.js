@@ -152,37 +152,21 @@ class LocalSim {
             };
         }
 
+        _contentApi() {
+            if (typeof Content !== "undefined") return Content;
+            try {
+                return require("../../shared/mods/content");
+            } catch (_) {
+                return null;
+            }
+        }
+
         async _ensureData() {
-            if (typeof DataStore === "undefined") return;
-            if (DataStore.isReady()) return;
-            if (this.scene) {
-                DataStore.initFromPhaserScene(this.scene);
-                if (DataStore.isReady()) return;
-            }
-            if (typeof fetch === "function") {
-                const load = (name) => fetch(`data/${name}`).then((r) => {
-                    if (!r.ok) throw new Error(`Failed to load data/${name}`);
-                    return r.json();
-                });
-                const [bodyPlans, injuries, hediffs, items, mobs, things, structures] = await Promise.all([
-                    load("BodyPlans.json"),
-                    load("Injuries.json"),
-                    load("Hediffs.json"),
-                    load("Items.json"),
-                    load("Mobs.json"),
-                    load("Things.json"),
-                    load("Structures.json").catch(() => null)
-                ]);
-                DataStore.initFromData({ bodyPlans, injuries, hediffs, items, mobs, things });
-                if (structures && typeof Structures !== "undefined") {
-                    Structures.loadConfig?.(structures);
-                }
-                return;
-            }
-            if (typeof DataStore.loadFromDisk === "function") {
-                DataStore.loadFromDisk();
-            }
-    }
+            const content = this._contentApi();
+            if (!content) throw new Error("Content is not loaded");
+            if (content.isFinalized()) return;
+            await content.boot();
+        }
 
     async connect() {
         this._closed = false;
@@ -191,6 +175,8 @@ class LocalSim {
         this._queue = [];
 
             await this._ensureData();
+            const content = this._contentApi();
+            if (typeof content?.loadSimScripts === "function") await content.loadSimScripts();
 
             const persist = this._makePersist();
             const hasChunks = this.world?.chunks && Object.keys(this.world.chunks).length > 0;
@@ -230,10 +216,19 @@ class LocalSim {
                 silentJoin: true
             });
 
+            let mods = [];
+            let contentHash = "";
+            if (typeof content?.authContent === "function") {
+                const auth = await content.authContent();
+                mods = auth?.mods || [];
+                contentHash = auth?.hash || "";
+            }
             const welcome = this.session.welcomePayload(this.playerId, {
             worldName: this.world.name || "World",
             local: true,
-            firstSpawn: !hasPose
+            firstSpawn: !hasPose,
+            mods,
+            contentHash
             });
         this._dispatch(NetProtocol.Types.WELCOME, welcome);
             this.session.afterJoin(this.playerId);

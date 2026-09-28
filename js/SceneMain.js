@@ -128,8 +128,6 @@ class SceneMain extends SceneBase {
         try { this.sound?.stopByKey?.("title"); } catch (_) {}
         if (typeof GameMusic !== "undefined") GameMusic.play(this, "forest", { fade: true });
         this.input.mouse.disableContextMenu();
-        resolveCraftedWeights(this.items());
-        resolveCraftedFuel(this.items());
 
         // Shared world seed from listen server (identical terrain for all clients)
         if (this.isNet && this.welcome?.seed != null) {
@@ -191,14 +189,12 @@ class SceneMain extends SceneBase {
         this.damageables = this.add.group();
         this.mobs = this.physics.add.group();
 
-        // Shared body defs must see Phaser JSON cache before Body() runs.
-        // (Phaser.Scene.data is a DataManager — do not confuse with DataStore.)
-        if (typeof DataStore !== "undefined") {
-            DataStore.initFromPhaserScene(this);
+        // Finalized DataStore is authority. The Phaser cache is a published view.
+        if (typeof Content !== "undefined") {
+            Content.publishToScene(this);
         }
-        if (typeof Structures !== "undefined") {
-            Structures.loadConfig(this.cache.json.get("structures"));
-        }
+        resolveCraftedWeights(this.items());
+        resolveCraftedFuel(this.items());
 
         // Player
         this.partySys = new PartySystem(this);
@@ -435,7 +431,10 @@ class SceneMain extends SceneBase {
             lastSleep: pl.lastSleep || null,
             resting: !!pl._resting,
             techs: pl.techs && typeof pl.techs === "object" ? { ...pl.techs } : (this.character?.techs || {}),
-            techGrantRev: pl.techGrantRev ?? this.character?.techGrantRev ?? 0
+            techGrantRev: pl.techGrantRev ?? this.character?.techGrantRev ?? 0,
+            quarantine: Array.isArray(pl.quarantine)
+                ? pl.quarantine
+                : (Array.isArray(this._lastYou?.quarantine) ? this._lastYou.quarantine : null)
         };
     }
 
@@ -497,6 +496,12 @@ class SceneMain extends SceneBase {
                     ? m.overflow.map((s) => this._cloneSaveStack(s))
                     : m.overflow,
                 equipment: cloneEq(m.equipment),
+                quarantine: Array.isArray(m.quarantine)
+                    ? m.quarantine.map((s) => this._cloneSaveStack(s)).filter(Boolean)
+                    : (Array.isArray(this._lastYou?.party?.find?.((row) => row?.id === m.id)?.quarantine)
+                        ? this._lastYou.party.find((row) => row.id === m.id).quarantine
+                            .map((s) => this._cloneSaveStack(s)).filter(Boolean)
+                        : []),
                 hotbarIndex: m.hotbarIndex,
                 body: m.body,
                 hp: m.hp,
@@ -510,6 +515,9 @@ class SceneMain extends SceneBase {
         };
         return {
             ...raw,
+            quarantine: Array.isArray(raw.quarantine)
+                ? raw.quarantine.map((s) => this._cloneSaveStack(s)).filter(Boolean)
+                : raw.quarantine,
             inventory: Array.isArray(raw.inventory)
                 ? raw.inventory.map((s) => this._cloneSaveStack(s))
                 : raw.inventory,
@@ -2243,6 +2251,7 @@ class SceneMain extends SceneBase {
         if (!ev || !this.isNet) return;
         if (ev.kind === "world_regen" && ev.seed != null) {
             this._netOnWorldRegen(ev.seed);
+            if (typeof ModKinds !== "undefined") ModKinds.dispatchEvent(this, ev);
             return;
         }
         if (ev.kind === "chat" && ev.text) {
@@ -2434,6 +2443,11 @@ class SceneMain extends SceneBase {
         if (ev.kind === "thing_set") {
             this._netApplyThingSet(ev);
         }
+        if (typeof ModKinds !== "undefined") ModKinds.dispatchEvent(this, ev);
+    }
+
+    onEvent(kind, fn) {
+        if (typeof ModKinds !== "undefined") ModKinds.onEvent("scene", kind, fn);
     }
 
     /**
@@ -6768,6 +6782,8 @@ class SceneMain extends SceneBase {
             if (typeof Place !== "undefined") Place.ensureSettlementEntry(entry);
             return { lootable: false, entry };
         }
+        const custom = typeof ModKinds !== "undefined" ? ModKinds.applyInitEntry(def, x, y) : null;
+        if (custom) return custom;
         return { lootable: false, entry: { id: def.id, x, y } };
     }
 
@@ -6799,15 +6815,32 @@ class SceneMain extends SceneBase {
         } else if (this.getThing(entry.id)?.figurine || entry.id === "clay_figurine") {
             thing = new ClayFigurine(this, entry);
         } else {
-            thing = new Thing(this, entry.x, entry.y, entry.id, entry);
-            if (entry.id === "rock") this.wireRockKnapping?.(thing);
-            else if (entry.id === "sign") {
-                if (entry.spawnHint && this._spawnSignTooltip) {
-                    entry.tooltip = this._spawnSignTooltip();
+            const kindClass = typeof ModKinds !== "undefined"
+                ? ModKinds.clientClassFor(this.getThing(entry.id), entry)
+                : null;
+            if (kindClass) {
+                thing = new kindClass(this, entry);
+            } else {
+                thing = new Thing(this, entry.x, entry.y, entry.id, entry);
+                if (entry.id === "rock") this.wireRockKnapping?.(thing);
+                else if (entry.id === "sign") {
+                    if (entry.spawnHint && this._spawnSignTooltip) {
+                        entry.tooltip = this._spawnSignTooltip();
+                    }
+                    this.wireThingTooltip?.(thing);
+                } else if (thing.meta?.diggable?.item) {
+                    this.wireDigTooltip?.(thing);
                 }
-                this.wireThingTooltip?.(thing);
-            } else if (thing.meta?.diggable?.item) {
-                this.wireDigTooltip?.(thing);
+            }
+            const panelId = typeof ModKinds !== "undefined"
+                ? ModKinds.panelIdFor(this.getThing(entry.id), entry)
+                : "";
+            if (panelId && thing?.on) {
+                thing.setInteractive?.({ cursor: "pointer" });
+                thing.on("pointerdown", (pointer) => {
+                    if (pointer?.rightButtonDown?.()) return;
+                    if (typeof ModClient !== "undefined") ModClient.openPanel(panelId, this, thing);
+                });
             }
         }
         chunk.things.add(thing);

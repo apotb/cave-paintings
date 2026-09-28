@@ -8,6 +8,23 @@ const WorldStore = (() => {
     const DB_VERSION = 2;
     const STORE = "worlds";
 
+    function lastModsLib() {
+        if (typeof LastMods !== "undefined" && LastMods && typeof LastMods.normalize === "function") {
+            return LastMods;
+        }
+        if (typeof require === "function") return require("./lastMods");
+        return null;
+    }
+
+    function copyLastMods(raw) {
+        if (!Array.isArray(raw)) return undefined;
+        const lib = lastModsLib();
+        return lib ? lib.normalize(raw) : raw.map((row) => ({
+            id: String(row && row.id || row || ""),
+            name: String((row && row.name) || (row && row.id) || row || "")
+        })).filter((row) => row.id);
+    }
+
     function diskApi() {
         try {
             const api = typeof window !== "undefined" ? window.cavePaintings : null;
@@ -60,14 +77,24 @@ const WorldStore = (() => {
         return (Math.random() * 0x100000000) >>> 0;
     }
 
-    /** Same spawn-at-origin check used by the terrain generator. */
+    function worldGenApi() {
+        if (typeof WorldGen !== "undefined" && WorldGen.generateTileKey) return WorldGen;
+        try {
+            return require("../../shared/sim/WorldGen");
+        } catch (_) {
+            return null;
+        }
+    }
+
+    /** Origin tile is landable plains, using WorldGen's biome key. */
     function seedIsPlayable(seed) {
-        if (typeof noise === "undefined" || typeof octaveNoise2D !== "function") return true;
+        const gen = worldGenApi();
+        if (!gen) return true;
         const s = Number(seed) >>> 0;
-        noise.seed(s);
-        const elevation = octaveNoise2D(0, 0, 2, 0.5, 2.5, 0);
-        const river = Math.abs(octaveNoise2D(0, 0, 3, 1.2, 0.7, 2));
-        return elevation > -0.2 && elevation < 0.25 && river > 0.005;
+        gen.applySeed(s);
+        const key = gen.generateTileKey(0, 0, () => 1).key;
+        return key !== "water" && key !== "ice"
+            && key !== "mountain" && key !== "mesa" && key !== "snow_mountain";
     }
 
     /**
@@ -233,6 +260,7 @@ const WorldStore = (() => {
         const w = defaultWorld(name);
         const raw = opts.seed != null ? Number(opts.seed) : randomSeed();
         w.seed = Number.isFinite(raw) ? findPlayableSeed(raw >>> 0) : findPlayableSeed();
+        if (Array.isArray(opts.lastMods)) w.lastMods = copyLastMods(opts.lastMods);
         return put(w);
     }
 
@@ -310,6 +338,7 @@ const WorldStore = (() => {
             favorite: !!raw.favorite,
             lastPlayedAt: Math.max(0, Number(raw.lastPlayedAt) || 0)
         });
+        if (Array.isArray(raw.lastMods)) w.lastMods = copyLastMods(raw.lastMods);
         w.id = uuid();
         w.createdAt = Date.now();
         w.updatedAt = w.createdAt;

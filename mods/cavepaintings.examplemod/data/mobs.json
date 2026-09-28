@@ -1,0 +1,15 @@
+[
+  {
+    "id": "critter",
+    "name": "Example Critter",
+    "bodyPlan": "body",
+    "speed": 2,
+    "wanderSpeed": 1,
+    "hitboxSize": 8,
+    "ai": "neutralAnimal",
+    "attacks": [],
+    "drops": [
+      { "item": "token", "min": 1, "max": 1 }
+    ]
+  }
+]

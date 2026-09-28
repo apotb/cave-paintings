@@ -55,7 +55,9 @@
                     .map((w) => sim._publicWanderer(w))
                     .filter(Boolean),
                 local: !!extras.local,
-                firstSpawn: !!extras.firstSpawn
+                firstSpawn: !!extras.firstSpawn,
+                mods: Array.isArray(extras.mods) ? extras.mods : [],
+                contentHash: extras.contentHash || ""
             };
         }
 

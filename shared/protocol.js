@@ -12,7 +12,9 @@
     const PROTOCOL_VERSION = 2;
 
     const Types = {
+        /** payload.content is { hash, mods: [{ id, version }] }. Omitted content is base-game only. */
         AUTH: "auth",
+        /** payload.mods and payload.contentHash are the host simulation identity. */
         WELCOME: "welcome",
         REJECT: "reject",
         INPUT_MOVE: "input.move",

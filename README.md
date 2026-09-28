@@ -26,6 +26,8 @@ npm run bump --patch    # also --minor / --major; updates package.json + version
 
 Server flags, TLS, console commands: [server/README.md](server/README.md).
 
+Mod reference: [mods/README.md](mods/README.md).
+
 ## Release
 
 Pushing to `main` runs tests. A GitHub Release with Mac / Windows / Linux installers is built when you push a `v*` tag that matches the bumped version:

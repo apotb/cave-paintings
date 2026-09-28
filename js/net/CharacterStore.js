@@ -8,6 +8,23 @@ const CharacterStore = (() => {
     const DB_VERSION = 2;
     const STORE = "characters";
 
+    function lastModsLib() {
+        if (typeof LastMods !== "undefined" && LastMods && typeof LastMods.normalize === "function") {
+            return LastMods;
+        }
+        if (typeof require === "function") return require("./lastMods");
+        return null;
+    }
+
+    function copyLastMods(raw) {
+        if (!Array.isArray(raw)) return undefined;
+        const lib = lastModsLib();
+        return lib ? lib.normalize(raw) : raw.map((row) => ({
+            id: String(row && row.id || row || ""),
+            name: String((row && row.name) || (row && row.id) || row || "")
+        })).filter((row) => row.id);
+    }
+
     function diskApi() {
         try {
             const api = typeof window !== "undefined" ? window.cavePaintings : null;
@@ -101,7 +118,8 @@ const CharacterStore = (() => {
             controlId: null,
             leaderDead: false,
             techs: {},
-            techGrantRev: 0
+            techGrantRev: 0,
+            quarantine: []
         };
     }
 
@@ -261,9 +279,10 @@ const CharacterStore = (() => {
         return row;
     }
 
-    async function create(name, look) {
+    async function create(name, look, lastMods) {
         const c = defaultCharacter(name);
         c.look = normalizeLook(look);
+        if (Array.isArray(lastMods)) c.lastMods = copyLastMods(lastMods);
         return put(c);
     }
 
@@ -319,6 +338,17 @@ const CharacterStore = (() => {
         if (Array.isArray(character.overflow)) {
             for (const s of character.overflow) stripWorldSpoil(s);
         }
+        if (Array.isArray(character.quarantine)) {
+            for (const s of character.quarantine) stripWorldSpoil(s);
+        }
+        if (Array.isArray(character.party)) {
+            for (const m of character.party) {
+                if (!m) continue;
+                if (Array.isArray(m.quarantine)) {
+                    for (const s of m.quarantine) stripWorldSpoil(s);
+                }
+            }
+        }
         return character;
     }
 
@@ -345,6 +375,8 @@ const CharacterStore = (() => {
                     if (Array.isArray(m?.inventory)) cm.inventory = cloneInv(m.inventory);
                     if (Array.isArray(m?.overflow)) cm.overflow = cloneOverflow(m.overflow);
                     if (m?.equipment) cm.equipment = cloneEquipment(m.equipment);
+                    if (Array.isArray(m?.quarantine)) cm.quarantine = cloneOverflow(m.quarantine);
+                    if (m?.techs) cm.techs = cloneTechs(m.techs);
                     return cm;
                 })
                 : [],
@@ -353,7 +385,8 @@ const CharacterStore = (() => {
             lastSleep: character.lastSleep || null,
             resting: !!character.resting,
             techs: cloneTechs(character.techs),
-            techGrantRev: Math.max(0, Math.floor(Number(character.techGrantRev) || 0))
+            techGrantRev: Math.max(0, Math.floor(Number(character.techGrantRev) || 0)),
+            quarantine: cloneOverflow(character.quarantine)
         };
         normalizeCharacterSpoil(snap);
         return snap;
@@ -369,6 +402,7 @@ const CharacterStore = (() => {
         if (typeof you.stomach === "number") next.stomach = you.stomach;
         if (Array.isArray(you.inventory)) next.inventory = cloneInv(you.inventory);
         if (Array.isArray(you.overflow)) next.overflow = cloneOverflow(you.overflow);
+        if (Array.isArray(you.quarantine)) next.quarantine = cloneOverflow(you.quarantine);
         if (you.equipment) next.equipment = cloneEquipment(you.equipment);
         if (typeof you.hotbarIndex === "number") next.hotbarIndex = you.hotbarIndex;
         if (typeof you.hp === "number") next.hp = you.hp;
@@ -382,6 +416,7 @@ const CharacterStore = (() => {
                 if (Array.isArray(m?.inventory)) cm.inventory = cloneInv(m.inventory);
                 if (Array.isArray(m?.overflow)) cm.overflow = cloneOverflow(m.overflow);
                 if (m?.equipment) cm.equipment = cloneEquipment(m.equipment);
+                if (Array.isArray(m?.quarantine)) cm.quarantine = cloneOverflow(m.quarantine);
                 return cm;
             });
         }
@@ -445,8 +480,10 @@ const CharacterStore = (() => {
             lastSleep: raw.lastSleep || null,
             resting: !!raw.resting,
             techs: cloneTechs(raw.techs),
-            techGrantRev: Math.max(0, Math.floor(Number(raw.techGrantRev) || 0))
+            techGrantRev: Math.max(0, Math.floor(Number(raw.techGrantRev) || 0)),
+            quarantine: Array.isArray(raw.quarantine) ? clone(raw.quarantine) : []
         });
+        if (Array.isArray(raw.lastMods)) c.lastMods = copyLastMods(raw.lastMods);
         // Keep the exported id so world logout poses (keyed by character id) still apply.
         c.id = (typeof raw.id === "string" && raw.id) ? raw.id : uuid();
         c.createdAt = Date.now();

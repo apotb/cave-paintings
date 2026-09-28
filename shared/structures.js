@@ -58,14 +58,21 @@
     };
 
     let _config = null;
+    let _locked = false;
 
     function loadConfig(cfg) {
         if (cfg && typeof cfg === "object") _config = cfg;
         return _config;
     }
 
+    function lockConfig() {
+        _locked = true;
+        return _config;
+    }
+
     function getConfig(scene) {
         if (_config) return _config;
+        if (_locked) return _config;
         if (scene?.cache?.json?.exists?.("structures")) {
             _config = scene.cache.json.get("structures");
             return _config;
@@ -748,6 +755,7 @@
         CS,
         TS,
         loadConfig,
+        lockConfig,
         getConfig,
         typesInOrder,
         typeById,

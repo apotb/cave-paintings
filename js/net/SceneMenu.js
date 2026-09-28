@@ -139,6 +139,11 @@ class SceneMenu extends Phaser.Scene {
         if (!this.cache.audio.exists("title")) {
             this.load.audio("title", "assets/audio/title.ogg");
         }
+        for (const key of ["github", "github_hover", "github_open"]) {
+            if (!this.textures.exists(key)) {
+                this.load.image(key, `assets/ui/${key}.png`);
+            }
+        }
     }
 
     create() {
@@ -177,6 +182,15 @@ class SceneMenu extends Phaser.Scene {
         }
         this._onMenuKeydown = (e) => this._handleMenuEscape(e);
         document.addEventListener("keydown", this._onMenuKeydown, true);
+        if (this._onModsFolderFocus) {
+            window.removeEventListener("focus", this._onModsFolderFocus);
+        }
+        this._onModsFolderFocus = () => {
+            if (!this.sys?.isActive?.() || this._phase !== "mods") return;
+            if (typeof window.cavePaintings?.openModsFolder !== "function") return;
+            this._showMods();
+        };
+        window.addEventListener("focus", this._onModsFolderFocus);
         this._bindFullscreenWatch();
         if (this._onResize) this.scale.off("resize", this._onResize);
         this._onResize = () => {
@@ -763,6 +777,13 @@ class SceneMenu extends Phaser.Scene {
             case "options":
                 this._showRoot();
                 return;
+            case "mods":
+                if (this._modsNeedReload) {
+                    window.location.reload();
+                    return;
+                }
+                this._leaveMods();
+                return;
             case "rename":
                 if (this._renameKind === "world") this._showWorlds();
                 else this._showCharacters({ next: this._charNext });
@@ -818,6 +839,9 @@ class SceneMenu extends Phaser.Scene {
             case "options":
                 this._showOptions();
                 break;
+            case "mods":
+                this._showMods();
+                break;
             case "rename":
                 this._showRename({
                     kind: this._renameKind,
@@ -863,6 +887,7 @@ class SceneMenu extends Phaser.Scene {
         }
         this._armedDeleteId = null;
         this._armedDeleteBtn = null;
+        this._menuTip = null;
         for (const o of this._dom) {
             try {
                 o.destroy?.();
@@ -892,12 +917,12 @@ class SceneMenu extends Phaser.Scene {
         this._versionLabel = null;
         this._updateLabel = null;
         this._updateUnderline = null;
+        this._githubBtn = null;
         this._syncKeyboardForDom();
-        this._placeVersionLabel();
     }
 
     _destroyVersionChrome() {
-        for (const key of ["_versionLabel", "_updateLabel", "_updateUnderline"]) {
+        for (const key of ["_versionLabel", "_updateLabel", "_updateUnderline", "_githubBtn"]) {
             const obj = this[key];
             this[key] = null;
             if (!obj) continue;
@@ -905,9 +930,11 @@ class SceneMenu extends Phaser.Scene {
         }
     }
 
-    /** Quiet build mark in the title-scene corner; rebuilt after every `_clear`. */
+    /** Version, update link, and GitHub button. Title, Options, and Mods only. */
     _placeVersionLabel() {
         this._destroyVersionChrome();
+        const phase = this._phase;
+        if (phase !== "root" && phase !== "options" && phase !== "mods") return;
         const s = this._uiScale();
         const pad = Math.round(10 * s);
         const gap = Math.round(2 * s);
@@ -967,6 +994,7 @@ class SceneMenu extends Phaser.Scene {
             else if (typeof crispUiText === "function") crispUiText(label);
             this._versionLabel = label;
         }
+        this._placeGithubButton(s, pad);
         this._sendCaveBehind();
         if (_localVersionCache === undefined) {
             resolveLocalVersion().then(() => {
@@ -980,6 +1008,47 @@ class SceneMenu extends Phaser.Scene {
                 this._placeVersionLabel();
             });
         }
+    }
+
+    /** Bottom-right repo link. Idle, hover, and press match the help button. */
+    _placeGithubButton(s, pad) {
+        if (!this.textures?.exists?.("github")) return;
+        const btn = this.add.image(this.scale.width - pad, this.scale.height - pad, "github");
+        btn.setOrigin(1, 1).setDepth(20).setScale(s);
+        if (typeof lockPixelHit === "function") {
+            lockPixelHit(btn, "github", { useHandCursor: true });
+        } else {
+            btn.setInteractive({ useHandCursor: true });
+        }
+        let pressed = false;
+        const paint = (key) => {
+            if (btn.active && this.textures.exists(key)) btn.setTexture(key);
+        };
+        btn.on("pointerover", () => {
+            if (!pressed) paint("github_hover");
+        });
+        btn.on("pointerout", () => {
+            pressed = false;
+            paint("github");
+        });
+        btn.on("pointerdown", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            if (pointer?.button != null && pointer.button !== 0) return;
+            pressed = true;
+            paint("github_open");
+        });
+        btn.on("pointerup", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            if (pointer?.button != null && pointer.button !== 0) return;
+            const was = pressed;
+            pressed = false;
+            paint("github_hover");
+            if (!was) return;
+            try {
+                window.open(`https://github.com/${GITHUB_REPO}`, "_blank", "noopener,noreferrer");
+            } catch (_) {}
+        });
+        this._githubBtn = btn;
     }
 
     _track(...nodes) {
@@ -1143,10 +1212,18 @@ class SceneMenu extends Phaser.Scene {
             }
         };
 
-        rect.on("pointerover", () => {
+        const showTip = (pointer) => {
+            if (!opts.tooltip) return;
+            this._placeHoverTip(this._menuTip, pointer, opts.tooltip);
+        };
+        rect.on("pointerover", (pointer) => {
             hovering = true;
             paint();
             setActive(true);
+            showTip(pointer);
+        });
+        rect.on("pointermove", (pointer) => {
+            if (hovering) showTip(pointer);
         });
         rect.on("pointerout", () => {
             hovering = false;
@@ -1154,6 +1231,7 @@ class SceneMenu extends Phaser.Scene {
             paint();
             setActive(false);
             opts.onPointerOut?.();
+            if (opts.tooltip) this._hideHoverTip(this._menuTip);
         });
         rect.on("pointerdown", (pointer, _lx, _ly, event) => {
             event?.stopPropagation?.();
@@ -1166,8 +1244,10 @@ class SceneMenu extends Phaser.Scene {
             const wasPress = pressing;
             pressing = false;
             paint();
-            if (wasPress && hovering) onClick?.();
-            else if (!hovering) setActive(false);
+            if (wasPress && hovering) {
+                if (opts.tooltip) this._hideHoverTip(this._menuTip);
+                onClick?.();
+            } else if (!hovering) setActive(false);
         });
 
         this._track(root);
@@ -1303,6 +1383,8 @@ class SceneMenu extends Phaser.Scene {
             onRename,
             onFavorite,
             favorited = false,
+            onModWarn,
+            modWarnTip = "",
             onExport,
             onDelete,
             onHoverActive
@@ -1391,6 +1473,14 @@ class SceneMenu extends Phaser.Scene {
                 armed: !!favorited
             })
             : null;
+        const modWarnBtn = onModWarn
+            ? this._button(0, 0, "!", () => onModWarn(), {
+                size: "small",
+                width: this._buttonSizePreset("small").height,
+                height: this._buttonSizePreset("small").height,
+                tooltip: modWarnTip || ""
+            })
+            : null;
         const exportBtn = this._button(0, 0, "Export", () => onExport?.(), { size: "small" });
         const deleteBtn = this._button(0, 0, "Delete", () => {
             if (this._armedDeleteId === cardId) {
@@ -1411,9 +1501,15 @@ class SceneMenu extends Phaser.Scene {
         playBtn.y = btnY;
         renameBtn.x = playBtn.x + playBtn.btnWidth / 2 + Math.round(8 * s) + renameBtn.btnWidth / 2;
         renameBtn.y = btnY;
+        const rowGap = Math.round(8 * s);
         if (favoriteBtn) {
-            favoriteBtn.x = renameBtn.x + renameBtn.btnWidth / 2 + Math.round(8 * s) + favoriteBtn.btnWidth / 2;
+            favoriteBtn.x = renameBtn.x + renameBtn.btnWidth / 2 + rowGap + favoriteBtn.btnWidth / 2;
             favoriteBtn.y = btnY;
+        }
+        if (modWarnBtn) {
+            const anchor = favoriteBtn || renameBtn;
+            modWarnBtn.x = anchor.x + anchor.btnWidth / 2 + rowGap + modWarnBtn.btnWidth / 2;
+            modWarnBtn.y = btnY;
         }
 
         // Top-right stack: Export, then Delete
@@ -1424,7 +1520,7 @@ class SceneMenu extends Phaser.Scene {
         deleteBtn.x = sideX;
         deleteBtn.y = exportBtn.y + exportBtn.btnHeight / 2 + sideGap + deleteBtn.btnHeight / 2;
 
-        return { panel, playBtn, renameBtn, favoriteBtn, exportBtn, deleteBtn, titleText, info, height };
+        return { panel, playBtn, renameBtn, favoriteBtn, modWarnBtn, exportBtn, deleteBtn, titleText, info, height };
     }
 
     /**
@@ -1540,6 +1636,7 @@ class SceneMenu extends Phaser.Scene {
             card?.playBtn,
             card?.renameBtn,
             card?.favoriteBtn,
+            card?.modWarnBtn,
             card?.exportBtn,
             card?.deleteBtn
         ].filter(Boolean);
@@ -1601,6 +1698,7 @@ class SceneMenu extends Phaser.Scene {
         this._onCardListWheel = (_p, _over, _dx, dy) => {
             const ptr = this.input?.activePointer;
             if (!ptr || ptr.y < viewTop || ptr.y > viewBottom) return;
+            this._hideHoverTip(this._menuTip);
             apply(scroll + dy * 0.45);
         };
         this.input.on("wheel", this._onCardListWheel);
@@ -1689,21 +1787,185 @@ class SceneMenu extends Phaser.Scene {
         return el;
     }
 
+    _ensureMenuTip() {
+        if (this._menuTip?.isConnected) return this._menuTip;
+        const s = this._uiScale();
+        const tipFont = typeof pixelUiFontSize === "function" ? pixelUiFontSize(16, s) : Math.round(16 * s);
+        const tipPad = Math.round(6 * s);
+        const tipStroke = Math.max(2, Math.round(2 * s));
+        const tipRadius = Math.max(4, Math.round(6 * s));
+        const tipShadow = [];
+        for (let sx = -tipStroke; sx <= tipStroke; sx++) {
+            for (let sy = -tipStroke; sy <= tipStroke; sy++) {
+                if (!sx && !sy) continue;
+                if (sx * sx + sy * sy > tipStroke * tipStroke) continue;
+                tipShadow.push(`${sx}px ${sy}px 0 #000`);
+            }
+        }
+        const tip = document.createElement("div");
+        tip.style.cssText = [
+            "position:fixed",
+            "display:none",
+            "z-index:1100",
+            "pointer-events:none",
+            "white-space:pre",
+            "width:max-content",
+            "max-width:none",
+            "box-sizing:content-box",
+            "background:#111111",
+            "color:#ffffff",
+            "border:1px solid #000000",
+            `border-radius:${tipRadius}px`,
+            `padding:${tipPad + tipStroke}px`,
+            `font-size:${tipFont}px`,
+            `line-height:${tipFont + tipStroke * 2}px`,
+            "font-family:PrimaryFont, monospace",
+            `text-shadow:${tipShadow.join(",")}`
+        ].join(";");
+        this._menuTip = tip;
+        this._dom.push(tip);
+        document.body.appendChild(tip);
+        return tip;
+    }
+
+    _tipClientPoint(source) {
+        if (source && Number.isFinite(source.clientX) && Number.isFinite(source.clientY)) {
+            return { x: source.clientX, y: source.clientY };
+        }
+        const ev = source?.event;
+        if (ev && Number.isFinite(ev.clientX) && Number.isFinite(ev.clientY)) {
+            return { x: ev.clientX, y: ev.clientY };
+        }
+        const canvas = this.game?.canvas;
+        const rect = canvas?.getBoundingClientRect?.();
+        const px = Number(source?.x);
+        const py = Number(source?.y);
+        if (!rect || !Number.isFinite(px) || !Number.isFinite(py)) return null;
+        const sx = this.scale?.width ? rect.width / this.scale.width : 1;
+        const sy = this.scale?.height ? rect.height / this.scale.height : 1;
+        return { x: rect.left + px * sx, y: rect.top + py * sy };
+    }
+
+    _placeHoverTip(tip, source, text) {
+        const el = tip?.isConnected ? tip : this._ensureMenuTip();
+        if (!el || !text) return;
+        const point = this._tipClientPoint(source);
+        if (!point) return;
+        el.textContent = text;
+        el.style.display = "block";
+        const rect = el.getBoundingClientRect();
+        let x = point.x + 16;
+        let y = point.y + 16;
+        if (x + rect.width > window.innerWidth - 8) x = Math.max(8, window.innerWidth - rect.width - 8);
+        if (y + rect.height > window.innerHeight - 8) y = Math.max(8, window.innerHeight - rect.height - 8);
+        el.style.left = `${Math.round(x)}px`;
+        el.style.top = `${Math.round(y)}px`;
+    }
+
+    _hideHoverTip(tip) {
+        const el = tip || this._menuTip;
+        if (el) el.style.display = "none";
+    }
+
+    async _modMenuState() {
+        if (typeof ModStore === "undefined" || typeof LastMods === "undefined") return null;
+        const rows = await ModStore.discover();
+        const saved = await ModStore.enabled();
+        const names = {};
+        for (const row of rows || []) {
+            if (!row || typeof row.id !== "string") continue;
+            const name = typeof row.name === "string" ? row.name.trim() : "";
+            if (name) names[row.id] = name;
+        }
+        const mods = LastMods.normalize((saved?.ids || []).map((id) => ({
+            id,
+            name: names[id] || id
+        })));
+        return { mods, names };
+    }
+
+    _modWarnTip(record, state) {
+        if (!state || typeof LastMods === "undefined") return "";
+        return LastMods.lines(LastMods.diff(record?.lastMods, state.mods), state.names).join("\n");
+    }
+
+    _modWarnCard(record, state, ret) {
+        const modWarnTip = this._modWarnTip(record, state);
+        if (!modWarnTip) return {};
+        return {
+            modWarnTip,
+            onModWarn: () => this._openModsFrom(ret)
+        };
+    }
+
+    _openModsFrom(ret) {
+        this._hideHoverTip(this._menuTip);
+        this._modsReturn = ret || null;
+        this._showMods().catch((e) => {
+            this.status?.setColor?.("#e06060");
+            this.status?.setText(String(e.message || e));
+        });
+    }
+
+    _leaveMods() {
+        const ret = this._modsReturn;
+        this._modsReturn = null;
+        if (ret?.phase === "worlds") {
+            this._showWorlds();
+            return;
+        }
+        if (ret?.phase === "characters") {
+            this._showCharacters({ next: ret.next ?? this._charNext });
+            return;
+        }
+        this._showRoot();
+    }
+
+    async _stampLoadedMods(...records) {
+        let state = null;
+        try {
+            state = await this._modMenuState();
+        } catch (e) {
+            console.warn("[mods] could not record enabled mods", e);
+            return;
+        }
+        if (!state) return;
+        const stamped = state.mods.map((mod) => ({ id: mod.id, name: mod.name }));
+        for (const rec of records) {
+            if (!rec?.row || typeof rec.store?.put !== "function") continue;
+            rec.row.lastMods = stamped.map((mod) => ({ id: mod.id, name: mod.name }));
+            try {
+                await rec.store.put(rec.row);
+            } catch (e) {
+                console.warn("[mods] could not record enabled mods", e);
+            }
+        }
+    }
+
     _showRoot() {
+        this._modsReturn = null;
         this._clear();
         this._phase = "root";
+        this._placeVersionLabel();
         const w = this.scale.width;
         const h = this.scale.height;
         const step = this._buttonSizePreset("large").height + Math.round(8 * this._uiScale());
         const canQuit = typeof window !== "undefined" && typeof window.cavePaintings?.quit === "function";
-        const y0 = h * (canQuit ? 0.36 : 0.42);
+        const count = canQuit ? 5 : 4;
+        const y0 = h * 0.55 - ((count - 1) * step) / 2;
         this._title("CAVE PAINTINGS", 0.16, 64);
         this._status();
         this._button(w / 2, y0, "Singleplayer", () => this._beginSp(), { size: "large" });
         this._button(w / 2, y0 + step, "Multiplayer", () => this._beginMp(), { size: "large" });
-        this._button(w / 2, y0 + step * 2, "Options", () => this._showOptions(), { size: "large" });
+        this._button(w / 2, y0 + step * 2, "Mods", () => {
+            this._showMods().catch((e) => {
+                this.status?.setColor?.("#e06060");
+                this.status?.setText(String(e.message || e));
+            });
+        }, { size: "large" });
+        this._button(w / 2, y0 + step * 3, "Options", () => this._showOptions(), { size: "large" });
         if (canQuit) {
-            this._button(w / 2, y0 + step * 3, "Quit Game", () => {
+            this._button(w / 2, y0 + step * 4, "Quit Game", () => {
                 window.cavePaintings.quit().catch((e) => console.warn(e));
             }, { size: "large" });
         }
@@ -1809,6 +2071,7 @@ class SceneMenu extends Phaser.Scene {
     _showOptions() {
         this._clear();
         this._phase = "options";
+        this._placeVersionLabel();
         const L = this._optionsLayout();
         const { w, h, s, disk } = L;
         this._title("Options");
@@ -2168,6 +2431,13 @@ class SceneMenu extends Phaser.Scene {
         } catch (e) {
             this.status.setText(String(e.message || e));
         }
+        let modState = null;
+        try {
+            modState = await this._modMenuState();
+        } catch (e) {
+            console.warn("[mods] could not compare enabled mods", e);
+        }
+        this._ensureMenuTip();
 
         const s = this._uiScale();
         const cardW = Math.min(Math.round(560 * s), w - 48);
@@ -2214,6 +2484,7 @@ class SceneMenu extends Phaser.Scene {
                     });
                 },
                 favorited: !!c.favorite,
+                ...this._modWarnCard(c, modState, { phase: "characters", next }),
                 onFavorite: async (on) => {
                     try {
                         const row = await CharacterStore.setFavorite(c.id, on);
@@ -2642,7 +2913,14 @@ class SceneMenu extends Phaser.Scene {
                     this.nameInput?.focus();
                     return;
                 }
-                const c = await CharacterStore.create(name, this._createLookNormalized());
+                let lastMods;
+                try {
+                    const state = await this._modMenuState();
+                    lastMods = state ? state.mods : undefined;
+                } catch (err) {
+                    console.warn("[mods] could not record enabled mods", err);
+                }
+                const c = await CharacterStore.create(name, this._createLookNormalized(), lastMods);
                 this._selectedCharacter = c;
                 await this._showCharacters({ next: this._charNext });
             } catch (e) {
@@ -2673,6 +2951,13 @@ class SceneMenu extends Phaser.Scene {
         } catch (e) {
             this.status.setText(String(e.message || e));
         }
+        let modState = null;
+        try {
+            modState = await this._modMenuState();
+        } catch (e) {
+            console.warn("[mods] could not compare enabled mods", e);
+        }
+        this._ensureMenuTip();
 
         const s = this._uiScale();
         const cardW = Math.min(Math.round(560 * s), w - 48);
@@ -2718,6 +3003,7 @@ class SceneMenu extends Phaser.Scene {
                     });
                 },
                 favorited: !!world.favorite,
+                ...this._modWarnCard(world, modState, { phase: "worlds" }),
                 onFavorite: async (on) => {
                     try {
                         await WorldStore.setFavorite(world.id, on);
@@ -2756,35 +3042,25 @@ class SceneMenu extends Phaser.Scene {
         });
     }
 
-    /** Terrain color for spawn preview (matches generateTile biomes, no trees). */
+    /** Terrain color for spawn preview. Biome key comes from WorldGen. */
     _previewTileColor(tx, ty) {
-        const inv = 1 / 6000;
-        const nx = tx * inv;
-        const ny = ty * inv;
-        const elevation = octaveNoise2D(nx, ny, 2, 0.5, 2.5, 0);
-        const temperature = octaveNoise2D(nx, ny, 3, 0.2, 4.2, 1);
-        const river = Math.abs(octaveNoise2D(nx, ny, 3, 1.2, 0.7, 2));
-        if (river < 0.005) return 0x3a6ea5;
-        if (elevation < -0.2) return temperature < -0.4 ? 0xc8d8e8 : 0x3a6ea5;
-        if (river < 0.0065 && elevation < 0.14) return 0x7a7a70;
-        if (elevation < -0.19) return temperature < -0.25 ? 0xe8eef2 : 0xc2b280;
-        if (elevation < 0.15) {
-            if (temperature < -0.25) return 0xeef2f6;
-            if (temperature < 0.25) return 0x5a8f4a;
-            return 0xc2b280;
+        const key = WorldGen.generateTileKey(tx, ty, () => 1).key;
+        switch (key) {
+            case "water": return 0x3a6ea5;
+            case "ice": return 0xc8d8e8;
+            case "gravel": return 0x7a7a70;
+            case "snow_beach": return 0xe8eef2;
+            case "sand": return 0xc2b280;
+            case "snow": return 0xeef2f6;
+            case "grass": return 0x5a8f4a;
+            case "snow_hill": return 0xdde6ee;
+            case "grass_hill": return 0x4a7a3a;
+            case "sand_hill": return 0xb0a070;
+            case "mesa": return 0xa87850;
+            case "mountain": return 0x6a6a68;
+            case "snow_mountain": return 0xd0d8e0;
+            default: return 0x3a6ea5;
         }
-        if (elevation < 0.25) {
-            if (temperature < -0.25) return 0xdde6ee;
-            if (temperature < 0.25) return 0x4a7a3a;
-            return 0xb0a070;
-        }
-        if (elevation < 0.55) {
-            if (temperature < -0.25) return 0xd0d8e0;
-            if (temperature < 0.25) return 0x6a6a68;
-            return 0xa87850;
-        }
-        if (elevation < 0.7) return 0x6a6a68;
-        return 0xd0d8e0;
     }
 
     _drawSpawnPreview(seed, centerX, centerY) {
@@ -2991,7 +3267,14 @@ class SceneMenu extends Phaser.Scene {
                 let nextSeed = Number(this.seedInput?.value);
                 if (!Number.isFinite(nextSeed)) nextSeed = WorldStore.randomSeed();
                 nextSeed = WorldStore.findPlayableSeed(nextSeed >>> 0);
-                await WorldStore.create(name, { seed: nextSeed });
+                let lastMods;
+                try {
+                    const state = await this._modMenuState();
+                    lastMods = state ? state.mods : undefined;
+                } catch (err) {
+                    console.warn("[mods] could not record enabled mods", err);
+                }
+                await WorldStore.create(name, { seed: nextSeed, lastMods });
                 await this._showWorlds();
             } catch (e) {
                 this.status?.setText(String(e.message || e));
@@ -3002,6 +3285,304 @@ class SceneMenu extends Phaser.Scene {
         }
     }
 
+    async _bootSelectedMods() {
+        if (typeof Content === "undefined" || typeof Content.boot !== "function") return;
+        if (Content.isFinalized?.()) return;
+        if (typeof ModStore === "undefined") {
+            await Content.boot();
+            return;
+        }
+        const rows = await ModStore.discover();
+        const saved = await ModStore.enabled();
+        const gate = ModStore.preflight(rows, saved.ids);
+        if (!gate.ok) throw new Error(gate.reason);
+        const extraPacks = await ModStore.packsForBoot(saved.ids);
+        await Content.boot({ enabledIds: saved.ids, extraPacks });
+        ModStore.noteBoot(saved.ids);
+    }
+
+    async _showMods() {
+        const rows = await ModStore.discover();
+        const saved = await ModStore.enabled();
+        if (!this.sys?.isActive?.()) return;
+        this._modRows = rows;
+        this._renderMods(rows, saved.ids);
+    }
+
+    _modTipText(row) {
+        const deps = (row.dependencies || []).filter((dep) => typeof dep === "string");
+        const lines = [
+            `id: ${row.id || "—"}`,
+            `version: ${row.version || "—"}`,
+            `gameVersion: ${row.gameVersion || "—"}`,
+            `dependencies: ${deps.length ? deps.join(", ") : "none"}`,
+            `source: ${row.source === "uploaded" ? "Uploaded" : "Base"}`
+        ];
+        if (row.error) lines.push(row.error);
+        return lines.join("\n");
+    }
+
+    _modIconButton(label, title) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = label;
+        btn.title = title;
+        btn.style.cssText = [
+            "width:22px",
+            "height:22px",
+            "padding:0",
+            "flex:0 0 auto",
+            "font-family:PrimaryFont, monospace",
+            "font-size:14px",
+            "line-height:20px",
+            "color:#e8dcc8",
+            "background:#2a2218",
+            "border:1px solid #6a5a4a",
+            "cursor:pointer"
+        ].join(";");
+        return btn;
+    }
+
+    _renderMods(rows, enabledIds) {
+        this._clear();
+        this._phase = "mods";
+        this._placeVersionLabel();
+        const w = this.scale.width;
+        const h = this.scale.height;
+        const s = this._uiScale();
+        this._title("Mods", 0.08, 36);
+        const needsReload = typeof ModStore !== "undefined"
+            && typeof ModStore.needsReload === "function"
+            && ModStore.needsReload(enabledIds);
+        this._modsNeedReload = needsReload;
+        const fontPx = typeof pixelUiFontSize === "function" ? pixelUiFontSize(16, s) : Math.round(16 * s);
+        const top = Math.round(h * 0.14);
+        const fire = this._menuCampfire;
+        const fireTop = fire?.active && fire.height
+            ? Math.round(h - fire.height * (fire.scaleY || 1))
+            : h;
+        const bottom = Math.min(Math.round(h - 78 * s), fireTop - Math.round(8 * s));
+        const panel = document.createElement("div");
+        panel.style.cssText = [
+            "position:fixed",
+            `left:${Math.round(w * 0.06)}px`,
+            `top:${top}px`,
+            `width:${Math.round(w * 0.88)}px`,
+            `height:${Math.max(120, bottom - top)}px`,
+            "z-index:1000",
+            "pointer-events:auto",
+            "display:flex",
+            "flex-direction:column",
+            "gap:8px",
+            "color:#e8dcc8",
+            "font-family:PrimaryFont, monospace",
+            `font-size:${fontPx}px`,
+            "box-sizing:border-box"
+        ].join(";");
+        panel.addEventListener("wheel", (e) => e.stopPropagation());
+
+        const tipFont = typeof pixelUiFontSize === "function" ? pixelUiFontSize(16, s) : fontPx;
+        const tipPad = Math.round(6 * s);
+        const tipStroke = Math.max(2, Math.round(2 * s));
+        const tipRadius = Math.max(4, Math.round(6 * s));
+        const tipShadow = [];
+        for (let sx = -tipStroke; sx <= tipStroke; sx++) {
+            for (let sy = -tipStroke; sy <= tipStroke; sy++) {
+                if (!sx && !sy) continue;
+                if (sx * sx + sy * sy > tipStroke * tipStroke) continue;
+                tipShadow.push(`${sx}px ${sy}px 0 #000`);
+            }
+        }
+        const tip = document.createElement("div");
+        tip.style.cssText = [
+            "position:fixed",
+            "display:none",
+            "z-index:1100",
+            "pointer-events:none",
+            "white-space:pre",
+            "width:max-content",
+            "max-width:none",
+            "box-sizing:content-box",
+            "background:#111111",
+            "color:#ffffff",
+            "border:1px solid #000000",
+            `border-radius:${tipRadius}px`,
+            `padding:${tipPad + tipStroke}px`,
+            `font-size:${tipFont}px`,
+            `line-height:${tipFont + tipStroke * 2}px`,
+            "font-family:PrimaryFont, monospace",
+            `text-shadow:${tipShadow.join(",")}`
+        ].join(";");
+        const placeTip = (ev, text) => {
+            tip.textContent = text;
+            tip.style.display = "block";
+            const rect = tip.getBoundingClientRect();
+            let x = ev.clientX + 16;
+            let y = ev.clientY + 16;
+            if (x + rect.width > window.innerWidth - 8) x = Math.max(8, window.innerWidth - rect.width - 8);
+            if (y + rect.height > window.innerHeight - 8) y = Math.max(8, window.innerHeight - rect.height - 8);
+            tip.style.left = `${x}px`;
+            tip.style.top = `${y}px`;
+        };
+        const hideTip = () => { tip.style.display = "none"; };
+        const notice = document.createElement("div");
+        notice.style.cssText = `flex:0 0 auto;text-align:center;min-height:${fontPx}px;line-height:${fontPx}px;`;
+        const setNotice = (text, color) => {
+            notice.textContent = text || "";
+            notice.style.color = color || "#d4a84b";
+        };
+        if (needsReload) setNotice("Changes saved. Reload to apply.", "#d4a84b");
+
+        const columns = document.createElement("div");
+        columns.style.cssText = "display:flex;gap:16px;flex:1;min-height:0;";
+        const enabled = new Set(enabledIds);
+        const byName = (a, b) => String(a.name || a.id || "").localeCompare(String(b.name || b.id || ""));
+        const available = rows.filter((row) => !row.id || !enabled.has(row.id)).slice().sort(byName);
+        const selected = enabledIds.map((id) => rows.find((row) => row.id === id)).filter(Boolean);
+
+        const move = (row, on) => {
+            hideTip();
+            ModStore.enable(row.id, on).then((result) => {
+                if (!result.ok) {
+                    setNotice(result.reason || "Mod change rejected", "#e06060");
+                    return;
+                }
+                setNotice("");
+                return this._showMods();
+            }).catch((err) => {
+                setNotice(String(err.message || err), "#e06060");
+            });
+        };
+        const removeRow = (row) => {
+            hideTip();
+            if (row.source !== "uploaded" || !row.id) {
+                setNotice("Base mods are removed from the mods folder.", "#e06060");
+                return;
+            }
+            ModStore.remove(row.id).then((result) => {
+                if (!result.ok) {
+                    setNotice(result.reason || "Remove rejected", "#e06060");
+                    return;
+                }
+                setNotice("");
+                return this._showMods();
+            }).catch((err) => {
+                setNotice(String(err.message || err), "#e06060");
+            });
+        };
+
+        const makeColumn = (heading, list, side) => {
+            const col = document.createElement("div");
+            col.style.cssText = "flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;";
+            const head = document.createElement("div");
+            head.textContent = heading;
+            head.style.cssText = "text-align:center;text-decoration:underline;margin-bottom:6px;";
+            const listEl = document.createElement("div");
+            listEl.style.cssText = [
+                "flex:1",
+                "overflow:auto",
+                "background:#120e0a",
+                "border:1px solid #2a2218",
+                "padding:6px",
+                "min-height:0"
+            ].join(";");
+            listEl.addEventListener("scroll", hideTip);
+            listEl.addEventListener("wheel", (e) => e.stopPropagation());
+            if (!list.length) {
+                const empty = document.createElement("div");
+                empty.textContent = side === "available" ? "No mods available." : "No mods enabled.";
+                empty.style.cssText = "display:flex;align-items:center;padding:4px 2px;min-height:22px;opacity:0.7;";
+                listEl.appendChild(empty);
+            }
+            for (const row of list) {
+                const item = document.createElement("div");
+                item.style.cssText = "display:flex;align-items:center;gap:6px;padding:4px 2px;";
+                const name = document.createElement("div");
+                name.textContent = row.name || row.dir || row.id || "Mod";
+                name.style.cssText = `flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${row.error ? "color:#e06060;" : ""}`;
+                const tipText = this._modTipText(row);
+                item.addEventListener("mouseenter", (ev) => placeTip(ev, tipText));
+                item.addEventListener("mousemove", (ev) => placeTip(ev, tipText));
+                item.addEventListener("mouseleave", hideTip);
+                if (side === "available") {
+                    if (row.source === "uploaded" && row.id) {
+                        const close = this._modIconButton("×", "Delete");
+                        close.addEventListener("click", () => removeRow(row));
+                        item.appendChild(close);
+                    } else {
+                        const slot = document.createElement("div");
+                        slot.style.cssText = "width:22px;height:22px;padding:0;flex:0 0 auto;box-sizing:border-box;";
+                        item.appendChild(slot);
+                    }
+                    item.appendChild(name);
+                    if (row.id && !row.error) {
+                        const right = this._modIconButton("→", "Enable");
+                        right.addEventListener("click", () => move(row, true));
+                        item.appendChild(right);
+                    }
+                } else {
+                    const left = this._modIconButton("←", "Disable");
+                    left.addEventListener("click", () => move(row, false));
+                    item.appendChild(left);
+                    item.appendChild(name);
+                }
+                listEl.appendChild(item);
+            }
+            col.appendChild(head);
+            col.appendChild(listEl);
+            return col;
+        };
+
+        columns.appendChild(makeColumn("Available", available, "available"));
+        columns.appendChild(makeColumn("Enabled", selected, "selected"));
+        panel.appendChild(columns);
+        panel.appendChild(notice);
+        panel.appendChild(tip);
+        this._dom.push(panel);
+        document.body.appendChild(panel);
+
+        const electronMods = typeof window.cavePaintings?.openModsFolder === "function";
+        const canUpload = !electronMods && !(typeof window.cavePaintings?.listMods === "function");
+        const btnY = h - Math.round(36 * s);
+        const finishLabel = needsReload ? "Reload" : "Done";
+        const finishMods = () => {
+            if (needsReload) {
+                window.location.reload();
+                return;
+            }
+            this._leaveMods();
+        };
+        if (canUpload) {
+            const upload = document.createElement("input");
+            upload.type = "file";
+            upload.webkitdirectory = true;
+            upload.multiple = true;
+            upload.style.display = "none";
+            upload.addEventListener("change", () => {
+                const files = Array.from(upload.files || []);
+                upload.value = "";
+                if (!files.length) return;
+                ModStore.addUpload(files, rows).then(() => this._showMods()).catch((err) => {
+                    setNotice(String(err.message || err), "#e06060");
+                });
+            });
+            panel.appendChild(upload);
+            const gap = this._buttonSizePreset("medium").width + Math.round(16 * s);
+            this._button(w / 2 - gap / 2, btnY, "Add Mod", () => upload.click());
+            this._button(w / 2 + gap / 2, btnY, finishLabel, finishMods);
+        } else if (electronMods) {
+            const finishW = this._buttonSizePreset("medium").width;
+            const openW = Math.round(220 * s);
+            const gap = (openW + finishW) / 2 + Math.round(16 * s);
+            this._button(w / 2 - gap / 2, btnY, "Open Mods Folder", () => {
+                window.cavePaintings.openModsFolder().catch((e) => console.warn(e));
+            }, { width: openW });
+            this._button(w / 2 + gap / 2, btnY, finishLabel, finishMods);
+        } else {
+            this._button(w / 2, btnY, finishLabel, finishMods);
+        }
+    }
+
     async _startSingleplayer(world) {
         if (this._startingSp) return;
         const character = this._selectedCharacter;
@@ -3009,11 +3590,16 @@ class SceneMenu extends Phaser.Scene {
         this._startingSp = true;
         this._cleanupDomOnly();
         try {
+            await this._bootSelectedMods();
             const freshChar = await CharacterStore.get(character.id) || character;
             const freshWorld = await WorldStore.get(world.id) || world;
             const net = new LocalSim({ world: freshWorld, character: freshChar });
             try {
                 const welcome = await net.connect();
+                await this._stampLoadedMods(
+                    { row: freshChar, store: CharacterStore },
+                    { row: freshWorld, store: WorldStore }
+                );
                 this._stopTitleMusic();
                 this._startingSp = false;
                 this.scene.start("SceneMain", {
@@ -3051,23 +3637,28 @@ class SceneMenu extends Phaser.Scene {
         this.status?.setText("Connecting…");
         this._cancelMpProbe();
         const gen = this._mpConnectGen;
-        const net = new NetClient();
-        this._mpJoinNet = net;
+        let net = null;
         const url = NetClient.wsUrlFromHostPort(host);
         try {
+            await this._bootSelectedMods();
+            const content = await Content.authContent();
+            net = new NetClient();
+            this._mpJoinNet = net;
             const freshChar = await CharacterStore.get(character.id) || character;
             const snap = CharacterStore.toJoinSnapshot(freshChar);
             const welcome = await net.connect(url, {
                 characterId: freshChar.id,
                 displayName: freshChar.name,
                 password,
-                character: snap
+                character: snap,
+                content
             });
             if (gen !== this._mpConnectGen || this._mpJoinNet !== net) {
                 try { net.close(); } catch (_) {}
                 return;
             }
             this._mpJoinNet = null;
+            await this._stampLoadedMods({ row: freshChar, store: CharacterStore });
             this._clear();
             this._stopTitleMusic();
             this.scene.start("SceneMain", {
@@ -3080,8 +3671,8 @@ class SceneMenu extends Phaser.Scene {
                 joinHost: host
             });
         } catch (e) {
-            if (this._mpJoinNet === net) this._mpJoinNet = null;
-            try { net.close(); } catch (_) {}
+            if (net && this._mpJoinNet === net) this._mpJoinNet = null;
+            try { net?.close(); } catch (_) {}
             if (e?.name === "AbortError" || gen !== this._mpConnectGen) return;
             const msg = String(e.message || e);
             if (this._isPasswordError(msg)) {

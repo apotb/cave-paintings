@@ -1,7 +1,7 @@
 {
   "name": "cave-paintings",
   "productName": "Cave Paintings",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "main": "electron/main.js",
@@ -10,7 +10,7 @@
     "start": "node server/index.js",
     "server": "node server/index.js",
     "server:world": "node server/index.js --world",
-    "client": "npx --yes serve -l 21825",
+    "client": "node scripts/write-mod-catalog.js && npx --yes serve -l 21825",
     "app": "node electron/launch.js",
     "build": "node electron/run-builder.js --mac --win --linux",
     "build:mac": "node electron/run-builder.js --mac",
