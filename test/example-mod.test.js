@@ -52,9 +52,27 @@ test("cavepaintings.examplemod loads through generic data", () => {
     assert.equal(Jobs.get("cavepaintings.examplemod.note")?.name, "Example");
     assert.equal(Jobs.get("cavepaintings.examplemod.note")?.defaultPriority, 0);
 
-    const sceneMain = fs.readFileSync(path.join(ROOT, "js/SceneMain.js"), "utf8");
-    const simWorld = fs.readFileSync(path.join(ROOT, "shared/sim/SimWorld.js"), "utf8");
-    const settler = fs.readFileSync(path.join(ROOT, "shared/sim/settlerWork.js"), "utf8");
+    const sceneDir = path.join(ROOT, "js", "scene");
+    const sceneMain = [
+        fs.readFileSync(path.join(ROOT, "js/SceneMain.js"), "utf8"),
+        ...fs.readdirSync(sceneDir).filter((name) => name.endsWith(".js")).map((name) => (
+            fs.readFileSync(path.join(sceneDir, name), "utf8")
+        ))
+    ].join("\n");
+    const simDir = path.join(ROOT, "shared/sim");
+    const simWorld = [
+        fs.readFileSync(path.join(simDir, "SimWorld.js"), "utf8"),
+        ...fs.readdirSync(path.join(simDir, "world")).filter((name) => name.endsWith(".js")).map((name) => (
+            fs.readFileSync(path.join(simDir, "world", name), "utf8")
+        ))
+    ].join("\n");
+    const settlerDir = path.join(ROOT, "shared/sim/settler");
+    const settler = [
+        fs.readFileSync(path.join(ROOT, "shared/sim/settlerWork.js"), "utf8"),
+        ...fs.readdirSync(settlerDir).filter((name) => name.endsWith(".js")).map((name) => (
+            fs.readFileSync(path.join(settlerDir, name), "utf8")
+        ))
+    ].join("\n");
     assert.equal(sceneMain.includes("cavepaintings.examplemod"), false);
     assert.equal(simWorld.includes("cavepaintings.examplemod"), false);
     assert.equal(settler.includes("cavepaintings.examplemod"), false);

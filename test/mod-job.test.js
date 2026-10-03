@@ -160,6 +160,13 @@ describe("phase 6 jobs", { concurrency: false }, () => {
         assert.equal(net.includes("registerJob"), false);
         assert.equal(client.includes("registerJob"), false);
         assert.equal(server.includes("loadSimScripts"), true);
-        assert.equal(server.includes("_tickSettlerWork") || fs.readFileSync(path.join(ROOT, "shared", "sim", "SimWorld.js"), "utf8").includes("SettlerWork.tick"), true);
+        const simDir = path.join(ROOT, "shared", "sim");
+        const simWorld = [
+            fs.readFileSync(path.join(simDir, "SimWorld.js"), "utf8"),
+            ...fs.readdirSync(path.join(simDir, "world")).filter((name) => name.endsWith(".js")).map((name) => (
+                fs.readFileSync(path.join(simDir, "world", name), "utf8")
+            ))
+        ].join("\n");
+        assert.equal(server.includes("_tickSettlerWork") || simWorld.includes("SettlerWork.tick"), true);
     });
 });

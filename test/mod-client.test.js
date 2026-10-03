@@ -62,7 +62,13 @@ function loadSceneClasses() {
         }
     };
     vm.createContext(sandbox);
+    const sceneParts = [
+        "session.js", "netActors.js", "netProps.js", "netEvents.js", "netStations.js",
+        "hud.js", "tooltip.js", "world.js", "rest.js", "craft.js", "pause.js", "chunks.js"
+    ];
     const source = fs.readFileSync(path.join(ROOT, "js", "SceneBase.js"), "utf8")
+        + "\n"
+        + sceneParts.map((name) => fs.readFileSync(path.join(ROOT, "js", "scene", name), "utf8")).join("\n")
         + "\n"
         + fs.readFileSync(path.join(ROOT, "js", "SceneMain.js"), "utf8")
         + "\nthis.SceneBase = SceneBase;\nthis.SceneMain = SceneMain;\n";
@@ -225,8 +231,20 @@ describe("phase 5 client mods", { concurrency: false }, () => {
         }, basket, 3, 3);
         assert.ok(Array.isArray(simStored.entry.slots));
         assert.equal(simStored.entry.pile, undefined);
-        const sceneMain = fs.readFileSync(path.join(ROOT, "js", "SceneMain.js"), "utf8");
-        const simWorld = fs.readFileSync(path.join(ROOT, "shared", "sim", "SimWorld.js"), "utf8");
+        const sceneDir = path.join(ROOT, "js", "scene");
+        const sceneMain = [
+            fs.readFileSync(path.join(ROOT, "js", "SceneMain.js"), "utf8"),
+            ...fs.readdirSync(sceneDir).filter((name) => name.endsWith(".js")).map((name) => (
+                fs.readFileSync(path.join(sceneDir, name), "utf8")
+            ))
+        ].join("\n");
+        const simDir = path.join(ROOT, "shared", "sim");
+        const simWorld = [
+            fs.readFileSync(path.join(simDir, "SimWorld.js"), "utf8"),
+            ...fs.readdirSync(path.join(simDir, "world")).filter((name) => name.endsWith(".js")).map((name) => (
+                fs.readFileSync(path.join(simDir, "world", name), "utf8")
+            ))
+        ].join("\n");
         assert.equal(sceneMain.includes("example.mod"), false);
         assert.equal(sceneMain.includes("flint_basket"), false);
         assert.equal(simWorld.includes("flint_basket"), false);

@@ -1,0 +1,5 @@
+# Binary media: skip indexing, still readable when opened directly
+assets/**/*.png
+assets/**/*.ogg
+*.ico
+*.ttf

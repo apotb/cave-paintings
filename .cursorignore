@@ -1,2 +1,17 @@
+# Vendored bundles
 js/phaser.min.js
 js/three.min.js
+
+# Installed and build output
+node_modules/
+dist/
+out/
+public/
+build/
+
+# Local game saves
+saves/
+
+# Lockfile and OS junk
+package-lock.json
+.DS_Store
