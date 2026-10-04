@@ -61,3 +61,12 @@ test("import keeps settlements, settlers, and wanderers", () => {
     assert.equal(w.settlers[0].id, "og");
     assert.equal(w.wanderers[0].id, "w1");
 });
+
+test("import keeps removed corpse ids", () => {
+    const json = WorldStore.exportJson({
+        name: "Camp",
+        removedCorpseIds: ["c-gone", ""]
+    });
+    const w = WorldStore.importJson(json);
+    assert.deepEqual(w.removedCorpseIds, ["c-gone"]);
+});

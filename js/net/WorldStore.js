@@ -133,6 +133,7 @@ const WorldStore = (() => {
             settlements: [],
             settlers: [],
             researchSpentByOwner: {},
+            removedCorpseIds: [],
             chunks: {},
             favorite: false,
             lastPlayedAt: 0
@@ -335,6 +336,9 @@ const WorldStore = (() => {
                 && !Array.isArray(raw.researchSpentByOwner)
                 ? clone(raw.researchSpentByOwner)
                 : {},
+            removedCorpseIds: Array.isArray(raw.removedCorpseIds)
+                ? raw.removedCorpseIds.filter((id) => typeof id === "string" && id).slice(-4000)
+                : [],
             favorite: !!raw.favorite,
             lastPlayedAt: Math.max(0, Number(raw.lastPlayedAt) || 0)
         });

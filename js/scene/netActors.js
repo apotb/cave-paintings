@@ -8,6 +8,7 @@
 
     _netApplyChunk(meta) {
         if (!meta || !this.isNet) return;
+        const corpses = (meta.corpses || []).filter((e) => e && (!e.id || !this._goneCorpseIds?.has(e.id)));
         const key = this.getKey(meta.x, meta.y);
         const existing = this.chunks[key];
         if (existing?.isLoaded) return;
@@ -29,7 +30,7 @@
                 mobs: meta.mobs || [],
                 drops: meta.drops || [],
                 bloodStains: mergeBlood(meta.bloodStains, prevBlood),
-                corpses: meta.corpses || [],
+                corpses,
                 wanderers: meta.wanderers || []
             };
             existing.isGenerated = !!(meta.tiles && meta.tiles.some((t) => !!t));
@@ -43,7 +44,7 @@
             mobs: meta.mobs || [],
             drops: meta.drops || [],
             bloodStains: meta.bloodStains || [],
-            corpses: meta.corpses || [],
+            corpses,
             wanderers: meta.wanderers || []
         });
         chunk.isGenerated = !!(meta.tiles && meta.tiles.some((t) => !!t));

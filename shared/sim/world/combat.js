@@ -853,7 +853,11 @@
             creature.hotbarIndex = 0;
         }
         this._youDirty.add(p.id);
-        if (alreadyDead) return;
+        if (alreadyDead) {
+            // The client already showed a corpse under its own id. Loot uses that id.
+            this._retargetPlayerCorpse(p, action);
+            return;
+        }
         for (const m of p.party || []) {
             const cc = m.creature || this.creatures.get(m.id);
             if (cc) {

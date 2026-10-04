@@ -2721,6 +2721,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this.scene.net.sendAction({
                 type: NetProtocol.Actions.CORPSE_SKIN,
                 corpseId: corpse.entry?.id,
+                corpseX: corpse.x,
+                corpseY: corpse.y,
                 x: this.x,
                 y: this.y
             });

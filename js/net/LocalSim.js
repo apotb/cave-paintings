@@ -139,6 +139,9 @@ class LocalSim {
                 ? data.researchSpentByOwner
                 : (this.world.researchSpentByOwner || {});
             this.world.chunks = data.chunks;
+            this.world.removedCorpseIds = Array.isArray(data.removedCorpseIds)
+                ? data.removedCorpseIds
+                : (this.world.removedCorpseIds || []);
         }
 
         _makePersist() {

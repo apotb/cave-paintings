@@ -374,6 +374,11 @@ class SimWorld {
         w.rng = mulberry32(w.seed >>> 0);
         GameMath.setRng(() => w.rng());
         WorldGen.applySeed(w.seed);
+        const removedList = Array.isArray(data.removedCorpseIds)
+            ? data.removedCorpseIds.filter((id) => typeof id === "string" && id).slice(-4000)
+            : [];
+        w._removedCorpseIds = removedList;
+        w._removedCorpseSet = new Set(removedList);
         const seenCorpseIds = new Set();
         for (const [key, meta] of Object.entries(data.chunks || {})) {
             const cx = meta.x ?? meta.cx;
@@ -405,7 +410,8 @@ class SimWorld {
                 lootableThings: meta.lootableThings || [],
                 drops,
                 mobs: meta.mobs || [],
-                corpses: dedupeCorpses(meta.corpses, seenCorpseIds),
+                corpses: dedupeCorpses(meta.corpses, seenCorpseIds)
+                    .filter((c) => !c?.id || !w._removedCorpseSet.has(c.id)),
                 bloodStains: meta.bloodStains || [],
                 generated: true
             };

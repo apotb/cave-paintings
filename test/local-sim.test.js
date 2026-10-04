@@ -76,6 +76,54 @@ test("DIE then RESPAWN go through SimWorld", async () => {
     await sim.close();
 });
 
+test("looted corpse stays gone after leaving and re-entering", async () => {
+    const world = makeWorld();
+    const character = {
+        id: "p1p1p1p1",
+        name: "Tester",
+        inventory: [null, null, null, null, null]
+    };
+    const sim = new LocalSim({ world, character });
+    await sim.connect();
+    sim.flushAndListen();
+    const pawn = sim.sim.players.get(sim.playerId);
+    sim.sim._pushCorpse({
+        id: "c-gone",
+        x: pawn.x,
+        y: pawn.y,
+        loot: [{ id: "stick", quantity: 1 }]
+    });
+    sim.sim._pushCorpse({
+        id: "c-stay",
+        x: pawn.x + 48,
+        y: pawn.y,
+        loot: [{ id: "stone", quantity: 1 }]
+    });
+    sim.sendAction({
+        type: Protocol.Actions.CORPSE_TAKE,
+        corpseId: "c-gone",
+        index: 0,
+        quantity: 1,
+        x: pawn.x,
+        y: pawn.y
+    });
+    await sim.close();
+    const again = new LocalSim({ world, character });
+    await again.connect();
+    again.flushAndListen();
+    let gone = 0;
+    let stay = 0;
+    for (const c of again.sim.chunks.values()) {
+        for (const e of c.corpses || []) {
+            if (e?.id === "c-gone") gone++;
+            if (e?.id === "c-stay") stay++;
+        }
+    }
+    assert.equal(gone, 0);
+    assert.equal(stay, 1);
+    await again.close();
+});
+
 test("LocalSim persist writes SimWorld chunks into the world record", async () => {
     const sim = await makeSim();
     sim.sim.saveAll();

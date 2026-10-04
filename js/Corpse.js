@@ -409,7 +409,9 @@ class Corpse extends Phaser.GameObjects.Sprite {
         const y = this.y;
         const id = this.entry?.id;
         if (scene?.corpsePanel?.corpse === this) scene.corpsePanel.close(true);
-        if (this.chunk?.meta?.corpses && this.entry) {
+        if (id && typeof scene?._dropCorpseFromChunkMeta === "function") {
+            scene._dropCorpseFromChunkMeta(id);
+        } else if (this.chunk?.meta?.corpses && this.entry) {
             const i = this.chunk.meta.corpses.indexOf(this.entry);
             if (i >= 0) this.chunk.meta.corpses.splice(i, 1);
         }

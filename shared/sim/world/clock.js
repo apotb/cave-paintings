@@ -190,8 +190,9 @@
                 const next = CorpseDecay.stageFor(entry.diedAt, now);
                 if (next === "gone") {
                     const id = entry.id;
-                    c.corpses.splice(i, 1);
-                    this.pushEvent({ kind: "corpse", op: "remove", id });
+                    if (!id || !this._eraseCorpse(id)) c.corpses.splice(i, 1);
+                    // Erase can drop more than this slot. Rescan the chunk.
+                    i = c.corpses.length;
                     continue;
                 }
                 if (next === "carcass" && entry.stage !== "carcass") {

@@ -70,7 +70,8 @@
     _registerChunkMobs(c) {
         this._ensureMobUids(c);
         if (!c || !Array.isArray(c.mobs)) return;
-        for (const entry of c.mobs) {
+        for (let i = c.mobs.length - 1; i >= 0; i--) {
+            const entry = c.mobs[i];
             if (!entry?.uid || this.mobs.has(entry.uid)) continue;
             const def = mobDefs().get(entry.id) || this.dataStore.getMob(entry.id);
             const creature = createMobCreature(
@@ -79,6 +80,12 @@
                 this.dataStore,
                 this._creatureCtx()
             );
+            // A leftover entry from a death that walked off its spawn chunk.
+            // The corpse was authored then; registering this body would mint another.
+            if (creature.capacities?.isDeadFromCapacities?.()) {
+                c.mobs.splice(i, 1);
+                continue;
+            }
             createAI(creature, creature.aiType);
             this.mobs.set(entry.uid, creature);
         }
@@ -242,6 +249,7 @@
                 ? { ...this.researchSpentByOwner }
                 : {},
             settlers: (this.settlers || []).filter((s) => s && !s.dead).map((s) => this._persistSettler(s)),
+            removedCorpseIds: Array.isArray(this._removedCorpseIds) ? this._removedCorpseIds.slice(-4000) : [],
             chunks,
             modData: this.modData && typeof this.modData === "object" && !Array.isArray(this.modData)
                 ? { ...this.modData }

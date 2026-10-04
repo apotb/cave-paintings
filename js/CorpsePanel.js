@@ -206,7 +206,7 @@ class CorpsePanel {
                 this.container.setVisible(false);
                 this._clearSlots();
                 if (this._dedicatedNet()) this._notifyServerDismiss(corpse);
-                corpse.removeForever?.();
+                else corpse.removeForever?.();
                 return;
             }
         }
@@ -438,6 +438,8 @@ class CorpsePanel {
         this.scene.net.sendAction({
             type: NetProtocol.Actions.CORPSE_TAKE,
             corpseId: id,
+            corpseX: this.corpse?.x,
+            corpseY: this.corpse?.y,
             index,
             itemId: stack.id,
             quantity,
@@ -461,6 +463,8 @@ class CorpsePanel {
         this.scene.net.sendAction({
             type: NetProtocol.Actions.CORPSE_DISMISS,
             corpseId: id,
+            corpseX: corpse?.x,
+            corpseY: corpse?.y,
             x: player?.x,
             y: player?.y
         });

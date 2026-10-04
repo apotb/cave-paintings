@@ -2047,6 +2047,199 @@ test("reloading a world keeps one corpse when the same death was saved twice", (
     assert.equal(n, 1);
 });
 
+function countCorpseId(world, id) {
+    let n = 0;
+    for (const c of world.chunks.values()) {
+        n += (c.corpses || []).filter((e) => e && e.id === id).length;
+    }
+    return n;
+}
+
+test("taking the last item removes every copy and stays gone after reload", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const chunk = originChunk(world);
+    chunk.corpses.push({
+        id: "c-loot",
+        x: pawn.x,
+        y: pawn.y,
+        loot: [{ id: "stick", quantity: 1 }]
+    });
+    chunk.corpses.push({
+        id: "c-keep",
+        x: pawn.x + 40,
+        y: pawn.y,
+        loot: [{ id: "stone", quantity: 1 }]
+    });
+    const far = world._ensureChunk(4, 0);
+    if (!Array.isArray(far.corpses)) far.corpses = [];
+    far.corpses.push({
+        id: "c-loot",
+        x: pawn.x,
+        y: pawn.y,
+        loot: [{ id: "stick", quantity: 1 }]
+    });
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.CORPSE_TAKE,
+        corpseId: "c-loot",
+        index: 0,
+        quantity: 1
+    });
+    assert.equal(countCorpseId(world, "c-loot"), 0);
+    assert.equal(countCorpseId(world, "c-keep"), 1);
+    const saved = world.toSaveData();
+    assert.ok((saved.removedCorpseIds || []).includes("c-loot"));
+    const host = Object.values(saved.chunks).find((c) =>
+        Array.isArray(c.corpses)
+    );
+    host.corpses.push({
+        id: "c-loot",
+        x: pawn.x,
+        y: pawn.y,
+        loot: [{ id: "stick", quantity: 1 }]
+    });
+    const again = world.constructor.loadFromData(saved, {});
+    assert.equal(countCorpseId(again, "c-loot"), 0);
+    assert.equal(countCorpseId(again, "c-keep"), 1);
+});
+
+test("dismiss finds a looted body by position when the client id does not match", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const chunk = originChunk(world);
+    chunk.corpses.push({
+        id: "server-body",
+        x: pawn.x + 4,
+        y: pawn.y,
+        loot: []
+    });
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.CORPSE_DISMISS,
+        corpseId: "client-only",
+        corpseX: pawn.x + 4,
+        corpseY: pawn.y
+    });
+    assert.equal(countCorpseId(world, "server-body"), 0);
+    const saved = world.toSaveData();
+    Object.values(saved.chunks)[0].corpses.push({
+        id: "server-body",
+        x: pawn.x + 4,
+        y: pawn.y,
+        loot: [{ id: "stick", quantity: 1 }]
+    });
+    const again = world.constructor.loadFromData(saved, {});
+    assert.equal(countCorpseId(again, "server-body"), 0);
+});
+
+test("a later DIE adopts the client corpse id so loot removes the saved body", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    world._kill(pawn, null);
+    let oldId = null;
+    let x = pawn.x;
+    let y = pawn.y;
+    for (const c of world.chunks.values()) {
+        for (const e of c.corpses || []) {
+            if (!e?.playerCorpse) continue;
+            oldId = e.id;
+            x = e.x;
+            y = e.y;
+        }
+    }
+    assert.ok(oldId);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.DIE,
+        corpseId: "client-body",
+        x,
+        y
+    });
+    assert.equal(countCorpseId(world, oldId), 0);
+    assert.equal(countCorpseId(world, "client-body"), 1);
+    const other = world.addPlayer("p2", "Other");
+    other.x = x;
+    other.y = y;
+    world.handleAction(other.id, {
+        type: Protocol.Actions.CORPSE_DISMISS,
+        corpseId: "client-body",
+        x,
+        y
+    });
+    assert.equal(countCorpseId(world, "client-body"), 0);
+    const again = world.constructor.loadFromData(world.toSaveData(), {});
+    assert.equal(countCorpseId(again, "client-body"), 0);
+    assert.equal(countCorpseId(again, oldId), 0);
+});
+
+test("killing a mob removes its chunk entry after it leaves the spawn chunk", () => {
+    const { world, pawn } = createTestWorld();
+    const entry = world._spawnMobAt("deer", pawn.x, pawn.y);
+    const mob = world.mobs.get(entry.uid);
+    mob.x = 400;
+    mob.y = pawn.y;
+    world._finishMobDeath(mob);
+    for (const c of world.chunks.values()) {
+        assert.equal((c.mobs || []).some((m) => m && m.uid === entry.uid), false);
+    }
+    assert.equal(world.mobs.has(entry.uid), false);
+});
+
+test("MOB_DEATH id is the corpse id when the mob dies afterward", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const entry = world._spawnMobAt("deer", pawn.x + 8, pawn.y);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.MOB_DEATH,
+        uid: entry.uid,
+        x: pawn.x + 8,
+        y: pawn.y,
+        corpse: { id: "client-deer" }
+    });
+    world._finishMobDeath(world.mobs.get(entry.uid));
+    const found = world._findCorpse("client-deer");
+    assert.ok(found);
+    assert.equal(found.entry.sourceUid, entry.uid);
+});
+
+test("MOB_DEATH after death retargets the saved corpse", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const entry = world._spawnMobAt("deer", pawn.x + 8, pawn.y);
+    const mob = world.mobs.get(entry.uid);
+    const x = mob.x;
+    const y = mob.y;
+    world._finishMobDeath(mob);
+    let serverId = null;
+    for (const c of world.chunks.values()) {
+        for (const e of c.corpses || []) {
+            if (e?.sourceUid === entry.uid) serverId = e.id;
+        }
+    }
+    assert.ok(serverId);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.MOB_DEATH,
+        uid: entry.uid,
+        x,
+        y,
+        corpse: { id: "client-deer" }
+    });
+    assert.equal(countCorpseId(world, serverId), 0);
+    assert.equal(countCorpseId(world, "client-deer"), 1);
+});
+
+test("a saved dead mob does not grow a new corpse on load", () => {
+    const { world, pawn } = createTestWorld();
+    const entry = world._spawnMobAt("deer", pawn.x + 16, pawn.y);
+    const mob = world.mobs.get(entry.uid);
+    assert.ok(mob.anatomy.core, "deer has a core");
+    mob.anatomy.core.destroy();
+    entry.body = mob.anatomy.toJSON();
+    const before = [...world.chunks.values()].reduce((n, c) => n + (c.corpses || []).length, 0);
+    const again = world.constructor.loadFromData(world.toSaveData(), {});
+    let mobs = 0;
+    let corpses = 0;
+    for (const c of again.chunks.values()) {
+        mobs += (c.mobs || []).filter((m) => m && m.uid === entry.uid).length;
+        corpses += (c.corpses || []).length;
+    }
+    assert.equal(mobs, 0);
+    assert.equal(corpses, before);
+});
+
 test("wildlife corpse is authored at the downed body center", () => {
     const { world, pawn } = createTestWorld();
     const entry = world._spawnMobAt("deer", pawn.x + 16, pawn.y);

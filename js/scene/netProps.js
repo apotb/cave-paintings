@@ -178,6 +178,7 @@
      */
     _netUpsertCorpse(c, opts = {}) {
         if (!c?.id) return null;
+        if (this._goneCorpseIds?.has(c.id)) return null;
         if (!this.netCorpses) this.netCorpses = new Map();
         if (!this.corpses?.children) this.corpses = this.add.group();
         const loot = Array.isArray(c.loot)
@@ -289,6 +290,7 @@
         const now = performance.now();
         for (const c of corpses) {
             if (!c?.id) continue;
+            if (this._goneCorpseIds?.has(c.id)) continue;
             seen.add(c.id);
             const spr = this._netUpsertCorpse(c, { confirmed: true });
             if (spr?.entry) spr.entry._missedSnaps = 0;

@@ -530,7 +530,10 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
                 corpse.entry.pendingServer = true;
                 corpse.entry.pendingAt = performance.now();
             }
-            if (corpse && scene.netCorpses) scene.netCorpses.set(corpseId, corpse);
+            if (corpse) {
+                if (!scene.netCorpses) scene.netCorpses = new Map();
+                scene.netCorpses.set(corpseId, corpse);
+            }
         }
 
         if (this.chunk?.meta?.mobs) {

@@ -881,7 +881,11 @@ class PartySystem {
         const scene = this.scene;
         if (!pawn) return;
         const name = pawn.displayName?.() || "Wanderer";
-        pawn.createDeathCorpse?.({ spawn: true, combatDeath: !!killer });
+        // Sim already authors the wanderer's corpse. A local copy keeps its own id,
+        // so looting it leaves the saved body for the next visit.
+        if (!scene.simAuth?.()) {
+            pawn.createDeathCorpse?.({ spawn: true, combatDeath: !!killer });
+        }
         this.wanderers = this.wanderers.filter((w) => w !== pawn);
         pawn.setVisible(false);
         if (pawn.body) pawn.body.enable = false;

@@ -457,7 +457,16 @@
         if (!ev || !this.simAuth()) return;
         if (!this.netCorpses) this.netCorpses = new Map();
         if (ev.op === "remove" && ev.id) {
-            const spr = this.netCorpses.get(ev.id);
+            if (!this._goneCorpseIds) this._goneCorpseIds = new Set();
+            this._goneCorpseIds.add(ev.id);
+            let spr = this.netCorpses.get(ev.id);
+            if (!spr) {
+                for (const chunk of Object.values(this.chunks || {})) {
+                    const kids = chunk?.corpses?.getChildren?.() || [];
+                    spr = kids.find((s) => s?.entry?.id === ev.id);
+                    if (spr) break;
+                }
+            }
             this.netCorpses.delete(ev.id);
             if (this.corpsePanel?.corpse === spr) this.corpsePanel.close(true);
             if (spr?.active) {

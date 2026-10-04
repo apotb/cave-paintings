@@ -540,10 +540,121 @@
         return out;
     },
 
+    _corpseIdGone(id) {
+        if (!id) return false;
+        if (!this._removedCorpseSet && Array.isArray(this._removedCorpseIds)) {
+            this._removedCorpseSet = new Set(this._removedCorpseIds);
+        }
+        return !!this._removedCorpseSet?.has(id);
+    },
+
+    /** Remember a removed corpse id so a stale chunk copy cannot revive it on load. */
+    _rememberRemovedCorpse(id) {
+        if (!id || this._corpseIdGone(id)) return;
+        if (!Array.isArray(this._removedCorpseIds)) this._removedCorpseIds = [];
+        if (!this._removedCorpseSet) this._removedCorpseSet = new Set(this._removedCorpseIds);
+        this._removedCorpseSet.add(id);
+        this._removedCorpseIds.push(id);
+        while (this._removedCorpseIds.length > 4000) {
+            const old = this._removedCorpseIds.shift();
+            this._removedCorpseSet.delete(old);
+        }
+    },
+
+    /**
+     * Drop every copy of a corpse id. One death used to leave a second copy in another chunk.
+     * `aliasId` is the id the client clicked when it did not match the saved body.
+     */
+    _eraseCorpse(id, aliasId = null) {
+        if (!id) return false;
+        let removed = false;
+        for (const c of this.chunks.values()) {
+            if (!Array.isArray(c.corpses)) continue;
+            for (let i = c.corpses.length - 1; i >= 0; i--) {
+                if (c.corpses[i]?.id === id) {
+                    c.corpses.splice(i, 1);
+                    removed = true;
+                }
+            }
+        }
+        if (!removed) return false;
+        this._rememberRemovedCorpse(id);
+        this.pushEvent({ kind: "corpse", op: "remove", id });
+        if (aliasId && aliasId !== id && !this._findCorpse(aliasId)) {
+            this._rememberRemovedCorpse(aliasId);
+            this.pushEvent({ kind: "corpse", op: "remove", id: aliasId });
+        }
+        return true;
+    },
+
+    /**
+     * Exactly one corpse within `radius` px, optionally filtered.
+     * Used when the client clicked a local body whose id the sim never stored.
+     */
+    _soleCorpseNear(x, y, radius, pred) {
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+        const r2 = radius * radius;
+        let found = null;
+        for (const c of this.chunks.values()) {
+            if (!Array.isArray(c.corpses)) continue;
+            for (let i = 0; i < c.corpses.length; i++) {
+                const e = c.corpses[i];
+                if (!e) continue;
+                if (pred && !pred(e)) continue;
+                const dx = (Number(e.x) || 0) - x;
+                const dy = (Number(e.y) || 0) - y;
+                if (dx * dx + dy * dy > r2) continue;
+                if (found) return null;
+                found = { chunk: c, index: i, entry: e };
+            }
+        }
+        return found;
+    },
+
+    _resolveCorpse(action = {}) {
+        const byId = action.corpseId ? this._findCorpse(action.corpseId) : null;
+        if (byId) return byId;
+        const x = Number(action.corpseX);
+        const y = Number(action.corpseY);
+        return this._soleCorpseNear(x, y, 24, null);
+    },
+
+    /**
+     * Client authored a corpse id before the sim did (or after, with a different id).
+     * Point the sim body at the client's id so a loot click removes the saved one.
+     */
+    _retargetCorpseId(found, newId, sourceUid = null) {
+        if (!found?.entry?.id || !newId || found.entry.id === newId) return found?.entry || null;
+        if (this._corpseIdGone(newId) || this._findCorpse(newId)) return found.entry;
+        const oldId = found.entry.id;
+        found.entry.id = newId;
+        if (sourceUid) found.entry.sourceUid = sourceUid;
+        this._rememberRemovedCorpse(oldId);
+        this.pushEvent({ kind: "corpse", op: "remove", id: oldId });
+        this.pushEvent({
+            kind: "corpse",
+            op: "add",
+            cx: found.chunk.cx,
+            cy: found.chunk.cy,
+            entry: found.entry
+        });
+        return found.entry;
+    },
+
+    _retargetPlayerCorpse(p, action = {}) {
+        const newId = typeof action?.corpseId === "string" ? action.corpseId.slice(0, 48) : "";
+        if (!newId || !p || this._corpseIdGone(newId) || this._findCorpse(newId)) return;
+        const x = Number(action.x);
+        const y = Number(action.y);
+        const found = this._soleCorpseNear(x, y, 96, (e) => !!e.playerCorpse);
+        this._retargetCorpseId(found, newId, null);
+    },
+
     _pushCorpse(opts) {
         const wx = Number(opts.x);
         const wy = Number(opts.y);
         if (!Number.isFinite(wx) || !Number.isFinite(wy)) return null;
+        if (opts.id && this._corpseIdGone(opts.id)) return null;
         const { cx, cy } = worldToChunk(wx, wy);
         const c = this._ensureChunk(cx, cy);
         if (!Array.isArray(c.corpses)) c.corpses = [];
@@ -564,7 +675,8 @@
             diedAt: opts.diedAt != null && Number.isFinite(Number(opts.diedAt))
                 ? Math.round(Number(opts.diedAt))
                 : this.worldMinuteIndex(),
-            stage: opts.stage === "carcass" ? "carcass" : "corpse"
+            stage: opts.stage === "carcass" ? "carcass" : "corpse",
+            sourceUid: opts.sourceUid || null
         };
         const existing = entry.id
             ? c.corpses.find((e) => e && e.id === entry.id)
@@ -584,6 +696,7 @@
             existing.playerCorpse = entry.playerCorpse;
             existing.diedAt = entry.diedAt;
             existing.stage = entry.stage;
+            if (entry.sourceUid) existing.sourceUid = entry.sourceUid;
             this.pushEvent({ kind: "corpse", op: "add", cx, cy, entry: existing });
             return existing;
         }
@@ -636,15 +749,13 @@
         return loot;
     },
 
-    _removeMobFromChunks(mobOrUid, wx = null, wy = null) {
+    _removeMobFromChunks(mobOrUid, _wx = null, _wy = null) {
         const uid = typeof mobOrUid === "string" ? mobOrUid : mobOrUid?.id || mobOrUid?.chunkUid;
         if (!uid) return null;
-        const x = wx ?? mobOrUid?.x;
-        const y = wy ?? mobOrUid?.y;
-        const near = Number.isFinite(x) && Number.isFinite(y)
-            ? this._chunksNear(x, y, 1)
-            : this.chunks.values();
-        for (const c of near) {
+        // The chunk entry stays in the spawn chunk while x/y follow the mob.
+        // A nearby-chunk search misses anything that walked more than one chunk
+        // away, and that leftover entry becomes a new corpse on the next join.
+        for (const c of this.chunks.values()) {
             if (!Array.isArray(c.mobs)) continue;
             const i = c.mobs.findIndex((m) => m && m.uid === uid);
             if (i >= 0) {
@@ -697,18 +808,36 @@
     },
 
     /**
-     * Client MOB_DEATH is no longer authoritative — server owns wildlife death.
-     * Ignore unless the mob is already gone (lag compensate / no-op).
+     * Wildlife death is authored here, but the client may already be showing a
+     * corpse under its own id. Remember that id so loot removes the saved body.
      */
     _tryMobDeath(_p, action = {}) {
-        const uid = action.uid ? String(action.uid) : null;
-        if (!uid) return;
+        const uid = action.uid ? String(action.uid).slice(0, 64) : "";
+        const corpseId = typeof action.corpse?.id === "string" ? action.corpse.id.slice(0, 48) : "";
+        if (!uid || !corpseId || this._corpseIdGone(corpseId)) return;
         const live = this.mobs.get(uid);
         if (live && !live.isBodyDead()) {
-            // Client thinks it's dead; server still owns it — ignore.
+            if (!this._pendingMobCorpse) this._pendingMobCorpse = new Map();
+            this._pendingMobCorpse.set(uid, {
+                id: corpseId,
+                x: Number(action.x),
+                y: Number(action.y)
+            });
             return;
         }
-        // Already dead/removed server-side: nothing to do.
+        let found = null;
+        for (const c of this.chunks.values()) {
+            if (!Array.isArray(c.corpses)) continue;
+            for (let i = 0; i < c.corpses.length; i++) {
+                if (c.corpses[i]?.sourceUid === uid) {
+                    found = { chunk: c, index: i, entry: c.corpses[i] };
+                    break;
+                }
+            }
+            if (found) break;
+        }
+        if (!found) found = this._soleCorpseNear(Number(action.x), Number(action.y), 24, (e) => !e.playerCorpse);
+        this._retargetCorpseId(found, corpseId, uid);
     },
 
     _finishMobDeath(mob, killer = null) {
@@ -737,11 +866,16 @@
         this._removeMobFromChunks(uid, mob.x, mob.y);
         this.mobs.delete(uid);
         this.pushEvent({ kind: "mob", op: "remove", uid });
+        const pending = this._pendingMobCorpse?.get(uid) || null;
+        this._pendingMobCorpse?.delete(uid);
         if (corpse) {
+            const pendingId = pending?.id && !this._corpseIdGone(pending.id) ? pending.id : null;
+            const px = Number(pending?.x);
+            const py = Number(pending?.y);
             this._pushCorpse({
-                id: corpse.id,
-                x: corpse.x,
-                y: corpse.y,
+                id: pendingId || corpse.id,
+                x: Number.isFinite(px) ? px : corpse.x,
+                y: Number.isFinite(py) ? py : corpse.y,
                 key: corpse.key,
                 look: corpse.look || null,
                 frame: corpse.frame != null ? corpse.frame : 7,
@@ -750,7 +884,8 @@
                 body: corpse.body || null,
                 bodyPlan: corpse.bodyPlan || "human",
                 mobId: corpse.mobId || null,
-                skinned: !!corpse.skinned
+                skinned: !!corpse.skinned,
+                sourceUid: uid
             });
         }
     },
@@ -797,7 +932,7 @@
         const held = this._held(p);
         const heldDef = held ? itemDefs().get(held.id) : null;
         if (!held || Carry.stackToolClass(held, heldDef) !== "knife") return;
-        const found = this._findCorpse(action.corpseId);
+        const found = this._resolveCorpse(action);
         if (!found) return;
         const { entry } = found;
         if (!CorpseDecay.canSkin(entry, this.worldMinuteIndex())) return;
@@ -924,9 +1059,9 @@
             actor.y = action.y;
             if (actor === p) p.poseAuth = true;
         }
-        const found = this._findCorpse(action.corpseId);
+        const found = this._resolveCorpse(action);
         if (!found) return;
-        const { chunk, index: corpseIdx, entry } = found;
+        const { entry } = found;
         const dest = action.toPawnId ? this._partyGiveDest(p, action, actor) : actor;
         if (action.toPawnId && !dest) return;
         const receiver = dest || actor;
@@ -957,8 +1092,7 @@
                 this._syncPlayerInvSize(receiver);
                 this._youDirty.add(p.id);
                 if (!entry.loot.filter(Boolean).length) {
-                    chunk.corpses.splice(corpseIdx, 1);
-                    this.pushEvent({ kind: "corpse", op: "remove", id: entry.id });
+                    this._eraseCorpse(entry.id, this._requestedCorpseId(action));
                 } else {
                     this.pushEvent({
                         kind: "corpse",
@@ -989,8 +1123,7 @@
         if (!(stack.quantity > 0)) entry.loot.splice(slot, 1);
         this._youDirty.add(p.id);
         if (!entry.loot.filter(Boolean).length) {
-            chunk.corpses.splice(corpseIdx, 1);
-            this.pushEvent({ kind: "corpse", op: "remove", id: entry.id });
+            this._eraseCorpse(entry.id, this._requestedCorpseId(action));
         } else {
             this.pushEvent({
                 kind: "corpse",
@@ -1029,17 +1162,20 @@
             actor.y = action.y;
             if (actor === p) p.poseAuth = true;
         }
-        const found = this._findCorpse(action.corpseId);
+        const found = this._resolveCorpse(action);
         if (!found) return;
-        const { chunk, index: corpseIdx, entry } = found;
+        const { entry } = found;
         const dx = entry.x - actor.x;
         const dy = entry.y - actor.y;
         const r = TS * (HARVEST_RANGE_TILES + 2);
         if (dx * dx + dy * dy > r * r) return;
         const loot = Array.isArray(entry.loot) ? entry.loot.filter(Boolean) : [];
         if (loot.length) return;
-        chunk.corpses.splice(corpseIdx, 1);
-        this.pushEvent({ kind: "corpse", op: "remove", id: entry.id });
+        this._eraseCorpse(entry.id, this._requestedCorpseId(action));
+    },
+
+    _requestedCorpseId(action) {
+        return typeof action?.corpseId === "string" ? action.corpseId.slice(0, 48) : "";
     },
 
     /** Ground spawn that does not take from inventory (overflow / failed fit). */
