@@ -388,11 +388,19 @@
     const FURNITURE_NORTH_SLACK = 3;
 
     /**
+     * Horizontal lean-to (rot 0 / 180). The thatch is drawn north of the posts,
+     * so a full-tile box stops you at the eave. This pulls the north edge south
+     * enough to stand slightly under the roof. The frame sprite sorts at the
+     * shelter's feet, above anyone tucked into that lip. The south edge stays
+     * flush — that side is the posts and the opening.
+     */
+    const SLEEP_HORIZONTAL_NORTH_SLACK = 6;
+
+    /**
      * Walk collision in world pixels.
      * 1×1: hs×hs at the feet, or a rotation-aware AABB from `hitbox`.
      * Sleep 90/270: footprint minus the open/bedding side (walk onto the laying spot).
-     * Sleep 0/180: the whole footprint. Those frames are a roof + posts facing
-     * the camera; cutting an open lip lets you walk into the drawing.
+     * Sleep 0/180: the footprint, with the north edge inset under the roof.
      * Other multi-tile: a strip `hitboxSize` thick on the closed side.
      */
     function collisionWorldRect(entry, thingDef, tileSize) {
@@ -442,10 +450,15 @@
         const hs = box.h;
         if (thingDef?.sleep) {
             const r = normalizeRot(entry.rot);
-            // Horizontal frames (opening south/north) are a roof with posts on
-            // both ends. A south/north open lip is the interior of the sprite.
+            // Horizontal frames face the camera: roof to the north, posts at
+            // the south. Inset only the north edge so you can tuck under the
+            // thatch; the frame sprite draws above that overlap.
             if (r === 0 || r === 180) {
-                return { left, right, top, bottom };
+                const slack = Math.min(
+                    SLEEP_HORIZONTAL_NORTH_SLACK,
+                    Math.max(0, bottom - top - 4)
+                );
+                return { left, right, top: top + slack, bottom };
             }
             const along = bottom - top;
             const pad = Math.min(2, Math.max(0, Math.floor((along - 12) / 2)));

@@ -174,10 +174,11 @@ test("lean-to collision matches the wooden frame", () => {
     const left0 = Math.min(...tiles0.map((t) => t.tx)) * TS;
     const right0 = (Math.max(...tiles0.map((t) => t.tx)) + 1) * TS;
     const midX = (w0.left + w0.right) / 2;
-    assert.equal(w0.top, top0);
+    assert.equal(w0.top, top0 + 6, "rot 0 north edge tucks under the roof");
     assert.equal(w0.bottom, bottom0);
+    assert.equal(contains(w0, midX, top0 + 2), false, "rot 0 roof overhang is walkable");
+    assert.equal(contains(w0, midX, top0 + 6), true, "rot 0 lower roof is still solid");
     assert.equal(contains(w0, midX, bottom0 - 2), true, "rot 0 south interior is solid");
-    assert.equal(contains(w0, midX, top0 + 2), true, "rot 0 roof is solid");
     assert.equal(contains(w0, left0 + 2, bottom0 - 2), true, "rot 0 front posts are solid");
     assert.equal(contains(w0, right0 - 2, bottom0 - 2), true, "rot 0 front posts are solid");
 
@@ -188,7 +189,10 @@ test("lean-to collision matches the wooden frame", () => {
     const top180 = Math.min(...tiles180.map((t) => t.ty)) * TS;
     const bottom180 = (Math.max(...tiles180.map((t) => t.ty)) + 1) * TS;
     const mid180 = (w180.left + w180.right) / 2;
-    assert.equal(contains(w180, mid180, top180 + 2), true, "rot 180 roof is solid");
+    assert.equal(w180.top, top180 + 6, "rot 180 north edge tucks under the roof");
+    assert.equal(w180.bottom, bottom180);
+    assert.equal(contains(w180, mid180, top180 + 2), false, "rot 180 roof overhang is walkable");
+    assert.equal(contains(w180, mid180, top180 + 6), true, "rot 180 lower wall is still solid");
     assert.equal(contains(w180, mid180, bottom180 - 2), true, "rot 180 back wall is solid");
 
     const occupy = Place.footprintWorldRect(e0, def, TS);
