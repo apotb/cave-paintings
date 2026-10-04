@@ -910,12 +910,13 @@
             const catchR = (P.FOLLOW_CATCH ?? 4.8) * TILE;
             const overlapping = !!this._overlappingThing(this._world);
 
-            // Park in catch range even if a padded tree AABB clips the
-            // hitbox. Walking the exit dir here was the tiny pacing circle.
+            // Park once they are in catch range. An overlap still parks:
+            // walking the exit dir was the tiny pacing circle. Being stuck
+            // does not park — that froze them against a tree the route
+            // should have gone around.
             const closeEnough = dist <= idleR
                 || (this._holdFollow && dist < catchR)
-                || (overlapping && dist < catchR)
-                || (this._stuckMs > 280 && dist < catchR);
+                || (overlapping && dist < catchR);
             if (closeEnough) {
                 this._holdFollow = true;
                 this._followSprint = false;
@@ -1181,6 +1182,11 @@
         _walkToward(tx, ty, sprint, world, delta) {
             const mob = this.mob;
             const settler = mob.role === "settler" || !!mob.homeSettlementId;
+            // Companions used a point sample (isBlocked). The stand point of a
+            // tree tile is often clear while the 8×8 body is not, so they
+            // walked into trunks and furniture and stopped. Plan with the
+            // same fattened pose settlers use; movement still steps at pad 0.
+            const bodyNav = settler || mob.role === "companion";
             const embedded = !!this._overlappingThing(world)
                 || !!(world?.poseBlocked && world.poseBlocked(
                     mob, mob.x, mob.y, 0, { sleepFootprint: false }
@@ -1188,8 +1194,8 @@
             if (embedded) this._nudgeOutOfThing(world, true);
             const overlap = embedded ? this._overlappingThing(world) : null;
             const from = { x: mob.x, y: mob.y };
-            const pad = settler ? 2 : 1;
-            const bunkNav = settler || mob.role === "wanderer";
+            const pad = bodyNav ? 2 : 1;
+            const bunkNav = bodyNav || mob.role === "wanderer";
             const blocked = (x, y) => {
                 if (bunkNav && world?.poseBlocked) return world.poseBlocked(mob, x, y, pad);
                 if (world?.isBlocked) return world.isBlocked(x, y);
@@ -1202,7 +1208,7 @@
             // Local window only — a long haul must not A* the whole 32-tile camp
             // every replan (that hitchs FPS when several settlers walk at once).
             const local = Math.min(10, Math.max(8, Math.ceil(destDistTiles) + 6));
-            if (settler) {
+            if (bodyNav) {
                 maxRange = local;
                 if (openRadius == null) openRadius = 2;
             } else if (destDistTiles > maxRange) {
@@ -1210,7 +1216,7 @@
                 if (openRadius == null) openRadius = 2;
             }
             const to = { x: tx, y: ty };
-            const farLook = settler || destDistTiles > 12;
+            const farLook = bodyNav || destDistTiles > 12;
             const now = Date.now();
             const stuckDt = stuckClockDt(world, delta);
             // A one-pixel bounce beside a stump shrinks the waypoint distance
@@ -1378,7 +1384,7 @@
                 this._bankTravel = 0;
                 this._bankFlipped = false;
             }
-            if (settler) {
+            if (bodyNav) {
                 const preNx = nx;
                 const preNy = ny;
                 const sep = this._separation(0.45);

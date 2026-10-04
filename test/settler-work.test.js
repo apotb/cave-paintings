@@ -2147,6 +2147,27 @@ function stepSettlerWalk(world, rec, tx, ty, dt = 16) {
     rec.y = cc.y;
 }
 
+/** Same integrator as party follow: body collision, not a point sample. */
+function stepCompanionWalk(world, pawn, rec, tx, ty, dt = 16) {
+    const cc = world._ensureCompanionCreature(pawn, rec);
+    const aiWorld = world._aiWorld();
+    cc.x = rec.x;
+    cc.y = rec.y;
+    cc.role = "companion";
+    cc.homeSettlementId = null;
+    cc.ai._walkToward(tx, ty, false, aiWorld, dt);
+    cc.applyDesiredVel(dt);
+    const sec = dt / 1000;
+    const nx = cc.x + (cc.vx || 0) * sec;
+    const ny = cc.y + (cc.vy || 0) * sec;
+    const opts = { load: false, sleepFootprint: false };
+    if (!world._partyPoseBlocked(cc, nx, cc.y, 0, opts)) cc.x = nx;
+    if (!world._partyPoseBlocked(cc, cc.x, ny, 0, opts)) cc.y = ny;
+    rec.x = cc.x;
+    rec.y = cc.y;
+    return cc;
+}
+
 test("hauler walks around a tree instead of turning back into open ground", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {
@@ -2218,6 +2239,107 @@ test("settler follows the path around a row of lean-tos instead of skating back"
         `should reach the far side, ended ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`
     );
     assert.equal(reversed, 0, "skated back along the lean-tos");
+});
+
+test("companion following past stumps keeps the route around them", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.connected = true;
+    const ts = 16;
+    const chunk = originChunk(world);
+    for (const [tx, ty] of [[8, 8], [9, 7], [7, 9], [10, 8]]) {
+        chunk.things.push({
+            uid: `stump-${tx}-${ty}`,
+            id: "tree_stump",
+            x: tx * ts + ts / 2,
+            y: ty * ts + ts
+        });
+    }
+    pawn.x = 8 * ts + 10;
+    pawn.y = 12 * ts;
+    pawn.creature.x = pawn.x;
+    pawn.creature.y = pawn.y;
+    const rec = world._companionFromSnap(pawn, {
+        id: "c-stumps",
+        name: "Og",
+        x: pawn.x,
+        y: pawn.y + 40
+    });
+    pawn.party = [rec];
+    let now = Date.now();
+    const origNow = Date.now;
+    Date.now = () => now;
+    let worst = 0;
+    let still = 0;
+    let anchorX = rec.x;
+    let anchorY = rec.y;
+    try {
+        for (let i = 0; i < 420; i++) {
+            now += 16;
+            pawn.y -= 0.9;
+            pawn.creature.y = pawn.y;
+            world.tick(16);
+            if (Math.hypot(rec.x - anchorX, rec.y - anchorY) < 0.4) {
+                still += 16;
+                worst = Math.max(worst, still);
+            } else {
+                still = 0;
+                anchorX = rec.x;
+                anchorY = rec.y;
+            }
+        }
+    } finally {
+        Date.now = origNow;
+    }
+    const gap = Math.hypot(rec.x - pawn.x, rec.y - pawn.y);
+    assert.ok(worst < 1200, `stood still for ${worst}ms on the stumps`);
+    assert.ok(
+        gap < 6 * ts,
+        `should stay with the leader, gap ${gap.toFixed(1)} at ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`
+    );
+});
+
+test("companion walks around a tree instead of stopping on the trunk", () => {
+    const { world, pawn } = createTestWorld();
+    const ts = 16;
+    const tx = 6;
+    const ty = 6;
+    const treeX = tx * ts + ts / 2;
+    const treeY = ty * ts + ts;
+    originChunk(world).things.push({ uid: "tree-block", id: "tree", x: treeX, y: treeY });
+    const from = { x: (tx - 2) * ts + 4, y: treeY };
+    const dest = { x: (tx + 3) * ts + 4, y: treeY };
+    const rec = world._companionFromSnap(pawn, {
+        id: "c-tree",
+        name: "Og",
+        x: from.x,
+        y: from.y
+    });
+    const cc = world._ensureCompanionCreature(pawn, rec);
+    const stand = { x: tx * ts + ts * 0.25, y: treeY };
+    assert.equal(world.isBlocked(stand.x, stand.y), false, "tree stand point is clear");
+    assert.equal(
+        world._partyPoseBlocked(cc, stand.x, stand.y, 2),
+        true,
+        "the body cannot stand in that tree tile"
+    );
+    assert.equal(world._partyPoseBlocked(cc, from.x, from.y, 0, { load: false, sleepFootprint: false }), false);
+    let overlappedMs = 0;
+    for (let i = 0; i < 280; i++) {
+        stepCompanionWalk(world, pawn, rec, dest.x, dest.y, 16);
+        if (world._partyPoseBlocked(cc, rec.x, rec.y, 0, { load: false, sleepFootprint: false })) {
+            overlappedMs += 16;
+        }
+        if (Math.hypot(dest.x - rec.x, dest.y - rec.y) < 18) break;
+    }
+    assert.ok(overlappedMs < 400, `stuck on the tree for ${overlappedMs}ms`);
+    assert.ok(
+        Math.hypot(dest.x - rec.x, dest.y - rec.y) < 20,
+        `should reach the far side, ended ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`
+    );
+    assert.equal(
+        world._partyPoseBlocked(cc, rec.x, rec.y, 0, { load: false, sleepFootprint: false }),
+        false
+    );
 });
 
 test("dedicated settler walks around a lean-to instead of sticking to it", () => {

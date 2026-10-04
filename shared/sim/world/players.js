@@ -770,13 +770,22 @@
         creature.ownerId = owner.id;
         creature.leaderId = owner.id;
         creature.role = "companion";
+        const hadHome = !!creature.homeSettlementId;
         creature.homeSettlementId = rec.homeSettlementId || null;
         creature.faction = Party.partyFactionId(owner.id);
         this._bindPartyAI(creature);
+        // Recruit used to wipe the route here on every tick. A companion has
+        // no home, so that threw away the around-path and they bee-lined into
+        // the next stump. Clear stroll leftovers only; drop the route once,
+        // when they stop being a settler.
         if (!creature.homeSettlementId && creature.ai) {
             creature.ai._idleWanderState = null;
             creature.ai._idleWanderDest = null;
-            creature.ai._path = null;
+            if (hadHome) {
+                creature.ai._path = null;
+                creature.ai._pathGoalX = null;
+                creature.ai._pathGoalY = null;
+            }
         }
         return creature;
     },
