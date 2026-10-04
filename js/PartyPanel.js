@@ -35,6 +35,7 @@ class PartyPanel {
             this.refresh();
             return;
         }
+        const dt = scene.game?.loop?.delta ?? 16;
         for (let i = 0; i < this.rows.length; i++) {
             const row = this.rows[i];
             const pawn = row.pawn;
@@ -44,6 +45,9 @@ class PartyPanel {
             const a = dead ? 0.4 : far ? 0.55 : 1;
             if (row.root.alpha !== a) row.root.setAlpha(a);
             this._drawVitals(row, pawn, s, row._cardW);
+            this._syncCardPortrait(row, pawn, s);
+            this._tickCardZzz(row, pawn, s, dt);
+            this._tickCardHeal(row, pawn, s, dt);
         }
     }
 
@@ -102,10 +106,7 @@ class PartyPanel {
             const row = this.rows[i];
             row.root.setPosition(0, startY + i * rowH);
             this._layoutCard(row, w, h, s, sprH, padY, maxNameH);
-            const tex = pawn.texture?.key || "human";
-            if (row.spr.texture?.key !== tex) row.spr.setTexture(tex, 1);
-            else if (row.spr.frame?.name !== 1) row.spr.setFrame(1);
-            row.spr.setScale(2 * s);
+            this._syncCardPortrait(row, pawn, s);
             row.crown.setVisible(pawn === scene.leader);
             row.crown.setScale(s);
             const controlled = pawn === scene.player;
@@ -124,7 +125,105 @@ class PartyPanel {
             row._cardW = w;
             row._vitalsSig = null;
             this._drawVitals(row, pawn, s, w);
+            this._clearCardZzz(row);
+            this._clearCardHeal(row);
         });
+    }
+
+    /**
+     * Knocked down matches the world corpse pose: right-facing frame, −90° (counter-clockwise).
+     * Sleeping uses that same frame turned the other way, +90° (clockwise).
+     */
+    _cardIsSleeping(pawn) {
+        return !!(pawn?._resting && !pawn.isBodyDead?.());
+    }
+
+    _cardIsDowned(pawn) {
+        if (!pawn || pawn._resting || pawn.isBodyDead?.()) return false;
+        return !!(
+            pawn._downed
+            || pawn._prone
+            || pawn._netProne
+            || pawn.isIncapacitated?.()
+            || pawn.isImmobile?.()
+        );
+    }
+
+    _syncCardPortrait(row, pawn, s) {
+        const spr = row?.spr;
+        if (!spr || !pawn) return;
+        const sleeping = this._cardIsSleeping(pawn);
+        const downed = !sleeping && this._cardIsDowned(pawn);
+        const lying = sleeping || downed;
+        const tex = pawn.texture?.key || "human";
+        const frame = lying ? 7 : 1;
+        const rot = sleeping ? Math.PI / 2 : downed ? -Math.PI / 2 : 0;
+        const scale = 2 * (s || 1);
+        const standX = Number.isFinite(row._portraitX) ? row._portraitX : 0;
+        const standY = Number.isFinite(row._portraitY) ? row._portraitY : spr.y;
+        if (spr.texture?.key !== tex) spr.setTexture(tex, frame);
+        else if (Number(spr.frame?.name) !== frame && (spr.texture?.frameTotal || 0) > frame) {
+            spr.setFrame(frame);
+        }
+        // Turn around the frame center so the body stays in the portrait, then
+        // drop only enough for the side of the body to rest on the standing feet.
+        const drop = lying ? this._lyingFootDrop(spr) * scale : 0;
+        const px = standX;
+        const py = standY + drop;
+        const sig = `${tex}|${frame}|${rot}|${scale}|${px}|${py}`;
+        row._bodyFxX = px;
+        row._bodyFxY = py;
+        if (row._poseSig === sig && spr.rotation === rot && spr.scaleX === scale && spr.originY === 0.5) return;
+        row._poseSig = sig;
+        if (spr.originX !== 0.5 || spr.originY !== 0.5) spr.setOrigin(0.5, 0.5);
+        if (spr.rotation !== rot) spr.setRotation(rot);
+        if (spr.scaleX !== scale || spr.scaleY !== scale) spr.setScale(scale);
+        if (spr.x !== px || spr.y !== py) spr.setPosition(px, py);
+    }
+
+    /**
+     * Frame-pixel distance to lower a turned sprite so its underside meets
+     * the standing foot line. 0 if the frame can't be read.
+     */
+    _lyingFootDrop(spr) {
+        const frame = spr?.frame;
+        const key = `${spr?.texture?.key || ""}|${frame?.name}`;
+        const cache = this._lyingDropCache || (this._lyingDropCache = new Map());
+        if (cache.has(key)) return cache.get(key);
+        let drop = 0;
+        try {
+            const img = frame?.source?.image;
+            const w = frame?.cutWidth || frame?.width || 0;
+            const h = frame?.cutHeight || frame?.height || 0;
+            if (img && w > 0 && h > 0 && typeof document !== "undefined") {
+                const canvas = document.createElement("canvas");
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext("2d", { willReadFrequently: true });
+                ctx.drawImage(img, frame.cutX || 0, frame.cutY || 0, w, h, 0, 0, w, h);
+                const data = ctx.getImageData(0, 0, w, h).data;
+                let minX = w;
+                let maxX = -1;
+                let maxY = -1;
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
+                        if (data[(y * w + x) * 4 + 3] <= 20) continue;
+                        if (x < minX) minX = x;
+                        if (x > maxX) maxX = x;
+                        if (y > maxY) maxY = y;
+                    }
+                }
+                if (maxY >= 0) {
+                    const footFromCenter = (maxY + 1) - h / 2;
+                    const halfThick = (maxX - minX + 1) / 2;
+                    drop = Math.max(0, footFromCenter - halfThick);
+                }
+            }
+        } catch (_) {
+            drop = 0;
+        }
+        cache.set(key, drop);
+        return drop;
     }
 
     _isDetached(pawn) {
@@ -255,7 +354,10 @@ class PartyPanel {
             row.hit.setInteractive({ useHandCursor: true });
         }
         const top = -h / 2 + padY;
-        row.spr.setPosition(0, top + sprH * 0.45);
+        row._portraitX = 0;
+        row._portraitY = top + sprH * 0.45;
+        row._poseSig = null;
+        row.spr.setPosition(row._portraitX, row._portraitY);
         row.crown.setPosition(14 * s, top + 4 * s);
         row.warn.setPosition(w / 2 - 8 * s, top + 6 * s);
         row.vitals.setPosition(0, top + sprH + 1 * s);
@@ -273,6 +375,7 @@ class PartyPanel {
         const hit = scene.add.zone(0, 0, w, h).setOrigin(0.5);
         hit.setInteractive({ useHandCursor: true });
         const spr = scene.add.sprite(0, -10 * s, "human", 1).setOrigin(0.5, 0.5).setScale(2 * s);
+        const zzzRoot = scene.add.container(0, 0).setVisible(false);
         const crown = scene.add.image(14 * s, -22 * s, "leader").setOrigin(0.5).setVisible(false);
         const name = crispUiText(scene.add.text(0, 18 * s, "", {
             fontFamily: PIXEL_UI_FONT,
@@ -292,8 +395,8 @@ class PartyPanel {
             strokeThickness: 3
         }).setOrigin(0.5));
         if (typeof applyPixelUiFont === "function") applyPixelUiFont(warn, 8, s);
-        root.add([bg, spr, crown, name, vitals, warn, hit]);
-        const row = { root, bg, hit, spr, crown, name, vitals, warn, pawn: null };
+        root.add([bg, spr, zzzRoot, crown, name, vitals, warn, hit]);
+        const row = { root, bg, hit, spr, zzzRoot, crown, name, vitals, warn, pawn: null };
         hit.on("pointerdown", () => {
             if (scene._gamePaused) return;
             if (row.pawn) scene.partySys?.tryAllyClick?.(row.pawn, { forceSwitch: true });
@@ -316,6 +419,251 @@ class PartyPanel {
         this.root.add(root);
         this.rows.push(row);
         return row;
+    }
+
+    /**
+     * Comic z z z on the portrait, same glyph and drift as the world sleeper.
+     * Travel is shortened so the marks stay on the card.
+     */
+    _tickCardZzz(row, pawn, s, dt) {
+        const sleeping = !!(pawn?._resting && !pawn.isBodyDead?.());
+        let st = row._zzz;
+        if (!sleeping && !st?.bits?.length) {
+            if (!row._heal?.bits?.length && row.zzzRoot?.visible) row.zzzRoot.setVisible(false);
+            return;
+        }
+        st = this._ensureCardZzz(row, s);
+        if (!st) return;
+        row.zzzRoot.setVisible(true);
+        const step = Math.max(0, Number(dt) || 16);
+        if (sleeping) {
+            st.wait -= step;
+            if (st.wait <= 0 && st.bits.length < 3) {
+                const n = st.seq % 3;
+                this._spawnCardZ(row, st, s, n);
+                st.seq++;
+                st.wait = st.seq < 3 ? 140 : (780 + Math.random() * 360);
+            }
+        }
+        this._stepCardZBits(st, step);
+        if (!sleeping && !st.bits.length && !row._heal?.bits?.length) row.zzzRoot.setVisible(false);
+    }
+
+    /** Same green + as the world: rest is boosting heal on an open injury. */
+    _cardHealBoost(pawn) {
+        if (typeof sleepHealIsInjured === "function") return sleepHealIsInjured(pawn);
+        if (typeof Sleep !== "undefined" && Sleep.injuredForAutofill && pawn?.anatomy) {
+            return !!Sleep.injuredForAutofill(pawn.anatomy);
+        }
+        return !!pawn?.injured;
+    }
+
+    _tickCardHeal(row, pawn, s, dt) {
+        const sleeping = !!(pawn?._resting && !pawn.isBodyDead?.());
+        const healing = sleeping && this._cardHealBoost(pawn);
+        let st = row._heal;
+        if (!healing && !st?.bits?.length) {
+            if (!sleeping && !row._zzz?.bits?.length && row.zzzRoot?.visible) row.zzzRoot.setVisible(false);
+            return;
+        }
+        st = this._ensureCardHeal(row, s);
+        if (!st) return;
+        row.zzzRoot.setVisible(true);
+        const step = Math.max(0, Number(dt) || 16);
+        if (healing) {
+            st.wait -= step;
+            if (st.wait <= 0 && st.bits.length < 3) {
+                const n = st.seq % 3;
+                this._spawnCardPlus(row, st, s, n);
+                st.seq++;
+                st.wait = st.seq < 3 ? 140 : (700 + Math.random() * 320);
+            }
+        }
+        this._stepCardZBits(st, step);
+        if (!healing && !st.bits.length && !sleeping && !row._zzz?.bits?.length) row.zzzRoot.setVisible(false);
+    }
+
+    _ensureCardHeal(row, s) {
+        const font = typeof pixelUiFontSize === "function" ? pixelUiFontSize(16, s) : 16;
+        if (row._heal?.font === font) return row._heal;
+        this._destroyCardHeal(row);
+        if (!row.zzzRoot) return null;
+        const pool = [];
+        for (let i = 0; i < 3; i++) pool.push(this._makeCardGlyph(row, "+", "#4ee05a", font));
+        row._heal = { pool, bits: [], wait: 120, seq: 0, font };
+        return row._heal;
+    }
+
+    _makeCardGlyph(row, ch, color, font) {
+        const scene = this.scene;
+        const txt = scene.add.text(0, 0, ch, {
+            fontFamily: typeof PIXEL_UI_FONT !== "undefined" ? PIXEL_UI_FONT : "PrimaryFont",
+            fontSize: `${font}px`,
+            color,
+            stroke: "#000000",
+            strokeThickness: 2,
+            align: "center"
+        }).setOrigin(0.5, 1).setVisible(false);
+        txt.setResolution(Math.max(2, window.devicePixelRatio || 1));
+        if (txt.context) txt.context.imageSmoothingEnabled = true;
+        try { txt.texture?.setFilter?.(Phaser.Textures.FilterMode.LINEAR); } catch (_) {}
+        row.zzzRoot.add(txt);
+        return txt;
+    }
+
+    _spawnCardPlus(row, st, s, n) {
+        const txt = st.pool.find((t) => !st.bits.some((b) => b.obj === t));
+        if (!txt || !row.spr) return;
+        const scales = [0.41, 0.51, 0.64];
+        txt.setScale(scales[n] || scales[0]);
+        txt.setAlpha(1);
+        txt.setVisible(true);
+        const spr = row.spr;
+        const halfW = ((spr.displayWidth || 32 * s) * 0.35);
+        const bx = Number.isFinite(row._bodyFxX) ? row._bodyFxX : spr.x;
+        const by = Number.isFinite(row._bodyFxY) ? row._bodyFxY : spr.y;
+        const x0 = bx + (Math.random() * 2 - 1) * halfW;
+        const y0 = by + (Math.random() * 2 - 1) * 3 * s;
+        let dx = (Math.random() * 2 - 1) * 1.6 * s;
+        let dy = -(6 + n * 2.2 + Math.random() * 1.4) * (0.85 * s);
+        const cardTop = -((row.bg?.height || 0) * 0.5) + 2 * s;
+        const maxRise = y0 - cardTop;
+        if (maxRise > 0 && -dy > maxRise) dy = -maxRise;
+        const cardLeft = -((row.bg?.width || 0) * 0.5) + 2 * s;
+        const cardRight = ((row.bg?.width || 0) * 0.5) - 2 * s;
+        const endX = x0 + dx;
+        if (endX > cardRight) dx = cardRight - x0;
+        else if (endX < cardLeft) dx = cardLeft - x0;
+        txt.setPosition(x0, y0);
+        st.bits.push({
+            obj: txt,
+            t: 0,
+            life: 2100 + n * 220,
+            x0,
+            y0,
+            dx,
+            dy
+        });
+    }
+
+    _clearCardHeal(row) {
+        const st = row?._heal;
+        if (!st) return;
+        for (const b of st.bits) b.obj?.setVisible(false);
+        st.bits.length = 0;
+        st.wait = 120;
+        st.seq = 0;
+        if (!row._zzz?.bits?.length) row.zzzRoot?.setVisible(false);
+    }
+
+    _destroyCardHeal(row) {
+        const st = row?._heal;
+        if (!st) return;
+        for (const t of st.pool || []) {
+            try { t.destroy(); } catch (_) {}
+        }
+        row._heal = null;
+    }
+
+    _ensureCardZzz(row, s) {
+        const font = typeof pixelUiFontSize === "function" ? pixelUiFontSize(16, s) : 16;
+        if (row._zzz?.font === font) return row._zzz;
+        this._destroyCardZzz(row);
+        if (!row.zzzRoot) return null;
+        const scene = this.scene;
+        const pool = [];
+        for (let i = 0; i < 3; i++) {
+            const txt = scene.add.text(0, 0, "z", {
+                fontFamily: typeof PIXEL_UI_FONT !== "undefined" ? PIXEL_UI_FONT : "PrimaryFont",
+                fontSize: `${font}px`,
+                color: "#b7c2d4",
+                stroke: "#000000",
+                strokeThickness: 2,
+                align: "center"
+            }).setOrigin(0.5, 1).setVisible(false);
+            txt.setResolution(Math.max(2, window.devicePixelRatio || 1));
+            if (txt.context) txt.context.imageSmoothingEnabled = true;
+            try { txt.texture?.setFilter?.(Phaser.Textures.FilterMode.LINEAR); } catch (_) {}
+            row.zzzRoot.add(txt);
+            pool.push(txt);
+        }
+        row._zzz = { pool, bits: [], wait: 80, seq: 0, font };
+        return row._zzz;
+    }
+
+    _spawnCardZ(row, st, s, n) {
+        const txt = st.pool.find((t) => !st.bits.some((b) => b.obj === t));
+        if (!txt || !row.spr) return;
+        const scales = [0.41, 0.51, 0.64];
+        txt.setScale(scales[n] || scales[0]);
+        txt.setAlpha(1);
+        txt.setVisible(true);
+        const spr = row.spr;
+        const k = 0.85 * s;
+        const crownShift = row.crown?.visible ? -7 * s : 0;
+        const bx = Number.isFinite(row._bodyFxX) ? row._bodyFxX : spr.x;
+        const by = Number.isFinite(row._bodyFxY) ? row._bodyFxY : spr.y;
+        const x0 = bx + crownShift + (3 + n * 2.2) * s;
+        const y0 = by - (8 + n * 0.4) * s;
+        let dx = (3 + n * 1.4 + Math.random() * 1.2) * k;
+        let dy = -(6 + n * 2.2 + Math.random() * 1.5) * k;
+        const cardTop = -((row.bg?.height || 0) * 0.5);
+        const maxRise = y0 - (cardTop + 2 * s);
+        if (maxRise > 0 && -dy > maxRise) dy = -maxRise;
+        const cardRight = ((row.bg?.width || 0) * 0.5) - 2 * s;
+        if (x0 + dx > cardRight) dx = Math.max(0, cardRight - x0);
+        txt.setPosition(x0, y0);
+        st.bits.push({
+            obj: txt,
+            t: 0,
+            life: 2100 + n * 220,
+            x0,
+            y0,
+            dx,
+            dy
+        });
+    }
+
+    _stepCardZBits(st, dt) {
+        const bits = st?.bits;
+        if (!bits) return;
+        for (let i = bits.length - 1; i >= 0; i--) {
+            const b = bits[i];
+            const obj = b.obj;
+            if (!obj?.active) {
+                bits.splice(i, 1);
+                continue;
+            }
+            b.t += dt;
+            const k = Math.min(1, b.t / b.life);
+            const ease = 1 - (1 - k) * (1 - k);
+            obj.setPosition(b.x0 + b.dx * ease, b.y0 + b.dy * ease);
+            obj.setAlpha(1 - k * k);
+            if (k >= 1) {
+                obj.setVisible(false);
+                bits.splice(i, 1);
+            }
+        }
+    }
+
+    _clearCardZzz(row) {
+        const st = row?._zzz;
+        if (!st) return;
+        for (const b of st.bits) b.obj?.setVisible(false);
+        st.bits.length = 0;
+        st.wait = 80;
+        st.seq = 0;
+        row.zzzRoot?.setVisible(false);
+    }
+
+    _destroyCardZzz(row) {
+        const st = row?._zzz;
+        if (!st) return;
+        for (const t of st.pool || []) {
+            try { t.destroy(); } catch (_) {}
+        }
+        row._zzz = null;
+        row.zzzRoot?.setVisible(false);
     }
 
     _clearRows() {
