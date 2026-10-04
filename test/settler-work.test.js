@@ -2997,6 +2997,65 @@ test("cook relights a cold campfire that already holds fuel", () => {
     assert.equal(basket.slots[0]?.quantity, 20);
 });
 
+test("cook clears a full hotbar before lighting instead of standing on it", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [
+            { id: "apple", quantity: 2 },
+            { id: "blueberry", quantity: 2 },
+            { id: "leaf", quantity: 4 },
+            { id: "bone", quantity: 1 },
+            { id: "clay", quantity: 1 }
+        ]
+    });
+    cookOnlyJobs(settle, rec);
+    unlockFire(world, pawn);
+    const fire = addColdFire(world, settle, rec, "fire-full", rec.x + 32);
+    const basket = addBasket(world, settle, rec.x, rec.y, "fuel-full");
+    basket.slots[0] = { id: "stick", quantity: 8 };
+    basket.slots[1] = { id: "sharp_stick", quantity: 1, durability: 50 };
+    let lighting = 0;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if (rec._settlerAct === "Lighting a fire") lighting++;
+        if (fire.id === "campfire" && (fire.burnRemaining || 0) > 0) break;
+    }
+    assert.equal(fire.id, "campfire", `fire stayed cold act=${rec._settlerAct} inv=${JSON.stringify(rec.inventory)}`);
+    assert.ok((fire.burnRemaining || 0) > 0);
+    assert.ok(lighting < 40, `stood on Lighting a fire for ${lighting} ticks`);
+});
+
+test("cook does not stand on Lighting a fire when the starter will not fit", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [
+            { id: "apple", quantity: 2 },
+            { id: "blueberry", quantity: 2 },
+            { id: "leaf", quantity: 4 },
+            { id: "bone", quantity: 1 },
+            { id: "clay", quantity: 1 }
+        ]
+    });
+    cookOnlyJobs(settle, rec);
+    unlockFire(world, pawn);
+    const fire = addColdFire(world, settle, rec, "fire-noroom", rec.x + 16);
+    fire.fuel = [{ id: "stick", quantity: 4 }, null];
+    const basket = addBasket(world, settle, rec.x + 48, rec.y, "drill-only");
+    const def = world._thingDef("wicker_basket");
+    const slots = def?.storage?.slots || basket.slots.length;
+    basket.slots = Array.from({ length: slots }, () => ({ id: "log", quantity: 99 }));
+    basket.slots[0] = { id: "sharp_stick", quantity: 1, durability: 50 };
+    let lighting = 0;
+    for (let i = 0; i < 40; i++) {
+        world.tick(50);
+        if (rec._settlerAct === "Lighting a fire") lighting++;
+    }
+    assert.equal(fire.id, "unlit_campfire");
+    assert.ok(lighting < 8, `stood on Lighting a fire for ${lighting} ticks`);
+});
+
 test("cook lights a cold campfire when allowed fuel is in storage", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn);

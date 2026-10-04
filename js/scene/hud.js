@@ -378,16 +378,25 @@
         const color = this._channelBarFillColor(frac);
         g.clear().setVisible(true);
         g.setScale(1 / zoom);
-        const frameH = Number(thing.frame?.height) || Number(thing.height) || 16;
-        const scaleY = Math.abs(Number(thing.scaleY) || 1) || 1;
-        const spriteH = frameH * scaleY;
-        let inset = (typeof textureOpaqueTopInset === "function"
-            ? textureOpaqueTopInset(this, thing)
-            : 0) * scaleY;
         const id = thing?.entry?.id || thing?.meta?.id || "";
-        if (!(inset > 0) && /stump/i.test(id)) {
-            const visual = Math.max(Number(thing.hitboxSize) || 5, 8);
-            inset = Math.max(0, spriteH - visual);
+        const isFire = id === "campfire" || id === "unlit_campfire";
+        let spriteH;
+        let inset;
+        if (isFire && typeof campfireWorldBarMetrics === "function") {
+            const metrics = campfireWorldBarMetrics(this, thing);
+            spriteH = metrics.spriteH;
+            inset = metrics.inset;
+        } else {
+            const frameH = Number(thing.frame?.height) || Number(thing.height) || 16;
+            const scaleY = Math.abs(Number(thing.scaleY) || 1) || 1;
+            spriteH = frameH * scaleY;
+            inset = (typeof textureOpaqueTopInset === "function"
+                ? textureOpaqueTopInset(this, thing)
+                : 0) * scaleY;
+            if (!(inset > 0) && /stump/i.test(id)) {
+                const visual = Math.max(Number(thing.hitboxSize) || 5, 8);
+                inset = Math.max(0, spriteH - visual);
+            }
         }
         const barY = (typeof GameMath !== "undefined" && GameMath.worldHudBarY)
             ? GameMath.worldHudBarY(thing.y, spriteH, inset, 2)

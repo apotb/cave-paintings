@@ -290,28 +290,81 @@ function lockPixelHit(obj, textureKey, opts = {}) {
     return obj;
 }
 
-/** Rows of fully transparent pixels from the top of a texture frame. Cached. */
-function textureOpaqueTopInset(scene, sprite) {
-    const key = sprite?.texture?.key;
+function _opaqueTopCache(scene) {
+    return scene._opaqueTopCache || (scene._opaqueTopCache = new Map());
+}
+
+/** Rows of fully transparent pixels from the top of one texture frame. Cached. */
+function textureFrameOpaqueTopInset(scene, key, frameName, w, h) {
     if (!scene?.textures?.getPixelAlpha || !key) return 0;
-    const frameName = sprite.frame?.name;
-    const w = Math.max(1, Math.round(Number(sprite.frame?.cutWidth || sprite.frame?.width || sprite.width) || 1));
-    const h = Math.max(1, Math.round(Number(sprite.frame?.cutHeight || sprite.frame?.height || sprite.height) || 1));
-    const cache = scene._opaqueTopCache || (scene._opaqueTopCache = new Map());
-    const cacheKey = `${key}:${frameName}:${w}x${h}`;
+    const width = Math.max(1, Math.round(Number(w) || 1));
+    const height = Math.max(1, Math.round(Number(h) || 1));
+    const cache = _opaqueTopCache(scene);
+    const cacheKey = `${key}:${frameName}:${width}x${height}`;
     if (cache.has(cacheKey)) return cache.get(cacheKey);
     let inset = 0;
-    outer: for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
+    outer: for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
             if (scene.textures.getPixelAlpha(x, y, key, frameName) > 8) {
                 inset = y;
                 break outer;
             }
         }
-        if (y === h - 1) inset = 0;
+        if (y === height - 1) inset = 0;
     }
     cache.set(cacheKey, inset);
     return inset;
+}
+
+/** Rows of fully transparent pixels from the top of a texture frame. Cached. */
+function textureOpaqueTopInset(scene, sprite) {
+    const key = sprite?.texture?.key;
+    if (!key) return 0;
+    const frameName = sprite.frame?.name;
+    const w = Number(sprite.frame?.cutWidth || sprite.frame?.width || sprite.width) || 1;
+    const h = Number(sprite.frame?.cutHeight || sprite.frame?.height || sprite.height) || 1;
+    return textureFrameOpaqueTopInset(scene, key, frameName, w, h);
+}
+
+/**
+ * Smallest top inset across every frame of a sheet. Campfire flames change
+ * height each frame; the world bar uses this so it does not bob.
+ */
+function textureMinOpaqueTopInset(scene, textureKey) {
+    const key = textureKey;
+    if (!scene?.textures?.exists?.(key)) return 0;
+    const cache = _opaqueTopCache(scene);
+    const cacheKey = `${key}:minTop`;
+    if (cache.has(cacheKey)) return cache.get(cacheKey);
+    const tex = scene.textures.get(key);
+    const frames = tex?.frames || {};
+    let min = null;
+    for (const name of Object.keys(frames)) {
+        if (name === "__BASE") continue;
+        const frame = frames[name];
+        const w = frame?.cutWidth || frame?.width || 1;
+        const h = frame?.realHeight || frame?.height || 1;
+        const inset = textureFrameOpaqueTopInset(scene, key, name, w, h);
+        if (min == null || inset < min) min = inset;
+    }
+    if (min == null) min = 0;
+    cache.set(cacheKey, min);
+    return min;
+}
+
+/** Feet-origin bar metrics that stay put while a campfire frame changes. */
+function campfireWorldBarMetrics(scene, thing) {
+    const scaleY = Math.abs(Number(thing?.scaleY) || 1) || 1;
+    const key = "campfire";
+    if (scene?.textures?.exists?.(key)) {
+        const tex = scene.textures.get(key);
+        const frame = tex?.get?.(0) || tex?.frames?.[0] || tex?.frames?.["0"];
+        const frameH = Number(frame?.realHeight || frame?.height) || 16;
+        const inset = textureMinOpaqueTopInset(scene, key);
+        return { spriteH: frameH * scaleY, inset: inset * scaleY };
+    }
+    const frameH = Number(thing?.frame?.realHeight || thing?.frame?.height || thing?.height) || 16;
+    return { spriteH: frameH * scaleY, inset: 0 };
 }
 
 /** True if Phaser's hit test still includes `obj` (honors lockPixelHit). */

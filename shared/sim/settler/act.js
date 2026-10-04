@@ -63,6 +63,7 @@
     const faceFire = (...args) => ctx.faceFire(...args);
     const researchHolder = (...args) => ctx.researchHolder(...args);
     const fireCanFuel = (...args) => ctx.fireCanFuel(...args);
+    const stationKey = (...args) => ctx.stationKey(...args);
 
 
 function mergeNeedsRoom(rec, job) {
@@ -892,25 +893,74 @@ function doStokeFire(world, rec, settle, fire) {
     return halt(facing ? { facing } : null);
 }
 
+function markStarterNeedsRoom(rec) {
+    if (!rec._settlerScan) return;
+    const light = rec._settlerScan.light || {};
+    rec._settlerScan.light = { ...light, starterNeedsRoom: true };
+}
+
+function holdFirestarter(rec, starter) {
+    if (!starter || starter.at !== rec) return false;
+    if (starter.kind === "inv") {
+        rec.hotbarIndex = starter.index;
+        return true;
+    }
+    if (starter.kind !== "overflow") return false;
+    const inv = rec.inventory || [];
+    const empty = inv.findIndex((s) => !s);
+    if (empty < 0) return false;
+    inv[empty] = starter.slots[starter.index];
+    starter.slots[starter.index] = null;
+    rec.hotbarIndex = empty;
+    return true;
+}
+
 function doLightFire(world, rec, settle, fire) {
-    if (Research?.techUnlocked && !Research.techUnlocked("fire", researchHolder(world, rec, settle))) return halt();
+    if (Research?.techUnlocked && !Research.techUnlocked("fire", researchHolder(world, rec, settle))) {
+        endWorkHold(rec);
+        return halt();
+    }
     if (!fire) return halt();
     if (!fireCanFuel(world, rec, settle, fire)) {
         endWorkHold(rec);
         return halt();
     }
+    const starter = findStack(world, rec, settle, (s) => Settlement.isFirestarter(s, getItem));
+    if (!starter) {
+        endWorkHold(rec);
+        skipJob(rec, stationKey(fire));
+        return halt();
+    }
+    // Fetch the starter before loading fuel. A full hotbar used to dump sticks
+    // into a cold pit, fail to pick up the drill, and stand there forever.
+    if (starter.at !== rec) {
+        const stack = starter.slots?.[starter.index];
+        if (!canGivePawn(rec, stack && { ...stack, quantity: 1 })) {
+            endWorkHold(rec);
+            markStarterNeedsRoom(rec);
+            if (!firstStashable(rec, keepGearOpts())) skipJob(rec, stationKey(fire));
+            return halt();
+        }
+        return fetchStack(world, rec, settle, starter) || halt();
+    }
     const walked = goOrWalk(world, rec, fire);
     if (walked) return walked;
     const facing = faceFire(rec, fire);
-    if (world._campfireHasFuel(fire) || stokeUntilKeep(world, rec, settle, fire)) {
-        const starter = findStack(world, rec, settle, (s) => Settlement.isFirestarter(s, getItem));
-        if (starter && starter.at !== rec) return fetchStack(world, rec, settle, starter) || halt();
-        if (starter) rec.hotbarIndex = starter.index;
-        world._campfireEnsureBurning(fire);
-        if (starter && starter.at === rec) world._wearHeld(rec, 1);
-        emitEntry(world, fire);
+    const face = facing ? { facing } : null;
+    if (!(world._campfireHasFuel(fire) || stokeUntilKeep(world, rec, settle, fire))) {
+        endWorkHold(rec);
+        return halt(face);
     }
-    return halt(facing ? { facing } : null);
+    const wear = holdFirestarter(rec, starter);
+    const lit = world._campfireEnsureBurning(fire);
+    if (!lit) {
+        endWorkHold(rec);
+        skipJob(rec, stationKey(fire));
+        return halt(face);
+    }
+    if (wear) world._wearHeld(rec, 1);
+    emitEntry(world, fire);
+    return halt(face);
 }
     ctx.mergeNeedsRoom = mergeNeedsRoom;
     ctx.fetchTarget = fetchTarget;

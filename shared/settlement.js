@@ -1607,7 +1607,9 @@
             // Same for cook: a paused or reordered bill must drop the roast hold.
             const keepLeather = busyJob.type !== "leather" || state.leatherWork || state.benchBill;
             const keepCook = busyJob.type !== "cook" || sameCookJob(busyJob.target, state.cookBill);
-            if (keepLeather && keepCook) return busyJob;
+            // Hands full: drop the light hold so a stash can free a slot for the starter.
+            const keepLight = busyJob.type !== "cook_light" || !state.light?.starterNeedsRoom;
+            if (keepLeather && keepCook && keepLight) return busyJob;
         }
         if (!busy && (Number(state.kc) || 0) < AUTO && state.canEat !== false) return { type: "eat" };
         if (state.isOrphan) return { type: "idle" };
@@ -1639,7 +1641,13 @@
             }
             if (job === "cook") {
                 if (state.unlitFire && cookCanLight(state.light || {})) {
-                    return { type: "cook_light", target: state.unlitFire };
+                    if (state.light?.starterNeedsRoom) {
+                        if (state.hasStash && state.stashBasket) {
+                            return { type: "stash", target: state.stashBasket };
+                        }
+                    } else {
+                        return { type: "cook_light", target: state.unlitFire };
+                    }
                 }
                 if (state.cookBill) return { type: "cook", target: state.cookBill };
                 if (state.stokeFire) return { type: "cook_stoke", target: state.stokeFire };

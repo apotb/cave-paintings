@@ -66,6 +66,7 @@
     const pigmentPred = (...args) => ctx.pigmentPred(...args);
     const keepGearOpts = (...args) => ctx.keepGearOpts(...args);
     const stashScan = (...args) => ctx.stashScan(...args);
+    const canGivePawn = (...args) => ctx.canGivePawn(...args);
 
 
 function haulDrop(world, rec, settle, claims) {
@@ -335,13 +336,25 @@ function stokeFire(world, rec, settle, claims) {
 
 function lightOpts(world, rec, settle) {
     let hasFirestarter = false;
-    const scan = (slots) => {
+    let starterHeld = false;
+    let storedStarter = null;
+    const scan = (slots, held) => {
         for (const s of slots || []) {
-            if (Settlement.isFirestarter(s, getItem)) hasFirestarter = true;
+            if (!Settlement.isFirestarter(s, getItem)) continue;
+            hasFirestarter = true;
+            if (held) starterHeld = true;
+            else if (!storedStarter) storedStarter = s;
         }
     };
-    scan(rec.inventory);
-    for (const b of basketsOf(world, settle)) scan(b.slots);
+    scan(rec.inventory, true);
+    scan(rec.overflow, true);
+    for (const b of basketsOf(world, settle)) scan(b.slots, false);
+    // A starter in a basket does no good when the hotbar cannot take it.
+    // Cook would otherwise stand on "Lighting a fire" and never ignite.
+    let starterNeedsRoom = false;
+    if (hasFirestarter && !starterHeld && storedStarter) {
+        starterNeedsRoom = !canGivePawn(rec, { ...storedStarter, quantity: 1 });
+    }
     let hasFuel = false;
     for (const f of stationsOf(world, settle, "campfire")) {
         if (fireCanFuel(world, rec, settle, f)) hasFuel = true;
@@ -350,6 +363,7 @@ function lightOpts(world, rec, settle) {
         hasFirestarter,
         hasFuel,
         hasGroundRecipe: false,
+        starterNeedsRoom,
         knowsFire: !Research?.techUnlocked || Research.techUnlocked("fire", researchHolder(world, rec, settle))
     };
 }
