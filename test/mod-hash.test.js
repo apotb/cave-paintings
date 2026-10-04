@@ -107,6 +107,16 @@ test("simDocument.v is 1 and is not the protocol version", () => {
     assert.deepEqual(doc.scripts.map((row) => row.modId), [EXAMPLE]);
 });
 
+test("browser SHA-256 matches node crypto", () => {
+    const crypto = require("crypto");
+    const samples = ["", "abc", "cave paintings", Hash.canonicalString(Content.simDocument())];
+    for (const text of samples) {
+        const want = crypto.createHash("sha256").update(text, "utf8").digest("hex");
+        const got = Hash.sha256BytesSync(Buffer.from(text, "utf8"));
+        assert.equal(got, want);
+    }
+});
+
 test("_source and _textureUrl do not change the hash", () => {
     const apple = DataStore.getItem("apple");
     const before = Content.simHash();
