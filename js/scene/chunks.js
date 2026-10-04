@@ -366,11 +366,21 @@
         const wx = Math.round(p.posX());
         const wy = Math.round(p.posY());
         if (!Number.isFinite(wx) || !Number.isFinite(wy)) return;
-        if (wx !== this._oldWaterX || wy !== this._oldWaterY) {
-            this._oldWaterX = wx;
-            this._oldWaterY = wy;
-            spr.setPosition(wx * this.tileSize, wy * this.tileSize);
-        }
+        const ts = this.tileSize;
+        const x = wx * ts;
+        const y = wy * ts;
+        const cam = this.cameras?.main?.worldView;
+        const left = spr.x - spr.width * spr.originX;
+        const top = spr.y - spr.height * spr.originY;
+        const covers = cam
+            && left <= cam.x
+            && top <= cam.y
+            && left + spr.width >= cam.right
+            && top + spr.height >= cam.bottom;
+        if (covers && wx === this._oldWaterX && wy === this._oldWaterY) return;
+        this._oldWaterX = wx;
+        this._oldWaterY = wy;
+        if (spr.x !== x || spr.y !== y) spr.setPosition(x, y);
     },
     };
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -100,6 +100,10 @@ class SceneMain extends SceneBase {
         this._craftMenuData = null;
         this.fpsText = this.locXText = this.locYText = null;
         this._waterSprite = null;
+        // Scene instance is reused. Stale tile coords would skip the first
+        // backdrop move, so water stays off-camera until the player changes tiles.
+        this._oldWaterX = null;
+        this._oldWaterY = null;
         this.groundLayer = this.mainLayer = this.uiLayer = this.veilLayer = this.worldHudLayer = null;
         this._hoverTarget = null;
         this._tooltipTarget = null;
@@ -317,6 +321,9 @@ class SceneMain extends SceneBase {
             || "Player";
 
         if (this.isNet) this._setupNetPlay();
+        // Player pose is final now. Place the backdrop before the first paint
+        // so water tiles are not black while the world comes up.
+        this._syncWaterSprite();
         this._playReady = true;
     }
 
