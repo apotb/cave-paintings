@@ -176,7 +176,7 @@ test("bushes including snow take a quarter of clay health and drop sticks and le
         assert.equal(last.done, true, id);
         const drops = Dig.rollDrops(def, () => 0);
         const byId = Object.fromEntries(drops.map((d) => [d.id, d.quantity]));
-        assert.equal(byId.stick, 6, id);
+        assert.equal(byId.stick, 3, id);
         assert.equal(byId.leaf, 8, id);
         assert.equal(byId.log, undefined, id);
         if (id === "blueberry_bush") assert.equal(byId.blueberry, 5);

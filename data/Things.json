@@ -95,7 +95,7 @@
         "diggable": {
             "health": 0.25,
             "drops": {
-                "stick": [6, 10],
+                "stick": [3, 5],
                 "leaf": [8, 14]
             }
         }
@@ -114,7 +114,7 @@
         "diggable": {
             "health": 0.25,
             "drops": {
-                "stick": [6, 10],
+                "stick": [3, 5],
                 "leaf": [8, 14]
             }
         }
@@ -127,7 +127,7 @@
         "diggable": {
             "health": 0.25,
             "drops": {
-                "stick": [6, 10],
+                "stick": [3, 5],
                 "leaf": [8, 14]
             }
         }

@@ -329,7 +329,7 @@ test("dig melee uproots grass, snow, and blueberry bushes in 5 hits with stick a
         assert.equal(originChunk(world)[spec.list].includes(bush), false, spec.id);
         const drops = originChunk(world).drops;
         const qty = (id) => drops.filter((d) => d.id === id).reduce((n, d) => n + d.quantity, 0);
-        assert.ok(qty("stick") >= 6 && qty("stick") <= 10, `${spec.id} sticks`);
+        assert.ok(qty("stick") >= 3 && qty("stick") <= 5, `${spec.id} sticks`);
         assert.ok(qty("leaf") >= 8 && qty("leaf") <= 14, `${spec.id} leaves`);
         assert.equal(qty("log"), 0, spec.id);
         assert.equal(qty("clay"), 0, spec.id);
