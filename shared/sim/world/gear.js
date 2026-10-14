@@ -495,6 +495,7 @@
                 pile.quantity = qty + add;
                 // Merged stacks refresh despawn timer (matches client DroppedItem.spawn)
                 pile.lifeMs = DROP_LIFE_MS;
+                this._stampHaulHold(pile, opts);
                 remaining -= add;
                 last = pile;
             }
@@ -518,11 +519,19 @@
             this._applyStackExtras(entry, this._stackExtrasFrom(drop));
             if (drop.spoilAt != null) entry.spoilAt = drop.spoilAt;
             this._stampDropSoak(entry);
+            this._stampHaulHold(entry, opts);
             c.drops.push(entry);
             last = entry;
             remaining -= add;
         }
         return last;
+    },
+
+    /** Player-laid sticks/leaves stay unhaulable until that pawn leaves. */
+    _stampHaulHold(pile, opts) {
+        const owner = opts && opts.haulHoldOwner;
+        if (owner == null || owner === "") return;
+        pile.haulHoldOwner = String(owner).slice(0, 64);
     },
 
     /** Character → world stack (spoilLeft → spoilAt). */

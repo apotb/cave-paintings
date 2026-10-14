@@ -916,6 +916,141 @@ test("dedicated settler hauls a ground drop into a basket", () => {
     assert.ok(inInv || inBasket, "sticks should leave the ground");
 });
 
+function layHotbarDrop(world, pawn, id, amount = 1) {
+    pawn.inventory[0] = { id, quantity: amount };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.DROP,
+        amount,
+        x: pawn.x,
+        y: pawn.y
+    });
+}
+
+function onlyHaul(settle, rec) {
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1, research: 0
+    };
+}
+
+function carries(rec, basket, itemId) {
+    return [rec.inventory, rec.overflow, basket?.slots].some(
+        (slots) => (slots || []).some((s) => s && s.id === itemId)
+    );
+}
+
+test("dedicated settler leaves player-dropped sticks until the dropper walks away", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    onlyHaul(settle, rec);
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    layHotbarDrop(world, pawn, "stick", 3);
+    const chunk = originChunk(world);
+    const pile = chunk.drops.find((d) => d.id === "stick");
+    assert.ok(pile, "drop should land");
+    assert.equal(pile.haulHoldOwner, pawn.id);
+
+    workOnce(world, rec);
+    workOnce(world, rec);
+    assert.ok(chunk.drops.some((d) => d.uid === pile.uid), "sticks stay while the dropper is on them");
+    assert.equal(carries(rec, basket, "stick"), false);
+    assert.equal(pile.haulHoldOwner, pawn.id);
+
+    pawn.x += 4 * 16;
+    workOnce(world, rec);
+    workOnce(world, rec);
+    assert.equal(pile.haulHoldOwner, pawn.id, "four tiles is still fire range");
+    assert.ok(chunk.drops.some((d) => d.uid === pile.uid));
+
+    pawn.x += 16;
+    workOnce(world, rec);
+    workOnce(world, rec);
+    assert.equal(pile.haulHoldOwner, undefined);
+    assert.ok(carries(rec, basket, "stick"), "sticks haul once the dropper leaves");
+});
+
+test("dedicated settler leaves player-dropped leaves until the dropper walks away", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    onlyHaul(settle, rec);
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    layHotbarDrop(world, pawn, "leaf", 3);
+    const chunk = originChunk(world);
+    const pile = chunk.drops.find((d) => d.id === "leaf");
+    assert.equal(pile?.haulHoldOwner, pawn.id);
+
+    workOnce(world, rec);
+    workOnce(world, rec);
+    assert.ok(chunk.drops.some((d) => d.uid === pile.uid));
+    assert.equal(carries(rec, basket, "leaf"), false);
+
+    pawn.x += 5 * 16;
+    workOnce(world, rec);
+    workOnce(world, rec);
+    assert.equal(pile.haulHoldOwner, undefined);
+    assert.ok(carries(rec, basket, "leaf"), "leaves haul once the dropper leaves");
+});
+
+test("dedicated settler hauls a pebble dropped beside the player", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    onlyHaul(settle, rec);
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    layHotbarDrop(world, pawn, "pebble", 1);
+    const chunk = originChunk(world);
+    const pile = chunk.drops.find((d) => d.id === "pebble");
+    assert.ok(pile);
+    assert.equal(pile.haulHoldOwner, undefined);
+    workOnce(world, rec);
+    workOnce(world, rec);
+    assert.equal(chunk.drops.some((d) => d.uid === pile.uid), false);
+    assert.ok(carries(rec, basket, "pebble"), "pebbles stay haulable");
+});
+
+test("dedicated settler hauls unowned sticks while the player stands on them", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    onlyHaul(settle, rec);
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    const chunk = originChunk(world);
+    chunk.drops.push({ uid: "world-sticks", id: "stick", quantity: 3, x: pawn.x, y: pawn.y });
+    workOnce(world, rec);
+    workOnce(world, rec);
+    assert.equal(chunk.drops.some((d) => d.uid === "world-sticks"), false);
+    assert.ok(carries(rec, basket, "stick"), "world sticks haul with the player standing there");
+});
+
+test("merging a player stick drop into a pile holds that pile until the player leaves", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    onlyHaul(settle, rec);
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    const chunk = originChunk(world);
+    chunk.drops.push({ uid: "pile", id: "stick", quantity: 4, x: pawn.x, y: pawn.y });
+    layHotbarDrop(world, pawn, "stick", 1);
+    const sticks = chunk.drops.filter((d) => d.id === "stick");
+    assert.equal(sticks.length, 1);
+    assert.equal(sticks[0].uid, "pile");
+    assert.equal(sticks[0].quantity, 5);
+    assert.equal(sticks[0].haulHoldOwner, pawn.id);
+
+    workOnce(world, rec);
+    workOnce(world, rec);
+    assert.ok(chunk.drops.some((d) => d.uid === "pile"), "merged pile stays while the dropper is on it");
+    assert.equal(carries(rec, basket, "stick"), false);
+
+    pawn.x += 5 * 16;
+    workOnce(world, rec);
+    workOnce(world, rec);
+    assert.equal(sticks[0].haulHoldOwner, undefined);
+    assert.ok(carries(rec, basket, "stick"), "merged pile hauls once the dropper leaves");
+});
+
 test("dedicated settler does not haul sticks past the stock target", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn);

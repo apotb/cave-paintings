@@ -166,7 +166,10 @@
             creature.x = dx;
             creature.y = dy;
         }
-        if (worldStack) this._pushDrop(dx, dy, worldStack);
+        const fireLay = worldStack && (worldStack.id === "stick" || worldStack.id === "leaf");
+        if (worldStack) {
+            this._pushDrop(dx, dy, worldStack, fireLay ? { haulHoldOwner: p.id } : null);
+        }
         this._dirtyPawnOwner(p);
     },
 

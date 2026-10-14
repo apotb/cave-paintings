@@ -856,7 +856,51 @@ function dropAsStack(drop) {
     };
 }
 
+/** Same reach as lighting a ground fire (HARVEST_RANGE_TILES). */
+const HAUL_HOLD_TILES = 4;
+
+function findHaulHoldOwner(world, id) {
+    if (!world || !id) return null;
+    const players = world.players;
+    if (players && typeof players.get === "function") {
+        const session = players.get(id);
+        if (session) return session.dead ? null : session;
+        if (typeof players.values === "function") {
+            for (const p of players.values()) {
+                const mem = (p?.party || []).find((m) => m && m.id === id);
+                if (mem) return mem.dead ? null : mem;
+            }
+        }
+    }
+    const creature = world.creatures?.get?.(id);
+    if (creature) return creature.dead ? null : creature;
+    return null;
+}
+
+/**
+ * Player-laid sticks and leaves stay put while the dropper is still in
+ * fire-lighting range. Leaving clears the hold for good.
+ */
+function haulHoldBlocks(world, drop) {
+    const id = drop?.haulHoldOwner;
+    if (!id) return false;
+    const owner = findHaulHoldOwner(world, id);
+    const ox = Number(owner?.x);
+    const oy = Number(owner?.y);
+    const dx = Number(drop.x);
+    const dy = Number(drop.y);
+    const range = (TS || 16) * HAUL_HOLD_TILES;
+    const near = owner && !owner.dead
+        && Number.isFinite(ox) && Number.isFinite(oy)
+        && Number.isFinite(dx) && Number.isFinite(dy)
+        && (ox - dx) * (ox - dx) + (oy - dy) * (oy - dy) <= range * range;
+    if (near) return true;
+    delete drop.haulHoldOwner;
+    return false;
+}
+
 function leaveHaulDrop(world, drop) {
+    if (haulHoldBlocks(world, drop)) return true;
     const def = getItem(drop?.id);
     return Hide.leaveHaulInWater(def, world._dropIsOnWater(drop));
 }
