@@ -112,6 +112,8 @@ class SettlementPanel {
     _setScroll(y) {
         this._scroll = Phaser.Math.Clamp(y, 0, this._maxScroll);
         this.body.setY(this._bodyY - this._scroll);
+        // Column labels stay put while the rows slide under them.
+        if (this._jobHeader?.active) this._jobHeader.setY(this._scroll);
         this._layoutScrollbar();
     }
 
@@ -367,6 +369,8 @@ class SettlementPanel {
     }
 
     _clearBody() {
+        this._jobHeader = null;
+        this._jobGridGfx = null;
         this.body.removeAll(true);
         this._rows = [];
         this._stockRows = [];
@@ -727,8 +731,12 @@ class SettlementPanel {
         const cellHover = 0x2a2218;
         const cellPress = 0x0a0806;
 
+        const header = scene.add.container(0, 0);
         const headerFill = scene.add.rectangle(0, 0, gridW, headerH, headerBg, 1).setOrigin(0, 0);
-        this.body.add(headerFill);
+        const nameBlock = scene.add.rectangle(0, 0, nameW, headerH, headerBg, 0)
+            .setOrigin(0, 0)
+            .setInteractive();
+        header.add([headerFill, nameBlock]);
 
         for (let i = 0; i < nJobs; i++) {
             const j = jobs[i];
@@ -747,10 +755,19 @@ class SettlementPanel {
                 if (this._pointerStillOn(hit, pointer)) return;
                 if (scene._tooltipTarget === hit) scene.hideTooltip?.();
             });
-            this.body.add(hit);
-            const ht = this._label(S?.jobLabel?.(j) || j, hx, hy, 10);
-            ht.setOrigin(0.5, 0.5);
+            header.add(hit);
+            const ht = scene.add.text(hx, hy, S?.jobLabel?.(j) || j, {
+                fontFamily: PIXEL_UI_FONT,
+                fontSize: `${pixelUiFontSize(10, sc)}px`,
+                color: "#d4c4a8"
+            }).setOrigin(0.5, 0.5);
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(ht, 10, sc);
+            header.add(ht);
         }
+        const headerEdge = scene.add.graphics();
+        headerEdge.lineStyle(stroke, line, 1);
+        headerEdge.lineBetween(0, headerH + stroke / 2, gridW, headerH + stroke / 2);
+        header.add(headerEdge);
 
         this._jobHeaderH = headerH;
         this._jobRowH = rowH;
@@ -867,6 +884,8 @@ class SettlementPanel {
         }
         this.body.add(g);
         this._jobGridGfx = g;
+        this.body.add(header);
+        this._jobHeader = header;
         return gridH + 8 * sc;
     }
 
@@ -878,7 +897,9 @@ class SettlementPanel {
         if (ri < 0) return;
         list.splice(ri, 1);
         const gi = list.indexOf(this._jobGridGfx);
-        list.splice(gi >= 0 ? gi : list.length, 0, row);
+        const hi = list.indexOf(this._jobHeader);
+        const at = gi >= 0 ? gi : (hi >= 0 ? hi : list.length);
+        list.splice(at, 0, row);
     }
 
     _jobIndexAtPointer(pointer) {
