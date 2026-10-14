@@ -342,7 +342,22 @@ class ClayFigurine extends Thing {
             for (const line of Stats.tooltipLines(item, stack)) lines.push(line);
         }
         if (entry.tooltipExtra) lines.push(entry.tooltipExtra);
-        return lines.join("\n");
+        const text = lines.join("\n");
+        const preview = this._formPreviewKey();
+        return preview ? { text, preview } : text;
+    }
+
+    /** Inventory 3D bake. A copy so session texture keys stay off the chunk entry. */
+    _formPreviewKey() {
+        const entry = this.entry;
+        if (!entry?.formVoxels || typeof ClayForming === "undefined") return null;
+        const scene = this.scene;
+        const key = ClayForming.ensureFormTexture(scene, {
+            formVoxels: entry.formVoxels,
+            formColor: entry.formColor,
+            formIcon: entry.formIcon
+        });
+        return key && scene?.textures?.exists?.(key) ? key : null;
     }
 
     inRange(pawn = null) {

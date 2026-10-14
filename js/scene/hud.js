@@ -436,14 +436,16 @@
 
     _tooltipPayload(raw) {
         if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+            const preview = typeof raw.preview === "string" && raw.preview ? raw.preview : null;
             return {
                 text: raw.text || "",
                 rows: Array.isArray(raw.rows) ? raw.rows : null,
                 lines: Array.isArray(raw.lines) ? raw.lines : null,
-                hunger: raw.hunger && typeof raw.hunger === "object" ? raw.hunger : null
+                hunger: raw.hunger && typeof raw.hunger === "object" ? raw.hunger : null,
+                preview
             };
         }
-        return { text: raw || "", rows: null, lines: null, hunger: null };
+        return { text: raw || "", rows: null, lines: null, hunger: null, preview: null };
     },
 
     _splitTooltipText(text) {
@@ -464,7 +466,7 @@
 
     _applyTooltipPayload() {
         const raw = this._tooltipSource ? this._tooltipSource() : "";
-        const { text, rows, lines, hunger } = this._tooltipPayload(raw);
+        const { text, rows, lines, hunger, preview } = this._tooltipPayload(raw);
         const useHunger = !!hunger;
         const split = useHunger ? this._splitTooltipText(text) : { head: text, tail: "" };
         const head = useHunger ? split.head : text;
@@ -473,14 +475,16 @@
         const linesSig = this._tooltipLinesSig(lines);
         const extraSig = lines?.length ? `L:${linesSig}` : `G:${gearSig}`;
         const hungerSig = this._hungerSig(hunger);
+        const previewKey = preview || "";
         if (
             this._tooltipDrawn
             && this.tooltipText.text === head
             && (this.tooltipSub?.text || "") === tail
             && extraSig === this._tooltipGearSig
             && hungerSig === this._tooltipHungerSig
+            && previewKey === (this._tooltipPreviewKey || "")
         ) {
-            return !!(head || tail || this._tooltipGearH || this._tooltipHungerH);
+            return !!(head || tail || this._tooltipGearH || this._tooltipHungerH || this._tooltipPreviewH);
         }
         this.tooltipText.setText(head);
         if (this.tooltipSub) {
@@ -489,9 +493,10 @@
         }
         if (lines?.length) this._syncTooltipLines(lines, extraSig);
         else this._syncTooltipGear(rows, extraSig);
+        this._syncTooltipPreview(previewKey);
         this._layoutTooltip(hunger);
         this._tooltipDrawn = true;
-        return !!(head || tail || this._tooltipGearH || this._tooltipHungerH);
+        return !!(head || tail || this._tooltipGearH || this._tooltipHungerH || this._tooltipPreviewH);
     },
 
     _syncTooltipHunger(hunger, sig) {
@@ -547,6 +552,7 @@
             this.tooltipText.setPadding(pad);
             if (this.tooltipSub) this.tooltipSub.setPadding(pad);
         }
+        if (this.tooltipText?.style?.wordWrapWidth) this.tooltipText.setWordWrapWidth(0);
         this._syncTooltipHunger(hunger, this._hungerSig(hunger));
         const hasText = !!(this.tooltipText?.text);
         this.tooltipText?.setVisible(hasText);
@@ -571,8 +577,22 @@
         }
         const gearGap = gh > 0 ? gap : 0;
         if (this.tooltipGear) this.tooltipGear.setPosition(0, y + gearGap);
-        const innerW = Math.max(tw, sw, gw, hh > 0 ? hw + pad * 2 : 0);
-        const innerH = y + gearGap + gh;
+        const afterGear = y + gearGap + gh;
+        const pw = this._tooltipPreviewW || 0;
+        const ph = this._tooltipPreviewH || 0;
+        const previewGap = ph > 0 ? gap : 0;
+        const previewSpan = ph > 0 ? pw + pad * 2 : 0;
+        const innerW = Math.max(tw, sw, gw, hh > 0 ? hw + pad * 2 : 0, previewSpan);
+        const previewY = afterGear + previewGap;
+        if (this.tooltipPreview) {
+            if (ph > 0) {
+                this.tooltipPreview.setOrigin(0, 0);
+                this.tooltipPreview.setPosition(pad, previewY);
+            } else {
+                this.tooltipPreview.setPosition(0, 0);
+            }
+        }
+        const innerH = previewY + ph;
         const boxW = innerW + pad * 2;
         const boxH = innerH + pad * 2;
         this._tooltipBoxW = boxW;
@@ -613,6 +633,111 @@
         this._tooltipGearW = 0;
         this._tooltipGearH = 0;
         this.tooltipGear?.removeAll(true);
+    },
+
+    _clearTooltipPreview() {
+        this._tooltipPreviewKey = "";
+        this._tooltipPreviewW = 0;
+        this._tooltipPreviewH = 0;
+        this.tooltipPreview?.setVisible(false);
+    },
+
+    /**
+     * Opaque pixel bounds of a bake. The inventory square has empty margin the tip should not keep.
+     * @returns {{ x: number, y: number, w: number, h: number } | null}
+     */
+    _tooltipOpaqueBounds(data, width, height) {
+        const w = width | 0;
+        const h = height | 0;
+        if (!data || w < 1 || h < 1) return null;
+        let minX = w;
+        let minY = h;
+        let maxX = -1;
+        let maxY = -1;
+        for (let y = 0; y < h; y++) {
+            const row = y * w * 4;
+            for (let x = 0; x < w; x++) {
+                if (data[row + x * 4 + 3] < 16) continue;
+                if (x < minX) minX = x;
+                if (y < minY) minY = y;
+                if (x > maxX) maxX = x;
+                if (y > maxY) maxY = y;
+            }
+        }
+        if (maxX < minX || maxY < minY) return null;
+        const edge = 1;
+        minX = Math.max(0, minX - edge);
+        minY = Math.max(0, minY - edge);
+        maxX = Math.min(w - 1, maxX + edge);
+        maxY = Math.min(h - 1, maxY + edge);
+        return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+    },
+
+    /** Cropped bake so the tip hugs the sculpture instead of the empty square. */
+    _tooltipPreviewContentKey(key) {
+        const cropped = `${key}_tip`;
+        if (this.textures.exists(cropped)) return cropped;
+        let src = null;
+        try {
+            const tex = this.textures.get(key);
+            src = tex?.getSourceImage?.() || tex?.source?.[0]?.image || null;
+        } catch (_) {
+            src = null;
+        }
+        if (!src?.width || typeof document === "undefined") return key;
+        const canvas = document.createElement("canvas");
+        canvas.width = src.width;
+        canvas.height = src.height;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) return key;
+        try {
+            ctx.drawImage(src, 0, 0);
+        } catch (_) {
+            return key;
+        }
+        const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const bounds = this._tooltipOpaqueBounds(frame.data, canvas.width, canvas.height);
+        if (!bounds) return key;
+        if (bounds.w === canvas.width && bounds.h === canvas.height) return key;
+        const out = document.createElement("canvas");
+        out.width = bounds.w;
+        out.height = bounds.h;
+        const octx = out.getContext("2d");
+        if (!octx) return key;
+        octx.drawImage(canvas, bounds.x, bounds.y, bounds.w, bounds.h, 0, 0, bounds.w, bounds.h);
+        this.textures.addCanvas(cropped, out);
+        try {
+            const linear = typeof Phaser !== "undefined" ? Phaser.Textures.FilterMode.LINEAR : null;
+            if (linear != null) this.textures.get(cropped)?.setFilter?.(linear);
+        } catch (_) { /* keep the bake's own filter */ }
+        return cropped;
+    },
+
+    /** Inventory render under the tip text, cropped and capped so the box hugs the clay. */
+    _syncTooltipPreview(key) {
+        const next = key && this.textures?.exists?.(key) ? key : "";
+        this._tooltipPreviewKey = next;
+        if (!next) {
+            this._tooltipPreviewW = 0;
+            this._tooltipPreviewH = 0;
+            this.tooltipPreview?.setVisible(false);
+            return;
+        }
+        const contentKey = this._tooltipPreviewContentKey(next);
+        if (!this.tooltipPreview) {
+            this.tooltipPreview = this.add.image(0, 0, contentKey).setOrigin(0, 0);
+            this.tooltip?.add(this.tooltipPreview);
+        }
+        this.tooltipPreview.setTexture(contentKey);
+        const fw = Math.max(1, Number(this.tooltipPreview.width) || 1);
+        const fh = Math.max(1, Number(this.tooltipPreview.height) || 1);
+        const max = Math.round(64 * (this.uiScale || 1));
+        const fit = max / Math.max(fw, fh);
+        const dw = Math.max(1, Math.round(fw * fit));
+        const dh = Math.max(1, Math.round(fh * fit));
+        this.tooltipPreview.setDisplaySize(dw, dh).setVisible(true);
+        this._tooltipPreviewW = dw;
+        this._tooltipPreviewH = dh;
     },
 
     _syncTooltipGear(rows, sig = null) {

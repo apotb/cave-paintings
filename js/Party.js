@@ -763,7 +763,7 @@ class PartySystem {
         const held = pawn.getHeldItem?.();
         if (!held || !(held.quantity > 0)) return "";
         if (scene.clayFormingPanel?.canOpenHeld?.(held)) {
-            return held.id === "clay" ? "Click yourself to form clay" : "Click yourself to form";
+            return "Click yourself to form clay";
         }
         return "";
     }
@@ -1474,7 +1474,7 @@ class PartySystem {
                 if (selfTip) {
                     const idle = !busy || busy === "Waiting" || busy === "Idle";
                     if (!idle) return `${name}\n${busy}\n${selfTip}`;
-                    return name ? `${name}\n${selfTip}` : selfTip;
+                    return selfTip;
                 }
                 if (!busy && !downed) return "";
                 return busy ? text : (name ? `${name}\nDowned` : "Downed");

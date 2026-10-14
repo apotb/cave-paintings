@@ -44,6 +44,9 @@
         this._tooltipHungerSig = "";
         this._tooltipHungerW = 0;
         this._tooltipHungerH = 0;
+        this._tooltipPreviewKey = "";
+        this._tooltipPreviewW = 0;
+        this._tooltipPreviewH = 0;
         this._tooltipBoxW = 0;
         this._tooltipBoxH = 0;
         this._tooltipDrawn = false;
@@ -191,6 +194,7 @@
             this._tooltipTarget = null;
             this._tooltipDrawn = false;
             this._clearTooltipGear();
+            this._clearTooltipPreview?.();
             this._syncTooltipHunger(null, "");
             this.tooltipSub?.setText("");
             this.tooltipSub?.setVisible(false);
