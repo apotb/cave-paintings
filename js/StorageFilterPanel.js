@@ -44,6 +44,8 @@ class StorageFilterPanel {
         this.closeBtn = this._btn(0, 0, "Close", () => this.close(), { w: 52, h: 22 });
         this.prioBtn = this._btn(0, 0, "Priority: Normal", () => {}, { w: 160, h: 22 });
         this._bindPriority(this.prioBtn);
+        this.setAllBtn = this._btn(0, 0, "Set All", () => this._setAll(), { w: 88, h: 22 });
+        this.setNoneBtn = this._btn(0, 0, "Set None", () => this._setNone(), { w: 96, h: 22 });
         this.body = scene.add.container(12, 36);
         this._maskGfx = scene.make.graphics({ x: 0, y: 0, add: false });
         this.body.setMask(this._maskGfx.createGeometryMask());
@@ -52,7 +54,7 @@ class StorageFilterPanel {
         this.root.add([
             this.bg, this.title, this.subtitle, this.body,
             this.scrollTrack, this.scrollThumb,
-            this.prioBtn, this.closeBtn
+            this.prioBtn, this.setAllBtn, this.setNoneBtn, this.closeBtn
         ]);
     }
 
@@ -272,6 +274,18 @@ class StorageFilterPanel {
         this._commit(f);
     }
 
+    _setAll() {
+        const SF = this._SF();
+        if (!SF?.setAll) return;
+        this._commit(SF.setAll(this._filter()));
+    }
+
+    _setNone() {
+        const SF = this._SF();
+        if (!SF?.setNone) return;
+        this._commit(SF.setNone(this._filter()));
+    }
+
     open(settle, thing) {
         if (!settle || !thing?.entry?.uid) return;
         this.settle = settle;
@@ -330,8 +344,16 @@ class StorageFilterPanel {
         const prioW = Math.round(168 * s);
         const prioH = Math.round(22 * s);
         const prioY = Math.round(42 * s);
+        const bulkGap = Math.round(8 * s);
+        const allW = Math.round(88 * s);
+        const noneW = Math.round(96 * s);
         this.prioBtn.setPosition(pad + prioW / 2, prioY);
         this._sizeBtn(this.prioBtn, prioW, prioH, 12);
+        const allX = pad + prioW + bulkGap + allW / 2;
+        this.setAllBtn.setPosition(allX, prioY);
+        this._sizeBtn(this.setAllBtn, allW, prioH, 12);
+        this.setNoneBtn.setPosition(allX + allW / 2 + bulkGap + noneW / 2, prioY);
+        this._sizeBtn(this.setNoneBtn, noneW, prioH, 12);
         const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
         this.bg.setStrokeStyle(sw, 0x2a2218);
         this._bodyX = pad;

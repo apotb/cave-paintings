@@ -41,6 +41,8 @@ class PigmentFilterPanel {
             color: "#8a7a62"
         }).setOrigin(0, 0.5);
         this.closeBtn = this._btn(0, 0, "Close", () => this.close(), { w: 52, h: 22 });
+        this.setAllBtn = this._btn(0, 0, "Set All", () => this._setAll(), { w: 88, h: 22 });
+        this.setNoneBtn = this._btn(0, 0, "Set None", () => this._setNone(), { w: 96, h: 22 });
         this.body = scene.add.container(12, 36);
         this._maskGfx = scene.make.graphics({ x: 0, y: 0, add: false });
         this.body.setMask(this._maskGfx.createGeometryMask());
@@ -49,7 +51,7 @@ class PigmentFilterPanel {
         this.root.add([
             this.bg, this.title, this.subtitle, this.body,
             this.scrollTrack, this.scrollThumb,
-            this.closeBtn
+            this.setAllBtn, this.setNoneBtn, this.closeBtn
         ]);
     }
 
@@ -274,6 +276,18 @@ class PigmentFilterPanel {
         this.refresh();
     }
 
+    _setAll() {
+        const R = this._R();
+        if (!R?.setPaintAll) return;
+        this._commit(R.setPaintAll(this._filter()));
+    }
+
+    _setNone() {
+        const R = this._R();
+        if (!R?.setPaintNone) return;
+        this._commit(R.setPaintNone(this._filter()));
+    }
+
     open(settle, thing) {
         if (!settle || !thing?.entry?.uid) return;
         this.settle = settle;
@@ -328,10 +342,19 @@ class PigmentFilterPanel {
         this.subtitle.setPosition(pad, headerY);
         this.closeBtn.setPosition(w - Math.round(40 * s), headerY);
         this._sizeBtn(this.closeBtn, Math.round(52 * s), Math.round(22 * s), 12);
+        const bulkH = Math.round(22 * s);
+        const bulkGap = Math.round(8 * s);
+        const allW = Math.round(88 * s);
+        const noneW = Math.round(96 * s);
+        const bulkY = headerY + Math.round(16 * s) + Math.ceil(bulkH / 2);
+        this.setAllBtn.setPosition(pad + allW / 2, bulkY);
+        this._sizeBtn(this.setAllBtn, allW, bulkH, 12);
+        this.setNoneBtn.setPosition(pad + allW + bulkGap + noneW / 2, bulkY);
+        this._sizeBtn(this.setNoneBtn, noneW, bulkH, 12);
         const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
         this.bg.setStrokeStyle(sw, 0x2a2218);
         this._bodyX = pad;
-        this._bodyY = headerY + Math.round(16 * s);
+        this._bodyY = bulkY + Math.ceil(bulkH / 2) + Math.ceil(sw / 2) + Math.round(8 * s);
         this._viewW = w - pad * 2;
         this._viewH = h - this._bodyY - pad;
         this.body.setPosition(this._bodyX, this._bodyY);

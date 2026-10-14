@@ -413,6 +413,19 @@ test("paint filter can forbid a pigment", () => {
     assert.equal(entry.paintPigment, "cactus_flower");
 });
 
+test("paint set all and set none", () => {
+    const getItem = (id) => DataStore.getItem(id);
+    const berry = { id: "blueberry", quantity: 1 };
+    const denied = Research.setPaintNone({ offItems: ["cactus_flower"] });
+    assert.equal(denied.onItems.length, 0);
+    assert.equal(denied.offItems.length, 0);
+    assert.ok(denied.offCategories.length > 0);
+    assert.equal(Research.allowsPigment({ paintFilter: denied }, berry, getItem), false);
+    const allowed = Research.setPaintAll(denied);
+    assert.equal(Research.allowsPigment({ paintFilter: allowed }, berry, getItem), true);
+    assert.equal(Research.persistPaintFilter(allowed), null);
+});
+
 test("pigment materials list is flat and alphabetical", () => {
     const items = DataStore._store.itemsList;
     const rows = Research.listPigments(items);

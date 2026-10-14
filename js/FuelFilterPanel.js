@@ -48,6 +48,8 @@ class FuelFilterPanel {
         this.preferBtn = this._btn(0, 0, "Prefer logs", () => this._toggleFlag("preferLogs"), {
             w: 148, h: 22, check: true
         });
+        this.setAllBtn = this._btn(0, 0, "Set All", () => this._setAll(), { w: 88, h: 22 });
+        this.setNoneBtn = this._btn(0, 0, "Set None", () => this._setNone(), { w: 96, h: 22 });
         this.body = scene.add.container(12, 36);
         this._maskGfx = scene.make.graphics({ x: 0, y: 0, add: false });
         this.body.setMask(this._maskGfx.createGeometryMask());
@@ -56,7 +58,7 @@ class FuelFilterPanel {
         this.root.add([
             this.bg, this.title, this.subtitle, this.body,
             this.scrollTrack, this.scrollThumb,
-            this.alwaysBtn, this.preferBtn, this.closeBtn
+            this.alwaysBtn, this.preferBtn, this.setAllBtn, this.setNoneBtn, this.closeBtn
         ]);
     }
 
@@ -291,6 +293,18 @@ class FuelFilterPanel {
         this._commit(f);
     }
 
+    _setAll() {
+        const FF = this._FF();
+        if (!FF?.setAll) return;
+        this._commit(FF.setAll(this._filter()));
+    }
+
+    _setNone() {
+        const FF = this._FF();
+        if (!FF?.setNone) return;
+        this._commit(FF.setNone(this._filter()));
+    }
+
     _paintFlags() {
         const f = this._filter();
         if (this.alwaysBtn) {
@@ -366,10 +380,18 @@ class FuelFilterPanel {
         this.preferBtn.setPosition(pad + checkW + checkGap + checkW / 2, checkY);
         this._sizeBtn(this.alwaysBtn, checkW, checkH, 12);
         this._sizeBtn(this.preferBtn, checkW, checkH, 12);
+        const bulkH = Math.round(22 * s);
+        const allW = Math.round(88 * s);
+        const noneW = Math.round(96 * s);
+        const bulkY = checkY + Math.ceil(checkH / 2) + checkGap + Math.ceil(bulkH / 2);
+        this.setAllBtn.setPosition(pad + allW / 2, bulkY);
+        this._sizeBtn(this.setAllBtn, allW, bulkH, 12);
+        this.setNoneBtn.setPosition(pad + allW + checkGap + noneW / 2, bulkY);
+        this._sizeBtn(this.setNoneBtn, noneW, bulkH, 12);
         const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
         this.bg.setStrokeStyle(sw, 0x2a2218);
         this._bodyX = pad;
-        this._bodyY = checkY + Math.ceil(checkH / 2) + Math.ceil(sw / 2) + Math.round(8 * s);
+        this._bodyY = bulkY + Math.ceil(bulkH / 2) + Math.ceil(sw / 2) + Math.round(8 * s);
         this._viewW = w - pad * 2;
         this._viewH = h - this._bodyY - pad;
         this.body.setPosition(this._bodyX, this._bodyY);

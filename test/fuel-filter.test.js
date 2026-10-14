@@ -36,6 +36,30 @@ test("defaults are always on and prefer logs, and persist as null", () => {
     assert.equal(FF.allows(f, { id: "leaf" }, getItem), false);
 });
 
+test("set all allows every fuel and keeps flags", () => {
+    const f = FF.setAll(FF.normalize({ alwaysOn: false, preferLogs: false }));
+    assert.equal(f.alwaysOn, false);
+    assert.equal(f.preferLogs, false);
+    assert.deepEqual(f.offCategories, []);
+    assert.deepEqual(f.onItems, []);
+    assert.equal(FF.allows(f, { id: "leaf" }, getItem), true);
+    assert.equal(FF.allows(f, { id: "log" }, getItem), true);
+    assert.equal(FF.allows(f, { id: "stick" }, getItem), true);
+    assert.ok(FF.persist(f));
+    assert.equal(FF.isDefault(f), false);
+});
+
+test("set none denies stick and log and keeps flags", () => {
+    const f = FF.setNone(FF.emptyFilter());
+    assert.equal(f.alwaysOn, true);
+    assert.equal(f.preferLogs, true);
+    assert.equal(f.onItems.length, 0);
+    assert.equal(FF.allows(f, { id: "stick" }, getItem), false);
+    assert.equal(FF.allows(f, { id: "log" }, getItem), false);
+    assert.equal(FF.allows(f, { id: "leaf" }, getItem), false);
+    assert.equal(FF.isDefault(f), false);
+});
+
 test("fuel tree only lists items with fuel kj greater than 0", () => {
     const ids = walkIds(FF.buildTree(items()));
     assert.ok(ids.includes("log"));

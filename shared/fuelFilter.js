@@ -183,6 +183,14 @@
         return withFlags(filter, StorageFilter.toggleCategory(storageSlice(filter), tree, categoryId));
     }
 
+    function setAll(filter) {
+        return withFlags(filter, StorageFilter.setAll(storageSlice(filter)));
+    }
+
+    function setNone(filter) {
+        return withFlags(filter, StorageFilter.setNone(storageSlice(filter)));
+    }
+
     function fuelHasRoom(entry, id, getItem) {
         if (!id) return false;
         const def = typeof getItem === "function" ? getItem(id) : null;
@@ -282,6 +290,8 @@
         itemState,
         toggleItem,
         toggleCategory,
+        setAll,
+        setNone,
         fuelHasRoom,
         addFuelUnit,
         pickFuelId,

@@ -404,6 +404,30 @@
         return f;
     }
 
+    function allCategoryIds(nodes, out) {
+        for (const n of nodes || []) {
+            if (n?.id) out.push(n.id);
+            if (n.children) allCategoryIds(n.children, out);
+        }
+        return out;
+    }
+
+    function setAll(filter) {
+        const f = normalize(filter);
+        f.offCategories = [];
+        f.offItems = [];
+        f.onItems = [];
+        return f;
+    }
+
+    function setNone(filter) {
+        const f = normalize(filter);
+        f.offCategories = allCategoryIds(CATEGORY_TREE, []);
+        f.offItems = [];
+        f.onItems = [];
+        return f;
+    }
+
     function priorityRank(priority) {
         const i = PRIORITIES.indexOf(String(priority || "normal"));
         return i < 0 ? PRIORITIES.indexOf("normal") : i;
@@ -685,6 +709,8 @@
         itemState,
         toggleItem,
         toggleCategory,
+        setAll,
+        setNone,
         priorityRank,
         cyclePriority,
         isMergeableStack,

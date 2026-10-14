@@ -498,6 +498,18 @@
         return normalizePaintFilter(SF.toggleCategory(paintStorageSlice(filter), tree, categoryId));
     }
 
+    function setPaintAll(filter) {
+        const SF = _storageFilter();
+        if (!SF?.setAll) return normalizePaintFilter(filter);
+        return normalizePaintFilter(SF.setAll(paintStorageSlice(filter)));
+    }
+
+    function setPaintNone(filter) {
+        const SF = _storageFilter();
+        if (!SF?.setNone) return normalizePaintFilter(filter);
+        return normalizePaintFilter(SF.setNone(paintStorageSlice(filter)));
+    }
+
     function allowsPigment(entry, stack, getItem) {
         if (!isPigment(typeof getItem === "function" ? getItem(stack?.id) : null, stack)) return false;
         const SF = _storageFilter();
@@ -2397,6 +2409,8 @@
         paintItemState,
         togglePaintItem,
         togglePaintCategory,
+        setPaintAll,
+        setPaintNone,
         paintedCount,
         hasTally,
         circlePoints,

@@ -51,6 +51,47 @@ test("parent toggle sets descendants and clears exceptions", () => {
     assert.equal(SF.allows(f, { id: "roasted_apple" }, getItem), false);
 });
 
+test("set all clears denies and keeps priority", () => {
+    const t = tree();
+    let f = SF.toggleCategory(SF.emptyFilter(), t, "food");
+    f = SF.toggleItem(f, t, "apple");
+    f.priority = "critical";
+    f = SF.setAll(f);
+    assert.equal(f.priority, "critical");
+    assert.deepEqual(f.offCategories, []);
+    assert.deepEqual(f.offItems, []);
+    assert.deepEqual(f.onItems, []);
+    assert.equal(SF.allows(f, { id: "apple" }, getItem), true);
+    assert.equal(SF.allows(f, { id: "stick" }, getItem), true);
+    assert.equal(SF.allows(f, { id: "deer_hide_dry" }, getItem), true);
+    assert.equal(SF.persist(f).priority, "critical");
+    assert.equal(SF.persist(SF.setAll(SF.emptyFilter())), null);
+});
+
+test("set none denies every category and a later toggle restores one branch", () => {
+    const t = tree();
+    let f = SF.setNone({
+        priority: "preferred",
+        offItems: ["apple"],
+        onItems: ["stick"]
+    });
+    assert.equal(f.priority, "preferred");
+    assert.equal(f.offItems.length, 0);
+    assert.equal(f.onItems.length, 0);
+    assert.ok(f.offCategories.includes("materials/hides/dried"));
+    assert.equal(SF.allows(f, { id: "apple" }, getItem), false);
+    assert.equal(SF.allows(f, { id: "stick" }, getItem), false);
+    assert.equal(SF.allows(f, { id: "deer_hide_dry" }, getItem), false);
+    assert.equal(SF.categoryState(f, t, "materials/hides/dried"), "off");
+    f = SF.toggleCategory(f, t, "food");
+    assert.equal(SF.categoryState(f, t, "food"), "on");
+    assert.equal(SF.allows(f, { id: "apple" }, getItem), true);
+    assert.equal(SF.allows(f, { id: "blueberry" }, getItem), true);
+    assert.equal(SF.allows(f, { id: "stick" }, getItem), false);
+    assert.equal(SF.allows(f, { id: "deer_hide_dry" }, getItem), false);
+    assert.equal(SF.categoryState(f, t, "materials"), "off");
+});
+
 test("priority order critical > important > preferred > normal > low", () => {
     const ranks = SF.PRIORITIES.map((p) => SF.priorityRank(p));
     assert.deepEqual(ranks, [0, 1, 2, 3, 4]);
