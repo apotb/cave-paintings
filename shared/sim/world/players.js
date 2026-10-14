@@ -701,7 +701,7 @@
         const id = m.id || uuid();
         const rec = {
             id,
-            name: m.name || CavemanNames.generate(),
+            name: m.name || CavemanNames.generate(() => this.rng(), { avoid: this._livingNames() }),
             x: Number.isFinite(m.x) ? m.x : owner.x + 16,
             y: Number.isFinite(m.y) ? m.y : owner.y,
             facing: m.facing || "down",

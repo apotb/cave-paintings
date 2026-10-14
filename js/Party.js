@@ -430,6 +430,29 @@ class PartySystem {
         }
     }
 
+    /** Living player, party, settler, and wanderer names already on this client. */
+    _takenNames() {
+        const scene = this.scene;
+        const names = [];
+        const add = (pawn) => {
+            if (!pawn || pawn.isBodyDead?.()) return;
+            const name = pawn.pawnName || pawn.name;
+            if (name) names.push(name);
+        };
+        add(scene?.player);
+        add(scene?.leader);
+        if (scene?.playerName) names.push(scene.playerName);
+        for (const p of scene?.party || []) add(p);
+        for (const s of scene?.settlers || []) add(s);
+        for (const w of this.wanderers || []) add(w);
+        return names;
+    }
+
+    _freshName() {
+        if (typeof CavemanNames === "undefined") return "Og";
+        return CavemanNames.generate(undefined, { avoid: this._takenNames() });
+    }
+
     spawnCompanion(opts = {}) {
         const scene = this.scene;
         const P = typeof Party !== "undefined" ? Party : { CAP: 6 };
@@ -445,7 +468,7 @@ class PartySystem {
         pawn.faction = (typeof Party !== "undefined" && Party.partyFactionId)
             ? Party.partyFactionId(pawn.ownerId)
             : `party:${pawn.ownerId}`;
-        pawn.pawnName = opts.name || (typeof CavemanNames !== "undefined" ? CavemanNames.generate() : "Og");
+        pawn.pawnName = opts.name || this._freshName();
         pawn.hotbarIndex = opts.hotbarIndex || 0;
         if (Array.isArray(opts.inventory)) {
             try {
@@ -530,7 +553,7 @@ class PartySystem {
         pawn.leaderId = null;
         pawn.role = "wanderer";
         pawn.faction = (typeof Party !== "undefined" && Party.FACTION_WANDERERS) || "Wanderers";
-        pawn.pawnName = opts.name || (typeof CavemanNames !== "undefined" ? CavemanNames.generate() : "Og");
+        pawn.pawnName = opts.name || this._freshName();
         pawn.hostile = !!opts.hostile;
         pawn.recruitLocked = !!opts.recruitLocked;
         pawn.refusedBy = new Set(opts.refusedBy || []);

@@ -59,6 +59,27 @@
         return out;
     },
 
+    /** Names already carried by a living player, companion, settler, or wanderer. */
+    _livingNames() {
+        const names = [];
+        const add = (pawn) => {
+            if (!pawn || pawn.dead) return;
+            const name = pawn.name || pawn.pawnName;
+            if (name) names.push(name);
+        };
+        if (this.players && typeof this.players.values === "function") {
+            for (const p of this.players.values()) {
+                add(p);
+                for (const m of p?.party || []) add(m);
+            }
+        }
+        for (const s of this.settlers || []) add(s);
+        if (this.wanderers && typeof this.wanderers.values === "function") {
+            for (const w of this.wanderers.values()) add(w);
+        }
+        return names;
+    },
+
     /** Party member to receive a dragged stack, or `from` when toPawnId is omitted. */
     _partyGiveDest(session, action, from) {
         const id = action?.toPawnId;
@@ -992,7 +1013,7 @@
             const h = inward;
             this.wanderers.set(id, {
                 id,
-                name: CavemanNames.generate(() => this.rng()),
+                name: CavemanNames.generate(() => this.rng(), { avoid: this._livingNames() }),
                 look: Look.randomLook(),
                 x: sx,
                 y: sy,
