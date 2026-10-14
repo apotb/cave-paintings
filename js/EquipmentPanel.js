@@ -92,6 +92,18 @@ class EquipmentPanel {
         return labels[key] || key;
     }
 
+    /** Live tip. The slot name is always the first line; an item's usual lines follow it. */
+    _slotTip(key) {
+        const label = this._slotLabel(key);
+        const stack = this.scene.player.getEquipmentStack(key);
+        if (!stack) return label;
+        const meta = this.scene.getItem(stack.id);
+        const body = this.scene.formatItemTooltip(
+            meta, stack.quantity, stack.spoilLeft ?? stack.spoilAt, stack
+        );
+        return body ? `${label}\n${body}` : label;
+    }
+
     layout() {
         const s = this.scene.uiScale || 1;
         const btn = this.scene.equipmentBtn;
@@ -269,16 +281,7 @@ class EquipmentPanel {
             .setScale(3);
 
         slot.on('pointerover', (p) => {
-            const stack = this.scene.player.getEquipmentStack(key);
-            if (!stack) {
-                this.scene.showTooltip(this._slotLabel(key), p.x, p.y, slot);
-                return;
-            }
-            const meta = this.scene.getItem(stack.id);
-            this.scene.showTooltip(
-                () => this.scene.formatItemTooltip(meta, stack.quantity, stack.spoilLeft ?? stack.spoilAt, stack),
-                p.x, p.y, slot
-            );
+            this.scene.showTooltip(() => this._slotTip(key), p.x, p.y, slot);
         });
         slot.on('pointerout', () => {
             if (this._equipRefreshing) return;
