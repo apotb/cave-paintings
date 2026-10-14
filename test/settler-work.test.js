@@ -1107,6 +1107,64 @@ test("dedicated settler does not haul when haul is off", () => {
     assert.equal(rec._settlerAct, "Idle");
 });
 
+test("dedicated settler drops a haul when the player picks the pile up", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1, research: 0 };
+    addBasket(world, settle, rec.x, rec.y);
+    const chunk = originChunk(world);
+    const takenX = rec.x + 64;
+    const nextX = rec.x + 80;
+    chunk.drops.push({ uid: "d-taken", id: "stick", quantity: 3, x: takenX, y: rec.y });
+    chunk.drops.push({ uid: "d-next", id: "leaf", quantity: 2, x: nextX, y: rec.y });
+    let hauling = false;
+    for (let i = 0; i < 40; i++) {
+        world.tick(50);
+        if (rec._busyJob?.type === "haul" && rec._busyJob?.target?.uid === "d-taken") {
+            hauling = true;
+            break;
+        }
+    }
+    assert.equal(hauling, true, "settler should start walking to the nearer pile");
+    pawn.x = takenX;
+    pawn.y = rec.y;
+    world._tryPickup(pawn, { dropId: "d-taken" });
+    assert.equal(chunk.drops.some((d) => d.uid === "d-taken"), false);
+    assert.ok(pawn.inventory.some((s) => s && s.id === "stick"), "player should be holding the sticks");
+    world.tick(50);
+    assert.notEqual(rec._busyJob?.target?.uid, "d-taken");
+    assert.equal(rec._busyJob?.type, "haul");
+    assert.equal(rec._busyJob?.target?.uid, "d-next", "should haul the next pile");
+    assert.match(rec._settlerAct || "", /leaves/i);
+});
+
+test("dedicated settler keeps hauling a pile the player only partly picks up", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1, research: 0 };
+    addBasket(world, settle, rec.x, rec.y);
+    const chunk = originChunk(world);
+    const dx = rec.x + 64;
+    chunk.drops.push({ uid: "d-part", id: "stick", quantity: 4, x: dx, y: rec.y });
+    let hauling = false;
+    for (let i = 0; i < 40; i++) {
+        world.tick(50);
+        if (rec._busyJob?.type === "haul" && rec._busyJob?.target?.uid === "d-part") {
+            hauling = true;
+            break;
+        }
+    }
+    assert.equal(hauling, true);
+    pawn.x = dx;
+    pawn.y = rec.y;
+    world._tryPickup(pawn, { dropId: "d-part", quantity: 1 });
+    const left = chunk.drops.find((d) => d.uid === "d-part");
+    assert.equal(left?.quantity, 3);
+    world.tick(50);
+    assert.equal(rec._busyJob?.type, "haul");
+    assert.equal(rec._busyJob?.target?.uid, "d-part");
+});
+
 test("dedicated settler stops hauling a drop as soon as haul is turned off", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });

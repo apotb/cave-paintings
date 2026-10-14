@@ -57,6 +57,8 @@
     const skipJob = (...args) => ctx.skipJob(...args);
     const dropAsStack = (...args) => ctx.dropAsStack(...args);
     const haulDropQty = (...args) => ctx.haulDropQty(...args);
+    const haulDropLive = (...args) => ctx.haulDropLive(...args);
+    const abandonHaul = (...args) => ctx.abandonHaul(...args);
     const depositKeepGear = (...args) => ctx.depositKeepGear(...args);
     const onMerge = (...args) => ctx.onMerge(...args);
     const fuelSources = (...args) => ctx.fuelSources(...args);
@@ -757,6 +759,10 @@ function doGather(world, rec, target) {
 
 function doHaul(world, rec, settle, drop) {
     if (!drop) return halt();
+    if (!haulDropLive(world, drop)) {
+        abandonHaul(world, rec, settle);
+        return halt();
+    }
     const key = dropKey(drop);
     const walked = goToDrop(world, rec, drop);
     if (walked) return walked;

@@ -125,6 +125,8 @@ const shellRequire = typeof require === "function" ? require : undefined;
     const doResearch = (...args) => ctx.doResearch(...args);
     const doMerge = (...args) => ctx.doMerge(...args);
     const doHaul = (...args) => ctx.doHaul(...args);
+    const haulTargetMissing = (...args) => ctx.haulTargetMissing(...args);
+    const abandonHaul = (...args) => ctx.abandonHaul(...args);
     const doLightFire = (...args) => ctx.doLightFire(...args);
     const doStokeFire = (...args) => ctx.doStokeFire(...args);
     const doCook = (...args) => ctx.doCook(...args);
@@ -203,6 +205,9 @@ function tick(world, mob, delta) {
     reservesOf(world, settle).prune(alive);
 
     rec._settlerScanMs = (rec._settlerScanMs || 0) + (Number(delta) || 16);
+    // Someone else took the pile. Drop the haul and rescan for the next job
+    // instead of walking to where it used to be.
+    if (haulTargetMissing(world, rec)) abandonHaul(world, rec, settle);
     if (!rec._settlerScan || rec._settlerScanMs >= SCAN_MS) {
         rec._settlerScanMs = 0;
         rec._settlerScan = scanWork(world, rec, settle, claims);

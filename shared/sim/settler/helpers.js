@@ -905,6 +905,72 @@ function leaveHaulDrop(world, drop) {
     return Hide.leaveHaulInWater(def, world._dropIsOnWater(drop));
 }
 
+/** Ground pile a haul job walks to. Basket merges are not piles. */
+function groundHaulDrop(job) {
+    if (!job || job.type !== "haul") return null;
+    const drop = job.target;
+    if (!drop?.uid || !drop.id) return null;
+    if (drop.kind === "pack" || drop.kind === "move") return null;
+    return drop;
+}
+
+function chunkHasDrop(chunk, uid) {
+    const list = chunk?.drops;
+    if (!Array.isArray(list)) return false;
+    for (const d of list) {
+        if (d && d.uid === uid && Number(d.quantity) > 0) return true;
+    }
+    return false;
+}
+
+/** True while this pile is still on the ground. Uid-less piles are left to pickup. */
+function haulDropLive(world, drop) {
+    if (!drop?.id || !(Number(drop.quantity) > 0)) return false;
+    if (!drop.uid) return true;
+    const x = Number(drop.x) || 0;
+    const y = Number(drop.y) || 0;
+    const near = world?._chunksNear?.(x, y, 0, { load: false });
+    if (Array.isArray(near)) {
+        for (const c of near) {
+            if (chunkHasDrop(c, drop.uid)) return true;
+        }
+        return false;
+    }
+    const all = world?.chunks;
+    if (all && typeof all.values === "function") {
+        for (const c of all.values()) {
+            if (chunkHasDrop(c, drop.uid)) return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * The haul they are walking to (or the cached pile they are about to take)
+ * was picked up. Carrying it to storage is not this case.
+ */
+function haulTargetMissing(world, rec) {
+    if (!rec || rec._haulDestUid) return false;
+    const busy = groundHaulDrop(rec._busyJob);
+    if (busy) return !haulDropLive(world, busy);
+    if (rec._busyJob?.type === "haul") return false;
+    const scanned = groundHaulDrop({ type: "haul", target: rec._settlerScan?.haulDrop });
+    return !!(scanned && !haulDropLive(world, scanned));
+}
+
+/** Forget a haul whose pile is gone so the next scan can pick another job. */
+function abandonHaul(world, rec, settle) {
+    if (!rec) return;
+    if (settle) claimsFor(world, settle)?.release(rec.id);
+    endWorkHold(rec);
+    rec._settlerScan = null;
+    rec._settlerScanMs = SCAN_MS;
+    if (settle) {
+        const q = settleQ(world, settle);
+        if (q) q.drops = null;
+    }
+}
+
 function findStack(world, rec, settle, pred) {
     const inv = rec.inventory || [];
     const ii = inv.findIndex((s) => s && pred(s));
@@ -1303,6 +1369,9 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     ctx.basketsOf = basketsOf;
     ctx.stationsOf = stationsOf;
     ctx.dropsOf = dropsOf;
+    ctx.haulDropLive = haulDropLive;
+    ctx.haulTargetMissing = haulTargetMissing;
+    ctx.abandonHaul = abandonHaul;
     ctx.lootablesOf = lootablesOf;
     ctx.choppablesOf = choppablesOf;
     ctx.diggablesOf = diggablesOf;
