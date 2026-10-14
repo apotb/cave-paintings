@@ -557,6 +557,9 @@ class SimCreature {
             if (!target || target === this || target.isBodyDead?.()) continue;
             if (this.attackHitSet.has(target)) continue;
             if (Party?.sameFaction?.(this, target)) continue;
+            if (this.ctx?.sim?._companionMayStrike && !this.ctx.sim._companionMayStrike(this, target)) {
+                continue;
+            }
             const rad = target.role === "wanderer" ? radius + 8 : radius;
             if (!MeleeMath.meleeSegmentHitsTarget(seg.a, seg.b, rad, target)) continue;
 

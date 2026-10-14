@@ -1994,6 +1994,46 @@ test("companion attacks a hostile animal on the leader", () => {
     assert.equal(swung, true, "companion should start a melee swing");
 });
 
+test("companions keep hunting deer and do not switch to boars", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.controlId = pawn.id;
+    const buddy = addTestCompanion(world, pawn);
+    const buddyC = world._ensureCompanionCreature(pawn, buddy);
+    const deerEntry = world._spawnMobAt("deer", pawn.x + 24, pawn.y);
+    const otherEntry = world._spawnMobAt("deer", pawn.x + 48, pawn.y);
+    const deer = world.mobs.get(deerEntry.uid);
+    const other = world.mobs.get(otherEntry.uid);
+    const boar = spawnHostileBoar(world, pawn.x + 96, pawn.y);
+    const you = world._ensurePlayerCreature(pawn);
+    landHit(you, deer);
+    assert.equal(pawn.huntKind, "deer");
+    assert.equal(other.ai?.panicMs > 0, true, "nearby deer should flee with the herd");
+    assert.equal(world._companionMayStrike(buddyC, boar), false);
+    assert.equal(world._companionMayStrike(buddyC, other), true);
+
+    landHit(buddyC, boar);
+    assert.equal(pawn.huntKind, "deer", "a companion clipping a boar must not redirect the hunt");
+    assert.notEqual(pawn.lastHitMob, boar);
+
+    for (let i = 0; i < 8; i++) world.tick(50);
+    const assist = buddy.creature?.ai?.assistTarget;
+    const duel = world._duelMap?.get(buddy.id);
+    assert.notEqual(assist, boar);
+    assert.notEqual(duel, boar);
+    assert.ok(
+        assist === deer || assist === other || duel === deer || duel === other,
+        "companion should still be on a deer"
+    );
+
+    deer._dead = true;
+    other._dead = true;
+    pawn.lastHitMob = null;
+    for (let i = 0; i < 6; i++) world.tick(50);
+    assert.notEqual(buddy.creature?.ai?.assistTarget, boar);
+    assert.notEqual(world._duelMap?.get(buddy.id), boar);
+    assert.equal(pawn.huntKind, "deer");
+});
+
 test("companion does not join another party's wildlife aggro", () => {
     const { world, pawn } = createTestWorld();
     pawn.controlId = pawn.id;

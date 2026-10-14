@@ -350,6 +350,23 @@
         return !!(ia && ia === ib);
     }
 
+    /**
+     * Species id for a wildlife mob (deer, boar). Players, companions, and
+     * wanderers are not a hunt species.
+     */
+    function wildKind(entity) {
+        if (!entity) return null;
+        if (entity.role === "wanderer" || entity.role === "settler" || entity.role === "companion") {
+            return null;
+        }
+        if (entity.kind && entity.kind !== "mob") return null;
+        const id = entity.def?.id || entity.entry?.id || entity.mobId || null;
+        if (!id) return null;
+        const s = String(id).toLowerCase();
+        if (!s || s === "human") return null;
+        return s;
+    }
+
     function wildIsHostile(wild) {
         if (!wild) return false;
         return !!(
@@ -1174,6 +1191,7 @@
         setWildAggroOwner,
         clearWildAggroOwner,
         sameWildTarget,
+        wildKind,
         wildIsHostile,
         ownerEngagedWithWild,
         sameParty,

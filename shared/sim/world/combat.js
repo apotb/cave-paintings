@@ -25,10 +25,97 @@
         return ent.kind === "mob" || ent.role === "wanderer";
     },
 
-    _lockHuntOn(session, wild, source) {
+    _rememberHunt(session, wild) {
         if (!session || !wild) return;
         session.lastHitMob = wild;
         session.lastHitAt = Date.now();
+        const kind = Party.wildKind?.(wild);
+        if (kind) session.huntKind = kind;
+    },
+
+    /**
+     * A deer hunt may chain onto other deer. It must not retarget onto boars
+     * just because a companion's swing clipped one or the deer died beside them.
+     * The controlled pawn choosing a new animal, or wildlife actually hitting
+     * the party, starts a new hunt.
+     */
+    _acceptHuntTarget(session, wild, source) {
+        const kind = Party.wildKind?.(wild);
+        if (!session || !kind) return true;
+        this._touchHunt(session);
+        if (!session.huntKind || kind === session.huntKind) return true;
+        const controlId = session.controlId || session.id;
+        const sid = source?.id || source?.pawnId;
+        return !!(sid && sid === controlId);
+    },
+
+    _isCampSettler(pawn) {
+        return pawn?.role === "settler"
+            || (!!pawn?.homeSettlementId && pawn?.role !== "companion");
+    },
+
+    /** Keep the species lock alive while same-kind prey is still in the fight. */
+    _touchHunt(session) {
+        if (!session?.huntKind) return;
+        const now = Date.now();
+        if (this._sameKindPreyNear(session)) {
+            session.lastHitAt = now;
+            return;
+        }
+        if (now - (Number(session.lastHitAt) || 0) > 8000) {
+            session.huntKind = null;
+        }
+    },
+
+    _sameKindPreyNear(session) {
+        const kind = session?.huntKind;
+        if (!kind) return false;
+        const cluster = ((Party.DUEL_CLUSTER_TILES) || 12) * TS;
+        const anchors = [];
+        for (const pawn of this._livingPartyOf?.(session) || []) {
+            if (Number.isFinite(pawn?.x) && Number.isFinite(pawn?.y)) anchors.push(pawn);
+        }
+        if (!anchors.length && Number.isFinite(session.x) && Number.isFinite(session.y)) {
+            anchors.push(session);
+        }
+        for (const mob of this.mobs.values()) {
+            if (!mob || mob.isBodyDead?.()) continue;
+            if (Party.wildKind?.(mob) !== kind) continue;
+            const hot = !!(
+                mob.hostile
+                || mob.ai?.hostile
+                || (Number(mob.ai?.panicMs) || 0) > 0
+            );
+            if (!hot) continue;
+            for (const a of anchors) {
+                if (Math.hypot((mob.x || 0) - a.x, (mob.y || 0) - a.y) <= cluster) return true;
+            }
+        }
+        return false;
+    },
+
+    /**
+     * Companion swings during a hunt only connect with that species, so a
+     * deer chase cannot aggro a boar that happens to stand in the arc.
+     */
+    _companionMayStrike(attacker, target) {
+        if (!attacker || !target) return true;
+        if (attacker.kind !== "player") return true;
+        if (attacker.role === "wanderer" || this._isCampSettler(attacker)) return true;
+        const session = this._sessionOwnerOf(attacker);
+        if (!session) return true;
+        const controlId = session.controlId || session.id;
+        if (attacker.id === controlId) return true;
+        this._touchHunt(session);
+        if (!session.huntKind) return true;
+        const kind = Party.wildKind?.(target);
+        if (!kind) return true;
+        return kind === session.huntKind;
+    },
+
+    _lockHuntOn(session, wild, source) {
+        if (!session || !wild) return;
+        this._rememberHunt(session, wild);
         Party.setWildAggroOwner?.(wild, source);
         const rec = this.wanderers.get(wild.id) || this.mobs.get(wild.id);
         if (rec && rec !== wild) Party.setWildAggroOwner?.(rec, source);
@@ -65,6 +152,7 @@
                 || this._sessionOfPawn(attacker)
                 || this.players.get(attacker.id);
             if (!session) return;
+            if (!this._acceptHuntTarget(session, victim, attacker)) return;
             this._lockHuntOn(session, victim, attacker);
             this._wakeAbleResters(session, victim, session);
             this._partySetAssist(session, victim);
@@ -89,8 +177,11 @@
         }
         if (Date.now() - (Number(p.lastHitAt) || 0) > 8000) {
             p.lastHitMob = null;
+            p.huntKind = null;
             return null;
         }
+        const kind = Party.wildKind?.(hit);
+        if (p.huntKind && kind && kind !== p.huntKind) return null;
         return hit;
     },
 
@@ -321,9 +412,26 @@
             if (pa?.dead || pb?.dead) return false;
             return !!(pa?.pvpAggro?.has(ob) || pb?.pvpAggro?.has(oa));
         }
-        if (aSess && !bSess) return this._ownerEngagedWithWild(oa, b);
-        if (bSess && !aSess) return this._ownerEngagedWithWild(ob, a);
+        if (aSess && !bSess) return this._partyMayFightWild(a, b);
+        if (bSess && !aSess) return this._partyMayFightWild(b, a);
         return true;
+    },
+
+    /**
+     * During a hunt, traveling party members only auto-engage that species.
+     * Camp settlers still defend against whatever is hostile in the circle.
+     */
+    _partyMayFightWild(pawn, wild) {
+        const ownerId = Party.ownerIdOf(pawn);
+        if (!this._ownerEngagedWithWild(ownerId, wild)) return false;
+        if (this._isCampSettler(pawn)) return true;
+        const session = ownerId ? this.players.get(ownerId) : null;
+        if (!session) return true;
+        this._touchHunt(session);
+        if (!session.huntKind) return true;
+        const kind = Party.wildKind?.(wild);
+        if (!kind) return true;
+        return kind === session.huntKind;
     },
 
     _ownerEngagedWithWild(ownerId, wild) {

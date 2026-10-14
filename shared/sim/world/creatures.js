@@ -445,6 +445,7 @@
         };
         for (const p of this.players.values()) {
             if (!p.connected) continue;
+            this._touchHunt?.(p);
             const controlId = p.controlId || p.id;
             const chase = this._chaseTarget(p);
             if (!p.dead) {

@@ -991,8 +991,7 @@
             this._wakePawn(session, p, { help: true });
             pc?.ai?.setAssist?.(enemy);
         }
-        session.lastHitMob = enemy;
-        session.lastHitAt = Date.now();
+        this._rememberHunt?.(session, enemy);
     },
 
     _findSleepByOccupant(pawnId) {

@@ -15,6 +15,13 @@ test("placeJoinParty clusters members with no world pose next to the leader", ()
     assert.equal(members[1].y, 96);
 });
 
+test("wildKind is the wildlife species and ignores people", () => {
+    assert.equal(Party.wildKind({ kind: "mob", def: { id: "Deer" } }), "deer");
+    assert.equal(Party.wildKind({ kind: "mob", entry: { id: "boar" } }), "boar");
+    assert.equal(Party.wildKind({ kind: "player", def: { id: "human" } }), null);
+    assert.equal(Party.wildKind({ kind: "mob", role: "wanderer", def: { id: "human" } }), null);
+});
+
 test("ownerEngagedWithWild allows nearby hostiles unless another session owns aggro", () => {
     const wild = { id: "b1", hostile: true };
     assert.equal(Party.ownerEngagedWithWild("p1", wild), true);
