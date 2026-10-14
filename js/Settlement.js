@@ -19,6 +19,7 @@ class SettlementSystem {
         this._pendingPlace = null;
         this._worldPointerLocked = false;
         this._inputWasEnabled = true;
+        this._stonePips = [];
     }
 
     ownerId() {
@@ -2142,6 +2143,7 @@ class SettlementSystem {
     }
 
     update() {
+        this.updateStonePips();
         this.ensureHud();
         const settle = this.campAt(this.scene.player);
         const show = !!settle;
@@ -2213,5 +2215,75 @@ class SettlementSystem {
             }
         }
         // Settlers are ticked from PartySystem.update so they share eat/tend/AI.
+    }
+
+    /** Clip center→target to the padded screen rect. Same bearing math as party pips. */
+    _rayToRect(cx, cy, px, py, left, top, right, bottom) {
+        const dx = px - cx;
+        const dy = py - cy;
+        let t = Infinity;
+        if (dx > 1e-9) t = Math.min(t, (right - cx) / dx);
+        else if (dx < -1e-9) t = Math.min(t, (left - cx) / dx);
+        if (dy > 1e-9) t = Math.min(t, (bottom - cy) / dy);
+        else if (dy < -1e-9) t = Math.min(t, (top - cy) / dy);
+        if (!Number.isFinite(t) || t <= 0) return { x: cx, y: cy };
+        return { x: cx + dx * t, y: cy + dy * t };
+    }
+
+    /**
+     * Edge arrows for every settling stone this player owns, whenever it is
+     * off camera. Independent of the party roster.
+     */
+    updateStonePips() {
+        const scene = this.scene;
+        const pips = this._stonePips || (this._stonePips = []);
+        const cam = scene.cameras?.main;
+        const booting = !!(scene._worldBooting || scene._generatingUi);
+        if (!cam || booting) {
+            for (const p of pips) p.setVisible(false);
+            return;
+        }
+        const oid = this.ownerId();
+        const owned = oid ? this.owned() : [];
+        while (pips.length < owned.length) {
+            const css = (typeof Party !== "undefined" && Party.COLOR_SETTLER) || "#7ec8ff";
+            const parsed = parseInt(String(css).replace("#", ""), 16);
+            const img = scene.add.triangle(
+                0, 0, 0, 6, 5, 0, 10, 6,
+                Number.isFinite(parsed) ? parsed : 0x7ec8ff,
+                0.9
+            ).setScrollFactor(0).setDepth(15001);
+            scene.uiLayer?.add(img);
+            pips.push(img);
+        }
+        while (pips.length > owned.length) pips.pop().destroy();
+        const view = cam.worldView;
+        const s = scene.uiScale || 1;
+        const zoom = cam.zoom || scene.worldZoom || 1;
+        const w = cam.width || scene.scale.width;
+        const h = cam.height || scene.scale.height;
+        const ox = cam.x || 0;
+        const oy = cam.y || 0;
+        const pad = 12 * s;
+        const cx = ox + w / 2;
+        const cy = oy + h / 2;
+        const lift = (scene.tileSize || 16) * 0.5;
+        for (let i = 0; i < owned.length; i++) {
+            const pip = pips[i];
+            const stone = owned[i];
+            const wx = Number(stone?.x) || 0;
+            const wy = (Number(stone?.y) || 0) - lift;
+            const sp = {
+                x: (wx - view.x) * zoom + ox,
+                y: (wy - view.y) * zoom + oy
+            };
+            const inside = sp.x >= ox && sp.x <= ox + w && sp.y >= oy && sp.y <= oy + h;
+            pip.setVisible(!inside);
+            if (inside) continue;
+            const hit = this._rayToRect(cx, cy, sp.x, sp.y, ox + pad, oy + pad, ox + w - pad, oy + h - pad);
+            pip.setPosition(hit.x, hit.y);
+            pip.setRotation(Math.atan2(sp.y - cy, sp.x - cx) + Math.PI / 2);
+            pip.setScale(s);
+        }
     }
 }
