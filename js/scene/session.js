@@ -196,7 +196,10 @@
                 x: m.x,
                 y: m.y,
                 lastSleep: m.lastSleep || null,
-                resting: !!m.resting
+                resting: !!m.resting,
+                jobs: (m.jobs && typeof m.jobs === "object" && !Array.isArray(m.jobs))
+                    ? { ...m.jobs }
+                    : null
             }));
         };
         return {

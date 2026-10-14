@@ -88,6 +88,44 @@ test("left click raises job priority; right click cycles the old way", () => {
     assert.equal(Settlement.cyclePriority(4), 0);
 });
 
+test("job priorities travel with a person between camps", () => {
+    const home = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p" });
+    const away = Settlement.createSettlement({ x: 800, y: 0, ownerId: "p" });
+    const pawn = { id: "og" };
+    Settlement.bindPawnJobs(home, pawn);
+    assert.equal(home.jobs.og.cook, Settlement.defaultJobs().cook);
+    const custom = Settlement.defaultJobs();
+    custom.cook = 1;
+    custom.haul = 0;
+    custom.chop = 4;
+    home.jobs.og = custom;
+    Settlement.unbindPawnJobs(home, pawn);
+    assert.equal(pawn.jobs.cook, 1);
+    assert.equal(pawn.jobs.haul, 0);
+    Settlement.bindPawnJobs(away, pawn);
+    assert.equal(away.jobs.og.cook, 1);
+    assert.equal(away.jobs.og.haul, 0);
+    assert.equal(away.jobs.og.chop, 4);
+    const later = Settlement.normalizeJobs(away.jobs.og);
+    later.gather = 2;
+    away.jobs.og = later;
+    Settlement.unbindPawnJobs(away, pawn);
+    Settlement.bindPawnJobs(home, pawn);
+    assert.equal(home.jobs.og.cook, 1);
+    assert.equal(home.jobs.og.gather, 2);
+    assert.equal(pawn.jobs.chop, 4);
+});
+
+test("rejoining a camp keeps a saved row when the person carries nothing yet", () => {
+    const settle = Settlement.createSettlement({ x: 0, y: 0 });
+    settle.jobs.og = Settlement.normalizeJobs({ cook: 1, haul: 0 });
+    const pawn = { id: "og" };
+    Settlement.bindPawnJobs(settle, pawn);
+    assert.equal(settle.jobs.og.cook, 1);
+    assert.equal(settle.jobs.og.haul, 0);
+    assert.equal(pawn.jobs.cook, 1);
+});
+
 test("jobOrder keeps known pawns, drops gone ones, and appends newcomers", () => {
     const settle = Settlement.createSettlement({ x: 0, y: 0 });
     settle.jobOrder = ["b", "gone", "a"];

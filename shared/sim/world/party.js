@@ -142,8 +142,7 @@
             rec.role = "settler";
             rec.homeSettlementId = park.id;
             rec.ownerId = p.id;
-            if (!park.jobs) park.jobs = {};
-            park.jobs[rec.id] = Settlement.defaultJobs();
+            Settlement.bindPawnJobs(park, rec);
             this.settlers.push(rec);
             this._ensureSettlerCreature(rec);
         } else {

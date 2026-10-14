@@ -1219,6 +1219,47 @@
         return row;
     }
 
+    /** Priorities this person carries between camps. Empty objects do not count. */
+    function carriedJobs(pawn) {
+        const raw = pawn?.jobs;
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+        if (!knownJobIds().some((j) => raw[j] != null && raw[j] !== "")) return null;
+        return normalizeJobs(raw);
+    }
+
+    function rememberJobs(pawn, row) {
+        if (!pawn) return null;
+        const jobs = normalizeJobs(row);
+        pawn.jobs = jobs;
+        return jobs;
+    }
+
+    /**
+     * Join a camp. Keep priorities they already carry, else a row this camp
+     * still has for them, else the defaults.
+     */
+    function bindPawnJobs(settle, pawn) {
+        if (!settle || !pawn) return null;
+        const id = pawnIdOf(pawn);
+        if (!id) return null;
+        if (!settle.jobs) settle.jobs = {};
+        const carried = carriedJobs(pawn);
+        const row = carried
+            || (settle.jobs[id] ? normalizeJobs(settle.jobs[id]) : defaultJobs());
+        settle.jobs[id] = row;
+        pawn.jobs = normalizeJobs(row);
+        return pawn.jobs;
+    }
+
+    /** Leave a camp. The camp's current row becomes what they carry. */
+    function unbindPawnJobs(settle, pawn) {
+        if (!pawn) return null;
+        const id = pawnIdOf(pawn);
+        const row = id && settle?.jobs ? settle.jobs[id] : null;
+        if (row) return rememberJobs(pawn, row);
+        return carriedJobs(pawn);
+    }
+
     function ownedOf(list, ownerId) {
         return (list || []).filter((s) => s && s.ownerId === ownerId);
     }
@@ -2298,6 +2339,9 @@
         jobTooltip,
         jobsFor,
         setJob,
+        rememberJobs,
+        bindPawnJobs,
+        unbindPawnJobs,
         pawnIdOf,
         normalizeJobOrder,
         sortByJobOrder,

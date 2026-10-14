@@ -476,6 +476,9 @@ class PartySystem {
         if (opts.facing) pawn.facing = opts.facing;
         if (opts.lastSleep) pawn.lastSleep = opts.lastSleep;
         if (opts.resting) pawn._resting = true;
+        if (opts.jobs && typeof opts.jobs === "object" && typeof Settlement !== "undefined" && Settlement.rememberJobs) {
+            Settlement.rememberJobs(pawn, opts.jobs);
+        }
         pawn.recomputeEquipmentEffects?.();
         pawn.capacities = new Capacities(pawn.anatomy);
         pawn._netTx = pawn.x;
@@ -2805,7 +2808,8 @@ class PartySystem {
             x: p.x,
             y: p.y,
             lastSleep: p.lastSleep || null,
-            resting: !!p._resting
+            resting: !!p._resting,
+            jobs: (p.jobs && typeof p.jobs === "object") ? { ...p.jobs } : null
         };
     }
 
@@ -2903,6 +2907,9 @@ class PartySystem {
                             existing._refreshDownedState?.();
                             existing._netBodySig = bsig;
                         }
+                    }
+                    if (m.jobs && typeof m.jobs === "object" && typeof Settlement !== "undefined" && Settlement.rememberJobs) {
+                        Settlement.rememberJobs(existing, m.jobs);
                     }
                     if (m.lastSleep) existing.lastSleep = m.lastSleep;
                     if (typeof m.resting === "boolean") {

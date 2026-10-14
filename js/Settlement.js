@@ -121,6 +121,7 @@ class SettlementSystem {
             body: snap.body,
             lastSleep: snap.lastSleep,
             resting: snap.resting,
+            jobs: snap.jobs,
             ignoreCap: true
         });
         if (!pawn) return null;
@@ -1187,9 +1188,8 @@ class SettlementSystem {
         pawn._netFromY = pawn.y;
         if (!scene.settlers) scene.settlers = [];
         if (!scene.settlers.includes(pawn)) scene.settlers.push(pawn);
-        if (!target.jobs) target.jobs = {};
-        if (typeof Settlement !== "undefined") {
-            target.jobs[pawn.pawnId] = Settlement.defaultJobs();
+        if (typeof Settlement !== "undefined" && Settlement.bindPawnJobs) {
+            Settlement.bindPawnJobs(target, pawn);
         }
         this._syncJobOrder(target);
         if (wasControl) scene.partySys?.switchControl?.(scene.leader);
@@ -1213,6 +1213,9 @@ class SettlementSystem {
         }
         const from = settle || this.byId(pawn.homeSettlementId);
         const fromName = from?.name || "";
+        if (from && typeof Settlement !== "undefined" && Settlement.unbindPawnJobs) {
+            Settlement.unbindPawnJobs(from, pawn);
+        }
         this.sendNet("pick", { pawnId: pawn.pawnId });
         scene.partySys?.adoptSettler?.(pawn);
         if (from) this._syncJobOrder(from);
@@ -1237,8 +1240,16 @@ class SettlementSystem {
         const ts = scene.tileSize || 16;
         const walkMax = S?.WALK_TRANSFER_TILES || 96;
         const d = S ? S.distTiles(from.x, from.y, dest.x, dest.y, ts) : 999;
+        if (typeof Settlement !== "undefined") {
+            Settlement.unbindPawnJobs?.(from, pawn);
+            Settlement.bindPawnJobs?.(dest, pawn);
+        }
         pawn.homeSettlementId = dest.id;
-        this.sendNet("transfer", { pawnId: pawn.pawnId, destId: dest.id });
+        this.sendNet("transfer", {
+            pawnId: pawn.pawnId,
+            settlementId: from.id,
+            destId: dest.id
+        });
         if (d > walkMax) {
             pawn.x = dest.x + 12;
             pawn.y = dest.y + 8;

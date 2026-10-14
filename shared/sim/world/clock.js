@@ -1169,7 +1169,10 @@
                     lastSleep: m.lastSleep || null,
                     eatChannel: this._eatChannelSnap(m.eatChannel),
                     tendChannel: this._tendChannelSnap(m.tendChannel),
-                    activity: this._pawnTendActivity(m)
+                    activity: this._pawnTendActivity(m),
+                    jobs: (m.jobs && typeof m.jobs === "object" && !Array.isArray(m.jobs))
+                        ? Settlement.normalizeJobs(m.jobs)
+                        : null
                 };
             }),
             controlId: p.controlId || p.id,

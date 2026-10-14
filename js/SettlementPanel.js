@@ -819,7 +819,8 @@ class SettlementPanel {
                     const next = S
                         ? (right ? S.cyclePriority(pri) : S.raisePriority(pri))
                         : 0;
-                    S?.setJob(this.settle, pid, j, next);
+                    const row = S?.setJob(this.settle, pid, j, next);
+                    if (row) S?.rememberJobs?.(p, row);
                     this.scene.settlementSys?.bumpWorkCache?.();
                     this.scene.settlementSys?.sendNet("setJobs", {
                         settlementId: this.settle.id,

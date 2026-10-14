@@ -2431,6 +2431,82 @@ test("drop then pick keeps companion inventory and clothes", () => {
     assert.equal(row.equipment.torso.id, "leaf_wrap");
 });
 
+test("settler job priorities survive pick-up, drop-off, transfer, and relog", () => {
+    const { world, pawn } = createTestWorld();
+    const home = Settlement.createSettlement({
+        x: pawn.x,
+        y: pawn.y,
+        ownerId: pawn.id
+    });
+    const away = Settlement.createSettlement({
+        x: pawn.x + 800,
+        y: pawn.y,
+        ownerId: pawn.id
+    });
+    world.settlements.push(home, away);
+    const mem = world._companionFromSnap(pawn, {
+        id: "job-og",
+        name: "Og",
+        x: pawn.x,
+        y: pawn.y
+    });
+    pawn.party.push(mem);
+    world._handleSettlement(pawn, {
+        op: "drop",
+        pawnId: mem.id,
+        settlementId: home.id
+    });
+    assert.equal(home.jobs[mem.id].cook, Settlement.defaultJobs().cook);
+    const custom = Settlement.defaultJobs();
+    custom.cook = 1;
+    custom.haul = 0;
+    custom.chop = 4;
+    world._handleSettlement(pawn, {
+        op: "setJobs",
+        settlementId: home.id,
+        pawnId: mem.id,
+        jobs: custom
+    });
+    assert.equal(mem.jobs.cook, 1);
+    world._handleSettlement(pawn, { op: "pick", pawnId: mem.id });
+    const back = (pawn.party || []).find((m) => m.id === mem.id);
+    assert.equal(back.jobs.cook, 1);
+    assert.equal(back.jobs.haul, 0);
+    assert.equal(back.jobs.chop, 4);
+    const you = world.youPayload(pawn.id);
+    const row = (you.party || []).find((m) => m.id === mem.id);
+    assert.equal(row.jobs.cook, 1);
+    const restored = world._companionFromSnap(pawn, row);
+    assert.equal(restored.jobs.haul, 0);
+    assert.equal(restored.jobs.chop, 4);
+    world._handleSettlement(pawn, {
+        op: "drop",
+        pawnId: mem.id,
+        settlementId: away.id
+    });
+    assert.equal(away.jobs[mem.id].cook, 1);
+    assert.equal(away.jobs[mem.id].haul, 0);
+    const next = Settlement.normalizeJobs(away.jobs[mem.id]);
+    next.gather = 2;
+    world._handleSettlement(pawn, {
+        op: "setJobs",
+        settlementId: away.id,
+        pawnId: mem.id,
+        jobs: next
+    });
+    world._handleSettlement(pawn, {
+        op: "transfer",
+        settlementId: away.id,
+        pawnId: mem.id,
+        destId: home.id
+    });
+    assert.equal(mem.homeSettlementId, home.id);
+    assert.equal(home.jobs[mem.id].cook, 1);
+    assert.equal(home.jobs[mem.id].gather, 2);
+    assert.equal(home.jobs[mem.id].chop, 4);
+    assert.equal(mem.jobs.gather, 2);
+});
+
 test("empty rec equipment does not wipe clothes on the creature", () => {
     const { world, pawn } = createTestWorld();
     const { rec } = parkSettler(world, pawn, {

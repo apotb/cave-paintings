@@ -229,8 +229,7 @@
             mem.role = "settler";
             mem.homeSettlementId = dropSettle.id;
             mem.ownerId = p.id;
-            if (!dropSettle.jobs) dropSettle.jobs = {};
-            dropSettle.jobs[mem.id] = Settlement.defaultJobs();
+            Settlement.bindPawnJobs(dropSettle, mem);
             this.settlers.push(mem);
             this._syncJobOrder(dropSettle);
             SettlerWork.releaseWork(this, mem);
@@ -258,6 +257,7 @@
             rec.role = "companion";
             rec.homeSettlementId = null;
             const from = fromId ? this.settlements.find((s) => s.id === fromId) : null;
+            if (from) Settlement.unbindPawnJobs(from, rec);
             if (from) this._syncJobOrder(from);
             if (rec._resting || rec.resting || rec._restWalk) {
                 this._wakePawn(p, rec, { manual: true });
@@ -275,7 +275,9 @@
             const dest = this.settlements.find((s) => s.id === action.destId);
             if (!rec || !dest || dest.ownerId !== p.id) return;
             const from = this.settlements.find((s) => s.id === rec.homeSettlementId);
+            if (from) Settlement.unbindPawnJobs(from, rec);
             rec.homeSettlementId = dest.id;
+            Settlement.bindPawnJobs(dest, rec);
             const d = from ? Settlement.distTiles(from.x, from.y, dest.x, dest.y, TS) : 999;
             if (Settlement.transferMode(d) === "teleport") {
                 rec.x = dest.x + 12;
@@ -353,7 +355,12 @@
         }
         if (op === "setJobs" && settle && settle.ownerId === p.id) {
             settle.jobs = settle.jobs || {};
-            settle.jobs[action.pawnId] = Settlement.normalizeJobs(action.jobs);
+            const row = Settlement.normalizeJobs(action.jobs);
+            settle.jobs[action.pawnId] = row;
+            const pid = String(action.pawnId || "");
+            const rec = (this.settlers || []).find((s) => s && String(s.id) === pid)
+                || (p.party || []).find((m) => m && String(m.id) === pid);
+            if (rec) Settlement.rememberJobs(rec, row);
             SettlerWork.bumpWork?.(this);
             this._youDirty.add(p.id);
             return;

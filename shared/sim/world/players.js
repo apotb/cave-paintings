@@ -731,6 +731,9 @@
                 : Object.create(null),
             quarantine: Array.isArray(m.quarantine) ? m.quarantine.filter((s) => s && s.id) : []
         };
+        if (m.jobs && typeof m.jobs === "object" && !Array.isArray(m.jobs)) {
+            Settlement.rememberJobs(rec, m.jobs);
+        }
         this._restoreLogoutPose(rec);
         this._ensureCompanionCreature(owner, rec);
         return rec;
@@ -942,6 +945,9 @@
             resting: !!snap.resting,
             _resting: !!snap.resting
         };
+        if (snap.jobs && typeof snap.jobs === "object" && !Array.isArray(snap.jobs)) {
+            Settlement.rememberJobs(rec, snap.jobs);
+        }
         for (const s of rec.inventory) Hide.migrateStackItemId(s);
         for (const s of rec.overflow) Hide.migrateStackItemId(s);
         this._ensureEquipment(rec);
@@ -980,7 +986,10 @@
             homeSettlementId: s.homeSettlementId || null,
             role: "settler",
             lastSleep: s.lastSleep || null,
-            resting: !!(s._resting || s.resting)
+            resting: !!(s._resting || s.resting),
+            jobs: (s.jobs && typeof s.jobs === "object" && !Array.isArray(s.jobs))
+                ? Settlement.normalizeJobs(s.jobs)
+                : null
         };
     },
 
