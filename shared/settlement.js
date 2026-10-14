@@ -1041,6 +1041,29 @@
         return bill;
     }
 
+    /** New id. Keeps recipe, mode, count, remaining, pause, filters, and name. */
+    function cloneBill(bill) {
+        if (!bill || typeof bill !== "object") return null;
+        const paused = bill.paused == null ? true : !!bill.paused;
+        const copy = makeBill({
+            kind: bill.kind,
+            recipeId: bill.recipeId,
+            method: bill.method,
+            outputId: bill.outputId,
+            mode: bill.mode,
+            n: bill.n,
+            paused,
+            remaining: bill.remaining,
+            allowedIds: bill.allowedIds,
+            resultIds: bill.resultIds,
+            name: bill.name
+        });
+        if (copy.mode === "count" && bill.remaining != null && Number.isFinite(Number(bill.remaining))) {
+            copy.remaining = Math.max(0, Math.floor(Number(bill.remaining)));
+        }
+        return copy;
+    }
+
     function billsOf(settle, stationUid) {
         const list = settle?.bills?.[stationUid];
         return Array.isArray(list) ? list : [];
@@ -2291,6 +2314,7 @@
         stockTarget,
         stockShort,
         makeBill,
+        cloneBill,
         billsOf,
         setBills,
         addBill,

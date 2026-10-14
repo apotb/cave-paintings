@@ -19,6 +19,7 @@ class BillsPanel {
         this._bodyY = 52;
         this._refreshing = false;
         this._lastShortageSig = "";
+        this._clipboard = null;
         this.root = scene.add.container(0, 0).setScrollFactor(0).setDepth(15150).setVisible(false);
         scene.uiLayer?.add(this.root);
         this._build();
@@ -136,7 +137,10 @@ class BillsPanel {
         c._icon = icon;
         const tip = opts.tip ? String(opts.tip) : "";
         bg.on("pointerover", (pointer) => {
-            if (disabled) return;
+            if (disabled) {
+                if (tip) scene.showTooltip(() => tip, pointer.x, pointer.y, bg);
+                return;
+            }
             hovering = true;
             paint();
             if (tip) scene.showTooltip(() => tip, pointer.x, pointer.y, bg);
@@ -605,10 +609,53 @@ class BillsPanel {
         return bg;
     }
 
+    _stationName() {
+        return this.thing?.meta?.name || this.thing?.entry?.id || "Station";
+    }
+
+    _copyBills(bills) {
+        const kind = this._kind();
+        const list = Array.isArray(bills) ? bills.filter(Boolean) : [];
+        if (!kind || !list.length) return;
+        this._clipboard = {
+            kind,
+            sourceName: this._stationName(),
+            bills: list.map((b) => ({
+                ...b,
+                allowedIds: Array.isArray(b.allowedIds) ? b.allowedIds.slice() : null,
+                resultIds: Array.isArray(b.resultIds) ? b.resultIds.slice() : null
+            }))
+        };
+        this.refresh();
+    }
+
+    _pasteTip() {
+        const clip = this._clipboard;
+        const n = clip?.bills?.length || 0;
+        if (!n) return "No bill copied";
+        if (clip.kind !== this._kind()) return `Copied from ${clip.sourceName || "another station"}`;
+        if (n === 1) return `Paste ${this._S()?.billTitle?.(clip.bills[0]) || "Bill"}`;
+        return `Paste ${n} bills`;
+    }
+
+    _canPaste() {
+        const clip = this._clipboard;
+        return !!(clip?.bills?.length && clip.kind === this._kind());
+    }
+
+    _pasteBills() {
+        const S = this._S();
+        const clip = this._clipboard;
+        if (!S || !this._canPaste()) return;
+        const next = this._list().concat(clip.bills.map((b) => S.cloneBill(b)).filter(Boolean));
+        this._commit(next);
+    }
+
     _fillList(sc) {
         const S = this._S();
         const { inset, innerW } = this._contentBox(sc);
         const bh = Math.round(22 * sc);
+        const gap = Math.round(4 * sc);
         const add = this._btn(inset + innerW / 2, inset + bh / 2, "Add bill", () => {
             this.view = "add";
             this._scroll = 0;
@@ -616,8 +663,31 @@ class BillsPanel {
         }, { w: innerW, h: bh });
         this._sizeBtn(add, innerW, bh, 12);
         this.body.add(add);
-        let y = inset + bh + Math.round(8 * sc);
+        let y = inset + bh + gap;
         const bills = this._list();
+        const half = Math.floor((innerW - gap) / 2);
+        const copyAll = this._btn(inset + half / 2, y + bh / 2, "Copy all", () => {
+            this._copyBills(this._list());
+        }, {
+            w: half,
+            h: bh,
+            disabled: !bills.length,
+            tip: "Copy every bill on this station"
+        });
+        const pasteW = innerW - half - gap;
+        const paste = this._btn(inset + half + gap + pasteW / 2, y + bh / 2, "Paste", () => {
+            this._pasteBills();
+        }, {
+            w: pasteW,
+            h: bh,
+            disabled: !this._canPaste(),
+            tip: this._pasteTip()
+        });
+        this._sizeBtn(copyAll, half, bh, 12);
+        this._sizeBtn(paste, pasteW, bh, 12);
+        this.body.add(copyAll);
+        this.body.add(paste);
+        y += bh + Math.round(8 * sc);
         if (!bills.length) {
             this._label("No bills", inset, y, 12, "#8a7a62");
             return y + Math.round(22 * sc);
@@ -676,6 +746,7 @@ class BillsPanel {
         const right = inset + innerW - pad;
         const xW = bh;
         const sW = bh;
+        const cW = bh;
         const detW = Math.round(64 * sc);
         const renW = Math.round(64 * sc);
         const name = this._label(title, textX, titleY, 13, titleColor);
@@ -724,17 +795,33 @@ class BillsPanel {
         this._sizeBtn(sBtn, sW, bh, 12);
         this.body.add(sBtn);
 
-        const details = this._btn(right - xW - gap - sW - gap - detW / 2, y + pad + bh / 2, "Details", () => {
-            this.view = "details";
-            this.detailsId = bill.id;
-            this._scroll = 0;
-            this.refresh();
-        }, { w: detW, h: bh });
+        const cBtn = this._btn(
+            right - xW - gap - sW - gap - cW / 2,
+            y + pad + bh / 2,
+            "C",
+            () => this._copyBills([bill]),
+            { w: cW, h: bh, tip: "Copy bill" }
+        );
+        this._sizeBtn(cBtn, cW, bh, 12);
+        this.body.add(cBtn);
+
+        const details = this._btn(
+            right - xW - gap - sW - gap - cW - gap - detW / 2,
+            y + pad + bh / 2,
+            "Details",
+            () => {
+                this.view = "details";
+                this.detailsId = bill.id;
+                this._scroll = 0;
+                this.refresh();
+            },
+            { w: detW, h: bh }
+        );
         this._sizeBtn(details, detW, bh, 12);
         this.body.add(details);
 
         const rename = this._btn(
-            right - xW - gap - sW - gap - detW - gap - renW / 2,
+            right - xW - gap - sW - gap - cW - gap - detW - gap - renW / 2,
             y + pad + bh / 2,
             "Rename",
             () => this._promptRename(bill),

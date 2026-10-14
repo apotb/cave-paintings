@@ -398,6 +398,56 @@ test("bill until-you-have counts across baskets", () => {
     assert.equal(done, null);
 });
 
+test("cloneBill copies settings onto a new id and append keeps existing bills", () => {
+    const settle = Settlement.createSettlement({ x: 0, y: 0 });
+    Settlement.addBill(settle, "fire1", {
+        recipeId: "roast",
+        mode: "forever",
+        paused: false,
+        name: "Keep"
+    });
+    const src = Settlement.makeBill({
+        recipeId: "simmer",
+        outputId: "stew",
+        mode: "count",
+        n: 4,
+        remaining: 2,
+        paused: false,
+        allowedIds: ["apple", "stick"],
+        resultIds: ["simmered_apple"],
+        name: "Night stew"
+    });
+    const partial = Settlement.cloneBill(src);
+    assert.equal(partial.remaining, 2);
+    assert.equal(partial.n, 4);
+    src.remaining = 0;
+    const copy = Settlement.cloneBill(src);
+    assert.ok(copy.id);
+    assert.notEqual(copy.id, src.id);
+    assert.equal(copy.kind, "cook");
+    assert.equal(copy.recipeId, "simmer");
+    assert.equal(copy.method, "shell_simmer");
+    assert.equal(copy.outputId, "stew");
+    assert.equal(copy.mode, "count");
+    assert.equal(copy.n, 4);
+    assert.equal(copy.remaining, 0);
+    assert.equal(copy.paused, false);
+    assert.deepEqual(copy.allowedIds, ["apple", "stick"]);
+    assert.deepEqual(copy.resultIds, ["simmered_apple"]);
+    assert.equal(copy.name, "Night stew");
+    const again = Settlement.cloneBill(src);
+    assert.notEqual(again.id, copy.id);
+
+    Settlement.setBills(settle, "fire1", Settlement.billsOf(settle, "fire1").concat([copy]));
+    const bills = Settlement.billsOf(settle, "fire1");
+    assert.equal(bills.length, 2);
+    assert.equal(bills[0].name, "Keep");
+    assert.equal(bills[0].recipeId, "roast");
+    assert.equal(bills[1].id, copy.id);
+    assert.equal(bills[1].remaining, 0);
+    assert.equal(bills[1].paused, false);
+});
+
 test("billIsActive ignores paused and finished count bills", () => {
     const forever = Settlement.makeBill({ recipeId: "roast", mode: "forever", paused: false });
     assert.equal(Settlement.billIsActive(forever), true);
