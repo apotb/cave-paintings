@@ -31,7 +31,7 @@
         this._fpsSamples = [];
         this._fpsUiAcc = 0;
 
-        // /debug location — blue X + red Y above hotbar center
+        // /debug location — blue X + red Y above the top inventory row
         const locStyle = {
             fontSize: "16px",
             fontFamily: PIXEL_UI_FONT,
@@ -102,8 +102,7 @@
         const fmt = (v) => {
             const n = Number(v);
             if (!Number.isFinite(n)) return "—";
-            // 4 decimals covers 1/16 px-per-tile steps without float junk
-            return n.toFixed(4).replace(/\.?0+$/, "");
+            return n.toFixed(3);
         };
         this.locXText.setText(fmt(feetX));
         this.locYText.setText(` ${fmt(feetY)}`);
@@ -113,10 +112,13 @@
         if (!this.locXText || !this.locYText) return;
         const s = this.uiScale || 1;
         const cx = this.scale.width / 2;
-        const slot0 = this.hotbar?.slots?.[0];
         const slotW = this.hotbar?.slotW || Math.round(32 * s);
-        const slotTop = slot0
-            ? slot0.y - slotW
+        // Backpack slots sit one row above the hotbar; keep the coords above that row.
+        const overflow0 = this.hotbar?.overflowSlots?.[0];
+        const slot0 = this.hotbar?.slots?.[0];
+        const anchor = overflow0 || slot0;
+        const slotTop = anchor
+            ? anchor.y - slotW
             : this.scale.height - Math.round(48 * s);
         const y = slotTop - Math.round(4 * s);
         if (typeof applyPixelUiFont === "function") {

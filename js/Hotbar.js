@@ -457,6 +457,7 @@ class Hotbar {
         }
 
         this.dragDistanceThreshold = Math.round(6 * s);
+        this.scene._layoutLocationDebug?.();
     }
 
     _buildSlot(i) {
