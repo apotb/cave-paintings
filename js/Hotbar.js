@@ -493,6 +493,7 @@ class Hotbar {
         });
 
         slot.on('pointerdown', (pointer) => {
+            if (this.scene._gamePaused) return;
             if (pointer.rightButtonDown()) {
                 this._handleSlotRightClick(slot.index, 'hotbar', pointer);
                 return;
@@ -564,6 +565,7 @@ class Hotbar {
         slot.on('pointerout', () => this.scene.hideTooltip());
 
         slot.on('pointerdown', (pointer) => {
+            if (this.scene._gamePaused) return;
             if (pointer.rightButtonDown()) {
                 this._handleSlotRightClick(slot.index, 'overflow', pointer);
                 return;

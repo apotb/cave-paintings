@@ -230,7 +230,7 @@ class KnappingPanel {
      * @returns {boolean}
      */
     tryOpenAtRock(rock) {
-        if (this.visible) return false;
+        if (this.visible || this.scene._gamePaused) return false;
         const rockId = rock?.meta?.id;
         const isAnvil = typeof Place !== "undefined" && Place.countsAsThing
             ? Place.countsAsThing(rockId, "rock")

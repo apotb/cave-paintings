@@ -474,6 +474,7 @@
         // Default arrow; _cursorFor switches to pointer only when knap tip is active
         thing.setInteractive({ cursor: "default", pixelPerfect: false });
         thing.on("pointerdown", (pointer) => {
+            if (this._gamePaused) return;
             if (this.pointerOverWorldUi?.(pointer)) return;
             this.knappingPanel?.tryOpenAtRock?.(thing);
         });

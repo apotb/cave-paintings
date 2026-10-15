@@ -220,6 +220,7 @@ class PartySystem {
             this.trySelfHeldAction(scene.player, pointer);
         });
         scene.input.on("gameobjectdown", (_pointer, obj) => {
+            if (scene._gamePaused || scene._sculptUiOpen?.()) return;
             if (scene.pointerOverWorldUi?.(_pointer) || scene._pointerOverHudChrome?.(_pointer)) return;
             if (_pointer.rightButtonDown?.()) return;
             const careAlly = this._partyMemberUnderPointer(_pointer);
@@ -774,6 +775,7 @@ class PartySystem {
     trySelfHeldAction(pawn, pointer) {
         const scene = this.scene;
         if (!pawn || pawn !== scene.player) return false;
+        if (scene._gamePaused) return false;
         if (pointer && (scene.pointerOverWorldUi?.(pointer) || scene._pointerOverHudChrome?.(pointer))) return false;
         if (pointer && !scene._pointerOnCreature?.(pointer, pawn)) return false;
         if (pawn._bodyDead || pawn.isIncapacitated?.() || pawn._resting) return false;

@@ -11,6 +11,7 @@
         this.craft = this.add.image(44 * s, this.scale.height / 2, 'craft');
         lockPixelHit(this.craft, 'craft', { cursor: 'pointer' });
         this.craft.on('pointerdown', (pointer) => {
+            if (this._gamePaused) return;
             if (pointer?.button != null && pointer.button !== 0) return;
             this.toggleCraftMenu();
         });
@@ -25,7 +26,10 @@
 
         this.healthBtn = this.add.image(44 * s, this.scale.height / 2 + 104 * s, "health");
         lockPixelHit(this.healthBtn, "health", { cursor: "pointer" });
-        this.healthBtn.on("pointerdown", () => this.toggleHealthMenu());
+        this.healthBtn.on("pointerdown", () => {
+            if (this._gamePaused) return;
+            this.toggleHealthMenu();
+        });
         this.healthBtn.on("pointerover", () => {
             if (!this.healthPanel?.visible) this.healthBtn.setTexture("health_hover");
         });
@@ -37,7 +41,10 @@
 
         this.equipmentBtn = this.add.image(44 * s, this.scale.height / 2 - 104 * s, 'equipment');
         lockPixelHit(this.equipmentBtn, 'equipment', { cursor: 'pointer' });
-        this.equipmentBtn.on('pointerdown', () => this.toggleEquipmentMenu());
+        this.equipmentBtn.on('pointerdown', () => {
+            if (this._gamePaused) return;
+            this.toggleEquipmentMenu();
+        });
         this.equipmentBtn.on('pointerover', () => {
             if (!this.equipmentPanel?.visible) this.equipmentBtn.setTexture('equipment_hover');
         });
@@ -60,6 +67,7 @@
             if (this._tooltipTarget === this.help) this.hideTooltip();
         });
         this.help.on('pointerdown', () => {
+            if (this._gamePaused) return;
             this._helpPressed = true;
             this.help.setTexture('help_open');
         });
@@ -497,6 +505,16 @@
         return !!(this.net?.isLocal || this.localWorldId);
     },
 
+    /**
+     * Pause and the generating overlay are drawn on the UI camera. The world
+     * camera would still hit the player, rocks, and trees underneath.
+     */
+    _syncWorldCameraInput() {
+        const cam = this.cameras?.main;
+        if (!cam) return;
+        cam.inputEnabled = !(this._gamePaused || this._generatingUi);
+    },
+
     _setWorldSimFrozen(on) {
         if (!this._isSingleplayerSession()) {
             if (this._worldSimFrozen) this._applyWorldSimFrozen(false);
@@ -611,8 +629,13 @@
         };
         rect.on("pointerover", () => { hovering = true; paint(); });
         rect.on("pointerout", () => { hovering = false; pressing = false; paint(); });
-        rect.on("pointerdown", () => { pressing = true; paint(); });
-        rect.on("pointerup", () => {
+        rect.on("pointerdown", (_pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            pressing = true;
+            paint();
+        });
+        rect.on("pointerup", (_pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
             const was = pressing;
             pressing = false;
             paint();
@@ -722,6 +745,7 @@
     _openPauseMenu() {
         if (this._gamePaused || this._leavingGame) return;
         this._gamePaused = true;
+        this._syncWorldCameraInput();
         this.closeOpenMenus();
         if (this.knappingPanel?.visible) this.knappingPanel.finishOrClose?.();
         if (this.clayFormingPanel?.visible) this.clayFormingPanel.finishOrClose?.();
@@ -750,6 +774,12 @@
         const dim = this.add.rectangle(w / 2, h / 2, w + 4, h + 4, 0x000000, 0.55)
             .setInteractive({ cursor: "default", useHandCursor: false })
             .setScrollFactor(0);
+        const swallow = (_pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+        };
+        dim.on("pointerdown", swallow);
+        dim.on("pointerup", swallow);
+        dim.on("pointermove", swallow);
         this._pauseAdd(dim, 50000);
         if (this._pausePage === "options") this._fillPauseOptions(dim, w, h);
         else this._fillPauseRoot(dim, w, h);
@@ -914,6 +944,7 @@
         if (!this._gamePaused) return;
         this._releaseChatFade();
         this._gamePaused = false;
+        this._syncWorldCameraInput();
         this._pausePage = "root";
         if (this._isSingleplayerSession()) {
             this.net?.setPaused?.(false);
@@ -1012,6 +1043,7 @@
             this._destroyPauseUi();
         }
         this._gamePaused = true;
+        this._syncWorldCameraInput();
         if (this._isSingleplayerSession()) {
             try { this.net?.setPaused?.(true); } catch (_) {}
             try { this.physics?.world?.pause?.(); } catch (_) {}
@@ -1063,7 +1095,7 @@
         this._generatingUi = { root, bg, text };
         // Overlay lives on the UI camera; world-camera hits (trees, camp, party
         // sprites) would still steal the hand cursor if main input stays on.
-        if (this.cameras?.main) this.cameras.main.inputEnabled = false;
+        this._syncWorldCameraInput();
         try { this.input?.setDefaultCursor?.("default"); } catch (_) {}
         try {
             if (this.game?.canvas) this.game.canvas.style.cursor = "default";
@@ -1096,7 +1128,7 @@
         this._generatingLabelTimer = null;
         const ui = this._generatingUi;
         this._generatingUi = null;
-        if (this.cameras?.main) this.cameras.main.inputEnabled = true;
+        this._syncWorldCameraInput();
         try { ui?.root?.destroy?.(true); } catch (_) {}
     },
 

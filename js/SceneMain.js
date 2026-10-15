@@ -345,6 +345,7 @@ class SceneMain extends SceneBase {
             this._gamePaused = false;
             this._worldSimFrozen = false;
         }
+        this._syncWorldCameraInput?.();
         try { this._destroyPauseUi?.(); } catch (_) {}
         try { this.input?.setDefaultCursor?.("default"); } catch (_) {}
         try {

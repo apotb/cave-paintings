@@ -1376,6 +1376,7 @@ class SettlingStone extends Thing {
         });
         this.on("pointerdown", (pointer) => {
             if (pointer.rightButtonDown()) return;
+            if (scene._gamePaused) return;
             if (scene.pointerOverWorldUi?.(pointer)) return;
             if (scene.restBlocksWorldUi?.()) return;
             if (!this.inRange()) return;
