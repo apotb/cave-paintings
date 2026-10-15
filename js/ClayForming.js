@@ -132,52 +132,62 @@ const ClayForming = {
                 "position:fixed",
                 "z-index:9",
                 "pointer-events:none",
-                "box-sizing:border-box",
+                "display:none",
+                "width:max-content",
+                "max-width:none",
+                "box-sizing:content-box",
                 "background:#111111",
                 "border:1px solid #000000",
                 "color:#ffffff",
-                "font-family:PrimaryFont,monospace",
-                "white-space:pre",
-                "line-height:1.25"
+                "font-family:PrimaryFont, monospace",
+                "white-space:pre"
             ].join(";");
             document.body.appendChild(el);
             this._hudTip = el;
         }
 
         const s = scene.uiScale || 1;
-        const pad = scene._tooltipPadding || 6;
-        const fontPx = typeof pixelUiFontSize === "function" ? pixelUiFontSize(16, s) : Math.round(16 * s);
-        const radius = Math.max(4, Math.round(6 * s));
-        const stroke = Math.max(2, Math.round(2 * s));
-        const head = scene.tooltipText?.text || "";
-        const tail = scene.tooltipSub?.visible ? (scene.tooltipSub.text || "") : "";
-        const text = tail ? `${head}\n${tail}` : head;
-        el.textContent = text;
-        el.style.display = text ? "block" : "none";
-        el.style.padding = `${pad}px`;
-        el.style.fontSize = `${fontPx}px`;
-        el.style.borderRadius = `${radius}px`;
-        el.style.textShadow = [
-            `-${stroke}px 0 #000`,
-            `${stroke}px 0 #000`,
-            `0 -${stroke}px #000`,
-            `0 ${stroke}px #000`
-        ].join(",");
-
         const canvas = scene.game?.canvas;
         const gr = canvas?.getBoundingClientRect?.();
         const cw = canvas?.width || scene.scale?.width || 1;
         const ch = canvas?.height || scene.scale?.height || 1;
         const sx = gr && cw ? gr.width / cw : 1;
         const sy = gr && ch ? gr.height / ch : 1;
-        const boxW = scene._tooltipBoxW || 0;
-        const boxH = scene._tooltipBoxH || 0;
-        const left = (gr ? gr.left : 0) + (tip.x - pad) * sx;
-        const top = (gr ? gr.top : 0) + (tip.y - pad) * sy;
+        const gamePad = scene._tooltipPadding || Math.round(6 * s);
+        const fontPx = Math.max(8, Math.round(
+            (typeof pixelUiFontSize === "function" ? pixelUiFontSize(16, s) : Math.round(16 * s)) * sx
+        ));
+        const pad = Math.max(0, Math.round(gamePad * sx));
+        const stroke = Math.max(1, Math.round(Math.max(2, Math.round(2 * s)) * sx));
+        const radius = Math.max(2, Math.round(Math.max(4, Math.round(6 * s)) * sx));
+        const shadow = [];
+        for (let dx = -stroke; dx <= stroke; dx++) {
+            for (let dy = -stroke; dy <= stroke; dy++) {
+                if (!dx && !dy) continue;
+                if (dx * dx + dy * dy > stroke * stroke) continue;
+                shadow.push(`${dx}px ${dy}px 0 #000`);
+            }
+        }
+        const head = scene.tooltipText?.text || "";
+        const tail = scene.tooltipSub?.visible ? (scene.tooltipSub.text || "") : "";
+        const text = tail ? `${head}\n${tail}` : head;
+        el.textContent = text;
+        el.style.display = text ? "block" : "none";
+        el.style.width = "max-content";
+        el.style.minWidth = "0";
+        el.style.minHeight = "0";
+        el.style.height = "auto";
+        el.style.boxSizing = "content-box";
+        el.style.padding = `${pad + stroke}px`;
+        el.style.fontSize = `${fontPx}px`;
+        el.style.lineHeight = `${fontPx + stroke * 2}px`;
+        el.style.borderRadius = `${radius}px`;
+        el.style.textShadow = shadow.join(",");
+
+        const left = (gr ? gr.left : 0) + (tip.x - gamePad) * sx;
+        const top = (gr ? gr.top : 0) + (tip.y - gamePad) * sy;
         el.style.left = `${Math.round(left)}px`;
         el.style.top = `${Math.round(top)}px`;
-        if (boxW > 0) el.style.minWidth = `${Math.round(boxW * sx)}px`;
-        if (boxH > 0) el.style.minHeight = `${Math.round(boxH * sy)}px`;
     },
 
     showOverlay(bounds, gameCanvas) {
