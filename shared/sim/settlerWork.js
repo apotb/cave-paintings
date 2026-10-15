@@ -236,18 +236,18 @@ function tick(world, mob, delta) {
         keepPigment: !!scan.keepPigment,
         isPigment: scan.isPigment || null
     });
-    const stash = stashScan(world, rec, settle, keepOpts);
-    const haulOn = Settlement.enabledJobs(liveJobs).includes("haul");
-    const delivering = !!(rec._haulDestUid && (stash.has || rec._haulMergeOnly)
-        && (haulOn || rec._busyJob?.type === "stash"));
-    if (rec._haulDestUid && !delivering) {
-        rec._haulDestUid = null;
-        rec._haulMergeOnly = false;
-        if (rec._busyJob?.type === "haul" || rec._busyJob?.type === "stash") endWorkHold(rec);
-    }
-
-    const hold = isWorkHold(rec) || delivering;
-    if (!hold) {
+    // Last search found nothing to do. Replanning every idle person every
+    // frame is what pegs a slow laptop at 30 fps inside a camp.
+    if (
+        rec._settlerPlan === "idle"
+        && rec._settlerScan
+        && rec._settlerScanMs > 0
+        && rec._settlerScanMs < SCAN_MS
+        && !rec._haulDestUid
+        && !rec._haulMergeOnly
+        && !rec._returnFood
+        && !isWorkHold(rec)
+    ) {
         const eat = doEat(world, rec, settle, keepOpts);
         if (eat) {
             rec._researchPoll = 0;
@@ -255,76 +255,117 @@ function tick(world, mob, delta) {
             setSettlerAct(rec, mob, eatAct(world, rec, eat));
             return eat;
         }
+        if (rec._settlerAct !== "Idle") setSettlerAct(rec, mob, "Idle");
+        return null;
     }
-    if (rec._returnFood) {
-        const back = returnPreparedFood(world, rec, settle);
-        if (back) {
-            const meal = heldPrepared(rec)[0];
-            setSettlerAct(rec, mob, Settlement.actLabel({ type: "stash" }, actCtx(world, rec, {
-                stashStack: meal ? meal.slots[meal.index] : null
-            })));
-            return back;
+    const reuseHold = isWorkHold(rec)
+        && rec._busyJob?.type
+        && rec._busyJob.type !== "research"
+        && Settlement.jobEnabled(liveJobs, rec._busyJob.type)
+        && rec._settlerScan
+        && rec._settlerScanMs > 0
+        && rec._settlerScanMs < SCAN_MS
+        && !rec._haulDestUid
+        && !rec._haulMergeOnly
+        && !rec._returnFood;
+    let stash;
+    let delivering = false;
+    let plan;
+    if (reuseHold) {
+        stash = scan.stash || { basket: null, has: false, urgent: false, hasFood: false };
+        plan = rec._busyJob;
+    } else {
+        stash = stashScan(world, rec, settle, keepOpts);
+        const haulOn = Settlement.enabledJobs(liveJobs).includes("haul");
+        delivering = !!(rec._haulDestUid && (stash.has || rec._haulMergeOnly)
+            && (haulOn || rec._busyJob?.type === "stash"));
+        if (rec._haulDestUid && !delivering) {
+            rec._haulDestUid = null;
+            rec._haulMergeOnly = false;
+            if (rec._busyJob?.type === "haul" || rec._busyJob?.type === "stash") endWorkHold(rec);
         }
-    }
 
-    const planOpts = () => ({
-        kc: rec.kc,
-        autoEatBelow: AUTO_EAT,
-        canEat: false,
-        isNight: scan.night,
-        injured: scan.injured,
-        isOrphan: false,
-        bed: scan.bed || null,
-        jobs: liveJobs,
-        patients: scan.patients || [],
-        unlitFire: scan.unlitFire,
-        light: scan.light,
-        cookBill: scan.cookBill,
-        stokeFire: scan.stokeFire,
-        leatherWork: scan.leatherWork,
-        haulDrop: scan.haulDrop,
-        haulMerge: scan.haulMerge,
-        gatherThing: scan.gatherThing,
-        digThing: scan.digThing,
-        chopTree: scan.chopTree,
-        researchCircle: scan.researchCircle,
-        stashBasket: stash.basket,
-        hasStash: stash.has,
-        hasFoodStash: stash.hasFood,
-        stashUrgent: stash.urgent,
-        mergeNeedsRoom: mergeNeedsRoom(rec, scan.haulMerge),
-        busy: hold,
-        busyJob: rec._busyJob || null,
-        reconsiderNeeds: pollNeeds,
-        world,
-        rec
-    });
+        const hold = isWorkHold(rec) || delivering;
+        if (!hold) {
+            const eat = doEat(world, rec, settle, keepOpts);
+            if (eat) {
+                rec._researchPoll = 0;
+                endWorkHold(rec);
+                setSettlerAct(rec, mob, eatAct(world, rec, eat));
+                return eat;
+            }
+        }
+        if (rec._returnFood) {
+            const back = returnPreparedFood(world, rec, settle);
+            if (back) {
+                const meal = heldPrepared(rec)[0];
+                setSettlerAct(rec, mob, Settlement.actLabel({ type: "stash" }, actCtx(world, rec, {
+                    stashStack: meal ? meal.slots[meal.index] : null
+                })));
+                return back;
+            }
+        }
 
-    let plan = Settlement.planWork(planOpts());
-    if (!delivering && !lockWork(claims, rec.id, plan)) {
-        voidPlan(scan, plan);
+        const planOpts = () => ({
+            kc: rec.kc,
+            autoEatBelow: AUTO_EAT,
+            canEat: false,
+            isNight: scan.night,
+            injured: scan.injured,
+            isOrphan: false,
+            bed: scan.bed || null,
+            jobs: liveJobs,
+            patients: scan.patients || [],
+            unlitFire: scan.unlitFire,
+            light: scan.light,
+            cookBill: scan.cookBill,
+            stokeFire: scan.stokeFire,
+            leatherWork: scan.leatherWork,
+            haulDrop: scan.haulDrop,
+            haulMerge: scan.haulMerge,
+            gatherThing: scan.gatherThing,
+            digThing: scan.digThing,
+            chopTree: scan.chopTree,
+            researchCircle: scan.researchCircle,
+            stashBasket: stash.basket,
+            hasStash: stash.has,
+            hasFoodStash: stash.hasFood,
+            stashUrgent: stash.urgent,
+            mergeNeedsRoom: mergeNeedsRoom(rec, scan.haulMerge),
+            busy: hold,
+            busyJob: rec._busyJob || null,
+            reconsiderNeeds: pollNeeds,
+            world,
+            rec
+        });
+
         plan = Settlement.planWork(planOpts());
-        if (!lockWork(claims, rec.id, plan)) {
+        if (!delivering && !lockWork(claims, rec.id, plan)) {
             voidPlan(scan, plan);
-            plan = { type: "idle" };
-            claims?.release(rec.id);
+            plan = Settlement.planWork(planOpts());
+            if (!lockWork(claims, rec.id, plan)) {
+                voidPlan(scan, plan);
+                plan = { type: "idle" };
+                claims?.release(rec.id);
+            }
         }
-    }
-    if (pollNeeds) rec._researchPoll = 0;
+        if (pollNeeds) rec._researchPoll = 0;
 
-    if (pollNeeds && plan.type === "research") {
-        const eat = doEat(world, rec, settle, keepOpts);
-        if (eat) {
-            endWorkHold(rec);
-            setSettlerAct(rec, mob, eatAct(world, rec, eat));
-            return eat;
+        if (pollNeeds && plan.type === "research") {
+            const eat = doEat(world, rec, settle, keepOpts);
+            if (eat) {
+                endWorkHold(rec);
+                setSettlerAct(rec, mob, eatAct(world, rec, eat));
+                return eat;
+            }
         }
+
+        if (plan.type !== "doctor") reservesOf(world, settle).release(rec.id);
+
+        if (Settlement.isBusyWork(plan.type)) beginWorkHold(rec, plan);
+        else if (!delivering && plan.type !== "chop") endWorkHold(rec);
+        rec._settlerPlan = delivering ? "stash" : plan.type;
     }
-
-    if (plan.type !== "doctor") reservesOf(world, settle).release(rec.id);
-
-    if (Settlement.isBusyWork(plan.type)) beginWorkHold(rec, plan);
-    else if (!delivering && plan.type !== "chop") endWorkHold(rec);
 
     const ctx = actCtx(world, rec, {
         stashStack: firstStashable(rec, keepOpts),

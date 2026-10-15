@@ -260,8 +260,36 @@
         return base;
     }
 
+    const EMPTY_VIEW = Object.freeze({
+        priority: "normal",
+        offCategories: Object.freeze([]),
+        offItems: Object.freeze([]),
+        onItems: Object.freeze([])
+    });
+    const viewCache = new WeakMap();
+
+    /**
+     * normalize() for reads. Haul scoring asks this for every stack in every
+     * basket, and the arrays rarely change. A toggle replaces those arrays, so
+     * the cache key is the array identity — an in-place edit must not stick.
+     */
+    function view(raw) {
+        if (!raw || typeof raw !== "object") return EMPTY_VIEW;
+        const offC = raw.offCategories;
+        const offI = raw.offItems;
+        const onI = raw.onItems;
+        const pri = raw.priority;
+        const hit = viewCache.get(raw);
+        if (hit && hit.offC === offC && hit.offI === offI && hit.onI === onI && hit.pri === pri) {
+            return hit.v;
+        }
+        const v = normalize(raw);
+        viewCache.set(raw, { offC, offI, onI, pri, v });
+        return v;
+    }
+
     function isEmpty(filter) {
-        const f = normalize(filter);
+        const f = view(filter);
         return f.priority === "normal"
             && !f.offCategories.length
             && !f.offItems.length
@@ -283,7 +311,7 @@
     }
 
     function keyAllowed(filter, key, ancestors) {
-        const f = normalize(filter);
+        const f = view(filter);
         if (!key) return true;
         if (f.onItems.includes(key)) return true;
         if (f.offItems.includes(key)) return false;
@@ -358,7 +386,7 @@
         const cats = [];
         collectDescendants(node, cats, keys);
         if (!keys.length) {
-            return normalize(filter).offCategories.includes(categoryId) ? "off" : "on";
+            return view(filter).offCategories.includes(categoryId) ? "off" : "on";
         }
         let on = 0;
         let off = 0;
@@ -599,8 +627,8 @@
         if (!stackFits(destSlots, stack, getItem)) return 0;
         const srcFilt = basketFilter(src);
         const srcAllows = allows(srcFilt, stack, getItem);
-        const srcPri = priorityRank(normalize(srcFilt).priority);
-        const destPri = priorityRank(normalize(destFilt).priority);
+        const srcPri = priorityRank(view(srcFilt).priority);
+        const destPri = priorityRank(view(destFilt).priority);
         const merge = existingStackRoom(destSlots, stack, getItem) > 0 ? 1 : 0;
         if (!srcAllows) return 400 + destPri * 10 + merge;
         if (destPri > srcPri) return 300 + destPri * 10 + merge;
@@ -703,7 +731,7 @@
             if (!allows(b.storageFilter || b.entry?.storageFilter, stack, getItem)) continue;
             const slots = b.slots || b.entry?.slots;
             if (!stackFits(slots, stack, getItem)) continue;
-            const rank = priorityRank(normalize(b.storageFilter || b.entry?.storageFilter).priority);
+            const rank = priorityRank(view(b.storageFilter || b.entry?.storageFilter).priority);
             const hasMerge = existingStackRoom(slots, stack, getItem) > 0;
             const d = Math.hypot(
                 (Number(b.x) || Number(b.entry?.x) || 0) - fx,

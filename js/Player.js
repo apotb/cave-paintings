@@ -3658,6 +3658,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this._bodyDead) return;
 
         if (!controlled) {
+            // Pose comes from the sim. A camp of settlers each colliding with
+            // every tree and basket is a physics pass the puppet then throws away.
+            if (this.body?.enable) {
+                this.body.setVelocity(0, 0);
+                this.body.moves = false;
+                this.body.enable = false;
+            }
             const tendLock = !!(this._tendChannel && !this._tendChannel.corpse)
                 || !!this.scene.partySys?._isTendTargeted?.(this);
             const prone = !!(
@@ -3690,6 +3697,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 this._syncChatBubble?.();
                 return;
             }
+
+        if (this.body && !this.body.enable) {
+            this.body.enable = true;
+            const lying = !!(
+                this._downed || this._prone || this._resting
+                || this.isImmobile?.() || this.isIncapacitated?.()
+            );
+            this.body.moves = !lying;
+        }
 
             if (composing || knapping || naming || researchOpen) {
             this.setVelocity(0, 0);
