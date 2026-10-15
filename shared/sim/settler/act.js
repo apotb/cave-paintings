@@ -38,6 +38,7 @@
     const storageNear = (...args) => ctx.storageNear(...args);
     const insertInEntry = (...args) => ctx.insertInEntry(...args);
     const beginWorkHold = (...args) => ctx.beginWorkHold(...args);
+    const bumpWork = (...args) => ctx.bumpWork(...args);
     const basketsOf = (...args) => ctx.basketsOf(...args);
     const endWorkHold = (...args) => ctx.endWorkHold(...args);
     const paintStandOf = (...args) => ctx.paintStandOf(...args);
@@ -242,6 +243,9 @@ function putInBasket(world, rec, settle, stack) {
             rec._haulDestUid = b.uid;
             rec._haulMergeOnly = false;
             beginWorkHold(rec, { type: "stash", target: b });
+            // The scan that picked this up still names the station. Leave it
+            // and the next tick plans "do that again" and drops the basket.
+            bumpWork(world, rec);
         }
         world._dirtyPawnOwner(rec);
         return true;

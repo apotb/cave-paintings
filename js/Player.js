@@ -3642,7 +3642,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._tickChopBar();
         this._tickVomit(dt);
 
-        this.capacities = new Capacities(this.anatomy);
+        // Puppets share one anatomy object for the whole visit. Rebuilding
+        // Moving/Consciousness for every settler every frame is a camp hitch.
+        if (controlled || this.anatomy?._dirty || !this.capacities || this.capacities.body !== this.anatomy) {
+            this.capacities = new Capacities(this.anatomy);
+            if (this.anatomy) this.anatomy._dirty = false;
+        }
         this._refreshDownedState();
         if (this._bodyDead) return;
 

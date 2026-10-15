@@ -361,7 +361,7 @@
             const rec = (this.settlers || []).find((s) => s && String(s.id) === pid)
                 || (p.party || []).find((m) => m && String(m.id) === pid);
             if (rec) Settlement.rememberJobs(rec, row);
-            SettlerWork.bumpWork?.(this);
+            SettlerWork.bumpWork?.(this, rec);
             this._youDirty.add(p.id);
             return;
         }

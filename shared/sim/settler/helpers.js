@@ -59,6 +59,14 @@ function beginSettleQueries(world) {
     if (!world._simTickLive) {
         world._queryGen = (world._queryGen || 0) + 1;
         world._uidIndex = null;
+        world._scanLeft = 99;
+        return;
+    }
+    // One budget for the whole tick. beginSettleQueries runs once per settler.
+    const gen = world._queryGen | 0;
+    if (world._scanGen !== gen) {
+        world._scanGen = gen;
+        world._scanLeft = 2;
     }
 }
 
@@ -271,12 +279,17 @@ function claimsFor(world, settle) {
     return c;
 }
 
-function bumpWork(world) {
-    for (const rec of world?.settlers || []) {
-        if (!rec) continue;
-        rec._settlerScan = null;
-        rec._settlerScanMs = SCAN_MS;
-    }
+/**
+ * A basket, bill, or job change used to wipe every settler's cached search
+ * and make the whole camp scan on the next tick. With a full camp that hitch
+ * is most of the frame. Shared lists already rebuild once per tick; each
+ * person picks a new job on their own timer. Pass one record to refresh just
+ * that person (a job edit should not wait).
+ */
+function bumpWork(world, rec) {
+    if (!rec) return;
+    rec._settlerScan = null;
+    rec._settlerScanMs = SCAN_MS;
 }
 
 function releaseWork(world, mob) {
@@ -803,13 +816,16 @@ function researchCircle(world, rec, settle, claims) {
 }
 
 function settlersOf(world, settle) {
+    const q = settleQ(world, settle);
+    if (q.settlers) return q.settlers;
     const list = (world.settlers || []).filter(
         (s) => s && !s.dead && s.homeSettlementId === settle.id
     );
-    if (Settlement?.sortByJobOrder && settle) {
-        return Settlement.sortByJobOrder(settle, list, (s) => s.id);
-    }
-    return list;
+    const sorted = (Settlement?.sortByJobOrder && settle)
+        ? Settlement.sortByJobOrder(settle, list, (s) => s.id)
+        : list;
+    q.settlers = sorted;
+    return sorted;
 }
 
 function countStored(world, settle, itemId) {

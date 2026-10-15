@@ -133,6 +133,14 @@ const shellRequire = typeof require === "function" ? require : undefined;
     const doLeather = (...args) => ctx.doLeather(...args);
 
 
+/** At most a couple of full job searches per sim tick, so a camp of twenty doesn't all search on the same frame. */
+function allowSettlerScan(world) {
+    if (!world || !world._simTickLive) return true;
+    if (!(world._scanLeft > 0)) return false;
+    world._scanLeft--;
+    return true;
+}
+
 function tick(world, mob, delta) {
     beginSettleQueries(world);
     const rec = findRec(world, mob);
@@ -208,7 +216,8 @@ function tick(world, mob, delta) {
     // Someone else took the pile. Drop the haul and rescan for the next job
     // instead of walking to where it used to be.
     if (haulTargetMissing(world, rec)) abandonHaul(world, rec, settle);
-    if (!rec._settlerScan || rec._settlerScanMs >= SCAN_MS) {
+    const wantScan = !rec._settlerScan || rec._settlerScanMs >= SCAN_MS;
+    if (wantScan && allowSettlerScan(world)) {
         rec._settlerScanMs = 0;
         rec._settlerScan = scanWork(world, rec, settle, claims);
     }
@@ -217,7 +226,7 @@ function tick(world, mob, delta) {
     else rec._researchPoll = 0;
     const pollNeeds = researchHold
         && rec._researchPoll >= (Settlement.RESEARCH_NEEDS_TICKS || 10);
-    if (pollNeeds) {
+    if (pollNeeds && allowSettlerScan(world)) {
         rec._settlerScan = scanWork(world, rec, settle, claims);
         rec._settlerScanMs = 0;
     }
