@@ -217,20 +217,47 @@
             || !!(ent.hostile || ent.ai?.hostile || (Number(ent.ai?.panicMs) || 0) > 0);
     },
 
+    /**
+     * Hostiles standing in the camp, shared by every settler this tick.
+     * Scanning all wildlife once beats doing it again per person.
+     */
+    _settlementHostiles(settle) {
+        if (!settle) return [];
+        const gen = this._queryGen | 0;
+        if (settle._hostileGen === gen && settle._hostileList) return settle._hostileList;
+        const list = [];
+        const push = (ent) => {
+            if (!ent || ent.isBodyDead?.() || ent._dead || ent.dead) return;
+            if (!Settlement.inRange(settle, ent.x, ent.y, TS)) return;
+            const owner = Party.ownerIdOf(ent);
+            if (owner && this.players.has(owner)) return;
+            if (!(Party.wildIsHostile?.(ent)
+                || ent.hostile
+                || ent.ai?.hostile
+                || (Number(ent.ai?.panicMs) || 0) > 0)) return;
+            list.push(ent);
+        };
+        for (const mob of this.mobs.values()) push(mob);
+        for (const w of this.wanderers.values()) {
+            if (!w || w.dead) continue;
+            push(this._ensureWandererCreature(w) || w);
+        }
+        settle._hostileGen = gen;
+        settle._hostileList = list;
+        return list;
+    },
+
     _nearestHostileInSettlement(settle, settler) {
         let best = null;
         let bestD = Infinity;
-        const consider = (ent) => {
-            if (!this._hostileInSettlement(settle, ent, settler)) return;
+        const list = this._settlementHostiles(settle);
+        for (let i = 0; i < list.length; i++) {
+            const ent = list[i];
+            if (Party.sameFaction?.(settler, ent)) continue;
             const d = Math.hypot((ent.x || 0) - (settler.x || 0), (ent.y || 0) - (settler.y || 0));
-            if (d >= bestD) return;
+            if (d >= bestD) continue;
             bestD = d;
             best = ent;
-        };
-        for (const mob of this.mobs.values()) consider(mob);
-        for (const w of this.wanderers.values()) {
-            if (!w || w.dead) continue;
-            consider(this._ensureWandererCreature(w) || w);
         }
         return best;
     },
@@ -1075,7 +1102,6 @@
         this._queryGen = (this._queryGen || 0) + 1;
         this._chunkRectCache = new Map();
         this._sleepRectCache = new Map();
-        this._uidIndex = null;
         const dt = dtMs / 1000;
         for (const p of this.players.values()) {
             if (!p.connected) continue;

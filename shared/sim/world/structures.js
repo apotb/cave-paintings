@@ -261,6 +261,7 @@
         const chunk = this._ensureChunk(cx, cy);
         if (!Array.isArray(chunk.things)) chunk.things = [];
         if (!Array.isArray(chunk.lootableThings)) chunk.lootableThings = [];
+        this._watchChunkThings(chunk);
 
         if (thingDef.sleep) {
             const entry = {

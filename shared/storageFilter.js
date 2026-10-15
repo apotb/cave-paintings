@@ -116,14 +116,27 @@
         return null;
     }
 
-    function ancestorIds(nodes, id, trail = []) {
+    const ancestorMemo = new Map();
+
+    function ancestorIds(nodes, id, trail) {
+        const top = !trail && nodes === CATEGORY_TREE;
+        if (top && ancestorMemo.has(id)) return ancestorMemo.get(id);
+        const prefix = trail || [];
+        let found = null;
         for (const n of nodes || []) {
-            const next = trail.concat(n.id);
-            if (n.id === id) return next;
+            const next = prefix.concat(n.id);
+            if (n.id === id) {
+                found = next;
+                break;
+            }
             const hit = ancestorIds(n.children, id, next);
-            if (hit) return hit;
+            if (hit) {
+                found = hit;
+                break;
+            }
         }
-        return null;
+        if (top) ancestorMemo.set(id, found);
+        return found;
     }
 
     function collectDescendants(node, cats, keys) {
@@ -598,31 +611,20 @@
         return 0;
     }
 
-    function findMergeJob(baskets, getItem, fromX, fromY, opts = {}) {
-        const claimed = typeof opts.isClaimed === "function" ? opts.isClaimed : () => false;
-        const fx = Number(fromX) || 0;
-        const fy = Number(fromY) || 0;
-        let best = null;
-        let bestScore = -1;
-        let bestD = Infinity;
-        const consider = (job, x, y, score, distScale) => {
-            const key = mergeClaimKey(job);
-            if (!key) return;
-            job.claimKey = key;
-            if (opts.claimKey) {
-                if (key !== opts.claimKey) return;
-            } else if (claimed(key)) return;
-            const d = Math.hypot((Number(x) || 0) - fx, (Number(y) || 0) - fy) * (distScale || 1);
-            if (score > bestScore || (score === bestScore && d < bestD)) {
-                bestScore = score;
-                bestD = d;
-                best = job;
-            }
-        };
+    /**
+     * Every positive haul between these baskets. Callers pick one.
+     * Scoring does not depend on who is walking, so a camp can reuse the list.
+     */
+    function listMergeJobs(baskets, getItem) {
+        const jobs = [];
         const list = (baskets || []).filter(Boolean);
         for (const b of list) {
             if (!needsCompact(basketSlots(b), getItem)) continue;
-            consider({ kind: "pack", basket: b }, b.x, b.y, 450, 0.5);
+            const job = { kind: "pack", basket: b };
+            const key = mergeClaimKey(job);
+            if (!key) continue;
+            job.claimKey = key;
+            jobs.push({ job, x: b.x, y: b.y, score: 450, distScale: 0.5 });
         }
         for (let a = 0; a < list.length; a++) {
             const src = list[a];
@@ -635,18 +637,51 @@
                     const dest = list[b];
                     const score = transferScore(src, dest, stack, getItem);
                     if (!(score > 0)) continue;
-                    consider({
+                    const job = {
                         kind: "move",
                         from: src,
                         fromIndex: i,
                         to: dest,
                         stackId: stack.id,
                         reason: score >= 400 ? "wrong" : (score >= 200 ? "better" : "merge")
-                    }, src.x, src.y, score, 1);
+                    };
+                    const key = mergeClaimKey(job);
+                    if (!key) continue;
+                    job.claimKey = key;
+                    jobs.push({ job, x: src.x, y: src.y, score, distScale: 1 });
                 }
             }
         }
-        return best;
+        return jobs;
+    }
+
+    function pickMergeJob(jobs, fromX, fromY, opts = {}) {
+        const claimed = typeof opts.isClaimed === "function" ? opts.isClaimed : () => false;
+        const fx = Number(fromX) || 0;
+        const fy = Number(fromY) || 0;
+        let best = null;
+        let bestScore = -1;
+        let bestD = Infinity;
+        for (let i = 0; i < (jobs || []).length; i++) {
+            const row = jobs[i];
+            const job = row.job;
+            const key = job?.claimKey || mergeClaimKey(job);
+            if (!key) continue;
+            if (opts.claimKey) {
+                if (key !== opts.claimKey) continue;
+            } else if (claimed(key)) continue;
+            const d = Math.hypot((Number(row.x) || 0) - fx, (Number(row.y) || 0) - fy) * (row.distScale || 1);
+            if (row.score > bestScore || (row.score === bestScore && d < bestD)) {
+                bestScore = row.score;
+                bestD = d;
+                best = job;
+            }
+        }
+        return best ? Object.assign({}, best) : null;
+    }
+
+    function findMergeJob(baskets, getItem, fromX, fromY, opts = {}) {
+        return pickMergeJob(listMergeJobs(baskets, getItem), fromX, fromY, opts);
     }
 
     function stackFits(slots, stack, getItem) {
@@ -723,6 +758,8 @@
         needsCompact,
         mergeClaimKey,
         findMergeJob,
+        listMergeJobs,
+        pickMergeJob,
         stackFits,
         pickBasket,
         transferScore,

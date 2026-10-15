@@ -203,6 +203,7 @@
         if (!entry) return null;
         if (!entry.uid) {
             entry.uid = `cf_${Math.round(Number(entry.x) || 0)}_${Math.round(Number(entry.y) || 0)}`;
+            this._invalidateUidIndex?.();
         }
         const cloneSlot = (s) => (s?.id ? this._cloneStackForWorld(s) : null);
         const fuel = Array.isArray(entry.fuel) ? entry.fuel : [null, null];
@@ -649,6 +650,7 @@
         const { cx, cy } = worldToChunk(x, y - 1);
         const chunk = this._ensureChunk(cx, cy);
         if (!Array.isArray(chunk.things)) chunk.things = [];
+        this._watchChunkThings(chunk);
         const entry = {
             uid: `cf_${Math.round(x)}_${Math.round(y)}`,
             id: "campfire",
@@ -921,6 +923,7 @@
         const { chunk, entry } = found;
         if (!entry.uid) {
             entry.uid = `cf_${Math.round(Number(entry.x) || 0)}_${Math.round(Number(entry.y) || 0)}`;
+            this._invalidateUidIndex?.();
         }
         const op = String(action.op || "");
         if (op === "attend") {

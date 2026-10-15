@@ -24,6 +24,39 @@
         return itemDefs().get(id);
     },
 
+    /** Drop the cached uid map so the next lookup rebuilds it. */
+    _invalidateUidIndex() {
+        this._uidBuiltGen = -1;
+    },
+
+    /**
+     * push/splice are how things appear and disappear. Wrapping those keeps the
+     * uid map honest without walking every explored chunk every frame.
+     */
+    _watchThingList(chunk, key) {
+        const list = chunk && chunk[key];
+        if (!Array.isArray(list) || list._uidWatch) return;
+        const world = this;
+        const push = list.push;
+        const splice = list.splice;
+        list.push = function () {
+            const n = push.apply(this, arguments);
+            world._invalidateUidIndex();
+            return n;
+        };
+        list.splice = function () {
+            const removed = splice.apply(this, arguments);
+            world._invalidateUidIndex();
+            return removed;
+        };
+        Object.defineProperty(list, "_uidWatch", { value: true });
+    },
+
+    _watchChunkThings(chunk) {
+        this._watchThingList(chunk, "things");
+        this._watchThingList(chunk, "lootableThings");
+    },
+
     _buildUidIndex() {
         const map = new Map();
         for (const c of this.chunks.values()) {
@@ -38,13 +71,41 @@
         return map;
     },
 
+    /** True when the indexed object is still in that chunk's live lists. */
+    _uidEntryLive(hit, want) {
+        const entry = hit?.entry;
+        const chunk = hit?.chunk;
+        if (!entry || !chunk || String(entry.uid) !== want) return false;
+        const things = chunk.things;
+        if (Array.isArray(things)) {
+            for (let i = 0; i < things.length; i++) {
+                if (things[i] === entry) return true;
+            }
+        }
+        const loot = chunk.lootableThings;
+        if (Array.isArray(loot)) {
+            for (let i = 0; i < loot.length; i++) {
+                if (loot[i] === entry) return true;
+            }
+        }
+        return false;
+    },
+
     _findThingByUid(uid) {
-        if (!uid) return null;
+        if (uid == null || uid === "") return null;
         const want = String(uid);
-        const map = this._uidIndex || this._buildUidIndex();
-        const hit = map.get(want);
-        if (hit?.entry && String(hit.entry.uid) === want) return hit;
-        return null;
+        const map = this._uidIndex;
+        const hit = map && map.get(want);
+        if (hit && this._uidEntryLive(hit, want)) return hit;
+        if (hit && map) map.delete(want);
+        // One full walk of the explored map per tick, and only after a miss.
+        // Steady settler lookups stay on the map built last time something moved.
+        const gen = this._queryGen | 0;
+        if (map && this._uidBuiltGen === gen) return null;
+        const built = this._buildUidIndex();
+        this._uidBuiltGen = gen;
+        const again = built.get(want);
+        return again && this._uidEntryLive(again, want) ? again : null;
     },
 
     _ownedPawns(p) {

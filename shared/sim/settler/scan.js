@@ -56,6 +56,7 @@
     const stationsOf = (...args) => ctx.stationsOf(...args);
     const stationKey = (...args) => ctx.stationKey(...args);
     const basketsOf = (...args) => ctx.basketsOf(...args);
+    const settleQ = (...args) => ctx.settleQ(...args);
     const emitEntry = (...args) => ctx.emitEntry(...args);
     const takeOffFire = (...args) => ctx.takeOffFire(...args);
     const workJobOn = (...args) => ctx.workJobOn(...args);
@@ -68,6 +69,16 @@
     const stashScan = (...args) => ctx.stashScan(...args);
     const canGivePawn = (...args) => ctx.canGivePawn(...args);
 
+
+function haulMergeJob(world, rec, settle, claims) {
+    const q = settleQ(world, settle);
+    if (!q.mergeJobs) {
+        q.mergeJobs = StorageFilter.listMergeJobs(basketsOf(world, settle), getItem);
+    }
+    return StorageFilter.pickMergeJob(q.mergeJobs, rec.x, rec.y, {
+        isClaimed: (key) => claimedByOther(claims, key, rec.id) || isSkipped(rec, key)
+    });
+}
 
 function haulDrop(world, rec, settle, claims) {
     const drops = dropsOf(world, settle);
@@ -804,13 +815,7 @@ function scanWork(world, rec, settle, claims) {
         stokeFire: jobOn(enabled, "cook") ? stokeFire(world, rec, settle, claims) : null,
         leatherWork: jobOn(enabled, "leather") ? leatherWork(world, rec, settle, claims) : null,
         haulDrop: jobOn(enabled, "haul") ? haulDrop(world, rec, settle, claims) : null,
-        haulMerge: jobOn(enabled, "haul") ? StorageFilter.findMergeJob(
-            basketsOf(world, settle),
-            getItem,
-            rec.x,
-            rec.y,
-            { isClaimed: (key) => claimedByOther(claims, key, rec.id) || isSkipped(rec, key) }
-        ) : null,
+        haulMerge: jobOn(enabled, "haul") ? haulMergeJob(world, rec, settle, claims) : null,
         gatherThing: jobOn(enabled, "gather") ? gatherThing(world, rec, settle, claims) : null,
         digThing: jobOn(enabled, "gather") ? digThing(world, rec, settle, claims) : null,
         chopTree: jobOn(enabled, "chop") ? chopTree(world, rec, settle, claims) : null,

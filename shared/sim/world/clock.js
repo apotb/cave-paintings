@@ -661,6 +661,7 @@
             }
         });
         this.chunks.set(key, c);
+        this._watchChunkThings(c);
         this._ensureLootableUids(c);
         this._registerChunkMobs(c);
         return c;

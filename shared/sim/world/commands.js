@@ -639,6 +639,8 @@
         if (Array.isArray(chunk.lootableThings)) {
             chunk.lootableThings = chunk.lootableThings.filter((t) => !onTile(t));
         }
+        this._watchChunkThings(chunk);
+        this._invalidateUidIndex();
         return chunk;
     },
 

@@ -416,6 +416,7 @@ class SimWorld {
                 generated: true
             };
             w.chunks.set(key, chunk);
+            w._watchChunkThings(chunk);
             w._ensureLootableUids(chunk);
             w._registerChunkMobs(chunk);
         }
