@@ -112,6 +112,88 @@ test("craft leaf_cord spends leaves", () => {
     assert.ok(!pawn.inventory.some((s) => s && s.id === "leaf" && s.quantity >= 5));
 });
 
+test("craft count makes several leaf cords and stops when leaves run out", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "leaf", quantity: 12 };
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "leaf_cord", count: 10 });
+    assert.equal(pawn.inventory.find((s) => s?.id === "leaf_cord")?.quantity, 2);
+    assert.equal(pawn.inventory.find((s) => s?.id === "leaf")?.quantity, 2);
+});
+
+test("craft count of 3 spends exactly three recipes", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "leaf", quantity: 20 };
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "leaf_cord", count: 3 });
+    assert.equal(pawn.inventory.find((s) => s?.id === "leaf_cord")?.quantity, 3);
+    assert.equal(pawn.inventory.find((s) => s?.id === "leaf")?.quantity, 5);
+});
+
+test("shift-crafting a whole leaf stack puts the cords in that slot", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "pebble", quantity: 1 };
+    pawn.inventory[1] = { id: "leaf", quantity: 90 };
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "leaf_cord", count: 99 });
+    assert.equal(pawn.inventory[0]?.id, "pebble");
+    assert.equal(pawn.inventory[1]?.id, "leaf_cord");
+    assert.equal(pawn.inventory[1]?.quantity, 18);
+    assert.ok(!pawn.inventory.some((s) => s?.id === "leaf"));
+});
+
+test("ctrl-crafting part of a stack leaves the rest and puts cords beside it", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "pebble", quantity: 1 };
+    pawn.inventory[1] = { id: "leaf", quantity: 90 };
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "leaf_cord", count: 10 });
+    assert.equal(pawn.inventory[1]?.id, "leaf");
+    assert.equal(pawn.inventory[1]?.quantity, 40);
+    assert.equal(pawn.inventory[2]?.id, "leaf_cord");
+    assert.equal(pawn.inventory[2]?.quantity, 10);
+});
+
+test("batch craft keeps an existing cord stack and still refills the leaf slot", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "leaf_cord", quantity: 2 };
+    pawn.inventory[1] = { id: "leaf", quantity: 90 };
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "leaf_cord", count: 99 });
+    assert.equal(pawn.inventory[0]?.quantity, 2);
+    assert.equal(pawn.inventory[1]?.id, "leaf_cord");
+    assert.equal(pawn.inventory[1]?.quantity, 18);
+});
+
+test("a single craft does not move cords back into a leftover leaf stack", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "pebble", quantity: 1 };
+    pawn.inventory[1] = { id: "leaf", quantity: 90 };
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "leaf_cord" });
+    assert.equal(pawn.inventory[1]?.id, "leaf");
+    assert.equal(pawn.inventory[1]?.quantity, 85);
+    assert.equal(pawn.inventory[2]?.id, "leaf_cord");
+    assert.equal(pawn.inventory[2]?.quantity, 1);
+});
+
+test("craft count spends a whole basket stack in one action", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const chunk = originChunk(world);
+    const basket = {
+        uid: "st_craft_batch",
+        id: "wicker_basket",
+        x: pawn.x,
+        y: pawn.y
+    };
+    Place.ensureStorageEntry(basket, DataStore.getThing("wicker_basket"));
+    basket.slots[0] = { id: "leaf", quantity: 10 };
+    chunk.things.push(basket);
+
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.CRAFT,
+        id: "leaf_cord",
+        count: 99,
+        storageUid: basket.uid
+    });
+    assert.equal(pawn.inventory.find((s) => s?.id === "leaf_cord")?.quantity, 2);
+    assert.equal(basket.slots[0], null);
+});
+
 test("craft leaf_cord spends leaves from a nearby basket", () => {
     const { world, pawn, Protocol } = createTestWorld();
     const chunk = originChunk(world);

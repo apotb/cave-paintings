@@ -2916,7 +2916,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      * (skinworking bench, campfire pitch) must stay in range; handheld
      * recipes (tally stick) only need the tool.
      */
-    beginCraft(recipe, station) {
+    beginCraft(recipe, station, repeatLeft = 1) {
         if (this._eatChannel) this._cancelEat();
         if (this._tendChannel || this._skinChannel || this._fleshChannel || this._brainChannel || this._craftChannel || this._bodyDead || this.isAttacking()) {
             return false;
@@ -2947,6 +2947,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             ? knapMaterialDurationScale(item?.knapMaterial)
             : 1;
         const max = seconds * 1000 * scale * quality * material;
+        let repeat = Math.floor(Number(repeatLeft));
+        if (!Number.isFinite(repeat) || repeat < 1) repeat = 1;
         this._craftChannel = {
             remaining: max,
             max,
@@ -2954,7 +2956,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             station,
             recipe,
             toolClass: rt?.toolClass || null,
-            requireTool: rt || null
+            requireTool: rt || null,
+            repeat
         };
         this._showChannelBar(0);
         return true;
@@ -2997,10 +3000,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._showChannelBar(Phaser.Math.Clamp(prog, 0, 1));
         if (this._craftChannel.remaining > 0) return;
 
+        const repeatLeft = Math.max(1, Math.floor(Number(this._craftChannel.repeat) || 1));
         this._craftChannel = null;
-        this._hideChannelBar();
         this.scene._finishCraft?.(recipe, this);
         this.scene.hotbar && (this.scene.hotbar.dirty = true);
+        if (!(repeatLeft > 1 && this.beginCraft(recipe, station, repeatLeft - 1))) {
+            this._hideChannelBar();
+        }
         if (this.isControlled?.()) {
             this.scene.refreshCraftMenu?.();
             this.scene.refreshTooltip?.();

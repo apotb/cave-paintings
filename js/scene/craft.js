@@ -423,10 +423,11 @@
                 if (this._tooltipTarget === slot) this.hideTooltip();
             });
 
-            // Craft
-            slot.on('pointerdown', ()  => {
+            // Craft. Ctrl makes 10 output items; Shift makes as many as ingredients allow.
+            slot.on('pointerdown', (pointer) => {
                 if (this.canCraft(recipe)) {
-                    this.doCraft(recipe);
+                    const count = Math.max(1, this._craftClickCount(recipe, pointer));
+                    this.doCraft(recipe, count);
                     this.hotbar.dirty = true;
                     this.refreshTooltip();
                     this.refreshCraftMenu();
@@ -1090,7 +1091,73 @@
         return true;
     },
 
-    doCraft(recipe) {
+    /**
+     * How many times to run a recipe for this click.
+     * Ctrl produces 10 output items (rounded up to a whole craft).
+     * Shift produces as many as ingredients and the held tool allow.
+     * A plain click crafts once.
+     */
+    _craftClickCount(recipe, pointer) {
+        const ev = pointer?.event;
+        const keys = this.player?.keys;
+        const shift = !!(ev?.shiftKey || keys?.SHIFT?.isDown);
+        const ctrl = !!(ev?.ctrlKey || ev?.metaKey || keys?.CTRL?.isDown);
+        const out = Math.max(1, Math.floor(Number(recipe?.quantity) || 1));
+        let n = 1;
+        if (shift) n = 999;
+        else if (ctrl) n = Math.ceil(10 / out);
+        // Timed crafts channel one by one, so the queue has to be finite up front.
+        // Offline play also has to stop itself; the sim path lets the server stop.
+        const timed = (Number(recipe?.craftSeconds) || 0) > 0;
+        if (timed || !this.simAuth?.()) n = Math.min(n, this._maxCraftRepeats(recipe));
+        return Math.max(0, Math.floor(n));
+    },
+
+    /** Crafts possible from pockets, the open container, and the held tool. */
+    _maxCraftRepeats(recipe, pawn) {
+        const who = pawn || this.player;
+        if (!recipe || !this.canCraft(recipe, who)) return 0;
+        let n = 999;
+        for (const ing of recipe.ingredients || []) {
+            const qty = Math.max(1, Math.floor(Number(ing.qty) || 1));
+            const have = this._craftIngredientHave(ing, who);
+            n = Math.min(n, Math.floor(have / qty));
+        }
+        const tool = this._craftToolRepeats(recipe, who);
+        if (tool != null) n = Math.min(n, tool);
+        return Math.max(0, n);
+    },
+
+    /**
+     * Uses left on the held tool, or null when the tool is not consumed.
+     * A durability tool can finish the craft that breaks it.
+     */
+    _craftToolRepeats(recipe, pawn) {
+        const rt = recipe?.requireTool;
+        if (!rt) return null;
+        const classes = (typeof Carry !== "undefined" && Carry.recipeToolClasses)
+            ? Carry.recipeToolClasses(rt)
+            : (rt.toolClass ? [rt.toolClass] : []);
+        if (!classes.length) return null;
+        const who = pawn || this.player;
+        const held = who?.getHeldItem?.();
+        const def = held ? this.getItem?.(held.id) : null;
+        if (typeof Carry !== "undefined" && Carry.isSingleUseTool?.(held, def)) {
+            return Math.max(0, Math.floor(Number(held?.quantity) || 0));
+        }
+        const wear = Number(rt.wear) || 0;
+        if (!(wear > 0) || typeof Durability === "undefined") return null;
+        const max = Durability.maxDurability(held, def);
+        if (!(max > 0)) return null;
+        const left = Durability.remainingDurability(held, def);
+        if (!(left > 0)) return 1;
+        return Math.max(1, Math.ceil(left / wear));
+    },
+
+    doCraft(recipe, count = 1) {
+        let n = Math.floor(Number(count));
+        if (!Number.isFinite(n) || n < 1) n = 1;
+        n = Math.min(999, n);
         if (recipe.craftSeconds > 0) {
             let station = null;
             if (recipe.requireStation) {
@@ -1098,13 +1165,20 @@
             } else if (recipe.requireThing) {
                 station = this._findNearbyThing(recipe.requireThing);
             }
-            this.player.beginCraft?.(recipe, station);
+            this.player.beginCraft?.(recipe, station, n);
             return;
         }
-        this._finishCraft(recipe);
+        if (this.simAuth()) {
+            this._finishCraft(recipe, this.player, n);
+            return;
+        }
+        for (let i = 0; i < n; i++) {
+            if (!this.canCraft(recipe)) break;
+            this._finishCraft(recipe);
+        }
     },
 
-    _finishCraft(recipe, pawn) {
+    _finishCraft(recipe, pawn, count = 1) {
         const who = pawn || this.player;
         if (!this.canCraft(recipe, who)) return;
         // Dedicated MP: server consumes ingredients + grants/drops; YOU/snapshots update UI.
@@ -1112,9 +1186,13 @@
         if (this.simAuth()) {
             this._netSendMove?.(true);
             const store = this._openCraftStorage(who);
+            let n = Math.floor(Number(count));
+            if (!Number.isFinite(n) || n < 1) n = 1;
+            n = Math.min(999, n);
             this.net.sendAction({
                 type: NetProtocol.Actions.CRAFT,
                 id: recipe.id,
+                count: n,
                 pawnId: who?.pawnId,
                 storageUid: store?.entry?.uid || null
             });

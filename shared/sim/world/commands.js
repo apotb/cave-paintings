@@ -1028,17 +1028,135 @@
             const holder = this._researchHolder(p.ownerId || session.id);
             if (!R.recipeUnlocked(id, holder)) return;
         }
+        let want = Math.floor(Number(action.count));
+        if (!Number.isFinite(want) || want < 1) want = 1;
+        want = Math.min(999, want);
+
         const store = this._craftStorageFromAction(p, action);
+        // Ctrl/shift craft one output at a time, so the result lands in the next
+        // open slot while the ingredient stack is still there. If that stack is
+        // fully used, move the result back into it.
+        const replace = want > 1 ? this._snapshotCraftBags(p) : null;
+        let made = 0;
+        let storageDirty = false;
+        for (let i = 0; i < want; i++) {
+            const result = this._craftOne(p, recipe, store);
+            if (!result.crafted) break;
+            made++;
+            if (result.storageDirty) storageDirty = true;
+        }
+        if (replace && made > 0) this._replaceEmptiedIngredientSlot(p, recipe, made, replace);
+        if (storageDirty && store) this._emitStorage(store.chunk, store.entry);
+        if (made > 0) this._dirtyPawnOwner(p);
+    },
+
+    _snapshotCraftBags(p) {
+        const brief = (slots) => (Array.isArray(slots) ? slots : []).map((s) => (
+            s?.id ? { id: s.id, quantity: s.quantity || 1, toolClass: s.toolClass || null } : null
+        ));
+        return { inventory: brief(p?.inventory), overflow: brief(p?.overflow) };
+    },
+
+    _stackMatchesAnyIngredient(stack, recipe) {
+        if (!stack) return false;
+        for (const ing of recipe?.ingredients || []) {
+            if (this._stackMatchesCraft(stack, ing)) return true;
+        }
+        return false;
+    },
+
+    /** First pocket slot whose ingredient stack this batch used up. */
+    _firstEmptiedIngredientSlot(p, recipe, before) {
+        const find = (prev, now, bag) => {
+            if (!Array.isArray(prev) || !Array.isArray(now)) return null;
+            for (let i = 0; i < prev.length; i++) {
+                if (!this._stackMatchesAnyIngredient(prev[i], recipe)) continue;
+                if (now[i]) continue;
+                return { bag, index: i };
+            }
+            return null;
+        };
+        return find(before?.inventory, p?.inventory, "inventory")
+            || find(before?.overflow, p?.overflow, "overflow");
+    },
+
+    _detachStackQty(slots, index, take) {
+        const s = slots[index];
+        const have = Math.max(1, Math.floor(Number(s.quantity) || 1));
+        const n = Math.min(have, take);
+        if (n >= have) {
+            slots[index] = null;
+            s.quantity = have;
+            return s;
+        }
+        s.quantity = have - n;
+        const piece = { id: s.id, quantity: n };
+        if (s.spoilLeft != null) piece.spoilLeft = s.spoilLeft;
+        if (s.spoilAt != null) piece.spoilAt = s.spoilAt;
+        return piece;
+    },
+
+    /**
+     * Put this batch's output into an ingredient slot the batch emptied.
+     * Stops at one stack so a bigger yield keeps the overflow where it landed.
+     */
+    _replaceEmptiedIngredientSlot(p, recipe, made, before) {
+        const target = this._firstEmptiedIngredientSlot(p, recipe, before);
+        if (!target) return;
+        const slots = target.bag === "overflow" ? p.overflow : p.inventory;
+        if (!Array.isArray(slots) || slots[target.index]) return;
+        const meta = itemDefs().get(recipe.id);
+        const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
+        const produced = Math.max(0, made * Math.max(1, Math.floor(Number(recipe.quantity) || 1)));
+        let need = Math.min(produced, maxStack);
+        if (!(need > 0)) return;
+
+        const bags = [];
+        if (Array.isArray(p.overflow)) bags.push(p.overflow);
+        if (Array.isArray(p.inventory)) bags.push(p.inventory);
+        let placed = null;
+        for (const bag of bags) {
+            for (let i = bag.length - 1; i >= 0 && need > 0; i--) {
+                if (bag === slots && i === target.index) continue;
+                const s = bag[i];
+                if (!s || s.id !== recipe.id || this._stackIsSpecial(s)) continue;
+                const piece = this._detachStackQty(bag, i, need);
+                need -= piece.quantity || 0;
+                if (!placed) {
+                    placed = piece;
+                    continue;
+                }
+                if (piece.spoilLeft != null || placed.spoilLeft != null) {
+                    placed.spoilLeft = Spoil.mergeSpoilLeft(
+                        placed.quantity || 1, placed.spoilLeft,
+                        piece.quantity, piece.spoilLeft
+                    );
+                    delete placed.spoilAt;
+                }
+                placed.quantity = (placed.quantity || 1) + (piece.quantity || 0);
+            }
+        }
+        if (placed && (placed.quantity || 0) > 0) slots[target.index] = placed;
+    },
+
+    /** One craft. Caller emits storage and dirties the owner after a batch. */
+    _craftOne(p, recipe, store) {
         const extra = store?.entry?.slots || null;
         for (const ing of recipe.ingredients) {
-            if (this._countMatchingItems(p, ing, extra) < ing.qty) return;
+            if (this._countMatchingItems(p, ing, extra) < ing.qty) return { crafted: false };
         }
-        if (recipe.requireThing && !this._hasNearbyThing(p, recipe.requireThing)) return;
-        if (recipe.requireStation && !this._hasNearbyThing(p, recipe.requireStation)) return;
+        if (recipe.requireThing && !this._hasNearbyThing(p, recipe.requireThing)) {
+            return { crafted: false };
+        }
+        if (recipe.requireStation && !this._hasNearbyThing(p, recipe.requireStation)) {
+            return { crafted: false };
+        }
         if (Carry.recipeToolClasses?.(recipe.requireTool)?.length) {
             const held = this._held(p);
             const def = held ? itemDefs().get(held.id) : null;
-            if (!Carry.heldMatchesRecipeTool(held, def, recipe.requireTool)) return;
+            if (!Carry.heldMatchesRecipeTool(held, def, recipe.requireTool)) {
+                return { crafted: false };
+            }
         }
 
         let tipQuality = null;
@@ -1048,7 +1166,6 @@
             if (ing.toolClass === "spear_tip" && knapQuality) tipQuality = knapQuality;
             if (fromStorage) storageDirty = true;
         }
-        if (storageDirty && store) this._emitStorage(store.chunk, store.entry);
 
         this._consumeCraftTool(p, recipe);
 
@@ -1064,7 +1181,7 @@
                 ...(extras.knapQuality ? { knapQuality: extras.knapQuality } : {})
             });
         }
-        this._dirtyPawnOwner(p);
+        return { crafted: true, storageDirty };
     },
 
     _held(p) {
