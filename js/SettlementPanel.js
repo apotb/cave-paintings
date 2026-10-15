@@ -109,6 +109,22 @@ class SettlementPanel {
             && pointer.y >= y && pointer.y <= y + this._viewH;
     }
 
+    /**
+     * The body mask only hides scrolled rows. Their hit areas still sit on the
+     * tabs unless the hit test itself stops at the visible list.
+     */
+    _clipHit(hitArea, x, y) {
+        if (!Phaser.Geom.Rectangle.Contains(hitArea, x, y)) return false;
+        return this._pointerInBody(this.scene.input.activePointer);
+    }
+
+    _clipInput(obj) {
+        if (obj?.input) {
+            obj.input.hitAreaCallback = (area, x, y) => this._clipHit(area, x, y);
+        }
+        return obj;
+    }
+
     _setScroll(y) {
         this._scroll = Phaser.Math.Clamp(y, 0, this._maxScroll);
         this.body.setY(this._bodyY - this._scroll);
@@ -153,6 +169,7 @@ class SettlementPanel {
         const OUTLINE_PRESS = 0xd4a84b;
         const bg = scene.add.rectangle(0, 0, 64, 22, BG, 1)
             .setInteractive({ useHandCursor: true });
+        if (clip) this._clipInput(bg);
         const txt = scene.add.text(0, 0, label, {
             fontFamily: PIXEL_UI_FONT,
             fontSize: "14px",
@@ -656,6 +673,7 @@ class SettlementPanel {
             const hitW = Math.max(8, colW - btnsW);
             const hit = scene.add.zone(x, y, hitW, rowH).setOrigin(0, 0);
             hit.setInteractive({ useHandCursor: true, cursor: "pointer" });
+            this._clipInput(hit);
             hit._settlePersonTip = true;
             hit.on("pointerover", (pointer) => {
                 if (!this._pointerInBody(pointer)) return;
@@ -736,6 +754,7 @@ class SettlementPanel {
         const nameBlock = scene.add.rectangle(0, 0, nameW, headerH, headerBg, 0)
             .setOrigin(0, 0)
             .setInteractive();
+        this._clipInput(nameBlock);
         header.add([headerFill, nameBlock]);
 
         for (let i = 0; i < nJobs; i++) {
@@ -745,6 +764,7 @@ class SettlementPanel {
             const hit = scene.add.rectangle(colX[i], 0, cellS, headerH, headerBg, 0)
                 .setOrigin(0, 0)
                 .setInteractive({ useHandCursor: true, cursor: "pointer" });
+            this._clipInput(hit);
             hit.on("pointerover", (pointer) => {
                 if (!this._pointerInBody(pointer)) return;
                 const text = S?.jobTooltip ? S.jobTooltip(j) : j;
@@ -797,6 +817,7 @@ class SettlementPanel {
                 const bg = scene.add.rectangle(cellX, 0, cellS, rowH, cellBg, 1)
                     .setOrigin(0, 0)
                     .setInteractive({ useHandCursor: true });
+                this._clipInput(bg);
                 const txt = scene.add.text(cellX + cellS / 2, rowH / 2, pri ? String(pri) : "–", {
                     fontFamily: PIXEL_UI_FONT,
                     fontSize: `${pixelUiFontSize(11, sc)}px`,
@@ -852,6 +873,7 @@ class SettlementPanel {
             const nameHit = scene.add.rectangle(0, 0, nameW, rowH, 0x000000, 0)
                 .setOrigin(0, 0)
                 .setInteractive({ useHandCursor: true, cursor: "pointer" });
+            this._clipInput(nameHit);
             nameHit.on("pointerdown", (pointer, _lx, _ly, event) => {
                 event?.stopPropagation?.();
                 if (pointer.rightButtonDown?.() || pointer.button === 2) return;
