@@ -584,7 +584,7 @@
         const previewSpan = ph > 0 ? pw + pad * 2 : 0;
         const innerW = Math.max(tw, sw, gw, hh > 0 ? hw + pad * 2 : 0, previewSpan);
         const previewY = afterGear + previewGap;
-        if (this.tooltipPreview) {
+        if (this.tooltipPreview?.scene) {
             if (ph > 0) {
                 this.tooltipPreview.setOrigin(0, 0);
                 this.tooltipPreview.setPosition(pad, previewY);
@@ -639,7 +639,7 @@
         this._tooltipPreviewKey = "";
         this._tooltipPreviewW = 0;
         this._tooltipPreviewH = 0;
-        this.tooltipPreview?.setVisible(false);
+        if (this.tooltipPreview?.scene) this.tooltipPreview.setVisible(false);
     },
 
     /**
@@ -720,11 +720,13 @@
         if (!next) {
             this._tooltipPreviewW = 0;
             this._tooltipPreviewH = 0;
-            this.tooltipPreview?.setVisible(false);
+            if (this.tooltipPreview?.scene) this.tooltipPreview.setVisible(false);
             return;
         }
         const contentKey = this._tooltipPreviewContentKey(next);
-        if (!this.tooltipPreview) {
+        // Leave → Play destroys display objects and keeps this ref. setTexture
+        // then reads scene.sys and throws on every hover.
+        if (!this.tooltipPreview?.scene) {
             this.tooltipPreview = this.add.image(0, 0, contentKey).setOrigin(0, 0);
             this.tooltip?.add(this.tooltipPreview);
         }

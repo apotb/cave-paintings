@@ -78,11 +78,14 @@ function previewScene(hud, keys) {
         add: {
             image(x, y, key) {
                 const img = {
+                    scene,
                     x, y, key,
                     originX: 0, originY: 0,
                     visible: true,
                     displayWidth: 0,
                     displayHeight: 0,
+                    width: 64,
+                    height: 64,
                     setOrigin(ox, oy) { img.originX = ox; img.originY = oy; return img; },
                     setTexture(k) { img.key = k; return img; },
                     setDisplaySize(w, h) { img.displayWidth = w; img.displayHeight = h; return img; },
@@ -195,4 +198,21 @@ test("a missing sculpture bake stays text-only", () => {
     assert.equal(scene.tooltipPreview, undefined);
     assert.equal(scene._tooltipPreviewH, 0);
     assert.equal(scene.tooltipText.text, "Lump");
+});
+
+test("a destroyed sculpture preview is rebuilt instead of setTexture on the dead image", () => {
+    const hud = loadHud();
+    const scene = previewScene(hud, new Set(["form_a"]));
+    let deadCalls = 0;
+    scene.tooltipPreview = {
+        scene: null,
+        setTexture() { deadCalls += 1; throw new TypeError("Cannot read properties of undefined (reading 'sys')"); },
+        setVisible() { deadCalls += 1; }
+    };
+    scene._tooltipSource = () => ({ text: "Idol", preview: "form_a" });
+    assert.equal(scene._applyTooltipPayload(), true);
+    assert.equal(deadCalls, 0);
+    assert.equal(scene.tooltipPreview.key, "form_a");
+    assert.equal(scene.tooltipPreview.scene, scene);
+    assert.equal(scene.tooltip.kids.includes(scene.tooltipPreview), true);
 });

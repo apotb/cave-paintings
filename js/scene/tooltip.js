@@ -47,6 +47,7 @@
         this._tooltipPreviewKey = "";
         this._tooltipPreviewW = 0;
         this._tooltipPreviewH = 0;
+        this.tooltipPreview = null;
         this._tooltipBoxW = 0;
         this._tooltipBoxH = 0;
         this._tooltipDrawn = false;

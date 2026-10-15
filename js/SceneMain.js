@@ -84,6 +84,7 @@ class SceneMain extends SceneBase {
         this.keyC = this.keyE = this.keyH = this.keyT = this.keyR = this.keyEsc = null;
         this.tooltip = null;
         this.tooltipText = null;
+        this.tooltipPreview = null;
         this.painBar = this.kcBar = this.weightBar = this.barIcons = null;
         this.channelBar = this.treeChopBar = null;
         this.craft = this.healthBtn = this.equipmentBtn = this.help = null;
