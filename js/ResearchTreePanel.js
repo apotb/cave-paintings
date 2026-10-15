@@ -69,14 +69,24 @@ class ResearchTreePanel {
             fontFamily: PIXEL_UI_FONT,
             fontSize: "12px",
             color: "#d4c4a8"
-        }).setOrigin(0.5, 0.5).setInteractive({ useHandCursor: true });
-        this.ageTxt.on("pointerover", (pointer) => {
+        }).setOrigin(0.5, 0.5);
+        // Yoster has no ⓘ, so the mark is a separate system-font glyph.
+        this.ageInfoTxt = scene.add.text(0, 0, "\u24D8", {
+            fontFamily: "sans-serif",
+            fontSize: "12px",
+            color: "#d4c4a8"
+        }).setOrigin(0, 0.5);
+        // One hit over the name, the gap, and the mark so the tip doesn't drop between them.
+        this.ageHit = scene.add.rectangle(0, 0, 8, 8, 0x000000, 0)
+            .setOrigin(0, 0.5)
+            .setInteractive({ useHandCursor: true });
+        this.ageHit.on("pointerover", (pointer) => {
             if (!this.visible) return;
-            scene.showTooltip(() => this._ageTip(), pointer.x, pointer.y, this.ageTxt);
+            scene.showTooltip(() => this._ageTip(), pointer.x, pointer.y, this.ageHit);
         });
-        this.ageTxt.on("pointerout", (pointer) => {
-            if (this._pointerStillOn(this.ageTxt, pointer)) return;
-            if (scene._tooltipTarget === this.ageTxt) scene.hideTooltip?.();
+        this.ageHit.on("pointerout", (pointer) => {
+            if (this._pointerStillOn(this.ageHit, pointer)) return;
+            if (scene._tooltipTarget === this.ageHit) scene.hideTooltip?.();
         });
         this.closeBtn = this._btn("Close", () => this.close());
         this.pauseBtn = this._checkBtn("Pause game", () => this._togglePause());
@@ -102,7 +112,7 @@ class ResearchTreePanel {
         this.root.add([
             this.dim, this.frame, this.viewHit, this.world,
             this.detailBg, this.divider, this.detailBody, this.researchBtn,
-            this.pointsTxt, this.ageTxt, this.pauseBtn, this.closeBtn
+            this.pointsTxt, this.ageTxt, this.ageInfoTxt, this.ageHit, this.pauseBtn, this.closeBtn
         ]);
     }
 
@@ -723,11 +733,31 @@ class ResearchTreePanel {
         }
         const age = (R?.currentAge && R.currentAge(this._techHolder())) || "Paleolithic";
         this.ageTxt.setText(age);
-        if (this.ageTxt.input?.hitArea?.setSize) {
-            this.ageTxt.input.hitArea.setSize(
-                Math.max(this.ageTxt.width, 1),
-                Math.max(this.ageTxt.height, 1)
-            );
+        this._placeAgeHeader();
+    }
+
+    /** Center the era name with ⓘ immediately after it. */
+    _placeAgeHeader() {
+        const s = this.scene.uiScale || 1;
+        const gap = Math.max(2, Math.round(4 * s));
+        const ageW = this.ageTxt.displayWidth || this.ageTxt.width || 0;
+        const infoW = this.ageInfoTxt.displayWidth || this.ageInfoTxt.width || 0;
+        const total = ageW + gap + infoW;
+        const cx = this._viewX + this._viewW / 2;
+        const y = this._headerY || 0;
+        const left = cx - total / 2;
+        this.ageTxt.setPosition(left + ageW / 2, y);
+        this.ageInfoTxt.setPosition(left + ageW + gap, y);
+        const h = Math.max(
+            this.ageTxt.displayHeight || this.ageTxt.height || 0,
+            this.ageInfoTxt.displayHeight || this.ageInfoTxt.height || 0,
+            8
+        );
+        if (this.ageHit) {
+            this.ageHit.setPosition(left, y).setSize(Math.max(1, total), h);
+            if (this.ageHit.input?.hitArea?.setSize) {
+                this.ageHit.input.hitArea.setSize(this.ageHit.width, this.ageHit.height);
+            }
         }
     }
 
@@ -1365,13 +1395,14 @@ class ResearchTreePanel {
         return rows;
     }
 
-    _addText(x, y, str, size, color, originX = 0, originY = 0, wrapW = 0) {
+    _addText(x, y, str, size, color, originX = 0, originY = 0, wrapW = 0, align = "left") {
         const scene = this.scene;
         const s = scene.uiScale || 1;
         const txt = scene.add.text(x, y, str, {
             fontFamily: PIXEL_UI_FONT,
             fontSize: `${typeof pixelUiFontSize === "function" ? pixelUiFontSize(size, s) : size}px`,
             color,
+            align,
             wordWrap: wrapW > 0 ? { width: wrapW } : undefined
         }).setOrigin(originX, originY);
         if (typeof applyPixelUiFont === "function") applyPixelUiFont(txt, size, s);
@@ -1519,7 +1550,8 @@ class ResearchTreePanel {
                 fogged ? "#8a7a62" : "#c45c54",
                 0.5,
                 0.5,
-                wrapW
+                wrapW,
+                "center"
             );
             if (fogged) {
                 const tipFn = () => (R.FOG_TIP) || "";
@@ -1683,6 +1715,7 @@ class ResearchTreePanel {
         const divW = Math.max(1, Math.round(2 * s));
         this.divider.setPosition(pad + detailW, pad).setSize(divW, frameH);
         const headerY = pad + Math.round(18 * s);
+        this._headerY = headerY;
         const closeW = Math.round(52 * s);
         const closeH = Math.round(22 * s);
         this.closeBtn.setPosition(pad + frameW - Math.round(40 * s), headerY);
@@ -1721,12 +1754,19 @@ class ResearchTreePanel {
             applyPixelUiFont(this.closeBtn._txt, 12, s);
             applyPixelUiFont(this.researchBtn._txt, 14, s);
         }
+        if (this.ageInfoTxt) {
+            const px = typeof pixelUiFontSize === "function" ? pixelUiFontSize(12, s) : 16;
+            const sizeStr = `${px}px`;
+            if (String(this.ageInfoTxt.style?.fontSize ?? "") !== sizeStr) {
+                this.ageInfoTxt.setFontSize(sizeStr);
+            }
+        }
         const inset = Math.round(8 * s);
         this._viewX = pad + detailW + divW + inset;
         this._viewY = pad + Math.round(36 * s);
         this._viewW = Math.max(40, pad + frameW - inset - this._viewX);
         this._viewH = Math.max(40, pad + frameH - inset - this._viewY);
-        this.ageTxt.setPosition(this._viewX + this._viewW / 2, headerY);
+        this._placeAgeHeader();
         this.viewHit.setPosition(this._viewX, this._viewY).setSize(this._viewW, this._viewH);
         if (this.viewHit.input?.hitArea?.setSize) {
             this.viewHit.input.hitArea.setSize(this._viewW, this._viewH);
@@ -1739,7 +1779,7 @@ class ResearchTreePanel {
     hoverObjAt(pointer) {
         if (!pointer || !this.visible) return null;
         if (this._pointerStillOn(this.pointsTxt, pointer)) return this.pointsTxt;
-        if (this.ageTxt && this._pointerStillOn(this.ageTxt, pointer)) return this.ageTxt;
+        if (this.ageHit && this._pointerStillOn(this.ageHit, pointer)) return this.ageHit;
         if (this.pauseBtn?.visible && this.pauseBtn._bg && this._pointerStillOn(this.pauseBtn._bg, pointer)) {
             return this.pauseBtn._bg;
         }
