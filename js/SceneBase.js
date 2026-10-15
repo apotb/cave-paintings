@@ -5,6 +5,11 @@ class SceneBase extends Phaser.Scene {
 
     loadImage(key, type='tiles', path=null) {
         path = path || key;
+        // Same set Content.queueTextures uses, so a later thing load cannot
+        // replace a dedicated item icon that shares the key (flint, pebble).
+        this.__cpQueuedTextures = this.__cpQueuedTextures || new Set();
+        if (this.__cpQueuedTextures.has(key)) return;
+        this.__cpQueuedTextures.add(key);
         this.load.image(key, `assets/${type}/${path}.png`);
     }
 
@@ -23,6 +28,77 @@ class SceneBase extends Phaser.Scene {
         }
         if (!this.cache?.audio?.exists?.("forest")) {
             this.load.audio("forest", "assets/audio/forest.ogg");
+        }
+        // Dedicated item icons before world sprites. A 404 for assets/items still
+        // claims the loader key, and Phaser then drops the thing file (leaves,
+        // settling stone, the hanging rack).
+        const itemIcons = [
+            "blueberry",
+            "apple",
+            "roasted_apple",
+            "raw_human_flesh",
+            "roasted_human_flesh",
+            "raw_venison",
+            "roasted_venison",
+            "raw_pork",
+            "roasted_pork",
+            "coconut",
+            "cactus_flower",
+            "blueberries",
+            "leaf_cord",
+            "poultice",
+            "sharp_stick",
+            "wooden_spear",
+            "stone_spear",
+            "flint_spear",
+            "pitch",
+            "stick_frame",
+            "leaf_wrap",
+            "leaf_loincloth",
+            "leaf_sandals",
+            "leaf_pouch",
+            "hide_pouch",
+            "hide_bundle",
+            "hide_tunic",
+            "hide_loincloth",
+            "leather_pouch",
+            "leather_pack",
+            "leather_tunic",
+            "leather_kilt",
+            "cracked_coconut",
+            "cracked_coconut_overlay",
+            "rot",
+            "pebble",
+            "flint",
+            "deer_hide",
+            "deer_hide_fleshed",
+            "deer_hide_dry",
+            "deer_hide_soaked",
+            "deer_hide_dehaired",
+            "deer_hide_brained",
+            "deer_leather",
+            "boar_hide",
+            "boar_hide_fleshed",
+            "boar_hide_dry",
+            "boar_hide_soaked",
+            "boar_hide_dehaired",
+            "boar_hide_brained",
+            "boar_leather",
+            "brain",
+            "bone",
+            "stick",
+            "log",
+            "digging_stick",
+            "clay",
+            "lean_to",
+            "painting_circle",
+            "tally_stick"
+        ];
+        this.__cpQueuedTextures = this.__cpQueuedTextures || new Set();
+        for (const item of itemIcons) {
+            if (this.textures?.exists?.(item) || this.__cpQueuedTextures.has(item)) continue;
+            this.__cpQueuedTextures.add(item);
+            this.load.image(item, `assets/items/${item}.png`);
         }
         // Second Play → Leave → Play: textures/json already live in the game caches.
         // Queue any resolved item/thing textures the warm cache does not have yet.
@@ -170,72 +246,6 @@ class SceneBase extends Phaser.Scene {
             this.loadImage(tile, 'tiles');
         }
 
-        // Items
-        const items = [
-            "blueberry",
-            "apple",
-            "roasted_apple",
-            "raw_human_flesh",
-            "roasted_human_flesh",
-            "raw_venison",
-            "roasted_venison",
-            "raw_pork",
-            "roasted_pork",
-            "coconut",
-            "cactus_flower",
-            "blueberries",
-            "leaf_cord",
-            "poultice",
-            "sharp_stick",
-            "wooden_spear",
-            "stone_spear",
-            "flint_spear",
-            "pitch",
-            "stick_frame",
-            "leaf_wrap",
-            "leaf_loincloth",
-            "leaf_sandals",
-            "leaf_pouch",
-            "hide_pouch",
-            "hide_bundle",
-            "hide_tunic",
-            "hide_loincloth",
-            "leather_pouch",
-            "leather_pack",
-            "leather_tunic",
-            "leather_kilt",
-            "cracked_coconut",
-            "cracked_coconut_overlay",
-            "rot",
-            "pebble",
-            "flint",
-            "deer_hide",
-            "deer_hide_fleshed",
-            "deer_hide_dry",
-            "deer_hide_soaked",
-            "deer_hide_dehaired",
-            "deer_hide_brained",
-            "deer_leather",
-            "boar_hide",
-            "boar_hide_fleshed",
-            "boar_hide_dry",
-            "boar_hide_soaked",
-            "boar_hide_dehaired",
-            "boar_hide_brained",
-            "boar_leather",
-            "brain",
-            "bone",
-            "stick",
-            "log",
-            "digging_stick",
-            "clay",
-            "lean_to",
-            "painting_circle",
-            "tally_stick"
-        ];
-        for (const item of items) {
-            this.loadImage(item, 'items');
-        }
     }
 
     create() {

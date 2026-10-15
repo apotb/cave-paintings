@@ -93,3 +93,25 @@ test("queueTextures queues a resolved item texture that is not in the cache", ()
     delete item._textureUrl;
     delete item.key;
 });
+
+test("missing item icons do not claim a world texture key", () => {
+    const scene = fakeScene({});
+    scene.__cpQueuedTextures = new Set(["flint", "pebble", "painting_circle", "lean_to"]);
+    scene._queued.push(
+        { key: "flint", url: "assets/items/flint.png" },
+        { key: "pebble", url: "assets/items/pebble.png" },
+        { key: "painting_circle", url: "assets/items/painting_circle.png" },
+        { key: "lean_to", url: "assets/items/lean_to.png" }
+    );
+    Content.queueTextures(scene);
+    const url = (key) => scene._queued.filter((q) => q.key === key).map((q) => q.url);
+    assert.deepEqual(url("leaves"), ["assets/things/leaves.png"]);
+    assert.deepEqual(url("settling_stone"), ["assets/things/settling_stone.png"]);
+    assert.deepEqual(url("drying_rack_hanging"), ["assets/things/drying_rack_hanging.png"]);
+    assert.deepEqual(url("flint"), ["assets/items/flint.png"]);
+    assert.deepEqual(url("pebble"), ["assets/items/pebble.png"]);
+    assert.equal(url("wicker_basket").some((u) => u.includes("assets/items/")), false);
+    assert.equal(url("skinworking_bench").some((u) => u.includes("assets/items/")), false);
+    assert.ok(url("wicker_basket_0").includes("assets/things/wicker_basket/0.png"));
+    assert.ok(url("skinworking_bench_0").includes("assets/things/skinworking_bench/0.png"));
+});

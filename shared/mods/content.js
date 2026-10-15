@@ -667,40 +667,73 @@
         scene.load.image(key, url);
     }
 
+    function queueSpritesheet(scene, spec) {
+        const key = spec?.key;
+        const url = spec?.path;
+        if (!key || !url) return;
+        if (scene.textures?.exists?.(key)) return;
+        scene.__cpQueuedTextures = scene.__cpQueuedTextures || new Set();
+        if (scene.__cpQueuedTextures.has(key)) return;
+        scene.__cpQueuedTextures.add(key);
+        scene.load.spritesheet(key, url, {
+            frameWidth: spec.frameWidth ?? 16,
+            frameHeight: spec.frameHeight ?? 16
+        });
+    }
+
+    /**
+     * Item icons that are the world sprite. Requesting a missing assets/items
+     * file still claims the loader key, and Phaser then drops the thing image.
+     * Rotatable placeables take their icon from the 0° frame instead.
+     */
+    function itemUsesThingArt(it, things, thingKeys, Place) {
+        if (!it?.key || it._textureUrl) return false;
+        if (thingKeys.has(it.key)) return true;
+        const thingId = Place?.placeThingId?.(it);
+        if (!thingId) return false;
+        const thingDef = things.find((t) => t?.id === thingId);
+        return !!Place?.canRotate?.(thingDef);
+    }
+
     /**
      * Queue item and thing textures that are not already in the cache.
      * Safe to call on SceneBase.preload's early return.
+     * Dedicated item art must already be in `__cpQueuedTextures` (SceneBase
+     * loads those first) so flint/pebble keep assets/items over the ground sprite.
      */
     function queueTextures(scene) {
         if (!scene?.load || !_finalized) return;
-        const items = DataStore._store?.itemsList || [];
-        for (const it of items) {
-            if (!it?.key && !it?._textureUrl) continue;
-            const key = it.key || it.id;
-            queueImage(scene, key, it._textureUrl || (it.key ? `assets/items/${it.key}.png` : null));
-        }
         const things = DataStore._store?.thingsList || [];
         const Place = placeApi();
+        const thingSpecs = [];
         for (const t of things) {
             if (!t) continue;
             if (t._textureUrl) {
-                queueImage(scene, t.key || t.id, t._textureUrl);
+                thingSpecs.push({ key: t.key || t.id, path: t._textureUrl });
                 continue;
             }
             const loads = Place?.thingImageLoads
                 ? Place.thingImageLoads(t)
                 : (t.key ? [{ key: t.key, path: `assets/things/${t.key}.png` }] : []);
             for (const spec of loads) {
-                if (!spec?.key || scene.textures?.exists?.(spec.key)) continue;
-                if (spec.spritesheet) {
-                    scene.load.spritesheet(spec.key, spec.path, {
-                        frameWidth: spec.frameWidth ?? 16,
-                        frameHeight: spec.frameHeight ?? 16
-                    });
-                } else {
-                    scene.load.image(spec.key, spec.path);
-                }
+                if (spec?.key) thingSpecs.push(spec);
             }
+        }
+        const thingKeys = new Set(thingSpecs.map((spec) => spec.key));
+        const items = DataStore._store?.itemsList || [];
+        for (const it of items) {
+            if (!it?.key && !it?._textureUrl) continue;
+            const key = it.key || it.id;
+            if (it._textureUrl) {
+                queueImage(scene, key, it._textureUrl);
+                continue;
+            }
+            if (itemUsesThingArt(it, things, thingKeys, Place)) continue;
+            queueImage(scene, key, `assets/items/${it.key}.png`);
+        }
+        for (const spec of thingSpecs) {
+            if (spec.spritesheet) queueSpritesheet(scene, spec);
+            else queueImage(scene, spec.key, spec.path);
         }
         const kinds = textureKinds();
         for (const tex of kinds?.textureList?.() || []) {

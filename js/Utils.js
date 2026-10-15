@@ -1055,7 +1055,7 @@ function ensurePaintingsUiIcon(scene) {
     const canvas = document.createElement("canvas");
     canvas.width = w;
     canvas.height = h;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return baseKey;
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(src, 0, 0);
@@ -1066,7 +1066,7 @@ function ensurePaintingsUiIcon(scene) {
     const tmp = document.createElement("canvas");
     tmp.width = w;
     tmp.height = h;
-    const tctx = tmp.getContext("2d");
+    const tctx = tmp.getContext("2d", { willReadFrequently: true });
     if (!tctx) return baseKey;
     tctx.imageSmoothingEnabled = false;
     const max = (R && R.PAINT_MAX) || 6;
@@ -1109,7 +1109,7 @@ function ensureCultureHandIcon(scene) {
     const canvas = document.createElement("canvas");
     canvas.width = w;
     canvas.height = h;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return srcKey;
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(src, 0, 0);
