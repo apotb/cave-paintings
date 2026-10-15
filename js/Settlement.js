@@ -403,23 +403,42 @@ class SettlementSystem {
 
     promptRemovePaintingCircle(thing, onOk) {
         const R = typeof Research !== "undefined" ? Research : null;
-        const painted = R?.paintedCount ? R.paintedCount(thing?.entry) : 0;
+        const entry = thing?.entry;
+        const painted = R?.paintedCount ? R.paintedCount(entry) : 0;
         const copy = R?.removeConfirmCopy
-            ? R.removeConfirmCopy(painted)
+            ? R.removeConfirmCopy(entry)
             : {
                 question: "Are you sure you'd like to remove this Painting Circle?",
                 loseLead: painted > 0 ? "You'll lose:" : "",
-                paintings: painted
+                paintings: painted,
+                tallies: 0
             };
-        const iconSrc = typeof paintingsUiIconDataUrl === "function"
-            ? paintingsUiIconDataUrl(this.scene)
-            : null;
+        const fmt = (n) => (R?.formatPoints ? R.formatPoints(n) : String(n));
+        const currency = (id) => (R?.currencies?.() || []).find((row) => row.id === id);
+        const loseRows = [];
+        if (copy.paintings > 0) {
+            loseRows.push({
+                iconSrc: typeof paintingsUiIconDataUrl === "function"
+                    ? paintingsUiIconDataUrl(this.scene)
+                    : null,
+                label: currency("paintings")?.name || "Paintings",
+                count: fmt(copy.paintings)
+            });
+        }
+        if (copy.tallies > 0) {
+            const iconId = currency("tallies")?.icon || R?.TALLY_ITEM_ID || "tally_stick";
+            loseRows.push({
+                iconSrc: typeof itemIconDataUrl === "function"
+                    ? itemIconDataUrl(this.scene, iconId)
+                    : null,
+                label: currency("tallies")?.name || "Tallies",
+                count: fmt(copy.tallies)
+            });
+        }
         this.promptConfirm(copy.question, onOk, {
             confirm: "Remove",
             loseLead: copy.loseLead,
-            loseIconSrc: iconSrc,
-            loseCount: copy.paintings,
-            loseLabel: "Paintings"
+            loseRows
         });
     }
 
@@ -1024,7 +1043,9 @@ class SettlementSystem {
             "line-height:1.35"
         ].join(";");
         box.appendChild(question);
-        if (opts.loseLead && (opts.loseCount > 0 || opts.loseIconSrc)) {
+        const loseRows = (Array.isArray(opts.loseRows) ? opts.loseRows : [])
+            .filter((row) => Number(row?.count) > 0);
+        if (opts.loseLead && loseRows.length) {
             const smallPx = typeof pixelUiFontSize === "function" ? pixelUiFontSize(14, s) : Math.round(14 * s);
             const lead = document.createElement("div");
             lead.textContent = String(opts.loseLead);
@@ -1036,49 +1057,60 @@ class SettlementSystem {
                 "line-height:1.35"
             ].join(";");
             box.appendChild(lead);
-            const loseRow = document.createElement("div");
-            loseRow.style.cssText = [
+            const list = document.createElement("div");
+            list.style.cssText = [
                 "display:flex",
-                "align-items:center",
-                `gap:${Math.round(6 * s)}px`,
-                `margin-top:${Math.round(6 * s)}px`
+                "flex-direction:column",
+                `gap:${Math.round(4 * s)}px`,
+                `margin-top:${Math.round(6 * s)}px`,
+                "width:100%"
             ].join(";");
-            if (opts.loseIconSrc) {
-                const img = document.createElement("img");
-                img.src = String(opts.loseIconSrc);
-                img.alt = String(opts.loseLabel || "Paintings");
-                const iconPx = Math.round(16 * s);
-                img.width = iconPx;
-                img.height = iconPx;
-                img.style.cssText = [
-                    `width:${iconPx}px`,
-                    `height:${iconPx}px`,
-                    "image-rendering:pixelated",
-                    "image-rendering:crisp-edges",
-                    "flex-shrink:0"
+            const iconPx = Math.round(16 * s);
+            for (const row of loseRows) {
+                const loseRow = document.createElement("div");
+                loseRow.style.cssText = [
+                    "display:flex",
+                    "align-items:center",
+                    `gap:${Math.round(6 * s)}px`,
+                    "width:100%"
                 ].join(";");
-                loseRow.appendChild(img);
-            }
-            if (opts.loseLabel) {
-                const name = document.createElement("span");
-                name.textContent = String(opts.loseLabel);
-                name.style.cssText = [
+                if (row.iconSrc) {
+                    const img = document.createElement("img");
+                    img.src = String(row.iconSrc);
+                    img.alt = String(row.label || "");
+                    img.width = iconPx;
+                    img.height = iconPx;
+                    img.style.cssText = [
+                        `width:${iconPx}px`,
+                        `height:${iconPx}px`,
+                        "image-rendering:pixelated",
+                        "image-rendering:crisp-edges",
+                        "flex-shrink:0"
+                    ].join(";");
+                    loseRow.appendChild(img);
+                }
+                if (row.label) {
+                    const name = document.createElement("span");
+                    name.textContent = String(row.label);
+                    name.style.cssText = [
+                        "color:#d4c4a8",
+                        "font-family:PrimaryFont,monospace",
+                        `font-size:${smallPx}px`,
+                        "flex:1"
+                    ].join(";");
+                    loseRow.appendChild(name);
+                }
+                const count = document.createElement("span");
+                count.textContent = String(row.count ?? "");
+                count.style.cssText = [
                     "color:#d4c4a8",
                     "font-family:PrimaryFont,monospace",
-                    `font-size:${smallPx}px`,
-                    "flex:1"
+                    `font-size:${smallPx}px`
                 ].join(";");
-                loseRow.appendChild(name);
+                loseRow.appendChild(count);
+                list.appendChild(loseRow);
             }
-            const count = document.createElement("span");
-            count.textContent = String(opts.loseCount ?? "");
-            count.style.cssText = [
-                "color:#d4c4a8",
-                "font-family:PrimaryFont,monospace",
-                `font-size:${smallPx}px`
-            ].join(";");
-            loseRow.appendChild(count);
-            box.appendChild(loseRow);
+            box.appendChild(list);
         }
         const row = document.createElement("div");
         row.style.cssText = [

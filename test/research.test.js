@@ -520,10 +520,27 @@ test("cannot remove a painting circle that would drop below spent research", () 
     assert.equal(Research.paintedTotal(left), 18);
     assert.equal(Research.availableTotal(left, s), 10);
 
-    const copy = Research.removeConfirmCopy(6);
+    const copy = Research.removeConfirmCopy(a);
     assert.equal(copy.question, "Are you sure you'd like to remove this Painting Circle?");
     assert.equal(copy.paintings, 6);
+    assert.equal(copy.tallies, 0);
     assert.equal(copy.loseLead, "You'll lose:");
+});
+
+test("remove confirm lists tallies when the circle has a tally stick", () => {
+    const marked = { id: "painting_circle", uid: "marked", painted: 5, tallyStick: true };
+    Research.ensureEntry(marked);
+    const copy = Research.removeConfirmCopy(marked);
+    assert.equal(copy.paintings, 5);
+    assert.equal(copy.tallies, 2.5);
+    assert.equal(copy.loseLead, "You'll lose:");
+
+    const bare = { id: "painting_circle", uid: "bare", painted: 0, tallyStick: true };
+    Research.ensureEntry(bare);
+    const none = Research.removeConfirmCopy(bare);
+    assert.equal(none.paintings, 0);
+    assert.equal(none.tallies, 0);
+    assert.equal(none.loseLead, "");
 });
 
 test("remove tooltip is how many paintings this circle would leave you short", () => {

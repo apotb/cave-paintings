@@ -1130,11 +1130,8 @@ function ensureCultureHandIcon(scene) {
     return key;
 }
 
-/** Data URL of the research-tab Paintings icon, for DOM overlays. */
-function paintingsUiIconDataUrl(scene) {
-    const key = typeof ensurePaintingsUiIcon === "function"
-        ? ensurePaintingsUiIcon(scene)
-        : null;
+/** Data URL of a loaded texture, for DOM overlays. */
+function textureToDataUrl(scene, key) {
     if (!key || !scene?.textures?.exists?.(key)) return null;
     const tex = scene.textures.get(key);
     const src = tex?.getSourceImage?.() || tex?.source?.[0]?.image;
@@ -1154,6 +1151,29 @@ function paintingsUiIconDataUrl(scene) {
     } catch (_) {
         return null;
     }
+}
+
+/** Data URL of the research-tab Paintings icon, for DOM overlays. */
+function paintingsUiIconDataUrl(scene) {
+    const key = typeof ensurePaintingsUiIcon === "function"
+        ? ensurePaintingsUiIcon(scene)
+        : null;
+    return textureToDataUrl(scene, key);
+}
+
+/** Data URL of an item icon, for DOM overlays. */
+function itemIconDataUrl(scene, itemId) {
+    if (!scene || !itemId) return null;
+    let key = itemId;
+    if (typeof Place !== "undefined" && Place.itemIconKey) {
+        const picked = Place.itemIconKey(
+            scene.getItem?.(itemId) || { id: itemId, key: itemId },
+            (id) => scene.getThing?.(id),
+            (k) => scene.textures?.exists?.(k)
+        );
+        if (picked) key = picked;
+    }
+    return textureToDataUrl(scene, key);
 }
 
 /** Drag ghost: shell + optional tinted fill (Container). */

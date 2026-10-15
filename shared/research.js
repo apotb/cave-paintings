@@ -848,12 +848,15 @@
         return _shortfallReason(tallyRemoveShortfall(settle, entries, entry, extra));
     }
 
-    function removeConfirmCopy(painted) {
-        const n = Math.max(0, Math.floor(Number(painted) || 0));
+    /** What this circle contributes, for the remove confirmation. */
+    function removeConfirmCopy(entry) {
+        const paintings = paintedCount(entry);
+        const tallies = hasTally(entry) ? paintings / TALLY_MULT_DEN : 0;
         return {
             question: "Are you sure you'd like to remove this Painting Circle?",
-            loseLead: n > 0 ? "You'll lose:" : "",
-            paintings: n
+            loseLead: paintings > 0 || tallies > 0 ? "You'll lose:" : "",
+            paintings,
+            tallies
         };
     }
 
