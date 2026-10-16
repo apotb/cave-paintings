@@ -405,7 +405,7 @@ test("compactSlots merges partial stacks in one basket", () => {
     assert.equal(fullish[1].quantity, 20);
 });
 
-test("findMergeJob packs a basket or moves between same-priority storage", () => {
+test("findMergeJob packs a basket and only moves to a higher priority", () => {
     const a = {
         uid: "a", x: 0, y: 0,
         slots: [{ id: "stick", quantity: 10 }, { id: "stick", quantity: 8 }, null],
@@ -425,11 +425,9 @@ test("findMergeJob packs a basket or moves between same-priority storage", () =>
         slots: [{ id: "stick", quantity: 20 }, { id: "apple", quantity: 1 }],
         storageFilter: { priority: "normal" }
     };
-    const move = SF.findMergeJob([src, dest], getItem, 0, 0);
-    assert.equal(move.kind, "move");
-    assert.equal(move.from, src);
-    assert.equal(move.to, dest);
-    assert.equal(move.stackId, "stick");
+    assert.equal(SF.findMergeJob([src, dest], getItem, 0, 0), null);
+    assert.equal(SF.transferScore(src, dest, src.slots[0], getItem), 0);
+    assert.equal(SF.transferScore(dest, src, dest.slots[0], getItem), 0);
 
     const crit = {
         uid: "crit", x: 8, y: 0,
@@ -438,7 +436,10 @@ test("findMergeJob packs a basket or moves between same-priority storage", () =>
     };
     const acrossPri = SF.findMergeJob([src, crit], getItem, 0, 0);
     assert.equal(acrossPri.kind, "move");
+    assert.equal(acrossPri.from, src);
     assert.equal(acrossPri.to, crit);
+    assert.equal(acrossPri.reason, "better");
+    assert.equal(SF.transferScore(crit, src, crit.slots[0], getItem), 0);
 
     const denied = {
         uid: "no", x: 8, y: 0,
@@ -475,9 +476,21 @@ test("findMergeJob takes disallowed items to a basket that wants them", () => {
     assert.equal(job.from, apparel);
     assert.equal(job.to, wood);
     assert.equal(job.stackId, "stick");
+
+    const lowWood = {
+        uid: "low-wood", x: 80, y: 0,
+        slots: [null, null, null, null],
+        storageFilter: { priority: "low", offCategories: ["apparel", "food", "tools", "weapons", "junk", "buildings", "medicine", "art"] }
+    };
+    const downhill = SF.findMergeJob([apparel, lowWood], getItem, 0, 0);
+    assert.equal(downhill.kind, "move");
+    assert.equal(downhill.reason, "wrong");
+    assert.equal(downhill.from, apparel);
+    assert.equal(downhill.to, lowWood);
+    assert.equal(downhill.stackId, "stick");
 });
 
-test("findMergeJob spreads from an unfiltered dump into a category basket", () => {
+test("findMergeJob leaves an unfiltered dump alone until the category basket is higher priority", () => {
     const dump = {
         uid: "dump", x: 0, y: 0,
         slots: [
@@ -491,6 +504,12 @@ test("findMergeJob spreads from an unfiltered dump into a category basket", () =
         uid: "clothes", x: 32, y: 0,
         slots: [null, null, null, null],
         storageFilter: { priority: "normal", offCategories: ["materials", "food", "tools", "weapons", "junk", "buildings", "medicine", "art"] }
+    };
+    assert.equal(SF.findMergeJob([dump, clothes], getItem, 0, 0), null);
+
+    clothes.storageFilter = {
+        priority: "preferred",
+        offCategories: ["materials", "food", "tools", "weapons", "junk", "buildings", "medicine", "art"]
     };
     const job = SF.findMergeJob([dump, clothes], getItem, 0, 0);
     assert.ok(job);

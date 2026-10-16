@@ -656,7 +656,9 @@
 
     /**
      * Higher is better. 0 means "do not move this stack to dest".
-     * Wrong-filter and higher-priority homes beat same-priority stack merging.
+     * A storage that rejects the item gives it up to any storage that accepts it.
+     * Once both accept it, only a strictly higher priority pulls it across.
+     * Same priority keeps whatever arrived first, so two bins cannot trade a stack.
      */
     function transferScore(src, dest, stack, getItem) {
         if (!src || !dest || src === dest || !stack?.id || !(Number(stack.quantity) > 0)) return 0;
@@ -671,10 +673,6 @@
         const merge = existingStackRoom(destSlots, stack, getItem) > 0 ? 1 : 0;
         if (!srcAllows) return 400 + destPri * 10 + merge;
         if (destPri > srcPri) return 300 + destPri * 10 + merge;
-        if (destPri === srcPri) {
-            if (isEmpty(srcFilt) && !isEmpty(destFilt)) return 200 + merge;
-            if (isMergeableStack(stack) && stackRoom(stack, getItem) > 0 && merge) return 50;
-        }
         return 0;
     }
 
