@@ -3,13 +3,26 @@ const assert = require("node:assert/strict");
 const Chop = require("../shared/chop");
 const { seedRng } = require("./helpers/load");
 
-test("chopFraction by class and quality", () => {
+test("chopFraction by class, quality, and hardness", () => {
     const rough = Chop.chopFraction({ toolClass: "chopper", knapQuality: "rough" });
     const crude = Chop.chopFraction({ toolClass: "chopper", knapQuality: "crude" });
-    assert.ok(rough > 0);
+    const flint = Chop.chopFraction({
+        toolClass: "chopper",
+        knapQuality: "rough",
+        knapMaterial: "flint"
+    });
+    const axe = Chop.chopFraction({
+        toolClass: "hand_axe",
+        knapQuality: "rough",
+        knapMaterial: "flint"
+    });
+    assert.equal(rough, 0.03);
     assert.ok(crude < rough);
+    assert.ok(Math.abs(flint - 0.042) < 1e-9);
+    assert.ok(Math.abs(axe - 0.14) < 1e-9);
     assert.equal(Chop.chopFraction({ toolClass: "knife" }), 0);
     assert.equal(Chop.isChopper({ toolClass: "chopper", knapQuality: "rough" }), true);
+    assert.equal(Chop.isChopper({ toolClass: "hand_axe", knapQuality: "rough", knapMaterial: "flint" }), true);
     assert.equal(Chop.isChopper({ id: "stick" }), false);
 });
 
@@ -80,6 +93,22 @@ test("fellToStump is not stillChoppable even with the old tree def", () => {
     assert.equal(Chop.stillChoppable(def, entry), false);
     assert.equal(Chop.stillChoppable({}, entry), false);
     assert.equal(Number(entry.chopProgress), 1);
+});
+
+test("log count follows the tool", () => {
+    const def = { choppable: {} };
+    const chopper = Chop.rollDrops(def, () => 0, { toolClass: "chopper" });
+    const axe = Chop.rollDrops(def, () => 0, { toolClass: "hand_axe" });
+    const chopperHi = Chop.rollDrops(def, () => 0.999, { toolClass: "chopper" });
+    const axeHi = Chop.rollDrops(def, () => 0.999, { toolClass: "hand_axe" });
+    assert.equal(chopper.find((d) => d.id === "log").quantity, 1);
+    assert.equal(chopperHi.find((d) => d.id === "log").quantity, 2);
+    assert.equal(axe.find((d) => d.id === "log").quantity, 4);
+    assert.equal(axeHi.find((d) => d.id === "log").quantity, 5);
+    assert.equal(chopper.find((d) => d.id === "stick").quantity, 6);
+    assert.equal(chopperHi.find((d) => d.id === "stick").quantity, 10);
+    assert.equal(chopper.find((d) => d.id === "leaf").quantity, 8);
+    assert.equal(chopperHi.find((d) => d.id === "leaf").quantity, 14);
 });
 
 test("rollDrops is seeded", () => {

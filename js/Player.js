@@ -694,10 +694,16 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (knap?.weapon?.type === "melee") return knap;
         }
         if (meta?.weapon?.type === "melee") {
-            if (stack.knapQuality && typeof weaponMetaWithKnapQuality === "function") {
-                return weaponMetaWithKnapQuality(meta, stack);
+            let held = meta;
+            if (typeof weaponMetaWithKnapQuality === "function") {
+                held = weaponMetaWithKnapQuality(meta, stack);
             }
-            return meta;
+            if ((stack.id === "stone_spear" || stack.id === "flint_spear")
+                && typeof ensureSpearTexture === "function") {
+                const key = ensureSpearTexture(this.scene, stack.knapMaterial);
+                if (key) held = { ...held, key };
+            }
+            return held;
         }
         return null;
     }
@@ -1619,6 +1625,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!art || art.unarmed || !(art.key || art.itemId)) return null;
         const scene = this.scene;
         let key = art.key || art.itemId;
+        if ((art.itemId === "stone_spear" || art.itemId === "flint_spear")
+            && typeof ensureSpearTexture === "function") {
+            key = ensureSpearTexture(scene, art.knapMaterial) || key;
+        }
         if (
             art.knapIconData
             && typeof Knapping !== "undefined"

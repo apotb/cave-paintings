@@ -625,7 +625,69 @@
     },
 
     _tooltipLinesSig(lines) {
-        return (lines || []).map((l) => `${l?.icon || ""}:${l?.label || ""}:${l?.value ?? ""}:${l?.value2 ?? ""}:${l?.hangMinus ? 1 : 0}`).join("|");
+        return (lines || []).map((l) => `${l?.icon || ""}:${l?.mark || ""}:${l?.plain ? 1 : 0}:${l?.label || ""}:${l?.value ?? ""}:${l?.value2 ?? ""}:${l?.hangMinus ? 1 : 0}`).join("|");
+    },
+
+    /** Same green check / red cross as the storage filter rows. */
+    _drawStatusMark(g, u, state) {
+        const cells = state === "on"
+            ? [[0, 3], [1, 4], [2, 5], [3, 4], [4, 3], [5, 2], [6, 1]]
+            : (() => {
+                const cross = [];
+                for (let i = 0; i <= 6; i++) cross.push([i, i], [i, 6 - i]);
+                return cross;
+            })();
+        const color = state === "on" ? 0x5cbf63 : 0xc44c3c;
+        g.fillStyle(0x000000, 1);
+        for (let i = 0; i < cells.length; i++) {
+            const x = cells[i][0] - 3;
+            const y = cells[i][1] - 3;
+            g.fillRect(x * u - u, y * u - u, 3 * u, 3 * u);
+        }
+        g.fillStyle(color, 1);
+        for (let i = 0; i < cells.length; i++) {
+            const x = cells[i][0] - 3;
+            const y = cells[i][1] - 3;
+            g.fillRect(x * u, y * u, u, u);
+        }
+    },
+
+    _syncTooltipPlainLines(lines) {
+        const list = lines || [];
+        if (!list.length || !this.tooltipGear) return;
+        const s = this.uiScale || 1;
+        const pad = this._tooltipPadding;
+        const rowH = Math.round(20 * s);
+        const iconGap = Math.round(6 * s);
+        let y = 0;
+        let maxRight = 0;
+        for (const line of list) {
+            const midY = y + rowH / 2;
+            const mark = line?.mark === "on" || line?.mark === "off" ? line.mark : null;
+            let textX = pad;
+            if (mark) {
+                const u = Math.max(1, Math.round(s));
+                const indent = Math.round(12 * s);
+                const g = this.add.graphics();
+                g.setPosition(Math.round(pad + indent + 4 * u), midY);
+                this._drawStatusMark(g, u, mark);
+                this.tooltipGear.add(g);
+                textX = pad + indent + 8 * u + iconGap;
+            }
+            const label = crispUiText(this.add.text(textX, midY, String(line?.label || ""), {
+                fontFamily: PIXEL_UI_FONT,
+                fontSize: `${pixelUiFontSize(16, s)}px`,
+                color: "#ffffff",
+                stroke: "#000000",
+                strokeThickness: Math.max(2, Math.round(2 * s))
+            })).setOrigin(0, 0.5);
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(label, 16, s);
+            this.tooltipGear.add(label);
+            maxRight = Math.max(maxRight, textX + (label.displayWidth || 0));
+            y += rowH;
+        }
+        this._tooltipGearW = maxRight + pad;
+        this._tooltipGearH = Math.max(0, y);
     },
 
     _clearTooltipGear() {
@@ -813,6 +875,10 @@
         this._clearTooltipGear();
         this._tooltipGearSig = next;
         const list = lines || [];
+        if (list.some((l) => l?.plain || l?.mark === "on" || l?.mark === "off")) {
+            this._syncTooltipPlainLines(list);
+            return;
+        }
         if (!list.length || !this.tooltipGear) return;
 
         const s = this.uiScale || 1;

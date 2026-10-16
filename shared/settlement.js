@@ -1461,10 +1461,22 @@
     }
 
     /** Melee damage for "keep the best weapon" while stashing. Matches Party.meleeDamageOf. */
+    function stoneApi() {
+        if (typeof Stone !== "undefined" && Stone.toolDamage) return Stone;
+        if (typeof module === "object" && module.exports) {
+            try { return require("./stone"); } catch (_) { return null; }
+        }
+        return null;
+    }
+
     function weaponDamage(stack, getItem) {
         if (!stack?.id) return 0;
-        const knap = stack.toolClass && Number(stack.knapDamage);
+        const StoneApi = stoneApi();
+        const knap = StoneApi?.toolDamage?.(stack, getItem);
         if (Number.isFinite(knap) && knap > 0) return knap;
+        const meta0 = typeof getItem === "function" ? getItem(stack.id) : null;
+        const stab = StoneApi?.spearDamage?.(stack, meta0);
+        if (Number.isFinite(stab) && stab > 0) return stab;
         const meta = typeof getItem === "function" ? getItem(stack.id) : null;
         const dmg = Number(meta?.weapon?.melee?.damage ?? meta?.weapon?.damage);
         if (meta?.weapon?.type === "melee" && dmg > 0) return dmg;

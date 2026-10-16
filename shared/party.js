@@ -784,11 +784,22 @@
         return lo + r * (hi - lo);
     }
 
+    function stoneApi() {
+        if (typeof Stone !== "undefined" && Stone.toolDamage) return Stone;
+        if (typeof module === "object" && module.exports) {
+            try { return require("./stone"); } catch (_) { return null; }
+        }
+        return null;
+    }
+
     function meleeDamageOf(stack, getItem) {
         if (!stack?.id) return 0;
         const meta = typeof getItem === "function" ? getItem(stack.id) : stack;
-        const knap = stack.toolClass && Number(stack.knapDamage);
+        const StoneApi = stoneApi();
+        const knap = StoneApi?.toolDamage?.(stack, getItem);
         if (Number.isFinite(knap) && knap > 0) return knap;
+        const stab = StoneApi?.spearDamage?.(stack, meta);
+        if (Number.isFinite(stab) && stab > 0) return stab;
         const dmg = Number(meta?.weapon?.melee?.damage ?? meta?.weapon?.damage);
         if (meta?.weapon?.type === "melee" && dmg > 0) return dmg;
         if (stack.toolClass && Number(meta?.weapon?.melee?.damage) > 0) {

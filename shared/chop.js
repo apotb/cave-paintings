@@ -9,15 +9,20 @@
         root.Chop = factory(root.MeleeMath);
     }
 })(typeof globalThis !== "undefined" ? globalThis : this, function (MeleeMath) {
-    /** Rough stone chopper = this fraction per hit. */
+    /** Rough pebble chopper = this fraction per hit, before hardness. */
     const CLASS_BASE = {
-        chopper: 0.05
+        chopper: 0.03,
+        hand_axe: 0.10
     };
     const ROUGH_QUALITY = 0.95;
-    const FLINT_MULT = 1.25;
     const QUALITY_MULT = { crude: 0.65, rough: 0.95, fine: 1.35 };
     const CHOP_ATTACK_IDS = {
-        knap_chopper_chop: true
+        knap_chopper_chop: true,
+        knap_hand_axe_chop: true
+    };
+    const LOG_RANGE = {
+        chopper: [1, 2],
+        hand_axe: [4, 5]
     };
     const DEFAULT_DROPS = {
         log: [2, 3],
@@ -40,12 +45,26 @@
         return n > 0 ? n : 0;
     }
 
+    function stoneApi() {
+        if (typeof Stone !== "undefined" && Stone.hardnessFactor) return Stone;
+        if (typeof module === "object" && module.exports) {
+            try { return require("./stone"); } catch (_) { return null; }
+        }
+        return null;
+    }
+
+    function hardnessMult(stack) {
+        const StoneApi = stoneApi();
+        if (!StoneApi) return stack?.knapMaterial === "flint" ? 1.4 : 1;
+        const id = StoneApi.materialId(stack, "pebble");
+        return StoneApi.hardnessFactor(StoneApi.props(id).hardness);
+    }
+
     function chopFraction(stack) {
         const base = classBase(stack);
         if (!(base > 0)) return 0;
         const q = knapQualityMult(stack?.knapQuality);
-        const mat = stack?.knapMaterial === "flint" ? FLINT_MULT : 1;
-        return base * (q / ROUGH_QUALITY) * mat;
+        return base * (q / ROUGH_QUALITY) * hardnessMult(stack);
     }
 
     function isChopper(stack) {
@@ -198,7 +217,7 @@
      * @param {object} def  Things.json row for the tree's current id
      * @param {function} [rng]  0–1
      */
-    function rollDrops(def, rng) {
+    function rollDrops(def, rng, tool) {
         const c = def?.choppable;
         if (!c) return [];
         const out = [];
@@ -206,7 +225,8 @@
             const n = rollBetween(rng, lo, hi);
             if (n > 0) out.push({ id, quantity: n });
         };
-        const log = _dropRange(c, "log");
+        const toolLogs = LOG_RANGE[tool?.toolClass];
+        const log = toolLogs || _dropRange(c, "log");
         const stick = _dropRange(c, "stick");
         const leaf = _dropRange(c, "leaf");
         push("log", log[0], log[1]);

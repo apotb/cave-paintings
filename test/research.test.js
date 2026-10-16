@@ -104,7 +104,6 @@ test("painting circle recipe is known; stick frame is gated on Basic Furniture",
     assert.equal(Research.recipeUnlocked("stick_frame", null), true);
     assert.equal(Research.recipeUnlocked("wooden_spear", s), true);
     assert.equal(Research.recipeUnlocked("stone_spear", s), false);
-    assert.equal(Research.recipeUnlocked("flint_spear", s), false);
     assert.equal(Research.recipeUnlocked("pitch", s), false);
     Research.unlock(s, "hafting");
     assert.equal(Research.recipeUnlocked("pitch", s), true);
@@ -114,7 +113,6 @@ test("painting circle recipe is known; stick frame is gated on Basic Furniture",
     assert.equal(pitch.recipe.leaf, undefined);
     assert.equal(pitch.recipe.CRAFT_SECONDS, 20);
     assert.equal(Research.recipeUnlocked("stone_spear", s), true);
-    assert.equal(Research.recipeUnlocked("flint_spear", s), true);
 });
 
 test("Fire gates campfire and sharp-stick fire tips, not the sharp stick recipe", () => {
@@ -322,10 +320,10 @@ test("knapping help lists only unlocked techniques", () => {
     assert.ok(withHaft.includes("Spear tip — long and thin"));
     assert.equal(withHaft[withHaft.length - 1], "Flake — unclear leftover chip");
     Research.unlock(s, "hand_axe");
-    assert.equal(
-        Research.knappingHelpLines(s).some((l) => /hand-axe/i.test(l)),
-        false,
-        "unimplemented techniques stay out of the knapping help"
+    assert.ok(
+        Research.knappingHelpLines(s).includes(
+            "Hand-axe — symmetric biface, edge all around"
+        )
     );
 });
 
@@ -1234,12 +1232,12 @@ test("unfinished techs are WIP and cannot be researched", () => {
     const live = [
         "gathering", "cordage", "camping", "basic_furniture", "herbalism", "digging",
         "fire", "hearth", "cooking", "smoking", "clay_forming",
-        "knapping", "hafting", "tanning", "skinworking", "leatherworking",
+        "knapping", "hafting", "hand_axe", "tanning", "skinworking", "leatherworking",
         "culture", "painting", "counting"
     ];
     const wip = [
         "storage", "hut", "traps", "grinding", "pit_traps", "spike_traps",
-        "pit_kiln", "earth_oven", "dogs", "feasts", "hand_axe", "burin",
+        "pit_kiln", "earth_oven", "dogs", "feasts", "burin",
         "cleaver", "blades", "throwing", "fishing", "microliths", "bows", "nets",
         "ornament", "rituals", "idolatry", "music", "burial", "afterlife", "ancestors", "shrine",
         "settlements", "agriculture", "tree_sowing", "husbandry", "herding",

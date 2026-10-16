@@ -237,7 +237,10 @@
         "maxStack": 99,
         "weight": 0.3,
         "knapping": {
-            "material": "pebble"
+            "material": "pebble",
+            "hardness": 5,
+            "toughness": 0.4,
+            "tipColor": "#717171"
         },
         "tooltip": [
             "Click a rock while holding to knap"
@@ -250,7 +253,10 @@
         "maxStack": 99,
         "weight": 0.3,
         "knapping": {
-            "material": "flint"
+            "material": "flint",
+            "hardness": 7,
+            "toughness": 0.6,
+            "tipColor": "#333333"
         },
         "tooltip": [
             "Click a rock while holding to knap"
@@ -264,19 +270,6 @@
         "weight": 0.3,
         "durability": 150,
         "tooltip": [
-            "Knapped from a pebble",
-            "Click yourself to reshape"
-        ]
-    },
-    {
-        "id": "flint_tool",
-        "name": "Flint Tool",
-        "key": "flint",
-        "maxStack": 1,
-        "weight": 0.3,
-        "durability": 200,
-        "tooltip": [
-            "Knapped from flint",
             "Click yourself to reshape"
         ]
     },
@@ -752,7 +745,7 @@
     {
         "id": "stone_spear",
         "name": "Stone Spear",
-        "key": "stone_spear",
+        "key": "wooden_spear",
         "maxStack": 1,
         "durability": 120,
         "weapon": {
@@ -808,72 +801,6 @@
         "recipe": {
             "wooden_spear": 1,
             "stone_tool": {
-                "qty": 1,
-                "toolClass": "spear_tip"
-            },
-            "leaf_cord": 2,
-            "pitch": 1
-        }
-    },
-    {
-        "id": "flint_spear",
-        "name": "Flint Spear",
-        "key": "flint_spear",
-        "maxStack": 1,
-        "durability": 150,
-        "weapon": {
-            "type": "melee",
-            "range": 12,
-            "hitStart": 0.25,
-            "hitEnd": 0.75,
-            "attacks": [
-                {
-                    "id": "point_stab",
-                    "name": "Point (Stab)",
-                    "damage": 14,
-                    "type": "sharp",
-                    "verb": "thrust",
-                    "cooldown": 2.0,
-                    "weightMultiplier": 1.0,
-                    "source": "hand"
-                },
-                {
-                    "id": "shaft_poke",
-                    "name": "Shaft (Poke)",
-                    "damage": 4,
-                    "type": "sharp",
-                    "verb": "poked",
-                    "cooldown": 2.0,
-                    "weightMultiplier": 0.25,
-                    "source": "hand"
-                },
-                {
-                    "id": "shaft_blunt",
-                    "name": "Shaft (Blunt)",
-                    "damage": 5,
-                    "type": "blunt",
-                    "verb": "bashed",
-                    "cooldown": 2.2,
-                    "weightMultiplier": 0.2,
-                    "source": "hand"
-                },
-                {
-                    "id": "other_fist",
-                    "name": "Fist",
-                    "damage": 6,
-                    "type": "blunt",
-                    "verb": "swung",
-                    "cooldown": 2.0,
-                    "weightMultiplier": 0.15,
-                    "source": "otherHand",
-                    "unarmed": "punch",
-                    "range": 4
-                }
-            ]
-        },
-        "recipe": {
-            "wooden_spear": 1,
-            "flint_tool": {
                 "qty": 1,
                 "toolClass": "spear_tip"
             },

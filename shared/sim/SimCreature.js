@@ -33,10 +33,26 @@ function knapQualityMult(quality) {
     return { crude: 0.65, rough: 0.95, fine: 1.35 }[quality] || 1;
 }
 
-/** Scale tip stab damage by knapQuality (matches js/Utils.weaponMetaWithKnapQuality). */
+function stoneApi() {
+    if (typeof Stone !== "undefined" && Stone.toolDamage) return Stone;
+    try { return require("../stone"); } catch (_) { return null; }
+}
+
+/** Scale tip stab by rock hardness and knap quality (matches js/Utils). */
 function weaponMetaWithKnapQuality(meta, stack) {
-    if (!meta?.weapon || !stack?.knapQuality) return meta;
-    const mult = knapQualityMult(stack.knapQuality);
+    if (!meta?.weapon) return meta;
+    const spear = stack?.id === "stone_spear" || stack?.id === "flint_spear";
+    if (!spear && !stack?.knapQuality) return meta;
+    const StoneApi = stoneApi();
+    let hard = 1;
+    if (spear && StoneApi) {
+        const mat = StoneApi.materialId(stack, "pebble");
+        hard = StoneApi.hardnessFactor(StoneApi.props(mat).hardness);
+    } else if (spear && stack?.knapMaterial === "flint") {
+        hard = 1.4;
+    }
+    const q = (spear || stack?.knapQuality) ? knapQualityMult(stack?.knapQuality) : 1;
+    const mult = hard * q;
     if (mult === 1) return meta;
     const attacks = (meta.weapon.attacks || []).map((a) => {
         if (a.id !== "point_stab") return { ...a };
@@ -50,8 +66,9 @@ function weaponMetaWithKnapQuality(meta, stack) {
 function knapWeaponMetaFromStack(baseMeta, stack) {
     if (!stack || !baseMeta) return null;
     const cls = stack.toolClass;
-    const dmg = Number(stack.knapDamage) || 0;
-    if (!["knife", "scraper", "chopper", "awl"].includes(cls) || !(dmg > 0)) {
+    const StoneApi = stoneApi();
+    const dmg = StoneApi?.toolDamage?.(stack) ?? (Number(stack.knapDamage) || 0);
+    if (!["knife", "scraper", "chopper", "awl", "hand_axe"].includes(cls) || !(dmg > 0)) {
         return null;
     }
     const r = (n) => Math.round(n * 10) / 10;
@@ -66,10 +83,12 @@ function knapWeaponMetaFromStack(baseMeta, stack) {
             { id: "knap_scraper_edge", name: "Scrape", damage: dmg, type: "sharp", verb: "scraped", cooldown: 2.0, weightMultiplier: 1, source: "hand" },
             { id: "knap_scraper_hack", name: "Hack", damage: r(dmg * 0.75), type: "sharp", verb: "hacked", cooldown: 2.3, weightMultiplier: 0.55, source: "hand" }
         ];
-    } else if (cls === "chopper") {
+    } else if (cls === "chopper" || cls === "hand_axe") {
+        const chopId = cls === "hand_axe" ? "knap_hand_axe_chop" : "knap_chopper_chop";
+        const bashId = cls === "hand_axe" ? "knap_hand_axe_bash" : "knap_chopper_bash";
         attacks = [
-            { id: "knap_chopper_chop", name: "Chop", damage: dmg, type: "sharp", verb: "chopped", cooldown: 2.4, weightMultiplier: 1, source: "hand" },
-            { id: "knap_chopper_bash", name: "Bash", damage: r(dmg * 0.7), type: "blunt", verb: "bashed", cooldown: 2.2, weightMultiplier: 0.5, source: "hand" }
+            { id: chopId, name: "Chop", damage: dmg, type: "sharp", verb: "chopped", cooldown: 2.4, weightMultiplier: 1, source: "hand" },
+            { id: bashId, name: "Bash", damage: r(dmg * 0.7), type: "blunt", verb: "bashed", cooldown: 2.2, weightMultiplier: 0.5, source: "hand" }
         ];
     } else {
         attacks = [
@@ -79,7 +98,7 @@ function knapWeaponMetaFromStack(baseMeta, stack) {
     }
     return {
         ...baseMeta,
-        name: stack.customName || baseMeta.name,
+        name: stoneApi()?.displayName?.(stack) || stack.customName || baseMeta.name,
         key: stack.knapIcon || baseMeta.key,
         weapon: {
             type: "melee",
@@ -244,13 +263,12 @@ class SimCreature {
         const stack = this.getHeldItem();
         if (!stack) return null;
         const meta = this.ctx.data.getItem(stack.id);
-        if (stack.toolClass && Number(stack.knapDamage) > 0) {
+        if (stack.toolClass && stack.toolClass !== "spear_tip" && stack.toolClass !== "blank") {
             const knap = knapWeaponMetaFromStack(meta || { id: stack.id, name: stack.customName || stack.id }, stack);
             if (knap?.weapon?.type === "melee") return knap;
         }
         if (meta?.weapon?.type === "melee") {
-            if (stack.knapQuality) return weaponMetaWithKnapQuality(meta, stack);
-            return meta;
+            return weaponMetaWithKnapQuality(meta, stack);
         }
         return null;
     }
@@ -280,7 +298,10 @@ class SimCreature {
         }
         return {
             unarmed: false,
-            key: stack?.knapIcon || meta.key || meta.id || null,
+            key: (stack?.id === "stone_spear" || stack?.id === "flint_spear")
+                ? "wooden_spear"
+                : (stack?.knapIcon || meta.key || meta.id || null),
+            knapMaterial: stack?.knapMaterial || null,
             itemId: stack?.id || meta.id || null,
             range: Number(meta.weapon.range) || Number(attack.range) || 12,
             knapSilhouette: !!meta.weapon.knapSilhouette,

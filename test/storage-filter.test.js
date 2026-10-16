@@ -110,12 +110,14 @@ test("knapped stack uses toolClass key not unique silhouette", () => {
     const awl = { id: "stone_tool", toolClass: "awl", quantity: 1 };
     const tip = { id: "stone_tool", toolClass: "spear_tip", quantity: 1 };
     const flake = { id: "stone_tool", toolClass: "blank", quantity: 1 };
-    const flintFlake = { id: "flint_tool", toolClass: "blank", quantity: 1 };
+    const flintFlake = { id: "stone_tool", toolClass: "blank", knapMaterial: "flint", quantity: 1 };
+    const axe = { id: "stone_tool", toolClass: "hand_axe", knapMaterial: "flint", quantity: 1 };
     assert.equal(SF.filterKey(knap, def), "tool:chopper");
     assert.equal(SF.filterKey(awl, def), "tool:awl");
     assert.equal(SF.filterKey(tip, def), "tool:spear_tip");
     assert.equal(SF.filterKey(flake, def), "tool:blank");
-    assert.equal(SF.filterKey(flintFlake, getItem("flint_tool")), "tool:blank");
+    assert.equal(SF.filterKey(flintFlake, def), "tool:blank");
+    assert.equal(SF.filterKey(axe, def), "tool:hand_axe");
     assert.equal(SF.filterKey({ id: "stone_tool" }, def), "tool:blank");
     assert.equal(SF.filterKey({ id: "bone" }, getItem("bone")), "bone");
     const t = tree();
@@ -123,7 +125,7 @@ test("knapped stack uses toolClass key not unique silhouette", () => {
     const ids = (tools.items || []).map((it) => it.id);
     assert.deepEqual(ids, [
         "tool:awl", "bone", "tool:chopper", "digging_stick",
-        "tool:knife", "tool:scraper"
+        "tool:hand_axe", "tool:knife", "tool:scraper"
     ]);
     assert.equal(ids.includes("stone_tool"), false);
     assert.equal(ids.includes("flint_tool"), false);
@@ -265,7 +267,7 @@ test("every item lands in exactly one leaf", () => {
                 assert.ok(seen.has(`tool:${def.toolClass}`), def.id);
             }
         }
-        if (def.id === "stone_tool" || def.id === "flint_tool" || def.id === "clay_figurine") {
+        if (def.id === "stone_tool" || def.id === "clay_figurine") {
             assert.equal(seen.has(def.id), false, `${def.id} should be hidden from tree`);
             continue;
         }

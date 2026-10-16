@@ -865,6 +865,12 @@ class DroppedItem extends Mob {
         if (entry.soakDoneAt != null) this.soakDoneAt = entry.soakDoneAt;
         if (entry.temp != null) this.temp = entry.temp;
 
+        if ((entry.id === "stone_spear" || entry.id === "flint_spear")
+            && typeof ensureSpearTexture === "function") {
+            const spearKey = ensureSpearTexture(scene, entry.knapMaterial);
+            if (spearKey && scene.textures.exists(spearKey)) this.setTexture(spearKey);
+        }
+
         // Knapped silhouette on the ground drop
         if (this.knapIconData && typeof Knapping !== "undefined") {
             const knapKey = Knapping.ensureToolTexture(scene, {

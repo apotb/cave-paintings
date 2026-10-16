@@ -987,6 +987,34 @@ function abandonHaul(world, rec, settle) {
     }
 }
 
+/** Highest chop percent across hotbar, overflow, and baskets. Ties keep that scan order. */
+function findBestChopStack(world, rec, settle) {
+    if (typeof Chop === "undefined" || !Chop.chopFraction) return null;
+    let best = null;
+    let bestFrac = 0;
+    const consider = (slots, index, at, kind, extra) => {
+        const frac = Chop.chopFraction(slots[index]);
+        if (!(frac > bestFrac)) return;
+        bestFrac = frac;
+        best = { slots, index, at, kind, ...extra };
+    };
+    const inv = rec?.inventory || [];
+    for (let i = 0; i < inv.length; i++) {
+        if (inv[i]) consider(inv, i, rec, "inv", { bag: "hotbar" });
+    }
+    const overflow = rec?.overflow || [];
+    for (let i = 0; i < overflow.length; i++) {
+        if (overflow[i]) consider(overflow, i, rec, "overflow", { bag: "overflow" });
+    }
+    for (const b of basketsOf(world, settle)) {
+        const slots = b.slots || [];
+        for (let i = 0; i < slots.length; i++) {
+            if (slots[i]) consider(slots, i, b, "basket", { entry: b });
+        }
+    }
+    return best;
+}
+
 function findStack(world, rec, settle, pred) {
     const inv = rec.inventory || [];
     const ii = inv.findIndex((s) => s && pred(s));
@@ -1401,6 +1429,7 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     ctx.dropAsStack = dropAsStack;
     ctx.leaveHaulDrop = leaveHaulDrop;
     ctx.findStack = findStack;
+    ctx.findBestChopStack = findBestChopStack;
     ctx.dist2 = dist2;
     ctx.reservesOf = reservesOf;
     ctx.medicineKey = medicineKey;

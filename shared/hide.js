@@ -76,6 +76,13 @@
         if (!stack?.id) return stack;
         const next = canonicalItemId(stack.id);
         if (next !== stack.id) stack.id = next;
+        if (stack.id === "flint_tool") {
+            stack.id = "stone_tool";
+            if (!stack.knapMaterial) stack.knapMaterial = "flint";
+        } else if (stack.id === "flint_spear") {
+            stack.id = "stone_spear";
+            if (!stack.knapMaterial) stack.knapMaterial = "flint";
+        }
         return stack;
     }
 

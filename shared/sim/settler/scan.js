@@ -36,6 +36,7 @@
     const countItem = (...args) => ctx.countItem(...args);
     const thingKey = (...args) => ctx.thingKey(...args);
     const findStack = (...args) => ctx.findStack(...args);
+    const findBestChopStack = (...args) => ctx.findBestChopStack(...args);
     const choppablesOf = (...args) => ctx.choppablesOf(...args);
     const researchHolder = (...args) => ctx.researchHolder(...args);
     const getItem = (...args) => ctx.getItem(...args);
@@ -146,7 +147,7 @@ function gatherThing(world, rec, settle, claims) {
 }
 
 function chopTree(world, rec, settle, claims) {
-    if (!findStack(world, rec, settle, (s) => Chop.isChopper(s))) return null;
+    if (!findBestChopStack(world, rec, settle)) return null;
     const have = countItem(world, settle, "log");
     const want = Settlement.stockTarget(settle, "log");
     if (!Settlement.gatherShouldWork(have, want)) return null;

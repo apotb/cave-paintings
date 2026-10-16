@@ -50,7 +50,7 @@ class SceneBase extends Phaser.Scene {
             "sharp_stick",
             "wooden_spear",
             "stone_spear",
-            "flint_spear",
+            "spear_tip",
             "pitch",
             "stick_frame",
             "leaf_wrap",

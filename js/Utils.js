@@ -1012,8 +1012,13 @@ function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
         applyItemIconScale(overlay, scale);
         return;
     }
-    // Knapped tools: silhouette cut from the pebble/flint sprite
+    // Stone spear: wooden shaft plus a tip tinted to the rock.
     let key = stackIconKey(meta, stack, base.scene);
+    if (stack.id === "stone_spear" || stack.id === "flint_spear") {
+        const spearKey = ensureSpearTexture(base.scene, stack.knapMaterial);
+        if (spearKey && textures.exists(spearKey)) key = spearKey;
+    }
+    // Knapped tools: silhouette cut from the pebble/flint sprite
     if (stack.knapIconData && typeof Knapping !== "undefined") {
         const scene = base.scene;
         const knapKey = Knapping.ensureToolTexture(scene, stack);
@@ -1037,6 +1042,56 @@ function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
         base.setVisible(false);
     }
     if (overlay) overlay.setVisible(false).clearTint();
+}
+
+/**
+ * wooden_spear with spear_tip drawn on top, tinted to the rock's tip color.
+ * Inventory, ground drops, and the held weapon all use this texture.
+ */
+function ensureSpearTexture(scene, material) {
+    if (!scene?.textures) return null;
+    // "white" is the untinted tip, used when a craft has not picked a rock yet.
+    const plain = material === "white";
+    const mat = plain ? "white" : (material === "flint" ? "flint" : "pebble");
+    const key = `spear_tip_${mat}`;
+    if (scene.textures.exists(key)) return key;
+    if (!scene.textures.exists("wooden_spear") || !scene.textures.exists("spear_tip")) {
+        return scene.textures.exists("wooden_spear") ? "wooden_spear" : null;
+    }
+    const color = plain
+        ? null
+        : ((typeof Stone !== "undefined" && Stone.props)
+            ? Stone.props(mat, (id) => scene.getItem?.(id)).tipColor
+            : (mat === "flint" ? "#333333" : "#717171"));
+    const shaftTex = scene.textures.get("wooden_spear");
+    const tipTex = scene.textures.get("spear_tip");
+    const shaft = shaftTex?.getSourceImage?.() || shaftTex?.source?.[0]?.image;
+    const tip = tipTex?.getSourceImage?.() || tipTex?.source?.[0]?.image;
+    if (!shaft?.width || !tip?.width) {
+        return "wooden_spear";
+    }
+    const w = shaft.width;
+    const h = shaft.height;
+    const canvasTex = scene.textures.createCanvas(key, w, h);
+    if (!canvasTex?.getContext) return "wooden_spear";
+    const ctx = canvasTex.getContext();
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(shaft, 0, 0, w, h);
+    if (plain) {
+        ctx.drawImage(tip, 0, 0, w, h);
+    } else {
+        const tmp = document.createElement("canvas");
+        tmp.width = tip.width;
+        tmp.height = tip.height;
+        const tctx = tmp.getContext("2d");
+        tctx.drawImage(tip, 0, 0);
+        tctx.globalCompositeOperation = "source-in";
+        tctx.fillStyle = color;
+        tctx.fillRect(0, 0, tmp.width, tmp.height);
+        ctx.drawImage(tmp, 0, 0, w, h);
+    }
+    canvasTex.refresh();
+    return key;
 }
 
 /** Full painting-circle icon (all 6 overlays) tinted with title-art red. */
@@ -1453,15 +1508,27 @@ function knapQualityDurationScale(quality) {
     return { crude: 1.25, rough: 1.0, fine: 0.8 }[quality] || 1;
 }
 
-/** Flint punches faster than pebble (inverse of the 1.25 combat/chop mult). */
+/** Harder rock works faster. Pebble is 1. Flint (Mohs 7) is 5/7. */
 function knapMaterialDurationScale(material) {
-    return material === "flint" ? 0.8 : 1;
+    if (typeof Stone !== "undefined" && Stone.durationScale) return Stone.durationScale(material);
+    const h = material === "flint" ? 7 : 5;
+    return 5 / h;
 }
 
-/** Clone weapon meta with tip-quality scaled point damage (tipped spears). */
+/** Clone weapon meta with hardness and tip-quality scaled point damage. */
 function weaponMetaWithKnapQuality(meta, stack) {
-    if (!meta?.weapon || !stack?.knapQuality) return meta;
-    const mult = knapQualityMult(stack.knapQuality);
+    if (!meta?.weapon) return meta;
+    const spear = stack?.id === "stone_spear" || stack?.id === "flint_spear";
+    if (!spear && !stack?.knapQuality) return meta;
+    let hard = 1;
+    if (spear && typeof Stone !== "undefined" && Stone.hardnessFactor) {
+        const mat = Stone.materialId(stack, "pebble");
+        hard = Stone.hardnessFactor(Stone.props(mat).hardness);
+    } else if (spear && stack?.knapMaterial === "flint") {
+        hard = 1.4;
+    }
+    const q = (spear || stack?.knapQuality) ? knapQualityMult(stack?.knapQuality) : 1;
+    const mult = hard * q;
     if (mult === 1) return meta;
     const attacks = (meta.weapon.attacks || []).map((a) => {
         if (a.id !== "point_stab") return { ...a };

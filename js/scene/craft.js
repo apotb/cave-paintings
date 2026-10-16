@@ -8,7 +8,10 @@
 
     formatItemTooltip(item, quantity, spoilAt, stack = null, opts = null) {
         const lines = [];
-        const displayName = stack?.customName || item.name;
+        const liveName = (stack && typeof Stone !== "undefined" && Stone.displayName)
+            ? Stone.displayName(stack, (id) => this.getItem?.(id))
+            : null;
+        const displayName = liveName || stack?.customName || item.name;
         let name = quantity > 1 ? `${displayName} x${quantity}` : displayName;
         const food = stack?.food || item.food;
         let namePct = null;
@@ -46,6 +49,12 @@
             : (stack?.weight != null ? stack.weight : item.weight);
         if (weight > 0) {
             lines.push(`Weight: ${weight} kg`);
+        }
+
+        if (typeof Stone !== "undefined" && Stone.statLinesFor) {
+            for (const line of Stone.statLinesFor(stack, item, (id) => this.getItem?.(id))) {
+                lines.push(line);
+            }
         }
 
         if (typeof Stats !== "undefined") {
@@ -122,9 +131,9 @@
         let weaponMetaForDps = knapWeapon || item;
         if (
             !knapWeapon
-            && stack?.knapQuality
             && item.weapon
             && typeof weaponMetaWithKnapQuality === "function"
+            && (stack?.knapQuality || stack?.id === "stone_spear" || stack?.id === "flint_spear")
         ) {
             weaponMetaForDps = weaponMetaWithKnapQuality(item, stack);
             weapon = weaponMetaForDps.weapon;
@@ -237,6 +246,8 @@
         if (typeof Fire !== "undefined" && Fire.stackShowsTemp(stack)) {
             lines.push(Fire.formatTemp(stack.temp));
         }
+
+        if (stack?.toolClass === "hand_axe") lines.push("Increases log yield");
 
         return lines.join("\n");
     },
@@ -394,7 +405,16 @@
             // Tooltip
             const tt = () => {
                 const lines = [];
-                lines.push(this.formatItemTooltip(this.getItem(recipe.id), recipe.quantity));
+                let stack = null;
+                if (recipe.id === "stone_spear") {
+                    const tip = this._craftPredictedTip(recipe);
+                    const mat = tip?.knapMaterial;
+                    if (mat === "flint" || mat === "pebble") {
+                        stack = { id: "stone_spear", knapMaterial: mat };
+                        if (tip.knapQuality) stack.knapQuality = tip.knapQuality;
+                    }
+                }
+                lines.push(this.formatItemTooltip(this.getItem(recipe.id), recipe.quantity, null, stack));
                 lines.push('—');
 
                 for (const ingredient of recipe.ingredients) {
@@ -650,6 +670,11 @@
     },
 
     _craftRecipeIconKey(recipe) {
+        if (recipe?.id === "stone_spear" && typeof ensureSpearTexture === "function") {
+            const mat = this._craftPredictedTip(recipe)?.knapMaterial;
+            const key = ensureSpearTexture(this, mat === "flint" || mat === "pebble" ? mat : "white");
+            if (key && this.textures.exists(key)) return key;
+        }
         const meta = this.getItem(recipe.id);
         if (typeof Place !== "undefined" && Place.itemIconKey) {
             const key = Place.itemIconKey(meta, (id) => this.getThing(id), (k) => this.textures.exists(k));
@@ -658,6 +683,25 @@
         if (recipe.key && this.textures.exists(recipe.key)) return recipe.key;
         if (this.textures.exists("null")) return "null";
         return "slot";
+    },
+
+    /**
+     * Spear tip this craft would consume: leftmost hotbar match, then the open basket.
+     * No match leaves the recipe icon as a white tip named Stone Spear.
+     */
+    _craftPredictedTip(recipe, pawn) {
+        const tipIng = recipe?.ingredients?.find((i) => i.toolClass === "spear_tip");
+        if (!tipIng) return null;
+        const who = pawn || this.player;
+        const match = (s) => !!(s && s.id === tipIng.id && s.toolClass === tipIng.toolClass);
+        for (const stack of who?.inventory || []) {
+            if (match(stack)) return stack;
+        }
+        const store = this._openCraftStorage(who);
+        for (const stack of store?.entry?.slots || []) {
+            if (match(stack)) return stack;
+        }
+        return null;
     },
 
     _buildCraftTakeButton() {
@@ -866,10 +910,7 @@
             const label = stage.charAt(0).toUpperCase() + stage.slice(1);
             return `Any ${label} Hide`;
         }
-        if (ingredient.toolClass === "spear_tip") {
-            if (ingredient.id === "flint_tool") return "Flint Spear Tip";
-            if (ingredient.id === "stone_tool") return "Stone Spear Tip";
-        }
+        if (ingredient.toolClass === "spear_tip") return "Spear Tip";
         return this.getItem(ingredient.id)?.name || ingredient.id;
     },
 
@@ -1200,17 +1241,9 @@
         }
         const item = this.getItem(recipe.id);
         const store = this._openCraftStorage(who);
-        // Tipped spears inherit quality from the leftmost matching tip in the hotbar
-        let tipQuality = null;
-        const tipIng = recipe.ingredients?.find((i) => i.toolClass === "spear_tip");
-        if (tipIng) {
-            for (const stack of who.inventory) {
-                if (!stack || stack.id !== tipIng.id) continue;
-                if (stack.toolClass !== tipIng.toolClass) continue;
-                tipQuality = stack.knapQuality || null;
-                break;
-            }
-        }
+        const tip = this._craftPredictedTip(recipe, who);
+        const tipQuality = tip?.knapQuality || null;
+        const tipMaterial = tip?.knapMaterial || null;
         for (const ing of recipe.ingredients) {
             const need = Math.max(0, Number(ing.qty) || 1);
             const fromInv = who.loseMatchingItems(ing);
@@ -1220,15 +1253,18 @@
 
         this._consumeCraftTool(recipe, who);
 
-        if (tipQuality && (recipe.id === "stone_spear" || recipe.id === "flint_spear")) {
+        if (recipe.id === "stone_spear" || recipe.id === "flint_spear") {
             const stack = makeItemStack(item, recipe.quantity || 1, undefined, this.worldMinuteIndex());
-            stack.knapQuality = tipQuality;
+            stack.knapMaterial = tipMaterial || "pebble";
+            if (tipQuality) stack.knapQuality = tipQuality;
+            const extras = { knapMaterial: stack.knapMaterial };
+            if (tipQuality) extras.knapQuality = tipQuality;
             if (typeof who.gainStack === "function" && who.gainStack(stack)) {
                 return;
             }
             DroppedItem.spawn(
                 this, who.x, who.y, item, recipe.quantity || 1,
-                undefined, { knapQuality: tipQuality }
+                undefined, extras
             );
             return;
         }

@@ -76,3 +76,135 @@ test("filled block is not read as a spear tip", () => {
     assert.notEqual(r.toolClass, "spear_tip");
     assert.ok(r.elong < 2.15);
 });
+
+/** Fat oval: symmetric, edged, thick enough not to be a flake. */
+function biface() {
+    const cells = [];
+    const cx = 7.5;
+    const cy = 7.5;
+    for (let y = 2; y <= 13; y++) {
+        for (let x = 3; x <= 12; x++) {
+            const dx = (x - cx) / 4.2;
+            const dy = (y - cy) / 5.4;
+            if (dx * dx + dy * dy <= 1) cells.push([x, y]);
+        }
+    }
+    return gridFrom(cells);
+}
+
+test("symmetric flint biface is a hand-axe", () => {
+    const r = Knapping.classify(biface(), "flint");
+    assert.equal(r.toolClass, "hand_axe", JSON.stringify({
+        toolClass: r.toolClass,
+        mass: r.mass,
+        elong: r.elong,
+        taper: r.taper,
+        tip: r.tip,
+        edge: r.edge,
+        thickness: r.thickness,
+        fill: r.fill,
+        fork: r.fork,
+        preview: r.preview
+    }));
+    assert.match(r.preview, /hand-axe/);
+    assert.match(r.name, /Flint Hand-axe/);
+    const stack = Knapping.makeToolStack(r);
+    assert.equal(stack.id, "stone_tool");
+    assert.equal(stack.knapMaterial, "flint");
+    assert.equal(stack.toolClass, "hand_axe");
+});
+
+test("the same biface in pebble is a chopper that is too soft", () => {
+    const r = Knapping.classify(biface(), "pebble");
+    assert.equal(r.toolClass, "chopper");
+    assert.equal(r.preview, "Too soft for a hand-axe");
+    assert.match(r.name, /Pebble Chopper/);
+});
+
+test("a locked hand-axe technique stays a chopper with no mention of it", () => {
+    const unlocked = {
+        knife: true, scraper: true, chopper: true, awl: true, spear_tip: true, hand_axe: false
+    };
+    const r = Knapping.classify(biface(), "flint", unlocked);
+    assert.equal(r.toolClass, "chopper");
+    assert.equal(r.reject, null);
+    assert.match(r.preview, /chopper/);
+});
+
+test("a lumpy core stays a chopper", () => {
+    const cells = [];
+    for (let y = 3; y <= 12; y++) {
+        for (let x = 4; x <= 11; x++) cells.push([x, y]);
+    }
+    for (let y = 3; y <= 8; y++) {
+        for (let x = 4; x <= 6; x++) {
+            const i = cells.findIndex((c) => c[0] === x && c[1] === y);
+            if (i >= 0) cells.splice(i, 1);
+        }
+    }
+    const r = Knapping.classify(gridFrom(cells), "flint");
+    assert.equal(r.toolClass, "chopper");
+    assert.match(r.preview, /chopper/);
+});
+
+test("flint_tool rewrites to a flint stone_tool", () => {
+    const Hide = require("../shared/hide");
+    const stack = { id: "flint_tool", toolClass: "chopper" };
+    Hide.migrateStackItemId(stack);
+    assert.equal(stack.id, "stone_tool");
+    assert.equal(stack.knapMaterial, "flint");
+    const spear = { id: "flint_spear" };
+    Hide.migrateStackItemId(spear);
+    assert.equal(spear.id, "stone_spear");
+    assert.equal(spear.knapMaterial, "flint");
+});
+
+test("weapon damage and spear stab follow the rock", () => {
+    const Stone = require("../shared/stone");
+    const chopper = Stone.toolDamage({
+        toolClass: "chopper",
+        knapQuality: "rough",
+        knapMaterial: "flint"
+    });
+    const axe = Stone.toolDamage({
+        toolClass: "hand_axe",
+        knapQuality: "rough",
+        knapMaterial: "flint"
+    });
+    assert.equal(chopper, Math.round(9 * 1.4 * 0.95 * 10) / 10);
+    assert.equal(axe, Math.round(12 * 1.4 * 0.95 * 10) / 10);
+    const spear = Stone.spearDamage(
+        { id: "stone_spear", knapMaterial: "flint", knapQuality: "rough" },
+        { weapon: { attacks: [{ id: "point_stab", damage: 11 }, { id: "shaft_poke", damage: 4 }] } }
+    );
+    assert.equal(spear, Math.round(11 * 1.4 * 0.95 * 10) / 10);
+    assert.equal(Stone.props("pebble").hardness, 5);
+    assert.equal(Stone.props("flint").toughness, 0.6);
+    assert.equal(Stone.handAxeGate("pebble"), "soft");
+    assert.equal(Stone.handAxeGate("flint"), null);
+    assert.deepEqual(Stone.requirementStatus("hand_axe", "pebble"), [
+        { stat: "hardness", min: 6, met: false, label: "Hardness ≥ 6" },
+        { stat: "toughness", min: 0.5, met: false, label: "Toughness ≥ 50%" }
+    ]);
+    assert.deepEqual(Stone.requirementStatus("hand_axe", "flint").map((r) => r.met), [true, true]);
+    assert.deepEqual(Stone.requirementStatus("knife", "pebble"), []);
+    assert.equal(Stone.handAxeGate("flint", () => ({
+        knapping: { hardness: 7, toughness: 0.2, tipColor: "#111111" }
+    })), "brittle");
+    assert.equal(Knapping.previewLine("chopper", "rough", "brittle"), "Too brittle for a hand-axe");
+    assert.deepEqual(Stone.statLines({
+        knapping: { hardness: 5, toughness: 0.4 }
+    }), ["Hardness: 5", "Toughness: 40%"]);
+    assert.deepEqual(Stone.statLinesFor(
+        { id: "stone_tool", toolClass: "chopper", knapMaterial: "flint" },
+        { id: "stone_tool" }
+    ), []);
+    assert.deepEqual(Stone.statLinesFor(
+        { id: "stone_spear", knapMaterial: "flint" },
+        { id: "stone_spear" }
+    ), []);
+    assert.deepEqual(Stone.statLinesFor(
+        { id: "pebble" },
+        { id: "pebble", knapping: { hardness: 5, toughness: 0.4 } }
+    ), ["Hardness: 5", "Toughness: 40%"]);
+});

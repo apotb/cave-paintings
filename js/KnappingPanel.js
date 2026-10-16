@@ -118,16 +118,30 @@ class KnappingPanel {
 
     _helpTooltipText() {
         const holder = this.scene._playerResearchHolder?.() || this.scene.player;
-        if (typeof Research !== "undefined" && Research.knappingHelpLines) {
-            return Research.knappingHelpLines(holder).join("\n");
+        const rows = (typeof Research !== "undefined" && Research.knappingHelpRows)
+            ? Research.knappingHelpRows(holder)
+            : null;
+        if (!rows) {
+            return [
+                "Knife — tapered blade with some body (not forked)",
+                "Scraper — wide flat flake (thin), little/no taper",
+                "Chopper — big solid leftover (don't thin it into a flake)",
+                "Awl — small pierce spike / butt with a point",
+                "Flake — unclear leftover chip"
+            ].join("\n");
         }
-        return [
-            "Knife — tapered blade with some body (not forked)",
-            "Scraper — wide flat flake (thin), little/no taper",
-            "Chopper — big solid leftover (don't thin it into a flake)",
-            "Awl — small pierce spike / butt with a point",
-            "Flake — unclear leftover chip"
-        ].join("\n");
+        const getItem = (id) => this.scene.getItem?.(id);
+        const lines = [];
+        for (const row of rows) {
+            lines.push({ plain: true, label: row.help });
+            const reqs = (typeof Stone !== "undefined" && Stone.requirementStatus)
+                ? Stone.requirementStatus(row.toolClass, this.material, getItem)
+                : [];
+            for (const req of reqs) {
+                lines.push({ mark: req.met ? "on" : "off", label: req.label });
+            }
+        }
+        return { text: "", lines };
     }
 
     _knapUnlocked() {

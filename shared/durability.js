@@ -16,9 +16,18 @@
         return { crude: 0.65, rough: 0.95, fine: 1.35 }[quality] || 1;
     }
 
+    function stoneApi() {
+        if (typeof Stone !== "undefined" && Stone.durabilityBase) return Stone;
+        if (typeof module === "object" && module.exports) {
+            try { return require("./stone"); } catch (_) { return null; }
+        }
+        return null;
+    }
+
     function maxDurability(stack, itemDef) {
         if (NO_DURABILITY_CLASS[stack?.toolClass]) return 0;
-        const base = Number(itemDef?.durability);
+        const fromRock = stoneApi()?.durabilityBase?.(stack);
+        const base = fromRock != null ? fromRock : Number(itemDef?.durability);
         if (!(base > 0)) return 0;
         const q = stack?.knapQuality;
         const max = q ? base * knapQualityMult(q) : base;

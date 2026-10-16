@@ -570,8 +570,53 @@ const Knapping = {
             width,
             elong: length / Math.max(1, width),
             taper,
-            fork: total ? multi / total : 0
+            fork: total ? multi / total : 0,
+            proj
         };
+    },
+
+    /**
+     * Fraction of cells that have a mirror across the long axis.
+     * 1 is symmetric. A one-sided bite drops this well below a biface.
+     */
+    _symmetryScore(grid) {
+        const axis = this._orientedExtent(grid);
+        const proj = axis?.proj;
+        if (!proj || proj.length < 8) return 0;
+        let hit = 0;
+        for (const [u, v] of proj) {
+            let ok = false;
+            for (let i = 0; i < proj.length; i++) {
+                const u2 = proj[i][0];
+                const v2 = proj[i][1];
+                if (Math.abs(u2 - u) <= 0.75 && Math.abs(v2 + v) <= 0.75) {
+                    ok = true;
+                    break;
+                }
+            }
+            if (ok) hit++;
+        }
+        return hit / proj.length;
+    },
+
+    _handAxeGate(material) {
+        if (typeof Stone !== "undefined" && Stone.handAxeGate) return Stone.handAxeGate(material);
+        const hard = material === "flint" ? 7 : 5;
+        const tough = material === "flint" ? 0.6 : 0.4;
+        if (hard < 6) return "soft";
+        if (tough < 0.5) return "brittle";
+        return null;
+    },
+
+    _isHandAxe(mass, elong, taper, tip, edge, thickness, fill, fork, symmetry) {
+        return mass >= 28
+            && fill >= 0.5
+            && elong < 2.15
+            && taper < 0.35
+            && thickness >= 1.05
+            && edge >= 6
+            && fork < 0.2
+            && symmetry >= 0.82;
     },
 
     _distToEdge(grid) {
@@ -785,7 +830,6 @@ const Knapping = {
         let taper = this._taperScore(grid);
         let fork = this._forkRatio(grid);
         const fill = mass / Math.max(1, box.w * box.h);
-        const matMult = material === "flint" ? 1.25 : 1;
         const allow = (cls) => !unlocked || !!unlocked[cls];
 
         // Diagonal (and other tilted) silhouettes: the upright box looks square.
@@ -803,6 +847,7 @@ const Knapping = {
         // Order matters. Awl before spear/knife so butt+spike isn't stolen.
         // Spear = long fairly even shaft; knife = tapered blade with body.
         let toolClass = "blank";
+        let reject = null;
         if (
             allow("awl")
             // Small pierce spike (T / butt+point). AABB taper misses stems off the long axis.
@@ -857,6 +902,23 @@ const Knapping = {
         ) {
             toolClass = "scraper";
         } else if (
+            this._isHandAxe(
+                mass, elong, taper, tip, edge, thickness, fill, fork, this._symmetryScore(grid)
+            )
+        ) {
+            // A locked technique stays a chopper, and the preview does not mention it.
+            if (!allow("hand_axe")) {
+                toolClass = "chopper";
+            } else {
+                const gate = this._handAxeGate(material);
+                if (gate) {
+                    toolClass = "chopper";
+                    reject = gate;
+                } else {
+                    toolClass = "hand_axe";
+                }
+            }
+        } else if (
             allow("chopper")
             // Heavy core leftover — thickness≥1.2 almost never fired on 16×16 silhouettes
             && mass >= 28
@@ -873,37 +935,32 @@ const Knapping = {
             1
         );
         const quality = sharpness >= 0.7 ? "fine" : sharpness >= 0.45 ? "rough" : "crude";
-        // Wide bands so Fine clearly outdamages Rough/Crude
-        const qualityMult = { crude: 0.65, rough: 0.95, fine: 1.35 }[quality];
 
-        const baseDmg = {
-            knife: 7,
-            scraper: 4,
-            chopper: 9,
-            awl: 3,
-            spear_tip: 0,
-            blank: 2
-        }[toolClass] || 2;
+        const named = {
+            toolClass,
+            knapQuality: quality,
+            knapMaterial: material === "flint" ? "flint" : "pebble"
+        };
+        const damage = this._combatDamage(named);
 
-        const damage = toolClass === "spear_tip" || toolClass === "blank"
-            ? 0
-            : Math.round(baseDmg * qualityMult * matMult * 10) / 10;
-
-        const matLabel = material === "flint" ? "Flint" : "Stone";
+        const matLabel = (typeof Stone !== "undefined" && Stone.props)
+            ? Stone.props(material).name
+            : (material === "flint" ? "Flint" : "Pebble");
         const classNames = {
             knife: "Knife",
             scraper: "Scraper",
             chopper: "Chopper",
             awl: "Awl",
             spear_tip: "Spear Tip",
-            blank: "Flake"
+            blank: "Flake",
+            hand_axe: "Hand-axe"
         };
         const qLabel = quality.charAt(0).toUpperCase() + quality.slice(1);
         const name = toolClass === "spear_tip" || toolClass === "blank"
             ? `${matLabel} ${classNames[toolClass]}`
             : `${qLabel} ${matLabel} ${classNames[toolClass]}`;
 
-        const preview = this.previewLine(toolClass, quality);
+        const preview = this.previewLine(toolClass, quality, reject);
 
         return {
             toolClass,
@@ -912,6 +969,7 @@ const Knapping = {
             damage,
             name,
             preview,
+            reject,
             mass,
             tip,
             edge,
@@ -924,11 +982,32 @@ const Knapping = {
         };
     },
 
-    previewLine(toolClass, quality) {
+    _combatDamage(stack) {
+        if (typeof Stone !== "undefined" && Stone.toolDamage) {
+            const d = Stone.toolDamage(stack);
+            if (d != null) return d;
+        }
+        const base = {
+            knife: 7,
+            scraper: 4,
+            chopper: 9,
+            awl: 3,
+            hand_axe: 12
+        }[stack?.toolClass] || 0;
+        if (!(base > 0)) return 0;
+        const q = { crude: 0.65, rough: 0.95, fine: 1.35 }[stack?.knapQuality] || 1;
+        const hard = stack?.knapMaterial === "flint" ? 1.4 : 1;
+        return Math.round(base * q * hard * 10) / 10;
+    },
+
+    previewLine(toolClass, quality, reject) {
+        if (reject === "soft") return "Too soft for a hand-axe";
+        if (reject === "brittle") return "Too brittle for a hand-axe";
         switch (toolClass) {
             case "knife": return `Looks like a ${quality} knife…`;
             case "scraper": return `Looks like a ${quality} scraper…`;
             case "chopper": return `Looks like a ${quality} chopper…`;
+            case "hand_axe": return `Looks like a ${quality} hand-axe…`;
             case "awl": return `Looks like a ${quality} awl…`;
             case "spear_tip": return `Looks like a ${quality} spear tip…`;
             default: return "Unclear flake…";
@@ -942,16 +1021,14 @@ const Knapping = {
      */
     makeToolStack(result, visual = null) {
         const material = result.material === "flint" ? "flint" : "pebble";
-        const id = material === "flint" ? "flint_tool" : "stone_tool";
         const stack = {
-            id,
+            id: "stone_tool",
             quantity: 1,
             customName: result.name,
             toolClass: result.toolClass,
             sharpness: result.sharpness,
             knapDamage: result.damage,
             knapMaterial: material
-            // weight comes from stone_tool / flint_tool defs (same as pebble / flint)
         };
         // Weapons use DPS from attack verbs (like spears) — no raw Damage: line
         if (result.toolClass === "blank") {
@@ -989,8 +1066,8 @@ const Knapping = {
     weaponMetaFromStack(baseMeta, stack) {
         if (!stack || !baseMeta) return null;
         const cls = stack.toolClass;
-        const dmg = Number(stack.knapDamage) || 0;
-        if (!["knife", "scraper", "chopper", "awl"].includes(cls) || !(dmg > 0)) {
+        const dmg = this._combatDamage(stack);
+        if (!["knife", "scraper", "chopper", "awl", "hand_axe"].includes(cls) || !(dmg > 0)) {
             return null;
         }
         const r = (n) => Math.round(n * 10) / 10;
@@ -1041,10 +1118,12 @@ const Knapping = {
                     source: "hand"
                 }
             ];
-        } else if (cls === "chopper") {
+        } else if (cls === "chopper" || cls === "hand_axe") {
+            const chopId = cls === "hand_axe" ? "knap_hand_axe_chop" : "knap_chopper_chop";
+            const bashId = cls === "hand_axe" ? "knap_hand_axe_bash" : "knap_chopper_bash";
             attacks = [
                 {
-                    id: "knap_chopper_chop",
+                    id: chopId,
                     name: "Chop",
                     damage: dmg,
                     type: "sharp",
@@ -1054,7 +1133,7 @@ const Knapping = {
                     source: "hand"
                 },
                 {
-                    id: "knap_chopper_bash",
+                    id: bashId,
                     name: "Bash",
                     damage: r(dmg * 0.7),
                     type: "blunt",
@@ -1093,7 +1172,9 @@ const Knapping = {
         const range = 2.8;
         return {
             ...baseMeta,
-            name: stack.customName || baseMeta.name,
+            name: (typeof Stone !== "undefined" && Stone.displayName(stack))
+                || stack.customName
+                || baseMeta.name,
             key: stack.knapIcon || baseMeta.key,
             weapon: {
                 type: "melee",

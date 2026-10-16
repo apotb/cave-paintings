@@ -137,7 +137,7 @@
     }
 
     /**
-     * Implemented knap shapes with help copy. Later techs (hand-axe, burin, …)
+     * Implemented knap shapes with help copy. Later techs (burin, …)
      * stay off the menu until they have a classifier + a row here.
      */
     const KNAP_TECHNIQUES = [
@@ -145,7 +145,8 @@
         { label: "Scraper knapping", toolClass: "scraper", help: "Scraper — wide flat flake (thin), little/no taper" },
         { label: "Chopper knapping", toolClass: "chopper", help: "Chopper — big solid leftover (don't thin it into a flake)" },
         { label: "Awl knapping", toolClass: "awl", help: "Awl — small pierce spike / butt with a point" },
-        { label: "Spear tip knapping", toolClass: "spear_tip", help: "Spear tip — long and thin" }
+        { label: "Spear tip knapping", toolClass: "spear_tip", help: "Spear tip — long and thin" },
+        { label: "Hand-axe knapping", toolClass: "hand_axe", help: "Hand-axe — symmetric biface, edge all around" }
     ];
 
     function knappingTechniqueByLabel(label) {
@@ -170,14 +171,18 @@
         return unlocked;
     }
 
-    function knappingHelpLines(settle) {
+    function knappingHelpRows(settle) {
         const unlocked = knappingTechniques(settle);
-        const lines = [];
+        const rows = [];
         for (const row of KNAP_TECHNIQUES) {
-            if (unlocked[row.toolClass]) lines.push(row.help);
+            if (unlocked[row.toolClass]) rows.push({ toolClass: row.toolClass, help: row.help });
         }
-        lines.push("Flake — unclear leftover chip");
-        return lines;
+        rows.push({ toolClass: null, help: "Flake — unclear leftover chip" });
+        return rows;
+    }
+
+    function knappingHelpLines(settle) {
+        return knappingHelpRows(settle).map((row) => row.help);
     }
 
     function requireHeaderLabel(header) {
@@ -2381,6 +2386,7 @@
         unlockTextEntries,
         knappingTechniques,
         knappingHelpLines,
+        knappingHelpRows,
         setTechs,
         techs,
         techById,

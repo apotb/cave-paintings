@@ -23,6 +23,7 @@
     const halt = (...args) => ctx.halt(...args);
     const researchHolder = (...args) => ctx.researchHolder(...args);
     const findStack = (...args) => ctx.findStack(...args);
+    const findBestChopStack = (...args) => ctx.findBestChopStack(...args);
     const clearPaintBar = (...args) => ctx.clearPaintBar(...args);
     const fetchStack = (...args) => ctx.fetchStack(...args);
     const goOrWalk = (...args) => ctx.goOrWalk(...args);
@@ -215,7 +216,7 @@ function doChop(world, rec, settle, tree, delta) {
         dropChopTarget(rec, tree);
         return halt();
     }
-    const found = findStack(world, rec, settle, (s) => Chop.isChopper(s));
+    const found = findBestChopStack(world, rec, settle);
     if (!found) {
         clearChopApproach(rec, rec.creature);
         return halt();

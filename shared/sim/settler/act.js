@@ -447,7 +447,13 @@ function knapQualityDurationScale(quality) {
 }
 
 function knapMaterialDurationScale(material) {
-    return material === "flint" ? 0.8 : 1;
+    if (typeof Stone !== "undefined" && Stone.durationScale) {
+        return Stone.durationScale(material, (id) => DataStore?.getItem?.(id));
+    }
+    const def = DataStore?.getItem?.(material === "flint" ? "flint" : "pebble");
+    const h = Number(def?.knapping?.hardness);
+    const hardness = Number.isFinite(h) && h > 0 ? h : (material === "flint" ? 7 : 5);
+    return 5 / hardness;
 }
 
 function manipScale(world, rec) {

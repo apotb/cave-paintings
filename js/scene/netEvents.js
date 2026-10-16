@@ -697,7 +697,7 @@
         const who = actor || this.player;
         who?.noteChopProgress?.(thing, result.progress, false);
         if (!result.felled) return result;
-        const drops = Chop.rollDrops(def, () => Math.random());
+        const drops = Chop.rollDrops(def, () => Math.random(), who?.getHeldItem?.());
         const piles = Chop.scatterFellPiles(drops, entry.x, entry.y, () => Math.random());
         Chop.fellToStump(entry, def);
         if (typeof thing.morph === "function") thing.morph(entry.id);

@@ -949,10 +949,11 @@
         const id = match?.id;
         const wantClass = match?.toolClass || null;
         if ((!hideStage && !id) || !(remaining > 0) || !Array.isArray(slots)) {
-            return { lost: 0, knapQuality: null };
+            return { lost: 0, knapQuality: null, knapMaterial: null };
         }
         let lost = 0;
         let knapQuality = null;
+        let knapMaterial = null;
         const takeFrom = (requireClass) => {
             for (let i = 0; i < slots.length && remaining > 0; i++) {
                 const s = slots[i];
@@ -960,6 +961,7 @@
                 if (requireClass && s.toolClass !== requireClass) continue;
                 if (!requireClass && wantClass && s.toolClass === wantClass) continue;
                 if (knapQuality == null && s.knapQuality) knapQuality = s.knapQuality;
+                if (knapMaterial == null && s.knapMaterial) knapMaterial = s.knapMaterial;
                 const have = Math.max(0, Math.floor(Number(s.quantity) || 0));
                 const take = Math.min(have, remaining);
                 if (!(take > 0)) continue;
@@ -972,7 +974,7 @@
         if (hideStage) takeFrom(null);
         else if (wantClass) takeFrom(wantClass);
         else takeFrom(null);
-        return { lost, knapQuality };
+        return { lost, knapQuality, knapMaterial };
     },
 
     _loseMatchingItems(p, match, extraSlots) {
@@ -981,14 +983,16 @@
         const left = Math.max(0, qty - fromInv.lost);
         let fromStorage = false;
         let knapQuality = fromInv.knapQuality;
+        let knapMaterial = fromInv.knapMaterial;
         let lost = fromInv.lost;
         if (left > 0 && extraSlots) {
             const rest = this._loseMatchingFromSlots(extraSlots, { ...match, qty: left });
             lost += rest.lost;
             fromStorage = rest.lost > 0;
             if (knapQuality == null) knapQuality = rest.knapQuality;
+            if (knapMaterial == null) knapMaterial = rest.knapMaterial;
         }
-        return { lost, knapQuality, fromStorage };
+        return { lost, knapQuality, knapMaterial, fromStorage };
     },
 
     _craftStorageFromAction(p, action = {}) {
@@ -1160,25 +1164,31 @@
         }
 
         let tipQuality = null;
+        let tipMaterial = null;
         let storageDirty = false;
         for (const ing of recipe.ingredients) {
-            const { knapQuality, fromStorage } = this._loseMatchingItems(p, ing, extra);
-            if (ing.toolClass === "spear_tip" && knapQuality) tipQuality = knapQuality;
+            const { knapQuality, knapMaterial, fromStorage } = this._loseMatchingItems(p, ing, extra);
+            if (ing.toolClass === "spear_tip") {
+                if (knapQuality) tipQuality = knapQuality;
+                if (knapMaterial) tipMaterial = knapMaterial;
+            }
             if (fromStorage) storageDirty = true;
         }
 
         this._consumeCraftTool(p, recipe);
 
         const extras = {};
-        if (tipQuality && (recipe.id === "stone_spear" || recipe.id === "flint_spear")) {
-            extras.knapQuality = tipQuality;
+        if (recipe.id === "stone_spear" || recipe.id === "flint_spear") {
+            extras.knapMaterial = tipMaterial || "pebble";
+            if (tipQuality) extras.knapQuality = tipQuality;
         }
         const left = this._give(p, recipe.id, recipe.quantity, extras);
         if (left > 0) {
             this._pushDrop(p.x, p.y, {
                 id: recipe.id,
                 quantity: left,
-                ...(extras.knapQuality ? { knapQuality: extras.knapQuality } : {})
+                ...(extras.knapQuality ? { knapQuality: extras.knapQuality } : {}),
+                ...(extras.knapMaterial ? { knapMaterial: extras.knapMaterial } : {})
             });
         }
         return { crafted: true, storageDirty };
@@ -1348,7 +1358,7 @@
             creature._attackWoreHeld = true;
         }
         if (result.felled) {
-            const drops = Chop.rollDrops(bestDef, () => this.rng());
+            const drops = Chop.rollDrops(bestDef, () => this.rng(), creature.getHeldItem?.());
             const piles = Chop.scatterFellPiles(drops, best.x, best.y, () => this.rng());
             Chop.fellToStump(best, bestDef);
             for (const p of piles) {
@@ -1640,12 +1650,11 @@
 
     _sanitizeKnapStack(raw, material) {
         if (!raw || typeof raw !== "object") return null;
-        const wantId = material === "flint" ? "flint_tool" : "stone_tool";
         const id = String(raw.id || "");
-        if (id !== wantId) return null;
-        const classes = new Set(["knife", "scraper", "chopper", "awl", "spear_tip", "blank"]);
+        if (id !== "stone_tool" && id !== "flint_tool") return null;
+        const classes = new Set(["knife", "scraper", "chopper", "awl", "spear_tip", "blank", "hand_axe"]);
         const toolClass = classes.has(raw.toolClass) ? raw.toolClass : "blank";
-        const out = { id, quantity: 1, toolClass };
+        const out = { id: "stone_tool", quantity: 1, toolClass };
         if (typeof raw.customName === "string" && raw.customName.trim()) {
             out.customName = raw.customName.trim().slice(0, 64);
         }
@@ -1655,7 +1664,7 @@
         if (Number.isFinite(sharp)) out.sharpness = Math.max(0, Math.min(2, sharp));
         if (typeof raw.knapQuality === "string") out.knapQuality = raw.knapQuality.slice(0, 24);
         if (typeof raw.tooltipExtra === "string") out.tooltipExtra = raw.tooltipExtra.slice(0, 80);
-        out.knapMaterial = material === "flint" ? "flint" : "pebble";
+        out.knapMaterial = (material === "flint" || id === "flint_tool") ? "flint" : "pebble";
         const icon = this._sanitizeKnapIconData(raw.knapIconData);
         if (icon) out.knapIconData = icon;
         return out;

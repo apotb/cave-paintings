@@ -21,6 +21,35 @@ test("carryDurabilityAfterRework keeps remaining fraction across max change", ()
     assert.ok(rem > 0);
 });
 
+test("knapped durability scales with toughness and does not refill wear", () => {
+    const def = { durability: 150 };
+    const pebble = {
+        id: "stone_tool",
+        toolClass: "chopper",
+        knapQuality: "rough",
+        knapMaterial: "pebble"
+    };
+    const flint = {
+        id: "stone_tool",
+        toolClass: "chopper",
+        knapQuality: "rough",
+        knapMaterial: "flint"
+    };
+    assert.equal(Durability.maxDurability(pebble, def), 150 * 0.95);
+    assert.equal(Durability.maxDurability(flint, def), 213.75);
+    const worn = { ...flint, durability: 40 };
+    assert.equal(Durability.remainingDurability(worn, def), 40);
+    const over = { ...pebble, durability: 999 };
+    assert.equal(Durability.remainingDurability(over, def), 150 * 0.95);
+    const spear = {
+        id: "stone_spear",
+        knapQuality: "rough",
+        knapMaterial: "flint"
+    };
+    assert.equal(Durability.maxDurability(spear, { durability: 120 }), 120 * 1.5 * 0.95);
+    assert.equal(Durability.maxDurability({ id: "stone_tool", toolClass: "spear_tip" }, def), 0);
+});
+
 test("knapQualityMult and maxDurability", () => {
     assert.equal(Durability.knapQualityMult("crude"), 0.65);
     const def = { durability: 100 };
