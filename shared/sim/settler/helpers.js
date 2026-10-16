@@ -616,7 +616,14 @@ function bagHasRoom(slots, stack) {
     if (stackIsSpecial(stack)) return false;
     const meta = getItem(stack.id);
     const max = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
-    return slots.some((s) => s && s.id === stack.id && !stackIsSpecial(s) && (Number(s.quantity) || 1) < max);
+    return slots.some((s) => {
+        if (!s || s.id !== stack.id || stackIsSpecial(s)) return false;
+        if ((Number(s.quantity) || 1) >= max) return false;
+        if (stack.id === "pebble" && typeof Stone !== "undefined" && Stone.stoneKey) {
+            return Stone.stoneKey(s) === Stone.stoneKey(stack);
+        }
+        return true;
+    });
 }
 
 function hasCarryRoom(rec, stack) {

@@ -69,7 +69,7 @@ class SceneNet extends Phaser.Scene {
         for (const item of [
             "apple", "blueberry", "blueberries", "roasted_apple",
             "raw_human_flesh", "roasted_human_flesh", "raw_venison", "roasted_venison", "raw_pork", "roasted_pork", "coconut",
-            "flint", "pebble", "deer_hide", "deer_hide_fleshed", "deer_hide_dry",
+            "flint", "deer_hide", "deer_hide_fleshed", "deer_hide_dry",
             "deer_hide_soaked", "deer_hide_dehaired", "deer_hide_brained", "deer_leather",
             "boar_hide", "boar_hide_fleshed", "boar_hide_dry",
             "boar_hide_soaked", "boar_hide_dehaired", "boar_hide_brained", "boar_leather",

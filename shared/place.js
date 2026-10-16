@@ -108,6 +108,17 @@
             });
             return loads;
         }
+        if (Array.isArray(t.variants) && t.variants.length) {
+            const loads = [];
+            const seen = new Set();
+            for (const raw of t.variants) {
+                const key = String(raw || "");
+                if (!key || seen.has(key)) continue;
+                seen.add(key);
+                loads.push({ key, path: `assets/things/${key}.png` });
+            }
+            return loads;
+        }
         if (t.anim) {
             return [{
                 key: t.key,

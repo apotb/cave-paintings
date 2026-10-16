@@ -325,17 +325,26 @@ const Knapping = {
      * Remove a random flake around (x,y). Mutates a clone.
      * @returns {{ grid: boolean[][], shattered: boolean, reason: string|null, removed: number }}
      */
-    chip(grid, x, y, rng = Math.random) {
+    chip(grid, x, y, rng = Math.random, toughness = 0.4) {
         const n = this.SIZE;
         if (!grid[y]?.[x] || !this.isEdgeCell(grid, x, y)) {
             return { grid, shattered: false, reason: null, removed: 0 };
         }
         const next = this.cloneGrid(grid);
-        // Mostly single-cell chips; rare small flakes — no giant 5–10 bites
+        // 1 cell, 2 cells, or 3–4. Andesite (0.4) stays 78% / 19% / 3%.
+        // Softer stone raises the 2-cell and 3–4 chances by (0.4 / toughness)^2.
+        const tough = Number(toughness);
+        const t = Number.isFinite(tough) && tough > 0 ? tough : 0.4;
+        const scale = (0.4 / t) ** 2;
+        const pBig = Math.min(1, 0.03 * scale);
+        const pTwo = Math.min(Math.max(0, 1 - pBig), 0.19 * scale);
+        const bigAt = scale === 1 ? 0.97 : 1 - pBig;
+        const twoAt = scale === 1 ? 0.78 : 1 - pBig - pTwo;
         const roll = rng();
         let target = 1;
-        if (roll >= 0.97) target = 3 + Math.floor(rng() * 2); // 3–4 (~3%)
-        else if (roll >= 0.78) target = 2; // (~19%)
+        if (roll >= bigAt) target = 3 + Math.floor(rng() * 2);
+        else if (roll >= twoAt) target = 2;
+        if (target > 4) target = 4;
 
         // Prefer growing along a crack from the click; light tip bias
         const removed = [];
@@ -936,10 +945,16 @@ const Knapping = {
         );
         const quality = sharpness >= 0.7 ? "fine" : sharpness >= 0.45 ? "rough" : "crude";
 
+        const stoneId = material === "flint"
+            ? null
+            : ((typeof Stone !== "undefined" && Stone.normalizeStone)
+                ? (Stone.normalizeStone(material) || "andesite")
+                : "andesite");
         const named = {
             toolClass,
             knapQuality: quality,
-            knapMaterial: material === "flint" ? "flint" : "pebble"
+            knapMaterial: material === "flint" ? "flint" : "pebble",
+            ...(stoneId ? { stone: stoneId } : {})
         };
         const damage = this._combatDamage(named);
 
@@ -978,7 +993,8 @@ const Knapping = {
             taper,
             fork,
             fill,
-            material
+            material,
+            stone: stoneId
         };
     },
 
@@ -1030,6 +1046,12 @@ const Knapping = {
             knapDamage: result.damage,
             knapMaterial: material
         };
+        if (material !== "flint") {
+            const stone = (typeof Stone !== "undefined" && Stone.normalizeStone)
+                ? (Stone.normalizeStone(result.stone) || Stone.normalizeStone(result.material) || "andesite")
+                : "andesite";
+            stack.stone = stone;
+        }
         // Weapons use DPS from attack verbs (like spears) — no raw Damage: line
         if (result.toolClass === "blank") {
             stack.tooltipExtra = "Failed knapping";

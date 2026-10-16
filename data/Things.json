@@ -136,6 +136,7 @@
         "id": "rock",
         "name": "Rock",
         "key": "rock",
+        "variants": ["rock_1", "rock_2"],
         "hitboxSize": 5
     },
     {
@@ -151,6 +152,7 @@
         "id": "pebbles",
         "name": "Pebbles",
         "key": "pebble",
+        "variants": ["pebble_1", "pebble_2"],
         "hitboxSize": 0,
         "lootable": {
             "item": "pebble",

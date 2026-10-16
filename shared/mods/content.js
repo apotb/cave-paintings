@@ -699,7 +699,7 @@
      * Queue item and thing textures that are not already in the cache.
      * Safe to call on SceneBase.preload's early return.
      * Dedicated item art must already be in `__cpQueuedTextures` (SceneBase
-     * loads those first) so flint/pebble keep assets/items over the ground sprite.
+     * loads those first) so flint keeps assets/items over the ground sprite.
      */
     function queueTextures(scene) {
         if (!scene?.load || !_finalized) return;

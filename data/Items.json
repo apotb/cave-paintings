@@ -233,7 +233,7 @@
     {
         "id": "pebble",
         "name": "Pebble",
-        "key": "pebble",
+        "key": "pebble_1",
         "maxStack": 99,
         "weight": 0.3,
         "knapping": {
@@ -265,7 +265,7 @@
     {
         "id": "stone_tool",
         "name": "Stone Tool",
-        "key": "pebble",
+        "key": "pebble_1",
         "maxStack": 1,
         "weight": 0.3,
         "durability": 150,

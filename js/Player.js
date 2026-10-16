@@ -700,7 +700,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             }
             if ((stack.id === "stone_spear" || stack.id === "flint_spear")
                 && typeof ensureSpearTexture === "function") {
-                const key = ensureSpearTexture(this.scene, stack.knapMaterial);
+                const key = ensureSpearTexture(this.scene, stack.knapMaterial, stack.stone);
                 if (key) held = { ...held, key };
             }
             return held;
@@ -738,7 +738,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const left = spoilLeftForCharacter(stack, now);
         const remaining = this.gainItem(meta, stack.quantity, left, {
             dryProgress: stack.dryProgress,
-            soakProgress: stack.soakProgress
+            soakProgress: stack.soakProgress,
+            stone: stack.stone
         });
         return remaining === 0;
     }
@@ -866,7 +867,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const left = spoilLeftForCharacter(stack, now);
         const remaining = this.gainItem(meta, stack.quantity, left, {
             dryProgress: stack.dryProgress,
-            soakProgress: stack.soakProgress
+            soakProgress: stack.soakProgress,
+            stone: stack.stone
         });
         if (remaining === stack.quantity) return false;
         if (remaining > 0) {
@@ -1627,7 +1629,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         let key = art.key || art.itemId;
         if ((art.itemId === "stone_spear" || art.itemId === "flint_spear")
             && typeof ensureSpearTexture === "function") {
-            key = ensureSpearTexture(scene, art.knapMaterial) || key;
+            key = ensureSpearTexture(scene, art.knapMaterial, art.stone) || key;
         }
         if (
             art.knapIconData
@@ -2333,6 +2335,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (!slot || slot.id !== item.id || slot.quantity >= maxStack) continue;
             if (slot.customName || slot.food || slot.ingredients || slot.toolClass
                 || slot.formClass || slot.formVoxels) continue;
+            if (item.id === "pebble" && typeof Stone !== "undefined" && Stone.stoneKey
+                && Stone.stoneKey(slot) !== Stone.stoneKey(extras)) continue;
             const space = maxStack - slot.quantity;
             const toAdd = Math.min(space, remaining, fitNow());
             if (!(toAdd > 0)) break;
@@ -2364,6 +2368,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             const soak = Math.floor(Number(extras?.soakProgress) || 0);
             if (soak > 0) stack.soakProgress = soak;
             if (typeof Fire !== "undefined") Fire.applyStackTemp(stack, extras?.temp);
+            const stone = typeof Stone !== "undefined" ? Stone.normalizeStone?.(extras?.stone) : null;
+            if (stone) stack.stone = stone;
             const nullIndex = arr.findIndex(s => !s);
             if (nullIndex !== -1) {
                 arr[nullIndex] = stack;
@@ -2954,7 +2960,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             ? knapQualityDurationScale(item?.knapQuality)
             : 1;
         const material = typeof knapMaterialDurationScale === "function"
-            ? knapMaterialDurationScale(item?.knapMaterial)
+            ? knapMaterialDurationScale(item?.stone || item?.knapMaterial)
             : 1;
         const max = seconds * 1000 * scale * quality * material;
         let repeat = Math.floor(Number(repeatLeft));

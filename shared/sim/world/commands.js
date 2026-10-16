@@ -754,6 +754,7 @@
         for (let i = 0; i < p.inventory.length && remaining > 0; i++) {
             const s = p.inventory[i];
             if (!s || s.id !== itemId || this._stackIsSpecial(s) || incomingUnique) continue;
+            if (itemId === "pebble" && !this._samePebbleStone(s, extraFields)) continue;
             const space = Math.max(0, maxStack - (s.quantity || 1));
             if (space <= 0) continue;
             const add = Math.min(space, remaining, fitNow());
@@ -786,6 +787,7 @@
         for (let i = 0; i < over.length && remaining > 0; i++) {
             const s = over[i];
             if (!s || s.id !== itemId || this._stackIsSpecial(s) || incomingUnique) continue;
+            if (itemId === "pebble" && !this._samePebbleStone(s, extraFields)) continue;
             const space = Math.max(0, maxStack - (s.quantity || 1));
             if (space <= 0) continue;
             const add = Math.min(space, remaining, fitNow());
@@ -949,11 +951,12 @@
         const id = match?.id;
         const wantClass = match?.toolClass || null;
         if ((!hideStage && !id) || !(remaining > 0) || !Array.isArray(slots)) {
-            return { lost: 0, knapQuality: null, knapMaterial: null };
+            return { lost: 0, knapQuality: null, knapMaterial: null, stone: null };
         }
         let lost = 0;
         let knapQuality = null;
         let knapMaterial = null;
+        let stone = null;
         const takeFrom = (requireClass) => {
             for (let i = 0; i < slots.length && remaining > 0; i++) {
                 const s = slots[i];
@@ -962,6 +965,7 @@
                 if (!requireClass && wantClass && s.toolClass === wantClass) continue;
                 if (knapQuality == null && s.knapQuality) knapQuality = s.knapQuality;
                 if (knapMaterial == null && s.knapMaterial) knapMaterial = s.knapMaterial;
+                if (stone == null && s.stone) stone = s.stone;
                 const have = Math.max(0, Math.floor(Number(s.quantity) || 0));
                 const take = Math.min(have, remaining);
                 if (!(take > 0)) continue;
@@ -974,7 +978,7 @@
         if (hideStage) takeFrom(null);
         else if (wantClass) takeFrom(wantClass);
         else takeFrom(null);
-        return { lost, knapQuality, knapMaterial };
+        return { lost, knapQuality, knapMaterial, stone };
     },
 
     _loseMatchingItems(p, match, extraSlots) {
@@ -984,6 +988,7 @@
         let fromStorage = false;
         let knapQuality = fromInv.knapQuality;
         let knapMaterial = fromInv.knapMaterial;
+        let stone = fromInv.stone;
         let lost = fromInv.lost;
         if (left > 0 && extraSlots) {
             const rest = this._loseMatchingFromSlots(extraSlots, { ...match, qty: left });
@@ -991,8 +996,9 @@
             fromStorage = rest.lost > 0;
             if (knapQuality == null) knapQuality = rest.knapQuality;
             if (knapMaterial == null) knapMaterial = rest.knapMaterial;
+            if (stone == null) stone = rest.stone;
         }
-        return { lost, knapQuality, knapMaterial, fromStorage };
+        return { lost, knapQuality, knapMaterial, stone, fromStorage };
     },
 
     _craftStorageFromAction(p, action = {}) {
@@ -1165,14 +1171,16 @@
 
         let tipQuality = null;
         let tipMaterial = null;
+        let tipStone = null;
         let storageDirty = false;
         for (const ing of recipe.ingredients) {
-            const { knapQuality, knapMaterial, fromStorage } = this._loseMatchingItems(p, ing, extra);
+            const lost = this._loseMatchingItems(p, ing, extra);
             if (ing.toolClass === "spear_tip") {
-                if (knapQuality) tipQuality = knapQuality;
-                if (knapMaterial) tipMaterial = knapMaterial;
+                if (lost.knapQuality) tipQuality = lost.knapQuality;
+                if (lost.knapMaterial) tipMaterial = lost.knapMaterial;
+                if (tipStone == null && lost.stone) tipStone = lost.stone;
             }
-            if (fromStorage) storageDirty = true;
+            if (lost.fromStorage) storageDirty = true;
         }
 
         this._consumeCraftTool(p, recipe);
@@ -1181,6 +1189,7 @@
         if (recipe.id === "stone_spear" || recipe.id === "flint_spear") {
             extras.knapMaterial = tipMaterial || "pebble";
             if (tipQuality) extras.knapQuality = tipQuality;
+            if (tipStone) extras.stone = tipStone;
         }
         const left = this._give(p, recipe.id, recipe.quantity, extras);
         if (left > 0) {
@@ -1188,7 +1197,8 @@
                 id: recipe.id,
                 quantity: left,
                 ...(extras.knapQuality ? { knapQuality: extras.knapQuality } : {}),
-                ...(extras.knapMaterial ? { knapMaterial: extras.knapMaterial } : {})
+                ...(extras.knapMaterial ? { knapMaterial: extras.knapMaterial } : {}),
+                ...(extras.stone ? { stone: extras.stone } : {})
             });
         }
         return { crafted: true, storageDirty };
@@ -1499,6 +1509,13 @@
         });
     },
 
+    _samePebbleStone(a, b) {
+        if (typeof Stone !== "undefined" && Stone.stoneKey) {
+            return Stone.stoneKey(a) === Stone.stoneKey(b);
+        }
+        return (a?.stone || "andesite") === (b?.stone || "andesite");
+    },
+
     _stackIsSpecial(s) {
         return !!(s && (
             s.customName || s.food || s.ingredients?.length || s.toolClass
@@ -1522,6 +1539,9 @@
         if (src.sharpness != null) out.sharpness = src.sharpness;
         if (src.knapDamage != null) out.knapDamage = src.knapDamage;
         if (src.knapMaterial) out.knapMaterial = src.knapMaterial;
+        if (typeof Stone !== "undefined" && Stone.normalizeStone?.(src.stone)) {
+            out.stone = Stone.normalizeStone(src.stone);
+        }
         if (src.knapQuality) out.knapQuality = src.knapQuality;
         if (src.tooltipExtra) out.tooltipExtra = src.tooltipExtra;
         if (src.knapIconData) {
@@ -1590,6 +1610,9 @@
         if (extras.sharpness != null) slot.sharpness = extras.sharpness;
         if (extras.knapDamage != null) slot.knapDamage = extras.knapDamage;
         if (extras.knapMaterial) slot.knapMaterial = extras.knapMaterial;
+        if (typeof Stone !== "undefined" && Stone.normalizeStone?.(extras.stone)) {
+            slot.stone = Stone.normalizeStone(extras.stone);
+        }
         if (extras.knapQuality) slot.knapQuality = extras.knapQuality;
         if (extras.tooltipExtra) slot.tooltipExtra = extras.tooltipExtra;
         if (extras.knapIconData) slot.knapIconData = extras.knapIconData;
@@ -1648,7 +1671,7 @@
         return raw;
     },
 
-    _sanitizeKnapStack(raw, material) {
+    _sanitizeKnapStack(raw, material, stone) {
         if (!raw || typeof raw !== "object") return null;
         const id = String(raw.id || "");
         if (id !== "stone_tool" && id !== "flint_tool") return null;
@@ -1665,6 +1688,12 @@
         if (typeof raw.knapQuality === "string") out.knapQuality = raw.knapQuality.slice(0, 24);
         if (typeof raw.tooltipExtra === "string") out.tooltipExtra = raw.tooltipExtra.slice(0, 80);
         out.knapMaterial = (material === "flint" || id === "flint_tool") ? "flint" : "pebble";
+        if (out.knapMaterial !== "flint") {
+            const stoneId = (typeof Stone !== "undefined" && Stone.normalizeStone)
+                ? (Stone.normalizeStone(stone) || "andesite")
+                : "andesite";
+            out.stone = stoneId;
+        }
         const icon = this._sanitizeKnapIconData(raw.knapIconData);
         if (icon) out.knapIconData = icon;
         return out;
@@ -1742,6 +1771,11 @@
                 slot,
                 id: held.id,
                 material,
+                stone: material === "flint"
+                    ? null
+                    : ((typeof Stone !== "undefined" && Stone.stoneOf)
+                        ? (Stone.stoneOf(held) || "andesite")
+                        : (held.stone || "andesite")),
                 rework: !!rework,
                 durability: held.durability,
                 knapQuality: held.knapQuality || null,
@@ -1771,7 +1805,7 @@
         if (op === "finish") {
             const session = p._knapSession;
             if (!session) return;
-            const stack = this._sanitizeKnapStack(action.stack, session.material);
+            const stack = this._sanitizeKnapStack(action.stack, session.material, session.stone);
             p._knapSession = null;
             if (!stack) return;
             if (session.rework && session.durability != null) {

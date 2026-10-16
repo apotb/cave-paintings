@@ -1224,6 +1224,16 @@ class ResearchTreePanel {
 
     _itemIconKey(itemId) {
         if (!itemId) return null;
+        // Crafting shows an untinted tip when no rock is chosen yet. Research has no rock.
+        if (itemId === "stone_spear" && typeof ensureSpearTexture === "function") {
+            const key = ensureSpearTexture(this.scene, "white");
+            if (key && this.scene.textures.exists(key)) return key;
+        }
+        // Knapping techniques use the rock. The default stone is andesite.
+        if (itemId === "rock" && typeof ensureStoneTexture === "function") {
+            const key = ensureStoneTexture(this.scene, "rock", 1, "andesite");
+            if (key && this.scene.textures.exists(key)) return key;
+        }
         const def = this.scene.getItem?.(itemId)
             || this.scene.getThing?.(itemId)
             || { id: itemId, key: itemId };

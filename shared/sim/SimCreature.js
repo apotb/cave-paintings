@@ -46,8 +46,8 @@ function weaponMetaWithKnapQuality(meta, stack) {
     const StoneApi = stoneApi();
     let hard = 1;
     if (spear && StoneApi) {
-        const mat = StoneApi.materialId(stack, "pebble");
-        hard = StoneApi.hardnessFactor(StoneApi.props(mat).hardness);
+        const p = StoneApi.propsOf ? StoneApi.propsOf(stack) : StoneApi.props(StoneApi.materialId(stack, "pebble"));
+        hard = StoneApi.hardnessFactor(p.hardness);
     } else if (spear && stack?.knapMaterial === "flint") {
         hard = 1.4;
     }
@@ -302,6 +302,7 @@ class SimCreature {
                 ? "wooden_spear"
                 : (stack?.knapIcon || meta.key || meta.id || null),
             knapMaterial: stack?.knapMaterial || null,
+            stone: stack?.stone || null,
             itemId: stack?.id || meta.id || null,
             range: Number(meta.weapon.range) || Number(attack.range) || 12,
             knapSilhouette: !!meta.weapon.knapSilhouette,

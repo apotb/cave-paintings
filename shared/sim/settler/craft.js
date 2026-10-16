@@ -461,7 +461,7 @@ function doLeather(world, rec, settle, job) {
         const held = rec.inventory[rec.hotbarIndex];
         const seconds = Math.max(0.1, Number(recipe.craftSeconds) || 1);
         const quality = knapQualityDurationScale(held?.knapQuality);
-        const material = knapMaterialDurationScale(held?.knapMaterial);
+        const material = knapMaterialDurationScale(held?.stone || held?.knapMaterial);
         const max = seconds * 1000 * manipScale(world, rec) * quality * material;
         rec._workChannel = {
             kind: "craft",

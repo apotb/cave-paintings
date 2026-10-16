@@ -4,7 +4,8 @@ const fs = require("fs");
 const vm = require("vm");
 
 const Phaser = { Math: { Clamp: (v, a, b) => Math.min(b, Math.max(a, v)) } };
-const context = { Phaser };
+const Stone = require("../shared/stone");
+const context = { Phaser, Stone };
 vm.createContext(context);
 vm.runInContext(
     fs.readFileSync(require.resolve("../js/Knapping.js"), "utf8") + "\nthis.Knapping = Knapping;\n",
@@ -118,7 +119,7 @@ test("the same biface in pebble is a chopper that is too soft", () => {
     const r = Knapping.classify(biface(), "pebble");
     assert.equal(r.toolClass, "chopper");
     assert.equal(r.preview, "Too soft for a hand-axe");
-    assert.match(r.name, /Pebble Chopper/);
+    assert.match(r.name, /Andesite Chopper/);
 });
 
 test("a locked hand-axe technique stays a chopper with no mention of it", () => {
@@ -157,6 +158,13 @@ test("flint_tool rewrites to a flint stone_tool", () => {
     Hide.migrateStackItemId(spear);
     assert.equal(spear.id, "stone_spear");
     assert.equal(spear.knapMaterial, "flint");
+});
+
+test("a spear with no rock keeps the Stone Spear name", () => {
+    const Stone = require("../shared/stone");
+    assert.equal(Stone.displayName({ id: "stone_spear" }), null);
+    assert.equal(Stone.displayName({ id: "stone_spear", knapMaterial: "pebble" }), "Andesite Spear");
+    assert.equal(Stone.displayName({ id: "stone_spear", knapMaterial: "flint" }), "Flint Spear");
 });
 
 test("weapon damage and spear stab follow the rock", () => {
@@ -207,4 +215,63 @@ test("weapon damage and spear stab follow the rock", () => {
         { id: "pebble" },
         { id: "pebble", knapping: { hardness: 5, toughness: 0.4 } }
     ), ["Hardness: 5", "Toughness: 40%"]);
+});
+
+function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function rng() {
+        a = (a + 0x6D2B79F5) >>> 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+function fullBlank() {
+    const g = Knapping.emptyGrid();
+    for (let y = 0; y < Knapping.SIZE; y++) {
+        for (let x = 0; x < Knapping.SIZE; x++) g[y][x] = true;
+    }
+    return g;
+}
+
+/** Today's bite, before toughness scaling: 78% one, 19% two, 3% three or four. */
+function legacyBite(rng) {
+    const roll = rng();
+    if (roll >= 0.97) return 3 + Math.floor(rng() * 2);
+    if (roll >= 0.78) return 2;
+    return 1;
+}
+
+test("andesite chip sizes match today's roll, and limestone flakes bigger than flint", () => {
+    const n = 2000;
+    const seed0 = 0x51e7;
+    const andesite = Stone.props("andesite").toughness;
+    const limestone = Stone.props("limestone").toughness;
+    const flint = Stone.props("flint").toughness;
+    let limeBig = 0;
+    let flintBig = 0;
+    const buckets = { 1: 0, 2: 0, big: 0 };
+
+    for (let i = 0; i < n; i++) {
+        const seed = (seed0 + i) >>> 0;
+        const expected = legacyBite(mulberry32(seed));
+        const blank = Knapping.chip(fullBlank(), 0, 0, mulberry32(seed));
+        const named = Knapping.chip(fullBlank(), 0, 0, mulberry32(seed), andesite);
+        assert.equal(blank.removed, expected);
+        assert.equal(named.removed, expected);
+        assert.ok(blank.removed >= 1 && blank.removed <= 4);
+        if (expected === 1) buckets[1]++;
+        else if (expected === 2) buckets[2]++;
+        else buckets.big++;
+
+        const soft = Knapping.chip(fullBlank(), 0, 0, mulberry32(seed), limestone);
+        const hard = Knapping.chip(fullBlank(), 0, 0, mulberry32(seed), flint);
+        assert.ok(soft.removed <= 4 && hard.removed <= 4);
+        if (soft.removed >= 3) limeBig++;
+        if (hard.removed >= 3) flintBig++;
+    }
+
+    assert.equal(buckets[1] + buckets[2] + buckets.big, n);
+    assert.ok(limeBig > flintBig);
 });

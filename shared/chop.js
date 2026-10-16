@@ -56,8 +56,8 @@
     function hardnessMult(stack) {
         const StoneApi = stoneApi();
         if (!StoneApi) return stack?.knapMaterial === "flint" ? 1.4 : 1;
-        const id = StoneApi.materialId(stack, "pebble");
-        return StoneApi.hardnessFactor(StoneApi.props(id).hardness);
+        const p = StoneApi.propsOf ? StoneApi.propsOf(stack) : StoneApi.props(StoneApi.materialId(stack, "pebble"));
+        return StoneApi.hardnessFactor(p.hardness);
     }
 
     function chopFraction(stack) {

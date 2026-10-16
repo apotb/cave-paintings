@@ -411,6 +411,7 @@
                     const mat = tip?.knapMaterial;
                     if (mat === "flint" || mat === "pebble") {
                         stack = { id: "stone_spear", knapMaterial: mat };
+                        if (tip.stone) stack.stone = tip.stone;
                         if (tip.knapQuality) stack.knapQuality = tip.knapQuality;
                     }
                 }
@@ -671,8 +672,13 @@
 
     _craftRecipeIconKey(recipe) {
         if (recipe?.id === "stone_spear" && typeof ensureSpearTexture === "function") {
-            const mat = this._craftPredictedTip(recipe)?.knapMaterial;
-            const key = ensureSpearTexture(this, mat === "flint" || mat === "pebble" ? mat : "white");
+            const tip = this._craftPredictedTip(recipe);
+            const mat = tip?.knapMaterial;
+            const key = ensureSpearTexture(
+                this,
+                mat === "flint" || mat === "pebble" ? mat : "white",
+                tip?.stone
+            );
             if (key && this.textures.exists(key)) return key;
         }
         const meta = this.getItem(recipe.id);
@@ -1257,8 +1263,10 @@
             const stack = makeItemStack(item, recipe.quantity || 1, undefined, this.worldMinuteIndex());
             stack.knapMaterial = tipMaterial || "pebble";
             if (tipQuality) stack.knapQuality = tipQuality;
+            if (tip?.stone) stack.stone = tip.stone;
             const extras = { knapMaterial: stack.knapMaterial };
             if (tipQuality) extras.knapQuality = tipQuality;
+            if (stack.stone) extras.stone = stack.stone;
             if (typeof who.gainStack === "function" && who.gainStack(stack)) {
                 return;
             }

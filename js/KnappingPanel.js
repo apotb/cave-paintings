@@ -8,6 +8,8 @@ class KnappingPanel {
         this.scene = scene;
         this.visible = false;
         this.material = "pebble";
+        this.stone = null;
+        this.toughness = 0.4;
         this.textureKey = "pebble";
         this.blankItemId = null;
         this.blankSlotIndex = -1;
@@ -135,7 +137,7 @@ class KnappingPanel {
         for (const row of rows) {
             lines.push({ plain: true, label: row.help });
             const reqs = (typeof Stone !== "undefined" && Stone.requirementStatus)
-                ? Stone.requirementStatus(row.toolClass, this.material, getItem)
+                ? Stone.requirementStatus(row.toolClass, this.stone || this.material, getItem)
                 : [];
             for (const req of reqs) {
                 lines.push({ mark: req.met ? "on" : "off", label: req.label });
@@ -270,6 +272,8 @@ class KnappingPanel {
         this.blankItemId = knapPrep.blankItemId;
         this.blankSlotIndex = knapPrep.blankSlotIndex;
         this.material = knapPrep.material;
+        this.stone = knapPrep.stone || null;
+        this.toughness = knapPrep.toughness > 0 ? knapPrep.toughness : 0.4;
         this.textureKey = knapPrep.textureKey;
         this.grid = knapPrep.grid;
         this.pixels = knapPrep.pixels;
@@ -314,11 +318,18 @@ class KnappingPanel {
             const material = held.knapMaterial === "flint" || held.id === "flint_tool"
                 ? "flint"
                 : "pebble";
+            const stone = material === "flint"
+                ? null
+                : ((typeof Stone !== "undefined" && Stone.stoneOf)
+                    ? (Stone.stoneOf(held) || "andesite")
+                    : (held.stone || "andesite"));
             return {
                 rework: true,
                 blankItemId: held.id,
                 blankSlotIndex: slotIndex,
                 material,
+                stone,
+                toughness: this._stackToughness(held),
                 textureKey: meta?.key || material,
                 grid,
                 pixels,
@@ -331,13 +342,23 @@ class KnappingPanel {
         if (!knap?.material) return null;
         if (opts.probe) return { rework: false };
         const material = knap.material === "flint" ? "flint" : "pebble";
-        const textureKey = meta.key || material;
+        const stone = material === "flint"
+            ? null
+            : ((typeof Stone !== "undefined" && Stone.stoneOf)
+                ? (Stone.stoneOf(held) || "andesite")
+                : (held.stone || "andesite"));
+        let textureKey = meta.key || material;
+        if (material !== "flint" && typeof ensureStoneTexture === "function") {
+            textureKey = ensureStoneTexture(this.scene, "pebble", 1, stone) || textureKey;
+        }
         const blank = Knapping.blankFromTexture(this.scene, textureKey);
         return {
             rework: false,
             blankItemId: held.id,
             blankSlotIndex: slotIndex,
             material,
+            stone,
+            toughness: this._stackToughness(held),
             textureKey,
             grid: blank.grid,
             pixels: blank.pixels,
@@ -345,6 +366,21 @@ class KnappingPanel {
             _reworkQuality: null,
             _reworkToolClass: null
         };
+    }
+
+    /** Toughness of the stack in hand. A blank stone is andesite. */
+    _stackToughness(held) {
+        if (!held || typeof Stone === "undefined" || !Stone.props) return 0.4;
+        const getItem = (id) => this.scene.getItem?.(id);
+        const flint = held.knapMaterial === "flint"
+            || held.id === "flint"
+            || held.id === "flint_tool"
+            || held.id === "flint_spear";
+        const id = flint
+            ? "flint"
+            : (Stone.normalizeStone?.(held.stone) || Stone.stoneOf?.(held) || "andesite");
+        const t = Number(Stone.props(id, getItem)?.toughness);
+        return Number.isFinite(t) && t > 0 ? t : 0.4;
     }
 
     _isDedicated() {
@@ -433,7 +469,7 @@ class KnappingPanel {
             this.preview.setText("");
             return;
         }
-        const result = Knapping.classify(this.grid, this.material, this._knapUnlocked());
+        const result = Knapping.classify(this.grid, this.stone || this.material, this._knapUnlocked());
         this.preview.setText(result.preview);
     }
 
@@ -474,7 +510,7 @@ class KnappingPanel {
     }
 
     _applyChip(x, y) {
-        const out = Knapping.chip(this.grid, x, y);
+        const out = Knapping.chip(this.grid, x, y, undefined, this.toughness);
         if (!(out.removed > 0)) return;
 
         // First real chip spends the blank
@@ -543,14 +579,14 @@ class KnappingPanel {
         this._consumeBlankOnce();
         let stack = null;
         try {
-            const result = Knapping.classify(this.grid, this.material, this._knapUnlocked());
+            const result = Knapping.classify(this.grid, this.stone || this.material, this._knapUnlocked());
             stack = Knapping.makeToolStack(result, {
                 grid: this.grid,
                 pixels: this.pixels,
                 scene: this.scene
             });
         } catch (_) {
-            const result = Knapping.classify(this.grid, this.material, this._knapUnlocked());
+            const result = Knapping.classify(this.grid, this.stone || this.material, this._knapUnlocked());
             stack = Knapping.makeToolStack(result, {
                 grid: this.grid,
                 pixels: this.pixels,

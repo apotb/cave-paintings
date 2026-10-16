@@ -78,6 +78,33 @@
     const CLAY_HOST = { gravel: true, sand: true, snow_beach: true };
     const CLAY_THRESH = 0.58;
     const CLAY_FREQ = 6;
+    /** About a short walk. One hillside holds two or three stone patches. */
+    const STONE_PERIOD = 22 * 16;
+    const STONE_SALT = 0x51e7;
+
+    function stoneApi() {
+        if (typeof Stone !== "undefined" && Stone.pickStone) return Stone;
+        try {
+            if (typeof require === "function") return require("../stone");
+        } catch (_) { /* optional */ }
+        return null;
+    }
+
+    function stoneNoise(tx, ty) {
+        const n = octaveNoise2D(tx / STONE_PERIOD, ty / STONE_PERIOD, 1, 0.5, 2, 4);
+        return (n + 1) * 0.5;
+    }
+
+    function stoneDecor(tx, ty, id, elevation, temperature, tileKey) {
+        const api = stoneApi();
+        if (!api?.pickStone) return id;
+        const variant = (hash2D(tx | 0, ty | 0, STONE_SALT) & 1) ? 2 : 1;
+        return {
+            id,
+            stone: api.pickStone(elevation, temperature, stoneNoise(tx, ty), tileKey),
+            variant
+        };
+    }
 
     function clayRichness(tx, ty) {
         const inv = 1 / NOISE_SCALE;
@@ -133,7 +160,7 @@
                 if (randValue < 0.1) things.push("snow_tree");
                 else if (randValue < 0.12) loot.push("sticks");
                 else if (randValue < 0.14) things.push("snow_bush");
-                else if (randValue < 0.145) things.push("rock");
+                else if (randValue < 0.145) things.push(stoneDecor(tx, ty, "rock", elevation, temperature, "snow"));
                 return { key: "snow", things, loot };
             }
             if (temperature < 0.25) {
@@ -142,7 +169,7 @@
                 if (randValue < 0.1) things.push("tree");
                 else if (randValue < 0.15) things.push("bush");
                 else if (randValue < 0.18) loot.push("sticks");
-                else if (randValue < 0.185) things.push("rock");
+                else if (randValue < 0.185) things.push(stoneDecor(tx, ty, "rock", elevation, temperature, "grass"));
                 else if (randValue < 0.19) loot.push("blueberry_bush");
                 else if (randValue < 0.21) loot.push("leaves");
                 else if (randValue < 0.212) loot.push("apple_tree");
@@ -152,18 +179,22 @@
             const loot = [];
             if (randValue < 0.05) things.push("cactus");
             else if (randValue < 0.055) loot.push("flowering_cactus");
-            else if (randValue < 0.056) things.push("rock");
+            // Same 0.5% band as a forest rock (grass is 0.18–0.185).
+            else if (randValue < 0.06) things.push(stoneDecor(tx, ty, "rock", elevation, temperature, "sand"));
             return finish("sand", things, loot);
         }
         if (elevation < 0.25) {
             const things = [];
             const loot = [];
-            if (randValue < 0.07) things.push("rock");
+            const hillKey = temperature < -0.25
+                ? "snow_hill"
+                : (temperature < 0.25 ? "grass_hill" : "sand_hill");
+            if (randValue < 0.07) things.push(stoneDecor(tx, ty, "rock", elevation, temperature, hillKey));
             if (temperature < -0.25) {
                 if (randValue >= 0.07) {
                     if (randValue < 0.13) things.push("snow_tree");
                     else if (randValue < 0.14) loot.push("sticks");
-                    else if (randValue < 0.144) loot.push("pebbles");
+                    else if (randValue < 0.144) loot.push(stoneDecor(tx, ty, "pebbles", elevation, temperature, "snow_hill"));
                     else if (randValue < 0.1455) loot.push("flint");
                 }
                 return { key: "snow_hill", things, loot };
@@ -175,14 +206,14 @@
                     else if (randValue < 0.175) loot.push("leaves");
                     else if (randValue < 0.205) things.push("bush");
                     else if (randValue < 0.2075) loot.push("blueberry_bush");
-                    else if (randValue < 0.211) loot.push("pebbles");
+                    else if (randValue < 0.211) loot.push(stoneDecor(tx, ty, "pebbles", elevation, temperature, "grass_hill"));
                     else if (randValue < 0.2125) loot.push("flint");
                 }
                 return { key: "grass_hill", things, loot };
             }
             if (randValue >= 0.07 && randValue < 0.12) loot.push("cactus");
             else if (randValue >= 0.12 && randValue < 0.125) loot.push("flowering_cactus");
-            else if (randValue >= 0.125 && randValue < 0.13) loot.push("pebbles");
+            else if (randValue >= 0.125 && randValue < 0.13) loot.push(stoneDecor(tx, ty, "pebbles", elevation, temperature, "sand_hill"));
             else if (randValue >= 0.13 && randValue < 0.1315) loot.push("flint");
             return { key: "sand_hill", things, loot };
         }
@@ -192,20 +223,20 @@
             else if (temperature >= 0.25) key = "mesa";
             const things = [];
             const loot = [];
-            if (randValue < 0.05) things.push("rock");
-            else if (randValue < 0.06) loot.push("pebbles");
+            if (randValue < 0.05) things.push(stoneDecor(tx, ty, "rock", elevation, temperature, key));
+            else if (randValue < 0.06) loot.push(stoneDecor(tx, ty, "pebbles", elevation, temperature, key));
             else if (randValue < 0.064) loot.push("flint");
             return { key, things, loot };
         }
         if (elevation < 0.7) {
             const loot = [];
-            if (randValue < 0.012) loot.push("pebbles");
+            if (randValue < 0.012) loot.push(stoneDecor(tx, ty, "pebbles", elevation, temperature, "mountain"));
             else if (randValue < 0.016) loot.push("flint");
             return { key: "mountain", things: [], loot };
         }
         {
             const loot = [];
-            if (randValue < 0.012) loot.push("pebbles");
+            if (randValue < 0.012) loot.push(stoneDecor(tx, ty, "pebbles", elevation, temperature, "snow_mountain"));
             else if (randValue < 0.016) loot.push("flint");
             return { key: "snow_mountain", things: [], loot };
         }
@@ -215,16 +246,22 @@
         return generateTileKey(tileIx * TS, tileIy * TS, () => 1).key;
     }
 
-    function pushDecor(list, tx, ty, id) {
-        if (tx === 0 && ty === 0) return;
+    function pushDecor(list, tx, ty, spec) {
+        const id = typeof spec === "string" ? spec : spec?.id;
+        if (!id || (tx === 0 && ty === 0)) return;
         const x = tx + TS / 2;
         const y = ty + TS;
-        list.push({
+        const entry = {
             x,
             y,
             id,
             uid: `lt_${Math.round(x)}_${Math.round(y)}_${id}`
-        });
+        };
+        if (spec && typeof spec === "object") {
+            if (spec.stone) entry.stone = spec.stone;
+            if (spec.variant) entry.variant = spec.variant;
+        }
+        list.push(entry);
     }
 
     let _mobSpawnRules = null;
@@ -388,6 +425,7 @@
         );
         // After the chunk stream is finished. Scatter rolls are per coordinate.
         applyScatters(cx, cy, worldSeed, tiles, things, lootableThings);
+        sprinklePebblesBesideRocks(cx, cy, tiles, things, lootableThings);
 
         return {
             cx,
@@ -404,6 +442,52 @@
     }
 
     const BLOCKED = new Set(["water", "ice"]);
+    const BESIDE = [[TS, 0], [-TS, 0], [0, TS], [0, -TS]];
+    const PEBBLE_BESIDE_SALT = 0x9b17;
+
+    /**
+     * About half of rocks get a pebble pile on a free neighboring tile.
+     * The pile keeps that rock's stone. This hash does not touch the chunk rand().
+     */
+    function sprinklePebblesBesideRocks(cx, cy, tiles, things, lootableThings) {
+        const occupied = new Set();
+        const mark = (entry) => {
+            if (!entry) return;
+            const lx = Math.round((entry.x - TS / 2 - cx * CHUNK_PX) / TS);
+            const ly = Math.round((entry.y - TS - cy * CHUNK_PX) / TS);
+            if (lx >= 0 && ly >= 0 && lx < CS && ly < CS) occupied.add(lx + ly * CS);
+        };
+        for (const entry of things || []) mark(entry);
+        for (const entry of lootableThings || []) mark(entry);
+
+        for (const rock of things || []) {
+            if (rock?.id !== "rock") continue;
+            const tx = rock.x - TS / 2;
+            const ty = rock.y - TS;
+            const h = hash2D(tx | 0, ty | 0, PEBBLE_BESIDE_SALT);
+            if ((h % 1000) >= 500) continue;
+            const start = (h >>> 10) & 3;
+            for (let k = 0; k < 4; k++) {
+                const [dx, dy] = BESIDE[(start + k) & 3];
+                const nx = tx + dx;
+                const ny = ty + dy;
+                const lx = (nx - cx * CHUNK_PX) / TS;
+                const ly = (ny - cy * CHUNK_PX) / TS;
+                if (lx < 0 || ly < 0 || lx >= CS || ly >= CS) continue;
+                if ((lx | 0) !== lx || (ly | 0) !== ly) continue;
+                const idx = lx + ly * CS;
+                if (occupied.has(idx) || BLOCKED.has(tiles[idx])) continue;
+                const variant = (hash2D(nx | 0, ny | 0, STONE_SALT) & 1) ? 2 : 1;
+                const spec = { id: "pebbles", variant };
+                if (rock.stone) spec.stone = rock.stone;
+                const before = lootableThings.length;
+                pushDecor(lootableThings, nx, ny, spec);
+                if (lootableThings.length === before) continue;
+                occupied.add(idx);
+                break;
+            }
+        }
+    }
 
     function scatterApi() {
         if (typeof ModScatters !== "undefined") return ModScatters;

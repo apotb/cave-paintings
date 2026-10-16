@@ -480,7 +480,14 @@
         });
         thing.on("pointerover", (pointer) => {
             this.showTooltip(
-                () => this._rockKnapTooltipText(),
+                () => {
+                    const hint = this._rockKnapTooltipText();
+                    if (!hint) return "";
+                    const name = (typeof Stone !== "undefined" && Stone.rockLabel)
+                        ? Stone.rockLabel(thing.entry)
+                        : (thing.meta?.name || "Rock");
+                    return `${name}\n${hint}`;
+                },
                 pointer.x,
                 pointer.y,
                 thing

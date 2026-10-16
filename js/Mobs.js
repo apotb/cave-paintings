@@ -685,7 +685,8 @@ class DroppedItem extends Mob {
                 dryProgress: stackExtras?.dryProgress,
                 soakProgress: stackExtras?.soakProgress,
                 soakDoneAt: stackExtras?.soakDoneAt,
-                temp: stackExtras?.temp
+                temp: stackExtras?.temp,
+                stone: stackExtras?.stone
             });
             return null;
         }
@@ -719,6 +720,9 @@ class DroppedItem extends Mob {
                     && !drop.toolClass                     && drop.knapDamage == null
                     && !drop.knapQuality
                     && drop.durability == null
+                    && (item.id !== "pebble" || (typeof Stone !== "undefined" && Stone.stoneKey
+                        ? Stone.stoneKey(drop) === Stone.stoneKey(soakStamp)
+                        : (drop.stone || "andesite") === (soakStamp.stone || "andesite")))
                     && !(typeof Hide !== "undefined" && Hide.soakMergeBlocked(drop, soakStamp))
                     && drop.quantity < maxStack)
                 .map(drop => ({
@@ -814,6 +818,9 @@ class DroppedItem extends Mob {
         if (stackExtras?.soakProgress != null) entry.soakProgress = stackExtras.soakProgress;
         if (stackExtras?.soakDoneAt != null) entry.soakDoneAt = stackExtras.soakDoneAt;
         if (typeof Fire !== "undefined") Fire.copyStackTemp(stackExtras, entry);
+        if (typeof Stone !== "undefined" && Stone.normalizeStone?.(stackExtras?.stone)) {
+            entry.stone = Stone.normalizeStone(stackExtras.stone);
+        }
         return entry;
     }
 
@@ -864,10 +871,16 @@ class DroppedItem extends Mob {
         if (entry.soakProgress != null) this.soakProgress = entry.soakProgress;
         if (entry.soakDoneAt != null) this.soakDoneAt = entry.soakDoneAt;
         if (entry.temp != null) this.temp = entry.temp;
+        if (entry.stone) this.stone = entry.stone;
+
+        if (entry.id === "pebble" && typeof ensureStoneTexture === "function") {
+            const stoneKey = ensureStoneTexture(scene, "pebble", 1, entry.stone);
+            if (stoneKey && scene.textures.exists(stoneKey)) this.setTexture(stoneKey);
+        }
 
         if ((entry.id === "stone_spear" || entry.id === "flint_spear")
             && typeof ensureSpearTexture === "function") {
-            const spearKey = ensureSpearTexture(scene, entry.knapMaterial);
+            const spearKey = ensureSpearTexture(scene, entry.knapMaterial, entry.stone);
             if (spearKey && scene.textures.exists(spearKey)) this.setTexture(spearKey);
         }
 
@@ -991,6 +1004,8 @@ class DroppedItem extends Mob {
         else delete this.entry.soakDoneAt;
         if (this.temp != null) this.entry.temp = this.temp;
         else delete this.entry.temp;
+        if (this.stone) this.entry.stone = this.stone;
+        else delete this.entry.stone;
     }
 
     _removeEntry() {
@@ -1126,7 +1141,8 @@ class DroppedItem extends Mob {
                 ...(this.dryProgress != null ? { dryProgress: this.dryProgress } : {}),
                 ...(this.soakProgress != null ? { soakProgress: this.soakProgress } : {}),
                 ...(this.soakDoneAt != null ? { soakDoneAt: this.soakDoneAt } : {}),
-                ...(this.temp != null ? { temp: this.temp } : {})
+                ...(this.temp != null ? { temp: this.temp } : {}),
+                ...(this.stone ? { stone: this.stone } : {})
             };
             if (typeof Hide !== "undefined") Hide.pickupSoak(stack, now);
             const want = Math.max(1, Number(this.quantity) || 1);
@@ -1168,7 +1184,8 @@ class DroppedItem extends Mob {
                 if (typeof Hide !== "undefined") Hide.pickupSoak(pickup, now);
                 return pickup.soakProgress;
             })(),
-            temp: this.temp
+            temp: this.temp,
+            stone: this.stone
         });
         if (leftover === take) return false;
         this.scene.hotbar.dirty = true;
@@ -1202,6 +1219,8 @@ class DroppedItem extends Mob {
             soakProgress: this.soakProgress ?? this.entry?.soakProgress,
             soakDoneAt: this.soakDoneAt ?? this.entry?.soakDoneAt,
             temp: this.temp ?? this.entry?.temp,
+            id: this.item?.id,
+            stone: this.stone,
             spoilAt: this.spoilAt,
             spoilLeft: this.spoilLeft
         };

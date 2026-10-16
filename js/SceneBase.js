@@ -6,7 +6,7 @@ class SceneBase extends Phaser.Scene {
     loadImage(key, type='tiles', path=null) {
         path = path || key;
         // Same set Content.queueTextures uses, so a later thing load cannot
-        // replace a dedicated item icon that shares the key (flint, pebble).
+        // replace a dedicated item icon that shares the key (flint). Pebbles use the thing sprite.
         this.__cpQueuedTextures = this.__cpQueuedTextures || new Set();
         if (this.__cpQueuedTextures.has(key)) return;
         this.__cpQueuedTextures.add(key);
@@ -49,7 +49,7 @@ class SceneBase extends Phaser.Scene {
             "poultice",
             "sharp_stick",
             "wooden_spear",
-            "stone_spear",
+            // Stone spears composite wooden_spear + spear_tip at runtime.
             "spear_tip",
             "pitch",
             "stick_frame",
@@ -68,7 +68,6 @@ class SceneBase extends Phaser.Scene {
             "cracked_coconut",
             "cracked_coconut_overlay",
             "rot",
-            "pebble",
             "flint",
             "deer_hide",
             "deer_hide_fleshed",

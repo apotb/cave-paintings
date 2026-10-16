@@ -128,6 +128,7 @@
         assign("soakProgress", d.soakProgress);
         assign("soakDoneAt", d.soakDoneAt);
         assign("temp", d.temp);
+        assign("stone", d.stone);
         if (d.ingredients) {
             entry.ingredients = Array.isArray(d.ingredients)
                 ? d.ingredients.slice()
@@ -163,12 +164,17 @@
         spr.soakProgress = e.soakProgress;
         spr.soakDoneAt = e.soakDoneAt;
         spr.temp = e.temp;
+        spr.stone = e.stone;
         spr.ingredients = e.ingredients;
         spr.stackWeight = e.weight;
         if (e.food) spr.food = { ...e.food };
         else delete spr.food;
         if (e.customName) spr.customName = e.customName;
         else delete spr.customName;
+        if (spr.item?.id === "pebble" && typeof ensureStoneTexture === "function") {
+            const key = ensureStoneTexture(spr.scene, "pebble", 1, e.stone);
+            if (key && spr.scene.textures?.exists?.(key)) spr.setTexture(key);
+        }
     },
 
     /**

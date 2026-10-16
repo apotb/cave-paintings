@@ -1015,8 +1015,12 @@ function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
     // Stone spear: wooden shaft plus a tip tinted to the rock.
     let key = stackIconKey(meta, stack, base.scene);
     if (stack.id === "stone_spear" || stack.id === "flint_spear") {
-        const spearKey = ensureSpearTexture(base.scene, stack.knapMaterial);
+        const spearKey = ensureSpearTexture(base.scene, stack.knapMaterial, stack.stone);
         if (spearKey && textures.exists(spearKey)) key = spearKey;
+    }
+    if (stack.id === "pebble") {
+        const stoneKey = ensureStoneTexture(base.scene, "pebble", 1, stack.stone);
+        if (stoneKey && textures.exists(stoneKey)) key = stoneKey;
     }
     // Knapped tools: silhouette cut from the pebble/flint sprite
     if (stack.knapIconData && typeof Knapping !== "undefined") {
@@ -1048,11 +1052,83 @@ function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
  * wooden_spear with spear_tip drawn on top, tinted to the rock's tip color.
  * Inventory, ground drops, and the held weapon all use this texture.
  */
-function ensureSpearTexture(scene, material) {
+function spearTintId(material, stone) {
+    if (material === "white") return "white";
+    if (material === "flint") return "flint";
+    if (typeof Stone !== "undefined" && Stone.normalizeStone) {
+        return Stone.normalizeStone(stone) || Stone.normalizeStone(material) || "andesite";
+    }
+    return "andesite";
+}
+
+/**
+ * Palette-swapped rock or pebble sprite. Inventory always uses pebble variant 1.
+ * @param {"rock"|"pebble"} kind
+ * @param {1|2} variant
+ */
+function stoneSourceImage(scene, texKey) {
+    if (!scene?.textures?.exists?.(texKey)) return null;
+    const tex = scene.textures.get(texKey);
+    const img = tex?.getSourceImage?.() || tex?.source?.[0]?.image;
+    return img?.width ? img : null;
+}
+
+function stoneImageData(img) {
+    if (!img?.width || typeof document === "undefined") return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, img.width, img.height);
+    ctx.drawImage(img, 0, 0);
+    try {
+        return ctx.getImageData(0, 0, img.width, img.height);
+    } catch (_) {
+        return null;
+    }
+}
+
+function ensureStoneTexture(scene, kind, variant, stoneId) {
+    if (!scene?.textures || typeof Stone === "undefined" || !Stone.recolorImageData) return null;
+    const k = kind === "rock" ? "rock" : "pebble";
+    const v = variant === 2 ? 2 : 1;
+    const stone = Stone.normalizeStone?.(stoneId) || "andesite";
+    const key = `stone_${k}_${v}_${stone}`;
+    if (scene.textures.exists(key)) return key;
+    // rock_2 / pebble_2 are the shade pixels that sit in the holes of _1.
+    // Variant 2 still draws the _1 body, then stamps those marks on top.
+    const body = stoneSourceImage(scene, `${k}_1`) || stoneSourceImage(scene, `${k}_${v}`);
+    if (!body) return null;
+    const canvasTex = scene.textures.createCanvas(key, body.width, body.height);
+    if (!canvasTex?.getContext) return null;
+    const ctx = canvasTex.getContext();
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, body.width, body.height);
+    ctx.drawImage(body, 0, 0);
+    let data;
+    try {
+        data = ctx.getImageData(0, 0, body.width, body.height);
+    } catch (_) {
+        return null;
+    }
+    Stone.recolorImageData(data.data, stone);
+    Stone.fillEnclosedTransparent?.(data.data, body.width, body.height, stone);
+    if (v === 2 && Stone.stampSecondary) {
+        const marks = stoneImageData(stoneSourceImage(scene, `${k}_2`));
+        if (marks) Stone.stampSecondary(data.data, marks.data, stone);
+    }
+    ctx.putImageData(data, 0, 0);
+    canvasTex.refresh();
+    return key;
+}
+
+function ensureSpearTexture(scene, material, stone) {
     if (!scene?.textures) return null;
     // "white" is the untinted tip, used when a craft has not picked a rock yet.
     const plain = material === "white";
-    const mat = plain ? "white" : (material === "flint" ? "flint" : "pebble");
+    const mat = plain ? "white" : spearTintId(material, stone);
     const key = `spear_tip_${mat}`;
     if (scene.textures.exists(key)) return key;
     if (!scene.textures.exists("wooden_spear") || !scene.textures.exists("spear_tip")) {
@@ -1399,6 +1475,8 @@ function cloneItemStack(stack) {
     if (typeof Fire !== "undefined") Fire.copyStackTemp(stack, out);
     const extras = mealStackExtras(stack);
     if (extras) Object.assign(out, extras);
+    const stone = typeof Stone !== "undefined" ? Stone.normalizeStone?.(stack.stone) : null;
+    if (stone) out.stone = stone;
     return out;
 }
 
@@ -1406,6 +1484,7 @@ function cloneItemStack(stack) {
 function mealStackExtras(stack) {
     if (!stack) return null;
     const knap = knapStackExtras(stack);
+    const stone = typeof Stone !== "undefined" ? Stone.normalizeStone?.(stack.stone) : null;
     const hasExtras = !!(
         stack.customName
         || stack.food
@@ -1422,6 +1501,7 @@ function mealStackExtras(stack) {
         || stack.formClass
         || stack.formVoxels
         || (Number(stack.beauty) > 0)
+        || stone
     );
     if (!hasExtras) return null;
     const form = formStackExtras(stack);
@@ -1437,6 +1517,7 @@ function mealStackExtras(stack) {
         soakProgress: stack.soakProgress,
         soakDoneAt: stack.soakDoneAt,
         ...(stack.temp != null && Number(stack.temp) > 20 ? { temp: stack.temp } : {}),
+        ...(stone ? { stone } : {}),
         ...(knap || {}),
         ...(form || {})
     };
@@ -1475,6 +1556,8 @@ function knapStackExtras(stack) {
     if (stack.knapQuality) out.knapQuality = stack.knapQuality;
     if (stack.tooltipExtra) out.tooltipExtra = stack.tooltipExtra;
     if (stack.knapIconData) out.knapIconData = stack.knapIconData;
+    const stone = typeof Stone !== "undefined" ? Stone.normalizeStone?.(stack.stone) : null;
+    if (stone) out.stone = stone;
     return out;
 }
 
@@ -1522,8 +1605,8 @@ function weaponMetaWithKnapQuality(meta, stack) {
     if (!spear && !stack?.knapQuality) return meta;
     let hard = 1;
     if (spear && typeof Stone !== "undefined" && Stone.hardnessFactor) {
-        const mat = Stone.materialId(stack, "pebble");
-        hard = Stone.hardnessFactor(Stone.props(mat).hardness);
+        const p = Stone.propsOf ? Stone.propsOf(stack) : Stone.props(Stone.materialId(stack, "pebble"));
+        hard = Stone.hardnessFactor(p.hardness);
     } else if (spear && stack?.knapMaterial === "flint") {
         hard = 1.4;
     }

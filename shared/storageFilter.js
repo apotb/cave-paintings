@@ -490,7 +490,14 @@
     }
 
     function stacksMatch(a, b) {
-        return !!(a && b && a.id && a.id === b.id && isMergeableStack(a) && isMergeableStack(b));
+        if (!(a && b && a.id && a.id === b.id && isMergeableStack(a) && isMergeableStack(b))) return false;
+        const stoneApi = (typeof Stone !== "undefined" && Stone.sameStone)
+            ? Stone
+            : (() => { try { return require("./stone"); } catch (_) { return null; } })();
+        if (a.id === "pebble" && stoneApi?.sameStone) {
+            return stoneApi.sameStone(a, b);
+        }
+        return true;
     }
 
     function stackMax(stack, getItem) {

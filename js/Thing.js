@@ -107,10 +107,32 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
                 return;
             }
         }
+        if (this._applyStoneVisual()) {
+            if (this.body) this._positionBody();
+            this._syncInteractMark();
+            this._syncDigHole();
+            return;
+        }
         this.setTexture(this.meta.key);
         if (this.body) this._positionBody();
         this._syncInteractMark();
         this._syncDigHole();
+    }
+
+    _applyStoneVisual() {
+        const id = this.meta?.id;
+        if (id !== "rock" && id !== "pebbles") return false;
+        if (typeof ensureStoneTexture !== "function") return false;
+        const kind = id === "rock" ? "rock" : "pebble";
+        const variant = this.entry?.variant === 2 ? 2 : 1;
+        const key = ensureStoneTexture(this.scene, kind, variant, this.entry?.stone);
+        const src = `${kind}_${variant}`;
+        const tex = (key && this.scene.textures.exists(key))
+            ? key
+            : (this.scene.textures.exists(src) ? src : null);
+        if (!tex) return false;
+        this.setTexture(tex);
+        return true;
     }
 
     _applyFigurineVisual() {
@@ -399,7 +421,7 @@ class LootableThing extends Thing {
      * @param {Chunk} [chunk]
      */
     constructor(scene, entry, chunk = null) {
-        super(scene, entry.x, entry.y, entry.id);
+        super(scene, entry.x, entry.y, entry.id, entry);
         this.entry = entry;
         this.chunk = chunk;
 
@@ -410,10 +432,16 @@ class LootableThing extends Thing {
         });
         this.on("pointerover", (pointer) => {
             if (!this.meta.lootable) return;
-            const itemMeta = this.scene.getItem(this.meta.lootable.item);
-            const stack = { id: itemMeta?.id, quantity: this.meta.lootable.yield ?? 1 };
             this.scene.showTooltip(
-                () => this.scene.formatItemTooltip(itemMeta, stack.quantity),
+                () => {
+                    const itemMeta = this.scene.getItem(this.meta.lootable.item);
+                    const stack = {
+                        id: itemMeta?.id,
+                        quantity: this.meta.lootable.yield ?? 1,
+                        ...(this.entry?.stone ? { stone: this.entry.stone } : {})
+                    };
+                    return this.scene.formatItemTooltip(itemMeta, stack.quantity, null, stack);
+                },
                 pointer.x,
                 pointer.y,
                 this

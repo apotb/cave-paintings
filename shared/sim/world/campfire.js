@@ -78,9 +78,15 @@
 
         const harvestedId = best.id;
         const qty = Math.max(1, Math.floor(Number(loot.yield) || 1));
-        const left = this._give(p, loot.item, qty);
+        const stone = (loot.item === "pebble" && typeof Stone !== "undefined")
+            ? Stone.normalizeStone?.(best.stone)
+            : null;
+        const giveExtras = stone ? { stone } : null;
+        const left = this._give(p, loot.item, qty, giveExtras);
         if (left > 0) {
-            this._pushDrop(best.x, best.y, { id: loot.item, quantity: left });
+            const drop = { id: loot.item, quantity: left };
+            if (stone) drop.stone = stone;
+            this._pushDrop(best.x, best.y, drop);
         }
 
         const transform = loot.transform || null;
