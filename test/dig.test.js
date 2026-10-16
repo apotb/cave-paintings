@@ -114,43 +114,73 @@ test("digging stick stays 0.9 kg with weightFixed", () => {
     assert.equal(log.weight, 2);
 });
 
-test("WorldGen clay banks sit on gravel sand snow_beach and beat flint", () => {
-    const seed = 424242;
+test("WorldGen clay stays near water and beats flint", () => {
+    const seed = 1;
     WorldGen.applySeed(seed);
     const hosts = new Set();
     let clay = 0;
     let grassClay = 0;
     let flintWithClay = 0;
-    let hostTiles = 0;
-    let clayOnHost = 0;
+    let dryClay = 0;
+    let shoreTiles = 0;
+    let clayOnShore = 0;
     const TS = WorldGen.TS;
-    for (let ix = -80; ix <= 80; ix++) {
-        for (let iy = -80; iy <= 80; iy++) {
-            const tx = ix * TS;
-            const ty = iy * TS;
-            const t = WorldGen.generateTileKey(tx, ty, () => 0.01);
+    const reach = WorldGen.CLAY_WATER_REACH;
+    const R = 70;
+    const tiles = new Map();
+    for (let ix = -R; ix <= R; ix++) {
+        for (let iy = -R; iy <= R; iy++) {
+            tiles.set(`${ix},${iy}`, WorldGen.generateTileKey(ix * TS, iy * TS, () => 0.01));
+        }
+    }
+    const wet = (ix, iy) => {
+        for (let dy = -reach; dy <= reach; dy++) {
+            for (let dx = -reach; dx <= reach; dx++) {
+                const key = tiles.get(`${ix + dx},${iy + dy}`)?.key;
+                if (key === "water" || key === "ice") return true;
+            }
+        }
+        return false;
+    };
+    for (let ix = -R + reach; ix <= R - reach; ix++) {
+        for (let iy = -R + reach; iy <= R - reach; iy++) {
+            const t = tiles.get(`${ix},${iy}`);
             const hasClay = (t.things || []).includes("clay_patch");
+            const near = wet(ix, iy);
             if (t.key === "grass" && hasClay) grassClay++;
             if (hasClay) {
                 clay++;
                 hosts.add(t.key);
                 if ((t.loot || []).includes("flint")) flintWithClay++;
+                if (!near) dryClay++;
             }
-            if (WorldGen.CLAY_HOST[t.key]) {
-                hostTiles++;
-                if (hasClay) clayOnHost++;
+            if (near && WorldGen.CLAY_HOST[t.key]) {
+                shoreTiles++;
+                if (hasClay) clayOnShore++;
             }
         }
     }
     assert.equal(grassClay, 0, "clay must never spawn on grass");
     assert.equal(flintWithClay, 0, "clay overrides flint on the same tile");
-    assert.ok(clay > 20, `expected medium clay banks, got ${clay}`);
-    assert.ok(hostTiles > 0, "need host shoreline/gravel tiles");
+    assert.equal(dryClay, 0, "clay must sit within reach of water");
+    assert.ok(clay > 20, `expected clay banks near water, got ${clay}`);
+    assert.ok(shoreTiles > 0, "need shoreline or gravel tiles");
     for (const k of hosts) {
         assert.ok(WorldGen.CLAY_HOST[k], `clay on unexpected tile ${k}`);
     }
-    assert.ok(clayOnHost / hostTiles > 0.08, "clay should form medium banks on host tiles");
-    assert.ok(clayOnHost / hostTiles < 0.75, "clay should not cover every host tile");
+    const frac = clayOnShore / shoreTiles;
+    assert.ok(frac > 0.08, `clay should form medium banks on wet host tiles, got ${frac}`);
+    assert.ok(frac < 0.75, `clay should not cover every wet host tile, got ${frac}`);
+
+    WorldGen.applySeed(424242);
+    let desertClay = 0;
+    for (let ix = -40; ix <= 40; ix++) {
+        for (let iy = -40; iy <= 40; iy++) {
+            const t = WorldGen.generateTileKey(ix * TS, iy * TS, () => 0.01);
+            if ((t.things || []).includes("clay_patch")) desertClay++;
+        }
+    }
+    assert.equal(desertClay, 0, "a dry inland sand region must not spawn clay");
 });
 
 test("bushes including snow take a quarter of clay health and drop sticks and leaves", () => {

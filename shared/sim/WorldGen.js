@@ -78,6 +78,12 @@
     const CLAY_HOST = { gravel: true, sand: true, snow_beach: true };
     const CLAY_THRESH = 0.58;
     const CLAY_FREQ = 6;
+    /** Chebyshev tiles. Shores sit inside this; dry desert sand does not. */
+    const CLAY_WATER_REACH = 4;
+    // About 3× the steepest per-tile step of these fields. A host past both
+    // margins cannot reach water inside CLAY_WATER_REACH, so skip the search.
+    const CLAY_RIVER_STEP = 0.007;
+    const CLAY_ELEV_STEP = 0.018;
     /** About a short walk. One hillside holds two or three stone patches. */
     const STONE_PERIOD = 22 * 16;
     const STONE_SALT = 0x51e7;
@@ -112,6 +118,41 @@
         return (n + 1) * 0.5;
     }
 
+    function sampleRiver(px, py) {
+        const inv = 1 / NOISE_SCALE;
+        return Math.abs(octaveNoise2D(px * inv, py * inv, 3, 1.2, 0.7, 2));
+    }
+
+    function sampleElevation(px, py) {
+        const inv = 1 / NOISE_SCALE;
+        return octaveNoise2D(px * inv, py * inv, 2, 0.5, 2.5, 0);
+    }
+
+    /** River or lake/ocean, including ice. Matches the water branches in generateTileKey. */
+    function isWaterAt(px, py) {
+        if (sampleRiver(px, py) < 0.005) return true;
+        return sampleElevation(px, py) < -0.2;
+    }
+
+    function nearWater(tx, ty, elevation, river) {
+        const reach = CLAY_WATER_REACH;
+        if (river >= 0.005 + CLAY_RIVER_STEP * reach
+            && elevation >= -0.2 + CLAY_ELEV_STEP * reach) {
+            return false;
+        }
+        for (let d = 1; d <= reach; d++) {
+            const span = d * TS;
+            for (let i = -d; i <= d; i++) {
+                const off = i * TS;
+                if (isWaterAt(tx + off, ty + span) || isWaterAt(tx + off, ty - span)) return true;
+                if (i !== d && i !== -d) {
+                    if (isWaterAt(tx + span, ty + off) || isWaterAt(tx - span, ty + off)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
     function generateTileKey(tx, ty, rand) {
         const inv = 1 / NOISE_SCALE;
         const nx = tx * inv;
@@ -123,7 +164,9 @@
         const randValue = rand();
 
         function finish(key, things, loot) {
-            if (CLAY_HOST[key] && clay > CLAY_THRESH) {
+            // Sand is both the beach and the hot inland desert. Clay follows the
+            // shore, so a rich desert still stays bare unless water is nearby.
+            if (CLAY_HOST[key] && clay > CLAY_THRESH && nearWater(tx, ty, elevation, river)) {
                 return { key, things: ["clay_patch"], loot: [] };
             }
             return { key, things: things || [], loot: loot || [] };
@@ -546,6 +589,7 @@
         BLOCKED,
         CLAY_HOST,
         CLAY_THRESH,
+        CLAY_WATER_REACH,
         pickWorldSeed,
         applySeed,
         generateChunk,

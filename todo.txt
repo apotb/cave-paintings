@@ -6,8 +6,6 @@ Improve clay figure classification for humans
 
 Overhaul Thing generation to work based on other Things (e.g. sticks/leaves should spawn next to trees instead of randomly) and also make it so destroying the parent Thing stops the other Things from respawning (e.g. destroying the parent Tree prevents the Sticks and Leaves spawned next to it from respawning)
 
-Fix clay deposits sometimes spawning even without nearby water
-
 Fix UI size 1 issues (e.g. tech tree, settlement menu)
 
 Vomiting settlers should have their current task interrupted while vomiting, vomiting itself should be a task that shows in the tooltip and stuff
