@@ -10,7 +10,7 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         // Clay sits on groundLayer with painting circles: over tiles (0),
         // under drops (1), under pawns on mainLayer. Do not use y-depth —
         // chunk tile RTs also live here at depth 0.
-        if ((meta?.diggable?.item || meta?.figurine) && scene.groundLayer) {
+        if ((meta?.diggable?.item || meta?.figurine || meta?.id === "storage_pit") && scene.groundLayer) {
             scene.groundLayer.add(this);
             this.setDepth(meta?.figurine ? 0.55 : 0.5);
         } else {
@@ -117,6 +117,7 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         if (this.body) this._positionBody();
         this._syncInteractMark();
         this._syncDigHole();
+        this.syncPitLook?.();
     }
 
     _applyStoneVisual() {
@@ -935,6 +936,67 @@ class Campfire extends Thing {
 }
 
 /**
+ * Multiply tint cannot lighten the brown pit, so bake a light-blue copy.
+ * Darker pixels stay a deeper blue so the hole still reads.
+ */
+function ensureStoragePitBlueprint(scene, sourceKey) {
+    const key = "storage_pit_blueprint";
+    if (!scene?.textures || !sourceKey) return null;
+    if (scene.textures.exists(key)) return key;
+    const srcTex = scene.textures.get(sourceKey);
+    if (!srcTex || srcTex.key === "__MISSING") return null;
+    const img = srcTex.getSourceImage?.() || srcTex.source?.[0]?.image;
+    if (!img?.width) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(img, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const px = imageData.data;
+    const w = canvas.width;
+    const h = canvas.height;
+    const n = w * h;
+    const opaque = new Uint8Array(n);
+    const lum = new Float32Array(n);
+    for (let p = 0; p < n; p++) {
+        const i = p * 4;
+        if (px[i + 3] < 8) continue;
+        opaque[p] = 1;
+        lum[p] = Math.max(px[i], px[i + 1], px[i + 2]) / 255;
+    }
+    // Hologram: bright cyan rim, translucent saturated fill so the ground shows through.
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const p = y * w + x;
+            if (!opaque[p]) continue;
+            const i = p * 4;
+            const t = lum[p];
+            const rim = x === 0 || y === 0 || x === w - 1 || y === h - 1
+                || !opaque[p - 1] || !opaque[p + 1] || !opaque[p - w] || !opaque[p + w];
+            if (rim) {
+                px[i] = Math.round(80 + t * 60);
+                px[i + 1] = Math.round(200 + t * 40);
+                px[i + 2] = 255;
+                px[i + 3] = 245;
+            } else {
+                px[i] = Math.round(30 + t * 50);
+                px[i + 1] = Math.round(80 + t * 60);
+                px[i + 2] = Math.round(230 + t * 20);
+                px[i + 3] = Math.round(160 + t * 20);
+            }
+        }
+    }
+    ctx.putImageData(imageData, 0, 0);
+    if (!scene.textures.addCanvas(key, canvas)) return null;
+    const tex = scene.textures.get(key);
+    tex?.setFilter?.(typeof Phaser !== "undefined" ? Phaser.Textures.FilterMode.NEAREST : 0);
+    return key;
+}
+
+/**
  * Player-placed storage. `entry` lives in chunk.meta.things (mutated in place for save).
  */
 class Storage extends Thing {
@@ -1017,6 +1079,10 @@ class Storage extends Thing {
 
     tooltipText() {
         const name = this.meta?.name || "Storage";
+        if (typeof Place !== "undefined") {
+            const blueprint = Place.pitBlueprintTooltip(this.meta, this.entry);
+            if (blueprint) return blueprint;
+        }
         const total = this._slotCount();
         const slots = this.entry?.slots || [];
         let used = 0;
@@ -1050,6 +1116,34 @@ class Storage extends Thing {
 
     onInteract(_pointer) {
         return false;
+    }
+
+    syncPitLid(open) {
+        this._pitPanelOpen = !!open;
+        this.syncPitLook();
+    }
+
+    /** Hologram lid while the hole is unfinished. Open finished pit shows the clay hole. */
+    syncPitLook() {
+        if (this.entry?.id !== "storage_pit" && this.meta?.id !== "storage_pit") return;
+        const finished = typeof Place !== "undefined"
+            ? Place.pitFinished(this.entry)
+            : (Number(this.entry?.digProgress) || 0) >= 1;
+        const showHole = finished && this._pitPanelOpen;
+        this.clearTint();
+        if (showHole && this.scene.textures?.exists?.("hole")) {
+            this.setTexture("hole");
+            return;
+        }
+        const key = this.meta?.key || "storage_pit";
+        if (!finished) {
+            const blue = ensureStoragePitBlueprint(this.scene, key);
+            if (blue) {
+                this.setTexture(blue);
+                return;
+            }
+        }
+        if (this.scene.textures?.exists?.(key)) this.setTexture(key);
     }
 
     static create(scene, entry) {

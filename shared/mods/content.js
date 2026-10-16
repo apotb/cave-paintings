@@ -729,7 +729,9 @@
                 continue;
             }
             if (itemUsesThingArt(it, things, thingKeys, Place)) continue;
-            queueImage(scene, key, `assets/items/${it.key}.png`);
+            // The snow tile already owns the "snow" texture key.
+            const file = it.key === "snow_pile" ? "snow" : it.key;
+            queueImage(scene, key, `assets/items/${file}.png`);
         }
         for (const spec of thingSpecs) {
             if (spec.spritesheet) queueSpritesheet(scene, spec);

@@ -239,6 +239,35 @@
         };
     }
 
+    function spoils(def) {
+        return Number(def?.food?.spoil) > 0;
+    }
+
+    /**
+     * Pit default: the food categories, plus any other item that has a spoil
+     * timer (raw hides, brains, and so on). Dried hides and leather do not.
+     */
+    function perishableDefault(items) {
+        const list = (items || []).filter((it) => it && it.id);
+        const roast = roastResultIds(list);
+        const offCategories = allCategoryIds(CATEGORY_TREE, []).filter((id) => {
+            return id !== "food" && !id.startsWith("food/");
+        });
+        const onItems = [];
+        for (const def of list) {
+            if (!spoils(def)) continue;
+            const leaf = leafCategory(def, roast);
+            if (leaf === "food" || String(leaf).startsWith("food/")) continue;
+            onItems.push(def.id);
+        }
+        return {
+            priority: "preferred",
+            offCategories,
+            offItems: [],
+            onItems
+        };
+    }
+
     function uniqStrings(list) {
         const out = [];
         const seen = new Set();
@@ -307,8 +336,9 @@
     function applyToEntry(entry, filter) {
         if (!entry) return entry;
         const saved = persist(filter);
-        if (!saved) delete entry.storageFilter;
-        else entry.storageFilter = saved;
+        if (saved) entry.storageFilter = saved;
+        else if (entry.id === "storage_pit") entry.storageFilter = normalize(filter);
+        else delete entry.storageFilter;
         return entry;
     }
 
@@ -766,6 +796,7 @@
         HIDE_STAGES,
         CATEGORY_TREE,
         emptyFilter,
+        perishableDefault,
         normalize,
         persist,
         applyToEntry,

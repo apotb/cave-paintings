@@ -83,11 +83,10 @@
         "id": "storage",
         "name": "Storage",
         "era": "Paleolithic",
-        "wip": true,
         "quote": "Perfect for leftovers",
         "cost": 2,
-        "prereqs": ["digging", "camping"],
-        "unlocks": { "items": [], "jobs": [], "text": ["Storage Pit"] },
+        "prereqs": ["digging", "basic_furniture"],
+        "unlocks": { "items": ["storage_pit"], "jobs": [], "text": [] },
         "children": ["agriculture"]
     },
     {

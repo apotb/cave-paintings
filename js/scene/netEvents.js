@@ -729,6 +729,10 @@
             const meta = this.getItem(itemId);
             if (meta) DroppedItem.spawn(this, entry.x, entry.y, meta, result.give);
         }
+        if (entry.id === "storage_pit" || def?.id === "storage_pit") {
+            thing.syncPitLook?.();
+            return result;
+        }
         if (result.done) {
             const drops = Dig.rollDrops?.(def, () => Math.random()) || [];
             const piles = Dig.scatterDrops?.(drops, entry.x, entry.y, () => Math.random()) || [];
@@ -887,7 +891,12 @@
                 (t) => t?.entry === entry || (t?.entry && match(t.entry))
             ) || null;
             live?._syncDigHole?.();
-            if (ev.dug) {
+            live?.syncPitLook?.();
+            if (this.storagePanel?.visible && this.storagePanel.storage === live) {
+                this.storagePanel.refresh();
+                this.storagePanel.layout();
+            }
+            if (ev.dug && entry.id !== "storage_pit") {
                 entry.gone = true;
                 const lst = chunk.meta?.[listName];
                 if (Array.isArray(lst)) {

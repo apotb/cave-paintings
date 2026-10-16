@@ -418,6 +418,8 @@
                 this._netApplyFigurineFields(entry, src);
             } else {
                 entry.slots = Array.isArray(src.slots) ? src.slots : [null, null, null, null, null, null];
+                if (src.digProgress != null) entry.digProgress = src.digProgress;
+                if (src.fillId) entry.fillId = src.fillId;
                 if (typeof Place !== "undefined") {
                     Place.ensureStorageEntry(entry, this.getThing(entry.id));
                 }
@@ -434,6 +436,8 @@
                 entry.rot = typeof Place !== "undefined" ? Place.normalizeRot(src.rot) : src.rot;
             }
             if (Array.isArray(src.slots)) entry.slots = src.slots;
+            if (src.digProgress != null) entry.digProgress = src.digProgress;
+            if (src.fillId) entry.fillId = src.fillId;
             if (Array.isArray(src.occupants)) entry.occupants = src.occupants;
             this._netApplyStorageFilter(entry, src);
             this._netApplyFigurineFields(entry, src);

@@ -37,11 +37,46 @@ class StoragePanel {
         return s / zoom;
     }
 
+    _isStoragePit() {
+        return typeof Place !== "undefined"
+            && Place.isStoragePit(this.storage?.meta, this.storage?.entry);
+    }
+
+    _pitFinished() {
+        if (!this._isStoragePit()) return true;
+        return Place.pitFinished(this.storage?.entry);
+    }
+
     _slotCount() {
+        if (this._isStoragePit() && !this._pitFinished()) return 0;
         const entry = this.storage?.entry;
         const def = this.storage?.meta;
         if (typeof Place !== "undefined") return Place.storageSlotCount(def, entry) || 8;
         return Array.isArray(entry?.slots) ? entry.slots.length : 8;
+    }
+
+    _pitDestroyReady() {
+        if (!this._isStoragePit()) return null;
+        if (!this._pitFinished()) return !!this.storage?.isEmpty?.();
+        if (!this.storage?.isEmpty?.()) return false;
+        const fillId = this.storage.entry?.fillId === "snow" ? "snow" : "dirt";
+        return (this.scene.player?.getNumItems?.(fillId) || 0) >= 1;
+    }
+
+    /** Finished pits: check or cross plus the pile it takes to fill the hole. */
+    _destroyCostTip() {
+        if (!this._isStoragePit() || !this._pitFinished()) return "";
+        const fillId = this.storage?.entry?.fillId === "snow" ? "snow" : "dirt";
+        const meta = this.scene.getItem?.(fillId);
+        const name = meta?.name || (fillId === "snow" ? "Snow" : "Dirt");
+        const have = (this.scene.player?.getNumItems?.(fillId) || 0) >= 1;
+        return {
+            text: "",
+            lines: [
+                { plain: true, label: "Filling this hole will cost:" },
+                { mark: have ? "on" : "off", label: `x1 ${name}` }
+            ]
+        };
     }
 
     _isDryingRack() {
@@ -254,6 +289,13 @@ class StoragePanel {
             this._paintTake();
             if (was && this._takeHovering && this._takeEnabled) this._tryTake();
         });
+        this.takeRect.on("pointerover", (p) => {
+            if (!this._destroyCostTip()) return;
+            this.scene.showTooltip(() => this._destroyCostTip() || "", p.x, p.y, this.takeRect);
+        });
+        this.takeRect.on("pointerout", () => {
+            if (this.scene._tooltipTarget === this.takeRect) this.scene.hideTooltip();
+        });
 
         this.container.add(this.takeBtn);
     }
@@ -340,7 +382,10 @@ class StoragePanel {
         if (this.scene.paintingCirclePanel?.visible) this.scene.paintingCirclePanel.close();
         this.scene.closeCraftStationMenu?.();
 
-        if (this.storage && this.storage !== storage) this._notifyStorage("leave");
+        if (this.storage && this.storage !== storage) {
+            this.storage.syncPitLid?.(false);
+            this._notifyStorage("leave");
+        }
         this.storage = storage;
         if (storage?.entry && typeof Place !== "undefined") {
             Place.ensureStorageEntry(storage.entry, storage.meta);
@@ -348,6 +393,7 @@ class StoragePanel {
         this.visible = true;
         this.container.setVisible(true);
         this.container.setPosition(storage.x, storage.y);
+        storage.syncPitLid?.(true);
         this.refresh();
         this.layout();
         this._notifyStorage("attend");
@@ -359,9 +405,11 @@ class StoragePanel {
     }
 
     close() {
+        const prev = this.storage;
         this._notifyStorage("leave");
         this.visible = false;
         this.storage = null;
+        prev?.syncPitLid?.(false);
         this.container.setVisible(false);
         this._cancelDrag();
         this.scene.hideTooltip();
@@ -409,13 +457,29 @@ class StoragePanel {
             drawSlotConditionBar(view.bar, view.slot, showSlot ? frac : null);
         }
 
-        const empty = !!this.storage.isEmpty?.();
-        this._takeEnabled = empty;
-        this.takeBtn.setVisible(true);
-        if (empty) this._syncTakeHitArea(true);
-        else disableInteractiveIfOn(this.takeRect);
-        this._syncTakeHover();
+        this._syncTakeButton();
         this.refreshDryBar();
+    }
+
+    /** Enable Fill/Take from the pit's contents and what the player is holding. */
+    _syncTakeButton() {
+        if (!this.storage) return;
+        const empty = !!this.storage.isEmpty?.();
+        const pitReady = this._pitDestroyReady();
+        const label = this._isStoragePit() ? "Fill" : "Take";
+        const enabled = pitReady == null ? empty : !!pitReady;
+        if (this.takeText?.text !== label || enabled !== this._takeEnabled) {
+            this.takeText?.setText(label);
+            this._takeEnabled = enabled;
+            this.takeBtn?.setVisible(true);
+        }
+        // Stay hoverable while greyed out so the fill-cost tip can show.
+        this._syncTakeHitArea(true);
+        if (this.takeRect?.input) {
+            this.takeRect.input.cursor = enabled ? "pointer" : "default";
+            this.takeRect.input.useHandCursor = !!enabled;
+        }
+        this._syncTakeHover();
     }
 
     refreshDryBar() {
@@ -562,7 +626,7 @@ class StoragePanel {
             this.close();
             return;
         }
-        this._syncTakeHover();
+        this._syncTakeButton();
     }
 
     getSlotAt(screenX, screenY) {

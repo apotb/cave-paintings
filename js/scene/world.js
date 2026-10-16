@@ -1199,7 +1199,8 @@
                     tx: t.tx,
                     ty: t.ty,
                     tileSize: ts,
-                    getThing
+                    getThing,
+                    placeDef: def
                 })) return false;
             } else if (!this._tileKeyAt(t.tx, t.ty)) {
                 return false;
@@ -1443,6 +1444,10 @@
                 ? Place.emptySlots(def.storage?.slots || 1)
                 : [null, null, null, null, null, null, null, null];
             if (typeof Place !== "undefined") Place.ensureStorageEntry(entry, def);
+            if (typeof Place !== "undefined" && Place.isStoragePit(def, entry)) {
+                entry.digProgress = 0;
+                entry.fillId = Place.pitFillForTile(this._tileKeyAt(tx, ty)) || "dirt";
+            }
         }
         if (typeof Research !== "undefined") Research.ensureEntry(entry, def);
         chunk.meta.things.push(entry);
@@ -1576,6 +1581,17 @@
                 y: storage.y
             });
             return true;
+        }
+
+        if (typeof Place !== "undefined" && Place.isStoragePit(storage.meta, entry)) {
+            if (Place.pitFinished(entry)) {
+                const fillId = entry.fillId === "snow" ? "snow" : "dirt";
+                if ((this.player?.getNumItems?.(fillId) || 0) < 1) {
+                    this.combatLog?.push(fillId === "snow" ? "Need snow" : "Need dirt");
+                    return false;
+                }
+                this.player.loseAnyItem(fillId, 1);
+            }
         }
 
         this._removeStorageThing(storage);

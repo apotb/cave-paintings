@@ -541,6 +541,7 @@ test("removing a station from a settlement keeps its bills for re-add", () => {
 test("owner-only station add including abandoned-camp ids", () => {
     assert.equal(Settlement.isAddableId("unlit_campfire"), true);
     assert.equal(Settlement.isAddableId("wicker_basket"), true);
+    assert.equal(Settlement.isAddableId("storage_pit"), true);
     assert.equal(Settlement.isAddableId("skinworking_bench"), true);
     assert.equal(Settlement.isAddableId("drying_rack"), true);
     assert.equal(Settlement.isAddableId("lean_to"), false);

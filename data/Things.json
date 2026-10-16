@@ -259,6 +259,20 @@
         }
     },
     {
+        "id": "storage_pit",
+        "name": "Storage Pit",
+        "key": "storage_pit",
+        "hitboxSize": 0,
+        "placeTiles": ["grass", "grass_hill", "snow", "snow_hill"],
+        "diggable": {
+            "health": 1
+        },
+        "storage": {
+            "slots": 8,
+            "spoilScale": 0.5
+        }
+    },
+    {
         "id": "wicker_basket",
         "name": "Wicker Basket",
         "key": "wicker_basket",

@@ -307,7 +307,9 @@ class SettlementSystem {
                 if (!byKind[k]) byKind[k] = [];
                 byKind[k].push(spr);
             }
-            if (spr.entry?.id === "wicker_basket" || spr.meta?.storage?.slots > 1) {
+            const unfinishedPit = spr.entry?.id === "storage_pit"
+                && (Number(spr.entry?.digProgress) || 0) < 1;
+            if (!unfinishedPit && (spr.entry?.id === "wicker_basket" || spr.meta?.storage?.slots > 1)) {
                 baskets.push(spr.entry);
             }
         }, settle);
@@ -1314,6 +1316,10 @@ class SettlementSystem {
         if (!target || !thing?.entry) return false;
         const id = thing.entry.id;
         if (S && !S.isAddableId(id)) return false;
+        if (id === "storage_pit" && !(typeof Place !== "undefined" && Place.pitFinished(thing.entry))) {
+            this.scene.combatLog?.push("Dig the storage pit first");
+            return false;
+        }
         const uid = thing.entry.uid;
         if (!uid) return false;
         if (this.list.some((s) => s.id !== target.id && (s.stationUids || []).includes(uid))) {
@@ -1627,6 +1633,9 @@ class SettlementSystem {
         if (!this.canManage(settle) || !thing?.entry) return false;
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         if (S && !S.isAddableId(thing.entry.id)) return false;
+        if (thing.entry.id === "storage_pit" && !(typeof Place !== "undefined" && Place.pitFinished(thing.entry))) {
+            return false;
+        }
         return this._inRangePawn(this.scene.player, settle)
             && S.inRange(settle, thing.x, thing.y, this.scene.tileSize || 16);
     }

@@ -901,6 +901,35 @@
         return remaining;
     },
 
+    /** Remove qty of itemId from inventory then overflow. False when the pawn is short. */
+    _takePawnItem(p, itemId, qty) {
+        let need = Math.max(0, Math.floor(Number(qty) || 0));
+        if (!p || !itemId || need <= 0) return false;
+        const bags = [p.inventory, p.overflow];
+        let have = 0;
+        for (const bag of bags) {
+            if (!Array.isArray(bag)) continue;
+            for (const s of bag) {
+                if (s?.id === itemId) have += Math.max(1, Math.floor(Number(s.quantity) || 1));
+            }
+        }
+        if (have < need) return false;
+        for (const bag of bags) {
+            if (!Array.isArray(bag)) continue;
+            for (let i = 0; i < bag.length && need > 0; i++) {
+                const s = bag[i];
+                if (!s || s.id !== itemId) continue;
+                const n = Math.max(1, Math.floor(Number(s.quantity) || 1));
+                const take = Math.min(need, n);
+                s.quantity = n - take;
+                need -= take;
+                if (!(s.quantity > 0)) bag[i] = null;
+            }
+        }
+        this._dirtyPawnOwner(p);
+        return need <= 0;
+    },
+
     /** Strip world-drop fields (uid, lifeMs, Arcade weight) so they can't zero item mass. */
     _giveExtras(extras) {
         if (!extras || typeof extras !== "object") return null;
@@ -1666,6 +1695,32 @@
         if (!creature._attackWoreHeld) {
             this._wearPlayerHeld(creature.id, 1);
             creature._attackWoreHeld = true;
+        }
+        if (Place.isStoragePit(bestDef, best)) {
+            if (result.done) {
+                best.digProgress = 1;
+                const fillId = best.fillId === "snow" ? "snow" : "dirt";
+                const owner = this.players?.get?.(creature.id) || null;
+                let left = 1;
+                if (owner) left = this._give(owner, fillId, 1);
+                if (left > 0) this._pushDrop(best.x, best.y, { id: fillId, quantity: left });
+            }
+            this.pushEvent({
+                kind: "dig",
+                playerId: creature.id,
+                cx: bestChunk.cx,
+                cy: bestChunk.cy,
+                x: best.x,
+                y: best.y,
+                uid: best.uid || null,
+                id: best.id,
+                digProgress: result.done ? 1 : result.progress,
+                digTaken: best.digTaken || 0,
+                lastDigAt: best.lastDigAt || Date.now(),
+                give: 0,
+                dug: false
+            });
+            return;
         }
         const itemId = bestDef?.diggable?.item;
         if (itemId && result.give > 0) {

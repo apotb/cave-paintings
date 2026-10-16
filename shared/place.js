@@ -133,7 +133,7 @@
             const hangKey = t.hangingKey || `${t.key}_hanging`;
             loads.push({ key: hangKey, path: `assets/things/${hangKey}.png` });
         }
-        if (t.diggable?.item) {
+        if (t.diggable?.item || t.id === "storage_pit") {
             loads.push({ key: "hole", path: "assets/things/hole.png" });
         }
         return loads;
@@ -500,9 +500,45 @@
         return occupyTiles(entry, ts, thingDef).some((t) => t.tx === tx && t.ty === ty);
     }
 
+    function isStoragePit(thingDef, entry) {
+        return thingDef?.id === "storage_pit" || entry?.id === "storage_pit";
+    }
+
+    function pitFinished(entry) {
+        return (Number(entry?.digProgress) || 0) >= 1 - 1e-6;
+    }
+
+    /** Hover label for a pit that still needs digging. Null once it is finished. */
+    function pitBlueprintTooltip(thingDef, entry) {
+        if (!isStoragePit(thingDef, entry) || pitFinished(entry)) return null;
+        const name = thingDef?.name || "Storage Pit";
+        return `${name} (Blueprint)\nRequires digging to complete`;
+    }
+
+    /** Grass and grass hills yield dirt. Snow and snow hills yield snow. */
+    function pitFillForTile(tileKey) {
+        if (tileKey === "snow" || tileKey === "snow_hill") return "snow";
+        if (tileKey === "grass" || tileKey === "grass_hill") return "dirt";
+        return null;
+    }
+
+    function tileAllowsThing(thingDef, tileKey) {
+        const tiles = thingDef?.placeTiles;
+        if (!Array.isArray(tiles) || !tiles.length) return true;
+        return tiles.indexOf(tileKey) >= 0;
+    }
+
+    /** Finished pits keep food for twice as long. Unfinished pits do not. */
+    function pitSlowsSpoil(thingDef, entry) {
+        if (!isStoragePit(thingDef, entry) || !pitFinished(entry)) return false;
+        const scale = Number(thingDef?.storage?.spoilScale);
+        return scale > 0 && scale < 1;
+    }
+
     function canPlaceOnTile(opts) {
         const tileKey = opts?.tileKey;
         if (!tileKey || BLOCKED[tileKey]) return false;
+        if (opts.placeDef && !tileAllowsThing(opts.placeDef, tileKey)) return false;
         const tx = opts.tx;
         const ty = opts.ty;
         const ts = opts.tileSize || 16;
@@ -590,7 +626,49 @@
         if (!entry.uid) {
             entry.uid = `st_${Math.round(Number(entry.x) || 0)}_${Math.round(Number(entry.y) || 0)}`;
         }
+        // A missing filter on a pit is the perishable default. An explicit
+        // object, including Set All, is the player's choice and stays put.
+        if (thingDef?.id === "storage_pit" || entry.id === "storage_pit") {
+            const SF = storageFilterApi();
+            const items = loadedItemDefs();
+            const fresh = SF?.perishableDefault && items ? SF.perishableDefault(items) : null;
+            if (fresh && entry.storageFilter == null) entry.storageFilter = fresh;
+            else if (fresh && isPriorPerishableDefault(entry.storageFilter, fresh)) {
+                entry.storageFilter.priority = fresh.priority;
+            }
+        }
         return entry;
+    }
+
+    function storageFilterApi() {
+        if (typeof StorageFilter !== "undefined") return StorageFilter;
+        if (typeof require === "function") {
+            try { return require("./storageFilter"); } catch (_) { return null; }
+        }
+        return null;
+    }
+
+    function sameIdSet(a, b) {
+        if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+        const set = new Set(a);
+        return b.every((id) => set.has(id));
+    }
+
+    /** The first pit default used Normal. Lift that exact filter to Preferred. */
+    function isPriorPerishableDefault(filter, fresh) {
+        if (!filter || filter.priority !== "normal") return false;
+        return sameIdSet(filter.offCategories, fresh.offCategories)
+            && sameIdSet(filter.offItems, fresh.offItems)
+            && sameIdSet(filter.onItems, fresh.onItems);
+    }
+
+    function loadedItemDefs() {
+        let DS = typeof DataStore !== "undefined" ? DataStore : null;
+        if (!DS && typeof require === "function") {
+            try { DS = require("./DataStore"); } catch (_) { DS = null; }
+        }
+        const list = DS?._store?.itemsList;
+        return Array.isArray(list) ? list.filter(Boolean) : null;
     }
 
     function isStorageEmpty(entry) {
@@ -693,6 +771,12 @@
         ensureCraftStationEntry,
         inPlaceRange,
         entryOnTile,
+        isStoragePit,
+        pitFinished,
+        pitBlueprintTooltip,
+        pitFillForTile,
+        tileAllowsThing,
+        pitSlowsSpoil,
         canPlaceOnTile,
         canPlaceOnTiles,
         footprintSize,

@@ -327,10 +327,16 @@
             const kids = chunk.things?.getChildren?.() || [];
             for (const t of kids) {
                 if (!t?.active || t.entry?.gone) continue;
-                let frac = (typeof Chop !== "undefined" && Chop.barVisible?.(t.entry, Date.now()))
-                    ? (Number(t.entry?.chopProgress) || 0)
-                    : 0;
-                if (!(frac > 0) || frac >= 1) {
+                const unfinishedPit = t.entry?.id === "storage_pit"
+                    && (Number(t.entry?.digProgress) || 0) < 1;
+                let frac = unfinishedPit
+                    ? Math.max(0, Math.min(1, Number(t.entry?.digProgress) || 0))
+                    : ((typeof Chop !== "undefined" && Chop.barVisible?.(t.entry, Date.now()))
+                        ? (Number(t.entry?.chopProgress) || 0)
+                        : 0);
+                if (unfinishedPit) {
+                    // Keep the bar up for the whole dig, including an empty bar at 0%.
+                } else if (!(frac > 0) || frac >= 1) {
                     frac = 0;
                     const id = t.entry?.id;
                     const isFire = id === "campfire" || id === "unlit_campfire";
@@ -343,7 +349,7 @@
                         frac = Number(t.entry?.digProgress) || 0;
                     }
                 }
-                if (!(frac > 0)) continue;
+                if (!(frac > 0) && !unfinishedPit) continue;
                 if (frac > 1) frac = 1;
                 if (view) {
                     if (t.x < view.x - pad || t.x > view.right + pad) continue;
@@ -575,7 +581,9 @@
             this.tooltipSub.setPosition(0, tail ? y : 0);
             if (tail) y += sh;
         }
-        const gearGap = gh > 0 ? gap : 0;
+        // Plain-line tips already inset their own pad. The gap is only to separate
+        // a gear block from a title above it.
+        const gearGap = gh > 0 && !(this._tooltipPlainBlock && y === 0) ? gap : 0;
         if (this.tooltipGear) this.tooltipGear.setPosition(0, y + gearGap);
         const afterGear = y + gearGap + gh;
         const pw = this._tooltipPreviewW || 0;
@@ -659,7 +667,13 @@
         const pad = this._tooltipPadding;
         const rowH = Math.round(20 * s);
         const iconGap = Math.round(6 * s);
-        let y = 0;
+        // Same outer margin as a text tooltip: pad inside the block, and the box
+        // adds another pad. The row is taller than the glyphs, so only the slack
+        // stays inside the line.
+        const fontH = pixelUiFontSize(16, s);
+        const inset = Math.max(0, pad - Math.round(Math.max(0, rowH - fontH) / 2));
+        this._tooltipPlainBlock = true;
+        let y = inset;
         let maxRight = 0;
         for (const line of list) {
             const midY = y + rowH / 2;
@@ -687,13 +701,14 @@
             y += rowH;
         }
         this._tooltipGearW = maxRight + pad;
-        this._tooltipGearH = Math.max(0, y);
+        this._tooltipGearH = Math.max(0, y + inset);
     },
 
     _clearTooltipGear() {
         this._tooltipGearSig = null;
         this._tooltipGearW = 0;
         this._tooltipGearH = 0;
+        this._tooltipPlainBlock = false;
         this.tooltipGear?.removeAll(true);
     },
 

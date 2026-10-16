@@ -291,6 +291,9 @@
         if (op === "addStation" && settle && settle.ownerId === p.id) {
             const uid = String(action.uid || "");
             if (!uid) return;
+            const found = this._findThingByUid(uid);
+            if (!found?.entry || !Settlement.isAddableId(found.entry.id)) return;
+            if (found.entry.id === "storage_pit" && !Place.pitFinished(found.entry)) return;
             const taken = this.settlements.some((s) => s.id !== settle.id
                 && (s.stationUids || []).some((u) => String(u) === uid));
             if (taken) return;

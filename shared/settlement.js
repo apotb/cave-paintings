@@ -158,7 +158,8 @@
         unlit_campfire: true,
         skinworking_bench: true,
         drying_rack: true,
-        wicker_basket: true
+        wicker_basket: true,
+        storage_pit: true
     };
 
     function uid() {
@@ -330,7 +331,7 @@
         if (id === "campfire" || id === "unlit_campfire") return "campfire";
         if (id === "skinworking_bench") return "craft";
         if (id === "drying_rack") return "rack";
-        if (id === "wicker_basket") return "storage";
+        if (id === "wicker_basket" || id === "storage_pit") return "storage";
         return null;
     }
 

@@ -531,6 +531,7 @@
         "key": "brain",
         "maxStack": 99,
         "weight": 0.3,
+        "storageCategory": "materials",
         "brain": true,
         "food": {
             "kc": 0,
@@ -1228,6 +1229,24 @@
         }
     },
     {
+        "id": "storage_pit",
+        "name": "Storage Pit",
+        "key": "storage_pit",
+        "maxStack": 99,
+        "place": {
+            "thing": "storage_pit"
+        },
+        "tooltip": [
+            "Preserves food underground",
+            "Requires digging to complete"
+        ],
+        "recipe": {
+            "stick_frame": 2,
+            "stick": 10,
+            "leaf_cord": 2
+        }
+    },
+    {
         "id": "drying_rack",
         "name": "Drying Rack",
         "key": "drying_rack_hanging",
@@ -1359,6 +1378,22 @@
             "kj": 160,
             "temp": 800
         }
+    },
+    {
+        "id": "dirt",
+        "name": "Dirt",
+        "key": "dirt",
+        "maxStack": 99,
+        "weight": 0.8,
+        "storageCategory": "junk"
+    },
+    {
+        "id": "snow",
+        "name": "Snow",
+        "key": "snow_pile",
+        "maxStack": 99,
+        "weight": 0.2,
+        "storageCategory": "junk"
     },
     {
         "id": "clay",

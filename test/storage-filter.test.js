@@ -15,6 +15,30 @@ function tree() {
     return SF.buildTree(items());
 }
 
+test("pit default allows food and other spoiling items only", () => {
+    const f = SF.perishableDefault(items());
+    const t = tree();
+    assert.equal(f.priority, "preferred");
+    assert.equal(SF.allows(f, { id: "apple" }, getItem), true);
+    assert.equal(SF.allows(f, { id: "blueberry" }, getItem), true);
+    assert.equal(SF.allows(f, { id: "roasted_apple" }, getItem), true);
+    assert.equal(SF.allows(f, { id: "deer_hide" }, getItem), true);
+    assert.equal(SF.allows(f, { id: "deer_hide_fleshed" }, getItem), true);
+    assert.equal(SF.allows(f, { id: "brain" }, getItem), true);
+    assert.equal(SF.allows(f, { id: "stick" }, getItem), false);
+    assert.equal(SF.allows(f, { id: "log" }, getItem), false);
+    assert.equal(SF.allows(f, { id: "deer_hide_dry" }, getItem), false);
+    assert.equal(SF.allows(f, { id: "boar_leather" }, getItem), false);
+    assert.equal(SF.categoryState(f, t, "food"), "on");
+    assert.equal(SF.categoryState(f, t, "materials/wood"), "off");
+    assert.equal(SF.persist(f) != null, true);
+
+    const entry = { id: "storage_pit" };
+    SF.applyToEntry(entry, SF.setAll(f));
+    assert.equal(SF.allows(entry.storageFilter, { id: "stick" }, getItem), true);
+    assert.ok(entry.storageFilter);
+});
+
 test("default filter allows everything", () => {
     const f = SF.emptyFilter();
     assert.equal(SF.allows(f, { id: "stick" }, getItem), true);
@@ -290,7 +314,7 @@ test("every item lands in exactly one leaf", () => {
     assert.equal(SF.isPreparedFood({ id: "blueberry" }, getItem("blueberry")), false);
     assert.equal(SF.isPreparedFood({ id: "raw_venison" }, getItem("raw_venison")), false);
     assert.equal(SF.leafCategory(getItem("rot"), null), "junk");
-    assert.equal(SF.leafCategory(getItem("brain"), null), "junk");
+    assert.equal(SF.leafCategory(getItem("brain"), null), "materials");
     assert.equal(SF.leafCategory(getItem("lean_to"), null), "buildings");
     assert.equal(SF.leafCategory(getItem("wicker_basket"), null), "buildings");
     assert.equal(SF.leafCategory(getItem("drying_rack"), null), "buildings");
@@ -315,7 +339,7 @@ test("every item lands in exactly one leaf", () => {
     assert.equal(SF.findNode(t, "materials/clay"), null);
     assert.equal(SF.findNode(t, "materials/fuel"), null);
     const materialIds = (SF.findNode(t, "materials").items || []).map((it) => it.id);
-    assert.deepEqual(materialIds, ["clay"]);
+    assert.deepEqual(materialIds, ["brain", "clay"]);
     let clayFilt = SF.toggleCategory(SF.emptyFilter(), t, "materials");
     assert.equal(SF.allows(clayFilt, { id: "clay" }, getItem), false);
     clayFilt = SF.toggleCategory(SF.emptyFilter(), t, "materials/stone");

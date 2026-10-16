@@ -145,7 +145,9 @@
             rev: Number(entry.rev) || 0,
             rot: Place.normalizeRot(entry.rot),
             slots: (entry.slots || []).map((s) => (s?.id ? this._cloneStackForWorld(s) : null)),
-            storageFilter: entry.storageFilter || null
+            storageFilter: entry.storageFilter || null,
+            digProgress: entry.digProgress != null ? entry.digProgress : null,
+            fillId: entry.fillId || null
         };
     },
 
@@ -224,7 +226,8 @@
                 tx: t.tx,
                 ty: t.ty,
                 tileSize: TS,
-                getThing
+                getThing,
+                placeDef: thingDef
             })) return;
         }
         if ((thingDef.settlement || Place.isSettlementThing(thingDef))
@@ -350,6 +353,10 @@
             slots: Place.emptySlots(thingDef.storage?.slots || 1)
         };
         Place.ensureStorageEntry(entry, thingDef);
+        if (Place.isStoragePit(thingDef, entry)) {
+            entry.digProgress = 0;
+            entry.fillId = Place.pitFillForTile(this._tileKeyAt(tx, ty)) || "dirt";
+        }
         _research()?.ensureEntry?.(entry, thingDef);
         chunk.things.push(entry);
         this._emitStorage(chunk, entry);
@@ -1129,6 +1136,20 @@
             return;
         }
         Place.ensureStorageEntry(entry, def);
+        if (Place.isStoragePit(def, entry)) {
+            if (op === "pickup") {
+                this._tryDestroyStoragePit(p, chunk, entry);
+                return;
+            }
+            if (!Place.pitFinished(entry)) return;
+            if (op === "inv_to_slot") this._storageInvToSlot(p, entry, action);
+            else if (op === "slot_to_inv") this._storageSlotToInv(p, entry, action);
+            else if (op === "slot_to_slot") this._storageSlotToSlot(entry, action);
+            else return;
+            this._emitStorage(chunk, entry);
+            this._youDirty.add(p.id);
+            return;
+        }
         if (op === "pickup") {
             if (!Place.isStorageEmpty(entry)) return;
             const itemId = Place.itemIdForThing(entry.id, itemDefs());
@@ -1188,6 +1209,33 @@
         for (const settle of covering) {
             this._youDirty.add(settle.ownerId);
         }
+        this._dirtyPawnOwner(p);
+    },
+
+    _tryDestroyStoragePit(p, chunk, entry) {
+        if (!p || !chunk || !entry) return;
+        if (!Place.isStorageEmpty(entry)) return;
+        const finished = Place.pitFinished(entry);
+        if (finished) {
+            const fillId = entry.fillId === "snow" ? "snow" : "dirt";
+            if (!this._takePawnItem(p, fillId, 1)) {
+                this.pushEvent({
+                    kind: "combat_log",
+                    text: fillId === "snow" ? "Need snow" : "Need dirt",
+                    to: p.id
+                });
+                return;
+            }
+        }
+        const itemId = Place.itemIdForThing(entry.id, itemDefs()) || "storage_pit";
+        const leftover = this._give(p, itemId, 1);
+        if (leftover > 0) {
+            this._pushDrop(p.x, p.y, { id: itemId, quantity: leftover });
+        }
+        this._unlinkStationUid(entry.uid);
+        const i = chunk.things.indexOf(entry);
+        if (i >= 0) chunk.things.splice(i, 1);
+        this._emitStorageRemoved(chunk, entry);
         this._dirtyPawnOwner(p);
     },
 

@@ -873,6 +873,11 @@
                             );
                         }
                         if (Fire.tickStackTemp(stack)) changed = true;
+                        if (opts.emit && Place.pitSlowsSpoil(def, t) && stack.spoilAt != null
+                            && (this.worldMinuteIndex() & 1) === 1) {
+                            stack.spoilAt = Math.round(Number(stack.spoilAt)) + 1;
+                            changed = true;
+                        }
                         this._spoilStackIfDue(stack);
                         if (stack.temp !== beforeTemp || stack.id !== beforeId) changed = true;
                     }

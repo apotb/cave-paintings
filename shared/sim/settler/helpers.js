@@ -680,7 +680,9 @@ function takeToPawn(world, rec, stack) {
 
 function insertInEntry(world, entry, stack) {
     if (!entry || !stack) return false;
-    Place.ensureStorageEntry(entry, world._thingDef(entry.id));
+    const def = world._thingDef(entry.id);
+    if (Place.isStoragePit?.(def, entry) && !Place.pitFinished(entry)) return false;
+    Place.ensureStorageEntry(entry, def);
     const slots = entry.slots;
     if (!Array.isArray(slots) || !stack) return false;
     StorageFilter.absorbStack(slots, stack, getItem, onMerge);
@@ -714,7 +716,9 @@ function basketsOf(world, settle) {
         const found = world._findThingByUid(uid);
         if (!found?.entry) continue;
         if (Settlement.stationKind(found.entry.id) !== "storage") continue;
-        Place.ensureStorageEntry(found.entry, world._thingDef(found.entry.id));
+        const def = world._thingDef(found.entry.id);
+        if (Place.isStoragePit?.(def, found.entry) && !Place.pitFinished(found.entry)) continue;
+        Place.ensureStorageEntry(found.entry, def);
         out.push(found.entry);
     }
     q.baskets = out;
