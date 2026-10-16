@@ -76,8 +76,18 @@ function haulMergeJob(world, rec, settle, claims) {
     if (!q.mergeJobs) {
         q.mergeJobs = StorageFilter.listMergeJobs(basketsOf(world, settle), getItem);
     }
+    const reserves = reservesOf(world, settle);
     return StorageFilter.pickMergeJob(q.mergeJobs, rec.x, rec.y, {
-        isClaimed: (key) => claimedByOther(claims, key, rec.id) || isSkipped(rec, key)
+        isClaimed: (key) => {
+            if (claimedByOther(claims, key, rec.id) || isSkipped(rec, key)) return true;
+            const move = /^merge:(.+):(\d+)$/.exec(String(key || ""));
+            if (!move) return false;
+            const basket = basketsOf(world, settle).find((b) => String(b.uid) === move[1]);
+            const index = Number(move[2]);
+            const stack = basket?.slots?.[index];
+            if (!stack) return false;
+            return !(reserves.available(`basket:${basket.uid}:${index}`, stack.quantity, rec.id) > 0);
+        }
     });
 }
 
@@ -539,7 +549,15 @@ function cookHasWork(world, rec, settle, fire, bill, opts = {}) {
         };
         countInv(rec.inventory);
         countInv(rec.overflow);
-        for (const b of basketsOf(world, settle)) countInv(b.slots);
+        const reserves = reservesOf(world, settle);
+        for (const b of basketsOf(world, settle)) {
+            const slots = b.slots || [];
+            for (let i = 0; i < slots.length; i++) {
+                const s = slots[i];
+                if (!s || !Settlement.cookInputReady(getItem, s, bill)) continue;
+                stock += reserves.available(`basket:${b.uid}:${i}`, s.quantity, rec.id);
+            }
+        }
         if (!(hasTool && stock >= 1)) return false;
         if (fireNeedsLight(fire) && !fireCanFuel(world, rec, settle, fire)) return false;
         return true;

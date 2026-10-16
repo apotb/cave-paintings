@@ -2195,9 +2195,21 @@
     /**
      * Quantity reservations on a basket slot or ground drop.
      * Not persisted — runtime only. AI-only (player may still take reserved units).
+     * `kind: "food"` is an eat claim. Medicine still uses set/release, which
+     * replace every claim that pawn holds.
      */
     function createMedicineReserves() {
         const list = [];
+        const add = (pawnId, kind, entries) => {
+            if (!pawnId) return;
+            for (const e of entries || []) {
+                const qty = Math.max(0, Math.floor(Number(e?.qty) || 0));
+                if (!e?.key || !(qty > 0)) continue;
+                const row = { pawnId, key: e.key, qty };
+                if (kind) row.kind = kind;
+                list.push(row);
+            }
+        };
         return {
             reservedByOthers(key, pawnId) {
                 if (!key) return 0;
@@ -2214,12 +2226,16 @@
             },
             set(pawnId, entries) {
                 this.release(pawnId);
-                if (!pawnId) return;
-                for (const e of entries || []) {
-                    const qty = Math.max(0, Math.floor(Number(e?.qty) || 0));
-                    if (!e?.key || !(qty > 0)) continue;
-                    list.push({ pawnId, key: e.key, qty });
+                add(pawnId, null, entries);
+            },
+            /** Replace this pawn's claims of one kind. Other kinds stay. */
+            setKind(pawnId, kind, entries) {
+                if (!kind) {
+                    this.set(pawnId, entries);
+                    return;
                 }
+                this.releaseKind(pawnId, kind);
+                add(pawnId, kind, entries);
             },
             reduce(pawnId, key, qty) {
                 if (!pawnId || !key) return;
@@ -2240,6 +2256,21 @@
                 for (let i = list.length - 1; i >= 0; i--) {
                     if (list[i].pawnId === pawnId) list.splice(i, 1);
                 }
+            },
+            releaseKind(pawnId, kind) {
+                if (!pawnId || !kind) return;
+                for (let i = list.length - 1; i >= 0; i--) {
+                    if (list[i].pawnId === pawnId && list[i].kind === kind) list.splice(i, 1);
+                }
+            },
+            held(pawnId, kind) {
+                const out = [];
+                for (const r of list) {
+                    if (r.pawnId !== pawnId) continue;
+                    if (kind && r.kind !== kind) continue;
+                    out.push({ key: r.key, qty: r.qty, kind: r.kind || null });
+                }
+                return out;
             },
             prune(aliveIds) {
                 const live = aliveIds instanceof Set ? aliveIds : new Set(aliveIds || []);

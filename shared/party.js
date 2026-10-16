@@ -592,6 +592,16 @@
                 const poison = Number(food?.foodPoisonChance ?? 0) > 0;
                 if (poison && !allowPoison) continue;
                 if (isReservedAutoEat(stack, food) && !allowPoison) continue;
+                if (typeof opts.availableQty === "function") {
+                    const avail = Number(opts.availableQty({
+                        stack,
+                        slot: i,
+                        bag: bag.bag || "basket",
+                        extra: bag,
+                        pawn: bag.host || eater
+                    }));
+                    if (!(avail > 0)) continue;
+                }
                 const spoil = Number(stack.spoilAt ?? stack.spoilLeft ?? Infinity);
                 candidates.push({
                     pawn: bag.host || eater,

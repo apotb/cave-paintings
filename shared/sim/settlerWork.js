@@ -91,6 +91,8 @@ const shellRequire = typeof require === "function" ? require : undefined;
     const haltAtRack = (...args) => ctx.haltAtRack(...args);
     const haltAtBench = (...args) => ctx.haltAtBench(...args);
     const reservesOf = (...args) => ctx.reservesOf(...args);
+    const eatReserveBroken = (...args) => ctx.eatReserveBroken(...args);
+    const releaseFoodReserve = (...args) => ctx.releaseFoodReserve(...args);
     const halt = (...args) => ctx.halt(...args);
     const clearChopApproach = (...args) => ctx.clearChopApproach(...args);
     const chopTargetLive = (...args) => ctx.chopTargetLive(...args);
@@ -215,6 +217,14 @@ function tick(world, mob, delta) {
     const alive = new Set(settlersOf(world, settle).map((s) => s.id));
     claims?.prune(alive);
     reservesOf(world, settle).prune(alive);
+
+    if (eatReserveBroken(world, rec, settle)) {
+        releaseFoodReserve(world, rec, settle);
+        endWorkHold(rec);
+        rec._settlerPlan = null;
+        rec._settlerScan = scanWork(world, rec, settle, claims);
+        rec._settlerScanMs = 0;
+    }
 
     rec._settlerScanMs = (rec._settlerScanMs || 0) + (Number(delta) || 16);
     // Someone else took the pile. Drop the haul and rescan for the next job

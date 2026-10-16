@@ -4980,3 +4980,159 @@ test("settler keeps hauling when the settlement owner is offline", () => {
     );
 });
 
+function noJobs() {
+    return {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 0
+    };
+}
+
+function coconutMeal(kc = 900) {
+    return {
+        id: "coconut_meal",
+        quantity: 1,
+        ingredients: [{ id: "cracked_coconut", quantity: 1 }],
+        food: { kc }
+    };
+}
+
+test("a hungry settler reserves a whole coconut meal", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 800;
+    rec.stomach = 1600;
+    settle.jobs[rec.id] = noJobs();
+    const basket = addBasket(world, settle, rec.x + 180, rec.y, "meals");
+    basket.slots[0] = coconutMeal(900);
+    const other = addHomeSettler(world, pawn, settle, {
+        id: "hungry2",
+        x: rec.x,
+        y: rec.y,
+        kc: 800,
+        jobs: noJobs()
+    });
+    other.stomach = 1600;
+    workOnce(world, rec);
+    const key = `basket:${basket.uid}:0`;
+    const reserves = Settlement.medicineReservesFor(world, settle.id);
+    assert.equal(rec._settlerAct, "Getting food");
+    assert.equal(reserves.held(rec.id, "food")[0]?.qty, 1);
+    assert.equal(reserves.available(key, 1, other.id), 0);
+    workOnce(world, other);
+    assert.notEqual(other._settlerAct, "Getting food");
+    assert.equal(basket.slots[0]?.quantity, 1);
+    assert.equal(qtyOf(other.inventory, "coconut_meal"), 0);
+});
+
+test("a hungry settler reserves only the stackable portion they will eat", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 800;
+    rec.stomach = 1600;
+    settle.jobs[rec.id] = noJobs();
+    const basket = addBasket(world, settle, rec.x + 180, rec.y, "roast");
+    basket.slots[0] = { id: "roasted_human_flesh", quantity: 10 };
+    const other = addHomeSettler(world, pawn, settle, {
+        id: "hungry2",
+        x: rec.x,
+        y: rec.y,
+        kc: 800,
+        jobs: noJobs()
+    });
+    other.stomach = 1600;
+    workOnce(world, rec);
+    const reserves = Settlement.medicineReservesFor(world, settle.id);
+    const key = `basket:${basket.uid}:0`;
+    assert.equal(reserves.held(rec.id, "food")[0]?.qty, 3);
+    assert.equal(reserves.available(key, 10, other.id), 7);
+    workOnce(world, other);
+    assert.equal(other._settlerAct, "Getting food");
+    assert.equal(reserves.held(other.id, "food")[0]?.qty, 3);
+    assert.equal(basket.slots[0]?.quantity, 10);
+});
+
+test("a hauler moves a meal out of a basket that rejects food", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1, research: 0
+    };
+    const wrong = addBasket(world, settle, rec.x, rec.y, "wrong-food");
+    const good = addBasket(world, settle, rec.x + 48, rec.y, "good-food");
+    wrong.storageFilter = { priority: "normal", offCategories: ["food"] };
+    good.storageFilter = {
+        priority: "preferred",
+        offCategories: ["materials", "apparel", "tools", "weapons", "junk", "buildings", "medicine", "art"]
+    };
+    wrong.slots[0] = coconutMeal();
+    workOnce(world, rec);
+    workOnce(world, rec);
+    const stillWrong = (wrong.slots || []).some((s) => s && s.id === "coconut_meal");
+    const moved = (good.slots || []).some((s) => s && s.id === "coconut_meal")
+        || qtyOf(rec.inventory, "coconut_meal") > 0
+        || qtyOf(rec.overflow, "coconut_meal") > 0;
+    assert.equal(stillWrong, false);
+    assert.equal(moved, true);
+});
+
+test("a hauler leaves a meal a hungry settler has reserved", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: hauler } = parkSettler(world, pawn, { id: "hauler" });
+    hauler.kc = 1600;
+    settle.jobs[hauler.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1, research: 0
+    };
+    const eater = addHomeSettler(world, pawn, settle, {
+        id: "eater",
+        x: hauler.x + 180,
+        y: hauler.y,
+        kc: 800,
+        jobs: noJobs()
+    });
+    eater.stomach = 1600;
+    const wrong = addBasket(world, settle, hauler.x, hauler.y, "wrong-food");
+    const good = addBasket(world, settle, hauler.x + 48, hauler.y, "good-food");
+    wrong.storageFilter = { priority: "normal", offCategories: ["food"] };
+    good.storageFilter = {
+        priority: "preferred",
+        offCategories: ["materials", "apparel", "tools", "weapons", "junk", "buildings", "medicine", "art"]
+    };
+    wrong.slots[0] = coconutMeal();
+    workOnce(world, eater);
+    assert.equal(eater._settlerAct, "Getting food");
+    workOnce(world, hauler);
+    workOnce(world, hauler);
+    assert.equal(wrong.slots[0]?.id, "coconut_meal");
+    assert.equal(wrong.slots[0]?.quantity, 1);
+    assert.equal(qtyOf(hauler.inventory, "coconut_meal"), 0);
+    assert.equal((good.slots || []).some((s) => s && s.id === "coconut_meal"), false);
+});
+
+test("taking a reserved meal makes the settler look for other work", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    settle.jobs[rec.id] = noJobs();
+    workOnce(world, rec);
+    assert.equal(rec._settlerPlan, "idle");
+    rec.kc = 200;
+    const basket = addBasket(world, settle, rec.x + 180, rec.y, "meal-far");
+    basket.slots[0] = coconutMeal(900);
+    const mob = world._ensureSettlerCreature(rec);
+    world._tickSettlerWork(mob, 16);
+    assert.equal(rec._settlerAct, "Getting food");
+    basket.slots[0] = null;
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0, research: 0
+    };
+    originChunk(world).lootableThings.push({
+        uid: "sticks-after-take",
+        id: "sticks",
+        x: rec.x,
+        y: rec.y
+    });
+    world._tickSettlerWork(mob, 16);
+    assert.match(rec._settlerAct || "", /Gathering/i);
+    assert.equal(Settlement.medicineReservesFor(world, settle.id).held(rec.id, "food").length, 0);
+});
+

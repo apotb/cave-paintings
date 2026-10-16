@@ -58,6 +58,9 @@
     const skipJob = (...args) => ctx.skipJob(...args);
     const dropAsStack = (...args) => ctx.dropAsStack(...args);
     const haulDropQty = (...args) => ctx.haulDropQty(...args);
+    const reservesOf = (...args) => ctx.reservesOf(...args);
+    const foundAvail = (...args) => ctx.foundAvail(...args);
+    const releaseFoodReserve = (...args) => ctx.releaseFoodReserve(...args);
     const haulDropLive = (...args) => ctx.haulDropLive(...args);
     const abandonHaul = (...args) => ctx.abandonHaul(...args);
     const depositKeepGear = (...args) => ctx.depositKeepGear(...args);
@@ -121,6 +124,7 @@ function fetchCookPiece(world, rec, settle, found) {
     if (found.at === rec) return null;
     const walked = walkToFound(world, rec, found);
     if (walked) return walked;
+    if (!(foundAvail(world, rec, settle, found) > 0)) return halt();
     const stack = takeOne(found);
     if (!stack) return halt();
     if (takeToPawn(world, rec, stack) <= 0) {
@@ -137,7 +141,9 @@ function fetchCookQty(world, rec, settle, found, want) {
     if (found.at === rec) return null;
     const walked = walkToFound(world, rec, found);
     if (walked) return walked;
-    const cap = Math.max(1, Math.floor(Number(want) || 1));
+    const avail = foundAvail(world, rec, settle, found);
+    const cap = Math.min(Math.max(1, Math.floor(Number(want) || 1)), avail);
+    if (!(cap > 0)) return halt();
     const stack = takeQty(found, cap);
     if (!stack) return halt();
     const qty = Math.max(1, Number(stack.quantity) || 1);
@@ -223,6 +229,7 @@ function fetchEatStack(world, rec, settle, found) {
     }
     const left = (Number(piece.quantity) || 1) - got;
     if (left > 0) restorePiece(found, { ...piece, quantity: left });
+    releaseFoodReserve(world, rec, settle);
     if (found.entry) emitEntry(world, found.entry);
     world._dirtyPawnOwner(rec);
     rec._settlerScan = null;
@@ -822,16 +829,38 @@ function doMerge(world, rec, settle, job) {
     const src = job.from;
     const dest = job.to;
     if (!src || !dest) return halt();
+    const key = StorageFilter.mergeClaimKey(job) || job.claimKey;
+    const reservedAvail = () => {
+        const stack = src.slots?.[job.fromIndex];
+        if (!stack || src.uid == null) return 0;
+        return reservesOf(world, settle).available(
+            `basket:${src.uid}:${job.fromIndex}`,
+            stack.quantity,
+            rec.id
+        );
+    };
+    if (!(reservedAvail() > 0)) {
+        skipJob(rec, key);
+        endWorkHold(rec);
+        if (rec._settlerScan) rec._settlerScan.haulMerge = null;
+        return halt();
+    }
     const walked = goOrWalk(world, rec, src);
     if (walked) return walked;
-    const key = StorageFilter.mergeClaimKey(job) || job.claimKey;
     const stack = src.slots?.[job.fromIndex];
     if (!stack || (job.stackId && stack.id !== job.stackId)) {
         skipJob(rec, key);
         endWorkHold(rec);
         return halt();
     }
-    const took = takeToPawn(world, rec, stack);
+    const want = Math.min(Math.max(1, Math.floor(Number(stack.quantity) || 1)), reservedAvail());
+    if (!(want > 0)) {
+        skipJob(rec, key);
+        endWorkHold(rec);
+        if (rec._settlerScan) rec._settlerScan.haulMerge = null;
+        return halt();
+    }
+    const took = takeToPawn(world, rec, { ...stack, quantity: want });
     if (!(took > 0)) {
         skipJob(rec, key);
         endWorkHold(rec);

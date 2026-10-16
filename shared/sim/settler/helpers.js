@@ -1055,7 +1055,14 @@ function findBestChopStack(world, rec, settle) {
     for (const b of basketsOf(world, settle)) {
         const slots = b.slots || [];
         for (let i = 0; i < slots.length; i++) {
-            if (slots[i]) consider(slots, i, b, "basket", { entry: b });
+            if (!slots[i]) continue;
+            const avail = reservesOf(world, settle).available(
+                `basket:${b.uid}:${i}`,
+                slots[i].quantity,
+                rec.id
+            );
+            if (!(avail > 0)) continue;
+            consider(slots, i, b, "basket", { entry: b });
         }
     }
     return best;
@@ -1070,9 +1077,17 @@ function findStack(world, rec, settle, pred) {
     if (oi >= 0) return { slots: overflow, index: oi, at: rec, kind: "overflow", bag: "overflow" };
     for (const b of basketsOf(world, settle)) {
         const slots = b.slots || [];
-        const i = slots.findIndex((s) => s && pred(s));
-        if (i < 0) continue;
-        return { slots, index: i, at: b, kind: "basket", entry: b };
+        for (let i = 0; i < slots.length; i++) {
+            const s = slots[i];
+            if (!s || !pred(s)) continue;
+            const avail = reservesOf(world, settle).available(
+                `basket:${b.uid}:${i}`,
+                s.quantity,
+                rec.id
+            );
+            if (!(avail > 0)) continue;
+            return { slots, index: i, at: b, kind: "basket", entry: b };
+        }
     }
     return null;
 }
@@ -1081,8 +1096,48 @@ function dist2(a, b) {
     return Math.hypot((Number(a?.x) || 0) - (Number(b?.x) || 0), (Number(a?.y) || 0) - (Number(b?.y) || 0));
 }
 
+const FOOD_RESERVE_KIND = "food";
+
 function reservesOf(world, settle) {
     return Settlement.medicineReservesFor(world, settle?.id);
+}
+
+function releaseFoodReserve(world, rec, settle) {
+    if (!rec || !settle) return;
+    reservesOf(world, settle).releaseKind(rec.id, FOOD_RESERVE_KIND);
+}
+
+function reserveKeyQty(world, settle, key) {
+    const basket = /^basket:(.+):(\d+)$/.exec(String(key || ""));
+    if (basket) {
+        const entry = basketsOf(world, settle).find((b) => String(b.uid) === basket[1]);
+        const stack = entry?.slots?.[Number(basket[2])];
+        return Math.max(0, Math.floor(Number(stack?.quantity) || 0));
+    }
+    if (String(key || "").startsWith("drop:")) {
+        const drop = (dropsOf(world, settle) || []).find((d) => dropKey(d) === key);
+        return Math.max(0, Math.floor(Number(drop?.quantity) || 0));
+    }
+    return 0;
+}
+
+/** True when someone took units this pawn had claimed for a meal. */
+function eatReserveBroken(world, rec, settle) {
+    if (!rec || !settle) return false;
+    const rows = reservesOf(world, settle).held(rec.id, FOOD_RESERVE_KIND);
+    for (let i = 0; i < rows.length; i++) {
+        if (reserveKeyQty(world, settle, rows[i].key) < rows[i].qty) return true;
+    }
+    return false;
+}
+
+function foundAvail(world, rec, settle, found) {
+    const stack = found?.slots?.[found.index];
+    const qty = Math.max(0, Math.floor(Number(stack?.quantity) || 0));
+    if (!found || found.at === rec || found.kind === "inv" || found.kind === "overflow") return qty;
+    const key = medicineKey(found);
+    if (!key) return qty;
+    return reservesOf(world, settle).available(key, qty, rec.id);
 }
 
 function medicineKey(found) {
@@ -1302,9 +1357,17 @@ function findHeld(rec, pred) {
 function findStored(world, rec, settle, pred) {
     for (const b of basketsOf(world, settle)) {
         const slots = b.slots || [];
-        const i = slots.findIndex((s) => s && pred(s));
-        if (i < 0) continue;
-        return { slots, index: i, at: b, kind: "basket", entry: b };
+        for (let i = 0; i < slots.length; i++) {
+            const s = slots[i];
+            if (!s || !pred(s)) continue;
+            const avail = reservesOf(world, settle).available(
+                `basket:${b.uid}:${i}`,
+                s.quantity,
+                rec.id
+            );
+            if (!(avail > 0)) continue;
+            return { slots, index: i, at: b, kind: "basket", entry: b };
+        }
     }
     return null;
 }
@@ -1479,6 +1542,9 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     ctx.findBestChopStack = findBestChopStack;
     ctx.dist2 = dist2;
     ctx.reservesOf = reservesOf;
+    ctx.releaseFoodReserve = releaseFoodReserve;
+    ctx.eatReserveBroken = eatReserveBroken;
+    ctx.foundAvail = foundAvail;
     ctx.medicineKey = medicineKey;
     ctx.poulticeBatch = poulticeBatch;
     ctx.cordBatch = cordBatch;
