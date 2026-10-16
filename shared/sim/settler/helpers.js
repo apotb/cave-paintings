@@ -191,6 +191,9 @@ function endWorkHold(rec) {
     if (!rec) return;
     rec._workHold = false;
     rec._busyJob = null;
+    rec._researchMissMs = 0;
+    rec._researchPx = null;
+    rec._researchPy = null;
     clearPaintBar(rec);
 }
 
@@ -839,19 +842,98 @@ function paintingCirclesOf(world, settle) {
     return out;
 }
 
+function pigmentOk(entry, stack) {
+    if (!stack?.id || !(Number(stack.quantity) > 0) || !Research) return false;
+    return Research.isPigment(getItem(stack.id), stack)
+        && Research.allowsPigment(entry, stack, getItem);
+}
+
+function canHoldOne(rec, stack) {
+    if (!stack?.id) return false;
+    const one = { id: stack.id, quantity: 1 };
+    return canCarry(rec, one, 1) && hasCarryRoom(rec, one);
+}
+
+/** Nearest ground pile this settler can pick up. */
+function findSupplyDrop(world, rec, settle, pred) {
+    const claims = claimsFor(world, settle);
+    let best = null;
+    let bestD = Infinity;
+    for (const d of dropsOf(world, settle) || []) {
+        if (!d || !pred(d)) continue;
+        if (leaveHaulDrop(world, d)) continue;
+        const key = dropKey(d);
+        if (claimedByOther(claims, key, rec.id) || isSkipped(rec, key)) continue;
+        const qty = Math.max(0, Math.floor(Number(d.quantity) || 0));
+        if (!(reservesOf(world, settle).available(key, qty, rec.id) > 0)) continue;
+        if (!canHoldOne(rec, d)) continue;
+        const dist = dist2(rec, d);
+        if (dist < bestD) {
+            bestD = dist;
+            best = d;
+        }
+    }
+    return best;
+}
+
+function findHeldOrStored(world, rec, settle, pred) {
+    const found = findStack(world, rec, settle, pred);
+    if (!found) return null;
+    if (found.at === rec) return { found };
+    if (!canHoldOne(rec, found.slots?.[found.index])) return null;
+    return { found };
+}
+
+function findTally(world, rec, settle) {
+    const id = Research?.TALLY_ITEM_ID || "tally_stick";
+    const pred = (s) => s?.id === id && Number(s.quantity) > 0;
+    const held = findHeldOrStored(world, rec, settle, pred);
+    if (held) return held;
+    const drop = findSupplyDrop(world, rec, settle, pred);
+    return drop ? { drop } : null;
+}
+
+function findPigment(world, rec, settle, entry) {
+    const pred = (s) => pigmentOk(entry, s);
+    const held = findHeldOrStored(world, rec, settle, pred);
+    if (held) return held;
+    const drop = findSupplyDrop(world, rec, settle, pred);
+    return drop ? { drop } : null;
+}
+
+/**
+ * A circle is work only when this settler can do something with it.
+ * Selecting one with no dye, no tally, and no painting in progress made
+ * them halt every tick while the label stayed "Painting".
+ */
+function circleWorkable(world, rec, settle, entry) {
+    if (!entry || entry.gone || !Research?.isEnabled?.(entry)) return false;
+    const holder = researchHolder(world, rec, settle);
+    const needsTally = !!Research.needsTallyInstall?.(holder, entry);
+    const tally = needsTally && !!findTally(world, rec, settle);
+    if (!Research.hasRoom(entry) && !Research.inProgress(entry)) return tally;
+    if (Research.inProgress(entry)) return true;
+    // A tally goes in before the first dye. Dye alone is enough when the stick
+    // is already there, or when counting is not known yet.
+    if (tally) return true;
+    if (Research.needsPigment(entry)) return !!findPigment(world, rec, settle, entry);
+    return false;
+}
+
 function researchCircle(world, rec, settle, claims) {
     const list = paintingCirclesOf(world, settle);
     if (!list.length) return null;
     const mine = claims?.held(rec.id);
     if (mine && mine.startsWith("thing:")) {
         const held = list.find((e) => thingKey(e) === mine);
-        if (held && !isSkipped(rec, mine)) return held;
+        if (held && !isSkipped(rec, mine) && circleWorkable(world, rec, settle, held)) return held;
     }
     let best = null;
     let bestD = Infinity;
     for (const e of list) {
         const key = thingKey(e);
         if (claimedByOther(claims, key, rec.id) || isSkipped(rec, key)) continue;
+        if (!circleWorkable(world, rec, settle, e)) continue;
         const d = Math.hypot(rec.x - e.x, rec.y - e.y);
         if (d < bestD) {
             bestD = d;
@@ -1531,6 +1613,9 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     ctx.diggablesOf = diggablesOf;
     ctx.paintingCirclesOf = paintingCirclesOf;
     ctx.researchCircle = researchCircle;
+    ctx.findTally = findTally;
+    ctx.findPigment = findPigment;
+    ctx.pigmentOk = pigmentOk;
     ctx.settlersOf = settlersOf;
     ctx.countStored = countStored;
     ctx.countItem = countItem;

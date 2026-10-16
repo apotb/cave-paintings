@@ -4279,6 +4279,114 @@ test("disabled painting circle is skipped by researchers", () => {
     assert.equal(rec.inventory[0]?.quantity, 2);
 });
 
+test("researcher without dye does not stand still saying Painting", () => {
+    const Research = require("../shared/research");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [null, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-nodie",
+        id: "painting_circle",
+        x: rec.x + 96,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, def);
+    chunk.things.push(entry);
+    for (let i = 0; i < 40; i++) world.tick(50);
+    assert.equal(entry.paintStarted, false);
+    assert.equal(/Painting/i.test(rec._settlerAct || ""), false);
+    assert.notEqual(rec._busyJob?.type, "research");
+    const stand = Research.standWorldPos(entry);
+    assert.ok(
+        Math.hypot(rec.x - stand.x, rec.y - stand.y) > 32,
+        `should not walk to the circle, at ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`
+    );
+});
+
+test("researcher picks up dye off the ground and paints", () => {
+    const Research = require("../shared/research");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [null, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-ground",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, def);
+    chunk.things.push(entry);
+    chunk.drops.push({
+        uid: "dye-ground",
+        id: "blueberry",
+        quantity: 4,
+        x: rec.x + 48,
+        y: rec.y
+    });
+    let started = false;
+    for (let i = 0; i < 240; i++) {
+        world.tick(50);
+        if (entry.paintStarted) {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, `should fetch ground dye and paint (act=${rec._settlerAct})`);
+    const left = chunk.drops.find((d) => d.uid === "dye-ground");
+    assert.equal(left ? left.quantity : 0, 3);
+});
+
+test("researcher stops saying Painting when the circle cannot be reached", () => {
+    const Research = require("../shared/research");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{ id: "blueberry", quantity: 2 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-walled",
+        id: "painting_circle",
+        x: rec.x + 128,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, def);
+    chunk.things.push(entry);
+    world._partyPoseBlocked = () => true;
+    let sawPainting = false;
+    let gaveUp = false;
+    for (let i = 0; i < 80; i++) {
+        world.tick(50);
+        if (rec._settlerAct === "Painting") sawPainting = true;
+        if (sawPainting && rec._settlerAct !== "Painting" && rec._busyJob?.type !== "research") {
+            gaveUp = true;
+            break;
+        }
+    }
+    assert.equal(sawPainting, true, "should try to walk to the circle");
+    assert.equal(gaveUp, true, `kept ${rec._settlerAct} at ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`);
+    assert.equal(entry.paintStarted, false);
+    assert.equal(rec.inventory[0]?.quantity, 2);
+});
+
 test("researchers skip pigments the circle's materials filter forbids", () => {
     const Research = require("../shared/research");
     const { world, pawn } = createTestWorld();

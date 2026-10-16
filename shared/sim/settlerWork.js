@@ -424,7 +424,7 @@ function tick(world, mob, delta) {
         });
     }
     if (plan.type === "chop" && plan.target) return doChop(world, rec, settle, plan.target, delta);
-    if (plan.type === "research" && plan.target) return doResearch(world, rec, settle, plan.target);
+    if (plan.type === "research" && plan.target) return doResearch(world, rec, settle, plan.target, delta);
     if (plan.type === "haul" && plan.target) {
         if (plan.target.kind === "pack" || plan.target.kind === "move") {
             return doMerge(world, rec, settle, plan.target);

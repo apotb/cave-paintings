@@ -31,10 +31,16 @@
     const emitEntry = (...args) => ctx.emitEntry(...args);
     const facePaint = (...args) => ctx.facePaint(...args);
     const restorePiece = (...args) => ctx.restorePiece(...args);
-    const dropsOf = (...args) => ctx.dropsOf(...args);
     const goToDrop = (...args) => ctx.goToDrop(...args);
+    const paintStandOf = (...args) => ctx.paintStandOf(...args);
     const fetchCookPiece = (...args) => ctx.fetchCookPiece(...args);
     const setPaintBar = (...args) => ctx.setPaintBar(...args);
+    const setSettlerAct = (...args) => ctx.setSettlerAct(...args);
+    const findTally = (...args) => ctx.findTally(...args);
+    const findPigment = (...args) => ctx.findPigment(...args);
+    const pigmentOk = (...args) => ctx.pigmentOk(...args);
+    const paintingCirclesOf = (...args) => ctx.paintingCirclesOf(...args);
+    const dropKey = (...args) => ctx.dropKey(...args);
     const walkTo = (...args) => ctx.walkTo(...args);
     const clayWantsDig = (...args) => ctx.clayWantsDig(...args);
 
@@ -118,30 +124,99 @@ function pigmentPred(entry) {
     return (s) => Research.isPigment(getItem(s.id), s) && Research.allowsPigment(entry, s, getItem);
 }
 
-function doResearch(world, rec, settle, circle) {
+function holdingPigment(rec, entry) {
+    const pred = (s) => pigmentOk(entry, s);
+    return (rec?.inventory || []).some(pred) || (rec?.overflow || []).some(pred);
+}
+
+function holdingTally(rec) {
+    const id = Research?.TALLY_ITEM_ID || "tally_stick";
+    const has = (s) => s?.id === id && Number(s.quantity) > 0;
+    return (rec?.inventory || []).some(has) || (rec?.overflow || []).some(has);
+}
+
+/** The circle still standing in camp, not a leftover object from an old scan. */
+function liveCircle(world, settle, circle) {
     const entry = circle?.entry || circle;
+    if (!entry || entry.gone) return null;
+    const list = paintingCirclesOf(world, settle) || [];
+    if (entry.uid) {
+        const live = list.find((e) => e && !e.gone && String(e.uid) === String(entry.uid));
+        if (live) return live;
+    }
+    return list.includes(entry) ? entry : null;
+}
+
+function stopResearch(rec, entry, skip) {
+    endWorkHold(rec);
+    if (rec?._settlerScan) rec._settlerScan.researchCircle = null;
+    if (skip && entry) {
+        skipJob(rec, thingKey(entry));
+        rec._settlerScanMs = SCAN_MS;
+    }
+    setSettlerAct(rec, rec?.creature, "Idle");
+}
+
+/** Walked for a couple of seconds without moving: the stand or the dye is walled off. */
+function researchStalled(rec, delta) {
+    const x = Number(rec?.x) || 0;
+    const y = Number(rec?.y) || 0;
+    const px = rec._researchPx;
+    const py = rec._researchPy;
+    const dt = Number(delta) > 0 ? Number(delta) : 16;
+    rec._researchPx = x;
+    rec._researchPy = y;
+    if (px == null || Math.hypot(x - px, y - py) > 0.25) {
+        rec._researchMissMs = 0;
+        return false;
+    }
+    rec._researchMissMs = (rec._researchMissMs || 0) + dt;
+    return rec._researchMissMs > 2000;
+}
+
+function walkResearch(world, rec, entry, walked, delta) {
+    if (!walked?.walkTo) return walked || null;
+    if (researchStalled(rec, delta)) {
+        stopResearch(rec, entry, true);
+        return halt();
+    }
+    return walked;
+}
+
+function afterFetch(world, rec, entry, walked, delta, haveIt) {
+    if (walked?.walkTo) return walkResearch(world, rec, entry, walked, delta);
+    if (!haveIt()) {
+        stopResearch(rec, entry, true);
+        return halt();
+    }
+    return walked || halt();
+}
+
+function doResearch(world, rec, settle, circle, delta) {
+    const entry = liveCircle(world, settle, circle);
     if (!entry || !Research) {
-        endWorkHold(rec);
+        stopResearch(rec, null, false);
         return halt();
     }
     const def = world._thingDef(entry.id);
     Research.ensureEntry(entry, def);
     if (!Research.isEnabled(entry)) {
-        endWorkHold(rec);
+        stopResearch(rec, null, false);
         return halt();
     }
-    const tallyId = Research.TALLY_ITEM_ID || "tally_stick";
     if (Research.needsTallyInstall?.(researchHolder(world, rec, settle), entry)) {
-        const found = findStack(world, rec, settle, (s) => s?.id === tallyId);
-        if (found) {
+        const src = findTally(world, rec, settle);
+        if (src?.found) {
+            const found = src.found;
             if (found.at !== rec) {
                 clearPaintBar(rec);
-                return fetchStack(world, rec, settle, found) || halt();
+                const walked = fetchStack(world, rec, settle, found) || halt();
+                return afterFetch(world, rec, entry, walked, delta, () => holdingTally(rec));
             }
             const walked = goOrWalk(world, rec, entry);
             if (walked) {
                 clearPaintBar(rec);
-                return walked;
+                return walkResearch(world, rec, entry, walked, delta);
             }
             const piece = takeOne(found);
             if (piece && Research.installTally(entry)) {
@@ -152,50 +227,72 @@ function doResearch(world, rec, settle, circle) {
             } else if (piece) {
                 restorePiece(found, piece);
             }
-        } else {
-            const drop = (dropsOf(world, settle) || []).find((d) => d && d.id === tallyId);
-            if (drop) {
-                clearPaintBar(rec);
-                const walked = goToDrop(world, rec, drop);
-                if (walked) return walked;
-                world._tryPickup?.(rec, { dropId: drop.uid, quantity: 1 });
-                world._dirtyPawnOwner(rec);
-                return halt();
+        } else if (src?.drop) {
+            clearPaintBar(rec);
+            const drop = src.drop;
+            const walked = goToDrop(world, rec, drop);
+            if (walked) return walkResearch(world, rec, entry, walked, delta);
+            world._tryPickup?.(rec, { dropId: drop.uid, quantity: 1 });
+            world._dirtyPawnOwner(rec);
+            if (!holdingTally(rec)) {
+                skipJob(rec, dropKey(drop));
+                stopResearch(rec, null, false);
             }
+            return halt();
         }
     }
     if (!Research.hasRoom(entry) && !Research.inProgress(entry)) {
-        endWorkHold(rec);
+        stopResearch(rec, null, false);
         return halt();
     }
     if (Research.needsPigment(entry)) {
-        const found = findStack(world, rec, settle, pigmentPred(entry));
-        if (!found) {
-            endWorkHold(rec);
+        const src = findPigment(world, rec, settle, entry);
+        if (!src) {
+            stopResearch(rec, null, false);
             return halt();
         }
+        if (src.drop) {
+            clearPaintBar(rec);
+            const drop = src.drop;
+            const walked = goToDrop(world, rec, drop);
+            if (walked) return walkResearch(world, rec, entry, walked, delta);
+            world._tryPickup?.(rec, { dropId: drop.uid, quantity: 1 });
+            world._dirtyPawnOwner(rec);
+            if (!holdingPigment(rec, entry)) {
+                skipJob(rec, dropKey(drop));
+                stopResearch(rec, null, false);
+            }
+            return halt();
+        }
+        const found = src.found;
         if (found.at !== rec) {
             clearPaintBar(rec);
-            return fetchCookPiece(world, rec, settle, found) || halt();
+            const walked = fetchCookPiece(world, rec, settle, found) || halt();
+            return afterFetch(world, rec, entry, walked, delta, () => holdingPigment(rec, entry));
         }
         const walked = goOrWalk(world, rec, entry);
         if (walked) {
             clearPaintBar(rec);
-            return walked;
+            return walkResearch(world, rec, entry, walked, delta);
         }
         const piece = takeOne(found);
         if (!piece || !Research.startPaint(entry, piece.id)) {
             if (piece) restorePiece(found, piece);
-            endWorkHold(rec);
+            stopResearch(rec, null, false);
             return halt();
         }
         emitEntry(world, entry);
         world._dirtyPawnOwner(rec);
     }
-    const walked = goOrWalk(world, rec, entry);
-    if (walked) {
+    const stand = paintStandOf(entry);
+    if (!stand) {
+        stopResearch(rec, null, false);
+        return halt();
+    }
+    if (Math.hypot((Number(rec.x) || 0) - stand.x, (Number(rec.y) || 0) - stand.y) > 3) {
         clearPaintBar(rec);
-        return walked;
+        const walked = goOrWalk(world, rec, entry) || walkTo(stand.x, stand.y, { openRadius: 0 });
+        return walkResearch(world, rec, entry, walked, delta);
     }
     const now = world.gameMinutes;
     if (rec._paintTickMin == null) rec._paintTickMin = now;
@@ -206,6 +303,7 @@ function doResearch(world, rec, settle, circle) {
         const r = Research.addPaintMinutes(entry, elapsed);
         if (r.changed) emitEntry(world, entry);
     }
+    rec._researchMissMs = 0;
     setPaintBar(rec, entry);
     const facing = facePaint(rec, entry);
     return halt(facing ? { facing } : null);
