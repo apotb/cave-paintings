@@ -193,7 +193,7 @@
             const loot = [];
             if (randValue < 0.05) things.push("palm_tree");
             else if (randValue < 0.065) loot.push("coconut_tree");
-            else if (randValue < 0.07) loot.push("sticks");
+            else if (randValue < 0.07) { /* sticks spawn beside palms */ }
             return finish("sand", things, loot);
         }
         if (elevation < 0.15) {
@@ -201,7 +201,7 @@
                 const things = [];
                 const loot = [];
                 if (randValue < 0.1) things.push("snow_tree");
-                else if (randValue < 0.12) loot.push("sticks");
+                else if (randValue < 0.12) { /* sticks spawn beside snow trees */ }
                 else if (randValue < 0.14) things.push("snow_bush");
                 else if (randValue < 0.145) things.push(stoneDecor(tx, ty, "rock", elevation, temperature, "snow"));
                 return { key: "snow", things, loot };
@@ -211,10 +211,10 @@
                 const loot = [];
                 if (randValue < 0.1) things.push("tree");
                 else if (randValue < 0.15) things.push("bush");
-                else if (randValue < 0.18) loot.push("sticks");
+                else if (randValue < 0.18) { /* sticks spawn beside trees */ }
                 else if (randValue < 0.185) things.push(stoneDecor(tx, ty, "rock", elevation, temperature, "grass"));
                 else if (randValue < 0.19) loot.push("blueberry_bush");
-                else if (randValue < 0.21) loot.push("leaves");
+                else if (randValue < 0.21) { /* leaves spawn beside trees */ }
                 else if (randValue < 0.212) loot.push("apple_tree");
                 return { key: "grass", things, loot };
             }
@@ -236,7 +236,7 @@
             if (temperature < -0.25) {
                 if (randValue >= 0.07) {
                     if (randValue < 0.13) things.push("snow_tree");
-                    else if (randValue < 0.14) loot.push("sticks");
+                    else if (randValue < 0.14) { /* sticks spawn beside snow trees */ }
                     else if (randValue < 0.144) loot.push(stoneDecor(tx, ty, "pebbles", elevation, temperature, "snow_hill"));
                     else if (randValue < 0.1455) loot.push("flint");
                 }
@@ -245,8 +245,8 @@
             if (temperature < 0.25) {
                 if (randValue >= 0.07) {
                     if (randValue < 0.15) things.push("tree");
-                    else if (randValue < 0.165) loot.push("sticks");
-                    else if (randValue < 0.175) loot.push("leaves");
+                    else if (randValue < 0.165) { /* sticks spawn beside trees */ }
+                    else if (randValue < 0.175) { /* leaves spawn beside trees */ }
                     else if (randValue < 0.205) things.push("bush");
                     else if (randValue < 0.2075) loot.push("blueberry_bush");
                     else if (randValue < 0.211) loot.push(stoneDecor(tx, ty, "pebbles", elevation, temperature, "grass_hill"));
@@ -303,6 +303,7 @@
         if (spec && typeof spec === "object") {
             if (spec.stone) entry.stone = spec.stone;
             if (spec.variant) entry.variant = spec.variant;
+            if (spec.parentUid) entry.parentUid = spec.parentUid;
         }
         list.push(entry);
     }
@@ -468,7 +469,9 @@
         );
         // After the chunk stream is finished. Scatter rolls are per coordinate.
         applyScatters(cx, cy, worldSeed, tiles, things, lootableThings);
-        sprinklePebblesBesideRocks(cx, cy, tiles, things, lootableThings);
+        const spilled = spawnFromParents(
+            cx, cy, tiles, things, lootableThings, stamped, getGeneratedChunk
+        );
 
         return {
             cx,
@@ -480,56 +483,147 @@
             mobs,
             corpses: [],
             bloodStains: [],
+            yardKeys: stamped?.yard ? [...stamped.yard] : [],
+            spilled,
             generated: true
         };
     }
 
     const BLOCKED = new Set(["water", "ice"]);
-    const BESIDE = [[TS, 0], [-TS, 0], [0, TS], [0, -TS]];
-    const PEBBLE_BESIDE_SALT = 0x9b17;
+    const AROUND = [];
+    for (let oy = -1; oy <= 1; oy++) {
+        for (let ox = -1; ox <= 1; ox++) {
+            if (ox === 0 && oy === 0) continue;
+            AROUND.push([ox * TS, oy * TS]);
+        }
+    }
+
+    function thingDef(id) {
+        return DataStore?.getThing?.(id) || null;
+    }
+
+    function chunkOfPixel(px) {
+        return Math.floor(px / CHUNK_PX);
+    }
 
     /**
-     * About half of rocks get a pebble pile on a free neighboring tile.
-     * The pile keeps that rock's stone. This hash does not touch the chunk rand().
+     * Each spawn row rolls every tile around its parent. Rolls are per
+     * coordinate, so they do not move the chunk rand stream. A child whose
+     * tile is in an already-generated neighbor is written there. A child
+     * whose chunk does not exist yet is left for that chunk to place.
      */
-    function sprinklePebblesBesideRocks(cx, cy, tiles, things, lootableThings) {
-        const occupied = new Set();
-        const mark = (entry) => {
-            if (!entry) return;
-            const lx = Math.round((entry.x - TS / 2 - cx * CHUNK_PX) / TS);
-            const ly = Math.round((entry.y - TS - cy * CHUNK_PX) / TS);
-            if (lx >= 0 && ly >= 0 && lx < CS && ly < CS) occupied.add(lx + ly * CS);
+    function spawnFromParents(cx, cy, tiles, things, lootableThings, stamped, getGeneratedChunk) {
+        const spilled = [];
+        const here = {
+            cx,
+            cy,
+            tiles,
+            things,
+            lootableThings,
+            yard: stamped?.yard || new Set()
         };
-        for (const entry of things || []) mark(entry);
-        for (const entry of lootableThings || []) mark(entry);
-
-        for (const rock of things || []) {
-            if (rock?.id !== "rock") continue;
-            const tx = rock.x - TS / 2;
-            const ty = rock.y - TS;
-            const h = hash2D(tx | 0, ty | 0, PEBBLE_BESIDE_SALT);
-            if ((h % 1000) >= 500) continue;
-            const start = (h >>> 10) & 3;
-            for (let k = 0; k < 4; k++) {
-                const [dx, dy] = BESIDE[(start + k) & 3];
-                const nx = tx + dx;
-                const ny = ty + dy;
-                const lx = (nx - cx * CHUNK_PX) / TS;
-                const ly = (ny - cy * CHUNK_PX) / TS;
-                if (lx < 0 || ly < 0 || lx >= CS || ly >= CS) continue;
-                if ((lx | 0) !== lx || (ly | 0) !== ly) continue;
-                const idx = lx + ly * CS;
-                if (occupied.has(idx) || BLOCKED.has(tiles[idx])) continue;
-                const variant = (hash2D(nx | 0, ny | 0, STONE_SALT) & 1) ? 2 : 1;
-                const spec = { id: "pebbles", variant };
-                if (rock.stone) spec.stone = rock.stone;
-                const before = lootableThings.length;
-                pushDecor(lootableThings, nx, ny, spec);
-                if (lootableThings.length === before) continue;
-                occupied.add(idx);
-                break;
+        const map = new Map();
+        map.set(`${cx},${cy}`, here);
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dy === 0) continue;
+                const n = getGeneratedChunk?.(cx + dx, cy + dy);
+                if (!n?.tiles || !Number.isInteger(n.cx) || !Number.isInteger(n.cy)) continue;
+                map.set(`${n.cx},${n.cy}`, {
+                    cx: n.cx,
+                    cy: n.cy,
+                    tiles: n.tiles,
+                    things: n.things || [],
+                    lootableThings: n.lootableThings || [],
+                    yard: new Set(n.yardKeys || [])
+                });
             }
         }
+
+        const occupied = new Map();
+        const mark = (ch, entry) => {
+            if (!entry) return;
+            const lx = Math.round((entry.x - TS / 2 - ch.cx * CHUNK_PX) / TS);
+            const ly = Math.round((entry.y - TS - ch.cy * CHUNK_PX) / TS);
+            if (lx < 0 || ly < 0 || lx >= CS || ly >= CS) return;
+            let set = occupied.get(ch);
+            if (!set) {
+                set = new Set();
+                occupied.set(ch, set);
+            }
+            set.add(lx + ly * CS);
+        };
+        for (const ch of map.values()) {
+            for (const entry of ch.things || []) mark(ch, entry);
+            for (const entry of ch.lootableThings || []) mark(ch, entry);
+        }
+
+        const parents = [];
+        for (const ch of map.values()) {
+            for (const entry of ch.things || []) parents.push({ entry, ch });
+            for (const entry of ch.lootableThings || []) parents.push({ entry, ch });
+        }
+
+        for (const { entry, ch } of parents) {
+            const spawns = thingDef(entry?.id)?.spawns;
+            if (!entry?.uid || !Array.isArray(spawns) || !spawns.length) continue;
+            const originX = entry.x - TS / 2;
+            const originY = entry.y - TS;
+            const parentHere = ch.cx === cx && ch.cy === cy;
+            for (const spec of spawns) {
+                const childId = spec?.thing;
+                const chance = Number(spec?.chance);
+                const salt = spec?.salt;
+                if (!childId || !(chance > 0) || !Number.isInteger(salt)) continue;
+                const childDef = thingDef(childId);
+                if (!childDef) continue;
+                const threshold = Math.round(chance * 1000);
+                const listName = childDef.lootable ? "lootableThings" : "things";
+                for (const [dx, dy] of AROUND) {
+                    const nx = originX + dx;
+                    const ny = originY + dy;
+                    if (nx === 0 && ny === 0) continue;
+                    const ncx = chunkOfPixel(nx);
+                    const ncy = chunkOfPixel(ny);
+                    const dest = map.get(`${ncx},${ncy}`);
+                    if (!dest) continue;
+                    const childHere = ncx === cx && ncy === cy;
+                    if (!parentHere && !childHere) continue;
+                    const roll = hash2D(nx | 0, ny | 0, hash2D(originX | 0, originY | 0, salt >>> 0));
+                    if ((roll % 1000) >= threshold) continue;
+                    const lx = (nx - ncx * CHUNK_PX) / TS;
+                    const ly = (ny - ncy * CHUNK_PX) / TS;
+                    if (lx < 0 || ly < 0 || lx >= CS || ly >= CS) continue;
+                    if ((lx | 0) !== lx || (ly | 0) !== ly) continue;
+                    const idx = lx + ly * CS;
+                    if (BLOCKED.has(dest.tiles[idx])) continue;
+                    if (dest.yard?.has?.(`${nx / TS},${ny / TS}`)) continue;
+                    const taken = occupied.get(dest);
+                    if (taken?.has(idx)) continue;
+                    const decor = { id: childId, parentUid: entry.uid };
+                    if (Array.isArray(childDef.variants) && childDef.variants.length) {
+                        decor.variant = (hash2D(nx | 0, ny | 0, STONE_SALT) & 1) ? 2 : 1;
+                    }
+                    if (Array.isArray(spec.copy)) {
+                        for (const key of spec.copy) {
+                            if (entry[key] != null) decor[key] = entry[key];
+                        }
+                    }
+                    const list = dest[listName];
+                    if (!Array.isArray(list)) continue;
+                    const uid = `lt_${Math.round(nx + TS / 2)}_${Math.round(ny + TS)}_${childId}`;
+                    const clash = (dest.things || []).some((row) => row?.uid === uid)
+                        || (dest.lootableThings || []).some((row) => row?.uid === uid);
+                    if (clash) continue;
+                    const before = list.length;
+                    pushDecor(list, nx, ny, decor);
+                    if (list.length === before) continue;
+                    mark(dest, list[list.length - 1]);
+                    if (!childHere) spilled.push({ cx: ncx, cy: ncy, entry: list[list.length - 1] });
+                }
+            }
+        }
+        return spilled;
     }
 
     function scatterApi() {

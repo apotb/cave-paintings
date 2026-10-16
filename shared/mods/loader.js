@@ -142,6 +142,7 @@
             qualifyStringField(modId, row.lootable, "transform", locals);
             qualifyStringField(modId, row.choppable, "stump", locals);
             qualifyStringField(modId, row.diggable, "item", locals);
+            for (const spawn of row.spawns || []) qualifyStringField(modId, spawn, "thing", locals);
         }
         for (const row of data.mobs || []) {
             if (!row || typeof row !== "object") continue;

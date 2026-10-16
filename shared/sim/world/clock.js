@@ -208,8 +208,36 @@
         const src = chunks || this.chunks.values();
         for (const c of src) {
             if (!Array.isArray(c.lootableThings)) continue;
-            for (const entry of c.lootableThings) {
-                if (!entry || entry.regrowAt == null || now < entry.regrowAt) continue;
+            for (let i = c.lootableThings.length - 1; i >= 0; i--) {
+                const entry = c.lootableThings[i];
+                if (!entry) continue;
+                const waiting = !!(entry.gone || entry.regrowPaused);
+                if (waiting && entry.parentUid && !this._spawnChildMayRegrow(entry, c)) {
+                    const id = entry.regrowId || entry.id;
+                    c.lootableThings.splice(i, 1);
+                    this.pushEvent({
+                        kind: "lootable",
+                        cx: c.cx,
+                        cy: c.cy,
+                        x: entry.x,
+                        y: entry.y,
+                        uid: entry.uid || null,
+                        id,
+                        removed: true
+                    });
+                    continue;
+                }
+                if (!waiting && entry.regrowAt == null) continue;
+                if (waiting && this._placedThingCovers(entry)) {
+                    this._freezeRegrow(entry);
+                    continue;
+                }
+                if (entry.regrowPaused) {
+                    entry.regrowAt = now + (Number(entry.regrowLeft) || 0);
+                    delete entry.regrowLeft;
+                    delete entry.regrowPaused;
+                }
+                if (entry.regrowAt == null || now < entry.regrowAt) continue;
                 const id = entry.regrowId || entry.id;
                 if (!id) continue;
                 entry.id = id;
@@ -656,7 +684,8 @@
                     tileSize: 16,
                     things: n.things,
                     lootableThings: n.lootableThings,
-                    tiles: n.tiles
+                    tiles: n.tiles,
+                    yardKeys: n.yardKeys
                 };
             }
         });
@@ -664,7 +693,31 @@
         this._watchChunkThings(c);
         this._ensureLootableUids(c);
         this._registerChunkMobs(c);
+        this._emitSpawnSpills(c);
         return c;
+    },
+
+    _emitSpawnSpills(chunk) {
+        const spills = chunk?.spilled;
+        if (!Array.isArray(spills) || !spills.length) return;
+        for (const spill of spills) {
+            const entry = spill?.entry;
+            if (!entry) continue;
+            this.pushEvent({
+                kind: "lootable",
+                respawn: true,
+                cx: spill.cx,
+                cy: spill.cy,
+                x: entry.x,
+                y: entry.y,
+                uid: entry.uid || null,
+                id: entry.id,
+                stone: entry.stone,
+                variant: entry.variant,
+                parentUid: entry.parentUid
+            });
+        }
+        delete chunk.spilled;
     },
 
     chunkPayload(cx, cy) {

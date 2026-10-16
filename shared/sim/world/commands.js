@@ -697,7 +697,7 @@
         return { lootable: false, entry: { id: def.id, x, y } };
     },
 
-    _clearTileThings(tx, ty) {
+    _clearTileThings(tx, ty, opts = {}) {
         const { x, y } = this._tileCenter(tx, ty);
         const { cx, cy } = worldToChunk(x, y - 1);
         const chunk = this._ensureChunk(cx, cy);
@@ -707,19 +707,26 @@
             const ety = Math.floor((Number(entry.y) - 1) / TS);
             return etx === tx && ety === ty;
         };
-        if (Array.isArray(chunk.things)) {
-            chunk.things = chunk.things.filter((t) => !onTile(t));
-        }
-        if (Array.isArray(chunk.lootableThings)) {
-            chunk.lootableThings = chunk.lootableThings.filter((t) => !onTile(t));
-        }
+        const removed = [];
+        const keep = (entry) => {
+            if (!onTile(entry)) return true;
+            if (opts.keepWaiting && this._isWaitingRegrow(entry)) {
+                this._freezeRegrow(entry);
+                return true;
+            }
+            removed.push(entry);
+            return false;
+        };
+        if (Array.isArray(chunk.things)) chunk.things = chunk.things.filter(keep);
+        if (Array.isArray(chunk.lootableThings)) chunk.lootableThings = chunk.lootableThings.filter(keep);
+        for (const entry of removed) this._severSpawnChildren(entry);
         this._watchChunkThings(chunk);
         this._invalidateUidIndex();
         return chunk;
     },
 
     _setThingOnTile(tx, ty, entry, opts = {}) {
-        const chunk = this._clearTileThings(tx, ty);
+        const chunk = this._clearTileThings(tx, ty, { keepWaiting: !!entry?.id });
         const lootable = !!opts.lootable;
         if (entry?.id) {
             if (lootable) {
@@ -1445,6 +1452,7 @@
             const drops = Chop.rollDrops(bestDef, () => this.rng(), creature.getHeldItem?.());
             const piles = Chop.scatterFellPiles(drops, best.x, best.y, () => this.rng());
             Chop.fellToStump(best, bestDef);
+            this._severSpawnChildren(best);
             for (const p of piles) {
                 this._pushDrop(p.x, p.y, { id: p.id, quantity: p.quantity }, { noMerge: true });
             }
@@ -1509,6 +1517,113 @@
         for (const name of ["things", "lootableThings"]) {
             const i = (chunk[name] || []).indexOf(entry);
             if (i >= 0) chunk[name].splice(i, 1);
+        }
+        this._severSpawnChildren(entry);
+    },
+
+    _isWaitingRegrow(entry) {
+        return !!(entry && (entry.gone || entry.regrowPaused) && (entry.regrowAt != null || entry.regrowPaused));
+    },
+
+    _freezeRegrow(entry) {
+        if (!entry || entry.regrowPaused || entry.regrowAt == null) return;
+        const now = this.worldMinuteIndex();
+        entry.regrowLeft = Math.max(0, entry.regrowAt - now);
+        delete entry.regrowAt;
+        entry.regrowPaused = true;
+        entry.gone = true;
+    },
+
+    _entryTile(entry) {
+        return {
+            tx: Math.floor(Number(entry?.x) / TS),
+            ty: Math.floor((Number(entry?.y) - 1) / TS)
+        };
+    },
+
+    /** A placed thing's footprint covers this pile. Corpses and drops do not. */
+    _placedThingCovers(entry) {
+        if (!entry) return false;
+        const tile = this._entryTile(entry);
+        const near = this._chunksNear(entry.x, entry.y, 1, { load: false });
+        for (const c of near) {
+            for (const thing of c.things || []) {
+                if (!thing || thing.gone) continue;
+                const def = thingDefs().get(thing.id);
+                const tiles = Place.entryFootprintTiles(thing, TS, def);
+                if (tiles.some((t) => t.tx === tile.tx && t.ty === tile.ty)) return true;
+            }
+        }
+        return false;
+    },
+
+    /**
+     * A linked child regrows while its parent entry still lists that child.
+     * Unknown while a neighbor chunk is not loaded yet.
+     */
+    _spawnChildMayRegrow(entry, hintChunk) {
+        if (!entry?.parentUid) return true;
+        const parent = this._findSpawnParent(entry, hintChunk);
+        if (parent === undefined) return true;
+        if (!parent || parent.gone) return false;
+        const childId = entry.regrowId || entry.id;
+        const spawns = thingDefs().get(parent.id)?.spawns;
+        return Array.isArray(spawns) && spawns.some((row) => row && row.thing === childId);
+    },
+
+    _findSpawnParent(entry, hintChunk) {
+        const coords = [];
+        const add = (cx, cy) => {
+            if (!Number.isInteger(cx) || !Number.isInteger(cy)) return;
+            if (coords.some((p) => p[0] === cx && p[1] === cy)) return;
+            coords.push([cx, cy]);
+        };
+        const around = (cx, cy) => {
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) add(cx + dx, cy + dy);
+            }
+        };
+        if (hintChunk) around(hintChunk.cx, hintChunk.cy);
+        const at = worldToChunk(Number(entry.x) || 0, Number(entry.y) || 0);
+        around(at.cx, at.cy);
+        let missing = false;
+        for (const [cx, cy] of coords) {
+            const c = this.chunks.get(chunkKey(cx, cy));
+            if (!c) {
+                missing = true;
+                continue;
+            }
+            for (const listName of ["things", "lootableThings"]) {
+                for (const row of c[listName] || []) {
+                    if (row && row.uid === entry.parentUid) return row;
+                }
+            }
+        }
+        return missing ? undefined : null;
+    },
+
+    _severSpawnChildren(parent) {
+        if (!parent?.uid) return;
+        const near = this._chunksNear(parent.x, parent.y, 1, { load: false });
+        for (const c of near) {
+            if (!Array.isArray(c.lootableThings)) continue;
+            for (let i = c.lootableThings.length - 1; i >= 0; i--) {
+                const e = c.lootableThings[i];
+                if (!e || e.parentUid !== parent.uid) continue;
+                if (!(e.gone || e.regrowPaused)) continue;
+                const id = e.regrowId || e.id;
+                c.lootableThings.splice(i, 1);
+                this.pushEvent({
+                    kind: "lootable",
+                    removed: true,
+                    cx: c.cx,
+                    cy: c.cy,
+                    x: e.x,
+                    y: e.y,
+                    uid: e.uid || null,
+                    id
+                });
+            }
         }
     },
 

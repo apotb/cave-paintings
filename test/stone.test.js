@@ -141,12 +141,22 @@ test("a pebble pile can sit on the tile next to a rock and share its stone", () 
     const chunk = WorldGen.generateChunk(3, -5, 42);
     const again = WorldGen.generateChunk(3, -5, 42);
     assert.deepEqual(again.lootableThings, chunk.lootableThings);
-    const pile = chunk.lootableThings.find((entry) => entry.id === "pebbles" && chunk.things.some((rock) => {
-        if (rock.id !== "rock" || rock.stone !== entry.stone) return false;
+    const beside = (entry, rock) => {
+        if (!rock || rock.id !== "rock" || rock.uid !== entry.parentUid) return false;
+        if (rock.stone !== entry.stone) return false;
         const dx = Math.abs(rock.x - entry.x);
         const dy = Math.abs(rock.y - entry.y);
-        return (dx === 16 && dy === 0) || (dx === 0 && dy === 16);
-    }));
+        return dx <= 16 && dy <= 16 && (dx > 0 || dy > 0);
+    };
+    let pile = chunk.lootableThings.find((entry) => entry.id === "pebbles" && chunk.things.some((rock) => beside(entry, rock)));
+    if (!pile) {
+        for (let cy = -6; cy <= 6 && !pile; cy++) {
+            for (let cx = -6; cx <= 6 && !pile; cx++) {
+                const next = WorldGen.generateChunk(cx, cy, 42);
+                pile = next.lootableThings.find((entry) => entry.id === "pebbles" && next.things.some((rock) => beside(entry, rock)));
+            }
+        }
+    }
     assert.ok(pile, "a rock has a neighboring pebble pile of the same stone");
 });
 

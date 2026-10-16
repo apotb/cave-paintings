@@ -91,7 +91,7 @@
 
         const transform = loot.transform || null;
         const regrowMinutes = Number(loot.regrowMinutes) || 0;
-        const canRegrow = regrowMinutes > 0;
+        const canRegrow = regrowMinutes > 0 && this._spawnChildMayRegrow(best, bestChunk);
         const regrowAt = canRegrow
             ? GameMath.jitteredRegrowAt(regrowMinutes, this.worldMinuteIndex(), () => this.rng())
             : null;

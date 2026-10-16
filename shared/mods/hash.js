@@ -206,7 +206,26 @@
         put(out, "settlement", take(thing, "settlement"));
         put(out, "paintingCircle", take(thing, "paintingCircle"));
         put(out, "figurine", take(thing, "figurine"));
+        put(out, "spawns", copySpawns(thing));
         return out;
+    }
+
+    function copySpawns(thing) {
+        if (!Array.isArray(thing?.spawns)) return undefined;
+        const rows = [];
+        for (const row of thing.spawns) {
+            if (!row || typeof row !== "object") continue;
+            const out = {};
+            put(out, "thing", scalar(row.thing));
+            put(out, "chance", scalar(row.chance));
+            put(out, "salt", scalar(row.salt));
+            if (Array.isArray(row.copy)) {
+                const copy = list(row.copy);
+                if (copy) out.copy = copy;
+            }
+            if (out.thing) rows.push(out);
+        }
+        return rows.length ? rows : undefined;
     }
 
     function copyTech(tech) {

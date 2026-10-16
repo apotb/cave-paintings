@@ -19,7 +19,11 @@
         "hitboxSize": 5,
         "choppable": {
             "stump": "tree_stump"
-        }
+        },
+        "spawns": [
+            { "thing": "leaves", "chance": 0.05, "salt": 7845 },
+            { "thing": "sticks", "chance": 0.075, "salt": 22300 }
+        ]
     },
     {
         "id": "apple_tree",
@@ -34,7 +38,11 @@
             "yield": 3,
             "transform": "tree",
             "regrowMinutes": 2160
-        }
+        },
+        "spawns": [
+            { "thing": "leaves", "chance": 0.05, "salt": 7845 },
+            { "thing": "sticks", "chance": 0.075, "salt": 22300 }
+        ]
     },
     {
         "id": "snow_tree",
@@ -43,7 +51,10 @@
         "hitboxSize": 5,
         "choppable": {
             "stump": "snow_tree_stump"
-        }
+        },
+        "spawns": [
+            { "thing": "sticks", "chance": 0.05, "salt": 22300 }
+        ]
     },
     {
         "id": "cactus",
@@ -70,7 +81,10 @@
         "hitboxSize": 5,
         "choppable": {
             "stump": "coconut_tree_stump"
-        }
+        },
+        "spawns": [
+            { "thing": "sticks", "chance": 0.02, "salt": 22300 }
+        ]
     },
     {
         "id": "coconut_tree",
@@ -85,7 +99,10 @@
             "yield": 2,
             "transform": "palm_tree",
             "regrowMinutes": 2880
-        }
+        },
+        "spawns": [
+            { "thing": "sticks", "chance": 0.02, "salt": 22300 }
+        ]
     },
     {
         "id": "bush",
@@ -137,7 +154,10 @@
         "name": "Rock",
         "key": "rock",
         "variants": ["rock_1", "rock_2"],
-        "hitboxSize": 5
+        "hitboxSize": 5,
+        "spawns": [
+            { "thing": "pebbles", "chance": 0.125, "salt": 39703, "copy": ["stone"] }
+        ]
     },
     {
         "id": "sign",

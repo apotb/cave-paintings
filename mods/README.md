@@ -140,6 +140,8 @@ These objects select built-in behavior. A custom thing kind does not run when an
 
 `lootable.item` is the harvested item. `lootable.yield` is the count. `lootable.regrowMinutes` is when it grows back. `lootable.transform` is the thing id it becomes when harvested.
 
+`spawns` places other things on the eight tiles around this one, including diagonals. Each row is `{ "thing", "chance", "salt", "copy" }`. `chance` is the roll for one of those tiles, not for the whole parent. `salt` is an integer so the roll stays the same for a coordinate. `copy` is a list of fields to take from the parent, such as `"stone"` on a pebble pile beside a rock. When two rows hit the same tile, the earlier row keeps it. A child stops growing back when this thing is felled or removed.
+
 `choppable.stump` is the thing id left behind. `diggable.item` and `diggable.yield` are the dig product. `diggable.health` is how long the dig takes. `diggable.drops` maps item id to a count.
 
 `storage.slots` is the slot count. `storage.maxPerSlot` caps a stack in one slot. `storage.accept` limits what the container takes (`"hide"` on the drying rack). `storage.slotLabel` is the slot name in the panel.

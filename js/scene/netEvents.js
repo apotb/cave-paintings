@@ -589,6 +589,9 @@
                     y: ev.y,
                     uid: ev.uid || null
                 };
+                if (ev.stone) entry.stone = ev.stone;
+                if (ev.variant) entry.variant = ev.variant;
+                if (ev.parentUid) entry.parentUid = ev.parentUid;
                 list.push(entry);
             } else {
                 entry.id = ev.id;
