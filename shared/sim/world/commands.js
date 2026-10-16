@@ -12,8 +12,47 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function (ctx) {
     "use strict";
     const {
-        Protocol, Look, rng, Spoil, Durability, Apparel, Chop, Place, Sleep, Hunger, Path, Hide, Carry, Fire, Party, Settlement, StorageFilter, FuelFilter, CavemanNames, CorpseDecay, GameMath, DataStore, BodyHealing, Hediffs, BodyCombat, BodyMod, Capacities, HeadlessAI, SimCreatureMod, WorldGen, SettlerWork, mulberry32, hash2D, uuid, Body, createAI, PartyAI, WandererStrollAI, NeutralAnimalAI, createPlayerCreature, createMobCreature, feetToBodyCenter, CS, TS, CHUNK_PX, SPEED, SPRINT, MELEE_RANGE, INTEREST, SIM_CHUNKS, DROP_LIFE_MS, HARVEST_RANGE_TILES, BLOCKED, _research, _contentApi, _actionsApi, _kindsApi, _forming, _dig, _defGeneration, thingDefs, mobDefs, itemDefs, chunkKey, worldToChunk, emptyInv, dedupeCorpses
+        Protocol, Look, rng, Spoil, Durability, Apparel, Chop, Place, Sleep, Hunger, Path, Hide, Carry, Fire, Party, Settlement, StorageFilter, FuelFilter, CavemanNames, CorpseDecay, GameMath, DataStore, BodyHealing, Hediffs, BodyCombat, BodyMod, Capacities, HeadlessAI, SimCreatureMod, WorldGen, SettlerWork, mulberry32, hash2D, uuid, Body, createAI, PartyAI, WandererStrollAI, NeutralAnimalAI, createPlayerCreature, createMobCreature, feetToBodyCenter, CS, TS, CHUNK_PX, SPEED, SPRINT, MELEE_RANGE, INTEREST, SIM_CHUNKS, DROP_LIFE_MS, HARVEST_RANGE_TILES, BLOCKED, _research, _contentApi, _actionsApi, _kindsApi, _forming, _dig, _defGeneration, thingDefs, mobDefs, itemDefs,         chunkKey, worldToChunk, emptyInv, dedupeCorpses
     } = ctx;
+
+    function stoneApi() {
+        if (typeof Stone !== "undefined" && Stone.fromToken) return Stone;
+        try {
+            if (typeof require === "function") return require("../../stone");
+        } catch (_) { /* browser build uses the Stone global */ }
+        return null;
+    }
+
+    /**
+     * Optional tail of /give <item> [qty] [stuff]. Stuff depends on the item.
+     * @returns {{ extras?: object, error?: string }}
+     */
+    function giveStuff(meta, stuff) {
+        const raw = String(stuff || "").trim();
+        if (!raw) return { extras: {} };
+        if (meta?.id === "pebble") {
+            const stone = stoneApi()?.fromToken?.(raw);
+            if (!stone) return { error: `Unknown stone "${stuff}".` };
+            return { extras: { stone } };
+        }
+        return { error: `${meta?.name || meta?.id || "Item"} takes no extra.` };
+    }
+
+    /**
+     * Optional tail of /set <thing> [stuff]. Stuff depends on the thing.
+     * @returns {{ extras?: object, error?: string }}
+     */
+    function setStuff(def, stuff) {
+        const raw = String(stuff || "").trim();
+        if (!raw) return { extras: {} };
+        if (def?.id === "rock" || def?.id === "pebbles") {
+            const stone = stoneApi()?.fromToken?.(raw);
+            if (!stone) return { error: `Unknown stone "${stuff}".` };
+            return { extras: { stone } };
+        }
+        return { error: `${def?.name || def?.id || "Thing"} takes no extra.` };
+    }
+
     return {
 
     setMove(playerId, { x = 0, y = 0, sprint = false, facing = null, px = null, py = null, viewChunks = null, pawnId = null, partyPoses = null } = {}) {
@@ -399,19 +438,11 @@
             return;
         }
         if (cmd === "/give") {
+            const usage = "Usage: /give <item> [qty] [stuff]";
             const rawId = String(parts[1] || "").toLowerCase().replace(/-/g, "_");
             if (!rawId) {
-                this.announceCmd("Usage: /give <item> [qty]", { to: p.id });
+                this.announceCmd(usage, { to: p.id });
                 return;
-            }
-            let qty = 1;
-            if (parts[2] != null && parts[2] !== "") {
-                qty = Number(parts[2]);
-                if (!Number.isFinite(qty) || qty < 1 || !Number.isInteger(qty)) {
-                    this.announceCmd("Usage: /give <item> [qty]", { to: p.id });
-                    return;
-                }
-                qty = Math.min(9999, Math.floor(qty));
             }
             const meta = itemDefs().get(rawId)
                 || [...itemDefs().values()].find((it) =>
@@ -422,14 +453,34 @@
                 this.announceCmd(`Unknown item "${parts[1]}".`, { to: p.id });
                 return;
             }
-            const spoilLeft = Spoil.defaultSpoilLeft(meta);
-            const extras = spoilLeft != null ? { spoilLeft } : null;
-            const pawn = this._actionPawn(p) || p;
-            const left = this._give(pawn, meta.id, qty, extras);
-            if (left > 0) {
-                this._pushDrop(pawn.x, pawn.y, { id: meta.id, quantity: left });
+            let qty = 1;
+            if (parts[2] != null && parts[2] !== "") {
+                qty = Number(parts[2]);
+                if (!Number.isFinite(qty) || qty < 1 || !Number.isInteger(qty)) {
+                    this.announceCmd(usage, { to: p.id });
+                    return;
+                }
+                qty = Math.min(9999, Math.floor(qty));
             }
-            const label = meta.name || meta.id;
+            const applied = giveStuff(meta, parts.slice(3).join(" "));
+            if (applied.error) {
+                this.announceCmd(applied.error, { to: p.id });
+                return;
+            }
+            const stone = applied.extras?.stone || null;
+            const spoilLeft = Spoil.defaultSpoilLeft(meta);
+            const extras = { ...(applied.extras || {}) };
+            if (spoilLeft != null) extras.spoilLeft = spoilLeft;
+            const pawn = this._actionPawn(p) || p;
+            const left = this._give(pawn, meta.id, qty, Object.keys(extras).length ? extras : null);
+            if (left > 0) {
+                const drop = { id: meta.id, quantity: left, ...(applied.extras || {}) };
+                this._pushDrop(pawn.x, pawn.y, drop);
+            }
+            const stones = stoneApi();
+            const label = (meta.id === "pebble" && stones?.displayName)
+                ? stones.displayName({ id: "pebble", stone })
+                : (meta.name || meta.id);
             const out = left > 0
                 ? `Gave ${qty}× ${label} (${left} dropped on ground)`
                 : `Gave ${qty}× ${label}`;
@@ -538,26 +589,44 @@
             return;
         }
         if (cmd === "/set") {
-            const usage = "Usage: /set <thing>/null";
+            const usage = "Usage: /set <thing> [stuff]";
             const rawId = parts.slice(1).join(" ").trim();
             if (!rawId) {
                 this.announceCmd(usage, { to: p.id });
                 return;
             }
-            const needle = rawId.toLowerCase().replace(/-/g, "_").replace(/\s+/g, "_");
+            const needleOf = (text) => String(text || "").toLowerCase().replace(/-/g, "_").replace(/\s+/g, "_");
+            const findThing = (text) => {
+                const needle = needleOf(text);
+                return thingDefs().get(needle)
+                    || [...thingDefs().values()].find((t) =>
+                        (t.name || "").toLowerCase().replace(/\s+/g, "_") === needle
+                        || (t.name || "").toLowerCase() === String(text || "").toLowerCase().replace(/_/g, " ")
+                    );
+            };
             const { tx, ty } = this._playerTile(p);
-            if (needle === "null" || needle === "none" || needle === "clear") {
+            if (needleOf(rawId) === "null" || needleOf(rawId) === "none" || needleOf(rawId) === "clear") {
                 this._setThingOnTile(tx, ty, null);
                 this.announceCmd("Cleared thing", { to: p.id });
                 return;
             }
-            const def = thingDefs().get(needle)
-                || [...thingDefs().values()].find((t) =>
-                    (t.name || "").toLowerCase().replace(/\s+/g, "_") === needle
-                    || (t.name || "").toLowerCase() === rawId.toLowerCase().replace(/_/g, " ")
-                );
+            const tokens = parts.slice(1);
+            let def = null;
+            let stuff = "";
+            for (let len = tokens.length; len >= 1; len--) {
+                const preview = findThing(tokens.slice(0, len).join(" "));
+                if (!preview?.id) continue;
+                def = preview;
+                stuff = tokens.slice(len).join(" ");
+                break;
+            }
             if (!def?.id) {
                 this.announceCmd(`Unknown thing "${rawId}".`, { to: p.id });
+                return;
+            }
+            const applied = setStuff(def, stuff);
+            if (applied.error) {
+                this.announceCmd(applied.error, { to: p.id });
                 return;
             }
             const made = this._makeThingEntry(def, tx, ty);
@@ -565,8 +634,13 @@
                 this.announceCmd(`Failed to set ${def.name || def.id}.`, { to: p.id });
                 return;
             }
+            if (applied.extras?.stone) made.entry.stone = applied.extras.stone;
             this._setThingOnTile(tx, ty, made.entry, { lootable: made.lootable });
-            this.announceCmd(`Set ${def.name || def.id}`, { to: p.id });
+            const typeName = applied.extras?.stone
+                ? (stoneApi()?.props?.(applied.extras.stone)?.name || applied.extras.stone)
+                : "";
+            const label = typeName ? `${typeName} ${def.name || def.id}` : (def.name || def.id);
+            this.announceCmd(`Set ${label}`, { to: p.id });
             return;
         }
         this.announceCmd(`Unknown command: ${cmd}`, { to: p.id });
@@ -1539,9 +1613,8 @@
         if (src.sharpness != null) out.sharpness = src.sharpness;
         if (src.knapDamage != null) out.knapDamage = src.knapDamage;
         if (src.knapMaterial) out.knapMaterial = src.knapMaterial;
-        if (typeof Stone !== "undefined" && Stone.normalizeStone?.(src.stone)) {
-            out.stone = Stone.normalizeStone(src.stone);
-        }
+        const srcStone = stoneApi()?.normalizeStone?.(src.stone);
+        if (srcStone) out.stone = srcStone;
         if (src.knapQuality) out.knapQuality = src.knapQuality;
         if (src.tooltipExtra) out.tooltipExtra = src.tooltipExtra;
         if (src.knapIconData) {
@@ -1610,9 +1683,8 @@
         if (extras.sharpness != null) slot.sharpness = extras.sharpness;
         if (extras.knapDamage != null) slot.knapDamage = extras.knapDamage;
         if (extras.knapMaterial) slot.knapMaterial = extras.knapMaterial;
-        if (typeof Stone !== "undefined" && Stone.normalizeStone?.(extras.stone)) {
-            slot.stone = Stone.normalizeStone(extras.stone);
-        }
+        const slotStone = stoneApi()?.normalizeStone?.(extras.stone);
+        if (slotStone) slot.stone = slotStone;
         if (extras.knapQuality) slot.knapQuality = extras.knapQuality;
         if (extras.tooltipExtra) slot.tooltipExtra = extras.tooltipExtra;
         if (extras.knapIconData) slot.knapIconData = extras.knapIconData;

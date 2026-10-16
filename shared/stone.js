@@ -100,6 +100,17 @@
         return null;
     }
 
+    /** A stone id or display name from a chat command. "pebble" is not a stone. */
+    function fromToken(raw) {
+        const id = String(raw || "").trim().toLowerCase().replace(/-/g, "_").replace(/\s+/g, "_");
+        if (TYPES[id]) return id;
+        const name = id.replace(/_/g, " ");
+        for (const key of TYPE_ORDER) {
+            if (TYPES[key].name.toLowerCase() === name) return key;
+        }
+        return null;
+    }
+
     /** Andesite when the stack is a pebble rock and the field is blank. Null for flint. */
     function stoneOf(stack) {
         if (!stack || isFlintStack(stack)) return null;
@@ -488,6 +499,7 @@
         HAND_AXE_TOUGHNESS,
         materialId,
         normalizeStone,
+        fromToken,
         stoneOf,
         stoneKey,
         sameStone,

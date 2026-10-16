@@ -895,6 +895,36 @@ test("/kms aliases /kill", () => {
     assert.equal(pawn.dead, true);
 });
 
+test("/give pebble keeps the stone, and /set stamps it on rocks and piles", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give pebble 4 granite" });
+    const stack = pawn.inventory.find((s) => s && s.id === "pebble");
+    assert.ok(stack);
+    assert.equal(stack.quantity, 4);
+    assert.equal(stack.stone, "granite");
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give pebble 2" });
+    assert.ok(pawn.inventory.some((s) => s && s.id === "pebble" && s.quantity === 2 && !s.stone));
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give stick 1 granite" });
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give pebble 1 quartz" });
+    const chats = world.drainEvents().filter((e) => e.kind === "chat");
+    assert.ok(chats.some((e) => e.text === "Stick takes no extra."));
+    assert.ok(chats.some((e) => e.text === 'Unknown stone "quartz".'));
+    assert.equal(pawn.inventory.some((s) => s && s.id === "stick"), false);
+    const chunk = originChunk(world);
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/set rock diorite" });
+    assert.equal((chunk.things || []).find((t) => t && t.id === "rock")?.stone, "diorite");
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/set pebbles sandstone" });
+    assert.equal((chunk.lootableThings || []).find((t) => t && t.id === "pebbles")?.stone, "sandstone");
+    assert.equal((chunk.things || []).find((t) => t && t.id === "rock"), undefined);
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/set flowering cactus" });
+    assert.ok((chunk.lootableThings || []).some((t) => t && t.id === "flowering_cactus"));
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/set tree granite" });
+    const setChats = world.drainEvents().filter((e) => e.kind === "chat");
+    assert.ok(setChats.some((e) => e.text === "Tree takes no extra."));
+    assert.equal((chunk.things || []).find((t) => t && t.id === "tree"), undefined);
+    assert.ok((chunk.lootableThings || []).some((t) => t && t.id === "flowering_cactus"));
+});
+
 test("/heal restores body and announces", () => {
     const { world, pawn, Protocol } = createTestWorld();
     pawn.hp = 1;

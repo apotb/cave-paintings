@@ -153,20 +153,54 @@ class CombatLog {
         this._layoutDirty = false;
     }
 
+    /**
+     * Optional tail of /give <item> [qty] [stuff]. Stuff depends on the item.
+     * @returns {{ extras?: object, error?: string }}
+     */
+    _giveStuff(meta, stuff) {
+        const raw = String(stuff || "").trim();
+        if (!raw) return { extras: {} };
+        if (meta?.id === "pebble") {
+            const stone = (typeof Stone !== "undefined" && Stone.fromToken)
+                ? Stone.fromToken(raw)
+                : null;
+            if (!stone) return { error: `Unknown stone "${stuff}".` };
+            return { extras: { stone } };
+        }
+        return { error: `${meta?.name || meta?.id || "Item"} takes no extra.` };
+    }
+
+    /**
+     * Optional tail of /set <thing> [stuff]. Stuff depends on the thing.
+     * @returns {{ extras?: object, error?: string }}
+     */
+    _setStuff(def, stuff) {
+        const raw = String(stuff || "").trim();
+        if (!raw) return { extras: {} };
+        if (def?.id === "rock" || def?.id === "pebbles") {
+            const stone = (typeof Stone !== "undefined" && Stone.fromToken)
+                ? Stone.fromToken(raw)
+                : null;
+            if (!stone) return { error: `Unknown stone "${stuff}".` };
+            return { extras: { stone } };
+        }
+        return { error: `${def?.name || def?.id || "Thing"} takes no extra.` };
+    }
+
     /** Slash commands (no speech bubble). */
     _handleCommand(raw) {
         const parts = String(raw).trim().split(/\s+/);
         const cmd = (parts[0] || "").toLowerCase();
         const helpSyntax = {
             debug: "/debug blood/chunks/combat_log/fps/location [show/hide]",
-            give: "/give <item> [qty]",
+            give: "/give <item> [qty] [stuff]",
             heal: "/heal",
             help: "/help [command]",
             kms: "/kms",
             regen: "/regen",
             seed: "/seed",
             spawn: "/spawn <mob>",
-            set: "/set <thing>/null",
+            set: "/set <thing> [stuff]",
             tick: "/tick [speed]",
             time: "/time [HH] [MM]",
             tp: "/tp <x> <y>",
@@ -330,15 +364,53 @@ class CombatLog {
             return;
         }
         if (cmd === "/set") {
-            const usage = "Usage: /set <thing>/null";
+            const usage = "Usage: /set <thing> [stuff]";
             const rawId = parts.slice(1).join(" ").trim();
             if (!rawId) {
                 this.pushError(usage);
                 return;
             }
-            const resolved = this.scene.resolveThingDef?.(rawId);
+            const needle = rawId.toLowerCase().replace(/-/g, "_").replace(/\s+/g, "_");
+            if (needle === "null" || needle === "none" || needle === "clear") {
+                const player = this.scene.player;
+                if (!player) {
+                    this.push("No player to set at.");
+                    return;
+                }
+                const tile = this.scene.playerFeetTile?.(player);
+                if (!tile) {
+                    this.pushError("No tile to set.");
+                    return;
+                }
+                if (this.scene.simAuth()) {
+                    this.scene._netSendMove?.(true);
+                    this.scene.net.sendAction({
+                        type: NetProtocol.Actions.CHAT,
+                        text: "/set null"
+                    });
+                    return;
+                }
+                this.scene.setThingOnTile(tile.tx, tile.ty, null);
+                this.push("Cleared thing");
+                return;
+            }
+            const tokens = parts.slice(1);
+            let resolved = null;
+            let stuff = "";
+            for (let len = tokens.length; len >= 1; len--) {
+                const preview = this.scene.resolveThingDef?.(tokens.slice(0, len).join(" "));
+                if (!preview?.id || preview.clear) continue;
+                resolved = preview;
+                stuff = tokens.slice(len).join(" ");
+                break;
+            }
             if (!resolved) {
                 this.pushError(`Unknown thing "${rawId}".`);
+                return;
+            }
+            const applied = this._setStuff(resolved, stuff);
+            if (applied.error) {
+                this.pushError(applied.error);
                 return;
             }
             const player = this.scene.player;
@@ -351,18 +423,14 @@ class CombatLog {
                 this.pushError("No tile to set.");
                 return;
             }
+            const stone = applied.extras?.stone || null;
             if (this.scene.simAuth()) {
                 this.scene._netSendMove?.(true);
-                const id = resolved.clear ? "null" : resolved.id;
+                const tail = stuff ? ` ${stone || stuff}` : "";
                 this.scene.net.sendAction({
                     type: NetProtocol.Actions.CHAT,
-                    text: `/set ${id}`
+                    text: `/set ${resolved.id}${tail}`
                 });
-                return;
-            }
-            if (resolved.clear) {
-                this.scene.setThingOnTile(tile.tx, tile.ty, null);
-                this.push("Cleared thing");
                 return;
             }
             const { x, y } = this.scene.tileCenter(tile.tx, tile.ty);
@@ -371,15 +439,30 @@ class CombatLog {
                 this.pushError(`Failed to set ${resolved.name || resolved.id}.`);
                 return;
             }
+            if (stone) made.entry.stone = stone;
             this.scene.setThingOnTile(tile.tx, tile.ty, made.entry, { lootable: made.lootable });
-            this.push(`Set ${resolved.name || resolved.id}`);
+            const typeName = stone && typeof Stone !== "undefined"
+                ? (Stone.props?.(stone)?.name || stone)
+                : "";
+            const label = typeName ? `${typeName} ${resolved.name || resolved.id}` : (resolved.name || resolved.id);
+            this.push(`Set ${label}`);
             return;
         }
         if (cmd === "/give") {
-            const usage = "Usage: /give <item> [qty]";
+            const usage = "Usage: /give <item> [qty] [stuff]";
             const idArg = (parts[1] || "").toLowerCase();
             if (!idArg) {
                 this.pushError(usage);
+                return;
+            }
+            const items = (this.scene.items?.() || []).filter(Boolean);
+            const needle = idArg.replace(/-/g, "_");
+            const meta = this.scene.getItem?.(needle)
+                || items.find(i => (i.id || "").toLowerCase() === needle)
+                || items.find(i => (i.name || "").toLowerCase().replace(/\s+/g, "_") === needle)
+                || items.find(i => (i.name || "").toLowerCase() === idArg.replace(/_/g, " "));
+            if (!meta?.id) {
+                this.pushError(`Unknown item "${parts[1]}".`);
                 return;
             }
             let qty = 1;
@@ -391,16 +474,13 @@ class CombatLog {
                 }
                 qty = Math.min(9999, qty);
             }
-            const items = (this.scene.items?.() || []).filter(Boolean);
-            const needle = idArg.replace(/-/g, "_");
-            let meta = this.scene.getItem?.(needle)
-                || items.find(i => (i.id || "").toLowerCase() === needle)
-                || items.find(i => (i.name || "").toLowerCase().replace(/\s+/g, "_") === needle)
-                || items.find(i => (i.name || "").toLowerCase() === idArg.replace(/_/g, " "));
-            if (!meta?.id) {
-                this.pushError(`Unknown item "${parts[1]}".`);
+            const stuff = parts.slice(3).join(" ");
+            const applied = this._giveStuff(meta, stuff);
+            if (applied.error) {
+                this.pushError(applied.error);
                 return;
             }
+            const stone = applied.extras?.stone || null;
             const player = this.scene.player;
             if (!player) {
                 this.push("No player to give to.");
@@ -409,17 +489,21 @@ class CombatLog {
             // Dedicated MP: server owns inventory (YOU). Local give alone is stomped.
             if (this.scene.simAuth()) {
                 this.scene._netSendMove?.(true);
+                const tail = stuff ? ` ${stone || stuff}` : "";
                 this.scene.net.sendAction({
                     type: NetProtocol.Actions.CHAT,
-                    text: `/give ${meta.id} ${qty}`
+                    text: `/give ${meta.id} ${qty}${tail}`
                 });
                 return;
             }
-            const remaining = player.gainItem(meta, qty);
+            const extras = applied.extras && Object.keys(applied.extras).length ? applied.extras : null;
+            const remaining = player.gainItem(meta, qty, undefined, extras);
             if (remaining > 0) {
-                DroppedItem.spawn(this.scene, player.x, player.y, meta, remaining);
+                DroppedItem.spawn(this.scene, player.x, player.y, meta, remaining, undefined, extras);
             }
-            const label = meta.name || meta.id;
+            const label = (meta.id === "pebble" && typeof Stone !== "undefined" && Stone.displayName)
+                ? Stone.displayName({ id: "pebble", stone })
+                : (meta.name || meta.id);
             if (remaining > 0) {
                 this.push(`Gave ${qty}× ${label} (${remaining} dropped on ground)`);
             } else {

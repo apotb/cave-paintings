@@ -81,6 +81,14 @@ test("shade marks stamp the secondary color onto the body", () => {
     assert.deepEqual(Array.from(body.slice(4, 8)), [0x8a, 0x6a, 0x62, 255]);
 });
 
+test("a stone token accepts the id or the display name", () => {
+    assert.equal(Stone.fromToken("granite"), "granite");
+    assert.equal(Stone.fromToken("Limestone"), "limestone");
+    assert.equal(Stone.fromToken("sand-stone"), null);
+    assert.equal(Stone.fromToken("pebble"), null);
+    assert.equal(Stone.fromToken("5"), null);
+});
+
 test("pebble stacks of different stones do not merge, and a blank is andesite", () => {
     assert.equal(SF.stacksMatch(
         { id: "pebble", quantity: 1, stone: "granite" },
