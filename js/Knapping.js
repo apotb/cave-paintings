@@ -558,6 +558,9 @@ const Knapping = {
         const tipW = Math.min(left, right);
         const bodyW = Math.max(left, right);
         const taper = bodyW < 1.5 ? 0 : Math.max(0, Math.min(1, 1 - tipW / bodyW));
+        let maxCount = 1;
+        for (const vs of slices) if (vs.length > maxCount) maxCount = vs.length;
+        const bit = bodyW / maxCount;
 
         let multi = 0;
         let total = 0;
@@ -579,6 +582,7 @@ const Knapping = {
             width,
             elong: length / Math.max(1, width),
             taper,
+            bit,
             fork: total ? multi / total : 0,
             proj
         };
@@ -606,6 +610,54 @@ const Knapping = {
             if (ok) hit++;
         }
         return hit / proj.length;
+    },
+
+    /**
+     * Wider end's thickness divided by the fattest slice.
+     * A straight bit stays near 1. An oval's ends fall off.
+     */
+    _bitScore(grid) {
+        const box = this._aabb(grid);
+        if (box.w < 3 || box.h < 2) return 0;
+        const widths = [];
+        if (box.w >= box.h) {
+            for (let x = box.minX; x <= box.maxX; x++) {
+                let c = 0;
+                for (let y = box.minY; y <= box.maxY; y++) if (grid[y][x]) c++;
+                widths.push(c);
+            }
+        } else {
+            for (let y = box.minY; y <= box.maxY; y++) {
+                let c = 0;
+                for (let x = box.minX; x <= box.maxX; x++) if (grid[y][x]) c++;
+                widths.push(c);
+            }
+        }
+        const n = widths.length;
+        const q = Math.max(1, Math.floor(n / 4));
+        let left = 0;
+        let right = 0;
+        for (let i = 0; i < q; i++) left += widths[i];
+        for (let i = n - q; i < n; i++) right += widths[i];
+        left /= q;
+        right /= q;
+        let maxW = 1;
+        for (const w of widths) if (w > maxW) maxW = w;
+        return Math.max(left, right) / maxW;
+    },
+
+    /**
+     * Flat-ended block that fits in a real blank. A flint's solid middle is
+     * about 7×6, a pebble's about 9×4. A 10×10 does not fit in either sprite.
+     * A 2-cell spear shaft stays a spear (minSide under 4, or longer than 2.6).
+     */
+    _isCleaver(mass, elong, bit, fill, minSide) {
+        return bit >= 0.85
+            && fill >= 0.8
+            && minSide >= 4
+            && mass >= 28
+            && mass <= 80
+            && elong < 2.6;
     },
 
     _handAxeGate(material) {
@@ -838,6 +890,7 @@ const Knapping = {
         const thickness = this._distToEdge(grid);
         let taper = this._taperScore(grid);
         let fork = this._forkRatio(grid);
+        let bit = this._bitScore(grid);
         const fill = mass / Math.max(1, box.w * box.h);
         const allow = (cls) => !unlocked || !!unlocked[cls];
 
@@ -851,12 +904,14 @@ const Knapping = {
             maxSide = axis.length;
             taper = axis.taper;
             fork = axis.fork;
+            bit = axis.bit;
         }
 
         // Order matters. Awl before spear/knife so butt+spike isn't stolen.
         // Spear = long fairly even shaft; knife = tapered blade with body.
         let toolClass = "blank";
         let reject = null;
+        let rejectClass = null;
         if (
             allow("awl")
             // Small pierce spike (T / butt+point). AABB taper misses stems off the long axis.
@@ -871,6 +926,18 @@ const Knapping = {
             && (taper >= 0.35 || (tip >= 0.62 && mass <= 16))
         ) {
             toolClass = "awl";
+        } else if (
+            allow("cleaver")
+            && this._isCleaver(mass, elong, bit, fill, minSide)
+        ) {
+            const gate = this._handAxeGate(material);
+            if (gate) {
+                toolClass = "chopper";
+                reject = gate;
+                rejectClass = "cleaver";
+            } else {
+                toolClass = "cleaver";
+            }
         } else if (
             allow("spear_tip")
             && elong >= 2.15
@@ -968,14 +1035,15 @@ const Knapping = {
             awl: "Awl",
             spear_tip: "Spear Tip",
             blank: "Flake",
-            hand_axe: "Hand-axe"
+            hand_axe: "Hand-axe",
+            cleaver: "Cleaver"
         };
         const qLabel = quality.charAt(0).toUpperCase() + quality.slice(1);
         const name = toolClass === "spear_tip" || toolClass === "blank"
             ? `${matLabel} ${classNames[toolClass]}`
             : `${qLabel} ${matLabel} ${classNames[toolClass]}`;
 
-        const preview = this.previewLine(toolClass, quality, reject);
+        const preview = this.previewLine(toolClass, quality, reject, rejectClass);
 
         return {
             toolClass,
@@ -993,6 +1061,7 @@ const Knapping = {
             taper,
             fork,
             fill,
+            bit,
             material,
             stone: stoneId
         };
@@ -1008,7 +1077,8 @@ const Knapping = {
             scraper: 4,
             chopper: 9,
             awl: 3,
-            hand_axe: 12
+            hand_axe: 12,
+            cleaver: 9
         }[stack?.toolClass] || 0;
         if (!(base > 0)) return 0;
         const q = { crude: 0.65, rough: 0.95, fine: 1.35 }[stack?.knapQuality] || 1;
@@ -1016,14 +1086,16 @@ const Knapping = {
         return Math.round(base * q * hard * 10) / 10;
     },
 
-    previewLine(toolClass, quality, reject) {
-        if (reject === "soft") return "Too soft for a hand-axe";
-        if (reject === "brittle") return "Too brittle for a hand-axe";
+    previewLine(toolClass, quality, reject, rejectClass) {
+        const gateName = rejectClass === "cleaver" ? "cleaver" : "hand-axe";
+        if (reject === "soft") return `Too soft for a ${gateName}`;
+        if (reject === "brittle") return `Too brittle for a ${gateName}`;
         switch (toolClass) {
             case "knife": return `Looks like a ${quality} knife…`;
             case "scraper": return `Looks like a ${quality} scraper…`;
             case "chopper": return `Looks like a ${quality} chopper…`;
             case "hand_axe": return `Looks like a ${quality} hand-axe…`;
+            case "cleaver": return `Looks like a ${quality} cleaver…`;
             case "awl": return `Looks like a ${quality} awl…`;
             case "spear_tip": return `Looks like a ${quality} spear tip…`;
             default: return "Unclear flake…";
@@ -1089,7 +1161,7 @@ const Knapping = {
         if (!stack || !baseMeta) return null;
         const cls = stack.toolClass;
         const dmg = this._combatDamage(stack);
-        if (!["knife", "scraper", "chopper", "awl", "hand_axe"].includes(cls) || !(dmg > 0)) {
+        if (!["knife", "scraper", "chopper", "awl", "hand_axe", "cleaver"].includes(cls) || !(dmg > 0)) {
             return null;
         }
         const r = (n) => Math.round(n * 10) / 10;
@@ -1137,6 +1209,19 @@ const Knapping = {
                     verb: "hacked",
                     cooldown: 2.3,
                     weightMultiplier: 0.55,
+                    source: "hand"
+                }
+            ];
+        } else if (cls === "cleaver") {
+            attacks = [
+                {
+                    id: "knap_cleaver_chop",
+                    name: "Chop",
+                    damage: dmg,
+                    type: "sharp",
+                    verb: "chopped",
+                    cooldown: 2.4,
+                    weightMultiplier: 1,
                     source: "hand"
                 }
             ];

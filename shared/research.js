@@ -146,7 +146,8 @@
         { label: "Chopper knapping", toolClass: "chopper", help: "Chopper — big solid leftover (don't thin it into a flake)" },
         { label: "Awl knapping", toolClass: "awl", help: "Awl — small pierce spike / butt with a point" },
         { label: "Spear tip knapping", toolClass: "spear_tip", help: "Spear tip — long and thin" },
-        { label: "Hand-axe knapping", toolClass: "hand_axe", help: "Hand-axe — symmetric biface, edge all around" }
+        { label: "Hand-axe knapping", toolClass: "hand_axe", help: "Hand-axe — symmetric biface, edge all around" },
+        { label: "Cleaver knapping", toolClass: "cleaver", help: "Cleaver — flat-ended block" }
     ];
 
     function knappingTechniqueByLabel(label) {
@@ -2096,6 +2097,37 @@
                 a.r.path[a.i][1] = chosen;
                 a.r.path[a.i][0] = nodeLeftX(dest, chosen, { stroke });
                 a.y = chosen;
+                moved = true;
+            }
+            // A departure stub is pinned to the source row, so it cannot dodge
+            // an arrival on that same row by changing y. Pull its turn back
+            // down the gutter until the two horizontals no longer share x.
+            for (const a of hors) {
+                if (!a.pinned || a.i !== 1) continue;
+                const path = a.r.path;
+                const prev = path[a.i - 1];
+                const pt = path[a.i];
+                const next = path[a.i + 1];
+                if (!prev || !pt || !next) continue;
+                if (Math.abs(next[0] - pt[0]) >= 0.5 || Math.abs(next[1] - pt[1]) < 1) continue;
+                const hit = hors.find((b) => (
+                    b !== a
+                    && a.from !== b.from
+                    && Math.abs(a.y - b.y) < gap
+                    && _overlap1d(a.x0, a.x1, b.x0, b.x1)
+                ));
+                if (!hit) continue;
+                const y0 = Math.min(pt[1], next[1]);
+                const y1 = Math.max(pt[1], next[1]);
+                const lim = gutterLimits(pt[0], y0, y1, a.from);
+                const x = Math.min(hit.x0, hit.x1) - gap;
+                if (x >= pt[0] - 0.5 || x <= prev[0] + 4) continue;
+                if (x < lim.minX || x > lim.maxX) continue;
+                if (hitsNode(x, y0, x, y1, a.from, a.to)) continue;
+                pt[0] = x;
+                next[0] = x;
+                a.x0 = Math.min(prev[0], x);
+                a.x1 = Math.max(prev[0], x);
                 moved = true;
             }
             if (!moved) break;

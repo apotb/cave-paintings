@@ -124,7 +124,7 @@ test("knapped stack uses toolClass key not unique silhouette", () => {
     const tools = SF.findNode(t, "tools");
     const ids = (tools.items || []).map((it) => it.id);
     assert.deepEqual(ids, [
-        "tool:awl", "bone", "tool:chopper", "digging_stick",
+        "tool:awl", "bone", "tool:chopper", "tool:cleaver", "digging_stick",
         "tool:hand_axe", "tool:knife", "tool:scraper"
     ]);
     assert.equal(ids.includes("stone_tool"), false);

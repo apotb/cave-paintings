@@ -207,15 +207,16 @@ class Corpse extends Phaser.GameObjects.Sprite {
             if (!this.inRange()) return;
             const player = scene.player;
             const held = player?.getHeldItem?.();
-            const knife = player?.heldToolClass?.() === "knife"
-                || held?.toolClass === "knife";
+            const skinTool = typeof CorpseDecay !== "undefined" && CorpseDecay.isSkinTool
+                ? CorpseDecay.isSkinTool(player?.heldToolClass?.() || held?.toolClass)
+                : (player?.heldToolClass?.() === "knife" || held?.toolClass === "knife");
             const now = scene.worldMinuteIndex?.();
             const skinnable = typeof CorpseDecay !== "undefined" && CorpseDecay.canSkin
                 ? CorpseDecay.canSkin(this.entry, now)
                 : (!this.entry?.skinned && this.entry?.stage !== "carcass");
-            // Knife + unskinned corpse (not carcass) → skin, then loot opens.
+            // Knife or cleaver + unskinned corpse (not carcass) → skin, then loot opens.
             // A failed channel (already busy) must still toggle the menu shut.
-            if (knife && skinnable && typeof player.beginSkin === "function") {
+            if (skinTool && skinnable && typeof player.beginSkin === "function") {
                 if (player.beginSkin(this)) return;
             }
             panel?.toggle?.(this);
@@ -293,45 +294,23 @@ class Corpse extends Phaser.GameObjects.Sprite {
     }
 
     /**
-     * Loot granted when finishing a knife skin channel.
+     * Loot granted when finishing a skin channel.
+     * @param {string} [toolClass]
      * @returns {{ id: string, min: number, max: number }[]}
      */
-    skinLootTable() {
-        const id = this.entry?.mobId || "";
-        if (id === "deer") {
-            const loot = [
-                { id: "raw_venison", min: 2, max: 4 },
-                { id: "deer_hide", min: 1, max: 1 },
-                { id: "brain", min: 1, max: 1 },
-                { id: "bone", min: 2, max: 4 }
-            ];
-            const destroyed = typeof Body !== "undefined" && Body.isBrainDestroyed?.(this.entry?.body);
-            return destroyed ? loot.filter((d) => d.id !== "brain") : loot;
-        }
-        if (id === "boar") {
-            const loot = [
-                { id: "raw_pork", min: 3, max: 5 },
-                { id: "boar_hide", min: 1, max: 1 },
-                { id: "brain", min: 1, max: 1 },
-                { id: "bone", min: 2, max: 4 }
-            ];
-            const destroyed = typeof Body !== "undefined" && Body.isBrainDestroyed?.(this.entry?.body);
-            return destroyed ? loot.filter((d) => d.id !== "brain") : loot;
-        }
-        if (id === "human") {
-            const loot = [
-                { id: "raw_human_flesh", min: 2, max: 4 },
-                { id: "brain", min: 1, max: 1 },
-                { id: "bone", min: 1, max: 2 }
-            ];
-            const destroyed = typeof Body !== "undefined" && Body.isBrainDestroyed?.(this.entry?.body);
-            return destroyed ? loot.filter((d) => d.id !== "brain") : loot;
+    skinLootTable(toolClass) {
+        const destroyed = typeof Body !== "undefined" && Body.isBrainDestroyed?.(this.entry?.body);
+        if (typeof CorpseDecay !== "undefined" && CorpseDecay.skinLootTable) {
+            return CorpseDecay.skinLootTable(this.entry?.mobId, {
+                toolClass,
+                brainDestroyed: !!destroyed
+            });
         }
         return [{ id: "bone", min: 1, max: 2 }];
     }
 
     /** Apply skinning: mark skinned and append butcher loot. */
-    applySkin() {
+    applySkin(toolClass) {
         const now = this.scene?.worldMinuteIndex?.();
         const ok = typeof CorpseDecay !== "undefined" && CorpseDecay.canSkin
             ? CorpseDecay.canSkin(this.entry, now)
@@ -341,7 +320,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
         Corpse.bloodBurst(this.scene, this.x, this.y);
         if (!this.entry.loot) this.entry.loot = [];
         const gained = [];
-        for (const drop of this.skinLootTable()) {
+        for (const drop of this.skinLootTable(toolClass)) {
             const item = this.scene.getItem(drop.id);
             if (!item) continue;
             const lo = Math.max(0, Math.floor(Number(drop.min ?? 1) || 0));

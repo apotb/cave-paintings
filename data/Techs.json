@@ -333,7 +333,7 @@
         "startUnlocked": true,
         "prereqs": [],
         "unlocks": { "items": [], "jobs": [], "text": ["Knife knapping", "Scraper knapping", "Chopper knapping", "Awl knapping"] },
-        "children": ["hafting", "hand_axe", "burin"]
+        "children": ["hafting", "hand_axe", "burin", "cleaver"]
     },
     {
         "id": "hafting",
@@ -397,16 +397,15 @@
         "cost": 2,
         "prereqs": ["knapping"],
         "unlocks": { "items": [], "jobs": [], "text": ["Hand-axe knapping"] },
-        "children": ["cleaver", "blades"]
+        "children": ["blades"]
     },
     {
         "id": "cleaver",
         "name": "Cleaver",
         "era": "Paleolithic",
-        "wip": true,
         "quote": "Better butchering",
         "cost": 2,
-        "prereqs": ["hand_axe"],
+        "prereqs": ["knapping"],
         "unlocks": { "items": [], "jobs": [], "text": ["Cleaver knapping"] },
         "children": []
     },

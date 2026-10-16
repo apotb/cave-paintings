@@ -68,7 +68,7 @@ function knapWeaponMetaFromStack(baseMeta, stack) {
     const cls = stack.toolClass;
     const StoneApi = stoneApi();
     const dmg = StoneApi?.toolDamage?.(stack) ?? (Number(stack.knapDamage) || 0);
-    if (!["knife", "scraper", "chopper", "awl", "hand_axe"].includes(cls) || !(dmg > 0)) {
+    if (!["knife", "scraper", "chopper", "awl", "hand_axe", "cleaver"].includes(cls) || !(dmg > 0)) {
         return null;
     }
     const r = (n) => Math.round(n * 10) / 10;
@@ -82,6 +82,10 @@ function knapWeaponMetaFromStack(baseMeta, stack) {
         attacks = [
             { id: "knap_scraper_edge", name: "Scrape", damage: dmg, type: "sharp", verb: "scraped", cooldown: 2.0, weightMultiplier: 1, source: "hand" },
             { id: "knap_scraper_hack", name: "Hack", damage: r(dmg * 0.75), type: "sharp", verb: "hacked", cooldown: 2.3, weightMultiplier: 0.55, source: "hand" }
+        ];
+    } else if (cls === "cleaver") {
+        attacks = [
+            { id: "knap_cleaver_chop", name: "Chop", damage: dmg, type: "sharp", verb: "chopped", cooldown: 2.4, weightMultiplier: 1, source: "hand" }
         ];
     } else if (cls === "chopper" || cls === "hand_axe") {
         const chopId = cls === "hand_axe" ? "knap_hand_axe_chop" : "knap_chopper_chop";

@@ -2688,7 +2688,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Start skinning a corpse with a held knife (5s channel, cancel if you swap off / walk away).
+     * Start skinning a corpse with a held knife or cleaver (5s channel, cancel if you swap off / walk away).
      */
     beginSkin(corpse) {
         if (this._eatChannel) this._cancelEat();
@@ -2703,7 +2703,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             : !!(corpse?.entry && !corpse.entry.skinned && corpse.entry.stage !== "carcass");
         if (!corpse?.entry || !skinnable) return false;
         if (!corpse.inRange?.()) return false;
-        if (this.heldToolClass() !== "knife") return false;
+        const skinTool = typeof CorpseDecay !== "undefined" && CorpseDecay.isSkinTool
+            ? CorpseDecay.isSkinTool(this.heldToolClass())
+            : this.heldToolClass() === "knife";
+        if (!skinTool) return false;
         const item = this.getHeldItem();
         if (!item) return false;
 
@@ -2744,9 +2747,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const stillSkinnable = typeof CorpseDecay !== "undefined" && CorpseDecay.canSkin
             ? CorpseDecay.canSkin(corpse?.entry, now)
             : !!(corpse?.entry && !corpse.entry.skinned && corpse.entry.stage !== "carcass");
+        const stillTool = typeof CorpseDecay !== "undefined" && CorpseDecay.isSkinTool
+            ? CorpseDecay.isSkinTool(this.heldToolClass())
+            : this.heldToolClass() === "knife";
         if (
             slot !== this._skinChannel.slot
-            || this.heldToolClass() !== "knife"
+            || !stillTool
             || !corpse?.active
             || !stillSkinnable
             || !corpse.inRange?.()
@@ -2771,7 +2777,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 y: this.y
             });
         } else {
-            corpse.applySkin?.();
+            corpse.applySkin?.(this.heldToolClass());
             this.wearHeld(1);
         }
         this._skinChannel = null;

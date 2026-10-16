@@ -180,7 +180,7 @@
         ) {
             lines.push(knapFlavor);
         }
-        if (stack?.toolClass === "knife") {
+        if (stack?.toolClass === "knife" || stack?.toolClass === "cleaver") {
             lines.push("Click a corpse to skin it for more resources");
         }
         if (stack?.toolClass === "scraper") {
@@ -248,6 +248,7 @@
         }
 
         if (stack?.toolClass === "hand_axe") lines.push("Increases log yield");
+        if (stack?.toolClass === "cleaver") lines.push("Increases meat yield");
 
         return lines.join("\n");
     },

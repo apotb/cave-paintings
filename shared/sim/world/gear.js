@@ -900,35 +900,11 @@
         }
     },
 
-    _skinLootTable(mobId, bodyJson) {
-        const id = String(mobId || "");
-        if (id === "deer") {
-            const loot = [
-                { id: "raw_venison", min: 2, max: 4 },
-                { id: "deer_hide", min: 1, max: 1 },
-                { id: "brain", min: 1, max: 1 },
-                { id: "bone", min: 2, max: 4 }
-            ];
-            return Body.isBrainDestroyed?.(bodyJson) ? loot.filter((d) => d.id !== "brain") : loot;
-        }
-        if (id === "boar") {
-            const loot = [
-                { id: "raw_pork", min: 3, max: 5 },
-                { id: "boar_hide", min: 1, max: 1 },
-                { id: "brain", min: 1, max: 1 },
-                { id: "bone", min: 2, max: 4 }
-            ];
-            return Body.isBrainDestroyed?.(bodyJson) ? loot.filter((d) => d.id !== "brain") : loot;
-        }
-        if (id === "human") {
-            const loot = [
-                { id: "raw_human_flesh", min: 2, max: 4 },
-                { id: "brain", min: 1, max: 1 },
-                { id: "bone", min: 1, max: 2 }
-            ];
-            return Body.isBrainDestroyed?.(bodyJson) ? loot.filter((d) => d.id !== "brain") : loot;
-        }
-        return [{ id: "bone", min: 1, max: 2 }];
+    _skinLootTable(mobId, bodyJson, toolClass) {
+        return CorpseDecay.skinLootTable(mobId, {
+            toolClass,
+            brainDestroyed: !!Body.isBrainDestroyed?.(bodyJson)
+        });
     },
 
     _tryCorpseSkin(session, action = {}) {
@@ -941,7 +917,8 @@
         }
         const held = this._held(p);
         const heldDef = held ? itemDefs().get(held.id) : null;
-        if (!held || Carry.stackToolClass(held, heldDef) !== "knife") return;
+        const toolClass = held ? Carry.stackToolClass(held, heldDef) : null;
+        if (!held || !CorpseDecay.isSkinTool(toolClass)) return;
         const found = this._resolveCorpse(action);
         if (!found) return;
         const { entry } = found;
@@ -953,7 +930,7 @@
 
         if (!Array.isArray(entry.loot)) entry.loot = [];
         const now = this.worldMinuteIndex();
-        for (const drop of this._skinLootTable(entry.mobId, entry.body)) {
+        for (const drop of this._skinLootTable(entry.mobId, entry.body, toolClass)) {
             const meta = itemDefs().get(drop.id);
             if (!meta) continue;
             const lo = Math.max(0, Math.floor(Number(drop.min ?? 1) || 0));

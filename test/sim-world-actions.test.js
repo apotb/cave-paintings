@@ -822,6 +822,53 @@ test("corpse_take as a companion fills that pawn, not the leader", () => {
     assert.equal(chunk.corpses.length, 0);
 });
 
+test("corpse_skin cleaver drops more meat than a knife", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const chunk = originChunk(world);
+    const skin = (toolClass, id) => {
+        pawn.inventory[0] = { id: "stick", quantity: 1, toolClass, durability: 40 };
+        pawn.hotbarIndex = 0;
+        chunk.corpses.push({
+            id,
+            x: pawn.x,
+            y: pawn.y,
+            mobId: "deer",
+            skinned: false,
+            loot: []
+        });
+        world.rng = () => 0;
+        world.handleAction(pawn.id, { type: Protocol.Actions.CORPSE_SKIN, corpseId: id });
+        const entry = chunk.corpses.find((c) => c.id === id);
+        const qty = (itemId) => (entry.loot || [])
+            .filter((s) => s && s.id === itemId)
+            .reduce((n, s) => n + (s.quantity || 0), 0);
+        return { skinned: entry.skinned, venison: qty("raw_venison"), hide: qty("deer_hide"), bone: qty("bone") };
+    };
+    const knife = skin("knife", "deer-knife");
+    const cleaver = skin("cleaver", "deer-cleaver");
+    assert.equal(knife.skinned, true);
+    assert.equal(knife.venison, 2);
+    assert.equal(knife.hide, 1);
+    assert.equal(knife.bone, 2);
+    assert.equal(cleaver.skinned, true);
+    assert.equal(cleaver.venison, 4);
+    assert.equal(cleaver.hide, 1);
+    assert.equal(cleaver.bone, 2);
+    pawn.inventory[0] = { id: "stick", quantity: 1, toolClass: "hand_axe", durability: 40 };
+    chunk.corpses.push({
+        id: "deer-axe",
+        x: pawn.x,
+        y: pawn.y,
+        mobId: "deer",
+        skinned: false,
+        loot: []
+    });
+    world.handleAction(pawn.id, { type: Protocol.Actions.CORPSE_SKIN, corpseId: "deer-axe" });
+    const axe = chunk.corpses.find((c) => c.id === "deer-axe");
+    assert.equal(axe.skinned, false);
+    assert.equal(axe.loot.length, 0);
+});
+
 test("corpse_skin with knife marks skinned", () => {
     const { world, pawn, Protocol } = createTestWorld();
     pawn.inventory[0] = { id: "stick", quantity: 1, toolClass: "knife", durability: 40 };

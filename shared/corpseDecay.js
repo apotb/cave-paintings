@@ -11,6 +11,8 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
     const CORPSE_MINUTES = 12 * 60;
     const CARCASS_MINUTES = 30 * 1440;
+    /** Extra meat on a cleaver. Hide, brain, and bone stay on the knife table. */
+    const CLEAVER_MEAT_BONUS = 2;
 
     function boneRange(mobId) {
         const id = String(mobId || "");
@@ -47,6 +49,52 @@
         if (entry.stage === "carcass") return true;
         const st = stageFor(entry.diedAt, now);
         return st === "carcass" || st === "gone";
+    }
+
+    /** Knife or cleaver. A cleaver is not a knife for crafts. */
+    function isSkinTool(toolClass) {
+        return toolClass === "knife" || toolClass === "cleaver";
+    }
+
+    function meatDrop(id, min, max, toolClass) {
+        const bonus = toolClass === "cleaver" ? CLEAVER_MEAT_BONUS : 0;
+        return { id, min: min + bonus, max: max + bonus };
+    }
+
+    /**
+     * Butcher loot for a fresh corpse. Cleaver adds 2 meat. Brain is omitted
+     * when `brainDestroyed` is set.
+     * @returns {{ id: string, min: number, max: number }[]}
+     */
+    function skinLootTable(mobId, opts) {
+        const id = String(mobId || "");
+        const toolClass = opts?.toolClass;
+        let loot;
+        if (id === "deer") {
+            loot = [
+                meatDrop("raw_venison", 2, 4, toolClass),
+                { id: "deer_hide", min: 1, max: 1 },
+                { id: "brain", min: 1, max: 1 },
+                { id: "bone", min: 2, max: 4 }
+            ];
+        } else if (id === "boar") {
+            loot = [
+                meatDrop("raw_pork", 3, 5, toolClass),
+                { id: "boar_hide", min: 1, max: 1 },
+                { id: "brain", min: 1, max: 1 },
+                { id: "bone", min: 2, max: 4 }
+            ];
+        } else if (id === "human") {
+            loot = [
+                meatDrop("raw_human_flesh", 2, 4, toolClass),
+                { id: "brain", min: 1, max: 1 },
+                { id: "bone", min: 1, max: 2 }
+            ];
+        } else {
+            loot = [{ id: "bone", min: 1, max: 2 }];
+        }
+        if (opts?.brainDestroyed) loot = loot.filter((d) => d.id !== "brain");
+        return loot;
     }
 
     /** Knife-skin only while it is still a fresh, unskinned corpse. */
@@ -163,6 +211,9 @@
     return {
         CORPSE_MINUTES,
         CARCASS_MINUTES,
+        CLEAVER_MEAT_BONUS,
+        isSkinTool,
+        skinLootTable,
         boneRange,
         carcassLootTable,
         stageFor,

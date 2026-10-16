@@ -36,7 +36,8 @@
         awl: 3,
         spear_tip: 0,
         blank: 2,
-        hand_axe: 12
+        hand_axe: 12,
+        cleaver: 9
     };
     const CLASS_NAME = {
         knife: "Knife",
@@ -45,7 +46,8 @@
         awl: "Awl",
         spear_tip: "Spear Tip",
         blank: "Flake",
-        hand_axe: "Hand-axe"
+        hand_axe: "Hand-axe",
+        cleaver: "Cleaver"
     };
     const QUALITY_NAME = { crude: "Crude", rough: "Rough", fine: "Fine" };
     const QUALITY_MULT = { crude: 0.65, rough: 0.95, fine: 1.35 };
@@ -56,7 +58,8 @@
         awl: true,
         spear_tip: true,
         blank: true,
-        hand_axe: true
+        hand_axe: true,
+        cleaver: true
     };
     const HAND_AXE_HARDNESS = 6;
     const HAND_AXE_TOUGHNESS = 0.5;
@@ -359,6 +362,10 @@
 
     const TECHNIQUE_GATES = {
         hand_axe: [
+            { stat: "hardness", min: HAND_AXE_HARDNESS, label: "Hardness" },
+            { stat: "toughness", min: HAND_AXE_TOUGHNESS, label: "Toughness" }
+        ],
+        cleaver: [
             { stat: "hardness", min: HAND_AXE_HARDNESS, label: "Hardness" },
             { stat: "toughness", min: HAND_AXE_TOUGHNESS, label: "Toughness" }
         ]

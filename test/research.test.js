@@ -325,6 +325,16 @@ test("knapping help lists only unlocked techniques", () => {
             "Hand-axe — symmetric biface, edge all around"
         )
     );
+    assert.equal(
+        Research.knappingHelpLines(s).some((line) => /cleaver/i.test(line)),
+        false
+    );
+    Research.unlock(s, "cleaver");
+    assert.ok(
+        Research.knappingHelpLines(s).includes(
+            "Cleaver — flat-ended block"
+        )
+    );
 });
 
 test("painting circle has no walk collision", () => {
@@ -774,6 +784,8 @@ test("tree layout is left-to-right with prereq edges", () => {
     assert.ok(layout.edges.some((e) => e.from === "settlements" && e.to === "herding"));
     assert.equal(layout.edges.some((e) => e.from === "hut" && e.to === "herding"), false);
     assert.ok(layout.edges.some((e) => e.from === "knapping" && e.to === "burin"));
+    assert.ok(layout.edges.some((e) => e.from === "knapping" && e.to === "cleaver"));
+    assert.equal(layout.edges.some((e) => e.from === "hand_axe" && e.to === "cleaver"), false);
     assert.ok(layout.edges.some((e) => e.from === "culture" && e.to === "ornament"));
     assert.ok(layout.edges.some((e) => e.from === "rituals" && e.to === "idolatry"));
     assert.ok(layout.edges.some((e) => e.from === "burin" && e.to === "idolatry"));
@@ -1232,13 +1244,13 @@ test("unfinished techs are WIP and cannot be researched", () => {
     const live = [
         "gathering", "cordage", "camping", "basic_furniture", "herbalism", "digging",
         "fire", "hearth", "cooking", "smoking", "clay_forming",
-        "knapping", "hafting", "hand_axe", "tanning", "skinworking", "leatherworking",
+        "knapping", "hafting", "hand_axe", "cleaver", "tanning", "skinworking", "leatherworking",
         "culture", "painting", "counting"
     ];
     const wip = [
         "storage", "hut", "traps", "grinding", "pit_traps", "spike_traps",
         "pit_kiln", "earth_oven", "dogs", "feasts", "burin",
-        "cleaver", "blades", "throwing", "fishing", "microliths", "bows", "nets",
+        "blades", "throwing", "fishing", "microliths", "bows", "nets",
         "ornament", "rituals", "idolatry", "music", "burial", "afterlife", "ancestors", "shrine",
         "settlements", "agriculture", "tree_sowing", "husbandry", "herding",
         "pottery", "mathematics", "writing"

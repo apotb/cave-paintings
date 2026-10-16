@@ -115,6 +115,109 @@ test("symmetric flint biface is a hand-axe", () => {
     assert.equal(stack.toolClass, "hand_axe");
 });
 
+/** 10×12 block. Bigger than a real blank; still a cleaver, and a hand-axe if locked. */
+function straightBit() {
+    const cells = [];
+    for (let y = 2; y <= 13; y++) {
+        for (let x = 3; x <= 12; x++) cells.push([x, y]);
+    }
+    return gridFrom(cells);
+}
+
+/** Largest solid block inside the flint sprite (7×6). */
+function flintBlock() {
+    const cells = [];
+    for (let y = 4; y <= 9; y++) {
+        for (let x = 6; x <= 12; x++) cells.push([x, y]);
+    }
+    return gridFrom(cells);
+}
+
+/** Largest solid block inside a filled pebble (9×4). */
+function pebbleBlock() {
+    const cells = [];
+    for (let y = 9; y <= 12; y++) {
+        for (let x = 3; x <= 11; x++) cells.push([x, y]);
+    }
+    return gridFrom(cells);
+}
+
+test("straight flint bit is a cleaver", () => {
+    const r = Knapping.classify(flintBlock(), "flint");
+    assert.equal(r.toolClass, "cleaver", JSON.stringify({
+        toolClass: r.toolClass,
+        bit: r.bit,
+        tip: r.tip,
+        thickness: r.thickness,
+        preview: r.preview
+    }));
+    assert.match(r.preview, /cleaver/);
+    assert.match(r.name, /Flint Cleaver/);
+    const meta = Knapping.weaponMetaFromStack(
+        { id: "stone_tool", name: "tool" },
+        { toolClass: "cleaver", knapQuality: "rough", knapMaterial: "flint" }
+    );
+    assert.equal(meta.weapon.attacks.length, 1);
+    assert.equal(meta.weapon.attacks[0].id, "knap_cleaver_chop");
+    assert.equal(meta.weapon.attacks[0].type, "sharp");
+    assert.equal(meta.weapon.attacks[0].cooldown, 2.4);
+    assert.equal(meta.weapon.attacks[0].damage, Math.round(9 * 1.4 * 0.95 * 10) / 10);
+});
+
+test("a flint-sized flat block is a cleaver", () => {
+    const r = Knapping.classify(flintBlock(), "flint");
+    assert.equal(r.toolClass, "cleaver", JSON.stringify({
+        toolClass: r.toolClass, mass: r.mass, elong: r.elong, bit: r.bit, preview: r.preview
+    }));
+});
+
+test("a pebble-sized flat block is a cleaver", () => {
+    const r = Knapping.classify(pebbleBlock(), "flint");
+    assert.equal(r.toolClass, "cleaver", JSON.stringify({
+        toolClass: r.toolClass, mass: r.mass, elong: r.elong, bit: r.bit, preview: r.preview
+    }));
+});
+
+test("a flint-sized block stays a scraper when cleaver is locked", () => {
+    const unlocked = {
+        knife: true, scraper: true, chopper: true, awl: true, spear_tip: true,
+        hand_axe: true, cleaver: false
+    };
+    const r = Knapping.classify(flintBlock(), "flint", unlocked);
+    assert.equal(r.toolClass, "scraper");
+    assert.equal(/cleaver/i.test(r.preview), false);
+});
+
+test("diorite straight bit is a cleaver", () => {
+    const r = Knapping.classify(flintBlock(), "diorite");
+    assert.equal(r.toolClass, "cleaver");
+    assert.match(r.name, /Diorite Cleaver/);
+});
+
+test("the same straight bit in pebble is a chopper that is too soft for a cleaver", () => {
+    const r = Knapping.classify(flintBlock(), "pebble");
+    assert.equal(r.toolClass, "chopper");
+    assert.equal(r.preview, "Too soft for a cleaver");
+});
+
+test("a brittle straight bit names the cleaver", () => {
+    const r = Knapping.classify(flintBlock(), "granite");
+    assert.equal(r.toolClass, "chopper");
+    assert.equal(r.preview, "Too brittle for a cleaver");
+});
+
+test("a locked cleaver technique stays a hand-axe", () => {
+    const unlocked = {
+        knife: true, scraper: true, chopper: true, awl: true, spear_tip: true,
+        hand_axe: true, cleaver: false
+    };
+    const r = Knapping.classify(straightBit(), "flint", unlocked);
+    assert.equal(r.toolClass, "hand_axe");
+    assert.equal(r.reject, null);
+    assert.match(r.preview, /hand-axe/);
+    assert.equal(/cleaver/i.test(r.preview), false);
+});
+
 test("the same biface in pebble is a chopper that is too soft", () => {
     const r = Knapping.classify(biface(), "pebble");
     assert.equal(r.toolClass, "chopper");
@@ -195,6 +298,16 @@ test("weapon damage and spear stab follow the rock", () => {
         { stat: "toughness", min: 0.5, met: false, label: "Toughness ≥ 50%" }
     ]);
     assert.deepEqual(Stone.requirementStatus("hand_axe", "flint").map((r) => r.met), [true, true]);
+    assert.deepEqual(Stone.requirementStatus("cleaver", "pebble"), [
+        { stat: "hardness", min: 6, met: false, label: "Hardness ≥ 6" },
+        { stat: "toughness", min: 0.5, met: false, label: "Toughness ≥ 50%" }
+    ]);
+    assert.deepEqual(Stone.requirementStatus("cleaver", "flint").map((r) => r.met), [true, true]);
+    assert.equal(Stone.toolDamage({
+        toolClass: "cleaver",
+        knapQuality: "rough",
+        knapMaterial: "flint"
+    }), Math.round(9 * 1.4 * 0.95 * 10) / 10);
     assert.deepEqual(Stone.requirementStatus("knife", "pebble"), []);
     assert.equal(Stone.handAxeGate("flint", () => ({
         knapping: { hardness: 7, toughness: 0.2, tipColor: "#111111" }
