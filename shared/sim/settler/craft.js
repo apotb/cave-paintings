@@ -48,6 +48,9 @@
     const pickBasket = (...args) => ctx.pickBasket(...args);
     const dropAsStack = (...args) => ctx.dropAsStack(...args);
     const findStack = (...args) => ctx.findStack(...args);
+    const findNearestStored = (...args) => ctx.findNearestStored(...args);
+    const skipJob = (...args) => ctx.skipJob(...args);
+    const stationKey = (...args) => ctx.stationKey(...args);
     const rackHang = (...args) => ctx.rackHang(...args);
     const faceRack = (...args) => ctx.faceRack(...args);
     const givePawn = (...args) => ctx.givePawn(...args);
@@ -465,6 +468,7 @@ function doLeather(world, rec, settle, job) {
         const max = seconds * 1000 * manipScale(world, rec) * quality * material;
         rec._workChannel = {
             kind: "craft",
+            job: "leather",
             remaining: max,
             max,
             slot: rec.hotbarIndex,
@@ -480,6 +484,229 @@ function doLeather(world, rec, settle, job) {
     }
     return halt();
 }
+
+const KNAP_SECONDS = 20;
+
+function stoneMod() {
+    if (typeof Stone !== "undefined" && Stone.toolDamage) return Stone;
+    try {
+        if (typeof require === "function") return require("../../stone");
+    } catch (_) { /* optional */ }
+    return null;
+}
+
+function stopRock(rec, job, skip) {
+    if (skip && job?.station) skipJob(rec, stationKey(job.station));
+    endWorkHold(rec);
+    rec._settlerScan = null;
+    rec._settlerScanMs = SCAN_MS;
+}
+
+function invQty(rec, pred) {
+    let n = 0;
+    for (const s of rec.inventory || []) {
+        if (s && pred(s)) n += Math.max(1, Number(s.quantity) || 1);
+    }
+    return n;
+}
+
+function holdTool(rec, found, classes) {
+    if (!found || found.at !== rec) return false;
+    if (found.kind === "overflow") {
+        const piece = takeOne(found);
+        if (!piece || !givePawn(rec, piece)) {
+            if (piece) found.slots[found.index] = piece;
+            return false;
+        }
+        const idx = (rec.inventory || []).indexOf(piece);
+        if (idx >= 0) rec.hotbarIndex = idx;
+        return true;
+    }
+    const cls = Carry.stackToolClass(found.slots[found.index], getItem(found.slots[found.index]?.id));
+    if (!classes.includes(cls)) return false;
+    rec.hotbarIndex = found.index;
+    return true;
+}
+
+/** 40% crude, 30% rough, 20% break, 10% fine. Null is a shattered blank. */
+function settlerKnapQuality(world) {
+    const roll = typeof world.rng === "function" ? world.rng() : Math.random();
+    if (roll < 0.4) return "crude";
+    if (roll < 0.7) return "rough";
+    if (roll < 0.9) return null;
+    return "fine";
+}
+
+function settlerKnapStack(world, toolClass, blank) {
+    const StoneApi = stoneMod();
+    const quality = settlerKnapQuality(world);
+    if (!quality) return null;
+    const flint = blank?.id === "flint";
+    const stack = {
+        toolClass,
+        knapQuality: quality,
+        knapMaterial: flint ? "flint" : "pebble",
+        sharpness: quality === "fine" ? 0.85 : quality === "rough" ? 0.55 : 0.3
+    };
+    if (!flint) stack.stone = StoneApi?.stoneOf?.(blank) || blank?.stone || "andesite";
+    const named = { id: "stone_tool", ...stack };
+    const name = StoneApi?.displayName?.(named);
+    if (name) stack.customName = name;
+    const dmg = StoneApi?.toolDamage?.(named);
+    if (dmg != null) stack.knapDamage = dmg;
+    if (toolClass === "knife") stack.tooltipExtra = "'Mr. Stabby'";
+    else if (toolClass === "chopper") stack.tooltipExtra = "Slow but heavy";
+    else if (toolClass === "awl") stack.tooltipExtra = "For sewing hides";
+    return stack;
+}
+
+function finishSettlerKnap(world, rec, ch) {
+    const inv = rec.inventory || [];
+    let index = -1;
+    for (let i = 0; i < inv.length; i++) {
+        if (inv[i] && Settlement.blankMatchesBill(ch.bill, inv[i])) {
+            index = i;
+            break;
+        }
+    }
+    if (index < 0) return;
+    const blank = takeOne({ slots: inv, index });
+    if (!blank) return;
+    const tool = settlerKnapStack(world, ch.toolClass, blank);
+    if (!tool) {
+        world._dirtyPawnOwner?.(rec);
+        return;
+    }
+    const left = world._give(rec, "stone_tool", 1, tool);
+    if (left > 0) {
+        world._pushDrop(rec.x, rec.y, { id: "stone_tool", quantity: left, ...tool });
+    }
+    world._dirtyPawnOwner?.(rec);
+}
+
+function canReceiveTool(world, rec, settle) {
+    const stack = { id: "stone_tool", quantity: 1, toolClass: "knife" };
+    if (ctx.hasCarryRoom(rec, stack) && ctx.canCarry(rec, stack, 1)) return true;
+    if (pickBasket(world, rec, settle, stack)) return true;
+    return (rec.inventory || []).some((s) => {
+        if (!s || (s.id !== "pebble" && s.id !== "flint")) return false;
+        return (Number(s.quantity) || 1) <= 1;
+    });
+}
+
+function doRock(world, rec, settle, job) {
+    const rock = job?.station;
+    const bill = job?.bill;
+    if (!rock || !bill) return halt();
+    const have = (id) => {
+        if (typeof id === "string" && id.startsWith("tool:")) return ctx.countToolClass(world, settle, id.slice(5));
+        return countItem(world, settle, id);
+    };
+    if (!Settlement.billIsActive(bill, have, settle)) {
+        stopRock(rec, job, false);
+        return halt();
+    }
+    const recipeDef = Settlement.billRecipeById(bill.recipeId) || bill;
+    if (recipeDef.kind === "knap" || bill.kind === "knap") {
+        const blank = findNearestStored(world, rec, settle, (s) => Settlement.blankMatchesBill(bill, s));
+        if (!blank) {
+            stopRock(rec, job, true);
+            return halt();
+        }
+        if (blank.at !== rec) return fetchStack(world, rec, settle, blank) || halt();
+        const walked = goOrWalk(world, rec, rock);
+        if (walked) return walked;
+        if (!canReceiveTool(world, rec, settle)) {
+            stopRock(rec, job, true);
+            return halt();
+        }
+        const max = KNAP_SECONDS * 1000 * manipScale(world, rec);
+        rec._workChannel = {
+            kind: "knap",
+            job: "craft",
+            remaining: max,
+            max,
+            slot: rec.hotbarIndex,
+            uid: rock.uid,
+            toolClass: bill.toolClass || recipeDef.toolClass,
+            bill
+        };
+        Settlement.noteBillCrafted(bill);
+        persistBills(world, settle, rock.uid);
+        rec._settlerScan = null;
+        rec._settlerScanMs = SCAN_MS;
+        return haltAtBench(rec, rock);
+    }
+    const recipe = bill.recipeId ? world._parseRecipe(bill.recipeId) : null;
+    if (!recipe) {
+        stopRock(rec, job, true);
+        return halt();
+    }
+    for (const ing of recipe.ingredients || []) {
+        if (invQty(rec, (s) => s.id === ing.id) >= (ing.qty || 1)) continue;
+        const found = findNearestStored(world, rec, settle, (s) => s.id === ing.id);
+        if (!found || found.at === rec) {
+            stopRock(rec, job, true);
+            return halt();
+        }
+        return fetchStack(world, rec, settle, found) || halt();
+    }
+    const classes = Carry.recipeToolClasses?.(recipe.requireTool) || [];
+    if (classes.length) {
+        const held = rec.inventory?.[rec.hotbarIndex];
+        const heldCls = Carry.stackToolClass(held, held ? getItem(held.id) : null);
+        if (!classes.includes(heldCls)) {
+            const tool = findNearestStored(world, rec, settle, (s) => {
+                return classes.includes(Carry.stackToolClass(s, getItem(s.id)));
+            });
+            if (!tool) {
+                stopRock(rec, job, true);
+                return halt();
+            }
+            if (tool.at !== rec) return fetchStack(world, rec, settle, tool) || halt();
+            if (!holdTool(rec, tool, classes)) {
+                stopRock(rec, job, true);
+                return halt();
+            }
+        }
+    }
+    const walked = goOrWalk(world, rec, rock);
+    if (walked) return walked;
+    for (const ing of recipe.ingredients || []) {
+        if (invQty(rec, (s) => s.id === ing.id) < (ing.qty || 1)) {
+            stopRock(rec, job, true);
+            return halt();
+        }
+    }
+    if (recipe.requireThing && !world._hasNearbyThing(rec, recipe.requireThing)) {
+        stopRock(rec, job, true);
+        return halt();
+    }
+    if (!canReceiveCraft(world, rec, settle, recipe, bill)) {
+        stopRock(rec, job, true);
+        return halt();
+    }
+    const seconds = Math.max(0.1, Number(recipe.craftSeconds) || 1);
+    const max = seconds * 1000 * manipScale(world, rec);
+    rec._workChannel = {
+        kind: "rock",
+        job: "craft",
+        remaining: max,
+        max,
+        slot: rec.hotbarIndex,
+        uid: rock.uid,
+        recipeId: recipe.id,
+        toolClasses: classes,
+        bill
+    };
+    Settlement.noteBillCrafted(bill);
+    persistBills(world, settle, rock.uid);
+    rec._settlerScan = null;
+    rec._settlerScanMs = SCAN_MS;
+    return haltAtBench(rec, rock);
+}
     ctx.doCook = doCook;
     ctx.doLeather = doLeather;
+    ctx.doRock = doRock;
+    ctx.finishSettlerKnap = finishSettlerKnap;
 });

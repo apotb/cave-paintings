@@ -201,7 +201,8 @@
         "recipe": {
             "REQUIRE_THING": "rock",
             "coconut": 1,
-            "QUANTITY": 2
+            "QUANTITY": 2,
+            "CRAFT_SECONDS": 1
         }
     },
     {
@@ -620,7 +621,8 @@
         ],
         "recipe": {
             "REQUIRE_THING": "rock",
-            "stick": 1
+            "stick": 1,
+            "CRAFT_SECONDS": 4
         }
     },
     {
@@ -657,7 +659,8 @@
             "REQUIRE_THING": "rock",
             "leaf_cord": 1,
             "leaf": 8,
-            "QUANTITY": 2
+            "QUANTITY": 2,
+            "CRAFT_SECONDS": 1
         }
     },
     {

@@ -42,6 +42,10 @@ class BillsPanel {
             fontSize: "12px",
             color: "#8a7a62"
         }).setOrigin(0, 0.5);
+        const iconKey = scene.textures.exists("null") ? "null" : null;
+        this.headerIcon = iconKey
+            ? scene.add.image(0, 0, iconKey).setOrigin(0.5, 0.5).setVisible(false)
+            : null;
         this.closeBtn = this._btn(0, 0, "Close", () => this.close(), { w: 52, h: 22 });
         this.body = scene.add.container(12, 36);
         this._maskGfx = scene.make.graphics({ x: 0, y: 0, add: false });
@@ -49,9 +53,9 @@ class BillsPanel {
         this.scrollTrack = scene.add.rectangle(0, 0, 5, 100, 0x3a2e26, 1).setOrigin(0, 0).setVisible(false);
         this.scrollThumb = scene.add.rectangle(0, 0, 5, 20, 0x8a7260, 1).setOrigin(0, 0).setVisible(false);
         this.root.add([
-            this.bg, this.title, this.subtitle, this.closeBtn, this.body,
+            this.bg, this.title, this.headerIcon, this.subtitle, this.closeBtn, this.body,
             this.scrollTrack, this.scrollThumb
-        ]);
+        ].filter(Boolean));
     }
 
     _bindScroll() {
@@ -299,6 +303,18 @@ class BillsPanel {
         this.refresh();
     }
 
+    _ingredientIcon(ing) {
+        const stone = ing?.id;
+        if (stone && stone !== "flint"
+            && typeof Stone !== "undefined" && Stone.normalizeStone?.(stone)
+            && typeof ensureStoneTexture === "function") {
+            const key = ensureStoneTexture(this.scene, "pebble", 1, stone);
+            if (key && this.scene.textures.exists(key)) return key;
+        }
+        return this._itemIconKey(ing?.id)
+            || (ing?.key && this.scene.textures.exists(ing.key) ? ing.key : null);
+    }
+
     _itemIconKey(itemId) {
         if (!itemId) return null;
         const def = this.scene.getItem?.(itemId) || { id: itemId, key: itemId };
@@ -317,8 +333,15 @@ class BillsPanel {
 
     _billIconKey(billOrRec) {
         const rec = this._recipeOf(billOrRec);
-        const craft = rec?.kind === "craft" || billOrRec?.kind === "craft";
-        if (!craft) return null;
+        const kind = rec?.kind || billOrRec?.kind;
+        if (kind === "knap") {
+            const cls = rec?.toolClass || billOrRec?.toolClass;
+            if (!cls || typeof Knapping === "undefined" || !Knapping.carveShapeIcon) return null;
+            const data = Knapping.carveShapeIcon(this.scene, cls, "andesite");
+            if (!data) return null;
+            return Knapping.ensureToolTexture(this.scene, { knapIconData: data, toolClass: cls });
+        }
+        if (kind !== "craft" && kind !== "make") return null;
         return this._itemIconKey(rec?.outputId || billOrRec?.outputId || rec?.id || billOrRec?.recipeId);
     }
 
@@ -403,10 +426,8 @@ class BillsPanel {
             applyPixelUiFont(this.subtitle, 12, s);
         }
         const pad = Math.round(12 * s);
-        const headerY = Math.round(18 * s);
-        this.title.setPosition(Math.round(w / 2), headerY);
-        this.subtitle.setPosition(pad, headerY);
-        this.closeBtn.setPosition(w - Math.round(40 * s), headerY);
+        this._placeHeader();
+        this.closeBtn.setPosition(w - Math.round(40 * s), Math.round(18 * s));
         this._sizeBtn(this.closeBtn, Math.round(52 * s), Math.round(22 * s), 12);
         const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
         this.bg.setStrokeStyle(sw, 0x2a2218);
@@ -431,9 +452,13 @@ class BillsPanel {
         if (!this.visible || !this.settle) return;
         this._refreshing = true;
         const s = this.scene.uiScale || 1;
-        const name = this.thing?.meta?.name || this.thing?.entry?.id || "Station";
+        let name = this.thing?.meta?.name || this.thing?.entry?.id || "Station";
+        if (this._kind() === "rock" && typeof Stone !== "undefined" && Stone.rockLabel) {
+            name = Stone.rockLabel(this.thing?.entry);
+        }
         this.title.setText("Bills");
         this.subtitle.setText(String(name));
+        this._placeHeader();
         this._clearBody();
         let contentH = 0;
         if (this.view === "add") contentH = this._fillAdd(s);
@@ -456,6 +481,9 @@ class BillsPanel {
     }
 
     _countItem(id) {
+        if (typeof id === "string" && id.startsWith("tool:")) {
+            return this.scene.settlementSys?.countToolClass?.(this.settle, id.slice(5)) || 0;
+        }
         return this.scene.settlementSys?.countItem?.(this.settle, id) || 0;
     }
 
@@ -482,7 +510,8 @@ class BillsPanel {
         return !S.billHasMaterials(bill, {
             countItem,
             getItem: (id) => this.scene.getItem?.(id),
-            items: this.scene.items?.() || []
+            items: this.scene.items?.() || [],
+            hasBlank: (b) => (this.scene.settlementSys?.countBlank?.(this.settle, b) || 0) > 0
         });
     }
 
@@ -575,6 +604,14 @@ class BillsPanel {
     _billItemTip(ing) {
         const scene = this.scene;
         if (!ing?.id || typeof scene.formatItemTooltip !== "function") return ing?.name || "";
+        const stone = (typeof Stone !== "undefined" && Stone.normalizeStone)
+            ? Stone.normalizeStone(ing.id)
+            : null;
+        if (stone) {
+            const def = scene.getItem?.("pebble");
+            if (!def) return ing.name || "";
+            return scene.formatItemTooltip(def, 1, null, { id: "pebble", stone, quantity: 1 });
+        }
         const def = scene.getItem?.(ing.id);
         if (!def) return ing.name || "";
         return scene.formatItemTooltip(def, 1, null, { id: ing.id, quantity: 1 });
@@ -611,6 +648,56 @@ class BillsPanel {
 
     _stationName() {
         return this.thing?.meta?.name || this.thing?.entry?.id || "Station";
+    }
+
+    _stationIconKey() {
+        const scene = this.scene;
+        const thing = this.thing;
+        if (!thing || !scene?.textures) return null;
+        const live = thing.texture?.key;
+        if (live && live !== "__MISSING" && scene.textures.exists(live)) return live;
+        const id = thing.entry?.id || thing.meta?.id;
+        const meta = thing.meta || scene.getThing?.(id);
+        if (id === "rock" && typeof ensureStoneTexture === "function") {
+            const variant = thing.entry?.variant === 2 ? 2 : 1;
+            const key = ensureStoneTexture(scene, "rock", variant, thing.entry?.stone);
+            if (key && scene.textures.exists(key)) return key;
+        }
+        if (typeof Thing !== "undefined" && meta && Thing.textureKeyFor) {
+            const key = Thing.textureKeyFor(scene, meta, thing.entry?.rot);
+            if (key && scene.textures.exists(key)) return key;
+        }
+        const fallback = meta?.key || id;
+        if (fallback && scene.textures.exists(fallback)) return fallback;
+        return null;
+    }
+
+    _placeHeader() {
+        const s = this.scene.uiScale || 1;
+        const pad = Math.round(12 * s);
+        const headerY = Math.round(18 * s);
+        const iconSize = Math.round(16 * s);
+        const gap = Math.round(4 * s);
+        const key = this.visible ? this._stationIconKey() : null;
+        let nameX = pad;
+        const icon = this.headerIcon;
+        if (icon) {
+            if (key) {
+                const tex = this.scene.textures.get(key);
+                const frame = tex?.frames?.["0"] ? 0 : undefined;
+                const frameName = icon.frame?.name;
+                const frameOk = frame == null || frameName === 0 || frameName === "0";
+                if (icon.texture?.key !== key || !frameOk) icon.setTexture(key, frame);
+                icon.setDisplaySize(iconSize, iconSize);
+                icon.setPosition(Math.round(pad + iconSize / 2), headerY);
+                icon.setVisible(true);
+                nameX = pad + iconSize + gap;
+            } else {
+                icon.setVisible(false);
+            }
+        }
+        this.title.setPosition(Math.round(this.bg.width / 2), headerY);
+        this.subtitle.setPosition(nameX, headerY);
     }
 
     _copyBills(bills) {
@@ -929,7 +1016,10 @@ class BillsPanel {
         let y = inset + bh + Math.round(8 * sc);
         const recipes = S?.billRecipesFor?.(this._kind(), this.scene._playerResearchHolder?.() || this.settle) || [];
         if (!recipes.length) {
-            const name = this.thing?.meta?.name || this.thing?.entry?.id || "Station";
+            let name = this.thing?.meta?.name || this.thing?.entry?.id || "Station";
+            if (this._kind() === "rock" && typeof Stone !== "undefined" && Stone.rockLabel) {
+                name = Stone.rockLabel(this.thing?.entry);
+            }
             this._label(`No bills for ${name}`, inset, y, 12, "#8a7a62");
             return y + Math.round(24 * sc);
         }
@@ -938,7 +1028,7 @@ class BillsPanel {
             const itemKey = this._billIconKey(rec);
             const row = this._btn(inset + innerW / 2, y + bh / 2, title, () => {
                 this._addRecipe(rec);
-            }, { w: innerW, h: bh, itemKey, alignLeft: rec.kind === "craft" });
+            }, { w: innerW, h: bh, itemKey, alignLeft: rec.kind === "craft" || rec.kind === "make" || rec.kind === "knap" });
             this._sizeBtn(row, innerW, bh, 12);
             this.body.add(row);
             y += bh + Math.round(6 * sc);
@@ -955,6 +1045,7 @@ class BillsPanel {
             recipeId: rec.id,
             method: rec.method,
             outputId: rec.outputId || null,
+            toolClass: rec.toolClass || null,
             mode: "count",
             n: 1,
             allowedIds: inputs.map((i) => i.id)
@@ -1023,8 +1114,7 @@ class BillsPanel {
             this._row(inset, y, innerW, rowH, itemState, () => {
                 this._toggleIngredient(bill, ing.id, allIds);
             }, () => this._billItemTip(ing));
-            const ic = this._itemIconKey(ing.id)
-                || (ing.key && this.scene.textures.exists(ing.key) ? ing.key : null);
+            const ic = this._ingredientIcon(ing);
             if (ic) {
                 const icon = this.scene.add.image(inset + Math.round(10 * sc), itemMid, ic)
                     .setDisplaySize(iconS, iconS);

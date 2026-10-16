@@ -557,6 +557,34 @@ class SettlementSystem {
         return S.filterStockItems(found);
     }
 
+    countToolClass(settle, toolClass) {
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!S?.countToolClassStock || !settle || !toolClass) return 0;
+        return S.countToolClassStock(
+            this.addedBaskets(settle),
+            this.settlersOf(settle.id),
+            this.dropsInRange(settle),
+            toolClass
+        );
+    }
+
+    countBlank(settle, bill) {
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!S?.blankMatchesBill || !settle || !bill) return 0;
+        let n = 0;
+        const add = (slots) => {
+            for (const stack of slots || []) {
+                if (S.blankMatchesBill(bill, stack)) n += S.stackQty(stack);
+            }
+        };
+        for (const basket of this.addedBaskets(settle)) add(basket?.slots);
+        for (const pawn of this.settlersOf(settle.id)) {
+            add(pawn?.inventory);
+            add(pawn?.overflow);
+        }
+        return n;
+    }
+
     countItem(settle, itemId) {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         if (!S) return 0;
@@ -1304,6 +1332,9 @@ class SettlementSystem {
 
     _stationLabel(thing, id) {
         const entryId = thing?.entry?.id || id;
+        if (entryId === "rock" && typeof Stone !== "undefined" && Stone.rockLabel) {
+            return Stone.rockLabel(thing?.entry);
+        }
         return thing?.meta?.name
             || this.scene.getThing?.(entryId)?.name
             || entryId

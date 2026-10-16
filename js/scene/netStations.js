@@ -710,15 +710,18 @@
         if (useWeapon) {
             let texKey = resolvedArt.key;
             if (
-                resolvedArt.knapIconData
+                (resolvedArt.knapIconData || resolvedArt.toolClass)
                 && typeof Knapping !== "undefined"
-                && typeof Knapping.ensureToolTexture === "function"
+                && typeof Knapping.ensureShapeTexture === "function"
             ) {
                 try {
-                    texKey = Knapping.ensureToolTexture(this, {
+                    texKey = Knapping.ensureShapeTexture(this, {
                         id: resolvedArt.itemId || "knap",
                         knapIconData: resolvedArt.knapIconData,
-                        knapIcon: resolvedArt.key
+                        knapIcon: resolvedArt.key,
+                        toolClass: resolvedArt.toolClass,
+                        stone: resolvedArt.stone,
+                        knapMaterial: resolvedArt.knapMaterial
                     }) || texKey;
                     resolvedArt.key = texKey;
                 } catch (_) { /* fall through */ }

@@ -5244,3 +5244,261 @@ test("taking a reserved meal makes the settler look for other work", () => {
     assert.equal(Settlement.medicineReservesFor(world, settle.id).held(rec.id, "food").length, 0);
 });
 
+function craftOnly() {
+    return {
+        doctor: 0, cook: 0, chop: 0, leather: 0, craft: 1, gather: 0, haul: 0, research: 0
+    };
+}
+
+function addRock(world, settle, rec, uid, stone = "andesite") {
+    const rock = addStation(world, settle, "rock", rec.x, rec.y, uid);
+    rock.stone = stone;
+    return rock;
+}
+
+test("a saved job row leaves Craft off and a new person gets it on", () => {
+    assert.equal(Settlement.defaultJobs().craft, 3);
+    const saved = Settlement.normalizeJobs({
+        doctor: 3, cook: 3, chop: 3, leather: 3, gather: 3, haul: 3, research: 3
+    });
+    assert.equal(saved.craft, 0);
+    assert.equal(Settlement.JOBS.indexOf("craft"), Settlement.JOBS.indexOf("leather") + 1);
+    assert.equal(Settlement.JOB_LABELS.craft, "Cft");
+    assert.match(Settlement.jobTooltip("craft"), /Craft/);
+    assert.match(Settlement.jobTooltip("craft"), /Work at Rock/);
+});
+
+test("rock bills list crafts before knapping, and hand-axe stone is gated", () => {
+    const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    const names = Settlement.billRecipesFor("rock", s).map((r) => r.name);
+    assert.deepEqual(names.slice(0, 2), ["Make Coconut Shell", "Make Sharp Stick"]);
+    assert.equal(names.includes("Make Poultice"), false);
+    assert.equal(names.includes("Knap knife"), true);
+    assert.equal(names.includes("Knap hand-axe"), false);
+    Research.unlock(s, "herbalism");
+    Research.unlock(s, "digging");
+    Research.unlock(s, "hand_axe");
+    const unlocked = Settlement.billRecipesFor("rock", s);
+    assert.deepEqual(unlocked.slice(0, 4).map((r) => r.name), [
+        "Make Coconut Shell",
+        "Make Sharp Stick",
+        "Make Poultice",
+        "Make Digging Stick"
+    ]);
+    const axe = unlocked.find((r) => r.toolClass === "hand_axe");
+    const knife = unlocked.find((r) => r.toolClass === "knife");
+    const axeIds = Settlement.billInputsFor(axe, []).map((i) => i.id);
+    const knifeInputs = Settlement.billInputsFor(knife, []);
+    const knifeIds = knifeInputs.map((i) => i.id);
+    assert.deepEqual(axeIds, ["flint", "diorite"]);
+    assert.equal(knifeInputs.find((i) => i.id === "andesite")?.name, "Andesite Pebble");
+    assert.equal(knifeInputs.find((i) => i.id === "diorite")?.name, "Diorite Pebble");
+    assert.equal(knifeInputs.find((i) => i.id === "flint")?.name, "Flint");
+    assert.equal(knifeIds.includes("andesite"), true);
+    assert.equal(knifeIds.includes("limestone"), true);
+    assert.equal(Settlement.blankMatchesBill(
+        { recipeId: "knap_hand_axe", toolClass: "hand_axe", kind: "knap" },
+        { id: "pebble", stone: "andesite", quantity: 1 }
+    ), false);
+    assert.equal(Settlement.blankMatchesBill(
+        { recipeId: "knap_hand_axe", toolClass: "hand_axe", kind: "knap" },
+        { id: "flint", quantity: 1 }
+    ), true);
+});
+
+test("dedicated settler cracks a coconut at a rock", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "coconut", quantity: 1 }, null, null, null, null]
+    });
+    Research.unlock(pawn, "cooking");
+    settle.jobs[rec.id] = craftOnly();
+    const rock = addRock(world, settle, rec, "rock-coco");
+    Settlement.addBill(settle, rock.uid, {
+        recipeId: "cracked_coconut", mode: "count", n: 1, paused: false
+    });
+    workOnce(world, rec);
+    assert.equal(rec._workChannel?.kind, "rock");
+    assert.equal(rec._workChannel?.job, "craft");
+    assert.match(rec._settlerAct || "", /Crafting at Andesite Rock/);
+    assert.equal(rec.inventory.some((s) => s && s.id === "cracked_coconut"), false);
+    world.tick(400);
+    assert.equal(rec.inventory.some((s) => s && s.id === "cracked_coconut"), false);
+    world.tick(2000);
+    const shells = rec.inventory.find((s) => s && s.id === "cracked_coconut");
+    assert.equal(shells?.quantity, 2);
+    assert.equal(rec.inventory.some((s) => s && s.id === "coconut"), false);
+});
+
+test("dedicated settler knaps the nearest allowed blank and until counts only that class", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "stone_tool", toolClass: "scraper", knapQuality: "rough", knapMaterial: "pebble", stone: "andesite", quantity: 1 },
+            null, null, null, null
+        ]
+    });
+    world.rng = () => 0;
+    settle.jobs[rec.id] = craftOnly();
+    const rock = addRock(world, settle, rec, "rock-knap");
+    const near = addBasket(world, settle, rec.x + 16, rec.y, "near-blank");
+    const far = addBasket(world, settle, rec.x + 160, rec.y, "far-blank");
+    near.slots[0] = { id: "pebble", stone: "andesite", quantity: 1 };
+    far.slots[0] = { id: "flint", quantity: 1 };
+    Settlement.addBill(settle, rock.uid, {
+        recipeId: "knap_knife", mode: "until", n: 1, paused: false
+    });
+    let started = false;
+    for (let i = 0; i < 80; i++) {
+        world.tick(50);
+        if (rec._workChannel?.kind === "knap") {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true);
+    assert.equal(near.slots[0], null);
+    assert.equal(far.slots[0]?.id, "flint");
+    world.tick(21000);
+    const knife = rec.inventory.find((s) => s && s.toolClass === "knife");
+    assert.ok(knife, "should knap a knife");
+    assert.equal(knife.stone, "andesite");
+    assert.equal(knife.knapQuality, "crude");
+    assert.match(knife.customName || "", /Crude Andesite Knife/);
+    assert.equal(knife.knapIconData, undefined);
+    assert.equal(rec.inventory.some((s) => s && s.toolClass === "scraper"), true);
+
+    rec.inventory = rec.inventory.map((s) => (s && s.toolClass === "knife" ? null : s));
+    const carried = { id: "stone_tool", toolClass: "knife", knapQuality: "rough", knapMaterial: "flint", quantity: 1 };
+    rec.inventory[1] = carried;
+    far.slots[0] = { id: "pebble", stone: "diorite", quantity: 1 };
+    Settlement.setBills(settle, rock.uid, []);
+    Settlement.addBill(settle, rock.uid, {
+        recipeId: "knap_knife", mode: "until", n: 1, paused: false
+    });
+    rec._workChannel = null;
+    rec._settlerSkip = null;
+    endHold(rec);
+    workOnce(world, rec);
+    assert.equal(rec._workChannel ?? null, null);
+    assert.equal(far.slots[0]?.stone, "diorite");
+});
+
+test("a broken knap spends the blank and leaves no tool", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "pebble", stone: "andesite", quantity: 1 }, null, null, null, null]
+    });
+    world.rng = () => 0.75;
+    settle.jobs[rec.id] = craftOnly();
+    const rock = addRock(world, settle, rec, "rock-break");
+    Settlement.addBill(settle, rock.uid, {
+        recipeId: "knap_knife", mode: "forever", paused: false
+    });
+    workOnce(world, rec);
+    assert.equal(rec._workChannel?.kind, "knap");
+    world.tick(21000);
+    assert.equal(rec.inventory.some((s) => s && (s.id === "pebble" || s.id === "stone_tool")), false);
+});
+
+function endHold(rec) {
+    rec._workHold = false;
+    rec._busyJob = null;
+    rec._settlerScan = null;
+}
+
+test("a hand-axe bill does not knap soft stone", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    Research.unlock(pawn, "hand_axe");
+    settle.jobs[rec.id] = craftOnly();
+    const rock = addRock(world, settle, rec, "rock-axe");
+    const basket = addBasket(world, settle, rec.x, rec.y, "soft-stone");
+    basket.slots[0] = { id: "pebble", stone: "andesite", quantity: 1 };
+    Settlement.addBill(settle, rock.uid, {
+        recipeId: "knap_hand_axe", mode: "forever", paused: false
+    });
+    workOnce(world, rec);
+    assert.equal(rec._workChannel ?? null, null);
+    assert.equal(basket.slots[0]?.stone, "andesite");
+    basket.slots[1] = { id: "flint", quantity: 1 };
+    let tookFlint = false;
+    for (let i = 0; i < 40; i++) {
+        world.tick(50);
+        if (!basket.slots[1]) {
+            tookFlint = true;
+            break;
+        }
+    }
+    assert.equal(tookFlint, true);
+    assert.equal(basket.slots[0]?.stone, "andesite");
+});
+
+test("digging stick waits for the nearest knife or scraper", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "log", quantity: 1 }, null, null, null, null]
+    });
+    Research.unlock(pawn, "digging");
+    settle.jobs[rec.id] = craftOnly();
+    const rock = addRock(world, settle, rec, "rock-dig");
+    Settlement.addBill(settle, rock.uid, {
+        recipeId: "digging_stick", mode: "count", n: 1, paused: false
+    });
+    workOnce(world, rec);
+    assert.equal(rec._workChannel ?? null, null);
+    assert.equal(rec.inventory[0]?.id, "log");
+    const near = addBasket(world, settle, rec.x + 16, rec.y, "near-tool");
+    const far = addBasket(world, settle, rec.x + 160, rec.y, "far-tool");
+    near.slots[0] = { id: "stone_tool", toolClass: "scraper", knapQuality: "rough", knapMaterial: "pebble", quantity: 1 };
+    far.slots[0] = { id: "stone_tool", toolClass: "knife", knapQuality: "rough", knapMaterial: "flint", quantity: 1 };
+    let started = false;
+    for (let i = 0; i < 80; i++) {
+        world.tick(50);
+        if (rec._workChannel?.kind === "rock") {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true);
+    assert.equal(near.slots[0], null);
+    assert.equal(far.slots[0]?.toolClass, "knife");
+    assert.equal(rec.inventory[rec.hotbarIndex]?.toolClass, "scraper");
+    world.tick(13000);
+    assert.ok(rec.inventory.some((s) => s && s.id === "digging_stick"));
+    assert.equal(rec.inventory.some((s) => s && s.id === "log"), false);
+});
+
+test("player rock crafts use the recipe times", () => {
+    const { world } = createTestWorld();
+    assert.equal(world._parseRecipe("cracked_coconut").craftSeconds, 1);
+    assert.equal(world._parseRecipe("sharp_stick").craftSeconds, 4);
+    assert.equal(world._parseRecipe("poultice").craftSeconds, 1);
+    assert.equal(world._parseRecipe("digging_stick").craftSeconds, 12);
+});
+
+test("a Leather settler still finishes a bench bill after Craft exists", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "deer_hide_dry", quantity: 1 },
+            { id: "leaf_cord", quantity: 4 },
+            { id: "bone", quantity: 1 },
+            null, null
+        ]
+    });
+    Research.unlock(pawn, "basic_furniture");
+    Research.unlock(pawn, "skinworking");
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0, research: 0
+    };
+    assert.equal(Settlement.jobsFor(settle, rec.id).craft, 0);
+    const bench = addBenchInFront(world, settle, rec, "bench-craft-job");
+    Settlement.addBill(settle, bench.uid, { recipeId: "hide_pouch", mode: "forever", paused: false });
+    workOnce(world, rec);
+    assert.equal(rec._workChannel?.kind, "craft");
+    assert.equal(rec._workChannel?.job, "leather");
+    world.tick(13000);
+    assert.ok(rec.inventory.some((s) => s && s.id === "hide_pouch"));
+});
+

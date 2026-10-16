@@ -1402,6 +1402,7 @@
 
     toggleCraftStationMenu(thing) {
         if (!thing || this._sculptUiOpen()) return;
+        this._closeRockStation?.();
         if (isHudTextOpen(this)) return;
         if (this.player?._resting) return;
         if (this.craftMenuVisible && this._craftFromStation && (

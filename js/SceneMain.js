@@ -95,6 +95,9 @@ class SceneMain extends SceneBase {
         this._craftFromStation = false;
         this._craftSettleUi = null;
         this._craftBillUi = null;
+        this._rockStationThing = null;
+        this._rockSettleUi = null;
+        this._rockBillUi = null;
         this._craftTakeBtn = null;
         this._craftTakeRect = null;
         this._craftTakeText = null;
@@ -577,6 +580,7 @@ class SceneMain extends SceneBase {
         this.leanToPanel?.update();
         this.paintingCirclePanel?.update();
         this._updateCraftStationMenu();
+        this._updateRockStation?.();
         this.corpsePanel?.update();
         this.updateLightVeil();
         this._syncWaterSprite();

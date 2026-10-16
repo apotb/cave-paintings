@@ -885,11 +885,8 @@ class DroppedItem extends Mob {
         }
 
         // Knapped silhouette on the ground drop
-        if (this.knapIconData && typeof Knapping !== "undefined") {
-            const knapKey = Knapping.ensureToolTexture(scene, {
-                knapIconData: this.knapIconData,
-                knapIcon: entry.knapIcon
-            });
+        if (this.toolClass && typeof Knapping !== "undefined" && Knapping.ensureShapeTexture) {
+            const knapKey = Knapping.ensureShapeTexture(scene, this);
             if (knapKey && scene.textures.exists(knapKey)) {
                 this.knapIcon = knapKey;
                 this.setTexture(knapKey);

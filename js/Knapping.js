@@ -277,6 +277,53 @@ const Knapping = {
         return key;
     },
 
+    /**
+     * Cut a class shape out of the pebble or flint sprite the player knaps.
+     * Returns the same packed RGBA a finished knap stores.
+     */
+    carveShapeIcon(scene, toolClass, stoneId) {
+        const shapes = (typeof KnapShapes !== "undefined") ? KnapShapes : null;
+        const grid = shapes?.grid?.(toolClass);
+        if (!grid || !scene?.textures) return null;
+        const flint = stoneId === "flint";
+        const id = flint ? "flint" : (stoneId || "andesite");
+        if (!this._shapeIconCache) this._shapeIconCache = Object.create(null);
+        const cacheKey = toolClass + ":" + id;
+        if (this._shapeIconCache[cacheKey]) return this._shapeIconCache[cacheKey];
+        let textureKey = null;
+        if (flint) {
+            if (!scene.textures.exists("flint")) return null;
+            textureKey = "flint";
+        } else if (typeof ensureStoneTexture === "function") {
+            textureKey = ensureStoneTexture(scene, "pebble", 1, id);
+        }
+        if (!textureKey || !scene.textures.exists(textureKey)) return null;
+        const blank = this.blankFromTexture(scene, textureKey);
+        if (!blank?.pixels) return null;
+        const packed = this.packIconData(grid, blank.pixels);
+        if (packed) this._shapeIconCache[cacheKey] = packed;
+        return packed;
+    },
+
+    /**
+     * Texture for a knapped stack. A stored picture wins. Otherwise the class
+     * shape is cut from that stack's stone sprite.
+     */
+    ensureShapeTexture(scene, stack) {
+        if (!scene?.textures || !stack) return null;
+        if (stack.knapIconData) return this.ensureToolTexture(scene, stack);
+        const cls = stack.toolClass;
+        if (!cls) {
+            return stack.knapIcon && scene.textures.exists(stack.knapIcon) ? stack.knapIcon : null;
+        }
+        const stoneId = stack.knapMaterial === "flint" ? "flint" : (stack.stone || "andesite");
+        const data = this.carveShapeIcon(scene, cls, stoneId);
+        if (!data) return null;
+        const key = this.ensureToolTexture(scene, { knapIconData: data, toolClass: cls });
+        if (key) stack.knapIcon = key;
+        return key;
+    },
+
     /** Keep largest connected component so blanks start as one stone. */
     _ensureConnected(grid) {
         const comps = this.components(grid);

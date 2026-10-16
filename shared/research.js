@@ -1218,6 +1218,7 @@
             return techUnlocked(techId, settle);
         }
         const rec = idOrRec;
+        if (rec.kind === "knap") return !!knappingTechniques(settle)[rec.toolClass];
         const recipeId = rec.recipeId || rec.id || null;
         const outputId = rec.outputId || (rec.kind === "craft" ? (rec.recipeId || rec.outputId) : null);
         if (outputId && recipeTechId(outputId)) return recipeUnlocked(outputId, settle);

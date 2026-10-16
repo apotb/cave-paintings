@@ -1022,10 +1022,10 @@ function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
         const stoneKey = ensureStoneTexture(base.scene, "pebble", 1, stack.stone);
         if (stoneKey && textures.exists(stoneKey)) key = stoneKey;
     }
-    // Knapped tools: silhouette cut from the pebble/flint sprite
-    if (stack.knapIconData && typeof Knapping !== "undefined") {
+    // Knapped tools: class shape cut from the pebble/flint sprite, or a stored picture
+    if (stack.toolClass && typeof Knapping !== "undefined" && Knapping.ensureShapeTexture) {
         const scene = base.scene;
-        const knapKey = Knapping.ensureToolTexture(scene, stack);
+        const knapKey = Knapping.ensureShapeTexture(scene, stack);
         if (knapKey && textures.exists(knapKey)) key = knapKey;
     } else if (stack.formVoxels && typeof ClayForming !== "undefined") {
         const scene = base.scene;
@@ -1320,8 +1320,8 @@ function createStackDragIcon(scene, x, y, stack, meta, scale) {
         return cont;
     }
     let key = stackIconKey(meta, stack, scene);
-    if (stack?.knapIconData && typeof Knapping !== "undefined") {
-        const knapKey = Knapping.ensureToolTexture(scene, stack);
+    if (stack?.toolClass && typeof Knapping !== "undefined" && Knapping.ensureShapeTexture) {
+        const knapKey = Knapping.ensureShapeTexture(scene, stack);
         if (knapKey) key = knapKey;
     } else if (stack?.formVoxels && typeof ClayForming !== "undefined") {
         const formKey = ClayForming.ensureFormTexture(scene, stack);

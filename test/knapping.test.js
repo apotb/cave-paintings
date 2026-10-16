@@ -388,3 +388,17 @@ test("andesite chip sizes match today's roll, and limestone flakes bigger than f
     assert.equal(buckets[1] + buckets[2] + buckets.big, n);
     assert.ok(limeBig > flintBig);
 });
+
+test("settler silhouettes classify as that exact class", () => {
+    const KnapShapes = require("../shared/knapShapes");
+    const unlocked = {
+        knife: true, scraper: true, chopper: true, awl: true,
+        spear_tip: true, hand_axe: true, cleaver: true
+    };
+    for (const cls of Object.keys(KnapShapes.SHAPES)) {
+        const material = cls === "hand_axe" || cls === "cleaver" ? "flint" : "pebble";
+        const got = Knapping.classify(KnapShapes.grid(cls), material, unlocked);
+        assert.equal(got.toolClass, cls, cls);
+        assert.equal(got.reject, null, cls);
+    }
+});

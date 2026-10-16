@@ -38,11 +38,12 @@
         }
         return ids;
     }
-    const JOBS = ["doctor", "cook", "chop", "leather", "gather", "haul", "research"];
+    const JOBS = ["doctor", "cook", "chop", "leather", "craft", "gather", "haul", "research"];
     const JOB_LABELS = {
         doctor: "Doc",
         cook: "Cook",
         leather: "Tail",
+        craft: "Cft",
         haul: "Haul",
         gather: "Get",
         chop: "Chop",
@@ -52,6 +53,7 @@
         doctor: "Doctor",
         cook: "Cook",
         leather: "Tailoring",
+        craft: "Craft",
         haul: "Haul",
         gather: "Gather",
         chop: "Chop",
@@ -73,6 +75,7 @@
             "Smoke leather",
             "Work at Skinworking Bench"
         ],
+        craft: ["Work at Rock"],
         gather: ["Harvest plants", "Gather resources", "Dig clay"],
         haul: [
             "Pick up ground items",
@@ -146,7 +149,20 @@
             kind: "craft",
             outputId: r.id,
             hideStage: r.hideStage
-        }))
+        })),
+        rock: [
+            { id: "cracked_coconut", name: "Make Coconut Shell", kind: "make", outputId: "cracked_coconut" },
+            { id: "sharp_stick", name: "Make Sharp Stick", kind: "make", outputId: "sharp_stick" },
+            { id: "poultice", name: "Make Poultice", kind: "make", outputId: "poultice" },
+            { id: "digging_stick", name: "Make Digging Stick", kind: "make", outputId: "digging_stick" },
+            { id: "knap_knife", name: "Knap knife", kind: "knap", toolClass: "knife" },
+            { id: "knap_scraper", name: "Knap scraper", kind: "knap", toolClass: "scraper" },
+            { id: "knap_chopper", name: "Knap chopper", kind: "knap", toolClass: "chopper" },
+            { id: "knap_awl", name: "Knap awl", kind: "knap", toolClass: "awl" },
+            { id: "knap_spear_tip", name: "Knap spear tip", kind: "knap", toolClass: "spear_tip" },
+            { id: "knap_hand_axe", name: "Knap hand-axe", kind: "knap", toolClass: "hand_axe" },
+            { id: "knap_cleaver", name: "Knap cleaver", kind: "knap", toolClass: "cleaver" }
+        ]
     };
     const BILL_STATION_THING = {
         campfire: "campfire",
@@ -159,7 +175,8 @@
         skinworking_bench: true,
         drying_rack: true,
         wicker_basket: true,
-        storage_pit: true
+        storage_pit: true,
+        rock: true
     };
 
     function uid() {
@@ -332,6 +349,7 @@
         if (id === "skinworking_bench") return "craft";
         if (id === "drying_rack") return "rack";
         if (id === "wicker_basket" || id === "storage_pit") return "storage";
+        if (id === "rock") return "rock";
         return null;
     }
 
@@ -620,8 +638,62 @@
         return out;
     }
 
+    function knapShapesApi() {
+        if (typeof KnapShapes !== "undefined" && KnapShapes.inputIds) return KnapShapes;
+        try {
+            if (typeof require === "function") return require("./knapShapes");
+        } catch (_) { /* optional */ }
+        return null;
+    }
+
+    function itemDefById(id, items) {
+        const hit = (items || []).find((it) => it && it.id === id);
+        if (hit) return hit;
+        try {
+            const ds = (typeof DataStore !== "undefined" && DataStore.getItem) ? DataStore : null;
+            const live = ds || (typeof require === "function" ? require("./DataStore") : null);
+            if (live?.isReady?.() && typeof live.getItem === "function") return live.getItem(id) || null;
+        } catch (_) { /* optional */ }
+        return null;
+    }
+
+    function makeBillInputs(recipe, items) {
+        const def = itemDefById(recipe?.outputId, items);
+        const raw = def?.recipe;
+        if (!raw || typeof raw !== "object") return [];
+        const out = [];
+        for (const [k, v] of Object.entries(raw)) {
+            if (RECIPE_SKIP[k]) continue;
+            const qty = v && typeof v === "object"
+                ? Math.max(1, Math.floor(Number(v.qty) || 1))
+                : Math.max(0, Math.floor(Number(v) || 0));
+            if (!(qty > 0)) continue;
+            const meta = itemDefById(k, items);
+            out.push({
+                id: k,
+                name: meta?.name || k,
+                key: meta?.key || k,
+                qty
+            });
+        }
+        return out;
+    }
+
+    function knapBillInputs(recipe) {
+        const api = knapShapesApi();
+        const ids = api?.inputIds?.(recipe?.toolClass) || [];
+        return ids.map((id) => ({
+            id,
+            name: api.inputName?.(id) || id,
+            key: id === "flint" ? "flint" : "pebble",
+            qty: 1
+        }));
+    }
+
     function billInputsFor(recipe, items) {
         if (!recipe) return [];
+        if (recipe.kind === "knap") return knapBillInputs(recipe);
+        if (recipe.kind === "make") return makeBillInputs(recipe, items);
         if (recipe.method === "shell_simmer") return simmerInputsFromItems(items);
         if (hideStepOf(recipe.method)) return hideInputsForStep(items, recipe.method);
         if (recipe.hideStage || recipe.kind === "craft") {
@@ -637,6 +709,53 @@
         if (!Array.isArray(allowed) || !allowed.length) return true;
         const want = canonItemId(itemId);
         return allowed.some((id) => canonItemId(id) === want);
+    }
+
+    /** Raw pebble or flint. A finished stone tool is not a knapping blank. */
+    function isKnapBlank(stack) {
+        if (!stack || !(Number(stack.quantity) > 0) || stack.toolClass) return false;
+        return stack.id === "pebble" || stack.id === "flint";
+    }
+
+    function blankStoneKey(stack) {
+        if (!isKnapBlank(stack)) return null;
+        if (stack.id === "flint") return "flint";
+        const api = stoneApi();
+        return api?.normalizeStone?.(stack.stone) || api?.stoneOf?.(stack) || "andesite";
+    }
+
+    function blankMatchesBill(bill, stack) {
+        const key = blankStoneKey(stack);
+        if (!key || !bill) return false;
+        const rec = billRecipeById(bill.recipeId) || bill;
+        const cls = bill.toolClass || rec?.toolClass;
+        if ((cls === "hand_axe" || cls === "cleaver") && stoneApi()?.handAxeGate?.(key)) return false;
+        return billAllowsInput(bill, key);
+    }
+
+    function countToolClassSlots(slots, toolClass) {
+        if (!toolClass) return 0;
+        let n = 0;
+        for (const s of slots || []) {
+            if (s?.toolClass === toolClass) n += stackQty(s);
+        }
+        return n;
+    }
+
+    function countToolClassStock(baskets, pawns, drops, toolClass) {
+        let n = 0;
+        for (const b of baskets || []) n += countToolClassSlots(b?.slots || b, toolClass);
+        for (const p of pawns || []) {
+            if (!p) continue;
+            n += countToolClassSlots(p.inventory, toolClass);
+            n += countToolClassSlots(p.overflow, toolClass);
+        }
+        for (const d of drops || []) {
+            if (!d) continue;
+            if (d.toolClass === toolClass) n += stackQty(d);
+            else if (d.entry?.toolClass === toolClass) n += stackQty(d.entry);
+        }
+        return n;
     }
 
     const RECIPE_SKIP = {
@@ -688,6 +807,9 @@
         const getItem = opts.getItem;
         const items = opts.items || [];
         const rec = billRecipeById(bill.recipeId) || bill;
+        if (rec?.kind === "knap" || bill.kind === "knap") {
+            return typeof opts.hasBlank === "function" ? !!opts.hasBlank(bill) : false;
+        }
         const needs = billCraftNeeds(bill, getItem);
         if (needs) {
             for (const need of needs) {
@@ -991,6 +1113,10 @@
 
     function syncBillResults(bill, getItem) {
         if (!bill) return bill;
+        if (bill.kind === "knap" || (bill.toolClass && !bill.outputId)) {
+            bill.resultIds = bill.toolClass ? [`tool:${bill.toolClass}`] : [];
+            return bill;
+        }
         if (bill.outputId) {
             bill.resultIds = [bill.outputId];
             return bill;
@@ -1029,6 +1155,7 @@
             recipeId: opts.recipeId || rec?.id || null,
             method: opts.method || rec?.method || null,
             outputId: opts.outputId || rec?.outputId || null,
+            toolClass: opts.toolClass || rec?.toolClass || null,
             mode,
             n: Math.max(1, Math.floor(Number(opts.n) || 1)),
             paused: opts.paused == null ? true : !!opts.paused,
@@ -1039,6 +1166,9 @@
             resultIds: Array.isArray(opts.resultIds) ? opts.resultIds.filter(Boolean) : null,
             name: String(opts.name || "").trim().slice(0, NAME_MAX) || null
         };
+        if (bill.kind === "knap" && bill.toolClass && !bill.resultIds) {
+            bill.resultIds = [`tool:${bill.toolClass}`];
+        }
         return bill;
     }
 
@@ -1051,6 +1181,7 @@
             recipeId: bill.recipeId,
             method: bill.method,
             outputId: bill.outputId,
+            toolClass: bill.toolClass,
             mode: bill.mode,
             n: bill.n,
             paused,
@@ -1407,7 +1538,7 @@
     function isBusyWork(type) {
         if (type === "chop" || type === "gather" || type === "dig" || type === "haul" || type === "stash"
             || type === "cook" || type === "cook_light" || type === "cook_stoke"
-            || type === "leather" || type === "doctor" || type === "research") return true;
+            || type === "leather" || type === "craft" || type === "doctor" || type === "research") return true;
         const id = jobForWork(type);
         const job = id && jobApi()?.get?.(id);
         return !!(job && job.busy);
@@ -1426,6 +1557,19 @@
         const job = jobApi()?.forType?.(t) || jobApi()?.get?.(t);
         if (job) return job.id;
         return null;
+    }
+
+    /**
+     * Job column that must stay on for an in-progress channel.
+     * Bench channels are kind "craft" and stay on Leather. A missing job
+     * on one of those still means Leather. Rock channels carry job "craft".
+     */
+    function channelJob(ch) {
+        if (!ch) return null;
+        if (ch.job) return ch.job;
+        if (ch.kind === "craft") return "leather";
+        if (ch.kind === "rock" || ch.kind === "knap") return "craft";
+        return ch.kind || null;
     }
 
     function jobEnabled(row, typeOrName) {
@@ -1683,10 +1827,11 @@
             // Don't keep sewing just because the previous scan still had that job.
             // Same for cook: a paused or reordered bill must drop the roast hold.
             const keepLeather = busyJob.type !== "leather" || state.leatherWork || state.benchBill;
+            const keepCraft = busyJob.type !== "craft" || state.rockWork;
             const keepCook = busyJob.type !== "cook" || sameCookJob(busyJob.target, state.cookBill);
             // Hands full: drop the light hold so a stash can free a slot for the starter.
             const keepLight = busyJob.type !== "cook_light" || !state.light?.starterNeedsRoom;
-            if (keepLeather && keepCook && keepLight) return busyJob;
+            if (keepLeather && keepCraft && keepCook && keepLight) return busyJob;
         }
         if (!busy && (Number(state.kc) || 0) < AUTO && state.canEat !== false) return { type: "eat" };
         if (state.isOrphan) return { type: "idle" };
@@ -1731,6 +1876,9 @@
             }
             if (job === "leather" && (state.leatherWork || state.benchBill)) {
                 return { type: "leather", target: state.leatherWork || state.benchBill };
+            }
+            if (job === "craft" && state.rockWork) {
+                return { type: "craft", target: state.rockWork };
             }
             if (job === "haul") {
                 if (state.haulDrop || state.haulOutput || state.haulMerge) {
@@ -2017,7 +2165,11 @@
         if (t === "cook_stoke") return "Stoking the fire";
         if (t === "flesh") return "Fleshing hides";
         if (t === "brain") return "Brain-tanning hides";
-        if (t === "craft") return "Crafting";
+        if (t === "craft") {
+            const rock = plan?.target?.station || plan?.target;
+            const name = stoneApi()?.rockLabel?.(rock);
+            return name ? `Crafting at ${name}` : "Crafting";
+        }
         if (t === "tend" || t === "doctor") {
             const who = ctx.patientName != null ? ctx.patientName : pawnDisplayName(plan?.target);
             return who && who !== "Someone" ? `Tending ${who}` : "Tending";
@@ -2370,6 +2522,11 @@
         cookInputsForMethod,
         billInputsFor,
         billAllowsInput,
+        isKnapBlank,
+        blankStoneKey,
+        blankMatchesBill,
+        countToolClassSlots,
+        countToolClassStock,
         billHasMaterials,
         billWantsMaterials,
         hideItemId,
@@ -2434,6 +2591,7 @@
         RESEARCH_NEEDS_TICKS,
         isBusyWork,
         jobForWork,
+        channelJob,
         jobEnabled,
         isFirestarter,
         cookCanLight,

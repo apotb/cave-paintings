@@ -307,6 +307,7 @@ class SimCreature {
                 : (stack?.knapIcon || meta.key || meta.id || null),
             knapMaterial: stack?.knapMaterial || null,
             stone: stack?.stone || null,
+            toolClass: stack?.toolClass || null,
             itemId: stack?.id || meta.id || null,
             range: Number(meta.weapon.range) || Number(attack.range) || 12,
             knapSilhouette: !!meta.weapon.knapSilhouette,

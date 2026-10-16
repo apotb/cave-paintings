@@ -133,6 +133,7 @@ const shellRequire = typeof require === "function" ? require : undefined;
     const doStokeFire = (...args) => ctx.doStokeFire(...args);
     const doCook = (...args) => ctx.doCook(...args);
     const doLeather = (...args) => ctx.doLeather(...args);
+    const doRock = (...args) => ctx.doRock(...args);
 
 
 /** At most a couple of full job searches per sim tick, so a camp of twenty doesn't all search on the same frame. */
@@ -168,7 +169,10 @@ function tick(world, mob, delta) {
 
     const liveJobs = jobsOn(settle, rec);
     if (rec._workChannel) {
-        if (!workJobOn(settle, rec, rec._workChannel.kind) || !channelStillValid(world, rec, rec._workChannel)) {
+        const chJob = Settlement.channelJob
+            ? Settlement.channelJob(rec._workChannel)
+            : rec._workChannel.kind;
+        if (!workJobOn(settle, rec, chJob) || !channelStillValid(world, rec, rec._workChannel)) {
             rec._workChannel = null;
             endWorkHold(rec);
         } else {
@@ -182,7 +186,7 @@ function tick(world, mob, delta) {
                 const rack = world._findThingByUid(ch.uid)?.entry;
                 if (rack) return haltAtRack(rec, rack);
             }
-            if (ch.kind === "craft" && ch.uid) {
+            if ((ch.kind === "craft" || ch.kind === "rock" || ch.kind === "knap") && ch.uid) {
                 const bench = world._findThingByUid(ch.uid)?.entry;
                 if (bench) return haltAtBench(rec, bench);
             }
@@ -335,6 +339,7 @@ function tick(world, mob, delta) {
             cookBill: scan.cookBill,
             stokeFire: scan.stokeFire,
             leatherWork: scan.leatherWork,
+            rockWork: scan.rockWork,
             haulDrop: scan.haulDrop,
             haulMerge: scan.haulMerge,
             gatherThing: scan.gatherThing,
@@ -443,6 +448,7 @@ function tick(world, mob, delta) {
     }
     if (plan.type === "cook" && plan.target) return doCook(world, rec, settle, plan.target);
     if (plan.type === "leather" && plan.target) return doLeather(world, rec, settle, plan.target);
+    if (plan.type === "craft" && plan.target) return doRock(world, rec, settle, plan.target);
 
     return null;
 }

@@ -62,6 +62,8 @@
     const takeOffFire = (...args) => ctx.takeOffFire(...args);
     const workJobOn = (...args) => ctx.workJobOn(...args);
     const benchHasWork = (...args) => ctx.benchHasWork(...args);
+    const rockBillReady = (...args) => ctx.rockBillReady(...args);
+    const countToolClass = (...args) => ctx.countToolClass(...args);
     const leatherJobKey = (...args) => ctx.leatherJobKey(...args);
     const jobOn = (...args) => ctx.jobOn(...args);
     const researchCircle = (...args) => ctx.researchCircle(...args);
@@ -807,6 +809,47 @@ function leatherWork(world, rec, settle, claims) {
     return best;
 }
 
+function rockWork(world, rec, settle, claims) {
+    const have = (id) => {
+        if (typeof id === "string" && id.startsWith("tool:")) {
+            return countToolClass(world, settle, id.slice(5));
+        }
+        return countItem(world, settle, id);
+    };
+    const jobs = [];
+    for (const rock of stationsOf(world, settle, "rock")) {
+        for (const bill of Settlement.billsOf(settle, rock.uid)) {
+            if (!Settlement.billIsActive(bill, have, settle)) continue;
+            if (!rockBillReady(world, rec, settle, bill)) continue;
+            jobs.push({
+                kind: bill.kind === "knap" ? "knap" : "make",
+                station: rock,
+                bill,
+                entry: rock
+            });
+            break;
+        }
+    }
+    if (!jobs.length) return null;
+    const mine = claims?.held(rec.id);
+    if (mine) {
+        const held = jobs.find((j) => stationKey(j.station) === mine);
+        if (held && !isSkipped(rec, mine)) return held;
+    }
+    let best = null;
+    let bestD = Infinity;
+    for (const job of jobs) {
+        const key = stationKey(job.station);
+        if (claimedByOther(claims, key, rec.id) || isSkipped(rec, key)) continue;
+        const d = Math.hypot(rec.x - job.station.x, rec.y - job.station.y);
+        if (d < bestD) {
+            bestD = d;
+            best = job;
+        }
+    }
+    return best;
+}
+
 function scanWork(world, rec, settle, claims) {
     const jobs = Settlement.jobsFor(settle, rec.id);
     const enabled = new Set(Settlement.enabledJobs(jobs));
@@ -833,6 +876,7 @@ function scanWork(world, rec, settle, claims) {
         cookBill: jobOn(enabled, "cook") ? cookBill(world, rec, settle, claims) : null,
         stokeFire: jobOn(enabled, "cook") ? stokeFire(world, rec, settle, claims) : null,
         leatherWork: jobOn(enabled, "leather") ? leatherWork(world, rec, settle, claims) : null,
+        rockWork: jobOn(enabled, "craft") ? rockWork(world, rec, settle, claims) : null,
         haulDrop: jobOn(enabled, "haul") ? haulDrop(world, rec, settle, claims) : null,
         haulMerge: jobOn(enabled, "haul") ? haulMergeJob(world, rec, settle, claims) : null,
         gatherThing: jobOn(enabled, "gather") ? gatherThing(world, rec, settle, claims) : null,

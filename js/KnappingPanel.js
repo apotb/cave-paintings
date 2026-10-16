@@ -308,10 +308,20 @@ class KnappingPanel {
         if (!held || !(held.quantity > 0)) return null;
         const meta = this.scene.getItem(held.id);
         const slotIndex = this.scene.hotbar?.activeIndex ?? -1;
-        const rework = !!(held.knapIconData && (held.id === "stone_tool" || held.id === "flint_tool"));
+        const shaped = !!(held.toolClass && typeof KnapShapes !== "undefined" && KnapShapes.grid?.(held.toolClass));
+        const rework = !!((held.knapIconData || shaped) && (held.id === "stone_tool" || held.id === "flint_tool"));
         if (rework) {
             if (opts.probe) return { rework: true };
-            const pixels = Knapping.unpackIconData(held.knapIconData);
+            let packed = held.knapIconData;
+            if (!packed && shaped && Knapping.carveShapeIcon) {
+                const stoneId = held.knapMaterial === "flint"
+                    ? "flint"
+                    : ((typeof Stone !== "undefined" && Stone.stoneOf)
+                        ? (Stone.stoneOf(held) || "andesite")
+                        : (held.stone || "andesite"));
+                packed = Knapping.carveShapeIcon(this.scene, held.toolClass, stoneId);
+            }
+            const pixels = Knapping.unpackIconData(packed);
             if (!pixels) return null;
             const grid = Knapping.gridFromPixels(pixels);
             if (!grid || Knapping.mass(grid) < 1) return null;

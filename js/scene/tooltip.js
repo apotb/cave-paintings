@@ -801,7 +801,8 @@
             if (!obj?.input) return 'default';
             // Rocks: hand cursor only when "Click to knap" tip would show
             if (obj.meta?.id === "rock") {
-                return this._rockKnapTooltipText() ? "pointer" : "default";
+                if (this._rockKnapTooltipText()) return "pointer";
+                return this._rockManageable?.(obj) ? "pointer" : "default";
             }
             if (obj.meta?.diggable?.item) {
                 // Empty GO.cursor: Phaser setCursor would flash the arrow between deposits.

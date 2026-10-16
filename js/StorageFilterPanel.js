@@ -41,6 +41,10 @@ class StorageFilterPanel {
             fontSize: "12px",
             color: "#8a7a62"
         }).setOrigin(0, 0.5);
+        const iconKey = scene.textures.exists("null") ? "null" : null;
+        this.headerIcon = iconKey
+            ? scene.add.image(0, 0, iconKey).setOrigin(0.5, 0.5).setVisible(false)
+            : null;
         this.closeBtn = this._btn(0, 0, "Close", () => this.close(), { w: 52, h: 22 });
         this.prioBtn = this._btn(0, 0, "Priority: Normal", () => {}, { w: 160, h: 22 });
         this._bindPriority(this.prioBtn);
@@ -52,10 +56,10 @@ class StorageFilterPanel {
         this.scrollTrack = scene.add.rectangle(0, 0, 5, 100, 0x3a2e26, 1).setOrigin(0, 0).setVisible(false);
         this.scrollThumb = scene.add.rectangle(0, 0, 5, 20, 0x8a7260, 1).setOrigin(0, 0).setVisible(false);
         this.root.add([
-            this.bg, this.title, this.subtitle, this.body,
+            this.bg, this.title, this.headerIcon, this.subtitle, this.body,
             this.scrollTrack, this.scrollThumb,
             this.prioBtn, this.setAllBtn, this.setNoneBtn, this.closeBtn
-        ]);
+        ].filter(Boolean));
     }
 
     _bindPriority(c) {
@@ -336,10 +340,8 @@ class StorageFilterPanel {
             applyPixelUiFont(this.subtitle, 12, s);
         }
         const pad = Math.round(12 * s);
-        const headerY = Math.round(18 * s);
-        this.title.setPosition(Math.round(w / 2), headerY);
-        this.subtitle.setPosition(pad, headerY);
-        this.closeBtn.setPosition(w - Math.round(40 * s), headerY);
+        this._placeHeader();
+        this.closeBtn.setPosition(w - Math.round(40 * s), Math.round(18 * s));
         this._sizeBtn(this.closeBtn, Math.round(52 * s), Math.round(22 * s), 12);
         const prioW = Math.round(168 * s);
         const prioH = Math.round(22 * s);
@@ -381,6 +383,7 @@ class StorageFilterPanel {
         const name = this.thing?.meta?.name || this.thing?.entry?.id || "Basket";
         this.title.setText("Storage");
         this.subtitle.setText(String(name));
+        this._placeHeader();
         const f = this._filter();
         const prio = SF?.PRIORITY_LABELS?.[f.priority] || "Normal";
         if (this.prioBtn._txt) this.prioBtn._txt.setText(`Priority: ${prio}`);
@@ -394,6 +397,61 @@ class StorageFilterPanel {
         this._refreshMask();
         this._refreshing = false;
         this._restoreHoverTip();
+    }
+
+    _containerIconKey() {
+        const scene = this.scene;
+        const thing = this.thing;
+        if (!thing || !scene?.textures) return null;
+        const live = thing.texture?.key;
+        // An open finished pit swaps to the hole sprite. The header keeps the container.
+        if (live && live !== "__MISSING" && live !== "hole" && scene.textures.exists(live)) return live;
+        const id = thing.entry?.id || thing.meta?.id;
+        const meta = thing.meta || scene.getThing?.(id);
+        if (id === "storage_pit") {
+            const finished = typeof Place !== "undefined"
+                ? Place.pitFinished(thing.entry)
+                : (Number(thing.entry?.digProgress) || 0) >= 1;
+            if (!finished && typeof ensureStoragePitBlueprint === "function") {
+                const blue = ensureStoragePitBlueprint(scene, meta?.key || "storage_pit");
+                if (blue && scene.textures.exists(blue)) return blue;
+            }
+        }
+        if (typeof Thing !== "undefined" && meta && Thing.textureKeyFor) {
+            const key = Thing.textureKeyFor(scene, meta, thing.entry?.rot);
+            if (key && scene.textures.exists(key)) return key;
+        }
+        const fallback = meta?.key || id;
+        if (fallback && scene.textures.exists(fallback)) return fallback;
+        return null;
+    }
+
+    _placeHeader() {
+        const s = this.scene.uiScale || 1;
+        const pad = Math.round(12 * s);
+        const headerY = Math.round(18 * s);
+        const iconSize = Math.round(16 * s);
+        const gap = Math.round(4 * s);
+        const key = this.visible ? this._containerIconKey() : null;
+        let nameX = pad;
+        const icon = this.headerIcon;
+        if (icon) {
+            if (key) {
+                const tex = this.scene.textures.get(key);
+                const frame = tex?.frames?.["0"] ? 0 : undefined;
+                const frameName = icon.frame?.name;
+                const frameOk = frame == null || frameName === 0 || frameName === "0";
+                if (icon.texture?.key !== key || !frameOk) icon.setTexture(key, frame);
+                icon.setDisplaySize(iconSize, iconSize);
+                icon.setPosition(Math.round(pad + iconSize / 2), headerY);
+                icon.setVisible(true);
+                nameX = pad + iconSize + gap;
+            } else {
+                icon.setVisible(false);
+            }
+        }
+        this.title.setPosition(Math.round(this.bg.width / 2), headerY);
+        this.subtitle.setPosition(nameX, headerY);
     }
 
     _label(text, x, y, size = 12, color = "#d4c4a8") {

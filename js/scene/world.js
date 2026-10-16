@@ -475,18 +475,27 @@
         thing.setInteractive({ cursor: "default", pixelPerfect: false });
         thing.on("pointerdown", (pointer) => {
             if (this._gamePaused) return;
+            if (pointer.rightButtonDown?.()) return;
+            if (this.pointerOnRockAdd?.(pointer) || this.pointerOnRockBills?.(pointer)) return;
             if (this.pointerOverWorldUi?.(pointer)) return;
-            this.knappingPanel?.tryOpenAtRock?.(thing);
+            if (this._rockKnapTooltipText()) {
+                this.knappingPanel?.tryOpenAtRock?.(thing);
+                return;
+            }
+            if (!this._rockManageable?.(thing)) return;
+            if (this._rockStationThing === thing) this._closeRockStation?.();
+            else this._openRockStation?.(thing);
         });
         thing.on("pointerover", (pointer) => {
             this.showTooltip(
                 () => {
-                    const hint = this._rockKnapTooltipText();
-                    if (!hint) return "";
                     const name = (typeof Stone !== "undefined" && Stone.rockLabel)
                         ? Stone.rockLabel(thing.entry)
                         : (thing.meta?.name || "Rock");
-                    return `${name}\n${hint}`;
+                    const hint = this._rockKnapTooltipText();
+                    if (hint) return `${name}\n${hint}`;
+                    if (this._rockManageable?.(thing)) return name;
+                    return "";
                 },
                 pointer.x,
                 pointer.y,
@@ -502,7 +511,7 @@
     _rockKnapTooltipText() {
         const held = this.player?.getHeldItem?.();
         if (!held || !(held.quantity > 0)) return "";
-        if (held.knapIconData && (held.id === "stone_tool" || held.id === "flint_tool")) {
+        if ((held.knapIconData || held.toolClass) && (held.id === "stone_tool" || held.id === "flint_tool")) {
             return "Click to reshape";
         }
         const meta = this.getItem(held.id);

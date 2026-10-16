@@ -725,10 +725,12 @@
         if (recipe?.id === "stone_spear" && typeof ensureSpearTexture === "function") {
             const tip = this._craftPredictedTip(recipe);
             const mat = tip?.knapMaterial;
+            const hasRock = mat === "flint" || mat === "pebble";
+            // No rock yet: andesite gray only. Name and stats stay Stone Spear.
             const key = ensureSpearTexture(
                 this,
-                mat === "flint" || mat === "pebble" ? mat : "white",
-                tip?.stone
+                hasRock ? mat : "andesite",
+                hasRock ? tip?.stone : "andesite"
             );
             if (key && this.textures.exists(key)) return key;
         }
@@ -744,7 +746,7 @@
 
     /**
      * Spear tip this craft would consume: leftmost hotbar match, then the open basket.
-     * No match leaves the recipe icon as a white tip named Stone Spear.
+     * No match leaves the recipe icon as an andesite-colored tip named Stone Spear.
      */
     _craftPredictedTip(recipe, pawn) {
         const tipIng = recipe?.ingredients?.find((i) => i.toolClass === "spear_tip");
@@ -1330,6 +1332,137 @@
 
         const remaining = who.gainItem(item, recipe.quantity);
         if (remaining > 0) DroppedItem.spawn(this, who.x, who.y, item, remaining);
+    },
+
+    _rockInReach(thing) {
+        const p = this.player;
+        if (!p || !thing) return false;
+        const r = (this.tileSize || 16) * (p.interactionRange || 4);
+        const dx = (thing.x || 0) - (p.x || 0);
+        const dy = (thing.y || 0) - (p.y || 0);
+        return dx * dx + dy * dy <= r * r;
+    },
+
+    _rockManageable(thing) {
+        if (!thing || thing.meta?.id !== "rock") return false;
+        if (!this.settlementSys?.canManageThing?.(thing)) return false;
+        return this._rockInReach(thing);
+    },
+
+    _hideRockChrome() {
+        for (const key of ["_rockSettleUi", "_rockBillUi"]) {
+            const ui = this[key];
+            if (!ui) continue;
+            // Rejoin reuses this scene. Shutdown destroys the buttons and leaves
+            // these refs on dead objects; disableInteractive then reads scene.sys.
+            if (!this._worldUiLive(ui)) {
+                this._discardWorldUi(key);
+                continue;
+            }
+            ui.btn.setVisible(false);
+            if (ui.rect.input?.enabled) ui.rect.disableInteractive();
+        }
+    },
+
+    _closeRockStation() {
+        const thing = this._rockStationThing;
+        if (this.billsPanel?.visible && thing && this.billsPanel.thing === thing) {
+            this.billsPanel.close();
+        }
+        this._rockStationThing = null;
+        this._hideRockChrome();
+    },
+
+    _openRockStation(thing) {
+        if (!thing) return;
+        if (this._craftStationThing) this.closeCraftStationMenu?.();
+        if (this.billsPanel?.visible && this.billsPanel.thing !== thing) this.billsPanel.close();
+        this._rockStationThing = thing;
+        this._layoutRockStation();
+    },
+
+    _updateRockStation() {
+        const thing = this._rockStationThing;
+        if (!thing?.active || !this._rockManageable(thing)) {
+            if (thing) this._closeRockStation();
+            else this._hideRockChrome();
+            return;
+        }
+        this._layoutRockStation();
+    },
+
+    pointerOnRockAdd(pointer) {
+        const ui = this._rockSettleUi;
+        if (!ui?.btn?.visible || !ui.rect || !pointer) return false;
+        const pt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        return Phaser.Geom.Rectangle.Contains(ui.rect.getBounds(), pt.x, pt.y);
+    },
+
+    pointerOnRockBills(pointer) {
+        const ui = this._rockBillUi;
+        if (!ui?.btn?.visible || !ui.rect || !pointer) return false;
+        const pt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        return Phaser.Geom.Rectangle.Contains(ui.rect.getBounds(), pt.x, pt.y);
+    },
+
+    _layoutRockStation() {
+        const rock = this._rockStationThing;
+        const sys = this.settlementSys;
+        const s = this.uiScale || 1;
+        const zoom = this.worldZoom || 1;
+        const ws = s / zoom;
+        const bh = 28 * ws;
+        const gap = 8 * ws;
+        const show = !!(rock && sys && this._rockManageable(rock));
+        if (!show) {
+            this._hideRockChrome();
+            return;
+        }
+        if (this._rockSettleUi && !this._worldUiLive(this._rockSettleUi)) {
+            this._discardWorldUi("_rockSettleUi");
+        }
+        if (!this._rockSettleUi) {
+            this._rockSettleUi = sys.makeStationButton(() => {
+                const thing = this._rockStationThing;
+                if (!thing) return;
+                sys.toggleStation(thing);
+                this._layoutRockStation();
+            });
+            this._placeCraftWorldBtn(this._rockSettleUi.btn);
+        }
+        const ui = this._rockSettleUi;
+        const x = rock.x || 0;
+        const y = (rock.y || 0) + 2 + bh / 2;
+        ui.setSize(bh);
+        sys.syncStationButton(ui, rock);
+        sys.placeAddActionRow(ui, null, {
+            x, y, gap, addW: bh, actionW: 0, addOn: true, actionOn: false
+        });
+        if (this._rockBillUi && !this._worldUiLive(this._rockBillUi)) {
+            this._discardWorldUi("_rockBillUi");
+        }
+        const added = !!sys.isAdded(rock);
+        if (!added) {
+            this._rockBillUi?.btn?.setVisible?.(false);
+            this._rockBillUi?.rect?.disableInteractive?.();
+            return;
+        }
+        if (!this._rockBillUi) {
+            this._rockBillUi = sys.makeWorldButton("Bills", () => {
+                if (this._rockStationThing) sys.openBills?.(this._rockStationThing);
+            });
+            this._placeCraftWorldBtn(this._rockBillUi.btn);
+        }
+        const bills = this._rockBillUi;
+        const bw = 78 * ws;
+        bills.btn.setVisible(true);
+        bills.rect.setSize(bw, bh);
+        bills.rect.setInteractive({ useHandCursor: true });
+        if (bills.rect.input?.hitArea?.setTo) bills.rect.input.hitArea.setTo(0, 0, bw, bh);
+        else if (bills.rect.input?.hitArea?.setSize) bills.rect.input.hitArea.setSize(bw, bh);
+        if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(bills.text, 14, this);
+        bills.paint?.();
+        bills.btn.setPosition(x, y + bh + gap);
     },
     };
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -452,6 +452,7 @@ function planClaimKey(plan) {
         return stationKey(plan.target?.fire || plan.target?.entry || plan.target);
     }
     if (t === "leather") return leatherJobKey(plan.target);
+    if (t === "craft") return stationKey(plan.target?.station || plan.target);
     if (t === "gather" || t === "chop" || t === "research") return thingKey(plan.target);
     if (t === "dig") return null;
     if (t === "haul") {
@@ -500,6 +501,7 @@ function voidPlan(scan, plan) {
     else if (t === "chop") scan.chopTree = null;
     else if (t === "research") scan.researchCircle = null;
     else if (t === "leather") scan.leatherWork = null;
+    else if (t === "craft") scan.rockWork = null;
     else if (t === "cook") scan.cookBill = null;
     else if (t === "cook_light") scan.unlitFire = null;
     else if (t === "cook_stoke") scan.stokeFire = null;
@@ -1150,6 +1152,53 @@ function findBestChopStack(world, rec, settle) {
     return best;
 }
 
+/** Closest storage pile. Carried stacks count as distance 0 and win ties. */
+function findNearestStored(world, rec, settle, pred) {
+    let best = null;
+    let bestD = Infinity;
+    const consider = (slots, index, at, kind, extra, dist) => {
+        if (!(dist < bestD)) return;
+        const stack = slots[index];
+        if (!stack || !pred(stack)) return;
+        if (kind === "basket") {
+            const avail = reservesOf(world, settle).available(
+                `basket:${extra.entry.uid}:${index}`,
+                stack.quantity,
+                rec.id
+            );
+            if (!(avail > 0)) return;
+        }
+        bestD = dist;
+        best = { slots, index, at, kind, ...extra };
+    };
+    const inv = rec?.inventory || [];
+    for (let i = 0; i < inv.length; i++) {
+        if (inv[i]) consider(inv, i, rec, "inv", { bag: "hotbar" }, 0);
+    }
+    const overflow = rec?.overflow || [];
+    for (let i = 0; i < overflow.length; i++) {
+        if (overflow[i]) consider(overflow, i, rec, "overflow", { bag: "overflow" }, 0);
+    }
+    for (const b of basketsOf(world, settle)) {
+        const slots = b.slots || [];
+        const dist = dist2(rec, b);
+        for (let i = 0; i < slots.length; i++) {
+            if (!slots[i]) continue;
+            consider(slots, i, b, "basket", { entry: b }, dist);
+        }
+    }
+    return best;
+}
+
+function countToolClass(world, settle, toolClass) {
+    return Settlement.countToolClassStock(
+        basketsOf(world, settle),
+        settlersOf(world, settle),
+        dropsOf(world, settle),
+        toolClass
+    );
+}
+
 function findStack(world, rec, settle, pred) {
     const inv = rec.inventory || [];
     const ii = inv.findIndex((s) => s && pred(s));
@@ -1624,6 +1673,8 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     ctx.dropAsStack = dropAsStack;
     ctx.leaveHaulDrop = leaveHaulDrop;
     ctx.findStack = findStack;
+    ctx.findNearestStored = findNearestStored;
+    ctx.countToolClass = countToolClass;
     ctx.findBestChopStack = findBestChopStack;
     ctx.dist2 = dist2;
     ctx.reservesOf = reservesOf;

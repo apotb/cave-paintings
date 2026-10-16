@@ -100,6 +100,7 @@
     },
 
     _ensureLootableUids(c) {
+        this._ensureRockUids(c);
         if (!c || !Array.isArray(c.lootableThings)) return;
         const seen = new Set();
         let changed = false;
@@ -107,6 +108,25 @@
             if (!e) continue;
             if (!e.uid) {
                 e.uid = `lt_${Math.round(Number(e.x) || 0)}_${Math.round(Number(e.y) || 0)}_${e.id || "x"}`;
+                changed = true;
+            }
+            if (seen.has(e.uid)) {
+                e.uid = `${e.uid}_${uuid().slice(0, 6)}`;
+                changed = true;
+            }
+            seen.add(e.uid);
+        }
+        if (changed) this._invalidateUidIndex?.();
+    },
+
+    _ensureRockUids(c) {
+        if (!c || !Array.isArray(c.things)) return;
+        const seen = new Set();
+        let changed = false;
+        for (const e of c.things) {
+            if (!e || e.id !== "rock") continue;
+            if (!e.uid) {
+                e.uid = `rk_${Math.round(Number(e.x) || 0)}_${Math.round(Number(e.y) || 0)}`;
                 changed = true;
             }
             if (seen.has(e.uid)) {

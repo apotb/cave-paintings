@@ -48,6 +48,7 @@
     const near = (...args) => ctx.near(...args);
     const keepGearOpts = (...args) => ctx.keepGearOpts(...args);
     const findStack = (...args) => ctx.findStack(...args);
+    const findNearestStored = (...args) => ctx.findNearestStored(...args);
     const canGivePawn = (...args) => ctx.canGivePawn(...args);
     const rackHang = (...args) => ctx.rackHang(...args);
     const patientNeedsTend = (...args) => ctx.patientNeedsTend(...args);
@@ -555,6 +556,10 @@ function workChannelLabel(world, rec) {
         }
         return "Crafting";
     }
+    if (ch.kind === "rock" || ch.kind === "knap") {
+        const rock = ch.uid ? world._findThingByUid(ch.uid)?.entry : null;
+        return Settlement.actLabel({ type: "craft", target: rock }, actCtx(world, rec));
+    }
     return Settlement.actLabel({ type: ch.kind }, actCtx(world, rec));
 }
 
@@ -615,6 +620,29 @@ function benchHasWork(world, rec, settle, bill) {
         const n = countSettle(world, rec, settle, (s) => s.id === ing.id);
         if (n < (ing.qty || 1)) return false;
     }
+    return true;
+}
+
+function rockBillReady(world, rec, settle, bill) {
+    if (!bill) return false;
+    const recId = bill.recipeId;
+    const recipeDef = Settlement.billRecipeById(recId) || bill;
+    if (recipeDef.kind === "knap" || bill.kind === "knap") {
+        return !!findNearestStored(world, rec, settle, (s) => Settlement.blankMatchesBill(bill, s));
+    }
+    const recipe = recId ? world._parseRecipe(recId) : null;
+    if (!recipe) return false;
+    for (const ing of recipe.ingredients || []) {
+        let n = countSettle(world, rec, settle, (s) => s.id === ing.id);
+        for (const s of rec.overflow || []) {
+            if (s?.id === ing.id) n += Math.max(1, Number(s.quantity) || 1);
+        }
+        if (n < (ing.qty || 1)) return false;
+    }
+    const classes = Carry.recipeToolClasses?.(recipe.requireTool) || [];
+    if (classes.length && !findNearestStored(world, rec, settle, (s) => {
+        return classes.includes(Carry.stackToolClass(s, getItem(s.id)));
+    })) return false;
     return true;
 }
 
@@ -698,6 +726,18 @@ function channelStillValid(world, rec, ch) {
         }
         return true;
     }
+    if (ch.kind === "rock" || ch.kind === "knap") {
+        const rock = world._findThingByUid(ch.uid)?.entry;
+        if (!rock || !near(rec.x, rec.y, rock.x, rock.y)) return false;
+        if (ch.kind === "knap") {
+            return (rec.inventory || []).some((s) => Settlement.blankMatchesBill(ch.bill, s));
+        }
+        if (ch.toolClasses?.length) {
+            const cls = Carry.stackToolClass(held, held ? getItem(held.id) : null);
+            if (!ch.toolClasses.includes(cls)) return false;
+        }
+        return true;
+    }
     if (ch.kind === "tend") {
         const patient = findChannelPatient(world, rec, ch.patientId);
         if (!patient || patient.dead) return false;
@@ -722,9 +762,13 @@ function finishWorkChannel(world, rec, ch) {
         world._tryRackBrain(rec, { uid: ch.uid, pawnId: rec.id });
         return;
     }
-    if (ch.kind === "craft") {
+    if (ch.kind === "craft" || ch.kind === "rock") {
         const owner = world.players.get(rec.ownerId) || rec;
         world._tryCraft(owner, { id: ch.recipeId, pawnId: rec.id });
+        return;
+    }
+    if (ch.kind === "knap") {
+        ctx.finishSettlerKnap(world, rec, ch);
         return;
     }
     if (ch.kind === "tend") {
@@ -753,7 +797,8 @@ function tickChannel(world, rec, dtMs) {
     const ch = rec?._workChannel;
     if (!ch) return;
     const settle = findSettle(world, rec);
-    if ((settle && !workJobOn(settle, rec, ch.kind)) || !channelStillValid(world, rec, ch)) {
+    const jobName = Settlement.channelJob ? Settlement.channelJob(ch) : ch.kind;
+    if ((settle && !workJobOn(settle, rec, jobName)) || !channelStillValid(world, rec, ch)) {
         rec._workChannel = null;
         endWorkHold(rec);
         return;
@@ -1042,6 +1087,7 @@ function doLightFire(world, rec, settle, fire) {
     ctx.findBasketStack = findBasketStack;
     ctx.hideAllowed = hideAllowed;
     ctx.benchHasWork = benchHasWork;
+    ctx.rockBillReady = rockBillReady;
     ctx.fetchOrBlock = fetchOrBlock;
     ctx.fetchBenchMats = fetchBenchMats;
     ctx.findChannelPatient = findChannelPatient;

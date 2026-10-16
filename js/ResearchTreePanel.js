@@ -1224,9 +1224,9 @@ class ResearchTreePanel {
 
     _itemIconKey(itemId) {
         if (!itemId) return null;
-        // Crafting shows an untinted tip when no rock is chosen yet. Research has no rock.
+        // Research has no rock. The icon uses andesite gray; the name stays Stone Spear.
         if (itemId === "stone_spear" && typeof ensureSpearTexture === "function") {
-            const key = ensureSpearTexture(this.scene, "white");
+            const key = ensureSpearTexture(this.scene, "andesite");
             if (key && this.scene.textures.exists(key)) return key;
         }
         // Knapping techniques use the rock. The default stone is andesite.

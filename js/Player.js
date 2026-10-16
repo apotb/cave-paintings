@@ -717,7 +717,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!stack) return null;
         const meta = this.scene.getItem(stack.id);
         if (typeof Knapping !== "undefined" && stack.toolClass) {
-            if (stack.knapIconData) Knapping.ensureToolTexture(this.scene, stack);
+            if (Knapping.ensureShapeTexture) Knapping.ensureShapeTexture(this.scene, stack);
+            else if (stack.knapIconData) Knapping.ensureToolTexture(this.scene, stack);
             const knap = Knapping.weaponMetaFromStack(meta, stack);
             if (knap?.weapon?.type === "melee") return knap;
         }
@@ -1660,15 +1661,18 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             key = ensureSpearTexture(scene, art.knapMaterial, art.stone) || key;
         }
         if (
-            art.knapIconData
+            (art.knapIconData || art.toolClass)
             && typeof Knapping !== "undefined"
-            && typeof Knapping.ensureToolTexture === "function"
+            && typeof Knapping.ensureShapeTexture === "function"
         ) {
             try {
-                key = Knapping.ensureToolTexture(scene, {
+                key = Knapping.ensureShapeTexture(scene, {
                     id: art.itemId || "knap",
                     knapIconData: art.knapIconData,
-                    knapIcon: art.key
+                    knapIcon: art.key,
+                    toolClass: art.toolClass,
+                    stone: art.stone,
+                    knapMaterial: art.knapMaterial
                 }) || key;
             } catch (_) { /* fall through */ }
         }
