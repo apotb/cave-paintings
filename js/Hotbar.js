@@ -278,6 +278,7 @@ class Hotbar {
             this.slots[i].setTexture(i === this.activeIndex ? 'active_slot' : 'slot');
         }
         this.layout();
+        this.scene._placeCraftAboveInventory?.();
         this.dirty = true;
     }
 
@@ -317,6 +318,7 @@ class Hotbar {
 
         this.overflowSize = size;
         this.layout();
+        this.scene._placeCraftAboveInventory?.();
         this.dirty = true;
     }
 

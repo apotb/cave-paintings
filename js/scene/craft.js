@@ -292,6 +292,56 @@
             this.uiLayer.add(c);
         }
         if (this._uiCam) c.cameraFilter = (c.cameraFilter || 0) & ~this._uiCam.id;
+        this._placeCraftAboveInventory();
+    },
+
+    /**
+     * uiLayer draws in list order (depth is ignored). Hotbar and pack slots
+     * added after the recipe list would cover it. Keep those objects just
+     * under the craft container so later UI (buttons, panels) stays on top.
+     */
+    _inventoryUiObjects() {
+        const hotbar = this.hotbar;
+        if (!hotbar) return [];
+        const out = [];
+        const push = (obj) => {
+            if (!obj) return;
+            if (Array.isArray(obj)) {
+                for (const inner of obj) push(inner);
+                return;
+            }
+            out.push(obj);
+        };
+        push(hotbar.slots);
+        push(hotbar.icons);
+        push(hotbar.fillIcons);
+        push(hotbar.quantity);
+        push(hotbar.bars);
+        push(hotbar.ingredientBadges);
+        push(hotbar.overflowSlots);
+        push(hotbar.overflowIcons);
+        push(hotbar.overflowFillIcons);
+        push(hotbar.overflowQuantity);
+        push(hotbar.overflowBars);
+        push(hotbar.overflowIngredientBadges);
+        return out;
+    },
+
+    _placeCraftAboveInventory() {
+        const list = this.uiLayer?.list;
+        const craft = this.craftContainer;
+        if (!Array.isArray(list) || !craft || craft.displayList !== this.uiLayer) return;
+        const ci = list.indexOf(craft);
+        if (ci < 0) return;
+        const above = [];
+        for (const obj of this._inventoryUiObjects()) {
+            const oi = list.indexOf(obj);
+            if (oi > ci) above.push({ obj, oi });
+        }
+        if (!above.length) return;
+        above.sort((a, b) => a.oi - b.oi);
+        for (let i = above.length - 1; i >= 0; i--) list.splice(above[i].oi, 1);
+        for (let i = 0; i < above.length; i++) list.splice(ci + i, 0, above[i].obj);
     },
 
     _craftMenuLayoutSig() {
