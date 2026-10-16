@@ -35,6 +35,7 @@ class SceneMain extends SceneBase {
         this._gamePaused = false;
         this._worldSimFrozen = false;
         this._chatFadeHold = null;
+        this._puppetSnapHold = null;
         this._worldBooting = !!(this.net?.isLocal || this.localWorldId);
         this._generatingUi = null;
         this._generatingLabelTimer = null;
@@ -344,6 +345,7 @@ class SceneMain extends SceneBase {
             try { this.anims?.resumeAll?.(); } catch (_) {}
             this._gamePaused = false;
             this._worldSimFrozen = false;
+            this._puppetSnapHold = null;
         }
         this._syncWorldCameraInput?.();
         try { this._destroyPauseUi?.(); } catch (_) {}

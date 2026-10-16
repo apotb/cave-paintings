@@ -532,6 +532,7 @@
             this.physics?.world?.pause?.();
             this.anims?.pauseAll?.();
             this._holdChatFade();
+            this._holdPuppetSnapClock();
             return;
         }
         if (this._gamePaused) return;
@@ -539,6 +540,7 @@
         this.physics?.world?.resume?.();
         this.anims?.resumeAll?.();
         this._releaseChatFade();
+        this._releasePuppetSnapClock();
     },
 
     _isUnderPauseUi(obj) {
@@ -762,6 +764,7 @@
             this.net?.setPaused?.(true);
             this.physics?.world?.pause?.();
             this.anims?.pauseAll?.();
+            this._holdPuppetSnapClock();
         }
         this._buildPauseMenu();
     },
@@ -950,12 +953,63 @@
             this.net?.setPaused?.(false);
             this.physics?.world?.resume?.();
             this.anims?.resumeAll?.();
+            if (!this._worldSimFrozen) this._releasePuppetSnapClock();
         }
         this._destroyPauseUi();
         this.input?.setDefaultCursor?.("default");
         try {
             if (this.game?.canvas) this.game.canvas.style.cursor = "default";
         } catch (_) {}
+    },
+
+    /**
+     * Settler (and other puppet) poses lerp against performance.now().
+     * Pausing freezes the sim and the sprites, but not that clock, so the
+     * first frame after unpause treats the whole pause as a late snapshot,
+     * runs them ahead, and the next pose pulls them back.
+     * Remember when the freeze started; on resume, slide snap timestamps
+     * forward by that duration so the lerp continues from where it stopped.
+     */
+    _holdPuppetSnapClock() {
+        if (this._puppetSnapHold != null) return;
+        this._puppetSnapHold = (typeof performance !== "undefined" && performance.now)
+            ? performance.now()
+            : Date.now();
+    },
+
+    _releasePuppetSnapClock() {
+        if (this._puppetSnapHold == null) return;
+        const now = (typeof performance !== "undefined" && performance.now)
+            ? performance.now()
+            : Date.now();
+        const dt = now - this._puppetSnapHold;
+        this._puppetSnapHold = null;
+        if (!(dt > 0)) return;
+        this._shiftPuppetSnapTimes(dt);
+    },
+
+    _shiftPuppetSnapTimes(dt) {
+        const n = Number(dt);
+        if (!(n > 0)) return;
+        const seen = new Set();
+        const bumpPawn = (p) => {
+            if (!p || seen.has(p)) return;
+            seen.add(p);
+            const t = Number(p._netSnapAt);
+            if (Number.isFinite(t)) p._netSnapAt = t + n;
+        };
+        bumpPawn(this.player);
+        for (const p of this.party || []) bumpPawn(p);
+        for (const s of this.settlers || []) bumpPawn(s);
+        for (const w of this.partySys?.wanderers || []) bumpPawn(w);
+        for (const entry of this.netMobs?.values?.() || []) {
+            const t = Number(entry?.snapAt);
+            if (Number.isFinite(t)) entry.snapAt = t + n;
+        }
+        for (const entry of this.remotePlayers?.values?.() || []) {
+            const t = Number(entry?.snapAt);
+            if (Number.isFinite(t)) entry.snapAt = t + n;
+        }
     },
 
     /** Clock used by combat-log / speech-bubble fade. Frozen while the pause menu is up. */
