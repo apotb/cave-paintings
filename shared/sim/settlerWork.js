@@ -145,6 +145,10 @@ function tick(world, mob, delta) {
     beginSettleQueries(world);
     const rec = findRec(world, mob);
     if (!rec || rec.dead) return null;
+    if (world._isVomiting?.(rec) || mob?.isVomiting?.()) {
+        setSettlerAct(rec, mob, "Vomiting");
+        return halt();
+    }
     const settle = findSettle(world, rec);
     if (!settle) {
         const leftBed = maybeLeaveBed(world, rec, mob);
@@ -434,5 +438,5 @@ function tick(world, mob, delta) {
 }
     ctx.tick = tick;
 
-    return { tick, releaseWork: ctx.releaseWork, interruptForCombat: ctx.interruptForCombat, tickChannel: ctx.tickChannel, publicChannel: ctx.publicChannel, bumpWork: ctx.bumpWork };
+    return { tick, releaseWork: ctx.releaseWork, interruptForCombat: ctx.interruptForCombat, interruptForVomit: ctx.interruptForVomit, tickChannel: ctx.tickChannel, publicChannel: ctx.publicChannel, bumpWork: ctx.bumpWork };
 });

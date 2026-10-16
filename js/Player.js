@@ -576,7 +576,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      */
     startVomit(opts = {}) {
         if (this._bodyDead || this.isVomiting()) return;
-        this._cancelEat();
+        this._dropWorkForVomit(!!opts.fromServer);
         const remaining = Number(opts.remainingMs);
         this._vomit = {
             remainingMs: remaining > 0 ? remaining : Phaser.Math.Between(5000, 15000),
@@ -584,8 +584,36 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             fromServer: !!opts.fromServer
         };
         this.setVelocity(0, 0);
-        if (this.isAttacking()) this._endAttack?.();
         if (!this._vomit.fromServer) this._vomitDrip();
+    }
+
+    /**
+     * Vomiting replaces the current action. A server-authored bout already
+     * cancelled the sim channel, so don't echo a cancel back.
+     */
+    _dropWorkForVomit(fromServer) {
+        if (fromServer) {
+            this._eatChannel = null;
+            this._tendChannel = null;
+            this._skinChannel = null;
+            this._fleshChannel = null;
+            this._brainChannel = null;
+            this._craftChannel = null;
+        } else {
+            this._cancelEat();
+            this._cancelTend();
+            this._cancelSkin();
+            this._cancelFlesh();
+            this._cancelBrain();
+            this._cancelCraft();
+        }
+        this._chopBar = null;
+        this._paintChannel = null;
+        this._netWorkChannel = null;
+        this._netEating = false;
+        this._hideChannelBar();
+        this._hideOwnChannelBar();
+        if (this.isAttacking()) this._endAttack?.();
     }
 
     _vomitDrip() {

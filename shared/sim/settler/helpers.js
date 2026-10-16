@@ -337,6 +337,41 @@ function interruptForCombat(world, recOrMob) {
     releaseWork(world, rec);
 }
 
+/**
+ * Drop the job the way a fight does, but stay in bed and keep whatever
+ * they are already carrying. Partial tend, craft, and swing progress is lost.
+ */
+function interruptForVomit(world, recOrMob) {
+    const rec = recOrMob && (world?.settlers || []).includes(recOrMob)
+        ? recOrMob
+        : findRec(world, recOrMob);
+    if (!rec) return;
+    const mob = rec.creature || recOrMob;
+    if (rec.eatChannel) world._clearEatChannel?.(rec);
+    if (rec.tendChannel) world._clearTendChannel?.(rec, { cancelled: true });
+    rec.pendingAttackAngle = null;
+    rec.attackTimer = 0;
+    rec.attackArt = null;
+    if (mob) {
+        mob._eatChannel = null;
+        mob._tendChannel = null;
+        mob._tending = false;
+        mob._endAttack?.();
+        mob.setDesiredVel?.(0, 0);
+        mob.vx = 0;
+        mob.vy = 0;
+        if (mob.ai) {
+            mob.ai.eatSeek = null;
+            mob.ai.tendSeek = null;
+        }
+    }
+    clearChopApproach(rec, rec.creature || mob);
+    rec._chopIgnoreUid = null;
+    if (mob) mob._chopIgnoreUid = null;
+    releaseWork(world, rec);
+    ctx.setSettlerAct?.(rec, mob, "Vomiting");
+}
+
 function findRec(world, mob) {
     const id = mob?.id;
     if (!id) return null;
@@ -1380,6 +1415,7 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     ctx.bumpWork = bumpWork;
     ctx.releaseWork = releaseWork;
     ctx.interruptForCombat = interruptForCombat;
+    ctx.interruptForVomit = interruptForVomit;
     ctx.findRec = findRec;
     ctx.findSettle = findSettle;
     ctx.skipUntil = skipUntil;

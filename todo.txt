@@ -6,8 +6,6 @@ Improve clay figure classification for humans
 
 Fix UI size 1 issues (e.g. tech tree, settlement menu)
 
-Vomiting settlers should have their current task interrupted while vomiting, vomiting itself should be a task that shows in the tooltip and stuff
-
 Agriculture -- will unlock a tutorial tip that you can open to learn about soil and farming mechanics
 
 Fishing -- will also open a tutorial tip to learn about fishing mechanics

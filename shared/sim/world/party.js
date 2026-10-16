@@ -374,6 +374,10 @@
 
     _tickEatChannel(pawn, dtMs) {
         if (!pawn?.eatChannel) return;
+        if (this._pawnVomiting?.(pawn)) {
+            this._clearEatChannel(pawn);
+            return;
+        }
         const session = this._sessionOfPawn(pawn);
         const controlId = session?.controlId || session?.id;
         if (controlId && pawn.eatChannel.fromId === controlId && pawn.id !== controlId) {
@@ -398,6 +402,7 @@
     /** Hover line while a pawn tends, or walks over to tend, someone else. */
     _pawnTendActivity(pawn) {
         if (!pawn || pawn.dead) return null;
+        if (this._pawnVomiting?.(pawn)) return "Vomiting";
         const selfId = pawn.id;
         const named = (id, name) => {
             if (!id || id === selfId) return null;

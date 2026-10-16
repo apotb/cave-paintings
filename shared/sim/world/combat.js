@@ -1120,7 +1120,7 @@
             const sdt = this._settlerDtMs(dtMs);
             this._tickEatChannel(rec, sdt);
             this._tickTendChannel(rec, sdt);
-            if (rec._workChannel) SettlerWork.tickChannel(this, rec, sdt);
+            if (rec._workChannel && !this._isVomiting(rec)) SettlerWork.tickChannel(this, rec, sdt);
             if (this._isVomiting(rec)) this._tickPlayerVomit(rec, sdt);
         }
         for (const p of this.players.values()) {

@@ -138,6 +138,49 @@ test("dedicated settler harvests a lootable in range", () => {
     assert.deepEqual((pub.inventory || []).map((s) => s && s.id), recIds);
 });
 
+test("vomiting drops the job, keeps the bed and the haul, and shows Vomiting", () => {
+    const { world, pawn } = createTestWorld();
+    const { rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "stick", quantity: 3 }, null, null, null, null]
+    });
+    const chunk = originChunk(world);
+    chunk.lootableThings.push({ uid: "lt-vomit", id: "sticks", x: rec.x, y: rec.y });
+    rec._resting = true;
+    rec._workChannel = { kind: "craft", remaining: 4000, max: 8000 };
+    rec._workHold = true;
+    rec._busyJob = { type: "haul" };
+    rec._haulDestUid = "basket-1";
+    rec._settlerAct = "Hauling sticks";
+    rec.eatChannel = { remaining: 3000, max: 5000, itemId: "berry" };
+    world._beginPlayerVomit(rec.creature, 8000);
+    assert.equal(rec._workChannel, null);
+    assert.equal(rec._busyJob, null);
+    assert.equal(rec._haulDestUid, null);
+    assert.equal(rec.eatChannel, null);
+    assert.equal(rec._resting, true);
+    assert.equal(rec.inventory[0].id, "stick");
+    assert.equal(rec.inventory[0].quantity, 3);
+    assert.equal(rec._settlerAct, "Vomiting");
+    assert.equal(world._publicSettler(rec).activity, "Vomiting");
+    for (let i = 0; i < 5; i++) world.tick(300);
+    assert.equal(rec._settlerAct, "Vomiting");
+    assert.equal(rec._resting, true);
+    assert.equal(rec.inventory[0].quantity, 3);
+    assert.ok(chunk.lootableThings.some((e) => e.uid === "lt-vomit" && !e.gone));
+    world._clearVomit(rec);
+    workOnce(world, rec);
+    assert.notEqual(rec._settlerAct, "Vomiting");
+});
+
+test("vomiting cancels eating for the controlled pawn", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.eatChannel = { remaining: 4000, max: 5000, itemId: "berry" };
+    world._beginPlayerVomit(pawn.creature, 8000);
+    assert.equal(pawn.eatChannel, null);
+    assert.equal(world._pawnTendActivity(pawn), "Vomiting");
+    assert.ok(pawn.vomitRemainingMs > 0);
+});
+
 test("public settler snapshot includes carried gear", () => {
     const { world, pawn } = createTestWorld();
     const { rec } = parkSettler(world, pawn, {

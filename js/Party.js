@@ -787,7 +787,7 @@ class PartySystem {
     selfHeldActionTooltip(pawn) {
         const scene = this.scene;
         if (!pawn || pawn !== scene.player) return "";
-        if (pawn._bodyDead || pawn.isIncapacitated?.() || pawn._resting) return "";
+        if (pawn._bodyDead || pawn.isIncapacitated?.() || pawn._resting || pawn.isVomiting?.()) return "";
         const held = pawn.getHeldItem?.();
         if (!held || !(held.quantity > 0)) return "";
         if (scene.clayFormingPanel?.canOpenHeld?.(held)) {
@@ -1340,6 +1340,9 @@ class PartySystem {
      */
     activityTooltip(pawn) {
         if (!pawn || pawn.isBodyDead?.()) return "";
+        if (pawn.isVomiting?.()) return "Vomiting";
+        const vomitAct = pawn._settlerAct || pawn.partyAI?._settlerAct;
+        if (vomitAct === "Vomiting") return "Vomiting";
         const isSettler = pawn.role === "settler" || !!pawn.homeSettlementId;
 
         const tend = pawn._tendChannel;
@@ -1382,7 +1385,6 @@ class PartySystem {
             return foodName ? `Eating ${foodName}` : "Eating";
         }
         pawn._eatTipName = null;
-        if (pawn.isVomiting?.()) return "Vomiting";
         if (this._isBeingTended(pawn)) return "Being tended";
         if (pawn._chopBar || pawn._resting || pawn._restWalk) {
             let act = pawn.partyAI?._settlerAct || pawn._settlerAct;

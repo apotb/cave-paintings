@@ -408,8 +408,9 @@ class PartyPanel {
                 if (!pawn) return "";
                 const name = pawn.displayName?.() || "";
                 const controlled = !!(pawn.isControlled?.() || pawn === scene.player);
-                const busy = controlled ? "" : (scene.partySys?.activityTooltip?.(pawn) || "");
-                const text = busy ? `${name}\n${busy}` : name;
+                const busy = scene.partySys?.activityTooltip?.(pawn) || "";
+                const showAct = !controlled || busy === "Vomiting";
+                const text = (showAct && busy) ? `${name}\n${busy}` : name;
                 return scene.partySys?.withHeldTooltip?.(pawn, text) || text;
             }, p.x, p.y, hit);
         });

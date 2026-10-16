@@ -1266,19 +1266,57 @@
         };
     },
 
-    _beginPlayerVomit(creature, remainingMs) {
-        const pawn = this._findOwnedPawn(creature?.id);
-        if (!pawn || pawn.dead) return;
-        pawn.eatChannel = null;
+    /**
+     * Stop the current job. Sleep and carried items stay; tend, craft, eat,
+     * and the current swing do not.
+     */
+    _interruptPawnForVomit(pawn) {
+        if (!pawn) return;
         pawn.pendingAttackAngle = null;
-        pawn.vomitRemainingMs = Math.max(1, Number(remainingMs) || 8000);
-        pawn.vomitDripAccMs = 0;
+        pawn.attackTimer = 0;
+        pawn.attackArt = null;
+        const creature = pawn.creature || this.creatures.get(pawn.id);
+        creature?._endAttack?.();
+        creature?.setDesiredVel?.(0, 0);
+        if (creature) {
+            creature.vx = 0;
+            creature.vy = 0;
+        }
         const session = this._sessionOfPawn(pawn);
         if (session && pawn === session) {
             session.moveX = 0;
             session.moveY = 0;
             session.sprint = false;
         }
+        if ((this.settlers || []).includes(pawn)) {
+            SettlerWork.interruptForVomit?.(this, pawn);
+            return;
+        }
+        this._clearEatChannel(pawn);
+        if (pawn.tendChannel) this._clearTendChannel(pawn, { cancelled: true });
+        pawn._workChannel = null;
+        pawn._paintChannel = null;
+        if (creature) {
+            creature._eatChannel = null;
+            creature._tendChannel = null;
+            creature._tending = false;
+            if (creature.ai) {
+                creature.ai.eatSeek = null;
+                creature.ai.tendSeek = null;
+            }
+        }
+    },
+
+    _beginPlayerVomit(creature, remainingMs) {
+        const pawn = this._findOwnedPawn(creature?.id);
+        if (!pawn || pawn.dead) return;
+        pawn.vomitRemainingMs = Math.max(1, Number(remainingMs) || 8000);
+        pawn.vomitDripAccMs = 0;
+        if (creature) {
+            creature._vomitRemainingMs = pawn.vomitRemainingMs;
+            creature._vomitDripAccMs = 0;
+        }
+        this._interruptPawnForVomit(pawn);
         this._vomitDrip(pawn, { start: true });
         this._dirtyPawnOwner(pawn);
     },

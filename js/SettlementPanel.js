@@ -714,8 +714,9 @@ class SettlementPanel {
         }
         const name = p.displayName?.() || p.pawnName || "";
         const controlled = !!(p.isControlled?.() || p === this.scene.player);
-        const busy = controlled ? "" : (partySys?.activityTooltip?.(p) || "");
-        const text = busy ? `${name}\n${busy}` : name;
+        const busy = partySys?.activityTooltip?.(p) || "";
+        const showAct = !controlled || busy === "Vomiting";
+        const text = (showAct && busy) ? `${name}\n${busy}` : name;
         if (partySys?.withSettlerTooltip) return partySys.withSettlerTooltip(p, text);
         return partySys?.withHeldTooltip?.(p, text) || text;
     }
