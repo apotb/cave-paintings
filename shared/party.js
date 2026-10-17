@@ -749,7 +749,8 @@
                 { weight: 0.28, id: "blueberry", lo: 4, hi: 10 },
                 { weight: 0.32, id: "apple", lo: 1, hi: 3 },
                 { weight: 0.22, id: "roasted_apple", lo: 1, hi: 2 },
-                { weight: 0.18, id: "roasted_human_flesh", lo: 1, hi: 1 }
+                { weight: 0.09, id: "roasted_venison", lo: 1, hi: 1 },
+                { weight: 0.09, id: "roasted_pork", lo: 1, hi: 1 }
             ]
             : [
                 { weight: 0.65, id: "blueberry", lo: 2, hi: 6 },
