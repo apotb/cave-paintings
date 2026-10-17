@@ -733,6 +733,7 @@ class Hotbar {
         this.dirty = true;
 
         this.scene.input.on('wheel', (_pointer, _over, deltaX, deltaY) => {
+            if (this.scene._gamePaused) return;
             const hp = this.scene.healthPanel;
             const p = this.scene.input.activePointer;
             if (hp?.visible && hp._pointerInInjView?.(p.x, p.y)) return;
