@@ -515,8 +515,7 @@ test("gather settler digs clay with an existing stick and does not craft one", (
         1,
         "settler must not craft a second digging stick"
     );
-    const pile = chunk.drops.find((d) => d.id === "clay");
-    assert.ok(pile, "clay should drop on the ground");
+    assert.ok(qtyOf(rec.inventory, "clay") + qtyOf(rec.overflow, "clay") >= 1, "clay should enter the settler's inventory");
 });
 
 test("gather settler does not dig stumps", () => {

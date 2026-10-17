@@ -9,6 +9,8 @@
         root.Dig = factory(root.Chop);
     }
 })(typeof globalThis !== "undefined" ? globalThis : this, function (Chop) {
+    const TILE_HP = 25;
+    const SNOW_PIT_HP = 10;
     const DIG_ATTACK_IDS = {
         dig_thrust: true
     };
@@ -52,14 +54,23 @@
         return !!(def && def.diggable);
     }
 
-    /** Clay (and similar) deposits that yield an item — not stumps. */
+    /** Clay (and similar) deposits that yield an item — not pits, stumps, or bushes. */
     function isDeposit(def) {
-        if (!def?.diggable) return false;
-        if (def.diggable.item) return true;
-        return Math.max(0, Math.floor(Number(def.diggable.yield) || 0)) > 0;
+        return !!(def?.diggable && def.diggable.item);
     }
 
-    function healthOf(def) {
+    function isStoragePitDef(def, entry) {
+        return def?.id === "storage_pit" || entry?.id === "storage_pit";
+    }
+
+    /**
+     * Fraction of a standard 25-HP tile. A snow pit is 10/25.
+     * Bushes and stumps keep their own fractions in data.
+     */
+    function healthOf(def, entry) {
+        if (isStoragePitDef(def, entry) && entry?.fillId === "snow") {
+            return SNOW_PIT_HP / TILE_HP;
+        }
         const n = Number(def?.diggable?.health);
         return n > 0 ? n : 1;
     }
@@ -84,13 +95,8 @@
         return Math.max(0, y - taken);
     }
 
-    function tooltipName(def, entry) {
-        const name = def?.name || "Clay Deposit";
-        const y = yieldOf(def);
-        if (!(y > 0)) return name;
-        const taken = Math.max(0, Math.floor(Number(entry?.digTaken) || 0));
-        if (!(taken > 0) && !(Number(entry?.digProgress) > 0)) return name;
-        return `${name} (${Math.max(0, y - taken)}/${y})`;
+    function tooltipName(def) {
+        return def?.name || "Clay Deposit";
     }
 
     function depositTooltip(def, entry, stack, getItem) {
@@ -143,6 +149,26 @@
     }
 
     /**
+     * Old pits stored progress without paying items per thrust. Seed the float
+     * and mark that floor settled so the next thrust does not dump the backlog.
+     * digTaken stays 0: those items were never given, and fill cost reads it.
+     */
+    function ensureDigAccrual(entry, def, prev) {
+        if (Number.isFinite(Number(entry.digAccrued))) return;
+        const yieldN = yieldOf(def);
+        const progress = Math.max(0, Number(prev) || 0);
+        const taken = Math.max(0, Math.floor(Number(entry.digTaken) || 0));
+        if (isStoragePitDef(def, entry) && taken === 0 && progress > 0) {
+            const seeded = yieldN * progress;
+            entry.digAccrued = seeded;
+            entry.digSettled = Math.floor(seeded + 1e-9);
+            return;
+        }
+        entry.digAccrued = yieldN * progress;
+        if (!Number.isFinite(Number(entry.digSettled))) entry.digSettled = 0;
+    }
+
+    /**
      * @param {object} entry
      * @param {object} def
      * @param {number} frac
@@ -150,7 +176,7 @@
      */
     function applyDig(entry, def, frac, nowMs) {
         const yieldN = yieldOf(def);
-        const health = healthOf(def);
+        const health = healthOf(def, entry);
         const prev = Number(entry?.digProgress) || 0;
         if (!entry || !(frac > 0)) {
             return {
@@ -160,19 +186,27 @@
                 remaining: remainingOf(def, entry)
             };
         }
-        const next = Math.min(1, prev + frac / health);
+        ensureDigAccrual(entry, def, prev);
+        const rawNext = Math.min(1, prev + frac / health);
+        const done = rawNext >= 1 - 1e-6;
+        const next = done ? 1 : rawNext;
+        const gained = Math.max(0, next - prev);
         entry.digProgress = next;
+        let accrued = Number(entry.digAccrued);
+        if (!Number.isFinite(accrued)) accrued = 0;
+        accrued += yieldN * gained;
+        if (done) accrued = yieldN;
+        entry.digAccrued = accrued;
+        const settled = Math.max(0, Math.floor(Number(entry.digSettled) || 0));
         const taken = Math.max(0, Math.floor(Number(entry.digTaken) || 0));
-        const give = Math.max(0, Math.round(yieldN * next) - taken);
+        const give = Math.max(0, Math.floor(accrued + 1e-9) - settled - taken);
         entry.digTaken = taken + give;
         entry.lastDigAt = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
-        const done = next >= 1 - 1e-6;
-        if (done) entry.digProgress = 1;
         return {
             progress: entry.digProgress,
             give,
             done,
-            remaining: Math.max(0, yieldN - entry.digTaken)
+            remaining: Math.max(0, yieldN - settled - entry.digTaken)
         };
     }
 

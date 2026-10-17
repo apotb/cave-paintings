@@ -147,6 +147,9 @@
             slots: (entry.slots || []).map((s) => (s?.id ? this._cloneStackForWorld(s) : null)),
             storageFilter: entry.storageFilter || null,
             digProgress: entry.digProgress != null ? entry.digProgress : null,
+            digTaken: entry.digTaken != null ? entry.digTaken : null,
+            digAccrued: entry.digAccrued != null ? entry.digAccrued : null,
+            digSettled: entry.digSettled != null ? entry.digSettled : null,
             fillId: entry.fillId || null
         };
     },
@@ -1215,13 +1218,13 @@
     _tryDestroyStoragePit(p, chunk, entry) {
         if (!p || !chunk || !entry) return;
         if (!Place.isStorageEmpty(entry)) return;
-        const finished = Place.pitFinished(entry);
-        if (finished) {
+        const cost = Math.max(0, Math.floor(Number(entry.digTaken) || 0));
+        if (cost > 0) {
             const fillId = entry.fillId === "snow" ? "snow" : "dirt";
-            if (!this._takePawnItem(p, fillId, 1)) {
+            if (!this._takePawnItem(p, fillId, cost)) {
                 this.pushEvent({
                     kind: "combat_log",
-                    text: fillId === "snow" ? "Need snow" : "Need dirt",
+                    text: `Need ${cost} ${fillId}`,
                     to: p.id
                 });
                 return;

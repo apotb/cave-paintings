@@ -1324,7 +1324,7 @@ test("digging stick recipe is gated on Digging and needs knife or scraper", () =
     assert.equal(item.maxStack, 1);
     assert.equal(item.weight, 0.9);
     assert.equal(item.weightFixed, true);
-    assert.equal(item.digPower, 0.05);
+    assert.equal(item.digPower, 0.04);
     assert.equal(item.recipe.log, 1);
     assert.equal(item.recipe.REQUIRE_THING, "rock");
     assert.deepEqual(item.recipe.REQUIRE_TOOL.toolClass, ["knife", "scraper"]);

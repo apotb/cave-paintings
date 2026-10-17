@@ -7,11 +7,11 @@ const { loadDefs, DataStore } = require("./helpers/load");
 
 loadDefs();
 
-test("digFraction and Dig: +5% line", () => {
-    const stick = { id: "digging_stick", digPower: 0.05, toolClass: "digger" };
-    assert.equal(Dig.digFraction(stick), 0.05);
+test("digFraction and Dig: +4% line", () => {
+    const stick = { id: "digging_stick", digPower: 0.04, toolClass: "digger" };
+    assert.equal(Dig.digFraction(stick), 0.04);
     assert.equal(Dig.isDigger(stick), true);
-    assert.equal(Dig.digPercentLine(stick), "Dig: +5%");
+    assert.equal(Dig.digPercentLine(stick), "Dig: +4%");
     assert.equal(Dig.digFraction({ id: "stick" }), 0);
     assert.equal(Dig.isDigger({ toolClass: "knife" }), false);
     assert.equal(Dig.isDigAttack({ id: "dig_thrust" }), true);
@@ -19,36 +19,62 @@ test("digFraction and Dig: +5% line", () => {
     assert.equal(Dig.isDigAttack({ id: "point_stab" }), false);
 });
 
-test("applyDig merge-yields round(25 * progress) and finishes in 20 hits", () => {
+test("applyDig pays one clay per thrust and finishes in 25 hits", () => {
     const def = { diggable: { item: "clay", yield: 25 } };
     const entry = { id: "clay_patch", digProgress: 0 };
     let total = 0;
-    for (let i = 0; i < 19; i++) {
-        const r = Dig.applyDig(entry, def, 0.05, 1000);
+    for (let i = 0; i < 24; i++) {
+        const r = Dig.applyDig(entry, def, 0.04, 1000);
         assert.equal(r.done, false);
+        assert.equal(r.give, 1);
         total += r.give;
         assert.equal(entry.digTaken, total);
-        assert.equal(Dig.tooltipName(def, entry), `Clay Deposit (${25 - total}/25)`);
+        assert.equal(Dig.tooltipName(def, entry), "Clay Deposit");
         assert.equal(Dig.barVisible(entry, 1000 + 500), true);
         assert.equal(Dig.barVisible(entry, 1000 + 4000), false);
     }
-    const last = Dig.applyDig(entry, def, 0.05, 2000);
+    const last = Dig.applyDig(entry, def, 0.04, 2000);
     total += last.give;
+    assert.equal(last.give, 1);
     assert.equal(last.done, true);
     assert.equal(total, 25);
     assert.equal(entry.digProgress, 1);
     assert.equal(Dig.stillDiggable(def, entry), false);
 });
 
+test("snow pit accrues 2.5 and pays 2 then 3 across 10 thrusts", () => {
+    const def = { id: "storage_pit", diggable: { health: 1, yield: 25 } };
+    const entry = { id: "storage_pit", fillId: "snow", digProgress: 0 };
+    assert.equal(Dig.healthOf(def, entry), 0.4);
+    assert.equal(Dig.isDeposit(def), false);
+    const gives = [];
+    for (let i = 0; i < 10; i++) {
+        const r = Dig.applyDig(entry, def, 0.04, 1000);
+        gives.push(r.give);
+    }
+    assert.deepEqual(gives, [2, 3, 2, 3, 2, 3, 2, 3, 2, 3]);
+    assert.equal(entry.digTaken, 25);
+    assert.equal(entry.digProgress, 1);
+});
+
+test("an in-progress pit does not pay the old empty portion", () => {
+    const def = { id: "storage_pit", diggable: { health: 1, yield: 25 } };
+    const entry = { id: "storage_pit", fillId: "dirt", digProgress: 0.52, digTaken: 0 };
+    const r = Dig.applyDig(entry, def, 0.04, 1000);
+    assert.equal(entry.digSettled, 13);
+    assert.equal(r.give, 1);
+    assert.equal(entry.digTaken, 1);
+});
+
 test("deposit tooltip only when the held stack has dig power", () => {
-    const def = { name: "Clay Deposit", diggable: { yield: 25 } };
+    const def = { name: "Clay Deposit", diggable: { item: "clay", yield: 25 } };
     const getItem = (id) => DataStore.getItem(id);
     assert.equal(Dig.depositTooltip(def, {}, { id: "stick" }, getItem), "");
     assert.equal(Dig.depositTooltip(def, {}, { id: "knife" }, getItem), "");
     assert.equal(Dig.depositTooltip(def, {}, null, getItem), "");
     assert.equal(Dig.depositTooltip(def, {}, { id: "digging_stick" }, getItem), "Clay Deposit");
     const damaged = { digTaken: 10, digProgress: 0.4 };
-    assert.equal(Dig.depositTooltip(def, damaged, { id: "digging_stick" }, getItem), "Clay Deposit (15/25)");
+    assert.equal(Dig.depositTooltip(def, damaged, { id: "digging_stick" }, getItem), "Clay Deposit");
     assert.equal(Dig.depositTooltip(def, damaged, { id: "log" }, getItem), "");
 });
 
@@ -67,11 +93,11 @@ test("stumps take half clay health and drop nothing", () => {
     const palm = DataStore.getThing("coconut_tree_stump");
     assert.equal(Dig.healthOf(clay), 1);
     assert.equal(Dig.isDeposit(clay), true);
-    assert.equal(Dig.healthOf(stump), 0.5);
+    assert.equal(Dig.healthOf(stump), 0.4);
     assert.equal(Dig.isDeposit(stump), false);
     assert.equal(Dig.isDiggable(stump), true);
-    assert.equal(Dig.healthOf(snow), 0.5);
-    assert.equal(Dig.healthOf(palm), 0.5);
+    assert.equal(Dig.healthOf(snow), 0.4);
+    assert.equal(Dig.healthOf(palm), 0.4);
     const getItem = (id) => DataStore.getItem(id);
     const stick = { id: "digging_stick" };
     assert.equal(Dig.depositTooltip(stump, {}, stick, getItem), "");
@@ -190,7 +216,7 @@ test("bushes including snow take a quarter of clay health and drop sticks and le
     const ids = ["bush", "snow_bush", "blueberry_bush"];
     for (const id of ids) {
         const def = DataStore.getThing(id);
-        assert.equal(Dig.healthOf(def), 0.25, id);
+        assert.equal(Dig.healthOf(def), 0.2, id);
         assert.equal(Dig.isDeposit(def), false, id);
         assert.equal(Dig.isDiggable(def), true, id);
         assert.equal(Dig.depositTooltip(def, {}, stick, getItem), "");

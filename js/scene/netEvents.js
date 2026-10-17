@@ -724,12 +724,18 @@
         if (!Dig.isDiggable(def)) return null;
         const result = Dig.applyDig(entry, def, frac);
         thing._syncDigHole?.();
-        const itemId = def.diggable?.item;
+        const pit = entry.id === "storage_pit" || def?.id === "storage_pit";
+        const itemId = def.diggable?.item
+            || (pit ? (entry.fillId === "snow" ? "snow" : "dirt") : null);
         if (itemId && result.give > 0) {
             const meta = this.getItem(itemId);
-            if (meta) DroppedItem.spawn(this, entry.x, entry.y, meta, result.give);
+            if (meta) {
+                let left = result.give;
+                if (actor?.gainItem) left = actor.gainItem(meta, result.give);
+                if (left > 0) DroppedItem.spawn(this, entry.x, entry.y, meta, left);
+            }
         }
-        if (entry.id === "storage_pit" || def?.id === "storage_pit") {
+        if (pit) {
             thing.syncPitLook?.();
             return result;
         }
@@ -885,6 +891,8 @@
         if (entry) {
             if (ev.digProgress != null) entry.digProgress = ev.digProgress;
             if (ev.digTaken != null) entry.digTaken = ev.digTaken;
+            if (ev.digAccrued != null) entry.digAccrued = ev.digAccrued;
+            if (ev.digSettled != null) entry.digSettled = ev.digSettled;
             if (ev.lastDigAt != null) entry.lastDigAt = ev.lastDigAt;
             else entry.lastDigAt = Date.now();
             const live = (chunk.things?.getChildren?.() || []).find(

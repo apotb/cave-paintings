@@ -821,7 +821,7 @@
         "weightFixed": true,
         "weight": 0.9,
         "toolClass": "digger",
-        "digPower": 0.05,
+        "digPower": 0.04,
         "weapon": {
             "type": "melee",
             "range": 5,

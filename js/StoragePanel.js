@@ -55,26 +55,33 @@ class StoragePanel {
         return Array.isArray(entry?.slots) ? entry.slots.length : 8;
     }
 
-    _pitDestroyReady() {
-        if (!this._isStoragePit()) return null;
-        if (!this._pitFinished()) return !!this.storage?.isEmpty?.();
-        if (!this.storage?.isEmpty?.()) return false;
-        const fillId = this.storage.entry?.fillId === "snow" ? "snow" : "dirt";
-        return (this.scene.player?.getNumItems?.(fillId) || 0) >= 1;
+    _pitFillCost() {
+        return Math.max(0, Math.floor(Number(this.storage?.entry?.digTaken) || 0));
     }
 
-    /** Finished pits: check or cross plus the pile it takes to fill the hole. */
+    _pitDestroyReady() {
+        if (!this._isStoragePit()) return null;
+        if (!this.storage?.isEmpty?.()) return false;
+        const cost = this._pitFillCost();
+        if (!(cost > 0)) return true;
+        const fillId = this.storage.entry?.fillId === "snow" ? "snow" : "dirt";
+        return (this.scene.player?.getNumItems?.(fillId) || 0) >= cost;
+    }
+
+    /** Check or cross plus the pile it takes to fill the hole. */
     _destroyCostTip() {
-        if (!this._isStoragePit() || !this._pitFinished()) return "";
+        if (!this._isStoragePit()) return "";
+        const cost = this._pitFillCost();
+        if (!(cost > 0)) return "";
         const fillId = this.storage?.entry?.fillId === "snow" ? "snow" : "dirt";
         const meta = this.scene.getItem?.(fillId);
         const name = meta?.name || (fillId === "snow" ? "Snow" : "Dirt");
-        const have = (this.scene.player?.getNumItems?.(fillId) || 0) >= 1;
+        const have = (this.scene.player?.getNumItems?.(fillId) || 0) >= cost;
         return {
             text: "",
             lines: [
                 { plain: true, label: "Filling this hole will cost:" },
-                { mark: have ? "on" : "off", label: `x1 ${name}` }
+                { mark: have ? "on" : "off", label: `x${cost} ${name}` }
             ]
         };
     }

@@ -1593,13 +1593,14 @@
         }
 
         if (typeof Place !== "undefined" && Place.isStoragePit(storage.meta, entry)) {
-            if (Place.pitFinished(entry)) {
+            const cost = Math.max(0, Math.floor(Number(entry.digTaken) || 0));
+            if (cost > 0) {
                 const fillId = entry.fillId === "snow" ? "snow" : "dirt";
-                if ((this.player?.getNumItems?.(fillId) || 0) < 1) {
-                    this.combatLog?.push(fillId === "snow" ? "Need snow" : "Need dirt");
+                if ((this.player?.getNumItems?.(fillId) || 0) < cost) {
+                    this.combatLog?.push(`Need ${cost} ${fillId}`);
                     return false;
                 }
-                this.player.loseAnyItem(fillId, 1);
+                this.player.loseAnyItem(fillId, cost);
             }
         }
 

@@ -319,16 +319,12 @@ test("dig melee needs Digging tech, merge-drops clay, and removes the patch", ()
     world._tryDigFromMelee(creature, null);
     assert.ok(Number(patch.digProgress) > 0);
     assert.ok((Number(patch.digTaken) || 0) >= 1);
-    const drops = originChunk(world).drops.filter((d) => d.id === "clay");
-    assert.equal(drops.length, 1);
-    const firstQty = drops[0].quantity;
+    assert.equal(qtyInv(pawn, "clay"), 1);
     creature._attackDugPatch = false;
     creature._attackWoreHeld = false;
     creature.attackHitSet = new Set();
     world._tryDigFromMelee(creature, null);
-    const after = originChunk(world).drops.filter((d) => d.id === "clay");
-    assert.equal(after.length, 1, "clay should merge into one pile");
-    assert.ok(after[0].quantity > firstQty);
+    assert.equal(qtyInv(pawn, "clay"), 2);
     const def = DataStore.getThing("clay_patch");
     let hits = 2;
     while (Dig.stillDiggable(def, patch) && hits < 40) {
@@ -338,10 +334,10 @@ test("dig melee needs Digging tech, merge-drops clay, and removes the patch", ()
         world._tryDigFromMelee(creature, null);
         hits++;
     }
+    assert.equal(hits, 25);
     assert.equal(patch.gone, true);
     assert.equal(originChunk(world).things.includes(patch), false);
-    const pile = originChunk(world).drops.find((d) => d.id === "clay");
-    assert.equal(pile.quantity, 25);
+    assert.equal(qtyInv(pawn, "clay"), 25);
     assert.equal(pawn.inventory[0].durability, 50 - hits);
 });
 

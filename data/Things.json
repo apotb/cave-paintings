@@ -110,7 +110,7 @@
         "key": "bush",
         "hitboxSize": 0,
         "diggable": {
-            "health": 0.25,
+            "health": 0.2,
             "drops": {
                 "stick": [3, 5],
                 "leaf": [8, 14]
@@ -129,7 +129,7 @@
             "regrowMinutes": 1440
         },
         "diggable": {
-            "health": 0.25,
+            "health": 0.2,
             "drops": {
                 "stick": [3, 5],
                 "leaf": [8, 14]
@@ -142,7 +142,7 @@
         "key": "snow_bush",
         "hitboxSize": 0,
         "diggable": {
-            "health": 0.25,
+            "health": 0.2,
             "drops": {
                 "stick": [3, 5],
                 "leaf": [8, 14]
@@ -237,7 +237,7 @@
         "key": "tree_stump",
         "hitboxSize": 5,
         "diggable": {
-            "health": 0.5
+            "health": 0.4
         }
     },
     {
@@ -246,7 +246,7 @@
         "key": "snow_tree_stump",
         "hitboxSize": 5,
         "diggable": {
-            "health": 0.5
+            "health": 0.4
         }
     },
     {
@@ -255,7 +255,7 @@
         "key": "coconut_tree_stump",
         "hitboxSize": 5,
         "diggable": {
-            "health": 0.5
+            "health": 0.4
         }
     },
     {
@@ -265,7 +265,8 @@
         "hitboxSize": 0,
         "placeTiles": ["grass", "grass_hill", "snow", "snow_hill"],
         "diggable": {
-            "health": 1
+            "health": 1,
+            "yield": 25
         },
         "storage": {
             "slots": 8,

@@ -419,6 +419,9 @@
             } else {
                 entry.slots = Array.isArray(src.slots) ? src.slots : [null, null, null, null, null, null];
                 if (src.digProgress != null) entry.digProgress = src.digProgress;
+                if (src.digTaken != null) entry.digTaken = src.digTaken;
+                if (src.digAccrued != null) entry.digAccrued = src.digAccrued;
+                if (src.digSettled != null) entry.digSettled = src.digSettled;
                 if (src.fillId) entry.fillId = src.fillId;
                 if (typeof Place !== "undefined") {
                     Place.ensureStorageEntry(entry, this.getThing(entry.id));
@@ -437,6 +440,9 @@
             }
             if (Array.isArray(src.slots)) entry.slots = src.slots;
             if (src.digProgress != null) entry.digProgress = src.digProgress;
+            if (src.digTaken != null) entry.digTaken = src.digTaken;
+            if (src.digAccrued != null) entry.digAccrued = src.digAccrued;
+            if (src.digSettled != null) entry.digSettled = src.digSettled;
             if (src.fillId) entry.fillId = src.fillId;
             if (Array.isArray(src.occupants)) entry.occupants = src.occupants;
             this._netApplyStorageFilter(entry, src);

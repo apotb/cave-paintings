@@ -1696,37 +1696,16 @@
             this._wearPlayerHeld(creature.id, 1);
             creature._attackWoreHeld = true;
         }
-        if (Place.isStoragePit(bestDef, best)) {
-            if (result.done) {
-                best.digProgress = 1;
-                const fillId = best.fillId === "snow" ? "snow" : "dirt";
-                const owner = this.players?.get?.(creature.id) || null;
-                let left = 1;
-                if (owner) left = this._give(owner, fillId, 1);
-                if (left > 0) this._pushDrop(best.x, best.y, { id: fillId, quantity: left });
-            }
-            this.pushEvent({
-                kind: "dig",
-                playerId: creature.id,
-                cx: bestChunk.cx,
-                cy: bestChunk.cy,
-                x: best.x,
-                y: best.y,
-                uid: best.uid || null,
-                id: best.id,
-                digProgress: result.done ? 1 : result.progress,
-                digTaken: best.digTaken || 0,
-                lastDigAt: best.lastDigAt || Date.now(),
-                give: 0,
-                dug: false
-            });
-            return;
-        }
-        const itemId = bestDef?.diggable?.item;
+        const pit = Place.isStoragePit(bestDef, best);
+        const itemId = bestDef?.diggable?.item
+            || (pit ? (best.fillId === "snow" ? "snow" : "dirt") : null);
         if (itemId && result.give > 0) {
-            this._pushDrop(best.x, best.y, { id: itemId, quantity: result.give });
+            const pawn = this._digPawn(creature);
+            let left = result.give;
+            if (pawn) left = this._digGive(pawn, itemId, result.give);
+            if (left > 0) this._pushDrop(best.x, best.y, { id: itemId, quantity: left });
         }
-        if (result.done) {
+        if (result.done && !pit) {
             const drops = DigApi.rollDrops?.(bestDef, () => this.rng()) || [];
             const piles = DigApi.scatterDrops?.(drops, best.x, best.y, () => this.rng())
                 || Chop.scatterFellPiles?.(drops, best.x, best.y, () => this.rng())
@@ -1747,10 +1726,41 @@
             id: best.id,
             digProgress: result.done ? 1 : result.progress,
             digTaken: best.digTaken || 0,
+            digAccrued: Number.isFinite(Number(best.digAccrued)) ? Number(best.digAccrued) : 0,
+            digSettled: Math.max(0, Math.floor(Number(best.digSettled) || 0)),
             lastDigAt: best.lastDigAt || Date.now(),
             give: result.give,
-            dug: !!result.done
+            dug: !!result.done && !pit
         });
+    },
+
+    _digPawn(creature) {
+        if (!creature?.id) return null;
+        const player = this.players?.get?.(creature.id);
+        if (player) return player;
+        return (this.settlers || []).find((s) => s && s.id === creature.id) || null;
+    },
+
+    /**
+     * Give dug material up to the pawn's dig cap. Settlers stop at strength.
+     * @returns {number} quantity that did not fit
+     */
+    _digGive(pawn, itemId, qty) {
+        let left = Math.max(0, Math.floor(Number(qty) || 0));
+        if (!pawn || !itemId || !(left > 0)) return left;
+        const getDef = (id) => itemDefs().get(id);
+        const meta = getDef(itemId);
+        const strength = Carry.strengthFromEquip(pawn.equipment, getDef, pawn.baseStrength);
+        const settler = (this.settlers || []).some((s) => s === pawn || s?.id === pawn.id);
+        const cap = settler
+            ? Carry.pickupCap(strength, "settler")
+            : Carry.carryCap(strength);
+        const unitW = Carry.unitWeight({ id: itemId }, meta);
+        const mass = Carry.gearMass(pawn.inventory, pawn.equipment, getDef, pawn.overflow);
+        const fit = Carry.countFit(left, unitW, mass, cap);
+        const overweight = left - fit;
+        const remain = fit > 0 ? this._give(pawn, itemId, fit) : 0;
+        return overweight + remain;
     },
 
     _samePebbleStone(a, b) {
