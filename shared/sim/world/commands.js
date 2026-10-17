@@ -175,11 +175,15 @@
         if (!p) return;
         const control = this._actionPawn(p, { pawnId: p.controlId || p.id }) || p;
         if (!Number.isFinite(control.x) || !Number.isFinite(control.y)) return;
-        this._interestLoad(control.x, control.y, this.interestRadius(p));
+        // Two new chunks a tick. The view is several chunks inside this ring,
+        // so the edge is filled long before the camera reaches it.
+        let budget = 2;
+        budget -= this._interestLoad(control.x, control.y, this.interestRadius(p), budget);
         const padNear = (wx, wy) => {
+            if (budget <= 0) return;
             if (!Number.isFinite(wx) || !Number.isFinite(wy)) return;
             if (Party.beyondFollowLeash({ x: wx, y: wy }, control, TS)) return;
-            this._interestLoad(wx, wy, 1);
+            budget -= this._interestLoad(wx, wy, 1, budget);
         };
         padNear(p.x, p.y);
         for (const m of p.party || []) padNear(m.x, m.y);

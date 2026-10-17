@@ -112,8 +112,11 @@
             }
             for (const key of keys) {
                 if (!force && known.has(key)) continue;
-                known.add(key);
                 const [cx, cy] = key.split(",").map(Number);
+                // Snapshot sync must not generate the rest of the ring. The
+                // tick stream creates a couple per frame; send them once they exist.
+                if (!force && this.sim.chunks && !this.sim.chunks.has(key)) continue;
+                known.add(key);
                 this._send(playerId, Protocol.Types.CHUNK, this.sim.chunkPayload(cx, cy));
             }
         }

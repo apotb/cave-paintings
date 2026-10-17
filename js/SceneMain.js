@@ -495,10 +495,24 @@ class SceneMain extends SceneBase {
             }
         }
         pending.sort((a, b) => a.d - b.d);
-        const budget = Math.max(1, Math.min(32, this._chunkLoadBurst || 8));
+        // A chunk edge used to build eight chunks of sprites, then paint them,
+        // in the same frame. Keep the closest ones, and stop when the frame
+        // has already spent a few milliseconds.
+        const burst = this._chunkLoadBurst | 0;
         this._chunkLoadBurst = 0;
-        for (let i = 0; i < pending.length && i < budget; i++) pending[i].chunk.load();
-        this._pumpChunkPaint();
+        const cap = burst > 0 ? Math.min(8, burst) : 2;
+        const limit = burst > 0 ? 8 : 4;
+        const nowMs = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+        const t0 = nowMs();
+        let started = 0;
+        for (let i = 0; i < pending.length && started < cap; i++) {
+            if (started > 0 && nowMs() - t0 >= limit) break;
+            pending[i].chunk.load();
+            started++;
+            const left = limit - (nowMs() - t0);
+            if (left > 0) this._pumpChunkPaint(left);
+        }
+        if (!started && this._chunkPaintQ?.length) this._pumpChunkPaint(limit);
 
         if (!this._worldBooting && (!this._spawnSignPlaced || !this._playerSpawnPlaced)) this.ensureSpawnSign();
 

@@ -191,7 +191,10 @@ class Chunk {
         this.isLoaded = true;
         this.ensureSpriteGroups();
         this.scene._trackLoadedChunk?.(this);
-        await this.generate();
+        // generate() only hands back an already-resolved promise. Awaiting it
+        // first parked every chunk's sprite build in one microtask flush, so
+        // crossing a chunk edge hitched on the whole ring at once.
+        this.generate();
         if (!this._loadStillCurrent(gen)) return;
         this.render();
         if (!this._loadStillCurrent(gen)) return;
@@ -272,12 +275,34 @@ class Chunk {
 
         const cs = this.scene.chunkSize;
         const ts = this.scene.tileSize;
-        for (let i = cs * cs - 1; i >= 0; i--) {
-            const key = this.meta.tiles[i];
-            if (!key || key === "water") continue;
-            const x = i % cs;
-            const y = (i / cs) | 0;
-            this.rt.draw(key, x * ts, y * ts);
+        // One framebuffer bind for the whole chunk. A draw() per tile swaps
+        // the render target 64 times and is the hitch when a chunk streams in.
+        const stamp = this.scene.chunkStamp?.();
+        if (stamp?.ctx) {
+            const ctx = stamp.ctx;
+            ctx.clearRect(0, 0, stamp.w, stamp.w);
+            const mgr = this.scene.textures;
+            for (let i = 0; i < cs * cs; i++) {
+                const key = this.meta.tiles[i];
+                if (!key || key === "water" || !mgr.exists(key)) continue;
+                const tex = mgr.get(key);
+                const img = tex.getSourceImage?.() || tex.source?.[0]?.image;
+                if (!img?.width) continue;
+                const x = (i % cs) * ts;
+                const y = ((i / cs) | 0) * ts;
+                ctx.drawImage(img, 0, 0, img.width, img.height, x, y, ts, ts);
+            }
+            try { mgr.get(stamp.key)?.refresh?.(); } catch (_) {}
+            try { mgr.get(stamp.key)?.source?.[0]?.update?.(); } catch (_) {}
+            this.rt.draw(stamp.key, 0, 0);
+        } else {
+            for (let i = cs * cs - 1; i >= 0; i--) {
+                const key = this.meta.tiles[i];
+                if (!key || key === "water") continue;
+                const x = i % cs;
+                const y = (i / cs) | 0;
+                this.rt.draw(key, x * ts, y * ts);
+            }
         }
         const layer = this.scene.groundLayer;
         layer.add(this.rt);

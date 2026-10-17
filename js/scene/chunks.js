@@ -125,9 +125,45 @@
         });
     },
 
-    _pumpChunkPaint() {
+    /**
+     * One canvas the size of a chunk. Tiles are blitted here, then the
+     * render texture copies the canvas once.
+     */
+    chunkStamp() {
+        const w = this.chunkPx();
+        const key = "__chunk_stamp";
+        const prev = this._chunkStamp;
+        if (prev?.ctx && prev.w === w && this.textures?.exists?.(key)) return prev;
+        if (typeof document === "undefined" || !this.textures?.addCanvas) return null;
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = w;
+        const ctx = canvas.getContext("2d", { alpha: true });
+        if (!ctx) return null;
+        ctx.imageSmoothingEnabled = false;
+        if (this.textures.exists(key)) this.textures.remove(key);
+        if (!this.textures.addCanvas(key, canvas)) return null;
+        const tex = this.textures.get(key);
+        const nearest = (typeof Phaser !== "undefined" && Phaser.Textures)
+            ? Phaser.Textures.FilterMode.NEAREST
+            : 0;
+        try { tex?.setFilter?.(nearest); } catch (_) {}
+        const frame = tex?.get?.();
+        if (frame) {
+            frame.customPivot = true;
+            frame.pivotX = 0;
+            frame.pivotY = 0;
+        }
+        const stamp = { canvas, ctx, w, key };
+        this._chunkStamp = stamp;
+        return stamp;
+    },
+
+    _pumpChunkPaint(budgetMs) {
         const q = this._chunkPaintQ;
         if (!q?.length) return;
+        const limit = Number.isFinite(budgetMs) ? budgetMs : 6;
+        if (limit <= 0) return;
         const t0 = typeof performance !== "undefined" ? performance.now() : Date.now();
         while (q.length) {
             const job = q.shift();
@@ -141,7 +177,7 @@
             } catch (_) {}
             job.resolve();
             const now = typeof performance !== "undefined" ? performance.now() : Date.now();
-            if (now - t0 >= 6) break;
+            if (now - t0 >= limit) break;
         }
         this._paintBusy = false;
     },

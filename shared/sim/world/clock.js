@@ -651,14 +651,27 @@
         return out;
     },
 
-    _interestLoad(wx, wy, radius = INTEREST) {
+    /**
+     * Generate missing chunks around a point.
+     * `limit` caps how many new chunks this call may create (already-generated
+     * cells are free). The per-tick stream uses a small limit so walking into
+     * a fresh edge does not build the whole ring before the frame can draw.
+     * @returns {number} how many chunks were created
+     */
+    _interestLoad(wx, wy, radius = INTEREST, limit = Infinity) {
         const { cx, cy } = worldToChunk(wx, wy);
         const r = Math.max(1, Math.floor(Number(radius) || INTEREST));
+        const cap = Number.isFinite(limit) ? Math.max(0, limit) : Infinity;
+        let made = 0;
         for (let x = cx - r; x <= cx + r; x++) {
             for (let y = cy - r; y <= cy + r; y++) {
+                if (this.chunks.has(chunkKey(x, y))) continue;
+                if (made >= cap) return made;
                 this._ensureChunk(x, y);
+                made++;
             }
         }
+        return made;
     },
 
     _ensureChunk(cx, cy) {
