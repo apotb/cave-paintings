@@ -2961,6 +2961,53 @@ test("healthy settlers get up at 6:00", () => {
     assert.equal(!!nightMob._resting, false);
 });
 
+test("stale night scan does not put settlers back to bed at 7:00", () => {
+    const { world, pawn } = createTestWorld();
+    const { rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    const chunk = originChunk(world);
+    const entry = { uid: "lt-dawn", id: "lean_to", x: rec.x, y: rec.y, tx: 2, ty: 2, rot: 0 };
+    Place.ensureSleepEntry(entry, world._thingDef("lean_to"));
+    chunk.things.push(entry);
+    world._occupySlot(pawn, rec, entry, 0);
+    assert.equal(entry.occupants[0], rec.id);
+    rec._settlerScan = {
+        night: true,
+        injured: false,
+        bed: { entry, slot: 0 }
+    };
+    rec._settlerScanMs = 0;
+    world.gameMinutes = 200;
+    for (let i = 0; i < 3; i++) world.tick(16);
+    assert.equal(!!rec._resting, true, "still night");
+    const origEnsure = world._ensureChunk;
+    const stray = [];
+    world._ensureChunk = function (cx, cy) {
+        const had = this.chunks.has(`${cx},${cy}`);
+        const chunk = origEnsure.call(this, cx, cy);
+        if (!had) {
+            const stack = new Error().stack || "";
+            const streamed = stack.includes("_loadPlayerInterest")
+                || stack.includes("_pinSettlements")
+                || stack.includes("_interestLoad");
+            if (!streamed) stray.push(`${cx},${cy}`);
+        }
+        return chunk;
+    };
+    world.gameMinutes = 7 * 60;
+    for (let i = 0; i < 12; i++) {
+        world.tick(16);
+        assert.equal(!!rec._resting, false, `tick ${i} went back to bed`);
+        assert.equal(!!rec._restWalk, false, `tick ${i} started walking back to bed`);
+    }
+    world._ensureChunk = origEnsure;
+    assert.equal(rec._settlerScan.night, false);
+    assert.equal(rec._settlerScan.bed, null);
+    assert.equal(/sleep/i.test(String(rec._settlerAct || "")), false, rec._settlerAct);
+    assert.equal(entry.occupants[0], null);
+    assert.deepEqual(stray, []);
+});
+
 test("injured settlers stay in bed after dawn", () => {
     const { world, pawn } = createTestWorld();
     const { rec } = parkSettler(world, pawn);

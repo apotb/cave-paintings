@@ -63,7 +63,7 @@ function chopStandFeet(world, rec, c, tree, hs) {
         const feetX = aimX + ((Number(rec.x) || 0) - body.x);
         const feetY = aimY + ((Number(rec.y) || 0) - body.y);
         if (typeof world?._partyPoseBlocked === "function" && c) {
-            return !world._partyPoseBlocked(c, feetX, feetY, 0);
+            return !world._partyPoseBlocked(c, feetX, feetY, 0, { load: false });
         }
         return true;
     };

@@ -227,6 +227,21 @@ function settlerWantsBed(world, rec, mob) {
     return Settlement.settlerShouldSleep(night, injured);
 }
 
+/**
+ * Sleep freezes the job search, so `scan.night` is still set when the clock
+ * jumps to morning. The tick that gets them up would otherwise order them
+ * straight back to bed. Waking vacates every chunk, and a whole camp doing
+ * that every frame is the stall that lasts until you leave and rejoin.
+ */
+function releaseStaleNightScan(world, rec, mob) {
+    const scan = rec?._settlerScan;
+    if (!scan?.night) return;
+    if (settlerWantsBed(world, rec, mob)) return;
+    scan.night = false;
+    scan.bed = null;
+    scan.injured = false;
+}
+
 function leaveBed(world, rec, mob) {
     const session = world._sessionOfPawn?.(rec)
         || world.players.get(rec.ownerId)
@@ -1608,6 +1623,7 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     ctx.setPaintBar = setPaintBar;
     ctx.isWorkHold = isWorkHold;
     ctx.settlerWantsBed = settlerWantsBed;
+    ctx.releaseStaleNightScan = releaseStaleNightScan;
     ctx.leaveBed = leaveBed;
     ctx.sleepBedEntry = sleepBedEntry;
     ctx.setSleepAct = setSleepAct;

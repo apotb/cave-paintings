@@ -337,7 +337,7 @@ function stationStandFeet(world, rec, c, target) {
         const feetX = aimX + ((Number(rec.x) || 0) - body.x);
         const feetY = aimY + ((Number(rec.y) || 0) - body.y);
         if (typeof world?._partyPoseBlocked === "function" && c) {
-            return !world._partyPoseBlocked(c, feetX, feetY, 2);
+            return !world._partyPoseBlocked(c, feetX, feetY, 2, { load: false });
         }
         return true;
     };
@@ -373,7 +373,7 @@ function bodyInsideHut(world, c, entry, def, x, y) {
     if (!rect || !body) return false;
     if (body.left < rect.left + 1 || body.right > rect.right - 1
         || body.top < rect.top + 1 || body.bottom > rect.bottom - 1) return false;
-    if (typeof world._partyPoseBlocked === "function" && world._partyPoseBlocked(c, x, y, 0)) {
+    if (typeof world._partyPoseBlocked === "function" && world._partyPoseBlocked(c, x, y, 0, { load: false })) {
         return false;
     }
     return true;
@@ -429,7 +429,7 @@ function interiorRest(world, rec, c, target) {
         return { x: anchor.x + off.dx - 8, y: anchor.y + off.dy + 4 };
     };
     const clear = (x, y) => !c || typeof world._partyPoseBlocked !== "function"
-        || !world._partyPoseBlocked(c, x, y, 0);
+        || !world._partyPoseBlocked(c, x, y, 0, { load: false });
     let out = null;
     for (const py of [40, 36, 34, 32]) {
         const f = feet(cx, py);
@@ -543,7 +543,7 @@ function blockedToward(world, rec, c, tx, ty, ignoreUid, pad = 2) {
     let hit = false;
     for (let i = 1; i < steps; i++) {
         const t = i / steps;
-        if (world._partyPoseBlocked(c, px + dx * t, py + dy * t, pad)) {
+        if (world._partyPoseBlocked(c, px + dx * t, py + dy * t, pad, { load: false })) {
             hit = true;
             break;
         }

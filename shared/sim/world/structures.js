@@ -447,7 +447,7 @@
             return null;
         };
         if (near && Number.isFinite(near.x) && Number.isFinite(near.y)) {
-            const hit = scan(this._chunksNear(near.x, near.y, 2));
+            const hit = scan(this._chunksNear(near.x, near.y, 2, { load: false }));
             if (hit) return hit;
         }
         return scan(this.chunks.values());
@@ -472,18 +472,30 @@
     _vacatePawn(pawn) {
         if (!pawn) return;
         const id = pawn.id;
-        for (const c of this.chunks.values()) {
-            if (!Array.isArray(c.things)) continue;
-            for (const t of c.things) {
-                if (!this._isSleepEntry(t) || !Array.isArray(t.occupants)) continue;
-                let changed = false;
-                for (let i = 0; i < t.occupants.length; i++) {
-                    if (t.occupants[i] === id) {
-                        t.occupants[i] = null;
-                        changed = true;
-                    }
+        const clearEntry = (t, chunk) => {
+            if (!this._isSleepEntry(t) || !Array.isArray(t.occupants)) return false;
+            let changed = false;
+            for (let i = 0; i < t.occupants.length; i++) {
+                if (t.occupants[i] === id) {
+                    t.occupants[i] = null;
+                    changed = true;
                 }
-                if (changed) this._emitStorage(c, t);
+            }
+            if (changed && chunk) this._emitStorage(chunk, t);
+            return changed;
+        };
+        // The bunk they just left is enough. Walking every generated chunk
+        // on wake is what stalls a large world when the camp gets up at once.
+        let cleared = false;
+        const lastUid = pawn.lastSleep?.uid;
+        if (lastUid) {
+            const found = this._findSleepByUid(lastUid, pawn);
+            if (found?.entry) cleared = clearEntry(found.entry, found.chunk);
+        }
+        if (!cleared) {
+            for (const c of this.chunks.values()) {
+                if (!Array.isArray(c.things)) continue;
+                for (const t of c.things) clearEntry(t, c);
             }
         }
         pawn._resting = false;

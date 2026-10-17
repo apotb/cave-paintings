@@ -81,6 +81,7 @@ const shellRequire = typeof require === "function" ? require : undefined;
     const findRec = (...args) => ctx.findRec(...args);
     const findSettle = (...args) => ctx.findSettle(...args);
     const maybeLeaveBed = (...args) => ctx.maybeLeaveBed(...args);
+    const releaseStaleNightScan = (...args) => ctx.releaseStaleNightScan(...args);
     const setSettlerAct = (...args) => ctx.setSettlerAct(...args);
     const markPathIgnore = (...args) => ctx.markPathIgnore(...args);
     const jobsOn = (...args) => ctx.jobsOn(...args);
@@ -152,6 +153,7 @@ function tick(world, mob, delta) {
         setSettlerAct(rec, mob, "Vomiting");
         return halt();
     }
+    releaseStaleNightScan(world, rec, mob);
     const settle = findSettle(world, rec);
     if (!settle) {
         const leftBed = maybeLeaveBed(world, rec, mob);

@@ -1657,8 +1657,8 @@
             const oy = cc.y;
             const nx = cc.x + (cc.vx || 0) * dt;
             const ny = cc.y + (cc.vy || 0) * dt;
-            if (!this._partyPoseBlocked(cc, nx, cc.y)) cc.x = nx;
-            if (!this._partyPoseBlocked(cc, cc.x, ny)) cc.y = ny;
+            if (!this._partyPoseBlocked(cc, nx, cc.y, 0, { load: false })) cc.x = nx;
+            if (!this._partyPoseBlocked(cc, cc.x, ny, 0, { load: false })) cc.y = ny;
             rec.x = cc.x;
             rec.y = cc.y;
             this._maybeEjectIdleOverlap(rec, cc);
@@ -1684,10 +1684,10 @@
                     const step = 3.5 * TS * dt;
                     const hx = rec._escapeH?.nx || 0;
                     const hy = rec._escapeH?.ny || 0;
-                    if (hx && !this._partyPoseBlocked(cc, rec.x + hx * step, rec.y)) {
+                    if (hx && !this._partyPoseBlocked(cc, rec.x + hx * step, rec.y, 0, { load: false })) {
                         rec.x += hx * step;
                     }
-                    if (hy && !this._partyPoseBlocked(cc, rec.x, rec.y + hy * step)) {
+                    if (hy && !this._partyPoseBlocked(cc, rec.x, rec.y + hy * step, 0, { load: false })) {
                         rec.y += hy * step;
                     }
                     cc.x = rec.x;
