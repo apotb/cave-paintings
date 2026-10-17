@@ -323,10 +323,16 @@
         const view = this.cameras.main?.worldView;
         const pad = 32;
         const seen = new Set();
-        for (const chunk of Object.values(this.chunks || {})) {
+        const chunks = this._loadedChunks || [];
+        for (let ci = 0; ci < chunks.length; ci++) {
+            const chunk = chunks[ci];
             const kids = chunk.things?.getChildren?.() || [];
             for (const t of kids) {
                 if (!t?.active || t.entry?.gone) continue;
+                if (view) {
+                    if (t.x < view.x - pad || t.x > view.right + pad) continue;
+                    if (t.y < view.y - pad || t.y > view.bottom + pad) continue;
+                }
                 const unfinishedPit = t.entry?.id === "storage_pit"
                     && (Number(t.entry?.digProgress) || 0) < 1;
                 let frac = unfinishedPit
@@ -351,10 +357,6 @@
                 }
                 if (!(frac > 0) && !unfinishedPit) continue;
                 if (frac > 1) frac = 1;
-                if (view) {
-                    if (t.x < view.x - pad || t.x > view.right + pad) continue;
-                    if (t.y < view.y - pad || t.y > view.bottom + pad) continue;
-                }
                 const key = this._chopBarKey(t);
                 seen.add(key);
                 this._drawOneChopBar(t, frac, key);

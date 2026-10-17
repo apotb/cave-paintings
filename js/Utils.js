@@ -1121,6 +1121,7 @@ function ensureStoneTexture(scene, kind, variant, stoneId) {
     }
     ctx.putImageData(data, 0, 0);
     canvasTex.refresh();
+    if (typeof WorldAtlas !== "undefined") WorldAtlas.adopt(scene, key);
     return key;
 }
 
@@ -1167,6 +1168,7 @@ function ensureSpearTexture(scene, material, stone) {
         ctx.drawImage(tmp, 0, 0, w, h);
     }
     canvasTex.refresh();
+    if (typeof WorldAtlas !== "undefined") WorldAtlas.adopt(scene, key);
     return key;
 }
 

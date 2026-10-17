@@ -130,6 +130,7 @@ class SceneMain extends SceneBase {
 
     create() {
         hookPixelTextureClamp(this);
+        if (typeof WorldAtlas !== "undefined") WorldAtlas.pack(this);
         this._bindFullscreenWatch();
         // pauseAll is global. Save-and-quit used to leave every Animation paused,
         // so the 2nd world join froze campfires, walks, and anything else that plays.
@@ -584,6 +585,7 @@ class SceneMain extends SceneBase {
         this.corpsePanel?.update();
         this.updateLightVeil();
         this._syncWaterSprite();
+        this._cullOffscreenPointer?.();
     }
 }
 

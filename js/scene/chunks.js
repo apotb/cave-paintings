@@ -382,5 +382,48 @@
         this._oldWaterY = wy;
         if (spr.x !== x || spr.y !== y) spr.setPosition(x, y);
     },
+
+    /**
+     * Hover hit-tests every interactive sprite, including ones loaded past
+     * the screen edge. A camp plus the forest around it is thousands of
+     * those. Leave clicks on for what is near the camera.
+     */
+    _cullOffscreenPointer() {
+        const cam = this.cameras?.main;
+        const view = cam?.worldView;
+        if (!view || !this._playReady) return;
+        const cell = `${(view.x / 48) | 0}:${(view.y / 48) | 0}:${view.width | 0}:${view.height | 0}`;
+        if (cell === this._pointerCullCell) return;
+        this._pointerCullCell = cell;
+        const pad = (this.tileSize || 16) * 4;
+        const left = view.x - pad;
+        const top = view.y - pad;
+        const right = view.right + pad;
+        const bottom = view.bottom + pad;
+        const hover = this._hoverTarget;
+        const touch = (obj) => {
+            if (!obj?.active || !obj.input || obj === hover) return;
+            const on = obj.x >= left && obj.x <= right && obj.y >= top && obj.y <= bottom;
+            if (obj.input.enabled !== on) obj.input.enabled = on;
+        };
+        const chunks = this._loadedChunks || [];
+        for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            const things = chunk.things?.getChildren?.() || [];
+            for (let j = 0; j < things.length; j++) touch(things[j]);
+            const drops = chunk.drops?.getChildren?.() || [];
+            for (let j = 0; j < drops.length; j++) touch(drops[j]);
+            const corpses = chunk.corpses?.getChildren?.() || [];
+            for (let j = 0; j < corpses.length; j++) touch(corpses[j]);
+        }
+        const pawns = this.party || [];
+        for (let i = 0; i < pawns.length; i++) {
+            if (pawns[i] !== this.player) touch(pawns[i]);
+        }
+        const settlers = this.settlers || [];
+        for (let i = 0; i < settlers.length; i++) touch(settlers[i]);
+        const wanderers = this.partySys?.wanderers || [];
+        for (let i = 0; i < wanderers.length; i++) touch(wanderers[i]);
+    },
     };
 })(typeof globalThis !== "undefined" ? globalThis : this);

@@ -993,6 +993,7 @@ function ensureStoragePitBlueprint(scene, sourceKey) {
     if (!scene.textures.addCanvas(key, canvas)) return null;
     const tex = scene.textures.get(key);
     tex?.setFilter?.(typeof Phaser !== "undefined" ? Phaser.Textures.FilterMode.NEAREST : 0);
+    if (typeof WorldAtlas !== "undefined") WorldAtlas.adopt(scene, key);
     return key;
 }
 
@@ -1507,6 +1508,7 @@ function ensureHutTextures(scene, meta) {
         g.drawImage(src, -size * 0.5, -size * 0.5);
         if (scene.textures.addCanvas) scene.textures.addCanvas(destKey, canvas);
         else scene.textures.addImage(destKey, canvas);
+        if (typeof WorldAtlas !== "undefined") WorldAtlas.adopt(scene, destKey);
     };
     for (const rot of [0, 90, 180, 270]) {
         bake(meta.floor, `${meta.floor}_${rot}`, rot);
@@ -1588,7 +1590,10 @@ class Hut extends LeanTo {
             const bh = Math.max(1, rect.bottom - rect.top);
             const cx = (rect.left + rect.right) * 0.5;
             const cy = (rect.top + rect.bottom) * 0.5;
-            const spr = scene.add.image(cx, cy, tex);
+            // Collision only. A hut mask is dozens of rects; putting each
+            // one on the display list makes a camp sort and cull that many
+            // invisible images every frame.
+            const spr = scene.make.image({ x: cx, y: cy, key: tex, add: false });
             spr.setVisible(false);
             spr.setOrigin(0.5, 0.5);
             scene.physics.add.existing(spr, true);
@@ -1597,6 +1602,7 @@ class Hut extends LeanTo {
             spr.meta = this.meta;
             spr.uid = this.entry?.uid;
             if (scene._things) scene._things.add(spr);
+            spr.removeFromDisplayList?.();
             if (typeof indexThingSprite === "function") indexThingSprite(scene, spr);
             bodies.push(spr);
         }

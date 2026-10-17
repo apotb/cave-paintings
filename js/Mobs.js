@@ -919,9 +919,9 @@ class DroppedItem extends Mob {
         if (typeof applyItemIconScale === "function") applyItemIconScale(this, 0.7);
         else this.setScale(0.7);
 
-        this.setDamping(true);
-        this.setDrag(200, 200);
-        this.setMaxVelocity(48, 48);
+        // Click to pick up. A dynamic body per pile stays in the arcade
+        // step, so a camp of loot pays for every stack every frame.
+        this.scene?.physics?.world?.disableBody?.(this.body);
 
         if (isMeal && scene.textures.exists(COCONUT_FILL_KEY)) {
             const tint = this.fillTint != null

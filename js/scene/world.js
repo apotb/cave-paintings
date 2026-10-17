@@ -258,7 +258,10 @@
         const g = (color >> 8) & 255;
         const b = color & 255;
 
-        if (skyDark < 0.01 && skyWash < 0.01) {
+        // Midday wash is a 2% tint. Keeping the veil up for that still
+        // fullscreen-blends every frame, and a campfire then repaints the
+        // canvas at flicker rate. That is the settlement hitch.
+        if (skyDark < 0.03 && skyWash < 0.03) {
             img.setVisible(false);
             this._lightHadFlame = false;
             this._lightRadiusAnimating = false;
@@ -309,8 +312,12 @@
         ww = Math.ceil(ww / 2) * 2;
         wh = Math.ceil(wh / 2) * 2;
 
-        if (canvasTex.width !== ww || canvasTex.height !== wh) {
-            canvasTex.setSize(ww, wh);
+        // Soft veil. Half resolution is four times less canvas work when a
+        // fire flickers, and the quad still covers the same world rect.
+        const cw = Math.max(2, Math.round(ww * 0.5));
+        const ch = Math.max(2, Math.round(wh * 0.5));
+        if (canvasTex.width !== cw || canvasTex.height !== ch) {
+            canvasTex.setSize(cw, ch);
             img.setTexture(key);
         }
         img.setPosition(wx, wy);
@@ -319,7 +326,8 @@
 
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalCompositeOperation = "source-over";
-        ctx.clearRect(0, 0, ww, wh);
+        ctx.clearRect(0, 0, cw, ch);
+        ctx.setTransform(cw / ww, 0, 0, ch / wh, 0, 0);
         if (skyDark >= 0.02) {
             ctx.fillStyle = `rgba(6, 10, 20, ${Math.min(0.96, skyDark)})`;
             ctx.fillRect(0, 0, ww, wh);
