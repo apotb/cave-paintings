@@ -154,6 +154,30 @@
         };
     },
 
+    /** Shrink saved containers to their def and drop stacks that no longer fit. */
+    _spillShrunkStorage(chunk) {
+        if (!Array.isArray(chunk?.things)) return;
+        for (const entry of chunk.things) {
+            if (!entry) continue;
+            const def = thingDefs().get(entry.id);
+            if (!def?.storage && !Array.isArray(entry.slots) && !Array.isArray(entry.ejected)) continue;
+            Place.ensureStorageEntry(entry, def);
+            const ejected = entry.ejected;
+            if (!Array.isArray(ejected) || !ejected.length) continue;
+            delete entry.ejected;
+            if (!Array.isArray(chunk.drops)) chunk.drops = [];
+            for (const stack of ejected) {
+                const world = this._cloneStackForWorld(stack);
+                if (!world) continue;
+                world.uid = world.uid || uuid();
+                world.x = entry.x;
+                world.y = entry.y;
+                world.lifeMs = DROP_LIFE_MS;
+                chunk.drops.push(world);
+            }
+        }
+    },
+
     _bumpStorage(entry) {
         if (!entry) return;
         entry.rev = (Number(entry.rev) || 0) + 1;

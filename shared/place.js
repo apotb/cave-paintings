@@ -790,23 +790,45 @@
 
     function storageSlotCount(thingDef, entry) {
         const fromDef = Math.floor(Number(thingDef?.storage?.slots) || 0);
-        const fromEntry = Array.isArray(entry?.slots) ? entry.slots.length : 0;
-        if (fromDef > 0) return Math.max(fromDef, fromEntry);
-        return fromEntry;
+        if (fromDef > 0) return fromDef;
+        return Array.isArray(entry?.slots) ? entry.slots.length : 0;
     }
 
-    /** Basket 8 → 2×4; drying rack 1 → single slot. */
+    /** Basket 8 → 2×4; pit 6 → 2×3; drying rack 1 → single slot. */
     function storageLayoutCols(n) {
         const count = Math.max(1, Math.floor(Number(n) || 1));
+        if (count > 4 && count % 3 === 0 && count % 4 !== 0) return 3;
         return Math.min(4, count);
+    }
+
+    /**
+     * Cut slots down to n. Stacks past the cap fill empty holes first.
+     * Whatever still does not fit is returned so the caller can drop it.
+     */
+    function ejectExtraSlots(entry, n) {
+        if (!Array.isArray(entry?.slots) || entry.slots.length <= n) return [];
+        const extra = [];
+        for (let i = n; i < entry.slots.length; i++) {
+            const stack = entry.slots[i];
+            if (stack && !(stack.quantity <= 0)) extra.push(stack);
+        }
+        entry.slots.length = n;
+        const ejected = [];
+        for (const stack of extra) {
+            const hole = entry.slots.findIndex((s) => !s || s.quantity <= 0);
+            if (hole >= 0) entry.slots[hole] = stack;
+            else ejected.push(stack);
+        }
+        return ejected;
     }
 
     function ensureStorageEntry(entry, thingDef) {
         if (!entry) return entry;
         const n = Math.max(1, storageSlotCount(thingDef, entry) || Math.floor(Number(thingDef?.storage?.slots) || 6));
         if (!Array.isArray(entry.slots)) entry.slots = emptySlots(n);
+        const ejected = ejectExtraSlots(entry, n);
+        if (ejected.length) entry.ejected = (entry.ejected || []).concat(ejected);
         while (entry.slots.length < n) entry.slots.push(null);
-        if (entry.slots.length > n) entry.slots.length = n;
         entry.rot = normalizeRot(entry.rot);
         if (!entry.uid) {
             entry.uid = `st_${Math.round(Number(entry.x) || 0)}_${Math.round(Number(entry.y) || 0)}`;

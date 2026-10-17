@@ -269,7 +269,7 @@
             "yield": 25
         },
         "storage": {
-            "slots": 8,
+            "slots": 6,
             "spoilScale": 0.5
         }
     },

@@ -419,6 +419,7 @@ class SimWorld {
             w._watchChunkThings(chunk);
             w._ensureLootableUids(chunk);
             w._registerChunkMobs(chunk);
+            w._spillShrunkStorage(chunk);
         }
         if (!w.chunks.size) w._findSpawnClearing();
         for (const snap of data.wanderers || []) {

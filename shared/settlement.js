@@ -1748,6 +1748,7 @@
 
     function storageLayoutCols(n) {
         const count = Math.max(1, Math.floor(Number(n) || 1));
+        if (count > 4 && count % 3 === 0 && count % 4 !== 0) return 3;
         return Math.min(4, count);
     }
 

@@ -506,8 +506,10 @@ test("basket slot count 8; 6-slot entries pad to 8; layout is 2x4", () => {
     Place.ensureStorageEntry(entry, def);
     assert.equal(entry.slots.length, 8);
     assert.equal(Place.storageLayoutCols(8), 4);
+    assert.equal(Place.storageLayoutCols(6), 3);
     assert.equal(Place.storageLayoutCols(1), 1);
     assert.equal(Settlement.storageLayoutCols(8), 4);
+    assert.equal(Settlement.storageLayoutCols(6), 3);
 });
 
 test("picking up a station unlinks it so a same-tile re-place is not auto-added", () => {

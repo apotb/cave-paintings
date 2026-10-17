@@ -153,7 +153,8 @@ test("storage pit, dirt, and snow are real items and Storage is researchable", (
     assert.ok(ids.indexOf("wicker_basket") < ids.indexOf("storage_pit"));
     assert.equal(pit.place.thing, "storage_pit");
     assert.equal(thing.hitboxSize, 0);
-    assert.equal(thing.storage.slots, 8);
+    assert.equal(thing.storage.slots, 6);
+    assert.equal(Place.storageLayoutCols(6), 3);
     assert.equal(thing.storage.spoilScale, 0.5);
     assert.deepEqual(thing.diggable, { health: 1, yield: 25 });
     assert.equal(Dig.isDeposit(thing), false);
@@ -208,7 +209,7 @@ test("storage pit places only on grass and snow, and remembers the fill", () => 
         assert.ok(pit, c.tile);
         assert.equal(pit.digProgress, 0, c.tile);
         assert.equal(pit.fillId, c.fill, c.tile);
-        assert.equal(pit.slots.length, 8, c.tile);
+        assert.equal(pit.slots.length, 6, c.tile);
         assert.equal(world.isBlocked(pit.x, pit.y), false, c.tile);
     }
 });
@@ -498,6 +499,38 @@ test("storage slot tooltip stretches spoil time only in a finished pit", () => {
     assert.equal(Place.pitSlowsSpoil(def, { id: "storage_pit", digProgress: 1 }), true);
     assert.equal(Place.pitSlowsSpoil(def, { id: "storage_pit", digProgress: 0 }), false);
     assert.equal(Place.pitSlowsSpoil(DataStore.getThing("wicker_basket"), { id: "wicker_basket" }), false);
+});
+
+test("an old 8-slot pit shrinks to 6 and drops what no longer fits", () => {
+    const def = DataStore.getThing("storage_pit");
+    const packed = {
+        id: "storage_pit",
+        x: 8,
+        y: 8,
+        slots: [
+            { id: "apple", quantity: 1 },
+            null, null, null, null, null,
+            null,
+            { id: "blueberry", quantity: 2 }
+        ]
+    };
+    Place.ensureStorageEntry(packed, def);
+    assert.equal(packed.slots.length, 6);
+    assert.equal(packed.slots[1].id, "blueberry");
+    assert.equal(packed.ejected, undefined);
+
+    const { world, pawn } = createTestWorld();
+    const pit = insertPit(world, pawn.x, pawn.y, { digProgress: 1, uid: "full-pit" });
+    pit.slots = Array.from({ length: 8 }, (_, i) => ({ id: "stick", quantity: i + 1 }));
+    Place.ensureStorageEntry(pit, world._thingDef("storage_pit"));
+    assert.equal(pit.slots.length, 6);
+    assert.equal(pit.ejected.length, 2);
+    assert.equal(pit.ejected[0].quantity, 7);
+    assert.equal(pit.ejected[1].quantity, 8);
+    world._spillShrunkStorage(originChunk(world));
+    assert.equal(pit.ejected, undefined);
+    const dropped = (originChunk(world).drops || []).filter((d) => d.id === "stick");
+    assert.equal(dropped.reduce((n, d) => n + d.quantity, 0), 15);
 });
 
 test("a new pit prefers perishable hauls, and an old Normal default is lifted", () => {
