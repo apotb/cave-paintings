@@ -41,11 +41,10 @@
         "id": "hut",
         "name": "Huts",
         "era": "Mesolithic",
-        "wip": true,
         "quote": "It's nice having walls",
         "cost": 4,
         "prereqs": ["camping", "basic_furniture"],
-        "unlocks": { "items": [], "jobs": [], "text": ["Hut"] },
+        "unlocks": { "items": ["hut"], "jobs": [], "text": [] },
         "children": ["settlements"]
     },
     {

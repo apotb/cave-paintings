@@ -1395,7 +1395,7 @@
             for (const things of [c.things, c.lootableThings]) {
                 for (const t of things || []) {
                     const def = thingDefs().get(t.id);
-                    if (Place.isSleepThing?.(def, t)) {
+                    if (Place.isSleepThing?.(def, t) && !def?.sleep?.interior) {
                         const fp = Place.footprintWorldRect?.(t, def, TS);
                         if (fp) {
                             sleep.push({
@@ -1407,17 +1407,40 @@
                             });
                         }
                     }
-                    const rect = this._thingRect(t);
-                    if (!rect) continue;
-                    list.push(rect);
-                    const x0 = Math.max(0, Math.floor((rect.left - ox) / TS));
-                    const x1 = Math.min(CS - 1, Math.floor((rect.right - 1e-3 - ox) / TS));
-                    const y0 = Math.max(0, Math.floor((rect.top - oy) / TS));
-                    const y1 = Math.min(CS - 1, Math.floor((rect.bottom - 1e-3 - oy) / TS));
-                    for (let ty = y0; ty <= y1; ty++) {
-                        for (let tx = x0; tx <= x1; tx++) {
-                            const i = tx + ty * CS;
-                            (bins[i] || (bins[i] = [])).push(rect);
+                    const pad = 1;
+                    const raw = (typeof Place !== "undefined" && Place.collisionWorldRects)
+                        ? Place.collisionWorldRects(t, def, TS)
+                        : [];
+                    const rects = [];
+                    if (raw.length) {
+                        for (let ri = 0; ri < raw.length; ri++) {
+                            const src = raw[ri];
+                            rects.push({
+                                t,
+                                left: src.left - pad,
+                                right: src.right + pad,
+                                top: src.top - pad,
+                                bottom: src.bottom + pad,
+                                r: Math.max(src.right - src.left, src.bottom - src.top) * 0.5 + pad
+                            });
+                        }
+                    } else {
+                        const one = this._thingRect(t);
+                        if (one) rects.push(one);
+                    }
+                    if (!rects.length) continue;
+                    for (let ri = 0; ri < rects.length; ri++) {
+                        const rect = rects[ri];
+                        list.push(rect);
+                        const x0 = Math.max(0, Math.floor((rect.left - ox) / TS));
+                        const x1 = Math.min(CS - 1, Math.floor((rect.right - 1e-3 - ox) / TS));
+                        const y0 = Math.max(0, Math.floor((rect.top - oy) / TS));
+                        const y1 = Math.min(CS - 1, Math.floor((rect.bottom - 1e-3 - oy) / TS));
+                        for (let ty = y0; ty <= y1; ty++) {
+                            for (let tx = x0; tx <= x1; tx++) {
+                                const i = tx + ty * CS;
+                                (bins[i] || (bins[i] = [])).push(rect);
+                            }
                         }
                     }
                 }

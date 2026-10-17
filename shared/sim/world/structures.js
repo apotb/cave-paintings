@@ -596,6 +596,8 @@
         pawn.resting = true;
         pawn.lastSleep = { uid: entry.uid, slot, rot: entry.rot };
         const def = this._sleepDef(entry);
+        const bonus = Sleep.healBonus ? Sleep.healBonus(def) : 8;
+        pawn._restHealBonus = bonus;
         const pos = Sleep.sleeperWorldPos(entry, slot, TS, def);
         pawn.x = pos.x;
         pawn.y = pos.y;
@@ -611,6 +613,7 @@
             c._resting = true;
             c._restWalk = null;
             c.lastSleep = pawn.lastSleep;
+            c._restHealBonus = bonus;
             c._prone = true;
         }
         const found = this._findSleepByUid(entry.uid, pawn);
@@ -631,9 +634,11 @@
         const c = pawn.creature || this.creatures.get(pawn.id);
         const downed = !!(c?.isImmobile?.() || c?.isIncapacitated?.());
         if (!downed) pawn.prone = false;
+        pawn._restHealBonus = 0;
         if (c) {
             c._resting = false;
             c._restWalk = null;
+            c._restHealBonus = 0;
             c._settlerAct = null;
             if (!downed) c._prone = false;
         }

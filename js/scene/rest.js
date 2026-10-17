@@ -399,6 +399,10 @@
         pawn._restWalk = null;
         pawn._resting = true;
         pawn.lastSleep = { uid: entry.uid, slot, rot: entry.rot };
+        const def = this.getThing?.(entry.id);
+        pawn._restHealBonus = (typeof Sleep !== "undefined" && Sleep.healBonus)
+            ? Sleep.healBonus(def)
+            : 8;
         this._intendedSleep().delete(pawn.pawnId);
         pawn.setVelocity?.(0, 0);
         if (typeof pinRestingCreature === "function") pinRestingCreature(pawn, this);
@@ -406,7 +410,7 @@
             const pos = typeof Sleep !== "undefined"
                 ? Sleep.sleeperWorldPos(entry, slot, this.tileSize, def)
                 : { x: entry.x, y: entry.y };
-            setCreatureRest?.(pawn, true, entry.rot);
+            setCreatureRest?.(pawn, true, entry.rot, def);
             pawn.setPosition?.(pos.x, pos.y);
             pawn.syncSortDepth?.();
         }
@@ -433,6 +437,7 @@
         this._intendedSleep().delete(id);
         setCreatureRest?.(pawn, false);
         pawn._resting = false;
+        pawn._restHealBonus = 0;
         if (!(pawn._downed || pawn.isIncapacitated?.() || pawn.isImmobile?.())) {
             pawn._netProne = false;
         }

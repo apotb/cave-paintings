@@ -319,6 +319,26 @@
         "rotations": [0, 90, 180, 270]
     },
     {
+        "id": "hut",
+        "name": "Hut",
+        "key": "hut",
+        "floor": "hut_floor",
+        "wall": "hut_wall",
+        "spriteSize": 32,
+        "wallSplit": 22,
+        "wallMask": "AAAAAAAf+AAAf/4AAeAHgAOAAcAHAADgDgAAcBwAADg4AAAcMAAADHAAAA5gAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGcAAADjAAAAw4AAAcHAAAOA4AAHAHAADgA4ABwAHgB4AAYAYAAAAAAAAAAAA=",
+        "doorClear": { "x": 10, "y": 28, "w": 12, "h": 2 },
+        "hitboxSize": 0,
+        "sleep": {
+            "slots": 4,
+            "healBonus": 12,
+            "interior": true,
+            "points": [[-6.5, -19.3], [6.5, -19.6], [-6.5, -12.3], [6.3, -12.7]]
+        },
+        "footprint": [2, 2],
+        "rotations": [0, 90, 180, 270]
+    },
+    {
         "id": "settling_stone",
         "name": "Settling Stone",
         "key": "settling_stone",

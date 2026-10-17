@@ -1484,6 +1484,179 @@ class LeanTo extends Thing {
     }
 }
 
+/**
+ * Bake 90° copies of the hut floor and wall so the sprite can keep a
+ * bottom-center origin while the doorway turns with the footprint.
+ */
+function ensureHutTextures(scene, meta) {
+    if (!scene?.textures || !meta?.floor || !meta?.wall) return;
+    const size = Number(meta.spriteSize) || 32;
+    const bake = (srcKey, destKey, rot) => {
+        if (!srcKey || !destKey || scene.textures.exists(destKey)) return;
+        if (!scene.textures.exists(srcKey)) return;
+        const src = scene.textures.get(srcKey).getSourceImage?.();
+        if (!src) return;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const g = canvas.getContext("2d");
+        if (!g) return;
+        g.imageSmoothingEnabled = false;
+        g.translate(size * 0.5, size * 0.5);
+        g.rotate((Number(rot) || 0) * Math.PI / 180);
+        g.drawImage(src, -size * 0.5, -size * 0.5);
+        if (scene.textures.addCanvas) scene.textures.addCanvas(destKey, canvas);
+        else scene.textures.addImage(destKey, canvas);
+    };
+    for (const rot of [0, 90, 180, 270]) {
+        bake(meta.floor, `${meta.floor}_${rot}`, rot);
+        bake(meta.wall, `${meta.wall}_${rot}`, rot);
+    }
+}
+
+class Hut extends LeanTo {
+    applyVisual() {
+        if (typeof ensureHutTextures === "function") ensureHutTextures(this.scene, this.meta);
+        let tex = this.meta?.floor || this.meta?.key;
+        if (typeof Place !== "undefined" && this.meta?.floor) {
+            const rotTex = Place.rotationTextureKey(this.meta.floor, this.entry?.rot);
+            if (this.scene.textures.exists(rotTex)) tex = rotTex;
+        }
+        if (tex && this.scene.textures.exists(tex) && this.texture?.key !== tex) this.setTexture(tex);
+        this.setOrigin(0.5, 1);
+        if (this.scene.groundLayer && this.displayList !== this.scene.groundLayer) {
+            this.scene.groundLayer.add(this);
+        }
+        this.setDepth(0.5);
+        this._syncWalls();
+        this._syncWallBodies();
+    }
+
+    refreshCollision() {
+        if (this.body) this.disableCollision();
+        this._syncWallBodies();
+    }
+
+    _wallTextureKey() {
+        if (typeof Place === "undefined" || !this.meta?.wall) return "";
+        return Place.rotationTextureKey(this.meta.wall, this.entry?.rot);
+    }
+
+    _syncWalls() {
+        const tex = this._wallTextureKey();
+        if (!tex || !this.scene.textures.exists(tex)) {
+            this._destroyWallSprites();
+            return;
+        }
+        const split = Number(this.meta.wallSplit) || 22;
+        const size = Number(this.meta.spriteSize) || 32;
+        this._backSpr = this._wallPiece(
+            this._backSpr, tex, 0, 0, size, split, (Number(this.y) || 0) - size - 1
+        );
+        this._frontSpr = this._wallPiece(
+            this._frontSpr, tex, 0, split, size, Math.max(1, size - split), (Number(this.y) || 0) + 2
+        );
+    }
+
+    _wallPiece(spr, tex, cx, cy, cw, ch, depth) {
+        if (!spr || !spr.active || spr._hutTex !== tex) {
+            spr?.destroy?.();
+            spr = this.scene.add.image(this.x, this.y, tex);
+            spr.setOrigin(0.5, 1);
+            this.scene.mainLayer?.add(spr);
+            spr._hutTex = tex;
+        }
+        spr.setTexture(tex);
+        spr.setCrop(cx, cy, cw, ch);
+        spr.setPosition(this.x, this.y);
+        spr.setDepth(depth);
+        spr.setVisible(true);
+        return spr;
+    }
+
+    _syncWallBodies() {
+        this._destroyWallBodies();
+        const scene = this.scene;
+        if (!scene?.physics || typeof Place === "undefined" || !Place.collisionWorldRects) return;
+        const tex = this._wallTextureKey();
+        if (!tex || !scene.textures.exists(tex)) return;
+        const rects = Place.collisionWorldRects(this.entry, this.meta, scene.tileSize || 16);
+        const bodies = [];
+        for (let i = 0; i < rects.length; i++) {
+            const rect = rects[i];
+            const bw = Math.max(1, rect.right - rect.left);
+            const bh = Math.max(1, rect.bottom - rect.top);
+            const cx = (rect.left + rect.right) * 0.5;
+            const cy = (rect.top + rect.bottom) * 0.5;
+            const spr = scene.add.image(cx, cy, tex);
+            spr.setVisible(false);
+            spr.setOrigin(0.5, 0.5);
+            scene.physics.add.existing(spr, true);
+            if (spr.body?.setSize) spr.body.setSize(bw, bh, true);
+            spr.entry = this.entry;
+            spr.meta = this.meta;
+            spr.uid = this.entry?.uid;
+            if (scene._things) scene._things.add(spr);
+            if (typeof indexThingSprite === "function") indexThingSprite(scene, spr);
+            bodies.push(spr);
+        }
+        this._wallBodies = bodies;
+    }
+
+    _destroyWallSprites() {
+        if (this._backSpr) {
+            this._backSpr.destroy();
+            this._backSpr = null;
+        }
+        if (this._frontSpr) {
+            this._frontSpr.destroy();
+            this._frontSpr = null;
+        }
+    }
+
+    _destroyWallBodies() {
+        const list = this._wallBodies;
+        this._wallBodies = null;
+        if (!list) return;
+        for (let i = 0; i < list.length; i++) {
+            const spr = list[i];
+            if (typeof unindexThingSprite === "function") unindexThingSprite(this.scene, spr);
+            if (this.scene?._things) this.scene._things.remove(spr, false, false);
+            spr.destroy();
+        }
+    }
+
+    _destroyFrame() {
+        this._destroyWallSprites();
+        this._destroyWallBodies();
+        LeanTo.prototype._destroyFrame.call(this);
+    }
+
+    slotAtPointer(pointer) {
+        const scene = this.scene;
+        if (!scene?.cameras?.main || !pointer) return 0;
+        if (typeof Sleep === "undefined" || !Array.isArray(this.meta?.sleep?.points)) {
+            return LeanTo.prototype.slotAtPointer.call(this, pointer);
+        }
+        const world = scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const ts = scene.tileSize || 16;
+        const n = this.meta.sleep.points.length;
+        let best = 0;
+        let bestD = Infinity;
+        for (let i = 0; i < n; i++) {
+            const pos = Sleep.sleeperWorldPos(this.entry, i, ts, this.meta);
+            const dx = world.x - pos.x;
+            const dy = world.y - pos.y;
+            const d = dx * dx + dy * dy;
+            if (d < bestD) {
+                bestD = d;
+                best = i;
+            }
+        }
+        return best;
+    }
+}
+
 class SettlingStone extends Thing {
     constructor(scene, entry) {
         super(scene, entry.x, entry.y, entry.id || "settling_stone", entry);

@@ -576,8 +576,9 @@
             return;
         }
         if (chunk?.isLoaded) {
+            const sleepDef = isSleep ? this.getThing(entry.id) : null;
             const spr = isSleep
-                ? new LeanTo(this, entry)
+                ? ((sleepDef?.floor && typeof Hut !== "undefined") ? new Hut(this, entry) : new LeanTo(this, entry))
                 : isStation ? new CraftStation(this, entry)
                 : isSettle ? new SettlingStone(this, entry)
                 : isFig ? new ClayFigurine(this, entry)
@@ -940,7 +941,8 @@
                     setPuppetProne(entry.spr, true, {
                         feetAnchored: false,
                         resting: true,
-                        restRot: entry.restRot ?? lean?.entry?.rot
+                        restRot: entry.restRot ?? lean?.entry?.rot,
+                        restDef: lean?.meta
                     });
                 } else {
                     setPuppetProne(entry.spr, prone, { feetAnchored: true });

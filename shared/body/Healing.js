@@ -340,7 +340,11 @@
                 const q = math.clamp(Number(inj.tendQuality) || 0, 0, 1);
                 healRate += 4 + q * 8;
             }
-            if (owner._resting) healRate += 8;
+            if (owner._resting) {
+                const extra = Number(owner._restHealBonus);
+                const lean = (typeof Sleep !== "undefined" && Number(Sleep.HEAL_BONUS)) || 8;
+                healRate += (Number.isFinite(extra) && extra > 0) ? extra : lean;
+            }
             inj.severity = Math.max(0, (Number(inj.severity) || 0) - healRate * 0.01);
 
             if (inj.scarPending && inj.severity <= (inj.scarSeverity || 0)) {

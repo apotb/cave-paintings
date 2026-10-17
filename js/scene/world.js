@@ -911,7 +911,10 @@
         } else if (entry.id === "campfire" || entry.id === "unlit_campfire") {
             thing = new Campfire(this, entry);
         } else if (this.getThing(entry.id)?.sleep || Array.isArray(entry.occupants)) {
-            thing = new LeanTo(this, entry);
+            const sleepDef = this.getThing(entry.id);
+            thing = (sleepDef?.floor && typeof Hut !== "undefined")
+                ? new Hut(this, entry)
+                : new LeanTo(this, entry);
         } else if (this.getThing(entry.id)?.craftStation) {
             thing = new CraftStation(this, entry);
         } else if (this.getThing(entry.id)?.settlement
@@ -1249,6 +1252,8 @@
         if (this._placeGhost) this._placeGhost.setVisible(false);
         if (this._placeGhostFrame) this._placeGhostFrame.setVisible(false);
         if (this._placeGhostInteract) this._placeGhostInteract.setVisible(false);
+        if (this._hutGhostBack) this._hutGhostBack.setVisible(false);
+        if (this._hutGhostFront) this._hutGhostFront.setVisible(false);
         this._placeGhostTile = null;
         this._placeGhostValid = false;
     },
@@ -1295,6 +1300,13 @@
             if (placeKey && this.textures.exists(placeKey)) ghost.setTexture(placeKey);
             else if (this.textures.exists("clay")) ghost.setTexture("clay");
             else if (this.textures.exists(info.thingDef.key)) ghost.setTexture(info.thingDef.key);
+        } else if (info.thingDef?.floor && typeof ensureHutTextures === "function") {
+            ensureHutTextures(this, info.thingDef);
+            const floorTex = (typeof Place !== "undefined")
+                ? Place.rotationTextureKey(info.thingDef.floor, rot)
+                : info.thingDef.floor;
+            if (this.textures.exists(floorTex)) ghost.setTexture(floorTex);
+            else if (this.textures.exists(info.thingDef.floor)) ghost.setTexture(info.thingDef.floor);
         } else if (hangKey && this.textures.exists(hangKey)) ghost.setTexture(hangKey);
         else if (this.textures.exists(rotTex)) ghost.setTexture(rotTex);
         else if (this.textures.exists(info.thingDef.key)) ghost.setTexture(info.thingDef.key);
@@ -1308,7 +1320,9 @@
         }
         ghost.setPosition(gx, gy);
         const floorH = ghost.displayHeight || ghost.height || 16;
-        const floorDecal = (typeof Research !== "undefined" && Research.isPaintingCircle?.(info.thingDef))
+        const hutGhost = !!info.thingDef?.floor;
+        const floorDecal = hutGhost
+            || (typeof Research !== "undefined" && Research.isPaintingCircle?.(info.thingDef))
             || !!info.thingDef?.figurine;
         if (floorDecal && this.groundLayer) {
             if (ghost.displayList !== this.groundLayer) this.groundLayer.add(ghost);
@@ -1320,7 +1334,13 @@
         ghost.setAlpha(0.5);
         ghost.setTint(valid ? 0xffffff : 0xff5555);
         ghost.setVisible(true);
-        const frameTex = (typeof Place !== "undefined" && info.thingDef?.sleep)
+        if (hutGhost) {
+            this._syncHutGhostWalls(info.thingDef, gx, gy, rot, valid);
+        } else {
+            if (this._hutGhostBack) this._hutGhostBack.setVisible(false);
+            if (this._hutGhostFront) this._hutGhostFront.setVisible(false);
+        }
+        const frameTex = !hutGhost && (typeof Place !== "undefined" && info.thingDef?.sleep)
             ? Place.rotationFrameTextureKey(info.thingDef.key, rot)
             : null;
         if (frameTex && this.textures.exists(frameTex)) {
@@ -1343,6 +1363,44 @@
         this._syncPlaceGhostInteract(info.thingDef, tx, ty, rot, valid);
         this._placeGhostTile = { tx, ty };
         this._placeGhostValid = valid;
+    },
+
+    _hutGhostPiece(spr, key, x, y, cx, cy, cw, ch, depth, tint) {
+        if (!spr || !spr.active) {
+            spr = this.add.image(x, y, key).setOrigin(0.5, 1);
+            this.mainLayer.add(spr);
+        } else if (spr.texture?.key !== key) {
+            spr.setTexture(key);
+        }
+        spr.setCrop(cx, cy, cw, ch);
+        spr.setPosition(x, y);
+        spr.setDepth(depth);
+        spr.setAlpha(0.5);
+        spr.setTint(tint);
+        spr.setVisible(true);
+        return spr;
+    },
+
+    _syncHutGhostWalls(thingDef, x, y, rot, valid) {
+        if (typeof ensureHutTextures === "function") ensureHutTextures(this, thingDef);
+        const key = (typeof Place !== "undefined")
+            ? Place.rotationTextureKey(thingDef.wall, rot)
+            : thingDef.wall;
+        if (!key || !this.textures.exists(key)) {
+            if (this._hutGhostBack) this._hutGhostBack.setVisible(false);
+            if (this._hutGhostFront) this._hutGhostFront.setVisible(false);
+            return;
+        }
+        const size = Number(thingDef.spriteSize) || 32;
+        const split = Number(thingDef.wallSplit) || 22;
+        const tint = valid ? 0xffffff : 0xff5555;
+        this._hutGhostBack = this._hutGhostPiece(
+            this._hutGhostBack, key, x, y, 0, 0, size, split, y - size - 1, tint
+        );
+        this._hutGhostFront = this._hutGhostPiece(
+            this._hutGhostFront, key, x, y, 0, split, size, Math.max(1, size - split), y + 2, tint
+        );
+        if (this._placeGhostFrame) this._placeGhostFrame.setVisible(false);
     },
 
     _syncPlaceGhostInteract(thingDef, tx, ty, rot, valid) {
@@ -1532,7 +1590,9 @@
         };
         if (typeof Place !== "undefined") Place.ensureSleepEntry(entry, def);
         chunk.meta.things.push(entry);
-        const spr = new LeanTo(this, entry);
+        const spr = (def?.floor && typeof Hut !== "undefined")
+            ? new Hut(this, entry)
+            : new LeanTo(this, entry);
         chunk.things.add(spr);
         return spr;
     },

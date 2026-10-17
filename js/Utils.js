@@ -1854,10 +1854,14 @@ function setCreatureProne(sprite, prone) {
  * tick drops Phaser's pointer-over list, which hid every HUD tooltip and
  * cancelled Craft's pointerup while lying in a bunk.
  */
-function setCreatureRest(sprite, resting, rot) {
+function setCreatureRest(sprite, resting, rot, thingDef) {
     if (!sprite) return;
     const want = !!resting;
-    const ang = typeof Sleep !== "undefined" ? Sleep.restRotation(rot) : -Math.PI / 2;
+    let def = thingDef;
+    if (!def && sprite.lastSleep?.uid && sprite.scene?.findLeanToByUid) {
+        def = sprite.scene.findLeanToByUid(sprite.lastSleep.uid)?.meta;
+    }
+    const ang = typeof Sleep !== "undefined" ? Sleep.restRotation(rot, def) : -Math.PI / 2;
     const scale = want && typeof Sleep !== "undefined" ? Sleep.SCALE : 1;
     const w = sprite.width || 16;
     const h = sprite.height || 16;
@@ -1929,9 +1933,9 @@ function pinRestingCreature(sprite, scene) {
     const lean = spec?.uid ? sc?.findLeanToByUid?.(spec.uid) : null;
     const entry = lean?.entry;
     const rot = spec?.rot ?? entry?.rot;
-    setCreatureRest(sprite, true, rot);
+    const def = sc?.getThing?.(entry?.id) || lean?.meta;
+    setCreatureRest(sprite, true, rot, def);
     if (entry && typeof Sleep !== "undefined") {
-        const def = sc?.getThing?.(entry.id) || lean?.meta;
         const pos = Sleep.sleeperWorldPos(entry, spec.slot, sc?.tileSize || 16, def);
         const dx = (Number(sprite.x) || 0) - pos.x;
         const dy = (Number(sprite.y) || 0) - pos.y;
@@ -2103,6 +2107,7 @@ function pawnPoseBlocked(pawn, x, y, pad = 0) {
         let bed = false;
         forThingsNearAabb(scene, left - ts, right + ts, top - ts, bottom + ts, (t) => {
             if (!Place.isSleepThing?.(t.meta, t.entry)) return false;
+            if (t.meta?.sleep?.interior) return false;
             if (pawnIgnoresThing(pawn, t)) return false;
             const rect = Place.footprintWorldRect(t.entry, t.meta, ts);
             if (!rect) return false;
@@ -2650,7 +2655,7 @@ function setPuppetProne(sprite, prone, opts = {}) {
     const want = !!prone;
     const rest = !!(want && opts.resting);
     const ang = rest && typeof Sleep !== "undefined"
-        ? Sleep.restRotation(opts.restRot)
+        ? Sleep.restRotation(opts.restRot, opts.restDef)
         : -Math.PI / 2;
     const scale = rest && typeof Sleep !== "undefined" ? Sleep.SCALE : 1;
     if (want && sprite.texture?.frameTotal > 7) {

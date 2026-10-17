@@ -573,10 +573,12 @@
             if (!tex || !entry.spr?.play) continue;
             if (typeof setPuppetProne === "function") {
                 if (entry.resting) {
+                    const lean = this.findLeanToByUid?.(entry.lastSleep?.uid);
                     setPuppetProne(entry.spr, true, {
                         feetAnchored: true,
                         resting: true,
-                        restRot: entry.restRot
+                        restRot: entry.restRot,
+                        restDef: lean?.meta
                     });
                 } else {
                     setPuppetProne(entry.spr, !!entry.prone, { feetAnchored: true });

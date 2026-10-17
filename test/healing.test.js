@@ -151,6 +151,32 @@ test("rollTendQuality respects self-tend factor", () => {
     assert.ok(Math.abs(q - 0.4 * 0.7) < 1e-9);
 });
 
+test("resting in a hut heals faster than a lean-to", () => {
+    function remaining(bonus) {
+        const owner = makeOwner();
+        owner._resting = true;
+        owner._restHealBonus = bonus;
+        const part = owner.anatomy.part("Left Arm") || owner.anatomy.core;
+        part.injure({ id: "cut", severity: 20, bleeding: false, tended: false });
+        BodyHealing.healGameMinute(owner, {
+            worldMinuteIndex: () => 0,
+            math: GameMath
+        });
+        return part.injuries[0].severity;
+    }
+    const hut = remaining(12);
+    const lean = remaining(8);
+    assert.ok(hut < lean, `hut ${hut} should be under lean-to ${lean}`);
+    const standing = (() => {
+        const owner = makeOwner();
+        const part = owner.anatomy.part("Left Arm") || owner.anatomy.core;
+        part.injure({ id: "cut", severity: 20, bleeding: false, tended: false });
+        BodyHealing.healGameMinute(owner, { worldMinuteIndex: () => 0, math: GameMath });
+        return part.injuries[0].severity;
+    })();
+    assert.ok(lean < standing);
+});
+
 test("minuteTick with food poisoning does not throw", () => {
     const owner = makeOwner();
     owner.anatomy.addHediff("food_poisoning", 0.5);

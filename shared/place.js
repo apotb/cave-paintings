@@ -10,6 +10,8 @@
     }
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
     const BLOCKED = { water: true, ice: true };
+    const _maskBytes = new Map();
+    const _wallBoxCache = new WeakMap();
 
     function placeThingId(itemDef) {
         const id = itemDef?.place?.thing;
@@ -70,6 +72,12 @@
     function thingImageLoads(t) {
         if (t?.figurine) return [];
         if (!t?.key) return [];
+        if (t.floor && t.wall) {
+            return [
+                { key: t.floor, path: `assets/things/${t.key}/${t.floor}.png` },
+                { key: t.wall, path: `assets/things/${t.key}/${t.wall}.png` }
+            ];
+        }
         if (Array.isArray(t.rotations) && t.rotations.length) {
             const loads = [];
             const seen = new Set();
@@ -302,6 +310,16 @@
             ? footprint
             : footprintSize(footprint);
         const r = normalizeRot(rot);
+        if (fw > 1 && fh > 1) {
+            const tiles = [];
+            for (let iy = 0; iy < fh; iy++) {
+                for (let ix = 0; ix < fw; ix++) {
+                    const d = rotateTileDelta(ix, -iy, r);
+                    tiles.push({ tx: tx + d.dx, ty: ty + d.dy });
+                }
+            }
+            return tiles;
+        }
         const along = Math.max(fw, fh);
         const dx = r === 0 ? 1 : r === 180 ? -1 : 0;
         const dy = r === 90 ? 1 : r === 270 ? -1 : 0;
@@ -492,6 +510,173 @@
         if (r === 180) return { left, right, top: bottom - thick, bottom };
         if (r === 90) return { left: right - thick, right, top, bottom };
         return { left, right: left + thick, top, bottom };
+    }
+
+    /** Feet anchor of a placed sprite: bottom-center of its footprint. */
+    function spriteAnchor(entry, thingDef, tileSize) {
+        const ts = Number(tileSize) || 16;
+        if (!entry) return { x: 0, y: 0 };
+        const origin = originTileOf(entry, ts);
+        return footprintWorldPos(
+            origin.tx, origin.ty, entry.rot, footprintSize(thingDef), ts
+        );
+    }
+
+    /**
+     * Rotate an offset from the sprite anchor (bottom-center) clockwise on
+     * screen. The pivot is the sprite center, 16px north of the anchor.
+     */
+    function rotateAnchorOffset(dx, dy, rot, spriteSize) {
+        const s = Number(spriteSize) || 32;
+        const r = normalizeRot(rot);
+        let x = Number(dx) || 0;
+        let y = (Number(dy) || 0) + s * 0.5;
+        if (r === 90) {
+            const nx = -y;
+            y = x;
+            x = nx;
+        } else if (r === 180) {
+            x = -x;
+            y = -y;
+        } else if (r === 270) {
+            const nx = y;
+            y = -x;
+            x = nx;
+        }
+        return { dx: x, dy: y - s * 0.5 };
+    }
+
+    function decodeMask(b64) {
+        const key = String(b64 || "");
+        const hit = _maskBytes.get(key);
+        if (hit) return hit;
+        let bytes;
+        if (typeof Buffer !== "undefined") {
+            bytes = Uint8Array.from(Buffer.from(key, "base64"));
+        } else {
+            const bin = atob(key);
+            bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        }
+        _maskBytes.set(key, bytes);
+        return bytes;
+    }
+
+    /** Opaque bit of a row-major MSB-first mask. */
+    function wallMaskSolid(mask, x, y, size) {
+        const s = Number(size) || 32;
+        if (x < 0 || y < 0 || x >= s || y >= s) return false;
+        const bytes = decodeMask(mask);
+        const i = y * s + x;
+        const byte = bytes[i >> 3];
+        if (byte == null) return false;
+        return ((byte >> (7 - (i & 7))) & 1) === 1;
+    }
+
+    function doorClearsPixel(thingDef, x, y) {
+        const d = thingDef?.doorClear;
+        if (!d) return false;
+        const dx = Number(d.x) || 0;
+        const dy = Number(d.y) || 0;
+        const dw = Number(d.w) || 0;
+        const dh = Number(d.h) || 0;
+        return x >= dx && x < dx + dw && y >= dy && y < dy + dh;
+    }
+
+    /** Greedy horizontal runs, merged with the run directly above. */
+    function meshAlphaBoxes(width, height, solidAt) {
+        const w = Math.max(1, Math.floor(Number(width) || 1));
+        const h = Math.max(1, Math.floor(Number(height) || 1));
+        const boxes = [];
+        let active = new Map();
+        for (let y = 0; y < h; y++) {
+            const next = new Map();
+            let x = 0;
+            while (x < w) {
+                if (!solidAt(x, y)) {
+                    x++;
+                    continue;
+                }
+                let x1 = x + 1;
+                while (x1 < w && solidAt(x1, y)) x1++;
+                const rw = x1 - x;
+                const key = `${x},${rw}`;
+                const prev = active.get(key);
+                if (prev && prev.y + prev.h === y) {
+                    prev.h += 1;
+                    next.set(key, prev);
+                } else {
+                    const box = { x, y, w: rw, h: 1 };
+                    boxes.push(box);
+                    next.set(key, box);
+                }
+                x = x1;
+            }
+            active = next;
+        }
+        return boxes;
+    }
+
+    function wallBoxesFor(thingDef) {
+        if (!thingDef?.wallMask) return null;
+        const hit = _wallBoxCache.get(thingDef);
+        if (hit) return hit;
+        const size = Number(thingDef.spriteSize) || 32;
+        const boxes = meshAlphaBoxes(size, size, (x, y) => {
+            if (doorClearsPixel(thingDef, x, y)) return false;
+            return wallMaskSolid(thingDef.wallMask, x, y, size);
+        });
+        _wallBoxCache.set(thingDef, boxes);
+        return boxes;
+    }
+
+    function wallBoxWorldRect(box, anchor, rot, spriteSize) {
+        const s = Number(spriteSize) || 32;
+        const corners = [
+            [box.x, box.y],
+            [box.x + box.w, box.y],
+            [box.x, box.y + box.h],
+            [box.x + box.w, box.y + box.h]
+        ];
+        let left = Infinity;
+        let right = -Infinity;
+        let top = Infinity;
+        let bottom = -Infinity;
+        for (let i = 0; i < corners.length; i++) {
+            const off = rotateAnchorOffset(
+                corners[i][0] - s * 0.5,
+                corners[i][1] - s,
+                rot,
+                s
+            );
+            const wx = anchor.x + off.dx;
+            const wy = anchor.y + off.dy;
+            if (wx < left) left = wx;
+            if (wx > right) right = wx;
+            if (wy < top) top = wy;
+            if (wy > bottom) bottom = wy;
+        }
+        return { left, right, top, bottom };
+    }
+
+    /**
+     * Walk blockers. A wall mask becomes one rect per meshed run so the
+     * interior and doorway stay open. Other things stay a single rect.
+     */
+    function collisionWorldRects(entry, thingDef, tileSize) {
+        const boxes = wallBoxesFor(thingDef);
+        if (boxes && boxes.length && entry && !entry.gone) {
+            const anchor = spriteAnchor(entry, thingDef, tileSize);
+            const size = Number(thingDef.spriteSize) || 32;
+            const rot = entry.rot;
+            const out = [];
+            for (let i = 0; i < boxes.length; i++) {
+                out.push(wallBoxWorldRect(boxes[i], anchor, rot, size));
+            }
+            return out;
+        }
+        const one = collisionWorldRect(entry, thingDef, tileSize);
+        return one ? [one] : [];
     }
 
     function entryOnTile(entry, tx, ty, tileSize, thingDef) {
@@ -793,6 +978,12 @@
         footprintWorldRect,
         hitboxWH,
         collisionWorldRect,
+        collisionWorldRects,
+        spriteAnchor,
+        rotateAnchorOffset,
+        wallMaskSolid,
+        doorClearsPixel,
+        meshAlphaBoxes,
         isSleepThing,
         sleepSlotCount,
         ensureSleepEntry,

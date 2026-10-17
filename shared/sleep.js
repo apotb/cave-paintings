@@ -89,13 +89,32 @@
         return { x: OPEN_PX, y: 0 };
     }
 
-    /** Phaser rotation so the head points at the origin tile. */
-    function restRotation(rot) {
+    /**
+     * Phaser rotation while lying down.
+     * Lean-tos point the head at the origin tile.
+     * An interior shelter (hut) lies along the beds, a quarter-turn clockwise
+     * from head-north, so a south door has the head pointing east.
+     * A standing sprite faces north at rotation 0. Positive angles are clockwise.
+     */
+    function restRotation(rot, thingDef) {
         const r = Place ? Place.normalizeRot(rot) : (rot || 0);
+        if (thingDef?.sleep?.interior) {
+            if (r === 0) return Math.PI / 2;
+            if (r === 90) return Math.PI;
+            if (r === 180) return -Math.PI / 2;
+            return 0;
+        }
         if (r === 0) return Math.PI / 2;
         if (r === 90) return 0;
         if (r === 180) return -Math.PI / 2;
         return Math.PI;
+    }
+
+    /** Flat heal-rate bonus while resting in this bed. Lean-tos stay at HEAL_BONUS. */
+    function healBonus(thingDef) {
+        const n = Number(thingDef?.sleep?.healBonus);
+        if (Number.isFinite(n) && n > 0) return n;
+        return HEAL_BONUS;
     }
 
     /**
@@ -132,6 +151,19 @@
     }
 
     function sleeperWorldPos(entry, slot, tileSize, thingDef) {
+        const pts = thingDef?.sleep?.points;
+        if (Array.isArray(pts) && pts.length && Place && entry) {
+            const i = Math.max(0, Math.min(pts.length - 1, Math.floor(Number(slot) || 0)));
+            const p = pts[i] || [0, 0];
+            const anchor = Place.spriteAnchor(entry, thingDef, tileSize);
+            const off = Place.rotateAnchorOffset(
+                Number(p[0]) || 0,
+                Number(p[1]) || 0,
+                entry.rot,
+                thingDef.spriteSize
+            );
+            return { x: anchor.x + off.dx, y: anchor.y + off.dy };
+        }
         const ts = Number(tileSize) || 16;
         if (!Place || !entry) return { x: Number(entry?.x) || 0, y: Number(entry?.y) || 0 };
         const tiles = Place.entryFootprintTiles(entry, ts, thingDef);
@@ -377,6 +409,7 @@
         capableToFight,
         openOffset,
         restRotation,
+        healBonus,
         sleeperWorldPos,
         besideWorldPos,
         restWalkStand,

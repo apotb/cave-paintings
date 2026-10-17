@@ -1307,6 +1307,27 @@
         }
     },
     {
+        "id": "hut",
+        "name": "Hut",
+        "key": "hut",
+        "maxStack": 99,
+        "place": {
+            "thing": "hut"
+        },
+        "tooltip": [
+            "Fits up to 4 people",
+            "Sleep to pass the time and increase healing rate",
+            "Heals a little faster than a lean-to"
+        ],
+        "recipe": {
+            "log": 12,
+            "stick": 20,
+            "leaf_cord": 12,
+            "leaf": 40,
+            "stick_frame": 4
+        }
+    },
+    {
         "id": "settling_stone",
         "name": "Settling Stone",
         "key": "settling_stone",

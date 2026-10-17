@@ -1243,12 +1243,12 @@ test("new settlements are Paleolithic and fog later ages", () => {
 test("unfinished techs are WIP and cannot be researched", () => {
     const live = [
         "gathering", "cordage", "camping", "basic_furniture", "herbalism", "digging", "storage",
-        "fire", "hearth", "cooking", "smoking", "clay_forming",
+        "fire", "hearth", "cooking", "smoking", "clay_forming", "hut",
         "knapping", "hafting", "hand_axe", "cleaver", "tanning", "skinworking", "leatherworking",
         "culture", "painting", "counting"
     ];
     const wip = [
-        "hut", "traps", "grinding", "pit_traps", "spike_traps",
+        "traps", "grinding", "pit_traps", "spike_traps",
         "pit_kiln", "earth_oven", "dogs", "feasts", "burin",
         "blades", "throwing", "fishing", "microliths", "bows", "nets",
         "ornament", "rituals", "idolatry", "music", "burial", "afterlife", "ancestors", "shrine",
