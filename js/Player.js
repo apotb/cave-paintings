@@ -2966,8 +2966,21 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
+     * Stations implement inRange. A plain rock used as a nearby requirement does not,
+     * so fall back to the same interaction distance the craft menu already uses.
+     */
+    _craftAnchorInRange(station) {
+        if (!station?.active) return false;
+        if (typeof station.inRange === "function") return !!station.inRange(this);
+        const r = (this.scene?.tileSize || 16) * (this.interactionRange || 4);
+        const dx = station.x - this.x;
+        const dy = station.y - this.y;
+        return dx * dx + dy * dy <= r * r;
+    }
+
+    /**
      * Timed craft with a held tool. Station and nearby-thing recipes
-     * (skinworking bench, campfire pitch) must stay in range; handheld
+     * (skinworking bench, campfire pitch, a rock) must stay in range; handheld
      * recipes (tally stick) only need the tool.
      */
     beginCraft(recipe, station, repeatLeft = 1) {
@@ -2980,7 +2993,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!this.capacities.canManipulate()) return false;
         if (this.isIncapacitated()) return false;
         const needPlace = !!(recipe?.requireStation || recipe?.requireThing || station);
-        if (needPlace && (!station?.active || !station.inRange?.(this))) return false;
+        if (needPlace && !this._craftAnchorInRange(station)) return false;
         if (!this.scene.canCraft?.(recipe, this)) return false;
         const item = this.getHeldItem();
         const rt = recipe.requireTool;
@@ -3037,7 +3050,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             : (!wantClass || this.heldToolClass() === wantClass);
         let placeGone = false;
         if (station) {
-            placeGone = !station.active || !station.inRange?.(this);
+            placeGone = !this._craftAnchorInRange(station);
         } else if (recipe?.requireStation || recipe?.requireThing) {
             placeGone = true;
         }

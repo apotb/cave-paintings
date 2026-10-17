@@ -495,37 +495,44 @@
                 if (this._tooltipTarget === slot) this.hideTooltip();
             });
 
+            const homes = [
+                [slot, x],
+                [icon, x + slotW / 2],
+                [quantity, x + slotW - 4 * ui]
+            ];
+            const shakeSlot = () => {
+                const shake = 3 * ui;
+                for (const [obj] of homes) this.tweens.killTweensOf(obj);
+                if (slot._shakeTween) slot._shakeTween.stop();
+                slot._shakeTween = this.tweens.addCounter({
+                    from: 0,
+                    to: 1,
+                    duration: 160,
+                    onUpdate: (tw) => {
+                        const offset = Math.sin(tw.getValue() * Math.PI * 4) * shake;
+                        for (const [obj, home] of homes) obj.x = home + offset;
+                    },
+                    onComplete: () => {
+                        for (const [obj, home] of homes) obj.x = home;
+                        slot._shakeTween = null;
+                    }
+                });
+            };
+
             // Craft. Ctrl makes 10 output items; Shift makes as many as ingredients allow.
             slot.on('pointerdown', (pointer) => {
-                if (this.canCraft(recipe)) {
-                    const count = Math.max(1, this._craftClickCount(recipe, pointer));
-                    this.doCraft(recipe, count);
-                    this.hotbar.dirty = true;
-                    this.refreshTooltip();
-                    this.refreshCraftMenu();
-                } else {
-                    const shake = 3 * ui;
-                    const homes = [
-                        [slot, x],
-                        [icon, x + slotW / 2],
-                        [quantity, x + slotW - 4 * ui]
-                    ];
-                    for (const [obj] of homes) this.tweens.killTweensOf(obj);
-                    if (slot._shakeTween) slot._shakeTween.stop();
-                    slot._shakeTween = this.tweens.addCounter({
-                        from: 0,
-                        to: 1,
-                        duration: 160,
-                        onUpdate: (tw) => {
-                            const offset = Math.sin(tw.getValue() * Math.PI * 4) * shake;
-                            for (const [obj, home] of homes) obj.x = home + offset;
-                        },
-                        onComplete: () => {
-                            for (const [obj, home] of homes) obj.x = home;
-                            slot._shakeTween = null;
-                        }
-                    });
+                if (!this.canCraft(recipe)) {
+                    shakeSlot();
+                    return;
                 }
+                const count = Math.max(1, this._craftClickCount(recipe, pointer));
+                if (this.doCraft(recipe, count) === false) {
+                    shakeSlot();
+                    return;
+                }
+                this.hotbar.dirty = true;
+                this.refreshTooltip();
+                this.refreshCraftMenu();
             });
 
             this._data.push({ slot, icon, qty: quantity, recipe, tt });
@@ -1265,8 +1272,7 @@
             } else if (recipe.requireThing) {
                 station = this._findNearbyThing(recipe.requireThing);
             }
-            this.player.beginCraft?.(recipe, station, n);
-            return;
+            return this.player.beginCraft?.(recipe, station, n) !== false;
         }
         if (this.simAuth()) {
             this._finishCraft(recipe, this.player, n);
