@@ -2,7 +2,7 @@
     "human": {
         "id": "human",
         "name": "Human",
-        "healRate": 11.52,
+        "healRate": 12,
         "painShockThreshold": 0.8,
         "core": "Torso",
         "showDoll": true,
@@ -81,7 +81,7 @@
     "deer": {
         "id": "deer",
         "name": "Deer",
-        "healRate": 11.52,
+        "healRate": 12,
         "painShockThreshold": 0.8,
         "healthScale": 0.9,
         "core": "Torso",
@@ -139,7 +139,7 @@
     "boar": {
         "id": "boar",
         "name": "Wild Boar",
-        "healRate": 11.52,
+        "healRate": 12,
         "painShockThreshold": 0.8,
         "healthScale": 1.1,
         "core": "Torso",

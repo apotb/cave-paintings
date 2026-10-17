@@ -42,7 +42,7 @@
     }
 
     const BodyHealing = {
-        BASE_HEAL_RATE: 11.52,
+        BASE_HEAL_RATE: 12,
         MINUTES_PER_DAY: 1440,
         BLOOD_RECOVERY_PER_MINUTE: 1 / 3 / 1440,
         STUMP_BLEED_RATE: 0.06,
