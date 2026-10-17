@@ -424,6 +424,7 @@ class SimCreature {
 
     onBodyFatal(_part = null, _reason = null) {
         if (this._dead) return;
+        if (typeof _reason === "string" && _reason) this._fatalReason = _reason;
         // Players: mark dead only — SimWorld._kill dumps gear into the corpse.
         if (this.kind === "player") {
             this._dead = true;

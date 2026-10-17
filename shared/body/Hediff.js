@@ -427,7 +427,7 @@
                 body.markDirty?.();
 
                 if ((Number(h.severity) || 0) >= lethal - 1e-9) {
-                    log?.push?.(this.infectionDiedMessage(owner, ctx), { owner });
+                    // _kill announces this. A log line here doubled the chat.
                     owner.onBodyFatal?.(null, "infection");
                     return;
                 }
@@ -474,7 +474,7 @@
                 }
                 const lethal = def.lethalSeverity != null ? Number(def.lethalSeverity) : 1;
                 if ((Number(h.severity) || 0) >= lethal - 1e-9) {
-                    log?.push?.(this.malnutritionStarvedMessage(owner, ctx), { owner });
+                    // _kill announces this. A log line here doubled the chat.
                     owner.onBodyFatal?.(null, "starvation");
                 }
                 return;

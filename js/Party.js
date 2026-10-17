@@ -900,7 +900,19 @@ class PartySystem {
         }
         pawn.setVisible(false);
         if (pawn.body) pawn.body.enable = false;
-        scene.combatLog?.push(`${name} died`);
+        // Sim already sent the chat line with the cause. Offline has no chat event.
+        if (!dedicated) {
+            let killerName = null;
+            if (typeof killer === "string") killerName = killer;
+            else if (killer) {
+                killerName = killer.displayName?.() || killer.def?.name || killer.name || null;
+            }
+            const reason = opts.reason || pawn._fatalReason || null;
+            const text = (typeof NetProtocol !== "undefined" && NetProtocol.deathMessage)
+                ? NetProtocol.deathMessage(name, killerName, reason)
+                : `${name} died`;
+            scene.combatLog?.push(text);
+        }
         scene.partyPanel?.refresh?.();
         scene.time?.delayedCall?.(0, () => pawn.destroy?.());
     }

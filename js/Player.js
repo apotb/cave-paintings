@@ -784,17 +784,19 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._bodyDead = true;
         this.setVelocity(0, 0);
         if (this._resting || this._restWalk) this.scene?._wakePawn?.(this);
-        const environmental = _reason === "bloodLoss" || _reason === "starvation" || _reason === "infection";
+        const reason = typeof _reason === "string" && _reason ? _reason : null;
+        this._fatalReason = reason;
+        const environmental = reason === "bloodLoss" || reason === "starvation" || reason === "infection";
         const killer = !environmental && this._hitKiller
             ? this._hitKiller
             : null;
         this._hitKiller = null;
         this._hitKillerAt = 0;
         if (this.role === "wanderer" || this.role === "companion" || this.role === "settler") {
-            this.scene.partySys?.onMemberDied?.(this, killer);
+            this.scene.partySys?.onMemberDied?.(this, killer, { reason });
             return;
         }
-        this.scene.onPlayerDied?.(killer);
+        this.scene.onPlayerDied?.(killer, { reason });
     }
 
     onBodyDamaged(_attacker, _result) {

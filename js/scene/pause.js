@@ -244,17 +244,17 @@
         if (this.sys?.isActive?.() && !this._leavingGame) this._startCharacterAutosave();
     },
 
-    _formatPlayerDeathMessage(killer) {
+    _formatPlayerDeathMessage(killer, reason) {
         const victim = this.playerName || this.player?.displayName?.() || "Player";
         let killerName = null;
         if (typeof killer === "string") killerName = killer;
         else if (killer) {
             killerName = killer.displayName?.() || killer.def?.name || killer.name || null;
         }
-        return NetProtocol.deathMessage(victim, killerName);
+        return NetProtocol.deathMessage(victim, killerName, reason);
     },
 
-    /** Popup only: your name → "You" ("You were slain by …" / "You died"). */
+    /** Popup only: your name → "You" ("You were slain by …" / "You died of blood loss"). */
     _deathOverlayText(chatText) {
         const victim = this.playerName || this.player?.displayName?.() || "Player";
         const text = String(chatText || "").replace(/\.+$/, "");
@@ -263,9 +263,18 @@
         if (victim && text.startsWith(slain)) {
             return `You were slain by ${text.slice(slain.length)}`;
         }
-        if (victim && text === `${victim} died`) return "You died";
+        if (victim && text.startsWith(`${victim} `)) {
+            const rest = text.slice(victim.length + 1);
+            if (rest === "died") return "You died";
+            if (rest === "died of blood loss") return "You died of blood loss";
+            if (rest === "died of infection") return "You died of infection";
+            if (rest === "starved to death") return "You starved to death";
+        }
         return text
             .replace(/^.+ was slain by /, "You were slain by ")
+            .replace(/^.+ died of blood loss$/, "You died of blood loss")
+            .replace(/^.+ died of infection$/, "You died of infection")
+            .replace(/^.+ starved to death$/, "You starved to death")
             .replace(/^.+ died$/, "You died");
     },
 
@@ -331,7 +340,7 @@
         }
         const msg = (dedicated && this._pendingDeathText)
             ? this._pendingDeathText
-            : this._formatPlayerDeathMessage(killer);
+            : this._formatPlayerDeathMessage(killer, opts.reason);
         this._pendingDeathText = null;
         this._applyDeathMessage(msg);
         if (!dedicated) this.combatLog?.push(msg);

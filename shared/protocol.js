@@ -111,10 +111,17 @@
         return JSON.stringify(msg(type, payload));
     }
 
-    /** Chat/system death line. Overlay uses first-person separately. */
-    function deathMessage(victimName, killerName) {
+    /**
+     * Chat/system death line. Overlay uses first-person separately.
+     * Environmental causes beat a stale killer (bleed-out after a hit is blood loss).
+     */
+    function deathMessage(victimName, killerName, reason) {
         const victim = String(victimName || "Player").trim() || "Player";
         const killer = killerName != null ? String(killerName).trim() : "";
+        const cause = typeof reason === "string" ? reason : "";
+        if (cause === "bloodLoss") return `${victim} died of blood loss`;
+        if (cause === "infection") return `${victim} died of infection`;
+        if (cause === "starvation") return `${victim} starved to death`;
         if (killer) return `${victim} was slain by ${killer}`;
         return `${victim} died`;
     }

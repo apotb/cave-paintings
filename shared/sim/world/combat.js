@@ -1003,7 +1003,8 @@
             m.attackArt = null;
         }
         const killerName = this._killerLabel(killer);
-        const msg = Protocol.deathMessage(p.name, killerName);
+        const reason = (p.creature || creature)?._fatalReason || null;
+        const msg = Protocol.deathMessage(p.name, killerName, reason);
         this.pushEvent({ kind: "death", playerId: p.id, text: msg });
         this._clearPvpOwner(p.id);
         this.pushEvent({ kind: "chat", text: msg, system: true });
@@ -1058,10 +1059,11 @@
         mem.overflow = [];
         mem.equipment = { head: null, torso: null, legs: null, feet: null, back: null, waist: [] };
         mem.hotbarIndex = 0;
+        const reason = creature?._fatalReason || null;
         this.creatures.delete(mem.id);
         mem.creature = null;
         const killerName = this._killerLabel(killer);
-        const msg = Protocol.deathMessage(mem.name, killerName);
+        const msg = Protocol.deathMessage(mem.name, killerName, reason);
         this.pushEvent({
             kind: "party_death",
             playerId: owner.id,
