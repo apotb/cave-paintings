@@ -24,6 +24,20 @@
         return ctxOrScene || owner?.anatomy?.ctx || owner?.scene || null;
     }
 
+    /**
+     * Where blood should hit the ground. A sleeper's x/y is already the
+     * body on the bunk; bodyCenter() adds another half-sprite and lands
+     * outside a hut.
+     */
+    function bleedAnchor(owner) {
+        if (!owner) return { x: 0, y: 0 };
+        if (owner._resting || owner.resting) {
+            return { x: Number(owner.x) || 0, y: Number(owner.y) || 0 };
+        }
+        if (typeof owner.bodyCenter === "function") return owner.bodyCenter();
+        return { x: Number(owner.x) || 0, y: Number(owner.y) || 0 };
+    }
+
     function combatLogOf(ctxOrScene) {
         return (
             ctxOrScene?.combatLog ||
@@ -175,10 +189,7 @@
         _scatterStains(owner, host, n, minDistTiles = 0.08, maxDistTiles = 0.5) {
             if (!(n > 0)) return;
             if (typeof host?.emitBleedFx === "function") {
-                const c =
-                    typeof owner.bodyCenter === "function"
-                        ? owner.bodyCenter()
-                        : { x: owner.x, y: owner.y };
+                const c = bleedAnchor(owner);
                 host.emitBleedFx({
                     x: c.x,
                     y: c.y,
@@ -193,10 +204,7 @@
             if (!host?.spawnBloodStain) return;
             const math = mathOf(host);
             const ts = host.tileSize || host.scene?.tileSize || 16;
-            const c =
-                typeof owner.bodyCenter === "function"
-                    ? owner.bodyCenter()
-                    : { x: owner.x, y: owner.y };
+            const c = bleedAnchor(owner);
             const span = Math.max(0.05, maxDistTiles - minDistTiles);
 
             for (let i = 0; i < n; i++) {
@@ -204,10 +212,9 @@
                 const dist = (minDistTiles + math.random() * span) * ts;
                 const jx = (math.random() - 0.5) * 2;
                 const jy = (math.random() - 0.5) * 2;
-                host.spawnBloodStain(
-                    c.x + Math.cos(ang) * dist + jx,
-                    c.y + Math.sin(ang) * dist + jy
-                );
+                const sx = c.x + Math.cos(ang) * dist + jx;
+                const sy = c.y + Math.sin(ang) * dist + jy;
+                host.spawnBloodStain(sx, sy, { fromX: c.x, fromY: c.y });
             }
         },
 
@@ -221,10 +228,7 @@
 
             // Dedicated / headless: cue clients (no Phaser delayedCall)
             if (typeof host?.emitBleedFx === "function") {
-                const c =
-                    typeof owner.bodyCenter === "function"
-                        ? owner.bodyCenter()
-                        : { x: owner.x, y: owner.y };
+                const c = bleedAnchor(owner);
                 host.emitBleedFx({
                     x: c.x,
                     y: c.y,
@@ -277,10 +281,7 @@
             n = math.clamp(n, 1, 4);
 
             if (typeof host?.emitBleedFx === "function") {
-                const c =
-                    typeof owner.bodyCenter === "function"
-                        ? owner.bodyCenter()
-                        : { x: owner.x, y: owner.y };
+                const c = bleedAnchor(owner);
                 host.emitBleedFx({
                     x: c.x,
                     y: c.y,

@@ -2060,6 +2060,92 @@ function pawnPoseHitsThing(pawn, x, y) {
     return pawnPoseBlocked(pawn, x, y, 0);
 }
 
+/** Hut walls are resolved as a circle. The box pieces only snag and jitter. */
+function pawnThingCollide(a, b) {
+    if (a?.meta?.ring || b?.meta?.ring) return false;
+    if (typeof Sleep !== "undefined" && Sleep.collideProcess) return Sleep.collideProcess(a, b);
+    return true;
+}
+
+/**
+ * Slide a pawn along a round hut wall. The doorway stays open. Radial speed
+ * into the thatch is dropped so holding into the wall does not shake.
+ */
+function holdPawnInsideRings(pawn) {
+    const body = pawn?.body;
+    const scene = pawn?.scene;
+    if (!body?.enable || !body.position || !body.prev || !scene) return;
+    if (typeof Place === "undefined" || !Place.clampRingCenter || !Place.ringWorld) return;
+    const hx = body.halfWidth || 0;
+    const hy = body.halfHeight || 0;
+    const rad = Math.max(hx, hy);
+    const cx = body.center ? body.center.x : body.position.x + hx;
+    const cy = body.center ? body.center.y : body.position.y + hy;
+    const px = body.prev.x + hx;
+    const py = body.prev.y + hy;
+    if (Math.hypot(cx - px, cy - py) > 24) return;
+    const rings = [];
+    const seen = new Set();
+    forThingsNearAabb(
+        scene,
+        Math.min(px, cx) - rad, Math.max(px, cx) + rad,
+        Math.min(py, cy) - rad, Math.max(py, cy) + rad,
+        (thing) => {
+            if (!thing?.meta?.ring || !thing.entry) return false;
+            const key = thing.entry.uid || thing.entry;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            const ring = Place.ringWorld(thing.entry, thing.meta, scene.tileSize || 16);
+            if (ring) rings.push(ring);
+            return false;
+        }
+    );
+    if (!rings.length) return;
+    let x = cx;
+    let y = cy;
+    let slide = null;
+    for (let i = 0; i < rings.length; i++) {
+        const ring = rings[i];
+        const next = Place.clampRingCenter(ring, px, py, x, y, rad);
+        if (Math.hypot(next.x - x, next.y - y) >= 0.05) {
+            const pr = Math.hypot(px - ring.cx, py - ring.cy);
+            slide = {
+                ring,
+                inside: pr <= (ring.inner + ring.outer) * 0.5
+            };
+        }
+        x = next.x;
+        y = next.y;
+    }
+    if (Math.hypot(x - cx, y - cy) >= 0.05) {
+        pawn.x += x - cx;
+        pawn.y += y - cy;
+        syncPawnPhysicsPose(pawn);
+    }
+    if (!slide) return;
+    const nx = x - slide.ring.cx;
+    const ny = y - slide.ring.cy;
+    const len = Math.hypot(nx, ny) || 1;
+    const ux = nx / len;
+    const uy = ny / len;
+    const shave = (vx, vy) => {
+        const vn = vx * ux + vy * uy;
+        const into = slide.inside ? vn > 0 : vn < 0;
+        if (!into) return { x: vx, y: vy };
+        return { x: vx - ux * vn, y: vy - uy * vn };
+    };
+    if (body.velocity) {
+        const v = shave(body.velocity.x || 0, body.velocity.y || 0);
+        body.velocity.x = v.x;
+        body.velocity.y = v.y;
+    }
+    if (pawn._iceVx != null || pawn._iceVy != null) {
+        const v = shave(pawn._iceVx || 0, pawn._iceVy || 0);
+        pawn._iceVx = v.x;
+        pawn._iceVy = v.y;
+    }
+}
+
 function pawnTileBlocked(pawn, x, y) {
     const scene = pawn?.scene;
     if (!scene?.worldToTile) return false;
@@ -2106,12 +2192,19 @@ function pawnPoseBlocked(pawn, x, y, pad = 0) {
     };
     let hit = overlaps(left, right, top, bottom);
     // Path margin seals a hut door the 8×8 body can walk through. Ignore that
-    // margin when it touches only interior walls.
-    if (hit && p > 0) {
-        const bare = overlaps(left + p, right - p, top + p, bottom - p);
+    // margin only in the doorway. Other interior walls stay solid.
+    if (hit && p > 0 && typeof Place !== "undefined" && Place.inDoorApproach) {
+        const bareLeft = left + p;
+        const bareRight = right - p;
+        const bareTop = top + p;
+        const bareBottom = bottom - p;
+        const bare = overlaps(bareLeft, bareRight, bareTop, bareBottom);
         if (!bare) {
             let foreign = false;
             let any = false;
+            const ts = scene.tileSize || 16;
+            const cx = (bareLeft + bareRight) * 0.5;
+            const cy = (bareTop + bareBottom) * 0.5;
             forThingsNearAabb(scene, left, right, top, bottom, (thing) => {
                 const tb = thing?.body;
                 if (!tb || !tb.enable || pawnIgnoresThing(pawn, thing)) return false;
@@ -2119,7 +2212,8 @@ function pawnPoseBlocked(pawn, x, y, pad = 0) {
                     return false;
                 }
                 any = true;
-                if (!thing.meta?.sleep?.interior) {
+                if (!thing.meta?.sleep?.interior
+                    || !Place.inDoorApproach(thing.entry, thing.meta, cx, cy, ts)) {
                     foreign = true;
                     return true;
                 }

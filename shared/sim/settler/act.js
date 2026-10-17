@@ -364,10 +364,53 @@ function stationStandFeet(world, rec, c, target) {
 }
 
 /**
- * Feet pose inside the hut a patient is lying in, close enough to tend.
- * Null when they are not resting in an interior shelter.
+ * The settler's 8×8 body is in the hut, clear of the walls.
  */
-function interiorTendStand(world, rec, c, target) {
+function bodyInsideHut(world, c, entry, def, x, y) {
+    if (!c || !entry || !def || !Place?.footprintWorldRect) return false;
+    const rect = Place.footprintWorldRect(entry, def, TS);
+    const body = world?._creatureBodyAt?.(c, x, y);
+    if (!rect || !body) return false;
+    if (body.left < rect.left + 1 || body.right > rect.right - 1
+        || body.top < rect.top + 1 || body.bottom > rect.bottom - 1) return false;
+    if (typeof world._partyPoseBlocked === "function" && world._partyPoseBlocked(c, x, y, 0)) {
+        return false;
+    }
+    return true;
+}
+
+function bodyCenter(world, c, x, y) {
+    const body = world?._creatureBodyAt?.(c, x, y);
+    if (!body) return { x, y };
+    return { x: (body.left + body.right) * 0.5, y: (body.top + body.bottom) * 0.5 };
+}
+
+/**
+ * A wall rect crosses the line from the doctor's body to the patient. Feet
+ * sit left of the body, so a feet-to-bed line can cut a door jamb the body
+ * itself has already cleared.
+ */
+function wallBetween(world, c, x0, y0, x1, y1) {
+    if (!c || typeof world?._aabbHitsThing !== "function") return false;
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const dist = Math.hypot(dx, dy);
+    if (!(dist > 6)) return false;
+    const steps = Math.max(2, Math.ceil(dist / 3));
+    for (let i = 1; i < steps; i++) {
+        const t = i / steps;
+        const x = x0 + dx * t;
+        const y = y0 + dy * t;
+        if (world._aabbHitsThing(x - 1, x + 1, y - 1, y + 1, x, y, 64, c)) return true;
+    }
+    return false;
+}
+
+/**
+ * The patient is resting in an interior hut, or null. `out` is a clear pose
+ * just outside the door; `inn` is one just inside where the whole body fits.
+ */
+function interiorRest(world, rec, c, target) {
     if (!target || !rec || target === rec || target.id === rec.id) return null;
     if (!target._resting && !target.resting) return null;
     const uid = target.lastSleep?.uid;
@@ -376,28 +419,28 @@ function interiorTendStand(world, rec, c, target) {
     const entry = found?.entry;
     if (!entry) return null;
     const def = world._thingDef?.(entry.id) || world._sleepDef?.(entry);
-    if (!def?.sleep?.interior || !Place?.footprintWorldRect) return null;
-    const rect = Place.footprintWorldRect(entry, def, TS);
-    if (!rect) return null;
-    const tx = Number(target.x) || 0;
-    const ty = Number(target.y) || 0;
-    const free = (x, y) => {
-        if (!c || typeof world._partyPoseBlocked !== "function") return true;
-        return !world._partyPoseBlocked(c, x, y, 2);
+    if (!def?.sleep?.interior || !def.doorClear || !Place?.spriteAnchor) return null;
+    const s = Number(def.spriteSize) || 32;
+    const d = def.doorClear;
+    const cx = (Number(d.x) || 0) + (Number(d.w) || 0) * 0.5;
+    const anchor = Place.spriteAnchor(entry, def, TS);
+    const feet = (px, py) => {
+        const off = Place.rotateAnchorOffset(px - s * 0.5, py - s, entry.rot, s);
+        return { x: anchor.x + off.dx - 8, y: anchor.y + off.dy + 4 };
     };
-    let best = null;
-    let bestD = Infinity;
-    for (let y = rect.top + 2; y <= rect.bottom - 2; y += 4) {
-        for (let x = rect.left + 2; x <= rect.right - 2; x += 4) {
-            if (!free(x, y) || !near(x, y, tx, ty)) continue;
-            const d = Math.hypot(x - tx, y - ty);
-            if (d < bestD) {
-                bestD = d;
-                best = { x, y };
-            }
-        }
+    const clear = (x, y) => !c || typeof world._partyPoseBlocked !== "function"
+        || !world._partyPoseBlocked(c, x, y, 0);
+    let out = null;
+    for (const py of [40, 36, 34, 32]) {
+        const f = feet(cx, py);
+        if (clear(f.x, f.y)) { out = f; break; }
     }
-    return best;
+    let inn = null;
+    for (const py of [d.y - 2, d.y - 6, d.y - 10, 22]) {
+        const f = feet(cx, py);
+        if (bodyInsideHut(world, c, entry, def, f.x, f.y)) { inn = f; break; }
+    }
+    return { entry, def, out, inn };
 }
 
 function goOrWalk(world, rec, target) {
@@ -405,15 +448,27 @@ function goOrWalk(world, rec, target) {
     const c = rec.creature || world?._ensureSettlerCreature?.(rec);
     if (rec) rec._pathIgnoreUid = null;
     if (c) c._pathIgnoreUid = null;
-    const interior = interiorTendStand(world, rec, c, target);
+    const interior = interiorRest(world, rec, c, target);
     if (interior) {
         const px = Number(rec.x) || 0;
         const py = Number(rec.y) || 0;
-        if (Math.hypot(px - interior.x, py - interior.y) <= 6) {
-            faceToward(rec, target.x, (Number(target.y) || 0) - 8);
+        const tx = Number(target.x) || 0;
+        const ty = Number(target.y) || 0;
+        const center = bodyCenter(world, c, px, py);
+        const inside = bodyInsideHut(world, c, interior.entry, interior.def, px, py);
+        // The body has to be in the room, with no wall between them.
+        if (inside && near(px, py, tx, ty) && !wallBetween(world, c, center.x, center.y, tx, ty)) {
+            faceToward(rec, tx, ty - 8);
             return null;
         }
-        return walkTo(interior.x, interior.y, { openRadius: 0 });
+        // Cross the doorway on the open line. A path to the bedside cuts
+        // the corner and walks through the wall.
+        const mouth = interior.out;
+        if (!inside && mouth && Math.hypot(px - mouth.x, py - mouth.y) > 8) {
+            return walkTo(mouth.x, mouth.y, { openRadius: 0 });
+        }
+        if (interior.inn) return walkTo(interior.inn.x, interior.inn.y, { openRadius: 0 });
+        return halt();
     }
     const def = world?._thingDef?.(target.id);
     const paintStand = paintStandOf(target);
@@ -474,7 +529,7 @@ function goOrWalk(world, rec, target) {
     return walkTo(pose.feetX, pose.feetY, { openRadius: 0 });
 }
 
-function blockedToward(world, rec, c, tx, ty, ignoreUid) {
+function blockedToward(world, rec, c, tx, ty, ignoreUid, pad = 2) {
     if (!c || typeof world?._partyPoseBlocked !== "function") return false;
     const px = Number(rec.x) || 0;
     const py = Number(rec.y) || 0;
@@ -488,7 +543,7 @@ function blockedToward(world, rec, c, tx, ty, ignoreUid) {
     let hit = false;
     for (let i = 1; i < steps; i++) {
         const t = i / steps;
-        if (world._partyPoseBlocked(c, px + dx * t, py + dy * t, 2)) {
+        if (world._partyPoseBlocked(c, px + dx * t, py + dy * t, pad)) {
             hit = true;
             break;
         }

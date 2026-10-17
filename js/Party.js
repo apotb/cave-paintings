@@ -72,7 +72,9 @@ class PartySystem {
                     player,
                     scene._things,
                     null,
-                    (a, b) => (typeof Sleep === "undefined" || !Sleep.collideProcess) ? true : Sleep.collideProcess(a, b)
+                    (a, b) => (typeof pawnThingCollide === "function")
+                        ? pawnThingCollide(a, b)
+                        : true
                 );
             }
             if (scene.mobs?.children) scene.physics.add.overlap(player, scene.mobs);

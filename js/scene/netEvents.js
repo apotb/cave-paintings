@@ -330,7 +330,8 @@
                 const dist = (0.08 + Math.random() * 0.45) * (this.tileSize || 16);
                 this.spawnBloodStain?.(
                     anchor.x + Math.cos(ang) * dist,
-                    anchor.y + Math.sin(ang) * dist
+                    anchor.y + Math.sin(ang) * dist,
+                    { fromX: anchor.x, fromY: anchor.y }
                 );
             }
         };

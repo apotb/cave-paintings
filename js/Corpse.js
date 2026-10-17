@@ -93,11 +93,9 @@ class Corpse extends Phaser.GameObjects.Sprite {
         for (let i = 0; i < n; i++) {
             const ang = Math.random() * Math.PI * 2;
             const d = Math.sqrt(Math.random()) * ts * 0.9;
-            scene.spawnBloodStain(
-                x + Math.cos(ang) * d,
-                y + Math.sin(ang) * d,
-                { merge: false }
-            );
+            const rawX = x + Math.cos(ang) * d;
+            const rawY = y + Math.sin(ang) * d;
+            scene.spawnBloodStain(rawX, rawY, { merge: false, fromX: x, fromY: y });
         }
     }
 

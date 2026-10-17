@@ -573,6 +573,46 @@
         return ((byte >> (7 - (i & 7))) & 1) === 1;
     }
 
+    /**
+     * Inverse of rotateAnchorOffset. Sprite pixel under a world point.
+     */
+    function worldToSpritePixel(entry, thingDef, wx, wy, tileSize) {
+        const anchor = spriteAnchor(entry, thingDef, tileSize);
+        const s = Number(thingDef?.spriteSize) || 32;
+        const rot = normalizeRot(entry?.rot);
+        const rx = (Number(wx) || 0) - anchor.x;
+        const ry = (Number(wy) || 0) - anchor.y + s * 0.5;
+        let sx = rx;
+        let sy = ry;
+        if (rot === 90) {
+            sx = ry;
+            sy = -rx;
+        } else if (rot === 180) {
+            sx = -rx;
+            sy = -ry;
+        } else if (rot === 270) {
+            sx = -ry;
+            sy = rx;
+        }
+        return { x: sx + s * 0.5, y: sy + s * 0.5 };
+    }
+
+    /**
+     * The doorway plus one step outside it. Path padding may overlap the
+     * jambs here. The rest of an interior wall stays solid.
+     */
+    function inDoorApproach(entry, thingDef, wx, wy, tileSize) {
+        const d = thingDef?.doorClear;
+        if (!d || !entry) return false;
+        const s = Number(thingDef.spriteSize) || 32;
+        const p = worldToSpritePixel(entry, thingDef, wx, wy, tileSize);
+        const x0 = Number(d.x) || 0;
+        const x1 = x0 + (Number(d.w) || 0);
+        const y0 = (Number(d.y) || 0) - 8;
+        const y1 = s + 8;
+        return p.x >= x0 && p.x < x1 && p.y >= y0 && p.y < y1;
+    }
+
     function doorClearsPixel(thingDef, x, y) {
         const d = thingDef?.doorClear;
         if (!d) return false;
@@ -615,6 +655,284 @@
             active = next;
         }
         return boxes;
+    }
+
+    /**
+     * A round wall with a wedge cut out for the door. Coarse arc boxes, not
+     * the thatch pixels, so walking the ring does not snag on every sprite.
+     */
+    function ringBoxesFor(thingDef) {
+        const ring = thingDef?.ring;
+        if (!ring) return null;
+        const hit = _wallBoxCache.get(ring);
+        if (hit) return hit;
+        const cx = Number(ring.cx) || 0;
+        const cy = Number(ring.cy) || 0;
+        const inner = Number(ring.inner) || 0;
+        const outer = Number(ring.outer) || 0;
+        const door = Array.isArray(ring.door) ? ring.door : [0, 0];
+        const d0 = (Number(door[0]) || 0) * Math.PI / 180;
+        const d1 = (Number(door[1]) || 0) * Math.PI / 180;
+        const two = Math.PI * 2;
+        const norm = (a) => ((a % two) + two) % two;
+        const a0 = norm(d0);
+        const a1 = norm(d1);
+        const inDoor = (a) => {
+            const x = norm(a);
+            if (a0 <= a1) return x >= a0 && x <= a1;
+            return x >= a0 || x <= a1;
+        };
+        const step = 10 * Math.PI / 180;
+        const boxes = [];
+        for (let a = 0; a < two - 1e-8; a += step) {
+            const aEnd = Math.min(a + step, two);
+            if (inDoor(a + 0.002) || inDoor(aEnd - 0.002) || inDoor((a + aEnd) * 0.5)) continue;
+            let minX = Infinity;
+            let minY = Infinity;
+            let maxX = -Infinity;
+            let maxY = -Infinity;
+            for (let i = 0; i <= 4; i++) {
+                const ang = a + (aEnd - a) * (i / 4);
+                for (let r = inner; r <= outer; r += Math.max(1, (outer - inner) * 0.5)) {
+                    const x = cx + Math.cos(ang) * r;
+                    const y = cy + Math.sin(ang) * r;
+                    if (x < minX) minX = x;
+                    if (y < minY) minY = y;
+                    if (x > maxX) maxX = x;
+                    if (y > maxY) maxY = y;
+                }
+            }
+            if (!(maxX > minX) || !(maxY > minY)) continue;
+            boxes.push({ x: minX, y: minY, w: maxX - minX, h: maxY - minY });
+        }
+        _wallBoxCache.set(ring, boxes);
+        return boxes;
+    }
+
+    /** World-space ring for a placed hut, door angles included. */
+    function ringWorld(entry, thingDef, tileSize) {
+        const ring = thingDef?.ring;
+        if (!ring || !entry) return null;
+        const s = Number(thingDef.spriteSize) || 32;
+        const anchor = spriteAnchor(entry, thingDef, tileSize);
+        const off = rotateAnchorOffset(
+            (Number(ring.cx) || 0) - s * 0.5,
+            (Number(ring.cy) || 0) - s,
+            entry.rot,
+            s
+        );
+        const rot = normalizeRot(entry.rot) * Math.PI / 180;
+        const door = Array.isArray(ring.door) ? ring.door : [0, 0];
+        return {
+            cx: anchor.x + off.dx,
+            cy: anchor.y + off.dy,
+            inner: Number(ring.inner) || 0,
+            outer: Number(ring.outer) || 0,
+            door0: (Number(door[0]) || 0) * Math.PI / 180 + rot,
+            door1: (Number(door[1]) || 0) * Math.PI / 180 + rot
+        };
+    }
+
+    function _angleInDoor(a, door0, door1) {
+        const two = Math.PI * 2;
+        const norm = (v) => ((v % two) + two) % two;
+        const x = norm(a);
+        const a0 = norm(door0);
+        const a1 = norm(door1);
+        if (a0 <= a1) return x >= a0 && x <= a1;
+        return x >= a0 || x <= a1;
+    }
+
+    /** True when a point sits in the solid part of a round wall. */
+    function ringWallAt(ring, x, y) {
+        if (!ring) return false;
+        const dx = x - ring.cx;
+        const dy = y - ring.cy;
+        const r = Math.hypot(dx, dy);
+        if (r < ring.inner || r > ring.outer) return false;
+        return !_angleInDoor(Math.atan2(dy, dx), ring.door0, ring.door1);
+    }
+
+    /**
+     * Keep a ground spill on the side of a hut wall it started on. `margin`
+     * is the drawn radius, so the pool itself cannot cross the thatch. The
+     * doorway stays open. A start already embedded in the wall still counts
+     * as inside.
+     */
+    function clipSpill(fromX, fromY, toX, toY, rings, margin) {
+        let x1 = Number(toX) || 0;
+        let y1 = Number(toY) || 0;
+        const x0 = Number(fromX) || 0;
+        const y0 = Number(fromY) || 0;
+        const pad = Math.max(0, Number(margin) || 0);
+        const list = rings || [];
+        for (let i = 0; i < list.length; i++) {
+            const ring = list[i];
+            if (!ring) continue;
+            const held = _clipSpillRing(ring, x0, y0, x1, y1, pad);
+            x1 = held.x;
+            y1 = held.y;
+        }
+        return { x: x1, y: y1 };
+    }
+
+    function _clipSpillRing(ring, x0, y0, x1, y1, pad) {
+        const dx = x1 - ring.cx;
+        const dy = y1 - ring.cy;
+        const r = Math.hypot(dx, dy);
+        const pr = Math.hypot(x0 - ring.cx, y0 - ring.cy);
+        const ang = r > 0.001
+            ? Math.atan2(dy, dx)
+            : Math.atan2(y0 - ring.cy, x0 - ring.cx);
+        if (_angleInDoor(ang, ring.door0, ring.door1)) return { x: x1, y: y1 };
+        if (pr <= ring.outer) {
+            const limit = ring.inner - pad - 0.05;
+            if (!(r > limit)) return { x: x1, y: y1 };
+            const keep = Math.max(0, limit);
+            return {
+                x: ring.cx + Math.cos(ang) * keep,
+                y: ring.cy + Math.sin(ang) * keep
+            };
+        }
+        const limit = ring.outer + pad + 0.05;
+        if (!(r < limit)) return { x: x1, y: y1 };
+        return {
+            x: ring.cx + Math.cos(ang) * limit,
+            y: ring.cy + Math.sin(ang) * limit
+        };
+    }
+
+    /**
+     * Keep a pawn center from crossing a round wall. A step that starts inside
+     * stays inside; one that starts outside stays outside. The doorway is open.
+     * A long jump is a teleport and is left alone.
+     */
+    function clampRingCenter(ring, fromX, fromY, toX, toY, radius) {
+        const x1 = Number(toX) || 0;
+        const y1 = Number(toY) || 0;
+        if (!ring) return { x: x1, y: y1 };
+        const x0 = Number(fromX) || 0;
+        const y0 = Number(fromY) || 0;
+        if (Math.hypot(x1 - x0, y1 - y0) > 24) return { x: x1, y: y1 };
+        const dx = x1 - ring.cx;
+        const dy = y1 - ring.cy;
+        const r = Math.hypot(dx, dy);
+        const pdx = x0 - ring.cx;
+        const pdy = y0 - ring.cy;
+        const pr = Math.hypot(pdx, pdy);
+        const rad = Math.max(0, Number(radius) || 0);
+        const skin = 0.15;
+        const ang = r > 0.001 ? Math.atan2(dy, dx) : Math.atan2(pdy, pdx);
+        if (_angleInDoor(ang, ring.door0, ring.door1)) return { x: x1, y: y1 };
+        const mid = (ring.inner + ring.outer) * 0.5;
+        if (pr <= mid) {
+            const keep = Math.max(0, ring.inner - rad - skin);
+            if (!(r > keep)) return { x: x1, y: y1 };
+            return { x: ring.cx + Math.cos(ang) * keep, y: ring.cy + Math.sin(ang) * keep };
+        }
+        const keep = ring.outer + rad + skin;
+        if (!(r < keep)) return { x: x1, y: y1 };
+        return { x: ring.cx + Math.cos(ang) * keep, y: ring.cy + Math.sin(ang) * keep };
+    }
+
+    function _spritePixelWorld(entry, thingDef, tileSize, px, py) {
+        const s = Number(thingDef?.spriteSize) || 32;
+        const anchor = spriteAnchor(entry, thingDef, tileSize);
+        const off = rotateAnchorOffset(px - s * 0.5, py - s, entry?.rot, s);
+        return { x: anchor.x + off.dx, y: anchor.y + off.dy };
+    }
+
+    /** True when a disk covers any thatch pixel. The doorway hole stays clear. */
+    function wallDiskHits(entry, thingDef, tileSize, wx, wy, pad) {
+        const mask = thingDef?.wallMask;
+        if (!mask || !entry) return false;
+        const s = Number(thingDef.spriteSize) || 32;
+        const p = worldToSpritePixel(entry, thingDef, wx, wy, tileSize);
+        const rad = Math.max(0, Number(pad) || 0);
+        const r = Math.ceil(rad);
+        for (let dy = -r; dy <= r; dy++) {
+            for (let dx = -r; dx <= r; dx++) {
+                if (dx * dx + dy * dy > rad * rad + 1e-6) continue;
+                if (wallMaskSolid(mask, Math.floor(p.x + dx), Math.floor(p.y + dy), s)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Stop a spill where its disk would touch the thatch. A path through the
+     * drawn doorway is left alone.
+     */
+    function clipWallSpill(entry, thingDef, tileSize, x0, y0, x1, y1, margin) {
+        const dest = { x: Number(x1) || 0, y: Number(y1) || 0 };
+        if (!thingDef?.wallMask || !entry) return dest;
+        const pad = Math.max(0, Number(margin) || 0);
+        const blocked = (x, y) => wallDiskHits(entry, thingDef, tileSize, x, y, pad);
+        const s = Number(thingDef.spriteSize) || 32;
+        const c = _spritePixelWorld(entry, thingDef, tileSize, s * 0.5, s * 0.5);
+        let sx = Number(x0) || 0;
+        let sy = Number(y0) || 0;
+        // A sleeper's body-center shift sits a few pixels outside the thatch.
+        // Pull that back inside. Someone actually standing outside is farther.
+        if (!blocked(sx, sy)) {
+            const cdx = c.x - sx;
+            const cdy = c.y - sy;
+            const cd = Math.hypot(cdx, cdy);
+            if (cd > 1) {
+                const n = Math.ceil(cd);
+                let saw = false;
+                let shallow = false;
+                for (let i = 1; i <= n; i++) {
+                    const t = i / n;
+                    const x = sx + cdx * t;
+                    const y = sy + cdy * t;
+                    const onThatch = wallDiskHits(entry, thingDef, tileSize, x, y, 0);
+                    if (onThatch) saw = true;
+                    else if (saw && !shallow) {
+                        shallow = Math.hypot(x - sx, y - sy) <= 7;
+                        if (!shallow) break;
+                    }
+                    if (shallow && !blocked(x, y)) {
+                        sx = x;
+                        sy = y;
+                        break;
+                    }
+                }
+            }
+        } else {
+            const cdx = c.x - sx;
+            const cdy = c.y - sy;
+            const cd = Math.hypot(cdx, cdy) || 1;
+            const n = Math.max(1, Math.ceil(cd));
+            for (let i = 1; i <= n; i++) {
+                const t = i / n;
+                const x = sx + cdx * t;
+                const y = sy + cdy * t;
+                if (!blocked(x, y)) {
+                    sx = x;
+                    sy = y;
+                    break;
+                }
+            }
+        }
+        const dx = dest.x - sx;
+        const dy = dest.y - sy;
+        const dist = Math.hypot(dx, dy);
+        if (!(dist > 0.01)) return { x: sx, y: sy };
+        const steps = Math.max(2, Math.ceil(dist));
+        let prevX = sx;
+        let prevY = sy;
+        for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            const x = sx + dx * t;
+            const y = sy + dy * t;
+            if (blocked(x, y)) return { x: prevX, y: prevY };
+            prevX = x;
+            prevY = y;
+        }
+        return dest;
     }
 
     function wallBoxesFor(thingDef) {
@@ -664,7 +982,7 @@
      * interior and doorway stay open. Other things stay a single rect.
      */
     function collisionWorldRects(entry, thingDef, tileSize) {
-        const boxes = wallBoxesFor(thingDef);
+        const boxes = ringBoxesFor(thingDef) || wallBoxesFor(thingDef);
         if (boxes && boxes.length && entry && !entry.gone) {
             const anchor = spriteAnchor(entry, thingDef, tileSize);
             const size = Number(thingDef.spriteSize) || 32;
@@ -1003,6 +1321,14 @@
         collisionWorldRects,
         spriteAnchor,
         rotateAnchorOffset,
+        worldToSpritePixel,
+        inDoorApproach,
+        ringWorld,
+        ringWallAt,
+        clipSpill,
+        clipWallSpill,
+        wallDiskHits,
+        clampRingCenter,
         wallMaskSolid,
         doorClearsPixel,
         meshAlphaBoxes,

@@ -1029,14 +1029,39 @@
         }
     },
 
+    /**
+     * Pull a spill back to the near side of a hut wall. The entrance stays open.
+     */
+    clipGroundSpill(x0, y0, x1, y1, margin) {
+        if (typeof Place === "undefined" || !Place.ringWorld || !Place.clipSpill) {
+            return { x: x1, y: y1 };
+        }
+        const ts = this.tileSize || 16;
+        const rings = [];
+        const seen = new Set();
+        for (const chunk of Object.values(this.chunks || {})) {
+            for (const entry of chunk?.meta?.things || []) {
+                if (!entry || entry.gone) continue;
+                const def = this.getThing?.(entry.id);
+                if (!def?.ring) continue;
+                const uid = entry.uid || entry;
+                if (seen.has(uid)) continue;
+                seen.add(uid);
+                if (def.wallMask && Place.clipWallSpill) {
+                    const held = Place.clipWallSpill(entry, def, ts, x0, y0, x1, y1, margin);
+                    x1 = held.x;
+                    y1 = held.y;
+                    continue;
+                }
+                const ring = Place.ringWorld(entry, def, ts);
+                if (ring) rings.push(ring);
+            }
+        }
+        return Place.clipSpill(x0, y0, x1, y1, rings, margin);
+    },
+
     spawnBloodStain(x, y, opts = null) {
         if (this.bloodDraw === false) return;
-        // No blood pools on water (ice is fine)
-        if (this._isWaterAt(x, y - 1)) return;
-        const chunk = LivingMob.ensureChunkAt(this, x, y);
-        if (!chunk) return;
-        if (!chunk.meta.bloodStains) chunk.meta.bloodStains = [];
-        const list = chunk.meta.bloodStains;
         const kind = opts?.kind || "blood";
         const isVomit = kind === "vomit";
         const color = opts?.color != null
@@ -1063,6 +1088,22 @@
                 ? Number(opts.mergeDist)
                 : (isVomit ? SceneMain.BLOOD_MERGE_DIST * 1.35 : SceneMain.BLOOD_MERGE_DIST));
         const mergeDistSq = mergeDist * mergeDist;
+        const fromX = Number.isFinite(opts?.fromX) ? opts.fromX : x;
+        const fromY = Number.isFinite(opts?.fromY) ? opts.fromY : y;
+        const contain = (px, py, rad) => {
+            if (typeof this.clipGroundSpill !== "function") return { x: px, y: py };
+            return this.clipGroundSpill(fromX, fromY, px, py, rad);
+        };
+        // Inset by the largest this pool can grow, so the circle stays off the thatch.
+        const held = contain(x, y, rCap);
+        x = held.x;
+        y = held.y;
+        // No blood pools on water (ice is fine)
+        if (this._isWaterAt(x, y - 1)) return;
+        const chunk = LivingMob.ensureChunkAt(this, x, y);
+        if (!chunk) return;
+        if (!chunk.meta.bloodStains) chunk.meta.bloodStains = [];
+        const list = chunk.meta.bloodStains;
 
         // Grow a nearby pool of the same kind instead of adding another circle
         let best = null;
@@ -1083,9 +1124,14 @@
                 rCap,
                 (Number(best.radius) || rMin) + grow
             );
-            // Pull pool slightly toward the new drip
-            best.x = best.x * 0.75 + x * 0.25;
-            best.y = best.y * 0.75 + y * 0.25;
+            // Pull pool slightly toward the new drip, then back off the wall.
+            const pulled = contain(
+                best.x * 0.75 + x * 0.25,
+                best.y * 0.75 + y * 0.25,
+                best.radius
+            );
+            best.x = pulled.x;
+            best.y = pulled.y;
             best.lifeMinutes = SceneMain.BLOOD_LIFE_MINUTES;
             best.color = color;
             best.kind = kind;
@@ -1151,8 +1197,11 @@
             const spread = (Math.random() - 0.5) * 2 * cone;
             const jx = (Math.random() - 0.5) * 1.5;
             const jy = (Math.random() - 0.5) * 1.5;
-            const landX = x + fx * dist + px * spread + jx;
-            const landY = y + fy * dist + py * spread + jy;
+            const rawX = x + fx * dist + px * spread + jx;
+            const rawY = y + fy * dist + py * spread + jy;
+            const landed = this.clipGroundSpill?.(x, y, rawX, rawY) || { x: rawX, y: rawY };
+            const landX = landed.x;
+            const landY = landed.y;
             const color = Phaser.Utils.Array.GetRandom(palette);
             const size = Phaser.Math.FloatBetween(0.55, 1.55);
             const flightMs = Phaser.Math.Clamp(
@@ -1208,7 +1257,7 @@
         const midY = (sy + ly) * 0.5 + opts.py * sideWobble - loft;
 
         const state = { t: 0 };
-        this.tweens.add({
+        const tween = this.tweens.add({
             targets: state,
             t: 1,
             duration: opts.flightMs,
@@ -1217,9 +1266,20 @@
                 if (!blob.active) return;
                 const t = state.t;
                 const omt = 1 - t;
+                const prevX = blob.x;
+                const prevY = blob.y;
                 // Quadratic Bezier mouth → loft → land
-                blob.x = omt * omt * sx + 2 * omt * t * midX + t * t * lx;
-                blob.y = omt * omt * sy + 2 * omt * t * midY + t * t * ly;
+                let nx = omt * omt * sx + 2 * omt * t * midX + t * t * lx;
+                let ny = omt * omt * sy + 2 * omt * t * midY + t * t * ly;
+                const hit = this.clipGroundSpill?.(prevX, prevY, nx, ny);
+                if (hit && Math.hypot(hit.x - nx, hit.y - ny) > 0.4) {
+                    blob.x = hit.x;
+                    blob.y = hit.y;
+                    tween.stop();
+                    return;
+                }
+                blob.x = nx;
+                blob.y = ny;
                 const bulge = 1 + Math.sin(t * Math.PI) * 0.4;
                 blob.setScale(stretchX * bulge, stretchY * bulge);
                 blob.setAlpha(0.95 - t * 0.12);
@@ -1227,7 +1287,11 @@
 
                 // Occasional mid-air drip trail
                 if (t > 0.2 && t < 0.85 && Math.random() < 0.04) {
-                    this.spawnBloodStain(blob.x, blob.y, {
+                    const drip = this.clipGroundSpill?.(sx, sy, blob.x, blob.y)
+                        || { x: blob.x, y: blob.y };
+                    this.spawnBloodStain(drip.x, drip.y, {
+                        fromX: sx,
+                        fromY: sy,
                         kind: "vomit",
                         color,
                         alpha: Phaser.Math.FloatBetween(0.35, 0.55),
@@ -1242,6 +1306,8 @@
                 if (blob.active) blob.destroy();
                 // Primary splat
                 this.spawnBloodStain(lx, ly, {
+                    fromX: sx,
+                    fromY: sy,
                     kind: "vomit",
                     color,
                     alpha: Phaser.Math.FloatBetween(0.55, 0.8),
@@ -1255,10 +1321,18 @@
                 for (let i = 0; i < flecks; i++) {
                     const ang = Math.random() * Math.PI * 2;
                     const d = Phaser.Math.FloatBetween(1.5, 5);
+                    const fleck = this.clipGroundSpill?.(
+                        lx, ly, lx + Math.cos(ang) * d, ly + Math.sin(ang) * d
+                    ) || {
+                        x: lx + Math.cos(ang) * d,
+                        y: ly + Math.sin(ang) * d
+                    };
                     this.spawnBloodStain(
-                        lx + Math.cos(ang) * d,
-                        ly + Math.sin(ang) * d,
+                        fleck.x,
+                        fleck.y,
                         {
+                            fromX: sx,
+                            fromY: sy,
                             kind: "vomit",
                             color: Phaser.Utils.Array.GetRandom([
                                 color, 0x5a7a1c, 0x8a6e20

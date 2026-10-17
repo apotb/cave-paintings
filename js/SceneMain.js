@@ -238,7 +238,9 @@ class SceneMain extends SceneBase {
             this.player,
             this._things,
             null,
-            (a, b) => (typeof Sleep === "undefined" || !Sleep.collideProcess) ? true : Sleep.collideProcess(a, b)
+            (a, b) => (typeof pawnThingCollide === "function")
+                ? pawnThingCollide(a, b)
+                : true
         );
         // Overlap only — collider was body-checking / shoving the player during melee
         this.physics.add.overlap(this.player, this.mobs);

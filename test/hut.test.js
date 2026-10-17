@@ -163,15 +163,15 @@ test("hut wall mask matches the sprite and the doorway stays walkable", () => {
     assert.equal(hit(rects, 16.5, 16.5), false, "interior");
     assert.equal(hit(rects, 2.5, 10.5), true, "west wall");
     assert.equal(Place.doorClearsPixel(def, 10, 29), true);
-    assert.equal(hit(rects, 10.5, 29.5), false, "inner door post is carved open");
-    assert.equal(hit(rects, 9.5, 29.5), true, "door jamb stays solid");
+    assert.equal(hit(rects, 16.5, 29.5), false, "entrance is open");
+    assert.equal(hit(rects, 6.5, 27.5), true, "wall beside the entrance stays solid");
     let bodyBlocked = false;
     for (let y = 24; y < 32; y++) {
         for (let x = 12; x < 20; x++) {
             if (hit(rects, x + 0.5, y + 0.5)) bodyBlocked = true;
         }
     }
-    assert.equal(bodyBlocked, false, "8px body fits the south door");
+    assert.equal(bodyBlocked, false, "8px body fits the entrance");
 
     const turned = Place.collisionWorldRects({ ...entry, rot: 90 }, def, TS);
     const anchor = Place.spriteAnchor({ ...entry, rot: 90 }, def, TS);
@@ -179,6 +179,147 @@ test("hut wall mask matches the sprite and the doorway stays walkable", () => {
     assert.equal(hit(turned, anchor.x + door.dx, anchor.y + door.dy), false, "door follows rotation");
     const wall = Place.rotateAnchorOffset(2.5 - 16, 10.5 - 32, 90, 32);
     assert.equal(hit(turned, anchor.x + wall.dx, anchor.y + wall.dy), true, "wall follows rotation");
+});
+
+test("blood and vomit stop at the hut wall and can leave by the door", () => {
+    const def = thingDef("hut");
+    const entry = placed(0);
+    const ring = Place.ringWorld(entry, def, TS);
+    const inside = { x: ring.cx, y: ring.cy };
+    const throughWall = Place.clipSpill(
+        inside.x, inside.y, ring.cx, ring.cy - (ring.outer + 10), [ring]
+    );
+    const stopped = Math.hypot(throughWall.x - ring.cx, throughWall.y - ring.cy);
+    assert.ok(stopped < ring.inner + 0.25, `spill crossed the wall at r=${stopped.toFixed(2)}`);
+    assert.equal(Place.ringWallAt(ring, throughWall.x, throughWall.y), false);
+    const door = Place.clipSpill(
+        inside.x, inside.y, ring.cx, ring.cy + ring.outer + 12, [ring]
+    );
+    assert.ok(
+        Math.abs(door.y - (ring.cy + ring.outer + 12)) < 0.5,
+        "spill should pass out the entrance"
+    );
+    const turned = Place.ringWorld({ ...entry, rot: 90 }, def, TS);
+    const side = Place.clipSpill(
+        turned.cx, turned.cy, turned.cx, turned.cy - (turned.outer + 10), [turned]
+    );
+    const sideR = Math.hypot(side.x - turned.cx, side.y - turned.cy);
+    assert.ok(sideR < turned.inner + 0.25, "rotated wall still stops a spill");
+    const outDoor = Place.clipSpill(
+        turned.cx, turned.cy, turned.cx - turned.outer - 12, turned.cy, [turned]
+    );
+    assert.ok(Math.abs(outDoor.x - (turned.cx - turned.outer - 12)) < 0.5);
+    const embeddedR = (ring.inner + ring.outer) * 0.5;
+    const embedded = { x: ring.cx, y: ring.cy - embeddedR };
+    const pool = Place.clipSpill(
+        embedded.x, embedded.y, ring.cx, ring.cy - (ring.outer + 8), [ring], 5
+    );
+    const poolR = Math.hypot(pool.x - ring.cx, pool.y - ring.cy);
+    assert.ok(poolR + 5 <= ring.inner + 0.05, `pool still clears the wall at r=${poolR.toFixed(2)}`);
+    const sitting = Place.clipSpill(embedded.x, embedded.y, embedded.x, embedded.y, [ring], 5);
+    const sittingR = Math.hypot(sitting.x - ring.cx, sitting.y - ring.cy);
+    assert.ok(sittingR + 5 <= ring.inner + 0.05, "a stain on the wall is pulled back inside");
+});
+
+test("a spatter from inside stops on the thatch, including beside the door", () => {
+    const def = thingDef("hut");
+    const entry = placed(0);
+    const pix = (x, y) => {
+        const anchor = Place.spriteAnchor(entry, def, TS);
+        const off = Place.rotateAnchorOffset(x - 16, y - 32, entry.rot, 32);
+        return { x: anchor.x + off.dx, y: anchor.y + off.dy };
+    };
+    const inside = pix(16.5, 16.5);
+    const pastWall = pix(-2, 10.5);
+    const held = Place.clipWallSpill(entry, def, TS, inside.x, inside.y, pastWall.x, pastWall.y, 2);
+    assert.equal(Place.wallDiskHits(entry, def, TS, held.x, held.y, 2), false);
+    assert.ok(Math.hypot(held.x - pastWall.x, held.y - pastWall.y) > 2);
+    const pastDoor = pix(16.5, 40);
+    const door = Place.clipWallSpill(entry, def, TS, inside.x, inside.y, pastDoor.x, pastDoor.y, 2);
+    assert.ok(Math.hypot(door.x - pastDoor.x, door.y - pastDoor.y) < 0.5, "the drawn doorway stays open");
+    const pastPost = pix(2, 36);
+    const post = Place.clipWallSpill(entry, def, TS, inside.x, inside.y, pastPost.x, pastPost.y, 2);
+    assert.equal(Place.wallDiskHits(entry, def, TS, post.x, post.y, 2), false);
+    assert.ok(Math.hypot(post.x - pastPost.x, post.y - pastPost.y) > 2, "the door post still stops a spatter");
+    const bunk = Sleep.sleeperWorldPos(entry, 1, TS, def);
+    const fromBunk = Place.clipWallSpill(
+        entry, def, TS, bunk.x, bunk.y, bunk.x + 8, bunk.y - 20, 2
+    );
+    assert.equal(Place.wallDiskHits(entry, def, TS, fromBunk.x, fromBunk.y, 2), false);
+    const shifted = { x: bunk.x + 8, y: bunk.y - 8 };
+    const center = pix(16, 16);
+    const leaked = Place.clipWallSpill(
+        entry, def, TS, shifted.x, shifted.y, shifted.x, shifted.y - 12, 2
+    );
+    assert.equal(Place.wallDiskHits(entry, def, TS, leaked.x, leaked.y, 2), false);
+    assert.ok(
+        Math.hypot(leaked.x - center.x, leaked.y - center.y)
+            < Math.hypot(shifted.x - center.x, shifted.y - center.y),
+        "a bunk shifted outside the thatch is pulled back in"
+    );
+    const ring = Place.ringWorld(entry, def, TS);
+    const outside = { x: ring.cx, y: ring.cy - (ring.outer + 4) };
+    const stayed = Place.clipWallSpill(
+        entry, def, TS, outside.x, outside.y, outside.x, outside.y - 10, 2
+    );
+    assert.ok(
+        Math.hypot(stayed.x - ring.cx, stayed.y - ring.cy) > ring.outer,
+        "someone standing outside is not pulled in"
+    );
+});
+
+test("turning into the hut wall does not carry a pawn through it", () => {
+    const def = thingDef("hut");
+    const ring = Place.ringWorld(placed(0), def, TS);
+    const through = Place.clampRingCenter(
+        ring, ring.cx, ring.cy, ring.cx, ring.cy - (ring.outer + 6)
+    );
+    const throughR = Math.hypot(through.x - ring.cx, through.y - ring.cy);
+    assert.ok(throughR < ring.inner, `center left the hut at r=${throughR.toFixed(2)}`);
+    const ang = -Math.PI / 2;
+    const press = ring.inner - 1;
+    const sx = ring.cx + Math.cos(ang) * press;
+    const sy = ring.cy + Math.sin(ang) * press;
+    const turned = Place.clampRingCenter(
+        ring, sx, sy,
+        sx + Math.cos(ang) * 6 + 2,
+        sy + Math.sin(ang) * 6
+    );
+    const turnedR = Math.hypot(turned.x - ring.cx, turned.y - ring.cy);
+    assert.ok(turnedR < ring.inner, `turn stepped through at r=${turnedR.toFixed(2)}`);
+    const along = Place.clampRingCenter(ring, ring.cx, ring.cy + 4, ring.cx + 3, ring.cy + 4);
+    assert.ok(Math.abs(along.x - (ring.cx + 3)) < 0.01, "sliding inside the ring stays free");
+    const doorToY = ring.cy + ring.outer + 8;
+    const door = Place.clampRingCenter(ring, ring.cx, ring.cy, ring.cx, doorToY);
+    assert.ok(Math.abs(door.y - doorToY) < 0.01, "the entrance still lets you out");
+    const outside = Place.clampRingCenter(
+        ring, ring.cx, ring.cy - (ring.outer + 6), ring.cx, ring.cy
+    );
+    const outsideR = Math.hypot(outside.x - ring.cx, outside.y - ring.cy);
+    assert.ok(outsideR > ring.outer, `outside step entered at r=${outsideR.toFixed(2)}`);
+    const far = Place.clampRingCenter(ring, ring.cx, ring.cy, ring.cx + 400, ring.cy);
+    assert.equal(far.x, ring.cx + 400);
+    const rad = 4;
+    const keep = ring.inner - rad - 0.15;
+    const a0 = -Math.PI / 2;
+    const sx0 = ring.cx + Math.cos(a0) * keep;
+    const sy0 = ring.cy + Math.sin(a0) * keep;
+    const a1 = a0 + 0.2;
+    const slid = Place.clampRingCenter(
+        ring, sx0, sy0,
+        ring.cx + Math.cos(a1) * (keep + 3),
+        ring.cy + Math.sin(a1) * (keep + 3),
+        rad
+    );
+    const slidR = Math.hypot(slid.x - ring.cx, slid.y - ring.cy);
+    assert.ok(Math.abs(slidR - keep) < 0.05, `slide left the circle at r=${slidR.toFixed(2)}`);
+    const slidA = Math.atan2(slid.y - ring.cy, slid.x - ring.cx);
+    assert.ok(Math.abs(slidA - a1) < 0.05, "sliding keeps moving along the wall");
+    const buried = Place.clampRingCenter(
+        ring, ring.cx, ring.cy - (ring.inner - 1), ring.cx, ring.cy - (ring.inner - 1), rad
+    );
+    const buriedR = Math.hypot(buried.x - ring.cx, buried.y - ring.cy);
+    assert.ok(buriedR <= keep + 0.05, "a body dug into the wall is pushed back to the circle");
 });
 
 test("hut is researched after camping and crafts just after the lean-to", () => {

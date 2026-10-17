@@ -1387,66 +1387,91 @@
         if (cache && cache.has(key)) return cache.get(key);
         const list = [];
         const bins = [];
+        const extra = [];
         const sleep = [];
-        const c = this.chunks.get(key);
-        if (c) {
-            const ox = cx * CHUNK_PX;
-            const oy = cy * CHUNK_PX;
-            for (const things of [c.things, c.lootableThings]) {
-                for (const t of things || []) {
-                    const def = thingDefs().get(t.id);
-                    if (Place.isSleepThing?.(def, t) && !def?.sleep?.interior) {
-                        const fp = Place.footprintWorldRect?.(t, def, TS);
-                        if (fp) {
-                            sleep.push({
-                                t,
-                                left: fp.left,
-                                right: fp.right,
-                                top: fp.top,
-                                bottom: fp.bottom
-                            });
-                        }
-                    }
-                    const pad = 1;
-                    const raw = (typeof Place !== "undefined" && Place.collisionWorldRects)
-                        ? Place.collisionWorldRects(t, def, TS)
-                        : [];
-                    const rects = [];
-                    if (raw.length) {
-                        for (let ri = 0; ri < raw.length; ri++) {
-                            const src = raw[ri];
-                            rects.push({
-                                t,
-                                left: src.left - pad,
-                                right: src.right + pad,
-                                top: src.top - pad,
-                                bottom: src.bottom + pad,
-                                r: Math.max(src.right - src.left, src.bottom - src.top) * 0.5 + pad
-                            });
-                        }
-                    } else {
-                        const one = this._thingRect(t);
-                        if (one) rects.push(one);
-                    }
-                    if (!rects.length) continue;
-                    for (let ri = 0; ri < rects.length; ri++) {
-                        const rect = rects[ri];
-                        list.push(rect);
-                        const x0 = Math.max(0, Math.floor((rect.left - ox) / TS));
-                        const x1 = Math.min(CS - 1, Math.floor((rect.right - 1e-3 - ox) / TS));
-                        const y0 = Math.max(0, Math.floor((rect.top - oy) / TS));
-                        const y1 = Math.min(CS - 1, Math.floor((rect.bottom - 1e-3 - oy) / TS));
-                        for (let ty = y0; ty <= y1; ty++) {
-                            for (let tx = x0; tx <= x1; tx++) {
-                                const i = tx + ty * CS;
-                                (bins[i] || (bins[i] = [])).push(rect);
-                            }
-                        }
-                    }
+        const ox = cx * CHUNK_PX;
+        const oy = cy * CHUNK_PX;
+        const bounds = {
+            left: ox,
+            right: ox + CS * TS,
+            top: oy,
+            bottom: oy + CS * TS
+        };
+        const overlapsChunk = (rect) => rect.right > bounds.left && rect.left < bounds.right
+            && rect.bottom > bounds.top && rect.top < bounds.bottom;
+        const addThing = (t, foreign) => {
+            if (!t || t.gone) return;
+            const def = thingDefs().get(t.id);
+            if (!foreign && Place.isSleepThing?.(def, t) && !def?.sleep?.interior) {
+                const fp = Place.footprintWorldRect?.(t, def, TS);
+                if (fp) {
+                    sleep.push({
+                        t,
+                        left: fp.left,
+                        right: fp.right,
+                        top: fp.top,
+                        bottom: fp.bottom
+                    });
                 }
             }
+            const pad = 1;
+            const raw = (typeof Place !== "undefined" && Place.collisionWorldRects)
+                ? Place.collisionWorldRects(t, def, TS)
+                : [];
+            const rects = [];
+            if (raw.length) {
+                for (let ri = 0; ri < raw.length; ri++) {
+                    const src = raw[ri];
+                    rects.push({
+                        t,
+                        left: src.left - pad,
+                        right: src.right + pad,
+                        top: src.top - pad,
+                        bottom: src.bottom + pad,
+                        r: Math.max(src.right - src.left, src.bottom - src.top) * 0.5 + pad
+                    });
+                }
+            } else {
+                const one = this._thingRect(t);
+                if (one) rects.push(one);
+            }
+            for (let ri = 0; ri < rects.length; ri++) {
+                const rect = rects[ri];
+                if (foreign) {
+                    if (overlapsChunk(rect)) extra.push(rect);
+                    continue;
+                }
+                list.push(rect);
+                const x0 = Math.max(0, Math.floor((rect.left - ox) / TS));
+                const x1 = Math.min(CS - 1, Math.floor((rect.right - 1e-3 - ox) / TS));
+                const y0 = Math.max(0, Math.floor((rect.top - oy) / TS));
+                const y1 = Math.min(CS - 1, Math.floor((rect.bottom - 1e-3 - oy) / TS));
+                let binned = false;
+                for (let ty = y0; ty <= y1; ty++) {
+                    for (let tx = x0; tx <= x1; tx++) {
+                        binned = true;
+                        const i = tx + ty * CS;
+                        (bins[i] || (bins[i] = [])).push(rect);
+                    }
+                }
+                // A wall can sit in the next chunk while the thing is stored here.
+                if (!binned) extra.push(rect);
+            }
+        };
+        const take = (chunk, foreign) => {
+            if (!chunk) return;
+            for (const things of [chunk.things, chunk.lootableThings]) {
+                for (const t of things || []) addThing(t, foreign);
+            }
+        };
+        take(this.chunks.get(key), false);
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                if (!dx && !dy) continue;
+                take(this.chunks.get(chunkKey(cx + dx, cy + dy)), true);
+            }
         }
-        const packed = { list, bins, sleep };
+        const packed = { list, bins, extra, sleep };
         if (cache) cache.set(key, packed);
         return packed;
     },
@@ -1493,6 +1518,13 @@
                 const ncy = cy + dy;
                 const index = this._chunkThingIndex(ncx, ncy);
                 const list = index.list;
+                const extra = index.extra;
+                if (extra && extra.length) {
+                    for (let i = 0; i < extra.length; i++) {
+                        const hit = take(extra[i]);
+                        if (hit) return hit;
+                    }
+                }
                 if (!list.length) continue;
                 if (list.length <= 8) {
                     for (let i = 0; i < list.length; i++) {
@@ -1530,9 +1562,9 @@
 
     /**
      * Pathing grows the body so settlers don't kiss trunks. That same margin
-     * seals a hut door: the 8×8 body fits, the padded one does not. A pose
-     * whose real body is clear, and whose margin touches only interior walls,
-     * stays open.
+     * seals a hut door: the 8×8 body fits, the padded one does not. Only the
+     * doorway gets that pass. A pose against any other interior wall stays
+     * blocked, so settlers cannot skim or step through it.
      */
     _interiorDoorMargin(creature, body, pad, x, y) {
         if (!(pad > 0)) return false;
@@ -1545,9 +1577,13 @@
             x, y, 64, creature, hits
         );
         if (!hits.length) return false;
+        const cx = (body.left + body.right) * 0.5;
+        const cy = (body.top + body.bottom) * 0.5;
         for (let i = 0; i < hits.length; i++) {
-            const def = thingDefs().get(hits[i].t?.id);
+            const thing = hits[i].t;
+            const def = thingDefs().get(thing?.id);
             if (!def?.sleep?.interior) return false;
+            if (!Place.inDoorApproach?.(thing, def, cx, cy, TS)) return false;
         }
         return true;
     },

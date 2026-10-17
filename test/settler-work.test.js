@@ -3610,20 +3610,24 @@ test("dedicated doctor walks into a hut to tend someone resting there", () => {
             });
             world._occupySlot(pawn, patient, entry, slot);
             const rect = Place.footprintWorldRect(entry, def, 16);
+            const dc = world._ensureSettlerCreature(doctor);
             let tended = false;
+            let clipped = false;
             for (let i = 0; i < 800; i++) {
                 world.tick(16);
+                if (world._partyPoseBlocked(dc, doctor.x, doctor.y, 0)) clipped = true;
                 if (doctor._workChannel?.kind === "tend") {
                     tended = true;
                     break;
                 }
             }
-            const inside = doctor.x > rect.left && doctor.x < rect.right
-                && doctor.y > rect.top && doctor.y < rect.bottom;
+            const body = world._creatureBodyAt(dc, doctor.x, doctor.y);
+            const inside = body.left >= rect.left + 1 && body.right <= rect.right - 1
+                && body.top >= rect.top + 1 && body.bottom <= rect.bottom - 1;
             assert.equal(
-                tended && inside,
+                tended && inside && !clipped,
                 true,
-                `rot ${rot} slot ${slot} tended=${tended} inside=${inside} at ${doctor.x.toFixed(1)},${doctor.y.toFixed(1)} act=${doctor._settlerAct}`
+                `rot ${rot} slot ${slot} tended=${tended} inside=${inside} clipped=${clipped} at ${doctor.x.toFixed(1)},${doctor.y.toFixed(1)} act=${doctor._settlerAct}`
             );
         }
     }

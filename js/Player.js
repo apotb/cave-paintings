@@ -10,6 +10,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         // Physics — hitbox matches human mob def
         scene.mainLayer.add(this);
         scene.physics.add.existing(this);
+        this._holdRingWalls = () => {
+            if (typeof holdPawnInsideRings === "function") holdPawnInsideRings(this);
+        };
+        scene.events.on("postupdate", this._holdRingWalls);
         const human = scene.getMob?.("human");
         this.hitboxSize = Number(human?.hitboxSize) || 8;
         this.body.setSize(this.hitboxSize, this.hitboxSize)
