@@ -544,12 +544,12 @@ class SettlementPanel {
             }
             return y + 8 * sc;
         }
-        this._rowLabel("Party", 0, y, rowH, 12);
+        this._rowLabel(`Party (${party.length})`, 0, y, rowH, 12);
         y += rowH;
         y = this._fillPeopleGrid(party, y, colW, gap, rowH, sc, "party");
         y += Math.round(8 * sc);
         this._peopleDivider(y, innerW, sc);
-        this._rowLabel("Here", 0, y, rowH, 12);
+        this._rowLabel(`Here (${here.length})`, 0, y, rowH, 12);
         y += rowH;
         if (!here.length) {
             this._rowLabel("(none)", Math.round(8 * sc), y, rowH, 12);
