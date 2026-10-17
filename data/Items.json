@@ -1067,7 +1067,7 @@
             "slot": "waist",
             "layer": "belt",
             "effects": {
-                "strength": 7.5,
+                "strength": 5,
                 "addSlot": [
                     "hotbar",
                     "hotbar"
