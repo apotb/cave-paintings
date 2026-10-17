@@ -101,6 +101,9 @@
                     mins = spoilDurationMinutes(item);
                 }
                 if (mins != null) {
+                    if (opts?.spoilScale != null && typeof spoilMinutesAtScale === "function") {
+                        mins = spoilMinutesAtScale(mins, opts.spoilScale, now);
+                    }
                     lines.push(`Spoils in: ${formatHours(Math.floor(mins / 60))}`);
                 }
             }

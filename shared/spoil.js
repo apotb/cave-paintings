@@ -38,6 +38,25 @@
         return Math.max(0, Math.round(spoilAt) - Math.round(now));
     }
 
+    /**
+     * World minutes until spoil under a storage spoilScale.
+     * 1 (or anything outside (0, 1)) leaves the timer alone.
+     * 0.5 matches a finished storage pit: spoilAt advances on odd world
+     * minutes, so each spoil minute takes two world minutes, one less
+     * when the clock is already on an odd minute.
+     */
+    function spoilMinutesAtScale(mins, scale, now) {
+        if (mins == null) return null;
+        const left = Math.max(0, Math.round(Number(mins)));
+        const s = Number(scale);
+        if (!(s > 0) || s >= 1) return left;
+        if (s === 0.5) {
+            const odd = now != null && (Math.round(Number(now)) & 1) === 1;
+            return Math.max(0, left * 2 - (odd ? 1 : 0));
+        }
+        return Math.max(0, Math.round(left / s));
+    }
+
     function spoilAtFromLeft(spoilLeft, now) {
         if (spoilLeft == null || now == null) return null;
         return Math.round(now) + Math.max(0, Math.round(spoilLeft));
@@ -217,6 +236,7 @@
         defaultSpoilLeft,
         defaultSpoilAt,
         remainingSpoilMinutes,
+        spoilMinutesAtScale,
         spoilAtFromLeft,
         spoilLeftFromAt,
         spoilAtForWorld,

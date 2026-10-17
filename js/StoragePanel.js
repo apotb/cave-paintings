@@ -170,11 +170,17 @@ class StoragePanel {
                             return label || "Storage";
                         }
                         const meta = this.scene.getItem(stack.id);
+                        const def = this.storage?.meta;
+                        const entry = this.storage?.entry;
                         const spoilPaused = typeof Hide !== "undefined"
-                            && Hide.isDryingRack(this.storage?.meta, this.storage?.entry)
+                            && Hide.isDryingRack(def, entry)
                             && Hide.pausesRackSpoil(meta);
+                        const spoilScale = (!spoilPaused && typeof Place !== "undefined"
+                            && Place.pitSlowsSpoil(def, entry))
+                            ? Number(def?.storage?.spoilScale)
+                            : null;
                         return this.scene.formatItemTooltip(
-                            meta, stack.quantity, stack.spoilAt, stack, { spoilPaused }
+                            meta, stack.quantity, stack.spoilAt, stack, { spoilPaused, spoilScale }
                         );
                     },
                     p.x, p.y, slot

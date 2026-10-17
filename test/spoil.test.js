@@ -30,6 +30,16 @@ test("spoilStackIfDue converts at due, no-op before", () => {
     assert.equal(due.stack.quantity, 2);
 });
 
+test("spoilMinutesAtScale doubles a pit timer, one minute less on an odd clock", () => {
+    assert.equal(Spoil.spoilMinutesAtScale(100, 1, 10), 100);
+    assert.equal(Spoil.spoilMinutesAtScale(100, null, 10), 100);
+    assert.equal(Spoil.spoilMinutesAtScale(4, 0.5, 10), 8);
+    assert.equal(Spoil.spoilMinutesAtScale(4, 0.5, 11), 7);
+    assert.equal(Spoil.spoilMinutesAtScale(1, 0.5, 10), 2);
+    assert.equal(Spoil.spoilMinutesAtScale(1, 0.5, 11), 1);
+    assert.equal(Spoil.spoilMinutesAtScale(0, 0.5, 11), 0);
+});
+
 test("spoilLeft and spoilAt round-trip", () => {
     const now = 500;
     const left = 120;

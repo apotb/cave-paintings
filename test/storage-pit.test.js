@@ -6,6 +6,10 @@ const Settlement = require("../shared/settlement");
 const Research = require("../shared/research");
 const Place = require("../shared/place");
 const Dig = require("../shared/dig");
+const Spoil = require("../shared/spoil");
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
 
 loadDefs();
 test.after(() => restoreRng());
@@ -437,6 +441,63 @@ test("food in a finished pit loses one spoil minute across two world minutes", (
     assert.equal(raw.slots[0].spoilAt, spoilAt);
     assert.equal(basket.slots[0].spoilAt, spoilAt);
     assert.equal(world.worldMinuteIndex(), start + 2);
+});
+
+test("a finished pit's spoil tooltip matches the minutes until the food rots", () => {
+    function ticksUntilRot(startOdd) {
+        const { world, pawn } = createTestWorld();
+        if (startOdd) world.gameMinutes += 1;
+        const start = world.worldMinuteIndex();
+        assert.equal(start & 1, startOdd ? 1 : 0);
+        const left = 4;
+        const pit = insertPit(world, pawn.x, pawn.y, {
+            digProgress: 1,
+            uid: startOdd ? "odd-spoil" : "even-spoil"
+        });
+        pit.slots[0] = { id: "apple", quantity: 1, spoilAt: start + left };
+        const predicted = Spoil.spoilMinutesAtScale(left, 0.5, start);
+        let ticks = 0;
+        while (pit.slots[0].id === "apple" && ticks < 30) {
+            world._worldMinute();
+            ticks++;
+        }
+        assert.equal(pit.slots[0].id, "rot");
+        assert.equal(ticks, predicted);
+    }
+    ticksUntilRot(false);
+    ticksUntilRot(true);
+});
+
+test("storage slot tooltip stretches spoil time only in a finished pit", () => {
+    const src = fs.readFileSync(path.join(__dirname, "../js/scene/craft.js"), "utf8");
+    const sandbox = {
+        remainingSpoilMinutes: Spoil.remainingSpoilMinutes,
+        spoilMinutesAtScale: Spoil.spoilMinutesAtScale,
+        spoilDurationMinutes: Spoil.spoilDurationMinutes,
+        formatHours(hours) {
+            const h = Math.max(0, Math.floor(hours));
+            if (h === 0) return "<1h";
+            const d = Math.floor(h / 24);
+            const remH = h % 24;
+            if (d > 0) return `${d}d${remH ? ` ${remH}h` : ""}`;
+            return `${remH}h`;
+        }
+    };
+    vm.runInNewContext(src, sandbox);
+    const item = { name: "Apple", food: { kc: 80, spoil: 2, satietyRatio: 0.15 } };
+    const tip = (now, opts) => sandbox.SceneMainCraft.formatItemTooltip.call({
+        worldMinuteIndex: () => now
+    }, item, 1, now + 120, { id: "apple", quantity: 1, spoilAt: now + 120 }, opts);
+
+    assert.match(tip(10, null), /Spoils in: 2h/);
+    assert.match(tip(10, { spoilScale: 0.5 }), /Spoils in: 4h/);
+    assert.match(tip(11, { spoilScale: 0.5 }), /Spoils in: 3h/);
+    assert.match(tip(10, { spoilPaused: true, spoilScale: 0.5 }), /Spoils: paused/);
+
+    const def = DataStore.getThing("storage_pit");
+    assert.equal(Place.pitSlowsSpoil(def, { id: "storage_pit", digProgress: 1 }), true);
+    assert.equal(Place.pitSlowsSpoil(def, { id: "storage_pit", digProgress: 0 }), false);
+    assert.equal(Place.pitSlowsSpoil(DataStore.getThing("wicker_basket"), { id: "wicker_basket" }), false);
 });
 
 test("a new pit prefers perishable hauls, and an old Normal default is lifted", () => {
