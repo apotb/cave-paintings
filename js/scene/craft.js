@@ -752,7 +752,7 @@
     },
 
     /**
-     * Spear tip this craft would consume: leftmost hotbar match, then the open basket.
+     * Spear tip this craft would consume: leftmost hotbar match, then the pack, then the open basket.
      * No match leaves the recipe icon as an andesite-colored tip named Stone Spear.
      */
     _craftPredictedTip(recipe, pawn) {
@@ -760,8 +760,10 @@
         if (!tipIng) return null;
         const who = pawn || this.player;
         const match = (s) => !!(s && s.id === tipIng.id && s.toolClass === tipIng.toolClass);
-        for (const stack of who?.inventory || []) {
-            if (match(stack)) return stack;
+        for (const bag of [who?.inventory, who?.overflow]) {
+            for (const stack of bag || []) {
+                if (match(stack)) return stack;
+            }
         }
         const store = this._openCraftStorage(who);
         for (const stack of store?.entry?.slots || []) {
@@ -1145,19 +1147,23 @@
     _craftIngredientHave(ingredient, pawn) {
         const who = pawn || this.player;
         let n = who.getNumMatchingItems?.(ingredient) || 0;
+        n += this._countSlotsMatching(who?.overflow, ingredient, who);
         const store = this._openCraftStorage(who);
         if (store) n += this._countSlotsMatching(store.entry?.slots, ingredient, who);
         return n;
     },
 
-    _loseStorageCraft(store, match, qty, who) {
-        if (!store || !(qty > 0) || !who?._stackMatchesCraft) return 0;
-        const slots = store.entry?.slots;
-        if (!Array.isArray(slots)) return 0;
+    /** Spend matching stacks. writeSlot is for containers that mirror the slot. */
+    _loseCraftSlots(slots, match, qty, who, writeSlot) {
+        if (!Array.isArray(slots) || !(qty > 0) || !who?._stackMatchesCraft) return 0;
         let remaining = Math.max(0, Math.floor(Number(qty) || 0));
         const hideStage = match?.hideStage || null;
         const id = match?.id;
         const wantClass = match?.toolClass || null;
+        const put = (i, stack) => {
+            if (writeSlot) writeSlot(i, stack);
+            else slots[i] = stack;
+        };
         const takeFrom = (requireClass) => {
             for (let i = 0; i < slots.length && remaining > 0; i++) {
                 const s = slots[i];
@@ -1169,14 +1175,21 @@
                 if (!(take > 0)) continue;
                 s.quantity = have - take;
                 remaining -= take;
-                if (!(s.quantity > 0)) store.setSlot(i, null);
-                else store.setSlot(i, s);
+                if (!(s.quantity > 0)) put(i, null);
+                else put(i, s);
             }
         };
         if (hideStage) takeFrom(null);
         else if (wantClass) takeFrom(wantClass);
         else takeFrom(null);
         return Math.max(0, Math.floor(Number(qty) || 0) - remaining);
+    },
+
+    _loseStorageCraft(store, match, qty, who) {
+        if (!store) return 0;
+        return this._loseCraftSlots(store.entry?.slots, match, qty, who, (i, stack) => {
+            store.setSlot(i, stack);
+        });
     },
 
     canCraft(recipe, pawn) {
@@ -1311,8 +1324,13 @@
         const tipMaterial = tip?.knapMaterial || null;
         for (const ing of recipe.ingredients) {
             const need = Math.max(0, Number(ing.qty) || 1);
-            const fromInv = who.loseMatchingItems(ing);
-            const left = Math.max(0, need - fromInv);
+            const fromInv = who.loseMatchingItems(ing) || 0;
+            let left = Math.max(0, need - fromInv);
+            if (left > 0) {
+                const fromPack = this._loseCraftSlots(who.overflow, ing, left, who);
+                if (fromPack > 0 && this.hotbar) this.hotbar.dirty = true;
+                left = Math.max(0, left - fromPack);
+            }
             if (left > 0) this._loseStorageCraft(store, ing, left, who);
         }
 

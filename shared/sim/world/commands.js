@@ -1052,6 +1052,7 @@
 
     _countMatchingItems(p, match, extraSlots) {
         return this._countMatchingInSlots(p?.inventory, match)
+            + this._countMatchingInSlots(p?.overflow, match)
             + this._countMatchingInSlots(extraSlots, match);
     },
 
@@ -1092,21 +1093,25 @@
     },
 
     _loseMatchingItems(p, match, extraSlots) {
-        const fromInv = this._loseMatchingFromSlots(p?.inventory, match);
         const qty = Math.max(0, Math.floor(Number(match?.qty) || 1));
-        const left = Math.max(0, qty - fromInv.lost);
+        // Hotbar, then backpack, then an open container.
+        const sources = [p?.inventory, p?.overflow, extraSlots];
+        let left = qty;
+        let knapQuality = null;
+        let knapMaterial = null;
+        let stone = null;
+        let lost = 0;
         let fromStorage = false;
-        let knapQuality = fromInv.knapQuality;
-        let knapMaterial = fromInv.knapMaterial;
-        let stone = fromInv.stone;
-        let lost = fromInv.lost;
-        if (left > 0 && extraSlots) {
-            const rest = this._loseMatchingFromSlots(extraSlots, { ...match, qty: left });
-            lost += rest.lost;
-            fromStorage = rest.lost > 0;
-            if (knapQuality == null) knapQuality = rest.knapQuality;
-            if (knapMaterial == null) knapMaterial = rest.knapMaterial;
-            if (stone == null) stone = rest.stone;
+        for (let i = 0; i < sources.length && left > 0; i++) {
+            const slots = sources[i];
+            if (!Array.isArray(slots)) continue;
+            const part = this._loseMatchingFromSlots(slots, { ...match, qty: left });
+            lost += part.lost;
+            left = Math.max(0, left - part.lost);
+            if (knapQuality == null) knapQuality = part.knapQuality;
+            if (knapMaterial == null) knapMaterial = part.knapMaterial;
+            if (stone == null) stone = part.stone;
+            if (i === 2 && part.lost > 0) fromStorage = true;
         }
         return { lost, knapQuality, knapMaterial, stone, fromStorage };
     },

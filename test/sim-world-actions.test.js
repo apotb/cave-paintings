@@ -217,6 +217,63 @@ test("craft leaf_cord spends leaves from a nearby basket", () => {
     assert.ok(!pawn.inventory.some((s) => s && s.id === "leaf"));
 });
 
+function wearHideBundle(pawn, stacks) {
+    pawn.equipment.back = { id: "hide_bundle", quantity: 1 };
+    pawn.overflow = [null, null, null];
+    for (let i = 0; i < stacks.length; i++) pawn.overflow[i] = stacks[i];
+}
+
+test("craft leaf_cord spends leaves from the backpack", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    wearHideBundle(pawn, [{ id: "leaf", quantity: 5 }]);
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "leaf_cord" });
+    assert.ok(pawn.inventory.some((s) => s && s.id === "leaf_cord"));
+    assert.equal(pawn.overflow[0], null);
+});
+
+test("craft leaf_cord uses hotbar leaves before backpack leaves", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "leaf", quantity: 2 };
+    wearHideBundle(pawn, [{ id: "leaf", quantity: 8 }]);
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "leaf_cord" });
+    assert.ok(pawn.inventory.some((s) => s && s.id === "leaf_cord"));
+    assert.ok(!pawn.inventory.some((s) => s && s.id === "leaf"));
+    assert.equal(pawn.overflow[0]?.quantity, 5);
+});
+
+test("shift-crafting a backpack leaf stack puts the cords in that slot", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    wearHideBundle(pawn, [{ id: "leaf", quantity: 10 }]);
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "leaf_cord", count: 99 });
+    assert.equal(pawn.overflow[0]?.id, "leaf_cord");
+    assert.equal(pawn.overflow[0]?.quantity, 2);
+    assert.ok(!pawn.inventory.some((s) => s?.id === "leaf" || s?.id === "leaf_cord"));
+});
+
+test("craft leaf_cord uses backpack leaves before basket leaves", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    wearHideBundle(pawn, [{ id: "leaf", quantity: 2 }]);
+    const chunk = originChunk(world);
+    const basket = {
+        uid: "st_craft_pack",
+        id: "wicker_basket",
+        x: pawn.x,
+        y: pawn.y
+    };
+    Place.ensureStorageEntry(basket, DataStore.getThing("wicker_basket"));
+    basket.slots[0] = { id: "leaf", quantity: 8 };
+    chunk.things.push(basket);
+
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.CRAFT,
+        id: "leaf_cord",
+        storageUid: basket.uid
+    });
+    assert.ok(pawn.inventory.some((s) => s && s.id === "leaf_cord"));
+    assert.equal(pawn.overflow[0], null);
+    assert.equal(basket.slots[0]?.quantity, 5);
+});
+
 test("craft leaf_cord uses pocket leaves before basket leaves", () => {
     const { world, pawn, Protocol } = createTestWorld();
     pawn.inventory[0] = { id: "leaf", quantity: 2 };
