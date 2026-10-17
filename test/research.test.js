@@ -233,8 +233,7 @@ test("tech unlocks list items, jobs, and planned text", () => {
     assert.ok(smoke.unlocks.bills.includes("smoke"));
     assert.equal((smoke.unlocks.text || []).includes("Smoke meat"), false);
     assert.equal(Research.techById("adhesive"), null);
-    assert.ok(Research.techById("hafting").unlocks.items.includes("pitch"));
-    assert.ok(Research.techById("hafting").unlocks.items.includes("stone_spear"));
+    assert.deepEqual(Research.techById("hafting").unlocks.items, ["stone_spear", "pitch"]);
     assert.equal(Research.techById("hafting").unlocks.items.includes("wooden_spear"), false);
     assert.equal(Research.techById("knapping").unlocks.text.includes("Spear tip knapping"), false);
     assert.ok(Research.techById("knapping").unlocks.text.includes("Knife knapping"));
