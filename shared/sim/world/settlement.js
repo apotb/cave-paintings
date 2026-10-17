@@ -307,6 +307,19 @@
             this._youDirty.add(p.id);
             return;
         }
+        if (op === "setMedical" && settle && settle.ownerId === p.id) {
+            const uid = String(action.uid || "");
+            if (!uid) return;
+            const found = this._findThingByUid(uid);
+            if (!found?.entry) return;
+            if (found.entry.id !== "lean_to" && found.entry.id !== "hut") return;
+            if (!Settlement.inRange(settle, found.entry.x, found.entry.y, TS)) return;
+            found.entry.medical = !!action.medical;
+            this._emitStorage(found.chunk, found.entry);
+            if (found.entry.medical) this._evictHealthyFromMedical(found.entry);
+            this._youDirty.add(p.id);
+            return;
+        }
         if (op === "setBills" && settle && settle.ownerId === p.id) {
             Settlement.setBills(settle, action.stationUid, action.bills);
             this._youDirty.add(p.id);

@@ -2122,6 +2122,158 @@ class SettlementSystem {
         return ui;
     }
 
+    /**
+     * Blue M for marking a lean-to or hut as medical. Same square as the
+     * green settlement button, with a letter instead of the stone icon.
+     */
+    makeMedicalButton(onClick) {
+        const scene = this.scene;
+        const BG = 0x120e0a;
+        const BG_PRESS = 0x0a0806;
+        const OUTLINE = 0x2a2218;
+        const OUTLINE_HOVER = 0xffffff;
+        const OUTLINE_PRESS = 0xd4a84b;
+        const BG_ON = 0x163044;
+        const BG_ON_PRESS = 0x0e2030;
+        const OUTLINE_ON = 0x7ec8ff;
+        const OUTLINE_ON_HOVER = 0xb7e4ff;
+        const size = 28;
+        const rect = scene.add.rectangle(0, 0, size, size, BG, 1)
+            .setStrokeStyle(2, OUTLINE)
+            .setInteractive({ useHandCursor: true });
+        const icon = scene.add.text(0, 0, "M", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "16px",
+            color: "#d4c4a8"
+        }).setOrigin(0.5);
+        const btn = scene.add.container(0, 0, [rect, icon]);
+        const ui = {
+            btn,
+            rect,
+            icon,
+            _added: false,
+            _hovering: false,
+            _pressing: false,
+            _screenUi: false,
+            _side: size
+        };
+        const strokeW = () => (ui._screenUi
+            ? (typeof pixelUiStroke === "function"
+                ? pixelUiStroke(scene.uiScale || 1)
+                : Math.max(2, Math.round(2 * (scene.uiScale || 1))))
+            : (typeof pixelUiWorldStroke === "function"
+                ? pixelUiWorldStroke(scene)
+                : 2 / (scene.worldZoom || 1)));
+        const paint = () => {
+            if (!rect?.active || !rect.geom) return;
+            const sw = strokeW();
+            const on = !!ui._added;
+            if (on && ui._pressing) {
+                rect.setFillStyle(BG_ON_PRESS, 1);
+                rect.setStrokeStyle(sw, OUTLINE_PRESS);
+            } else if (on && ui._hovering) {
+                rect.setFillStyle(BG_ON, 1);
+                rect.setStrokeStyle(sw, OUTLINE_ON_HOVER);
+            } else if (on) {
+                rect.setFillStyle(BG_ON, 1);
+                rect.setStrokeStyle(sw, OUTLINE_ON);
+            } else if (ui._pressing) {
+                rect.setFillStyle(BG_PRESS, 1);
+                rect.setStrokeStyle(sw, OUTLINE_PRESS);
+            } else if (ui._hovering) {
+                rect.setFillStyle(BG, 1);
+                rect.setStrokeStyle(sw, OUTLINE_HOVER);
+            } else {
+                rect.setFillStyle(BG, 1);
+                rect.setStrokeStyle(sw, OUTLINE);
+            }
+            icon.setColor(on ? "#7ec8ff" : "#d4c4a8");
+        };
+        ui.paint = paint;
+        ui.setScreenUi = () => {};
+        const tipText = () => ui._added ? "Clear medical mark" : "Mark for medical";
+        ui.setAdded = (on) => {
+            ui._added = !!on;
+            paint();
+            if (scene._tooltipTarget === rect) scene.refreshTooltip?.();
+        };
+        ui.setSize = (side) => {
+            if (!rect?.active) return;
+            const n = Math.max(8, Number(side) || size);
+            ui._side = n;
+            rect.setSize(n, n);
+            if (rect.input?.hitArea?.setTo) rect.input.hitArea.setTo(0, 0, n, n);
+            else if (rect.input?.hitArea?.setSize) rect.input.hitArea.setSize(n, n);
+            if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(icon, 16, scene);
+            paint();
+        };
+        rect.on("pointerover", (pointer) => {
+            ui._hovering = true;
+            paint();
+            scene.showTooltip?.(tipText, pointer.x, pointer.y, rect);
+        });
+        rect.on("pointerout", () => {
+            ui._hovering = false;
+            ui._pressing = false;
+            paint();
+            if (scene._tooltipTarget === rect) scene.hideTooltip?.();
+        });
+        rect.on("pointerdown", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            if (pointer.rightButtonDown()) return;
+            ui._pressing = true;
+            paint();
+        });
+        rect.on("pointerup", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            const was = ui._pressing && ui._hovering;
+            ui._pressing = false;
+            paint();
+            if (was) onClick?.();
+        });
+        paint();
+        return ui;
+    }
+
+    canMarkSleep(thing) {
+        const settle = this.here(this.scene.player);
+        if (!this.canManage(settle) || !thing?.entry) return false;
+        const id = thing.entry.id;
+        if (id !== "lean_to" && id !== "hut") return false;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!S?.inRange) return false;
+        return this._inRangePawn(this.scene.player, settle)
+            && S.inRange(settle, thing.x, thing.y, this.scene.tileSize || 16);
+    }
+
+    toggleMedical(thing) {
+        if (!this.canMarkSleep(thing)) return false;
+        const settle = this.here(this.scene.player);
+        const on = !thing.entry.medical;
+        thing.entry.medical = on;
+        this.sendNet("setMedical", {
+            uid: thing.entry.uid,
+            medical: on,
+            settlementId: settle.id
+        });
+        return true;
+    }
+
+    syncMedicalButton(ui, thing) {
+        if (!ui?.btn) return;
+        const ok = this.canMarkSleep(thing);
+        ui.btn.setVisible(ok);
+        if (!ok) {
+            ui.rect?.disableInteractive?.();
+            if (this.scene._tooltipTarget === ui.rect) this.scene.hideTooltip?.();
+            return;
+        }
+        if (typeof ensurePointerInteractive === "function") ensurePointerInteractive(ui.rect);
+        else ui.rect?.setInteractive?.({ useHandCursor: true });
+        ui.setAdded?.(!!thing?.entry?.medical);
+        ui.paint?.();
+    }
+
     syncStationButton(ui, thing) {
         if (!ui?.btn) return;
         const ok = this.canManageThing(thing);

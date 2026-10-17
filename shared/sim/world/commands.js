@@ -94,6 +94,7 @@
         const poseLocked = !!(
             control.dead
             || control._resting
+            || control._tendHold
             || control.prone
             || cc?._prone
             || cc?.isImmobile?.()

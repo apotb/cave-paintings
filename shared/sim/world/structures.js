@@ -77,7 +77,8 @@
                 rev: Number(entry.rev) || 0,
                 rot: Place.normalizeRot(entry.rot),
                 sleep: true,
-                occupants: Array.isArray(entry.occupants) ? entry.occupants : [null, null]
+                occupants: Array.isArray(entry.occupants) ? entry.occupants : [null, null],
+                medical: !!entry.medical
             };
         }
         if (Place.isSettlementThing(def, entry)) {
@@ -543,7 +544,7 @@
             }
         }
         this._cancelChannels(pawn);
-        this._orderRest(session, pawn, entry, slot, { autofill: true });
+        this._orderRest(session, pawn, entry, slot, { autofill: true, manual: true });
     },
 
     _orderRest(session, pawn, entry, slot, opts = {}) {
@@ -553,6 +554,7 @@
             return false;
         }
         if (pawn._resting) this._wakePawn(session, pawn, { moving: true });
+        pawn._manualRest = !!opts.manual;
         pawn._restWalk = { uid: entry.uid, slot };
         pawn.lastSleep = { uid: entry.uid, slot, rot: entry.rot };
         const c = pawn.creature || this.creatures.get(pawn.id);
@@ -598,10 +600,21 @@
             if (c?.isIncapacitated?.() || c?.isImmobile?.() || p.prone) return false;
             return Sleep.injuredForAutofill(c?.anatomy);
         });
+        const open = slots.slice();
         for (const pawn of injured) {
-            const next = slots.shift();
-            if (!next) break;
-            this._orderRest(session, pawn, next.entry, next.slot, { autofill: false });
+            const picked = Sleep.pickSleepSlot
+                ? Sleep.pickSleepSlot(open.map((s) => ({
+                    entry: s.entry,
+                    slot: s.slot,
+                    x: s.entry.x,
+                    y: s.entry.y,
+                    heal: Sleep.healBonus(this._sleepDef(s.entry))
+                })), pawn, true)
+                : open[0];
+            if (!picked) break;
+            const idx = open.findIndex((s) => s.entry === picked.entry && s.slot === picked.slot);
+            if (idx >= 0) open.splice(idx, 1);
+            this._orderRest(session, pawn, picked.entry, picked.slot, { autofill: false });
         }
     },
 
@@ -699,6 +712,7 @@
         }
         if (opts.manual) {
             pawn._wokeFromRest = false;
+            pawn._manualRest = false;
             if (c) c._wokeFromRest = false;
         }
         this._applyRestClock();
@@ -746,7 +760,9 @@
         const { entry } = found;
         const def = this._sleepDef(entry);
         if (this._sleepSlotClaimed(entry, spec.slot, pawn.id)) {
-            const next = this._pickFreeSleepSlot(pawn, entry);
+            const anatomy = (pawn.creature || this.creatures.get(pawn.id))?.anatomy;
+            const medical = !!(Sleep.injuredForAutofill && Sleep.injuredForAutofill(anatomy));
+            const next = this._pickFreeSleepSlot(pawn, null, { medical });
             if (next) {
                 pawn._restWalk = { uid: next.entry.uid, slot: next.slot };
                 pawn.lastSleep = { uid: next.entry.uid, slot: next.slot, rot: next.entry.rot };
@@ -809,8 +825,10 @@
             for (const pawn of this._ownedPawns(session)) {
                 if (!pawn || pawn.dead) continue;
                 stepped.add(pawn.id);
-                if (pawn._restWalk) this._stepRestWalk(session, pawn, dt);
+                if (pawn._restWalk && !pawn._carriedBy) this._stepRestWalk(session, pawn, dt);
                 else if (pawn._resting) {
+                    this._evictOneHealthyMedical(pawn);
+                    if (!pawn._resting) continue;
                     pawn.vx = 0;
                     pawn.vy = 0;
                     const c = pawn.creature || this.creatures.get(pawn.id);
@@ -833,8 +851,10 @@
         // Camp settlers keep walking to bed after their owner logs off.
         for (const rec of this.settlers || []) {
             if (!rec || rec.dead || stepped.has(rec.id)) continue;
-            if (rec._restWalk) this._stepRestWalk(null, rec, dt);
+            if (rec._restWalk && !rec._carriedBy) this._stepRestWalk(null, rec, dt);
             else if (rec._resting || rec.resting) {
+                this._evictOneHealthyMedical(rec);
+                if (!rec._resting && !rec.resting) continue;
                 rec.vx = 0;
                 rec.vy = 0;
                 const c = rec.creature || this.creatures.get(rec.id);
@@ -848,6 +868,7 @@
                 }
             }
         }
+        this._tickCarries();
     },
 
     _sleepSlotClaimed(entry, slot, exceptId) {
@@ -876,44 +897,35 @@
         return false;
     },
 
-    _pickFreeSleepSlot(pawn, preferEntry = null) {
+    _pickFreeSleepSlot(pawn, preferEntry = null, opts = {}) {
         if (!pawn) return null;
+        const medical = !!opts.medical;
+        const maxTiles = Number(opts.maxTiles) > 0 ? Number(opts.maxTiles) : Sleep.CAMP_TILES;
+        const candidates = [];
         const consider = (e) => {
-            if (!this._isSleepEntry(e)) return null;
-            Place.ensureSleepEntry(e, this._sleepDef(e));
-            if (!Sleep.inCampRange(pawn.x, pawn.y, e.x, e.y, TS)) return null;
-            const n = Sleep.slotCount(this._sleepDef(e), e);
-            let best = null;
-            let bestD = Infinity;
+            if (!this._isSleepEntry(e)) return;
+            const def = this._sleepDef(e);
+            Place.ensureSleepEntry(e, def);
+            const tiles = Math.hypot((pawn.x || 0) - e.x, (pawn.y || 0) - e.y) / TS;
+            if (tiles > maxTiles + 0.05) return;
+            const n = Sleep.slotCount(def, e);
+            const heal = Sleep.healBonus ? Sleep.healBonus(def) : 8;
             for (let i = 0; i < n; i++) {
                 if (this._sleepSlotClaimed(e, i, pawn.id)) continue;
-                const d = Math.hypot(pawn.x - e.x, pawn.y - e.y) + i * 0.01;
-                if (d < bestD) {
-                    bestD = d;
-                    best = { entry: e, slot: i };
-                }
+                candidates.push({ entry: e, slot: i, x: e.x, y: e.y, heal, def });
             }
-            return best;
         };
-        if (preferEntry) {
-            const hit = consider(preferEntry);
-            if (hit) return hit;
-        }
-        let best = null;
-        let bestD = Infinity;
+        if (preferEntry) consider(preferEntry);
         for (const ch of this._chunksNear(pawn.x, pawn.y, 2)) {
             if (!Array.isArray(ch.things)) continue;
             for (const e of ch.things) {
-                const hit = consider(e);
-                if (!hit) continue;
-                const d = Math.hypot(pawn.x - hit.entry.x, pawn.y - hit.entry.y) + hit.slot * 0.01;
-                if (d < bestD) {
-                    bestD = d;
-                    best = hit;
-                }
+                if (e === preferEntry) continue;
+                consider(e);
             }
         }
-        return best;
+        return Sleep.pickSleepSlot
+            ? Sleep.pickSleepSlot(candidates, pawn, medical)
+            : (candidates[0] || null);
     },
 
     _tryInjuredRest(session, pawn) {
@@ -942,9 +954,12 @@
             pawn._wokeFromRest = false;
             return;
         }
+        const anatomy = c?.anatomy;
+        const injured = !!(Sleep.injuredForAutofill && Sleep.injuredForAutofill(anatomy));
+        const manual = !!pawn._manualRest;
         const last = pawn.lastSleep;
         let picked = null;
-        if (last?.uid) {
+        if (manual && !injured && last?.uid) {
             const found = this._findSleepByUid(last.uid, pawn);
             const entry = found?.entry || null;
             const slot = last.slot || 0;
@@ -952,9 +967,250 @@
                 picked = { entry, slot };
             }
         }
-        if (!picked) picked = this._pickFreeSleepSlot(pawn);
+        if (!picked) picked = this._pickFreeSleepSlot(pawn, null, { medical: injured });
         pawn._wokeFromRest = false;
-        if (picked) this._orderRest(session, pawn, picked.entry, picked.slot, { autofill: false });
+        if (picked) this._orderRest(session, pawn, picked.entry, picked.slot, { autofill: false, manual });
+    },
+
+    _pawnIsDowned(pawn) {
+        if (!pawn || pawn.dead) return false;
+        const c = pawn.creature || this.creatures?.get?.(pawn.id);
+        return !!(pawn.prone || pawn._downed || c?._prone || c?.isIncapacitated?.() || c?.isImmobile?.());
+    },
+
+    _pawnsAdjacent(a, b) {
+        if (!a || !b || !Party?.inInteractRange) return false;
+        return Party.inInteractRange(a, b, TS);
+    },
+
+    _rescueBedFor(patient, opts = {}) {
+        if (!patient) return null;
+        if (opts.settle && Settlement?.inRange) {
+            const chunks = [];
+            const keys = Settlement.chunkKeysFor?.(opts.settle, TS, 8) || [];
+            for (const key of keys) {
+                const c = this.chunks.get(key);
+                if (c) chunks.push(c);
+            }
+            const candidates = [];
+            for (const c of chunks) {
+                if (!Array.isArray(c.things)) continue;
+                for (const e of c.things) {
+                    if (!this._isSleepEntry(e)) continue;
+                    if (!Settlement.inRange(opts.settle, e.x, e.y, TS)) continue;
+                    const def = this._sleepDef(e);
+                    Place.ensureSleepEntry(e, def);
+                    const heal = Sleep.healBonus ? Sleep.healBonus(def) : 8;
+                    const n = Sleep.slotCount(def, e);
+                    for (let i = 0; i < n; i++) {
+                        if (this._sleepSlotClaimed(e, i, patient.id)) continue;
+                        candidates.push({ entry: e, slot: i, x: e.x, y: e.y, heal, def });
+                    }
+                }
+            }
+            return Sleep.pickSleepSlot(candidates, patient, opts.medical !== false);
+        }
+        return this._pickFreeSleepSlot(patient, null, {
+            medical: opts.medical !== false,
+            maxTiles: opts.maxTiles || Sleep.CAMP_TILES
+        });
+    },
+
+    _beginCarry(carrier, patient, bed) {
+        if (!carrier || !patient || !bed?.entry) return false;
+        if (patient._carriedBy && patient._carriedBy !== carrier.id) return false;
+        if (carrier._carryPawnId && carrier._carryPawnId !== patient.id) return false;
+        carrier._carryPawnId = patient.id;
+        carrier._carryBed = { uid: bed.entry.uid, slot: bed.slot };
+        patient._carriedBy = carrier.id;
+        patient._restWalk = { uid: bed.entry.uid, slot: bed.slot };
+        patient.prone = true;
+        const cc = carrier.creature || this.creatures?.get?.(carrier.id);
+        if (cc) {
+            cc._carryPawnId = patient.id;
+            cc._carryBed = carrier._carryBed;
+        }
+        const pc = patient.creature || this.creatures?.get?.(patient.id);
+        if (pc) {
+            pc._prone = true;
+            pc._carriedBy = carrier.id;
+            pc._restWalk = patient._restWalk;
+        }
+        return true;
+    },
+
+    _clearCarryLinks(carrier, patient) {
+        if (carrier) {
+            carrier._carryPawnId = null;
+            carrier._carryBed = null;
+            const cc = carrier.creature || this.creatures?.get?.(carrier.id);
+            if (cc) {
+                cc._carryPawnId = null;
+                cc._carryBed = null;
+            }
+        }
+        if (patient) {
+            patient._carriedBy = null;
+            const pc = patient.creature || this.creatures?.get?.(patient.id);
+            if (pc) pc._carriedBy = null;
+        }
+    },
+
+    _dropCarry(carrier) {
+        if (!carrier?._carryPawnId) return;
+        const patient = this._findOwnedPawn(carrier._carryPawnId);
+        this._clearCarryLinks(carrier, patient);
+        if (!patient) return;
+        patient.x = carrier.x;
+        patient.y = carrier.y;
+        if (!patient._resting) patient._restWalk = null;
+        const pc = patient.creature || this.creatures?.get?.(patient.id);
+        if (pc) {
+            pc.x = patient.x;
+            pc.y = patient.y;
+            pc.vx = 0;
+            pc.vy = 0;
+            if (!patient._resting) pc._restWalk = null;
+            pc.setDesiredVel?.(0, 0);
+        }
+        patient.vx = 0;
+        patient.vy = 0;
+    },
+
+    _carryStand(carrier) {
+        const bed = carrier?._carryBed;
+        if (!bed?.uid) return null;
+        const found = this._findSleepByUid(bed.uid, carrier);
+        if (!found?.entry) return null;
+        const def = this._sleepDef(found.entry);
+        const stand = Sleep.restWalkStand
+            ? Sleep.restWalkStand(found.entry, bed.slot, TS, def)
+            : Sleep.besideWorldPos(found.entry, TS, def);
+        return stand ? { ...stand, entry: found.entry, slot: bed.slot } : null;
+    },
+
+    _finishCarry(carrier) {
+        const patient = carrier?._carryPawnId ? this._findOwnedPawn(carrier._carryPawnId) : null;
+        const stand = this._carryStand(carrier);
+        if (!patient || !stand?.entry) {
+            this._dropCarry(carrier);
+            return false;
+        }
+        const session = this._sessionOfPawn(patient) || this._sessionOfPawn(carrier);
+        this._clearCarryLinks(carrier, patient);
+        patient._restWalk = null;
+        const pc = patient.creature || this.creatures?.get?.(patient.id);
+        if (pc) pc._restWalk = null;
+        return this._occupySlot(session, patient, stand.entry, stand.slot);
+    },
+
+    _evictHealthyFromMedical(entry) {
+        if (!entry?.medical || !Array.isArray(entry.occupants)) return;
+        for (const id of entry.occupants) {
+            if (!id) continue;
+            const pawn = this._findOwnedPawn(id);
+            if (!pawn || !pawn._resting) continue;
+            this._evictOneHealthyMedical(pawn);
+        }
+    },
+
+    _evictOneHealthyMedical(pawn) {
+        if (!pawn?._resting || pawn._manualRest) return;
+        const found = pawn.lastSleep?.uid ? this._findSleepByUid(pawn.lastSleep.uid, pawn) : null;
+        if (!found?.entry?.medical) return;
+        if (this._pawnIsDowned(pawn)) return;
+        const c = pawn.creature || this.creatures?.get?.(pawn.id);
+        if (Sleep.injuredForAutofill && Sleep.injuredForAutofill(c?.anatomy)) return;
+        const session = this._sessionOfPawn(pawn);
+        this._wakePawn(session, pawn, { manual: true });
+        pawn._manualRest = false;
+        const settler = pawn.role === "settler" || !!pawn.homeSettlementId;
+        if (settler && Settlement?.isNight?.(this.gameMinutes)) {
+            const next = this._pickFreeSleepSlot(pawn, null, { medical: false });
+            if (next) this._orderRest(session, pawn, next.entry, next.slot, { autofill: false });
+        }
+    },
+
+    _tickCarries() {
+        const carriers = [];
+        for (const p of this.players.values()) {
+            if (p?._carryPawnId) carriers.push(p);
+            for (const m of p.party || []) {
+                if (m?._carryPawnId) carriers.push(m);
+            }
+        }
+        for (const s of this.settlers || []) {
+            if (s?._carryPawnId) carriers.push(s);
+        }
+        for (const carrier of carriers) {
+            const patient = this._findOwnedPawn(carrier._carryPawnId);
+            if (!patient || patient.dead) {
+                this._dropCarry(carrier);
+                continue;
+            }
+            const cc = carrier.creature || this.creatures?.get?.(carrier.id);
+            if (carrier.dead || cc?.isIncapacitated?.() || cc?.isImmobile?.()) {
+                this._dropCarry(carrier);
+                continue;
+            }
+            const settler = carrier.role === "settler" || !!carrier.homeSettlementId;
+            if (!settler) {
+                const session = this._sessionOfPawn(carrier);
+                const rows = [];
+                if (session) {
+                    for (const m of this._livingPartyOf(session)) {
+                        const c = m.creature || this.creatures?.get?.(m.id);
+                        if (c) rows.push({ rec: m, creature: c });
+                    }
+                }
+                if (session && this._sessionPartyCombat(session, rows)) {
+                    this._dropCarry(carrier);
+                    continue;
+                }
+            }
+            let stand = this._carryStand(carrier);
+            if (!stand || this._sleepSlotClaimed(stand.entry, stand.slot, patient.id)) {
+                const session = this._sessionOfPawn(carrier);
+                const settle = settler
+                    ? (this.settlements || []).find((s) => s.id === carrier.homeSettlementId)
+                    : null;
+                const next = this._rescueBedFor(patient, {
+                    medical: true,
+                    settle,
+                    maxTiles: Sleep.CAMP_TILES
+                });
+                if (!next) {
+                    this._dropCarry(carrier);
+                    continue;
+                }
+                carrier._carryBed = { uid: next.entry.uid, slot: next.slot };
+                if (cc) cc._carryBed = carrier._carryBed;
+                patient._restWalk = { uid: next.entry.uid, slot: next.slot };
+                stand = this._carryStand(carrier);
+            }
+            if (!stand) {
+                this._dropCarry(carrier);
+                continue;
+            }
+            patient.x = carrier.x;
+            patient.y = (carrier.y || 0) - 6;
+            patient.vx = 0;
+            patient.vy = 0;
+            patient.prone = true;
+            const pc = patient.creature || this.creatures?.get?.(patient.id);
+            if (pc) {
+                pc.x = patient.x;
+                pc.y = patient.y;
+                pc.vx = 0;
+                pc.vy = 0;
+                pc._prone = true;
+                pc._carriedBy = carrier.id;
+                pc.setDesiredVel?.(0, 0);
+            }
+            if (cc) cc._carryPawnId = carrier._carryPawnId;
+            const dist = Math.hypot((carrier.x || 0) - stand.x, (carrier.y || 0) - stand.y);
+            if (dist < (Sleep.ARRIVE_PX || 16)) this._finishCarry(carrier);
+        }
     },
 
     _everyoneLying() {

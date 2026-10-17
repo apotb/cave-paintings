@@ -117,6 +117,50 @@
         return HEAL_BONUS;
     }
 
+    function isMedicalEntry(entry) {
+        return !!(entry && entry.medical);
+    }
+
+    /**
+     * Best free sleep slot.
+     * candidates: { entry, slot, x, y, heal }
+     * medical true: marked beds, then heal bonus, then nearest.
+     * medical false: marked beds are left out; then heal bonus, then nearest.
+     */
+    function pickSleepSlot(candidates, origin, medical) {
+        const ox = Number(origin?.x) || 0;
+        const oy = Number(origin?.y) || 0;
+        const wantMedical = !!medical;
+        let best = null;
+        let bestMark = 0;
+        let bestHeal = -Infinity;
+        let bestDist = Infinity;
+        let bestSlot = Infinity;
+        for (const c of candidates || []) {
+            if (!c?.entry) continue;
+            const marked = isMedicalEntry(c.entry);
+            if (!wantMedical && marked) continue;
+            const mark = wantMedical && marked ? 1 : 0;
+            const heal = Number.isFinite(c.heal) ? c.heal : healBonus(c.def);
+            const dx = (Number.isFinite(c.x) ? c.x : Number(c.entry.x) || 0) - ox;
+            const dy = (Number.isFinite(c.y) ? c.y : Number(c.entry.y) || 0) - oy;
+            const dist = dx * dx + dy * dy;
+            const slot = Number(c.slot) || 0;
+            const better = !best
+                || mark > bestMark
+                || (mark === bestMark && heal > bestHeal)
+                || (mark === bestMark && heal === bestHeal && dist < bestDist)
+                || (mark === bestMark && heal === bestHeal && dist === bestDist && slot < bestSlot);
+            if (!better) continue;
+            best = c;
+            bestMark = mark;
+            bestHeal = heal;
+            bestDist = dist;
+            bestSlot = slot;
+        }
+        return best;
+    }
+
     /**
      * Wanderers and settlers path around the whole bunk so they don't walk the
      * laying spot into the wooden back. Party followers and wildlife use thing
@@ -410,6 +454,8 @@
         openOffset,
         restRotation,
         healBonus,
+        isMedicalEntry,
+        pickSleepSlot,
         sleeperWorldPos,
         besideWorldPos,
         restWalkStand,

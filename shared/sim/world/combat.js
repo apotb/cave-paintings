@@ -1337,6 +1337,147 @@
         return seekOthers[0] || null;
     },
 
+    _pickPartyRescue(tender, members) {
+        if (!tender) return null;
+        const seek = (Party.FOLLOW_DETACH || 12) * TS;
+        let best = null;
+        for (const p of members || []) {
+            if (!p || p.dead || p === tender || p.id === tender.id) continue;
+            if (p._resting || p.resting) continue;
+            if (!this._pawnIsDowned(p)) continue;
+            if (p._carriedBy && p._carriedBy !== tender.id) continue;
+            const dist = Math.hypot((p.x || 0) - (tender.x || 0), (p.y || 0) - (tender.y || 0));
+            if (dist > seek) continue;
+            const bed = this._rescueBedFor(p, { medical: true, maxTiles: Party.FOLLOW_DETACH || 12 });
+            if (!bed) continue;
+            const body = (p.creature || this.creatures.get(p.id))?.anatomy;
+            const mins = BodyHealing?.minutesToBleedOut ? BodyHealing.minutesToBleedOut(body) : null;
+            const row = { patient: p, bed, mins, dist };
+            if (!best) {
+                best = row;
+                continue;
+            }
+            const aBleed = best.mins != null;
+            const bBleed = mins != null;
+            if (aBleed !== bBleed) {
+                if (bBleed) best = row;
+                continue;
+            }
+            if (aBleed && bBleed && mins !== best.mins) {
+                if (mins < best.mins) best = row;
+                continue;
+            }
+            if (dist < best.dist) best = row;
+        }
+        return best;
+    },
+
+    _assignPartyRescues(session, uncontrolled, controlId) {
+        const members = [];
+        if (!session.dead) members.push(session);
+        for (const m of session.party || []) {
+            if (!m.dead) members.push(m);
+        }
+        const control = members.find((m) => m.id === controlId) || session;
+        const combat = this._sessionPartyCombat(session, uncontrolled);
+        const below = Party.AUTO_EAT_BELOW || 1000;
+        for (const row of uncontrolled || []) {
+            const rec = row.rec;
+            const cc = row.creature;
+            if (!cc) continue;
+            this._bindPartyAI(cc);
+            if (combat || rec.dead || this._pawnVomiting(rec) || cc.isAttacking?.()
+                || cc.isIncapacitated?.() || cc.isImmobile?.()) {
+                if (rec._carryPawnId && combat) this._dropCarry(rec);
+                cc.ai.rescueSeek = null;
+                continue;
+            }
+            if (rec._carryPawnId) {
+                const patient = this._findOwnedPawn(rec._carryPawnId);
+                const stand = this._carryStand(rec);
+                cc.ai.rescueSeek = patient ? {
+                    patient: patient.creature || patient,
+                    bed: rec._carryBed,
+                    stand
+                } : null;
+                continue;
+            }
+            if (Party.beyondFollowLeash(rec, control, TS)) {
+                cc.ai.rescueSeek = null;
+                continue;
+            }
+            const pick = this._pickPartyRescue(rec, members);
+            if (!pick) {
+                cc.ai.rescueSeek = null;
+                continue;
+            }
+            const hungry = (Number(rec.kc) || 0) < below;
+            if (hungry && pick.mins == null) {
+                cc.ai.rescueSeek = null;
+                continue;
+            }
+            const patientC = pick.patient.creature || this.creatures.get(pick.patient.id) || pick.patient;
+            cc.ai.rescueSeek = {
+                patient: patientC,
+                pawn: pick.patient,
+                bed: pick.bed,
+                mins: pick.mins
+            };
+        }
+    },
+
+    _refreshTendHolds() {
+        const held = new Set();
+        const near = (a, b) => {
+            if (!a || !b) return false;
+            return Math.hypot((a.x || 0) - (b.x || 0), (a.y || 0) - (b.y || 0))
+                <= (Party.INTERACT_TILES || 4) * TS;
+        };
+        const mark = (tender, patient) => {
+            if (!tender || !patient || tender === patient || patient.id === tender.id) return;
+            if (this._pawnIsDowned(patient)) return;
+            if (!near(tender, patient)) return;
+            held.add(patient.id);
+        };
+        for (const p of this.players.values()) {
+            if (!p.connected) continue;
+            const members = [];
+            if (!p.dead) members.push(p);
+            for (const m of p.party || []) if (!m.dead) members.push(m);
+            for (const rec of members) {
+                const cc = rec.creature || this.creatures.get(rec.id);
+                const seek = cc?.ai?.tendSeek;
+                if (seek) {
+                    const patient = this._findOwnedPawn(seek.id) || seek;
+                    mark(rec, patient);
+                }
+                const pid = rec.tendChannel?.patientId;
+                if (pid) mark(rec, this._findOwnedPawn(pid));
+            }
+        }
+        for (const rec of this.settlers || []) {
+            if (!rec || rec.dead) continue;
+            const job = rec._busyJob;
+            if (job?.type !== "doctor" && rec._settlerPlan !== "doctor") continue;
+            const patient = job?.type === "doctor" ? job.target : null;
+            if (patient) mark(rec, patient);
+            const pid = rec._workChannel?.patientId;
+            if (pid) mark(rec, this._findOwnedPawn(pid));
+        }
+        const apply = (pawn) => {
+            if (!pawn) return;
+            const on = held.has(pawn.id);
+            pawn._tendHold = on;
+            const c = pawn.creature || this.creatures.get(pawn.id);
+            if (c) c._tendHold = on;
+        };
+        for (const p of this.players.values()) {
+            apply(p);
+            for (const m of p.party || []) apply(m);
+        }
+        for (const s of this.settlers || []) apply(s);
+    },
+
     _assignPartyTendSeeks(session, uncontrolled, controlId) {
         const members = [];
         if (!session.dead) members.push(session);
@@ -1349,7 +1490,11 @@
             const rec = row.rec;
             const cc = row.creature;
             if (!cc) continue;
-            if (Party.beyondFollowLeash(rec, control, TS)) {
+            if (cc.ai?.rescueSeek || rec._carryPawnId) {
+                cc.ai.tendSeek = null;
+                continue;
+            }
+            if (Party.beyondFollowLeash(rec, control, TS) && !rec._carryPawnId) {
                 if (cc.ai) cc.ai.tendSeek = null;
                 continue;
             }
@@ -1433,6 +1578,7 @@
                 || this._pawnVomiting(rec)
                 || rec.tendChannel
                 || cc.ai.tendSeek
+                || cc.ai.rescueSeek
             ) {
                 cc.ai.eatSeek = null;
                 continue;
@@ -1495,6 +1641,7 @@
                 if (cc && !cc.isBodyDead()) rows.push({ rec: m, creature: cc });
             }
             const uncontrolled = rows.filter((row) => row.rec.id !== controlId);
+            this._assignPartyRescues(p, uncontrolled, controlId);
             this._assignPartyTendSeeks(p, uncontrolled, controlId);
             this._assignPartyEatSeeks(p, uncontrolled, controlId);
             for (const row of rows) {
@@ -1526,7 +1673,7 @@
                 cc.role = rec.role === "settler" ? "companion" : (rec.role || "companion");
                 cc.homeSettlementId = rec.homeSettlementId || null;
                 this._bindPartyAI(cc);
-                if (Party.beyondFollowLeash(rec, controlRec, TS)) {
+                if (Party.beyondFollowLeash(rec, controlRec, TS) && !rec._carryPawnId) {
                     cc.setDesiredVel?.(0, 0);
                     cc.vx = 0;
                     cc.vy = 0;
@@ -1742,6 +1889,7 @@
 
         this._rebuildDuelAssignments();
         this._claimDuelAggro();
+        this._refreshTendHolds();
         this._tickPartyAI(dtMs, aiWorld);
         this._tickSleepWalks(dtMs);
 

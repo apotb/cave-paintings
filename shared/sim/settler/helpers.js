@@ -478,6 +478,7 @@ function planClaimKey(plan) {
         return dropKey(plan.target);
     }
     if (t === "doctor") return pawnWorkKey(plan.target, "tend");
+    if (t === "rescue") return pawnWorkKey(plan.target, "rescue");
     if (t === "sleep") return bedKey(plan.target);
     if (t === "stash") return stashKey(plan.target);
     const owned = jobsApi().forType(t);
@@ -524,6 +525,11 @@ function voidPlan(scan, plan) {
     else if (t === "doctor") {
         const p = plan.target;
         scan.patients = (scan.patients || []).filter((x) => x !== p);
+        scan.critical = (scan.critical || []).filter((x) => (x.pawn || x) !== p);
+    } else if (t === "rescue") {
+        const p = plan.target;
+        scan.rescues = (scan.rescues || []).filter((x) => x !== p);
+        scan.critical = (scan.critical || []).filter((x) => (x.pawn || x) !== p);
     }
 }
 

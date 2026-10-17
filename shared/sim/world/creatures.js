@@ -429,6 +429,22 @@
             },
             interruptSettlerForCombat(mob) {
                 SettlerWork.interruptForCombat(self, mob);
+            },
+            beginCarry(mob, patient, bed) {
+                const carrier = self._findOwnedPawn(mob?.id) || mob;
+                const pat = self._findOwnedPawn(patient?.id) || patient;
+                return self._beginCarry(carrier, pat, bed);
+            },
+            dropCarry(mob) {
+                const carrier = self._findOwnedPawn(mob?.id) || mob;
+                self._dropCarry(carrier);
+            },
+            _carryStand(mob) {
+                const carrier = self._findOwnedPawn(mob?.id) || mob;
+                return self._carryStand(carrier);
+            },
+            _findOwnedPawn(id) {
+                return self._findOwnedPawn(id);
             }
         };
     },

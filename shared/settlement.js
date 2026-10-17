@@ -61,7 +61,7 @@
     };
     /** Work inside each column. Station bills are one line; order is the bill list. */
     const JOB_WORK = {
-        doctor: ["Tend the wounded"],
+        doctor: ["Carry the downed to a bed", "Tend the wounded"],
         cook: [
             "Work at Campfire",
             "Light campfires",
@@ -1538,7 +1538,8 @@
     function isBusyWork(type) {
         if (type === "chop" || type === "gather" || type === "dig" || type === "haul" || type === "stash"
             || type === "cook" || type === "cook_light" || type === "cook_stoke"
-            || type === "leather" || type === "craft" || type === "doctor" || type === "research") return true;
+            || type === "leather" || type === "craft" || type === "doctor" || type === "rescue"
+            || type === "research") return true;
         const id = jobForWork(type);
         const job = id && jobApi()?.get?.(id);
         return !!(job && job.busy);
@@ -1549,7 +1550,7 @@
         const t = String(type || "");
         if (t === "cook" || t === "cook_light" || t === "cook_stoke") return "cook";
         if (t === "stash") return "haul";
-        if (t === "tend") return "doctor";
+        if (t === "tend" || t === "rescue") return "doctor";
         if (t === "flesh" || t === "brain" || t === "craft" || t === "skin") return "leather";
         if (t === "chop" || t === "gather" || t === "haul" || t === "leather"
             || t === "doctor" || t === "research") return t;
@@ -1801,6 +1802,36 @@
         return null;
     }
 
+    function careRowOpen(row) {
+        const pawn = row?.pawn || row;
+        if (!pawn || pawn.dead) return null;
+        return pawn;
+    }
+
+    /** Bleeding patients: carry or tend before hunger, sleep, and other work. */
+    function doctorCarePlan(row, state) {
+        if (!jobEnabled(row, "doctor")) return null;
+        for (const rowCare of state.critical || []) {
+            const pawn = careRowOpen(rowCare);
+            if (!pawn) continue;
+            const inBed = !!(rowCare.inBed || pawn._resting || pawn.resting);
+            const downed = !!rowCare.downed && !inBed;
+            if (downed && rowCare.hasBed) return { type: "rescue", target: pawn };
+            if (rowCare.canTend) return { type: "doctor", target: pawn };
+        }
+        return null;
+    }
+
+    /** Downed, not bleeding: haul after eating, before sleep. */
+    function doctorRescuePlan(row, state) {
+        if (!jobEnabled(row, "doctor")) return null;
+        for (const pawn of state.rescues || []) {
+            if (!pawn || pawn.dead || pawn._resting || pawn.resting) continue;
+            return { type: "rescue", target: pawn };
+        }
+        return null;
+    }
+
     /**
      * Highest-priority next action for a parked settler. Phaser-free so tests
      * and both LocalSim / dedicated AI share one policy.
@@ -1815,7 +1846,11 @@
             ? state.busyJob
             : null;
         const poll = !!(busy && busyJob && state.reconsiderNeeds && busyJob.type === "research");
-        if (busy && busyJob && !poll) {
+        const criticalPlan = doctorCarePlan(row, state);
+        if (criticalPlan) return criticalPlan;
+        const rescueStale = busyJob?.type === "rescue"
+            && (!busyJob.target || busyJob.target.dead || busyJob.target._resting || busyJob.target.resting);
+        if (busy && busyJob && !poll && !rescueStale) {
             if (busyJob.type === "research") {
                 const foodFirst = stashFoodInsteadOfResearch(state);
                 if (foodFirst) return foodFirst;
@@ -1835,6 +1870,8 @@
             if (keepLeather && keepCraft && keepCook && keepLight) return busyJob;
         }
         if (!busy && (Number(state.kc) || 0) < AUTO && state.canEat !== false) return { type: "eat" };
+        const haulRescue = doctorRescuePlan(row, state);
+        if (haulRescue) return haulRescue;
         if (state.isOrphan) return { type: "idle" };
         if (!busy && settlerShouldSleep(night, injured) && state.bed) {
             return { type: "sleep", target: state.bed };
@@ -2170,6 +2207,10 @@
             const rock = plan?.target?.station || plan?.target;
             const name = stoneApi()?.rockLabel?.(rock);
             return name ? `Crafting at ${name}` : "Crafting";
+        }
+        if (t === "rescue") {
+            const who = ctx.patientName != null ? ctx.patientName : pawnDisplayName(plan?.target);
+            return who && who !== "Someone" ? `Carrying ${who}` : "Carrying";
         }
         if (t === "tend" || t === "doctor") {
             const who = ctx.patientName != null ? ctx.patientName : pawnDisplayName(plan?.target);

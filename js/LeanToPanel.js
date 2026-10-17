@@ -10,6 +10,19 @@ class LeanToPanel {
 
         this._buildAction();
         this._buildDestroy();
+        this._buildMedical();
+    }
+
+    _buildMedical() {
+        const sys = this.scene.settlementSys;
+        if (!sys?.makeMedicalButton) return;
+        this._medicalUi = sys.makeMedicalButton(() => {
+            if (!this.leanTo) return;
+            sys.toggleMedical(this.leanTo);
+            this.refresh();
+        });
+        this.container.add(this._medicalUi.btn);
+        this._medicalUi.btn.setVisible(false);
     }
 
     _worldUiScale() {
@@ -205,6 +218,8 @@ class LeanToPanel {
     containsPointer(pointer) {
         if (!this.visible || !this.container?.visible || !pointer) return false;
         if (this._pointerOnRect(this.actionRect, this.actionBtn, pointer)) return true;
+        if (this._medicalUi?.btn?.visible
+            && this._pointerOnRect(this._medicalUi.rect, this._medicalUi.btn, pointer)) return true;
         return this._pointerOnRect(this.destroyRect, this.destroyBtn, pointer);
     }
 
@@ -232,6 +247,7 @@ class LeanToPanel {
         this.container.setVisible(false);
         this.actionRect?.disableInteractive();
         this.destroyRect?.disableInteractive();
+        this._medicalUi?.rect?.disableInteractive();
     }
 
     toggle(leanTo) {
@@ -253,11 +269,38 @@ class LeanToPanel {
         this._syncHitArea(this.actionRect, this._actionEnabled, this._actionBw, this._actionBh);
 
         this._destroyEnabled = allEmpty;
-        this.destroyBtn.setVisible(allEmpty);
-        if (allEmpty) this._syncHitArea(this.destroyRect, true, this._destroyBw, this._destroyBh);
-        else this.destroyRect.disableInteractive();
+        this.destroyBtn.setVisible(true);
+        this._syncHitArea(this.destroyRect, allEmpty, this._destroyBw, this._destroyBh);
+        this._paintDestroy?.();
+
+        if (!this._medicalUi) this._buildMedical();
+        this.scene.settlementSys?.syncMedicalButton(this._medicalUi, this.leanTo);
+        this._placeBottomRow();
 
         this._syncHover();
+    }
+
+    _placeBottomRow(y, actionW, addW, gap) {
+        if (!this.destroyBtn) return;
+        if (Number.isFinite(y)) this._bottomY = y;
+        if (Number.isFinite(actionW)) this._bottomActionW = actionW;
+        if (Number.isFinite(addW)) this._bottomAddW = addW;
+        if (Number.isFinite(gap)) this._bottomGap = gap;
+        const rowY = this._bottomY || 0;
+        const bw = this._bottomActionW || this._destroyBw || 78;
+        const aw = this._bottomAddW || this._actionBh || 28;
+        const g = this._bottomGap || 8;
+        this.scene.settlementSys?.placeAddActionRow(this._medicalUi, this.destroyBtn, {
+            y: rowY,
+            gap: g,
+            addW: aw,
+            actionW: bw,
+            addOn: !!this._medicalUi?.btn?.visible,
+            actionOn: true
+        });
+        if (!this.scene.settlementSys?.placeAddActionRow) {
+            this.destroyBtn.setPosition(0, rowY);
+        }
     }
 
     layout() {
@@ -292,7 +335,8 @@ class LeanToPanel {
 
         const objH = this.leanTo.displayHeight || 16;
         this.actionBtn.setPosition(0, -(objH + clear + bh / 2));
-        this.destroyBtn.setPosition(0, clear + bh / 2);
+        this._medicalUi?.setSize?.(bh);
+        this._placeBottomRow(clear + bh / 2, bw, bh, 8 * ws);
 
         this.container.setPosition(this.leanTo.x, this.leanTo.y);
         this.refresh();

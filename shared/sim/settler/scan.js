@@ -209,9 +209,9 @@ function digThing(world, rec, settle, claims) {
     return best;
 }
 
-function freeBed(world, rec, settle, claims) {
-    let best = null;
-    let bestD = Infinity;
+function freeBed(world, rec, settle, claims, opts = {}) {
+    const medical = !!opts.medical;
+    const candidates = [];
     for (const c of settleChunks(world, settle)) {
         if (!Array.isArray(c.things)) continue;
         for (const e of c.things) {
@@ -220,19 +220,18 @@ function freeBed(world, rec, settle, claims) {
             const def = world._sleepDef(e);
             Place.ensureSleepEntry(e, def);
             const n = Sleep.slotCount(def, e);
+            const heal = Sleep.healBonus ? Sleep.healBonus(def) : 8;
             for (let i = 0; i < n; i++) {
                 if (world._sleepSlotClaimed(e, i, rec.id)) continue;
                 const key = bedKey({ entry: e, slot: i });
                 if (claimedByOther(claims, key, rec.id)) continue;
-                const d = Math.hypot(rec.x - e.x, rec.y - e.y);
-                if (d < bestD) {
-                    bestD = d;
-                    best = { entry: e, slot: i };
-                }
+                candidates.push({ entry: e, slot: i, x: e.x, y: e.y, heal, def });
             }
         }
     }
-    return best;
+    return Sleep.pickSleepSlot
+        ? Sleep.pickSleepSlot(candidates, { x: rec.x, y: rec.y }, medical)
+        : (candidates[0] || null);
 }
 
 function pawnCreature(world, pawn) {
@@ -268,6 +267,85 @@ function dropPatient(world, rec, patient, skip = false) {
     }
     endWorkHold(rec);
     setSettlerAct(rec, rec?.creature, "Idle");
+}
+
+function pawnDowned(world, pawn) {
+    if (!pawn || pawn.dead) return false;
+    const c = pawnCreature(world, pawn);
+    return !!(pawn.prone || pawn._downed || c?._prone || c?.isIncapacitated?.() || c?.isImmobile?.());
+}
+
+function pawnInBed(pawn) {
+    return !!(pawn && (pawn._resting || pawn.resting));
+}
+
+function bleedMinutes(world, pawn) {
+    const c = pawnCreature(world, pawn);
+    const body = c?.anatomy;
+    if (!body || !BodyHealing?.minutesToBleedOut) return null;
+    const mins = BodyHealing.minutesToBleedOut(body);
+    return mins == null ? null : mins;
+}
+
+function medicineFor(world, rec, settle, patient, claims) {
+    const sources = listMedicineSources(world, rec, settle, patient, claims);
+    return sources.some((s) => sourceAvail(world, rec, settle, s, rec.id) > 0);
+}
+
+/**
+ * Bleeding patients (any walker or downed person in camp) and downed people
+ * who are not bleeding. Bleeding is sorted by time left, then distance.
+ */
+function settlerCare(world, rec, settle, claims) {
+    const rows = [];
+    const campBed = freeBed(world, rec, settle, claims, { medical: true });
+    const consider = (p) => {
+        if (!p || p === rec || p.id === rec.id || p.dead) return;
+        if (!inRange(settle, p.x, p.y)) return;
+        if (pawnInBed(p) && !bleedMinutes(world, p)) return;
+        const key = pawnWorkKey(p, "rescue");
+        const tendKey = pawnWorkKey(p, "tend");
+        if (claimedByOther(claims, key, rec.id) || claimedByOther(claims, tendKey, rec.id)) return;
+        if (isSkipped(rec, key) || isSkipped(rec, tendKey)) return;
+        if (p._carriedBy && p._carriedBy !== rec.id) return;
+        const downed = pawnDowned(world, p);
+        const inBed = pawnInBed(p);
+        const mins = bleedMinutes(world, p);
+        if (!downed && mins == null) return;
+        if (downed && inBed && mins == null) return;
+        const canTend = medicineFor(world, rec, settle, p, claims);
+        const hasBed = !inBed && !!campBed;
+        rows.push({
+            pawn: p,
+            downed,
+            inBed,
+            mins,
+            canTend,
+            hasBed,
+            dist: Math.hypot((rec.x || 0) - (p.x || 0), (rec.y || 0) - (p.y || 0))
+        });
+    };
+    for (const s of settlersOf(world, settle)) consider(s);
+    const owner = world.players.get(rec.ownerId);
+    if (owner) {
+        consider(owner);
+        for (const m of owner.party || []) consider(m);
+    }
+    const blocksHunger = (r) => {
+        if (r.mins == null) return false;
+        if (r.downed && !r.inBed && r.hasBed) return true;
+        if (r.canTend) return true;
+        return false;
+    };
+    const critical = rows.filter(blocksHunger).sort((a, b) => {
+        if (a.mins !== b.mins) return a.mins - b.mins;
+        return a.dist - b.dist;
+    });
+    const rescues = rows
+        .filter((r) => r.downed && !r.inBed && r.mins == null && r.hasBed)
+        .sort((a, b) => a.dist - b.dist)
+        .map((r) => r.pawn);
+    return { critical, rescues };
 }
 
 function settlerPatients(world, rec, settle, claims) {
@@ -853,7 +931,9 @@ function rockWork(world, rec, settle, claims) {
 function scanWork(world, rec, settle, claims) {
     const jobs = Settlement.jobsFor(settle, rec.id);
     const enabled = new Set(Settlement.enabledJobs(jobs));
-    const patients = jobOn(enabled, "doctor") ? settlerPatients(world, rec, settle, claims) : [];
+    const doctorOn = jobOn(enabled, "doctor");
+    const patients = doctorOn ? settlerPatients(world, rec, settle, claims) : [];
+    const care = doctorOn ? settlerCare(world, rec, settle, claims) : { critical: [], rescues: [] };
     const keepBandage = false;
     const circle = jobOn(enabled, "research") ? researchCircle(world, rec, settle, claims) : null;
     const keepPigment = !!(circle && Research?.needsPigment?.(circle));
@@ -884,10 +964,12 @@ function scanWork(world, rec, settle, claims) {
         chopTree: jobOn(enabled, "chop") ? chopTree(world, rec, settle, claims) : null,
         researchCircle: circle,
         patients,
+        critical: care.critical,
+        rescues: care.rescues,
         keepBandage,
         keepPigment: keepPigment || keepTally,
         isPigment,
-        bed: (night || injured) ? freeBed(world, rec, settle, claims) : null,
+        bed: (night || injured) ? freeBed(world, rec, settle, claims, { medical: !!injured }) : null,
         stash,
         night,
         injured,
@@ -904,6 +986,8 @@ function scanWork(world, rec, settle, claims) {
     ctx.patientNeedsTend = patientNeedsTend;
     ctx.dropPatient = dropPatient;
     ctx.settlerPatients = settlerPatients;
+    ctx.settlerCare = settlerCare;
+    ctx.pawnDowned = pawnDowned;
     ctx.fireNeedsLight = fireNeedsLight;
     ctx.fireCanFuel = fireCanFuel;
     ctx.unlitFire = unlitFire;

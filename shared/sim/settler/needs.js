@@ -37,6 +37,7 @@
     const releaseFoodReserve = (...args) => ctx.releaseFoodReserve(...args);
     const fetchMedicineTake = (...args) => ctx.fetchMedicineTake(...args);
     const goOrWalk = (...args) => ctx.goOrWalk(...args);
+    const walkTo = (...args) => ctx.walkTo(...args);
     const getItem = (...args) => ctx.getItem(...args);
     const manipScale = (...args) => ctx.manipScale(...args);
     const basketsOf = (...args) => ctx.basketsOf(...args);
@@ -151,6 +152,57 @@ function doDoctor(world, rec, settle, patient) {
         targetHints: targets.map((t) => BodyHealing.tendTargetHint?.(t)).filter(Boolean)
     };
     return halt();
+}
+
+function doRescue(world, rec, settle, patient) {
+    if (!patient || patient.dead || patient._resting || patient.resting) {
+        world._dropCarry?.(rec);
+        dropPatient(world, rec, patient, false);
+        return halt();
+    }
+    const downed = world._pawnIsDowned?.(patient);
+    if (!downed) {
+        world._dropCarry?.(rec);
+        dropPatient(world, rec, patient, false);
+        return halt();
+    }
+    if (patient._carriedBy && patient._carriedBy !== rec.id) {
+        dropPatient(world, rec, patient, false);
+        return halt();
+    }
+    if (rec._carryPawnId && rec._carryPawnId !== patient.id) {
+        world._dropCarry?.(rec);
+    }
+    const bed = world._rescueBedFor?.(patient, { medical: true, settle, rec });
+    if (!rec._carryPawnId) {
+        if (!bed) {
+            dropPatient(world, rec, patient, false);
+            return halt();
+        }
+        if (!world._pawnsAdjacent?.(rec, patient)) {
+            const walked = goOrWalk(world, rec, patient);
+            if (walked) return walked;
+        }
+        if (!world._beginCarry?.(rec, patient, bed)) return halt();
+    } else if (bed && (rec._carryBed?.uid !== bed.entry?.uid || rec._carryBed?.slot !== bed.slot)) {
+        rec._carryBed = { uid: bed.entry.uid, slot: bed.slot };
+        patient._restWalk = { uid: bed.entry.uid, slot: bed.slot };
+        const c = rec.creature || world.creatures?.get?.(rec.id);
+        if (c) c._carryBed = rec._carryBed;
+        const pc = patient.creature || world.creatures?.get?.(patient.id);
+        if (pc) pc._restWalk = patient._restWalk;
+    }
+    const stand = world._carryStand?.(rec);
+    if (!stand) {
+        world._dropCarry?.(rec);
+        return halt();
+    }
+    const dist = Math.hypot((rec.x || 0) - stand.x, (rec.y || 0) - stand.y);
+    if (dist < 16) {
+        world._finishCarry?.(rec);
+        return halt();
+    }
+    return walkTo(stand.x, stand.y);
 }
 
 function doSleep(world, rec, bed) {
@@ -456,6 +508,7 @@ function doEat(world, rec, settle, keepOpts) {
     return halt();
 }
     ctx.doDoctor = doDoctor;
+    ctx.doRescue = doRescue;
     ctx.doSleep = doSleep;
     ctx.eatExtraBags = eatExtraBags;
     ctx.foundFromEatPick = foundFromEatPick;

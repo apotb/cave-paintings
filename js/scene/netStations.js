@@ -405,6 +405,7 @@
             };
             if (isSleep) {
                 if (Array.isArray(src.occupants)) entry.occupants = src.occupants;
+                if (src.medical != null) entry.medical = !!src.medical;
                 if (typeof Place !== "undefined") Place.ensureSleepEntry(entry, def);
             } else if (isStation) {
                 if (typeof Place !== "undefined") Place.ensureCraftStationEntry(entry);
@@ -445,6 +446,7 @@
             if (src.digSettled != null) entry.digSettled = src.digSettled;
             if (src.fillId) entry.fillId = src.fillId;
             if (Array.isArray(src.occupants)) entry.occupants = src.occupants;
+            if (src.medical != null) entry.medical = !!src.medical;
             this._netApplyStorageFilter(entry, src);
             this._netApplyFigurineFields(entry, src);
         }

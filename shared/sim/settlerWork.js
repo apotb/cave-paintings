@@ -117,6 +117,7 @@ const shellRequire = typeof require === "function" ? require : undefined;
     const clearPaintBar = (...args) => ctx.clearPaintBar(...args);
     const doSleep = (...args) => ctx.doSleep(...args);
     const doDoctor = (...args) => ctx.doDoctor(...args);
+    const doRescue = (...args) => ctx.doRescue(...args);
     const basketsOf = (...args) => ctx.basketsOf(...args);
     const goOrWalk = (...args) => ctx.goOrWalk(...args);
     const depositKeepGear = (...args) => ctx.depositKeepGear(...args);
@@ -268,7 +269,8 @@ function tick(world, mob, delta) {
         && !rec._returnFood
         && !isWorkHold(rec)
     ) {
-        const eat = doEat(world, rec, settle, keepOpts);
+        const careNow = Settlement.jobEnabled(liveJobs, "doctor") && (scan.critical || []).length;
+        const eat = careNow ? null : doEat(world, rec, settle, keepOpts);
         if (eat) {
             rec._researchPoll = 0;
             endWorkHold(rec);
@@ -306,7 +308,8 @@ function tick(world, mob, delta) {
         }
 
         const hold = isWorkHold(rec) || delivering;
-        if (!hold) {
+        const careNow = Settlement.jobEnabled(liveJobs, "doctor") && (scan.critical || []).length;
+        if (!hold && !careNow) {
             const eat = doEat(world, rec, settle, keepOpts);
             if (eat) {
                 rec._researchPoll = 0;
@@ -336,6 +339,8 @@ function tick(world, mob, delta) {
             bed: scan.bed || null,
             jobs: liveJobs,
             patients: scan.patients || [],
+            critical: scan.critical || [],
+            rescues: scan.rescues || [],
             unlitFire: scan.unlitFire,
             light: scan.light,
             cookBill: scan.cookBill,
@@ -399,6 +404,7 @@ function tick(world, mob, delta) {
     setSettlerAct(rec, mob, label);
 
     if (plan.type === "sleep" && plan.target) return doSleep(world, rec, plan.target);
+    if (plan.type === "rescue" && plan.target) return doRescue(world, rec, settle, plan.target);
     if (plan.type === "doctor" && plan.target) return doDoctor(world, rec, settle, plan.target);
 
     if (rec._haulDestUid && (stash.has || rec._haulMergeOnly)) {

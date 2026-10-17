@@ -720,6 +720,11 @@
                 mob.setDesiredVel?.(0, 0);
                 return;
             }
+            if (mob._tendHold) {
+                this._clearCombat();
+                mob.setDesiredVel?.(0, 0);
+                return;
+            }
             // Camp settlers keep working when their owner is offline or dead.
             // Party members still wait on a dead leader.
             if (!settler && world?.leaderDead?.(mob)) {
@@ -732,6 +737,7 @@
                 !settler
                 && follow
                 && !follow.isBodyDead?.()
+                && !mob._carryPawnId
                 && Party?.beyondFollowLeash?.(mob, follow, TILE)
             ) {
                 this._clearCombat();
@@ -744,6 +750,7 @@
                 const home = world?.getSettlement?.(mob);
                 const next = world?.getAssistTarget?.(mob) || null;
                 if (next && this._settlerDefendOk(next, home)) {
+                    world?.dropCarry?.(mob);
                     world?.interruptSettlerForCombat?.(mob);
                     if (mob.isIncapacitated?.() || mob.isImmobile?.()) {
                         this._clearCombat();
@@ -851,6 +858,7 @@
                 mob.setDesiredVel?.(0, 0);
                 return;
             }
+            if (this._tickRescueSeek(delta, world)) return;
             if (this._tickTendSeek(delta, world)) return;
             if (this._tickEatSeek(delta, world)) return;
             this._tickFollow(follow, delta);
@@ -858,11 +866,46 @@
 
         _isTendPatient(world) {
             const mob = this.mob;
-            if (mob._beingTended) return true;
+            if (mob._tendHold || mob._beingTended) return true;
+            if (!world) return false;
             for (const mate of world?.getPartyMates?.(mob) || []) {
-                if (mate && mate !== mob && mate.ai?.tendSeek === mob) return true;
+                if (!mate || mate === mob || mate.ai?.tendSeek !== mob) continue;
+                if (Party?.inInteractRange?.(mate, mob, TILE)) return true;
             }
             return false;
+        }
+
+        _tickRescueSeek(delta, world) {
+            const mob = this.mob;
+            const job = this.rescueSeek;
+            if (!job?.patient || job.patient.isBodyDead?.()) {
+                this.rescueSeek = null;
+                return false;
+            }
+            const patient = job.pawn || world?._findOwnedPawn?.(job.patient.id) || job.patient;
+            if (mob._carryPawnId) {
+                const stand = world?._carryStand?.(world._findOwnedPawn?.(mob.id) || mob) || job.stand;
+                if (!stand) {
+                    mob.setDesiredVel?.(0, 0);
+                    return true;
+                }
+                const dist = Math.hypot((mob.x || 0) - stand.x, (mob.y || 0) - stand.y);
+                if (dist < ((typeof Sleep !== "undefined" && Sleep.ARRIVE_PX) || 16)) {
+                    mob.setDesiredVel?.(0, 0);
+                    return true;
+                }
+                this._walkToward(stand.x, stand.y, false, world, delta);
+                return true;
+            }
+            if (Party?.inInteractRange?.(mob, patient, TILE)) {
+                const bed = job.bed;
+                world?.beginCarry?.(mob, patient, bed);
+                mob.setDesiredVel?.(0, 0);
+                return true;
+            }
+            const dist = Math.hypot((mob.x || 0) - (patient.x || 0), (mob.y || 0) - (patient.y || 0));
+            this._walkToward(patient.x, patient.y, dist > TILE * 6, world, delta);
+            return true;
         }
 
         _tickTendSeek(delta, world) {
@@ -1639,8 +1682,9 @@
                 })
                 : null;
             if (moved) {
-                mob.isSprinting = moved.sprinting;
-                mob.setDesiredVel?.(nx * moved.speed, ny * moved.speed);
+                const carryMul = mob._carryPawnId ? 0.5 : 1;
+                mob.isSprinting = moved.sprinting && !mob._carryPawnId;
+                mob.setDesiredVel?.(nx * moved.speed * carryMul, ny * moved.speed * carryMul);
                 this._face(nx, ny);
                 return;
             }
@@ -1649,6 +1693,7 @@
                 : 1;
             let mul = 1;
             if (mob._eatChannel || mob._tendChannel || mob._tending) mul *= 0.5;
+            if (mob._carryPawnId) mul *= 0.5;
             if (mob.isAttacking?.()) mul *= 0.5;
             const tiles = 3.5 * (sprint && (Number(mob.kc) > 0) ? 1.5 : 1);
             const stroll = this._strollMul != null ? this._strollMul : 1;
