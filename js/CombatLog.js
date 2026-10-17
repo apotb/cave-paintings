@@ -159,13 +159,23 @@ class CombatLog {
      */
     _giveStuff(meta, stuff) {
         const raw = String(stuff || "").trim();
-        if (!raw) return { extras: {} };
-        if (meta?.id === "pebble") {
+        if (!raw) {
+            if (meta?.id === "stone_spear") {
+                const stone = (typeof Stone !== "undefined" && Stone.stoneOf)
+                    ? (Stone.stoneOf({ id: "stone_spear" }) || "andesite")
+                    : "andesite";
+                return { extras: { stone, knapMaterial: "pebble" } };
+            }
+            return { extras: {} };
+        }
+        if (meta?.id === "pebble" || meta?.id === "stone_spear") {
             const stone = (typeof Stone !== "undefined" && Stone.fromToken)
                 ? Stone.fromToken(raw)
                 : null;
             if (!stone) return { error: `Unknown stone "${stuff}".` };
-            return { extras: { stone } };
+            const extras = { stone };
+            if (meta.id === "stone_spear") extras.knapMaterial = "pebble";
+            return { extras };
         }
         return { error: `${meta?.name || meta?.id || "Item"} takes no extra.` };
     }
@@ -501,9 +511,15 @@ class CombatLog {
             if (remaining > 0) {
                 DroppedItem.spawn(this.scene, player.x, player.y, meta, remaining, undefined, extras);
             }
-            const label = (meta.id === "pebble" && typeof Stone !== "undefined" && Stone.displayName)
-                ? Stone.displayName({ id: "pebble", stone })
-                : (meta.name || meta.id);
+            const named = (typeof Stone !== "undefined" && Stone.displayName
+                && (meta.id === "pebble" || (meta.id === "stone_spear" && stone)))
+                ? Stone.displayName({
+                    id: meta.id,
+                    stone,
+                    ...(meta.id === "stone_spear" ? { knapMaterial: "pebble" } : {})
+                })
+                : null;
+            const label = named || meta.name || meta.id;
             if (remaining > 0) {
                 this.push(`Gave ${qty}× ${label} (${remaining} dropped on ground)`);
             } else {

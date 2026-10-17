@@ -29,11 +29,19 @@
      */
     function giveStuff(meta, stuff) {
         const raw = String(stuff || "").trim();
-        if (!raw) return { extras: {} };
-        if (meta?.id === "pebble") {
+        if (!raw) {
+            if (meta?.id === "stone_spear") {
+                const stone = stoneApi()?.stoneOf?.({ id: "stone_spear" }) || "andesite";
+                return { extras: { stone, knapMaterial: "pebble" } };
+            }
+            return { extras: {} };
+        }
+        if (meta?.id === "pebble" || meta?.id === "stone_spear") {
             const stone = stoneApi()?.fromToken?.(raw);
             if (!stone) return { error: `Unknown stone "${stuff}".` };
-            return { extras: { stone } };
+            const extras = { stone };
+            if (meta.id === "stone_spear") extras.knapMaterial = "pebble";
+            return { extras };
         }
         return { error: `${meta?.name || meta?.id || "Item"} takes no extra.` };
     }
@@ -483,9 +491,14 @@
                 this._pushDrop(pawn.x, pawn.y, drop);
             }
             const stones = stoneApi();
-            const label = (meta.id === "pebble" && stones?.displayName)
-                ? stones.displayName({ id: "pebble", stone })
-                : (meta.name || meta.id);
+            const named = stones?.displayName && (meta.id === "pebble" || (meta.id === "stone_spear" && stone))
+                ? stones.displayName({
+                    id: meta.id,
+                    stone,
+                    ...(meta.id === "stone_spear" ? { knapMaterial: "pebble" } : {})
+                })
+                : null;
+            const label = named || meta.name || meta.id;
             const out = left > 0
                 ? `Gave ${qty}× ${label} (${left} dropped on ground)`
                 : `Gave ${qty}× ${label}`;

@@ -1025,6 +1025,30 @@ test("/give pebble keeps the stone, and /set stamps it on rocks and piles", () =
     assert.ok((chunk.lootableThings || []).some((t) => t && t.id === "flowering_cactus"));
 });
 
+test("/give stone_spear keeps the stone", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give stone_spear 1 granite" });
+    const stack = pawn.inventory.find((s) => s && s.id === "stone_spear");
+    assert.ok(stack);
+    assert.equal(stack.quantity, 1);
+    assert.equal(stack.stone, "granite");
+    assert.equal(stack.knapMaterial, "pebble");
+    const chats = world.drainEvents().filter((e) => e.kind === "chat");
+    assert.ok(chats.some((e) => e.text === "Gave 1× Granite Spear"));
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give stone_spear 1 quartz" });
+    const bad = world.drainEvents().filter((e) => e.kind === "chat");
+    assert.ok(bad.some((e) => e.text === 'Unknown stone "quartz".'));
+    assert.equal(pawn.inventory.filter((s) => s && s.id === "stone_spear").length, 1);
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give stone_spear" });
+    const spears = pawn.inventory.filter((s) => s && s.id === "stone_spear");
+    assert.equal(spears.length, 2);
+    const plain = spears.find((s) => s.stone === "andesite");
+    assert.ok(plain);
+    assert.equal(plain.knapMaterial, "pebble");
+    const named = world.drainEvents().filter((e) => e.kind === "chat");
+    assert.ok(named.some((e) => e.text === "Gave 1× Andesite Spear"));
+});
+
 test("/heal restores body and announces", () => {
     const { world, pawn, Protocol } = createTestWorld();
     pawn.hp = 1;
