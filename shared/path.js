@@ -184,11 +184,14 @@
     function cellStandCandidates(cx, cy, cell) {
         const c = cell || TILE;
         const y = cy * c + c;
-        const xs = [0.25, 0.12, 0, 0.38, 0.62, 0.75];
+        const xs = [0.25, 0.12, 0, 0.38, 0.62, 0.75, 0.5];
         const out = [];
         for (let i = 0; i < xs.length; i++) {
             out.push({ x: cx * c + c * xs[i], y });
         }
+        // East and west doors sit mid-tile. The south-edge samples above miss
+        // that opening, so a centered feet pose is tried only after them.
+        out.push({ x: cx * c + c * 0.5, y: cy * c + c * 0.55 });
         return out;
     }
 

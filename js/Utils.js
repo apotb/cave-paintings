@@ -2092,16 +2092,42 @@ function pawnPoseBlocked(pawn, x, y, pad = 0) {
     const top = body.top + dy - p;
     const bottom = body.bottom + dy + p;
     if (pawnTileBlocked(pawn, x, y)) return true;
-    let hit = false;
-    forThingsNearAabb(scene, left, right, top, bottom, (t) => {
-        const tb = t?.body;
-        if (!tb || !tb.enable || pawnIgnoresThing(pawn, t)) return false;
-        if (right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom) {
-            hit = true;
+    const overlaps = (l, r, t, b, pred) => {
+        let matched = false;
+        forThingsNearAabb(scene, l, r, t, b, (thing) => {
+            const tb = thing?.body;
+            if (!tb || !tb.enable || pawnIgnoresThing(pawn, thing)) return false;
+            if (!(r > tb.left && l < tb.right && b > tb.top && t < tb.bottom)) return false;
+            if (pred && !pred(thing)) return false;
+            matched = true;
             return true;
+        });
+        return matched;
+    };
+    let hit = overlaps(left, right, top, bottom);
+    // Path margin seals a hut door the 8×8 body can walk through. Ignore that
+    // margin when it touches only interior walls.
+    if (hit && p > 0) {
+        const bare = overlaps(left + p, right - p, top + p, bottom - p);
+        if (!bare) {
+            let foreign = false;
+            let any = false;
+            forThingsNearAabb(scene, left, right, top, bottom, (thing) => {
+                const tb = thing?.body;
+                if (!tb || !tb.enable || pawnIgnoresThing(pawn, thing)) return false;
+                if (!(right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom)) {
+                    return false;
+                }
+                any = true;
+                if (!thing.meta?.sleep?.interior) {
+                    foreign = true;
+                    return true;
+                }
+                return false;
+            });
+            if (any && !foreign) hit = false;
         }
-        return false;
-    });
+    }
     if (hit) return true;
     if (typeof Sleep !== "undefined" && Sleep.navAroundBeds?.(pawn)
         && typeof Place !== "undefined" && Place.footprintWorldRect) {

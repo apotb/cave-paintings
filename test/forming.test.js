@@ -41,6 +41,51 @@ function deityShape() {
     g[9][11][8] = true;
     g[7][12][8] = true;
     g[9][12][8] = true;
+    g[7][13][8] = true;
+    g[9][13][8] = true;
+    return g;
+}
+
+function bulkyHeadBiped() {
+    const g = Forming.emptyGrid();
+    box(g, 7, 7, 0, 4, 8, 8);
+    box(g, 10, 10, 0, 4, 8, 8);
+    box(g, 8, 9, 3, 5, 8, 8);
+    box(g, 4, 13, 6, 9, 5, 11);
+    return g;
+}
+
+function bumpyCrown() {
+    const g = humanShape();
+    box(g, 6, 10, 9, 10, 8, 8);
+    g[6][11][8] = true;
+    g[10][11][8] = true;
+    return g;
+}
+
+function highHands() {
+    const g = humanShape();
+    box(g, 4, 4, 8, 10, 8, 8);
+    box(g, 4, 7, 5, 5, 8, 8);
+    box(g, 12, 12, 8, 10, 8, 8);
+    box(g, 9, 12, 5, 5, 8, 8);
+    return g;
+}
+
+function yPose() {
+    const g = humanShape();
+    box(g, 4, 4, 8, 12, 8, 8);
+    box(g, 4, 7, 6, 7, 8, 8);
+    box(g, 12, 12, 8, 12, 8, 8);
+    box(g, 9, 12, 6, 7, 8, 8);
+    return g;
+}
+
+function twoHeads() {
+    const g = humanShape();
+    box(g, 11, 12, 9, 11, 8, 8);
+    g[11][8][8] = true;
+    box(g, 10, 11, 6, 7, 8, 8);
     return g;
 }
 
@@ -148,6 +193,41 @@ test("classifier: animal, human, deity, lump", () => {
 test("deity extras without idolatry fall back to human", () => {
     const r = Forming.classify(deityShape(), { idolatry: false });
     assert.equal(r.formClass, "human");
+});
+
+test("two feet stay human when the head is wider than the body", () => {
+    const bulky = Forming.classify(bulkyHeadBiped(), { idolatry: true });
+    assert.equal(bulky.legs, 2);
+    assert.equal(bulky.formClass, "human");
+    const uneven = bulkyHeadBiped();
+    uneven[7][0][8] = false;
+    const shortLeg = Forming.classify(uneven, { idolatry: true });
+    assert.equal(shortLeg.legs, 2);
+    assert.equal(shortLeg.formClass, "human");
+});
+
+test("a lumpy crown or lowered hands are not a deity", () => {
+    const crown = Forming.classify(bumpyCrown(), { idolatry: true });
+    assert.equal(crown.formClass, "human");
+    const hands = Forming.classify(highHands(), { idolatry: true });
+    assert.equal(hands.formClass, "human");
+});
+
+test("horns, second head, and raised arms are deities", () => {
+    assert.equal(Forming.classify(deityShape(), { idolatry: true }).formClass, "deity");
+    assert.equal(Forming.classify(twoHeads(), { idolatry: true }).formClass, "deity");
+    assert.equal(Forming.classify(yPose(), { idolatry: true }).formClass, "deity");
+    assert.equal(Forming.classify(yPose(), { idolatry: false }).formClass, "human");
+});
+
+test("a long body on two nubs stays a lump", () => {
+    const g = Forming.emptyGrid();
+    box(g, 3, 12, 2, 4, 5, 10);
+    box(g, 4, 5, 0, 1, 6, 7);
+    box(g, 10, 11, 0, 1, 6, 7);
+    const r = Forming.classify(g, { idolatry: true });
+    assert.equal(r.legs, 2);
+    assert.equal(r.formClass, "lump");
 });
 
 test("classifier uses largest connected component", () => {

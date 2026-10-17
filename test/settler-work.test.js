@@ -3536,6 +3536,99 @@ test("dedicated doctor stops when the patient has no injuries", () => {
     assert.equal(/Tending/.test(doctor._settlerAct || "Idle"), false);
 });
 
+test("dedicated doctor walks into a hut to tend someone resting there", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.connected = true;
+    const def = world._thingDef("hut");
+    const tx = 8;
+    const ty = 8;
+    for (const rot of [0, 90, 180, 270]) {
+        for (const slot of [0, 1]) {
+            const pos = Place.footprintWorldPos(tx, ty, rot, def.footprint, 16);
+            const entry = {
+                uid: "hut1",
+                id: "hut",
+                x: pos.x,
+                y: pos.y,
+                tx,
+                ty,
+                rot,
+                occupants: [null, null, null, null]
+            };
+            Place.ensureSleepEntry(entry, def);
+            const chunk = originChunk(world);
+            chunk.things.length = 0;
+            chunk.things.push(entry);
+            world._chunkRectCache = new Map();
+            world._sleepRectCache = new Map();
+            world.settlers.length = 0;
+            world.settlements.length = 0;
+            world.creatures.clear();
+            const bed = Sleep.sleeperWorldPos(entry, slot, 16, def);
+            const settle = Settlement.createSettlement({
+                x: pos.x,
+                y: pos.y,
+                ownerId: pawn.id
+            });
+            const doctor = world._settlerFromSnap({
+                id: "doc",
+                name: "Doc",
+                x: pos.x - 80,
+                y: pos.y + 64,
+                ownerId: pawn.id,
+                homeSettlementId: settle.id,
+                kc: 1600,
+                inventory: [{ id: "leaf_cord", quantity: 2 }, null, null, null, null]
+            });
+            const patient = world._settlerFromSnap({
+                id: "pat",
+                name: "Ugg",
+                x: bed.x,
+                y: bed.y,
+                ownerId: pawn.id,
+                homeSettlementId: settle.id,
+                kc: 1600,
+                inventory: [null, null, null, null, null]
+            });
+            settle.jobs = {};
+            settle.jobs[doctor.id] = {
+                doctor: 1, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 0
+            };
+            settle.jobs[patient.id] = {
+                doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 0
+            };
+            world.settlements.push(settle);
+            world.settlers.push(doctor, patient);
+            const pc = world._ensureSettlerCreature(patient);
+            const part = pc.anatomy.part("Left Arm") || pc.anatomy.core;
+            part.injure({
+                id: "cut",
+                severity: 8,
+                bleeding: true,
+                bleedRate: 0.06,
+                tended: false
+            });
+            world._occupySlot(pawn, patient, entry, slot);
+            const rect = Place.footprintWorldRect(entry, def, 16);
+            let tended = false;
+            for (let i = 0; i < 800; i++) {
+                world.tick(16);
+                if (doctor._workChannel?.kind === "tend") {
+                    tended = true;
+                    break;
+                }
+            }
+            const inside = doctor.x > rect.left && doctor.x < rect.right
+                && doctor.y > rect.top && doctor.y < rect.bottom;
+            assert.equal(
+                tended && inside,
+                true,
+                `rot ${rot} slot ${slot} tended=${tended} inside=${inside} at ${doctor.x.toFixed(1)},${doctor.y.toFixed(1)} act=${doctor._settlerAct}`
+            );
+        }
+    }
+});
+
 test("dedicated doctor drops a healed patient instead of tending forever", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec: doctor } = parkSettler(world, pawn, {

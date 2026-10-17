@@ -206,37 +206,44 @@
         return g;
     }
 
-    function supportsAtBottom(cells) {
-        if (!cells.length) return 0;
+    // Ground contacts within one voxel of the floor. A leg that is a voxel
+    // short of the other still counts as its own foot.
+    function footComponents(cells) {
+        if (!cells.length) return [];
         const box = aabbOf(cells);
-        const y0 = box.minY;
-        const seen = Object.create(null);
-        const key = (x, z) => `${x},${z}`;
-        const onFloor = [];
+        const occupied = new Set(cells.map(([x, y, z]) => `${x},${y},${z}`));
+        const contact = [];
         for (const [x, y, z] of cells) {
-            if (y === y0) onFloor.push([x, z]);
+            if (y > box.minY + 1) continue;
+            if (occupied.has(`${x},${y - 1},${z}`)) continue;
+            contact.push([x, y, z]);
         }
-        let n = 0;
-        for (const [sx, sz] of onFloor) {
-            const k0 = key(sx, sz);
-            if (seen[k0]) continue;
-            n++;
-            const stack = [[sx, sz]];
-            seen[k0] = true;
+        const index = new Set(contact.map(([x, y, z]) => `${x},${y},${z}`));
+        const seen = new Set();
+        const comps = [];
+        for (const start of contact) {
+            const k0 = `${start[0]},${start[1]},${start[2]}`;
+            if (seen.has(k0)) continue;
+            const blob = [];
+            const stack = [start];
+            seen.add(k0);
             while (stack.length) {
-                const [x, z] = stack.pop();
-                for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-                    const nx = x + dx;
-                    const nz = z + dz;
-                    const k = key(nx, nz);
-                    if (seen[k]) continue;
-                    if (!onFloor.some(([ox, oz]) => ox === nx && oz === nz)) continue;
-                    seen[k] = true;
-                    stack.push([nx, nz]);
+                const [x, y, z] = stack.pop();
+                blob.push([x, y, z]);
+                for (const [nx, ny, nz] of neighbors6(x, y, z)) {
+                    const k = `${nx},${ny},${nz}`;
+                    if (seen.has(k) || !index.has(k)) continue;
+                    seen.add(k);
+                    stack.push([nx, ny, nz]);
                 }
             }
+            comps.push(blob);
         }
-        return n;
+        return comps;
+    }
+
+    function supportsAtBottom(cells) {
+        return footComponents(cells).length;
     }
 
     function sliceComponents(cells, pred) {
@@ -267,31 +274,88 @@
         return comps;
     }
 
-    function hasHorns(cells, box) {
-        if (box.h < 4) return false;
-        const crown = box.maxY;
-        const spikes = sliceComponents(cells, (c) => c[1] >= crown);
-        return spikes.length >= 2 && spikes.every((b) => b.length <= 4);
+    // A horn is a narrow spike that keeps rising after it leaves the skull.
+    // One-voxel bumps on an otherwise solid crown are just a head.
+    function spikeHeight(cells, spike, crown) {
+        const cols = new Set(spike.map(([x, , z]) => `${x},${z}`));
+        let h = 0;
+        for (let y = crown; y >= 0; y--) {
+            let mine = 0;
+            let extra = 0;
+            for (const [x, yy, z] of cells) {
+                if (yy !== y) continue;
+                if (cols.has(`${x},${z}`)) mine++;
+                else extra++;
+            }
+            if (!mine) break;
+            if (h > 0 && extra >= 2) break;
+            h++;
+            if (h >= 4) break;
+        }
+        return h;
     }
 
+    function hasHorns(cells, box) {
+        if (box.h < 5) return false;
+        const crown = box.maxY;
+        const spikes = sliceComponents(cells, (c) => c[1] === crown);
+        if (spikes.length < 2 || !spikes.every((b) => b.length <= 4)) return false;
+        let horns = 0;
+        for (const spike of spikes) {
+            if (spikeHeight(cells, spike, crown) >= 2) horns++;
+        }
+        return horns >= 2;
+    }
+
+    // Both masses have to reach the crown. A hand beside the shoulders does not.
     function hasSecondHead(cells, box) {
-        const cut = box.minY + Math.floor(box.h * 0.66);
-        const top = sliceComponents(cells, (c) => c[1] >= cut);
-        const heads = top.filter((b) => b.length >= 3);
+        if (box.h < 6) return false;
+        const depth = Math.max(2, Math.floor(box.h * 0.28));
+        const top = sliceComponents(cells, (c) => c[1] >= box.maxY - depth);
+        const heads = top.filter((b) => b.length >= 3 && aabbOf(b).maxY === box.maxY);
         return heads.length >= 2;
     }
 
-    function hasYPose(cells, box) {
-        if (box.w < 3) return false;
-        const headY = box.minY + Math.floor(box.h * 0.7);
-        let left = false;
-        let right = false;
-        for (const [x, y] of cells) {
-            if (y < headY) continue;
-            if (x <= box.minX + 1) left = true;
-            if (x >= box.maxX - 1) right = true;
+    // Raised arms reach the top and leave a gap on each side of the head.
+    // A wide or bulky skull fills those columns, so it is not a pose.
+    function raisedArms(cells, box, axis) {
+        const span = axis === 0 ? box.w : box.d;
+        if (span < 5) return false;
+        const min = axis === 0 ? box.minX : box.minZ;
+        const max = axis === 0 ? box.maxX : box.maxZ;
+        const cut = box.minY + Math.floor(box.h * 0.65);
+        const crownCols = new Set();
+        const cols = new Set();
+        for (const c of cells) {
+            if (c[1] < cut) continue;
+            cols.add(c[axis]);
+            if (c[1] === box.maxY) crownCols.add(c[axis]);
         }
-        return left && right && box.w >= 4;
+        const xs = [...cols].sort((a, b) => a - b);
+        if (xs.length < 3 || xs[xs.length - 1] - xs[0] < 4) return false;
+        const clusters = [];
+        let cur = [xs[0]];
+        for (let i = 1; i < xs.length; i++) {
+            if (xs[i] === xs[i - 1] + 1) cur.push(xs[i]);
+            else {
+                clusters.push(cur);
+                cur = [xs[i]];
+            }
+        }
+        clusters.push(cur);
+        if (clusters.length < 3) return false;
+        const left = clusters[0];
+        const right = clusters[clusters.length - 1];
+        if (left[0] > min + 1 || right[right.length - 1] < max - 1) return false;
+        if (left.length > 3 || right.length > 3) return false;
+        const leftUp = left.some((x) => crownCols.has(x));
+        const rightUp = right.some((x) => crownCols.has(x));
+        return leftUp && rightUp;
+    }
+
+    function hasYPose(cells, box) {
+        if (box.h < 6) return false;
+        return raisedArms(cells, box, 0) || raisedArms(cells, box, 2);
     }
 
     function deityExtras(cells, box) {
@@ -303,6 +367,20 @@
         return box.h >= base && box.h / base >= 1.35;
     }
 
+    // Stance width comes from the legs. A wide head, hair, or shoulders
+    // used to push the whole silhouette under the upright ratio.
+    function standsOnTwoFeet(cells, box, legs) {
+        if (legs !== 2 || box.h < 5) return false;
+        const knee = box.minY + Math.max(1, Math.floor(box.h * 0.35));
+        const lower = cells.filter((c) => c[1] <= knee);
+        if (lower.length < 2) return false;
+        const base = Math.max(aabbOf(lower).w, aabbOf(lower).d, 1);
+        const above = box.minY + Math.floor(box.h * 0.55);
+        let upper = 0;
+        for (const c of cells) if (c[1] >= above) upper++;
+        return upper >= 3 && box.h / base >= 1;
+    }
+
     function classify(grid, opts = {}) {
         const cells = largestComponent(grid);
         const m = cells.length;
@@ -312,11 +390,12 @@
         let formClass = "lump";
         if (m >= MIN_MASS) {
             const horiz = Math.max(box.w, box.d);
+            const upright = isUpright(box) || standsOnTwoFeet(cells, box, legs);
             if (horiz > box.h && legs >= 3) {
                 formClass = "animal";
-            } else if (isUpright(box) && legs >= 1 && legs <= 2 && deityExtras(cells, box) && idolatry) {
+            } else if (upright && legs >= 1 && legs <= 2 && deityExtras(cells, box) && idolatry) {
                 formClass = "deity";
-            } else if (isUpright(box) && legs >= 1 && legs <= 2) {
+            } else if (upright && legs >= 1 && legs <= 2) {
                 formClass = "human";
             }
         }
@@ -347,7 +426,7 @@
             lines.push("Animal — long body, four legs");
         }
         if (unlocked.human) {
-            lines.push("Human — upright, head and two legs");
+            lines.push("Human — standing on two legs");
         }
         if (unlocked.deity) {
             lines.push("Deity — human-like with horns, extra head, or raised arms");

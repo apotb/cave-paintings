@@ -1471,7 +1471,7 @@
         return out;
     },
 
-    _aabbHitsThing(left, right, top, bottom, nearX, nearY, cull = 64, creature = null) {
+    _aabbHitsThing(left, right, top, bottom, nearX, nearY, cull = 64, creature = null, collect = null) {
         const r = Number(cull) || 64;
         const { cx, cy } = worldToChunk(nearX, nearY);
         const chunkR = Math.max(1, Math.ceil(r / CHUNK_PX));
@@ -1480,6 +1480,12 @@
             if (creature && Sleep.ignoresThingCollision?.(creature, tb.t)) return false;
             if (ignoreUid && tb.t?.uid && String(tb.t.uid) === String(ignoreUid)) return false;
             return right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom;
+        };
+        const take = (tb) => {
+            if (!hits(tb)) return null;
+            if (!collect) return tb;
+            collect.push(tb);
+            return null;
         };
         for (let dx = -chunkR; dx <= chunkR; dx++) {
             for (let dy = -chunkR; dy <= chunkR; dy++) {
@@ -1494,7 +1500,8 @@
                         const tcx = (tb.left + tb.right) * 0.5;
                         const tcy = (tb.top + tb.bottom) * 0.5;
                         if (Math.abs(tcx - nearX) > r || Math.abs(tcy - nearY) > r) continue;
-                        if (hits(tb)) return tb;
+                        const hit = take(tb);
+                        if (hit) return hit;
                     }
                     continue;
                 }
@@ -1511,13 +1518,38 @@
                         const bin = bins[tx + ty * CS];
                         if (!bin) continue;
                         for (let i = 0; i < bin.length; i++) {
-                            if (hits(bin[i])) return bin[i];
+                            const hit = take(bin[i]);
+                            if (hit) return hit;
                         }
                     }
                 }
             }
         }
-        return null;
+        return collect && collect.length ? collect[0] : null;
+    },
+
+    /**
+     * Pathing grows the body so settlers don't kiss trunks. That same margin
+     * seals a hut door: the 8×8 body fits, the padded one does not. A pose
+     * whose real body is clear, and whose margin touches only interior walls,
+     * stays open.
+     */
+    _interiorDoorMargin(creature, body, pad, x, y) {
+        if (!(pad > 0)) return false;
+        if (this._aabbHitsThing(
+            body.left, body.right, body.top, body.bottom, x, y, 64, creature
+        )) return false;
+        const hits = [];
+        this._aabbHitsThing(
+            body.left - pad, body.right + pad, body.top - pad, body.bottom + pad,
+            x, y, 64, creature, hits
+        );
+        if (!hits.length) return false;
+        for (let i = 0; i < hits.length; i++) {
+            const def = thingDefs().get(hits[i].t?.id);
+            if (!def?.sleep?.interior) return false;
+        }
+        return true;
     },
 
     _partyPoseBlocked(creature, x, y, pad = 0, opts = {}) {
@@ -1532,7 +1564,7 @@
         const p = Math.max(0, Number(pad) || 0);
         if (this._aabbHitsThing(
             body.left - p, body.right + p, body.top - p, body.bottom + p, x, y, 64, creature
-        )) return true;
+        ) && !this._interiorDoorMargin(creature, body, p, x, y)) return true;
         if (opts.sleepFootprint === false || opts.sleepNav === false) return false;
         return this._sleepFootprintHits(creature, body, p, x, y);
     },

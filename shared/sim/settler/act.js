@@ -363,11 +363,58 @@ function stationStandFeet(world, rec, c, target) {
     return pack(preferX, preferY);
 }
 
+/**
+ * Feet pose inside the hut a patient is lying in, close enough to tend.
+ * Null when they are not resting in an interior shelter.
+ */
+function interiorTendStand(world, rec, c, target) {
+    if (!target || !rec || target === rec || target.id === rec.id) return null;
+    if (!target._resting && !target.resting) return null;
+    const uid = target.lastSleep?.uid;
+    if (!uid || typeof world?._findSleepByUid !== "function") return null;
+    const found = world._findSleepByUid(uid, target);
+    const entry = found?.entry;
+    if (!entry) return null;
+    const def = world._thingDef?.(entry.id) || world._sleepDef?.(entry);
+    if (!def?.sleep?.interior || !Place?.footprintWorldRect) return null;
+    const rect = Place.footprintWorldRect(entry, def, TS);
+    if (!rect) return null;
+    const tx = Number(target.x) || 0;
+    const ty = Number(target.y) || 0;
+    const free = (x, y) => {
+        if (!c || typeof world._partyPoseBlocked !== "function") return true;
+        return !world._partyPoseBlocked(c, x, y, 2);
+    };
+    let best = null;
+    let bestD = Infinity;
+    for (let y = rect.top + 2; y <= rect.bottom - 2; y += 4) {
+        for (let x = rect.left + 2; x <= rect.right - 2; x += 4) {
+            if (!free(x, y) || !near(x, y, tx, ty)) continue;
+            const d = Math.hypot(x - tx, y - ty);
+            if (d < bestD) {
+                bestD = d;
+                best = { x, y };
+            }
+        }
+    }
+    return best;
+}
+
 function goOrWalk(world, rec, target) {
     if (!target) return halt();
     const c = rec.creature || world?._ensureSettlerCreature?.(rec);
     if (rec) rec._pathIgnoreUid = null;
     if (c) c._pathIgnoreUid = null;
+    const interior = interiorTendStand(world, rec, c, target);
+    if (interior) {
+        const px = Number(rec.x) || 0;
+        const py = Number(rec.y) || 0;
+        if (Math.hypot(px - interior.x, py - interior.y) <= 6) {
+            faceToward(rec, target.x, (Number(target.y) || 0) - 8);
+            return null;
+        }
+        return walkTo(interior.x, interior.y, { openRadius: 0 });
+    }
     const def = world?._thingDef?.(target.id);
     const paintStand = paintStandOf(target);
     if (paintStand) {
