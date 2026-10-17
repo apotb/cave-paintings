@@ -5329,6 +5329,66 @@ test("dedicated settler cracks a coconut at a rock", () => {
     assert.equal(rec.inventory.some((s) => s && s.id === "coconut"), false);
 });
 
+test("dedicated settler cracks a coconut carried in the backpack", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    Research.unlock(pawn, "cooking");
+    rec.overflow = [{ id: "coconut", quantity: 1 }];
+    settle.jobs[rec.id] = craftOnly();
+    const rock = addRock(world, settle, rec, "rock-coco-pack");
+    Settlement.addBill(settle, rock.uid, {
+        recipeId: "cracked_coconut", mode: "count", n: 1, paused: false
+    });
+    let started = false;
+    for (let i = 0; i < 40; i++) {
+        world.tick(50);
+        if (rec._workChannel?.kind === "rock") {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true);
+    world.tick(3000);
+    const shells = (rec.inventory || []).concat(rec.overflow || [])
+        .find((s) => s && s.id === "cracked_coconut");
+    assert.equal(shells?.quantity, 2);
+    assert.equal((rec.overflow || []).some((s) => s && s.id === "coconut"), false);
+    assert.equal((rec.inventory || []).some((s) => s && s.id === "coconut"), false);
+});
+
+test("a coconut bill takes one nut from a stockpile", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    Research.unlock(pawn, "cooking");
+    settle.jobs[rec.id] = craftOnly();
+    const rock = addRock(world, settle, rec, "rock-coco-pile");
+    const basket = addBasket(world, settle, rec.x + 32, rec.y, "coco-pile");
+    basket.slots[0] = { id: "coconut", quantity: 30 };
+    Settlement.addBill(settle, rock.uid, {
+        recipeId: "cracked_coconut", mode: "count", n: 1, paused: false
+    });
+    let started = false;
+    for (let i = 0; i < 80; i++) {
+        world.tick(50);
+        if (rec._workChannel?.kind === "rock") {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true);
+    const held = (rec.inventory || []).concat(rec.overflow || [])
+        .reduce((n, s) => n + (s?.id === "coconut" ? (s.quantity || 1) : 0), 0);
+    const stored = (basket.slots || [])
+        .reduce((n, s) => n + (s?.id === "coconut" ? (s.quantity || 1) : 0), 0);
+    assert.equal(held, 1);
+    assert.equal(stored, 29);
+    world.tick(3000);
+    const shells = (rec.inventory || []).concat(rec.overflow || [], basket.slots || [])
+        .find((s) => s && s.id === "cracked_coconut");
+    const dropped = (originChunk(world).drops || []).some((d) => d && d.id === "cracked_coconut");
+    assert.equal(!!shells || dropped, true);
+});
+
 test("dedicated settler knaps the nearest allowed blank and until counts only that class", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {

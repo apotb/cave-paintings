@@ -1152,8 +1152,9 @@ function findBestChopStack(world, rec, settle) {
     return best;
 }
 
-/** Closest storage pile. Carried stacks count as distance 0 and win ties. */
-function findNearestStored(world, rec, settle, pred) {
+/** Closest storage pile. Carried stacks count as distance 0 and win ties.
+ *  `storageOnly` skips pockets so a short backpack stack does not hide a basket. */
+function findNearestStored(world, rec, settle, pred, opts) {
     let best = null;
     let bestD = Infinity;
     const consider = (slots, index, at, kind, extra, dist) => {
@@ -1171,13 +1172,15 @@ function findNearestStored(world, rec, settle, pred) {
         bestD = dist;
         best = { slots, index, at, kind, ...extra };
     };
-    const inv = rec?.inventory || [];
-    for (let i = 0; i < inv.length; i++) {
-        if (inv[i]) consider(inv, i, rec, "inv", { bag: "hotbar" }, 0);
-    }
-    const overflow = rec?.overflow || [];
-    for (let i = 0; i < overflow.length; i++) {
-        if (overflow[i]) consider(overflow, i, rec, "overflow", { bag: "overflow" }, 0);
+    if (!opts?.storageOnly) {
+        const inv = rec?.inventory || [];
+        for (let i = 0; i < inv.length; i++) {
+            if (inv[i]) consider(inv, i, rec, "inv", { bag: "hotbar" }, 0);
+        }
+        const overflow = rec?.overflow || [];
+        for (let i = 0; i < overflow.length; i++) {
+            if (overflow[i]) consider(overflow, i, rec, "overflow", { bag: "overflow" }, 0);
+        }
     }
     for (const b of basketsOf(world, settle)) {
         const slots = b.slots || [];

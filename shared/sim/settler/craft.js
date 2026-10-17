@@ -510,6 +510,15 @@ function invQty(rec, pred) {
     return n;
 }
 
+/** Hotbar plus backpack. Rock crafts spend both, same as a player craft. */
+function carriedCraftQty(rec, id) {
+    let n = invQty(rec, (s) => s.id === id);
+    for (const s of rec.overflow || []) {
+        if (s?.id === id) n += Math.max(1, Number(s.quantity) || 1);
+    }
+    return n;
+}
+
 function holdTool(rec, found, classes) {
     if (!found || found.at !== rec) return false;
     if (found.kind === "overflow") {
@@ -643,13 +652,19 @@ function doRock(world, rec, settle, job) {
         return halt();
     }
     for (const ing of recipe.ingredients || []) {
-        if (invQty(rec, (s) => s.id === ing.id) >= (ing.qty || 1)) continue;
-        const found = findNearestStored(world, rec, settle, (s) => s.id === ing.id);
-        if (!found || found.at === rec) {
+        const need = Math.max(1, Math.floor(Number(ing.qty) || 1));
+        const have = carriedCraftQty(rec, ing.id);
+        if (have >= need) continue;
+        // Pockets are already counted. Searching them here would hide a basket
+        // behind a short backpack stack and cancel the bill.
+        const found = findNearestStored(
+            world, rec, settle, (s) => s.id === ing.id, { storageOnly: true }
+        );
+        if (!found) {
             stopRock(rec, job, true);
             return halt();
         }
-        return fetchStack(world, rec, settle, found) || halt();
+        return fetchCookQty(world, rec, settle, found, need - have) || halt();
     }
     const classes = Carry.recipeToolClasses?.(recipe.requireTool) || [];
     if (classes.length) {
@@ -673,7 +688,8 @@ function doRock(world, rec, settle, job) {
     const walked = goOrWalk(world, rec, rock);
     if (walked) return walked;
     for (const ing of recipe.ingredients || []) {
-        if (invQty(rec, (s) => s.id === ing.id) < (ing.qty || 1)) {
+        const need = Math.max(1, Math.floor(Number(ing.qty) || 1));
+        if (carriedCraftQty(rec, ing.id) < need) {
             stopRock(rec, job, true);
             return halt();
         }
