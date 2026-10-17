@@ -49,6 +49,24 @@ function parseArgs(argv) {
     return out;
 }
 
+const EXAMPLE_MOD_ID = "cavepaintings.examplemod";
+
+/** Mod ids under modsDir, with the shipped example mod left off. */
+function serverEnabledModIds(modsDir) {
+    if (!fs.existsSync(modsDir)) return [];
+    const ids = [];
+    for (const ent of fs.readdirSync(modsDir, { withFileTypes: true })) {
+        if (!ent.isDirectory()) continue;
+        const manifestFile = path.join(modsDir, ent.name, "mod.json");
+        if (!fs.existsSync(manifestFile)) continue;
+        const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+        const id = manifest && typeof manifest.id === "string" ? manifest.id : "";
+        if (!id || id === EXAMPLE_MOD_ID) continue;
+        ids.push(id);
+    }
+    return ids;
+}
+
 /** `--world 1` / picker index → existing save name; otherwise a sanitized folder name. */
 function resolveWorldArg(raw) {
     const s = String(raw || "").trim();
@@ -792,10 +810,12 @@ function createRequestHandler(game, { serveClient, useTls }) {
 async function startServer() {
     clearConsole();
     const args = parseArgs(process.argv);
+    const modsDir = args.mods || path.join(ROOT, "mods");
     try {
         Content.boot({
             root: ROOT,
-            modsDir: args.mods || path.join(ROOT, "mods")
+            modsDir,
+            enabledIds: serverEnabledModIds(modsDir)
         });
     } catch (err) {
         console.error(err && err.stack ? err.stack : err);
