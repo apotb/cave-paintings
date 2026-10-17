@@ -457,19 +457,17 @@
 
             const switchAlly = this.partySys?.worldSwitchTarget?.(pointer);
 
-            // Empty lean-to bunks beat a sleeper's standing AABB (90°/270°),
-            // but not a standing ally you're trying to click. The bunk you're in
-            // is hoverable too (finger cursor / Rest tip) unless the pointer is
-            // on HUD chrome that the big AABB would steal.
+            // The whole shelter beats a sleeper's standing AABB (90°/270°),
+            // but not a standing ally you're trying to click. Your own bunk
+            // stays hoverable unless the pointer is on HUD chrome the big
+            // AABB would steal.
             if (!switchAlly) {
                 for (let i = hits.length - 1; i >= 0; i--) {
                     const obj = hits[i];
                     if (!obj?.active || !obj.input?.enabled) continue;
                     if (!(obj instanceof LeanTo)) continue;
                     if (this._skipOwnRestLeanTo?.(obj, pointer)) continue;
-                    const slot = obj.slotAtPointer?.(pointer) ?? 0;
-                    const occ = obj.entry?.occupants?.[slot];
-                    if (!occ || occ === this.player?.pawnId) return obj;
+                    return obj;
                 }
             }
 

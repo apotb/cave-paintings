@@ -250,13 +250,9 @@ class PartySystem {
             if (scene.party?.includes(obj) && obj !== scene.player) {
                 if (obj._resting) {
                     const lean = scene.findLeanToByUid?.(obj.lastSleep?.uid);
-                    if (lean) {
-                        const slot = lean.slotAtPointer?.(_pointer);
-                        const occ = lean.entry?.occupants?.[slot];
-                        if (!occ || occ === scene.player?.pawnId) {
-                            scene.openLeanToPanel?.(lean, _pointer);
-                            return;
-                        }
+                    if (lean?._pointerStillOver?.(_pointer)) {
+                        scene.openLeanToPanel?.(lean, _pointer);
+                        return;
                     }
                 }
                 const P = typeof Party !== "undefined" ? Party : null;

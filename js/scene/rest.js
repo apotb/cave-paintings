@@ -147,25 +147,12 @@
             this.partySys.tryAllyClick(switchAlly);
             return;
         }
-        const slot = leanTo.slotAtPointer?.(pointer) ?? 0;
-        const occ = leanTo.entry?.occupants?.[slot];
-        const ally = (this.party || []).find((p) => p && p.pawnId === occ && p !== this.player);
-        if (ally && !ally.isBodyDead?.()) {
-            const cam = this.cameras?.main;
-            const world = cam && pointer ? cam.getWorldPoint(pointer.x, pointer.y) : null;
-            const onAlly = !world || typeof creaturePointerHit !== "function"
-                || creaturePointerHit(ally, world.x, world.y);
-            if (onAlly) {
-                this.partySys?.tryAllyClick?.(ally);
-                return;
-            }
-        }
         if (!leanTo?.inRange?.()) return;
         if (this.restBlocksWorldUi?.()) {
             const uid = this.player?.lastSleep?.uid;
             if (!uid || leanTo.entry?.uid !== uid) return;
         }
-        this.leanToPanel?.toggle(leanTo, slot);
+        this.leanToPanel?.toggle(leanTo);
     },
 
     _sleepLog(msg) {
@@ -190,9 +177,24 @@
         if (!pawn || pawn.isBodyDead?.()) return false;
         const entry = leanTo?.entry;
         if (!entry) return false;
-        if (typeof Sleep !== "undefined" && Sleep.isSlotOccupied(entry, slot) && entry.occupants[slot] !== pawn.pawnId) {
-            this._sleepLog("That spot is taken");
-            return false;
+        const want = Math.max(0, Math.floor(Number(slot) || 0));
+        if (typeof Sleep !== "undefined" && this._sleepSlotClaimed(entry, want, pawn.pawnId)) {
+            const def = leanTo.meta || this.getThing?.(entry.id);
+            const n = Sleep.slotCount(def, entry);
+            let next = -1;
+            for (let i = 0; i < n; i++) {
+                if (!this._sleepSlotClaimed(entry, i, pawn.pawnId)) {
+                    next = i;
+                    break;
+                }
+            }
+            if (next < 0) {
+                this._sleepLog("That spot is taken");
+                return false;
+            }
+            slot = next;
+        } else {
+            slot = want;
         }
         if (pawn._downed || pawn.isIncapacitated?.() || pawn.isImmobile?.()) {
             const pos = typeof Sleep !== "undefined"
@@ -225,8 +227,15 @@
 
     tryLeanToWake(leanTo, slot) {
         const pawn = this.player;
-        const occ = leanTo?.entry?.occupants?.[slot];
-        if (!pawn || occ !== pawn.pawnId) return false;
+        const entry = leanTo?.entry;
+        const occs = entry?.occupants || [];
+        const id = pawn?.pawnId;
+        let mine = occs[slot] === id ? slot : occs.indexOf(id);
+        if (mine < 0 && pawn?._resting && pawn.lastSleep?.uid === entry?.uid) {
+            mine = pawn.lastSleep.slot || 0;
+        }
+        if (!pawn?._resting || mine < 0) return false;
+        if (occs[mine] && occs[mine] !== id) return false;
         if (this.simAuth()) {
             this.net.sendAction({
                 type: NetProtocol.Actions.SLEEP,

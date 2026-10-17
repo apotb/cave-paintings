@@ -112,8 +112,63 @@ class LeanToPanel {
     }
 
     _tryAction() {
-        if (this._actionMode === "wake") this.scene.tryLeanToWake?.(this.leanTo, this.slot);
-        else this.scene.tryLeanToRest?.(this.leanTo, this.slot);
+        const slot = this._syncAction();
+        if (this._actionMode === "wake") this.scene.tryLeanToWake?.(this.leanTo, slot);
+        else if (slot >= 0) this.scene.tryLeanToRest?.(this.leanTo, slot);
+    }
+
+    /** Slot the local player is lying in, or -1. */
+    _ownRestSlot() {
+        const entry = this.leanTo?.entry;
+        const pawn = this.scene.player;
+        if (!entry || !pawn?._resting || pawn.isBodyDead?.()) return -1;
+        const id = pawn.pawnId;
+        if (!id) return -1;
+        const occ = entry.occupants || [];
+        if (pawn.lastSleep?.uid === entry.uid) {
+            const s = pawn.lastSleep.slot || 0;
+            if (!occ[s] || occ[s] === id) return s;
+        }
+        const i = occ.indexOf(id);
+        return i >= 0 ? i : -1;
+    }
+
+    /** First bunk that is free for the local player, or -1. */
+    _openSlot() {
+        const entry = this.leanTo?.entry;
+        const pawn = this.scene.player;
+        if (!entry || !pawn || pawn.isBodyDead?.()) return -1;
+        const scene = this.scene;
+        const def = scene.getThing?.(entry.id) || this.leanTo.meta;
+        const n = typeof Sleep !== "undefined"
+            ? Sleep.slotCount(def, entry)
+            : (entry.occupants?.length || 0);
+        const id = pawn.pawnId;
+        for (let i = 0; i < n; i++) {
+            const taken = typeof scene._sleepSlotClaimed === "function"
+                ? scene._sleepSlotClaimed(entry, i, id)
+                : !!entry.occupants?.[i];
+            if (!taken) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * Wake when the local player is already in this shelter.
+     * Otherwise Rest, enabled when any bunk is free.
+     * @returns {number} slot to use, or -1 when Rest has nowhere to go
+     */
+    _syncAction() {
+        const mine = this._ownRestSlot();
+        if (mine >= 0) {
+            this.slot = mine;
+            this._actionMode = "wake";
+            return mine;
+        }
+        const open = this._openSlot();
+        this.slot = open >= 0 ? open : 0;
+        this._actionMode = "rest";
+        return open;
     }
 
     _syncHitArea(rect, enable, bw, bh) {
@@ -153,14 +208,14 @@ class LeanToPanel {
         return this._pointerOnRect(this.destroyRect, this.destroyBtn, pointer);
     }
 
-    open(leanTo, slot) {
+    open(leanTo) {
         if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
         if (this.scene.storagePanel?.visible) this.scene.storagePanel.close();
         if (this.scene.campfirePanel?.visible) this.scene.campfirePanel.close();
         if (this.scene.paintingCirclePanel?.visible) this.scene.paintingCirclePanel.close();
         this.scene.closeCraftStationMenu?.();
         this.leanTo = leanTo;
-        this.slot = Math.max(0, Math.floor(Number(slot) || 0));
+        this.slot = 0;
         this.visible = true;
         this.container.setVisible(true);
         this.refresh();
@@ -179,26 +234,21 @@ class LeanToPanel {
         this.destroyRect?.disableInteractive();
     }
 
-    toggle(leanTo, slot) {
-        if (this.visible && this.leanTo === leanTo && this.slot === slot) this.close();
-        else this.open(leanTo, slot);
+    toggle(leanTo) {
+        if (this.visible && this.leanTo === leanTo) this.close();
+        else this.open(leanTo);
     }
 
     refresh() {
         if (!this.leanTo) return;
         const entry = this.leanTo.entry;
-        const pawn = this.scene.player;
-        const pawnId = pawn?.pawnId;
-        const occ = entry?.occupants?.[this.slot] || null;
-        const emptySlot = !occ;
-        const mine = !!(occ && pawnId && occ === pawnId);
-        const allEmpty = typeof Sleep !== "undefined" ? Sleep.isEmpty(entry) : emptySlot;
+        const open = this._syncAction();
+        const allEmpty = typeof Sleep !== "undefined"
+            ? Sleep.isEmpty(entry)
+            : !(entry?.occupants || []).some((id) => id);
 
-        this._actionMode = mine ? "wake" : "rest";
-        this.actionText.setText(mine ? "Wake" : "Rest");
-        this._actionEnabled = mine
-            ? true
-            : emptySlot && !!pawn && !pawn.isBodyDead?.();
+        this.actionText.setText(this._actionMode === "wake" ? "Wake" : "Rest");
+        this._actionEnabled = this._actionMode === "wake" ? true : open >= 0;
         this.actionBtn.setVisible(true);
         this._syncHitArea(this.actionRect, this._actionEnabled, this._actionBw, this._actionBh);
 
