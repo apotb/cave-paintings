@@ -646,7 +646,7 @@ class SettlementPanel {
             const manage = sys.canManage(this.settle);
             const showSend = manage && kind === "here" && others[0];
             const showDrop = kind === "party" && !isLeader;
-            const showTake = manage && kind === "here";
+            const showTake = manage && kind === "here" && !partyFull;
             let btns = 0;
             if (showDrop || showTake) btns += 1;
             if (showSend) btns += 1;
@@ -687,12 +687,11 @@ class SettlementPanel {
             this.body.add(hit);
             let bx = x + colW - btnW / 2;
             const by = y + rowH / 2;
-            const addBtn = (text, fn, dim) => {
+            const addBtn = (text, fn) => {
                 const b = this._btn(bx, by, text, fn, true);
                 b._bg.setSize(btnW, btnH);
                 if (b._bg.input?.hitArea?.setSize) b._bg.input.hitArea.setSize(btnW, btnH);
                 if (typeof applyPixelUiFont === "function") applyPixelUiFont(b._txt, 10, sc);
-                if (dim) b.setAlpha(0.4);
                 b._paint?.();
                 this.body.add(b);
                 bx -= btnW + btnGap;
@@ -700,7 +699,7 @@ class SettlementPanel {
             };
             if (showSend) addBtn("Send", () => sys.transfer(p, others[0]));
             if (showDrop) addBtn("Drop", () => sys.dropOff(p, this.settle));
-            if (showTake) addBtn("Take", () => sys.pickUp(p, this.settle), partyFull);
+            if (showTake) addBtn("Take", () => sys.pickUp(p, this.settle));
         }
         if (list.length) y += rowH;
         return y;
