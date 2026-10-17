@@ -194,14 +194,44 @@ test("diorite straight bit is a cleaver", () => {
     assert.match(r.name, /Diorite Cleaver/);
 });
 
-test("the same straight bit in pebble is a chopper that is too soft for a cleaver", () => {
+test("a soft flint-sized block is still a scraper", () => {
     const r = Knapping.classify(flintBlock(), "pebble");
+    assert.equal(r.toolClass, "scraper");
+    assert.equal(r.reject, null);
+    assert.equal(/cleaver/i.test(r.preview), false);
+});
+
+test("a brittle flint-sized block is still a scraper", () => {
+    const r = Knapping.classify(flintBlock(), "granite");
+    assert.equal(r.toolClass, "scraper");
+    assert.equal(r.reject, null);
+    assert.equal(/cleaver/i.test(r.preview), false);
+});
+
+/** 6×13 bar. A cleaver, and too long and wide for a spear, knife, or scraper. */
+function loneCleaver() {
+    const cells = [];
+    for (let y = 1; y <= 13; y++) {
+        for (let x = 1; x <= 6; x++) cells.push([x, y]);
+    }
+    return gridFrom(cells);
+}
+
+test("a long flint bar is a cleaver", () => {
+    const r = Knapping.classify(loneCleaver(), "flint");
+    assert.equal(r.toolClass, "cleaver", JSON.stringify({
+        toolClass: r.toolClass, mass: r.mass, elong: r.elong, bit: r.bit, preview: r.preview
+    }));
+});
+
+test("the same long bar in pebble is a chopper that is too soft for a cleaver", () => {
+    const r = Knapping.classify(loneCleaver(), "pebble");
     assert.equal(r.toolClass, "chopper");
     assert.equal(r.preview, "Too soft for a cleaver");
 });
 
-test("a brittle straight bit names the cleaver", () => {
-    const r = Knapping.classify(flintBlock(), "granite");
+test("a brittle long bar names the cleaver", () => {
+    const r = Knapping.classify(loneCleaver(), "granite");
     assert.equal(r.toolClass, "chopper");
     assert.equal(r.preview, "Too brittle for a cleaver");
 });

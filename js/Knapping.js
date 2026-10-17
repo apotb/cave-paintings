@@ -956,9 +956,13 @@ const Knapping = {
 
         // Order matters. Awl before spear/knife so butt+spike isn't stolen.
         // Spear = long fairly even shaft; knife = tapered blade with body.
+        // A cleaver the stone can't support is not a class: keep checking, and
+        // mention it only when nothing else matches.
         let toolClass = "blank";
         let reject = null;
         let rejectClass = null;
+        const cleaverShape = allow("cleaver") && this._isCleaver(mass, elong, bit, fill, minSide);
+        const cleaverGate = cleaverShape ? this._handAxeGate(material) : null;
         if (
             allow("awl")
             // Small pierce spike (T / butt+point). AABB taper misses stems off the long axis.
@@ -973,18 +977,8 @@ const Knapping = {
             && (taper >= 0.35 || (tip >= 0.62 && mass <= 16))
         ) {
             toolClass = "awl";
-        } else if (
-            allow("cleaver")
-            && this._isCleaver(mass, elong, bit, fill, minSide)
-        ) {
-            const gate = this._handAxeGate(material);
-            if (gate) {
-                toolClass = "chopper";
-                reject = gate;
-                rejectClass = "cleaver";
-            } else {
-                toolClass = "cleaver";
-            }
+        } else if (cleaverShape && !cleaverGate) {
+            toolClass = "cleaver";
         } else if (
             allow("spear_tip")
             && elong >= 2.15
@@ -1050,6 +1044,12 @@ const Knapping = {
             && taper < 0.4
         ) {
             toolClass = "chopper";
+        }
+
+        if (cleaverGate && (toolClass === "blank" || toolClass === "chopper")) {
+            toolClass = "chopper";
+            reject = cleaverGate;
+            rejectClass = "cleaver";
         }
 
         const sharpness = Phaser.Math.Clamp(
