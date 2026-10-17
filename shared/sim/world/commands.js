@@ -27,23 +27,41 @@
      * Optional tail of /give <item> [qty] [stuff]. Stuff depends on the item.
      * @returns {{ extras?: object, error?: string }}
      */
+    function isStuffableItem(id) {
+        const api = stoneApi();
+        if (typeof api?.isStuffableItem === "function") return api.isStuffableItem(id);
+        return id === "pebble" || id === "grindstone" || id === "stone_spear";
+    }
+
     function giveStuff(meta, stuff) {
         const raw = String(stuff || "").trim();
+        const id = meta?.id;
+        const stuffable = isStuffableItem(id);
         if (!raw) {
-            if (meta?.id === "stone_spear") {
-                const stone = stoneApi()?.stoneOf?.({ id: "stone_spear" }) || "andesite";
-                return { extras: { stone, knapMaterial: "pebble" } };
-            }
-            return { extras: {} };
-        }
-        if (meta?.id === "pebble" || meta?.id === "stone_spear") {
-            const stone = stoneApi()?.fromToken?.(raw);
-            if (!stone) return { error: `Unknown stone "${stuff}".` };
+            if (!stuffable) return { extras: {} };
+            const stone = stoneApi()?.stoneOf?.({ id }) || "andesite";
             const extras = { stone };
-            if (meta.id === "stone_spear") extras.knapMaterial = "pebble";
+            if (id === "stone_spear") {
+                extras.knapMaterial = "pebble";
+                extras.knapQuality = "rough";
+            }
             return { extras };
         }
-        return { error: `${meta?.name || meta?.id || "Item"} takes no extra.` };
+        if (!stuffable) {
+            return { error: `${meta?.name || id || "Item"} takes no extra.` };
+        }
+        const api = stoneApi();
+        const picked = typeof api?.stuffId === "function" ? api.stuffId(id, raw) : api?.fromToken?.(raw);
+        if (!picked) return { error: `Unknown stone "${stuff}".` };
+        if (picked === "flint") {
+            return { extras: { knapMaterial: "flint", knapQuality: "rough" } };
+        }
+        const extras = { stone: picked };
+        if (id === "stone_spear") {
+            extras.knapMaterial = "pebble";
+            extras.knapQuality = "rough";
+        }
+        return { extras };
     }
 
     /**
@@ -52,8 +70,14 @@
      */
     function setStuff(def, stuff) {
         const raw = String(stuff || "").trim();
-        if (!raw) return { extras: {} };
-        if (def?.id === "rock" || def?.id === "pebbles") {
+        if (!raw) {
+            if (def?.id === "rock" || def?.id === "pebbles" || def?.id === "grindstone") {
+                const stone = stoneApi()?.stoneOf?.({ id: def.id }) || "andesite";
+                return { extras: { stone } };
+            }
+            return { extras: {} };
+        }
+        if (def?.id === "rock" || def?.id === "pebbles" || def?.id === "grindstone") {
             const stone = stoneApi()?.fromToken?.(raw);
             if (!stone) return { error: `Unknown stone "${stuff}".` };
             return { extras: { stone } };
@@ -480,7 +504,6 @@
                 this.announceCmd(applied.error, { to: p.id });
                 return;
             }
-            const stone = applied.extras?.stone || null;
             const spoilLeft = Spoil.defaultSpoilLeft(meta);
             const extras = { ...(applied.extras || {}) };
             if (spoilLeft != null) extras.spoilLeft = spoilLeft;
@@ -491,12 +514,8 @@
                 this._pushDrop(pawn.x, pawn.y, drop);
             }
             const stones = stoneApi();
-            const named = stones?.displayName && (meta.id === "pebble" || (meta.id === "stone_spear" && stone))
-                ? stones.displayName({
-                    id: meta.id,
-                    stone,
-                    ...(meta.id === "stone_spear" ? { knapMaterial: "pebble" } : {})
-                })
+            const named = stones?.displayName && (meta.id === "pebble" || meta.id === "stone_spear")
+                ? stones.displayName({ id: meta.id, ...(applied.extras || {}) })
                 : null;
             const label = named || meta.name || meta.id;
             const out = left > 0
@@ -853,7 +872,9 @@
         for (let i = 0; i < p.inventory.length && remaining > 0; i++) {
             const s = p.inventory[i];
             if (!s || s.id !== itemId || this._stackIsSpecial(s) || incomingUnique) continue;
-            if (itemId === "pebble" && !this._samePebbleStone(s, extraFields)) continue;
+            if (itemId === "pebble" || itemId === "grindstone") {
+                if (!this._samePebbleStone(s, extraFields)) continue;
+            }
             const space = Math.max(0, maxStack - (s.quantity || 1));
             if (space <= 0) continue;
             const add = Math.min(space, remaining, fitNow());
@@ -886,7 +907,9 @@
         for (let i = 0; i < over.length && remaining > 0; i++) {
             const s = over[i];
             if (!s || s.id !== itemId || this._stackIsSpecial(s) || incomingUnique) continue;
-            if (itemId === "pebble" && !this._samePebbleStone(s, extraFields)) continue;
+            if (itemId === "pebble" || itemId === "grindstone") {
+                if (!this._samePebbleStone(s, extraFields)) continue;
+            }
             const space = Math.max(0, maxStack - (s.quantity || 1));
             if (space <= 0) continue;
             const add = Math.min(space, remaining, fitNow());
@@ -1134,6 +1157,19 @@
         return { lost, knapQuality, knapMaterial, stone, fromStorage };
     },
 
+    /** Stone of the first pebble a grindstone craft would consume. Missing stone is andesite. */
+    _firstCraftPebbleStone(p, extraSlots) {
+        const bags = [p?.inventory, p?.overflow, extraSlots];
+        for (const bag of bags) {
+            if (!Array.isArray(bag)) continue;
+            for (const s of bag) {
+                if (!s || s.id !== "pebble" || !(Number(s.quantity) > 0)) continue;
+                return stoneApi()?.normalizeStone?.(s.stone) || "andesite";
+            }
+        }
+        return "andesite";
+    },
+
     _craftStorageFromAction(p, action = {}) {
         const uid = action.storageUid != null && action.storageUid !== ""
             ? String(action.storageUid)
@@ -1305,6 +1341,9 @@
         let tipQuality = null;
         let tipMaterial = null;
         let tipStone = null;
+        const pebbleStone = recipe.id === "grindstone"
+            ? this._firstCraftPebbleStone(p, extra)
+            : null;
         let storageDirty = false;
         for (const ing of recipe.ingredients) {
             const lost = this._loseMatchingItems(p, ing, extra);
@@ -1323,6 +1362,9 @@
             extras.knapMaterial = tipMaterial || "pebble";
             if (tipQuality) extras.knapQuality = tipQuality;
             if (tipStone) extras.stone = tipStone;
+        }
+        if (recipe.id === "grindstone") {
+            extras.stone = pebbleStone || "andesite";
         }
         const left = this._give(p, recipe.id, recipe.quantity, extras);
         if (left > 0) {
@@ -1791,6 +1833,12 @@
             return Stone.stoneKey(a) === Stone.stoneKey(b);
         }
         return (a?.stone || "andesite") === (b?.stone || "andesite");
+    },
+
+    /** Pebbles and grindstones merge only with the same stone. A blank field is andesite. */
+    _canMergeStone(a, b) {
+        if (a?.id !== "pebble" && a?.id !== "grindstone") return true;
+        return this._samePebbleStone(a, b);
     },
 
     _stackIsSpecial(s) {

@@ -96,6 +96,62 @@ test("inv_swap merges same id", () => {
     assert.equal(pawn.inventory[0], null);
 });
 
+test("inv_swap keeps grindstones of different stones apart", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "grindstone", quantity: 2, stone: "granite" };
+    pawn.inventory[1] = { id: "grindstone", quantity: 3, stone: "diorite" };
+    world.handleAction(pawn.id, { type: Protocol.Actions.INV_SWAP, from: 0, to: 1 });
+    assert.equal(pawn.inventory[0]?.stone, "diorite");
+    assert.equal(pawn.inventory[0]?.quantity, 3);
+    assert.equal(pawn.inventory[1]?.stone, "granite");
+    assert.equal(pawn.inventory[1]?.quantity, 2);
+
+    pawn.inventory[0] = { id: "grindstone", quantity: 2, stone: "granite" };
+    pawn.inventory[1] = { id: "grindstone", quantity: 3, stone: "granite" };
+    world.handleAction(pawn.id, { type: Protocol.Actions.INV_SWAP, from: 0, to: 1 });
+    assert.equal(pawn.inventory[0], null);
+    assert.equal(pawn.inventory[1]?.quantity, 5);
+    assert.equal(pawn.inventory[1]?.stone, "granite");
+
+    pawn.inventory[0] = { id: "grindstone", quantity: 1 };
+    pawn.inventory[1] = { id: "grindstone", quantity: 1, stone: "andesite" };
+    world.handleAction(pawn.id, { type: Protocol.Actions.INV_SWAP, from: 0, to: 1 });
+    assert.equal(pawn.inventory[0], null);
+    assert.equal(pawn.inventory[1]?.quantity, 2);
+});
+
+test("backpack quick move does not merge a grindstone into a different stone", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    wearHideBundle(pawn, [{ id: "grindstone", quantity: 2, stone: "diorite" }]);
+    pawn.inventory[0] = { id: "grindstone", quantity: 4, stone: "granite" };
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.INV_SWAP,
+        from: 0,
+        to: 1,
+        fromBag: "overflow",
+        toBag: "hotbar"
+    });
+    assert.equal(pawn.inventory[0]?.stone, "granite");
+    assert.equal(pawn.inventory[0]?.quantity, 4);
+    assert.equal(pawn.inventory[1]?.stone, "diorite");
+    assert.equal(pawn.inventory[1]?.quantity, 2);
+    assert.equal(pawn.overflow[0], null);
+
+    wearHideBundle(pawn, [{ id: "grindstone", quantity: 2, stone: "granite" }]);
+    pawn.inventory[0] = { id: "grindstone", quantity: 4, stone: "granite" };
+    pawn.inventory[1] = null;
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.INV_SWAP,
+        from: 0,
+        to: 0,
+        fromBag: "overflow",
+        toBag: "hotbar"
+    });
+    assert.equal(pawn.inventory[0]?.quantity, 6);
+    assert.equal(pawn.inventory[0]?.stone, "granite");
+    assert.equal(pawn.overflow[0], null);
+});
+
 test("equip torso from hotbar", () => {
     const { world, pawn, Protocol } = createTestWorld();
     pawn.inventory[0] = { id: "leaf_wrap", quantity: 1 };
@@ -315,6 +371,30 @@ test("craft sharp_stick needs a nearby rock or settling stone", () => {
     assert.ok(!pawn.inventory.some((s) => s?.id === "stick"));
 });
 
+test("craft grindstone takes the first pebble's stone and defaults to andesite", () => {
+    const Research = require("../shared/research");
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "pebble", quantity: 1, stone: "granite" };
+    pawn.inventory[1] = { id: "pebble", quantity: 5, stone: "limestone" };
+    originChunk(world).things.push({ uid: "rock_grind", id: "rock", x: pawn.x, y: pawn.y });
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "grindstone" });
+    assert.equal(pawn.inventory.some((s) => s?.id === "grindstone"), false);
+
+    Research.unlock(pawn, "grinding");
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "grindstone" });
+    const made = pawn.inventory.find((s) => s?.id === "grindstone");
+    assert.ok(made);
+    assert.equal(made.stone, "granite");
+    assert.equal(pawn.inventory.some((s) => s?.id === "pebble" && s.stone === "granite"), false);
+    const lime = pawn.inventory.find((s) => s?.id === "pebble" && s.stone === "limestone");
+    assert.equal(lime.quantity, 3);
+
+    pawn.inventory[0] = { id: "pebble", quantity: 3 };
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "grindstone" });
+    const plain = pawn.inventory.find((s) => s?.id === "grindstone" && s.stone === "andesite");
+    assert.ok(plain);
+});
+
 test("craft tally_stick spends bone and needs a held knife", () => {
     const Research = require("../shared/research");
     const { world, pawn, Protocol } = createTestWorld();
@@ -472,6 +552,87 @@ test("dig melee uproots grass, snow, and blueberry bushes in 5 hits with stick a
         else assert.equal(qty("blueberry"), 0, spec.id);
         assert.equal(pawn.inventory[0].durability, 45, spec.id);
     }
+});
+
+test("storage quick move keeps grindstones of different stones apart", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const chunk = originChunk(world);
+    const basket = {
+        uid: "st_grind",
+        id: "wicker_basket",
+        x: pawn.x,
+        y: pawn.y
+    };
+    Place.ensureStorageEntry(basket, DataStore.getThing("wicker_basket"));
+    chunk.things.push(basket);
+
+    const deposit = (slot, inv, amount) => world.handleAction(pawn.id, {
+        type: Protocol.Actions.STORAGE,
+        op: "inv_to_slot",
+        uid: basket.uid,
+        slot: String(slot),
+        inv,
+        amount
+    });
+    const take = (slot, amount) => world.handleAction(pawn.id, {
+        type: Protocol.Actions.STORAGE,
+        op: "slot_to_inv",
+        uid: basket.uid,
+        slot: String(slot),
+        inv: -1,
+        amount
+    });
+
+    basket.slots[0] = { id: "grindstone", quantity: 3, stone: "diorite" };
+    pawn.inventory[0] = { id: "grindstone", quantity: 2, stone: "granite" };
+    deposit(0, 0, 1);
+    assert.equal(basket.slots[0]?.quantity, 3);
+    assert.equal(basket.slots[0]?.stone, "diorite");
+    assert.equal(pawn.inventory[0]?.quantity, 2);
+    assert.equal(pawn.inventory[0]?.stone, "granite");
+
+    deposit(1, 0, 1);
+    assert.equal(basket.slots[1]?.stone, "granite");
+    assert.equal(basket.slots[1]?.quantity, 1);
+    assert.equal(pawn.inventory[0]?.quantity, 1);
+
+    basket.slots[0] = { id: "grindstone", quantity: 3, stone: "granite" };
+    pawn.inventory[0] = { id: "grindstone", quantity: 2, stone: "granite" };
+    deposit(0, 0, 1);
+    assert.equal(basket.slots[0]?.quantity, 4);
+    assert.equal(basket.slots[0]?.stone, "granite");
+    assert.equal(pawn.inventory[0]?.quantity, 1);
+
+    pawn.inventory[0] = { id: "grindstone", quantity: 2, stone: "andesite" };
+    pawn.inventory[1] = null;
+    basket.slots[0] = { id: "grindstone", quantity: 1, stone: "granite" };
+    take(0, 1);
+    assert.equal(basket.slots[0], null);
+    assert.equal(pawn.inventory[0]?.quantity, 2);
+    assert.equal(pawn.inventory[0]?.stone, "andesite");
+    assert.equal(pawn.inventory[1]?.stone, "granite");
+    assert.equal(pawn.inventory[1]?.quantity, 1);
+
+    pawn.inventory[0] = { id: "grindstone", quantity: 2 };
+    pawn.inventory[1] = null;
+    basket.slots[0] = { id: "grindstone", quantity: 1, stone: "andesite" };
+    take(0, 1);
+    assert.equal(pawn.inventory[0]?.quantity, 3);
+    assert.equal(pawn.inventory[1], null);
+
+    basket.slots[0] = { id: "grindstone", quantity: 2, stone: "granite" };
+    basket.slots[1] = { id: "grindstone", quantity: 3, stone: "diorite" };
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.STORAGE,
+        op: "slot_to_slot",
+        uid: basket.uid,
+        from: "0",
+        to: "1"
+    });
+    assert.equal(basket.slots[0]?.stone, "diorite");
+    assert.equal(basket.slots[0]?.quantity, 3);
+    assert.equal(basket.slots[1]?.stone, "granite");
+    assert.equal(basket.slots[1]?.quantity, 2);
 });
 
 test("basket right-click take moves one cord, not the whole stack", () => {
@@ -1003,12 +1164,15 @@ test("/give pebble keeps the stone, and /set stamps it on rocks and piles", () =
     assert.equal(stack.quantity, 4);
     assert.equal(stack.stone, "granite");
     world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give pebble 2" });
-    assert.ok(pawn.inventory.some((s) => s && s.id === "pebble" && s.quantity === 2 && !s.stone));
+    assert.ok(pawn.inventory.some((s) => s && s.id === "pebble" && s.quantity === 2 && s.stone === "andesite"));
     world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give stick 1 granite" });
     world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give pebble 1 quartz" });
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give pebble 1 flint" });
     const chats = world.drainEvents().filter((e) => e.kind === "chat");
+    assert.ok(chats.some((e) => e.text === "Gave 2× Andesite Pebble"));
     assert.ok(chats.some((e) => e.text === "Stick takes no extra."));
     assert.ok(chats.some((e) => e.text === 'Unknown stone "quartz".'));
+    assert.ok(chats.some((e) => e.text === 'Unknown stone "flint".'));
     assert.equal(pawn.inventory.some((s) => s && s.id === "stick"), false);
     const chunk = originChunk(world);
     world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/set rock diorite" });
@@ -1023,6 +1187,22 @@ test("/give pebble keeps the stone, and /set stamps it on rocks and piles", () =
     assert.ok(setChats.some((e) => e.text === "Tree takes no extra."));
     assert.equal((chunk.things || []).find((t) => t && t.id === "tree"), undefined);
     assert.ok((chunk.lootableThings || []).some((t) => t && t.id === "flowering_cactus"));
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give grindstone" });
+    const grind = pawn.inventory.find((s) => s && s.id === "grindstone");
+    assert.ok(grind);
+    assert.equal(grind.stone, "andesite");
+    const grindChat = world.drainEvents().filter((e) => e.kind === "chat");
+    assert.ok(grindChat.some((e) => e.text === "Gave 1× Grindstone"));
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/set rock" });
+    assert.equal((chunk.things || []).find((t) => t && t.id === "rock")?.stone, "andesite");
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/set pebbles" });
+    assert.equal((chunk.lootableThings || []).find((t) => t && t.id === "pebbles")?.stone, "andesite");
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/set grindstone" });
+    assert.equal((chunk.things || []).find((t) => t && t.id === "grindstone")?.stone, "andesite");
+    const setDefault = world.drainEvents().filter((e) => e.kind === "chat");
+    assert.ok(setDefault.some((e) => e.text === "Set Andesite Rock"));
+    assert.ok(setDefault.some((e) => e.text === "Set Andesite Pebbles"));
+    assert.ok(setDefault.some((e) => e.text === "Set Andesite Grindstone"));
 });
 
 test("/give stone_spear keeps the stone", () => {
@@ -1033,8 +1213,9 @@ test("/give stone_spear keeps the stone", () => {
     assert.equal(stack.quantity, 1);
     assert.equal(stack.stone, "granite");
     assert.equal(stack.knapMaterial, "pebble");
+    assert.equal(stack.knapQuality, "rough");
     const chats = world.drainEvents().filter((e) => e.kind === "chat");
-    assert.ok(chats.some((e) => e.text === "Gave 1× Granite Spear"));
+    assert.ok(chats.some((e) => e.text === "Gave 1× Rough Granite Spear"));
     world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give stone_spear 1 quartz" });
     const bad = world.drainEvents().filter((e) => e.kind === "chat");
     assert.ok(bad.some((e) => e.text === 'Unknown stone "quartz".'));
@@ -1045,8 +1226,20 @@ test("/give stone_spear keeps the stone", () => {
     const plain = spears.find((s) => s.stone === "andesite");
     assert.ok(plain);
     assert.equal(plain.knapMaterial, "pebble");
+    assert.equal(plain.knapQuality, "rough");
     const named = world.drainEvents().filter((e) => e.kind === "chat");
-    assert.ok(named.some((e) => e.text === "Gave 1× Andesite Spear"));
+    assert.ok(named.some((e) => e.text === "Gave 1× Rough Andesite Spear"));
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give stone_spear 1 flint" });
+    const flint = pawn.inventory.find((s) => s && s.id === "stone_spear" && s.knapMaterial === "flint");
+    assert.ok(flint);
+    assert.equal(flint.quantity, 1);
+    assert.equal(flint.stone, undefined);
+    assert.equal(flint.knapQuality, "rough");
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give grindstone 1 flint" });
+    const flintChats = world.drainEvents().filter((e) => e.kind === "chat");
+    assert.ok(flintChats.some((e) => e.text === "Gave 1× Rough Flint Spear"));
+    assert.ok(flintChats.some((e) => e.text === 'Unknown stone "flint".'));
+    assert.equal(pawn.inventory.some((s) => s && s.id === "grindstone" && s.stone === "flint"), false);
 });
 
 test("/heal restores body and announces", () => {
@@ -3520,6 +3713,46 @@ test("places a finished figurine and pickup restores voxels", () => {
     assert.ok(back);
     assert.equal(back.formVoxels, stack.formVoxels);
     assert.equal(back.formClass, "human");
+});
+
+test("placing a grindstone keeps the chosen rotation", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    fillGrass(world);
+    pawn.inventory[0] = { id: "grindstone", quantity: 1, stone: "diorite" };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, { type: Protocol.Actions.PLACE, tx: 2, ty: 1, rot: 90 });
+    const chunk = originChunk(world);
+    const stone = (chunk.things || []).find((t) => t.id === "grindstone");
+    assert.ok(stone);
+    assert.equal(stone.rot, 90);
+    assert.equal(stone.stone, "diorite");
+    const def = require("../data/Things.json").find((t) => t && t.id === "grindstone");
+    const stand = Place.interactTileOf(stone, 16, def);
+    const origin = Place.originTileOf(stone, 16);
+    assert.equal(stand.tx, origin.tx - 1);
+    assert.equal(stand.ty, origin.ty);
+});
+
+test("placing and picking up a grindstone keeps its stone", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    fillGrass(world);
+    pawn.inventory[0] = { id: "grindstone", quantity: 1, stone: "granite" };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, { type: Protocol.Actions.PLACE, tx: 2, ty: 1 });
+    const chunk = originChunk(world);
+    const stone = (chunk.things || []).find((t) => t.id === "grindstone");
+    assert.ok(stone);
+    assert.equal(stone.stone, "granite");
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.STORAGE,
+        op: "pickup",
+        uid: stone.uid,
+        x: stone.x,
+        y: stone.y
+    });
+    const back = pawn.inventory.find((s) => s && s.id === "grindstone");
+    assert.ok(back);
+    assert.equal(back.stone, "granite");
 });
 
 test("place figurine rot does not rewrite voxels", () => {

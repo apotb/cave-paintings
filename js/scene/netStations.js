@@ -407,8 +407,9 @@
                 if (Array.isArray(src.occupants)) entry.occupants = src.occupants;
                 if (src.medical != null) entry.medical = !!src.medical;
                 if (typeof Place !== "undefined") Place.ensureSleepEntry(entry, def);
-            } else if (isStation) {
+            } else             if (isStation) {
                 if (typeof Place !== "undefined") Place.ensureCraftStationEntry(entry);
+                if (src.stone) entry.stone = src.stone;
             } else if (isSettle) {
                 if (typeof Place !== "undefined") Place.ensureSettlementEntry(entry);
                 if (src.settlementId) entry.settlementId = src.settlementId;
@@ -445,6 +446,7 @@
             if (src.digAccrued != null) entry.digAccrued = src.digAccrued;
             if (src.digSettled != null) entry.digSettled = src.digSettled;
             if (src.fillId) entry.fillId = src.fillId;
+            if (src.stone) entry.stone = src.stone;
             if (Array.isArray(src.occupants)) entry.occupants = src.occupants;
             if (src.medical != null) entry.medical = !!src.medical;
             this._netApplyStorageFilter(entry, src);

@@ -171,8 +171,9 @@
         else delete spr.food;
         if (e.customName) spr.customName = e.customName;
         else delete spr.customName;
-        if (spr.item?.id === "pebble" && typeof ensureStoneTexture === "function") {
-            const key = ensureStoneTexture(spr.scene, "pebble", 1, e.stone);
+        if ((spr.item?.id === "pebble" || spr.item?.id === "grindstone") && typeof ensureStoneTexture === "function") {
+            const kind = spr.item.id === "grindstone" ? "grindstone" : "pebble";
+            const key = ensureStoneTexture(spr.scene, kind, 1, e.stone);
             if (key && spr.scene.textures?.exists?.(key)) spr.setTexture(key);
         }
     },

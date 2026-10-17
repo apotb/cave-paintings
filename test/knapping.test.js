@@ -298,6 +298,18 @@ test("a spear with no rock keeps the Stone Spear name", () => {
     assert.equal(Stone.displayName({ id: "stone_spear" }), null);
     assert.equal(Stone.displayName({ id: "stone_spear", knapMaterial: "pebble" }), "Andesite Spear");
     assert.equal(Stone.displayName({ id: "stone_spear", knapMaterial: "flint" }), "Flint Spear");
+    assert.equal(
+        Stone.displayName({ id: "stone_spear", knapMaterial: "pebble", knapQuality: "rough" }),
+        "Rough Andesite Spear"
+    );
+    assert.equal(
+        Stone.displayName({ id: "stone_spear", knapMaterial: "pebble", stone: "granite", knapQuality: "crude" }),
+        "Crude Granite Spear"
+    );
+    assert.equal(
+        Stone.displayName({ id: "stone_spear", knapMaterial: "flint", knapQuality: "fine" }),
+        "Fine Flint Spear"
+    );
 });
 
 test("weapon damage and spear stab follow the rock", () => {
@@ -358,6 +370,10 @@ test("weapon damage and spear stab follow the rock", () => {
         { id: "pebble" },
         { id: "pebble", knapping: { hardness: 5, toughness: 0.4 } }
     ), ["Hardness: 5", "Toughness: 40%"]);
+    assert.deepEqual(Stone.statLinesFor(
+        { id: "grindstone", stone: "diorite" },
+        { id: "grindstone" }
+    ), []);
 });
 
 function mulberry32(seed) {

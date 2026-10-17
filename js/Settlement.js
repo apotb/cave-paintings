@@ -1335,6 +1335,11 @@ class SettlementSystem {
         if (entryId === "rock" && typeof Stone !== "undefined" && Stone.rockLabel) {
             return Stone.rockLabel(thing?.entry);
         }
+        if (entryId === "grindstone" && typeof Stone !== "undefined" && Stone.displayName) {
+            return Stone.displayName({ id: "grindstone", stone: thing?.entry?.stone })
+                || thing?.meta?.name
+                || "Grindstone";
+        }
         return thing?.meta?.name
             || this.scene.getThing?.(entryId)?.name
             || entryId

@@ -112,12 +112,22 @@
         const base = KIND_DEFS[piece?.kind] || {};
         const fp = Array.isArray(piece?.footprint) ? piece.footprint : base.footprint;
         const thing = thingById(piece?.id);
+        const storage = thing?.storage || base.storage;
         return {
             id: piece.id,
             ...base,
+            ...(storage ? { storage } : {}),
             footprint: fp || [1, 1],
             interactOffset: thing?.interactOffset || piece?.interactOffset || null
         };
+    }
+
+    function researchApi() {
+        if (typeof Research !== "undefined" && Research.ensureEntry) return Research;
+        if (typeof require === "function") {
+            try { return require("./research"); } catch (_) { return null; }
+        }
+        return null;
     }
 
     function thingById(id) {
@@ -196,7 +206,86 @@
         return lo + Math.floor(rand() * (hi - lo + 1));
     }
 
-    function fillBasketSlots(table, rand) {
+    function worldGenApi() {
+        if (typeof WorldGen !== "undefined" && WorldGen.rockStoneAt) return WorldGen;
+        try {
+            if (typeof require === "function") return require("./sim/WorldGen");
+        } catch (_) { /* camp loot still fills; spears fall back to andesite */ }
+        return null;
+    }
+
+    function rockStoneAt(tx, ty) {
+        const stone = worldGenApi()?.rockStoneAt?.(tx, ty);
+        return stone || "andesite";
+    }
+
+    function durabilityStack(row, rand) {
+        const frac = row.durabilityFrac || [0.25, 0.55];
+        const f = Number(frac[0]) + rand() * (Number(frac[1]) - Number(frac[0]));
+        const max = Number(row.durability) || 100;
+        return {
+            id: row.id,
+            quantity: 1,
+            durability: Math.max(1, max * f)
+        };
+    }
+
+    function stampLocalStone(stack, row, stoneId) {
+        if (!stack) return stack;
+        const local = !!(row && row.localStone) || stack.id === "stone_spear";
+        if (!local) return stack;
+        const stone = stoneId || "andesite";
+        if (stack.id === "stone_spear") {
+            stack.knapMaterial = "pebble";
+            stack.stone = stone;
+        } else if (stack.id === "pebble") {
+            stack.stone = stone;
+        }
+        return stack;
+    }
+
+    function rollLootStack(weapons, junk, rand, stoneId) {
+        let stack = null;
+        let row = null;
+        const roll = rand();
+        let acc = 0;
+        for (const w of weapons) {
+            acc += Number(w.chance) || 0;
+            if (roll < acc) {
+                row = w;
+                stack = durabilityStack(w, rand);
+                break;
+            }
+        }
+        if (!stack && junk.length) {
+            const picked = pickWeighted(rand, junk);
+            if (picked?.id) {
+                row = picked;
+                if (picked.durability != null) stack = durabilityStack(picked, rand);
+                else {
+                    const qty = randInt(rand, picked.min, picked.max);
+                    if (qty > 0) stack = { id: picked.id, quantity: qty };
+                }
+            }
+        }
+        return stampLocalStone(stack, row, stoneId);
+    }
+
+    function fillBasketSlots(table, rand, stoneId) {
+        const junk = Array.isArray(table?.junk) ? table.junk : [];
+        const weapons = Array.isArray(table?.weapons) ? table.weapons : [];
+        if (table?.eachSlot) {
+            const n = Math.max(1, Math.min(8, Math.floor(Number(table.slots) || 8)));
+            const slots = Array.from({ length: n }, () => null);
+            const empty = Number(table.empty);
+            const skipEmpty = Number.isFinite(empty) && empty > 0;
+            for (let i = 0; i < n; i++) {
+                if (skipEmpty && rand() < empty) continue;
+                if (!junk.length && !weapons.length) break;
+                slots[i] = rollLootStack(weapons, junk, rand, stoneId);
+            }
+            return slots;
+        }
         const slots = [null, null, null, null, null, null, null, null];
         if (!table) return slots;
         const countRow = pickWeighted(rand, table.stackCount || [{ n: 1, weight: 1 }]);
@@ -208,37 +297,8 @@
             idxs[i] = idxs[j];
             idxs[j] = t;
         }
-        const chosen = idxs.slice(0, n);
-        const weapons = Array.isArray(table.weapons) ? table.weapons : [];
-        const junk = Array.isArray(table.junk) ? table.junk : [];
-        for (const slot of chosen) {
-            let stack = null;
-            const roll = rand();
-            let acc = 0;
-            for (const w of weapons) {
-                acc += Number(w.chance) || 0;
-                if (roll < acc) {
-                    const frac = w.durabilityFrac || [0.25, 0.55];
-                    const f = Number(frac[0]) + rand() * (Number(frac[1]) - Number(frac[0]));
-                    const max = Number(w.durability) || 100;
-                    stack = {
-                        id: w.id,
-                        quantity: 1,
-                        durability: Math.max(1, max * f)
-                    };
-                    break;
-                }
-            }
-            if (!stack) {
-                const row = pickWeighted(rand, junk);
-                if (row?.id) {
-                    stack = {
-                        id: row.id,
-                        quantity: randInt(rand, row.min, row.max)
-                    };
-                }
-            }
-            slots[slot] = stack;
+        for (const slot of idxs.slice(0, n)) {
+            slots[slot] = rollLootStack(weapons, junk, rand, stoneId);
         }
         return slots;
     }
@@ -251,7 +311,7 @@
         return { x: tx * ts + ts / 2, y: ty * ts + ts };
     }
 
-    function makeEntry(piece, tx, ty, rot, worldSeed, ts, lootTables) {
+    function makeEntry(piece, tx, ty, rot, worldSeed, ts, lootTables, tileKeyAt) {
         const def = pieceDef(piece);
         const pos = worldPos(tx, ty, rot, piece, ts);
         const entry = {
@@ -277,15 +337,28 @@
             return entry;
         }
         if (piece.kind === "storage") {
+            if (piece.id === "storage_pit") {
+                entry.digProgress = 1;
+                const ground = tileKey(tileKeyAt, tx, ty);
+                entry.fillId = (Place && Place.pitFillForTile(ground)) || "dirt";
+            }
             if (piece.loot && lootTables?.[piece.loot]) {
                 const lootRand = mulberry32(hash2D(tx, ty, (worldSeed ^ LOOT_SALT) >>> 0));
-                entry.slots = fillBasketSlots(lootTables[piece.loot], lootRand);
+                const table = lootTables[piece.loot];
+                const stoneRows = [...(table.weapons || []), ...(table.junk || [])];
+                const wantsStone = stoneRows.some((w) => w && (w.localStone || w.id === "stone_spear"));
+                entry.slots = fillBasketSlots(table, lootRand, wantsStone ? rockStoneAt(tx, ty) : null);
             }
             if (Place) Place.ensureStorageEntry(entry, def);
             return entry;
         }
         if (piece.kind === "craft") {
             if (Place) Place.ensureCraftStationEntry(entry);
+            return entry;
+        }
+        if (piece.kind === "paint") {
+            const research = researchApi();
+            if (research?.ensureEntry) research.ensureEntry(entry, thingById(piece.id));
             return entry;
         }
         return entry;
@@ -308,7 +381,27 @@
         if (!Array.isArray(piecesIn) || !piecesIn.length) return null;
 
         const spawned = [];
-        for (const piece of piecesIn) {
+        for (const raw of piecesIn) {
+            let piece = raw;
+            if (Array.isArray(raw.oneOf) && raw.oneOf.length) {
+                const roll = rand();
+                let acc = 0;
+                let chosen = null;
+                for (const alt of raw.oneOf) {
+                    acc += Number(alt.chance) || 0;
+                    if (roll < acc) {
+                        chosen = alt;
+                        break;
+                    }
+                }
+                if (!chosen) continue;
+                piece = {
+                    ...raw,
+                    id: chosen.id,
+                    kind: chosen.kind || raw.kind
+                };
+                delete piece.oneOf;
+            }
             let include = true;
             if (piece.chance != null) include = rand() < Number(piece.chance);
             const d = rotateDelta(Number(piece.dx) || 0, Number(piece.dy) || 0, campRot);
@@ -318,15 +411,19 @@
             const tx = originTx + d.dx;
             const ty = originTy + d.dy;
             const foot = footprintOf(tx, ty, rot, piece);
-            const required = piece.chance == null;
+            const required = raw.chance == null && !Array.isArray(raw.oneOf);
             if (!include) continue;
             if (coversOrigin(foot)) {
                 if (required) return null;
                 continue;
             }
+            const placeTiles = thingById(piece.id)?.placeTiles;
+            const restricted = Array.isArray(placeTiles) && placeTiles.length > 0;
             let ok = true;
             for (const t of foot) {
-                if (!isPlaceLand(tileKey(tileKeyAt, t.tx, t.ty))) {
+                const key = tileKey(tileKeyAt, t.tx, t.ty);
+                const allowed = restricted ? placeTiles.indexOf(key) >= 0 : isPlaceLand(key);
+                if (!allowed) {
                     ok = false;
                     break;
                 }
@@ -343,7 +440,7 @@
         }
 
         for (const piece of piecesIn) {
-            if (piece.chance != null) continue;
+            if (piece.chance != null || Array.isArray(piece.oneOf)) continue;
             if (!spawned.some((s) => s.piece === piece)) return null;
         }
         const fire = spawned.find((s) => s.piece.kind === "campfire");
@@ -509,6 +606,9 @@
                     || id === "lean_to"
                     || id === "wicker_basket"
                     || id === "skinworking_bench"
+                    || id === "grindstone"
+                    || id === "painting_circle"
+                    || id === "storage_pit"
                 ) {
                     continue;
                 }
@@ -557,7 +657,7 @@
         );
     }
 
-    function stampInstance(inst, chunk, worldSeed, cfg) {
+    function stampInstance(inst, chunk, worldSeed, cfg, tileKeyAt) {
         const ts = chunk.tileSize || TS;
         const cx = chunk.cx;
         const cy = chunk.cy;
@@ -566,13 +666,13 @@
         for (const s of inst.spawned) {
             if (!inChunk(s.tx, s.ty, cx, cy)) continue;
             if (hasPieceEntry(chunk.things, s.piece, s.tx, s.ty, s.rot, ts)) continue;
-            chunk.things.push(makeEntry(s.piece, s.tx, s.ty, s.rot, worldSeed, ts, lootTables));
+            chunk.things.push(makeEntry(s.piece, s.tx, s.ty, s.rot, worldSeed, ts, lootTables, tileKeyAt));
         }
     }
 
     function applyInstance(inst, chunk, worldSeed, cfg, tileKeyAt) {
         applyYard(inst, chunk, tileKeyAt);
-        stampInstance(inst, chunk, worldSeed, cfg);
+        stampInstance(inst, chunk, worldSeed, cfg, tileKeyAt);
     }
 
     function chunkHasCampfire(chunk) {

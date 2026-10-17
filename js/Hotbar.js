@@ -99,7 +99,8 @@ class Hotbar {
         const bSpecial = typeof isSpecialStack === "function"
             ? isSpecialStack(b)
             : !!(b && (b.customName || b.food || b.ingredients || b.toolClass));
-        if (b && a.id === b.id && !aSpecial && !bSpecial) {
+        const stonesMatch = typeof stackStonesMatch !== "function" || stackStonesMatch(a, b);
+        if (b && a.id === b.id && !aSpecial && !bSpecial && stonesMatch) {
             const meta = this.scene.getItem(a.id);
             const maxStack = Math.max(1, meta?.maxStack || 1);
             const space = Math.max(0, maxStack - b.quantity);
@@ -227,6 +228,7 @@ class Hotbar {
             for (let i = 0; i < toCap; i++) {
                 const dest = toInv[i];
                 if (!dest || dest.id !== stack.id) continue;
+                if (typeof stackStonesMatch === "function" && !stackStonesMatch(dest, stack)) continue;
                 const destSpecial = typeof isSpecialStack === "function"
                     ? isSpecialStack(dest)
                     : !!(dest.customName || dest.food || dest.ingredients || dest.toolClass);

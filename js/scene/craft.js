@@ -33,15 +33,6 @@
         if (namePct != null) name = `${name} (${namePct}%)`;
         lines.push(name);
 
-        // Tip / tipped-spear quality on line 2 (knives still bake quality into the name)
-        if (
-            stack?.knapQuality
-            && (stack.toolClass === "spear_tip" || !stack.toolClass)
-        ) {
-            const q = String(stack.knapQuality);
-            lines.push(q.charAt(0).toUpperCase() + q.slice(1));
-        }
-
         // Weight (stack.weight for dynamic meals; knapped tools use item def)
         const knapTool = !!(stack?.toolClass || stack?.knapMaterial);
         const weight = knapTool
@@ -456,19 +447,10 @@
             if (typeof applyPixelUiFont === "function") applyPixelUiFont(quantity, 16, s);
             this.craftContainer.add(quantity);
 
-            // Tooltip
+            // Tooltip. The preview stack is live, so the name follows the first stuff stack.
             const tt = () => {
                 const lines = [];
-                let stack = null;
-                if (recipe.id === "stone_spear") {
-                    const tip = this._craftPredictedTip(recipe);
-                    const mat = tip?.knapMaterial;
-                    if (mat === "flint" || mat === "pebble") {
-                        stack = { id: "stone_spear", knapMaterial: mat };
-                        if (tip.stone) stack.stone = tip.stone;
-                        if (tip.knapQuality) stack.knapQuality = tip.knapQuality;
-                    }
-                }
+                const stack = this._craftPreviewStack(recipe);
                 lines.push(this.formatItemTooltip(this.getItem(recipe.id), recipe.quantity, null, stack));
                 lines.push('—');
 
@@ -732,16 +714,23 @@
     },
 
     _craftRecipeIconKey(recipe) {
-        if (recipe?.id === "stone_spear" && typeof ensureSpearTexture === "function") {
-            const tip = this._craftPredictedTip(recipe);
-            const mat = tip?.knapMaterial;
+        const id = recipe?.id;
+        const preview = this._craftPreviewStack(recipe);
+        if ((id === "stone_spear" || id === "flint_spear") && typeof ensureSpearTexture === "function") {
+            const mat = preview?.knapMaterial;
             const hasRock = mat === "flint" || mat === "pebble";
             // No rock yet: andesite gray only. Name and stats stay Stone Spear.
             const key = ensureSpearTexture(
                 this,
                 hasRock ? mat : "andesite",
-                hasRock ? tip?.stone : "andesite"
+                hasRock ? preview?.stone : "andesite"
             );
+            if (key && this.textures.exists(key)) return key;
+        }
+        if (id === "grindstone" && typeof ensureStoneTexture === "function") {
+            // No pebble yet: andesite gray. The name stays Grindstone.
+            const stone = preview?.stone || "andesite";
+            const key = ensureStoneTexture(this, "grindstone", 1, stone);
             if (key && this.textures.exists(key)) return key;
         }
         const meta = this.getItem(recipe.id);
@@ -754,25 +743,56 @@
         return "slot";
     },
 
+    /** Hotbar, then the pack, then the open basket. Same order the craft consumes. */
+    _craftStuffBags(pawn) {
+        const who = pawn || this.player;
+        const store = this._openCraftStorage(who);
+        return [who?.inventory, who?.overflow, store?.entry?.slots];
+    },
+
+    /**
+     * Result this craft would produce from the first stuff stack.
+     * No match leaves the plain name (Stone Spear, Grindstone) and an andesite icon.
+     */
+    _craftPreviewStack(recipe, pawn) {
+        if (typeof Stone === "undefined" || !Stone.craftPreviewStack) return null;
+        return Stone.craftPreviewStack(recipe, this._craftStuffBags(pawn));
+    },
+
     /**
      * Spear tip this craft would consume: leftmost hotbar match, then the pack, then the open basket.
      * No match leaves the recipe icon as an andesite-colored tip named Stone Spear.
      */
     _craftPredictedTip(recipe, pawn) {
-        const tipIng = recipe?.ingredients?.find((i) => i.toolClass === "spear_tip");
-        if (!tipIng) return null;
-        const who = pawn || this.player;
-        const match = (s) => !!(s && s.id === tipIng.id && s.toolClass === tipIng.toolClass);
-        for (const bag of [who?.inventory, who?.overflow]) {
-            for (const stack of bag || []) {
-                if (match(stack)) return stack;
-            }
+        if (recipe?.id !== "stone_spear" && recipe?.id !== "flint_spear") return null;
+        if (typeof Stone === "undefined" || !Stone.firstStuffStack) return null;
+        return Stone.firstStuffStack(recipe, this._craftStuffBags(pawn));
+    },
+
+    /**
+     * First pebble this craft would consume: leftmost hotbar match, then the pack, then the open basket.
+     * A missing pebble stays andesite. The name stays Grindstone until a pebble is in reach.
+     */
+    _craftPredictedPebble(recipe, pawn) {
+        if (recipe?.id !== "grindstone") return null;
+        if (typeof Stone === "undefined" || !Stone.firstStuffStack) return null;
+        return Stone.firstStuffStack(recipe, this._craftStuffBags(pawn));
+    },
+
+    /**
+     * Recipe icons are built once. Swap the texture when the first stuff stack changes
+     * so a drop, pickup, or hotbar move updates the color along with the name.
+     */
+    _syncCraftRecipeIcons() {
+        if (this._craftMenuRefreshing || !this.craftMenuVisible || !Array.isArray(this._data)) return;
+        for (let i = 0; i < this._data.length; i++) {
+            const row = this._data[i];
+            const icon = row?.icon;
+            if (!icon?.active || !row.recipe) continue;
+            const key = this._craftRecipeIconKey(row.recipe);
+            if (!key || icon.texture?.key === key || !this.textures?.exists?.(key)) continue;
+            icon.setTexture(key);
         }
-        const store = this._openCraftStorage(who);
-        for (const stack of store?.entry?.slots || []) {
-            if (match(stack)) return stack;
-        }
-        return null;
     },
 
     _buildCraftTakeButton() {
@@ -1354,6 +1374,19 @@
                 this, who.x, who.y, item, recipe.quantity || 1,
                 undefined, extras
             );
+            return;
+        }
+
+        if (recipe.id === "grindstone") {
+            const pebble = this._craftPredictedPebble(recipe, who);
+            const stone = (typeof Stone !== "undefined" && Stone.normalizeStone)
+                ? (Stone.normalizeStone(pebble?.stone) || "andesite")
+                : (pebble?.stone || "andesite");
+            const stack = makeItemStack(item, recipe.quantity || 1, undefined, this.worldMinuteIndex());
+            stack.stone = stone;
+            const extras = { stone };
+            if (typeof who.gainStack === "function" && who.gainStack(stack)) return;
+            DroppedItem.spawn(this, who.x, who.y, item, recipe.quantity || 1, undefined, extras);
             return;
         }
 

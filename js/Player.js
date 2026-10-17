@@ -2373,7 +2373,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (!slot || slot.id !== item.id || slot.quantity >= maxStack) continue;
             if (slot.customName || slot.food || slot.ingredients || slot.toolClass
                 || slot.formClass || slot.formVoxels) continue;
-            if (item.id === "pebble" && typeof Stone !== "undefined" && Stone.stoneKey
+            if ((item.id === "pebble" || item.id === "grindstone") && typeof Stone !== "undefined" && Stone.stoneKey
                 && Stone.stoneKey(slot) !== Stone.stoneKey(extras)) continue;
             const space = maxStack - slot.quantity;
             const toAdd = Math.min(space, remaining, fitNow());

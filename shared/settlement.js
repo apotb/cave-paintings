@@ -150,6 +150,7 @@
             outputId: r.id,
             hideStage: r.hideStage
         })),
+        grind: [],
         rock: [
             { id: "cracked_coconut", name: "Make Coconut Shell", kind: "make", outputId: "cracked_coconut" },
             { id: "sharp_stick", name: "Make Sharp Stick", kind: "make", outputId: "sharp_stick" },
@@ -167,12 +168,14 @@
     const BILL_STATION_THING = {
         campfire: "campfire",
         rack: "drying_rack",
-        craft: "skinworking_bench"
+        craft: "skinworking_bench",
+        grind: "grindstone"
     };
     const ADDABLE = {
         campfire: true,
         unlit_campfire: true,
         skinworking_bench: true,
+        grindstone: true,
         drying_rack: true,
         wicker_basket: true,
         storage_pit: true,
@@ -347,6 +350,7 @@
     function stationKind(id) {
         if (id === "campfire" || id === "unlit_campfire") return "campfire";
         if (id === "skinworking_bench") return "craft";
+        if (id === "grindstone") return "grind";
         if (id === "drying_rack") return "rack";
         if (id === "wicker_basket" || id === "storage_pit") return "storage";
         if (id === "rock") return "rock";

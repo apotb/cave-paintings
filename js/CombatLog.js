@@ -159,25 +159,38 @@ class CombatLog {
      */
     _giveStuff(meta, stuff) {
         const raw = String(stuff || "").trim();
+        const id = meta?.id;
+        const stuffable = (typeof Stone !== "undefined" && Stone.isStuffableItem)
+            ? Stone.isStuffableItem(id)
+            : (id === "pebble" || id === "grindstone" || id === "stone_spear");
         if (!raw) {
-            if (meta?.id === "stone_spear") {
-                const stone = (typeof Stone !== "undefined" && Stone.stoneOf)
-                    ? (Stone.stoneOf({ id: "stone_spear" }) || "andesite")
-                    : "andesite";
-                return { extras: { stone, knapMaterial: "pebble" } };
-            }
-            return { extras: {} };
-        }
-        if (meta?.id === "pebble" || meta?.id === "stone_spear") {
-            const stone = (typeof Stone !== "undefined" && Stone.fromToken)
-                ? Stone.fromToken(raw)
-                : null;
-            if (!stone) return { error: `Unknown stone "${stuff}".` };
+            if (!stuffable) return { extras: {} };
+            const stone = (typeof Stone !== "undefined" && Stone.stoneOf)
+                ? (Stone.stoneOf({ id }) || "andesite")
+                : "andesite";
             const extras = { stone };
-            if (meta.id === "stone_spear") extras.knapMaterial = "pebble";
+            if (id === "stone_spear") {
+                extras.knapMaterial = "pebble";
+                extras.knapQuality = "rough";
+            }
             return { extras };
         }
-        return { error: `${meta?.name || meta?.id || "Item"} takes no extra.` };
+        if (!stuffable) {
+            return { error: `${meta?.name || id || "Item"} takes no extra.` };
+        }
+        const picked = (typeof Stone !== "undefined" && Stone.stuffId)
+            ? Stone.stuffId(id, raw)
+            : ((typeof Stone !== "undefined" && Stone.fromToken) ? Stone.fromToken(raw) : null);
+        if (!picked) return { error: `Unknown stone "${stuff}".` };
+        if (picked === "flint") {
+            return { extras: { knapMaterial: "flint", knapQuality: "rough" } };
+        }
+        const extras = { stone: picked };
+        if (id === "stone_spear") {
+            extras.knapMaterial = "pebble";
+            extras.knapQuality = "rough";
+        }
+        return { extras };
     }
 
     /**
@@ -186,8 +199,16 @@ class CombatLog {
      */
     _setStuff(def, stuff) {
         const raw = String(stuff || "").trim();
-        if (!raw) return { extras: {} };
-        if (def?.id === "rock" || def?.id === "pebbles") {
+        if (!raw) {
+            if (def?.id === "rock" || def?.id === "pebbles" || def?.id === "grindstone") {
+                const stone = (typeof Stone !== "undefined" && Stone.stoneOf)
+                    ? (Stone.stoneOf({ id: def.id }) || "andesite")
+                    : "andesite";
+                return { extras: { stone } };
+            }
+            return { extras: {} };
+        }
+        if (def?.id === "rock" || def?.id === "pebbles" || def?.id === "grindstone") {
             const stone = (typeof Stone !== "undefined" && Stone.fromToken)
                 ? Stone.fromToken(raw)
                 : null;
@@ -512,12 +533,8 @@ class CombatLog {
                 DroppedItem.spawn(this.scene, player.x, player.y, meta, remaining, undefined, extras);
             }
             const named = (typeof Stone !== "undefined" && Stone.displayName
-                && (meta.id === "pebble" || (meta.id === "stone_spear" && stone)))
-                ? Stone.displayName({
-                    id: meta.id,
-                    stone,
-                    ...(meta.id === "stone_spear" ? { knapMaterial: "pebble" } : {})
-                })
+                && (meta.id === "pebble" || meta.id === "stone_spear"))
+                ? Stone.displayName({ id: meta.id, ...(applied.extras || {}) })
                 : null;
             const label = named || meta.name || meta.id;
             if (remaining > 0) {

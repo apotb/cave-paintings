@@ -14,6 +14,15 @@
     const {
         Protocol, Look, rng, Spoil, Durability, Apparel, Chop, Place, Sleep, Hunger, Path, Hide, Carry, Fire, Party, Settlement, StorageFilter, FuelFilter, CavemanNames, CorpseDecay, GameMath, DataStore, BodyHealing, Hediffs, BodyCombat, BodyMod, Capacities, HeadlessAI, SimCreatureMod, WorldGen, SettlerWork, mulberry32, hash2D, uuid, Body, createAI, PartyAI, WandererStrollAI, NeutralAnimalAI, createPlayerCreature, createMobCreature, feetToBodyCenter, CS, TS, CHUNK_PX, SPEED, SPRINT, MELEE_RANGE, INTEREST, SIM_CHUNKS, DROP_LIFE_MS, HARVEST_RANGE_TILES, BLOCKED, _research, _contentApi, _actionsApi, _kindsApi, _forming, _dig, _defGeneration, thingDefs, mobDefs, itemDefs, chunkKey, worldToChunk, emptyInv, dedupeCorpses
     } = ctx;
+
+    function heldStone(stack) {
+        let api = typeof Stone !== "undefined" ? Stone : null;
+        if (!api) {
+            try { api = require("../../stone"); } catch (_) { api = null; }
+        }
+        return api?.normalizeStone?.(stack?.stone) || null;
+    }
+
     return {
 
     _isCraftStationEntry(t) {
@@ -60,7 +69,8 @@
                 cy: chunk?.cy,
                 rev: Number(entry.rev) || 0,
                 rot: Place.normalizeRot(entry.rot),
-                craftStation: true
+                craftStation: true,
+                stone: entry.stone || null
             };
         }
         if (Place.isSleepThing(def, entry)) {
@@ -316,6 +326,8 @@
                 y,
                 rot
             };
+            const heldStoneId = heldStone(held);
+            if (heldStoneId) entry.stone = heldStoneId;
             Place.ensureCraftStationEntry(entry);
             chunk.things.push(entry);
             this._emitStorage(chunk, entry);
@@ -1424,9 +1436,11 @@
         if (def?.craftStation) {
             if (op !== "pickup") return;
             const itemId = Place.itemIdForThing(entry.id, itemDefs());
-            const leftover = this._give(p, itemId, 1);
+            const stone = heldStone(entry);
+            const extras = stone ? { stone } : null;
+            const leftover = this._give(p, itemId, 1, extras);
             if (leftover > 0) {
-                this._pushDrop(p.x, p.y, { id: itemId, quantity: leftover });
+                this._pushDrop(p.x, p.y, { id: itemId, quantity: leftover, ...(extras || {}) });
             }
             this._unlinkStationUid(entry.uid);
             const i = chunk.things.indexOf(entry);
@@ -1580,7 +1594,7 @@
             if (piece) this._storageSetSlot(entry, slotKey, this._hangIfRack(entry, piece));
             return;
         }
-        if (dest.id === held.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(held)) {
+        if (dest.id === held.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(held) && this._canMergeStone(dest, held)) {
             let space = Math.max(0, maxStack - (dest.quantity || 1));
             if (slotMax > 0) space = Math.min(space, Math.max(0, slotMax - (dest.quantity || 1)));
             const take = Math.min(space, amount, held.quantity || 1);
@@ -1659,7 +1673,7 @@
             this._storageSetSlot(entry, fromKey, null);
             return;
         }
-        if (a.id === b.id && !this._stackIsSpecial(a) && !this._stackIsSpecial(b)) {
+        if (a.id === b.id && !this._stackIsSpecial(a) && !this._stackIsSpecial(b) && this._canMergeStone(a, b)) {
             const meta = itemDefs().get(a.id);
             const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
             const space = Math.max(0, maxStack - (b.quantity || 1));

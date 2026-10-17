@@ -635,6 +635,19 @@ function formatHours(hours) {
  * @param {Phaser.Input.Pointer|null} pointer
  * @param {Phaser.Scene|null} scene
  */
+/**
+ * Pebbles and grindstones stack only with the same stone. Other items always match.
+ * A blank stone field is andesite.
+ */
+function stackStonesMatch(a, b) {
+    if (a?.id !== "pebble" && a?.id !== "grindstone"
+        && b?.id !== "pebble" && b?.id !== "grindstone") return true;
+    if (typeof Stone !== "undefined" && typeof Stone.sameStone === "function") {
+        return Stone.sameStone(a, b);
+    }
+    return (a?.stone || "andesite") === (b?.stone || "andesite");
+}
+
 function quickMoveAmount(quantity, pointer = null, scene = null) {
     const q = Math.max(0, Math.floor(Number(quantity) || 0));
     if (q <= 0) return 0;
@@ -1022,6 +1035,10 @@ function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
         const stoneKey = ensureStoneTexture(base.scene, "pebble", 1, stack.stone);
         if (stoneKey && textures.exists(stoneKey)) key = stoneKey;
     }
+    if (stack.id === "grindstone") {
+        const stoneKey = ensureStoneTexture(base.scene, "grindstone", 1, stack.stone);
+        if (stoneKey && textures.exists(stoneKey)) key = stoneKey;
+    }
     // Knapped tools: class shape cut from the pebble/flint sprite, or a stored picture
     if (stack.toolClass && typeof Knapping !== "undefined" && Knapping.ensureShapeTexture) {
         const scene = base.scene;
@@ -1061,11 +1078,6 @@ function spearTintId(material, stone) {
     return "andesite";
 }
 
-/**
- * Palette-swapped rock or pebble sprite. Inventory always uses pebble variant 1.
- * @param {"rock"|"pebble"} kind
- * @param {1|2} variant
- */
 function stoneSourceImage(scene, texKey) {
     if (!scene?.textures?.exists?.(texKey)) return null;
     const tex = scene.textures.get(texKey);
@@ -1090,15 +1102,21 @@ function stoneImageData(img) {
     }
 }
 
+/**
+ * Palette-swapped rock, pebble, or grindstone sprite. Inventory uses variant 1.
+ * @param {"rock"|"pebble"|"grindstone"} kind
+ * @param {1|2} variant
+ */
 function ensureStoneTexture(scene, kind, variant, stoneId) {
     if (!scene?.textures || typeof Stone === "undefined" || !Stone.recolorImageData) return null;
-    const k = kind === "rock" ? "rock" : "pebble";
+    const k = kind === "rock" ? "rock" : kind === "grindstone" ? "grindstone" : "pebble";
     const v = variant === 2 ? 2 : 1;
     const stone = Stone.normalizeStone?.(stoneId) || "andesite";
     const key = `stone_${k}_${v}_${stone}`;
     if (scene.textures.exists(key)) return key;
     // rock_2 / pebble_2 are the shade pixels that sit in the holes of _1.
     // Variant 2 still draws the _1 body, then stamps those marks on top.
+    // A grindstone always stamps its shade mask.
     const body = stoneSourceImage(scene, `${k}_1`) || stoneSourceImage(scene, `${k}_${v}`);
     if (!body) return null;
     const canvasTex = scene.textures.createCanvas(key, body.width, body.height);
@@ -1115,7 +1133,7 @@ function ensureStoneTexture(scene, kind, variant, stoneId) {
     }
     Stone.recolorImageData(data.data, stone);
     Stone.fillEnclosedTransparent?.(data.data, body.width, body.height, stone);
-    if (v === 2 && Stone.stampSecondary) {
+    if ((v === 2 || k === "grindstone") && Stone.stampSecondary) {
         const marks = stoneImageData(stoneSourceImage(scene, `${k}_2`));
         if (marks) Stone.stampSecondary(data.data, marks.data, stone);
     }

@@ -51,12 +51,23 @@
                         "chance": 0.5
                     },
                     {
-                        "id": "skinworking_bench",
-                        "kind": "craft",
                         "dx": 2,
                         "dy": 2,
                         "rot": 270,
-                        "chance": 0.12
+                        "oneOf": [
+                            { "id": "skinworking_bench", "kind": "craft", "chance": 0.12 },
+                            { "id": "grindstone", "kind": "craft", "chance": 0.12 },
+                            { "id": "painting_circle", "kind": "paint", "chance": 0.12 }
+                        ]
+                    },
+                    {
+                        "id": "storage_pit",
+                        "kind": "storage",
+                        "dx": -2,
+                        "dy": -2,
+                        "rot": 0,
+                        "loot": "abandoned_pit",
+                        "chance": 0.5
                     }
                 ]
             }
@@ -64,19 +75,26 @@
     ],
     "lootTables": {
         "abandoned_basket": {
-            "stackCount": [
-                { "n": 1, "weight": 65 },
-                { "n": 2, "weight": 35 }
-            ],
+            "slots": 8,
+            "eachSlot": true,
             "junk": [
-                { "id": "rot", "weight": 45, "min": 1, "max": 3 },
-                { "id": "stick", "weight": 30, "min": 2, "max": 6 },
-                { "id": "pebble", "weight": 15, "min": 1, "max": 4 },
-                { "id": "leaf_cord", "weight": 10, "min": 1, "max": 2 }
-            ],
-            "weapons": [
-                { "id": "stone_spear", "chance": 0.01, "durability": 120, "durabilityFrac": [0.25, 0.55] },
-                { "id": "wooden_spear", "chance": 0.03, "durability": 100, "durabilityFrac": [0.25, 0.55] }
+                { "weight": 55 },
+                { "id": "rot", "weight": 10, "min": 1, "max": 3 },
+                { "id": "stick", "weight": 10, "min": 2, "max": 6 },
+                { "id": "pebble", "weight": 10, "min": 1, "max": 4, "localStone": true },
+                { "id": "leaf_cord", "weight": 8, "min": 1, "max": 2 },
+                { "id": "wooden_spear", "weight": 5, "durability": 100, "durabilityFrac": [0.25, 0.55] },
+                { "id": "stone_spear", "weight": 2, "durability": 120, "durabilityFrac": [0.25, 0.55], "localStone": true }
+            ]
+        },
+        "abandoned_pit": {
+            "slots": 6,
+            "eachSlot": true,
+            "junk": [
+                { "weight": 60 },
+                { "id": "rot", "weight": 25, "min": 1, "max": 3 },
+                { "id": "coconut", "weight": 8, "min": 1, "max": 2 },
+                { "id": "apple", "weight": 7, "min": 1, "max": 3 }
             ]
         }
     }

@@ -36,7 +36,7 @@
         let want = Math.floor(Number(action.amount));
         if (!Number.isFinite(want) || want < 1) want = qty;
         want = Math.min(want, qty);
-        if (b && a.id === b.id && !this._stackIsSpecial(a) && !this._stackIsSpecial(b)) {
+        if (b && a.id === b.id && !this._stackIsSpecial(a) && !this._stackIsSpecial(b) && this._canMergeStone(a, b)) {
             const meta = itemDefs().get(a.id);
             const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
             const space = Math.max(0, maxStack - (b.quantity || 1));
@@ -470,7 +470,7 @@
                 for (const pile of c.drops) {
                     if (!pile || pile.id !== drop.id) continue;
                     if (this._stackIsSpecial(pile)) continue;
-                    if (drop.id === "pebble" && !this._samePebbleStone(pile, drop)) continue;
+                    if ((drop.id === "pebble" || drop.id === "grindstone") && !this._samePebbleStone(pile, drop)) continue;
                     if (Hide.soakMergeBlocked(pile, drop)) continue;
                     const qty = Math.max(1, Math.floor(Number(pile.quantity) || 1));
                     if (qty >= maxStack) continue;

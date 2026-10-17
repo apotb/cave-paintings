@@ -1300,6 +1300,9 @@
         const rotTex = typeof Place !== "undefined"
             ? Place.rotationTextureKey(info.thingDef.key, rot)
             : info.thingDef.key;
+        const stoneGhostKey = (info.thingId === "grindstone" && typeof ensureStoneTexture === "function")
+            ? ensureStoneTexture(this, "grindstone", 1, info.held?.stone)
+            : null;
         const ghost = this._ensurePlaceGhost();
         if (info.thingDef?.figurine) {
             const placeKey = (typeof ClayForming !== "undefined")
@@ -1315,7 +1318,9 @@
                 : info.thingDef.floor;
             if (this.textures.exists(floorTex)) ghost.setTexture(floorTex);
             else if (this.textures.exists(info.thingDef.floor)) ghost.setTexture(info.thingDef.floor);
-        } else if (hangKey && this.textures.exists(hangKey)) ghost.setTexture(hangKey);
+        } else if (stoneGhostKey && this.textures.exists(stoneGhostKey)) ghost.setTexture(stoneGhostKey);
+        else if (info.thingId === "grindstone" && this.textures.exists("grindstone_1")) ghost.setTexture("grindstone_1");
+        else if (hangKey && this.textures.exists(hangKey)) ghost.setTexture(hangKey);
         else if (this.textures.exists(rotTex)) ghost.setTexture(rotTex);
         else if (this.textures.exists(info.thingDef.key)) ghost.setTexture(info.thingDef.key);
         let gx = x;
@@ -1618,6 +1623,10 @@
             y,
             rot: typeof Place !== "undefined" ? Place.normalizeRot(rot) : rot
         };
+        const heldStone = (typeof Stone !== "undefined" && Stone.normalizeStone)
+            ? Stone.normalizeStone(this._heldPlaceableDef()?.held?.stone)
+            : null;
+        if (heldStone) entry.stone = heldStone;
         if (typeof Place !== "undefined") Place.ensureCraftStationEntry(entry);
         chunk.meta.things.push(entry);
         const spr = new CraftStation(this, entry);
@@ -1674,10 +1683,14 @@
 
         this._removeStorageThing(storage);
         const meta = this.getItem(itemId);
+        const stone = (typeof Stone !== "undefined" && Stone.normalizeStone)
+            ? Stone.normalizeStone(entry?.stone)
+            : null;
+        const extras = stone ? { stone } : null;
         if (meta) {
-            const left = this.player.gainItem(meta, 1);
+            const left = this.player.gainItem(meta, 1, undefined, extras);
             if (left > 0) {
-                DroppedItem.spawn(this, storage.x, storage.y, meta, left);
+                DroppedItem.spawn(this, storage.x, storage.y, meta, left, undefined, extras);
             }
         }
         this.hotbar.dirty = true;

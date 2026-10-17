@@ -308,6 +308,17 @@
         "rotations": [0, 90, 180, 270]
     },
     {
+        "id": "grindstone",
+        "name": "Grindstone",
+        "key": "grindstone",
+        "hitboxSize": 5,
+        "craftStation": true,
+        "interactOffset": [0, 1],
+        "rotations": [0, 90, 180, 270],
+        "variantDir": "grindstone",
+        "variants": ["grindstone_1", "grindstone_2"]
+    },
+    {
         "id": "lean_to",
         "name": "Lean-to",
         "key": "lean_to",

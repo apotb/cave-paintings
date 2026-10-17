@@ -78,7 +78,10 @@
                 { key: t.wall, path: `assets/things/${t.key}/${t.wall}.png` }
             ];
         }
-        if (Array.isArray(t.rotations) && t.rotations.length) {
+        // Recolored variant art (the grindstone) stays in one drawing. It lists
+        // rotations so the stand tile can turn, and does not ship 0/90/180/270 frames.
+        const variantArt = Array.isArray(t.variants) && t.variants.length;
+        if (Array.isArray(t.rotations) && t.rotations.length && !variantArt) {
             const loads = [];
             const seen = new Set();
             for (const raw of t.rotations) {
@@ -119,11 +122,12 @@
         if (Array.isArray(t.variants) && t.variants.length) {
             const loads = [];
             const seen = new Set();
+            const dir = t.variantDir ? `${t.variantDir}/` : "";
             for (const raw of t.variants) {
                 const key = String(raw || "");
                 if (!key || seen.has(key)) continue;
                 seen.add(key);
-                loads.push({ key, path: `assets/things/${key}.png` });
+                loads.push({ key, path: `assets/things/${dir}${key}.png` });
             }
             return loads;
         }
@@ -1202,6 +1206,59 @@
         return slots.every((s) => !s || !(s.quantity > 0));
     }
 
+    /**
+     * Hover-tip view of a container. Slots are read left to right, top to
+     * bottom (index 0 is the top-left cell). Stacks the game treats as the
+     * same item become one icon at the cell where that item first appears,
+     * and the quantity is the sum, past a full stack of 99.
+     * Copies only — the stored slots stay separate.
+     */
+    function storageTooltipStacks(slots, slotCount) {
+        const list = Array.isArray(slots) ? slots : [];
+        const limit = slotCount == null
+            ? list.length
+            : Math.max(0, Math.floor(Number(slotCount) || 0));
+        const SF = storageFilterApi();
+        const match = typeof SF?.stacksMatch === "function"
+            ? (a, b) => SF.stacksMatch(a, b)
+            : (a, b) => !!(a?.id && a.id === b?.id);
+        const out = [];
+        for (let i = 0; i < limit; i++) {
+            const s = list[i];
+            if (!s?.id) continue;
+            const qty = s.quantity == null ? 1 : Math.floor(Number(s.quantity) || 0);
+            if (!(qty > 0)) continue;
+            let dest = null;
+            for (let j = 0; j < out.length; j++) {
+                if (match(out[j], s)) {
+                    dest = out[j];
+                    break;
+                }
+            }
+            if (!dest) {
+                out.push(Object.assign({}, s, { quantity: qty }));
+                continue;
+            }
+            dest.quantity += qty;
+        }
+        return out;
+    }
+
+    /** Combined stacks wrapped to the container's own row width. */
+    function storageTooltipRows(slots, slotCount) {
+        const n = slotCount == null
+            ? (Array.isArray(slots) ? slots.length : 0)
+            : Math.max(0, Math.floor(Number(slotCount) || 0));
+        const items = storageTooltipStacks(slots, n);
+        if (!items.length) return [];
+        const cols = storageLayoutCols(Math.max(1, n));
+        const rows = [];
+        for (let i = 0; i < items.length; i += cols) {
+            rows.push(items.slice(i, i + cols));
+        }
+        return rows;
+    }
+
     function isStorageThing(thingDef, entry) {
         if (thingDef?.storage) return true;
         return Array.isArray(entry?.slots);
@@ -1220,6 +1277,17 @@
             }
         }
         return thingId;
+    }
+
+    /** Pebbles and grindstones share a slot only when the stone matches. Blank is andesite. */
+    function depositStonesMatch(dest, stack) {
+        if (stack?.id !== "pebble" && stack?.id !== "grindstone") return true;
+        let api = typeof Stone !== "undefined" ? Stone : null;
+        if (!api && typeof require === "function") {
+            try { api = require("./stone"); } catch (_) { api = null; }
+        }
+        if (typeof api?.sameStone === "function") return api.sameStone(dest, stack);
+        return (dest?.stone || "andesite") === (stack?.stone || "andesite");
     }
 
     /**
@@ -1242,6 +1310,7 @@
             for (let i = 0; i < slots.length && remaining > 0; i++) {
                 const dest = slots[i];
                 if (!dest || dest.id !== stack.id) continue;
+                if (!depositStonesMatch(dest, stack)) continue;
                 if (destSpecial?.(dest, i)) continue;
                 const have = Math.max(0, Math.floor(Number(dest.quantity) || 0));
                 const space = Math.max(0, cap - have);
@@ -1338,6 +1407,8 @@
         emptySlots,
         storageSlotCount,
         storageLayoutCols,
+        storageTooltipStacks,
+        storageTooltipRows,
         ensureStorageEntry,
         isStorageEmpty,
         isStorageThing,

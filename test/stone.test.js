@@ -86,7 +86,14 @@ test("a stone token accepts the id or the display name", () => {
     assert.equal(Stone.fromToken("Limestone"), "limestone");
     assert.equal(Stone.fromToken("sand-stone"), null);
     assert.equal(Stone.fromToken("pebble"), null);
+    assert.equal(Stone.fromToken("flint"), null);
     assert.equal(Stone.fromToken("5"), null);
+    assert.equal(Stone.stuffId("stone_spear", "flint"), "flint");
+    assert.equal(Stone.stuffId("stone_spear", "Flint"), "flint");
+    assert.equal(Stone.stuffId("stone_spear", "granite"), "granite");
+    assert.equal(Stone.stuffId("pebble", "flint"), null);
+    assert.equal(Stone.stuffId("grindstone", "flint"), null);
+    assert.equal(Stone.stuffId("rock", "flint"), null);
 });
 
 test("pebble stacks of different stones do not merge, and a blank is andesite", () => {
@@ -101,12 +108,110 @@ test("pebble stacks of different stones do not merge, and a blank is andesite", 
     assert.equal(SF.stacksMatch({ id: "stick", quantity: 1 }, { id: "stick", quantity: 1 }), true);
     assert.equal(Stone.displayName({ id: "pebble" }), "Andesite Pebble");
     assert.equal(Stone.displayName({ id: "pebble", stone: "granite" }), "Granite Pebble");
+    assert.equal(Stone.displayName({ id: "grindstone" }), "Andesite Grindstone");
+    assert.equal(Stone.displayName({ id: "grindstone", stone: "diorite" }), "Diorite Grindstone");
+    assert.equal(Stone.displayName({ id: "grindstone", stone: "granite" }), "Granite Grindstone");
+    assert.equal(Stone.isStuffableItem("grindstone"), true);
+    assert.equal(Stone.isStuffableItem("stone_spear"), true);
+    assert.equal(Stone.isStuffableItem("wooden_spear"), false);
+    assert.equal(Stone.craftTakesStuff("pebble"), false);
+    assert.equal(Stone.craftTakesStuff("grindstone"), true);
+    assert.equal(SF.stacksMatch(
+        { id: "grindstone", quantity: 1, stone: "granite" },
+        { id: "grindstone", quantity: 1, stone: "diorite" }
+    ), false);
+    assert.equal(SF.stacksMatch(
+        { id: "grindstone", quantity: 1 },
+        { id: "grindstone", quantity: 1, stone: "andesite" }
+    ), true);
     assert.equal(Stone.rockLabel({ stone: "diorite" }), "Diorite Rock");
     assert.equal(Stone.handAxeGate("diorite"), null);
     assert.equal(Stone.handAxeGate("granite"), "brittle");
     assert.equal(Stone.handAxeGate("limestone"), "soft");
     assert.ok(Stone.durationScale("limestone") > Stone.durationScale("andesite"));
     assert.ok(Stone.durationScale("granite") < Stone.durationScale("andesite"));
+});
+
+test("craft preview follows the first stuff stack and clears when it is gone", () => {
+    const spear = {
+        id: "stone_spear",
+        ingredients: [
+            { id: "wooden_spear", qty: 1 },
+            { id: "stone_tool", qty: 1, toolClass: "spear_tip" },
+            { id: "leaf_cord", qty: 2 }
+        ]
+    };
+    const hotbar = [
+        { id: "stone_tool", quantity: 1, toolClass: "knife", knapMaterial: "pebble", stone: "granite" },
+        { id: "stone_tool", quantity: 1, toolClass: "spear_tip", knapMaterial: "pebble", stone: "diorite", knapQuality: "fine" },
+        { id: "stone_tool", quantity: 1, toolClass: "spear_tip", knapMaterial: "flint" }
+    ];
+    const diorite = Stone.craftPreviewStack(spear, [hotbar]);
+    assert.equal(diorite.stone, "diorite");
+    assert.equal(diorite.knapQuality, "fine");
+    assert.equal(Stone.displayName(diorite), "Fine Diorite Spear");
+
+    hotbar[1] = { id: "stone_tool", quantity: 1, toolClass: "spear_tip", knapMaterial: "pebble", stone: "limestone" };
+    assert.equal(Stone.craftPreviewStack(spear, [hotbar]).stone, "limestone");
+
+    hotbar[1] = null;
+    assert.equal(Stone.craftPreviewStack(spear, [hotbar]).knapMaterial, "flint");
+    assert.equal(Stone.displayName(Stone.craftPreviewStack(spear, [hotbar])), "Flint Spear");
+
+    hotbar[2] = null;
+    assert.equal(Stone.craftPreviewStack(spear, [hotbar]), null);
+
+    const fromPack = Stone.craftPreviewStack(spear, [
+        [],
+        [{ id: "stone_tool", quantity: 1, toolClass: "spear_tip", knapMaterial: "pebble", stone: "sandstone" }]
+    ]);
+    assert.equal(fromPack.stone, "sandstone");
+    const hotbarWins = Stone.craftPreviewStack(spear, [
+        [{ id: "stone_tool", quantity: 1, toolClass: "spear_tip", knapMaterial: "pebble", stone: "granite" }],
+        [{ id: "stone_tool", quantity: 1, toolClass: "spear_tip", knapMaterial: "pebble", stone: "sandstone" }]
+    ]);
+    assert.equal(hotbarWins.stone, "granite");
+    const fromBasket = Stone.craftPreviewStack(spear, [
+        [],
+        [],
+        [{ id: "stone_tool", quantity: 1, toolClass: "spear_tip", knapMaterial: "pebble", stone: "limestone" }]
+    ]);
+    assert.equal(fromBasket.stone, "limestone");
+});
+
+test("grindstone preview uses the first pebble, and other recipes stay plain", () => {
+    const grind = { id: "grindstone", ingredients: [{ id: "pebble", qty: 3 }] };
+    const bags = [[
+        { id: "leaf", quantity: 4 },
+        { id: "pebble", quantity: 1, stone: "granite" },
+        { id: "pebble", quantity: 5, stone: "limestone" }
+    ]];
+    const granite = Stone.craftPreviewStack(grind, bags);
+    assert.equal(granite.stone, "granite");
+    assert.equal(Stone.displayName(granite), "Granite Grindstone");
+
+    bags[0][1] = { id: "pebble", quantity: 1, stone: "diorite" };
+    assert.equal(Stone.craftPreviewStack(grind, bags).stone, "diorite");
+
+    bags[0][1] = null;
+    bags[0][2] = null;
+    assert.equal(Stone.craftPreviewStack(grind, bags), null);
+
+    const plain = Stone.craftPreviewStack(grind, [[
+        { id: "pebble", quantity: 3 }
+    ]]);
+    assert.equal(plain.stone, "andesite");
+    assert.equal(Stone.displayName(plain), "Andesite Grindstone");
+
+    const stick = { id: "sharp_stick", ingredients: [{ id: "stick", qty: 1 }] };
+    assert.equal(Stone.craftPreviewStack(stick, bags), null);
+    const settling = {
+        id: "settling_stone",
+        ingredients: [{ id: "pebble", qty: 8 }]
+    };
+    assert.equal(Stone.craftPreviewStack(settling, [[
+        { id: "pebble", quantity: 8, stone: "granite" }
+    ]]), null);
 });
 
 test("new ground stamps stone without an extra decor roll", () => {

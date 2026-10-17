@@ -112,6 +112,19 @@
         };
     }
 
+    /** Stone a rock on this tile index would take from the stone noise map. */
+    function rockStoneAt(tileIx, tileIy) {
+        const api = stoneApi();
+        const px = (tileIx | 0) * TS;
+        const py = (tileIy | 0) * TS;
+        const inv = 1 / NOISE_SCALE;
+        const elevation = octaveNoise2D(px * inv, py * inv, 2, 0.5, 2.5, 0);
+        const temperature = octaveNoise2D(px * inv, py * inv, 3, 0.2, 4.2, 1);
+        const key = generateTileKey(px, py, () => 1).key;
+        if (!api?.pickStone) return "andesite";
+        return api.pickStone(elevation, temperature, stoneNoise(px, py), key);
+    }
+
     function clayRichness(tx, ty) {
         const inv = 1 / NOISE_SCALE;
         const n = octaveNoise2D(tx * inv * CLAY_FREQ, ty * inv * CLAY_FREQ, 3, 0.5, 2.0, 3);
@@ -688,6 +701,7 @@
         applySeed,
         generateChunk,
         generateTileKey,
+        rockStoneAt,
         addScatter,
         removeScatter,
         scatterRoll,

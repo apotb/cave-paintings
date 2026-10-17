@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const Stone = require("../shared/stone");
 
 const src = fs.readFileSync(path.join(__dirname, "../js/scene/craft.js"), "utf8");
 const sandbox = {};
@@ -55,4 +56,32 @@ test("held keyboard modifiers count when the pointer event does not", () => {
         null,
         { max: 3, player: { keys: { SHIFT: { isDown: true } } } }
     ), 3);
+});
+
+test("stone spear quality sits in front of the name", () => {
+    sandbox.Stone = Stone;
+    const tip = craft.formatItemTooltip.call(
+        {},
+        { id: "stone_spear", name: "Stone Spear", weight: 1.2 },
+        1,
+        null,
+        { id: "stone_spear", knapMaterial: "pebble", stone: "andesite", knapQuality: "rough" }
+    );
+    const lines = tip.split("\n");
+    assert.equal(lines[0], "Rough Andesite Spear");
+    assert.equal(lines.includes("Rough"), false);
+});
+
+test("spear tip quality sits in front of the name", () => {
+    sandbox.Stone = Stone;
+    const tip = craft.formatItemTooltip.call(
+        {},
+        { id: "stone_tool", name: "Stone Tool" },
+        1,
+        null,
+        { id: "stone_tool", toolClass: "spear_tip", knapMaterial: "pebble", stone: "diorite", knapQuality: "fine" }
+    );
+    const lines = tip.split("\n");
+    assert.equal(lines[0], "Fine Diorite Spear Tip");
+    assert.equal(lines.includes("Fine"), false);
 });

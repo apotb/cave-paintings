@@ -9,7 +9,7 @@
         "prereqs": [],
         "unlocks": { "items": [], "jobs": ["gather"], "text": [] },
         "icon": "blueberry",
-        "children": ["cordage", "digging"]
+        "children": ["cordage", "digging", "grinding"]
     },
     {
         "id": "cordage",
@@ -76,7 +76,7 @@
         "cost": 3,
         "prereqs": ["gathering"],
         "unlocks": { "items": ["digging_stick"], "jobs": [], "text": [] },
-        "children": ["storage", "grinding"]
+        "children": ["storage"]
     },
     {
         "id": "storage",
@@ -91,12 +91,11 @@
     {
         "id": "grinding",
         "name": "Grinding",
-        "era": "Mesolithic",
-        "wip": true,
+        "era": "Paleolithic",
         "quote": "Oog smash!",
         "cost": 3,
-        "prereqs": ["digging", "basic_furniture"],
-        "unlocks": { "items": [], "jobs": [], "text": ["Grindstone"] },
+        "prereqs": ["gathering"],
+        "unlocks": { "items": ["grindstone"], "jobs": [], "text": [] },
         "children": []
     },
     {

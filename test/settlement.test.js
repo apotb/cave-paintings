@@ -39,6 +39,35 @@ test("planStorageDeposits fills matching stacks then empty slots", () => {
     assert.deepEqual(one, [{ index: 0, amount: 1 }]);
 });
 
+test("planStorageDeposits keeps grindstones of different stones apart", () => {
+    const slots = [
+        { id: "grindstone", quantity: 4, stone: "diorite" },
+        null,
+        { id: "grindstone", quantity: 2, stone: "granite" }
+    ];
+    const same = Place.planStorageDeposits(
+        slots,
+        { id: "grindstone", quantity: 3, stone: "granite" },
+        3,
+        { maxStack: 99 }
+    );
+    assert.deepEqual(same, [{ index: 2, amount: 3 }]);
+    const other = Place.planStorageDeposits(
+        slots,
+        { id: "grindstone", quantity: 1, stone: "andesite" },
+        1,
+        { maxStack: 99 }
+    );
+    assert.deepEqual(other, [{ index: 1, amount: 1 }]);
+    const blank = Place.planStorageDeposits(
+        [{ id: "grindstone", quantity: 1 }],
+        { id: "grindstone", quantity: 1, stone: "andesite" },
+        1,
+        { maxStack: 99 }
+    );
+    assert.deepEqual(blank, [{ index: 0, amount: 1 }]);
+});
+
 test("planStorageDeposits splits leftovers across several partial stacks", () => {
     const slots = [
         { id: "leaf", quantity: 90 },
@@ -545,6 +574,9 @@ test("owner-only station add including abandoned-camp ids", () => {
     assert.equal(Settlement.isAddableId("wicker_basket"), true);
     assert.equal(Settlement.isAddableId("storage_pit"), true);
     assert.equal(Settlement.isAddableId("skinworking_bench"), true);
+    assert.equal(Settlement.isAddableId("grindstone"), true);
+    assert.equal(Settlement.stationKind("grindstone"), "grind");
+    assert.deepEqual(Settlement.billRecipesFor("grind"), []);
     assert.equal(Settlement.isAddableId("drying_rack"), true);
     assert.equal(Settlement.isAddableId("lean_to"), false);
     const list = [

@@ -122,10 +122,10 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
 
     _applyStoneVisual() {
         const id = this.meta?.id;
-        if (id !== "rock" && id !== "pebbles") return false;
+        if (id !== "rock" && id !== "pebbles" && id !== "grindstone") return false;
         if (typeof ensureStoneTexture !== "function") return false;
-        const kind = id === "rock" ? "rock" : "pebble";
-        const variant = this.entry?.variant === 2 ? 2 : 1;
+        const kind = id === "rock" ? "rock" : id === "grindstone" ? "grindstone" : "pebble";
+        const variant = kind === "grindstone" ? 1 : (this.entry?.variant === 2 ? 2 : 1);
         const key = ensureStoneTexture(this.scene, kind, variant, this.entry?.stone);
         const src = `${kind}_${variant}`;
         const tex = (key && this.scene.textures.exists(key))
@@ -1013,6 +1013,9 @@ class Storage extends Thing {
 
         this.setInteractive({ cursor: "pointer" });
         this.on("pointerover", (pointer) => {
+            // Panel close hides slot tips; the hover scan then lands on this
+            // sprite and would pop the contents tip. Wait until the pointer leaves.
+            if (this._storageTipHold) return;
             if (this.scene.storagePanel?.visible && this.scene.storagePanel.storage === this
                 && this.scene.pointerOverWorldUi?.(pointer)) return;
             this.scene.showTooltip(
@@ -1022,7 +1025,12 @@ class Storage extends Thing {
                 this
             );
         });
-        this.on("pointerout", () => {
+        this.on("pointerout", (pointer) => {
+            if (this._storageTipHold && this._cursorOverSprite(pointer)) return;
+            if (this._storageTipHold) {
+                this._storageTipHold = false;
+                if (this.scene._storageTipHold === this) this.scene._storageTipHold = null;
+            }
             if (this.scene._hoverTarget === this) this.scene._hoverTarget = null;
             if (this.scene._tooltipTarget === this) this.scene.hideTooltip();
         });
@@ -1058,19 +1066,19 @@ class Storage extends Thing {
         return slots.length || 8;
     }
 
-    /** Occupied stacks, wrapped like the storage grid (basket 8 → two rows of 4). */
+    /** Occupied stacks, same items summed, wrapped to this container's row width. */
     storageTooltipRows() {
         const slots = this.entry?.slots || [];
         const total = this._slotCount();
-        const cols = typeof Place !== "undefined"
-            ? Place.storageLayoutCols(total)
-            : Math.min(4, Math.max(1, total));
+        if (typeof Place !== "undefined" && Place.storageTooltipRows) {
+            return Place.storageTooltipRows(slots, total);
+        }
+        const cols = Math.min(4, Math.max(1, total));
         const items = [];
         for (let i = 0; i < total; i++) {
             const s = slots[i];
             if (s?.id && (s.quantity == null || s.quantity > 0)) items.push(s);
         }
-        if (!items.length) return [];
         const rows = [];
         for (let i = 0; i < items.length; i += cols) {
             rows.push(items.slice(i, i + cols));
@@ -1119,9 +1127,26 @@ class Storage extends Thing {
         return false;
     }
 
+    /** Screen pointer still inside this sprite. Spurious outs from a lid swap stay put. */
+    _cursorOverSprite(pointer) {
+        if (!pointer) return false;
+        const b = this.getBounds?.();
+        if (!b) return false;
+        const pt = this.scene.cameras?.main?.getWorldPoint?.(pointer.x, pointer.y);
+        if (!pt) return false;
+        return Phaser.Geom.Rectangle.Contains(b, pt.x, pt.y);
+    }
+
     syncPitLid(open) {
         this._pitPanelOpen = !!open;
         this.syncPitLook();
+    }
+
+    _usePitTexture(key) {
+        if (!key || !this.scene.textures?.exists?.(key)) return false;
+        // setTexture drops Phaser's over-state and flashes the contents tip.
+        if (this.texture?.key !== key) this.setTexture(key);
+        return true;
     }
 
     /** Hologram lid while the hole is unfinished. Open finished pit shows the clay hole. */
@@ -1132,19 +1157,13 @@ class Storage extends Thing {
             : (Number(this.entry?.digProgress) || 0) >= 1;
         const showHole = finished && this._pitPanelOpen;
         this.clearTint();
-        if (showHole && this.scene.textures?.exists?.("hole")) {
-            this.setTexture("hole");
-            return;
-        }
+        if (showHole && this._usePitTexture("hole")) return;
         const key = this.meta?.key || "storage_pit";
         if (!finished) {
             const blue = ensureStoragePitBlueprint(this.scene, key);
-            if (blue) {
-                this.setTexture(blue);
-                return;
-            }
+            if (blue && this._usePitTexture(blue)) return;
         }
-        if (this.scene.textures?.exists?.(key)) this.setTexture(key);
+        this._usePitTexture(key);
     }
 
     static create(scene, entry) {
@@ -1272,6 +1291,11 @@ class CraftStation extends Thing {
     }
 
     tooltipText() {
+        if (this.meta?.id === "grindstone" && typeof Stone !== "undefined" && Stone.displayName) {
+            return Stone.displayName({ id: "grindstone", stone: this.entry?.stone })
+                || this.meta?.name
+                || "Grindstone";
+        }
         return this.meta?.name || "Craft";
     }
 

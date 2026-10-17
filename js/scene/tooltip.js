@@ -178,6 +178,8 @@
         };
 
         this.refreshTooltip = () => {
+            // Craft names are live. The icon texture is not, so restamp it on the same refresh.
+            this._syncCraftRecipeIcons?.();
             // Keep source when text is empty so hotbar swaps can re-show (e.g. rock knap tip)
             if (!this._tooltipSource) return;
             const target = this._tooltipTarget;
@@ -906,6 +908,13 @@
                 && this._pointerOnCreature(pointer, this._hoverTarget)
             ) {
                 top = this._hoverTarget;
+            }
+
+            // Storage panel close holds the contents tip until the pointer
+            // actually leaves the basket or pit.
+            if (this._storageTipHold && top !== this._storageTipHold) {
+                this._storageTipHold._storageTipHold = false;
+                this._storageTipHold = null;
             }
 
             if (top !== this._hoverTarget) {

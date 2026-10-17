@@ -833,7 +833,7 @@
                     this._enforceCarryCap(p);
                     return true;
                 }
-                if (dest.id === worldStack.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(worldStack)) {
+                if (dest.id === worldStack.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(worldStack) && this._canMergeStone(dest, worldStack)) {
                     const meta = itemDefs().get(dest.id);
                     const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
                     const space = Math.max(0, maxStack - (dest.quantity || 1));
@@ -899,7 +899,7 @@
             this._enforceCarryCap(p);
             return 0;
         }
-        if (dest.id === worldStack.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(worldStack)) {
+        if (dest.id === worldStack.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(worldStack) && this._canMergeStone(dest, worldStack)) {
             const meta = itemDefs().get(dest.id);
             const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
             const space = Math.max(0, maxStack - (dest.quantity || 1));

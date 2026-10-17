@@ -29,6 +29,8 @@
         diorite: { name: "Diorite", hardness: 6, toughness: 0.55, primary: "#E6E2DC", secondary: "#8E8A84" }
     };
     const TYPE_ORDER = ["limestone", "sandstone", "andesite", "diorite", "granite"];
+    /** Stuffable ids that can be flint. Pebbles, grindstones, and rocks stay world stones. */
+    const FLINT_STUFF = { stone_spear: true };
     const CLASS_DAMAGE = {
         knife: 7,
         scraper: 4,
@@ -103,9 +105,13 @@
         return null;
     }
 
-    /** A stone id or display name from a chat command. "pebble" is not a stone. */
+    function tokenId(raw) {
+        return String(raw || "").trim().toLowerCase().replace(/-/g, "_").replace(/\s+/g, "_");
+    }
+
+    /** A stone id or display name from a chat command. "pebble" and "flint" are not world stones. */
     function fromToken(raw) {
-        const id = String(raw || "").trim().toLowerCase().replace(/-/g, "_").replace(/\s+/g, "_");
+        const id = tokenId(raw);
         if (TYPES[id]) return id;
         const name = id.replace(/_/g, " ");
         for (const key of TYPE_ORDER) {
@@ -114,21 +120,97 @@
         return null;
     }
 
-    /** Andesite when the stack is a pebble rock and the field is blank. Null for flint. */
+    /**
+     * Stone type for a stuff token. Flint counts only when this id can be flint.
+     * @returns {string|null}
+     */
+    function stuffId(ownerId, raw) {
+        const stone = fromToken(raw);
+        if (stone) return stone;
+        if (FLINT_STUFF[ownerId] && tokenId(raw) === "flint") return "flint";
+        return null;
+    }
+
+    /** Items that keep a stone (or flint, for a spear). Pebbles are the raw stuff. */
+    function isStuffableItem(id) {
+        return id === "pebble" || id === "grindstone" || id === "stone_spear" || id === "flint_spear";
+    }
+
+    /** A crafted item copies its stuff from an ingredient. Raw pebbles do not. */
+    function craftTakesStuff(id) {
+        return id === "flint_spear" || (isStuffableItem(id) && id !== "pebble");
+    }
+
+    /** Knapped pieces and stone items are what a stuffed craft copies from. */
+    function ingredientSuppliesStuff(ing) {
+        if (!ing || ing.hideStage) return false;
+        if (ing.toolClass) return true;
+        return isStuffableItem(ing.id);
+    }
+
+    function stackMatchesIngredient(stack, ing) {
+        if (!stack || !ing || !(Number(stack.quantity) > 0)) return false;
+        if (stack.id !== ing.id) return false;
+        if (ing.toolClass && stack.toolClass !== ing.toolClass) return false;
+        return true;
+    }
+
+    /**
+     * Stack a stuffed craft copies from. Bags are hotbar, then pack, then an open basket.
+     * The leftmost stack of the first stuff ingredient wins. No such stack means no stuff yet.
+     */
+    function firstStuffStack(recipe, bags) {
+        if (!craftTakesStuff(recipe?.id)) return null;
+        for (const ing of recipe.ingredients || []) {
+            if (!ingredientSuppliesStuff(ing)) continue;
+            for (const bag of bags || []) {
+                if (!Array.isArray(bag)) continue;
+                for (const stack of bag) {
+                    if (stackMatchesIngredient(stack, ing)) return stack;
+                }
+            }
+            return null;
+        }
+        return null;
+    }
+
+    /**
+     * Preview stack for a stuffed recipe. Null keeps the plain item name
+     * (Stone Spear, Grindstone) and the andesite icon.
+     */
+    function craftPreviewStack(recipe, bags) {
+        const id = recipe?.id;
+        if (!craftTakesStuff(id)) return null;
+        const src = firstStuffStack(recipe, bags);
+        if (!src) return null;
+        if (id === "stone_spear" || id === "flint_spear") {
+            const mat = src.knapMaterial;
+            if (mat !== "flint" && mat !== "pebble") return null;
+            const stack = { id, knapMaterial: mat };
+            if (src.stone) stack.stone = src.stone;
+            if (src.knapQuality) stack.knapQuality = src.knapQuality;
+            return stack;
+        }
+        const stone = normalizeStone(src.stone) || stoneOf(src) || DEFAULT_STONE;
+        return { id, stone };
+    }
+
+    /** Andesite when a pebble, grindstone, or pebble tool has a blank field. Null for flint. */
     function stoneOf(stack) {
         if (!stack || isFlintStack(stack)) return null;
         const named = normalizeStone(stack.stone);
         if (named) return named;
         const id = stack.id;
-        if (id === "pebble" || id === "stone_tool" || id === "stone_spear" || stack.knapMaterial === "pebble") {
+        if (id === "pebble" || id === "grindstone" || id === "stone_tool" || id === "stone_spear" || stack.knapMaterial === "pebble") {
             return DEFAULT_STONE;
         }
         return null;
     }
 
-    /** Missing and andesite are the same pile. Non-pebbles always match. */
+    /** Missing and andesite are the same pile. Other items always match. */
     function sameStone(a, b) {
-        if (a?.id !== "pebble" && b?.id !== "pebble") return true;
+        const typed = (s) => s?.id === "pebble" || s?.id === "grindstone";
+        if (!typed(a) && !typed(b)) return true;
         return (stoneOf(a) || DEFAULT_STONE) === (stoneOf(b) || DEFAULT_STONE);
     }
 
@@ -421,9 +503,9 @@
         ];
     }
 
-    /** Raw knapping stones only. Finished tools keep the stats in the math, not the tooltip. */
+    /** Raw knapping stones only. Finished tools and grindstones keep stone stats out of the tooltip. */
     function statLinesFor(stack, itemDef) {
-        if (stack?.toolClass || stack?.id === "stone_spear" || stack?.id === "flint_spear") return [];
+        if (stack?.toolClass || stack?.id === "stone_spear" || stack?.id === "flint_spear" || stack?.id === "grindstone") return [];
         if (stack?.id === "pebble" || normalizeStone(stack?.stone)) return linesFromProps(propsOf(stack));
         return statLines(itemDef);
     }
@@ -433,19 +515,23 @@
         if (stack.id === "pebble") {
             return `${propsOf(stack, getItem).name} Pebble`;
         }
+        if (stack.id === "grindstone") {
+            return `${propsOf(stack, getItem).name} Grindstone`;
+        }
         if (stack.id === "stone_spear" || stack.id === "flint_spear") {
             const m = stack.knapMaterial;
             if (m !== "flint" && m !== "pebble" && !normalizeStone(stack.stone)) return null;
-            if (isFlintStack(stack)) return `${props("flint", getItem).name} Spear`;
-            return `${propsOf(stack, getItem).name} Spear`;
+            const matName = isFlintStack(stack)
+                ? props("flint", getItem).name
+                : propsOf(stack, getItem).name;
+            const q = QUALITY_NAME[stack.knapQuality];
+            return q ? `${q} ${matName} Spear` : `${matName} Spear`;
         }
         const cls = CLASS_NAME[stack.toolClass];
         if (!cls) return null;
         const matName = propsOf(stack, getItem).name;
-        if (stack.toolClass === "spear_tip" || stack.toolClass === "blank") {
-            return `${matName} ${cls}`;
-        }
-        const q = QUALITY_NAME[stack.knapQuality];
+        // Flakes stay unnamed by quality. Spear tips and finished tools put it first.
+        const q = stack.toolClass === "blank" ? null : QUALITY_NAME[stack.knapQuality];
         return q ? `${q} ${matName} ${cls}` : `${matName} ${cls}`;
     }
 
@@ -507,6 +593,11 @@
         materialId,
         normalizeStone,
         fromToken,
+        stuffId,
+        isStuffableItem,
+        craftTakesStuff,
+        firstStuffStack,
+        craftPreviewStack,
         stoneOf,
         stoneKey,
         sameStone,

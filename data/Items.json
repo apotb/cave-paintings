@@ -1288,6 +1288,23 @@
         }
     },
     {
+        "id": "grindstone",
+        "name": "Grindstone",
+        "key": "grindstone_1",
+        "maxStack": 99,
+        "place": {
+            "thing": "grindstone"
+        },
+        "tooltip": [
+            "A stone with a hole for grinding"
+        ],
+        "recipe": {
+            "REQUIRE_THING": "rock",
+            "pebble": 3,
+            "CRAFT_SECONDS": 12
+        }
+    },
+    {
         "id": "lean_to",
         "name": "Lean-to",
         "key": "lean_to",

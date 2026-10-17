@@ -400,6 +400,10 @@ class StoragePanel {
             this._notifyStorage("leave");
         }
         this.storage = storage;
+        if (storage) {
+            storage._storageTipHold = false;
+            if (this.scene._storageTipHold === storage) this.scene._storageTipHold = null;
+        }
         if (storage?.entry && typeof Place !== "undefined") {
             Place.ensureStorageEntry(storage.entry, storage.meta);
         }
@@ -425,7 +429,14 @@ class StoragePanel {
         prev?.syncPitLid?.(false);
         this.container.setVisible(false);
         this._cancelDrag();
-        this.scene.hideTooltip();
+        // The hover scan rebuilds a tip it just hid, which flashes the contents
+        // icons. Keep the sprite's own tip; hold a new one until the pointer leaves.
+        const keepSpriteTip = !!(prev && this.scene._tooltipTarget === prev);
+        if (!keepSpriteTip) this.scene.hideTooltip();
+        if (prev) {
+            prev._storageTipHold = true;
+            this.scene._storageTipHold = prev;
+        }
         this.scene._flushPendingYouGear?.();
         if (this.scene.hotbar) {
             this.scene.hotbar.dirty = true;
@@ -763,7 +774,7 @@ class StoragePanel {
         const meta = this.scene.getItem(forInv.id);
         const left = this.scene.player.gainItem(
             meta, forInv.quantity, spoilLeftForCharacter(forInv, now),
-            { dryProgress: forInv.dryProgress, soakProgress: forInv.soakProgress }
+            { dryProgress: forInv.dryProgress, soakProgress: forInv.soakProgress, stone: forInv.stone }
         );
         return left < forInv.quantity && left === 0;
     }
@@ -795,7 +806,8 @@ class StoragePanel {
             this._setStack(key, piece);
             stack.quantity -= moved;
             if (stack.quantity <= 0) inv[hotbarIndex] = null;
-        } else if (dest.id === stack.id && !special && !(typeof isSpecialStack === "function" && isSpecialStack(dest))) {
+        } else if (dest.id === stack.id && !special && !(typeof isSpecialStack === "function" && isSpecialStack(dest))
+            && (typeof stackStonesMatch !== "function" || stackStonesMatch(dest, stack))) {
             const maxStack = Math.max(1, meta?.maxStack || 1);
             let space = Math.max(0, maxStack - dest.quantity);
             if (slotMax > 0) space = Math.min(space, Math.max(0, slotMax - dest.quantity));
@@ -852,7 +864,7 @@ class StoragePanel {
             if (!(amount > 0)) return;
             const remaining = this.scene.player.gainItem(
                 meta, amount, spoilLeftForCharacter(stack, now),
-                { dryProgress: stack.dryProgress, soakProgress: stack.soakProgress }
+                { dryProgress: stack.dryProgress, soakProgress: stack.soakProgress, stone: stack.stone }
             );
             moved = amount - remaining;
             if (moved <= 0) return;
@@ -944,7 +956,8 @@ class StoragePanel {
             inv[toHotbar] = this._toInvStack(stack);
             this._setStack(fromKey, null);
         } else if (dest.id === stack.id && !stack.customName && !dest.customName
-            && !(typeof isSpecialStack === "function" && (isSpecialStack(stack) || isSpecialStack(dest)))) {
+            && !(typeof isSpecialStack === "function" && (isSpecialStack(stack) || isSpecialStack(dest)))
+            && (typeof stackStonesMatch !== "function" || stackStonesMatch(dest, stack))) {
             const meta = this.scene.getItem(dest.id);
             const maxStack = Math.max(1, meta?.maxStack || 1);
             const space = maxStack - dest.quantity;
@@ -986,7 +999,8 @@ class StoragePanel {
             this._setStack(toKey, a);
             this._setStack(fromKey, null);
         } else if (a.id === b.id && !a.customName && !b.customName
-            && !(typeof isSpecialStack === "function" && (isSpecialStack(a) || isSpecialStack(b)))) {
+            && !(typeof isSpecialStack === "function" && (isSpecialStack(a) || isSpecialStack(b)))
+            && (typeof stackStonesMatch !== "function" || stackStonesMatch(a, b))) {
             const meta = this.scene.getItem(a.id);
             const maxStack = Math.max(1, meta?.maxStack || 1);
             const space = Math.max(0, maxStack - b.quantity);
@@ -1009,6 +1023,7 @@ class StoragePanel {
             this._setStack(toKey, a);
         }
         this._notifyStorage("slot_to_slot", { from: fromKey, to: toKey });
+        this.scene.refreshTooltip?.();
     }
 
     _tryTake() {

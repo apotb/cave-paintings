@@ -43,6 +43,32 @@ test("bench hitbox follows rotation instead of a 5×5 at the feet", () => {
     assert.equal(contains(r180, x, y - 1), false);
 });
 
+test("grindstone placement rotates the stand tile and keeps variant art", () => {
+    const def = thingDef("grindstone");
+    assert.equal(Place.canRotate(def), true);
+    const loads = Place.thingImageLoads(def).map((l) => l.key);
+    assert.deepEqual(loads, ["grindstone_1", "grindstone_2"]);
+    const x = 40;
+    const y = 48;
+    const e0 = { id: def.id, x, y, rot: 0 };
+    const origin = Place.originTileOf(e0, TS);
+    const t0 = Place.interactTileOf(e0, TS, def);
+    assert.equal(t0.tx, origin.tx);
+    assert.equal(t0.ty, origin.ty + 1);
+    const t90 = Place.interactTileOf({ ...e0, rot: 90 }, TS, def);
+    assert.equal(t90.tx, origin.tx - 1);
+    assert.equal(t90.ty, origin.ty);
+    const t180 = Place.interactTileOf({ ...e0, rot: 180 }, TS, def);
+    assert.equal(t180.tx, origin.tx);
+    assert.equal(t180.ty, origin.ty - 1);
+    const t270 = Place.interactTileOf({ ...e0, rot: 270 }, TS, def);
+    assert.equal(t270.tx, origin.tx + 1);
+    assert.equal(t270.ty, origin.ty);
+    const tiles = Place.placeOccupyTiles(origin.tx, origin.ty, 90, def);
+    assert.equal(tiles.length, 2);
+    assert.ok(tiles.some((t) => t.tx === origin.tx - 1 && t.ty === origin.ty));
+});
+
 test("skinworking bench interact tile is south at 0° and rotates with the bench", () => {
     const def = thingDef("skinworking_bench");
     const x = 40;
@@ -236,4 +262,78 @@ test("figurines and unclassified lumps are held-placeable", () => {
     assert.equal(Place.heldPlaceThingId({ id: "clay" }, { id: "clay" }), null);
     assert.equal(Place.collisionWorldRect({ id: "clay_figurine", x: 8, y: 16 }, figThing, 16), null);
     assert.equal(Place.canRotate(figThing), true);
+});
+
+test("storage tooltip sums stacks of the same item without touching the slots", () => {
+    const slots = [
+        { id: "stick", quantity: 2 },
+        null,
+        { id: "stick", quantity: 2 },
+        { id: "blueberry", quantity: 2 },
+        { id: "stick", quantity: 2 },
+        { id: "flint", quantity: 99 },
+        { id: "flint", quantity: 99 },
+        null
+    ];
+    const tip = Place.storageTooltipStacks(slots, 8);
+    assert.deepEqual(tip.map((s) => [s.id, s.quantity]), [
+        ["stick", 6],
+        ["blueberry", 2],
+        ["flint", 198]
+    ]);
+    assert.equal(slots[0].quantity, 2);
+    assert.equal(slots[5].quantity, 99);
+    assert.notEqual(tip[0], slots[0]);
+});
+
+test("storage tooltip keeps first-seen order, left to right then down", () => {
+    // Pit is 2×3. Top row is the first three slots.
+    const slots = [
+        { id: "blueberry", quantity: 1 },
+        { id: "stick", quantity: 2 },
+        { id: "blueberry", quantity: 4 },
+        { id: "flint", quantity: 1 },
+        { id: "stick", quantity: 99 },
+        { id: "leaf", quantity: 3 }
+    ];
+    const tip = Place.storageTooltipStacks(slots, 6);
+    assert.deepEqual(tip.map((s) => [s.id, s.quantity]), [
+        ["blueberry", 5],
+        ["stick", 101],
+        ["flint", 1],
+        ["leaf", 3]
+    ]);
+});
+
+test("storage tooltip rows match the container width", () => {
+    const distinct = ["a", "b", "c", "d", "e"].map((id) => ({ id, quantity: 1 }));
+    const basket = Place.storageTooltipRows(distinct, 8);
+    assert.equal(Place.storageLayoutCols(8), 4);
+    assert.deepEqual(basket.map((row) => row.map((s) => s.id)), [
+        ["a", "b", "c", "d"],
+        ["e"]
+    ]);
+    const pit = Place.storageTooltipRows(distinct.slice(0, 4), 6);
+    assert.equal(Place.storageLayoutCols(6), 3);
+    assert.deepEqual(pit.map((row) => row.map((s) => s.id)), [
+        ["a", "b", "c"],
+        ["d"]
+    ]);
+});
+
+test("storage tooltip keeps unlike stacks apart", () => {
+    const slots = [
+        { id: "pebble", quantity: 3, stone: "granite" },
+        { id: "pebble", quantity: 4, stone: "limestone" },
+        { id: "pebble", quantity: 1, stone: "granite" },
+        { id: "hand_axe", quantity: 1, toolClass: "hand_axe" },
+        { id: "hand_axe", quantity: 1, toolClass: "hand_axe" }
+    ];
+    const tip = Place.storageTooltipStacks(slots, slots.length);
+    assert.deepEqual(tip.map((s) => [s.id, s.quantity, s.stone || s.toolClass]), [
+        ["pebble", 4, "granite"],
+        ["pebble", 4, "limestone"],
+        ["hand_axe", 1, "hand_axe"],
+        ["hand_axe", 1, "hand_axe"]
+    ]);
 });

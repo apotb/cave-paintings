@@ -1234,6 +1234,11 @@ class ResearchTreePanel {
             const key = ensureStoneTexture(this.scene, "rock", 1, "andesite");
             if (key && this.scene.textures.exists(key)) return key;
         }
+        if (itemId === "grindstone" && typeof ensureStoneTexture === "function") {
+            // Research has no pebble. The icon uses andesite gray; the name stays Grindstone.
+            const key = ensureStoneTexture(this.scene, "grindstone", 1, "andesite");
+            if (key && this.scene.textures.exists(key)) return key;
+        }
         const def = this.scene.getItem?.(itemId)
             || this.scene.getThing?.(itemId)
             || { id: itemId, key: itemId };
@@ -1344,7 +1349,9 @@ class ResearchTreePanel {
     _itemTip(id) {
         const def = this.scene.getItem?.(id);
         if (!def || typeof this.scene.formatItemTooltip !== "function") return null;
-        return () => this.scene.formatItemTooltip(def, 1, null, { id, quantity: 1 });
+        // Grindstone has no chosen stone here. Andesite is only the icon.
+        const stack = id === "grindstone" ? null : { id, quantity: 1 };
+        return () => this.scene.formatItemTooltip(def, 1, null, stack);
     }
 
     _isUnlockWithoutIcon(label) {

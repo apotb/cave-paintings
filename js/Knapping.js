@@ -1086,7 +1086,7 @@ const Knapping = {
             cleaver: "Cleaver"
         };
         const qLabel = quality.charAt(0).toUpperCase() + quality.slice(1);
-        const name = toolClass === "spear_tip" || toolClass === "blank"
+        const name = toolClass === "blank"
             ? `${matLabel} ${classNames[toolClass]}`
             : `${qLabel} ${matLabel} ${classNames[toolClass]}`;
 

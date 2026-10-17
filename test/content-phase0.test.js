@@ -117,4 +117,8 @@ test("missing item icons do not claim a world texture key", () => {
     assert.equal(url("skinworking_bench").some((u) => u.includes("assets/items/")), false);
     assert.ok(url("wicker_basket_0").includes("assets/things/wicker_basket/0.png"));
     assert.ok(url("skinworking_bench_0").includes("assets/things/skinworking_bench/0.png"));
+    assert.equal(url("grindstone").some((u) => u.includes("assets/items/")), false);
+    assert.equal(url("grindstone_1").some((u) => u.includes("assets/items/")), false);
+    assert.deepEqual(url("grindstone_1"), ["assets/things/grindstone/grindstone_1.png"]);
+    assert.deepEqual(url("grindstone_2"), ["assets/things/grindstone/grindstone_2.png"]);
 });

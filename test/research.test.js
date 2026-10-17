@@ -145,6 +145,17 @@ test("skinworking bench recipe is gated on Skinworking", () => {
     assert.equal(Research.recipeUnlocked("leather_pouch", s), true);
 });
 
+test("grindstone recipe is gated on Grinding", () => {
+    const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
+    assert.equal(Research.recipeUnlocked("grindstone", s), false);
+    assert.equal(Research.recipeUnlocked("grindstone", null), false);
+    Research.unlock(s, "digging");
+    Research.unlock(s, "basic_furniture");
+    assert.equal(Research.recipeUnlocked("grindstone", s), false);
+    Research.unlock(s, "grinding");
+    assert.equal(Research.recipeUnlocked("grindstone", s), true);
+});
+
 test("station bills hide until their technology is unlocked", () => {
     const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
     assert.equal(Research.billUnlocked("roast", s), true);
@@ -751,8 +762,10 @@ test("tree layout is left-to-right with prereq edges", () => {
     assert.ok(layout.edges.some((e) => e.from === "cordage" && e.to === "herbalism"));
     assert.equal(layout.edges.some((e) => e.from === "gathering" && e.to === "herbalism"), false);
     assert.ok(layout.edges.some((e) => e.from === "grinding" && e.to === "agriculture"));
-    assert.ok(layout.edges.some((e) => e.from === "digging" && e.to === "grinding"));
-    assert.ok(layout.edges.some((e) => e.from === "basic_furniture" && e.to === "grinding"));
+    assert.ok(layout.edges.some((e) => e.from === "gathering" && e.to === "grinding"));
+    assert.equal(layout.edges.some((e) => e.from === "knapping" && e.to === "grinding"), false);
+    assert.equal(layout.edges.some((e) => e.from === "digging" && e.to === "grinding"), false);
+    assert.equal(layout.edges.some((e) => e.from === "basic_furniture" && e.to === "grinding"), false);
     assert.equal(layout.edges.some((e) => e.from === "gathering" && e.to === "agriculture"), false);
     assert.equal(layout.edges.some((e) => e.from === "gathering" && e.to === "traps"), false);
     assert.equal(layout.edges.some((e) => e.from === "gathering" && e.to === "fishing"), false);
@@ -968,9 +981,9 @@ test("tree layout is left-to-right with prereq edges", () => {
     assert.equal(trapFirstX.size, 1, "Traps children should share one outgoing bus");
     const camp = big.byId.camping;
     const digSkip = routed.filter((r) => (
-        r.from === "digging" && ["storage", "grinding", "pit_traps"].includes(r.to)
+        r.from === "digging" && ["storage", "pit_traps"].includes(r.to)
     ));
-    assert.ok(digSkip.length >= 2, "Digging should skip over Camping toward storage/grinding/pits");
+    assert.ok(digSkip.length >= 2, "Digging should skip over Camping toward storage/pits");
     const digSkipYs = new Set();
     for (const r of digSkip) {
         const path = r.path || [];
@@ -1173,8 +1186,9 @@ test("retuned tech costs, names, and eras", () => {
     assert.equal(Research.techById("idolatry").quote, "Still not a cult");
     assert.equal(Research.techById("music").quote, "Music to my ears");
     assert.equal(Research.techById("ancestors").quote, "Their spirits live on");
-    assert.equal(Research.techById("grinding").era, "Mesolithic");
+    assert.equal(Research.techById("grinding").era, "Paleolithic");
     assert.equal(Research.techById("grinding").cost, 3);
+    assert.deepEqual(Research.techById("grinding").prereqs, ["gathering"]);
     assert.equal(Research.techById("shrine").era, "Mesolithic");
     assert.equal(Research.techById("shrine").cost, 4);
     assert.ok(Research.techById("rituals").unlocks.text.includes("Ritual job"));
@@ -1244,10 +1258,10 @@ test("unfinished techs are WIP and cannot be researched", () => {
         "gathering", "cordage", "camping", "basic_furniture", "herbalism", "digging", "storage",
         "fire", "hearth", "cooking", "smoking", "clay_forming", "hut",
         "knapping", "hafting", "hand_axe", "cleaver", "tanning", "skinworking", "leatherworking",
-        "culture", "painting", "counting"
+        "culture", "painting", "counting", "grinding"
     ];
     const wip = [
-        "traps", "grinding", "pit_traps", "spike_traps",
+        "traps", "pit_traps", "spike_traps",
         "pit_kiln", "earth_oven", "dogs", "feasts", "burin",
         "blades", "throwing", "fishing", "microliths", "bows", "nets",
         "ornament", "rituals", "idolatry", "music", "burial", "afterlife", "ancestors", "shrine",
@@ -1278,9 +1292,9 @@ test("unfinished techs are WIP and cannot be researched", () => {
 test("age advances at ceil 50% of an era or 100% of the previous", () => {
     const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
     const meso = Research.techsInEra("Mesolithic");
-    assert.equal(meso.length, 9);
+    assert.equal(meso.length, 8);
     const need = Math.ceil(meso.length * 0.5);
-    assert.equal(need, 5);
+    assert.equal(need, 4);
     for (let i = 0; i < need - 1; i++) Research.unlock(s, meso[i].id);
     assert.equal(Research.currentAge(s), "Paleolithic");
     Research.unlock(s, meso[need - 1].id);

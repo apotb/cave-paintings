@@ -286,6 +286,19 @@ class BillsPanel {
         return S?.stationKind?.(id) || null;
     }
 
+    _stationTitle() {
+        const id = this.thing?.entry?.id || this.thing?.meta?.id;
+        if (id === "rock" && typeof Stone !== "undefined" && Stone.rockLabel) {
+            return Stone.rockLabel(this.thing?.entry);
+        }
+        if (id === "grindstone" && typeof Stone !== "undefined" && Stone.displayName) {
+            return Stone.displayName({ id: "grindstone", stone: this.thing?.entry?.stone })
+                || this.thing?.meta?.name
+                || "Grindstone";
+        }
+        return this.thing?.meta?.name || this.thing?.entry?.id || "Station";
+    }
+
     _list() {
         const S = this._S();
         return S ? S.billsOf(this.settle, this.uid).slice() : [];
@@ -452,10 +465,7 @@ class BillsPanel {
         if (!this.visible || !this.settle) return;
         this._refreshing = true;
         const s = this.scene.uiScale || 1;
-        let name = this.thing?.meta?.name || this.thing?.entry?.id || "Station";
-        if (this._kind() === "rock" && typeof Stone !== "undefined" && Stone.rockLabel) {
-            name = Stone.rockLabel(this.thing?.entry);
-        }
+        const name = this._stationTitle();
         this.title.setText("Bills");
         this.subtitle.setText(String(name));
         this._placeHeader();
@@ -1016,11 +1026,7 @@ class BillsPanel {
         let y = inset + bh + Math.round(8 * sc);
         const recipes = S?.billRecipesFor?.(this._kind(), this.scene._playerResearchHolder?.() || this.settle) || [];
         if (!recipes.length) {
-            let name = this.thing?.meta?.name || this.thing?.entry?.id || "Station";
-            if (this._kind() === "rock" && typeof Stone !== "undefined" && Stone.rockLabel) {
-                name = Stone.rockLabel(this.thing?.entry);
-            }
-            this._label(`No bills for ${name}`, inset, y, 12, "#8a7a62");
+            this._label(`No bills for ${this._stationTitle()}`, inset, y, 12, "#8a7a62");
             return y + Math.round(24 * sc);
         }
         for (const rec of recipes) {
