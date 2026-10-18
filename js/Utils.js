@@ -2065,12 +2065,16 @@ function overlappingThingSprite(pawn) {
     forThingsNearAabb(scene, body.left, body.right, body.top, body.bottom, (t) => {
         const tb = t?.body;
         if (!tb || !tb.enable || pawnIgnoresThing(pawn, t)) return false;
-        if (body.right > tb.left && body.left < tb.right
-            && body.bottom > tb.top && body.top < tb.bottom) {
-            hit = t;
-            return true;
+        if (!(body.right > tb.left && body.left < tb.right
+            && body.bottom > tb.top && body.top < tb.bottom)) return false;
+        if (t.meta?.ring && typeof Place !== "undefined" && Place.ringWorld && Place.rectHitsRing) {
+            const ring = Place.ringWorld(t.entry, t.meta, scene.tileSize || 16);
+            if (ring && !Place.rectHitsRing(ring, body.left, body.right, body.top, body.bottom)) {
+                return false;
+            }
         }
-        return false;
+        hit = t;
+        return true;
     });
     return hit;
 }
@@ -2197,12 +2201,19 @@ function pawnPoseBlocked(pawn, x, y, pad = 0) {
     const top = body.top + dy - p;
     const bottom = body.bottom + dy + p;
     if (pawnTileBlocked(pawn, x, y)) return true;
+    const ringMiss = (thing, l, r, t, b) => {
+        if (!thing?.meta?.ring || typeof Place === "undefined") return false;
+        if (!Place.ringWorld || !Place.rectHitsRing) return false;
+        const ring = Place.ringWorld(thing.entry, thing.meta, scene.tileSize || 16);
+        return !!(ring && !Place.rectHitsRing(ring, l, r, t, b));
+    };
     const overlaps = (l, r, t, b, pred) => {
         let matched = false;
         forThingsNearAabb(scene, l, r, t, b, (thing) => {
             const tb = thing?.body;
             if (!tb || !tb.enable || pawnIgnoresThing(pawn, thing)) return false;
             if (!(r > tb.left && l < tb.right && b > tb.top && t < tb.bottom)) return false;
+            if (ringMiss(thing, l, r, t, b)) return false;
             if (pred && !pred(thing)) return false;
             matched = true;
             return true;

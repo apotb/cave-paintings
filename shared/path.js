@@ -304,14 +304,65 @@
         const gx = goal.cx;
         const gy = goal.cy;
         if (sx === gx && sy === gy) return [{ x: to.x, y: to.y }];
-        const standMemo = new Map();
-        const standAt = (cx, cy) => {
+        const firstMemo = new Map();
+        const allMemo = new Map();
+        const firstStand = (cx, cy) => {
             const k = cellKey(cx, cy);
-            if (standMemo.has(k)) return standMemo.get(k);
+            if (firstMemo.has(k)) return firstMemo.get(k);
             const pos = cellStandOpen(cx, cy, cell, blocked);
-            standMemo.set(k, pos);
+            firstMemo.set(k, pos);
             return pos;
         };
+        const allStands = (cx, cy) => {
+            const k = cellKey(cx, cy);
+            if (allMemo.has(k)) return allMemo.get(k);
+            const pts = cellStandCandidates(cx, cy, cell);
+            const open = [];
+            for (let i = 0; i < pts.length; i++) {
+                if (!blocked(pts[i].x, pts[i].y)) open.push(pts[i]);
+            }
+            allMemo.set(k, open);
+            return open;
+        };
+        // Open ground uses the first stand and a 3px margin, which is what
+        // keeps a route from grazing a trunk. A hut door is wider than the
+        // body and narrower than that margin, so a failed check may use the
+        // other stands, and a doorway (opts.slack) may use a 1px margin.
+        const slack = opts && opts.slack;
+        const corridor = (a, b, fat) => {
+            const mx = (a.x + b.x) * 0.5;
+            const my = (a.y + b.y) * 0.5;
+            if (blocked(mx, my)) return false;
+            if (!(fat > 0)) return true;
+            const dx = b.x - a.x;
+            const dy = b.y - a.y;
+            const dist = hypot(dx, dy) || 1;
+            const pdx = (-dy / dist) * fat;
+            const pdy = (dx / dist) * fat;
+            return !blocked(mx + pdx, my + pdy) && !blocked(mx - pdx, my - pdy);
+        };
+        const opens = (a, b) => {
+            if (corridor(a, b, 3)) return true;
+            if (typeof slack !== "function") return false;
+            const mx = (a.x + b.x) * 0.5;
+            const my = (a.y + b.y) * 0.5;
+            return slack(mx, my) && corridor(a, b, 1);
+        };
+        const linkTight = (aList, bList) => {
+            for (let i = 0; i < aList.length; i++) {
+                for (let j = 0; j < bList.length; j++) {
+                    if (opens(aList[i], bList[j])) return bList[j];
+                }
+            }
+            return null;
+        };
+        const sourceStands = (cx, cy) => {
+            const open = allStands(cx, cy);
+            if (open.length) return open;
+            if (cx === sx && cy === sy) return [from];
+            return open;
+        };
+        const picked = new Map();
         const hOf = (cx, cy) => Math.max(Math.abs(gx - cx), Math.abs(gy - cy));
         const came = new Map();
         came.set(cellKey(sx, sy), null);
@@ -353,37 +404,33 @@
                 break;
             }
             const gCur = gScore.get(cellKey(cx, cy)) || 0;
-            const fromStand = standAt(cx, cy) || (cx === sx && cy === sy ? from : null);
+            const srcFirst = firstStand(cx, cy) || (cx === sx && cy === sy ? from : null);
             for (let d = 0; d < dirs.length; d++) {
                 const nx = cx + dirs[d][0];
                 const ny = cy + dirs[d][1];
                 if (Math.abs(nx - sx) > maxR || Math.abs(ny - sy) > maxR) continue;
                 const k = cellKey(nx, ny);
                 const goalCell = nx === gx && ny === gy;
-                const nbStand = standAt(nx, ny);
-                if (!nbStand && !goalCell) continue;
+                const nbFirst = firstStand(nx, ny);
+                if (!nbFirst && !goalCell) continue;
                 const ddx = dirs[d][0];
                 const ddy = dirs[d][1];
                 if (ddx && ddy) {
-                    if (!standAt(cx + ddx, cy) || !standAt(cx, cy + ddy)) continue;
+                    if (!firstStand(cx + ddx, cy) || !firstStand(cx, cy + ddy)) continue;
                 }
-                if (fromStand && nbStand) {
-                    const mx = (fromStand.x + nbStand.x) * 0.5;
-                    const my = (fromStand.y + nbStand.y) * 0.5;
-                    const dx = nbStand.x - fromStand.x;
-                    const dy = nbStand.y - fromStand.y;
-                    const dist = hypot(dx, dy) || 1;
-                    const fat = 3;
-                    const pdx = -dy / dist;
-                    const pdy = dx / dist;
-                    if (blocked(mx, my)
-                        || blocked(mx + pdx * fat, my + pdy * fat)
-                        || blocked(mx - pdx * fat, my - pdy * fat)) continue;
+                let via = null;
+                if (nbFirst && srcFirst) {
+                    if (opens(srcFirst, nbFirst)) via = nbFirst;
+                    else {
+                        via = linkTight(sourceStands(cx, cy), allStands(nx, ny));
+                        if (!via) continue;
+                    }
                 }
                 const ng = gCur + 1;
                 if (gScore.has(k) && ng >= gScore.get(k)) continue;
                 gScore.set(k, ng);
                 came.set(k, cur);
+                if (via) picked.set(k, via);
                 if (!inOpen.has(k)) {
                     inOpen.add(k);
                     open.push([nx, ny]);
@@ -403,7 +450,8 @@
         cells.reverse();
         const pts = [];
         for (let i = 1; i < cells.length; i++) {
-            const stand = standAt(cells[i][0], cells[i][1]);
+            const key = cellKey(cells[i][0], cells[i][1]);
+            const stand = picked.get(key) || firstStand(cells[i][0], cells[i][1]);
             if (!stand || blocked(stand.x, stand.y)) continue;
             pts.push(stand);
         }
@@ -539,9 +587,11 @@
             }
             const dist = hypot(dest.x - from.x, dest.y - from.y);
             const losMax = Math.min(dist, cell * Math.max(maxRange, 8));
+            // Step 3, not 8: a hut wall is only ~4px thick and a coarse
+            // sample jumps it, then the bee-line walks into the thatch.
             const clearToDest = !overlapping && losClear(
                 from.x, from.y, dest.x, dest.y, blocked,
-                { stepPx: 8, maxDist: losMax, fatPx: 0 }
+                { stepPx: 3, maxDist: losMax, fatPx: 0 }
             );
             const ahead = overlapping || blockedAhead(from, dest, blocked, lookPx);
             const goalDrift = !pathGoal
@@ -550,11 +600,13 @@
             if (clearToDest && !stuck && !ahead && (pathDone || goalDrift)) {
                 path = null;
             } else {
-                let planned = planPath(from, dest, blocked, { cellSize: cell, maxRange, side });
+                let planned = planPath(from, dest, blocked, {
+                    cellSize: cell, maxRange, side, slack: input.slack
+                });
                 if (stuck && (!planned || !planned.length)) {
                     const flipped = -side;
                     const other = planPath(from, dest, blocked, {
-                        cellSize: cell, maxRange, side: flipped
+                        cellSize: cell, maxRange, side: flipped, slack: input.slack
                     });
                     if (other && other.length) {
                         side = flipped;

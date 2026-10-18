@@ -325,6 +325,10 @@
             },
             solidThingAt: (x, y) => self._solidThingAt(x, y),
             thingRectsNear: (x, y, radius) => self._thingRectsNear(x, y, radius),
+            doorSlackNear: (x, y, radius) => self._doorSlackNear(x, y, radius),
+            _ringBoxMisses: (thing, left, right, top, bottom) => self._ringBoxMisses(
+                thing, left, right, top, bottom
+            ),
             getItem: (id) => itemDefs().get(id),
             stuckDt: Number(self._aiStuckDt) > 0 ? self._aiStuckDt : 16,
             alertNearbyMobs: (victim, source) => self.alertNearbyMobs(victim, source),

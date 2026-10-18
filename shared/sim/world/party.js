@@ -1496,6 +1496,49 @@
         return out;
     },
 
+    /**
+     * Arc boxes overlap the doorway and the floor. A query that misses the
+     * solid ring is not a hit, even when it overlaps one of those boxes.
+     */
+    _ringBoxMisses(thing, left, right, top, bottom) {
+        const def = thingDefs().get(thing?.id);
+        if (!def?.ring || !Place.ringWorld || !Place.rectHitsRing) return false;
+        const ring = Place.ringWorld(thing, def, TS);
+        if (!ring) return false;
+        return !Place.rectHitsRing(ring, left, right, top, bottom);
+    },
+
+    /**
+     * A fat path link is wider than a hut door. Callers pass this to planPath
+     * so only a segment whose midpoint is in the doorway may use a tighter fat.
+     */
+    _doorSlackNear(x, y, radius) {
+        if (!Place.inDoorApproach) return null;
+        const rects = this._thingRectsNear(x, y, radius);
+        const seen = new Set();
+        const doors = [];
+        for (let i = 0; i < rects.length; i++) {
+            const t = rects[i] && rects[i].t;
+            const uid = t && t.uid;
+            if (!uid || seen.has(uid)) continue;
+            const def = thingDefs().get(t.id);
+            if (!def || !def.doorClear) continue;
+            seen.add(uid);
+            doors.push({ t, def });
+        }
+        if (!doors.length) return null;
+        // Path samples are feet (origin 0, 1). The door strip is about the
+        // body, which sits 8px right and 4px up from those feet.
+        return (px, py) => {
+            const bx = px + 8;
+            const by = py - 4;
+            for (let i = 0; i < doors.length; i++) {
+                if (Place.inDoorApproach(doors[i].t, doors[i].def, bx, by, TS)) return true;
+            }
+            return false;
+        };
+    },
+
     _aabbHitsThing(left, right, top, bottom, nearX, nearY, cull = 64, creature = null, collect = null) {
         const r = Number(cull) || 64;
         const { cx, cy } = worldToChunk(nearX, nearY);
@@ -1504,7 +1547,12 @@
         const hits = (tb) => {
             if (creature && Sleep.ignoresThingCollision?.(creature, tb.t)) return false;
             if (ignoreUid && tb.t?.uid && String(tb.t.uid) === String(ignoreUid)) return false;
-            return right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom;
+            if (!(right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom)) {
+                return false;
+            }
+            // Ring boxes are a broad phase. A hut door is open in the circle
+            // even when an arc's box spills across it.
+            return !this._ringBoxMisses(tb.t, left, right, top, bottom);
         };
         const take = (tb) => {
             if (!hits(tb)) return null;

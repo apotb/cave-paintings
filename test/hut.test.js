@@ -4,6 +4,7 @@ const fs = require("fs");
 const zlib = require("zlib");
 const path = require("path");
 const { loadDefs, DataStore } = require("./helpers/load");
+const { createTestWorld, originChunk } = require("./helpers/simWorld");
 const Place = require("../shared/place");
 const Sleep = require("../shared/sleep");
 const Research = require("../shared/research");
@@ -320,6 +321,118 @@ test("turning into the hut wall does not carry a pawn through it", () => {
     );
     const buriedR = Math.hypot(buried.x - ring.cx, buried.y - ring.cy);
     assert.ok(buriedR <= keep + 0.05, "a body dug into the wall is pushed back to the circle");
+});
+
+function stepCompanion(world, pawn, rec, tx, ty) {
+    const cc = world._ensureCompanionCreature(pawn, rec);
+    const aiWorld = world._aiWorld();
+    cc.x = rec.x;
+    cc.y = rec.y;
+    cc.role = "companion";
+    cc.homeSettlementId = null;
+    cc._resting = false;
+    cc.ai._walkToward(tx, ty, false, aiWorld, 16);
+    cc.applyDesiredVel(16);
+    const sec = 0.016;
+    const nx = cc.x + (cc.vx || 0) * sec;
+    const ny = cc.y + (cc.vy || 0) * sec;
+    const opts = { load: false, sleepFootprint: false };
+    if (!world._partyPoseBlocked(cc, nx, cc.y, 0, opts)) cc.x = nx;
+    if (!world._partyPoseBlocked(cc, cc.x, ny, 0, opts)) cc.y = ny;
+    rec.x = cc.x;
+    rec.y = cc.y;
+}
+
+test("a companion who stands up inside a hut can path out the door", () => {
+    const { world, pawn } = createTestWorld();
+    const def = world._thingDef("hut");
+    const chunk = originChunk(world);
+    const rec = world._companionFromSnap(pawn, {
+        id: "buddy",
+        name: "Buddy",
+        x: 80,
+        y: 100,
+        inventory: [null, null, null, null, null]
+    });
+    pawn.party = [rec];
+    for (const rot of [0, 90, 180, 270]) {
+        chunk.things.length = 0;
+        world._chunkRectCache = null;
+        const placed = Place.footprintWorldPos(4, 6, rot, def.footprint, 16);
+        const entry = {
+            uid: `hut-${rot}`,
+            id: "hut",
+            rot,
+            tx: 4,
+            ty: 6,
+            x: placed.x,
+            y: placed.y
+        };
+        Place.ensureSleepEntry(entry, def);
+        chunk.things.push(entry);
+        const ring = Place.ringWorld(entry, def, 16);
+        const beside = Sleep.besideWorldPos(entry, 16, def);
+        const dx = beside.x - ring.cx;
+        const dy = beside.y - ring.cy;
+        const len = Math.hypot(dx, dy) || 1;
+        const dest = {
+            x: beside.x + (dx / len) * 40,
+            y: beside.y + (dy / len) * 40
+        };
+        const cc = rec.creature;
+        const two = Math.PI * 2;
+        const norm = (v) => ((v % two) + two) % two;
+        let a0 = norm(ring.door0);
+        let a1 = norm(ring.door1);
+        let span = a1 - a0;
+        if (span < 0) span += two;
+        const away = a0 + span / 2 + Math.PI;
+        const wr = (ring.inner + ring.outer) * 0.5;
+        const wallCx = ring.cx + Math.cos(away) * wr;
+        const wallCy = ring.cy + Math.sin(away) * wr;
+        const wallFeet = { x: wallCx - 8, y: wallCy + 4 };
+        const wallBody = world._creatureBodyAt(cc, wallFeet.x, wallFeet.y);
+        assert.equal(
+            Place.rectHitsRing(ring, wallBody.left, wallBody.right, wallBody.top, wallBody.bottom),
+            true,
+            `rot ${rot} thatch sample misses the ring`
+        );
+        assert.equal(
+            world._partyPoseBlocked(cc, wallFeet.x, wallFeet.y, 0),
+            true,
+            `rot ${rot} thatch stays solid`
+        );
+        const starts = [];
+        for (let slot = 0; slot < 4; slot++) {
+            starts.push(Sleep.sleeperWorldPos(entry, slot, 16, def));
+        }
+        starts.push({ x: ring.cx - 8, y: ring.cy + 8 });
+        for (let s = 0; s < starts.length; s++) {
+            const start = starts[s];
+            rec.x = start.x;
+            rec.y = start.y;
+            cc.x = start.x;
+            cc.y = start.y;
+            cc._resting = false;
+            cc.ai._path = null;
+            cc.ai._pathGoalX = null;
+            cc.ai._pathGoalY = null;
+            cc.ai._stuckMs = 0;
+            cc.ai._planAt = 0;
+            if (world._partyPoseBlocked(cc, rec.x, rec.y, 0, { sleepFootprint: false })) {
+                world._ejectOverlappingPose(rec, cc);
+                rec.x = cc.x;
+                rec.y = cc.y;
+            }
+            const before = Math.hypot(rec.x - dest.x, rec.y - dest.y);
+            for (let i = 0; i < 240; i++) stepCompanion(world, pawn, rec, dest.x, dest.y);
+            const after = Math.hypot(rec.x - dest.x, rec.y - dest.y);
+            assert.ok(
+                after < 8,
+                `rot ${rot} start ${s} stuck at ${rec.x.toFixed(1)},${rec.y.toFixed(1)} (${after.toFixed(1)}px, was ${before.toFixed(1)})`
+            );
+        }
+    }
 });
 
 test("hut is researched after camping and crafts just after the lean-to", () => {

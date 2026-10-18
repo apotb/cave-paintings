@@ -759,6 +759,44 @@
     }
 
     /**
+     * True when an axis-aligned body covers thatch. Arc boxes bulge into the
+     * doorway and the floor; this is the check those boxes are approximating.
+     */
+    function rectHitsRing(ring, left, right, top, bottom) {
+        if (!ring) return false;
+        const l = Math.min(Number(left) || 0, Number(right) || 0);
+        const rgt = Math.max(Number(left) || 0, Number(right) || 0);
+        const tp = Math.min(Number(top) || 0, Number(bottom) || 0);
+        const bt = Math.max(Number(top) || 0, Number(bottom) || 0);
+        const cx = ring.cx;
+        const cy = ring.cy;
+        const qx = Math.max(l, Math.min(cx, rgt));
+        const qy = Math.max(tp, Math.min(cy, bt));
+        if (Math.hypot(qx - cx, qy - cy) > ring.outer) return false;
+        let maxR = 0;
+        const corners = [l, tp, rgt, tp, l, bt, rgt, bt];
+        for (let i = 0; i < corners.length; i += 2) {
+            const d = Math.hypot(corners[i] - cx, corners[i + 1] - cy);
+            if (d > maxR) maxR = d;
+        }
+        if (maxR < ring.inner) return false;
+        const x0 = Math.floor(l);
+        const x1 = Math.ceil(rgt);
+        const y0 = Math.floor(tp);
+        const y1 = Math.ceil(bt);
+        const span = Math.max(x1 - x0, y1 - y0);
+        const step = span > 24 ? 2 : 1;
+        for (let y = y0; y <= y1; y += step) {
+            if (y < tp - 1e-3 || y > bt + 1e-3) continue;
+            for (let x = x0; x <= x1; x += step) {
+                if (x < l - 1e-3 || x > rgt + 1e-3) continue;
+                if (ringWallAt(ring, x, y)) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Keep a ground spill on the side of a hut wall it started on. `margin`
      * is the drawn radius, so the pool itself cannot cross the thatch. The
      * doorway stays open. A start already embedded in the wall still counts
@@ -1395,6 +1433,7 @@
         inDoorApproach,
         ringWorld,
         ringWallAt,
+        rectHitsRing,
         clipSpill,
         clipWallSpill,
         wallDiskHits,

@@ -1309,10 +1309,14 @@
                 this._replanPad = Math.abs(h) % 220;
             }
             const allowReplan = !this._planAt || now - this._planAt >= 400 + this._replanPad;
+            const slack = bodyNav && world?.doorSlackNear
+                ? world.doorSlackNear(mob.x, mob.y, (maxRange + 2) * TILE)
+                : null;
             const steered = Path.steerToward({
                 from,
                 to,
                 blocked,
+                slack,
                 cellSize: TILE,
                 side: this._avoidSide,
                 path: this._path,
@@ -1657,10 +1661,13 @@
                 const tb = solids[i];
                 if (Sleep?.ignoresThingCollision?.(this.mob, tb.t)) continue;
                 if (ignoreUid && tb.t?.uid && String(tb.t.uid) === String(ignoreUid)) continue;
-                if (body.right > tb.left && body.left < tb.right
-                    && body.bottom > tb.top && body.top < tb.bottom) {
-                    return tb;
+                if (!(body.right > tb.left && body.left < tb.right
+                    && body.bottom > tb.top && body.top < tb.bottom)) continue;
+                // Arc boxes spill across a hut door. Overlap is the thatch.
+                if (world?._ringBoxMisses?.(tb.t, body.left, body.right, body.top, body.bottom)) {
+                    continue;
                 }
+                return tb;
             }
             return null;
         }
