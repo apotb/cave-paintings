@@ -44,6 +44,8 @@
         PICKUP: "pickup",
         /** Harvest world lootable (sticks, leaves, bushes, etc.). */
         HARVEST: "harvest",
+        /** Cast a line into adjacent water. */
+        FISH: "fish",
         /** Debug/admin: spawn a living mob (server-authored in dedicated MP). */
         SPAWN_MOB: "spawn_mob",
         DROP: "drop",

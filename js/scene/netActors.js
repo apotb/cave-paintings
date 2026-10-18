@@ -402,6 +402,13 @@
                 pawn._netWorkChannel = {
                     kind: row.channel.kind || null,
                     progress: row.channel.progress,
+                    facing: row.channel.facing || prevCh?.facing || null,
+                    waterTx: Number.isFinite(Number(row.channel.waterTx))
+                        ? row.channel.waterTx | 0
+                        : prevCh?.waterTx,
+                    waterTy: Number.isFinite(Number(row.channel.waterTy))
+                        ? row.channel.waterTy | 0
+                        : prevCh?.waterTy,
                     itemId: row.channel.itemId || prevCh?.itemId || null,
                     uid: row.channel.uid || prevCh?.uid || null,
                     pigmentId: row.channel.pigmentId || prevCh?.pigmentId || null,

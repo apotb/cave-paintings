@@ -312,6 +312,7 @@
         if (unique.includes("raw_human_flesh")) meats.push("Human");
         if (unique.includes("raw_venison")) meats.push("Venison");
         if (unique.includes("raw_pork")) meats.push("Pork");
+        if (unique.includes("raw_fish")) meats.push("Fish");
         const hasMeat = meats.length > 0;
         const hasApple = unique.includes("apple");
         const hasBlue = unique.includes("blueberry");
@@ -757,7 +758,7 @@
 
     _isSimmerIngredient(id) {
         const canon = Hide.canonicalItemId(String(id || ""));
-        return ["apple", "blueberry", "raw_human_flesh", "raw_venison", "raw_pork"].includes(canon);
+        return ["apple", "blueberry", "raw_human_flesh", "raw_venison", "raw_pork", "raw_fish"].includes(canon);
     },
 
     _findPlayerCampfire(p, action = {}) {

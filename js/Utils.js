@@ -860,7 +860,7 @@ function getCookRecipe(getItem, inputId, method) {
     return recipe;
 }
 
-const SIMMER_INGREDIENTS = new Set(["apple", "blueberry", "raw_human_flesh", "raw_venison", "raw_pork"]);
+const SIMMER_INGREDIENTS = new Set(["apple", "blueberry", "raw_human_flesh", "raw_venison", "raw_pork", "raw_fish"]);
 const SIMMER_MINUTES_PER_SLOT = 5;
 
 function isSimmerIngredient(itemId) {
@@ -892,6 +892,7 @@ function getSimmerDishInfo(getItem, ingredientIds, coconutMeta) {
     if (unique.includes("raw_human_flesh")) meats.push("Human");
     if (unique.includes("raw_venison")) meats.push("Venison");
     if (unique.includes("raw_pork")) meats.push("Pork");
+    if (unique.includes("raw_fish")) meats.push("Fish");
     const hasMeat = meats.length > 0;
     const hasApple = unique.includes("apple");
     const hasBlue = unique.includes("blueberry");

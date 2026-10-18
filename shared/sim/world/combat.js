@@ -1105,14 +1105,18 @@
         this._chunkRectCache = new Map();
         this._sleepRectCache = new Map();
         const dt = dtMs / 1000;
+        const fishScale = Number(this.tickSpeed);
+        const fishDt = dtMs * (Number.isFinite(fishScale) && fishScale > 0 ? fishScale : 0);
         for (const p of this.players.values()) {
             if (!p.connected) continue;
             if (p.attackTimer > 0) p.attackTimer -= dtMs;
             this._tickPlayerVomit(p, dtMs);
             this._tickEatChannel(p, dtMs);
             this._tickTendChannel(p, dtMs);
+            this._tickFishChannel(p, fishDt);
             for (const m of p.party || []) this._tickEatChannel(m, dtMs);
             for (const m of p.party || []) this._tickTendChannel(m, dtMs);
+            for (const m of p.party || []) this._tickFishChannel(m, fishDt);
             for (const m of p.party || []) {
                 if (m && this._isVomiting(m)) this._tickPlayerVomit(m, dtMs);
             }
@@ -1122,6 +1126,7 @@
             const sdt = this._settlerDtMs(dtMs);
             this._tickEatChannel(rec, sdt);
             this._tickTendChannel(rec, sdt);
+            this._tickFishChannel(rec, sdt);
             if (rec._workChannel && !this._isVomiting(rec)) SettlerWork.tickChannel(this, rec, sdt);
             if (this._isVomiting(rec)) this._tickPlayerVomit(rec, sdt);
         }
@@ -1669,6 +1674,7 @@
                 this._sharePawnGear(rec, cc);
                 cc.hotbarIndex = rec.hotbarIndex ?? 0;
                 cc.kc = rec.kc;
+                cc.fishChannel = rec.fishChannel || null;
                 cc.ownerId = p.id;
                 cc.role = rec.role === "settler" ? "companion" : (rec.role || "companion");
                 cc.homeSettlementId = rec.homeSettlementId || null;
@@ -1705,6 +1711,7 @@
                 rec.vy = cc.vy || 0;
                 rec.sprint = !!cc.isSprinting;
                 rec.facing = cc.facing || rec.facing;
+                if (rec.fishChannel) this._lockFishFacing(rec);
                 rec._wokeFromRest = !!cc._wokeFromRest;
                 if (
                     Math.hypot(rec.x - ox, rec.y - oy) < 0.2
@@ -1761,6 +1768,7 @@
             cc._wadeWater = !!rec._wadeWater;
             this._sharePawnGear(rec, cc);
             cc.kc = rec.kc;
+            cc.fishChannel = rec.fishChannel || null;
             cc._eatChannel = rec.eatChannel || null;
             cc._tendChannel = rec.tendChannel || null;
             cc._tending = !!rec.tendChannel;
@@ -1812,6 +1820,7 @@
             rec.vx = cc.vx || 0;
             rec.vy = cc.vy || 0;
             rec.facing = cc.facing || rec.facing;
+            if (rec.fishChannel) this._lockFishFacing(rec);
             rec.attackTimer = cc.attackTimer;
             rec.attackAngle = cc.attackAngle;
             rec.attackArt = cc.attackArt;

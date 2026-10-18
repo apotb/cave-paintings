@@ -1203,7 +1203,7 @@ test("retuned tech costs, names, and eras", () => {
     assert.equal(Research.techById("bows").cost, 5);
     assert.deepEqual(Research.techById("bows").prereqs, ["hafting", "microliths"]);
     assert.equal(Research.techById("fishing").cost, 4);
-    assert.deepEqual(Research.techById("fishing").prereqs, ["hafting"]);
+    assert.deepEqual(Research.techById("fishing").prereqs, ["hafting", "digging"]);
     assert.equal(Research.techById("nets").cost, 4);
     assert.deepEqual(Research.techById("nets").prereqs, ["fishing", "basic_furniture"]);
     assert.equal(Research.techById("hafting").cost, 3);
@@ -1258,12 +1258,12 @@ test("unfinished techs are WIP and cannot be researched", () => {
         "gathering", "cordage", "camping", "basic_furniture", "herbalism", "digging", "storage",
         "fire", "hearth", "cooking", "smoking", "clay_forming", "hut",
         "knapping", "hafting", "hand_axe", "cleaver", "tanning", "skinworking", "leatherworking",
-        "culture", "painting", "counting", "grinding"
+        "culture", "painting", "counting", "grinding", "fishing"
     ];
     const wip = [
         "traps", "pit_traps", "spike_traps",
         "pit_kiln", "earth_oven", "dogs", "feasts", "burin",
-        "blades", "throwing", "fishing", "microliths", "bows", "nets",
+        "blades", "throwing", "microliths", "bows", "nets",
         "ornament", "rituals", "idolatry", "music", "burial", "afterlife", "ancestors", "shrine",
         "settlements", "agriculture", "tree_sowing", "husbandry", "herding",
         "pottery", "mathematics", "writing"

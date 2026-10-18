@@ -2,8 +2,6 @@ Fix UI size 1 issues (e.g. tech tree, settlement menu)
 
 Agriculture -- will unlock a tutorial tip that you can open to learn about soil and farming mechanics
 
-Fishing -- will also open a tutorial tip to learn about fishing mechanics
-
 Schedule tab for settlement
 
 Assign tab for settlement -- manage weapons, apparel, medical policy
@@ -17,8 +15,6 @@ Replace Settling Stone with Hearth: Log x4, Dried hide x1, Pebble x8, Leaf cord 
 Better party management Kenshi-esque -- choose which severity of injuries to tend, make certain party members bodyguards that will only attack enemies near you, etc
 
 Visible apparel on body
-
-Fishing
 
 Bows
 

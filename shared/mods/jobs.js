@@ -12,7 +12,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
     const jobs = new Map();
     const byType = new Map();
-    const CORE_IDS = ["doctor", "cook", "chop", "leather", "gather", "haul", "research"];
+    const CORE_IDS = ["doctor", "cook", "chop", "fish", "leather", "gather", "haul", "research"];
 
     function registerJob(modId, spec) {
         const source = String(modId || "");

@@ -375,6 +375,24 @@
         }
     },
     {
+        "id": "grub_nest",
+        "name": "Grub Nest",
+        "key": "grub_nest",
+        "hitboxSize": 0,
+        "anim": {
+            "frameWidth": 16,
+            "frameHeight": 16,
+            "frameRate": 2,
+            "repeat": -1
+        },
+        "diggable": {
+            "item": "grub",
+            "yield": 4,
+            "health": 0.16,
+            "regrowMinutes": 1440
+        }
+    },
+    {
         "id": "clay_figurine",
         "name": "Clay Figurine",
         "key": "clay",

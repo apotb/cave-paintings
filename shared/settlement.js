@@ -38,10 +38,11 @@
         }
         return ids;
     }
-    const JOBS = ["doctor", "cook", "chop", "leather", "craft", "gather", "haul", "research"];
+    const JOBS = ["doctor", "cook", "chop", "fish", "leather", "craft", "gather", "haul", "research"];
     const JOB_LABELS = {
         doctor: "Doc",
         cook: "Cook",
+        fish: "Fish",
         leather: "Tail",
         craft: "Cft",
         haul: "Haul",
@@ -52,6 +53,7 @@
     const JOB_NAMES = {
         doctor: "Doctor",
         cook: "Cook",
+        fish: "Fishing",
         leather: "Tailoring",
         craft: "Craft",
         haul: "Haul",
@@ -68,6 +70,7 @@
             "Stoke fires"
         ],
         chop: ["Chop trees"],
+        fish: ["Fish at the shore"],
         leather: [
             "Work at Drying Rack",
             "Soak hides in water",
@@ -76,7 +79,7 @@
             "Work at Skinworking Bench"
         ],
         craft: ["Work at Rock"],
-        gather: ["Harvest plants", "Gather resources", "Dig clay"],
+        gather: ["Harvest plants", "Gather resources", "Dig clay", "Dig grub nests"],
         haul: [
             "Pick up ground items",
             "Stash carried items",
@@ -91,9 +94,11 @@
     };
     const STOCK_ITEMS = [
         "stick", "leaf", "log", "blueberry", "apple", "coconut",
-        "pebble", "flint", "cactus_flower", "clay"
+        "pebble", "flint", "cactus_flower", "clay", "grub", "raw_fish"
     ];
-    const STOCK_DEFAULTS = { stick: 30, leaf: 20, log: 12, clay: 25 };
+    const STOCK_DEFAULTS = { stick: 30, leaf: 20, log: 12, clay: 25, grub: 12, raw_fish: 12 };
+    /** New stock rows keep their default when an older save never stored them. */
+    const STOCK_KEEP_DEFAULT = { grub: true, raw_fish: true };
     /** Harvested forms that still mean the fruit/flower will return. */
     const STOCK_REGROW_ALWAYS = {
         cactus: "cactus_flower",
@@ -108,7 +113,7 @@
         tree: "apple"
     };
     const BILL_MODES = ["count", "until", "forever"];
-    const SIMMER_INGREDIENT_IDS = ["apple", "blueberry", "raw_human_flesh", "raw_venison", "raw_pork"];
+    const SIMMER_INGREDIENT_IDS = ["apple", "blueberry", "raw_human_flesh", "raw_venison", "raw_pork", "raw_fish"];
     const SIMMER_RESULT = "coconut_meal";
     const SIMMER_MIN_SLOTS = 2;
     const SIMMER_SLOTS = 4;
@@ -224,6 +229,7 @@
         const row = defaultJobs();
         if (!raw || typeof raw !== "object") return row;
         for (const j of knownJobIds()) {
+            if ((raw[j] == null || raw[j] === "") && j === "fish") continue;
             const n = Math.floor(Number(raw[j]));
             if (n >= 1 && n <= 4) row[j] = n;
             else if (raw[j] == null || raw[j] === "" || raw[j] === 0 || raw[j] === false) row[j] = 0;
@@ -277,6 +283,7 @@
         const stock = defaultStock();
         if (!raw || typeof raw !== "object") return stock;
         for (const id of STOCK_ITEMS) {
+            if ((raw[id] == null || raw[id] === "") && STOCK_KEEP_DEFAULT[id]) continue;
             const n = Math.floor(Number(raw[id]));
             stock[id] = n > 0 ? n : 0;
         }
@@ -1540,7 +1547,7 @@
     const RESEARCH_NEEDS_TICKS = 10;
 
     function isBusyWork(type) {
-        if (type === "chop" || type === "gather" || type === "dig" || type === "haul" || type === "stash"
+        if (type === "chop" || type === "fish" || type === "gather" || type === "dig" || type === "haul" || type === "stash"
             || type === "cook" || type === "cook_light" || type === "cook_stoke"
             || type === "leather" || type === "craft" || type === "doctor" || type === "rescue"
             || type === "research") return true;
@@ -1556,7 +1563,7 @@
         if (t === "stash") return "haul";
         if (t === "tend" || t === "rescue") return "doctor";
         if (t === "flesh" || t === "brain" || t === "craft" || t === "skin") return "leather";
-        if (t === "chop" || t === "gather" || t === "haul" || t === "leather"
+        if (t === "chop" || t === "fish" || t === "gather" || t === "haul" || t === "leather"
             || t === "doctor" || t === "research") return t;
         if (t === "dig") return "gather";
         const job = jobApi()?.forType?.(t) || jobApi()?.get?.(t);
@@ -2168,7 +2175,9 @@
      * snapshots and client AI share one string.
      */
     function gatherActLabel(plan, ctx = {}) {
-        if (plan?.type === "dig") return "Digging clay";
+        if (plan?.type === "dig") {
+            return plan.target?.id === "grub_nest" ? "Digging grubs" : "Digging clay";
+        }
         const getItem = ctx.getItem || (() => null);
         const getThing = ctx.getThing || (() => null);
         const thing = plan?.target;
@@ -2256,6 +2265,30 @@
         if (t === "idle" || !t) return "Idle";
         return "Idle";
     }
+
+    function fishPlan(state) {
+        if (state?.fishSpot) return { type: "fish", target: state.fishSpot };
+        return null;
+    }
+
+    function fishActLabel() {
+        return "Fish at the shore";
+    }
+
+    jobApi()?.registerJob?.("core", {
+        id: "fish",
+        label: "Fish",
+        name: "Fishing",
+        work: JOB_WORK.fish.slice(),
+        defaultPriority: 3,
+        busy: true,
+        planTypes: ["fish"],
+        plan: fishPlan,
+        perform(ctx) {
+            return ctx.runFish?.();
+        },
+        actLabel: fishActLabel
+    });
 
     jobApi()?.registerJob?.("core", {
         id: "gather",

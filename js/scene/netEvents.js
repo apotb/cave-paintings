@@ -53,7 +53,7 @@
                 else this.partySys?.clearPvpAggro?.(ev.playerId);
             }
         }
-        if (ev.kind === "channel" && (ev.channel === "eat" || ev.channel === "tend")) {
+        if (ev.kind === "channel" && (ev.channel === "eat" || ev.channel === "tend" || ev.channel === "fish")) {
             const selfId = this._netPlayerId || this.net?.playerId;
             if (ev.playerId === selfId && this.simAuth()) {
                 const pawn = this._pawnByNetId(ev.pawnId) || this.player;
@@ -66,7 +66,10 @@
                         progress: ev.progress,
                         itemId: ev.itemId,
                         patientId: ev.patientId,
-                        patientName: ev.patientName
+                        patientName: ev.patientName,
+                        facing: ev.facing,
+                        waterTx: ev.waterTx,
+                        waterTy: ev.waterTy
                     }, ev.channel);
                 }
             }
@@ -244,6 +247,41 @@
     _applyPawnChannelVisual(pawn, data, kind = "eat") {
         if (!pawn) return;
         const live = data && typeof data.progress === "number";
+        if (kind === "fish") {
+            if (live) {
+                pawn._netWorkChannel = {
+                    kind: "fish",
+                    progress: Phaser.Math.Clamp(data.progress, 0, 1),
+                    facing: data.facing || pawn._netWorkChannel?.facing || null,
+                    waterTx: Number.isFinite(Number(data.waterTx))
+                        ? data.waterTx | 0
+                        : pawn._netWorkChannel?.waterTx,
+                    waterTy: Number.isFinite(Number(data.waterTy))
+                        ? data.waterTy | 0
+                        : pawn._netWorkChannel?.waterTy
+                };
+                if (pawn._netWorkChannel.facing) pawn.facing = pawn._netWorkChannel.facing;
+            } else if (pawn._netWorkChannel?.kind === "fish") {
+                pawn._netWorkChannel = null;
+            }
+            if (pawn.isControlled?.()) {
+                pawn._hideOwnChannelBar?.();
+                if (live) this.showChannelBar?.(pawn._netWorkChannel.progress);
+                else if (
+                    !pawn._eatChannel
+                    && !pawn._tendChannel
+                    && !pawn._skinChannel
+                    && !pawn._fleshChannel
+                    && !pawn._brainChannel
+                    && !pawn._craftChannel
+                ) {
+                    this.hideChannelBar?.();
+                }
+                return;
+            }
+            pawn.syncPawnChannelBar?.();
+            return;
+        }
         if (live) {
             if (kind === "eat") pawn._netEating = true;
             pawn._netWorkChannel = {
@@ -275,7 +313,14 @@
                 && !pawn._brainChannel
                 && !pawn._craftChannel
             ) {
-                this.hideChannelBar?.();
+                // Hunger YOU has no eat channel. A fish cast is only the net
+                // channel, so hiding here blanked the bar on every hunger tick.
+                const fish = pawn._netWorkChannel;
+                if (fish?.kind === "fish" && typeof fish.progress === "number") {
+                    this.showChannelBar?.(fish.progress);
+                } else {
+                    this.hideChannelBar?.();
+                }
             }
             return;
         }

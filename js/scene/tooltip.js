@@ -917,6 +917,23 @@
                 this._storageTipHold = null;
             }
 
+            const fishTip = (!top && !blockWorld) ? this._fishHoverText?.(pointer) : null;
+            if (fishTip) {
+                if (this._hoverTarget) {
+                    const prev = this._hoverTarget;
+                    this._hoverTarget = null;
+                    if (prev.active && prev.input?.enabled) prev.emit("pointerout", pointer);
+                }
+                this._fishHoverOn = true;
+                this.showTooltip(fishTip, pointer.x, pointer.y, null);
+                this.input.setDefaultCursor("pointer");
+                return;
+            }
+            if (this._fishHoverOn) {
+                this._fishHoverOn = false;
+                this.hideTooltip();
+            }
+
             if (top !== this._hoverTarget) {
                 const prev = this._hoverTarget;
                 this._hoverTarget = top;
@@ -987,7 +1004,18 @@
             // After physics: snap player+camera for this frame's render
             this.syncCameraToPlayer();
             this.player?._syncChatBubble?.();
+            const fishCh = this.player?._netWorkChannel;
+            if (
+                this._channelBarProgress == null
+                && this.player?.active
+                && !this.player._bodyDead
+                && fishCh?.kind === "fish"
+                && typeof fishCh.progress === "number"
+            ) {
+                this._channelBarProgress = fishCh.progress;
+            }
             if (this._channelBarProgress != null) this._drawChannelBar();
+            this._tickFishLines?.();
             this._tickTreeChopBars();
             this.drawChunkDebug();
         };

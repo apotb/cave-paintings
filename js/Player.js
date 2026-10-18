@@ -2559,7 +2559,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     /** Hold Space to keep attacking (weapon or unarmed). */
     tryWeaponAutofire() {
-        if (this.isAttacking() || this._tendChannel || this._skinChannel || this._fleshChannel || this._brainChannel || this._craftChannel || this._eatChannel || this._bodyDead) return;
+        if (this.isAttacking() || this._tendChannel || this._skinChannel || this._fleshChannel || this._brainChannel || this._craftChannel || this._eatChannel || this._netWorkChannel?.kind === "fish" || this._bodyDead) return;
         if (this.isVomiting() || this.isIncapacitated()) return;
         const item = this.getHeldItem();
         if (!item) {
@@ -3428,6 +3428,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     useItem(item) {
         if (this.isVomiting()) return null;
+        if (item.id === "flimsy_rod") {
+            if (this.scene.tryFishCast?.(this)) return "use";
+            return null;
+        }
         const meta = this.scene.getItem(item.id);
         // Stack-level food (dynamic meals) overrides item def
         const food = item.food || meta?.food;
@@ -3653,7 +3657,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (this._puppetStillMs > 100) this._puppetMoving = false;
         }
         const moving = !!this._puppetMoving;
-        if (moving) {
+        const fishFace = this._netWorkChannel?.kind === "fish" ? this._netWorkChannel.facing : null;
+        if (fishFace) {
+            this.facing = fishFace;
+        } else if (moving) {
             const dx = tx - fromX;
             const dy = ty - fromY;
             if (Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2) {
@@ -3902,8 +3909,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const encumbrance = this.getEncumbrance();
         const moving = x !== 0 || y !== 0;
         const attacking = this.isAttacking();
+        const fishing = this._netWorkChannel?.kind === "fish";
         const tending = !!this._tendChannel || !!this._eatChannel || !!this._skinChannel
-            || !!this._fleshChannel || !!this._brainChannel || !!this._craftChannel;
+            || !!this._fleshChannel || !!this._brainChannel || !!this._craftChannel
+            || fishing;
         const livingLegs = this.anatomy.livingLegs();
         const moved = typeof Carry !== "undefined" && Carry.humanMoveSpeed
             ? Carry.humanMoveSpeed(this, {
@@ -3972,6 +3981,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!prone && !vomiting) {
             if (attacking) {
                 this.facing = this.facingFromAngle(this.attackAngle);
+            } else if (fishing) {
+                if (this._netWorkChannel.facing) this.facing = this._netWorkChannel.facing;
             } else if (moving) {
                 if (Math.abs(x) > Math.abs(y)) this.facing = x > 0 ? "right" : "left";
                 else this.facing = y > 0 ? "down" : "up";

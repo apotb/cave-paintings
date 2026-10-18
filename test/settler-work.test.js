@@ -624,7 +624,7 @@ test("gather settler does not dig clay past the stock target", () => {
     });
     rec.kc = 1600;
     rec.hotbarIndex = 0;
-    settle.stock = Settlement.normalizeStock({ clay: 4, stick: 0, leaf: 0, log: 0 });
+    settle.stock = Settlement.normalizeStock({ clay: 4, grub: 0, stick: 0, leaf: 0, log: 0 });
     settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0, research: 0 };
     Research.unlock(pawn, "digging");
     Research.unlock(settle, "digging");
@@ -648,7 +648,7 @@ test("gather settler counts carried clay toward the stock target", () => {
     });
     rec.kc = 1600;
     rec.hotbarIndex = 0;
-    settle.stock = Settlement.normalizeStock({ clay: 25, stick: 0, leaf: 0, log: 0 });
+    settle.stock = Settlement.normalizeStock({ clay: 25, grub: 0, stick: 0, leaf: 0, log: 0 });
     settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0, research: 0 };
     Research.unlock(pawn, "digging");
     Research.unlock(settle, "digging");
@@ -670,7 +670,7 @@ test("gather settler stops digging once clay stock is already full", () => {
     });
     rec.kc = 1600;
     rec.hotbarIndex = 0;
-    settle.stock = Settlement.normalizeStock({ clay: 25, stick: 0, leaf: 0, log: 0 });
+    settle.stock = Settlement.normalizeStock({ clay: 25, grub: 0, stick: 0, leaf: 0, log: 0 });
     settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0, research: 0 };
     Research.unlock(pawn, "digging");
     Research.unlock(settle, "digging");

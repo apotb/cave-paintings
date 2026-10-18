@@ -277,6 +277,9 @@
             settlers: (this.settlers || []).filter((s) => s && !s.dead).map((s) => this._persistSettler(s)),
             removedCorpseIds: Array.isArray(this._removedCorpseIds) ? this._removedCorpseIds.slice(-4000) : [],
             chunks,
+            fisheries: this.fisheries && typeof this.fisheries === "object" && !Array.isArray(this.fisheries)
+                ? JSON.parse(JSON.stringify(this.fisheries))
+                : {},
             modData: this.modData && typeof this.modData === "object" && !Array.isArray(this.modData)
                 ? { ...this.modData }
                 : {},
@@ -1229,6 +1232,7 @@
         if (!p) return;
         const wasTending = !!p.tendChannel;
         this._clearEatChannel(p);
+        this._cancelFishChannel?.(p);
         p.tendChannel = null;
         p.tending = false;
         p._workChannel = null;

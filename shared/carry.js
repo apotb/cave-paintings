@@ -253,7 +253,9 @@
             || pawn?._brainChannel
             || pawn?._craftChannel
             || pawn?.eatChannel
-            || pawn?.tendChannel);
+            || pawn?.tendChannel
+            || pawn?.fishChannel
+            || pawn?._netWorkChannel?.kind === "fish");
         const attacking = !!(opts.attacking ?? pawn?.isAttacking?.());
         const kc = Number(opts.kc ?? pawn?.kc) || 0;
         const canSprint = legs >= 2

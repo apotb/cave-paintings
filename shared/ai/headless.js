@@ -1692,7 +1692,7 @@
                 ? Math.max(0.05, Math.min(1.5, mob.capacities.moving()))
                 : 1;
             let mul = 1;
-            if (mob._eatChannel || mob._tendChannel || mob._tending) mul *= 0.5;
+            if (mob._eatChannel || mob._tendChannel || mob._tending || mob.fishChannel) mul *= 0.5;
             if (mob._carryPawnId) mul *= 0.5;
             if (mob.isAttacking?.()) mul *= 0.5;
             const tiles = 3.5 * (sprint && (Number(mob.kc) > 0) ? 1.5 : 1);
@@ -1704,6 +1704,10 @@
 
         _face(x, y) {
             const mob = this.mob;
+            if (mob?.fishChannel?.facing) {
+                mob.facing = mob.fishChannel.facing;
+                return;
+            }
             const ax = Math.abs(x);
             const ay = Math.abs(y);
             if (ax > ay + 0.22) mob.facing = x > 0 ? "right" : "left";

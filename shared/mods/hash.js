@@ -169,6 +169,7 @@
         put(out, "use", take(item, "use"));
         put(out, "pigment", take(item, "pigment"));
         put(out, "fillColor", take(item, "fillColor"));
+        put(out, "lineColor", take(item, "lineColor"));
         put(out, "beauty", take(item, "beauty"));
         put(out, "fuel", pick(item.fuel, ["kj", "temp"]));
         put(out, "food", pick(item.food, ["kc", "spoil", "eatSeconds", "satietyRatio", "foodPoisonChance", "autoEat"]));

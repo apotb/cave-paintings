@@ -748,6 +748,214 @@
         return true;
     },
 
+    /**
+     * Cast line from the pawn into the water tile, with the grub on the end.
+     * Drawn after the camera snap so it stays on the sprite.
+     */
+    _tickFishLines() {
+        if (!this._fishLines) this._fishLines = new Map();
+        const live = new Set();
+        const pawns = [];
+        const push = (pawn) => {
+            if (!pawn?.active || pawn._bodyDead) return;
+            if (pawn._netWorkChannel?.kind !== "fish") return;
+            const id = pawn.pawnId || pawn.id;
+            if (!id || live.has(id)) return;
+            live.add(id);
+            pawns.push(pawn);
+        };
+        push(this.player);
+        for (const pawn of this.party || []) push(pawn);
+        for (const pawn of this.settlers || []) push(pawn);
+        for (const pawn of pawns) this._drawFishLine(pawn);
+        for (const [id, rec] of this._fishLines) {
+            if (live.has(id)) continue;
+            rec.gfx?.destroy();
+            rec.bait?.destroy();
+            this._fishLines.delete(id);
+        }
+    },
+
+    _fishLineColor(pawn) {
+        const held = pawn?.getHeldItem?.();
+        const raw = held ? this.getItem?.(held.id)?.lineColor : null;
+        if (typeof raw === "string" && /^#?[0-9a-fA-F]{6}$/.test(raw)) {
+            return parseInt(raw.replace("#", ""), 16);
+        }
+        return 0x4dab36;
+    },
+
+    _fishHand(pawn) {
+        const w = pawn.width || 16;
+        const h = pawn.height || 16;
+        const face = pawn._netWorkChannel?.facing || pawn.facing || "down";
+        if (face === "left") return { x: Math.round(pawn.x + 1), y: Math.round(pawn.y - 8) };
+        if (face === "right") return { x: Math.round(pawn.x + w - 2), y: Math.round(pawn.y - 8) };
+        if (face === "up") return { x: Math.round(pawn.x + w * 0.5), y: Math.round(pawn.y - h + 3) };
+        return { x: Math.round(pawn.x + w * 0.5), y: Math.round(pawn.y - 4) };
+    },
+
+    _plotFishPixels(gfx, x0, y0, x1, y1) {
+        let x = x0 | 0;
+        let y = y0 | 0;
+        const destX = x1 | 0;
+        const destY = y1 | 0;
+        const dx = Math.abs(destX - x);
+        const dy = Math.abs(destY - y);
+        const sx = x < destX ? 1 : -1;
+        const sy = y < destY ? 1 : -1;
+        let err = dx - dy;
+        for (let n = 0; n < 80; n++) {
+            gfx.fillRect(x, y, 1, 1);
+            if (x === destX && y === destY) break;
+            const e2 = err * 2;
+            if (e2 > -dy) {
+                err -= dy;
+                x += sx;
+            }
+            if (e2 < dx) {
+                err += dx;
+                y += sy;
+            }
+        }
+    },
+
+    _drawFishLine(pawn) {
+        const id = pawn.pawnId || pawn.id;
+        if (!id) return;
+        let rec = this._fishLines.get(id);
+        if (!rec?.gfx?.active) {
+            const gfx = this.add.graphics();
+            this.mainLayer?.add(gfx);
+            const bait = this.textures?.exists?.("grub")
+                ? this.add.image(0, 0, "grub").setOrigin(0.5, 0.5)
+                : null;
+            if (bait) this.mainLayer?.add(bait);
+            rec = {
+                gfx,
+                bait,
+                thrownAt: null,
+                landX: null,
+                landY: null,
+                color: this._fishLineColor(pawn)
+            };
+            this._fishLines.set(id, rec);
+        }
+        const ch = pawn._netWorkChannel;
+        const ts = this.tileSize || 16;
+        // Land once. A later water tile must not yank the bait after it has settled.
+        if (rec.landX == null && Number.isFinite(ch?.waterTx) && Number.isFinite(ch?.waterTy)) {
+            rec.landX = ch.waterTx * ts + ts / 2;
+            rec.landY = ch.waterTy * ts + ts / 2;
+        }
+        if (rec.landX == null) return;
+        const THROW_MS = 400;
+        const ARC = 8;
+        const now = performance.now();
+        const speed = Number(this.tickSpeed);
+        const scale = Number.isFinite(speed) ? Math.max(0, speed) : 1;
+        if (rec.thrownAt == null) {
+            const alreadyOut = (Number(ch?.progress) || 0) > 0.03;
+            rec.thrownAt = now;
+            rec.elapsed = alreadyOut ? THROW_MS : 0;
+            rec.lastAt = now;
+        }
+        const wall = Math.min(100, Math.max(0, now - (rec.lastAt || now)));
+        rec.lastAt = now;
+        rec.elapsed = (rec.elapsed || 0) + wall * scale;
+        const hand = this._fishHand(pawn);
+        const landX = Math.round(rec.landX);
+        const landY = Math.round(rec.landY);
+        const t = Math.max(0, Math.min(1, rec.elapsed / THROW_MS));
+        const bob = t >= 1 && (Math.floor(rec.elapsed / 420) % 2) ? 1 : 0;
+        const pointAt = (u) => {
+            const e = 1 - (1 - u) * (1 - u);
+            const lift = Math.sin(Math.min(1, u) * Math.PI) * ARC * (u < 1 ? 1 : 0);
+            return {
+                x: Math.round(hand.x + (landX - hand.x) * e),
+                y: Math.round(hand.y + (landY - hand.y) * e - lift) + (u >= 1 ? bob : 0)
+            };
+        };
+        const g = rec.gfx;
+        g.clear().setPosition(0, 0).setVisible(true);
+        g.fillStyle(rec.color, 1);
+        const tip = t >= 1
+            ? { x: landX, y: landY + bob }
+            : pointAt(t);
+        if (t >= 1) {
+            this._plotFishPixels(g, hand.x, hand.y, tip.x, tip.y);
+        } else {
+            const dist = Math.max(1, Math.ceil(Math.hypot(landX - hand.x, landY - hand.y)));
+            const steps = Math.min(48, dist);
+            let prev = pointAt(0);
+            for (let i = 1; i <= steps; i++) {
+                const u = Math.min(t, i / steps);
+                const next = pointAt(u);
+                this._plotFishPixels(g, prev.x, prev.y, next.x, next.y);
+                prev = next;
+                if (u >= t) break;
+            }
+        }
+        const inFront = tip.y >= pawn.y;
+        const depth = inFront ? (tip.y | 0) : ((pawn.y | 0) - 1);
+        if (g.depth !== depth) g.setDepth(depth);
+        if (rec.bait?.active) {
+            rec.bait.setPosition(tip.x, tip.y).setDepth(inFront ? depth + 1 : depth).setVisible(true);
+        }
+    },
+
+    /**
+     * Press Space with the rod while facing water. The server runs the cast.
+     * @returns {boolean} true when this press was a cast attempt
+     */
+    tryFishCast(pawn = this.player) {
+        const player = pawn || this.player;
+        if (!player || player._bodyDead || !this.simAuth?.()) return false;
+        const held = player.getHeldItem?.();
+        if (held?.id !== "flimsy_rod") return false;
+        if (player._netWorkChannel?.kind === "fish") return true;
+        const WG = typeof WorldGen !== "undefined" ? WorldGen : null;
+        const FishApi = typeof Fish !== "undefined" ? Fish : null;
+        if (!WG?.tileKeyAt || !FishApi?.castTile) return false;
+        const spot = FishApi.castTile(
+            player.x,
+            player.y,
+            player.facing || "down",
+            (x, y) => WG.tileKeyAt(x, y)
+        );
+        if (!spot) return false;
+        this._netSendMove?.(true);
+        this.net?.sendAction?.({
+            type: (typeof NetProtocol !== "undefined" ? NetProtocol.Actions.FISH : "fish"),
+            tx: spot.tx,
+            ty: spot.ty,
+            pawnId: player.pawnId || player.id
+        });
+        return true;
+    },
+
+    /** Hover line for the water under the cursor while a rod is held. */
+    _fishHoverText(pointer) {
+        const player = this.player;
+        if (!player || player.getHeldItem?.()?.id !== "flimsy_rod") return null;
+        const WG = typeof WorldGen !== "undefined" ? WorldGen : null;
+        const FishApi = typeof Fish !== "undefined" ? Fish : null;
+        if (!WG?.tileKeyAt || !FishApi?.measure || !FishApi.describe || !this.cameras?.main) return null;
+        if (this.pointerOverWorldUi?.(pointer)) return null;
+        const wpt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const tile = this.worldToTile(wpt.x, wpt.y);
+        if (WG.tileKeyAt(tile.tx, tile.ty) !== "water") return null;
+        if (!this._fishHoverCache) this._fishHoverCache = new Map();
+        const key = tile.tx + "," + tile.ty;
+        let measured = this._fishHoverCache.get(key);
+        if (!measured) {
+            measured = FishApi.measure(tile.tx, tile.ty, (x, y) => WG.tileKeyAt(x, y) === "water");
+            const tiles = measured.tiles?.length ? measured.tiles : [[tile.tx, tile.ty]];
+            for (const pair of tiles) this._fishHoverCache.set(pair[0] + "," + pair[1], measured);
+        }
+        return FishApi.describe(measured, this.sim?.fisheries || null);
+    },
+
     /** True if the world point sits on a water tile. */
     _isWaterAt(wx, wy) {
         const chunk = this.getChunkAtWorld(wx, wy);

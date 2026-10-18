@@ -574,6 +574,17 @@ function manipScale(world, rec) {
 }
 
 function publicChannel(rec) {
+    const fish = rec?.fishChannel;
+    if (fish && fish.max > 0) {
+        const prog = 1 - (Number(fish.remaining) || 0) / fish.max;
+        return {
+            kind: "fish",
+            progress: Math.max(0, Math.min(1, prog)),
+            facing: fish.facing || null,
+            waterTx: fish.waterTx,
+            waterTy: fish.waterTy
+        };
+    }
     const eat = rec?.eatChannel;
     if (eat && eat.max > 0) {
         const prog = 1 - (Number(eat.remaining) || 0) / eat.max;

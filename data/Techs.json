@@ -135,11 +135,10 @@
         "id": "fishing",
         "name": "Fishing",
         "era": "Mesolithic",
-        "wip": true,
         "quote": "Might need to adjust your palate",
         "cost": 4,
-        "prereqs": ["hafting"],
-        "unlocks": { "items": [], "jobs": [], "text": ["Fishing job"] },
+        "prereqs": ["hafting", "digging"],
+        "unlocks": { "items": ["flimsy_rod"], "jobs": ["fish"], "text": [] },
         "children": ["nets"]
     },
     {

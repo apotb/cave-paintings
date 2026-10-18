@@ -137,6 +137,8 @@
         const simChunks = this._simChunks();
         this._tickSoakDrops(simChunks);
         this._tickLootableRegrows(simChunks);
+        this._tickGrubNests(simChunks);
+        this._tickFisheries?.();
         this._tickCampfires(simChunks);
         this._tickDryingRacks(simChunks);
         this._tickWorldSpoil(simChunks);
@@ -751,6 +753,40 @@
     },
 
     /** Absolute in-game minute index — same formula as the client. */
+    /** Exhausted grub nests come back after one game day. Other digs stay gone. */
+    _tickGrubNests(chunks) {
+        const now = this.worldMinuteIndex();
+        const src = chunks || this.chunks.values();
+        for (const c of src) {
+            if (!Array.isArray(c.things)) continue;
+            for (const entry of c.things) {
+                if (!entry || entry.id !== "grub_nest") continue;
+                if (!(Number(entry.digProgress) >= 1)) continue;
+                if (entry.regrowAt == null) continue;
+                if (now < Number(entry.regrowAt)) continue;
+                entry.digProgress = 0;
+                entry.digTaken = 0;
+                entry.digAccrued = 0;
+                entry.digSettled = 0;
+                delete entry.regrowAt;
+                this.pushEvent({
+                    kind: "dig",
+                    cx: c.cx,
+                    cy: c.cy,
+                    x: entry.x,
+                    y: entry.y,
+                    uid: entry.uid || null,
+                    id: entry.id,
+                    digProgress: 0,
+                    digTaken: 0,
+                    digAccrued: 0,
+                    digSettled: 0,
+                    dug: false
+                });
+            }
+        }
+    },
+
     worldMinuteIndex() {
         return (Number(this.gameDay) || 1) * 1440 + (Number(this.gameMinutes) || 0);
     },

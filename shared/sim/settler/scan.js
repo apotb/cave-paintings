@@ -183,21 +183,23 @@ function chopTree(world, rec, settle, claims) {
     return best;
 }
 
-function clayWantsDig(world, settle) {
+function depositWantsDig(world, settle, def) {
+    const item = def?.diggable?.item;
+    if (!item) return false;
     return Settlement.gatherShouldWork(
-        countItem(world, settle, "clay"),
-        Settlement.stockTarget(settle, "clay")
+        countItem(world, settle, item),
+        Settlement.stockTarget(settle, item)
     );
 }
 
 function digThing(world, rec, settle, claims) {
     if (!Dig || !Research?.hasTech?.(researchHolder(world, rec, settle), "digging")) return null;
     if (!findStack(world, rec, settle, (s) => Dig.isDigger(s, getItem))) return null;
-    if (!clayWantsDig(world, settle)) return null;
     const list = diggablesOf(world, settle);
     let best = null;
     let bestD = Infinity;
     for (const t of list) {
+        if (!depositWantsDig(world, settle, t.def)) continue;
         const key = thingKey(t.entry);
         if (isSkipped(rec, key)) continue;
         const d = Math.hypot(rec.x - t.entry.x, rec.y - t.entry.y);
@@ -207,6 +209,81 @@ function digThing(world, rec, settle, claims) {
         }
     }
     return best;
+}
+
+function fishMod() {
+    if (typeof Fish !== "undefined" && Fish.measure) return Fish;
+    try { return ctx.require?.("../fish"); } catch (_) { return null; }
+    return null;
+}
+
+function worldGenMod() {
+    if (typeof WorldGen !== "undefined" && WorldGen.tileKeyAt) return WorldGen;
+    try { return ctx.require?.("./WorldGen"); } catch (_) { return null; }
+    return null;
+}
+
+function fishSpot(world, rec, settle, claims) {
+    const Fish = fishMod();
+    const WorldGen = worldGenMod();
+    if (!Fish || !WorldGen?.tileKeyAt || !world?._fishMeasure) return null;
+    if (!Research?.hasTech?.(researchHolder(world, rec, settle), "fishing")) return null;
+    if (!Settlement.gatherShouldWork(
+        countItem(world, settle, Fish.FISH_ID),
+        Settlement.stockTarget(settle, Fish.FISH_ID)
+    )) return null;
+    if (!findStack(world, rec, settle, (s) => s.id === Fish.ROD_ID)) return null;
+    if (!findStack(world, rec, settle, (s) => s.id === Fish.GRUB_ID)) return null;
+    const ts = TS || 16;
+    const r = Number(settle.radiusTiles) > 0 ? Number(settle.radiusTiles) : (Settlement.RADIUS_TILES || 32);
+    const minTx = Math.floor((Number(settle.x) - r * ts) / ts);
+    const maxTx = Math.ceil((Number(settle.x) + r * ts) / ts);
+    const minTy = Math.floor((Number(settle.y) - r * ts) / ts);
+    const maxTy = Math.ceil((Number(settle.y) + r * ts) / ts);
+    const waters = [];
+    for (let ty = minTy; ty <= maxTy; ty++) {
+        for (let tx = minTx; tx <= maxTx; tx++) {
+            const wx = (tx + 0.5) * ts;
+            const wy = (ty + 0.5) * ts;
+            if (!inRange(settle, wx, wy, ts)) continue;
+            if (WorldGen.tileKeyAt(tx, ty) !== "water") continue;
+            waters.push({ tx, ty, d: Math.hypot(wx - rec.x, wy - rec.y) });
+        }
+    }
+    waters.sort((a, b) => a.d - b.d);
+    const fisheries = world.fisheries;
+    for (const w of waters) {
+        const measured = world._fishMeasure(w.tx, w.ty);
+        if (!Fish.fishable(measured, fisheries)) continue;
+        let stand = null;
+        let standD = Infinity;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const stx = w.tx + dx;
+            const sty = w.ty + dy;
+            const ground = WorldGen.tileKeyAt(stx, sty);
+            if (ground === "water" || ground === "ice") continue;
+            const sx = (stx + 0.5) * ts;
+            const sy = (sty + 0.5) * ts;
+            if (!inRange(settle, sx, sy, ts)) continue;
+            const claim = `fish:stand:${stx},${sty}`;
+            if (claimedByOther(claims, claim, rec.id)) continue;
+            const d = Math.hypot(sx - rec.x, sy - rec.y);
+            if (d < standD) {
+                standD = d;
+                stand = {
+                    uid: `stand:${stx},${sty}`,
+                    x: sx,
+                    y: sy,
+                    standTx: stx,
+                    standTy: sty,
+                    waterTx: w.tx,
+                    waterTy: w.ty
+                };
+            }
+        }
+        if (stand) return stand;
+    }
+    return null;
 }
 
 function freeBed(world, rec, settle, claims, opts = {}) {
@@ -962,6 +1039,7 @@ function scanWork(world, rec, settle, claims) {
         gatherThing: jobOn(enabled, "gather") ? gatherThing(world, rec, settle, claims) : null,
         digThing: jobOn(enabled, "gather") ? digThing(world, rec, settle, claims) : null,
         chopTree: jobOn(enabled, "chop") ? chopTree(world, rec, settle, claims) : null,
+        fishSpot: jobOn(enabled, "fish") ? fishSpot(world, rec, settle, claims) : null,
         researchCircle: circle,
         patients,
         critical: care.critical,
@@ -976,10 +1054,10 @@ function scanWork(world, rec, settle, claims) {
         jobs
     };
 }
+    ctx.depositWantsDig = depositWantsDig;
     ctx.haulDrop = haulDrop;
     ctx.gatherThing = gatherThing;
     ctx.chopTree = chopTree;
-    ctx.clayWantsDig = clayWantsDig;
     ctx.digThing = digThing;
     ctx.freeBed = freeBed;
     ctx.pawnCreature = pawnCreature;

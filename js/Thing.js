@@ -91,6 +91,7 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
             }
             if (this.body) this._positionBody();
             this._syncInteractMark();
+            this._syncDigHole();
             return;
         }
         if (this.anims?.isPlaying) this.stop();
@@ -151,6 +152,17 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
     }
 
     _syncDigHole() {
+        if (this.meta?.id === "grub_nest") {
+            if (this._holeSpr) {
+                this._holeSpr.destroy();
+                this._holeSpr = null;
+            }
+            const spent = (Number(this.entry?.digProgress) || 0) >= 1;
+            this.setVisible(!spent);
+            if (this.input) this.input.enabled = !spent;
+            if (spent && this.scene?._tooltipTarget === this) this.scene.hideTooltip?.();
+            return;
+        }
         if (!this.meta?.diggable?.item) return;
         const damaged = (Number(this.entry?.digTaken) || 0) > 0
             || (Number(this.entry?.digProgress) || 0) > 0;

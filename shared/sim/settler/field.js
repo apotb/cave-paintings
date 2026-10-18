@@ -42,7 +42,7 @@
     const paintingCirclesOf = (...args) => ctx.paintingCirclesOf(...args);
     const dropKey = (...args) => ctx.dropKey(...args);
     const walkTo = (...args) => ctx.walkTo(...args);
-    const clayWantsDig = (...args) => ctx.clayWantsDig(...args);
+    const depositWantsDig = (...args) => ctx.depositWantsDig(...args);
 
 
 function chopStandFeet(world, rec, c, tree, hs) {
@@ -383,7 +383,8 @@ function doDig(world, rec, settle, patch, delta) {
         dropDigTarget(rec, patch);
         return halt();
     }
-    if (!clayWantsDig(world, settle)) {
+    const digDef = world._thingDef?.(patch.id);
+    if (!depositWantsDig(world, settle, digDef)) {
         dropDigTarget(rec, null, false);
         return halt();
     }
@@ -435,6 +436,65 @@ function doDig(world, rec, settle, patch, delta) {
     }
     return halt();
 }
+
+function doFish(world, rec, settle, spot) {
+    if (!spot) {
+        endWorkHold(rec);
+        return halt();
+    }
+    if (rec.fishChannel) {
+        const face = rec.fishChannel.facing || null;
+        if (face) rec.facing = face;
+        return halt(face ? { facing: face } : null);
+    }
+    const rodId = "flimsy_rod";
+    const grubId = "grub";
+    const rod = findStack(world, rec, settle, (s) => s.id === rodId);
+    if (!rod) {
+        endWorkHold(rec);
+        return halt();
+    }
+    if (rod.at !== rec) return fetchStack(world, rec, settle, rod) || halt();
+    const grub = findStack(world, rec, settle, (s) => s.id === grubId);
+    if (!grub) {
+        endWorkHold(rec);
+        return halt();
+    }
+    if (grub.at !== rec) return fetchStack(world, rec, settle, grub) || halt();
+    const heldRod = (rec.inventory || []).findIndex((s) => s && s.id === rodId);
+    if (heldRod >= 0) rec.hotbarIndex = heldRod;
+    const c = rec.creature || world._ensureSettlerCreature?.(rec);
+    if (c) {
+        c.inventory = rec.inventory;
+        c.hotbarIndex = rec.hotbarIndex;
+        c.homeSettlementId = rec.homeSettlementId;
+        c.ownerId = rec.ownerId;
+    }
+    const ts = 16;
+    const feetX = (Number(spot.standTx) + 0.5) * ts;
+    const feetY = (Number(spot.standTy) + 0.5) * ts;
+    if (Math.hypot(rec.x - feetX, rec.y - feetY) > 6) {
+        return walkTo(feetX, feetY, { openRadius: 0 });
+    }
+    rec.x = feetX;
+    rec.y = feetY;
+    const fdx = (spot.waterTx | 0) - (spot.standTx | 0);
+    const fdy = (spot.waterTy | 0) - (spot.standTy | 0);
+    rec.facing = fdx > 0 ? "right" : fdx < 0 ? "left" : fdy > 0 ? "down" : "up";
+    if (c) {
+        c.x = feetX;
+        c.y = feetY;
+        c.facing = rec.facing;
+    }
+    const started = world._tryStartFish?.(rec, { tx: spot.waterTx, ty: spot.waterTy });
+    if (!started) {
+        endWorkHold(rec);
+        return halt();
+    }
+    const face = rec.fishChannel?.facing || rec.facing;
+    if (face) rec.facing = face;
+    return halt(face ? { facing: face } : null);
+}
     ctx.chopStandFeet = chopStandFeet;
     ctx.clearChopApproach = clearChopApproach;
     ctx.chopTargetLive = chopTargetLive;
@@ -446,4 +506,5 @@ function doDig(world, rec, settle, patch, delta) {
     ctx.digTargetLive = digTargetLive;
     ctx.dropDigTarget = dropDigTarget;
     ctx.doDig = doDig;
+    ctx.doFish = doFish;
 });

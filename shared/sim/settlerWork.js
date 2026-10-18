@@ -125,6 +125,7 @@ const shellRequire = typeof require === "function" ? require : undefined;
     const jobsApi = (...args) => ctx.jobsApi(...args);
     const doGather = (...args) => ctx.doGather(...args);
     const doDig = (...args) => ctx.doDig(...args);
+    const doFish = (...args) => ctx.doFish(...args);
     const doChop = (...args) => ctx.doChop(...args);
     const doResearch = (...args) => ctx.doResearch(...args);
     const doMerge = (...args) => ctx.doMerge(...args);
@@ -352,6 +353,7 @@ function tick(world, mob, delta) {
             gatherThing: scan.gatherThing,
             digThing: scan.digThing,
             chopTree: scan.chopTree,
+            fishSpot: scan.fishSpot,
             researchCircle: scan.researchCircle,
             stashBasket: stash.basket,
             hasStash: stash.has,
@@ -399,7 +401,7 @@ function tick(world, mob, delta) {
     });
     let label = Settlement.actLabel(plan, ctx);
     if (delivering) label = Settlement.actLabel({ type: "stash" }, ctx);
-    if (plan.type !== "chop" && plan.type !== "dig") clearChopApproach(rec, rec.creature || mob);
+    if (plan.type !== "chop" && plan.type !== "dig" && plan.type !== "fish") clearChopApproach(rec, rec.creature || mob);
     if (plan.type !== "research") clearPaintBar(rec);
     setSettlerAct(rec, mob, label);
 
@@ -433,7 +435,8 @@ function tick(world, mob, delta) {
             plan,
             delta,
             runGather: () => doGather(world, rec, plan.target),
-            runDig: () => doDig(world, rec, settle, plan.target, delta)
+            runDig: () => doDig(world, rec, settle, plan.target, delta),
+            runFish: () => doFish(world, rec, settle, plan.target)
         });
     }
     if (plan.type === "chop" && plan.target) return doChop(world, rec, settle, plan.target, delta);

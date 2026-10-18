@@ -482,6 +482,7 @@
         );
         // After the chunk stream is finished. Scatter rolls are per coordinate.
         applyScatters(cx, cy, worldSeed, tiles, things, lootableThings);
+        scatterGrubNests(cx, cy, worldSeed, tiles, things, lootableThings);
         const spilled = spawnFromParents(
             cx, cy, tiles, things, lootableThings, stamped, getGeneratedChunk
         );
@@ -651,6 +652,37 @@
      * Private roll for one tile. Does not advance the chunk mulberry32 stream.
      * Same seed, salt, and coordinate always return the same value.
      */
+    const GRUB_SALT = 0xF15B;
+    function scatterGrubNests(cx, cy, worldSeed, tiles, things, lootableThings) {
+        const taken = new Set();
+        const mark = (e) => {
+            if (!e) return;
+            const tx = Math.floor(Number(e.x) / TS);
+            const ty = Math.floor((Number(e.y) - 1) / TS);
+            taken.add(tx + "," + ty);
+        };
+        for (const e of things) mark(e);
+        for (const e of lootableThings) mark(e);
+        for (let i = 0; i < CS * CS; i++) {
+            const key = tiles[i];
+            if (key === "water" || key === "ice") continue;
+            const lx = i % CS;
+            const ly = (i / CS) | 0;
+            const tix = cx * CS + lx;
+            const tiy = cy * CS + ly;
+            if (taken.has(tix + "," + tiy)) continue;
+            let shore = false;
+            if (tileKeyAt(tix + 1, tiy) === "water") shore = true;
+            else if (tileKeyAt(tix - 1, tiy) === "water") shore = true;
+            else if (tileKeyAt(tix, tiy + 1) === "water") shore = true;
+            else if (tileKeyAt(tix, tiy - 1) === "water") shore = true;
+            if (!shore) continue;
+            if (scatterRoll(tix, tiy, worldSeed, GRUB_SALT) >= 0.16) continue;
+            pushDecor(things, tix * TS, tiy * TS, "grub_nest");
+            taken.add(tix + "," + tiy);
+        }
+    }
+
     function scatterRoll(tx, ty, worldSeed, salt) {
         const mixed = (worldSeed ^ salt) >>> 0;
         return mulberry32(hash2D(tx | 0, ty | 0, mixed))();

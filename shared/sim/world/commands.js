@@ -15,6 +15,14 @@
         Protocol, Look, rng, Spoil, Durability, Apparel, Chop, Place, Sleep, Hunger, Path, Hide, Carry, Fire, Party, Settlement, StorageFilter, FuelFilter, CavemanNames, CorpseDecay, GameMath, DataStore, BodyHealing, Hediffs, BodyCombat, BodyMod, Capacities, HeadlessAI, SimCreatureMod, WorldGen, SettlerWork, mulberry32, hash2D, uuid, Body, createAI, PartyAI, WandererStrollAI, NeutralAnimalAI, createPlayerCreature, createMobCreature, feetToBodyCenter, CS, TS, CHUNK_PX, SPEED, SPRINT, MELEE_RANGE, INTEREST, SIM_CHUNKS, DROP_LIFE_MS, HARVEST_RANGE_TILES, BLOCKED, _research, _contentApi, _actionsApi, _kindsApi, _forming, _dig, _defGeneration, thingDefs, mobDefs, itemDefs,         chunkKey, worldToChunk, emptyInv, dedupeCorpses
     } = ctx;
 
+    function fishApi() {
+        if (typeof Fish !== "undefined" && Fish.measure) return Fish;
+        try {
+            if (typeof require === "function") return require("../../fish");
+        } catch (_) { /* browser build uses the Fish global */ }
+        return null;
+    }
+
     function stoneApi() {
         if (typeof Stone !== "undefined" && Stone.fromToken) return Stone;
         try {
@@ -107,9 +115,13 @@
                 p.moveX = x / len;
                 p.moveY = y / len;
             }
-            p.sprint = !!sprint && (Number(control.kc) > 0) && !this._pawnCannotSprint(control);
+            p.sprint = !!sprint
+                && !control.fishChannel
+                && (Number(control.kc) > 0)
+                && !this._pawnCannotSprint(control);
         }
-        if (facing) control.facing = facing;
+        if (control.fishChannel?.facing) control.facing = control.fishChannel.facing;
+        else if (facing) control.facing = facing;
         const cc = control.creature || this.creatures.get(control.id);
         let justWoke = false;
         if (
@@ -385,6 +397,10 @@
         }
         if (type === Protocol.Actions.HARVEST) {
             this._tryHarvest(p, action);
+            return;
+        }
+        if (type === Protocol.Actions.FISH) {
+            this._tryFish(p, action);
             return;
         }
         if (type === Protocol.Actions.SPAWN_MOB) {
@@ -1770,7 +1786,11 @@
             if (pawn) left = this._digGive(pawn, itemId, result.give);
             if (left > 0) this._pushDrop(best.x, best.y, { id: itemId, quantity: left });
         }
-        if (result.done && !pit) {
+        const regrowMinutes = Number(bestDef?.diggable?.regrowMinutes) || 0;
+        if (result.done && !pit && regrowMinutes > 0) {
+            best.digProgress = 1;
+            best.regrowAt = this.worldMinuteIndex() + regrowMinutes;
+        } else if (result.done && !pit) {
             const drops = DigApi.rollDrops?.(bestDef, () => this.rng()) || [];
             const piles = DigApi.scatterDrops?.(drops, best.x, best.y, () => this.rng())
                 || Chop.scatterFellPiles?.(drops, best.x, best.y, () => this.rng())
@@ -1795,7 +1815,7 @@
             digSettled: Math.max(0, Math.floor(Number(best.digSettled) || 0)),
             lastDigAt: best.lastDigAt || Date.now(),
             give: result.give,
-            dug: !!result.done && !pit
+            dug: !!result.done && !pit && !(regrowMinutes > 0)
         });
     },
 
@@ -2232,6 +2252,175 @@
             if (!stack) return;
             this._insertUniqueStack(p, stack, form.slot);
         }
+    },
+
+    _pawnHasItem(pawn, itemId) {
+        if (!pawn || !itemId) return false;
+        for (const bag of [pawn.inventory, pawn.overflow]) {
+            if (!Array.isArray(bag)) continue;
+            for (const stack of bag) {
+                if (stack?.id === itemId && (Number(stack.quantity) || 1) > 0) return true;
+            }
+        }
+        return false;
+    },
+
+    _pawnHasFishing(pawn) {
+        const R = _research();
+        if (!R?.hasTech || !pawn) return false;
+        const holder = this._researchHolder(pawn.ownerId || pawn.id);
+        return !!(holder && R.hasTech(holder, "fishing"));
+    },
+
+    _fishMeasure(tx, ty) {
+        const F = fishApi();
+        if (!F || !WorldGen?.tileKeyAt) return null;
+        if (!this._fishCache) this._fishCache = new Map();
+        const key = (tx | 0) + "," + (ty | 0);
+        const hit = this._fishCache.get(key);
+        if (hit) return hit;
+        const measured = F.measure(tx | 0, ty | 0, (x, y) => WorldGen.tileKeyAt(x, y) === "water");
+        const tiles = measured.tiles?.length ? measured.tiles : [[tx | 0, ty | 0]];
+        for (const pair of tiles) this._fishCache.set(pair[0] + "," + pair[1], measured);
+        return measured;
+    },
+
+    _tryStartFish(pawn, opts) {
+        if (!pawn) return false;
+        this._tryFish(pawn, { tx: opts?.tx, ty: opts?.ty, pawnId: pawn.id });
+        return !!pawn.fishChannel;
+    },
+
+    _tryFish(p, action = {}) {
+        const F = fishApi();
+        const pawn = this._actionPawn(p, action) || p;
+        if (!F || !pawn || pawn.dead || pawn.fishChannel) return;
+        const held = this._held(pawn);
+        if (!held || held.id !== F.ROD_ID) return;
+        if (!this._pawnHasItem(pawn, F.GRUB_ID)) return;
+        if (!this._pawnHasFishing(pawn)) return;
+        const spot = F.castTile(pawn.x, pawn.y, pawn.facing, (x, y) => WorldGen.tileKeyAt(x, y));
+        if (!spot) return;
+        const tx = spot.tx;
+        const ty = spot.ty;
+        const measured = this._fishMeasure(tx, ty);
+        if (!this.fisheries || typeof this.fisheries !== "object" || Array.isArray(this.fisheries)) {
+            this.fisheries = Object.create(null);
+        }
+        const started = F.beginCast(this.fisheries, measured);
+        if (!started?.ok) return;
+        pawn.fishChannel = {
+            remaining: F.CAST_MS,
+            max: F.CAST_MS,
+            haul: started.haul,
+            id: started.id || null,
+            open: !!started.open,
+            standTx: spot.standTx,
+            standTy: spot.standTy,
+            waterTx: tx,
+            waterTy: ty,
+            reach: F.castRangeTiles(spot.standTx, spot.standTy, tx, ty) * 2,
+            facing: F.shoreFacing(spot.standTx, spot.standTy, tx, ty) || pawn.facing || "down"
+        };
+        this._lockFishFacing(pawn);
+        this._pushFishChannelEvent(pawn);
+        this._dirtyPawnOwner(pawn);
+    },
+
+    _pushFishChannelEvent(pawn, extra = {}) {
+        if (!pawn) return;
+        const session = this._sessionOfPawn(pawn);
+        const ch = pawn.fishChannel;
+        let progress = extra.progress;
+        if (progress == null && ch && ch.max > 0) {
+            progress = 1 - (Number(ch.remaining) || 0) / ch.max;
+        }
+        this.pushEvent({
+            kind: "channel",
+            playerId: session?.id || pawn.ownerId || pawn.id,
+            pawnId: pawn.id,
+            channel: "fish",
+            progress: Math.max(0, Math.min(1, Number(progress) || 0)),
+            ...(ch?.facing ? { facing: ch.facing } : {}),
+            ...(Number.isFinite(ch?.waterTx) ? { waterTx: ch.waterTx | 0, waterTy: ch.waterTy | 0 } : {}),
+            ...(extra.done ? { done: true } : {}),
+            ...(extra.cancelled ? { cancelled: true } : {})
+        });
+    },
+
+    /** Keep a casting pawn looking at the water they cast into. */
+    _lockFishFacing(pawn) {
+        const face = pawn?.fishChannel?.facing;
+        if (!face) return;
+        pawn.facing = face;
+        const c = pawn.creature || this.creatures?.get?.(pawn.id);
+        if (c) c.facing = face;
+    },
+
+    _cancelFishChannel(pawn) {
+        const ch = pawn?.fishChannel;
+        if (!ch) return;
+        pawn.fishChannel = null;
+        if (!ch.open && ch.id) fishApi()?.cancelCast(this.fisheries, ch.id, ch.haul);
+        this._pushFishChannelEvent(pawn, { cancelled: true, progress: 0 });
+        this._dirtyPawnOwner(pawn);
+    },
+
+    _finishFishChannel(pawn) {
+        const ch = pawn?.fishChannel;
+        if (!ch) return;
+        pawn.fishChannel = null;
+        const F = fishApi();
+        if (!F || !this._takeOneItem(pawn, F.GRUB_ID)) {
+            if (!ch.open && ch.id) F?.cancelCast(this.fisheries, ch.id, ch.haul);
+            this._pushFishChannelEvent(pawn, { cancelled: true, progress: 0 });
+            this._dirtyPawnOwner(pawn);
+            return;
+        }
+        this._wearHeld(pawn, 1);
+        const haul = Math.max(1, Math.floor(Number(ch.haul) || 1));
+        const settler = (this.settlers || []).some((s) => s && (s === pawn || s.id === pawn.id));
+        if (settler) {
+            this._pushDrop(pawn.x, pawn.y, { id: F.FISH_ID, quantity: haul });
+        } else {
+            const left = this._digGive(pawn, F.FISH_ID, haul);
+            if (left > 0) this._pushDrop(pawn.x, pawn.y, { id: F.FISH_ID, quantity: left });
+        }
+        pawn._workHold = false;
+        pawn._busyJob = null;
+        pawn._settlerScan = null;
+        this._pushFishChannelEvent(pawn, { done: true, progress: 1 });
+        this._dirtyPawnOwner(pawn);
+    },
+
+    _tickFishChannel(pawn, dtMs) {
+        const ch = pawn?.fishChannel;
+        if (!ch) return;
+        if (this._pawnVomiting?.(pawn)) {
+            this._cancelFishChannel(pawn);
+            return;
+        }
+        const F = fishApi();
+        const reach = Number(ch.reach) > 0 ? ch.reach : 2;
+        if (!F?.lineHolds(pawn.x, pawn.y, ch.waterTx, ch.waterTy, reach)) {
+            this._cancelFishChannel(pawn);
+            return;
+        }
+        const held = this._held(pawn);
+        if (!held || held.id !== F.ROD_ID) {
+            this._cancelFishChannel(pawn);
+            return;
+        }
+        this._lockFishFacing(pawn);
+        ch.remaining -= Number(dtMs) || 0;
+        this._pushFishChannelEvent(pawn);
+        if (ch.remaining <= 0) this._finishFishChannel(pawn);
+    },
+
+    _tickFisheries() {
+        const F = fishApi();
+        if (!F || !this.fisheries) return;
+        F.regen(this.fisheries, 1);
     },
     };
 });

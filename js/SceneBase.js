@@ -124,6 +124,8 @@ class SceneBase extends Phaser.Scene {
                     ? Place.thingImageLoads(t)
                     : [{ key: t.key, path: `assets/things/${t.key}.png` }];
                 for (const load of loads) {
+                    if (this.textures.exists(load.key) || this.__cpQueuedTextures?.has(load.key)) continue;
+                    this.__cpQueuedTextures.add(load.key);
                     if (load.spritesheet) {
                         this.load.spritesheet(load.key, load.path, {
                             frameWidth: load.frameWidth ?? 16,
@@ -272,6 +274,7 @@ class SceneBase extends Phaser.Scene {
     }
 
     getThing(id) {
+        if (id === "grub_bank") id = "grub_nest";
         return this.things().find(i => i?.id === id);
     }
 

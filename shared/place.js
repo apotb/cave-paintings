@@ -132,13 +132,14 @@
             return loads;
         }
         if (t.anim) {
-            return [{
+            const loads = [{
                 key: t.key,
                 path: `assets/things/${t.key}.png`,
                 spritesheet: true,
                 frameWidth: t.anim.frameWidth ?? 16,
                 frameHeight: t.anim.frameHeight ?? 16
             }];
+            return loads;
         }
         const loads = [{ key: t.key, path: `assets/things/${t.key}.png` }];
         if (t.dryingRack) {

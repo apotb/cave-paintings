@@ -280,6 +280,8 @@ class SimWorld {
         this.researchSpentByOwner = Object.create(null);
         /** Mod-owned save blob. Not part of the sim hash. */
         this.modData = {};
+        /** Closed pools that have been fished. Open water is not stored. */
+        this.fisheries = Object.create(null);
         /** Load-time save warnings. Not a join REJECT. */
         this.contentWarnings = [];
         /** @type {Map<string, number>} playerId -> seconds until next passerby pack */
@@ -425,6 +427,16 @@ class SimWorld {
         for (const snap of data.wanderers || []) {
             const rec = w._wandererRecordFromSnap(snap);
             if (rec) w.wanderers.set(rec.id, rec);
+        }
+        w.fisheries = Object.create(null);
+        if (data.fisheries && typeof data.fisheries === "object" && !Array.isArray(data.fisheries)) {
+            for (const [id, rec] of Object.entries(data.fisheries)) {
+                if (!rec || typeof rec !== "object") continue;
+                const max = Number(rec.max);
+                const pop = Number(rec.pop);
+                if (!Number.isFinite(max) || !Number.isFinite(pop)) continue;
+                w.fisheries[id] = { pop, max };
+            }
         }
         w.settlements = (data.settlements || []).map((s) => Settlement.ensureSettlement(s));
         const spentRaw = data.researchSpentByOwner;

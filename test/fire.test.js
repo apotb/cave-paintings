@@ -419,6 +419,33 @@ test("a just-lit fire lights at least as embers before the pit heats", () => {
     assert.equal(Fire.lightRadiusForEntry({ pitTemp: Fire.AMBIENT_TEMP, id: "unlit_campfire" }), 0);
 });
 
+test("raw fish in a coconut shell heats up and the meal can finish", () => {
+    assert.equal(Fire.isSimmerIngredient("raw_fish"), true);
+    const e = pit({
+        id: "campfire",
+        pitTemp: 600,
+        burnRemaining: 80,
+        maxTemp: 600,
+        catalyst: { id: "cracked_coconut", quantity: 1 },
+        simmer: [
+            { id: "raw_fish", quantity: 1 },
+            { id: "raw_fish", quantity: 1 },
+            null,
+            null
+        ]
+    });
+    let finished = false;
+    for (let i = 0; i < 40; i++) {
+        const r = Fire.tickCook(e, getItem, {
+            worldMinute: i,
+            finishSimmer: () => { finished = true; }
+        });
+        if (r.converted) break;
+    }
+    assert.ok(e.simmer[0].temp > Fire.AMBIENT_TEMP, "raw fish should take heat from the pit");
+    assert.equal(finished, true);
+});
+
 test("cookWorldBarFrac follows roast and simmer minutes", () => {
     assert.equal(Fire.cookWorldBarFrac(null, getItem), 0);
     const empty = pit({ id: "campfire", cookProgress: 0 });

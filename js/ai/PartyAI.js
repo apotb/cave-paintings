@@ -337,7 +337,8 @@ class PartyAI {
         const moveMul = Math.max(0.05, Math.min(1.5, pawn.capacities?.moving?.() || 1));
         let mul = 1;
         if (pawn._eatChannel || pawn._tendChannel || pawn._skinChannel
-            || pawn._fleshChannel || pawn._brainChannel || pawn._craftChannel) mul *= 0.5;
+            || pawn._fleshChannel || pawn._brainChannel || pawn._craftChannel
+            || pawn.fishChannel || pawn._netWorkChannel?.kind === "fish") mul *= 0.5;
         if (pawn.isAttacking?.()) mul *= 0.5;
         const speed = moved
             ? moved.speed
@@ -354,7 +355,10 @@ class PartyAI {
         applyEntityVelocity?.(pawn, nx * speed, ny * speed, scene.game?.loop?.delta || 16, scene);
         const ax = Math.abs(nx);
         const ay = Math.abs(ny);
-        if (ax > ay + 0.22) pawn.facing = nx > 0 ? "right" : "left";
+        const fishFace = pawn.fishChannel?.facing
+            || (pawn._netWorkChannel?.kind === "fish" ? pawn._netWorkChannel.facing : null);
+        if (fishFace) pawn.facing = fishFace;
+        else if (ax > ay + 0.22) pawn.facing = nx > 0 ? "right" : "left";
         else if (ay > ax + 0.22) pawn.facing = ny > 0 ? "down" : "up";
         const tilesPerSec = speed / (scene.tileSize || 16);
         pawn.anims.timeScale = typeof Party !== "undefined" && Party.walkAnimTimeScale

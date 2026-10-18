@@ -516,7 +516,8 @@
             || id === "blueberry"
             || id === "raw_human_flesh"
             || id === "raw_venison"
-            || id === "raw_pork";
+            || id === "raw_pork"
+            || id === "raw_fish";
     }
 
     function simmerFilledCount(entry) {

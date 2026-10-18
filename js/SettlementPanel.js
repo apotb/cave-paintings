@@ -411,7 +411,9 @@ class SettlementPanel {
                 }
             }).join("|");
             const controlId = this.scene.player?.pawnId || this.scene.player?.id || "";
-            return `jobs:${id}:${jobs}:${controlId}:${layout}`;
+            const holder = this.scene._playerResearchHolder?.() || this.scene.leader || this.scene.player;
+            const fishing = holder?.techs?.fishing ? 1 : 0;
+            return `jobs:${id}:${jobs}:${controlId}:${fishing}:${layout}`;
         }
         if (tab === "stock") {
             const items = sys?.localStockItems?.(this.settle) || [];
@@ -722,9 +724,18 @@ class SettlementPanel {
 
     _fillJobs(sc) {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
-        const jobs = (typeof S?.jobIds === "function" ? S.jobIds() : null)
+        const allJobs = (typeof S?.jobIds === "function" ? S.jobIds() : null)
             || S?.JOBS
             || ["doctor", "cook", "chop", "leather", "gather", "haul"];
+        const R = typeof Research !== "undefined" ? Research : null;
+        const holder = this.scene._playerResearchHolder?.()
+            || this.scene.leader
+            || this.scene.player
+            || null;
+        const jobs = allJobs.filter((id) => {
+            if (id !== "fish") return true;
+            return !!(R && holder && R.hasTech(holder, "fishing"));
+        });
         const here = this.scene.settlementSys.settlersOf(this.settle.id);
         if (!here.length) {
             this._label("Drop people off to assign jobs.", 0, 0, 12);

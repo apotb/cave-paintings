@@ -242,6 +242,26 @@ test("bushes including snow take a quarter of clay health and drop sticks and le
     }
 });
 
+test("grub_nest loads as a two-frame sheet and does not queue the hole", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const Place = require("../shared/place");
+    const def = DataStore.getThing("grub_nest");
+    assert.equal(def.anim.frameWidth, 16);
+    assert.equal(def.anim.frameHeight, 16);
+    assert.equal(def.anim.frameRate, 2);
+    assert.equal(def.anim.repeat, -1);
+    const png = fs.readFileSync(path.join(__dirname, "../assets/things/grub_nest.png"));
+    assert.equal(png.readUInt32BE(16), 32);
+    assert.equal(png.readUInt32BE(20), 16);
+    const loads = Place.thingImageLoads(def);
+    const sheet = loads.find((l) => l.key === "grub_nest");
+    assert.equal(sheet.spritesheet, true);
+    assert.equal(sheet.frameWidth, 16);
+    assert.equal(sheet.frameHeight, 16);
+    assert.equal(loads.some((l) => l.key === "hole"), false);
+});
+
 test("clay_patch loads the hole overlay sprite", () => {
     const Place = require("../shared/place");
     const def = DataStore.getThing("clay_patch");

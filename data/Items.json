@@ -877,6 +877,24 @@
         }
     },
     {
+        "id": "flimsy_rod",
+        "name": "Flimsy Rod",
+        "key": "flimsy_rod",
+        "maxStack": 1,
+        "durability": 40,
+        "lineColor": "#4dab36",
+        "weight": 0.4,
+        "tooltip": [
+            "Press Space when facing water",
+            "Requires bait"
+        ],
+        "recipe": {
+            "stick": 2,
+            "leaf_cord": 3,
+            "sharp_stick": 1
+        }
+    },
+    {
         "id": "leaf_wrap",
         "name": "Leaf Wrap",
         "key": "leaf_wrap",
@@ -1462,5 +1480,50 @@
         "tooltip": [
             "Click yourself to form"
         ]
+    },
+    {
+        "id": "grub",
+        "name": "Grub",
+        "key": "grub",
+        "maxStack": 99,
+        "weight": 0.02,
+        "tooltip": [
+            "Used as bait for fishing"
+        ]
+    },
+    {
+        "id": "raw_fish",
+        "name": "Raw Fish",
+        "key": "raw_fish",
+        "maxStack": 99,
+        "weight": 0.15,
+        "fillColor": "#5a7a8a",
+        "food": {
+            "kc": 140,
+            "spoil": 8,
+            "foodPoisonChance": 0.33,
+            "eatSeconds": 4.0,
+            "satietyRatio": 0.1
+        },
+        "cook": {
+            "stick_roast": {
+                "result": "roasted_fish",
+                "minutes": 12,
+                "temp": 550
+            }
+        }
+    },
+    {
+        "id": "roasted_fish",
+        "name": "Roasted Fish",
+        "key": "roasted_fish",
+        "maxStack": 99,
+        "weight": 0.12,
+        "food": {
+            "kc": 200,
+            "spoil": 24,
+            "eatSeconds": 4.0,
+            "satietyRatio": 0.22
+        }
     }
 ]
