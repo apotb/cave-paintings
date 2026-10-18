@@ -462,8 +462,11 @@ test("carrying does not stop either person from being hit", () => {
     const hitP = BodyCombat.applyHit(attacker, carried, attack);
     assert.ok(hitC);
     assert.ok(hitP);
-    const hurt = (who, before) => Object.values(who.anatomy.parts()).some((part) => (part.injuries || []).length)
-        || (who.anatomy.bloodLoss || 0) > before
+    // A blow that destroys a finger clears that part's injury list, so a
+    // missing part counts as being hit the same way a wound or a death does.
+    const hurt = (who, before) => Object.values(who.anatomy.parts()).some((part) =>
+        (part.injuries || []).length || part.dead
+    ) || (who.anatomy.bloodLoss || 0) > before
         || who.isBodyDead?.();
     assert.equal(hurt(carrier, beforeC), true);
     assert.equal(hurt(carried, beforeP), true);
