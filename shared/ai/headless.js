@@ -820,6 +820,19 @@
                 mob.setDesiredVel?.(0, 0);
                 return;
             }
+            // Finish the cast before following, so switching control leaves the line out.
+            if (mob.fishChannel) {
+                this._clearCombat();
+                this.tendSeek = null;
+                this.eatSeek = null;
+                this.rescueSeek = null;
+                this._path = null;
+                this._pathGoalX = null;
+                this._pathGoalY = null;
+                mob.setDesiredVel?.(0, 0);
+                mob.isSprinting = false;
+                return;
+            }
 
             const next = world?.getAssistTarget?.(mob) || null;
             const ok = next && this._assistStillOk(next, follow, world);

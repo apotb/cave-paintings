@@ -1475,6 +1475,10 @@
                 } : null;
                 continue;
             }
+            if (rec.fishChannel) {
+                cc.ai.rescueSeek = null;
+                continue;
+            }
             if (Party.beyondFollowLeash(rec, control, TS)) {
                 cc.ai.rescueSeek = null;
                 continue;
@@ -1567,6 +1571,10 @@
                 cc.ai.tendSeek = null;
                 continue;
             }
+            if (rec.fishChannel) {
+                if (cc.ai) cc.ai.tendSeek = null;
+                continue;
+            }
             if (Party.beyondFollowLeash(rec, control, TS) && !rec._carryPawnId) {
                 if (cc.ai) cc.ai.tendSeek = null;
                 continue;
@@ -1634,6 +1642,10 @@
             const rec = row.rec;
             const cc = row.creature;
             if (!cc) continue;
+            if (rec.fishChannel) {
+                if (cc.ai) cc.ai.eatSeek = null;
+                continue;
+            }
             if (Party.beyondFollowLeash(rec, control, TS)) {
                 if (cc.ai) cc.ai.eatSeek = null;
                 continue;

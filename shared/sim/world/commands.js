@@ -2490,6 +2490,12 @@
         this._dirtyPawnOwner(pawn);
     },
 
+    _fishPawnControlled(pawn) {
+        const session = this._sessionOfPawn(pawn);
+        if (!session || !pawn) return false;
+        return pawn.id === (session.controlId || session.id);
+    },
+
     _tickFishChannel(pawn, dtMs, rawMs) {
         const ch = pawn?.fishChannel;
         if (!ch) return;
@@ -2509,6 +2515,24 @@
             return;
         }
         this._lockFishFacing(pawn);
+        if (ch.hook && !this._fishPawnControlled(pawn)) {
+            if (!ch.bite) {
+                ch.remaining -= Number(dtMs) || 0;
+                if (ch.remaining > 0) {
+                    this._pushFishChannelEvent(pawn);
+                    return;
+                }
+                ch.bite = true;
+                ch.biteLeft = F.HOOK_MS;
+                this._pushFishChannelEvent(pawn);
+                return;
+            }
+            const raw = Number.isFinite(Number(rawMs)) ? Number(rawMs) : Number(dtMs) || 0;
+            ch.biteLeft = (Number(ch.biteLeft) || 0) - raw;
+            if (ch.biteLeft <= 0) this._finishFishChannel(pawn);
+            else this._pushFishChannelEvent(pawn);
+            return;
+        }
         if (ch.hook && ch.bite) {
             const raw = Number.isFinite(Number(rawMs)) ? Number(rawMs) : Number(dtMs) || 0;
             ch.biteLeft = (Number(ch.biteLeft) || 0) - raw;

@@ -828,3 +828,98 @@ test("space before the bite reels in, and a missed bite spends the grub", () => 
         assert.ok(world.fisheries[Object.keys(world.fisheries)[0]].pop >= haulPop);
     }
 });
+
+test("a party member finishes fishing before following", () => {
+    const shore = shoreNearOrigin();
+    assert.ok(shore);
+    const { world, pawn, Protocol } = createTestWorld();
+    world.seed = 1;
+    WorldGen.applySeed(1);
+    Research.unlock(pawn, "fishing");
+    pawn.x = (shore.tx + 0.5) * 16;
+    pawn.y = (shore.ty + 0.5) * 16;
+    pawn.inventory[0] = { id: "flimsy_rod", quantity: 1, durability: 40 };
+    pawn.inventory[1] = { id: "grub", quantity: 3 };
+    pawn.hotbarIndex = 0;
+    pawn.facing = shore.wx > shore.tx ? "right"
+        : shore.wx < shore.tx ? "left"
+            : shore.wy > shore.ty ? "down" : "up";
+    world.handleAction(pawn.id, { type: Protocol.Actions.FISH, pawnId: pawn.id });
+    assert.equal(pawn.fishChannel?.hook, true);
+
+    const isWater = (x, y) => WorldGen.tileKeyAt(x, y) === "water";
+    let stand = null;
+    for (let ty = 1; ty < 24 && !stand; ty++) {
+        for (let tx = 1; tx < 24; tx++) {
+            const ground = WorldGen.tileKeyAt(tx, ty);
+            if (ground === "water" || ground === "ice") continue;
+            const dist = Math.hypot(tx - shore.tx, ty - shore.ty);
+            if (dist < 6 || dist > 14) continue;
+            for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                if (!isWater(tx + dx, ty + dy)) continue;
+                if ((tx + dx) === shore.wx && (ty + dy) === shore.wy) continue;
+                stand = { tx, ty, wx: tx + dx, wy: ty + dy };
+                break;
+            }
+            if (stand) break;
+        }
+    }
+    assert.ok(stand, "a second bank within follow range");
+    const mate = {
+        id: "mate",
+        name: "Mate",
+        x: (stand.tx + 0.5) * 16,
+        y: (stand.ty + 0.5) * 16,
+        facing: stand.wx > stand.tx ? "right"
+            : stand.wx < stand.tx ? "left"
+                : stand.wy > stand.ty ? "down" : "up",
+        vx: 0,
+        vy: 0,
+        inventory: [
+            { id: "flimsy_rod", quantity: 1, durability: 40 },
+            { id: "grub", quantity: 2 },
+            null, null, null
+        ],
+        overflow: [],
+        equipment: { head: null, torso: null, legs: null, feet: null, back: null, waist: [] },
+        hotbarIndex: 0,
+        kc: 1200,
+        dead: false,
+        prone: false,
+        ownerId: pawn.id,
+        leaderId: pawn.id,
+        role: "companion"
+    };
+    pawn.party = [mate];
+    world._ensureCompanionCreature(pawn, mate);
+    world._setControlId(pawn, mate.id);
+    assert.ok(pawn.fishChannel, "switching control leaves the first line out");
+    world.handleAction(pawn.id, { type: Protocol.Actions.FISH, pawnId: mate.id });
+    assert.ok(mate.fishChannel?.hook, "the controlled member can cast too");
+    assert.ok(pawn.fishChannel, "the first line stays out while the next one starts");
+
+    const sx = pawn.x;
+    const sy = pawn.y;
+    for (let i = 0; i < 8; i++) world.tick(200);
+    assert.ok(pawn.fishChannel, "the cast keeps running after the switch");
+    assert.ok(Math.hypot(pawn.x - sx, pawn.y - sy) < 2, "they wait on the bank instead of following");
+
+    world.rng = () => 0.5;
+    const haul = pawn.fishChannel.haul;
+    world._tickFishChannel(pawn, pawn.fishChannel.remaining, 0);
+    assert.equal(pawn.fishChannel.bite, true, "an uncontrolled bite still plays");
+    assert.ok(Math.hypot(pawn.x - sx, pawn.y - sy) < 2, "they stay through the bite");
+    world._tickFishChannel(pawn, 0, Fish.HOOK_MS);
+    assert.equal(pawn.fishChannel, null);
+    const got = (pawn.inventory || []).reduce((n, s) => {
+        return n + (s?.id === "raw_fish" ? (s.quantity || 1) : 0);
+    }, 0);
+    assert.equal(got, haul);
+    assert.equal(pawn.inventory[1].quantity, 2);
+    assert.ok(mate.fishChannel, "the controlled cast is still waiting on a bite");
+
+    const before = { x: pawn.x, y: pawn.y };
+    for (let i = 0; i < 40; i++) world.tick(200);
+    const moved = Math.hypot(pawn.x - before.x, pawn.y - before.y);
+    assert.ok(moved > 8, `they follow once the line is in (moved ${moved.toFixed(1)})`);
+});
