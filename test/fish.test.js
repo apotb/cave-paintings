@@ -62,6 +62,14 @@ test("water hover shows the population", () => {
     assert.equal(Fish.describe(null, null), null);
 });
 
+test("a water tile holds one bobber", () => {
+    const mine = [{ id: "me", waterTx: 3, waterTy: 4 }];
+    assert.equal(Fish.bobberTaken(3, 4, mine, "other"), true);
+    assert.equal(Fish.bobberTaken(3, 4, mine, "me"), false);
+    assert.equal(Fish.bobberTaken(2, 4, mine, "other"), false);
+    assert.equal(Fish.bobberTaken(3, 4, [], "other"), false);
+});
+
 test("a cast uses the tiles the feet cover, not the bottom-left corner", () => {
     const key = (x) => (x < 10 ? "water" : "grass");
     const spot = Fish.castTile(156, 40, "left", key);
@@ -358,6 +366,32 @@ test("a new save keeps grub and raw fish at the stock default", () => {
     assert.equal(off.raw_fish, 0);
 });
 
+function twoBanks() {
+    WorldGen.applySeed(1);
+    const isWater = (x, y) => WorldGen.tileKeyAt(x, y) === "water";
+    for (let ty = 2; ty < 28; ty++) {
+        for (let tx = 2; tx < 28; tx++) {
+            if (!isWater(tx, ty)) continue;
+            const measured = Fish.measure(tx, ty, isWater);
+            if (!(measured.open || measured.max >= 1)) continue;
+            const stands = [];
+            for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                const sx = tx + dx;
+                const sy = ty + dy;
+                const ground = WorldGen.tileKeyAt(sx, sy);
+                if (ground === "water" || ground === "ice") continue;
+                stands.push({
+                    tx: sx,
+                    ty: sy,
+                    face: dx > 0 ? "left" : dx < 0 ? "right" : dy > 0 ? "up" : "down"
+                });
+            }
+            if (stands.length >= 2) return { wx: tx, wy: ty, stands };
+        }
+    }
+    return null;
+}
+
 function shoreNearOrigin() {
     WorldGen.applySeed(1);
     const isWater = (x, y) => WorldGen.tileKeyAt(x, y) === "water";
@@ -594,4 +628,85 @@ test("Fish waits for the tech, a rod, a grub, and room in the fish stock", () =>
     for (let i = 0; i < 40; i++) world._tickFishChannel(rec, 1000);
     assert.equal(rec.fishChannel, null);
     assert.equal(rec.inventory[1].quantity, before - 1);
+});
+
+test("a second line cannot land on a tile that already has a bobber", () => {
+    const banks = twoBanks();
+    assert.ok(banks, "seed 1 should have a water tile with two shores");
+    const { world, pawn, Protocol } = createTestWorld();
+    world.seed = 1;
+    WorldGen.applySeed(1);
+    Research.unlock(pawn, "fishing");
+    const stand = banks.stands[0];
+    pawn.x = (stand.tx + 0.5) * 16;
+    pawn.y = (stand.ty + 0.5) * 16;
+    pawn.facing = stand.face;
+    pawn.inventory[0] = { id: "flimsy_rod", quantity: 1, durability: 40 };
+    pawn.inventory[1] = { id: "grub", quantity: 2 };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, { type: Protocol.Actions.FISH, pawnId: pawn.id });
+    assert.ok(pawn.fishChannel, "the first cast starts");
+    assert.equal(pawn.fishChannel.waterTx, banks.wx);
+    assert.equal(pawn.fishChannel.waterTy, banks.wy);
+    const reserved = pawn.fishChannel.open ? null : world.fisheries[pawn.fishChannel.id].pop;
+
+    const other = banks.stands[1];
+    const x = (other.tx + 0.5) * 16;
+    const y = (other.ty + 0.5) * 16;
+    const settle = Settlement.createSettlement({ x, y, ownerId: pawn.id });
+    const rec = world._settlerFromSnap({
+        id: "fisher2",
+        name: "Fisher",
+        x,
+        y,
+        ownerId: pawn.id,
+        homeSettlementId: settle.id,
+        inventory: [
+            { id: "flimsy_rod", quantity: 1, durability: 40 },
+            { id: "grub", quantity: 2 },
+            null, null, null
+        ]
+    });
+    rec.hotbarIndex = 0;
+    rec.facing = other.face;
+    const jobs = Settlement.defaultJobs();
+    for (const id of Settlement.JOBS) jobs[id] = 0;
+    jobs.fish = 3;
+    settle.jobs = { [rec.id]: jobs };
+    world.settlements.push(settle);
+    world.settlers.push(rec);
+    world._ensureSettlerCreature(rec);
+
+    world._tryFish(rec);
+    assert.ok(!rec.fishChannel, "a settler cannot drop a second bobber here");
+    if (reserved != null) assert.equal(world.fisheries[pawn.fishChannel.id].pop, reserved);
+
+    for (let i = 0; i < 6; i++) world.tick(200);
+    if (rec.fishChannel) {
+        const same = (rec.fishChannel.waterTx | 0) === banks.wx
+            && (rec.fishChannel.waterTy | 0) === banks.wy;
+        assert.equal(same, false, "the fishing job picks a free tile");
+    }
+    assert.ok(pawn.fishChannel, "the first bobber stays out");
+
+    world._cancelFishChannel(pawn);
+    rec.fishChannel = null;
+    rec.x = x;
+    rec.y = y;
+    rec.facing = other.face;
+    rec._busyJob = null;
+    rec._workHold = false;
+    rec._settlerScan = null;
+    const body = world.creatures.get(rec.id);
+    if (body) {
+        body.x = x;
+        body.y = y;
+        body.facing = other.face;
+    }
+    world._tryFish(rec);
+    assert.ok(rec.fishChannel, "the shore is free once the first line is in");
+    assert.equal(rec.fishChannel.waterTx, banks.wx);
+    assert.equal(rec.fishChannel.waterTy, banks.wy);
+    world.handleAction(pawn.id, { type: Protocol.Actions.FISH, pawnId: pawn.id });
+    assert.ok(!pawn.fishChannel, "the player cannot cast onto that bobber");
 });

@@ -447,6 +447,11 @@ function doFish(world, rec, settle, spot) {
         if (face) rec.facing = face;
         return halt(face ? { facing: face } : null);
     }
+    if (world._bobberOn?.(spot.waterTx, spot.waterTy, rec.id)) {
+        rec._settlerScan = null;
+        endWorkHold(rec);
+        return halt();
+    }
     const rodId = "flimsy_rod";
     const grubId = "grub";
     const rod = findStack(world, rec, settle, (s) => s.id === rodId);

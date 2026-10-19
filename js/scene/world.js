@@ -917,6 +917,40 @@
     },
 
     /**
+     * True when a bobber already sits on this water tile.
+     * The host sim is checked first; puppets cover a remote client's view.
+     */
+    _fishTileTaken(tx, ty, exceptPawn) {
+        const exceptId = exceptPawn?.pawnId || exceptPawn?.id || null;
+        if (this.sim?._bobberOn?.(tx, ty, exceptId)) return true;
+        const FishApi = typeof Fish !== "undefined" ? Fish : null;
+        if (!FishApi?.bobberTaken) return false;
+        const channels = [];
+        const add = (id, ch) => {
+            if (!ch || !Number.isFinite(Number(ch.waterTx))) return;
+            channels.push({
+                id: id || null,
+                waterTx: ch.waterTx,
+                waterTy: ch.waterTy
+            });
+        };
+        const pawnCh = (pawn) => {
+            if (!pawn) return;
+            const id = pawn.pawnId || pawn.id || null;
+            const net = pawn._netWorkChannel;
+            if (net?.kind === "fish") add(id, net);
+            else if (pawn.fishChannel) add(id, pawn.fishChannel);
+        };
+        pawnCh(this.player);
+        for (const p of this.party || []) pawnCh(p);
+        for (const p of this.settlers || []) pawnCh(p);
+        for (const entry of this.remotePlayers?.values?.() || []) {
+            if (entry?.fish) add(entry.pawnId || entry.id, entry.fish);
+        }
+        return FishApi.bobberTaken(tx, ty, channels, exceptId);
+    },
+
+    /**
      * Press Space with the rod while facing water. The server runs the cast.
      * @returns {boolean} true when this press was a cast attempt
      */
@@ -936,6 +970,7 @@
             (x, y) => WG.tileKeyAt(x, y)
         );
         if (!spot) return false;
+        if (this._fishTileTaken(spot.tx, spot.ty, player)) return false;
         this._netSendMove?.(true);
         this.net?.sendAction?.({
             type: (typeof NetProtocol !== "undefined" ? NetProtocol.Actions.FISH : "fish"),

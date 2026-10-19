@@ -116,6 +116,22 @@
     }
 
     /**
+     * One bobber per water tile. `channels` are `{ id, waterTx, waterTy }`.
+     * The caster's own channel does not block them.
+     */
+    function bobberTaken(tx, ty, channels, exceptId) {
+        const wx = tx | 0;
+        const wy = ty | 0;
+        if (!channels || typeof channels[Symbol.iterator] !== "function") return false;
+        for (const ch of channels) {
+            if (!ch || !Number.isFinite(Number(ch.waterTx)) || !Number.isFinite(Number(ch.waterTy))) continue;
+            if (exceptId && ch.id === exceptId) continue;
+            if ((ch.waterTx | 0) === wx && (ch.waterTy | 0) === wy) return true;
+        }
+        return false;
+    }
+
+    /**
      * Reserve the haul. Closed pools write `{ id, pop, max }` immediately,
      * already reduced, so a second cast cannot take the same fish.
      * Open water writes nothing.
@@ -307,6 +323,7 @@
         castRangeTiles,
         lineHolds,
         fishable,
+        bobberTaken,
         beginCast,
         cancelCast,
         regen,

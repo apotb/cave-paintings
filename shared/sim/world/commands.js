@@ -2303,6 +2303,7 @@
         if (!spot) return;
         const tx = spot.tx;
         const ty = spot.ty;
+        if (this._bobberOn(tx, ty, pawn.id)) return;
         const measured = this._fishMeasure(tx, ty);
         if (!this.fisheries || typeof this.fisheries !== "object" || Array.isArray(this.fisheries)) {
             this.fisheries = Object.create(null);
@@ -2430,6 +2431,34 @@
         const F = fishApi();
         if (!F || !this.fisheries) return;
         F.regen(this.fisheries, 1);
+    },
+
+    /** Live bobbers. One entry per pawn that has a line in the water. */
+    _fishBobbers() {
+        const out = [];
+        const seen = new Set();
+        const add = (pawn) => {
+            if (!pawn || seen.has(pawn.id)) return;
+            seen.add(pawn.id);
+            const ch = pawn.fishChannel;
+            if (!ch || !Number.isFinite(Number(ch.waterTx)) || !Number.isFinite(Number(ch.waterTy))) return;
+            out.push({ id: pawn.id, waterTx: ch.waterTx | 0, waterTy: ch.waterTy | 0 });
+        };
+        if (this.players && typeof this.players.values === "function") {
+            for (const p of this.players.values()) {
+                add(p);
+                for (const m of p?.party || []) add(m);
+            }
+        }
+        for (const s of this.settlers || []) add(s);
+        return out;
+    },
+
+    /** True when some other line already ends on this water tile. */
+    _bobberOn(tx, ty, exceptId) {
+        const F = fishApi();
+        if (!F?.bobberTaken) return false;
+        return F.bobberTaken(tx, ty, this._fishBobbers(), exceptId || null);
     },
     };
 });

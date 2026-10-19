@@ -223,6 +223,19 @@ function worldGenMod() {
     return null;
 }
 
+/** Another settler is already standing here to fish. */
+function fishStandHeld(world, stx, sty, pawnId) {
+    const tx = stx | 0;
+    const ty = sty | 0;
+    for (const s of world?.settlers || []) {
+        if (!s || s.dead || s.id === pawnId) continue;
+        const t = s._busyJob?.type === "fish" ? s._busyJob.target : null;
+        if (!t) continue;
+        if ((t.standTx | 0) === tx && (t.standTy | 0) === ty) return true;
+    }
+    return false;
+}
+
 function fishSpot(world, rec, settle, claims) {
     const Fish = fishMod();
     const WorldGen = worldGenMod();
@@ -255,6 +268,8 @@ function fishSpot(world, rec, settle, claims) {
     for (const w of waters) {
         const measured = world._fishMeasure(w.tx, w.ty);
         if (!Fish.fishable(measured, fisheries)) continue;
+        if (world._bobberOn?.(w.tx, w.ty, rec.id)) continue;
+        if (claimedByOther(claims, `fish:water:${w.tx},${w.ty}`, rec.id)) continue;
         let stand = null;
         let standD = Infinity;
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -265,13 +280,12 @@ function fishSpot(world, rec, settle, claims) {
             const sx = (stx + 0.5) * ts;
             const sy = (sty + 0.5) * ts;
             if (!inRange(settle, sx, sy, ts)) continue;
-            const claim = `fish:stand:${stx},${sty}`;
-            if (claimedByOther(claims, claim, rec.id)) continue;
+            if (fishStandHeld(world, stx, sty, rec.id)) continue;
             const d = Math.hypot(sx - rec.x, sy - rec.y);
             if (d < standD) {
                 standD = d;
                 stand = {
-                    uid: `stand:${stx},${sty}`,
+                    uid: `water:${w.tx},${w.ty}`,
                     x: sx,
                     y: sy,
                     standTx: stx,
