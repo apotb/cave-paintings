@@ -437,12 +437,36 @@ function interiorRest(world, rec, c, target) {
         const f = feet(cx, py);
         if (clear(f.x, f.y)) { out = f; break; }
     }
+    // Pathing treats 2px as arrived (Path ARRIVE_PX). A stand only 1px
+    // inside the floor makes that early stop miss the hut, so the tend
+    // never starts. Keep a pose that is still inside after that slack,
+    // and whose body can see the patient.
+    const ARRIVE_PX = 2;
+    const patientX = Number(target.x) || 0;
+    const patientY = Number(target.y) || 0;
     let inn = null;
+    let fallback = null;
     for (const py of [d.y - 2, d.y - 6, d.y - 10, 22]) {
         const f = feet(cx, py);
-        if (bodyInsideHut(world, c, entry, def, f.x, f.y)) { inn = f; break; }
+        if (!bodyInsideHut(world, c, entry, def, f.x, f.y)) continue;
+        fallback = f;
+        if (out) {
+            const dx = out.x - f.x;
+            const dy = out.y - f.y;
+            const dist = Math.hypot(dx, dy) || 1;
+            const slack = bodyInsideHut(
+                world, c, entry, def,
+                f.x + (dx / dist) * ARRIVE_PX,
+                f.y + (dy / dist) * ARRIVE_PX
+            );
+            if (!slack) continue;
+        }
+        const center = bodyCenter(world, c, f.x, f.y);
+        if (wallBetween(world, c, center.x, center.y, patientX, patientY)) continue;
+        inn = f;
+        break;
     }
-    return { entry, def, out, inn };
+    return { entry, def, out, inn: inn || fallback };
 }
 
 function goOrWalk(world, rec, target) {

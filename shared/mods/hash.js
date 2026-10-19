@@ -461,6 +461,38 @@
             .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     }
 
+    function carryApi() {
+        const root = typeof globalThis !== "undefined" ? globalThis : this;
+        if (root.Carry && root.Carry.resolveCraftedWeights) return root.Carry;
+        if (typeof require === "function") {
+            try { return require("../carry"); } catch (_) { return null; }
+        }
+        return null;
+    }
+
+    /**
+     * Recipe weights and fuel are written onto live defs the first time
+     * something looks an item up. Hash a copy that already has them, so a
+     * welcome sent before that lookup matches a hash taken after it.
+     */
+    function hashedItems(list) {
+        const rows = (Array.isArray(list) ? list : [])
+            .filter((row) => row && typeof row === "object" && !Array.isArray(row) && row.id)
+            .map((item) => {
+                const copy = Object.assign({}, item);
+                if (item.fuel && typeof item.fuel === "object" && !Array.isArray(item.fuel)) {
+                    copy.fuel = Object.assign({}, item.fuel);
+                }
+                return copy;
+            });
+        const Carry = carryApi();
+        if (Carry) {
+            Carry.resolveCraftedWeights(rows);
+            Carry.resolveCraftedFuel(rows);
+        }
+        return byId(rows).map(copyItem);
+    }
+
     function mapOf(table, copy) {
         const out = {};
         if (!table || typeof table !== "object") return out;
@@ -491,7 +523,7 @@
         return {
             v: 1,
             mods: copyMods(src.mods),
-            items: byId(src.items).map(copyItem),
+            items: hashedItems(src.items),
             things: byId(src.things).map(copyThing),
             techs: byId(src.techs).map(copyTech),
             mobs: byId(src.mobs).map(copyMob),

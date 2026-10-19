@@ -351,7 +351,7 @@ test("job order is Chop, then Fish, then Tail", () => {
     assert.ok(jobs.indexOf("fish") < jobs.indexOf("leather"));
     assert.equal(Settlement.jobLabel("fish"), "Fish");
     assert.equal(Settlement.JOB_NAMES.fish, "Fishing");
-    assert.ok(Settlement.jobTooltip("fish").includes("Fish at the shore"));
+    assert.match(Settlement.jobTooltip("fish"), /^Fishing\n- Fishing$/);
     assert.equal(Fish.CAST_MS, 30000);
 });
 
