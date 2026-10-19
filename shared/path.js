@@ -421,7 +421,10 @@
                 let via = null;
                 if (nbFirst && srcFirst) {
                     if (opens(srcFirst, nbFirst)) via = nbFirst;
+                    else if (typeof slack !== "function") continue;
                     else {
+                        // Other stands belong to a doorway. In the open they
+                        // sit closer to a trunk and the route turns back.
                         via = linkTight(sourceStands(cx, cy), allStands(nx, ny));
                         if (!via) continue;
                     }
