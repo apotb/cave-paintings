@@ -5785,3 +5785,65 @@ test("a Leather settler still finishes a bench bill after Craft exists", () => {
     assert.ok(rec.inventory.some((s) => s && s.id === "hide_pouch"));
 });
 
+test("craft settler makes pitch at a lit campfire", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "stick", quantity: 8 }, null, null, null, null]
+    });
+    Research.unlock(pawn, "hafting");
+    settle.jobs[rec.id] = craftOnly();
+    const fire = addLitFire(world, settle, rec, "fire-pitch");
+    Settlement.addBill(settle, fire.uid, {
+        recipeId: "pitch", mode: "count", n: 1, paused: false
+    });
+    workOnce(world, rec);
+    assert.equal(rec._workChannel?.kind, "rock");
+    assert.equal(rec._workChannel?.job, "craft");
+    assert.equal(rec._workChannel?.recipeId, "pitch");
+    assert.equal(rec._settlerAct, "Crafting");
+    assert.equal(rec.inventory.some((s) => s && s.id === "pitch"), false);
+    let made = null;
+    for (let i = 0; i < 30; i++) {
+        world.tick(1000);
+        made = rec.inventory.find((s) => s && s.id === "pitch");
+        if (made) break;
+    }
+    assert.equal(made?.quantity, 1);
+    assert.equal(rec.inventory.some((s) => s && s.id === "stick"), false);
+});
+
+test("pitch bill waits for a lit campfire", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "stick", quantity: 8 }, null, null, null, null]
+    });
+    Research.unlock(pawn, "hafting");
+    settle.jobs[rec.id] = craftOnly();
+    const fire = addStation(world, settle, "campfire", rec.x, rec.y, "fire-pitch-cold");
+    fire.id = "unlit_campfire";
+    Settlement.addBill(settle, fire.uid, {
+        recipeId: "pitch", mode: "count", n: 1, paused: false
+    });
+    workOnce(world, rec);
+    assert.equal(rec._workChannel ?? null, null);
+    assert.equal(rec.inventory[0]?.id, "stick");
+    assert.equal(rec.inventory[0]?.quantity, 8);
+});
+
+test("a cook does not roast from a Make Pitch bill", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "apple", quantity: 1 }, null, null, null, null]
+    });
+    cookOnlyJobs(settle, rec);
+    const fire = addLitFire(world, settle, rec, "fire-pitch-cook");
+    Settlement.addBill(settle, fire.uid, {
+        recipeId: "pitch", mode: "forever", paused: false
+    });
+    workOnce(world, rec);
+    assert.equal(fire.cook ?? null, null);
+    assert.equal(rec.inventory[0]?.id, "apple");
+    assert.equal(rec.inventory[0]?.quantity, 1);
+    assert.equal(rec._workChannel ?? null, null);
+});
+

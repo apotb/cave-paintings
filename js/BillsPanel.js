@@ -107,14 +107,13 @@ class BillsPanel {
                 fontFamily: PIXEL_UI_FONT,
                 fontSize: "14px",
                 color
-            }).setOrigin(opts.alignLeft ? 0 : 0.5, 0.5);
+            }).setOrigin(0.5, 0.5);
             kids.push(txt);
         }
         const c = scene.add.container(x, y, kids);
         c._bg = bg;
         c._txt = txt;
         c._item = item;
-        c._alignLeft = !!opts.alignLeft;
         c._w = w;
         c._h = h;
         let hovering = false;
@@ -179,23 +178,22 @@ class BillsPanel {
 
     _layoutBtnContent(c) {
         if (!c) return;
-        const w = c._w;
         const h = c._h;
-        const pad = Math.max(6, Math.round(h * 0.28));
         if (c._item) {
             const isz = Math.max(12, Math.round(h - 6));
             c._item.setDisplaySize(isz, isz);
-            c._item.setPosition(-w / 2 + pad + isz / 2, 0);
         }
-        if (c._txt) {
-            if (c._alignLeft) {
-                const iconW = c._item ? c._item.displayWidth : 0;
-                const gap = iconW ? Math.max(4, Math.round(h * 0.18)) : 0;
-                c._txt.setOrigin(0, 0.5).setPosition(-w / 2 + pad + iconW + gap, 0);
-            } else {
-                c._txt.setOrigin(0.5).setPosition(0, 0);
-            }
+        if (c._item && c._txt) {
+            const gap = Math.max(4, Math.round(h * 0.18));
+            const iconW = c._item.displayWidth;
+            const textW = Math.ceil(c._txt.displayWidth || c._txt.width || 0);
+            const left = -(iconW + gap + textW) / 2;
+            c._item.setPosition(left + iconW / 2, 0);
+            c._txt.setOrigin(0, 0.5).setPosition(left + iconW + gap, 0);
+            return;
         }
+        if (c._item) c._item.setPosition(0, 0);
+        if (c._txt) c._txt.setOrigin(0.5, 0.5).setPosition(0, 0);
     }
 
     _chevronGfx(dir, side) {
@@ -1034,7 +1032,7 @@ class BillsPanel {
             const itemKey = this._billIconKey(rec);
             const row = this._btn(inset + innerW / 2, y + bh / 2, title, () => {
                 this._addRecipe(rec);
-            }, { w: innerW, h: bh, itemKey, alignLeft: rec.kind === "craft" || rec.kind === "make" || rec.kind === "knap" });
+            }, { w: innerW, h: bh, itemKey });
             this._sizeBtn(row, innerW, bh, 12);
             this.body.add(row);
             y += bh + Math.round(6 * sc);

@@ -165,11 +165,15 @@ test("station bills hide until their technology is unlocked", () => {
     const smokeBill = Settlement.makeBill({ recipeId: "smoke", mode: "forever", paused: false });
     assert.equal(Settlement.billIsActive(smokeBill), true);
     assert.equal(Settlement.billIsActive(smokeBill, () => 0, s), true);
+    assert.equal(Research.billUnlocked("pitch", s), false);
     assert.deepEqual(
         Settlement.billRecipesFor("campfire", s).map((r) => r.id),
         ["roast", "simmer", "smoke"]
     );
     assert.ok(Settlement.billRecipesFor("campfire", s).some((r) => r.id === "smoke"));
+    Research.unlock(s, "hafting");
+    assert.equal(Research.billUnlocked("pitch", s), true);
+    assert.ok(Settlement.billRecipesFor("campfire", s).some((r) => r.id === "pitch"));
 
     assert.equal(Research.billUnlocked("hide_pouch", s), false);
     assert.equal(Settlement.billRecipesFor("craft", s).length, 0);

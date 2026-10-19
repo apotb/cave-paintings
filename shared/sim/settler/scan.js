@@ -757,6 +757,7 @@ function pickCookJob(world, rec, settle, f) {
     const bills = Settlement.billsOf(settle, f.uid);
     for (let i = 0; i < bills.length; i++) {
         const bill = bills[i];
+        if (bill.kind === "make") continue;
         if (!Settlement.billIsActive(bill, have, settle)) continue;
         if (bill.method === "smoke_hide") {
             if (canLeather && cookHasWork(world, rec, settle, f, bill)) return null;
@@ -767,7 +768,13 @@ function pickCookJob(world, rec, settle, f) {
             return { fire: f, bill, entry: f, skipInputIds };
         }
     }
-    const bill = Settlement.activeBill(settle, f.uid, have);
+    let bill = null;
+    for (const b of bills) {
+        if (b?.kind === "make") continue;
+        if (!Settlement.billIsActive(b, have, settle)) continue;
+        bill = b;
+        break;
+    }
     if (bill?.method === "smoke_hide") return null;
     if (cookNeedsCleanup(world, rec, settle, f, bill)) {
         return { fire: f, bill: bill || leftoverCookBill(f), entry: f };
@@ -794,6 +801,7 @@ function pickSmokeJob(world, rec, settle, f) {
     const bills = Settlement.billsOf(settle, f.uid);
     for (let i = 0; i < bills.length; i++) {
         const bill = bills[i];
+        if (bill.kind === "make") continue;
         if (!Settlement.billIsActive(bill, have, settle)) continue;
         const method = bill.method || "stick_roast";
         if (method === "smoke_hide") {
@@ -995,6 +1003,21 @@ function rockWork(world, rec, settle, claims) {
                 station: rock,
                 bill,
                 entry: rock
+            });
+            break;
+        }
+    }
+    for (const fire of stationsOf(world, settle, "campfire")) {
+        if (fire.id !== "campfire") continue;
+        for (const bill of Settlement.billsOf(settle, fire.uid)) {
+            if (bill?.kind !== "make") continue;
+            if (!Settlement.billIsActive(bill, have, settle)) continue;
+            if (!rockBillReady(world, rec, settle, bill)) continue;
+            jobs.push({
+                kind: "make",
+                station: fire,
+                bill,
+                entry: fire
             });
             break;
         }

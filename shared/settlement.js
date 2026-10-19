@@ -167,7 +167,8 @@
         campfire: [
             { id: "roast", name: "Roast", kind: "cook", method: "stick_roast" },
             { id: "simmer", name: "Simmer", kind: "cook", method: "shell_simmer" },
-            { id: "smoke", name: "Smoke leather", kind: "cook", method: "smoke_hide" }
+            { id: "smoke", name: "Smoke leather", kind: "cook", method: "smoke_hide" },
+            { id: "pitch", name: "Make Pitch", kind: "make", outputId: "pitch" }
         ],
         rack: [
             { id: "flesh_hide", name: "Flesh hides", kind: "hide", method: "flesh_hide" },
@@ -2321,8 +2322,11 @@
         if (t === "brain") return "Brain-tanning hides";
         if (t === "craft") {
             const rock = plan?.target?.station || plan?.target;
-            const name = stoneApi()?.rockLabel?.(rock);
-            return name ? `Crafting at ${name}` : "Crafting";
+            if (stationKind(rock?.id) === "rock") {
+                const name = stoneApi()?.rockLabel?.(rock);
+                return name ? `Crafting at ${name}` : "Crafting";
+            }
+            return "Crafting";
         }
         if (t === "rescue") {
             const who = ctx.patientName != null ? ctx.patientName : pawnDisplayName(plan?.target);

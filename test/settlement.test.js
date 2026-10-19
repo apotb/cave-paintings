@@ -257,15 +257,27 @@ test("shared camp requires both points inside the same claim", () => {
     assert.equal(Settlement.sharedCamp([camp], 0, 0, 16, 0, ts, "other"), null);
 });
 
-test("campfire bills catalog is Roast, Simmer, and Smoke leather", () => {
+test("campfire bills catalog is Roast, Simmer, Smoke leather, and Make Pitch", () => {
     const recipes = Settlement.billRecipesFor("campfire");
-    assert.equal(recipes.length, 3);
+    assert.equal(recipes.length, 4);
     assert.equal(recipes[0].id, "roast");
     assert.equal(recipes[0].method, "stick_roast");
     assert.equal(recipes[1].id, "simmer");
     assert.equal(recipes[1].method, "shell_simmer");
     assert.equal(recipes[2].id, "smoke");
     assert.equal(recipes[2].method, "smoke_hide");
+    assert.equal(recipes[3].id, "pitch");
+    assert.equal(recipes[3].kind, "make");
+    assert.equal(recipes[3].outputId, "pitch");
+    assert.equal(Settlement.billRecipeTitle(recipes[3]), "Make Pitch");
+    const pitchInputs = Settlement.billInputsFor(recipes[3]);
+    assert.equal(pitchInputs.length, 1);
+    assert.equal(pitchInputs[0].id, "stick");
+    assert.equal(pitchInputs[0].qty, 8);
+    const pitchBill = Settlement.makeBill({ recipeId: "pitch" });
+    assert.equal(Settlement.billTitle(pitchBill), "Make Pitch");
+    assert.equal(pitchBill.kind, "make");
+    assert.equal(pitchBill.outputId, "pitch");
     assert.equal(Settlement.billStationKindOf("smoke"), "campfire");
     assert.equal(Settlement.billStationThingId("campfire"), "campfire");
     assert.equal(Settlement.billRecipeTitle(Settlement.billRecipeById("smoke")), "Smoke leather");
