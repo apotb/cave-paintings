@@ -880,6 +880,7 @@
         "id": "flimsy_rod",
         "name": "Flimsy Rod",
         "key": "flimsy_rod",
+        "storageCategory": "tools",
         "maxStack": 1,
         "durability": 40,
         "lineColor": "#4dab36",
@@ -1485,6 +1486,7 @@
         "id": "grub",
         "name": "Grub",
         "key": "grub",
+        "storageCategory": "bait",
         "maxStack": 99,
         "weight": 0.02,
         "tooltip": [

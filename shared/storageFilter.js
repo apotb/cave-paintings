@@ -60,6 +60,7 @@
                 { id: "apparel/equipment", name: "Equipment" }
             ]
         },
+        { id: "bait", name: "Bait" },
         { id: "buildings", name: "Buildings" },
         {
             id: "food",

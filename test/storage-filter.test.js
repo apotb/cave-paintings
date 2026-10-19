@@ -149,7 +149,7 @@ test("knapped stack uses toolClass key not unique silhouette", () => {
     const ids = (tools.items || []).map((it) => it.id);
     assert.deepEqual(ids, [
         "tool:awl", "bone", "tool:chopper", "tool:cleaver", "digging_stick",
-        "tool:hand_axe", "tool:knife", "tool:scraper"
+        "flimsy_rod", "tool:hand_axe", "tool:knife", "tool:scraper"
     ]);
     assert.equal(ids.includes("stone_tool"), false);
     assert.equal(ids.includes("flint_tool"), false);
@@ -324,6 +324,10 @@ test("every item lands in exactly one leaf", () => {
     assert.equal(SF.leafCategory(getItem("leaf_cord"), null), "medicine");
     assert.equal(SF.leafCategory(getItem("poultice"), null), "medicine");
     assert.equal(SF.leafCategory(getItem("digging_stick"), null), "tools");
+    assert.equal(SF.leafCategory(getItem("flimsy_rod"), null), "tools");
+    assert.equal(SF.leafCategory(getItem("grub"), null), "bait");
+    const baitIds = (SF.findNode(t, "bait").items || []).map((it) => it.id);
+    assert.deepEqual(baitIds, ["grub"]);
     assert.equal(SF.leafCategory(getItem("stick_frame"), null), "materials/wood");
     assert.equal(SF.leafCategory(getItem("stick"), null), "materials/wood");
     assert.equal(SF.leafCategory(getItem("clay"), null), "materials");
