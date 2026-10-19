@@ -887,7 +887,7 @@
         "weight": 0.4,
         "tooltip": [
             "Press Space when facing water",
-            "Requires bait"
+            "Requires bait to cast"
         ],
         "recipe": {
             "stick": 2,
