@@ -337,6 +337,7 @@
             this.partyPanel?.layout?.();
             this.settlementPanel?.layout?.();
             this.researchTreePanel?.layout?.();
+            this.resourceSummaryPanel?.layout?.();
             this.billsPanel?.layout?.();
             this.storageFilterPanel?.layout?.();
             this.fuelFilterPanel?.layout?.();

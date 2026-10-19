@@ -91,6 +91,7 @@
                     cur === this.deathOverlay ||
                     cur === this.partyPanel?.root ||
                     cur === this.settlementPanel?.root ||
+                    cur === this.resourceSummaryPanel?.root ||
                     cur === this.researchTreePanel?.root ||
                     cur === this.billsPanel?.root ||
                     cur === this.storageFilterPanel?.root ||
@@ -274,6 +275,13 @@
 
             // Centered overlays sit above the left settlement panel (depth 15150 > 15100).
             // Check them first or the overlapping left strip fights the cursor and eats clicks.
+            const resourcesP = this.resourceSummaryPanel;
+            if (resourcesP?.visible && resourcesP.containsPointer?.(pointer)) {
+                const row = resourcesP.hoverObjAt?.(pointer);
+                if (row) return row;
+                return resourcesP.frame || resourcesP.dim;
+            }
+
             const researchP = this.researchTreePanel;
             if (researchP?.visible && researchP.containsPointer?.(pointer)) {
                 const row = researchP.hoverObjAt?.(pointer);

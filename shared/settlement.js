@@ -24,6 +24,34 @@
         } catch (_) { /* optional */ }
         return null;
     }
+    function storageFilterMod() {
+        if (typeof StorageFilter !== "undefined") return StorageFilter;
+        try {
+            if (typeof require === "function") return require("./storageFilter");
+        } catch (_) { /* optional */ }
+        return null;
+    }
+    function stoneMod() {
+        if (typeof Stone !== "undefined") return Stone;
+        try {
+            if (typeof require === "function") return require("./stone");
+        } catch (_) { /* optional */ }
+        return null;
+    }
+    function durabilityMod() {
+        if (typeof Durability !== "undefined") return Durability;
+        try {
+            if (typeof require === "function") return require("./durability");
+        } catch (_) { /* optional */ }
+        return null;
+    }
+    function formingMod() {
+        if (typeof Forming !== "undefined") return Forming;
+        try {
+            if (typeof require === "function") return require("./forming");
+        } catch (_) { /* optional */ }
+        return null;
+    }
     function jobApi() {
         if (typeof ModJobs !== "undefined") return ModJobs;
         try {
@@ -2587,6 +2615,181 @@
         };
     }
 
+    function resourceSlotsOf(holder) {
+        if (!holder) return [];
+        if (Array.isArray(holder)) return holder;
+        if (Array.isArray(holder.slots)) return holder.slots;
+        if (Array.isArray(holder.entry?.slots)) return holder.entry.slots;
+        return [];
+    }
+
+    function resourceStackFromDrop(drop) {
+        if (!drop) return null;
+        const entry = drop.entry && typeof drop.entry === "object" ? drop.entry : null;
+        const item = drop.item && typeof drop.item === "object" ? drop.item : null;
+        const id = item?.id
+            || entry?.item?.id
+            || (entry && typeof entry.id === "string" ? entry.id : null)
+            || (typeof drop.id === "string" ? drop.id : null)
+            || (typeof drop.itemId === "string" ? drop.itemId : null);
+        if (!id) return null;
+        const qty = stackQty(drop) || stackQty(entry) || stackQty(item);
+        if (!(qty > 0)) return null;
+        const stack = { id, quantity: qty };
+        const keys = [
+            "customName", "stone", "toolClass", "knapQuality", "knapMaterial",
+            "knapIconData", "knapIcon", "durability", "formClass", "formVoxels"
+        ];
+        for (const src of [entry, drop, item]) {
+            if (!src) continue;
+            for (const k of keys) {
+                if (stack[k] == null && src[k] != null && src[k] !== "") stack[k] = src[k];
+            }
+        }
+        return stack;
+    }
+
+    function resourceFigurine(stack, def) {
+        return !!(stack?.formClass || stack?.id === "clay_figurine" || def?.id === "clay_figurine");
+    }
+
+    function resourceSeparate(stack, def) {
+        if (!stack) return false;
+        // Knapped tools keep class on the stack. Bone is an awl on the item def
+        // only: every bone is the same and it has no durability, so stacks add up.
+        if (stack.toolClass || stack.knapIconData || stack.knapQuality || stack.knapMaterial) return true;
+        if (resourceFigurine(stack, def)) return true;
+        if (def?.weapon || def?.equip) return true;
+        if (def?.durability != null) return true;
+        if (def?.toolClass && !(Number(def.maxStack) > 1)) return true;
+        return false;
+    }
+
+    function resourceCategoryId(stack, def) {
+        const SF = storageFilterMod();
+        if (!SF) return "junk";
+        const key = SF.filterKey ? SF.filterKey(stack, def) : null;
+        if (key && String(key).startsWith("tool:")) {
+            const cls = String(key).slice(5);
+            const row = (SF.TOOL_CLASSES || []).find((t) => t.cls === cls || t.id === key);
+            return row?.category || "tools";
+        }
+        if (key && String(key).startsWith("art:")) return "art";
+        return (SF.leafCategory && SF.leafCategory(def, null)) || "junk";
+    }
+
+    function resourceDurabilitySuffix(stack, def) {
+        const D = durabilityMod();
+        if (!D?.maxDurability || !D.durabilityFraction) return "";
+        const max = D.maxDurability(stack, def);
+        if (!(max > 0)) return "";
+        const pct = Math.round(D.durabilityFraction(stack, def) * 100);
+        if (!(pct < 100)) return "";
+        return ` (${pct}%)`;
+    }
+
+    function resourceName(stack, def, getItem, separate) {
+        let name = "";
+        if (separate && (stack.formClass || stack.id === "clay_figurine" || def?.id === "clay_figurine")) {
+            const custom = String(stack.customName || "").trim();
+            if (custom) name = custom;
+            else name = formingMod()?.defaultNameFor?.(stack.formClass) || "";
+        }
+        if (!name) {
+            const stone = stoneMod();
+            if (stone?.displayName) {
+                const probe = separate ? stack : Object.assign({}, stack, { knapQuality: null });
+                name = stone.displayName(probe, getItem) || "";
+            }
+        }
+        if (!name) {
+            const custom = String(stack.customName || "").trim();
+            name = custom || def?.name || stack.id || "";
+        }
+        return name ? name + resourceDurabilitySuffix(stack, def) : "";
+    }
+
+    /** Name order for the resource list. A missing percent is full durability. */
+    function resourceNameCmp(aName, bName) {
+        const parts = (name) => {
+            const s = String(name || "");
+            const m = /^(.*) \((\d+)%\)$/.exec(s);
+            if (!m) return { base: s, pct: 100 };
+            return { base: m[1], pct: Number(m[2]) };
+        };
+        const pa = parts(aName);
+        const pb = parts(bName);
+        const byName = pa.base.localeCompare(pb.base, undefined, { sensitivity: "base" });
+        if (byName) return byName;
+        return pb.pct - pa.pct;
+    }
+
+    function resourceSample(stack) {
+        const sample = { id: stack.id };
+        if (stack.stone) sample.stone = stack.stone;
+        if (stack.toolClass) sample.toolClass = stack.toolClass;
+        if (stack.knapQuality) sample.knapQuality = stack.knapQuality;
+        if (stack.knapMaterial) sample.knapMaterial = stack.knapMaterial;
+        if (stack.knapIconData) sample.knapIconData = stack.knapIconData;
+        if (stack.knapIcon) sample.knapIcon = stack.knapIcon;
+        if (stack.formClass) sample.formClass = stack.formClass;
+        if (stack.customName) sample.customName = stack.customName;
+        return sample;
+    }
+
+    /**
+     * Held resources for the settlement summary.
+     * Baskets, settler inventories, and ground drops. Worn gear and station
+     * fuel are not in those piles. Goods merge by display name. Equipment
+     * names include durability unless it is full, so matching durability
+     * stacks and a different percent stays its own row. Figurines stay one
+     * row per stack.
+     */
+    function summarizeResources(baskets, pawns, drops, getItem) {
+        const rows = [];
+        const merged = new Map();
+        const addStack = (stack) => {
+            if (!stack || typeof stack !== "object") return;
+            const id = stack.id || stack.item?.id;
+            if (!id) return;
+            const qty = stackQty(stack);
+            if (!(qty > 0)) return;
+            const normalized = stack.id ? stack : Object.assign({}, stack, { id });
+            const def = typeof getItem === "function" ? getItem(id) : null;
+            const separate = resourceSeparate(normalized, def);
+            const name = resourceName(normalized, def, getItem, separate);
+            if (!name) return;
+            const categoryId = resourceCategoryId(normalized, def);
+            if (separate && resourceFigurine(normalized, def)) {
+                rows.push({
+                    categoryId,
+                    name,
+                    qty,
+                    sample: resourceSample(normalized)
+                });
+                return;
+            }
+            const key = `${categoryId}\0${name}`;
+            let row = merged.get(key);
+            if (!row) {
+                row = { categoryId, name, qty: 0, sample: resourceSample(normalized) };
+                merged.set(key, row);
+                rows.push(row);
+            }
+            row.qty += qty;
+        };
+        for (const basket of baskets || []) {
+            for (const stack of resourceSlotsOf(basket)) addStack(stack);
+        }
+        for (const pawn of pawns || []) {
+            if (!pawn) continue;
+            for (const stack of pawn.inventory || []) addStack(stack);
+            for (const stack of pawn.overflow || []) addStack(stack);
+        }
+        for (const drop of drops || []) addStack(resourceStackFromDrop(drop));
+        return rows;
+    }
+
     function medicineReservesFor(host, settleId) {
         if (!host) return createMedicineReserves();
         if (!host._medicineReserves) host._medicineReserves = new Map();
@@ -2661,6 +2864,8 @@
         countPawnStock,
         countDropStock,
         dropItemId,
+        summarizeResources,
+        resourceNameCmp,
         stockTarget,
         stockShort,
         makeBill,

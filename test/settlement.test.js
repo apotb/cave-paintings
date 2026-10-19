@@ -1894,3 +1894,129 @@ test("actLabel names smoke and hidework by hide type, not the full allowlist", (
         "Fleshing hides"
     );
 });
+
+test("resourceNameCmp lists higher durability before lower", () => {
+    const names = [
+        "Rough Andesite Chopper (40%)",
+        "Digging Stick",
+        "Rough Andesite Chopper",
+        "Rough Andesite Chopper (8%)",
+        "Digging Stick (50%)",
+        "Rough Andesite Chopper (68%)",
+        "Apple"
+    ];
+    names.sort(Settlement.resourceNameCmp);
+    assert.deepEqual(names, [
+        "Apple",
+        "Digging Stick",
+        "Digging Stick (50%)",
+        "Rough Andesite Chopper",
+        "Rough Andesite Chopper (68%)",
+        "Rough Andesite Chopper (40%)",
+        "Rough Andesite Chopper (8%)"
+    ]);
+});
+
+test("summarizeResources totals held goods and keeps varied stacks apart", () => {
+    const getItem = (id) => DataStore.getItem(id);
+    const Durability = require("../shared/durability");
+    const chopper = {
+        id: "stone_tool",
+        toolClass: "chopper",
+        knapQuality: "rough",
+        stone: "andesite",
+        quantity: 1
+    };
+    const chopperMax = Durability.maxDurability(chopper, getItem("stone_tool"));
+    const wornChopper = Object.assign({}, chopper, { durability: chopperMax * 0.68 });
+    const rows = Settlement.summarizeResources(
+        [{
+            slots: [
+                { id: "stick", quantity: 4 },
+                { id: "stick", quantity: 0 },
+                { id: "pebble", stone: "granite", quantity: 2 },
+                { id: "pebble", stone: "andesite", quantity: 1 },
+                { id: "deer_hide", quantity: 1 },
+                { id: "deer_hide_dry", quantity: 3 },
+                { id: "grindstone", stone: "andesite", quantity: 1 },
+                chopper,
+                Object.assign({}, chopper),
+                wornChopper,
+                Object.assign({}, wornChopper),
+                Object.assign({}, chopper, { durability: chopperMax * 0.4 }),
+                { id: "bone", quantity: 99 },
+                { id: "bone", quantity: 40 },
+                { id: "stone_tool", toolClass: "knife", knapQuality: "fine", stone: "granite", knapIconData: "pic-a", quantity: 1 },
+                { id: "clay_figurine", formClass: "animal", quantity: 1 }
+            ],
+            fuel: [{ id: "log", quantity: 50 }]
+        }],
+        [{
+            inventory: [
+                { id: "stick", quantity: 2 },
+                { id: "bone", quantity: 20 },
+                { id: "digging_stick", quantity: 1 },
+                { id: "digging_stick", quantity: 1 },
+                { id: "digging_stick", durability: 25, quantity: 1 },
+                { id: "hide_tunic", quantity: 1 },
+                { id: "hide_tunic", durability: 55, quantity: 1 },
+                { id: "hide_tunic", durability: 55, quantity: 1 },
+                { id: "hide_tunic", durability: 88, quantity: 1 }
+            ],
+            overflow: [
+                { id: "stick", quantity: 3 },
+                { id: "grindstone", stone: "andesite", quantity: 2 },
+                { id: "grindstone", stone: "granite", quantity: 1 },
+                { id: "stone_tool", toolClass: "knife", knapQuality: "fine", stone: "granite", knapIconData: "pic-b", quantity: 1 },
+                { id: "stone_tool", toolClass: "knife", knapQuality: "crude", stone: "granite", quantity: 1 },
+                { id: "clay_figurine", formClass: "animal", customName: "Little Deer", quantity: 1 }
+            ],
+            equipment: { torso: { id: "stick", quantity: 9 } }
+        }],
+        [
+            { id: "stick", quantity: 1 },
+            { id: "stone_tool", toolClass: "hand_axe", knapQuality: "rough", stone: "andesite", knapIconData: "pic-drop", quantity: 1 }
+        ],
+        getItem
+    );
+    const qty = (name) => rows.filter((r) => r.name === name).reduce((n, r) => n + r.qty, 0);
+    const named = (name) => rows.filter((r) => r.name === name);
+    assert.equal(qty("Stick"), 10);
+    assert.equal(qty("Log"), 0);
+    assert.equal(named("Granite Pebble").length, 1);
+    assert.equal(qty("Granite Pebble"), 2);
+    assert.equal(qty("Andesite Pebble"), 1);
+    assert.equal(named("Deer Hide").length, 1);
+    assert.equal(named("Dried Deer Hide").length, 1);
+    assert.equal(qty("Andesite Grindstone"), 3);
+    assert.equal(qty("Granite Grindstone"), 1);
+    assert.equal(named("Fine Granite Knife").length, 1);
+    assert.equal(qty("Fine Granite Knife"), 2);
+    assert.equal(named("Fine Granite Knife")[0].sample.knapIconData, "pic-a");
+    assert.equal(named("Rough Andesite Hand-axe")[0].sample.knapIconData, "pic-drop");
+    assert.equal(named("Rough Andesite Hand-axe")[0].sample.toolClass, "hand_axe");
+    assert.equal(named("Crude Granite Knife").length, 1);
+    assert.equal(named("Clay Animal Figurine").length, 1);
+    assert.equal(named("Little Deer").length, 1);
+    assert.equal(named("Clay Animal Figurine")[0].categoryId, "art");
+    assert.equal(named("Fine Granite Knife")[0].categoryId, "tools");
+    assert.equal(named("Stick")[0].categoryId, "materials/wood");
+    assert.equal(named("Bone").length, 1);
+    assert.equal(qty("Bone"), 159);
+    assert.equal(named("Digging Stick").length, 1);
+    assert.equal(qty("Digging Stick"), 2);
+    assert.equal(named("Digging Stick (50%)").length, 1);
+    assert.equal(qty("Digging Stick (50%)"), 1);
+    assert.equal(named("Rough Andesite Chopper").length, 1);
+    assert.equal(qty("Rough Andesite Chopper"), 2);
+    assert.equal(named("Rough Andesite Chopper (68%)").length, 1);
+    assert.equal(qty("Rough Andesite Chopper (68%)"), 2);
+    assert.equal(named("Rough Andesite Chopper (40%)").length, 1);
+    assert.equal(qty("Rough Andesite Chopper (40%)"), 1);
+    assert.equal(named("Hide Tunic").length, 1);
+    assert.equal(qty("Hide Tunic"), 1);
+    assert.equal(named("Hide Tunic (50%)").length, 1);
+    assert.equal(qty("Hide Tunic (50%)"), 2);
+    assert.equal(named("Hide Tunic (80%)").length, 1);
+    assert.equal(qty("Hide Tunic (80%)"), 1);
+});

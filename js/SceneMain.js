@@ -69,6 +69,7 @@ class SceneMain extends SceneBase {
         this.settlementSys = null;
         this.settlementPanel = null;
         this.researchTreePanel = null;
+        this.resourceSummaryPanel = null;
         this.billsPanel = null;
         this.storageFilterPanel = null;
         this.fuelFilterPanel = null;
@@ -296,6 +297,7 @@ class SceneMain extends SceneBase {
         this.partyPanel = new PartyPanel(this);
         this.settlementPanel = new SettlementPanel(this);
         this.researchTreePanel = new ResearchTreePanel(this);
+        this.resourceSummaryPanel = new ResourceSummaryPanel(this);
         this.billsPanel = new BillsPanel(this);
         this.storageFilterPanel = new StorageFilterPanel(this);
         this.fuelFilterPanel = new FuelFilterPanel(this);
@@ -522,7 +524,8 @@ class SceneMain extends SceneBase {
         const chatting = !!this.combatLog?.isComposing?.();
         const knapping = this._sculptUiOpen();
         const naming = isHudTextOpen(this);
-        const researchOpen = !!this.researchTreePanel?.visible;
+        const researchOpen = !!this.researchTreePanel?.visible
+            || !!this.resourceSummaryPanel?.visible;
         if (!chatting && !knapping && !naming && !researchOpen && !this._gamePaused) {
             const ctrl = !!this.keys?.CTRL?.isDown;
             if (!ctrl) {

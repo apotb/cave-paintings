@@ -972,6 +972,36 @@ function mealFillTint(stack, getItem) {
     return null;
 }
 
+/**
+ * Fill color implied by a simmer dish's name. A "Pork Stew" uses the color of
+ * a stew made only of pork, even when the shell was cooked from a mix.
+ */
+function simmerNameFillTint(getItem, name) {
+    const n = String(name || "").trim();
+    const meats = {
+        Pork: "raw_pork",
+        Venison: "raw_venison",
+        Fish: "raw_fish",
+        Human: "raw_human_flesh"
+    };
+    const allMeats = Object.values(meats);
+    let ids = null;
+    if (n === "Blueberry Mash") ids = ["blueberry"];
+    else if (n === "Simmered Apples") ids = ["apple"];
+    else if (n === "Blueberry-Apple Tart") ids = ["blueberry", "apple"];
+    else if (n === "Hunter's Stew") ids = ["apple", "blueberry"].concat(allMeats);
+    else if (n.endsWith(" Stew")) {
+        ids = [];
+        if (n.startsWith("Apple and ") || n.includes(" Apple")) ids.push("apple");
+        if (n.startsWith("Blueberry and ")) ids.push("blueberry");
+        const meatLabel = n.replace(/^Apple and /, "").replace(/^Blueberry and /, "").replace(/ Stew$/, "");
+        if (meats[meatLabel]) ids.push(meats[meatLabel]);
+        else if (meatLabel === "Meat") ids.push(...allMeats);
+    }
+    if (!ids || !ids.length) return null;
+    return mixIngredientFillTint(getItem, ids);
+}
+
 /** Item sprites are authored at 16×16. Formed-clay bakes (and any other
  *  oversized canvas) use this so `scale` still means "as if it were 16px". */
 const ITEM_ICON_NATIVE_PX = 16;

@@ -1,5 +1,5 @@
 /**
- * Settlement overlay: people, jobs, stock, destroy.
+ * Settlement overlay: people, jobs, stock, tech, manage, destroy.
  */
 
 /** Pixel star, 15×14. Cell (0, 0) is the top of the middle column. */
@@ -108,6 +108,7 @@ class SettlementPanel {
         this.tabJobs = this._btn(0, 0, "Jobs", () => this._setTab("jobs"));
         this.tabStock = this._btn(0, 0, "Stock", () => this._setTab("stock"));
         this.tabResearch = this._btn(0, 0, "Tech", () => this._setTab("research"));
+        this.tabManage = this._btn(0, 0, "Manage", () => this._setTab("manage"));
         this.body = scene.add.container(10, 64);
         this._maskGfx = scene.make.graphics({ x: 0, y: 0, add: false });
         // Bitmap mask (not stencil) so job/people tooltips are not washed out.
@@ -116,7 +117,7 @@ class SettlementPanel {
         this.scrollThumb = scene.add.rectangle(0, 0, 5, 20, 0x8a7260, 1).setOrigin(0, 0).setVisible(false);
         this.root.add([
             this.bg, this.title, this.destroyBtn, this.closeBtn,
-            this.tabPeople, this.tabJobs, this.tabStock, this.tabResearch, this.body,
+            this.tabPeople, this.tabJobs, this.tabStock, this.tabResearch, this.tabManage, this.body,
             this.scrollTrack, this.scrollThumb
         ]);
     }
@@ -297,6 +298,7 @@ class SettlementPanel {
         set(this.tabJobs, this.tab === "jobs");
         set(this.tabStock, this.tab === "stock");
         set(this.tabResearch, this.tab === "research");
+        set(this.tabManage, this.tab === "manage");
     }
 
     _manageOpen() {
@@ -345,6 +347,7 @@ class SettlementPanel {
             applyPixelUiFont(this.tabJobs._txt, 12, s);
             applyPixelUiFont(this.tabStock._txt, 12, s);
             applyPixelUiFont(this.tabResearch._txt, 12, s);
+            applyPixelUiFont(this.tabManage._txt, 12, s);
         }
         const manage = this._manageOpen();
         if (!manage && this.tab !== "people") this.tab = "people";
@@ -358,6 +361,7 @@ class SettlementPanel {
         showTab(this.tabJobs, manage);
         showTab(this.tabStock, manage);
         showTab(this.tabResearch, manage);
+        showTab(this.tabManage, manage);
         this.destroyBtn.setVisible(manage);
         if (this.destroyBtn._bg?.input) this.destroyBtn._bg.input.enabled = manage;
         const tabY = Math.round(44 * s);
@@ -367,7 +371,7 @@ class SettlementPanel {
         let tabLeft = tabPad;
         const tabInnerPad = Math.round(16 * s);
         const tabs = manage
-            ? [this.tabPeople, this.tabJobs, this.tabStock, this.tabResearch]
+            ? [this.tabPeople, this.tabJobs, this.tabStock, this.tabResearch, this.tabManage]
             : [this.tabPeople];
         for (const tab of tabs) {
             const tw = Math.round(tab._txt.width) + tabInnerPad;
@@ -466,6 +470,7 @@ class SettlementPanel {
             const items = sys?.localStockItems?.(this.settle) || [];
             return `stock:${id}:${items.join(",")}:${layout}`;
         }
+        if (tab === "manage") return `manage:${id}:${layout}`;
         if (tab === "research") {
             const R = typeof Research !== "undefined" ? Research : null;
             const holder = this.scene._playerResearchHolder?.() || this.settle;
@@ -533,6 +538,7 @@ class SettlementPanel {
         if (this.tab === "jobs") contentH = this._fillJobs(s);
         else if (this.tab === "stock") contentH = this._fillStock(s);
         else if (this.tab === "research") contentH = this._fillResearch(s);
+        else if (this.tab === "manage") contentH = this._fillManage(s);
         else contentH = this._fillPeople(s);
         this._contentH = Math.max(contentH, 1);
         this._maxScroll = Math.max(0, this._contentH - this._viewH);
@@ -1202,53 +1208,77 @@ class SettlementPanel {
         y += Math.max(18 * sc, Math.round(header.height + 6 * sc));
         if (!items.length) {
             this._label("Nothing gatherable in range.", 0, y, 11);
-            return y + 18 * sc;
-        }
-        const btnS = Math.round(16 * sc);
-        const btnGap = Math.round(4 * sc);
-        const plusX = innerW - btnS / 2;
-        const minusX = plusX - btnS - btnGap;
-        const iconS = Math.round(16 * sc);
-        const iconGap = Math.round(4 * sc);
-        const textX = iconS + iconGap;
-        this._stockRows = [];
-        for (const id of items) {
-            const meta = scene.getItem?.(id);
-            const name = meta?.name || id;
-            const midY = y + 8 * sc;
-            const iconKey = this._itemIconKey(id);
-            if (iconKey) {
-                const icon = scene.add.image(iconS / 2, midY, iconKey)
-                    .setDisplaySize(iconS, iconS);
-                this.body.add(icon);
+            y += 18 * sc;
+        } else {
+            const btnS = Math.round(16 * sc);
+            const btnGap = Math.round(4 * sc);
+            const plusX = innerW - btnS / 2;
+            const minusX = plusX - btnS - btnGap;
+            const iconS = Math.round(16 * sc);
+            const iconGap = Math.round(4 * sc);
+            const textX = iconS + iconGap;
+            this._stockRows = [];
+            for (const id of items) {
+                const meta = scene.getItem?.(id);
+                const name = meta?.name || id;
+                const midY = y + 8 * sc;
+                const iconKey = this._itemIconKey(id);
+                if (iconKey) {
+                    const icon = scene.add.image(iconS / 2, midY, iconKey)
+                        .setDisplaySize(iconS, iconS);
+                    this.body.add(icon);
+                }
+                const label = this._label(`${name}  0/0`, textX, midY, 11);
+                label.setOrigin(0, 0.5);
+                const minus = this._btn(minusX, midY, "–", (pointer) => {
+                    this._nudgeStock(settle, id, -this._stockStep(pointer));
+                }, true);
+                const plus = this._btn(plusX, midY, "+", (pointer) => {
+                    this._nudgeStock(settle, id, this._stockStep(pointer));
+                }, true);
+                this._fitBtnHit(minus, btnS, btnS);
+                this._fitBtnHit(plus, btnS, btnS);
+                if (typeof applyPixelUiFont === "function") {
+                    applyPixelUiFont(minus._txt, 10, sc);
+                    applyPixelUiFont(plus._txt, 10, sc);
+                }
+                minus._ctrlClick = true;
+                plus._ctrlClick = true;
+                minus._paint?.();
+                plus._paint?.();
+                this.body.add(minus);
+                this.body.add(plus);
+                const row = { id, name, label, minus, plus };
+                this._stockRows.push(row);
+                this._paintStockRow(row);
+                y += 22 * sc;
             }
-            const label = this._label(`${name}  0/0`, textX, midY, 11);
-            label.setOrigin(0, 0.5);
-            const minus = this._btn(minusX, midY, "–", (pointer) => {
-                this._nudgeStock(settle, id, -this._stockStep(pointer));
-            }, true);
-            const plus = this._btn(plusX, midY, "+", (pointer) => {
-                this._nudgeStock(settle, id, this._stockStep(pointer));
-            }, true);
-            this._fitBtnHit(minus, btnS, btnS);
-            this._fitBtnHit(plus, btnS, btnS);
-            if (typeof applyPixelUiFont === "function") {
-                applyPixelUiFont(minus._txt, 10, sc);
-                applyPixelUiFont(plus._txt, 10, sc);
-            }
-            minus._ctrlClick = true;
-            plus._ctrlClick = true;
-            minus._paint?.();
-            plus._paint?.();
-            this.body.add(minus);
-            this.body.add(plus);
-            const row = { id, name, label, minus, plus };
-            this._stockRows.push(row);
-            this._paintStockRow(row);
-            y += 22 * sc;
+            this._restoreStockHover();
         }
-        this._restoreStockHover();
-        return y + 8 * sc;
+        return y;
+    }
+
+    _fillManage(sc) {
+        const barW = Math.max(4, Math.round(5 * sc));
+        const innerW = Math.max(80, Math.round(this._viewW - barW - 4 * sc));
+        const y = Math.round(8 * sc);
+        // Stroke is centered on the rect, and the body mask starts at x = 0.
+        const stroke = typeof pixelUiStroke === "function" ? pixelUiStroke(sc) : 2;
+        const bw = Math.max(40, innerW - stroke);
+        const btn = this._btn(stroke + bw / 2, y, "All Settlement Resources", () => {
+            this.scene.resourceSummaryPanel?.open(this.settle);
+        }, true);
+        const wrap = Math.max(40, bw - Math.round(12 * sc));
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(btn._txt, 12, sc);
+        btn._txt?.setWordWrapWidth?.(wrap, true);
+        btn._txt?.setAlign?.("center");
+        const bh = Math.max(Math.round(24 * sc), Math.ceil((btn._txt?.height || 16) + 8 * sc));
+        btn.setY(y + bh / 2);
+        btn._bg.setSize(bw, bh);
+        this._fitBtnHit(btn, bw, bh);
+        btn._paint?.();
+        this.body.add(btn);
+        return y + bh + 8 * sc;
     }
 
     refreshStockLive() {

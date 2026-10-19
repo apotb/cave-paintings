@@ -60,6 +60,9 @@ class SettlementSystem {
         bind(this.scene.fuelFilterPanel);
         bind(this.scene.pigmentFilterPanel);
         bind(this.scene.researchTreePanel);
+        bind(this.scene.resourceSummaryPanel);
+        const summary = this.scene.resourceSummaryPanel;
+        if (summary?.visible) summary.refresh();
         const tree = this.scene.researchTreePanel;
         if (tree?.visible) tree.refresh();
         const panel = this.scene.settlementPanel;
@@ -1512,6 +1515,7 @@ class SettlementSystem {
 
     closePanel() {
         this.scene.researchTreePanel?.close({ restore: false });
+        this.scene.resourceSummaryPanel?.close({ restore: false });
         this.scene.settlementPanel?.close();
         this._drawRange(null, false);
         this._paintHud?.();
@@ -2451,7 +2455,11 @@ class SettlementSystem {
             } else {
                 this._drawRange(open, true);
                 this._stockUiAcc = (this._stockUiAcc || 0) + (this.scene.game?.loop?.delta || 16);
-                if (tree?.visible && this._stockUiAcc > 600) {
+                const summary = this.scene.resourceSummaryPanel;
+                if (summary?.visible && this._stockUiAcc > 600) {
+                    this._stockUiAcc = 0;
+                    summary.refresh();
+                } else if (tree?.visible && this._stockUiAcc > 600) {
                     this._stockUiAcc = 0;
                     tree.refresh();
                 } else if (panel.tab === "stock" && this._stockUiAcc > 600) {
