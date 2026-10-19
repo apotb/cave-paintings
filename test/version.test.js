@@ -8,4 +8,8 @@ test("version.json matches package.json", () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
     const ver = JSON.parse(fs.readFileSync(path.join(root, "version.json"), "utf8"));
     assert.equal(ver.version, pkg.version);
+    assert.ok(
+        pkg.build.files.includes("version.json"),
+        "Electron package must ship version.json"
+    );
 });

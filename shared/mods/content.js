@@ -102,6 +102,22 @@
         return res.json();
     }
 
+    /**
+     * Electron's preload reports app.getVersion(). The web client reads version.json.
+     * Mod checks need this only when a pack is actually loaded.
+     */
+    async function browserGameVersion() {
+        const api = typeof globalThis !== "undefined" ? globalThis.cavePaintings : null;
+        if (typeof api?.getVersion === "function") {
+            try {
+                const value = String(api.getVersion() || "").trim();
+                if (value) return value;
+            } catch (_) { /* fall through to version.json */ }
+        }
+        const body = await fetchJson("version.json");
+        return body && body.version;
+    }
+
     function toUint8(bytes) {
         if (bytes instanceof Uint8Array) return new Uint8Array(bytes);
         return new Uint8Array(bytes);
@@ -487,12 +503,12 @@
         } else {
             Loader?.stampCore?.(DataStore._store, _structures);
         }
-        const version = await fetchJson("version.json");
         let packs = await packsFromBrowser(opts);
         if (Array.isArray(opts.extraPacks)) packs = packs.concat(opts.extraPacks);
         _simMods = Loader.simModsFromPacks(packs);
         if (packs.length) {
-            _structures = Loader.mergePacks(DataStore._store, _structures, packs, version.version);
+            const gameVersion = await browserGameVersion();
+            _structures = Loader.mergePacks(DataStore._store, _structures, packs, gameVersion);
         }
         await rememberScriptsAsync(packs);
         registerPackScatters(packs);
