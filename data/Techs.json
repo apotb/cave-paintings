@@ -329,7 +329,7 @@
         "startUnlocked": true,
         "prereqs": [],
         "unlocks": { "items": [], "jobs": [], "text": ["Knife knapping", "Scraper knapping", "Chopper knapping", "Awl knapping"] },
-        "children": ["hafting", "hand_axe", "burin", "cleaver"]
+        "children": ["hafting", "hand_axe", "cleaver"]
     },
     {
         "id": "hafting",
@@ -381,7 +381,7 @@
         "wip": true,
         "quote": "A little chisel",
         "cost": 2,
-        "prereqs": ["knapping"],
+        "prereqs": ["blades"],
         "unlocks": { "items": [], "jobs": [], "text": ["Burin knapping"] },
         "children": []
     },
@@ -414,7 +414,7 @@
         "cost": 3,
         "prereqs": ["hand_axe"],
         "unlocks": { "items": [], "jobs": [], "text": ["Blade knapping"] },
-        "children": ["microliths"]
+        "children": ["microliths", "burin"]
     },
     {
         "id": "microliths",

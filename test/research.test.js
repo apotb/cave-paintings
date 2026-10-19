@@ -795,7 +795,8 @@ test("tree layout is left-to-right with prereq edges", () => {
     assert.ok(layout.edges.some((e) => e.from === "dogs" && e.to === "husbandry"));
     assert.ok(layout.edges.some((e) => e.from === "settlements" && e.to === "herding"));
     assert.equal(layout.edges.some((e) => e.from === "hut" && e.to === "herding"), false);
-    assert.ok(layout.edges.some((e) => e.from === "knapping" && e.to === "burin"));
+    assert.ok(layout.edges.some((e) => e.from === "blades" && e.to === "burin"));
+    assert.equal(layout.edges.some((e) => e.from === "knapping" && e.to === "burin"), false);
     assert.ok(layout.edges.some((e) => e.from === "knapping" && e.to === "cleaver"));
     assert.equal(layout.edges.some((e) => e.from === "hand_axe" && e.to === "cleaver"), false);
     assert.ok(layout.edges.some((e) => e.from === "culture" && e.to === "ornament"));
