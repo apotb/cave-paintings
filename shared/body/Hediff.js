@@ -231,6 +231,7 @@
         },
 
         CONDITION_RED: "#ef5a5a",
+        CONDITION_YELLOW: "#f0d84a",
         NAME_PARTY: "#80e080",
         NAME_SETTLER: "#7ec8ff",
 
@@ -251,18 +252,19 @@
             return this._isSettler(owner, ctx) ? this.NAME_SETTLER : this.NAME_PARTY;
         },
 
-        conditionSegments(nameText, rest, owner, ctx) {
+        conditionSegments(nameText, rest, owner, ctx, restColor) {
             return [
                 { text: String(nameText), color: this._conditionNameColor(owner, ctx) },
-                { text: String(rest), color: this.CONDITION_RED }
+                { text: String(rest), color: restColor || this.CONDITION_RED }
             ];
         },
 
-        _pushCondition(ctx, owner, nameText, rest) {
+        _pushCondition(ctx, owner, nameText, rest, restColor) {
             const log = combatLogOf(ctx || owner?.ctx || owner?.scene);
             if (typeof log?.push !== "function") return;
-            const segments = this.conditionSegments(nameText, rest, owner, ctx);
-            log.push(`${nameText} ${rest}`, { owner, segments, color: this.CONDITION_RED });
+            const color = restColor || this.CONDITION_RED;
+            const segments = this.conditionSegments(nameText, rest, owner, ctx, color);
+            log.push(`${nameText} ${rest}`, { owner, segments, color });
         },
 
         foodPoisonMessage(owner, worse) {
@@ -438,7 +440,10 @@
                 }
                 if ((Number(h.severity) || 0) <= 0) {
                     body.removeHediff(h.id, h.partName);
-                    this._pushCondition(ctx, owner, this._logName(owner), "recovered from an infection");
+                    this._pushCondition(
+                        ctx, owner, this._logName(owner), "recovered from an infection",
+                        this.CONDITION_YELLOW
+                    );
                 }
             }
         },
@@ -491,14 +496,18 @@
             h.severity = (Number(h.severity) || 0) - recoverPerMin;
             if (h.severity <= 0) {
                 body.removeHediff("malnutrition");
-                this._pushCondition(ctx, owner, this._logName(owner), "is no longer malnourished");
+                this._pushCondition(
+                    ctx, owner, this._logName(owner), "is no longer malnourished",
+                    this.CONDITION_YELLOW
+                );
                 return;
             }
             body.markDirty?.();
             const next = this.stageFor(h, ctx)?.label;
             if (next && next !== prev) {
                 this._pushCondition(
-                    ctx, owner, `${this._logName(owner)}'s`, `malnutrition is now ${next}`
+                    ctx, owner, `${this._logName(owner)}'s`, `malnutrition is now ${next}`,
+                    this.CONDITION_YELLOW
                 );
             }
         },
@@ -521,7 +530,10 @@
                 if ((Number(h.severity) || 0) <= 0) {
                     body.removeHediff(h.id);
                     if (h.id === "food_poisoning") {
-                        this._pushCondition(ctx, owner, this._logName(owner), "recovered from food poisoning");
+                        this._pushCondition(
+                            ctx, owner, this._logName(owner), "recovered from food poisoning",
+                            this.CONDITION_YELLOW
+                        );
                     }
                     continue;
                 }
