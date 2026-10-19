@@ -1113,10 +1113,10 @@
             this._tickPlayerVomit(p, dtMs);
             this._tickEatChannel(p, dtMs);
             this._tickTendChannel(p, dtMs);
-            this._tickFishChannel(p, fishDt);
+            this._tickFishChannel(p, fishDt, dtMs);
             for (const m of p.party || []) this._tickEatChannel(m, dtMs);
             for (const m of p.party || []) this._tickTendChannel(m, dtMs);
-            for (const m of p.party || []) this._tickFishChannel(m, fishDt);
+            for (const m of p.party || []) this._tickFishChannel(m, fishDt, dtMs);
             for (const m of p.party || []) {
                 if (m && this._isVomiting(m)) this._tickPlayerVomit(m, dtMs);
             }
@@ -1126,7 +1126,7 @@
             const sdt = this._settlerDtMs(dtMs);
             this._tickEatChannel(rec, sdt);
             this._tickTendChannel(rec, sdt);
-            this._tickFishChannel(rec, sdt);
+            this._tickFishChannel(rec, sdt, dtMs);
             if (rec._workChannel && !this._isVomiting(rec)) SettlerWork.tickChannel(this, rec, sdt);
             if (this._isVomiting(rec)) this._tickPlayerVomit(rec, sdt);
         }

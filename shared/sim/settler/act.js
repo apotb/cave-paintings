@@ -581,7 +581,9 @@ function publicChannel(rec) {
         const prog = 1 - (Number(fish.remaining) || 0) / fish.max;
         return {
             kind: "fish",
-            progress: Math.max(0, Math.min(1, prog)),
+            ...(fish.hook ? { hook: true, bite: !!fish.bite } : {
+                progress: Math.max(0, Math.min(1, prog))
+            }),
             facing: fish.facing || null,
             waterTx: fish.waterTx,
             waterTy: fish.waterTy

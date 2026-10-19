@@ -879,7 +879,10 @@
         const landX = Math.round(rec.landX);
         const landY = Math.round(rec.landY);
         const t = Math.max(0, Math.min(1, rec.elapsed / THROW_MS));
-        const bob = t >= 1 && (Math.floor(rec.elapsed / 420) % 2) ? 1 : 0;
+        const biting = t >= 1 && !!ch?.bite;
+        const bob = biting
+            ? Math.round(Math.sin((rec.elapsed || 0) / 90) * 3)
+            : (t >= 1 && (Math.floor(rec.elapsed / 420) % 2) ? 1 : 0);
         const pointAt = (u) => {
             const e = 1 - (1 - u) * (1 - u);
             const lift = Math.sin(Math.min(1, u) * Math.PI) * ARC * (u < 1 ? 1 : 0);
@@ -910,6 +913,13 @@
         }
         const inFront = tip.y >= pawn.y;
         const depth = inFront ? (tip.y | 0) : ((pawn.y | 0) - 1);
+        if (biting) {
+            g.fillStyle(0xf2f0e6, 1);
+            const mx = tip.x;
+            const my = tip.y - 8;
+            g.fillRect(mx, my, 1, 3);
+            g.fillRect(mx, my + 4, 1, 1);
+        }
         if (g.depth !== depth) g.setDepth(depth);
         if (rec.bait?.active) {
             rec.bait.setPosition(tip.x, tip.y).setDepth(inFront ? depth + 1 : depth).setVisible(true);
@@ -959,7 +969,16 @@
         if (!player || player._bodyDead || !this.simAuth?.()) return false;
         const held = player.getHeldItem?.();
         if (held?.id !== "flimsy_rod") return false;
-        if (player._netWorkChannel?.kind === "fish") return true;
+        const fishing = player._netWorkChannel?.kind === "fish";
+        if (fishing) {
+            this._netSendMove?.(true);
+            this.net?.sendAction?.({
+                type: (typeof NetProtocol !== "undefined" ? NetProtocol.Actions.FISH : "fish"),
+                op: player._netWorkChannel.bite ? "hook" : "reel",
+                pawnId: player.pawnId || player.id
+            });
+            return true;
+        }
         const WG = typeof WorldGen !== "undefined" ? WorldGen : null;
         const FishApi = typeof Fish !== "undefined" ? Fish : null;
         if (!WG?.tileKeyAt || !FishApi?.castTile) return false;

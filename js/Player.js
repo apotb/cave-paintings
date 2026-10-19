@@ -511,9 +511,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     syncPawnChannelBar() {
         const ch = this._eatChannel || this._tendChannel || this._skinChannel
             || this._fleshChannel || this._brainChannel || this._craftChannel;
-        const netProg = typeof this._netWorkChannel?.progress === "number"
-            ? this._netWorkChannel.progress
-            : null;
+        const netProg = this._netWorkChannel?.hook
+            ? null
+            : (typeof this._netWorkChannel?.progress === "number"
+                ? this._netWorkChannel.progress
+                : null);
         const paintProg = typeof this._paintChannel?.progress === "number"
             ? Phaser.Math.Clamp(this._paintChannel.progress, 0, 1)
             : null;

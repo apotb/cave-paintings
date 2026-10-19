@@ -407,10 +407,12 @@
             }
             if (typeof row.injured === "boolean") pawn.injured = !!row.injured;
             const prevCh = pawn._netWorkChannel;
-            if (row.channel && typeof row.channel.progress === "number") {
+            if (row.channel && (typeof row.channel.progress === "number" || row.channel.hook)) {
                 pawn._netWorkChannel = {
                     kind: row.channel.kind || null,
-                    progress: row.channel.progress,
+                    hook: !!row.channel.hook,
+                    bite: !!row.channel.bite,
+                    progress: row.channel.hook ? null : row.channel.progress,
                     facing: row.channel.facing || prevCh?.facing || null,
                     waterTx: Number.isFinite(Number(row.channel.waterTx))
                         ? row.channel.waterTx | 0

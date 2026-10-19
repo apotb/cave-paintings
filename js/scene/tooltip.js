@@ -1005,7 +1005,11 @@
             this.syncCameraToPlayer();
             this.player?._syncChatBubble?.();
             const fishCh = this.player?._netWorkChannel;
-            if (
+            if (fishCh?.kind === "fish" && fishCh.hook) {
+                this._channelBarProgress = null;
+                this.channelBar?.clear();
+                this.channelBar?.setVisible(false);
+            } else if (
                 this._channelBarProgress == null
                 && this.player?.active
                 && !this.player._bodyDead

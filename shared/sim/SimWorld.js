@@ -282,6 +282,8 @@ class SimWorld {
         this.modData = {};
         /** Closed pools that have been fished. Open water is not stored. */
         this.fisheries = Object.create(null);
+        /** Last snag, in worldMinuteIndex. Rare catches are not stored. */
+        this.fishCastEvents = { snagAt: null };
         /** Load-time save warnings. Not a join REJECT. */
         this.contentWarnings = [];
         /** @type {Map<string, number>} playerId -> seconds until next passerby pack */
@@ -317,6 +319,7 @@ class SimWorld {
                         kind: "combat_log",
                         text: msg,
                         combat: !!o.combat,
+                        feed: !!(o.combat || o.feed),
                         segments,
                         color: o.color || null,
                         deflected: !!o.deflected,
@@ -438,6 +441,9 @@ class SimWorld {
                 w.fisheries[id] = { pop, max };
             }
         }
+        w.fishCastEvents = { snagAt: null };
+        const snagAt = Number(data.fishCastEvents?.snagAt);
+        if (Number.isFinite(snagAt)) w.fishCastEvents.snagAt = snagAt;
         w.settlements = (data.settlements || []).map((s) => Settlement.ensureSettlement(s));
         const spentRaw = data.researchSpentByOwner;
         w.researchSpentByOwner = (spentRaw && typeof spentRaw === "object" && !Array.isArray(spentRaw))

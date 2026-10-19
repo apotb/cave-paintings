@@ -488,8 +488,20 @@ test("a finished cast spends one grub and does not generate chunks", () => {
             pawnId: pawn.id
         });
         assert.ok(pawn.fishChannel);
+        assert.equal(pawn.fishChannel.hook, true);
+        assert.ok(pawn.fishChannel.remaining >= Fish.BITE_MIN_MS);
+        assert.ok(pawn.fishChannel.remaining <= Fish.BITE_MAX_MS);
         const haul = pawn.fishChannel.haul;
-        for (let i = 0; i < 30; i++) world._tickFishChannel(pawn, 1000);
+        const speed = world.tickSpeed;
+        world.rng = () => 0.5;
+        world._tickFishChannel(pawn, pawn.fishChannel.remaining, 0);
+        assert.equal(pawn.fishChannel.bite, true);
+        world.handleAction(pawn.id, {
+            type: Protocol.Actions.FISH,
+            op: "hook",
+            pawnId: pawn.id
+        });
+        assert.equal(world.tickSpeed, speed);
         assert.equal(pawn.fishChannel, null);
         assert.equal(pawn.inventory[1].quantity, 2);
         const held = pawn.inventory[0];
@@ -623,6 +635,9 @@ test("Fish waits for the tech, a rod, a grub, and room in the fish stock", () =>
     rec._workHold = false;
     for (let i = 0; i < 8; i++) world.tick(200);
     assert.ok(rec.fishChannel, "a stocked shore with a rod and a grub is fished");
+    assert.equal(rec.fishChannel.hook, false);
+    assert.ok(rec.fishChannel.remaining <= Fish.CAST_MS);
+    assert.ok(rec.fishChannel.remaining > Fish.CAST_MS - 5000);
     assert.equal(bank.digProgress || 0, 0);
     const before = rec.inventory[1].quantity;
     for (let i = 0; i < 40; i++) world._tickFishChannel(rec, 1000);
@@ -709,4 +724,107 @@ test("a second line cannot land on a tile that already has a bobber", () => {
     assert.equal(rec.fishChannel.waterTy, banks.wy);
     world.handleAction(pawn.id, { type: Protocol.Actions.FISH, pawnId: pawn.id });
     assert.ok(!pawn.fishChannel, "the player cannot cast onto that bobber");
+});
+
+test("a snag restores fish and blocks the next snag; a rare does not", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.name = "Ada";
+    pawn.inventory[0] = { id: "flimsy_rod", quantity: 1, durability: 40 };
+    pawn.inventory[1] = { id: "grub", quantity: 4 };
+    pawn.hotbarIndex = 0;
+    world.fisheries = Object.create(null);
+    world.fishCastEvents = { snagAt: null };
+    world.rng = () => 0;
+    const measured = { open: false, anchor: "pond", max: 40 };
+    const first = Fish.beginCast(world.fisheries, measured);
+    const reserved = world.fisheries.pond.pop;
+    pawn.fishChannel = {
+        hook: false,
+        open: false,
+        id: first.id,
+        haul: first.haul,
+        max: Fish.CAST_MS,
+        remaining: 0
+    };
+    world._finishFishChannel(pawn);
+    assert.equal(world.fisheries.pond.pop, reserved + first.haul);
+    assert.equal(world.fishCastEvents.snagAt, world.worldMinuteIndex());
+    const saved = world.toSaveData();
+    assert.equal(saved.fishCastEvents.snagAt, world.fishCastEvents.snagAt);
+    const loaded = world.constructor.loadFromData(saved, {});
+    assert.equal(loaded.fishCastEvents.snagAt, saved.fishCastEvents.snagAt);
+    assert.equal(pawn.inventory.some((s) => s?.id === "raw_fish"), false);
+    assert.equal(pawn.inventory[1].quantity, 3);
+
+    const second = Fish.beginCast(world.fisheries, measured);
+    const again = world.fisheries.pond.pop;
+    pawn.fishChannel = {
+        hook: false,
+        open: false,
+        id: second.id,
+        haul: second.haul,
+        max: Fish.CAST_MS,
+        remaining: 0
+    };
+    world._finishFishChannel(pawn);
+    assert.equal(world.fisheries.pond.pop, again + second.haul);
+    assert.equal(pawn.inventory.some((s) => s?.id === "deer_hide"), true);
+    assert.equal(pawn.inventory.some((s) => s?.id === "raw_human_flesh"), false);
+});
+
+test("open water rare rows are the pond table plus a heavier tail", () => {
+    const pond = Fish.rareTable(false);
+    const sea = Fish.rareTable(true);
+    const weight = (rows, id) => rows.find((row) => row.id === id)?.weight || 0;
+    assert.equal(pond.some((row) => row.id === "raw_human_flesh"), false);
+    assert.equal(pond.some((row) => row.id === "clay"), true);
+    assert.ok(weight(sea, "stone_spear") > weight(pond, "stone_spear"));
+    assert.ok(weight(sea, "hide_bundle") > weight(pond, "hide_bundle"));
+    assert.equal(sea.some((row) => row.id === "raw_human_flesh"), true);
+    const sum = (rows) => rows.reduce((n, row) => n + row.weight, 0);
+    assert.equal(sum(pond), 112);
+    assert.equal(sum(sea), 136);
+});
+
+test("space before the bite reels in, and a missed bite spends the grub", () => {
+    const shore = shoreNearOrigin();
+    assert.ok(shore);
+    const { world, pawn, Protocol } = createTestWorld();
+    world.seed = 1;
+    WorldGen.applySeed(1);
+    Research.unlock(pawn, "fishing");
+    pawn.x = (shore.tx + 0.5) * 16;
+    pawn.y = (shore.ty + 0.5) * 16;
+    pawn.inventory[0] = { id: "flimsy_rod", quantity: 1, durability: 40 };
+    pawn.inventory[1] = { id: "grub", quantity: 3 };
+    pawn.hotbarIndex = 0;
+    pawn.facing = shore.wx > shore.tx ? "right" : shore.wx < shore.tx ? "left" : shore.wy > shore.ty ? "down" : "up";
+    const speed = world.tickSpeed;
+    world.handleAction(pawn.id, { type: Protocol.Actions.FISH, pawnId: pawn.id });
+    assert.equal(pawn.fishChannel.hook, true);
+    const reserved = pawn.fishChannel.open ? null : world.fisheries[pawn.fishChannel.id].pop;
+    world.handleAction(pawn.id, { type: Protocol.Actions.FISH, op: "reel", pawnId: pawn.id });
+    assert.equal(pawn.fishChannel, null);
+    assert.equal(pawn.inventory[1].quantity, 3);
+    assert.equal(pawn.inventory[0].durability, 40);
+    assert.equal(world.tickSpeed, speed);
+    if (reserved != null) {
+        assert.ok(world.fisheries[Object.keys(world.fisheries)[0]].pop > reserved);
+    }
+
+    world.handleAction(pawn.id, { type: Protocol.Actions.FISH, pawnId: pawn.id });
+    assert.ok(pawn.fishChannel.hook);
+    const haulPop = pawn.fishChannel.open ? null : world.fisheries[pawn.fishChannel.id].pop;
+    world._tickFishChannel(pawn, pawn.fishChannel.remaining, 0);
+    assert.equal(pawn.fishChannel.bite, true);
+    const grub = pawn.inventory[1].quantity;
+    world._tickFishChannel(pawn, 99999, Fish.HOOK_MS);
+    assert.equal(pawn.fishChannel, null);
+    assert.equal(pawn.inventory[1].quantity, grub - 1);
+    assert.equal(pawn.inventory.some((s) => s?.id === "raw_fish"), false);
+    assert.equal(pawn.fishChannel, null, "a finished bite does not cast again");
+    assert.equal(world.tickSpeed, speed);
+    if (haulPop != null) {
+        assert.ok(world.fisheries[Object.keys(world.fisheries)[0]].pop >= haulPop);
+    }
 });

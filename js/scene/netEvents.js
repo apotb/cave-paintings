@@ -61,9 +61,14 @@
                     if (ev.channel === "eat" && pawn?._eatChannel?.serverAuth) pawn._eatChannel = null;
                     if (ev.channel === "tend" && pawn?._tendChannel?.serverAuth) pawn._tendChannel = null;
                     this._applyPawnChannelVisual(pawn, null, ev.channel);
-                } else if (typeof ev.progress === "number") {
+                } else if (
+                    ev.channel === "fish" && (ev.hook || ev.bite)
+                    || typeof ev.progress === "number"
+                ) {
                     this._applyPawnChannelVisual(pawn, {
                         progress: ev.progress,
+                        hook: !!ev.hook,
+                        bite: !!ev.bite,
                         itemId: ev.itemId,
                         patientId: ev.patientId,
                         patientName: ev.patientName,
@@ -248,10 +253,17 @@
         if (!pawn) return;
         const live = data && typeof data.progress === "number";
         if (kind === "fish") {
-            if (live) {
+            const hook = !!data?.hook;
+            const bite = !!data?.bite;
+            const fishLive = live || hook || bite;
+            if (fishLive) {
                 pawn._netWorkChannel = {
                     kind: "fish",
-                    progress: Phaser.Math.Clamp(data.progress, 0, 1),
+                    hook,
+                    bite,
+                    progress: hook || typeof data.progress !== "number"
+                        ? null
+                        : Phaser.Math.Clamp(data.progress, 0, 1),
                     facing: data.facing || pawn._netWorkChannel?.facing || null,
                     waterTx: Number.isFinite(Number(data.waterTx))
                         ? data.waterTx | 0
@@ -266,8 +278,10 @@
             }
             if (pawn.isControlled?.()) {
                 pawn._hideOwnChannelBar?.();
-                if (live) this.showChannelBar?.(pawn._netWorkChannel.progress);
-                else if (
+                if (hook) this.hideChannelBar?.();
+                else if (fishLive && typeof pawn._netWorkChannel?.progress === "number") {
+                    this.showChannelBar?.(pawn._netWorkChannel.progress);
+                } else if (
                     !pawn._eatChannel
                     && !pawn._tendChannel
                     && !pawn._skinChannel

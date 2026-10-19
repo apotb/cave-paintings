@@ -2287,14 +2287,25 @@
 
     _tryStartFish(pawn, opts) {
         if (!pawn) return false;
-        this._tryFish(pawn, { tx: opts?.tx, ty: opts?.ty, pawnId: pawn.id });
+        this._tryFish(pawn, { tx: opts?.tx, ty: opts?.ty, pawnId: pawn.id, job: true });
         return !!pawn.fishChannel;
     },
 
     _tryFish(p, action = {}) {
         const F = fishApi();
         const pawn = this._actionPawn(p, action) || p;
-        if (!F || !pawn || pawn.dead || pawn.fishChannel) return;
+        if (!F || !pawn || pawn.dead) return;
+        if (action.op === "hook") {
+            this._hookFishChannel(pawn);
+            return;
+        }
+        if (action.op === "reel") {
+            const ch = pawn.fishChannel;
+            if (ch?.hook && ch.bite) this._hookFishChannel(pawn);
+            else if (ch?.hook) this._cancelFishChannel(pawn);
+            return;
+        }
+        if (pawn.fishChannel) return;
         const held = this._held(pawn);
         if (!held || held.id !== F.ROD_ID) return;
         if (!this._pawnHasItem(pawn, F.GRUB_ID)) return;
@@ -2310,9 +2321,15 @@
         }
         const started = F.beginCast(this.fisheries, measured);
         if (!started?.ok) return;
+        const session = this._sessionOfPawn(pawn) || p;
+        const controlId = session?.controlId || session?.id || null;
+        const hook = !action.job && !!controlId && pawn.id === controlId;
+        const wait = hook ? F.biteWaitMs(this.rng) : F.CAST_MS;
         pawn.fishChannel = {
-            remaining: F.CAST_MS,
-            max: F.CAST_MS,
+            remaining: wait,
+            max: wait,
+            hook,
+            bite: false,
             haul: started.haul,
             id: started.id || null,
             open: !!started.open,
@@ -2335,16 +2352,21 @@
         if (!pawn) return;
         const session = this._sessionOfPawn(pawn);
         const ch = pawn.fishChannel;
+        const hook = !!(ch?.hook || extra.hook);
         let progress = extra.progress;
-        if (progress == null && ch && ch.max > 0) {
+        if (hook) progress = null;
+        else if (progress == null && ch && ch.max > 0) {
             progress = 1 - (Number(ch.remaining) || 0) / ch.max;
         }
+        const bite = !!(ch?.bite || extra.bite);
         this.pushEvent({
             kind: "channel",
             playerId: session?.id || pawn.ownerId || pawn.id,
             pawnId: pawn.id,
             channel: "fish",
-            progress: Math.max(0, Math.min(1, Number(progress) || 0)),
+            ...(progress == null ? {} : { progress: Math.max(0, Math.min(1, Number(progress) || 0)) }),
+            ...(hook ? { hook: true } : {}),
+            ...(bite ? { bite: true } : {}),
             ...(ch?.facing ? { facing: ch.facing } : {}),
             ...(Number.isFinite(ch?.waterTx) ? { waterTx: ch.waterTx | 0, waterTy: ch.waterTy | 0 } : {}),
             ...(extra.done ? { done: true } : {}),
@@ -2376,25 +2398,90 @@
         this._dirtyPawnOwner(pawn);
     },
 
+    _refundFishHaul(ch) {
+        if (!ch || ch.open || !ch.id) return;
+        fishApi()?.cancelCast(this.fisheries, ch.id, ch.haul);
+    },
+
+    /** A hooked bite that ran out. The grub is spent and the haul goes back. */
+    _missFishHook(pawn) {
+        const ch = pawn?.fishChannel;
+        if (!ch) return;
+        pawn.fishChannel = null;
+        const F = fishApi();
+        this._refundFishHaul(ch);
+        if (F) this._takeOneItem(pawn, F.GRUB_ID);
+        pawn._workHold = false;
+        pawn._busyJob = null;
+        pawn._settlerScan = null;
+        this._pushFishChannelEvent(pawn, { cancelled: true, progress: 0 });
+        this._dirtyPawnOwner(pawn);
+    },
+
+    _hookFishChannel(pawn) {
+        const ch = pawn?.fishChannel;
+        if (!ch?.hook || !ch.bite) return;
+        this._finishFishChannel(pawn);
+    },
+
+    _fishCatchName(id, qty) {
+        const meta = itemDefs().get(id);
+        const name = String(meta?.name || id || "catch").toLowerCase();
+        const n = Math.max(1, Math.floor(Number(qty) || 1));
+        if (n === 1) return `a ${name}`;
+        return `${n} ${name}`;
+    },
+
+    _giveFishStack(pawn, id, qty, opts = {}) {
+        const n = Math.max(1, Math.floor(Number(qty) || 1));
+        const meta = itemDefs().get(id);
+        const durability = Number(meta?.durability);
+        const extras = Number.isFinite(durability) && durability > 0
+            ? { durability: Math.floor(durability) }
+            : null;
+        const settler = (this.settlers || []).some((s) => s && (s === pawn || s.id === pawn.id));
+        const drop = { id, quantity: n };
+        if (extras) drop.durability = extras.durability;
+        if (settler || opts.drop) {
+            this._pushDrop(pawn.x, pawn.y, drop);
+            return;
+        }
+        const left = this._give(pawn, id, n, extras);
+        if (left > 0) this._pushDrop(pawn.x, pawn.y, { ...drop, quantity: left });
+    },
+
     _finishFishChannel(pawn) {
         const ch = pawn?.fishChannel;
         if (!ch) return;
         pawn.fishChannel = null;
         const F = fishApi();
         if (!F || !this._takeOneItem(pawn, F.GRUB_ID)) {
-            if (!ch.open && ch.id) F?.cancelCast(this.fisheries, ch.id, ch.haul);
+            this._refundFishHaul(ch);
             this._pushFishChannelEvent(pawn, { cancelled: true, progress: 0 });
             this._dirtyPawnOwner(pawn);
             return;
         }
         this._wearHeld(pawn, 1);
-        const haul = Math.max(1, Math.floor(Number(ch.haul) || 1));
-        const settler = (this.settlers || []).some((s) => s && (s === pawn || s.id === pawn.id));
-        if (settler) {
-            this._pushDrop(pawn.x, pawn.y, { id: F.FISH_ID, quantity: haul });
+        if (!this.fishCastEvents || typeof this.fishCastEvents !== "object") {
+            this.fishCastEvents = { snagAt: null };
+        }
+        const rolled = F.finishRoll(this.rng, {
+            open: !!ch.open,
+            snagAt: this.fishCastEvents.snagAt,
+            now: this.worldMinuteIndex()
+        });
+        const who = pawn.name || "Someone";
+        if (rolled?.kind === "snag") {
+            this.fishCastEvents.snagAt = rolled.snagAt;
+            this._refundFishHaul(ch);
+            this._announceWorld(`${who}'s line snagged.`);
+        } else if (rolled?.kind === "rare" && rolled.item?.id) {
+            this._refundFishHaul(ch);
+            this._giveFishStack(pawn, rolled.item.id, rolled.item.quantity);
+            this._announceWorld(`${who} reeled in ${this._fishCatchName(rolled.item.id, rolled.item.quantity)}.`);
         } else {
-            const left = this._digGive(pawn, F.FISH_ID, haul);
-            if (left > 0) this._pushDrop(pawn.x, pawn.y, { id: F.FISH_ID, quantity: left });
+            const haul = Math.max(1, Math.floor(Number(ch.haul) || 1));
+            this._giveFishStack(pawn, F.FISH_ID, haul);
         }
         pawn._workHold = false;
         pawn._busyJob = null;
@@ -2403,7 +2490,7 @@
         this._dirtyPawnOwner(pawn);
     },
 
-    _tickFishChannel(pawn, dtMs) {
+    _tickFishChannel(pawn, dtMs, rawMs) {
         const ch = pawn?.fishChannel;
         if (!ch) return;
         if (this._pawnVomiting?.(pawn)) {
@@ -2422,9 +2509,25 @@
             return;
         }
         this._lockFishFacing(pawn);
+        if (ch.hook && ch.bite) {
+            const raw = Number.isFinite(Number(rawMs)) ? Number(rawMs) : Number(dtMs) || 0;
+            ch.biteLeft = (Number(ch.biteLeft) || 0) - raw;
+            if (ch.biteLeft <= 0) this._missFishHook(pawn);
+            else this._pushFishChannelEvent(pawn);
+            return;
+        }
         ch.remaining -= Number(dtMs) || 0;
+        if (ch.remaining <= 0) {
+            if (ch.hook) {
+                ch.bite = true;
+                ch.biteLeft = F.HOOK_MS;
+                this._pushFishChannelEvent(pawn);
+                return;
+            }
+            this._finishFishChannel(pawn);
+            return;
+        }
         this._pushFishChannelEvent(pawn);
-        if (ch.remaining <= 0) this._finishFishChannel(pawn);
     },
 
     _tickFisheries() {

@@ -15,6 +15,12 @@
     const MIN_TILES = 75;
     const BASE_MAX = 400;
     const CAST_MS = 30000;
+    const BITE_MIN_MS = 10000;
+    const BITE_MAX_MS = 30000;
+    const HOOK_MS = 3000;
+    const SNAG_CHANCE = 0.02;
+    const RARE_CHANCE = 0.01;
+    const SNAG_COOLDOWN_MINUTES = 5 * 1440;
     const OPEN_HAUL = 3;
     const REGEN_PER_DAY = 0.025;
     const DAY_MINUTES = 1440;
@@ -293,6 +299,89 @@
         return v.toFixed(1);
     }
 
+    /** 10–30s, inclusive, on the same clock as a settler cast. */
+    function biteWaitMs(rng) {
+        const roll = typeof rng === "function" ? Number(rng()) : 0;
+        const u = Number.isFinite(roll) ? Math.min(1, Math.max(0, roll)) : 0;
+        return BITE_MIN_MS + Math.floor(u * (BITE_MAX_MS - BITE_MIN_MS + 1));
+    }
+
+    /**
+     * Weights inside a rare catch. Open water adds to the tail.
+     * A hide row is deer or boar, chosen when it is rolled.
+     */
+    function rareTable(open) {
+        const rows = [
+            { hide: true, min: 1, max: 1, weight: 24 },
+            { id: "brain", min: 1, max: 1, weight: 16 },
+            { id: "pitch", min: 3, max: 6, weight: 14 },
+            { id: "clay", min: 4, max: 10, weight: 12 },
+            { id: "poultice", min: 2, max: 3, weight: 12 },
+            { id: "leaf_cord", min: 10, max: 20, weight: 12 },
+            { id: "wooden_spear", min: 1, max: 1, weight: 8 },
+            { id: "stone_spear", min: 1, max: 1, weight: 5 },
+            { id: "hide_pouch", min: 1, max: 1, weight: 5 },
+            { id: "tally_stick", min: 1, max: 1, weight: 3 },
+            { id: "hide_bundle", min: 1, max: 1, weight: 1 }
+        ];
+        if (!open) return rows;
+        const next = rows.map((row) => ({ ...row }));
+        const spear = next.find((row) => row.id === "stone_spear");
+        const bundle = next.find((row) => row.id === "hide_bundle");
+        if (spear) spear.weight += 8;
+        if (bundle) bundle.weight += 6;
+        next.push({ id: "raw_human_flesh", min: 8, max: 15, weight: 10 });
+        return next;
+    }
+
+    function rollRare(rng, open) {
+        const rows = rareTable(!!open);
+        let total = 0;
+        for (const row of rows) total += row.weight;
+        let pick = (typeof rng === "function" ? Number(rng()) : 0) * total;
+        let row = rows[rows.length - 1];
+        for (const candidate of rows) {
+            pick -= candidate.weight;
+            if (pick < 0) {
+                row = candidate;
+                break;
+            }
+        }
+        let id = row.id;
+        if (row.hide) {
+            const side = typeof rng === "function" ? Number(rng()) : 0;
+            id = side < 0.5 ? "deer_hide" : "boar_hide";
+        }
+        const min = row.min | 0;
+        const max = row.max | 0;
+        const span = Math.max(0, max - min);
+        const qtyRoll = typeof rng === "function" ? Number(rng()) : 0;
+        const quantity = min + (span > 0 ? Math.floor(Math.min(1, Math.max(0, qtyRoll)) * (span + 1)) : 0);
+        return { id, quantity };
+    }
+
+    /**
+     * Snag, then rare, then the reserved haul. A snag is skipped for 5 days
+     * after the last one. A rare catch is not.
+     * @param {() => number} rng
+     * @param {{ open?: boolean, snagAt?: number|null, now?: number }} opts
+     */
+    function finishRoll(rng, opts) {
+        const now = Number(opts?.now) || 0;
+        const rawSnag = opts?.snagAt;
+        const snagAt = rawSnag == null || rawSnag === "" ? null : Number(rawSnag);
+        const cooled = snagAt == null || !Number.isFinite(snagAt)
+            || (now - snagAt) >= SNAG_COOLDOWN_MINUTES;
+        const roll = typeof rng === "function" ? rng : () => 0;
+        if (cooled && roll() < SNAG_CHANCE) {
+            return { kind: "snag", snagAt: now };
+        }
+        if (roll() < RARE_CHANCE) {
+            return { kind: "rare", item: rollRare(roll, !!opts?.open) };
+        }
+        return { kind: "fish" };
+    }
+
     function describe(measured, fisheries) {
         if (!measured || measured.count < 1) return null;
         if (measured.open) return "Population: bountiful";
@@ -307,6 +396,12 @@
         MIN_TILES,
         BASE_MAX,
         CAST_MS,
+        BITE_MIN_MS,
+        BITE_MAX_MS,
+        HOOK_MS,
+        SNAG_CHANCE,
+        RARE_CHANCE,
+        SNAG_COOLDOWN_MINUTES,
         OPEN_HAUL,
         REGEN_PER_DAY,
         ROD_ID,
@@ -327,6 +422,10 @@
         beginCast,
         cancelCast,
         regen,
-        describe
+        describe,
+        biteWaitMs,
+        rareTable,
+        rollRare,
+        finishRoll
     };
 });

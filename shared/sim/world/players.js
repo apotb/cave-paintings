@@ -280,6 +280,11 @@
             fisheries: this.fisheries && typeof this.fisheries === "object" && !Array.isArray(this.fisheries)
                 ? JSON.parse(JSON.stringify(this.fisheries))
                 : {},
+            fishCastEvents: {
+                snagAt: Number.isFinite(Number(this.fishCastEvents?.snagAt))
+                    ? Number(this.fishCastEvents.snagAt)
+                    : null
+            },
             modData: this.modData && typeof this.modData === "object" && !Array.isArray(this.modData)
                 ? { ...this.modData }
                 : {},
@@ -1224,6 +1229,10 @@
         if (prev !== pawnId) {
             this._interruptEatsForControl(p, pawnId);
             this._cancelControlRestWalk(p, pawnId);
+            const old = prev === p.id
+                ? p
+                : (p.party || []).find((m) => m && m.id === prev);
+            if (old?.fishChannel?.hook) this._cancelFishChannel(old);
         }
         return true;
     },
