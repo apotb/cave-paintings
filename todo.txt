@@ -1,5 +1,3 @@
-Raids
-
 Fix UI size 1 issues (e.g. tech tree, settlement menu)
 
 Agriculture -- will unlock a tutorial tip that you can open to learn about soil and farming mechanics
@@ -26,13 +24,19 @@ Body/biome temperature
 
 Diet -- fruits, vegetables, grains, protein, dairy
 
+Raids
+
+Way to breed grub unlocked after Agriculture
+
+Rename, recolor, or otherwise label storage containers
+
 More animals -- lynx (neutral), auroch (scared)
 
 Icons in tooltips
 
 Needs beyond hunger: sleep, recreation, socialization, etc
 
-Tutorial tips -- Rimworld Tutorial Helper style?
+Backstories, personalities, job preferences, skills, socializing, and more randomly generated personalized stuff
 
 ---
 
