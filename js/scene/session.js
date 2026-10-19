@@ -435,7 +435,10 @@
                 }
                 let pawn = (this.settlers || []).find((p) => p && p.pawnId === row.id);
                 if (!pawn) pawn = this.settlementSys?._spawnSettlerPawn?.(row);
-                if (pawn) this._netApplySettlerGear(pawn, row);
+                if (pawn) {
+                    this._netApplySettlerGear(pawn, row);
+                    if (typeof row.favorite === "boolean") pawn.favorite = row.favorite;
+                }
             }
         }
     },

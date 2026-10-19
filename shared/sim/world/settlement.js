@@ -205,6 +205,16 @@
             this._youDirty.add(p.id);
             return;
         }
+        if (op === "favorite") {
+            const id = String(action.pawnId || "");
+            if (!id || id === String(p.id)) return;
+            const mem = (p.party || []).find((m) => String(m.id) === id)
+                || (this.settlers || []).find((s) => String(s.id) === id && s.ownerId === p.id);
+            if (!mem) return;
+            mem.favorite = !!action.favorite;
+            this._youDirty.add(p.id);
+            return;
+        }
         if (op === "drop") {
             const mem = (p.party || []).find((m) => String(m.id) === String(action.pawnId));
             let dropSettle = settle && settle.ownerId === p.id ? settle : null;
@@ -231,7 +241,7 @@
             mem.ownerId = p.id;
             Settlement.bindPawnJobs(dropSettle, mem);
             this.settlers.push(mem);
-            this._syncJobOrder(dropSettle);
+            this._syncJobOrder(dropSettle, mem.favorite ? mem.id : null);
             SettlerWork.releaseWork(this, mem);
             const cc = this._ensureSettlerCreature(mem);
             if (cc?.ai) {
@@ -399,12 +409,13 @@
         }
     },
 
-    _syncJobOrder(settle) {
+    _syncJobOrder(settle, frontId = null) {
         if (!settle || !Settlement?.normalizeJobOrder) return;
         const ids = (this.settlers || [])
             .filter((s) => s && !s.dead && s.homeSettlementId === settle.id)
             .map((s) => s.id);
         Settlement.normalizeJobOrder(settle, ids);
+        if (frontId) Settlement.moveJobOrder(settle, frontId, 0, ids);
         if (Settlement.applyJobOrderToList) {
             this.settlers = Settlement.applyJobOrderToList(
                 this.settlers || [],

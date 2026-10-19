@@ -757,6 +757,7 @@
             ownerId: owner.id,
             leaderId: owner.id,
             role: "companion",
+            favorite: !!m.favorite,
             lastSleep: m.lastSleep || null,
             _resting: false,
             _joinRestHint: !!m.resting,
@@ -975,6 +976,7 @@
             ownerId: snap.ownerId || null,
             homeSettlementId: snap.homeSettlementId || null,
             role: "settler",
+            favorite: !!snap.favorite,
             lastSleep: snap.lastSleep || null,
             resting: !!snap.resting,
             _resting: !!snap.resting
@@ -1019,6 +1021,7 @@
             ownerId: s.ownerId || null,
             homeSettlementId: s.homeSettlementId || null,
             role: "settler",
+            favorite: !!s.favorite,
             lastSleep: s.lastSleep || null,
             resting: !!(s._resting || s.resting),
             jobs: (s.jobs && typeof s.jobs === "object" && !Array.isArray(s.jobs))
@@ -1044,6 +1047,7 @@
             ownerId: s.ownerId,
             homeSettlementId: s.homeSettlementId,
             role: "settler",
+            favorite: !!s.favorite,
             dead: !!s.dead,
             prone: !!(s.dead || s.prone || s._resting || this._creatureIsProne(c)),
             resting: !!s._resting,

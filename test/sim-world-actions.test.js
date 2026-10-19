@@ -3066,6 +3066,61 @@ test("settler job priorities survive pick-up, drop-off, transfer, and relog", ()
     assert.equal(mem.jobs.gather, 2);
 });
 
+test("a favorite drops in at the front of the camp list", () => {
+    const { world, pawn } = createTestWorld();
+    const settle = Settlement.createSettlement({
+        x: pawn.x,
+        y: pawn.y,
+        ownerId: pawn.id
+    });
+    world.settlements.push(settle);
+    const plain = world._companionFromSnap(pawn, {
+        id: "plain",
+        name: "Plain",
+        x: pawn.x,
+        y: pawn.y
+    });
+    const fav = world._companionFromSnap(pawn, {
+        id: "fav",
+        name: "Fav",
+        x: pawn.x,
+        y: pawn.y
+    });
+    const later = world._companionFromSnap(pawn, {
+        id: "later",
+        name: "Later",
+        x: pawn.x,
+        y: pawn.y
+    });
+    assert.equal(plain.favorite, false);
+    pawn.party.push(plain, fav, later);
+    world._handleSettlement(pawn, { op: "favorite", pawnId: fav.id, favorite: true });
+    world._handleSettlement(pawn, { op: "drop", pawnId: plain.id, settlementId: settle.id });
+    assert.deepEqual(settle.jobOrder, ["plain"]);
+    world._handleSettlement(pawn, { op: "drop", pawnId: fav.id, settlementId: settle.id });
+    assert.deepEqual(settle.jobOrder, ["fav", "plain"]);
+    const parked = world.settlers.find((s) => s.id === fav.id);
+    assert.equal(parked.favorite, true);
+    const saved = world._persistSettler(parked);
+    assert.equal(saved.favorite, true);
+    assert.equal(world._settlerFromSnap(saved).favorite, true);
+    assert.equal(world._publicSettler(parked).favorite, true);
+    world._handleSettlement(pawn, { op: "pick", pawnId: fav.id });
+    const back = pawn.party.find((m) => m.id === fav.id);
+    assert.equal(back.favorite, true);
+    assert.deepEqual(settle.jobOrder, ["plain"]);
+    const you = world.youPayload(pawn.id);
+    assert.equal(you.party.find((m) => m.id === fav.id).favorite, true);
+    assert.equal(world._companionFromSnap(pawn, you.party.find((m) => m.id === fav.id)).favorite, true);
+    world._handleSettlement(pawn, { op: "drop", pawnId: fav.id, settlementId: settle.id });
+    world._handleSettlement(pawn, { op: "favorite", pawnId: later.id, favorite: true });
+    world._handleSettlement(pawn, { op: "drop", pawnId: later.id, settlementId: settle.id });
+    assert.deepEqual(settle.jobOrder, ["later", "fav", "plain"]);
+    world._handleSettlement(pawn, { op: "favorite", pawnId: later.id, favorite: false });
+    assert.equal(world.settlers.find((s) => s.id === later.id).favorite, false);
+    assert.deepEqual(settle.jobOrder, ["later", "fav", "plain"]);
+});
+
 test("empty rec equipment does not wipe clothes on the creature", () => {
     const { world, pawn } = createTestWorld();
     const { rec } = parkSettler(world, pawn, {

@@ -1297,7 +1297,8 @@
                     activity: this._pawnTendActivity(m),
                     jobs: (m.jobs && typeof m.jobs === "object" && !Array.isArray(m.jobs))
                         ? Settlement.normalizeJobs(m.jobs)
-                        : null
+                        : null,
+                    favorite: !!m.favorite
                 };
             }),
             controlId: p.controlId || p.id,

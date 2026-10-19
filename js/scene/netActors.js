@@ -369,7 +369,8 @@
                     ownerId: row.ownerId,
                     kc: row.kc,
                     saturation: row.saturation,
-                    stomach: row.stomach
+                    stomach: row.stomach,
+                    favorite: !!row.favorite
                 });
             }
             if (!pawn) continue;

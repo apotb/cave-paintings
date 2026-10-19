@@ -502,6 +502,7 @@ class PartySystem {
         if (opts.jobs && typeof opts.jobs === "object" && typeof Settlement !== "undefined" && Settlement.rememberJobs) {
             Settlement.rememberJobs(pawn, opts.jobs);
         }
+        pawn.favorite = !!opts.favorite;
         pawn.recomputeEquipmentEffects?.();
         pawn.capacities = new Capacities(pawn.anatomy);
         pawn._netTx = pawn.x;
@@ -2944,7 +2945,8 @@ class PartySystem {
             y: p.y,
             lastSleep: p.lastSleep || null,
             resting: !!p._resting,
-            jobs: (p.jobs && typeof p.jobs === "object") ? { ...p.jobs } : null
+            jobs: (p.jobs && typeof p.jobs === "object") ? { ...p.jobs } : null,
+            favorite: !!p.favorite
         };
     }
 
@@ -3046,6 +3048,7 @@ class PartySystem {
                     if (m.jobs && typeof m.jobs === "object" && typeof Settlement !== "undefined" && Settlement.rememberJobs) {
                         Settlement.rememberJobs(existing, m.jobs);
                     }
+                    if (typeof m.favorite === "boolean") existing.favorite = m.favorite;
                     if (m.lastSleep) existing.lastSleep = m.lastSleep;
                     if (typeof m.resting === "boolean") {
                         existing._resting = !!m.resting;

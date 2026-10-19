@@ -122,11 +122,13 @@ class SettlementSystem {
             lastSleep: snap.lastSleep,
             resting: snap.resting,
             jobs: snap.jobs,
+            favorite: !!snap.favorite,
             ignoreCap: true
         });
         if (!pawn) return null;
         scene.party = (scene.party || []).filter((p) => p !== pawn);
         pawn.role = "settler";
+        pawn.favorite = !!snap.favorite;
         pawn.homeSettlementId = snap.homeSettlementId || null;
         if (snap.ownerId) {
             pawn.ownerId = snap.ownerId;
@@ -185,13 +187,14 @@ class SettlementSystem {
         return S.sortByJobOrder(settle, list, (p) => p.pawnId || p.id);
     }
 
-    _syncJobOrder(settle) {
+    _syncJobOrder(settle, frontId = null) {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         if (!S?.normalizeJobOrder || !settle) return;
         const ids = (this.scene.settlers || [])
             .filter((p) => p && !p.isBodyDead?.() && p.homeSettlementId === settle.id)
             .map((p) => p.pawnId || p.id);
         S.normalizeJobOrder(settle, ids);
+        if (frontId) S.moveJobOrder(settle, frontId, 0, ids);
         if (S.applyJobOrderToList) {
             this.scene.settlers = S.applyJobOrderToList(
                 this.scene.settlers || [],
@@ -1253,12 +1256,27 @@ class SettlementSystem {
         if (typeof Settlement !== "undefined" && Settlement.bindPawnJobs) {
             Settlement.bindPawnJobs(target, pawn);
         }
-        this._syncJobOrder(target);
+        this._syncJobOrder(target, pawn.favorite ? (pawn.pawnId || pawn.id) : null);
         if (wasControl) scene.partySys?.switchControl?.(scene.leader);
         scene.net?._pullFromScene?.();
         scene.partyPanel?.refresh?.();
         scene.settlementPanel?.refresh?.();
         this._logPawnSettle(pawn, "was dropped off at", target.name);
+        return true;
+    }
+
+    toggleFavorite(pawn) {
+        const scene = this.scene;
+        if (!pawn || pawn === scene.leader) return false;
+        const id = pawn.pawnId || pawn.id;
+        if (!id) return false;
+        const inParty = (scene.party || []).includes(pawn);
+        const inCamp = (scene.settlers || []).includes(pawn);
+        if (!inParty && !inCamp) return false;
+        if (inCamp && pawn.ownerId && pawn.ownerId !== this.ownerId()) return false;
+        pawn.favorite = !pawn.favorite;
+        this.sendNet("favorite", { pawnId: id, favorite: !!pawn.favorite });
+        scene.settlementPanel?.refresh?.();
         return true;
     }
 

@@ -1,6 +1,53 @@
 /**
  * Settlement overlay: people, jobs, stock, destroy.
  */
+
+/** Pixel star, 15×14. Cell (0, 0) is the top of the middle column. */
+const SETTLEMENT_STAR_OUTLINE = [
+    ".......#.......",
+    ".......#.......",
+    "......#.#......",
+    "......#.#......",
+    "...###...###...",
+    "###.........###",
+    ".##.........##.",
+    "...#.......#...",
+    "....#.....#....",
+    "....#.....#....",
+    "....#..#..#....",
+    "...#..#.#..#...",
+    "...###...###...",
+    "...#.......#..."
+];
+const SETTLEMENT_STAR_FILL = [
+    ".......#.......",
+    ".......#.......",
+    "......###......",
+    "......###......",
+    "...#########...",
+    "###############",
+    ".#############.",
+    "...#########...",
+    "....#######....",
+    "....#######....",
+    "....#######....",
+    "...#########...",
+    "...###...###...",
+    "...#.......#..."
+];
+
+function settlementStarCells(rows) {
+    const cells = [];
+    const ox = (rows[0].length - 1) >> 1;
+    const oy = ox;
+    for (let y = 0; y < rows.length; y++) {
+        for (let x = 0; x < rows[y].length; x++) {
+            if (rows[y][x] === "#") cells.push([x - ox, y - oy]);
+        }
+    }
+    return cells;
+}
+
 class SettlementPanel {
     constructor(scene) {
         this.scene = scene;
@@ -433,7 +480,7 @@ class SettlementPanel {
         }
         const party = (this.scene.party || []).filter((p) => p && !p.isBodyDead?.());
         const here = sys?.settlersOf?.(this.settle.id) || [];
-        const ids = (list) => list.map((p) => p.pawnId || p.id).join(",");
+        const ids = (list) => list.map((p) => `${p.pawnId || p.id}${p.favorite ? "*" : ""}`).join(",");
         const lead = this._visitLeader();
         const leadSig = lead ? `${lead.online ? 1 : 0}:${lead.name}` : "";
         const controlId = this.scene.player?.pawnId || this.scene.player?.id || "";
@@ -636,6 +683,8 @@ class SettlementPanel {
         const btnW = Math.round(40 * sc);
         const btnH = Math.round(20 * sc);
         const btnGap = Math.round(4 * sc);
+        const starU = Math.max(1, Math.round(sc));
+        const starW = 15 * starU;
         let y = y0;
         for (let i = 0; i < list.length; i++) {
             const p = list[i];
@@ -649,12 +698,13 @@ class SettlementPanel {
             const showSend = manage && kind === "here" && others[0];
             const showDrop = kind === "party" && !isLeader;
             const showTake = manage && kind === "here" && !partyFull;
-            let btns = 0;
-            if (showDrop || showTake) btns += 1;
-            if (showSend) btns += 1;
-            const btnsW = btns ? btns * btnW + Math.max(0, btns - 1) * btnGap : 0;
+            const showFav = (kind === "party" && !isLeader) || (kind === "here" && manage);
+            let tail = 0;
+            if (showSend) tail += btnW;
+            if (showDrop || showTake) tail += (tail ? btnGap : 0) + btnW;
+            if (showFav) tail += (tail ? btnGap : 0) + starW;
             const crownW = (isLeader && kind === "party") ? Math.round(12 * sc) : 0;
-            const nameMax = Math.max(24, colW - btnsW - crownW - Math.round(6 * sc));
+            const nameMax = Math.max(24, colW - tail - crownW - Math.round(6 * sc));
             const label = this._rowLabel(name, x, y, rowH, 12);
             if (controlled) label.setColor("#b8ffb8");
             if (label.width > nameMax) {
@@ -672,7 +722,7 @@ class SettlementPanel {
                 ).setOrigin(0, 0.5).setScale(sc);
                 this.body.add(crown);
             }
-            const hitW = Math.max(8, colW - btnsW);
+            const hitW = Math.max(8, colW - tail);
             const hit = scene.add.zone(x, y, hitW, rowH).setOrigin(0, 0);
             hit.setInteractive({ useHandCursor: true, cursor: "pointer" });
             this._clipInput(hit);
@@ -687,24 +737,106 @@ class SettlementPanel {
                 if (scene._tooltipTarget === hit) scene.hideTooltip?.();
             });
             this.body.add(hit);
-            let bx = x + colW - btnW / 2;
+            let edge = x + colW;
             const by = y + rowH / 2;
             const addBtn = (text, fn) => {
+                const bx = edge - btnW / 2;
                 const b = this._btn(bx, by, text, fn, true);
                 b._bg.setSize(btnW, btnH);
                 if (b._bg.input?.hitArea?.setSize) b._bg.input.hitArea.setSize(btnW, btnH);
                 if (typeof applyPixelUiFont === "function") applyPixelUiFont(b._txt, 10, sc);
                 b._paint?.();
                 this.body.add(b);
-                bx -= btnW + btnGap;
+                edge -= btnW + btnGap;
                 return b;
             };
             if (showSend) addBtn("Send", () => sys.transfer(p, others[0]));
             if (showDrop) addBtn("Drop", () => sys.dropOff(p, this.settle));
             if (showTake) addBtn("Take", () => sys.pickUp(p, this.settle));
+            if (showFav) {
+                this._favoriteStar(edge - starW / 2, by, p, starU, btnH);
+            }
         }
         if (list.length) y += rowH;
         return y;
+    }
+
+    /**
+     * Gold star left of Take/Drop. Empty until favorited.
+     * A favorite dropped at this camp is inserted at the front of Here.
+     */
+    _favoriteStar(x, y, pawn, unit, hitTall) {
+        const scene = this.scene;
+        const u = Math.max(1, unit | 0);
+        const GOLD = 0xd4a84b;
+        const GOLD_HOVER = 0xffe7a8;
+        const GOLD_PRESS = 0xb08a3a;
+        if (!this._starOutline) {
+            this._starOutline = settlementStarCells(SETTLEMENT_STAR_OUTLINE);
+            this._starFill = settlementStarCells(SETTLEMENT_STAR_FILL);
+        }
+        const g = scene.add.graphics();
+        const hitW = 15 * u;
+        const hitH = Math.max(14 * u, hitTall || 0);
+        const hit = scene.add.zone(0, 0, hitW, hitH).setOrigin(0.5).setInteractive({
+            useHandCursor: true,
+            cursor: "pointer"
+        });
+        this._clipInput(hit);
+        const c = scene.add.container(x, y, [g, hit]);
+        c._hovering = false;
+        c._pressing = false;
+        const paint = () => {
+            const filled = !!pawn.favorite;
+            const color = c._pressing ? GOLD_PRESS : (c._hovering ? GOLD_HOVER : GOLD);
+            const cells = filled ? this._starFill : this._starOutline;
+            const ox = -Math.floor(u / 2);
+            g.clear();
+            g.fillStyle(color, 1);
+            for (let i = 0; i < cells.length; i++) {
+                g.fillRect(cells[i][0] * u + ox, cells[i][1] * u, u, u);
+            }
+        };
+        const inClip = (pointer) => this._pointerInBody(pointer);
+        hit.on("pointerover", (pointer) => {
+            if (!inClip(pointer)) return;
+            c._hovering = true;
+            paint();
+            scene.showTooltip(
+                () => (pawn.favorite ? "Unfavorite" : "Favorite"),
+                pointer.x,
+                pointer.y,
+                hit
+            );
+        });
+        hit.on("pointerout", (pointer) => {
+            c._hovering = false;
+            c._pressing = false;
+            if (g.active) paint();
+            if (this._refreshing) return;
+            if (this._pointerStillOn(hit, pointer)) return;
+            if (scene._tooltipTarget === hit) scene.hideTooltip?.();
+        });
+        hit.on("pointerdown", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            if (pointer.rightButtonDown() || !inClip(pointer)) return;
+            c._pressing = true;
+            paint();
+        });
+        hit.on("pointerup", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            const was = c._pressing && c._hovering && inClip(pointer);
+            c._pressing = false;
+            if (!was) {
+                if (g.active) paint();
+                return;
+            }
+            if (scene._tooltipTarget === hit) scene.hideTooltip?.();
+            scene.settlementSys?.toggleFavorite?.(pawn);
+        });
+        paint();
+        this.body.add(c);
+        return c;
     }
 
     _personActionTip(p) {
