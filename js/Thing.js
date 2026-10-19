@@ -149,6 +149,65 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         else if (this.meta?.key && scene.textures.exists(this.meta.key)) this.setTexture(this.meta.key);
         if (this.body) this._positionBody();
         this._syncInteractMark();
+        this._syncFigurineBodies();
+    }
+
+    _syncFigurineBodies() {
+        const scene = this.scene;
+        const entry = this.entry;
+        if (!this._figBodyBound) {
+            this._figBodyBound = true;
+            this.once("destroy", () => this._destroyFigurineBodies());
+        }
+        if (!scene?.physics || !entry || typeof Place === "undefined" || !Place.collisionWorldRects) {
+            return;
+        }
+        const rects = Place.collisionWorldRects(entry, this.meta, scene.tileSize || 16);
+        const sig = rects.map((r) =>
+            `${r.left.toFixed(2)},${r.top.toFixed(2)},${r.right.toFixed(2)},${r.bottom.toFixed(2)}`
+        ).join(";");
+        if (sig === this._figBodySig && this._figBodies) return;
+        this._destroyFigurineBodies();
+        this._figBodySig = sig;
+        if (!rects.length) return;
+        const tex = (this.texture?.key && scene.textures.exists(this.texture.key))
+            ? this.texture.key
+            : (scene.textures.exists("clay") ? "clay" : "");
+        if (!tex) return;
+        const bodies = [];
+        for (let i = 0; i < rects.length; i++) {
+            const rect = rects[i];
+            const bw = Math.max(1, rect.right - rect.left);
+            const bh = Math.max(1, rect.bottom - rect.top);
+            const cx = (rect.left + rect.right) * 0.5;
+            const cy = (rect.top + rect.bottom) * 0.5;
+            const spr = scene.make.image({ x: cx, y: cy, key: tex, add: false });
+            spr.setVisible(false);
+            spr.setOrigin(0.5, 0.5);
+            scene.physics.add.existing(spr, true);
+            if (spr.body?.setSize) spr.body.setSize(bw, bh, true);
+            spr.entry = entry;
+            spr.meta = this.meta;
+            spr.uid = entry.uid;
+            if (scene._things) scene._things.add(spr);
+            spr.removeFromDisplayList?.();
+            if (typeof indexThingSprite === "function") indexThingSprite(scene, spr);
+            bodies.push(spr);
+        }
+        this._figBodies = bodies;
+    }
+
+    _destroyFigurineBodies() {
+        const list = this._figBodies;
+        this._figBodies = null;
+        this._figBodySig = "";
+        if (!list) return;
+        for (let i = 0; i < list.length; i++) {
+            const spr = list[i];
+            if (typeof unindexThingSprite === "function") unindexThingSprite(this.scene, spr);
+            if (this.scene?._things) this.scene._things.remove(spr, false, false);
+            spr.destroy();
+        }
     }
 
     _syncDigHole() {

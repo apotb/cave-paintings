@@ -7,7 +7,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.look = typeof Look !== "undefined" ? Look.normalizeLook(look) : look;
         if (this.frame?.width !== 16) this.setFrame(1);
 
-        // Physics — hitbox matches human mob def
+        // Walk solid is a short strip on the feet, not the whole sprite.
         scene.mainLayer.add(this);
         scene.physics.add.existing(this);
         this._holdRingWalls = () => {
@@ -16,8 +16,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         scene.events.on("postupdate", this._holdRingWalls);
         const human = scene.getMob?.("human");
         this.hitboxSize = Number(human?.hitboxSize) || 8;
-        this.body.setSize(this.hitboxSize, this.hitboxSize)
-            .setOffset((this.width - this.hitboxSize) / 2, this.hitboxSize);
+        applyCreatureWalkBody(this);
         this.setOrigin(0, 1);
 
         // Body combat (RimWorld-style); flat hp kept only as unused legacy

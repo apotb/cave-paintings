@@ -567,15 +567,28 @@
     isBlocked(wx, wy, opts = {}) {
         if (this._tileBlocked(wx, wy, opts)) return true;
 
-        // Match client Thing.setup: only hitboxSize > 0 is solid (bushes/debris are not).
+        // hitboxSize > 0 is solid (bushes/debris are not). Figurines are
+        // the exception: their clay blocks are checked above.
         const { cx, cy } = worldToChunk(wx, wy);
         const c = this.chunks.get(chunkKey(cx, cy));
         if (!c) return false;
         const solidAt = (list) => {
             for (const t of list || []) {
                 if (!t || t.gone) continue;
+                const def = thingDefs().get(t.id);
+                if (typeof Place !== "undefined" && Place.isFigurineThing?.(def, t)) {
+                    const rects = Place.collisionWorldRects?.(t, def, TS) || [];
+                    const pad = 1;
+                    for (let i = 0; i < rects.length; i++) {
+                        const r = rects[i];
+                        if (wx > r.left - pad && wx < r.right + pad
+                            && wy > r.top - pad && wy < r.bottom + pad) {
+                            return true;
+                        }
+                    }
+                    continue;
+                }
                 if (opts.thingR != null) {
-                    const def = thingDefs().get(t.id);
                     const hs = Number(def?.hitboxSize);
                     if (!(hs > 0)) continue;
                     if (Math.abs(t.x - wx) < opts.thingR && Math.abs(t.y - wy) < opts.thingR) {

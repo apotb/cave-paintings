@@ -12,6 +12,33 @@
     const BLOCKED = { water: true, ice: true };
     const _maskBytes = new Map();
     const _wallBoxCache = new WeakMap();
+    const _figurineRectCache = new WeakMap();
+    /** Walk solid is this tall, sitting on the feet. Wider obstacles still use hitboxSize. */
+    const WALK_FEET_H = 4;
+    const FIGURINE_CELL = 2;
+    /** 3 of 4 columns. A one-pixel arm fills only half a cell. */
+    const FIGURINE_FILL = 3;
+
+    function formingApi() {
+        if (typeof Forming !== "undefined" && Forming.unpack) return Forming;
+        if (typeof require === "function") {
+            try { return require("./forming"); } catch (_) { return null; }
+        }
+        return null;
+    }
+
+    /**
+     * Feet-origin sprite. The solid is `hitboxSize` wide and a short strip
+     * at the bottom, so walking up to something stops at the feet.
+     */
+    function walkBodyAt(x, y, width, height, hitboxSize) {
+        const w = Number(width) > 0 ? Number(width) : 16;
+        const hs = Number(hitboxSize) > 0 ? Number(hitboxSize) : 8;
+        const feetH = Math.min(hs, WALK_FEET_H);
+        const left = (Number(x) || 0) + (w - hs) * 0.5;
+        const bottom = Number(y) || 0;
+        return { left, right: left + hs, top: bottom - feetH, bottom };
+    }
 
     function placeThingId(itemDef) {
         const id = itemDef?.place?.thing;
@@ -1021,10 +1048,154 @@
     }
 
     /**
+     * Top-down columns of a placed figurine, yawed the same way as the sprite.
+     * 1 = clay in that XZ column. Image X = voxel X, image Y = voxel Z.
+     */
+    function figurineColumnMask(entry) {
+        const Forming = formingApi();
+        if (!Forming || !entry?.formVoxels) return null;
+        const yawed = Forming.rotatePackYaw(entry.formVoxels, entry.rot)
+            || Forming.sanitizePack(entry.formVoxels);
+        const grid = yawed && Forming.unpack(yawed);
+        if (!grid) return null;
+        const n = Forming.SIZE || 16;
+        const mask = new Uint8Array(n * n);
+        for (let x = 0; x < n; x++) {
+            const yz = grid[x];
+            if (!yz) continue;
+            for (let z = 0; z < n; z++) {
+                for (let y = 0; y < n; y++) {
+                    if (!yz[y]?.[z]) continue;
+                    mask[z * n + x] = 1;
+                    break;
+                }
+            }
+        }
+        return mask;
+    }
+
+    /**
+     * 2×2 blocks of the clay footprint. A cell counts when at least 3 of its
+     * 4 columns are filled, so a one-voxel arm does not snag and the outline
+     * stays close to the sculpture. A speck that fills no cell still keeps
+     * one block at its densest spot.
+     */
+    function figurinePixelRects(mask) {
+        const n = 16;
+        const cell = FIGURINE_CELL;
+        const cells = n / cell;
+        const counts = new Uint8Array(cells * cells);
+        let total = 0;
+        let sx = 0;
+        let sz = 0;
+        for (let z = 0; z < n; z++) {
+            const cy = Math.floor(z / cell);
+            for (let x = 0; x < n; x++) {
+                if (!mask[z * n + x]) continue;
+                counts[cy * cells + Math.floor(x / cell)]++;
+                total++;
+                sx += x;
+                sz += z;
+            }
+        }
+        if (!total) return [];
+        const solid = new Uint8Array(cells * cells);
+        let any = false;
+        let bestI = 0;
+        let bestC = 0;
+        for (let i = 0; i < counts.length; i++) {
+            const c = counts[i];
+            if (c > bestC) {
+                bestC = c;
+                bestI = i;
+            }
+            if (c >= FIGURINE_FILL) {
+                solid[i] = 1;
+                any = true;
+            }
+        }
+        if (!any) {
+            if (bestC >= 2) solid[bestI] = 1;
+            else {
+                const cx = Math.min(cells - 1, Math.floor((sx / total) / cell));
+                const cy = Math.min(cells - 1, Math.floor((sz / total) / cell));
+                solid[cy * cells + cx] = 1;
+            }
+        }
+        const runs = [];
+        for (let cy = 0; cy < cells; cy++) {
+            let cx = 0;
+            while (cx < cells) {
+                if (!solid[cy * cells + cx]) {
+                    cx++;
+                    continue;
+                }
+                let end = cx;
+                while (end + 1 < cells && solid[cy * cells + end + 1]) end++;
+                runs.push({ cx, end, cy, used: false });
+                cx = end + 1;
+            }
+        }
+        const out = [];
+        for (let i = 0; i < runs.length; i++) {
+            if (runs[i].used) continue;
+            const run = runs[i];
+            run.used = true;
+            let cy1 = run.cy;
+            for (;;) {
+                let found = -1;
+                for (let j = 0; j < runs.length; j++) {
+                    const other = runs[j];
+                    if (other.used || other.cy !== cy1 + 1) continue;
+                    if (other.cx !== run.cx || other.end !== run.end) continue;
+                    found = j;
+                    break;
+                }
+                if (found < 0) break;
+                runs[found].used = true;
+                cy1++;
+            }
+            out.push({
+                left: run.cx * cell,
+                right: (run.end + 1) * cell,
+                top: run.cy * cell,
+                bottom: (cy1 + 1) * cell
+            });
+        }
+        return out;
+    }
+
+    /** Sprite origin (0.5, 1). Pixel (0, 0) is the north-west corner. */
+    function figurineCollisionRects(entry) {
+        if (!entry || entry.gone) return [];
+        const sig = `${entry.rot | 0}|${entry.formVoxels || ""}|${entry.x}|${entry.y}`;
+        const cached = _figurineRectCache.get(entry);
+        if (cached && cached.sig === sig) return cached.rects;
+        const mask = figurineColumnMask(entry);
+        const pix = mask ? figurinePixelRects(mask) : [];
+        const ax = Number(entry.x) || 0;
+        const ay = Number(entry.y) || 0;
+        const rects = [];
+        for (let i = 0; i < pix.length; i++) {
+            const r = pix[i];
+            rects.push({
+                left: ax - 8 + r.left,
+                right: ax - 8 + r.right,
+                top: ay - 16 + r.top,
+                bottom: ay - 16 + r.bottom
+            });
+        }
+        _figurineRectCache.set(entry, { sig, rects });
+        return rects;
+    }
+
+    /**
      * Walk blockers. A wall mask becomes one rect per meshed run so the
-     * interior and doorway stay open. Other things stay a single rect.
+     * interior and doorway stay open. A figurine is coarse blocks of its
+     * clay. Other things stay a single rect.
      */
     function collisionWorldRects(entry, thingDef, tileSize) {
+        if (isFigurineThing(thingDef, entry)) return figurineCollisionRects(entry);
         const boxes = ringBoxesFor(thingDef) || wallBoxesFor(thingDef);
         if (boxes && boxes.length && entry && !entry.gone) {
             const anchor = spriteAnchor(entry, thingDef, tileSize);
@@ -1425,8 +1596,10 @@
         entryFootprintTiles,
         footprintWorldRect,
         hitboxWH,
+        walkBodyAt,
         collisionWorldRect,
         collisionWorldRects,
+        figurineCollisionRects,
         spriteAnchor,
         rotateAnchorOffset,
         worldToSpritePixel,

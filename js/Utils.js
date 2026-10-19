@@ -2188,7 +2188,22 @@ function pawnTileBlocked(pawn, x, y) {
     return false;
 }
 
-/** True if the 8×8 body at (x,y), grown by `pad`, hits a Thing or blocked tile. */
+/** Size the arcade body to the feet strip Place.walkBodyAt uses. */
+function applyCreatureWalkBody(sprite) {
+    const body = sprite?.body;
+    if (!body?.setSize) return;
+    const w = sprite.width || 16;
+    const h = sprite.height || 16;
+    const hs = Number(sprite.hitboxSize) || 8;
+    const box = (typeof Place !== "undefined" && Place.walkBodyAt)
+        ? Place.walkBodyAt(0, 0, w, h, hs)
+        : { left: (w - hs) * 0.5, right: (w + hs) * 0.5, top: -4, bottom: 0 };
+    const bw = Math.max(1, box.right - box.left);
+    const bh = Math.max(1, box.bottom - box.top);
+    body.setSize(bw, bh).setOffset(box.left, h - bh);
+}
+
+/** True if the feet strip at (x,y), grown by `pad`, hits a Thing or blocked tile. */
 function pawnPoseBlocked(pawn, x, y, pad = 0) {
     const body = pawn?.body;
     const scene = pawn?.scene;
