@@ -48,8 +48,10 @@
     const near = (...args) => ctx.near(...args);
     const keepGearOpts = (...args) => ctx.keepGearOpts(...args);
     const findStack = (...args) => ctx.findStack(...args);
-    const findNearestStored = (...args) => ctx.findNearestStored(...args);
+    const equipHand = (...args) => ctx.equipHand(...args);
+    const freeHandSlot = (...args) => ctx.freeHandSlot(...args);
     const canGivePawn = (...args) => ctx.canGivePawn(...args);
+    const findNearestStored = (...args) => ctx.findNearestStored(...args);
     const rackHang = (...args) => ctx.rackHang(...args);
     const patientNeedsTend = (...args) => ctx.patientNeedsTend(...args);
     const findSettle = (...args) => ctx.findSettle(...args);
@@ -790,8 +792,14 @@ function fetchBenchMats(world, rec, settle, bill, recipe) {
     const toolClass = recipe.requireTool?.toolClass || "awl";
     const awl = findStack(world, rec, settle, (s) => Carry.stackToolClass(s, getItem(s.id)) === toolClass);
     if (!awl) return { blocked: true, halt: true };
-    if (awl.at !== rec) return fetchOrBlock(world, rec, settle, awl);
-    rec.hotbarIndex = awl.index;
+    if (awl.at !== rec) {
+        const stack = awl.slots?.[awl.index];
+        if (!canGivePawn(rec, stack) && !(freeHandSlot(rec) && canGivePawn(rec, stack))) {
+            return { blocked: true, halt: true };
+        }
+        return fetchOrBlock(world, rec, settle, awl);
+    }
+    if (!equipHand(rec, awl)) return { blocked: true, halt: true };
     return null;
 }
 
@@ -906,14 +914,28 @@ function workJobOn(settle, rec, type) {
     return Settlement.jobEnabled(jobsOn(settle, rec), type);
 }
 
+/**
+ * A flesh/brain channel that cannot run has to let the rack go. Restarting
+ * it every tick kept the station claimed while the settler stood still.
+ */
+function clearWorkChannel(world, rec, ch, reason) {
+    rec._workChannel = null;
+    endWorkHold(rec);
+    if (reason !== "invalid") return;
+    if (!ch || (ch.kind !== "flesh" && ch.kind !== "brain") || !ch.uid) return;
+    skipJob(rec, stationKey({ uid: ch.uid }));
+    rec._settlerScan = null;
+    rec._settlerScanMs = SCAN_MS;
+}
+
 function tickChannel(world, rec, dtMs) {
     const ch = rec?._workChannel;
     if (!ch) return;
     const settle = findSettle(world, rec);
     const jobName = Settlement.channelJob ? Settlement.channelJob(ch) : ch.kind;
-    if ((settle && !workJobOn(settle, rec, jobName)) || !channelStillValid(world, rec, ch)) {
-        rec._workChannel = null;
-        endWorkHold(rec);
+    const jobOff = !!(settle && !workJobOn(settle, rec, jobName));
+    if (jobOff || !channelStillValid(world, rec, ch)) {
+        clearWorkChannel(world, rec, ch, jobOff ? "job" : "invalid");
         return;
     }
     ch.remaining -= Number(dtMs) || 0;
@@ -1205,6 +1227,7 @@ function doLightFire(world, rec, settle, fire) {
     ctx.fetchBenchMats = fetchBenchMats;
     ctx.findChannelPatient = findChannelPatient;
     ctx.channelStillValid = channelStillValid;
+    ctx.clearWorkChannel = clearWorkChannel;
     ctx.finishWorkChannel = finishWorkChannel;
     ctx.jobsOn = jobsOn;
     ctx.workJobOn = workJobOn;

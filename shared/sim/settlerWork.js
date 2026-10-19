@@ -87,6 +87,7 @@ const shellRequire = typeof require === "function" ? require : undefined;
     const jobsOn = (...args) => ctx.jobsOn(...args);
     const workJobOn = (...args) => ctx.workJobOn(...args);
     const channelStillValid = (...args) => ctx.channelStillValid(...args);
+    const clearWorkChannel = (...args) => ctx.clearWorkChannel(...args);
     const endWorkHold = (...args) => ctx.endWorkHold(...args);
     const workChannelLabel = (...args) => ctx.workChannelLabel(...args);
     const haltAtRack = (...args) => ctx.haltAtRack(...args);
@@ -176,9 +177,9 @@ function tick(world, mob, delta) {
         const chJob = Settlement.channelJob
             ? Settlement.channelJob(rec._workChannel)
             : rec._workChannel.kind;
-        if (!workJobOn(settle, rec, chJob) || !channelStillValid(world, rec, rec._workChannel)) {
-            rec._workChannel = null;
-            endWorkHold(rec);
+        const jobOff = !workJobOn(settle, rec, chJob);
+        if (jobOff || !channelStillValid(world, rec, rec._workChannel)) {
+            clearWorkChannel(world, rec, rec._workChannel, jobOff ? "job" : "invalid");
         } else {
             setSettlerAct(rec, mob, workChannelLabel(world, rec));
             const ch = rec._workChannel;

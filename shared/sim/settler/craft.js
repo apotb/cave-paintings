@@ -58,6 +58,11 @@
     const walkTo = (...args) => ctx.walkTo(...args);
     const takeOne = (...args) => ctx.takeOne(...args);
     const haltAtRack = (...args) => ctx.haltAtRack(...args);
+    const equipHand = (...args) => ctx.equipHand(...args);
+    const canGivePawn = (...args) => ctx.canGivePawn(...args);
+    const freeHandSlot = (...args) => ctx.freeHandSlot(...args);
+    const walkStuck = (...args) => ctx.walkStuck(...args);
+    const near = (...args) => ctx.near(...args);
     const putInBasket = (...args) => ctx.putInBasket(...args);
     const knapQualityDurationScale = (...args) => ctx.knapQualityDurationScale(...args);
     const manipScale = (...args) => ctx.manipScale(...args);
@@ -383,21 +388,51 @@ function doLeather(world, rec, settle, job) {
         // Fetch the tool/brain first. Walking to the rack first made them
         // arrive, then path to a basket, then re-approach the rack every
         // tick — a north/south jiggle on the interact-range boundary.
-        if (need === "scraper") {
-            const tool = findStack(world, rec, settle, (s) => Carry.stackToolClass(s, getItem(s.id)) === "scraper");
-            if (!tool) return halt();
-            if (tool.at !== rec) return fetchStack(world, rec, settle, tool) || halt();
-            rec.hotbarIndex = tool.index;
-        } else if (need === "brain") {
-            const brain = findStack(world, rec, settle, (s) => Hide.isBrainItem(getItem(s.id)));
-            if (!brain) return halt();
-            if (brain.at !== rec) return fetchStack(world, rec, settle, brain) || halt();
-            rec.hotbarIndex = brain.index;
+        const pred = need === "scraper"
+            ? (s) => Carry.stackToolClass(s, getItem(s.id)) === "scraper"
+            : (need === "brain" ? (s) => Hide.isBrainItem(getItem(s.id)) : null);
+        if (pred) {
+            const tool = findStack(world, rec, settle, pred);
+            if (!tool) {
+                stopLeather(world, rec, job, true);
+                return halt();
+            }
+            if (tool.at !== rec) {
+                const stack = tool.slots?.[tool.index];
+                if (!canGivePawn(rec, stack) && !(freeHandSlot(rec) && canGivePawn(rec, stack))) {
+                    stopLeather(world, rec, job, true);
+                    return halt();
+                }
+                return fetchStack(world, rec, settle, tool) || halt();
+            }
+            // A backpack index is not a hotbar slot. Selecting it starts a
+            // scrape that the next tick throws out, and the rack stays claimed.
+            if (!equipHand(rec, tool)) {
+                stopLeather(world, rec, job, true);
+                return halt();
+            }
         }
         const walked = goOrWalk(world, rec, rack);
-        if (walked) return walked;
+        if (walked) {
+            if (walkStuck(world, rec)) {
+                stopLeather(world, rec, job, true);
+                return halt();
+            }
+            return walked;
+        }
+        if (!near(rec.x, rec.y, rack.x, rack.y)) {
+            if (walkStuck(world, rec)) {
+                stopLeather(world, rec, job, true);
+                return halt();
+            }
+            return walkTo(rack.x, rack.y, { openRadius: 0 });
+        }
         const hang = rackHang(rack);
-        if (!hang) return haltAtRack(rec, rack);
+        if (!hang) {
+            endWorkHold(rec);
+            rec._settlerScan = null;
+            return halt();
+        }
         if (need === "scraper") {
             const held = rec.inventory[rec.hotbarIndex];
             const seconds = Hide.FLESH_SECONDS || 10;
@@ -520,21 +555,10 @@ function carriedCraftQty(rec, id) {
 }
 
 function holdTool(rec, found, classes) {
-    if (!found || found.at !== rec) return false;
-    if (found.kind === "overflow") {
-        const piece = takeOne(found);
-        if (!piece || !givePawn(rec, piece)) {
-            if (piece) found.slots[found.index] = piece;
-            return false;
-        }
-        const idx = (rec.inventory || []).indexOf(piece);
-        if (idx >= 0) rec.hotbarIndex = idx;
-        return true;
-    }
-    const cls = Carry.stackToolClass(found.slots[found.index], getItem(found.slots[found.index]?.id));
-    if (!classes.includes(cls)) return false;
-    rec.hotbarIndex = found.index;
-    return true;
+    if (!equipHand(rec, found)) return false;
+    const held = rec.inventory?.[rec.hotbarIndex];
+    const cls = Carry.stackToolClass(held, held ? getItem(held.id) : null);
+    return classes.includes(cls);
 }
 
 /** 40% crude, 30% rough, 20% break, 10% fine. Null is a shattered blank. */

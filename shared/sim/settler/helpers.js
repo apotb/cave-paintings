@@ -621,6 +621,63 @@ function givePawn(rec, stack) {
     return true;
 }
 
+/** Park one hotbar stack in an empty backpack slot so a tool can be held. */
+function freeHandSlot(rec) {
+    const inv = rec?.inventory || [];
+    if (inv.some((s) => !s)) return true;
+    const over = rec?.overflow || [];
+    const empty = over.findIndex((s) => !s);
+    const from = inv.findIndex((s) => s && s.id);
+    if (empty < 0 || from < 0) return false;
+    over[empty] = inv[from];
+    inv[from] = null;
+    return true;
+}
+
+/**
+ * Select `found` on the hotbar. A backpack stack is moved into the hand,
+ * swapping a hotbar stack into that pocket when the bar is full.
+ */
+function equipHand(rec, found) {
+    if (!found || found.at !== rec) return false;
+    if (found.kind !== "overflow") {
+        rec.hotbarIndex = found.index;
+        return true;
+    }
+    const piece = takeOne(found);
+    if (!piece) return false;
+    if (givePawn(rec, piece)) {
+        const idx = (rec.inventory || []).indexOf(piece);
+        if (idx >= 0) rec.hotbarIndex = idx;
+        return true;
+    }
+    const inv = rec.inventory || [];
+    const swap = inv.findIndex((s) => s && s.id);
+    const hole = found.index;
+    const left = found.slots[hole];
+    if (swap < 0) {
+        if (!left) found.slots[hole] = piece;
+        else left.quantity = (Number(left.quantity) || 1) + (Number(piece.quantity) || 1);
+        return false;
+    }
+    if (!left) {
+        found.slots[hole] = inv[swap];
+        inv[swap] = piece;
+        rec.hotbarIndex = swap;
+        return true;
+    }
+    const over = found.slots;
+    const empty = over.findIndex((s) => !s);
+    if (empty < 0) {
+        left.quantity = (Number(left.quantity) || 1) + (Number(piece.quantity) || 1);
+        return false;
+    }
+    over[empty] = inv[swap];
+    inv[swap] = piece;
+    rec.hotbarIndex = swap;
+    return true;
+}
+
 function canGivePawn(rec, stack) {
     if (!stack?.id) return false;
     if (!(rec.inventory || []).some((s) => !s)) return false;
@@ -1666,7 +1723,10 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     ctx.takeCookPiece = takeCookPiece;
     ctx.takeFound = takeFound;
     ctx.givePawn = givePawn;
+    ctx.freeHandSlot = freeHandSlot;
+    ctx.equipHand = equipHand;
     ctx.canGivePawn = canGivePawn;
+    ctx.walkStuck = medicineWalkStuck;
     ctx.craftFreesInvSlot = craftFreesInvSlot;
     ctx.canReceiveCraft = canReceiveCraft;
     ctx.stopLeather = stopLeather;

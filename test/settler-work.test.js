@@ -1972,6 +1972,66 @@ test("dedicated settler fleshes a hang over the scrape channel", () => {
     assert.equal(rec._workChannel, null);
 });
 
+test("dedicated settler fleshes with a scraper that is only in the backpack", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "stick", quantity: 1 },
+            { id: "stick", quantity: 1 },
+            { id: "stick", quantity: 1 },
+            { id: "stick", quantity: 1 },
+            { id: "stick", quantity: 1 }
+        ]
+    });
+    rec.overflow = [
+        { id: "pebble", toolClass: "scraper", knapQuality: "rough", quantity: 1 },
+        null
+    ];
+    const rack = addStation(world, settle, "drying_rack", rec.x, rec.y, "rack-pack");
+    rack.slots[0] = { id: "deer_hide", quantity: 1 };
+    Settlement.addBill(settle, rack.uid, { recipeId: "flesh_hide", mode: "forever", paused: false });
+    workOnce(world, rec);
+    assert.equal(rec._workChannel?.kind, "flesh");
+    assert.equal(rec.inventory[rec._workChannel.slot]?.toolClass, "scraper");
+    world.tick(11000);
+    assert.equal(rack.slots[0]?.id, "deer_hide_fleshed");
+    assert.equal(rec._workChannel, null);
+});
+
+test("a settler who cannot keep fleshing lets someone else take the rack", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "pebble", toolClass: "scraper", knapQuality: "rough", quantity: 1 },
+            null, null, null, null
+        ]
+    });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
+    const rack = addStation(world, settle, "drying_rack", rec.x, rec.y, "rack-give");
+    rack.slots[0] = { id: "deer_hide", quantity: 1 };
+    Settlement.addBill(settle, rack.uid, { recipeId: "flesh_hide", mode: "forever", paused: false });
+    workOnce(world, rec);
+    assert.equal(rec._workChannel?.kind, "flesh");
+    rec.inventory[rec.hotbarIndex] = null;
+    const other = addHomeSettler(world, pawn, settle, {
+        id: "flesher2",
+        x: rec.x,
+        y: rec.y,
+        inventory: [
+            { id: "pebble", toolClass: "scraper", knapQuality: "rough", quantity: 1 },
+            null, null, null, null
+        ],
+        jobs: { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 }
+    });
+    world.tick(40);
+    assert.equal(rec._workChannel, null);
+    const claims = world._settlerClaims?.get(settle.id);
+    assert.notEqual(claims?.claimedBy(`station:${rack.uid}`), rec.id);
+    world.tick(11000);
+    assert.equal(rack.slots[0]?.id, "deer_hide_fleshed");
+    assert.equal(other._workChannel, null);
+});
+
 test("dedicated settler leaves fleshed hide on the rack instead of stashing it", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {
