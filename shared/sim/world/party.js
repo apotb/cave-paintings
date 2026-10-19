@@ -1087,7 +1087,12 @@
                     if (spawnBlocked(sx, sy)) continue;
                 }
             }
-            const inventory = Party.rollWandererInventory(() => this.rng(), { fullParty: full });
+            const inventory = Party.rollWandererInventory(() => this.rng(), {
+                fullParty: full,
+                x: sx,
+                y: sy,
+                tileSize: TS
+            });
             const id = uuid();
             const h = inward;
             this.wanderers.set(id, {

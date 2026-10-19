@@ -761,21 +761,60 @@
         return { id: row.id, quantity: _randInt(rng, row.lo, row.hi) };
     }
 
+    function worldGenApi() {
+        if (typeof WorldGen !== "undefined" && typeof WorldGen.rockStoneAt === "function") return WorldGen;
+        if (typeof module === "object" && module.exports) {
+            try { return require("./sim/WorldGen"); } catch (_) { return null; }
+        }
+        return null;
+    }
+
+    /**
+     * Stone a rock on this world position would take. Null when the spot is unknown,
+     * so a caller that has no tile leaves the stack unstuffed.
+     */
+    function stoneAtWorld(x, y, tileSize) {
+        const wx = Number(x);
+        const wy = Number(y);
+        if (!Number.isFinite(wx) || !Number.isFinite(wy)) return null;
+        const ts = Number(tileSize) > 0 ? Number(tileSize) : 16;
+        const tx = Math.floor(wx / ts);
+        const ty = Math.floor(wy / ts);
+        return worldGenApi()?.rockStoneAt?.(tx, ty) || "andesite";
+    }
+
+    /** Pebble spear and pebble pile take the rock from the spawn tile. */
+    function stampSpawnStone(stack, stone) {
+        if (!stack || !stone) return;
+        if (stack.id === "stone_spear") {
+            stack.knapMaterial = "pebble";
+            stack.stone = stone;
+        } else if (stack.id === "pebble") {
+            stack.stone = stone;
+        }
+    }
+
     /**
      * Sticks, leaves, pebbles, plus a held weapon when they rolled one.
+     * A stone spear and the pebbles take the stone a rock on the spawn tile would have.
      * Full parties see better spears and food more often. Always 5 slots.
+     * Pass `x` and `y` (and `tileSize` when it is not 16) so the rock can be looked up.
      */
     function rollWandererInventory(rng, opts = null) {
         const r = rngOf(rng);
         const full = !!(opts && (opts.fullParty || isPartyFull(opts.partyCount)));
+        const stone = stoneAtWorld(opts?.x, opts?.y, opts?.tileSize);
         const weaponId = rollGearId(r, { fullParty: full });
         const weapon = (weaponId === "sharp_stick" || weaponId === "wooden_spear" || weaponId === "stone_spear")
             ? { id: weaponId, quantity: 1 }
             : null;
+        if (weapon) stampSpawnStone(weapon, stone);
+        const pebbles = { id: "pebble", quantity: _randInt(r, 2, 4) };
+        stampSpawnStone(pebbles, stone);
         const inv = [];
         if (weapon) inv.push(weapon);
         inv.push(
-            { id: "pebble", quantity: _randInt(r, 2, 4) },
+            pebbles,
             { id: "stick", quantity: _randInt(r, 2, 5) },
             { id: "leaf", quantity: _randInt(r, 3, 7) }
         );

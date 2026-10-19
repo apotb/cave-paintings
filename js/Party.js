@@ -568,7 +568,12 @@ class PartySystem {
                 ? Party.isPartyFull(partyN)
                 : partyN >= 6;
             pawn.inventory = typeof Party !== "undefined" && Party.rollWandererInventory
-                ? Party.rollWandererInventory(undefined, { fullParty: full })
+                ? Party.rollWandererInventory(undefined, {
+                    fullParty: full,
+                    x: pawn.x,
+                    y: pawn.y,
+                    tileSize: scene.tileSize
+                })
                 : [{ id: "pebble", quantity: 2 }, { id: "stick", quantity: 3 }, { id: "leaf", quantity: 4 }, null, null];
             while (pawn.inventory.length < 5) pawn.inventory.push(null);
         }
@@ -2829,7 +2834,7 @@ class PartySystem {
                 y = anchor.y;
             }
             const inv = typeof Party !== "undefined" && Party.rollWandererInventory
-                ? Party.rollWandererInventory(undefined, { fullParty: full })
+                ? Party.rollWandererInventory(undefined, { fullParty: full, x, y, tileSize: ts })
                 : null;
             if (this.spawnWanderer({ x, y, heading: anchor.heading, inventory: inv })) spawned++;
         }

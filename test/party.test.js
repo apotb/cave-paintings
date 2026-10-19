@@ -209,6 +209,43 @@ test("pickAutoEat prefers soonest-spoil prepared food across meals and roasted",
     assert.equal(pick.stack.id, "roasted_apple");
 });
 
+test("wanderer stone spear and pebbles use the rock on the spawn tile", () => {
+    const WorldGen = require("../shared/sim/WorldGen");
+    const Stone = require("../shared/stone");
+    const seed = WorldGen.pickWorldSeed(20260814);
+    WorldGen.applySeed(seed);
+    let spot = null;
+    for (let ty = -48; ty <= 48 && !spot; ty++) {
+        for (let tx = -48; tx <= 48; tx++) {
+            const stone = WorldGen.rockStoneAt(tx, ty);
+            if (stone && stone !== "andesite") {
+                spot = { tx, ty, stone };
+                break;
+            }
+        }
+    }
+    assert.ok(spot, "expected a non-andesite rock tile");
+    const x = spot.tx * 16 + 8;
+    const y = spot.ty * 16 + 8;
+    // Gear table is last: 0.84+ is a stone spear when the party is full.
+    const rng = () => 0.9;
+    const inv = Party.rollWandererInventory(rng, { fullParty: true, x, y });
+    const spear = inv.find((s) => s && s.id === "stone_spear");
+    const pebbles = inv.find((s) => s && s.id === "pebble");
+    assert.ok(spear);
+    assert.equal(spear.knapMaterial, "pebble");
+    assert.equal(spear.stone, spot.stone);
+    assert.equal(pebbles.stone, spot.stone);
+    const name = Stone.TYPES[spot.stone].name;
+    assert.equal(Stone.displayName(spear), `${name} Spear`);
+    assert.equal(Stone.displayName(pebbles), `${name} Pebble`);
+
+    const bare = Party.rollWandererInventory(rng, { fullParty: true });
+    const bareSpear = bare.find((s) => s && s.id === "stone_spear");
+    assert.equal(bareSpear.stone, undefined);
+    assert.equal(bareSpear.knapMaterial, undefined);
+});
+
 test("pickAutoEat prefers soonest-spoil raw when no prepared food exists", () => {
     const eater = {
         id: "s",
