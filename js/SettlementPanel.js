@@ -334,6 +334,22 @@ class SettlementPanel {
         this.scrollTrack.setVisible(false);
         this.scrollThumb.setVisible(false);
         this.scene.settlementSys?._drawRange?.(null, false);
+        // Escape leaves the pointer inside the control, so pointerout never runs.
+        this._dismissTooltip();
+    }
+
+    _dismissTooltip() {
+        const scene = this.scene;
+        if (!scene) return;
+        const under = (obj) => !!scene._isUnderSettlementPanel?.(obj);
+        const hover = scene._hoverTarget;
+        if (under(hover)) {
+            scene._hoverTarget = null;
+            if (hover?.active && hover.input?.enabled) {
+                try { hover.emit("pointerout", scene.input?.activePointer); } catch (_) {}
+            }
+        }
+        if (under(hover) || under(scene._tooltipTarget)) scene.hideTooltip?.();
     }
 
     layout() {

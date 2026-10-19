@@ -907,7 +907,10 @@
                         const b = prev.getBounds?.();
                         if (b) {
                             if (this._isUiTooltipTarget(prev)) {
+                                // A closed menu still has bounds. Don't keep its tip
+                                // until the pointer happens to leave that rect.
                                 if (!prev._lockPixelHitKey
+                                    && this._objectShown?.(prev)
                                     && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y)) {
                                     top = prev;
                                 }
@@ -963,6 +966,11 @@
                 if (prev && prev.active && prev.input?.enabled) {
                     prev.emit("pointerout", pointer);
                 } else if (this._tooltipTarget && this._tooltipTarget !== top) {
+                    this.hideTooltip();
+                }
+                // Menu rows swallow pointerout while the cursor is still inside
+                // the hit. A hidden target has to drop the tip anyway.
+                if (this._tooltipTarget && !this._objectShown?.(this._tooltipTarget)) {
                     this.hideTooltip();
                 }
 
