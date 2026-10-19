@@ -301,5 +301,5 @@ test("queueTextures does not request the old pebble item icon", () => {
     scene.load._queued = scene._queued;
     Content.queueTextures(scene);
     assert.equal(scene._queued.some((q) => q.url === "assets/items/pebble.png"), false);
-    assert.ok(scene._queued.some((q) => q.key === "pebble_1" && q.url === "assets/things/pebble_1.png"));
+    assert.ok(scene._queued.some((q) => q.key === "pebble_1" && q.url === "assets/things/pebble/1.png"));
 });

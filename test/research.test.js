@@ -585,14 +585,17 @@ test("remove tooltip is how many paintings this circle would leave you short", (
 test("painting circle overlay loads sit next to the rock layers", () => {
     const def = DataStore.getThing("painting_circle");
     const loads = Place.thingImageLoads(def);
-    assert.equal(loads[0].key, "painting_circle_0");
-    assert.equal(loads[0].path, "assets/things/painting_circle/painting_circle_0.png");
-    assert.equal(loads[1].key, "painting_circle_tint_1");
-    assert.equal(loads[1].path, "assets/things/painting_circle/painting_circle_1.png");
-    assert.equal(loads[2].key, "painting_circle_tint_2");
-    assert.equal(loads[2].path, "assets/things/painting_circle/painting_circle_2.png");
+    assert.equal(loads[0].key, "painting_circle_1");
+    assert.equal(loads[0].path, "assets/things/painting_circle/1.png");
+    assert.equal(loads[1].key, "painting_circle_2");
+    assert.equal(loads[1].path, "assets/things/painting_circle/2.png");
+    assert.equal(loads[2].key, "painting_circle_3");
+    assert.equal(loads[2].path, "assets/things/painting_circle/3.png");
     assert.equal(loads.length, 10);
-    assert.equal(loads[8].key, "painting_circle_6");
+    assert.equal(loads[3].key, "painting_circle_dye_1");
+    assert.equal(loads[3].path, "assets/things/painting_circle/dye_1.png");
+    assert.equal(loads[8].key, "painting_circle_dye_6");
+    assert.equal(loads[8].path, "assets/things/painting_circle/dye_6.png");
     assert.equal(loads[9].key, "painting_circle_upgrade_stick");
     assert.equal(loads[9].path, "assets/things/painting_circle/upgrade_stick.png");
 });

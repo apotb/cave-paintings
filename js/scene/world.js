@@ -1573,7 +1573,7 @@
             ? Hide.hangingTextureKey(info.thingDef)
             : null;
         const rotTex = typeof Place !== "undefined"
-            ? Place.rotationTextureKey(info.thingDef.key, rot)
+            ? Place.facingTextureKey(info.thingDef, rot)
             : info.thingDef.key;
         const stoneGhostKey = (info.thingId === "grindstone" && typeof ensureStoneTexture === "function")
             ? ensureStoneTexture(this, "grindstone", 1, info.held?.stone)
@@ -1633,7 +1633,7 @@
             if (this._hutGhostFront) this._hutGhostFront.setVisible(false);
         }
         const frameTex = !hutGhost && (typeof Place !== "undefined" && info.thingDef?.sleep)
-            ? Place.rotationFrameTextureKey(info.thingDef.key, rot)
+            ? Place.rotationWallTextureKey(info.thingDef.key, rot)
             : null;
         if (frameTex && this.textures.exists(frameTex)) {
             let frame = this._placeGhostFrame;

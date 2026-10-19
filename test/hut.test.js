@@ -22,9 +22,9 @@ function hit(rects, x, y) {
     return rects.some((r) => x >= r.left && x < r.right && y >= r.top && y < r.bottom);
 }
 
-/** 2-bit indexed hut_wall.png, decoded once. */
+/** 2-bit indexed hut/wall.png, decoded once. */
 function wallOpaqueGrid() {
-    const data = fs.readFileSync(path.join(__dirname, "../assets/things/hut/hut_wall.png"));
+    const data = fs.readFileSync(path.join(__dirname, "../assets/things/hut/wall.png"));
     let pos = 8;
     let w = 0;
     let h = 0;
@@ -455,7 +455,7 @@ test("hut is researched after camping and crafts just after the lean-to", () => 
     assert.equal(Sleep.healBonus(thingDef("lean_to")), 8);
     const loads = Place.thingImageLoads(thingDef("hut"));
     assert.deepEqual(loads.map((l) => l.path), [
-        "assets/things/hut/hut_floor.png",
-        "assets/things/hut/hut_wall.png"
+        "assets/things/hut/floor.png",
+        "assets/things/hut/wall.png"
     ]);
 });

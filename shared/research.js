@@ -341,7 +341,7 @@
 
     function overlayKey(i, thingKey) {
         const key = thingKey || "painting_circle";
-        return `${key}_${i}`;
+        return `${key}_dye_${i}`;
     }
 
     function tallyOverlayKey(thingKey) {

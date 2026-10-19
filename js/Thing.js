@@ -30,7 +30,7 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
     static textureKeyFor(scene, meta, rot) {
         if (!meta?.key) return "";
         if (typeof Place !== "undefined" && Array.isArray(meta.rotations) && meta.rotations.length) {
-            const tex = Place.rotationTextureKey(meta.key, rot);
+            const tex = Place.facingTextureKey(meta, rot);
             if (scene?.textures?.exists(tex)) return tex;
         }
         return meta.key;
@@ -100,7 +100,7 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
             return;
         }
         if (typeof Place !== "undefined" && Array.isArray(this.meta.rotations) && this.meta.rotations.length) {
-            const tex = Place.rotationTextureKey(this.meta.key, this.entry?.rot);
+            const tex = Place.facingTextureKey(this.meta, this.entry?.rot);
             if (this.scene.textures.exists(tex)) {
                 this.setTexture(tex);
                 if (this.body) this._positionBody();
@@ -1425,7 +1425,7 @@ class LeanTo extends Thing {
     applyVisual() {
         let tex = this.meta?.key;
         if (typeof Place !== "undefined" && Array.isArray(this.meta?.rotations) && this.meta.rotations.length) {
-            const rotTex = Place.rotationTextureKey(this.meta.key, this.entry?.rot);
+            const rotTex = Place.facingTextureKey(this.meta, this.entry?.rot);
             if (this.scene.textures.exists(rotTex)) tex = rotTex;
         }
         if (this.meta?.anim || !tex || this.texture?.key !== tex) {
@@ -1449,13 +1449,13 @@ class LeanTo extends Thing {
         return (Number(this.y) || 0) - h - 1;
     }
 
-    frameTextureKey() {
+    wallTextureKey() {
         if (typeof Place === "undefined") return "";
-        return Place.rotationFrameTextureKey(this.meta?.key, this.entry?.rot);
+        return Place.rotationWallTextureKey(this.meta?.key, this.entry?.rot);
     }
 
     _syncFrame() {
-        const tex = this.frameTextureKey();
+        const tex = this.wallTextureKey();
         if (!tex || !this.scene.textures.exists(tex)) {
             this._destroyFrame();
             return;

@@ -92,8 +92,29 @@
         return `${thingKey}_${normalizeRot(rot)}`;
     }
 
-    function rotationFrameTextureKey(thingKey, rot) {
-        return `${thingKey}_frame_${normalizeRot(rot)}`;
+    function rotationFloorTextureKey(thingKey, rot) {
+        return `${thingKey}_floor_${normalizeRot(rot)}`;
+    }
+
+    function rotationWallTextureKey(thingKey, rot) {
+        return `${thingKey}_wall_${normalizeRot(rot)}`;
+    }
+
+    // A lean-to draws a floor and a wall for each facing. A hut bakes those
+    // from one floor image and one wall image, so it stays on rotationTextureKey.
+    function facingTextureKey(thingDef, rot) {
+        const key = thingDef?.key || "";
+        if (thingDef?.sleep && !(thingDef.floor && thingDef.wall)) {
+            return rotationFloorTextureKey(key, rot);
+        }
+        return rotationTextureKey(key, rot);
+    }
+
+    // Folder is the thing. The file is the texture key with that prefix removed.
+    function partFile(folder, textureKey) {
+        const name = String(textureKey || "");
+        const prefix = `${folder}_`;
+        return name.startsWith(prefix) ? name.slice(prefix.length) : name;
     }
 
     function thingImageLoads(t) {
@@ -101,8 +122,8 @@
         if (!t?.key) return [];
         if (t.floor && t.wall) {
             return [
-                { key: t.floor, path: `assets/things/${t.key}/${t.floor}.png` },
-                { key: t.wall, path: `assets/things/${t.key}/${t.wall}.png` }
+                { key: t.floor, path: `assets/things/${t.key}/${partFile(t.key, t.floor)}.png` },
+                { key: t.wall, path: `assets/things/${t.key}/${partFile(t.key, t.wall)}.png` }
             ];
         }
         // Recolored variant art (the grindstone) stays in one drawing. It lists
@@ -111,8 +132,23 @@
         if (Array.isArray(t.rotations) && t.rotations.length && !variantArt) {
             const loads = [];
             const seen = new Set();
+            const shelter = !!(t.sleep && !(t.floor && t.wall));
             for (const raw of t.rotations) {
                 const rot = normalizeRot(raw);
+                if (shelter) {
+                    const floorKey = rotationFloorTextureKey(t.key, rot);
+                    if (seen.has(floorKey)) continue;
+                    seen.add(floorKey);
+                    loads.push({
+                        key: floorKey,
+                        path: `assets/things/${t.key}/floor_${rot}.png`
+                    });
+                    loads.push({
+                        key: rotationWallTextureKey(t.key, rot),
+                        path: `assets/things/${t.key}/wall_${rot}.png`
+                    });
+                    continue;
+                }
                 const key = rotationTextureKey(t.key, rot);
                 if (seen.has(key)) continue;
                 seen.add(key);
@@ -120,27 +156,21 @@
                     key,
                     path: `assets/things/${t.key}/${rot}.png`
                 });
-                if (t.sleep) {
-                    loads.push({
-                        key: rotationFrameTextureKey(t.key, rot),
-                        path: `assets/things/${t.key}/frame_${rot}.png`
-                    });
-                }
             }
             return loads;
         }
         if (t.paintingCircle) {
-            // Leaves stay untinted. tint_1 and tint_2 are the two rock colors.
-            // Paint marks already own painting_circle_1 through painting_circle_6.
+            // 1 and 2 are the rock tints. 3 is the untinted leaves.
+            // Dye slots are dye_1 through dye_6.
             const loads = [
-                { key: `${t.key}_0`, path: `assets/things/${t.key}/${t.key}_0.png` },
-                { key: `${t.key}_tint_1`, path: `assets/things/${t.key}/${t.key}_1.png` },
-                { key: `${t.key}_tint_2`, path: `assets/things/${t.key}/${t.key}_2.png` }
+                { key: `${t.key}_1`, path: `assets/things/${t.key}/1.png` },
+                { key: `${t.key}_2`, path: `assets/things/${t.key}/2.png` },
+                { key: `${t.key}_3`, path: `assets/things/${t.key}/3.png` }
             ];
             for (let i = 1; i <= 6; i++) {
                 loads.push({
-                    key: `${t.key}_${i}`,
-                    path: `assets/things/${t.key}/${i}.png`
+                    key: `${t.key}_dye_${i}`,
+                    path: `assets/things/${t.key}/dye_${i}.png`
                 });
             }
             loads.push({
@@ -157,7 +187,8 @@
                 const key = String(raw || "");
                 if (!key || seen.has(key)) continue;
                 seen.add(key);
-                loads.push({ key, path: `assets/things/${dir}${key}.png` });
+                const file = t.variantDir ? partFile(t.variantDir, key) : key;
+                loads.push({ key, path: `assets/things/${dir}${file}.png` });
             }
             return loads;
         }
@@ -215,7 +246,8 @@
     /**
      * Inventory / craft / hotbar texture for an item.
      * Dedicated item art (`itemDef.key`) wins when that texture exists;
-     * rotatable placeables otherwise use the 0° world sprite (`${thingKey}_0`).
+     * rotatable placeables otherwise use the 0° world sprite (`${thingKey}_0`,
+     * or `${thingKey}_floor_0` for a lean-to).
      * Missing art uses `null`.
      */
     function itemIconKey(itemDef, getThing, hasTexture) {
@@ -231,7 +263,7 @@
         if (thingId) {
             const thingDef = typeof getThing === "function" ? getThing(thingId) : getThing;
             if (canRotate(thingDef) && thingDef.key) {
-                const rot = pick(rotationTextureKey(thingDef.key, 0));
+                const rot = pick(facingTextureKey(thingDef, 0));
                 if (rot) return rot;
             }
         }
@@ -1575,7 +1607,9 @@
         rotateCW,
         rotateCCW,
         rotationTextureKey,
-        rotationFrameTextureKey,
+        rotationFloorTextureKey,
+        rotationWallTextureKey,
+        facingTextureKey,
         thingImageLoads,
         canRotate,
         isCraftStation,

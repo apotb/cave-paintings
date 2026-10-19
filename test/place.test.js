@@ -177,6 +177,26 @@ test("basket hitbox is wide at 0° and narrow at 90°", () => {
     assert.equal(contains(r0, x, y - 2), true);
 });
 
+test("lean-to facings are a floor and a wall", () => {
+    const loads = Place.thingImageLoads(thingDef("lean_to"));
+    assert.deepEqual(loads.map((l) => l.key), [
+        "lean_to_floor_0", "lean_to_wall_0",
+        "lean_to_floor_90", "lean_to_wall_90",
+        "lean_to_floor_180", "lean_to_wall_180",
+        "lean_to_floor_270", "lean_to_wall_270"
+    ]);
+    assert.deepEqual(loads.map((l) => l.path), [
+        "assets/things/lean_to/floor_0.png",
+        "assets/things/lean_to/wall_0.png",
+        "assets/things/lean_to/floor_90.png",
+        "assets/things/lean_to/wall_90.png",
+        "assets/things/lean_to/floor_180.png",
+        "assets/things/lean_to/wall_180.png",
+        "assets/things/lean_to/floor_270.png",
+        "assets/things/lean_to/wall_270.png"
+    ]);
+});
+
 test("lean-to collision matches the wooden frame", () => {
     const def = thingDef("lean_to");
     const tx = 8;
@@ -243,17 +263,17 @@ test("lean-to collision matches the wooden frame", () => {
 });
 
 test("itemIconKey uses null when the item has no texture", () => {
-    const have = new Set(["stick", "null", "lean_to_0"]);
+    const have = new Set(["stick", "null", "lean_to_floor_0"]);
     const has = (k) => have.has(k);
     assert.equal(Place.itemIconKey({ id: "stick", key: "stick" }, () => null, has), "stick");
     assert.equal(Place.itemIconKey({ id: "hut", key: "hut" }, () => null, has), "null");
     assert.equal(
         Place.itemIconKey(
             { id: "lean_to", key: "lean_to", place: { thing: "lean_to" } },
-            () => ({ id: "lean_to", key: "lean_to", rotations: [0, 90, 180, 270] }),
+            () => ({ id: "lean_to", key: "lean_to", sleep: { slots: 2 }, rotations: [0, 90, 180, 270] }),
             has
         ),
-        "lean_to_0"
+        "lean_to_floor_0"
     );
 });
 

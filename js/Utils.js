@@ -1180,8 +1180,7 @@ function ensureStoneTexture(scene, kind, variant, stoneId) {
 
 /**
  * Leaves plus two rock tints. A blank stone is andesite.
- * Layer files are painting_circle_0 / _1 / _2. Tint textures use tint_1 and
- * tint_2 so they do not replace the paint marks on painting_circle_1 and _2.
+ * 1 and 2 are the rock colors. 3 is the untinted leaves.
  */
 function ensurePaintingCircleTexture(scene, stoneId) {
     if (!scene?.textures || typeof Stone === "undefined" || !Stone.props) return null;
@@ -1189,9 +1188,9 @@ function ensurePaintingCircleTexture(scene, stoneId) {
     const stone = Stone.normalizeStone?.(stoneId) || "andesite";
     const key = `${base}_stone_${stone}`;
     if (scene.textures.exists(key)) return key;
-    const leafKey = `${base}_0`;
-    const tint1Key = `${base}_tint_1`;
-    const tint2Key = `${base}_tint_2`;
+    const leafKey = `${base}_3`;
+    const tint1Key = `${base}_1`;
+    const tint2Key = `${base}_2`;
     if (!scene.textures.exists(leafKey) || !scene.textures.exists(tint1Key) || !scene.textures.exists(tint2Key)) {
         return null;
     }
@@ -1311,7 +1310,7 @@ function ensurePaintingsUiIcon(scene) {
     tctx.imageSmoothingEnabled = false;
     const max = (R && R.PAINT_MAX) || 6;
     for (let i = 1; i <= max; i++) {
-        const ovKey = R?.overlayKey ? R.overlayKey(i, thingKey) : `${thingKey}_${i}`;
+        const ovKey = R?.overlayKey ? R.overlayKey(i, thingKey) : `${thingKey}_dye_${i}`;
         if (!scene.textures.exists(ovKey)) continue;
         const ovTex = scene.textures.get(ovKey);
         const ov = ovTex?.getSourceImage?.() || ovTex?.source?.[0]?.image;
