@@ -763,6 +763,9 @@ class SettlementPanel {
 
     /**
      * Gold star left of Take/Drop. Empty until favorited.
+     * Favoriting in Here or Party parks them after the other favorites.
+     * Unfavoriting drops them just under the favorites that remain.
+     * The leader stays at the front of Party.
      * A favorite dropped at this camp is inserted at the front of Here.
      */
     _favoriteStar(x, y, pawn, unit, hitTall) {

@@ -3153,7 +3153,73 @@ test("a favorite drops in at the front of the camp list", () => {
     assert.deepEqual(settle.jobOrder, ["later", "fav", "plain"]);
     world._handleSettlement(pawn, { op: "favorite", pawnId: later.id, favorite: false });
     assert.equal(world.settlers.find((s) => s.id === later.id).favorite, false);
-    assert.deepEqual(settle.jobOrder, ["later", "fav", "plain"]);
+    assert.deepEqual(settle.jobOrder, ["fav", "later", "plain"]);
+});
+
+test("favoriting a settler here parks them under the other favorites", () => {
+    const { world, pawn } = createTestWorld();
+    const settle = Settlement.createSettlement({
+        x: pawn.x,
+        y: pawn.y,
+        ownerId: pawn.id
+    });
+    world.settlements.push(settle);
+    const ids = ["a", "b", "c", "d", "e", "f"];
+    for (const id of ids) {
+        world.settlers.push(world._settlerFromSnap({
+            id,
+            name: id,
+            x: pawn.x,
+            y: pawn.y,
+            ownerId: pawn.id,
+            homeSettlementId: settle.id
+        }));
+    }
+    world._syncJobOrder(settle);
+    const star = (id, on) => {
+        world._handleSettlement(pawn, { op: "favorite", pawnId: id, favorite: on });
+    };
+    star("a", true);
+    star("b", true);
+    star("e", true);
+    assert.deepEqual(settle.jobOrder, ["a", "b", "e", "c", "d", "f"]);
+    star("c", true);
+    star("d", true);
+    assert.deepEqual(settle.jobOrder, ["a", "b", "e", "c", "d", "f"]);
+    star("e", false);
+    assert.equal(world.settlers.find((s) => s.id === "e").favorite, false);
+    assert.deepEqual(settle.jobOrder, ["a", "b", "c", "d", "e", "f"]);
+    assert.deepEqual(
+        world.settlers.filter((s) => s.homeSettlementId === settle.id).map((s) => s.id),
+        ["a", "b", "c", "d", "e", "f"]
+    );
+});
+
+test("favoriting a companion parks them under the other party favorites", () => {
+    const { world, pawn } = createTestWorld();
+    for (const id of ["a", "b", "c", "d", "e"]) {
+        pawn.party.push(world._companionFromSnap(pawn, {
+            id,
+            name: id,
+            x: pawn.x,
+            y: pawn.y
+        }));
+    }
+    const star = (id, on) => {
+        world._handleSettlement(pawn, { op: "favorite", pawnId: id, favorite: on });
+    };
+    const order = () => pawn.party.map((m) => m.id);
+    star("c", true);
+    assert.deepEqual(order(), ["c", "a", "b", "d", "e"]);
+    star("a", true);
+    star("e", true);
+    assert.deepEqual(order(), ["c", "a", "e", "b", "d"]);
+    star("b", true);
+    star("d", true);
+    assert.deepEqual(order(), ["c", "a", "e", "b", "d"]);
+    star("e", false);
+    assert.equal(pawn.party.find((m) => m.id === "e").favorite, false);
+    assert.deepEqual(order(), ["c", "a", "b", "d", "e"]);
 });
 
 test("empty rec equipment does not wipe clothes on the creature", () => {

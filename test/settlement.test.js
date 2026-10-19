@@ -171,6 +171,57 @@ test("moveJobOrder relocates a settler in the jobs list", () => {
     assert.deepEqual(Settlement.moveJobOrder(settle, "ann", 1, ["ann", "bo", "cy"]), ["bo", "ann", "cy"]);
 });
 
+test("placeFavoriteOrder parks a star at the bottom of the favorites", () => {
+    const place = (start, pawnId, favorites) => {
+        const settle = Settlement.createSettlement({ x: 0, y: 0 });
+        settle.jobOrder = start.slice();
+        const fav = new Set(favorites);
+        const order = Settlement.placeFavoriteOrder(
+            settle,
+            pawnId,
+            start,
+            (id) => fav.has(id)
+        );
+        assert.deepEqual(settle.jobOrder, order);
+        return order;
+    };
+    assert.deepEqual(place(["a", "b", "c"], "c", []), ["c", "a", "b"]);
+    assert.deepEqual(
+        place(["a", "b", "c", "d", "e"], "e", ["a", "b"]),
+        ["a", "b", "e", "c", "d"]
+    );
+    assert.deepEqual(
+        place(["a", "b", "c", "d", "e", "f"], "c", ["a", "b", "d", "e"]),
+        ["a", "b", "d", "e", "c", "f"]
+    );
+    assert.deepEqual(place(["a", "b", "c", "d"], "c", ["a", "b"]), ["a", "b", "c", "d"]);
+    assert.deepEqual(place(["a", "b", "c", "d"], "a", ["b", "c"]), ["b", "c", "a", "d"]);
+    assert.deepEqual(place(["a", "b", "c"], "a", ["c"]), ["b", "c", "a"]);
+});
+
+test("applyFavoriteToList uses the same favorite slot on party members", () => {
+    const place = (start, pawnId, favorites) => {
+        const people = start.map((id) => ({ id, favorite: favorites.includes(id) }));
+        const fav = new Set(favorites);
+        const next = Settlement.applyFavoriteToList(
+            people,
+            pawnId,
+            (p) => p.id,
+            (id) => fav.has(id)
+        );
+        return next.map((p) => p.id);
+    };
+    assert.deepEqual(place(["a", "b", "c"], "c", []), ["c", "a", "b"]);
+    assert.deepEqual(
+        place(["a", "b", "c", "d", "e"], "e", ["a", "b"]),
+        ["a", "b", "e", "c", "d"]
+    );
+    assert.deepEqual(
+        place(["a", "b", "c", "d", "e", "f"], "c", ["a", "b", "d", "e"]),
+        ["a", "b", "d", "e", "c", "f"]
+    );
+});
+
 test("sortByJobOrder and applyJobOrderToList follow the jobs list", () => {
     const settle = Settlement.createSettlement({ x: 0, y: 0 });
     settle.jobOrder = ["c", "a"];

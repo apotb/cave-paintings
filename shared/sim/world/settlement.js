@@ -212,6 +212,26 @@
                 || (this.settlers || []).find((s) => String(s.id) === id && s.ownerId === p.id);
             if (!mem) return;
             mem.favorite = !!action.favorite;
+            if ((p.party || []).includes(mem)) {
+                p.party = Settlement.applyFavoriteToList(
+                    p.party,
+                    mem.id,
+                    (m) => m?.id,
+                    (oid) => {
+                        if (String(oid) === String(mem.id)) return false;
+                        const row = (p.party || []).find((h) => String(h?.id) === String(oid));
+                        return !!row?.favorite;
+                    }
+                );
+            } else {
+                const camp = mem.homeSettlementId
+                    ? this.settlements.find((s) => s.id === mem.homeSettlementId)
+                    : null;
+                if (camp && (this.settlers || []).includes(mem)) {
+                    this._placeFavorite(camp, mem.id);
+                    SettlerWork.bumpWork?.(this);
+                }
+            }
             this._youDirty.add(p.id);
             return;
         }
@@ -406,6 +426,27 @@
             settle.stock = Settlement.normalizeStock(action.stock);
             this._youDirty.add(p.id);
             return;
+        }
+    },
+
+    _placeFavorite(settle, pawnId) {
+        if (!settle || !Settlement?.placeFavoriteOrder) return;
+        const here = (this.settlers || []).filter(
+            (s) => s && !s.dead && s.homeSettlementId === settle.id
+        );
+        const ids = here.map((s) => s.id);
+        Settlement.placeFavoriteOrder(settle, pawnId, ids, (oid) => {
+            if (String(oid) === String(pawnId)) return false;
+            const s = here.find((h) => String(h.id) === String(oid));
+            return !!s?.favorite;
+        });
+        if (Settlement.applyJobOrderToList) {
+            this.settlers = Settlement.applyJobOrderToList(
+                this.settlers || [],
+                settle.id,
+                settle.jobOrder,
+                { idOf: (s) => s.id }
+            );
         }
     },
 

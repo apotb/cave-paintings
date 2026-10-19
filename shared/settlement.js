@@ -1337,6 +1337,61 @@
         return order;
     }
 
+    /**
+     * Park this settler just after every other favorite.
+     * Favoriting lands them at the bottom of the favorites. Unfavoriting
+     * drops them under the favorites that remain. Everyone else stays put.
+     * isFavorite(id) is the flag after the toggle. This settler's own flag
+     * is ignored; the slot depends only on the others.
+     */
+    function moveFavoriteId(order, pawnId, isFavorite) {
+        const id = String(pawnId || "");
+        const from = order.indexOf(id);
+        if (from < 0) return order;
+        let last = -1;
+        for (let i = 0; i < order.length; i++) {
+            if (i === from) continue;
+            if (typeof isFavorite === "function" && isFavorite(order[i])) last = i;
+        }
+        const to = last < 0 ? 0 : (last > from ? last : last + 1);
+        if (from === to) return order;
+        order.splice(from, 1);
+        order.splice(to, 0, id);
+        return order;
+    }
+
+    function placeFavoriteOrder(settle, pawnId, pawnIds, isFavorite) {
+        const order = normalizeJobOrder(settle, pawnIds);
+        return moveFavoriteId(order, pawnId, isFavorite);
+    }
+
+    /** Same favorite slot, for a party list instead of a camp job order. */
+    function applyFavoriteToList(list, pawnId, idOf, isFavorite) {
+        const arr = Array.isArray(list) ? list : [];
+        const take = typeof idOf === "function" ? idOf : pawnIdOf;
+        const ids = [];
+        const byId = new Map();
+        for (const p of arr) {
+            const id = String(take(p) || "");
+            ids.push(id);
+            if (id && !byId.has(id)) byId.set(id, p);
+        }
+        moveFavoriteId(ids, pawnId, isFavorite);
+        const out = [];
+        const used = new Set();
+        for (const id of ids) {
+            if (!id || used.has(id)) continue;
+            const p = byId.get(id);
+            if (!p) continue;
+            used.add(id);
+            out.push(p);
+        }
+        for (const p of arr) {
+            if (!out.includes(p)) out.push(p);
+        }
+        return out;
+    }
+
     function applyJobOrderToList(list, settleId, order, opts = {}) {
         const arr = Array.isArray(list) ? list : [];
         const sid = String(settleId || "");
@@ -2670,6 +2725,8 @@
         normalizeJobOrder,
         sortByJobOrder,
         moveJobOrder,
+        placeFavoriteOrder,
+        applyFavoriteToList,
         applyJobOrderToList,
         ownedOf,
         mergeOwned,

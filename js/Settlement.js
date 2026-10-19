@@ -205,6 +205,56 @@ class SettlementSystem {
         }
     }
 
+    /** Here list: bottom of the favorites, or just under them when cleared. */
+    _placeFavorite(settle, pawnId) {
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!S?.placeFavoriteOrder || !settle || !pawnId) return;
+        const here = (this.scene.settlers || []).filter(
+            (p) => p && !p.isBodyDead?.() && p.homeSettlementId === settle.id
+        );
+        const ids = here.map((p) => p.pawnId || p.id);
+        const before = (settle.jobOrder || []).join(",");
+        S.placeFavoriteOrder(settle, pawnId, ids, (oid) => {
+            if (String(oid) === String(pawnId)) return false;
+            const p = here.find((h) => String(h.pawnId || h.id) === String(oid));
+            return !!p?.favorite;
+        });
+        if (S.applyJobOrderToList) {
+            this.scene.settlers = S.applyJobOrderToList(
+                this.scene.settlers || [],
+                settle.id,
+                settle.jobOrder,
+                { idOf: (p) => p.pawnId || p.id }
+            );
+        }
+        if ((settle.jobOrder || []).join(",") !== before) this.bumpWorkCache();
+    }
+
+    /**
+     * Party list: same slot as Here. The leader stays at the front;
+     * favorites sort among everyone else.
+     */
+    _placePartyFavorite(pawnId) {
+        const scene = this.scene;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!S?.applyFavoriteToList) return;
+        const leader = scene.leader;
+        const party = scene.party || [];
+        const head = [];
+        const rest = [];
+        for (const p of party) {
+            if (p && p === leader) head.push(p);
+            else rest.push(p);
+        }
+        const ordered = S.applyFavoriteToList(rest, pawnId, (p) => p?.pawnId || p?.id, (oid) => {
+            if (String(oid) === String(pawnId)) return false;
+            const p = rest.find((h) => String(h?.pawnId || h?.id) === String(oid));
+            return !!p?.favorite;
+        });
+        scene.party = head.concat(ordered);
+        scene.partyPanel?.refresh?.();
+    }
+
     setJobOrder(settle, pawnId, toIndex) {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         if (!S?.moveJobOrder || !settle || !pawnId) return false;
@@ -1275,6 +1325,11 @@ class SettlementSystem {
         if (!inParty && !inCamp) return false;
         if (inCamp && pawn.ownerId && pawn.ownerId !== this.ownerId()) return false;
         pawn.favorite = !pawn.favorite;
+        if (inParty) this._placePartyFavorite(id);
+        if (inCamp) {
+            const settle = this.byId(pawn.homeSettlementId);
+            if (settle) this._placeFavorite(settle, id);
+        }
         this.sendNet("favorite", { pawnId: id, favorite: !!pawn.favorite });
         scene.settlementPanel?.refresh?.();
         return true;
