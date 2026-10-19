@@ -636,12 +636,12 @@ function formatHours(hours) {
  * @param {Phaser.Scene|null} scene
  */
 /**
- * Pebbles and grindstones stack only with the same stone. Other items always match.
- * A blank stone field is andesite.
+ * Pebbles, grindstones, and painting circles stack only with the same stone.
+ * Other items always match. A blank stone field is andesite.
  */
 function stackStonesMatch(a, b) {
-    if (a?.id !== "pebble" && a?.id !== "grindstone"
-        && b?.id !== "pebble" && b?.id !== "grindstone") return true;
+    const split = (id) => id === "pebble" || id === "grindstone" || id === "painting_circle";
+    if (!split(a?.id) && !split(b?.id)) return true;
     if (typeof Stone !== "undefined" && typeof Stone.sameStone === "function") {
         return Stone.sameStone(a, b);
     }
@@ -1040,6 +1040,10 @@ function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
         const stoneKey = ensureStoneTexture(base.scene, "grindstone", 1, stack.stone);
         if (stoneKey && textures.exists(stoneKey)) key = stoneKey;
     }
+    if (stack.id === "painting_circle") {
+        const stoneKey = ensurePaintingCircleTexture(base.scene, stack.stone);
+        if (stoneKey && textures.exists(stoneKey)) key = stoneKey;
+    }
     // Knapped tools: class shape cut from the pebble/flint sprite, or a stored picture
     if (stack.toolClass && typeof Knapping !== "undefined" && Knapping.ensureShapeTexture) {
         const scene = base.scene;
@@ -1144,6 +1148,59 @@ function ensureStoneTexture(scene, kind, variant, stoneId) {
     return key;
 }
 
+/**
+ * Leaves plus two rock tints. A blank stone is andesite.
+ * Layer files are painting_circle_0 / _1 / _2. Tint textures use tint_1 and
+ * tint_2 so they do not replace the paint marks on painting_circle_1 and _2.
+ */
+function ensurePaintingCircleTexture(scene, stoneId) {
+    if (!scene?.textures || typeof Stone === "undefined" || !Stone.props) return null;
+    const base = "painting_circle";
+    const stone = Stone.normalizeStone?.(stoneId) || "andesite";
+    const key = `${base}_stone_${stone}`;
+    if (scene.textures.exists(key)) return key;
+    const leafKey = `${base}_0`;
+    const tint1Key = `${base}_tint_1`;
+    const tint2Key = `${base}_tint_2`;
+    if (!scene.textures.exists(leafKey) || !scene.textures.exists(tint1Key) || !scene.textures.exists(tint2Key)) {
+        return null;
+    }
+    const leaf = stoneSourceImage(scene, leafKey);
+    const tint1 = stoneSourceImage(scene, tint1Key);
+    const tint2 = stoneSourceImage(scene, tint2Key);
+    const w = leaf?.width || tint1?.width || tint2?.width;
+    const h = leaf?.height || tint1?.height || tint2?.height;
+    if (!(w > 0) || !(h > 0)) return null;
+    const colors = Stone.props(stone);
+    const canvasTex = scene.textures.createCanvas(key, w, h);
+    if (!canvasTex?.getContext) return null;
+    const ctx = canvasTex.getContext();
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, w, h);
+    if (leaf) ctx.drawImage(leaf, 0, 0);
+    stampLayerTint(ctx, tint1, colors.primary);
+    stampLayerTint(ctx, tint2, colors.secondary);
+    canvasTex.refresh();
+    if (typeof WorldAtlas !== "undefined") WorldAtlas.adopt(scene, key);
+    return key;
+}
+
+/** Fill a layer's opaque pixels with one stone color and draw them on dest. */
+function stampLayerTint(ctx, img, color) {
+    if (!ctx || !img?.width || !color) return;
+    const tmp = document.createElement("canvas");
+    tmp.width = img.width;
+    tmp.height = img.height;
+    const tctx = tmp.getContext("2d");
+    if (!tctx) return;
+    tctx.imageSmoothingEnabled = false;
+    tctx.drawImage(img, 0, 0);
+    tctx.globalCompositeOperation = "source-in";
+    tctx.fillStyle = color;
+    tctx.fillRect(0, 0, tmp.width, tmp.height);
+    ctx.drawImage(tmp, 0, 0);
+}
+
 function ensureSpearTexture(scene, material, stone) {
     if (!scene?.textures) return null;
     // "white" is the untinted tip, used when a craft has not picked a rock yet.
@@ -1197,7 +1254,8 @@ function ensurePaintingsUiIcon(scene) {
     const R = typeof Research !== "undefined" ? Research : null;
     const key = R?.UI_ICON_KEY || "painting_circle_ui";
     if (scene.textures.exists(key)) return key;
-    const baseKey = "painting_circle";
+    const thingKey = "painting_circle";
+    const baseKey = ensurePaintingCircleTexture(scene, "andesite") || thingKey;
     if (!scene.textures.exists(baseKey)) return null;
     const srcTex = scene.textures.get(baseKey);
     const src = srcTex?.getSourceImage?.() || srcTex?.source?.[0]?.image;
@@ -1223,7 +1281,7 @@ function ensurePaintingsUiIcon(scene) {
     tctx.imageSmoothingEnabled = false;
     const max = (R && R.PAINT_MAX) || 6;
     for (let i = 1; i <= max; i++) {
-        const ovKey = R?.overlayKey ? R.overlayKey(i, baseKey) : `${baseKey}_${i}`;
+        const ovKey = R?.overlayKey ? R.overlayKey(i, thingKey) : `${thingKey}_${i}`;
         if (!scene.textures.exists(ovKey)) continue;
         const ovTex = scene.textures.get(ovKey);
         const ov = ovTex?.getSourceImage?.() || ovTex?.source?.[0]?.image;

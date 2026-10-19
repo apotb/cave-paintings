@@ -1166,6 +1166,10 @@ class SettlementPanel {
 
     _itemIconKey(itemId) {
         if (!itemId) return null;
+        if (itemId === "painting_circle" && typeof ensurePaintingCircleTexture === "function") {
+            const key = ensurePaintingCircleTexture(this.scene, "andesite");
+            if (key && this.scene.textures.exists(key)) return key;
+        }
         const def = this.scene.getItem?.(itemId) || { id: itemId, key: itemId };
         if (typeof Place !== "undefined" && Place.itemIconKey) {
             const key = Place.itemIconKey(

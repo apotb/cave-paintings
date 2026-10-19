@@ -467,7 +467,7 @@
                 for (const pile of c.drops) {
                     if (!pile || pile.id !== drop.id) continue;
                     if (this._stackIsSpecial(pile)) continue;
-                    if ((drop.id === "pebble" || drop.id === "grindstone") && !this._samePebbleStone(pile, drop)) continue;
+                    if ((drop.id === "pebble" || drop.id === "grindstone" || drop.id === "painting_circle") && !this._samePebbleStone(pile, drop)) continue;
                     if (Hide.soakMergeBlocked(pile, drop)) continue;
                     const qty = Math.max(1, Math.floor(Number(pile.quantity) || 1));
                     if (qty >= maxStack) continue;

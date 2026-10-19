@@ -526,7 +526,7 @@
         const stoneApi = (typeof Stone !== "undefined" && Stone.sameStone)
             ? Stone
             : (() => { try { return require("./stone"); } catch (_) { return null; } })();
-        if ((a.id === "pebble" || a.id === "grindstone") && stoneApi?.sameStone) {
+        if ((a.id === "pebble" || a.id === "grindstone" || a.id === "painting_circle") && stoneApi?.sameStone) {
             return stoneApi.sameStone(a, b);
         }
         return true;

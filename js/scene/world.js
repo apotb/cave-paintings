@@ -626,6 +626,7 @@
         if (this.leanToPanel?.containsPointer?.(pointer)) return true;
         if (this.storagePanel?.containsPointer?.(pointer)) return true;
         if (this.settlementPanel?.containsPointer?.(pointer)) return true;
+        if (this.resourceSummaryPanel?.containsPointer?.(pointer)) return true;
         if (this.researchTreePanel?.containsPointer?.(pointer)) return true;
         if (this.billsPanel?.containsPointer?.(pointer)) return true;
         if (this.storageFilterPanel?.containsPointer?.(pointer)) return true;
@@ -1577,6 +1578,9 @@
         const stoneGhostKey = (info.thingId === "grindstone" && typeof ensureStoneTexture === "function")
             ? ensureStoneTexture(this, "grindstone", 1, info.held?.stone)
             : null;
+        const paintGhostKey = (info.thingId === "painting_circle" && typeof ensurePaintingCircleTexture === "function")
+            ? ensurePaintingCircleTexture(this, info.held?.stone)
+            : null;
         const ghost = this._ensurePlaceGhost();
         if (info.thingDef?.figurine) {
             const placeKey = (typeof ClayForming !== "undefined")
@@ -1593,6 +1597,7 @@
             if (this.textures.exists(floorTex)) ghost.setTexture(floorTex);
             else if (this.textures.exists(info.thingDef.floor)) ghost.setTexture(info.thingDef.floor);
         } else if (stoneGhostKey && this.textures.exists(stoneGhostKey)) ghost.setTexture(stoneGhostKey);
+        else if (paintGhostKey && this.textures.exists(paintGhostKey)) ghost.setTexture(paintGhostKey);
         else if (info.thingId === "grindstone" && this.textures.exists("grindstone_1")) ghost.setTexture("grindstone_1");
         else if (hangKey && this.textures.exists(hangKey)) ghost.setTexture(hangKey);
         else if (this.textures.exists(rotTex)) ghost.setTexture(rotTex);
@@ -1793,7 +1798,12 @@
             y,
             rot: typeof Place !== "undefined" ? Place.normalizeRot(rot) : rot
         };
-        if (!isPaint) {
+        if (isPaint) {
+            const heldStone = (typeof Stone !== "undefined" && Stone.normalizeStone)
+                ? Stone.normalizeStone(this._heldPlaceableDef()?.held?.stone)
+                : null;
+            if (heldStone) entry.stone = heldStone;
+        } else {
             entry.slots = typeof Place !== "undefined"
                 ? Place.emptySlots(def.storage?.slots || 1)
                 : [null, null, null, null, null, null, null, null];
@@ -1999,10 +2009,14 @@
         const wy = circle.y;
         this._removePaintingCircleThing(circle);
         const meta = this.getItem(itemId);
+        const stone = (typeof Stone !== "undefined" && Stone.normalizeStone)
+            ? Stone.normalizeStone(entry?.stone)
+            : null;
+        const extras = stone ? { stone } : null;
         if (meta) {
-            const left = this.player.gainItem(meta, 1);
+            const left = this.player.gainItem(meta, 1, undefined, extras);
             if (left > 0) {
-                DroppedItem.spawn(this, wx, wy, meta, left);
+                DroppedItem.spawn(this, wx, wy, meta, left, undefined, extras);
             }
         }
         this.hotbar.dirty = true;

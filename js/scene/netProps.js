@@ -176,6 +176,10 @@
             const key = ensureStoneTexture(spr.scene, kind, 1, e.stone);
             if (key && spr.scene.textures?.exists?.(key)) spr.setTexture(key);
         }
+        if (spr.item?.id === "painting_circle" && typeof ensurePaintingCircleTexture === "function") {
+            const key = ensurePaintingCircleTexture(spr.scene, e.stone);
+            if (key && spr.scene.textures?.exists?.(key)) spr.setTexture(key);
+        }
     },
 
     /**

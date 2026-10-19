@@ -2000,6 +2000,10 @@ class PaintingCircle extends Thing {
 
     applyVisual() {
         super.applyVisual();
+        if (typeof ensurePaintingCircleTexture === "function") {
+            const key = ensurePaintingCircleTexture(this.scene, this.entry?.stone);
+            if (key && this.scene.textures.exists(key)) this.setTexture(key);
+        }
         if (typeof Research !== "undefined") Research.ensureEntry(this.entry, this.meta);
         const n = typeof Research !== "undefined" ? Research.paintedCount(this.entry) : 0;
         const keyBase = this.meta?.key || "painting_circle";
@@ -2056,7 +2060,11 @@ class PaintingCircle extends Thing {
         if (typeof Research !== "undefined") Research.ensureEntry(this.entry, this.meta);
         const painted = typeof Research !== "undefined" ? Research.paintedCount(this.entry) : 0;
         const max = (typeof Research !== "undefined" && Research.PAINT_MAX) || 6;
-        const name = this.meta?.name || "Painting Circle";
+        const name = (typeof Stone !== "undefined" && Stone.displayName)
+            ? (Stone.displayName({ id: "painting_circle", stone: this.entry?.stone })
+                || this.meta?.name
+                || "Painting Circle")
+            : (this.meta?.name || "Painting Circle");
         const lines = [`${name} (${painted}/${max})`];
         const prog = Number(this.entry?.paintProgress) || 0;
         if (this.entry?.paintStarted || prog > 0) {

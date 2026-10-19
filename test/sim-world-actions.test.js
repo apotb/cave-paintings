@@ -395,6 +395,25 @@ test("craft grindstone takes the first pebble's stone and defaults to andesite",
     assert.ok(plain);
 });
 
+test("craft painting circle takes the first pebble's stone and defaults to andesite", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "pebble", quantity: 12, stone: "granite" };
+    pawn.inventory[1] = { id: "pebble", quantity: 12, stone: "limestone" };
+    pawn.inventory[2] = { id: "leaf_cord", quantity: 12 };
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "painting_circle" });
+    const made = pawn.inventory.find((s) => s?.id === "painting_circle");
+    assert.ok(made);
+    assert.equal(made.stone, "granite");
+    assert.equal(pawn.inventory.some((s) => s?.id === "pebble" && s.stone === "granite"), false);
+    const lime = pawn.inventory.find((s) => s?.id === "pebble" && s.stone === "limestone");
+    assert.equal(lime.quantity, 12);
+
+    pawn.inventory[0] = { id: "pebble", quantity: 12 };
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "painting_circle" });
+    const plain = pawn.inventory.find((s) => s?.id === "painting_circle" && s.stone === "andesite");
+    assert.ok(plain);
+});
+
 test("craft tally_stick spends bone and needs a held knife", () => {
     const Research = require("../shared/research");
     const { world, pawn, Protocol } = createTestWorld();
@@ -1203,6 +1222,22 @@ test("/give pebble keeps the stone, and /set stamps it on rocks and piles", () =
     assert.ok(setDefault.some((e) => e.text === "Set Andesite Rock"));
     assert.ok(setDefault.some((e) => e.text === "Set Andesite Pebbles"));
     assert.ok(setDefault.some((e) => e.text === "Set Andesite Grindstone"));
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give painting_circle 1 granite" });
+    const circle = pawn.inventory.find((s) => s && s.id === "painting_circle" && s.stone === "granite");
+    assert.ok(circle);
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give painting_circle" });
+    assert.ok(pawn.inventory.some((s) => s && s.id === "painting_circle" && s.stone === "andesite"));
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give painting_circle 1 flint" });
+    const circleChats = world.drainEvents().filter((e) => e.kind === "chat");
+    assert.ok(circleChats.some((e) => e.text === 'Unknown stone "flint".'));
+    assert.equal(pawn.inventory.some((s) => s && s.id === "painting_circle" && s.stone === "flint"), false);
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/set painting_circle diorite" });
+    assert.equal((chunk.things || []).find((t) => t && t.id === "painting_circle")?.stone, "diorite");
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/set painting_circle" });
+    assert.equal((chunk.things || []).find((t) => t && t.id === "painting_circle")?.stone, "andesite");
+    const setCircle = world.drainEvents().filter((e) => e.kind === "chat");
+    assert.ok(setCircle.some((e) => e.text === "Set Diorite Painting Circle"));
+    assert.ok(setCircle.some((e) => e.text === "Set Andesite Painting Circle"));
 });
 
 test("/give stone_spear keeps the stone", () => {
@@ -3823,6 +3858,30 @@ test("can place painting circle inside owned settlement", () => {
     assert.equal(circle.paintEnabled, true);
     assert.equal(Research.hasTech(settle, "painting"), true);
     assert.equal(world.isBlocked(circle.x, circle.y), false);
+});
+
+test("placing and picking up a painting circle keeps its stone", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    fillGrass(world);
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    pawn.inventory[0] = { id: "painting_circle", quantity: 1, stone: "granite" };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, { type: Protocol.Actions.PLACE, tx: 2, ty: 1 });
+    const chunk = originChunk(world);
+    const circle = (chunk.things || []).find((t) => t.id === "painting_circle");
+    assert.ok(circle);
+    assert.equal(circle.stone, "granite");
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.STORAGE,
+        op: "pickup",
+        uid: circle.uid,
+        x: circle.x,
+        y: circle.y
+    });
+    const back = pawn.inventory.find((s) => s && s.id === "painting_circle");
+    assert.ok(back);
+    assert.equal(back.stone, "granite");
 });
 
 test("places a finished figurine and pickup restores voxels", () => {

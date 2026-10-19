@@ -374,7 +374,10 @@ class PigmentFilterPanel {
         if (!this.visible || !this.thing) return;
         this._refreshing = true;
         const s = this.scene.uiScale || 1;
-        const name = this.thing?.meta?.name || this.thing?.entry?.id || "Painting Circle";
+        const named = (typeof Stone !== "undefined" && Stone.displayName)
+            ? Stone.displayName({ id: "painting_circle", stone: this.thing?.entry?.stone })
+            : null;
+        const name = named || this.thing?.meta?.name || this.thing?.entry?.id || "Painting Circle";
         this.title.setText("Materials");
         this.subtitle.setText(String(name));
         const f = this._filter();

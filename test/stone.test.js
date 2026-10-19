@@ -111,7 +111,22 @@ test("pebble stacks of different stones do not merge, and a blank is andesite", 
     assert.equal(Stone.displayName({ id: "grindstone" }), "Andesite Grindstone");
     assert.equal(Stone.displayName({ id: "grindstone", stone: "diorite" }), "Diorite Grindstone");
     assert.equal(Stone.displayName({ id: "grindstone", stone: "granite" }), "Granite Grindstone");
+    assert.equal(Stone.displayName({ id: "painting_circle" }), "Andesite Painting Circle");
+    assert.equal(Stone.displayName({ id: "painting_circle", stone: "granite" }), "Granite Painting Circle");
+    assert.equal(Stone.displayName({ id: "painting_circle", stone: "diorite" }), "Diorite Painting Circle");
     assert.equal(Stone.isStuffableItem("grindstone"), true);
+    assert.equal(Stone.isStuffableItem("painting_circle"), true);
+    assert.equal(Stone.craftTakesStuff("painting_circle"), true);
+    assert.equal(Stone.stuffId("painting_circle", "flint"), null);
+    assert.equal(Stone.stuffId("painting_circle", "granite"), "granite");
+    assert.equal(SF.stacksMatch(
+        { id: "painting_circle", quantity: 1, stone: "granite" },
+        { id: "painting_circle", quantity: 1, stone: "diorite" }
+    ), false);
+    assert.equal(SF.stacksMatch(
+        { id: "painting_circle", quantity: 1 },
+        { id: "painting_circle", quantity: 1, stone: "andesite" }
+    ), true);
     assert.equal(Stone.isStuffableItem("stone_spear"), true);
     assert.equal(Stone.isStuffableItem("wooden_spear"), false);
     assert.equal(Stone.craftTakesStuff("pebble"), false);
@@ -205,6 +220,14 @@ test("grindstone preview uses the first pebble, and other recipes stay plain", (
 
     const stick = { id: "sharp_stick", ingredients: [{ id: "stick", qty: 1 }] };
     assert.equal(Stone.craftPreviewStack(stick, bags), null);
+    const circle = { id: "painting_circle", ingredients: [{ id: "pebble", qty: 12 }, { id: "leaf_cord", qty: 6 }] };
+    const graniteCircle = Stone.craftPreviewStack(circle, [[
+        { id: "pebble", quantity: 12, stone: "granite" }
+    ]]);
+    assert.equal(graniteCircle.stone, "granite");
+    assert.equal(Stone.displayName(graniteCircle), "Granite Painting Circle");
+    assert.equal(Stone.craftPreviewStack(circle, [[]]), null);
+
     const settling = {
         id: "settling_stone",
         ingredients: [{ id: "pebble", qty: 8 }]

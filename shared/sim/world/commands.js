@@ -38,7 +38,7 @@
     function isStuffableItem(id) {
         const api = stoneApi();
         if (typeof api?.isStuffableItem === "function") return api.isStuffableItem(id);
-        return id === "pebble" || id === "grindstone" || id === "stone_spear";
+        return id === "pebble" || id === "grindstone" || id === "painting_circle" || id === "stone_spear";
     }
 
     function giveStuff(meta, stuff) {
@@ -79,13 +79,13 @@
     function setStuff(def, stuff) {
         const raw = String(stuff || "").trim();
         if (!raw) {
-            if (def?.id === "rock" || def?.id === "pebbles" || def?.id === "grindstone") {
+            if (def?.id === "rock" || def?.id === "pebbles" || def?.id === "grindstone" || def?.id === "painting_circle") {
                 const stone = stoneApi()?.stoneOf?.({ id: def.id }) || "andesite";
                 return { extras: { stone } };
             }
             return { extras: {} };
         }
-        if (def?.id === "rock" || def?.id === "pebbles" || def?.id === "grindstone") {
+        if (def?.id === "rock" || def?.id === "pebbles" || def?.id === "grindstone" || def?.id === "painting_circle") {
             const stone = stoneApi()?.fromToken?.(raw);
             if (!stone) return { error: `Unknown stone "${stuff}".` };
             return { extras: { stone } };
@@ -888,7 +888,7 @@
         for (let i = 0; i < p.inventory.length && remaining > 0; i++) {
             const s = p.inventory[i];
             if (!s || s.id !== itemId || this._stackIsSpecial(s) || incomingUnique) continue;
-            if (itemId === "pebble" || itemId === "grindstone") {
+            if (itemId === "pebble" || itemId === "grindstone" || itemId === "painting_circle") {
                 if (!this._samePebbleStone(s, extraFields)) continue;
             }
             const space = Math.max(0, maxStack - (s.quantity || 1));
@@ -923,7 +923,7 @@
         for (let i = 0; i < over.length && remaining > 0; i++) {
             const s = over[i];
             if (!s || s.id !== itemId || this._stackIsSpecial(s) || incomingUnique) continue;
-            if (itemId === "pebble" || itemId === "grindstone") {
+            if (itemId === "pebble" || itemId === "grindstone" || itemId === "painting_circle") {
                 if (!this._samePebbleStone(s, extraFields)) continue;
             }
             const space = Math.max(0, maxStack - (s.quantity || 1));
@@ -1357,7 +1357,7 @@
         let tipQuality = null;
         let tipMaterial = null;
         let tipStone = null;
-        const pebbleStone = recipe.id === "grindstone"
+        const pebbleStone = (recipe.id === "grindstone" || recipe.id === "painting_circle")
             ? this._firstCraftPebbleStone(p, extra)
             : null;
         let storageDirty = false;
@@ -1379,7 +1379,7 @@
             if (tipQuality) extras.knapQuality = tipQuality;
             if (tipStone) extras.stone = tipStone;
         }
-        if (recipe.id === "grindstone") {
+        if (recipe.id === "grindstone" || recipe.id === "painting_circle") {
             extras.stone = pebbleStone || "andesite";
         }
         const left = this._give(p, recipe.id, recipe.quantity, extras);
@@ -1858,9 +1858,9 @@
         return (a?.stone || "andesite") === (b?.stone || "andesite");
     },
 
-    /** Pebbles and grindstones merge only with the same stone. A blank field is andesite. */
+    /** Pebbles, grindstones, and painting circles merge only with the same stone. A blank field is andesite. */
     _canMergeStone(a, b) {
-        if (a?.id !== "pebble" && a?.id !== "grindstone") return true;
+        if (a?.id !== "pebble" && a?.id !== "grindstone" && a?.id !== "painting_circle") return true;
         return this._samePebbleStone(a, b);
     },
 

@@ -733,6 +733,12 @@
             const key = ensureStoneTexture(this, "grindstone", 1, stone);
             if (key && this.textures.exists(key)) return key;
         }
+        if (id === "painting_circle" && typeof ensurePaintingCircleTexture === "function") {
+            // No pebble yet: andesite. The name stays Painting Circle.
+            const stone = preview?.stone || "andesite";
+            const key = ensurePaintingCircleTexture(this, stone);
+            if (key && this.textures.exists(key)) return key;
+        }
         const meta = this.getItem(recipe.id);
         if (typeof Place !== "undefined" && Place.itemIconKey) {
             const key = Place.itemIconKey(meta, (id) => this.getThing(id), (k) => this.textures.exists(k));
@@ -774,7 +780,7 @@
      * A missing pebble stays andesite. The name stays Grindstone until a pebble is in reach.
      */
     _craftPredictedPebble(recipe, pawn) {
-        if (recipe?.id !== "grindstone") return null;
+        if (recipe?.id !== "grindstone" && recipe?.id !== "painting_circle") return null;
         if (typeof Stone === "undefined" || !Stone.firstStuffStack) return null;
         return Stone.firstStuffStack(recipe, this._craftStuffBags(pawn));
     },
@@ -1377,7 +1383,7 @@
             return;
         }
 
-        if (recipe.id === "grindstone") {
+        if (recipe.id === "grindstone" || recipe.id === "painting_circle") {
             const pebble = this._craftPredictedPebble(recipe, who);
             const stone = (typeof Stone !== "undefined" && Stone.normalizeStone)
                 ? (Stone.normalizeStone(pebble?.stone) || "andesite")

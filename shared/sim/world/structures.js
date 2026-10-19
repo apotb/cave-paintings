@@ -125,7 +125,8 @@
                 paintPigments: Array.isArray(entry.paintPigments) ? entry.paintPigments.slice() : [],
                 paintEnabled: entry.paintEnabled !== false,
                 tallyStick: !!entry.tallyStick,
-                paintFilter: R.persistPaintFilter ? R.persistPaintFilter(entry.paintFilter) : (entry.paintFilter || null)
+                paintFilter: R.persistPaintFilter ? R.persistPaintFilter(entry.paintFilter) : (entry.paintFilter || null),
+                stone: entry.stone || null
             };
         }
         if (Place.isFigurineThing(def, entry)) {
@@ -363,6 +364,8 @@
                 rot,
                 uid: `pc_${Math.round(x)}_${Math.round(y)}`
             };
+            const heldStoneId = heldStone(held);
+            if (heldStoneId) entry.stone = heldStoneId;
             Research.ensureEntry(entry, thingDef);
             chunk.things.push(entry);
             this._emitStorage(chunk, entry);
@@ -1512,9 +1515,11 @@
             this._pushDrop(entry.x, entry.y, { id: R.TALLY_ITEM_ID || "tally_stick", quantity: 1 });
         }
         const itemId = Place.itemIdForThing(entry.id, itemDefs());
-        const leftover = this._give(p, itemId, 1);
+        const stone = heldStone(entry);
+        const extras = stone ? { stone } : null;
+        const leftover = this._give(p, itemId, 1, extras);
         if (leftover > 0) {
-            this._pushDrop(p.x, p.y, { id: itemId, quantity: leftover });
+            this._pushDrop(p.x, p.y, { id: itemId, quantity: leftover, ...(extras || {}) });
         }
         this._unlinkStationUid(entry.uid);
         const i = chunk.things.indexOf(entry);

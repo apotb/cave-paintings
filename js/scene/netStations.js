@@ -460,6 +460,7 @@
             if (Array.isArray(src.paintPigments)) entry.paintPigments = src.paintPigments.slice();
             if (src.paintEnabled != null) entry.paintEnabled = src.paintEnabled !== false;
             if (src.tallyStick != null) entry.tallyStick = !!src.tallyStick;
+            if (src.stone) entry.stone = src.stone;
             this._netApplyPaintFilter(entry, src);
             Research.ensureEntry(entry, this.getThing(entry.id));
         }
@@ -863,6 +864,7 @@
             && !isHudTextOpen(this)
             && !this._sculptUiOpen()
             && !this.researchTreePanel?.visible
+            && !this.resourceSummaryPanel?.visible
             && !downed
             && !p.isVomiting?.()
         ) {

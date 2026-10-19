@@ -2375,7 +2375,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (!slot || slot.id !== item.id || slot.quantity >= maxStack) continue;
             if (slot.customName || slot.food || slot.ingredients || slot.toolClass
                 || slot.formClass || slot.formVoxels) continue;
-            if ((item.id === "pebble" || item.id === "grindstone") && typeof Stone !== "undefined" && Stone.stoneKey
+            if ((item.id === "pebble" || item.id === "grindstone" || item.id === "painting_circle")
+                && typeof Stone !== "undefined" && Stone.stoneKey
                 && Stone.stoneKey(slot) !== Stone.stoneKey(extras)) continue;
             const space = maxStack - slot.quantity;
             const toAdd = Math.min(space, remaining, fitNow());
@@ -3728,7 +3729,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const composing = !!this.scene.combatLog?.isComposing?.();
         const knapping = !!(this.scene.knappingPanel?.visible || this.scene.clayFormingPanel?.visible);
         const naming = isHudTextOpen(this.scene);
-        const researchOpen = !!this.scene.researchTreePanel?.visible;
+        const researchOpen = !!this.scene.researchTreePanel?.visible
+            || !!this.scene.resourceSummaryPanel?.visible;
         const controlled = this.isControlled?.();
 
         // SP pause freezes everyone; channels still finish if we got here in MP.

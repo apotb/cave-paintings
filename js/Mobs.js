@@ -720,7 +720,7 @@ class DroppedItem extends Mob {
                     && !drop.toolClass                     && drop.knapDamage == null
                     && !drop.knapQuality
                     && drop.durability == null
-                    && (item.id !== "pebble" && item.id !== "grindstone" || (typeof Stone !== "undefined" && Stone.stoneKey
+                    && (item.id !== "pebble" && item.id !== "grindstone" && item.id !== "painting_circle" || (typeof Stone !== "undefined" && Stone.stoneKey
                         ? Stone.stoneKey(drop) === Stone.stoneKey(soakStamp)
                         : (drop.stone || "andesite") === (soakStamp.stone || "andesite")))
                     && !(typeof Hide !== "undefined" && Hide.soakMergeBlocked(drop, soakStamp))
@@ -876,6 +876,10 @@ class DroppedItem extends Mob {
         if ((entry.id === "pebble" || entry.id === "grindstone") && typeof ensureStoneTexture === "function") {
             const kind = entry.id === "grindstone" ? "grindstone" : "pebble";
             const stoneKey = ensureStoneTexture(scene, kind, 1, entry.stone);
+            if (stoneKey && scene.textures.exists(stoneKey)) this.setTexture(stoneKey);
+        }
+        if (entry.id === "painting_circle" && typeof ensurePaintingCircleTexture === "function") {
+            const stoneKey = ensurePaintingCircleTexture(scene, entry.stone);
             if (stoneKey && scene.textures.exists(stoneKey)) this.setTexture(stoneKey);
         }
 

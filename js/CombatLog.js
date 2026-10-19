@@ -188,7 +188,7 @@ class CombatLog {
         const id = meta?.id;
         const stuffable = (typeof Stone !== "undefined" && Stone.isStuffableItem)
             ? Stone.isStuffableItem(id)
-            : (id === "pebble" || id === "grindstone" || id === "stone_spear");
+            : (id === "pebble" || id === "grindstone" || id === "painting_circle" || id === "stone_spear");
         if (!raw) {
             if (!stuffable) return { extras: {} };
             const stone = (typeof Stone !== "undefined" && Stone.stoneOf)
@@ -226,7 +226,7 @@ class CombatLog {
     _setStuff(def, stuff) {
         const raw = String(stuff || "").trim();
         if (!raw) {
-            if (def?.id === "rock" || def?.id === "pebbles" || def?.id === "grindstone") {
+            if (def?.id === "rock" || def?.id === "pebbles" || def?.id === "grindstone" || def?.id === "painting_circle") {
                 const stone = (typeof Stone !== "undefined" && Stone.stoneOf)
                     ? (Stone.stoneOf({ id: def.id }) || "andesite")
                     : "andesite";
@@ -234,7 +234,7 @@ class CombatLog {
             }
             return { extras: {} };
         }
-        if (def?.id === "rock" || def?.id === "pebbles" || def?.id === "grindstone") {
+        if (def?.id === "rock" || def?.id === "pebbles" || def?.id === "grindstone" || def?.id === "painting_circle") {
             const stone = (typeof Stone !== "undefined" && Stone.fromToken)
                 ? Stone.fromToken(raw)
                 : null;

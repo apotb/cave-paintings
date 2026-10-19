@@ -737,7 +737,7 @@ function bagHasRoom(slots, stack) {
     return slots.some((s) => {
         if (!s || s.id !== stack.id || stackIsSpecial(s)) return false;
         if ((Number(s.quantity) || 1) >= max) return false;
-        if ((stack.id === "pebble" || stack.id === "grindstone") && typeof Stone !== "undefined" && Stone.stoneKey) {
+        if ((stack.id === "pebble" || stack.id === "grindstone" || stack.id === "painting_circle") && typeof Stone !== "undefined" && Stone.stoneKey) {
             return Stone.stoneKey(s) === Stone.stoneKey(stack);
         }
         return true;

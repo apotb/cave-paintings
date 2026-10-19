@@ -130,10 +130,13 @@
             return loads;
         }
         if (t.paintingCircle) {
-            const loads = [{
-                key: t.key,
-                path: `assets/things/${t.key}/${t.key}.png`
-            }];
+            // Leaves stay untinted. tint_1 and tint_2 are the two rock colors.
+            // Paint marks already own painting_circle_1 through painting_circle_6.
+            const loads = [
+                { key: `${t.key}_0`, path: `assets/things/${t.key}/${t.key}_0.png` },
+                { key: `${t.key}_tint_1`, path: `assets/things/${t.key}/${t.key}_1.png` },
+                { key: `${t.key}_tint_2`, path: `assets/things/${t.key}/${t.key}_2.png` }
+            ];
             for (let i = 1; i <= 6; i++) {
                 loads.push({
                     key: `${t.key}_${i}`,
@@ -1497,9 +1500,9 @@
         return thingId;
     }
 
-    /** Pebbles and grindstones share a slot only when the stone matches. Blank is andesite. */
+    /** Pebbles, grindstones, and painting circles share a slot only when the stone matches. Blank is andesite. */
     function depositStonesMatch(dest, stack) {
-        if (stack?.id !== "pebble" && stack?.id !== "grindstone") return true;
+        if (stack?.id !== "pebble" && stack?.id !== "grindstone" && stack?.id !== "painting_circle") return true;
         let api = typeof Stone !== "undefined" ? Stone : null;
         if (!api && typeof require === "function") {
             try { api = require("./stone"); } catch (_) { api = null; }

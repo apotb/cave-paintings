@@ -29,7 +29,7 @@
         diorite: { name: "Diorite", hardness: 6, toughness: 0.55, primary: "#E6E2DC", secondary: "#8E8A84" }
     };
     const TYPE_ORDER = ["limestone", "sandstone", "andesite", "diorite", "granite"];
-    /** Stuffable ids that can be flint. Pebbles, grindstones, and rocks stay world stones. */
+    /** Stuffable ids that can be flint. Pebbles, grindstones, painting circles, and rocks stay world stones. */
     const FLINT_STUFF = { stone_spear: true };
     const CLASS_DAMAGE = {
         knife: 7,
@@ -133,7 +133,13 @@
 
     /** Items that keep a stone (or flint, for a spear). Pebbles are the raw stuff. */
     function isStuffableItem(id) {
-        return id === "pebble" || id === "grindstone" || id === "stone_spear" || id === "flint_spear";
+        return id === "pebble" || id === "grindstone" || id === "painting_circle"
+            || id === "stone_spear" || id === "flint_spear";
+    }
+
+    /** Stacks split by stone. A blank field is andesite. Spears do not. */
+    function splitsByStone(id) {
+        return id === "pebble" || id === "grindstone" || id === "painting_circle";
     }
 
     /** A crafted item copies its stuff from an ingredient. Raw pebbles do not. */
@@ -201,7 +207,8 @@
         const named = normalizeStone(stack.stone);
         if (named) return named;
         const id = stack.id;
-        if (id === "pebble" || id === "grindstone" || id === "stone_tool" || id === "stone_spear" || stack.knapMaterial === "pebble") {
+        if (id === "pebble" || id === "grindstone" || id === "painting_circle"
+            || id === "stone_tool" || id === "stone_spear" || stack.knapMaterial === "pebble") {
             return DEFAULT_STONE;
         }
         return null;
@@ -209,7 +216,7 @@
 
     /** Missing and andesite are the same pile. Other items always match. */
     function sameStone(a, b) {
-        const typed = (s) => s?.id === "pebble" || s?.id === "grindstone";
+        const typed = (s) => splitsByStone(s?.id);
         if (!typed(a) && !typed(b)) return true;
         return (stoneOf(a) || DEFAULT_STONE) === (stoneOf(b) || DEFAULT_STONE);
     }
@@ -505,7 +512,8 @@
 
     /** Raw knapping stones only. Finished tools and grindstones keep stone stats out of the tooltip. */
     function statLinesFor(stack, itemDef) {
-        if (stack?.toolClass || stack?.id === "stone_spear" || stack?.id === "flint_spear" || stack?.id === "grindstone") return [];
+        if (stack?.toolClass || stack?.id === "stone_spear" || stack?.id === "flint_spear"
+            || stack?.id === "grindstone" || stack?.id === "painting_circle") return [];
         if (stack?.id === "pebble" || normalizeStone(stack?.stone)) return linesFromProps(propsOf(stack));
         return statLines(itemDef);
     }
@@ -517,6 +525,9 @@
         }
         if (stack.id === "grindstone") {
             return `${propsOf(stack, getItem).name} Grindstone`;
+        }
+        if (stack.id === "painting_circle") {
+            return `${propsOf(stack, getItem).name} Painting Circle`;
         }
         if (stack.id === "stone_spear" || stack.id === "flint_spear") {
             const m = stack.knapMaterial;
@@ -595,6 +606,7 @@
         fromToken,
         stuffId,
         isStuffableItem,
+        splitsByStone,
         craftTakesStuff,
         firstStuffStack,
         craftPreviewStack,

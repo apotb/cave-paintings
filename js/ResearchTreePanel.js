@@ -1239,6 +1239,11 @@ class ResearchTreePanel {
             const key = ensureStoneTexture(this.scene, "grindstone", 1, "andesite");
             if (key && this.scene.textures.exists(key)) return key;
         }
+        if (itemId === "painting_circle" && typeof ensurePaintingCircleTexture === "function") {
+            // Research has no pebble. The icon uses andesite; the name stays Painting Circle.
+            const key = ensurePaintingCircleTexture(this.scene, "andesite");
+            if (key && this.scene.textures.exists(key)) return key;
+        }
         const def = this.scene.getItem?.(itemId)
             || this.scene.getThing?.(itemId)
             || { id: itemId, key: itemId };
@@ -1349,8 +1354,8 @@ class ResearchTreePanel {
     _itemTip(id) {
         const def = this.scene.getItem?.(id);
         if (!def || typeof this.scene.formatItemTooltip !== "function") return null;
-        // Grindstone has no chosen stone here. Andesite is only the icon.
-        const stack = id === "grindstone" ? null : { id, quantity: 1 };
+        // Grindstone and Painting Circle have no chosen stone here. Andesite is only the icon.
+        const stack = (id === "grindstone" || id === "painting_circle") ? null : { id, quantity: 1 };
         return () => this.scene.formatItemTooltip(def, 1, null, stack);
     }
 
