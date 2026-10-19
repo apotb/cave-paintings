@@ -706,10 +706,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const weapon = (typeof CombatLog !== "undefined" && CombatLog.COLOR_WEAPON) || "#f0a040";
         const settlerBlue = (typeof CombatLog !== "undefined" && CombatLog.COLOR_SETTLER) || "#7ec8ff";
         const ally = (typeof CombatLog !== "undefined" && CombatLog.COLOR_YOU) || "#80e080";
-        const you = !!this.isControlled?.();
         const settler = this.role === "settler" || !!this.homeSettlementId;
         const actorName = this.displayName?.() || this.pawnName || this.name || "Someone";
-        if (you) return Durability.breakChat(name, { you: true, weaponColor: weapon });
         return Durability.breakChat(name, {
             actorName,
             actorColor: settler ? settlerBlue : ally,
@@ -3179,7 +3177,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
         if (!applied.length) {
             // Wound closed on its own — finish the channel, keep the bandage
-            const healer = this.isControlled?.() ? "you" : this.displayName();
+            const healer = this.displayName();
             if (this.isControlled?.() || patient.isControlled?.()) {
                 this.scene.combatLog?.push(`The wound healed before ${healer} finished`, {
                     feed: true,
@@ -3203,8 +3201,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (typeof src.loseItem === "function") src.loseItem(held, 1);
         else if (typeof src.loseItemAt === "function") src.loseItemAt(ch.slot, 1);
         else this.loseAnyItem(ch.itemId, 1);
-        const who = this.isControlled?.() ? "You" : this.displayName();
-        const poss = patient.isControlled?.() ? "your" : `${patient.displayName()}'s`;
+        const who = this.displayName();
+        const poss = `${patient.displayName()}'s`;
         const tendMsg = BodyHealing.tendLogLine?.(who, poss, quality, applied, body)
             || `${who} finished bandaging (${Math.round(quality * 100)}%)`;
         if (this.isControlled?.() || patient.isControlled?.()) {

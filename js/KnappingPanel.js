@@ -618,12 +618,13 @@ class KnappingPanel {
         }
         this._finished = true;
         const verb = this._rework ? "reshaped" : "knapped";
+        const who = this.scene.player?.displayName?.() || "Someone";
         const ok = this._grantTool(stack);
         if (ok) {
-            this.scene.combatLog?.push(`You ${verb} a ${stack.customName}`);
+            this.scene.combatLog?.push(`${who} ${verb} a ${stack.customName}`);
         } else {
             this.scene.combatLog?.push?.(
-                `You ${verb} a ${stack?.customName || "tool"}, but it fell out of reach`
+                `${who} ${verb} a ${stack?.customName || "tool"}, but it fell out of reach`
             );
         }
         this.close();

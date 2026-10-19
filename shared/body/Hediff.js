@@ -155,22 +155,17 @@
             return igs;
         },
 
-        infectionOnsetMessage(owner, partName, ctx) {
+        infectionOnsetMessage(owner, partName) {
             const part = partName ? String(partName) : "a wound";
-            if (this._logIsYou(owner, ctx)) return `You have an infection (${part})`;
             return `${this._logName(owner)} has an infection (${part})`;
         },
 
-        infectionRecoveredMessage(owner, ctx) {
-            return this._logIsYou(owner, ctx)
-                ? "You recovered from an infection"
-                : `${this._logName(owner)} recovered from an infection`;
+        infectionRecoveredMessage(owner) {
+            return `${this._logName(owner)} recovered from an infection`;
         },
 
-        infectionDiedMessage(owner, ctx) {
-            return this._logIsYou(owner, ctx)
-                ? "You died of infection"
-                : `${this._logName(owner)} died of infection`;
+        infectionDiedMessage(owner) {
+            return `${this._logName(owner)} died of infection`;
         },
 
         startInfection(owner, body, partName, ctx) {
@@ -188,11 +183,7 @@
                 h.luck = math.floatBetween(this.INFECTION_LUCK_MIN, this.INFECTION_LUCK_MAX);
             }
             const partLabel = partName ? String(partName) : "a wound";
-            if (this._logIsYou(owner, ctx)) {
-                this._pushCondition(ctx, owner, "You", `have an infection (${partLabel})`);
-            } else {
-                this._pushCondition(ctx, owner, this._logName(owner), `has an infection (${partLabel})`);
-            }
+            this._pushCondition(ctx, owner, this._logName(owner), `has an infection (${partLabel})`);
             return h;
         },
 
@@ -228,25 +219,6 @@
             const mtb = Number(mtbDays);
             if (!(mtb > 0)) return 0;
             return 1 / (mtb * this.MINUTES_PER_DAY);
-        },
-
-        /** Combat-log “You” vs pawn name (controlled pawn only). */
-        _logIsYou(owner, ctx) {
-            if (!owner) return true;
-            if (typeof owner.isControlled === "function") return !!owner.isControlled();
-            const host = ctx || owner.ctx || owner.scene;
-            if (typeof host?.isControlled === "function") return !!host.isControlled(owner);
-            if (host?.player) return host.player === owner;
-            const sim = host?.sim;
-            if (sim?.players) {
-                const pid = owner.id || owner.pawnId;
-                for (const p of sim.players.values()) {
-                    if (!p.connected) continue;
-                    if ((p.controlId || p.id) === pid) return true;
-                }
-                return false;
-            }
-            return false;
         },
 
         _logName(owner) {
@@ -293,39 +265,27 @@
             log.push(`${nameText} ${rest}`, { owner, segments, color: this.CONDITION_RED });
         },
 
-        foodPoisonMessage(owner, worse, ctx) {
-            if (this._logIsYou(owner, ctx)) {
-                return worse ? "Your food poisoning got worse" : "You have food poisoning";
-            }
+        foodPoisonMessage(owner, worse) {
             const name = this._logName(owner);
             return worse
                 ? `${name}'s food poisoning got worse`
                 : `${name} has food poisoning`;
         },
 
-        malnutritionOnsetMessage(owner, ctx) {
-            return this._logIsYou(owner, ctx)
-                ? "You are malnourished"
-                : `${this._logName(owner)} is malnourished`;
+        malnutritionOnsetMessage(owner) {
+            return `${this._logName(owner)} is malnourished`;
         },
 
-        malnutritionRecoveredMessage(owner, ctx) {
-            return this._logIsYou(owner, ctx)
-                ? "You are no longer malnourished"
-                : `${this._logName(owner)} is no longer malnourished`;
+        malnutritionRecoveredMessage(owner) {
+            return `${this._logName(owner)} is no longer malnourished`;
         },
 
-        malnutritionStageMessage(owner, stageLabel, ctx) {
-            if (this._logIsYou(owner, ctx)) {
-                return `Your malnutrition is now ${stageLabel}`;
-            }
+        malnutritionStageMessage(owner, stageLabel) {
             return `${this._logName(owner)}'s malnutrition is now ${stageLabel}`;
         },
 
-        malnutritionStarvedMessage(owner, ctx) {
-            return this._logIsYou(owner, ctx)
-                ? "You starved to death"
-                : `${this._logName(owner)} starved to death`;
+        malnutritionStarvedMessage(owner) {
+            return `${this._logName(owner)} starved to death`;
         },
 
         /**
@@ -351,17 +311,9 @@
                 sev = cur >= INITIAL_MIN ? 1 : Math.max(cur, MAJOR_PEAK);
             }
             body.addHediff("food_poisoning", sev);
-            const you = this._logIsYou(who, null);
-            let nameText;
-            let rest;
-            if (you) {
-                nameText = worse ? "Your" : "You";
-                rest = worse ? "food poisoning got worse" : "have food poisoning";
-            } else {
-                const name = this._logName(who);
-                nameText = worse ? `${name}'s` : name;
-                rest = worse ? "food poisoning got worse" : "has food poisoning";
-            }
+            const name = this._logName(who);
+            const nameText = worse ? `${name}'s` : name;
+            const rest = worse ? "food poisoning got worse" : "has food poisoning";
             return {
                 message: `${nameText} ${rest}`,
                 worse,
@@ -486,11 +438,7 @@
                 }
                 if ((Number(h.severity) || 0) <= 0) {
                     body.removeHediff(h.id, h.partName);
-                    if (this._logIsYou(owner, ctx)) {
-                        this._pushCondition(ctx, owner, "You", "recovered from an infection");
-                    } else {
-                        this._pushCondition(ctx, owner, this._logName(owner), "recovered from an infection");
-                    }
+                    this._pushCondition(ctx, owner, this._logName(owner), "recovered from an infection");
                 }
             }
         },
@@ -519,22 +467,16 @@
                 if (!h) {
                     h = body.addHediff("malnutrition", 0);
                     if (!h) return;
-                    if (this._logIsYou(owner, ctx)) {
-                        this._pushCondition(ctx, owner, "You", "are malnourished");
-                    } else {
-                        this._pushCondition(ctx, owner, this._logName(owner), "is malnourished");
-                    }
+                    this._pushCondition(ctx, owner, this._logName(owner), "is malnourished");
                 }
                 const prev = this.stageFor(h, ctx)?.label;
                 h.severity = Math.min(1, (Number(h.severity) || 0) + gainPerMin);
                 body.markDirty?.();
                 const next = this.stageFor(h, ctx)?.label;
                 if (next && next !== prev && prev) {
-                    if (this._logIsYou(owner, ctx)) {
-                        this._pushCondition(ctx, owner, "Your", `malnutrition is now ${next}`);
-                    } else {
-                        this._pushCondition(ctx, owner, `${this._logName(owner)}'s`, `malnutrition is now ${next}`);
-                    }
+                    this._pushCondition(
+                        ctx, owner, `${this._logName(owner)}'s`, `malnutrition is now ${next}`
+                    );
                 }
                 const lethal = def.lethalSeverity != null ? Number(def.lethalSeverity) : 1;
                 if ((Number(h.severity) || 0) >= lethal - 1e-9) {
@@ -549,21 +491,15 @@
             h.severity = (Number(h.severity) || 0) - recoverPerMin;
             if (h.severity <= 0) {
                 body.removeHediff("malnutrition");
-                if (this._logIsYou(owner, ctx)) {
-                    this._pushCondition(ctx, owner, "You", "are no longer malnourished");
-                } else {
-                    this._pushCondition(ctx, owner, this._logName(owner), "is no longer malnourished");
-                }
+                this._pushCondition(ctx, owner, this._logName(owner), "is no longer malnourished");
                 return;
             }
             body.markDirty?.();
             const next = this.stageFor(h, ctx)?.label;
             if (next && next !== prev) {
-                if (this._logIsYou(owner, ctx)) {
-                    this._pushCondition(ctx, owner, "Your", `malnutrition is now ${next}`);
-                } else {
-                    this._pushCondition(ctx, owner, `${this._logName(owner)}'s`, `malnutrition is now ${next}`);
-                }
+                this._pushCondition(
+                    ctx, owner, `${this._logName(owner)}'s`, `malnutrition is now ${next}`
+                );
             }
         },
 
@@ -585,11 +521,7 @@
                 if ((Number(h.severity) || 0) <= 0) {
                     body.removeHediff(h.id);
                     if (h.id === "food_poisoning") {
-                        if (this._logIsYou(owner, ctx)) {
-                            this._pushCondition(ctx, owner, "You", "recovered from food poisoning");
-                        } else {
-                            this._pushCondition(ctx, owner, this._logName(owner), "recovered from food poisoning");
-                        }
+                        this._pushCondition(ctx, owner, this._logName(owner), "recovered from food poisoning");
                     }
                     continue;
                 }

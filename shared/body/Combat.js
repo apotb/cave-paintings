@@ -96,6 +96,11 @@
         return colors.enemy;
     }
 
+    function logName(entity, fallback = "Someone") {
+        const named = typeof entity?.displayName === "function" ? entity.displayName() : "";
+        return named || entity?.pawnName || entity?.name || entity?.def?.name || fallback;
+    }
+
     function parseAttackColor(v) {
         if (v == null) return null;
         if (typeof v === "number" && Number.isFinite(v)) return (v >>> 0) & 0xffffff;
@@ -335,10 +340,8 @@
             const sparkAt = hitPoint(target);
 
             if (brokeApparel.length && typeof log?.push === "function") {
+                const who = `${logName(target, "Their")}'s`;
                 for (const piece of brokeApparel) {
-                    const who = vicIsYou
-                        ? "Your"
-                        : `${target.displayName?.() || target.def?.name || "Their"}'s`;
                     log.push(`${who} ${piece.name} fell apart`, {
                         combat: true,
                         attacker,
@@ -363,7 +366,7 @@
                         deflectName: itemName,
                         spark: sparkAt,
                         segments: [
-                            { text: vicIsYou ? "Your" : "The", color: vicColor },
+                            { text: vicIsYou ? `${logName(target)}'s` : "The", color: vicColor },
                             { text: itemName, color: colors.weapon },
                             { text: "deflected the blow" }
                         ]
@@ -476,17 +479,14 @@
             }
 
             if (typeof log?.push === "function") {
-                const isYou = attacker === player;
-                const subj = isYou
-                    ? "You"
-                    : attacker?.displayName?.() || attacker?.def?.name || "Someone";
+                const subj = logName(attacker);
                 const verb = attack.verb || "hit";
                 const weaponName =
                     !attack.unarmed && attack.weaponName
                         ? attack.weaponName
                         : attack.sourcePart?.name || attack.weaponName || "blow";
                 const vicPossessive = vicIsYou
-                    ? "your"
+                    ? `${logName(target)}'s`
                     : `${target.def?.name || target.displayName?.() || "foe"}'s`;
                 const dmgStr = armor?.glanced
                     ? `(${Number(damage).toFixed(1)}, glanced)`
@@ -515,7 +515,7 @@
                 });
                 if (destroyed) {
                     const who = vicIsYou
-                        ? "Your"
+                        ? `${logName(target)}'s`
                         : `${target.def?.name || target.displayName?.() || "Their"}'s`;
                     log.push(null, {
                         ...logOpts,

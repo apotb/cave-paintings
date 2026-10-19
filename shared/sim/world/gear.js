@@ -168,13 +168,10 @@
             this._syncPlayerInvSize(p);
             const creature = p.creature || this.creatures.get(p.id);
             if (creature) creature.equipment = p.equipment;
-            const self = !p.ownerId || p.ownerId === p.id;
             for (const piece of broke) {
                 this.pushEvent({
                     kind: "combat_log",
-                    text: self
-                        ? `Your ${piece.name} fell apart`
-                        : `${p.name || "Someone"}'s ${piece.name} fell apart`,
+                    text: `${p.name || "Someone"}'s ${piece.name} fell apart`,
                     to: p.ownerId || p.id
                 });
             }

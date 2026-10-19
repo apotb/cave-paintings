@@ -166,11 +166,7 @@
             return false;
         },
 
-        fullyHealedMessage(owner, host) {
-            const you = Hediffs && typeof Hediffs._logIsYou === "function"
-                ? Hediffs._logIsYou(owner, host)
-                : !!(typeof owner?.isControlled === "function" && owner.isControlled());
-            if (you) return "You are fully healed";
+        fullyHealedMessage(owner) {
             const name = Hediffs && typeof Hediffs._logName === "function"
                 ? Hediffs._logName(owner)
                 : (owner?.displayName?.() || owner?.pawnName || owner?.name || "Someone");

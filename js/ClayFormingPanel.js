@@ -937,7 +937,10 @@ class ClayFormingPanel {
         }
         this._finished = true;
         const label = stack.customName || Forming.defaultNameFor(stack.formClass) || "figurine";
-        const formed = Forming.isCustomName(stack) ? `You formed ${label}` : `You formed a ${label}`;
+        const who = this.scene.player?.displayName?.() || "Someone";
+        const formed = Forming.isCustomName(stack)
+            ? `${who} formed ${label}`
+            : `${who} formed a ${label}`;
         const ok = this._grantStack(stack);
         if (ok) this.scene.combatLog?.push(formed);
         else {

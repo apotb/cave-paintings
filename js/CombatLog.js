@@ -332,7 +332,7 @@ class CombatLog {
         if (cmd === "/kms") {
             const player = this.scene.player;
             if (!player || player._bodyDead) {
-                this.push("You are already dead.");
+                this.push(`${player?.displayName?.() || "Someone"} is already dead.`);
                 return;
             }
             if (this.scene.simAuth()) {
@@ -349,7 +349,7 @@ class CombatLog {
                 return;
             }
             if (brain.isDead()) {
-                this.push("Your brain is already destroyed.");
+                this.push(`${player.displayName?.() || "Someone"}'s brain is already destroyed.`);
                 return;
             }
             const defs = this.scene.cache?.json?.get?.("injuries") || {};

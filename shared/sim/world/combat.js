@@ -611,11 +611,10 @@
         const wantId = action.itemId ? String(action.itemId) : null;
         if (!held?.id || (wantId && held.id !== wantId)) {
             if (tenderIsYou || patientIsYou) {
-                const who = tenderIsYou ? "You" : (tender.name || "They");
-                const verb = tenderIsYou ? "need" : "needs";
+                const who = tender.name || "They";
                 this.pushEvent({
                     kind: "combat_log",
-                    text: `${who} ${verb} a bandage to finish tending`,
+                    text: `${who} needs a bandage to finish tending`,
                     feed: true,
                     combat: true,
                     to: p.id
@@ -626,11 +625,10 @@
         const meta = itemDefs().get(held.id);
         if (!meta?.bandage) {
             if (tenderIsYou || patientIsYou) {
-                const who = tenderIsYou ? "You" : (tender.name || "They");
-                const verb = tenderIsYou ? "need" : "needs";
+                const who = tender.name || "They";
                 this.pushEvent({
                     kind: "combat_log",
-                    text: `${who} ${verb} a bandage to finish tending`,
+                    text: `${who} needs a bandage to finish tending`,
                     feed: true,
                     combat: true,
                     to: p.id
@@ -675,7 +673,7 @@
         }
         if (!applied.length) {
             if (tenderIsYou || patientIsYou) {
-                const healer = tenderIsYou ? "you" : (tender.name || "they");
+                const healer = tender.name || "they";
                 this.pushEvent({
                     kind: "combat_log",
                     text: `The wound healed before ${healer} finished`,
@@ -703,10 +701,8 @@
         patientCreature.anatomy._dirty = false;
         this._youDirty.add(p.id);
 
-        const who = tenderIsYou ? "You" : (tender.name || "Someone");
-        const poss = patientIsYou
-            ? "your"
-            : (patientPawn.name ? `${patientPawn.name}'s` : "their");
+        const who = tender.name || "Someone";
+        const poss = patientPawn.name ? `${patientPawn.name}'s` : "their";
         const text = BodyHealing.tendLogLine?.(who, poss, quality, applied, patientCreature.anatomy)
             || `${who} finished bandaging (${Math.round(quality * 100)}%)`;
         if (tenderIsYou || patientIsYou) {

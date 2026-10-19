@@ -2360,7 +2360,7 @@ test("combat log names use party green, settler blue, and enemy red", () => {
     world.drainEvents();
     landHit(youC, boar);
     let line = firstHitLine(world, pawn.id);
-    assert.equal(line.segments[0].text, "You");
+    assert.equal(line.segments[0].text, pawn.name);
     assert.equal(line.segments[0].color, ALLY);
     const boarVic = line.segments.find((s) => /'s$/.test(s.text || ""));
     assert.ok(boarVic);
@@ -2384,7 +2384,7 @@ test("combat log names use party green, settler blue, and enemy red", () => {
     world.drainEvents();
     landHit(buddyC, boar);
     line = firstHitLine(world, pawn.id);
-    assert.equal(line.segments[0].text, "You");
+    assert.equal(line.segments[0].text, buddy.name);
     assert.equal(line.segments[0].color, ALLY);
     restoreRng();
 });

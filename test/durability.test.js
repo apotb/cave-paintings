@@ -69,9 +69,13 @@ test("wearInventorySlot mutates only the target index", () => {
 });
 
 test("breakChat colors the tool orange and names a settler in blue", () => {
-    const yours = Durability.breakChat("Sharp Stick", { you: true });
-    assert.equal(yours.text, "Your Sharp Stick broke");
-    assert.equal(yours.segments[0].text, "Your");
+    const yours = Durability.breakChat("Sharp Stick", {
+        actorName: "Tester",
+        actorColor: "#80e080"
+    });
+    assert.equal(yours.text, "Tester's Sharp Stick broke");
+    assert.equal(yours.segments[0].text, "Tester's");
+    assert.equal(yours.segments[0].color, "#80e080");
     assert.equal(yours.segments[1].text, "Sharp Stick");
     assert.equal(yours.segments[1].color, "#f0a040");
     assert.equal(yours.segments[2].text, "broke");

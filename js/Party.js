@@ -729,7 +729,8 @@ class PartySystem {
         if (!scene.party.includes(wanderer)) scene.party.push(wanderer);
         wanderer.syncNameLabel?.();
         scene.partyPanel?.refresh?.();
-        scene.combatLog?.push(`${name} joins you`);
+        const host = scene.player?.displayName?.() || scene.playerName || "them";
+        scene.combatLog?.push(`${name} joins ${host}`);
     }
 
     tryAllyClick(pawn, opts = {}) {
@@ -1929,7 +1930,8 @@ class PartySystem {
             this._promoteWanderer(w);
         }
         const name = ev.name || "Wanderer";
-        scene.combatLog?.push(`${name} joins you`);
+        const host = scene.player?.displayName?.() || scene.playerName || "them";
+        scene.combatLog?.push(`${name} joins ${host}`);
     }
 
     _promoteWanderer(w) {

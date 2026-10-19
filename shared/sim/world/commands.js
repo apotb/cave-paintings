@@ -1439,13 +1439,11 @@
 
     _pushToolBroke(p, name) {
         const to = this._sessionOfPawn(p)?.id || p.id;
-        const you = this._isViewerActingPawn(p, to);
         const settler = this._isViewerSettler(p, to);
         const actorName = (typeof p.displayName === "function" ? p.displayName() : null)
             || p.name || p.pawnName || "Someone";
         const chat = Durability.breakChat(name, {
-            you,
-            actorName: you ? null : actorName,
+            actorName,
             actorColor: settler
                 ? (Party.COLOR_SETTLER || "#7ec8ff")
                 : (Party.COLOR_ALLY || "#80e080"),

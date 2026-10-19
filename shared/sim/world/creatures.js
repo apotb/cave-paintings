@@ -219,12 +219,14 @@
         const WEAPON = "#f0a040";
         const atkColor = this._combatLogNameColor(attacker, viewerId);
         const vicColor = this._combatLogNameColor(target, viewerId);
-        const isYou = this._isViewerActingPawn(attacker, viewerId);
         const vicIsYou = this._isViewerActingPawn(target, viewerId);
+
+        const actorName = (entity) =>
+            entity?.displayName?.() || entity?.name || entity?.def?.name || "Someone";
 
         if (opts.destroyed) {
             const who = vicIsYou
-                ? "Your"
+                ? `${actorName(target)}'s`
                 : `${target.def?.name || target.displayName?.() || "Their"}'s`;
             return [
                 { text: who, color: vicColor },
@@ -235,22 +237,20 @@
         if (opts.deflected) {
             const itemName = opts.deflectName || "apparel";
             return [
-                { text: vicIsYou ? "Your" : "The", color: vicColor },
+                { text: vicIsYou ? `${actorName(target)}'s` : "The", color: vicColor },
                 { text: itemName, color: WEAPON },
                 { text: "deflected the blow" }
             ];
         }
 
-        const subj = isYou
-            ? "You"
-            : attacker?.displayName?.() || attacker?.def?.name || "Someone";
+        const subj = actorName(attacker);
         const verb = attack.verb || "hit";
         const weaponName =
             !attack.unarmed && attack.weaponName
                 ? attack.weaponName
                 : attack.sourcePart?.name || attack.weaponName || "blow";
         const vicPossessive = vicIsYou
-            ? "your"
+            ? `${actorName(target)}'s`
             : `${target.def?.name || target.displayName?.() || "foe"}'s`;
         const dmgStr = opts.glanced
             ? `(${Number(opts.damage).toFixed(1)}, glanced)`

@@ -135,7 +135,7 @@
     }
 
     function breakMessage(name, held) {
-        return breakChat(name, held ? { you: true } : { world: true }).text;
+        return breakChat(name, held ? { actorName: "Someone" } : { world: true }).text;
     }
 
     const WEAPON_COLOR = "#f0a040";
@@ -147,21 +147,17 @@
 
     /**
      * Combat-log line for a broken tool.
-     * Tool name is weapon orange. "Your" for the controlled pawn; otherwise
-     * the actor's possessive (settler blue / party green from the caller).
+     * Tool name is weapon orange. The actor's possessive is colored by the
+     * caller (party green / settler blue). World breaks stay "The … broke".
      */
     function breakChat(name, opts = {}) {
         const n = String(name || "item");
         const weapon = opts.weaponColor || WEAPON_COLOR;
         let who = "The";
         let whoColor = null;
-        if (!opts.world) {
-            if (opts.you || !opts.actorName) {
-                who = "Your";
-            } else {
-                who = breakPossessive(opts.actorName);
-                whoColor = opts.actorColor || null;
-            }
+        if (!opts.world && opts.actorName) {
+            who = breakPossessive(opts.actorName);
+            whoColor = opts.actorColor || null;
         }
         const segments = [
             whoColor ? { text: who, color: whoColor } : { text: who },

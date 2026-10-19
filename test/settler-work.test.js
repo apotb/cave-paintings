@@ -3843,7 +3843,7 @@ test("settler tool break names the settler in blue and the tool in orange", () =
     assert.equal(tool.color, "#f0a040");
 });
 
-test("player tool break says Your and colors the tool orange", () => {
+test("player tool break names the pawn and colors the tool orange", () => {
     const { world, pawn } = createTestWorld();
     pawn.connected = true;
     pawn.inventory = [{ id: "sharp_stick", quantity: 1, durability: 1 }, null, null, null, null];
@@ -3854,7 +3854,10 @@ test("player tool break says Your and colors the tool orange", () => {
     const logs = world.drainEvents().filter((e) => e.kind === "combat_log");
     assert.ok(logs.length, "expected a break combat log");
     const line = logs[0];
-    assert.equal(line.text, "Your Sharp Stick broke");
+    assert.equal(line.text, "Tester's Sharp Stick broke");
+    const who = line.segments.find((s) => s.text === "Tester's");
+    assert.ok(who, "expected pawn possessive segment");
+    assert.equal(who.color, Party.COLOR_ALLY || "#80e080");
     const tool = line.segments.find((s) => s.text === "Sharp Stick");
     assert.ok(tool);
     assert.equal(tool.color, "#f0a040");
