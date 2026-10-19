@@ -76,6 +76,8 @@
     }
 
     const CLAY_HOST = { gravel: true, sand: true, snow_beach: true };
+    /** Sand below this is beach. The same tile key above it is inland desert. */
+    const BEACH_ELEV = -0.19;
     const CLAY_THRESH = 0.58;
     const CLAY_FREQ = 6;
     /** Chebyshev tiles. Shores sit inside this; dry desert sand does not. */
@@ -194,7 +196,7 @@
             if (randValue < 0.03) loot.push("flint");
             return finish("gravel", [], loot);
         }
-        if (elevation < -0.19) {
+        if (elevation < BEACH_ELEV) {
             if (river < 0.005) return { key: "water", things: [], loot: [] };
             if (river < 0.0065) {
                 const loot = [];
@@ -653,6 +655,13 @@
      * Same seed, salt, and coordinate always return the same value.
      */
     const GRUB_SALT = 0xF15B;
+    /** River gravel, or the beach sand band. Hills and mountains stay bare. */
+    function grubHost(key, px, py) {
+        if (key === "gravel") return true;
+        if (key === "sand") return sampleElevation(px, py) < BEACH_ELEV;
+        return false;
+    }
+
     function scatterGrubNests(cx, cy, worldSeed, tiles, things, lootableThings) {
         const taken = new Set();
         const mark = (e) => {
@@ -665,11 +674,11 @@
         for (const e of lootableThings) mark(e);
         for (let i = 0; i < CS * CS; i++) {
             const key = tiles[i];
-            if (key === "water" || key === "ice") continue;
             const lx = i % CS;
             const ly = (i / CS) | 0;
             const tix = cx * CS + lx;
             const tiy = cy * CS + ly;
+            if (!grubHost(key, tix * TS, tiy * TS)) continue;
             if (taken.has(tix + "," + tiy)) continue;
             let shore = false;
             if (tileKeyAt(tix + 1, tiy) === "water") shore = true;
@@ -727,6 +736,7 @@
         CHUNK_PX,
         BLOCKED,
         CLAY_HOST,
+        BEACH_ELEV,
         CLAY_THRESH,
         CLAY_WATER_REACH,
         pickWorldSeed,

@@ -209,6 +209,60 @@ test("WorldGen clay stays near water and beats flint", () => {
     assert.equal(desertClay, 0, "a dry inland sand region must not spawn clay");
 });
 
+test("grub nests sit on gravel and beach sand, not rocky shores", () => {
+    const seed = 1;
+    WorldGen.applySeed(seed);
+    const TS = WorldGen.TS;
+    const CS = WorldGen.CS;
+    const NS = WorldGen.NOISE_SCALE;
+    const ROCKY = new Set([
+        "mountain", "snow_mountain", "mesa",
+        "grass_hill", "sand_hill", "snow_hill"
+    ]);
+    const hosts = new Map();
+    let nests = 0;
+    let rockyShores = 0;
+    const R = 24;
+    for (let cx = -R; cx <= R; cx++) {
+        for (let cy = -R; cy <= R; cy++) {
+            const chunk = WorldGen.generateChunk(cx, cy, seed);
+            for (let i = 0; i < CS * CS; i++) {
+                if (!ROCKY.has(chunk.tiles[i])) continue;
+                const lx = i % CS;
+                const ly = (i / CS) | 0;
+                const tix = cx * CS + lx;
+                const tiy = cy * CS + ly;
+                const wet = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => {
+                    return WorldGen.tileKeyAt(tix + dx, tiy + dy) === "water";
+                });
+                if (wet) rockyShores++;
+            }
+            for (const entry of chunk.things) {
+                if (entry.id !== "grub_nest") continue;
+                nests++;
+                const tix = Math.floor(entry.x / TS);
+                const tiy = Math.floor((entry.y - 1) / TS);
+                const lx = tix - cx * CS;
+                const ly = tiy - cy * CS;
+                const key = chunk.tiles[lx + ly * CS];
+                hosts.set(key, (hosts.get(key) || 0) + 1);
+                const elev = WorldGen.octaveNoise2D(
+                    (tix * TS) / NS, (tiy * TS) / NS, 2, 0.5, 2.5, 0
+                );
+                const beach = key === "sand" && elev < WorldGen.BEACH_ELEV;
+                assert.ok(key === "gravel" || beach, `grub nest on ${key} at ${tix},${tiy}`);
+            }
+        }
+    }
+    assert.ok(rockyShores > 0, "sample should include rocky shoreline");
+    assert.ok(nests > 0, "expected grub nests on soft shores");
+    assert.ok(hosts.get("gravel") > 0, "gravel shores should still grow nests");
+    assert.ok(hosts.get("sand") > 0, "beach sand should still grow nests");
+    for (const key of hosts.keys()) {
+        assert.ok(key === "gravel" || key === "sand", `unexpected nest host ${key}`);
+    }
+});
+
 test("bushes including snow take a quarter of clay health and drop sticks and leaves", () => {
     const getItem = (id) => DataStore.getItem(id);
     const stick = { id: "digging_stick" };
