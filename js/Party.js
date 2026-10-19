@@ -640,6 +640,25 @@ class PartySystem {
         pawn._refreshDownedState?.();
     }
 
+    /**
+     * Owned camp containing both the controlled pawn and the wanderer.
+     * A full party can only recruit into that camp, as a settler.
+     */
+    _recruitCamp(wanderer) {
+        const scene = this.scene;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        const sys = scene.settlementSys;
+        const me = scene.player;
+        if (!S?.sharedCamp || !sys || !me || !wanderer) return null;
+        return S.sharedCamp(
+            sys.owned(),
+            me.x, me.y,
+            wanderer.x, wanderer.y,
+            scene.tileSize || 16,
+            sys.ownerId()
+        );
+    }
+
     tryRecruit(wanderer) {
         const scene = this.scene;
         const me = scene.player;
@@ -649,8 +668,9 @@ class PartySystem {
         if (!me || me.isBodyDead?.()) return false;
         const P = typeof Party !== "undefined" ? Party : null;
         if (P && !P.inInteractRange(me, wanderer, scene.tileSize)) return false;
-        if ((scene.party?.length || 0) >= (P?.CAP || 6)) {
-            if (scene.settlementSys?.tryRecruitInto?.(wanderer)) return true;
+        const full = (scene.party?.length || 0) >= (P?.CAP || 6);
+        const camp = full ? this._recruitCamp(wanderer) : null;
+        if (full && !camp) {
             scene.combatLog?.push("Party is full");
             return false;
         }
@@ -677,7 +697,8 @@ class PartySystem {
             wanderer.syncNameLabel?.();
             return false;
         }
-        this.acceptRecruit(wanderer);
+        if (camp) this.acceptSettlerRecruit(wanderer, camp);
+        else this.acceptRecruit(wanderer);
         return true;
     }
 
@@ -731,6 +752,20 @@ class PartySystem {
         scene.partyPanel?.refresh?.();
         const host = scene.player?.displayName?.() || scene.playerName || "them";
         scene.combatLog?.push(`${name} joins ${host}`);
+    }
+
+    /** Full party, both inside the camp: they stay here instead of traveling. */
+    acceptSettlerRecruit(wanderer, settle) {
+        const scene = this.scene;
+        if (!wanderer || !settle) return null;
+        this._parkRecruitedSettler(wanderer, {
+            settlementId: settle.id,
+            settlementName: settle.name || ""
+        });
+        scene.settlementSys?._logPawnSettle?.(wanderer, "joins", settle.name);
+        scene.partyPanel?.refresh?.();
+        scene.settlementPanel?.refresh?.();
+        return wanderer;
     }
 
     tryAllyClick(pawn, opts = {}) {
@@ -1537,7 +1572,9 @@ class PartySystem {
         const name = wanderer.displayName?.() || wanderer.pawnName || "Wanderer";
         if (wanderer.hostile || wanderer.recruitLocked) return name;
         const lines = [name];
-        if ((scene.party?.length || 0) >= P.CAP) {
+        const full = (scene.party?.length || 0) >= P.CAP;
+        const camp = full ? this._recruitCamp(wanderer) : null;
+        if (full && !camp) {
             lines.push("Party is full");
             return lines.join("\n");
         }
@@ -1546,7 +1583,7 @@ class PartySystem {
             lines.push("Not interested");
             return lines.join("\n");
         }
-        lines.push("Click to recruit");
+        lines.push(camp ? "Click to join settlement" : "Click to recruit");
         const held = me?.getHeldItem?.();
         const meta = held ? scene.getItem(held.id) : null;
         const food = held?.food || meta?.food;
@@ -1926,12 +1963,71 @@ class PartySystem {
             w?.syncNameLabel?.();
             return;
         }
+        if (ev.settled) {
+            this._applySettledRecruit(ev, w);
+            return;
+        }
         if (w) {
             this._promoteWanderer(w);
         }
         const name = ev.name || "Wanderer";
         const host = scene.player?.displayName?.() || scene.playerName || "them";
         scene.combatLog?.push(`${name} joins ${host}`);
+    }
+
+    /** Server parked a recruit in camp. Keep the sprite; do not put them in the party. */
+    _applySettledRecruit(ev, wanderer) {
+        const scene = this.scene;
+        const id = ev?.wandererId;
+        const already = (scene.settlers || []).find((p) => p && p.pawnId === id);
+        if (wanderer && wanderer !== already) this._parkRecruitedSettler(wanderer, ev);
+        const pawn = wanderer || already;
+        const who = pawn || {
+            displayName: () => ev?.name || "Wanderer",
+            pawnName: ev?.name || "Wanderer"
+        };
+        const place = ev?.settlementName
+            || scene.settlementSys?.byId?.(ev?.settlementId)?.name
+            || "";
+        scene.settlementSys?._logPawnSettle?.(who, "joins", place);
+        scene.partyPanel?.refresh?.();
+        scene.settlementPanel?.refresh?.();
+    }
+
+    _parkRecruitedSettler(wanderer, ev) {
+        const scene = this.scene;
+        if (!wanderer) return null;
+        const settleId = ev?.settlementId || null;
+        this.wanderers = this.wanderers.filter((p) => p !== wanderer);
+        scene.party = (scene.party || []).filter((p) => p !== wanderer);
+        wanderer.role = "settler";
+        wanderer.homeSettlementId = settleId;
+        wanderer.ownerId = scene.leader?.ownerId || scene.characterId || scene._netPlayerId;
+        wanderer.leaderId = scene.leader?.pawnId || null;
+        wanderer.faction = (typeof Party !== "undefined" && Party.partyFactionId)
+            ? Party.partyFactionId(wanderer.ownerId)
+            : `party:${wanderer.ownerId}`;
+        wanderer.hostile = false;
+        wanderer.recruitLocked = false;
+        wanderer.wandererAI = null;
+        if (!this._isDedicatedNet()) this.applyRoughVitals(wanderer);
+        if (!wanderer.partyAI) wanderer.partyAI = new PartyAI(wanderer);
+        wanderer.partyAI.stopWork?.();
+        if (this._isDedicatedNet()) this._disablePawnPhysics(wanderer);
+        if (typeof syncCreatureInputHit === "function") syncCreatureInputHit(wanderer);
+        if (!scene.settlers) scene.settlers = [];
+        if (!scene.settlers.includes(wanderer)) scene.settlers.push(wanderer);
+        const settle = scene.settlementSys?.byId?.(settleId);
+        if (settle && typeof Settlement !== "undefined" && Settlement.bindPawnJobs) {
+            Settlement.bindPawnJobs(settle, wanderer);
+            scene.settlementSys._syncJobOrder?.(settle);
+        }
+        wanderer._netTx = wanderer.x;
+        wanderer._netTy = wanderer.y;
+        wanderer._netFromX = wanderer.x;
+        wanderer._netFromY = wanderer.y;
+        wanderer.syncNameLabel?.();
+        return wanderer;
     }
 
     _promoteWanderer(w) {

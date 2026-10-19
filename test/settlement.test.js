@@ -198,6 +198,14 @@ test("recruit parks into settlement when travel is full", () => {
     assert.equal(Settlement.recruitParksWhenFull(5, true, 6), false);
 });
 
+test("shared camp requires both points inside the same claim", () => {
+    const camp = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p", name: "Home" });
+    const ts = 16;
+    assert.equal(Settlement.sharedCamp([camp], 0, 0, 16, 0, ts, "p")?.id, camp.id);
+    assert.equal(Settlement.sharedCamp([camp], 31 * ts, 0, 34 * ts, 0, ts, "p"), null);
+    assert.equal(Settlement.sharedCamp([camp], 0, 0, 16, 0, ts, "other"), null);
+});
+
 test("campfire bills catalog is Roast, Simmer, and Smoke leather", () => {
     const recipes = Settlement.billRecipesFor("campfire");
     assert.equal(recipes.length, 3);

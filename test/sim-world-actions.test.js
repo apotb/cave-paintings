@@ -1703,6 +1703,96 @@ test("recruiting a wanderer drops stroll AI so they follow instead of walking of
     assert.equal(ai instanceof WandererStrollAI, false);
 });
 
+function fillTravelParty(pawn) {
+    pawn.party = [];
+    for (let i = 0; i < Party.CAP - 1; i++) {
+        pawn.party.push({ id: `mate-${i}`, dead: false, x: pawn.x, y: pawn.y });
+    }
+}
+
+function putWanderer(world, id, x, y) {
+    world.wanderers.set(id, {
+        id,
+        name: "Og",
+        x,
+        y,
+        facing: "right",
+        heading: { x: 1, y: 0 },
+        inventory: [null, null, null, null, null],
+        hostile: false,
+        recruitLocked: false,
+        refusedBy: []
+    });
+}
+
+test("a full party cannot recruit a wanderer outside the camp", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    world.rng = () => 0;
+    fillTravelParty(pawn);
+    const ts = 16;
+    const settle = Settlement.createSettlement({
+        x: 0, y: 0, ownerId: pawn.id, name: "Home"
+    });
+    world.settlements.push(settle);
+    pawn.x = 31 * ts;
+    pawn.y = 0;
+    const id = "w-full-out";
+    putWanderer(world, id, 34 * ts, 0);
+    const before = pawn.party.length;
+    world.handleAction(pawn.id, { type: Protocol.Actions.RECRUIT, wandererId: id });
+    assert.equal(world.wanderers.has(id), true);
+    assert.equal(pawn.party.length, before);
+    assert.equal(world.settlers.some((s) => s.id === id), false);
+    assert.equal(settle.jobs?.[id], undefined);
+});
+
+test("a full party recruits into the camp when both stand inside it", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    world.rng = () => 0;
+    fillTravelParty(pawn);
+    pawn.x = 0;
+    pawn.y = 0;
+    const settle = Settlement.createSettlement({
+        x: 0, y: 0, ownerId: pawn.id, name: "Home"
+    });
+    world.settlements.push(settle);
+    const id = "w-full-in";
+    putWanderer(world, id, 16, 0);
+    const before = pawn.party.length;
+    world.handleAction(pawn.id, { type: Protocol.Actions.RECRUIT, wandererId: id });
+    assert.equal(world.wanderers.has(id), false);
+    assert.equal(pawn.party.length, before);
+    const rec = world.settlers.find((s) => s.id === id);
+    assert.ok(rec);
+    assert.equal(rec.role, "settler");
+    assert.equal(rec.homeSettlementId, settle.id);
+    assert.ok(settle.jobs[id]);
+    assert.ok((settle.jobOrder || []).includes(id));
+    const ev = world._events.find((e) => e.kind === "recruit" && e.wandererId === id);
+    assert.equal(ev?.accepted, true);
+    assert.equal(ev?.settled, true);
+    assert.equal(ev?.settlementId, settle.id);
+});
+
+test("room in the party still recruits into the party inside a camp", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    world.rng = () => 0;
+    pawn.x = 0;
+    pawn.y = 0;
+    const settle = Settlement.createSettlement({
+        x: 0, y: 0, ownerId: pawn.id, name: "Home"
+    });
+    world.settlements.push(settle);
+    const id = "w-room-in";
+    putWanderer(world, id, 16, 0);
+    world.handleAction(pawn.id, { type: Protocol.Actions.RECRUIT, wandererId: id });
+    assert.equal(world.wanderers.has(id), false);
+    assert.ok((pawn.party || []).some((m) => m.id === id));
+    assert.equal(world.settlers.some((s) => s.id === id), false);
+    const ev = world._events.find((e) => e.kind === "recruit" && e.wandererId === id);
+    assert.equal(ev?.settled, false);
+});
+
 test("strolling wanderers do not worldgen an A* corridor", () => {
     const WorldGen = require("../shared/sim/WorldGen");
     const { world, pawn } = createTestWorld();

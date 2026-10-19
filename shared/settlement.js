@@ -1458,6 +1458,13 @@
         return hits[0] || null;
     }
 
+    /** Owned camp that contains both points, or null. */
+    function sharedCamp(list, ax, ay, bx, by, tileSize, ownerId) {
+        const camp = atPoint(list, ax, ay, tileSize, ownerId);
+        if (!camp || !inRange(camp, bx, by, tileSize)) return null;
+        return camp;
+    }
+
     function chunkKeysFor(settle, tileSize, chunkSize) {
         const ts = Number(tileSize) > 0 ? Number(tileSize) : 16;
         const cs = Number(chunkSize) > 0 ? Number(chunkSize) : 8;
@@ -2667,6 +2674,7 @@
         ownedOf,
         mergeOwned,
         atPoint,
+        sharedCamp,
         unlinkStation,
         removeStation,
         chunkKeysFor,

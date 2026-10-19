@@ -178,17 +178,22 @@
         const wid = action.wandererId;
         const w = this.wanderers.get(wid);
         if (!w || w.hostile || w.recruitLocked) return;
-        if ((p.party || []).length + 1 >= Party.CAP) {
-            const actor = (p.party || []).find((m) => m.id === p.controlId) || p;
-            const settle = Settlement.atPoint(this.settlements, actor.x, actor.y, TS, p.id);
-            if (settle) {
-                // fall through after checks by parking as settler
-            } else return;
-        }
-        const refused = w.refusedBy || [];
-        if (refused.includes(p.id)) return;
         const control = (p.party || []).find((m) => m.id === p.controlId) || p;
         if (!Party.inInteractRange(control, w, TS)) return;
+        // Party list is companions only. Headcount includes the leader.
+        const head = (p.party || []).length + 1;
+        const full = !Settlement.partyHasRoom(head, Party.CAP);
+        const camp = Settlement.sharedCamp(
+            this._ownedSettlements(p.id),
+            control.x, control.y,
+            w.x, w.y,
+            TS,
+            p.id
+        );
+        // A full party cannot recruit. Inside your own camp, they join as a settler.
+        if (full && !camp) return;
+        const refused = w.refusedBy || [];
+        if (refused.includes(p.id)) return;
         const held = control.inventory?.[control.hotbarIndex];
         const meta = held ? itemDefs().get(held.id) : null;
         const food = held?.food || meta?.food;
@@ -217,16 +222,15 @@
             kc: Party.rollRoughKc(() => this.rng()),
             body: w.body || null
         });
-        const actor = (p.party || []).find((m) => m.id === p.controlId) || p;
-        const park = Settlement.atPoint(this.settlements, actor.x, actor.y, TS, p.id);
-        const full = (p.party || []).length + 1 >= Party.CAP;
-        if (full && park) {
+        const park = full ? camp : null;
+        if (park) {
             rec.role = "settler";
             rec.homeSettlementId = park.id;
             rec.ownerId = p.id;
             Settlement.bindPawnJobs(park, rec);
             this.settlers.push(rec);
             this._ensureSettlerCreature(rec);
+            this._syncJobOrder(park);
         } else {
             if (!p.party) p.party = [];
             p.party.push(rec);
@@ -246,7 +250,10 @@
             wandererId: wid,
             accepted: true,
             name: rec.name,
-            to: p.id
+            to: p.id,
+            settled: !!park,
+            settlementId: park ? park.id : null,
+            settlementName: park ? (park.name || "") : null
         });
     },
 

@@ -2360,29 +2360,6 @@ class SettlementSystem {
         return false;
     }
 
-    tryRecruitInto(wanderer) {
-        const settle = this.here(this.scene.player);
-        if (!settle) return false;
-        const scene = this.scene;
-        const P = typeof Party !== "undefined" ? Party : { CAP: 6 };
-        if ((scene.party?.length || 0) < (P.CAP || 6)) return false;
-        const sys = scene.partySys;
-        const held = scene.player?.getHeldItem?.();
-        const meta = held ? scene.getItem(held.id) : null;
-        const food = held?.food || meta?.food;
-        const holdingFood = !!(food && Number(food.kc ?? 0) > 0);
-        const chance = P.recruitChance ? P.recruitChance(holdingFood) : 0.5;
-        if (holdingFood) sys._consumeRecruitFood?.(scene.player);
-        if (Math.random() >= chance) {
-            scene.combatLog?.push(`${wanderer.displayName()} is not interested`);
-            return true;
-        }
-        sys.acceptRecruit?.(wanderer);
-        const pawn = (scene.party || []).find((p) => p.pawnId === wanderer.pawnId) || wanderer;
-        this.dropOff(pawn, settle);
-        return true;
-    }
-
     update() {
         this.updateStonePips();
         this.ensureHud();
