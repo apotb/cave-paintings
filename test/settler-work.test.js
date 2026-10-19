@@ -1943,6 +1943,23 @@ test("dedicated settler does not haul a fleshed hide soaking in water", () => {
     assert.ok(!rec.inventory.some((s) => s && s.id === "deer_hide_fleshed"));
 });
 
+test("dedicated settler who hangs a raw hide goes on to flesh it", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "pebble", toolClass: "scraper", knapQuality: "rough", quantity: 1 },
+            { id: "deer_hide", quantity: 1 },
+            null, null, null
+        ]
+    });
+    const rack = addStation(world, settle, "drying_rack", rec.x, rec.y, "rack-hang-then-flesh");
+    Settlement.addBill(settle, rack.uid, { recipeId: "flesh_hide", mode: "forever", paused: false });
+    for (let i = 0; i < 800; i++) world.tick(16);
+    assert.equal(rack.slots[0]?.id, "deer_hide_fleshed");
+    assert.equal(rec._workChannel, null);
+    assert.notEqual(rec._busyJob?.target?.kind, "hang");
+});
+
 test("dedicated settler fleshes a hang over the scrape channel", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {

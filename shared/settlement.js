@@ -1590,6 +1590,18 @@
         return normalizeJobs(row)[name] >= 1;
     }
 
+    function sameLeatherJob(held, next) {
+        if (!held || !next) return false;
+        if ((held.kind || "") !== (next.kind || "")) return false;
+        const a = held.station?.uid || held.entry?.uid || held.drop?.uid || null;
+        const b = next.station?.uid || next.entry?.uid || next.drop?.uid || null;
+        if (a && b && String(a) !== String(b)) return false;
+        const ha = held.bill?.id;
+        const hb = next.bill?.id;
+        if (ha && hb && ha !== hb) return false;
+        return true;
+    }
+
     function sameCookJob(held, next) {
         if (!held || !next) return false;
         const hb = held.bill || null;
@@ -1873,7 +1885,8 @@
             // A finished count/until bill leaves a leather hold pointing at the bench.
             // Don't keep sewing just because the previous scan still had that job.
             // Same for cook: a paused or reordered bill must drop the roast hold.
-            const keepLeather = busyJob.type !== "leather" || state.leatherWork || state.benchBill;
+            const nextLeather = state.leatherWork || state.benchBill;
+            const keepLeather = busyJob.type !== "leather" || sameLeatherJob(busyJob.target, nextLeather);
             const keepCraft = busyJob.type !== "craft" || state.rockWork;
             const keepCook = busyJob.type !== "cook" || sameCookJob(busyJob.target, state.cookBill);
             // Hands full: drop the light hold so a stash can free a slot for the starter.

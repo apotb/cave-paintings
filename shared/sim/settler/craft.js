@@ -366,7 +366,13 @@ function doLeather(world, rec, settle, job) {
         return finishPut(world, rec, settle, facing ? { facing } : null);
     }
     if (job.kind === "hang") {
-        if (rackHang(rack)) return halt();
+        // Hide is already up. Holding this hang order past the search that
+        // should switch to fleshing leaves them standing on the rack forever.
+        if (rackHang(rack)) {
+            endWorkHold(rec);
+            rec._settlerScan = null;
+            return halt();
+        }
         const found = findStack(world, rec, settle, (s) => Settlement.hideAllowsStack(job.bill, s, getItem));
         if (!found) return halt();
         if (found.at !== rec) return fetchStack(world, rec, settle, found) || halt();
