@@ -2196,7 +2196,7 @@ class SettlementSystem {
         };
         ui.paint = paint;
         ui.setScreenUi = () => {};
-        const tipText = () => ui._added ? "Clear medical mark" : "Mark for medical";
+        const tipText = () => ui._added ? "Remove medical designation" : "Medical patients only";
         ui.setAdded = (on) => {
             ui._added = !!on;
             paint();
