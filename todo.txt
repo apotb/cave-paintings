@@ -1,3 +1,5 @@
+Raids
+
 Fix UI size 1 issues (e.g. tech tree, settlement menu)
 
 Agriculture -- will unlock a tutorial tip that you can open to learn about soil and farming mechanics

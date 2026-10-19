@@ -190,6 +190,89 @@ test("opaque bounds drop the empty margin around a sculpture", () => {
     assert.equal(Number(bounds.h), 3);
 });
 
+function trackVisible(text) {
+    text.visible = false;
+    text.setVisible = (v) => { text.visible = v; return text; };
+    return text;
+}
+
+test("stat lines gray, and spoil time turns light red at 6h", () => {
+    const hud = loadHud();
+    const scene = previewScene(hud, new Set());
+    const tip = [
+        "Berry",
+        "Weight: 0.1 kg",
+        "Food: 40 kcal",
+        "Satiety: ×1.5",
+        "Spoils in: 2d 3h",
+        "Fuel: 40 kj, 200°C",
+        "DPS: 1.5 melee",
+        "Dig: +4%",
+        "Chop: +12%",
+        "Stack total: 0.4 kg, 80 kj",
+        "Attack trees to chop them down"
+    ].join("\n");
+    assert.equal(scene._tooltipStatColor("Weight: 0.2 kg"), "muted");
+    assert.equal(scene._tooltipStatColor("Fuel: 40 kj"), "muted");
+    assert.equal(scene._tooltipStatColor("DPS: 1.5 melee"), "muted");
+    assert.equal(scene._tooltipStatColor("Dig: +4%"), "muted");
+    assert.equal(scene._tooltipStatColor("Food: 40 kcal"), "muted");
+    assert.equal(scene._tooltipStatColor("Satiety: ×1.5"), "muted");
+    assert.equal(scene._tooltipStatColor("Spoils: paused"), "muted");
+    assert.equal(scene._tooltipStatColor("Spoils in: 7h"), "muted");
+    assert.equal(scene._tooltipStatColor("Spoils in: 1d"), "muted");
+    assert.equal(scene._tooltipStatColor("Spoils in: 6h"), "warn");
+    assert.equal(scene._tooltipStatColor("Spoils in: <1h"), "warn");
+    assert.equal(scene._tooltipStatColor("Spoils in: 1h"), "warn");
+    assert.equal(scene._tooltipStatColor("Satiety: 40"), "");
+    assert.equal(scene._tooltipStatColor("Chop: +12%"), "");
+    assert.equal(scene._tooltipStatColor("Stack total: 0.4 kg"), "");
+    assert.equal(scene._tooltipStatColor("Stick"), "");
+    assert.equal(scene._tooltipStatColor("Slot: back"), "equip");
+    assert.equal(scene._tooltipStatColor("+ 2 pack slots"), "equip");
+    assert.equal(scene._tooltipStatColor("+ 4 kg carry"), "equip");
+    assert.equal(scene._tooltipStatColor("+ 10% speed"), "equip");
+    assert.equal(scene._tooltipStatColor("Armor: 12% sharp / 8% blunt"), "equip");
+    assert.equal(scene._tooltipStatColor("Covers: torso, right shoulder"), "equip");
+    assert.equal(scene._tooltipStatCss("muted"), "#a0a0a0");
+    assert.equal(scene._tooltipStatCss("warn"), "#f0a0a0");
+    assert.equal(scene._tooltipStatCss("equip"), "#f0a050");
+    assert.equal(
+        scene._tooltipColorOverlay("Basket\nSlot: back\n+ 2 pack slots\nWear on your back", "equip"),
+        "\nSlot: back\n+ 2 pack slots\n"
+    );
+    assert.equal(
+        scene._tooltipMutedOverlay(tip),
+        "\nWeight: 0.1 kg\nFood: 40 kcal\nSatiety: ×1.5\nSpoils in: 2d 3h\nFuel: 40 kj, 200°C\nDPS: 1.5 melee\nDig: +4%\n\n\n"
+    );
+    assert.equal(scene._tooltipColorOverlay(tip, "warn"), "");
+    assert.equal(
+        scene._tooltipColorOverlay("Berry\nSpoils in: 6h\nSpoils in: <1h", "warn"),
+        "\nSpoils in: 6h\nSpoils in: <1h"
+    );
+    assert.equal(scene._tooltipMutedOverlay("Stick"), "");
+
+    scene.tooltipMuted = trackVisible(tipText(0, 0));
+    scene.tooltipWarn = trackVisible(tipText(0, 0));
+    scene.tooltipEquip = trackVisible(tipText(0, 0));
+    scene._tooltipSource = () => "Berry\nFood: 40 kcal\nSpoils in: 5h";
+    assert.equal(scene._applyTooltipPayload(), true);
+    assert.equal(scene.tooltipMuted.text, "\nFood: 40 kcal\n");
+    assert.equal(scene.tooltipMuted.visible, true);
+    assert.equal(scene.tooltipWarn.text, "\n\nSpoils in: 5h");
+    assert.equal(scene.tooltipWarn.visible, true);
+
+    scene._tooltipDrawn = false;
+    scene._tooltipSource = () => "Pebble";
+    scene._applyTooltipPayload();
+    assert.equal(scene.tooltipMuted.text, "");
+    assert.equal(scene.tooltipMuted.visible, false);
+    assert.equal(scene.tooltipWarn.text, "");
+    assert.equal(scene.tooltipWarn.visible, false);
+    assert.equal(scene.tooltipEquip.text, "");
+    assert.equal(scene.tooltipEquip.visible, false);
+});
+
 test("a missing sculpture bake stays text-only", () => {
     const hud = loadHud();
     const scene = previewScene(hud, new Set());

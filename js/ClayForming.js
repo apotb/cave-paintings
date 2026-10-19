@@ -171,7 +171,20 @@ const ClayForming = {
         const head = scene.tooltipText?.text || "";
         const tail = scene.tooltipSub?.visible ? (scene.tooltipSub.text || "") : "";
         const text = tail ? `${head}\n${tail}` : head;
-        el.textContent = text;
+        const statColor = scene._tooltipStatColor;
+        const lines = text.split("\n");
+        if (typeof statColor === "function" && lines.some((line) => statColor.call(scene, line))) {
+            el.innerHTML = lines.map((line) => {
+                const safe = line
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;");
+                const css = scene._tooltipStatCss?.(statColor.call(scene, line));
+                return css ? `<span style="color:${css}">${safe}</span>` : safe;
+            }).join("\n");
+        } else {
+            el.textContent = text;
+        }
         el.style.display = text ? "block" : "none";
         el.style.width = "max-content";
         el.style.minWidth = "0";

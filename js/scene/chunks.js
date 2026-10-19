@@ -285,6 +285,14 @@
                 this.tooltipSub.setStroke("#000000", Math.max(2, Math.round(2 * s)));
                 if (typeof crispUiText === "function") crispUiText(this.tooltipSub);
             }
+            for (const overlay of [this.tooltipMuted, this.tooltipWarn, this.tooltipEquip]) {
+                if (!overlay) continue;
+                if (typeof applyPixelUiFont === "function") applyPixelUiFont(overlay, 16, s);
+                else overlay.setFontSize(`${pixelUiFontSize(16, s)}px`);
+                overlay.setPadding(this._tooltipPadding);
+                overlay.setStroke("#000000", Math.max(2, Math.round(2 * s)));
+                if (typeof crispUiText === "function") crispUiText(overlay);
+            }
             if (this.tooltip?.visible) {
                 this._tooltipDrawn = false;
                 this.refreshTooltip?.();

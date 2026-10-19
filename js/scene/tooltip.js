@@ -11,14 +11,28 @@
 
         this.tooltip = this.add.container(0, 0).setDepth(40000).setVisible(false).setAlpha(1);
         this.tooltipBg = this.add.graphics().setAlpha(1);
-        this.tooltipText = crispUiText(this.add.text(0, 0, "", {
+        const tipStyle = {
             fontFamily: PIXEL_UI_FONT,
             fontSize: `${pixelUiFontSize(16, 1)}px`,
             color: "#ffffff",
             stroke: "#000000",
             strokeThickness: 2,
             padding: { left: this._tooltipPadding, right: this._tooltipPadding, top: this._tooltipPadding, bottom: this._tooltipPadding }
-        }));
+        };
+        this.tooltipText = crispUiText(this.add.text(0, 0, "", tipStyle));
+        // Drawn on top of the same glyphs so stat lines can leave the white copy.
+        this.tooltipMuted = crispUiText(this.add.text(0, 0, "", {
+            ...tipStyle,
+            color: this._tooltipStatCss("muted")
+        })).setVisible(false);
+        this.tooltipWarn = crispUiText(this.add.text(0, 0, "", {
+            ...tipStyle,
+            color: this._tooltipStatCss("warn")
+        })).setVisible(false);
+        this.tooltipEquip = crispUiText(this.add.text(0, 0, "", {
+            ...tipStyle,
+            color: this._tooltipStatCss("equip")
+        })).setVisible(false);
         this.tooltipHunger = this.add.graphics().setVisible(false);
         this.tooltipSub = crispUiText(this.add.text(0, 0, "", {
             fontFamily: PIXEL_UI_FONT,
@@ -30,7 +44,7 @@
         })).setVisible(false);
         this.tooltipGear = this.add.container(0, 0);
         this.tooltip.add([
-            this.tooltipBg, this.tooltipText, this.tooltipHunger, this.tooltipSub, this.tooltipGear
+            this.tooltipBg, this.tooltipText, this.tooltipMuted, this.tooltipWarn, this.tooltipEquip, this.tooltipHunger, this.tooltipSub, this.tooltipGear
         ]);
         this.tooltip.clearMask?.(true);
         (this.tooltipLayer || this.uiLayer).add(this.tooltip);

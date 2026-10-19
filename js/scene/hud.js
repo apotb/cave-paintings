@@ -463,6 +463,63 @@
         return { head: s.slice(0, i), tail: s.slice(i + 1) };
     },
 
+    /** "" | "muted" | "warn" | "equip". Spoil time is light red at 6h or less. */
+    _tooltipStatColor(line) {
+        const s = String(line || "");
+        if (s.startsWith("Spoils in:")) {
+            const hours = this._tooltipSpoilHours(s);
+            return hours != null && hours <= 6 ? "warn" : "muted";
+        }
+        if (s === "Spoils: paused") return "muted";
+        if (/^(?:Weight|Fuel|DPS|Dig|Food):/.test(s) || s.startsWith("Satiety: ×")) return "muted";
+        if (/^(?:Slot|Armor|Covers): /.test(s) || s.startsWith("+ ")) return "equip";
+        return "";
+    },
+
+    /** Hours shown by formatHours, or null when the line is not a remaining-time tip. */
+    _tooltipSpoilHours(line) {
+        const rest = String(line || "").slice("Spoils in:".length).trim();
+        if (rest === "<1h") return 0;
+        const hours = /^(\d+)h$/.exec(rest);
+        if (hours) return Number(hours[1]);
+        const days = /^(\d+)d(?: (\d+)h)?$/.exec(rest);
+        if (days) return Number(days[1]) * 24 + (Number(days[2]) || 0);
+        return null;
+    },
+
+    _tooltipStatCss(kind) {
+        if (kind === "warn") return "#f0a0a0";
+        if (kind === "equip") return "#f0a050";
+        if (kind === "muted") return "#a0a0a0";
+        return "";
+    },
+
+    _tooltipStatMuted(line) {
+        return this._tooltipStatColor(line) === "muted";
+    },
+
+    _tooltipColorOverlay(text, kind) {
+        const lines = String(text || "").split("\n");
+        if (!lines.some((line) => this._tooltipStatColor(line) === kind)) return "";
+        return lines.map((line) => this._tooltipStatColor(line) === kind ? line : "").join("\n");
+    },
+
+    _tooltipMutedOverlay(text) {
+        return this._tooltipColorOverlay(text, "muted");
+    },
+
+    _syncTooltipOverlay(obj, overlay) {
+        if (!obj?.setText) return;
+        obj.setText(overlay);
+        obj.setVisible(!!overlay);
+    },
+
+    _syncTooltipStatColor(text) {
+        this._syncTooltipOverlay(this.tooltipMuted, this._tooltipColorOverlay(text, "muted"));
+        this._syncTooltipOverlay(this.tooltipWarn, this._tooltipColorOverlay(text, "warn"));
+        this._syncTooltipOverlay(this.tooltipEquip, this._tooltipColorOverlay(text, "equip"));
+    },
+
     _hungerSig(h) {
         if (!h) return "";
         return [
@@ -495,6 +552,7 @@
             return !!(head || tail || this._tooltipGearH || this._tooltipHungerH || this._tooltipPreviewH);
         }
         this.tooltipText.setText(head);
+        this._syncTooltipStatColor(head);
         if (this.tooltipSub) {
             this.tooltipSub.setText(tail);
             this.tooltipSub.setVisible(!!tail);
@@ -548,9 +606,13 @@
         const hungerOn = !!hunger;
         const tail = !!(this.tooltipSub?.text);
         if (hungerOn) {
-            this.tooltipText.setPadding({
+            const headPad = {
                 left: pad, right: pad, top: pad, bottom: Math.round(2 * s)
-            });
+            };
+            this.tooltipText.setPadding(headPad);
+            this.tooltipMuted?.setPadding?.(headPad);
+            this.tooltipWarn?.setPadding?.(headPad);
+            this.tooltipEquip?.setPadding?.(headPad);
             if (this.tooltipSub) {
                 this.tooltipSub.setPadding({
                     left: pad, right: pad, top: Math.round(2 * s), bottom: pad
@@ -558,9 +620,15 @@
             }
         } else {
             this.tooltipText.setPadding(pad);
+            this.tooltipMuted?.setPadding?.(pad);
+            this.tooltipWarn?.setPadding?.(pad);
+            this.tooltipEquip?.setPadding?.(pad);
             if (this.tooltipSub) this.tooltipSub.setPadding(pad);
         }
         if (this.tooltipText?.style?.wordWrapWidth) this.tooltipText.setWordWrapWidth(0);
+        if (this.tooltipMuted?.style?.wordWrapWidth) this.tooltipMuted.setWordWrapWidth(0);
+        if (this.tooltipWarn?.style?.wordWrapWidth) this.tooltipWarn.setWordWrapWidth(0);
+        if (this.tooltipEquip?.style?.wordWrapWidth) this.tooltipEquip.setWordWrapWidth(0);
         this._syncTooltipHunger(hunger, this._hungerSig(hunger));
         const hasText = !!(this.tooltipText?.text);
         this.tooltipText?.setVisible(hasText);
