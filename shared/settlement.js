@@ -70,7 +70,7 @@
             "Stoke fires"
         ],
         chop: ["Chop trees"],
-        fish: ["Fish at the shore"],
+        fish: ["Fishing"],
         leather: [
             "Work at Drying Rack",
             "Soak hides in water",
