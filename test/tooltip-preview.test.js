@@ -226,7 +226,9 @@ test("stat lines gray, and spoil time turns light red at 6h", () => {
     assert.equal(scene._tooltipStatColor("Spoils in: 1h"), "warn");
     assert.equal(scene._tooltipStatColor("Satiety: 40"), "");
     assert.equal(scene._tooltipStatColor("Chop: +12%"), "");
-    assert.equal(scene._tooltipStatColor("Stack total: 0.4 kg"), "");
+    assert.equal(scene._tooltipStatColor("Hardness: 5"), "muted");
+    assert.equal(scene._tooltipStatColor("Toughness: 40%"), "muted");
+    assert.equal(scene._tooltipStatColor("Stack total: 0.4 kg"), "muted");
     assert.equal(scene._tooltipStatColor("Stick"), "");
     assert.equal(scene._tooltipStatColor("Slot: back"), "equip");
     assert.equal(scene._tooltipStatColor("+ 2 pack slots"), "equip");
@@ -243,7 +245,7 @@ test("stat lines gray, and spoil time turns light red at 6h", () => {
     );
     assert.equal(
         scene._tooltipMutedOverlay(tip),
-        "\nWeight: 0.1 kg\nFood: 40 kcal\nSatiety: ×1.5\nSpoils in: 2d 3h\nFuel: 40 kj, 200°C\nDPS: 1.5 melee\nDig: +4%\n\n\n"
+        "\nWeight: 0.1 kg\nFood: 40 kcal\nSatiety: ×1.5\nSpoils in: 2d 3h\nFuel: 40 kj, 200°C\nDPS: 1.5 melee\nDig: +4%\n\nStack total: 0.4 kg, 80 kj\n"
     );
     assert.equal(scene._tooltipColorOverlay(tip, "warn"), "");
     assert.equal(

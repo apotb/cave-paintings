@@ -471,7 +471,7 @@
             return hours != null && hours <= 6 ? "warn" : "muted";
         }
         if (s === "Spoils: paused") return "muted";
-        if (/^(?:Weight|Fuel|DPS|Dig|Food):/.test(s) || s.startsWith("Satiety: ×")) return "muted";
+        if (/^(?:Weight|Fuel|DPS|Dig|Food|Hardness|Toughness|Stack total):/.test(s) || s.startsWith("Satiety: ×")) return "muted";
         if (/^(?:Slot|Armor|Covers): /.test(s) || s.startsWith("+ ")) return "equip";
         return "";
     },
