@@ -788,7 +788,19 @@
     _fishHand(pawn) {
         const w = pawn.width || 16;
         const h = pawn.height || 16;
-        const face = pawn._netWorkChannel?.facing || pawn.facing || "down";
+        const ch = pawn._netWorkChannel;
+        let face = pawn.facing || ch?.facing || "down";
+        if (
+            ch?.kind === "fish"
+            && typeof Fish !== "undefined"
+            && Fish.facingBobber
+            && Number.isFinite(ch.waterTx)
+            && Number.isFinite(ch.waterTy)
+        ) {
+            face = Fish.facingBobber(pawn.x, pawn.y, ch.waterTx, ch.waterTy, face) || face;
+        } else if (ch?.kind === "fish" && ch.facing) {
+            face = ch.facing;
+        }
         if (face === "left") return { x: Math.round(pawn.x + 1), y: Math.round(pawn.y - 8) };
         if (face === "right") return { x: Math.round(pawn.x + w - 2), y: Math.round(pawn.y - 8) };
         if (face === "up") return { x: Math.round(pawn.x + w * 0.5), y: Math.round(pawn.y - h + 3) };

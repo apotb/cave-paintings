@@ -120,8 +120,7 @@
                 && (Number(control.kc) > 0)
                 && !this._pawnCannotSprint(control);
         }
-        if (control.fishChannel?.facing) control.facing = control.fishChannel.facing;
-        else if (facing) control.facing = facing;
+        if (!control.fishChannel && facing) control.facing = facing;
         const cc = control.creature || this.creatures.get(control.id);
         let justWoke = false;
         if (
@@ -174,6 +173,7 @@
         } else if (cc) {
             cc.facing = control.facing || cc.facing;
         }
+        if (control.fishChannel) this._lockFishFacing(control);
         // Uncontrolled party poses are server-authored (PartyAI). Ignore client
         // copies so other players see the same hitboxes the sim uses — except a
         // tend lock so they finish bandaging before follow pulls them.
@@ -2320,7 +2320,10 @@
             waterTx: tx,
             waterTy: ty,
             reach: F.castRangeTiles(spot.standTx, spot.standTy, tx, ty) * 2,
-            facing: F.shoreFacing(spot.standTx, spot.standTy, tx, ty) || pawn.facing || "down"
+            facing: F.facingBobber(pawn.x, pawn.y, tx, ty, pawn.facing)
+                || F.shoreFacing(spot.standTx, spot.standTy, tx, ty)
+                || pawn.facing
+                || "down"
         };
         this._lockFishFacing(pawn);
         this._pushFishChannelEvent(pawn);
@@ -2348,10 +2351,16 @@
         });
     },
 
-    /** Keep a casting pawn looking at the water they cast into. */
+    /** Keep a casting pawn looking at the bobber, not the heading of the throw. */
     _lockFishFacing(pawn) {
-        const face = pawn?.fishChannel?.facing;
+        const ch = pawn?.fishChannel;
+        if (!ch) return;
+        const F = fishApi();
+        const face = (F?.facingBobber && Number.isFinite(ch.waterTx))
+            ? (F.facingBobber(pawn.x, pawn.y, ch.waterTx, ch.waterTy, ch.facing || pawn.facing) || ch.facing)
+            : ch.facing;
         if (!face) return;
+        ch.facing = face;
         pawn.facing = face;
         const c = pawn.creature || this.creatures?.get?.(pawn.id);
         if (c) c.facing = face;

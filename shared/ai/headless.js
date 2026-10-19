@@ -1711,8 +1711,15 @@
 
         _face(x, y) {
             const mob = this.mob;
-            if (mob?.fishChannel?.facing) {
-                mob.facing = mob.fishChannel.facing;
+            const fish = mob?.fishChannel;
+            if (fish?.facing || Number.isFinite(fish?.waterTx)) {
+                let face = fish.facing || null;
+                const FishApi = typeof Fish !== "undefined" ? Fish : null;
+                if (FishApi?.facingBobber && Number.isFinite(fish.waterTx) && Number.isFinite(fish.waterTy)) {
+                    face = FishApi.facingBobber(mob.x, mob.y, fish.waterTx, fish.waterTy, face) || face;
+                    if (face) fish.facing = face;
+                }
+                if (face) mob.facing = face;
                 return;
             }
             const ax = Math.abs(x);

@@ -1056,6 +1056,7 @@
                 lastSleep: p.lastSleep || null,
                 eating: !!p.eatChannel,
                 eatChannel: this._eatChannelSnap(p.eatChannel),
+                fish: this._fishSnap(p),
                 tendChannel: this._tendChannelSnap(p.tendChannel),
                 activity: this._pawnTendActivity(p),
                 attacking: !p.prone && !p.dead && p.attackTimer > 0,
@@ -1087,6 +1088,7 @@
                         look: m.look || Look.normalizeLook(null),
                         eatChannel: this._eatChannelSnap(m.eatChannel),
                         tendChannel: this._tendChannelSnap(m.tendChannel),
+                        fish: this._fishSnap(m),
                         activity: this._pawnTendActivity(m),
                         attacking: !(m.dead || m.prone || m.creature?._prone || m._resting)
                             && (m.attackTimer || 0) > 0,

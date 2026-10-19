@@ -355,8 +355,19 @@ class PartyAI {
         applyEntityVelocity?.(pawn, nx * speed, ny * speed, scene.game?.loop?.delta || 16, scene);
         const ax = Math.abs(nx);
         const ay = Math.abs(ny);
-        const fishFace = pawn.fishChannel?.facing
-            || (pawn._netWorkChannel?.kind === "fish" ? pawn._netWorkChannel.facing : null);
+        const fishCh = pawn.fishChannel
+            || (pawn._netWorkChannel?.kind === "fish" ? pawn._netWorkChannel : null);
+        let fishFace = fishCh?.facing || null;
+        if (
+            fishCh
+            && typeof Fish !== "undefined"
+            && Fish.facingBobber
+            && Number.isFinite(fishCh.waterTx)
+            && Number.isFinite(fishCh.waterTy)
+        ) {
+            fishFace = Fish.facingBobber(pawn.x, pawn.y, fishCh.waterTx, fishCh.waterTy, fishFace) || fishFace;
+            if (fishFace) fishCh.facing = fishFace;
+        }
         if (fishFace) pawn.facing = fishFace;
         else if (ax > ay + 0.22) pawn.facing = nx > 0 ? "right" : "left";
         else if (ay > ax + 0.22) pawn.facing = ny > 0 ? "down" : "up";

@@ -140,6 +140,9 @@
             snapAt: performance.now(),
             snapDt: 1000 / (NetProtocol.SNAPSHOT_HZ || 15),
             facing: rp.facing || "down",
+            fish: Number.isFinite(Number(rp.fish?.waterTx))
+                ? { waterTx: rp.fish.waterTx | 0, waterTy: rp.fish.waterTy | 0 }
+                : null,
             vx: rp.vx || 0,
             vy: rp.vy || 0,
             serverMoving: !!rp.moving,
@@ -198,6 +201,9 @@
                 this._netStampRemotePose(entry, rp);
             }
             entry.facing = rp.facing || "down";
+            entry.fish = Number.isFinite(Number(rp.fish?.waterTx))
+                ? { waterTx: rp.fish.waterTx | 0, waterTy: rp.fish.waterTy | 0 }
+                : null;
             entry.displayName = rp.name || entry.displayName || "?";
             entry.name.setText(entry.displayName);
             if (rp.look && typeof Look !== "undefined" && !Look.looksEqual(entry.look, rp.look)) {
@@ -263,6 +269,9 @@
                     this._netStampRemotePose(mEntry, mem);
                 }
                 mEntry.facing = mem.facing || "down";
+                mEntry.fish = Number.isFinite(Number(mem.fish?.waterTx))
+                    ? { waterTx: mem.fish.waterTx | 0, waterTy: mem.fish.waterTy | 0 }
+                    : null;
                 mEntry.displayName = mem.name || mEntry.displayName;
                 mEntry.name.setText(mEntry.displayName);
                 mEntry.ownerId = rp.id;

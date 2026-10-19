@@ -3534,6 +3534,26 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
+     * Cardinal look at the bobber while a cast is out. Writes it back onto the
+     * channel so the line leaves the hand that is actually facing the bait.
+     */
+    _fishBobberFacing() {
+        const ch = this._netWorkChannel;
+        if (ch?.kind !== "fish") return null;
+        let face = ch.facing || this.facing || null;
+        if (
+            typeof Fish !== "undefined"
+            && Fish.facingBobber
+            && Number.isFinite(ch.waterTx)
+            && Number.isFinite(ch.waterTy)
+        ) {
+            face = Fish.facingBobber(this.x, this.y, ch.waterTx, ch.waterTy, face) || face;
+        }
+        if (face) ch.facing = face;
+        return face;
+    }
+
+    /**
      * Dedicated MP: uncontrolled party members follow server poses.
      * Linear interp across the snapshot interval (same as net mobs) so they
      * don't idle-then-step every 15 Hz tick.
@@ -3657,7 +3677,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (this._puppetStillMs > 100) this._puppetMoving = false;
         }
         const moving = !!this._puppetMoving;
-        const fishFace = this._netWorkChannel?.kind === "fish" ? this._netWorkChannel.facing : null;
+        const fishFace = this._fishBobberFacing();
         if (fishFace) {
             this.facing = fishFace;
         } else if (moving) {
@@ -3982,7 +4002,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (attacking) {
                 this.facing = this.facingFromAngle(this.attackAngle);
             } else if (fishing) {
-                if (this._netWorkChannel.facing) this.facing = this._netWorkChannel.facing;
+                const face = this._fishBobberFacing();
+                if (face) this.facing = face;
             } else if (moving) {
                 if (Math.abs(x) > Math.abs(y)) this.facing = x > 0 ? "right" : "left";
                 else this.facing = y > 0 ? "down" : "up";

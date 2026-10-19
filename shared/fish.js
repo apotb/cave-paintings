@@ -214,6 +214,24 @@
         return null;
     }
 
+    /**
+     * Cardinal look from a pawn pose toward the bobber (water-tile center).
+     * Near a diagonal, keep `current` so the sprite does not flicker.
+     * @param {string} [current]
+     */
+    function facingBobber(x, y, waterTx, waterTy, current) {
+        const bx = ((waterTx | 0) + 0.5) * TILE;
+        const by = ((waterTy | 0) + 0.5) * TILE;
+        const dx = bx - (Number(x) || 0);
+        const dy = by - (Number(y) || 0);
+        if (!(dx || dy)) return current || null;
+        const ax = Math.abs(dx);
+        const ay = Math.abs(dy);
+        if (current && Math.abs(ax - ay) <= 2) return current;
+        if (ax > ay) return dx > 0 ? "right" : "left";
+        return dy > 0 ? "down" : "up";
+    }
+
     /** True while the feet still cover the stand tile the cast started on. */
     function feetCover(x, y, standTx, standTy) {
         const left = Number(x) || 0;
@@ -284,6 +302,7 @@
         measure,
         castTile,
         shoreFacing,
+        facingBobber,
         feetCover,
         castRangeTiles,
         lineHolds,

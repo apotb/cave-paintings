@@ -965,6 +965,19 @@
             }
             if (prone) {
                 entry.facing = "right";
+            } else if (
+                entry.fish
+                && typeof Fish !== "undefined"
+                && Fish.facingBobber
+            ) {
+                const face = Fish.facingBobber(
+                    entry.x,
+                    entry.y,
+                    entry.fish.waterTx,
+                    entry.fish.waterTy,
+                    entry.facing
+                );
+                if (face) entry.facing = face;
             } else if (entry.moving) {
                 const dx = entry.tx - fromX;
                 const dy = entry.ty - fromY;

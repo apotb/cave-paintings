@@ -351,6 +351,12 @@
         };
     },
 
+    _fishSnap(pawn) {
+        const ch = pawn?.fishChannel;
+        if (!ch || !Number.isFinite(Number(ch.waterTx)) || !Number.isFinite(Number(ch.waterTy))) return null;
+        return { waterTx: ch.waterTx | 0, waterTy: ch.waterTy | 0 };
+    },
+
     _pushEatChannelEvent(pawn, extra = {}) {
         if (!pawn) return;
         const session = this._sessionOfPawn(pawn);

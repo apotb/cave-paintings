@@ -77,6 +77,10 @@ test("a cast uses the tiles the feet cover, not the bottom-left corner", () => {
     assert.equal(Fish.lineHolds((9 - 3) * 16, 2 * 16, 9, 2, 2), false);
     assert.equal(Fish.shoreFacing(10, 2, 9, 2), "left");
     assert.equal(Fish.shoreFacing(10, 2, 10, 3), "down");
+    assert.equal(Fish.facingBobber(10.5 * 16, 2.5 * 16, 9, 2), "left");
+    assert.equal(Fish.facingBobber(10.5 * 16, 2.5 * 16, 10, 3), "down");
+    // A tile to the side of a down-cast, the bait is beside them.
+    assert.equal(Fish.facingBobber((10 - 1.5) * 16, 3.5 * 16, 10, 3, "down"), "right");
 });
 
 test("a cast stays faced into the water and a turn does not stick", () => {
@@ -138,6 +142,39 @@ test("a cast stays faced into the water and a turn does not stick", () => {
     world.tick(50);
     assert.equal(rec.facing, face);
     assert.equal(world.creatures.get(rec.id).facing, face);
+});
+
+test("a fisher turns toward the bobber after stepping along the shore", () => {
+    const shore = shoreNearOrigin();
+    assert.ok(shore);
+    const { world, pawn, Protocol } = createTestWorld();
+    world.seed = 1;
+    WorldGen.applySeed(1);
+    Research.unlock(pawn, "fishing");
+    pawn.x = (shore.tx + 0.5) * 16;
+    pawn.y = (shore.ty + 0.5) * 16;
+    pawn.inventory[0] = { id: "flimsy_rod", quantity: 1, durability: 40 };
+    pawn.inventory[1] = { id: "grub", quantity: 1 };
+    pawn.hotbarIndex = 0;
+    pawn.facing = shore.wx > shore.tx ? "right" : shore.wx < shore.tx ? "left" : shore.wy > shore.ty ? "down" : "up";
+    world.handleAction(pawn.id, { type: Protocol.Actions.FISH, pawnId: pawn.id });
+    const ch = pawn.fishChannel;
+    assert.ok(ch);
+    const castFace = ch.facing;
+    const besideX = (ch.waterTx - 1.5) * 16;
+    const besideY = (ch.waterTy + 0.5) * 16;
+    world.setMove(pawn.id, {
+        x: 1,
+        y: 0,
+        facing: castFace === "left" ? "right" : "left",
+        px: besideX,
+        py: besideY,
+        pawnId: pawn.id
+    });
+    assert.equal(pawn.fishChannel.facing, "right");
+    assert.equal(pawn.facing, "right");
+    const creature = pawn.creature || world.creatures.get(pawn.id);
+    if (creature) assert.equal(creature.facing, "right");
 });
 
 test("a cast holds while you walk out to twice the cast range, then the line snaps", () => {
