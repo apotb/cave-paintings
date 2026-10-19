@@ -474,3 +474,81 @@ test("basket pebble uses the stone a rock on that tile would have", () => {
         assert.ok(basket.slots.every((s) => s && s.id === "pebble" && s.quantity === 1 && s.stone === stone));
     }
 });
+
+test("an abandoned basket with no real stacks can be taken", () => {
+    const { createTestWorld } = require("./helpers/simWorld");
+    const Place = require("../shared/place");
+    const WorldGen = require("../shared/sim/WorldGen");
+    const Structures = require("../shared/structures");
+    const seed = WorldGen.pickWorldSeed(20260814);
+    WorldGen.applySeed(seed);
+    const type = Structures.typeById(Structures.getConfig(), "abandoned_camp");
+    let emptyBasket = null;
+    let filledBasket = null;
+    for (let cy = -12; cy <= 12 && (!emptyBasket || !filledBasket); cy++) {
+        for (let cx = -12; cx <= 12 && (!emptyBasket || !filledBasket); cx++) {
+            const inst = Structures.resolveTypeCell(type, cx, cy, seed, WorldGen.tileKeyAt);
+            if (!inst) continue;
+            Structures.clearPending(seed);
+            const chunks = new Map();
+            const touch = (x, y) => {
+                const k = `${x},${y}`;
+                if (!chunks.has(k)) chunks.set(k, { cx: x, cy: y, tileSize: 16, things: [], lootableThings: [] });
+                return chunks.get(k);
+            };
+            const order = [[Math.floor(inst.fireTx / 8), Math.floor(inst.fireTy / 8)]];
+            for (const s of inst.spawned) {
+                const x = Math.floor(s.tx / 8);
+                const y = Math.floor(s.ty / 8);
+                if (!order.some(([a, b]) => a === x && b === y)) order.push([x, y]);
+            }
+            for (const [x, y] of order) {
+                const ch = touch(x, y);
+                Structures.stampChunk({
+                    cx: x,
+                    cy: y,
+                    worldSeed: seed,
+                    tileKeyAt: WorldGen.tileKeyAt,
+                    things: ch.things,
+                    lootableThings: ch.lootableThings,
+                    getGeneratedChunk: (a, b) => chunks.get(`${a},${b}`) || null
+                });
+            }
+            for (const basket of [...chunks.values()].flatMap((ch) => ch.things || []).filter((e) => e.id === "wicker_basket")) {
+                const real = (basket.slots || []).some((s) => s && s.id && s.quantity > 0);
+                assert.equal(Place.isStorageEmpty(basket), !real);
+                if (!real && !emptyBasket) emptyBasket = basket;
+                if (real && !filledBasket) filledBasket = basket;
+            }
+        }
+    }
+    assert.ok(emptyBasket, "expected a camp basket that rolled empty");
+    assert.ok(filledBasket, "expected a camp basket that rolled loot");
+
+    const { world, pawn } = createTestWorld();
+    const chunk = world.chunks.get("0,0");
+    emptyBasket.x = pawn.x;
+    emptyBasket.y = pawn.y;
+    emptyBasket.uid = "empty-camp-basket";
+    filledBasket.x = pawn.x + 16;
+    filledBasket.y = pawn.y;
+    filledBasket.uid = "filled-camp-basket";
+    // A loot roll that is not an item must not keep the basket from being taken.
+    emptyBasket.slots[0] = { quantity: 1 };
+    Place.ensureStorageEntry(emptyBasket, { id: "wicker_basket", storage: { slots: 8 } });
+    assert.equal(emptyBasket.slots[0], null);
+    assert.equal(Place.isStorageEmpty(emptyBasket), true);
+    chunk.things.push(emptyBasket, filledBasket);
+
+    world.handleAction(pawn.id, {
+        type: "storage", op: "pickup", uid: filledBasket.uid, x: filledBasket.x, y: filledBasket.y
+    });
+    assert.equal(chunk.things.includes(filledBasket), true, "loot should block take");
+    assert.equal(pawn.inventory.some((s) => s && s.id === "wicker_basket"), false);
+
+    world.handleAction(pawn.id, {
+        type: "storage", op: "pickup", uid: emptyBasket.uid, x: emptyBasket.x, y: emptyBasket.y
+    });
+    assert.equal(chunk.things.includes(emptyBasket), false, "empty camp basket should be taken");
+    assert.equal(pawn.inventory.some((s) => s && s.id === "wicker_basket"), true);
+});

@@ -1168,7 +1168,10 @@ class Storage extends Thing {
         let used = 0;
         for (let i = 0; i < total; i++) {
             const s = slots[i];
-            if (s && s.quantity > 0) used++;
+            const occupied = typeof Place !== "undefined" && Place.slotOccupied
+                ? Place.slotOccupied(s)
+                : !!(s && s.id && s.quantity > 0);
+            if (occupied) used++;
         }
         const text = `${name} (${used}/${total})`;
         const rows = this.storageTooltipRows();

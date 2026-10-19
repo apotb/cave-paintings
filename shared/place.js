@@ -1361,6 +1361,9 @@
         const ejected = ejectExtraSlots(entry, n);
         if (ejected.length) entry.ejected = (entry.ejected || []).concat(ejected);
         while (entry.slots.length < n) entry.slots.push(null);
+        for (let i = 0; i < entry.slots.length; i++) {
+            if (entry.slots[i] && !slotOccupied(entry.slots[i])) entry.slots[i] = null;
+        }
         entry.rot = normalizeRot(entry.rot);
         if (!entry.uid) {
             entry.uid = `st_${Math.round(Number(entry.x) || 0)}_${Math.round(Number(entry.y) || 0)}`;
@@ -1410,10 +1413,15 @@
         return Array.isArray(list) ? list.filter(Boolean) : null;
     }
 
+    /** A slot blocks Take only when it holds a real stack. */
+    function slotOccupied(stack) {
+        return !!(stack && stack.id && stack.quantity > 0);
+    }
+
     function isStorageEmpty(entry) {
         const slots = entry?.slots;
         if (!Array.isArray(slots)) return true;
-        return slots.every((s) => !s || !(s.quantity > 0));
+        return slots.every((s) => !slotOccupied(s));
     }
 
     /**
@@ -1623,6 +1631,7 @@
         storageTooltipStacks,
         storageTooltipRows,
         ensureStorageEntry,
+        slotOccupied,
         isStorageEmpty,
         isStorageThing,
         itemIdForThing,

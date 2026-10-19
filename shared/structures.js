@@ -268,7 +268,9 @@
                 }
             }
         }
-        return stampLocalStone(stack, row, stoneId);
+        stack = stampLocalStone(stack, row, stoneId);
+        if (!stack?.id || !(stack.quantity > 0)) return null;
+        return stack;
     }
 
     function fillBasketSlots(table, rand, stoneId) {
