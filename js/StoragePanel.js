@@ -762,6 +762,19 @@ class StoragePanel {
         return clone;
     }
 
+    /** Fields gainItem must keep so a worn tool still draws its bar before YOU. */
+    _invMoveExtras(stack) {
+        const extras = {
+            dryProgress: stack?.dryProgress,
+            soakProgress: stack?.soakProgress,
+            stone: stack?.stone
+        };
+        if (stack?.durability != null) extras.durability = stack.durability;
+        const knap = typeof knapStackExtras === "function" ? knapStackExtras(stack) : null;
+        if (knap) Object.assign(extras, knap);
+        return extras;
+    }
+
     _tryInsertStack(stack) {
         const now = this.scene.worldMinuteIndex?.() ?? null;
         const forInv = stack.spoilLeft != null ? stack : (() => {
@@ -774,7 +787,7 @@ class StoragePanel {
         const meta = this.scene.getItem(forInv.id);
         const left = this.scene.player.gainItem(
             meta, forInv.quantity, spoilLeftForCharacter(forInv, now),
-            { dryProgress: forInv.dryProgress, soakProgress: forInv.soakProgress, stone: forInv.stone }
+            this._invMoveExtras(forInv)
         );
         return left < forInv.quantity && left === 0;
     }
@@ -864,7 +877,7 @@ class StoragePanel {
             if (!(amount > 0)) return;
             const remaining = this.scene.player.gainItem(
                 meta, amount, spoilLeftForCharacter(stack, now),
-                { dryProgress: stack.dryProgress, soakProgress: stack.soakProgress, stone: stack.stone }
+                this._invMoveExtras(stack)
             );
             moved = amount - remaining;
             if (moved <= 0) return;
