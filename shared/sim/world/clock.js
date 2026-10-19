@@ -838,19 +838,20 @@
     _migratePlayerSpoilLeft(p) {
         if (!p) return;
         const now = this.worldMinuteIndex();
+        const getItem = (id) => itemDefs().get(id);
         if (Array.isArray(p.inventory)) {
-            Spoil.migrateCharacterStacks(p.inventory, now);
+            Spoil.migrateCharacterStacks(p.inventory, now, getItem);
         }
         if (Array.isArray(p.overflow)) {
-            Spoil.migrateCharacterStacks(p.overflow, now);
+            Spoil.migrateCharacterStacks(p.overflow, now, getItem);
         }
         const eq = p.equipment;
         if (!eq) return;
         for (const key of ["head", "torso", "legs", "feet", "back"]) {
-            if (eq[key]) Spoil.migrateToSpoilLeft(eq[key], now);
+            if (eq[key]) Spoil.migrateToSpoilLeft(eq[key], now, getItem);
         }
         if (Array.isArray(eq.waist)) {
-            Spoil.migrateCharacterStacks(eq.waist, now);
+            Spoil.migrateCharacterStacks(eq.waist, now, getItem);
         }
     },
 
@@ -860,7 +861,7 @@
         const now = this.worldMinuteIndex();
         const tick = (stack) => {
             if (!stack) return;
-            Spoil.migrateToSpoilLeft(stack, now);
+            Spoil.migrateToSpoilLeft(stack, now, (id) => itemDefs().get(id));
             Spoil.tickSpoilLeft(stack);
             Fire.tickStackTemp(stack);
             this._spoilStackIfDue(stack);
@@ -887,6 +888,7 @@
                 const def = itemDefs().get(d.id);
                 Fire.tickStackTemp(d);
                 if (Hide.pausesDropDespawn(d, def, this._dropIsOnWater(d))) continue;
+                Spoil.migrateToSpoilAt(d, this.worldMinuteIndex(), (id) => itemDefs().get(id));
                 this._spoilStackIfDue(d);
             }
         }
@@ -927,13 +929,13 @@
                         if (isRack && Hide.pausesRackSpoil(itemDefs().get(stack.id))) continue;
                         const beforeTemp = stack.temp;
                         const beforeId = stack.id;
-                        if (isRack) {
-                            Spoil.migrateToSpoilAt(
-                                stack,
-                                this.worldMinuteIndex(),
-                                (id) => itemDefs().get(id)
-                            );
-                        }
+                        const beforeAt = stack.spoilAt;
+                        Spoil.migrateToSpoilAt(
+                            stack,
+                            this.worldMinuteIndex(),
+                            (id) => itemDefs().get(id)
+                        );
+                        if (stack.spoilAt !== beforeAt) changed = true;
                         if (Fire.tickStackTemp(stack)) changed = true;
                         if (opts.emit && Place.pitSlowsSpoil(def, t) && stack.spoilAt != null
                             && (this.worldMinuteIndex() & 1) === 1) {

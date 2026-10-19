@@ -1782,7 +1782,12 @@
             const pawn = this._digPawn(creature);
             let left = result.give;
             if (pawn) left = this._digGive(pawn, itemId, result.give);
-            if (left > 0) this._pushDrop(best.x, best.y, { id: itemId, quantity: left });
+            if (left > 0) {
+                const drop = { id: itemId, quantity: left };
+                const at = Spoil.defaultSpoilAt(itemDefs().get(itemId), this.worldMinuteIndex());
+                if (at != null) drop.spoilAt = at;
+                this._pushDrop(best.x, best.y, drop);
+            }
         }
         const regrowMinutes = Number(bestDef?.diggable?.regrowMinutes) || 0;
         if (result.done && !pit && regrowMinutes > 0) {

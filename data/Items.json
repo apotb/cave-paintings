@@ -1489,6 +1489,10 @@
         "storageCategory": "bait",
         "maxStack": 99,
         "weight": 0.02,
+        "food": {
+            "kc": 0,
+            "spoil": 120
+        },
         "tooltip": [
             "Used as bait for fishing"
         ]

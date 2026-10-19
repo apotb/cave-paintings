@@ -25,6 +25,7 @@ test("pit default allows food and other spoiling items only", () => {
     assert.equal(SF.allows(f, { id: "deer_hide" }, getItem), true);
     assert.equal(SF.allows(f, { id: "deer_hide_fleshed" }, getItem), true);
     assert.equal(SF.allows(f, { id: "brain" }, getItem), true);
+    assert.equal(SF.allows(f, { id: "grub" }, getItem), true);
     assert.equal(SF.allows(f, { id: "stick" }, getItem), false);
     assert.equal(SF.allows(f, { id: "log" }, getItem), false);
     assert.equal(SF.allows(f, { id: "deer_hide_dry" }, getItem), false);

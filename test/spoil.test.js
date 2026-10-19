@@ -1,6 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const Spoil = require("../shared/spoil");
+const { loadDefs } = require("./helpers/load");
 
 test("mergeSpoilAt weighted average", () => {
     assert.equal(Spoil.mergeSpoilAt(1, 10, 1, 20), 15);
@@ -45,6 +46,17 @@ test("spoilLeft and spoilAt round-trip", () => {
     const left = 120;
     const at = Spoil.spoilAtFromLeft(left, now);
     assert.equal(Spoil.spoilLeftFromAt(at, now), left);
+});
+
+test("a grub spoils in five days and is not food", () => {
+    const grub = loadDefs().getItem("grub");
+    assert.equal(grub.storageCategory, "bait");
+    assert.equal(grub.food.spoil, 120);
+    assert.equal(Number(grub.food.kc) || 0, 0);
+    assert.equal(Spoil.defaultSpoilLeft(grub), 120 * 60);
+    const stack = { id: "grub", quantity: 4 };
+    Spoil.migrateToSpoilLeft(stack, 1000, (id) => loadDefs().getItem(id));
+    assert.equal(stack.spoilLeft, 120 * 60);
 });
 
 test("browser UMD exposes Spoil (alias of NetSpoil)", () => {
