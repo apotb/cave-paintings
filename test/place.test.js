@@ -150,6 +150,19 @@ test("skinworking bench interact tile occupies placement and blocks other things
     ), false);
 });
 
+test("drying rack hitbox covers both posts, not the gap between them", () => {
+    const def = thingDef("drying_rack");
+    const x = 40;
+    const y = 48;
+    const rect = Place.collisionWorldRect({ id: def.id, x, y, rot: 0 }, def, TS);
+    assert.ok(rect, "drying rack is solid");
+    assert.ok(rect.right - rect.left >= 12, "both posts are inside one solid");
+    assert.equal(contains(rect, x - 5, y - 3), true, "left post");
+    assert.equal(contains(rect, x + 5, y - 3), true, "right post");
+    assert.equal(contains(rect, x, y - 3), true, "feet between the posts stay blocked");
+    assert.equal(contains(rect, x, y - 12), false, "empty sky above the posts is walkable");
+});
+
 test("basket hitbox is wide at 0° and narrow at 90°", () => {
     const def = thingDef("wicker_basket");
     const x = 32;

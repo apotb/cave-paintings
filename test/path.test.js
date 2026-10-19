@@ -533,6 +533,74 @@ test("steerToward goes around two baskets instead of walking into the gap", () =
     assert.ok(overlapped < 20, `stuck overlapping a basket for ${overlapped} steps`);
 });
 
+test("steerToward stops on the stand beside a blocked goal instead of pacing", () => {
+    const TS = 16;
+    const rack = { x: 136, y: 144 };
+    // Drying-rack feet: a short solid, plus the 1px thing pad pathing uses.
+    const solid = {
+        left: rack.x - 3.5,
+        right: rack.x + 3.5,
+        top: rack.y - 6,
+        bottom: rack.y + 1
+    };
+    function bodyAt(px, py) {
+        return { left: px + 2, right: px + 14, top: py - 10, bottom: py + 2 };
+    }
+    function blocked(px, py) {
+        const b = bodyAt(px, py);
+        return b.right > solid.left && b.left < solid.right
+            && b.bottom > solid.top && b.top < solid.bottom;
+    }
+    const to = { x: rack.x, y: rack.y + 6 };
+    assert.equal(blocked(to.x, to.y), true, "haul spot against the rack is blocked");
+    let x = rack.x;
+    let y = rack.y + 48;
+    let path = null;
+    let pathGoal = null;
+    let side = 1;
+    let stuckMs = 0;
+    let lastWpDist = 0;
+    let arrived = false;
+    let flips = 0;
+    let prevNy = 0;
+    const speed = 3.5 * TS * (16 / 1000);
+    for (let i = 0; i < 180; i++) {
+        const st = Path.steerToward({
+            from: { x, y },
+            to,
+            blocked,
+            cellSize: TS,
+            side,
+            path,
+            pathGoal,
+            stuckMs,
+            lastWpDist,
+            maxRange: 12,
+            dt: 16,
+            openRadius: 2
+        });
+        path = st.path;
+        pathGoal = st.pathGoal;
+        side = st.side;
+        stuckMs = st.stuckMs;
+        lastWpDist = st.lastWpDist;
+        if (prevNy && Math.sign(st.ny) !== Math.sign(prevNy) && Math.abs(st.ny) > 0.5) flips++;
+        prevNy = st.ny;
+        if (st.arrived) {
+            arrived = true;
+            break;
+        }
+        const nx = x + st.nx * speed;
+        const ny = y + st.ny * speed;
+        if (!blocked(nx, y)) x = nx;
+        if (!blocked(x, ny)) y = ny;
+    }
+    assert.equal(arrived, true, `paced at ${x.toFixed(1)},${y.toFixed(1)} goal ${to.x},${to.y}`);
+    assert.ok(flips < 3, `heading flipped ${flips} times across the stand`);
+    assert.equal(blocked(x, y), false, "settled inside the rack");
+    assert.ok(Math.hypot(to.x - x, to.y - y) < 24, `stand is ${Math.hypot(to.x - x, to.y - y).toFixed(1)}px from the pile`);
+});
+
 test("steerToward keeps one stand when dest is tight instead of circling it", () => {
     const TS = 16;
     const fire = { x: 80, y: 80 };

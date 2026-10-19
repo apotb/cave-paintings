@@ -289,6 +289,7 @@
         "name": "Drying Rack",
         "key": "drying_rack",
         "hitboxSize": 5,
+        "hitbox": [12, 11],
         "dryingRack": true,
         "storage": {
             "slots": 1,

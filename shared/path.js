@@ -644,6 +644,24 @@
         const dx = gx - from.x;
         const dy = gy - from.y;
         const len = hypot(dx, dy) || 1;
+        // Arrival is the point we are actually walking to. A blocked or tight
+        // goal — a haul pile against a drying rack, the rack itself — is
+        // replaced by a stand. Measuring only the original point leaves a full
+        // speed step across that stand, then back, for as long as the job lasts.
+        const lastLeg = !path || path.length <= 1;
+        if (lastLeg && len <= ARRIVE_PX) {
+            return {
+                nx: 0,
+                ny: 0,
+                path: null,
+                pathGoal: dest,
+                side,
+                stuckMs: 0,
+                lastFrom: { x: from.x, y: from.y },
+                lastWpDist: 0,
+                arrived: true
+            };
+        }
         return {
             nx: dx / len,
             ny: dy / len,
