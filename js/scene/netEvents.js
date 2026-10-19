@@ -150,6 +150,7 @@
         if (ev.kind === "combat_log") {
             this.combatLog?.push?.(ev.text, {
                 combat: !!ev.combat,
+                feed: !!(ev.feed || ev.combat),
                 segments: ev.segments || null,
                 color: ev.color || null
             });
@@ -179,8 +180,11 @@
         }
         if (ev.kind === "damage" && ev.amount != null) {
             const amt = Math.round(Number(ev.amount) || 0);
-            if (amt > 0) {
+            const selfId = this.player?.pawnId || this.player?.id || this._netPlayerId;
+            if (amt > 0 && ev.targetId && selfId && String(ev.targetId) === String(selfId)) {
                 this.combatLog?.push?.(`Hit for ${amt}`, {
+                    feed: true,
+                    combat: true,
                     color: CombatLog.COLOR_WEAPON
                 });
             }

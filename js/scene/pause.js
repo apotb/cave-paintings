@@ -343,7 +343,13 @@
             : this._formatPlayerDeathMessage(killer, opts.reason);
         this._pendingDeathText = null;
         this._applyDeathMessage(msg);
-        if (!dedicated) this.combatLog?.push(msg);
+        if (!dedicated) {
+            this.combatLog?.pushPawnDeath?.(msg, {
+                reason: opts.reason,
+                name: this.playerName || leader.displayName?.() || "Player",
+                controlled: this.player === leader
+            });
+        }
         const showOverlay = this.player === leader || !this.partySys?.living?.()?.length;
         this.deathOverlay?.setVisible(showOverlay);
         this.layoutDeathOverlay();

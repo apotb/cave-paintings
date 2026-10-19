@@ -2324,9 +2324,15 @@ function firstHitLine(world, viewerId) {
     return hits[0];
 }
 
+function combatLines(world, viewerId) {
+    return world.drainEvents().filter((e) =>
+        e.kind === "combat_log" && e.to === viewerId && e.segments?.length
+    );
+}
+
 test("combat log names use party green, settler blue, and enemy red", () => {
     seedRng(5);
-    const { world, pawn } = createTestWorld();
+    const { world, pawn, Protocol } = createTestWorld();
     pawn.connected = true;
     pawn.controlId = pawn.id;
     const buddy = addTestCompanion(world, pawn);
@@ -2360,32 +2366,26 @@ test("combat log names use party green, settler blue, and enemy red", () => {
     assert.ok(boarVic);
     assert.equal(boarVic.color, ENEMY);
 
+    assert.equal(world._combatLogNameColor(buddyC, pawn.id), ALLY);
+    assert.equal(world._combatLogNameColor(settlerC, pawn.id), SETTLER);
+
+    world.drainEvents();
+    landHit(buddyC, boar);
+    assert.equal(combatLines(world, pawn.id).length, 0);
+    landHit(settlerC, boar);
+    assert.equal(combatLines(world, pawn.id).length, 0);
+    landHit(boar, buddyC);
+    assert.equal(combatLines(world, pawn.id).length, 0);
+    landHit(boar, settlerC);
+    assert.equal(combatLines(world, pawn.id).length, 0);
+
+    world.handleAction(pawn.id, { type: Protocol.Actions.SWITCH_CONTROL, pawnId: buddy.id });
+    assert.equal(pawn.controlId, buddy.id);
     world.drainEvents();
     landHit(buddyC, boar);
     line = firstHitLine(world, pawn.id);
-    assert.equal(line.segments[0].text, buddyC.displayName());
+    assert.equal(line.segments[0].text, "You");
     assert.equal(line.segments[0].color, ALLY);
-
-    world.drainEvents();
-    landHit(settlerC, boar);
-    line = firstHitLine(world, pawn.id);
-    assert.equal(line.segments[0].text, settlerC.displayName());
-    assert.equal(line.segments[0].color, SETTLER);
-
-    world.drainEvents();
-    landHit(boar, buddyC);
-    line = firstHitLine(world, pawn.id);
-    assert.equal(line.segments[0].color, ENEMY);
-    const buddyVic = line.segments.find((s) => s.text === `${buddyC.displayName()}'s`);
-    assert.ok(buddyVic);
-    assert.equal(buddyVic.color, ALLY);
-
-    world.drainEvents();
-    landHit(boar, settlerC);
-    line = firstHitLine(world, pawn.id);
-    const setVic = line.segments.find((s) => s.text === `${settlerC.displayName()}'s`);
-    assert.ok(setVic);
-    assert.equal(setVic.color, SETTLER);
     restoreRng();
 });
 

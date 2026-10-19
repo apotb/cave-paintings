@@ -149,7 +149,15 @@
         add(opts.attacker);
         add(opts.target);
         add(opts.participants);
-        return [...ids];
+        const list = [...ids];
+        if (opts.combat || opts.feed) {
+            return list.filter((id) =>
+                this._isViewerActingPawn(opts.attacker, id)
+                || this._isViewerActingPawn(opts.target, id)
+                || this._isViewerActingPawn(opts.owner, id)
+            );
+        }
+        return list;
     },
 
     _entityLogIds(entity) {

@@ -317,6 +317,7 @@ class PartySystem {
         scene.clayFormingPanel?.close?.();
         scene.restorePlayerPhysicsPos?.();
         scene.player = pawn;
+        scene.combatLog?.clearFeed?.();
         if (typeof syncCreatureInputHit === "function") {
             syncCreatureInputHit(from);
             syncCreatureInputHit(pawn);
@@ -884,6 +885,7 @@ class PartySystem {
             return;
         }
         const name = pawn.displayName();
+        const wasControl = scene.player === pawn;
         const dedicated = !!(scene.simAuth());
         const spawn = opts.spawn != null ? !!opts.spawn : !dedicated;
         pawn.createDeathCorpse?.({ spawn, combatDeath: !!killer });
@@ -909,7 +911,12 @@ class PartySystem {
             const text = (typeof NetProtocol !== "undefined" && NetProtocol.deathMessage)
                 ? NetProtocol.deathMessage(name, killerName, reason)
                 : `${name} died`;
-            scene.combatLog?.push(text);
+            scene.combatLog?.pushPawnDeath?.(text, {
+                reason,
+                name,
+                controlled: wasControl,
+                settler: pawn.role === "settler" || !!pawn.homeSettlementId
+            });
         }
         scene.partyPanel?.refresh?.();
         scene.time?.delayedCall?.(0, () => pawn.destroy?.());
@@ -918,7 +925,6 @@ class PartySystem {
     _wandererDied(pawn, killer) {
         const scene = this.scene;
         if (!pawn) return;
-        const name = pawn.displayName?.() || "Wanderer";
         // Sim already authors the wanderer's corpse. A local copy keeps its own id,
         // so looting it leaves the saved body for the next visit.
         if (!scene.simAuth?.()) {
@@ -927,12 +933,6 @@ class PartySystem {
         this.wanderers = this.wanderers.filter((w) => w !== pawn);
         pawn.setVisible(false);
         if (pawn.body) pawn.body.enable = false;
-        const killerName = killer?.displayName?.() || (killer === scene.player ? "You" : null);
-        if (killer === scene.player || scene.party?.includes(killer)) {
-            scene.combatLog?.push(killerName === "You" || killer === scene.player
-                ? `You slew ${name}`
-                : `${killer.displayName()} slew ${name}`);
-        }
         scene.time?.delayedCall?.(0, () => pawn.destroy?.());
     }
 

@@ -1587,6 +1587,7 @@ class SettlementSystem {
         this.hudBtn.setPosition(Math.round(scene.scale.width / 2), Math.round(y));
         this._paintHud?.();
         this._syncHudLabel(this.campAt(scene.player)?.name || this._hudTxt?.text);
+        scene.combatLog?.layout?.();
     }
 
     /** Full name on the top button; step the pixel font down until it fits. */

@@ -1,9 +1,11 @@
 /**
- * Bottom-left fading combat / chat log, plus T-to-type chat input.
+ * Bottom-left fading chat log, plus T-to-type chat input, and a separate
+ * top-center fight feed under the camp button slot.
  * Chat stack is always up to 10 visual lines above a permanently reserved compose row.
  * While composing, wheel scrollback is capped at 100 visual lines.
+ * The fight feed is up to 5 visual lines, newest on top, and fades on its own.
  *
- * Colored hit lines are drawn to a single CanvasTexture (not per-segment Phaser.Text).
+ * Colored lines are drawn to a CanvasTexture (not per-segment Phaser.Text).
  * Creating stroked Text objects per color piece was causing multi-frame hitches on every hit.
  */
 class CombatLog {
@@ -16,12 +18,18 @@ class CombatLog {
     static COLOR_ERROR = "#ef5a5a";
     static STROKE = 3;
     static TEX_KEY = "__combat_log";
+    static FEED_TEX_KEY = "__combat_feed";
+    static FEED_LINE_CAP = 5;
 
     constructor(scene) {
         this.scene = scene;
         this.lines = [];
-        /** When false, hit/destroy lines from BodyCombat are skipped (chat/commands still log). */
+        /** When false, the fight feed element is hidden. Lines still arrive and fade. */
         this.combatMessages = true;
+        /** Fight lines for the controlled pawn. Newest last in storage. */
+        this.feedLines = [];
+        this._feedDirty = false;
+        this._lastFeedLayout = 0;
         /** Max stored visual lines (wrapped); older messages are dropped. */
         this.maxScrollbackLines = 100;
         /** Max on-screen rows; a word-wrapped message counts as multiple. */
@@ -71,6 +79,14 @@ class CombatLog {
             .setOrigin(0, 1)
             .setVisible(false);
         this.container.add(this._logImage);
+
+        this._ensureFeedCtx();
+        this.feedContainer = scene.add.container(0, 0).setScrollFactor(0).setDepth(10000);
+        scene.uiLayer?.add(this.feedContainer);
+        this._feedImage = scene.add.image(0, 0, CombatLog.FEED_TEX_KEY)
+            .setOrigin(0.5, 0)
+            .setVisible(false);
+        this.feedContainer.add(this._feedImage);
         // Compose row is painted on the same canvas as the log (same font/align/spacing).
     }
 
@@ -95,12 +111,22 @@ class CombatLog {
         this.composing = false;
         try { this._logImage?.destroy?.(); } catch (_) {}
         this._logImage = null;
+        try { this._feedImage?.destroy?.(); } catch (_) {}
+        this._feedImage = null;
+        try { this.feedContainer?.destroy?.(); } catch (_) {}
+        this.feedContainer = null;
         try {
             if (this.scene?.textures?.exists(CombatLog.TEX_KEY)) {
                 this.scene.textures.remove(CombatLog.TEX_KEY);
             }
+            if (this.scene?.textures?.exists(CombatLog.FEED_TEX_KEY)) {
+                this.scene.textures.remove(CombatLog.FEED_TEX_KEY);
+            }
         } catch (_) {}
         this._logTexture = null;
+        this._feedTexture = null;
+        this._feedCanvas = null;
+        this._feedCtx = null;
         this._canvas = null;
         this._ctx = null;
     }
@@ -616,6 +642,7 @@ class CombatLog {
                         ? false
                         : !this.combatMessages;
                 this.combatMessages = on;
+                this._feedDirty = true;
                 this.push(on ? "Debug: combat_log shown" : "Debug: combat_log hidden");
                 return;
             }
@@ -919,16 +946,39 @@ class CombatLog {
         return withCursor.length > base.length ? base : withCursor;
     }
 
-    push(msg, opts = null) {
-        // Hit lines only — chat, commands, death/respawn, tending still go through
-        if (opts?.combat && !this.combatMessages) return;
-        if (!msg && !(opts?.segments?.length)) return;
+    /** Fight feed, not chat: hits and lines explicitly marked feed. */
+    _isFeed(opts) {
+        return !!(opts?.combat || opts?.feed);
+    }
+
+    _entityIsControlled(entity) {
+        const player = this.scene?.player;
+        if (!entity || !player) return false;
+        if (entity === player || entity === player.creature) return true;
+        const id = entity.pawnId || entity.id;
+        const pid = player.pawnId || player.id;
+        return !!(id && pid && id === pid);
+    }
+
+    /**
+     * Local hits carry attacker/target/owner. Drop them unless one is the
+     * controlled pawn. Net lines arrive already filtered and have no actors.
+     */
+    _feedAudienceOk(opts) {
+        const actors = [opts?.attacker, opts?.target, opts?.owner].filter(
+            (a) => a && typeof a === "object"
+        );
+        if (!actors.length) return true;
+        return actors.some((a) => this._entityIsControlled(a));
+    }
+
+    _makeLine(msg, opts) {
         const segments = opts?.segments || null;
         const text = segments
             ? segments.map(s => String(s.text ?? "").trim()).filter(Boolean).join(" ")
-            : String(msg);
-        if (!text) return;
-        this.lines.push({
+            : String(msg ?? "");
+        if (!text) return null;
+        return {
             text,
             color: opts?.color || null,
             segments: segments
@@ -943,8 +993,52 @@ class CombatLog {
             visualLines: 0,
             _wrapKey: "",
             _rows: null
-        });
+        };
+    }
+
+    push(msg, opts = null) {
+        if (!msg && !(opts?.segments?.length)) return;
+        const line = this._makeLine(msg, opts);
+        if (!line) return;
+        if (this._isFeed(opts)) {
+            if (!this._feedAudienceOk(opts)) return;
+            this.feedLines.push(line);
+            this._feedDirty = true;
+            return;
+        }
+        this.lines.push(line);
         this._layoutDirty = true;
+    }
+
+    /**
+     * Death copy. Infection and starvation stay in chat (red, name colored).
+     * Other deaths of the pawn you were controlling go to the fight feed.
+     */
+    pushPawnDeath(text, opts = null) {
+        const reason = opts?.reason;
+        const condition = reason === "infection" || reason === "starvation";
+        if (condition) {
+            const name = String(opts?.name || "Someone");
+            const rest = reason === "infection" ? "died of infection" : "starved to death";
+            const nameColor = opts?.settler ? CombatLog.COLOR_SETTLER : CombatLog.COLOR_YOU;
+            this.push(text, {
+                color: CombatLog.COLOR_ERROR,
+                segments: [
+                    { text: name, color: nameColor },
+                    { text: rest, color: CombatLog.COLOR_ERROR }
+                ]
+            });
+            return;
+        }
+        if (opts?.controlled) this.push(text, { feed: true, combat: true });
+        else this.push(text);
+    }
+
+    /** Drop the fight feed. Used when control changes. */
+    clearFeed() {
+        this.feedLines.length = 0;
+        this._feedDirty = true;
+        this._feedImage?.setVisible(false);
     }
 
     /** Command usage / unknown-command style errors. */
@@ -969,6 +1063,24 @@ class CombatLog {
         this._canvasH = 4;
         if (this._logImage) this._logImage.setTexture(CombatLog.TEX_KEY);
         return this._ctx;
+    }
+
+    _ensureFeedCtx() {
+        if (this._feedTexture && this._feedCtx) return this._feedCtx;
+        this._feedCanvas = document.createElement("canvas");
+        this._feedCanvas.width = 4;
+        this._feedCanvas.height = 4;
+        if (this.scene.textures.exists(CombatLog.FEED_TEX_KEY)) {
+            this.scene.textures.remove(CombatLog.FEED_TEX_KEY);
+        }
+        this._feedTexture = this.scene.textures.addCanvas(CombatLog.FEED_TEX_KEY, this._feedCanvas);
+        this._feedTexture.setFilter(Phaser.Textures.FilterMode.NEAREST);
+        this._feedCtx = this._feedTexture.context || this._feedCanvas.getContext("2d");
+        if (this._feedCtx) this._feedCtx.imageSmoothingEnabled = false;
+        this._feedCanvasW = 4;
+        this._feedCanvasH = 4;
+        if (this._feedImage) this._feedImage.setTexture(CombatLog.FEED_TEX_KEY);
+        return this._feedCtx;
     }
 
     _setFont(fontSize) {
@@ -1302,6 +1414,178 @@ class CombatLog {
         this._logImage.setOrigin(0, 1);
     }
 
+    /** Top of the fight feed: just under the camp button slot, hidden or not. */
+    _feedAnchor() {
+        const scene = this.scene;
+        const s = scene.uiScale || 1;
+        const pad = Math.round(8 * s);
+        const clockH = Math.round(
+            scene.clockText?.displayHeight
+            || scene.clockText?.height
+            || pixelUiFontSize(16, s)
+        );
+        const fpsH = pixelUiFontSize(16, s);
+        const fpsBottom = pad + clockH + Math.round(2 * s) + fpsH;
+        const hudH = scene.settlementSys?._hudBg?.height || Math.round(28 * s);
+        const top = fpsBottom + Math.round(6 * s) + hudH + Math.round(4 * s);
+        return {
+            x: Math.round(scene.scale.width / 2),
+            y: Math.round(top)
+        };
+    }
+
+    /** No column cap. A long fight line stays one row and may run off the screen. */
+    _feedWrapWidth() {
+        return 1e7;
+    }
+
+    _rowWidth(pieces, fontSize) {
+        const spaceW = this._spaceWidth(fontSize);
+        let w = 0;
+        for (let i = 0; i < pieces.length; i++) {
+            if (i > 0) w += spaceW;
+            w += this._measureChunk(pieces[i].text, fontSize);
+        }
+        return w;
+    }
+
+    _resizeFeedCanvas(w, h) {
+        this._ensureFeedCtx();
+        const cw = Math.max(1, Math.ceil(w));
+        const ch = Math.max(1, Math.ceil(h));
+        if (this._feedCanvasW !== cw || this._feedCanvasH !== ch) {
+            this._feedCanvasW = cw;
+            this._feedCanvasH = ch;
+            this._feedTexture.setSize(cw, ch);
+            if (this._feedCtx) this._feedCtx.imageSmoothingEnabled = false;
+        }
+        this._feedImage.setTexture(CombatLog.FEED_TEX_KEY);
+        this._feedImage.setOrigin(0.5, 0);
+        this._feedImage.setScale(1);
+        this._feedImage.setDisplaySize(cw, ch);
+    }
+
+    _setFeedFont(fontSize) {
+        const ctx = this._ensureFeedCtx();
+        ctx.font = `${fontSize}px ${PIXEL_UI_FONT}, monospace`;
+        ctx.textBaseline = "alphabetic";
+        ctx.textAlign = "left";
+        ctx.imageSmoothingEnabled = false;
+    }
+
+    /**
+     * Newest message on top. No scrollback: lines that do not fit in 5 rows,
+     * and lines that have finished fading, are dropped.
+     * @param {{ alpha: number, rows: object[][] }[]} toShow newest first
+     */
+    _paintFeed(toShow, fontSize, lineH) {
+        if (!this.combatMessages || !toShow.length) {
+            this._feedImage?.setVisible(false);
+            return;
+        }
+        let msgLines = 0;
+        let contentW = 1;
+        for (const m of toShow) {
+            msgLines += m.rows.length;
+            for (const pieces of m.rows) {
+                contentW = Math.max(contentW, this._rowWidth(pieces, fontSize));
+            }
+        }
+        const pad = CombatLog.STROKE + 1;
+        const canvasW = Math.ceil(contentW) + pad * 2;
+        const canvasH = msgLines * lineH + pad * 2;
+        this._resizeFeedCanvas(canvasW, canvasH);
+        const ctx = this._feedCtx;
+        ctx.clearRect(0, 0, canvasW, canvasH);
+        ctx.imageSmoothingEnabled = false;
+        this._setFeedFont(fontSize);
+        const ascent = Math.round(fontSize * 0.85);
+        const spaceW = this._spaceWidth(fontSize);
+        let y = pad;
+        for (const m of toShow) {
+            for (const pieces of m.rows) {
+                const rowW = this._rowWidth(pieces, fontSize);
+                let x = Math.round((canvasW - rowW) / 2);
+                const baseline = Math.round(y + ascent);
+                for (let p = 0; p < pieces.length; p++) {
+                    if (p > 0) x += spaceW;
+                    const piece = pieces[p];
+                    this._drawStrokedText(
+                        ctx,
+                        piece.text,
+                        x,
+                        baseline,
+                        piece.color || CombatLog.COLOR_DEFAULT,
+                        m.alpha
+                    );
+                    x += Math.round(this._measureChunk(piece.text, fontSize));
+                }
+                y += lineH;
+            }
+        }
+        ctx.globalAlpha = 1;
+        this._feedTexture.refresh();
+        this._feedImage.setVisible(true);
+    }
+
+    _layoutFeed() {
+        const s = this.scene.uiScale || 1;
+        const fontSize = pixelUiFontSize(16, s);
+        const lineH = fontSize + PIXEL_FONT_CELL;
+        const wrapW = this._feedWrapWidth();
+        const now = this.scene._chatFadeNow?.() ?? this.scene.time.now;
+        const anchor = this._feedAnchor();
+        this.feedContainer?.setPosition(anchor.x, anchor.y);
+
+        const alive = [];
+        for (const line of this.feedLines) {
+            if (now - line.t >= this.fadeMs) continue;
+            alive.push(line);
+        }
+        this.feedLines = alive;
+        for (const line of this.feedLines) this._rowsForLine(line, wrapW, fontSize);
+
+        const budget = CombatLog.FEED_LINE_CAP;
+        const kept = [];
+        let used = 0;
+        for (let i = this.feedLines.length - 1; i >= 0; i--) {
+            const n = this.feedLines[i].visualLines || 1;
+            if (kept.length && used + n > budget) break;
+            kept.push(this.feedLines[i]);
+            used += n;
+            if (used >= budget) break;
+        }
+        this.feedLines = kept.reverse();
+
+        const toShow = [];
+        used = 0;
+        for (let i = this.feedLines.length - 1; i >= 0; i--) {
+            const line = this.feedLines[i];
+            let rows = line._rows || [];
+            if (!rows.length) continue;
+            const room = budget - used;
+            if (room <= 0) break;
+            if (rows.length > room) rows = rows.slice(0, room);
+            const age = now - line.t;
+            const alpha = age > this.fadeMs - 2000
+                ? Phaser.Math.Clamp(1 - (age - (this.fadeMs - 2000)) / 2000, 0, 1)
+                : 1;
+            toShow.push({ alpha, rows });
+            used += rows.length;
+            if (used >= budget) break;
+        }
+        this._paintFeed(toShow, fontSize, lineH);
+    }
+
+    _tickFeed() {
+        const now = this.scene._chatFadeNow?.() ?? (this.scene.time?.now || 0);
+        if (this._feedDirty || (this.feedLines.length && now - this._lastFeedLayout >= 100)) {
+            this._layoutFeed();
+            this._feedDirty = false;
+            this._lastFeedLayout = now;
+        }
+    }
+
     /** Keep fade timestamps still across a pause menu so remaining lifetime is preserved. */
     shiftFade(dt) {
         const n = Number(dt);
@@ -1309,11 +1593,16 @@ class CombatLog {
         for (const line of this.lines) {
             if (Number.isFinite(line.t)) line.t += n;
         }
+        for (const line of this.feedLines) {
+            if (Number.isFinite(line.t)) line.t += n;
+        }
         this._lastFadeLayout += n;
+        this._lastFeedLayout += n;
         this._lastBlink += n;
     }
 
     update() {
+        this._tickFeed();
         const now = this.scene._chatFadeNow?.() ?? (this.scene.time?.now || 0);
         if (this.scene._chatFadeHold != null && !this.composing) {
             if (this._layoutDirty) {
@@ -1351,5 +1640,7 @@ class CombatLog {
         this._layoutDirty = true;
         this._layout();
         this._layoutDirty = false;
+        this._layoutFeed();
+        this._feedDirty = false;
     }
 }

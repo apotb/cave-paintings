@@ -179,7 +179,7 @@
 
         _announceFullyHealed(owner, host) {
             const log = combatLogOf(host) || combatLogOf(owner?.scene);
-            log?.push?.(this.fullyHealedMessage(owner, host), { owner });
+            log?.push?.(this.fullyHealedMessage(owner, host), { owner, feed: true });
         },
 
         /**

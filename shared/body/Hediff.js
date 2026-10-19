@@ -187,8 +187,12 @@
                 const math = resolveMath(ctx || body.ctx);
                 h.luck = math.floatBetween(this.INFECTION_LUCK_MIN, this.INFECTION_LUCK_MAX);
             }
-            const log = combatLogOf(ctx || body.ctx);
-            log?.push?.(this.infectionOnsetMessage(owner, partName, ctx), { owner });
+            const partLabel = partName ? String(partName) : "a wound";
+            if (this._logIsYou(owner, ctx)) {
+                this._pushCondition(ctx, owner, "You", `have an infection (${partLabel})`);
+            } else {
+                this._pushCondition(ctx, owner, this._logName(owner), `has an infection (${partLabel})`);
+            }
             return h;
         },
 
@@ -254,6 +258,41 @@
             return owner.pawnName || owner.name || "Someone";
         },
 
+        CONDITION_RED: "#ef5a5a",
+        NAME_PARTY: "#80e080",
+        NAME_SETTLER: "#7ec8ff",
+
+        _isSettler(owner, ctx) {
+            if (!owner) return false;
+            if (owner.role === "settler" || owner.homeSettlementId) return true;
+            const id = owner.pawnId || owner.id;
+            const host = ctx || owner.ctx || owner.scene || null;
+            const sim = host?.sim || host;
+            if (sim?.settlers && id) {
+                if (sim.settlers.some((s) => s && (s.id === id || s.creature === owner))) return true;
+            }
+            if (host?.settlers?.includes?.(owner)) return true;
+            return false;
+        },
+
+        _conditionNameColor(owner, ctx) {
+            return this._isSettler(owner, ctx) ? this.NAME_SETTLER : this.NAME_PARTY;
+        },
+
+        conditionSegments(nameText, rest, owner, ctx) {
+            return [
+                { text: String(nameText), color: this._conditionNameColor(owner, ctx) },
+                { text: String(rest), color: this.CONDITION_RED }
+            ];
+        },
+
+        _pushCondition(ctx, owner, nameText, rest) {
+            const log = combatLogOf(ctx || owner?.ctx || owner?.scene);
+            if (typeof log?.push !== "function") return;
+            const segments = this.conditionSegments(nameText, rest, owner, ctx);
+            log.push(`${nameText} ${rest}`, { owner, segments, color: this.CONDITION_RED });
+        },
+
         foodPoisonMessage(owner, worse, ctx) {
             if (this._logIsYou(owner, ctx)) {
                 return worse ? "Your food poisoning got worse" : "You have food poisoning";
@@ -312,7 +351,22 @@
                 sev = cur >= INITIAL_MIN ? 1 : Math.max(cur, MAJOR_PEAK);
             }
             body.addHediff("food_poisoning", sev);
-            return { message: this.foodPoisonMessage(who, worse), worse };
+            const you = this._logIsYou(who, null);
+            let nameText;
+            let rest;
+            if (you) {
+                nameText = worse ? "Your" : "You";
+                rest = worse ? "food poisoning got worse" : "have food poisoning";
+            } else {
+                const name = this._logName(who);
+                nameText = worse ? `${name}'s` : name;
+                rest = worse ? "food poisoning got worse" : "has food poisoning";
+            }
+            return {
+                message: `${nameText} ${rest}`,
+                worse,
+                segments: this.conditionSegments(nameText, rest, who, null)
+            };
         },
 
         /**
@@ -365,7 +419,6 @@
         _tickInfections(owner, body, ctx) {
             const infections = this.infectionsOf(body);
             const immMap = body.immunities || (body.immunities = {});
-            const log = combatLogOf(ctx);
 
             if (!infections.length) {
                 const cur = Number(immMap.infection) || 0;
@@ -433,7 +486,11 @@
                 }
                 if ((Number(h.severity) || 0) <= 0) {
                     body.removeHediff(h.id, h.partName);
-                    log?.push?.(this.infectionRecoveredMessage(owner, ctx), { owner });
+                    if (this._logIsYou(owner, ctx)) {
+                        this._pushCondition(ctx, owner, "You", "recovered from an infection");
+                    } else {
+                        this._pushCondition(ctx, owner, this._logName(owner), "recovered from an infection");
+                    }
                 }
             }
         },
@@ -447,7 +504,6 @@
         _tickMalnutrition(owner, body, ctx) {
             const def = this.def(ctx, "malnutrition");
             if (!def) return;
-            const log = combatLogOf(ctx);
 
             const rate = Number(body.malnutritionRatePerDay);
             const gainPerMin =
@@ -463,14 +519,22 @@
                 if (!h) {
                     h = body.addHediff("malnutrition", 0);
                     if (!h) return;
-                    log?.push?.(this.malnutritionOnsetMessage(owner, ctx), { owner });
+                    if (this._logIsYou(owner, ctx)) {
+                        this._pushCondition(ctx, owner, "You", "are malnourished");
+                    } else {
+                        this._pushCondition(ctx, owner, this._logName(owner), "is malnourished");
+                    }
                 }
                 const prev = this.stageFor(h, ctx)?.label;
                 h.severity = Math.min(1, (Number(h.severity) || 0) + gainPerMin);
                 body.markDirty?.();
                 const next = this.stageFor(h, ctx)?.label;
                 if (next && next !== prev && prev) {
-                    log?.push?.(this.malnutritionStageMessage(owner, next, ctx), { owner });
+                    if (this._logIsYou(owner, ctx)) {
+                        this._pushCondition(ctx, owner, "Your", `malnutrition is now ${next}`);
+                    } else {
+                        this._pushCondition(ctx, owner, `${this._logName(owner)}'s`, `malnutrition is now ${next}`);
+                    }
                 }
                 const lethal = def.lethalSeverity != null ? Number(def.lethalSeverity) : 1;
                 if ((Number(h.severity) || 0) >= lethal - 1e-9) {
@@ -485,19 +549,26 @@
             h.severity = (Number(h.severity) || 0) - recoverPerMin;
             if (h.severity <= 0) {
                 body.removeHediff("malnutrition");
-                log?.push?.(this.malnutritionRecoveredMessage(owner, ctx), { owner });
+                if (this._logIsYou(owner, ctx)) {
+                    this._pushCondition(ctx, owner, "You", "are no longer malnourished");
+                } else {
+                    this._pushCondition(ctx, owner, this._logName(owner), "is no longer malnourished");
+                }
                 return;
             }
             body.markDirty?.();
             const next = this.stageFor(h, ctx)?.label;
             if (next && next !== prev) {
-                log?.push?.(this.malnutritionStageMessage(owner, next, ctx), { owner });
+                if (this._logIsYou(owner, ctx)) {
+                    this._pushCondition(ctx, owner, "Your", `malnutrition is now ${next}`);
+                } else {
+                    this._pushCondition(ctx, owner, `${this._logName(owner)}'s`, `malnutrition is now ${next}`);
+                }
             }
         },
 
         _tickSeverityAndVomit(owner, body, ctx) {
             const math = resolveMath(ctx);
-            const log = combatLogOf(ctx);
             const list = body.hediffs || [];
             for (let i = list.length - 1; i >= 0; i--) {
                 const h = list[i];
@@ -514,10 +585,11 @@
                 if ((Number(h.severity) || 0) <= 0) {
                     body.removeHediff(h.id);
                     if (h.id === "food_poisoning") {
-                        const recovered = this._logIsYou(owner, ctx)
-                            ? "You recovered from food poisoning"
-                            : `${this._logName(owner)} recovered from food poisoning`;
-                        log?.push?.(recovered);
+                        if (this._logIsYou(owner, ctx)) {
+                            this._pushCondition(ctx, owner, "You", "recovered from food poisoning");
+                        } else {
+                            this._pushCondition(ctx, owner, this._logName(owner), "recovered from food poisoning");
+                        }
                     }
                     continue;
                 }

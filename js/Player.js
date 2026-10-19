@@ -2249,7 +2249,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             : null;
         if (!result) return;
         this.capacities = new Capacities(this.anatomy);
-        this.scene.combatLog?.push(result.message);
+        this.scene.combatLog?.push(result.message, {
+            segments: result.segments || null,
+            color: "#ef5a5a"
+        });
         this.scene.healthPanel?.refresh?.();
     }
 
@@ -3177,7 +3180,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!applied.length) {
             // Wound closed on its own — finish the channel, keep the bandage
             const healer = this.isControlled?.() ? "you" : this.displayName();
-            this.scene.combatLog?.push(`The wound healed before ${healer} finished`);
+            if (this.isControlled?.() || patient.isControlled?.()) {
+                this.scene.combatLog?.push(`The wound healed before ${healer} finished`, {
+                    feed: true,
+                    combat: true
+                });
+            }
             this._tendChannel = null;
             if (this.isControlled?.()) this.scene.hideChannelBar?.();
             else this.syncPawnChannelBar?.();
@@ -3199,7 +3207,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const poss = patient.isControlled?.() ? "your" : `${patient.displayName()}'s`;
         const tendMsg = BodyHealing.tendLogLine?.(who, poss, quality, applied, body)
             || `${who} finished bandaging (${Math.round(quality * 100)}%)`;
-        this.scene.combatLog?.push(tendMsg);
+        if (this.isControlled?.() || patient.isControlled?.()) {
+            this.scene.combatLog?.push(tendMsg, { feed: true, combat: true });
+        }
         this._tendChannel = null;
         if (this.isControlled?.()) this.scene.hideChannelBar?.();
         else this.syncPawnChannelBar?.();

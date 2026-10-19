@@ -610,24 +610,32 @@
         const held = fromInv?.[slot];
         const wantId = action.itemId ? String(action.itemId) : null;
         if (!held?.id || (wantId && held.id !== wantId)) {
-            const who = tenderIsYou ? "You" : (tender.name || "They");
-            const verb = tenderIsYou ? "need" : "needs";
-            this.pushEvent({
-                kind: "combat_log",
-                text: `${who} ${verb} a bandage to finish tending`,
-                to: p.id
-            });
+            if (tenderIsYou || patientIsYou) {
+                const who = tenderIsYou ? "You" : (tender.name || "They");
+                const verb = tenderIsYou ? "need" : "needs";
+                this.pushEvent({
+                    kind: "combat_log",
+                    text: `${who} ${verb} a bandage to finish tending`,
+                    feed: true,
+                    combat: true,
+                    to: p.id
+                });
+            }
             return;
         }
         const meta = itemDefs().get(held.id);
         if (!meta?.bandage) {
-            const who = tenderIsYou ? "You" : (tender.name || "They");
-            const verb = tenderIsYou ? "need" : "needs";
-            this.pushEvent({
-                kind: "combat_log",
-                text: `${who} ${verb} a bandage to finish tending`,
-                to: p.id
-            });
+            if (tenderIsYou || patientIsYou) {
+                const who = tenderIsYou ? "You" : (tender.name || "They");
+                const verb = tenderIsYou ? "need" : "needs";
+                this.pushEvent({
+                    kind: "combat_log",
+                    text: `${who} ${verb} a bandage to finish tending`,
+                    feed: true,
+                    combat: true,
+                    to: p.id
+                });
+            }
             return;
         }
 
@@ -666,12 +674,16 @@
             applied.push(...batch);
         }
         if (!applied.length) {
-            const healer = tenderIsYou ? "you" : (tender.name || "they");
-            this.pushEvent({
-                kind: "combat_log",
-                text: `The wound healed before ${healer} finished`,
-                to: p.id
-            });
+            if (tenderIsYou || patientIsYou) {
+                const healer = tenderIsYou ? "you" : (tender.name || "they");
+                this.pushEvent({
+                    kind: "combat_log",
+                    text: `The wound healed before ${healer} finished`,
+                    feed: true,
+                    combat: true,
+                    to: p.id
+                });
+            }
             this._youDirty.add(p.id);
             return;
         }
@@ -697,7 +709,9 @@
             : (patientPawn.name ? `${patientPawn.name}'s` : "their");
         const text = BodyHealing.tendLogLine?.(who, poss, quality, applied, patientCreature.anatomy)
             || `${who} finished bandaging (${Math.round(quality * 100)}%)`;
-        this.pushEvent({ kind: "combat_log", text, to: p.id });
+        if (tenderIsYou || patientIsYou) {
+            this.pushEvent({ kind: "combat_log", text, feed: true, combat: true, to: p.id });
+        }
     },
 
     _satietyRatio(food, isMeal = false) {
@@ -796,13 +810,23 @@
             () => this.rng(),
             {
                 isControlled: () => you,
-                displayName: () => p.name || creature.displayName?.() || "Someone"
+                displayName: () => p.name || creature.displayName?.() || "Someone",
+                role: p.role,
+                homeSettlementId: p.homeSettlementId,
+                id: p.id,
+                pawnId: p.id
             }
         );
         if (!result) return;
         p.body = creature.anatomy.toJSON();
         creature.anatomy._dirty = false;
-        this.pushEvent({ kind: "combat_log", text: result.message, to: session?.id || p.id });
+        this.pushEvent({
+            kind: "combat_log",
+            text: result.message,
+            segments: result.segments || null,
+            color: "#ef5a5a",
+            to: session?.id || p.id
+        });
     },
 
     _pawnRecordForCreature(p, creature) {
@@ -917,6 +941,52 @@
         if (target.hp <= 0) this._kill(target, attacker);
     },
 
+    _deathIsCondition(reason) {
+        return reason === "infection" || reason === "starvation";
+    },
+
+    _conditionDeathSegments(pawnId, name, reason) {
+        const settler = (this.settlers || []).some((s) => s && s.id === pawnId);
+        const nameColor = settler ? "#7ec8ff" : "#80e080";
+        const rest = reason === "infection" ? "died of infection" : "starved to death";
+        return [
+            { text: name, color: nameColor },
+            { text: rest, color: "#ef5a5a" }
+        ];
+    },
+
+    /**
+     * Condition deaths stay in chat. A combat death of the controlled pawn
+     * goes to the fight feed and is not also written into chat.
+     */
+    _announceDeath(session, pawnId, name, killerName, reason, overlayPlayerId) {
+        const msg = Protocol.deathMessage(name, killerName, reason);
+        if (overlayPlayerId) {
+            this.pushEvent({ kind: "death", playerId: overlayPlayerId, text: msg });
+        }
+        if (this._deathIsCondition(reason)) {
+            this.pushEvent({
+                kind: "chat",
+                text: msg,
+                system: true,
+                segments: this._conditionDeathSegments(pawnId, name, reason)
+            });
+            return;
+        }
+        const controlled = !!(session && (session.controlId || session.id) === pawnId);
+        if (controlled) {
+            this.pushEvent({
+                kind: "combat_log",
+                text: msg,
+                feed: true,
+                combat: true,
+                to: session.id
+            });
+            return;
+        }
+        this.pushEvent({ kind: "chat", text: msg, system: true });
+    },
+
     _kill(p, killer, action = {}) {
         if (!p) return;
         const alreadyDead = !!p.dead;
@@ -1004,10 +1074,8 @@
         }
         const killerName = this._killerLabel(killer);
         const reason = (p.creature || creature)?._fatalReason || null;
-        const msg = Protocol.deathMessage(p.name, killerName, reason);
-        this.pushEvent({ kind: "death", playerId: p.id, text: msg });
+        this._announceDeath(p, p.id, p.name, killerName, reason, p.id);
         this._clearPvpOwner(p.id);
-        this.pushEvent({ kind: "chat", text: msg, system: true });
     },
 
     _killCompanion(owner, mem, killer) {
@@ -1070,7 +1138,7 @@
             pawnId: mem.id,
             text: msg
         });
-        this.pushEvent({ kind: "chat", text: msg, system: true });
+        this._announceDeath(owner, mem.id, mem.name, killerName, reason, null);
         this._youDirty.add(owner.id);
     },
 
