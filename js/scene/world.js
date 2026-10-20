@@ -231,6 +231,25 @@
         return list;
     },
 
+    /** Soft round brush. Stretched over each fire instead of a new gradient. */
+    _lightBrush() {
+        if (this._lightBrushCanvas) return this._lightBrushCanvas;
+        if (typeof document === "undefined") return null;
+        const canvas = document.createElement("canvas");
+        canvas.width = 64;
+        canvas.height = 64;
+        const g = canvas.getContext("2d");
+        if (!g) return null;
+        const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+        grd.addColorStop(0, "rgba(0,0,0,1)");
+        grd.addColorStop(0.4, "rgba(0,0,0,0.85)");
+        grd.addColorStop(1, "rgba(0,0,0,0)");
+        g.fillStyle = grd;
+        g.fillRect(0, 0, 64, 64);
+        this._lightBrushCanvas = canvas;
+        return canvas;
+    },
+
     updateLightVeil() {
         const img = this.lightGfx;
         const key = this._lightCanvasKey;
@@ -385,15 +404,22 @@
             for (const [k, st] of ease) {
                 if (!st.seen) ease.delete(k);
             }
+            // A fresh radial gradient per fire is the night hitch. Twelve
+            // campfires were rebuilding that shader every flicker. One brush,
+            // stretched to each radius, is the same falloff.
+            const brush = this._lightBrush();
             ctx.globalCompositeOperation = "destination-out";
-            for (const p of punches) {
-                const grd = ctx.createRadialGradient(p.fx, p.fy, 0, p.fx, p.fy, p.rad);
-                grd.addColorStop(0, `rgba(0,0,0,${p.core})`);
-                grd.addColorStop(0.4, `rgba(0,0,0,${0.85 * p.core})`);
-                grd.addColorStop(1, "rgba(0,0,0,0)");
-                ctx.fillStyle = grd;
-                ctx.fillRect(p.fx - p.rad, p.fy - p.rad, p.rad * 2, p.rad * 2);
+            if (brush) {
+                ctx.imageSmoothingEnabled = true;
+                for (const p of punches) {
+                    if (!(p.rad > 0)) continue;
+                    const d = p.rad * 2;
+                    ctx.globalAlpha = Math.max(0, Math.min(1, p.core || 1));
+                    ctx.drawImage(brush, p.fx - p.rad, p.fy - p.rad, d, d);
+                }
+                ctx.imageSmoothingEnabled = false;
             }
+            ctx.globalAlpha = 1;
             ctx.globalCompositeOperation = "source-over";
         }
         this._lightHadFlame = hadFlame;

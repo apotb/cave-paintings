@@ -263,7 +263,17 @@ class LocalSim {
         tickFromScene(dtMs) {
             if (!this._useSceneTick) return;
             if (this._closed || !this.connected || this._paused || !this.session) return;
-            this.session.tick(Math.min(100, Math.max(0, Number(dtMs) || 0)));
+            const dt = Math.min(100, Math.max(0, Number(dtMs) || 0));
+            // The scene calls this every animation frame. Settler and animal
+            // work is per tick, so 140fps was simulating more than twice as
+            // often as the dedicated server. Step at 60Hz and keep the remainder.
+            const step = 1000 / 60;
+            this._simAcc = (this._simAcc || 0) + dt;
+            if (this._simAcc < step) return;
+            const tick = Math.min(50, this._simAcc);
+            this._simAcc -= tick;
+            if (this._simAcc > step) this._simAcc = 0;
+            this.session.tick(tick);
         }
 
         setPaused(paused) {
