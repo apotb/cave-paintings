@@ -150,17 +150,18 @@ test("skinworking bench interact tile occupies placement and blocks other things
     ), false);
 });
 
-test("drying rack hitbox covers both posts, not the gap between them", () => {
-    const def = thingDef("drying_rack");
+test("drying rack hitbox matches a campfire", () => {
+    const rack = thingDef("drying_rack");
+    const fire = thingDef("campfire");
     const x = 40;
     const y = 48;
-    const rect = Place.collisionWorldRect({ id: def.id, x, y, rot: 0 }, def, TS);
-    assert.ok(rect, "drying rack is solid");
-    assert.ok(rect.right - rect.left >= 12, "both posts are inside one solid");
-    assert.equal(contains(rect, x - 5, y - 3), true, "left post");
-    assert.equal(contains(rect, x + 5, y - 3), true, "right post");
-    assert.equal(contains(rect, x, y - 3), true, "feet between the posts stay blocked");
-    assert.equal(contains(rect, x, y - 12), false, "empty sky above the posts is walkable");
+    const rackRect = Place.collisionWorldRect({ id: rack.id, x, y, rot: 0 }, rack, TS);
+    const fireRect = Place.collisionWorldRect({ id: fire.id, x, y, rot: 0 }, fire, TS);
+    assert.deepEqual(rackRect, fireRect);
+    assert.equal(rackRect.right - rackRect.left, 5);
+    assert.equal(rackRect.bottom - rackRect.top, 5);
+    assert.equal(contains(rackRect, x, y - 2), true);
+    assert.equal(contains(rackRect, x - 5, y - 3), false, "posts outside the 5×5 are walkable");
 });
 
 test("basket hitbox is wide at 0° and narrow at 90°", () => {
