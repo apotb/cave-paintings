@@ -23,6 +23,9 @@
     const halt = (...args) => ctx.halt(...args);
     const researchHolder = (...args) => ctx.researchHolder(...args);
     const findStack = (...args) => ctx.findStack(...args);
+    const findStored = (...args) => ctx.findStored(...args);
+    const heldPredQty = (...args) => ctx.heldPredQty(...args);
+    const fetchCookQty = (...args) => ctx.fetchCookQty(...args);
     const findBestChopStack = (...args) => ctx.findBestChopStack(...args);
     const clearPaintBar = (...args) => ctx.clearPaintBar(...args);
     const fetchStack = (...args) => ctx.fetchStack(...args);
@@ -454,18 +457,22 @@ function doFish(world, rec, settle, spot) {
     }
     const rodId = "flimsy_rod";
     const grubId = "grub";
+    const BAIT_CARRY = 3;
     const rod = findStack(world, rec, settle, (s) => s.id === rodId);
     if (!rod) {
         endWorkHold(rec);
         return halt();
     }
     if (rod.at !== rec) return fetchStack(world, rec, settle, rod) || halt();
-    const grub = findStack(world, rec, settle, (s) => s.id === grubId);
-    if (!grub) {
-        endWorkHold(rec);
-        return halt();
+    const baitPred = (s) => s.id === grubId;
+    if (!(heldPredQty(rec, baitPred) > 0)) {
+        const stored = findStored(world, rec, settle, baitPred);
+        if (!stored) {
+            endWorkHold(rec);
+            return halt();
+        }
+        return fetchCookQty(world, rec, settle, stored, BAIT_CARRY) || halt();
     }
-    if (grub.at !== rec) return fetchStack(world, rec, settle, grub) || halt();
     const heldRod = (rec.inventory || []).findIndex((s) => s && s.id === rodId);
     if (heldRod >= 0) rec.hotbarIndex = heldRod;
     const c = rec.creature || world._ensureSettlerCreature?.(rec);

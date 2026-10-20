@@ -3,8 +3,9 @@ const assert = require("node:assert/strict");
 const Fish = require("../shared/fish");
 const Settlement = require("../shared/settlement");
 const Research = require("../shared/research");
+const Place = require("../shared/place");
 const WorldGen = require("../shared/sim/WorldGen");
-const { createTestWorld } = require("./helpers/simWorld");
+const { createTestWorld, chunkKey } = require("./helpers/simWorld");
 const { loadDefs, restoreRng, DataStore } = require("./helpers/load");
 
 loadDefs();
@@ -643,6 +644,85 @@ test("Fish waits for the tech, a rod, a grub, and room in the fish stock", () =>
     for (let i = 0; i < 40; i++) world._tickFishChannel(rec, 1000);
     assert.equal(rec.fishChannel, null);
     assert.equal(rec.inventory[1].quantity, before - 1);
+});
+
+test("a fisher takes at most three grubs from storage", () => {
+    const shore = shoreNearOrigin();
+    assert.ok(shore);
+    const { world, pawn } = createTestWorld();
+    world.seed = 1;
+    WorldGen.applySeed(1);
+    Research.unlock(pawn, "fishing");
+    const x = (shore.tx + 0.5) * 16;
+    const y = (shore.ty + 0.5) * 16;
+    pawn.x = x;
+    pawn.y = y;
+    const settle = Settlement.createSettlement({ x, y, ownerId: pawn.id });
+    const rec = world._settlerFromSnap({
+        id: "fisher-bait",
+        name: "Fisher",
+        x,
+        y,
+        ownerId: pawn.id,
+        homeSettlementId: settle.id,
+        inventory: [
+            { id: "flimsy_rod", quantity: 1, durability: 40 },
+            null, null, null, null
+        ]
+    });
+    rec.hotbarIndex = 0;
+    rec.kc = 1600;
+    const jobs = Settlement.defaultJobs();
+    for (const id of Settlement.JOBS) jobs[id] = 0;
+    jobs.fish = 3;
+    settle.jobs = { [rec.id]: jobs };
+    world.settlements.push(settle);
+    world.settlers.push(rec);
+    world._ensureSettlerCreature(rec);
+    const basket = {
+        uid: "bait-basket",
+        id: "wicker_basket",
+        x,
+        y
+    };
+    Place.ensureStorageEntry(basket, world._thingDef("wicker_basket"));
+    basket.uid = "bait-basket";
+    basket.slots[0] = { id: "grub", quantity: 12 };
+    const chunk = world.chunks.get(chunkKey(
+        Math.floor(x / (8 * 16)),
+        Math.floor(y / (8 * 16))
+    ));
+    chunk?.things.push(basket);
+    settle.stationUids = [basket.uid];
+
+    const grubCount = (slots) => (slots || []).reduce(
+        (n, s) => n + (s && s.id === "grub" ? (Number(s.quantity) || 1) : 0),
+        0
+    );
+    let maxHeld = 0;
+    for (let i = 0; i < 40; i++) {
+        world.tick(50);
+        const held = grubCount(rec.inventory) + grubCount(rec.overflow);
+        maxHeld = Math.max(maxHeld, held);
+        if (held > 0) break;
+    }
+    const held = grubCount(rec.inventory) + grubCount(rec.overflow);
+    assert.equal(held, 3, "a full bait stack should yield three grubs");
+    assert.equal(maxHeld, 3);
+    assert.equal(grubCount(basket.slots), 9);
+
+    const pocket = (rec.inventory || []).find((s) => s && s.id === "grub");
+    assert.ok(pocket);
+    pocket.quantity = 1;
+    rec.fishChannel = null;
+    rec._busyJob = null;
+    rec._workHold = false;
+    rec._settlerScan = null;
+    basket.slots[0] = { id: "grub", quantity: 12 };
+    for (let i = 0; i < 12; i++) world.tick(50);
+    assert.equal(grubCount(basket.slots), 12, "bait already in hand should stay in storage");
+    const still = grubCount(rec.inventory) + grubCount(rec.overflow);
+    assert.ok(still <= 3 && still >= 1, `held ${still}`);
 });
 
 test("a second line cannot land on a tile that already has a bobber", () => {
