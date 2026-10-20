@@ -845,3 +845,246 @@ test("steerToward does not A* just because the pawn overlaps a thing", () => {
     assert.ok(second.path && second.path.length);
     assert.ok(probes < 80, `overlap should not A* (${probes} blocked probes)`);
 });
+
+test("gap lanes sit between neighboring drying racks", () => {
+    const Place = require("../shared/place");
+    const TS = 16;
+    const def = { id: "drying_rack", hitboxSize: 5, dryingRack: true };
+    const y = 9 * TS;
+    const racks = [4, 5, 6].map((tx) => {
+        const x = tx * TS + TS / 2;
+        return Place.collisionWorldRect({ id: "drying_rack", x, y, rot: 0 }, def, TS);
+    });
+    const lanes = Path.gapLanes(racks);
+    assert.equal(lanes.length, 2);
+    const x0 = 4 * TS + TS / 2;
+    assert.equal(Path.inGapLane(lanes, x0, y, 20), true, "feet at the left rack sit in the gap");
+    assert.equal(Path.inGapLane(lanes, x0 + 8, y, 20), false, "the solid between gaps is not a lane");
+    const far = Place.collisionWorldRect(
+        { id: "drying_rack", x: 12 * TS + TS / 2, y, rot: 0 }, def, TS
+    );
+    assert.equal(Path.gapLanes([racks[0], far]).length, 0, "a meadow is not a lane");
+});
+
+test("a companion walks between a row of drying racks", () => {
+    const Place = require("../shared/place");
+    const { createTestWorld, originChunk } = require("./helpers/simWorld");
+    const { world, pawn } = createTestWorld();
+    const chunk = originChunk(world);
+    const ty = 8;
+    for (let tx = 3; tx <= 12; tx++) {
+        const pos = Place.footprintWorldPos(tx, ty, 0, [1, 1], 16);
+        chunk.things.push({
+            uid: `rack-${tx}`,
+            id: "drying_rack",
+            x: pos.x,
+            y: pos.y,
+            rot: 0,
+            tx,
+            ty
+        });
+    }
+    world._chunkRectCache = null;
+    world._solidRects = null;
+    const rackY = (ty + 1) * 16;
+    const rec = world._companionFromSnap(pawn, {
+        id: "buddy",
+        name: "Buddy",
+        x: 112,
+        y: rackY + 48,
+        inventory: [null, null, null, null, null]
+    });
+    pawn.party = [rec];
+    const cc = world._ensureCompanionCreature(pawn, rec);
+    const poseOpts = { load: false, sleepFootprint: false };
+    assert.equal(
+        world._partyPoseBlocked(cc, 104, rackY, 2, poseOpts),
+        false,
+        "path padding must leave the gap between racks open"
+    );
+    assert.equal(
+        world._partyPoseBlocked(cc, 112, rackY, 0, poseOpts),
+        true,
+        "the rack itself stays solid"
+    );
+    // Start in front of the row, off the lane, where the old route dropped
+    // the gap waypoint early and paced left-right along the racks.
+    rec.x = 108;
+    rec.y = rackY + 16;
+    cc.x = rec.x;
+    cc.y = rec.y;
+    const dest = { x: 108, y: rackY - 48 };
+    const x0 = rec.x;
+    let minY = rec.y;
+    let maxDx = 0;
+    let flips = 0;
+    let prevSign = 0;
+    function step() {
+        cc.x = rec.x;
+        cc.y = rec.y;
+        cc.role = "companion";
+        cc.homeSettlementId = null;
+        cc._resting = false;
+        cc.ai._walkToward(dest.x, dest.y, false, world._aiWorld(), 16);
+        const vx = cc.vx || 0;
+        const sign = Math.abs(vx) > 8 ? Math.sign(vx) : 0;
+        if (sign && prevSign && sign !== prevSign && rec.y > rackY - 2) flips++;
+        if (sign) prevSign = sign;
+        cc.applyDesiredVel(16);
+        const nx = cc.x + (cc.vx || 0) * 0.016;
+        const ny = cc.y + (cc.vy || 0) * 0.016;
+        if (!world._partyPoseBlocked(cc, nx, cc.y, 0, poseOpts)) cc.x = nx;
+        if (!world._partyPoseBlocked(cc, cc.x, ny, 0, poseOpts)) cc.y = ny;
+        rec.x = cc.x;
+        rec.y = cc.y;
+    }
+    for (let i = 0; i < 320; i++) {
+        step();
+        if (rec.y < minY) minY = rec.y;
+        maxDx = Math.max(maxDx, Math.abs(rec.x - x0));
+        if (rec.y < rackY - 12) break;
+    }
+    assert.ok(
+        minY < rackY - 12,
+        `should cross the row, ended ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`
+    );
+    assert.ok(
+        maxDx < 20,
+        `should use a gap, not walk around the row (drifted ${maxDx.toFixed(1)}px)`
+    );
+    assert.ok(flips < 2, `paced in front of the gap (${flips} reversals)`);
+});
+
+test("a companion walks between campfires and a drying rack, not into a bench", () => {
+    const Place = require("../shared/place");
+    const { createTestWorld, originChunk } = require("./helpers/simWorld");
+    const { world, pawn } = createTestWorld();
+    const chunk = originChunk(world);
+    const ty = 8;
+    const row = [
+        { id: "campfire", tx: 4 },
+        { id: "campfire", tx: 5 },
+        { id: "skinworking_bench", tx: 6, rot: 0 },
+        { id: "drying_rack", tx: 7 },
+        { id: "campfire", tx: 8 }
+    ];
+    for (let i = 0; i < row.length; i++) {
+        const it = row[i];
+        const def = world._thingDef(it.id);
+        const pos = Place.footprintWorldPos(it.tx, ty, it.rot || 0, def.footprint || [1, 1], 16);
+        chunk.things.push({
+            uid: `st-${it.tx}`,
+            id: it.id,
+            x: pos.x,
+            y: pos.y,
+            rot: it.rot || 0,
+            tx: it.tx,
+            ty
+        });
+    }
+    world._chunkRectCache = null;
+    world._solidRects = null;
+    const rackY = (ty + 1) * 16;
+    const rec = world._companionFromSnap(pawn, {
+        id: "buddy",
+        name: "Buddy",
+        x: 88,
+        y: rackY + 48,
+        inventory: [null, null, null, null, null]
+    });
+    pawn.party = [rec];
+    const cc = world._ensureCompanionCreature(pawn, rec);
+    const poseOpts = { load: false, sleepFootprint: false };
+    assert.equal(
+        world._partyPoseBlocked(cc, 80, rackY, 0, poseOpts),
+        true,
+        "a campfire center stays solid"
+    );
+    assert.equal(
+        world._partyPoseBlocked(cc, 88, rackY, 0, poseOpts),
+        true,
+        "the gap beside a skinworking bench stays solid"
+    );
+    assert.equal(
+        world._partyPoseBlocked(cc, 88, rackY, 2, poseOpts),
+        true,
+        "pathing must not aim through the bench gap"
+    );
+    function cross(startX) {
+        rec.x = startX;
+        rec.y = rackY + 20;
+        cc.x = rec.x;
+        cc.y = rec.y;
+        cc.ai._path = null;
+        const dest = { x: startX, y: rackY - 48 };
+        let minY = rec.y;
+        let maxDx = 0;
+        let flips = 0;
+        let prevSign = 0;
+        for (let i = 0; i < 400; i++) {
+            cc.x = rec.x;
+            cc.y = rec.y;
+            cc.role = "companion";
+            cc.homeSettlementId = null;
+            cc._resting = false;
+            cc.ai._walkToward(dest.x, dest.y, false, world._aiWorld(), 16);
+            const vx = cc.vx || 0;
+            const sign = Math.abs(vx) > 8 ? Math.sign(vx) : 0;
+            if (sign && prevSign && sign !== prevSign && rec.y > rackY - 2) flips++;
+            if (sign) prevSign = sign;
+            cc.applyDesiredVel(16);
+            const nx = cc.x + (cc.vx || 0) * 0.016;
+            const ny = cc.y + (cc.vy || 0) * 0.016;
+            if (!world._partyPoseBlocked(cc, nx, cc.y, 0, poseOpts)) cc.x = nx;
+            if (!world._partyPoseBlocked(cc, cc.x, ny, 0, poseOpts)) cc.y = ny;
+            rec.x = cc.x;
+            rec.y = cc.y;
+            if (rec.y < minY) minY = rec.y;
+            maxDx = Math.max(maxDx, Math.abs(rec.x - startX));
+            if (rec.y < rackY - 12) break;
+        }
+        assert.ok(
+            minY < rackY - 12,
+            `from ${startX} should cross, ended ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`
+        );
+        assert.ok(
+            maxDx < 20,
+            `from ${startX} should use a gap (drifted ${maxDx.toFixed(1)}px)`
+        );
+        assert.ok(flips < 3, `from ${startX} paced in front of the gap (${flips} reversals)`);
+    }
+    // South of a campfire pair. The bench beside them is solid, so a start
+    // in front of it must go elsewhere without stepping into the board.
+    cross(80);
+    rec.x = 104;
+    rec.y = rackY + 20;
+    cc.x = rec.x;
+    cc.y = rec.y;
+    cc.ai._path = null;
+    const bench = Place.collisionWorldRect(
+        chunk.things.find((t) => t.id === "skinworking_bench"),
+        world._thingDef("skinworking_bench"),
+        16
+    );
+    for (let i = 0; i < 400; i++) {
+        cc.x = rec.x;
+        cc.y = rec.y;
+        cc.role = "companion";
+        cc.homeSettlementId = null;
+        cc._resting = false;
+        cc.ai._walkToward(104, rackY - 48, false, world._aiWorld(), 16);
+        cc.applyDesiredVel(16);
+        const nx = cc.x + (cc.vx || 0) * 0.016;
+        const ny = cc.y + (cc.vy || 0) * 0.016;
+        if (!world._partyPoseBlocked(cc, nx, cc.y, 0, poseOpts)) cc.x = nx;
+        if (!world._partyPoseBlocked(cc, cc.x, ny, 0, poseOpts)) cc.y = ny;
+        rec.x = cc.x;
+        rec.y = cc.y;
+        const body = world._creatureBodyAt(cc, rec.x, rec.y);
+        assert.ok(
+            !(body.right > bench.left && body.left < bench.right
+                && body.bottom > bench.top && body.top < bench.bottom),
+            `stepped into the bench at ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`
+        );
+    }
+});

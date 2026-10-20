@@ -2323,8 +2323,64 @@ function pawnPoseBlocked(pawn, x, y, pad = 0) {
         return matched;
     };
     let hit = overlaps(left, right, top, bottom);
-    // Path margin seals a hut door the 8×8 body can walk through. Ignore that
-    // margin only in the doorway. Other interior walls stay solid.
+    // A row of campfires or racks is a gap the body can take. A skinworking
+    // bench is wider than that opening, so it stays solid.
+    // The path margin, and a pixel of the edge, must not seal it. Standing
+    // in the middle of one stays blocked. Hut doors are handled below.
+    if (hit && typeof Place !== "undefined" && Place.isGapFurniture && Place.gapIntrusion) {
+        const bare = { left: left + p, right: right - p, top: top + p, bottom: bottom - p };
+        const squeeze = Place.GAP_SQUEEZE || 2;
+        let foreign = false;
+        let any = false;
+        forThingsNearAabb(scene, left, right, top, bottom, (thing) => {
+            const tb = thing?.body;
+            if (!tb || !tb.enable || pawnIgnoresThing(pawn, thing)) return false;
+            if (!(right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom)) {
+                return false;
+            }
+            any = true;
+            if (!Place.isGapFurniture(thing.meta) || Place.gapIntrusion(bare, tb) > squeeze) {
+                foreign = true;
+                return true;
+            }
+            return false;
+        });
+        if (any && !foreign) {
+            const stations = [];
+            forThingsNearAabb(scene, left - 24, right + 24, top - 24, bottom + 24, (thing) => {
+                const tb = thing?.body;
+                if (!tb || !tb.enable || pawnIgnoresThing(pawn, thing)) return false;
+                if (!Place.isGapFurniture(thing.meta)) return false;
+                stations.push(tb);
+                return false;
+            });
+            let between = false;
+            for (let i = 0; i < stations.length && !between; i++) {
+                for (let j = i + 1; j < stations.length; j++) {
+                    const a = stations[i];
+                    const b = stations[j];
+                    const acx = (a.left + a.right) * 0.5;
+                    const acy = (a.top + a.bottom) * 0.5;
+                    const bcx = (b.left + b.right) * 0.5;
+                    const bcy = (b.top + b.bottom) * 0.5;
+                    const dx = Math.abs(acx - bcx);
+                    const dy = Math.abs(acy - bcy);
+                    const row = (dy <= 10 && dx > 0 && dx <= 20)
+                        || (dx <= 10 && dy > 0 && dy <= 20);
+                    if (!row) continue;
+                    const cx = (bare.left + bare.right) * 0.5;
+                    const cy = (bare.top + bare.bottom) * 0.5;
+                    const along = dx >= dy
+                        ? cx > Math.min(acx, bcx) && cx < Math.max(acx, bcx)
+                        : cy > Math.min(acy, bcy) && cy < Math.max(acy, bcy);
+                    if (along) { between = true; break; }
+                }
+            }
+            if (between) hit = false;
+        }
+    }
+    // Path margin seals a hut door the body can walk through. Ignore that
+    // margin only in the doorway. Other walls stay solid.
     if (hit && p > 0 && typeof Place !== "undefined" && Place.inDoorApproach) {
         const bareLeft = left + p;
         const bareRight = right - p;

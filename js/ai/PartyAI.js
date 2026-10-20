@@ -149,6 +149,49 @@ class PartyAI {
         return null;
     }
 
+    /**
+     * Slack for the fat path corridor: a lane between neighboring drying
+     * racks, so a row of them is a set of gaps instead of a wall.
+     */
+    _rackSlack(pawn, x, y, radius) {
+        const nav = typeof Path !== "undefined" ? Path : null;
+        if (!nav?.gapLanes || !nav.inGapLane) return null;
+        if (typeof forThingsNearAabb !== "function") return null;
+        const scene = pawn?.scene;
+        if (!scene) return null;
+        const r = Number(radius) > 0 ? Number(radius) : 160;
+        const body = pawn.body;
+        const racks = [];
+        const seen = new Set();
+        forThingsNearAabb(scene, x - r, x + r, y - r, y + r, (thing) => {
+            const gap = typeof Place !== "undefined" && Place.isGapFurniture
+                ? Place.isGapFurniture(thing?.meta)
+                : !!(
+                    thing?.meta?.dryingRack
+                    || thing?.meta?.campfire
+                    || (thing?.meta?.craftStation && thing?.meta?.id !== "skinworking_bench")
+                );
+            if (!gap) return false;
+            if (seen.has(thing)) return false;
+            seen.add(thing);
+            const tb = thing.body;
+            if (!tb?.enable) return false;
+            racks.push({ left: tb.left, right: tb.right, top: tb.top, bottom: tb.bottom });
+            return false;
+        });
+        if (racks.length < 2) return null;
+        const lanes = nav.gapLanes(racks, body ? {
+            leftOff: body.left - pawn.x,
+            rightOff: body.right - pawn.x,
+            topOff: pawn.y - body.top,
+            squeeze: ((typeof Place !== "undefined" && Place.GAP_SQUEEZE) || 2) * 2
+        } : {
+            squeeze: ((typeof Place !== "undefined" && Place.GAP_SQUEEZE) || 2) * 2
+        });
+        if (!lanes.length) return null;
+        return (px, py) => nav.inGapLane(lanes, px, py, 20);
+    }
+
     _walkToward(pawn, tx, ty, ts, sprint, delta, opts) {
         const settler = this._isSettler();
         const now = pawn.scene?.time?.now || 0;
@@ -182,10 +225,12 @@ class PartyAI {
         const farLook = settler || destDistTiles > 12;
         const allowReplan = !this._planAt || now - this._planAt >= 400;
         const stuckDt = this._stuckClockDt(pawn, delta);
+        const slack = this._rackSlack(pawn, pawn.x, pawn.y, (maxRange + 2) * cell);
         const steered = nav.steerToward({
             from,
             to,
             blocked,
+            slack,
             cellSize: ts || 16,
             side: this._avoidSide,
             path: this._path,

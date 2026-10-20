@@ -429,7 +429,10 @@
                         if (!via) continue;
                     }
                 }
-                const ng = gCur + 1;
+                // A diagonal costs a hair more than a straight step. Equal
+                // costs were letting a dogleg win the tie and aim the next
+                // waypoint at the rack beside the gap.
+                const ng = gCur + ((ddx && ddy) ? 1.01 : 1);
                 if (gScore.has(k) && ng >= gScore.get(k)) continue;
                 gScore.set(k, ng);
                 came.set(k, cur);
@@ -467,12 +470,22 @@
         return stringPull(from, pts, blocked);
     }
 
-    function consumeWaypoints(from, path) {
+    function consumeWaypoints(from, path, blocked) {
         if (!path || !path.length) return path;
-        while (
-            path.length
-            && hypot(from.x - path[0].x, from.y - path[0].y) < WAYPOINT_PX
-        ) {
+        while (path.length) {
+            const dist = hypot(from.x - path[0].x, from.y - path[0].y);
+            if (!(dist < WAYPOINT_PX)) break;
+            // The gap stand sits on the rack. Dropping it from 10px away
+            // turns the settler at the next waypoint while they are still
+            // in front of the row, and the wall slide paces them there.
+            if (
+                dist > ARRIVE_PX
+                && path.length > 1
+                && !losClear(from.x, from.y, path[1].x, path[1].y, blocked, {
+                    stepPx: 3,
+                    fatPx: 0
+                })
+            ) break;
             path.shift();
         }
         return path;
@@ -540,7 +553,7 @@
         // camp followers used to dest-LOS thousands of tiles every tick.
         dest = clipToRange(from.x, from.y, dest.x, dest.y, maxRange, cell);
 
-        path = consumeWaypoints(from, path);
+        path = consumeWaypoints(from, path, blocked);
         if (path && path.length && blocked(path[0].x, path[0].y)) path.shift();
         const wp0 = path && path.length ? path[0] : dest;
         const wpDist = hypot(wp0.x - from.x, wp0.y - from.y);
@@ -814,6 +827,90 @@
         return steered;
     }
 
+    /**
+     * Feet lanes where a body fits between two nearby rects. A row of thin
+     * obstacles (drying racks on adjacent tiles) is a wall to a fat corridor
+     * and a gap to the body. `maxSep` keeps a meadow between distant racks
+     * from becoming a lane — that space already paths at the normal margin.
+     * Offsets are from the feet: humanoids occupy x+[4,12] and y-[8,0].
+     */
+    function gapLanes(rects, opts) {
+        const lo = Number.isFinite(opts && opts.leftOff) ? opts.leftOff : 4;
+        const ro = Number.isFinite(opts && opts.rightOff) ? opts.rightOff : 12;
+        const to = Number.isFinite(opts && opts.topOff) ? opts.topOff : 8;
+        const bodyW = ro - lo;
+        const bodyH = to;
+        const squeeze = Number(opts && opts.squeeze) > 0 ? Number(opts.squeeze) : 0;
+        const half = squeeze * 0.5;
+        const maxSep = Number(opts && opts.maxSep) > 0 ? Number(opts.maxSep) : 20;
+        const align = Number(opts && opts.align) > 0 ? Number(opts.align) : 10;
+        const lanes = [];
+        const list = rects || [];
+        for (let i = 0; i < list.length; i++) {
+            const a = list[i];
+            if (!a) continue;
+            const acx = (a.left + a.right) * 0.5;
+            const acy = (a.top + a.bottom) * 0.5;
+            for (let j = i + 1; j < list.length; j++) {
+                const b = list[j];
+                if (!b) continue;
+                const bcx = (b.left + b.right) * 0.5;
+                const bcy = (b.top + b.bottom) * 0.5;
+                const dx = Math.abs(acx - bcx);
+                const dy = Math.abs(acy - bcy);
+                if (dy <= align && dx > 0 && dx <= maxSep) {
+                    const left = acx <= bcx ? a : b;
+                    const right = acx <= bcx ? b : a;
+                    const gap = right.left - left.right;
+                    if (gap + squeeze > bodyW) {
+                        const min = left.right - lo - half;
+                        const max = right.left - ro + half;
+                        if (max > min) {
+                            lanes.push({
+                                axis: "x",
+                                min,
+                                max,
+                                near: (acy + bcy) * 0.5
+                            });
+                        }
+                    }
+                }
+                if (dx <= align && dy > 0 && dy <= maxSep) {
+                    const upper = acy <= bcy ? a : b;
+                    const lower = acy <= bcy ? b : a;
+                    const gap = lower.top - upper.bottom;
+                    if (gap + squeeze > bodyH) {
+                        const min = upper.bottom + to - half;
+                        const max = lower.top + half;
+                        if (max > min) {
+                            lanes.push({
+                                axis: "y",
+                                min,
+                                max,
+                                near: (acx + bcx) * 0.5
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        return lanes;
+    }
+
+    function inGapLane(lanes, x, y, reach) {
+        const r = Number(reach) > 0 ? Number(reach) : 20;
+        if (!lanes || !lanes.length) return false;
+        for (let i = 0; i < lanes.length; i++) {
+            const lane = lanes[i];
+            if (lane.axis === "x") {
+                if (x >= lane.min && x <= lane.max && Math.abs(y - lane.near) <= r) return true;
+            } else if (y >= lane.min && y <= lane.max && Math.abs(x - lane.near) <= r) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     return {
         TILE,
         LOOK_PX,
@@ -830,6 +927,8 @@
         stringPull,
         cellStand,
         cellStandOpen,
-        cellOf
+        cellOf,
+        gapLanes,
+        inGapLane
     };
 });

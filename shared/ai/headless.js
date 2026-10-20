@@ -1255,10 +1255,15 @@
             // walked into trunks and furniture and stopped. Plan with the
             // same fattened pose settlers use; movement still steps at pad 0.
             const bodyNav = settler || mob.role === "companion";
-            const embedded = !!this._overlappingThing(world)
-                || !!(world?.poseBlocked && world.poseBlocked(
-                    mob, mob.x, mob.y, 0, { sleepFootprint: false }
-                ));
+            const poseStuck = !!(world?.poseBlocked && world.poseBlocked(
+                mob, mob.x, mob.y, 0, { sleepFootprint: false }
+            ));
+            // poseBlocked is the stand test, including a shallow squeeze
+            // between stations. The raw overlap would shove them back out
+            // of that gap and leave them pacing the row.
+            const embedded = world?.poseBlocked
+                ? poseStuck
+                : !!this._overlappingThing(world);
             if (embedded) this._nudgeOutOfThing(world, true);
             const overlap = embedded ? this._overlappingThing(world) : null;
             const from = { x: mob.x, y: mob.y };
@@ -1335,8 +1340,14 @@
             }
             const allowReplan = (!this._planAt || now - this._planAt >= 400 + this._replanPad)
                 && allowPathPlan(world);
-            const slack = bodyNav && world?.doorSlackNear
+            const door = bodyNav && world?.doorSlackNear
                 ? world.doorSlackNear(mob.x, mob.y, (maxRange + 2) * TILE)
+                : null;
+            const rack = bunkNav && world?.rackGapNear
+                ? world.rackGapNear(mob.x, mob.y, (maxRange + 2) * TILE)
+                : null;
+            const slack = (door || rack)
+                ? (px, py) => (door && door(px, py)) || (rack && rack(px, py))
                 : null;
             const steered = Path.steerToward({
                 from,

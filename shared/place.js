@@ -477,6 +477,35 @@
     }
 
     /**
+     * Campfires, drying racks, and the grindstone are small stations people
+     * line up. A body can step between them. The skinworking bench is wider
+     * than the tile gap beside it, so a passer runs into the board. Trees,
+     * baskets, and shelters stay solid at the normal margin.
+     */
+    function isGapFurniture(thingDef) {
+        if (!thingDef || thingDef.id === "skinworking_bench") return false;
+        return !!(thingDef.campfire || thingDef.dryingRack || thingDef.craftStation);
+    }
+
+    /** How far `body` intrudes into `rect`. Infinity when its center is inside. */
+    function gapIntrusion(body, rect) {
+        if (!body || !rect) return 0;
+        if (!(body.right > rect.left && body.left < rect.right
+            && body.bottom > rect.top && body.top < rect.bottom)) return 0;
+        const cx = (body.left + body.right) * 0.5;
+        const cy = (body.top + body.bottom) * 0.5;
+        if (cx > rect.left && cx < rect.right && cy > rect.top && cy < rect.bottom) {
+            return Infinity;
+        }
+        const ox = Math.min(body.right, rect.right) - Math.max(body.left, rect.left);
+        const oy = Math.min(body.bottom, rect.bottom) - Math.max(body.top, rect.top);
+        return Math.min(ox, oy);
+    }
+
+    /** A passer may clip this far into the edge of gap furniture, per side. */
+    const GAP_SQUEEZE = 2;
+
+    /**
      * Empty/handle pixels on the north of 1×1 furniture (baskets, benches).
      * Opaque AABBs include the rim; walking this far into the sprite nests
      * against the body instead of stopping in the sand above it.
@@ -1644,6 +1673,9 @@
         walkBodyAt,
         collisionWorldRect,
         collisionWorldRects,
+        isGapFurniture,
+        gapIntrusion,
+        GAP_SQUEEZE,
         figurineCollisionRects,
         spriteAnchor,
         rotateAnchorOffset,

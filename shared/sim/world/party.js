@@ -1384,7 +1384,9 @@
         const hit = cache.get(t);
         if (hit && hit.x === x && hit.y === y && hit.rot === rot && hit.id === id) return hit.rect;
         const def = thingDefs().get(t.id);
-        const pad = 1;
+        // A 1px pad welds adjacent stations into one wall. Gap furniture
+        // keeps the raw box the player walks, so the space between them fits.
+        const pad = (def && Place.isGapFurniture?.(def)) ? 0 : 1;
         let rect = null;
         if (typeof Place !== "undefined" && Place.collisionWorldRect) {
             const raw = Place.collisionWorldRect(t, def, TS);
@@ -1490,7 +1492,8 @@
                     });
                 }
             }
-            const pad = 1;
+            // Same raw box as the player. The extra pixel welds a station row shut.
+            const pad = (def && Place.isGapFurniture?.(def)) ? 0 : 1;
             const raw = (typeof Place !== "undefined" && Place.collisionWorldRects)
                 ? Place.collisionWorldRects(t, def, TS)
                 : [];
@@ -1712,6 +1715,86 @@
         return true;
     },
 
+    /**
+     * Pathing grows the body so settlers don't kiss trunks. Campfires
+     * and drying racks leave a gap the body can take, and the same
+     * margin seals the row into a wall they pace along. A shallow clip
+     * of the edge still counts as the gap; standing in the middle of
+     * one does not. A skinworking bench is not part of that opening.
+     */
+    _gapClear(creature, body, pad) {
+        const p = Math.max(0, Number(pad) || 0);
+        const hits = [];
+        this._aabbHitsThing(
+            body.left - p, body.right + p, body.top - p, body.bottom + p,
+            (body.left + body.right) * 0.5, (body.top + body.bottom) * 0.5,
+            64, creature, hits
+        );
+        if (!hits.length) return false;
+        const squeeze = (typeof Place !== "undefined" && Place.GAP_SQUEEZE) || 2;
+        for (let i = 0; i < hits.length; i++) {
+            const tb = hits[i];
+            const def = thingDefs().get(tb.t?.id);
+            if (!def || !Place.isGapFurniture?.(def)) return false;
+            const depth = Place.gapIntrusion?.(body, tb);
+            if (!(depth <= squeeze)) return false;
+        }
+        // A lone station stays solid. The pass is the opening between two,
+        // so a campfire beside a lean-to is still walked around.
+        return this._betweenStations(body, hits);
+    },
+
+    _betweenStations(body, hits) {
+        const seen = new Set();
+        for (let i = 0; i < hits.length; i++) {
+            const uid = hits[i].t && hits[i].t.uid;
+            if (uid) seen.add(uid);
+        }
+        if (seen.size >= 2) return true;
+        if (typeof Path === "undefined" || !Path.gapLanes || !Path.inGapLane) return false;
+        const feetX = body.left - 4;
+        const feetY = body.bottom;
+        const rects = this._thingRectsNear(feetX, feetY, 40);
+        const squeeze = ((Place.GAP_SQUEEZE || 2) * 2);
+        for (let i = 0; i < rects.length; i++) {
+            const rect = rects[i];
+            const uid = rect && rect.t && rect.t.uid;
+            if (!uid || seen.has(uid)) continue;
+            const def = thingDefs().get(rect.t.id);
+            if (!def || !Place.isGapFurniture?.(def)) continue;
+            const lanes = Path.gapLanes(hits.concat(rect), { squeeze });
+            if (Path.inGapLane(lanes, feetX, feetY, 8)) return true;
+        }
+        return false;
+    },
+
+    /**
+     * Feet positions that fit between neighboring stations. Passed to
+     * planPath as slack so the fat corridor may use the gap instead of
+     * routing around the whole row.
+     */
+    _rackGapNear(x, y, radius) {
+        if (typeof Path === "undefined" || !Path.gapLanes || !Path.inGapLane) return null;
+        const rects = this._thingRectsNear(x, y, radius);
+        const seen = new Set();
+        const racks = [];
+        for (let i = 0; i < rects.length; i++) {
+            const rect = rects[i];
+            const t = rect && rect.t;
+            const uid = t && t.uid;
+            if (!uid || seen.has(uid)) continue;
+            const def = thingDefs().get(t.id);
+            if (!def || !Place.isGapFurniture?.(def)) continue;
+            seen.add(uid);
+            racks.push(rect);
+        }
+        if (racks.length < 2) return null;
+        const squeeze = ((Place.GAP_SQUEEZE || 2) * 2);
+        const lanes = Path.gapLanes(racks, { squeeze });
+        if (!lanes.length) return null;
+        return (px, py) => Path.inGapLane(lanes, px, py, 20);
+    },
+
     _partyPoseBlocked(creature, x, y, pad = 0, opts = {}) {
         // Feet origin (0, 1). A pose on a tile's bottom edge belongs to that
         // tile, matching Path.cellOf and the client.
@@ -1724,7 +1807,8 @@
         const p = Math.max(0, Number(pad) || 0);
         if (this._aabbHitsThing(
             body.left - p, body.right + p, body.top - p, body.bottom + p, x, y, 64, creature
-        ) && !this._interiorDoorMargin(creature, body, p, x, y)) return true;
+        ) && !this._interiorDoorMargin(creature, body, p, x, y)
+            && !this._gapClear(creature, body, p)) return true;
         if (opts.sleepFootprint === false || opts.sleepNav === false) return false;
         return this._sleepFootprintHits(creature, body, p, x, y);
     },

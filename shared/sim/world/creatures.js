@@ -334,6 +334,7 @@
             solidThingAt: (x, y) => self._solidThingAt(x, y),
             thingRectsNear: (x, y, radius) => self._thingRectsNear(x, y, radius),
             doorSlackNear: (x, y, radius) => self._doorSlackNear(x, y, radius),
+            rackGapNear: (x, y, radius) => self._rackGapNear(x, y, radius),
             _ringBoxMisses: (thing, left, right, top, bottom) => self._ringBoxMisses(
                 thing, left, right, top, bottom
             ),
