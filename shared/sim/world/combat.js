@@ -1166,8 +1166,10 @@
         this._simTickLive = true;
         this._aiStuckDt = Number(dtMs) > 0 ? dtMs : 16;
         this._queryGen = (this._queryGen || 0) + 1;
-        this._chunkRectCache = new Map();
         this._sleepRectCache = new Map();
+        // A few new routes a frame. The rest keep the path they already have,
+        // so a camp and a herd don't all run A* on the same tick.
+        this._planLeft = 4;
         const dt = dtMs / 1000;
         const fishScale = Number(this.tickSpeed);
         const fishDt = dtMs * (Number.isFinite(fishScale) && fishScale > 0 ? fishScale : 0);
@@ -2170,8 +2172,10 @@
                         lastFrom: navState.lastFrom,
                         lastWpDist: navState.lastWpDist,
                         maxRange: 6,
-                        dt: mobDtMs
+                        dt: mobDtMs,
+                        allowReplan: this._planLeft == null || this._planLeft > 0
                     });
+                    if (steered.replanned && this._planLeft > 0) this._planLeft--;
                     if (mob.ai) mob.ai._nav = steered;
                     if (!steered.arrived && (steered.nx || steered.ny)) {
                         const nxx = mob.x + steered.nx * speed * mobDt;

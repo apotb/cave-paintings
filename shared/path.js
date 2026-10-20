@@ -807,7 +807,8 @@
             lastFrom: state && state.lastFrom,
             maxRange: range,
             dt: (opts && (opts.stuckDt || opts.dt)),
-            overlapping: opts && opts.overlapping
+            overlapping: opts && opts.overlapping,
+            allowReplan: !(opts && opts.allowReplan === false)
         });
         steered.detour = true;
         return steered;

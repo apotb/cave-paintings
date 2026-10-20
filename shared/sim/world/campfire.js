@@ -117,6 +117,7 @@
                 delete best.regrowAt;
                 delete best.gone;
             }
+            this._bumpChunkCollision(bestChunk);
             this.pushEvent({
                 ...baseEv,
                 id: best.id,
@@ -131,6 +132,7 @@
             best.gone = true;
             best.regrowId = harvestedId;
             best.regrowAt = regrowAt;
+            this._bumpChunkCollision(bestChunk);
             this.pushEvent({
                 ...baseEv,
                 id: harvestedId,

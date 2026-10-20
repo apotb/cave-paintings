@@ -231,7 +231,7 @@
                 }
                 if (!waiting && entry.regrowAt == null) continue;
                 if (waiting && this._placedThingCovers(entry)) {
-                    this._freezeRegrow(entry);
+                    this._freezeRegrow(entry, c);
                     continue;
                 }
                 if (entry.regrowPaused) {
@@ -246,6 +246,7 @@
                 delete entry.gone;
                 delete entry.regrowAt;
                 delete entry.regrowId;
+                this._bumpChunkCollision(c);
                 this.pushEvent({
                     kind: "lootable",
                     cx: c.cx,
@@ -722,6 +723,7 @@
         this._ensureLootableUids(c);
         this._registerChunkMobs(c);
         this._emitSpawnSpills(c);
+        this._bumpChunkCollision(c);
         return c;
     },
 

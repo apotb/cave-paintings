@@ -764,7 +764,7 @@
         const keep = (entry) => {
             if (!onTile(entry)) return true;
             if (opts.keepWaiting && this._isWaitingRegrow(entry)) {
-                this._freezeRegrow(entry);
+                this._freezeRegrow(entry, chunk);
                 return true;
             }
             removed.push(entry);
@@ -775,6 +775,7 @@
         for (const entry of removed) this._severSpawnChildren(entry);
         this._watchChunkThings(chunk);
         this._invalidateUidIndex();
+        this._bumpChunkCollision(chunk);
         return chunk;
     },
 
@@ -1633,13 +1634,14 @@
         return !!(entry && (entry.gone || entry.regrowPaused) && (entry.regrowAt != null || entry.regrowPaused));
     },
 
-    _freezeRegrow(entry) {
+    _freezeRegrow(entry, chunk) {
         if (!entry || entry.regrowPaused || entry.regrowAt == null) return;
         const now = this.worldMinuteIndex();
         entry.regrowLeft = Math.max(0, entry.regrowAt - now);
         delete entry.regrowAt;
         entry.regrowPaused = true;
         entry.gone = true;
+        this._bumpChunkCollision(chunk);
     },
 
     _entryTile(entry) {

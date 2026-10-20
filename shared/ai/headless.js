@@ -39,6 +39,16 @@
         return d > 0 ? d : 16;
     }
 
+    /** Sim tick sets a small budget so a herd doesn't all search on one frame. */
+    function allowPathPlan(world) {
+        if (!world || world._planLeft == null) return true;
+        return world._planLeft > 0;
+    }
+
+    function notePathPlan(world, steered) {
+        if (steered && steered.replanned && world && world._planLeft > 0) world._planLeft--;
+    }
+
     class DoofusAI {
         constructor(mob) {
             this.mob = mob;
@@ -98,8 +108,9 @@
                     y,
                     blocked,
                     this._nav || { side: 1 },
-                    { dt: stuckClockDt(world, delta), rangeTiles: 6 }
+                    { dt: stuckClockDt(world, delta), rangeTiles: 6, allowReplan: allowPathPlan(world) }
                 );
+                notePathPlan(world, steered);
                 this._nav = steered;
                 x = steered.nx;
                 y = steered.ny;
@@ -551,8 +562,9 @@
                     ny,
                     blocked,
                     this._nav || { side: 1 },
-                    { dt: delta, rangeTiles: 6 }
+                    { dt: delta, rangeTiles: 6, allowReplan: allowPathPlan(world) }
                 );
+                notePathPlan(world, steered);
                 this._nav = steered;
                 nx = steered.nx;
                 ny = steered.ny;
@@ -1321,7 +1333,8 @@
                 for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
                 this._replanPad = Math.abs(h) % 220;
             }
-            const allowReplan = !this._planAt || now - this._planAt >= 400 + this._replanPad;
+            const allowReplan = (!this._planAt || now - this._planAt >= 400 + this._replanPad)
+                && allowPathPlan(world);
             const slack = bodyNav && world?.doorSlackNear
                 ? world.doorSlackNear(mob.x, mob.y, (maxRange + 2) * TILE)
                 : null;
@@ -1345,6 +1358,7 @@
                 openRadius,
                 allowReplan
             });
+            notePathPlan(world, steered);
             this._path = steered.path;
             this._pathGoalX = steered.pathGoal ? steered.pathGoal.x : null;
             this._pathGoalY = steered.pathGoal ? steered.pathGoal.y : null;

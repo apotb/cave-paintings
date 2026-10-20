@@ -42,11 +42,13 @@
         list.push = function () {
             const n = push.apply(this, arguments);
             world._invalidateUidIndex();
+            world._bumpChunkCollision(chunk);
             return n;
         };
         list.splice = function () {
             const removed = splice.apply(this, arguments);
             world._invalidateUidIndex();
+            world._bumpChunkCollision(chunk);
             return removed;
         };
         Object.defineProperty(list, "_uidWatch", { value: true });
@@ -1326,37 +1328,91 @@
     },
 
     /**
-     * Client Thing origin is (0.5, 1). Collision matches Place.collisionWorldRect
-     * (rotation-aware benches, lean-to roofs/posts). 1px pad matches Arcade slop.
+     * Things in this chunk (or a neighbor, whose rects are copied in) changed.
+     * The next collision query rebuilds those indexes; untouched forest stays.
      */
+    _bumpChunkCollision(chunk) {
+        if (!chunk) return;
+        chunk._colRev = (chunk._colRev | 0) + 1;
+        const cx = chunk.cx | 0;
+        const cy = chunk.cy | 0;
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                const n = this.chunks.get(chunkKey(cx + dx, cy + dy));
+                if (n) n._stampGen = -1;
+            }
+        }
+    },
+
+    /**
+     * Stamp of this chunk plus the eight around it. Cached until something
+     * in that neighborhood is added, removed, or edited.
+     */
+    _collisionStamp(cx, cy) {
+        const home = this.chunks.get(chunkKey(cx, cy));
+        const gen = this._queryGen | 0;
+        if (home && home._stampGen === gen) return home._stamp;
+        const parts = [];
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                const c = this.chunks.get(chunkKey(cx + dx, cy + dy));
+                const things = c && c.things;
+                const loot = c && c.lootableThings;
+                parts.push(
+                    c ? (c._colRev | 0) : -1,
+                    things ? things.length : 0,
+                    loot ? loot.length : 0
+                );
+            }
+        }
+        const s = parts.join(",");
+        if (home) {
+            home._stampGen = gen;
+            home._stamp = s;
+        }
+        return s;
+    },
+
     _thingRect(t) {
         if (!t || t.gone) return null;
+        const x = t.x;
+        const y = t.y;
+        const rot = t.rot || 0;
+        const id = t.id;
+        let cache = this._solidRects;
+        if (!cache) cache = this._solidRects = new WeakMap();
+        const hit = cache.get(t);
+        if (hit && hit.x === x && hit.y === y && hit.rot === rot && hit.id === id) return hit.rect;
         const def = thingDefs().get(t.id);
         const pad = 1;
+        let rect = null;
         if (typeof Place !== "undefined" && Place.collisionWorldRect) {
-            const rect = Place.collisionWorldRect(t, def, TS);
-            if (rect) {
-                return {
+            const raw = Place.collisionWorldRect(t, def, TS);
+            if (raw) {
+                rect = {
                     t,
-                    left: rect.left - pad,
-                    right: rect.right + pad,
-                    top: rect.top - pad,
-                    bottom: rect.bottom + pad,
-                    r: Math.max(rect.right - rect.left, rect.bottom - rect.top) * 0.5 + pad
+                    left: raw.left - pad,
+                    right: raw.right + pad,
+                    top: raw.top - pad,
+                    bottom: raw.bottom + pad,
+                    r: Math.max(raw.right - raw.left, raw.bottom - raw.top) * 0.5 + pad
                 };
             }
         }
         const hs = Number(def?.hitboxSize);
-        if (!(hs > 0)) return null;
-        const hx = hs * 0.5;
-        return {
-            t,
-            left: t.x - hx - pad,
-            right: t.x + hx + pad,
-            top: t.y - hs - pad,
-            bottom: t.y + pad,
-            r: hx + pad
-        };
+        if (!rect && hs > 0) {
+            const hx = hs * 0.5;
+            rect = {
+                t,
+                left: t.x - hx - pad,
+                right: t.x + hx + pad,
+                top: t.y - hs - pad,
+                bottom: t.y + pad,
+                r: hx + pad
+            };
+        }
+        cache.set(t, { x, y, rot, id, rect });
+        return rect;
     },
 
     _tileBlocked(wx, wy, opts = {}) {
@@ -1401,8 +1457,10 @@
 
     _chunkThingIndex(cx, cy) {
         const key = chunkKey(cx, cy);
-        const cache = this._chunkRectCache;
-        if (cache && cache.has(key)) return cache.get(key);
+        const cache = this._chunkRectCache || (this._chunkRectCache = new Map());
+        const stamp = this._collisionStamp(cx, cy);
+        const hit = cache.get(key);
+        if (hit && hit.stamp === stamp) return hit.packed;
         const list = [];
         const bins = [];
         const extra = [];
@@ -1490,7 +1548,7 @@
             }
         }
         const packed = { list, bins, extra, sleep };
-        if (cache) cache.set(key, packed);
+        cache.set(key, { stamp, packed });
         return packed;
     },
 
