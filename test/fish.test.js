@@ -1003,3 +1003,120 @@ test("a party member finishes fishing before following", () => {
     const moved = Math.hypot(pawn.x - before.x, pawn.y - before.y);
     assert.ok(moved > 8, `they follow once the line is in (moved ${moved.toFixed(1)})`);
 });
+
+test("rejoining does not haul a fisher's rod back to storage", () => {
+    const shore = shoreNearOrigin();
+    assert.ok(shore);
+    const { world, pawn } = createTestWorld();
+    world.seed = 1;
+    WorldGen.applySeed(1);
+    const x = (shore.tx + 0.5) * 16;
+    const y = (shore.ty + 0.5) * 16;
+    pawn.x = x;
+    pawn.y = y;
+    Research.unlock(pawn, "fishing");
+    const settle = Settlement.createSettlement({ x, y, ownerId: pawn.id });
+    const jobs = Settlement.defaultJobs();
+    for (const id of Settlement.JOBS) jobs[id] = 0;
+    jobs.fish = 3;
+    jobs.haul = 3;
+    const rec = world._settlerFromSnap({
+        id: "fisher-rejoin",
+        name: "Fisher",
+        x,
+        y,
+        ownerId: pawn.id,
+        homeSettlementId: settle.id,
+        hotbarIndex: 0,
+        inventory: [
+            { id: "flimsy_rod", quantity: 1, durability: 40 },
+            { id: "grub", quantity: 4 },
+            null, null, null
+        ]
+    });
+    settle.jobs = { [rec.id]: jobs };
+    world.settlements.push(settle);
+    world.settlers.push(rec);
+    world._ensureSettlerCreature(rec);
+    const ck = chunkKey(Math.floor(x / 128), Math.floor(y / 128));
+    let chunk = world.chunks.get(ck);
+    if (!chunk) {
+        chunk = {
+            cx: Math.floor(x / 128),
+            cy: Math.floor(y / 128),
+            tiles: [],
+            things: [],
+            lootableThings: [],
+            drops: [],
+            mobs: [],
+            corpses: [],
+            bloodStains: [],
+            generated: true
+        };
+        world.chunks.set(ck, chunk);
+    }
+    const basket = { uid: "rod-basket", id: "wicker_basket", x, y };
+    Place.ensureStorageEntry(basket, world._thingDef("wicker_basket"));
+    chunk.things.push(basket);
+    settle.stationUids = ["rod-basket"];
+
+    for (let i = 0; i < 20; i++) world.tick(200);
+    assert.ok(rec.fishChannel, "cast starts");
+    const saved = world.toSaveData();
+    assert.equal(saved.settlers[0].fishChannel.waterTx, rec.fishChannel.waterTx);
+
+    const loaded = world.constructor.loadFromData(saved, {});
+    WorldGen.applySeed(loaded.seed);
+    const rec2 = loaded.settlers[0];
+    const basket2 = [...loaded.chunks.values()]
+        .flatMap((c) => c.things || [])
+        .find((t) => t && t.uid === "rod-basket");
+    assert.ok(basket2, "the basket survives the save");
+    const rodIn = (who) => (who.inventory || []).some((s) => s && s.id === "flimsy_rod");
+    const rodStored = () => (basket2.slots || []).some((s) => s && s.id === "flimsy_rod");
+    assert.ok(rec2.fishChannel, "the cast is still out after rejoin");
+    assert.equal(rec2._busyJob && rec2._busyJob.type, "fish");
+    assert.equal(rodIn(rec2), true);
+    for (let i = 0; i < 25; i++) loaded.tick(200);
+    assert.equal(rodStored(), false, "the rod stays out of storage");
+    assert.equal(rodIn(rec2), true);
+    assert.ok(rec2.fishChannel, "they keep fishing through the rejoin");
+
+    rec2.fishChannel = null;
+    rec2._workHold = false;
+    rec2._busyJob = null;
+    rec2._settlerScan = null;
+    rec2._settlerPlan = null;
+    for (let i = 0; i < 20; i++) loaded.tick(200);
+    assert.equal(rodStored(), false, "a dropped cast still does not haul the rod away");
+    assert.equal(rodIn(rec2), true);
+
+    const back = {
+        id: pawn.id,
+        name: "Tester",
+        x,
+        y,
+        facing: "down",
+        kc: 1200,
+        saturation: 0,
+        stomach: 1600,
+        inventory: [null, null, null, null, null],
+        overflow: [],
+        equipment: { head: null, torso: null, legs: null, feet: null, back: null, waist: [] },
+        hotbarIndex: 0,
+        hp: 100,
+        mhp: 100,
+        connected: true,
+        party: [],
+        controlId: pawn.id,
+        dead: false
+    };
+    loaded.players.set(back.id, back);
+    Research.unlock(back, "fishing");
+    rec2._settlerScan = null;
+    rec2._settlerPlan = null;
+    for (let i = 0; i < 30; i++) loaded.tick(200);
+    assert.ok(rec2.fishChannel, "they cast again once the owner is back");
+    assert.equal(rodStored(), false);
+    assert.equal(rodIn(rec2), true);
+});

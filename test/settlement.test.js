@@ -1356,6 +1356,31 @@ test("planWork drops a busy job as soon as that priority is turned off", () => {
         stashBasket: { uid: "b1" },
         hasStash: true
     }).type, "idle");
+    const fishHaul = Settlement.defaultJobs();
+    for (const id of Settlement.JOBS) fishHaul[id] = 0;
+    fishHaul.fish = 3;
+    fishHaul.haul = 3;
+    const shoreJob = { uid: "water:1,2", waterTx: 1, waterTy: 2 };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        canEat: false,
+        jobs: fishHaul,
+        busy: true,
+        busyJob: { type: "stash", target: { uid: "b1" } },
+        stashBasket: { uid: "b1" },
+        hasStash: false,
+        fishSpot: shoreJob
+    }).type, "fish");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        canEat: false,
+        jobs: fishHaul,
+        busy: true,
+        busyJob: { type: "stash", target: { uid: "b1" } },
+        stashBasket: { uid: "b1" },
+        hasStash: true,
+        fishSpot: shoreJob
+    }).type, "stash");
     const researchOff = Settlement.defaultJobs();
     researchOff.research = 0;
     const circle = { uid: "pc1" };
@@ -1514,6 +1539,26 @@ test("settlers keep the best weapon (and a bandage while tending) when stashing"
         getItem,
         canStore,
         { keepPigment: true, isPigment: (s) => s.id === "blueberry" }
+    ), false);
+    const gear = [
+        { id: "flimsy_rod", quantity: 1 },
+        { id: "grub", quantity: 2 },
+        { id: "stick", quantity: 1 },
+        null,
+        null
+    ];
+    const keepGear = Settlement.keepIndices(gear, getItem, {
+        keepPreds: [(s) => s.id === "flimsy_rod", (s) => s.id === "grub"]
+    });
+    assert.equal(keepGear.has(0), true);
+    assert.equal(keepGear.has(1), true);
+    assert.equal(keepGear.has(2), false);
+    assert.equal(Settlement.hasStashable(
+        [{ id: "flimsy_rod", quantity: 1 }, { id: "grub", quantity: 1 }, null, null, null],
+        [],
+        getItem,
+        canStore,
+        { keepPreds: [(s) => s.id === "flimsy_rod", (s) => s.id === "grub"] }
     ), false);
     assert.equal(Settlement.hasStashable(inv, [], getItem, canStore), true);
     assert.equal(Settlement.hasStashable(

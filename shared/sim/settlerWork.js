@@ -257,7 +257,8 @@ function tick(world, mob, delta) {
     const keepOpts = keepGearOpts({
         keepBandage: !!scan.keepBandage,
         keepPigment: !!scan.keepPigment,
-        isPigment: scan.isPigment || null
+        isPigment: scan.isPigment || null,
+        keepPreds: scan.keepPreds || null
     });
     // Last search found nothing to do. Replanning every idle person every
     // frame is what pegs a slow laptop at 30 fps inside a camp.

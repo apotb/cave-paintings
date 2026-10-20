@@ -1590,19 +1590,24 @@ function heldPredQty(rec, pred) {
 }
 
 function keepGearOpts(keepBandageOrOpts) {
+    const preds = Array.isArray(keepBandageOrOpts?.keepPreds)
+        ? keepBandageOrOpts.keepPreds.filter((p) => typeof p === "function")
+        : null;
     if (keepBandageOrOpts && typeof keepBandageOrOpts === "object") {
         return {
             keepBandage: !!keepBandageOrOpts.keepBandage,
             keepPigment: !!keepBandageOrOpts.keepPigment,
             isPigment: typeof keepBandageOrOpts.isPigment === "function"
                 ? keepBandageOrOpts.isPigment
-                : null
+                : null,
+            keepPreds: preds && preds.length ? preds : null
         };
     }
     return {
         keepBandage: !!keepBandageOrOpts,
         keepPigment: false,
-        isPigment: null
+        isPigment: null,
+        keepPreds: null
     };
 }
 

@@ -1758,8 +1758,9 @@
 
     /**
      * Inventory indices settlers should keep on them: best melee, optionally
-     * one bandage while a doctor job has patients, and one pigment while a
-     * painting circle still needs it. Worn equipment is not inventory.
+     * one bandage while a doctor job has patients, one pigment while a
+     * painting circle still needs it, and any keepPreds (a fishing rod and
+     * bait while that job still has work). Worn equipment is not inventory.
      */
     function keepIndices(inventory, getItem, opts = {}) {
         const keep = new Set();
@@ -1798,6 +1799,18 @@
                     const meta = typeof getItem === "function" ? getItem(s?.id) : null;
                     return !!(s && R?.isPigment?.(meta, s));
                 };
+            for (let i = 0; i < inv.length; i++) {
+                if (keep.has(i)) continue;
+                const s = inv[i];
+                if (s?.id && pred(s)) {
+                    keep.add(i);
+                    break;
+                }
+            }
+        }
+        const preds = Array.isArray(opts.keepPreds) ? opts.keepPreds : [];
+        for (const pred of preds) {
+            if (typeof pred !== "function") continue;
             for (let i = 0; i < inv.length; i++) {
                 if (keep.has(i)) continue;
                 const s = inv[i];
@@ -1982,7 +1995,12 @@
             const keepCook = busyJob.type !== "cook" || sameCookJob(busyJob.target, state.cookBill);
             // Hands full: drop the light hold so a stash can free a slot for the starter.
             const keepLight = busyJob.type !== "cook_light" || !state.light?.starterNeedsRoom;
-            if (keepLeather && keepCraft && keepCook && keepLight) return busyJob;
+            // A rod kept for fishing is no longer cargo. Finish that walk and
+            // they put it away, then pick it straight back up.
+            const keepStash = busyJob.type !== "stash"
+                || state.hasStash !== false
+                || !!state.stashUrgent;
+            if (keepLeather && keepCraft && keepCook && keepLight && keepStash) return busyJob;
         }
         if (!busy && (Number(state.kc) || 0) < AUTO && state.canEat !== false) return { type: "eat" };
         const haulRescue = doctorRescuePlan(row, state);

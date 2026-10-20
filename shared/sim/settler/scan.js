@@ -300,6 +300,27 @@ function fishSpot(world, rec, settle, claims) {
     return null;
 }
 
+/**
+ * Rod and one bait stack stay in hand while this camp still wants fish.
+ * A rejoin drops the cast, and without this the haul job walks the rod
+ * to a basket and the next cast picks it straight back up.
+ */
+function fishGearPreds(world, rec, settle) {
+    const Fish = fishMod();
+    if (!Fish?.ROD_ID) return null;
+    const fishing = !!rec?.fishChannel;
+    if (!fishing && !Settlement.gatherShouldWork(
+        countItem(world, settle, Fish.FISH_ID),
+        Settlement.stockTarget(settle, Fish.FISH_ID)
+    )) return null;
+    const rodId = Fish.ROD_ID;
+    const grubId = Fish.GRUB_ID;
+    return [
+        (s) => s?.id === rodId,
+        (s) => !!(grubId && s?.id === grubId)
+    ];
+}
+
 function freeBed(world, rec, settle, claims, opts = {}) {
     const medical = !!opts.medical;
     const candidates = [];
@@ -1057,7 +1078,14 @@ function scanWork(world, rec, settle, claims) {
         ? (s) => (keepTally && s?.id === (Research.TALLY_ITEM_ID || "tally_stick"))
             || !!(pigmentPredFn && pigmentPredFn(s))
         : null;
-    const keepOpts = keepGearOpts({ keepBandage, keepPigment: keepPigment || keepTally, isPigment });
+    const keepFish = jobOn(enabled, "fish") || !!rec.fishChannel;
+    const keepPreds = keepFish ? fishGearPreds(world, rec, settle) : null;
+    const keepOpts = keepGearOpts({
+        keepBandage,
+        keepPigment: keepPigment || keepTally,
+        isPigment,
+        keepPreds
+    });
     const night = Settlement.isNight(world.gameMinutes);
     const c = rec.creature || world.creatures.get(rec.id);
     const injured = Sleep.injuredForAutofill ? Sleep.injuredForAutofill(c?.anatomy) : false;
@@ -1084,6 +1112,7 @@ function scanWork(world, rec, settle, claims) {
         keepBandage,
         keepPigment: keepPigment || keepTally,
         isPigment,
+        keepPreds,
         bed: (night || injured) ? freeBed(world, rec, settle, claims, { medical: !!injured }) : null,
         stash,
         night,

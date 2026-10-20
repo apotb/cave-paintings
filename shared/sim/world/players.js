@@ -984,6 +984,25 @@
         if (snap.jobs && typeof snap.jobs === "object" && !Array.isArray(snap.jobs)) {
             Settlement.rememberJobs(rec, snap.jobs);
         }
+        const fishChannel = this._fishChannelFromSnap(snap.fishChannel);
+        if (fishChannel) {
+            rec.fishChannel = fishChannel;
+            const rodAt = (rec.inventory || []).findIndex((s) => s && s.id === "flimsy_rod");
+            if (rodAt >= 0) rec.hotbarIndex = rodAt;
+            rec._workHold = true;
+            rec._busyJob = {
+                type: "fish",
+                target: {
+                    uid: `water:${fishChannel.waterTx},${fishChannel.waterTy}`,
+                    x: (fishChannel.standTx + 0.5) * TS,
+                    y: (fishChannel.standTy + 0.5) * TS,
+                    standTx: fishChannel.standTx,
+                    standTy: fishChannel.standTy,
+                    waterTx: fishChannel.waterTx,
+                    waterTy: fishChannel.waterTy
+                }
+            };
+        }
         for (const s of rec.inventory) Hide.migrateStackItemId(s);
         for (const s of rec.overflow) Hide.migrateStackItemId(s);
         this._ensureEquipment(rec);
@@ -1026,8 +1045,40 @@
             resting: !!(s._resting || s.resting),
             jobs: (s.jobs && typeof s.jobs === "object" && !Array.isArray(s.jobs))
                 ? Settlement.normalizeJobs(s.jobs)
-                : null
+                : null,
+            fishChannel: this._persistFishChannel(s.fishChannel)
         };
+    },
+
+    /** Mid-cast state. Without this, a rejoin treats the rod as loose cargo. */
+    _persistFishChannel(ch) {
+        if (!ch || !Number.isFinite(Number(ch.waterTx)) || !Number.isFinite(Number(ch.waterTy))) return null;
+        const max = Number(ch.max);
+        if (!(max > 0)) return null;
+        return {
+            remaining: Number(ch.remaining) || 0,
+            max,
+            hook: !!ch.hook,
+            bite: !!ch.bite,
+            biteLeft: Number(ch.biteLeft) || 0,
+            haul: Number(ch.haul) || 0,
+            id: ch.id || null,
+            open: !!ch.open,
+            standTx: ch.standTx | 0,
+            standTy: ch.standTy | 0,
+            waterTx: ch.waterTx | 0,
+            waterTy: ch.waterTy | 0,
+            reach: Number(ch.reach) > 0 ? Number(ch.reach) : 2,
+            facing: ch.facing || null
+        };
+    },
+
+    _fishChannelFromSnap(raw) {
+        const ch = this._persistFishChannel(raw);
+        if (!ch) return null;
+        if (!Number.isFinite(ch.standTx)) ch.standTx = ch.waterTx;
+        if (!Number.isFinite(ch.standTy)) ch.standTy = ch.waterTy;
+        return ch;
     },
 
     _publicSettler(s) {
