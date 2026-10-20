@@ -2379,7 +2379,7 @@
     }
 
     function fishActLabel() {
-        return "Fish at the shore";
+        return "Fishing";
     }
 
     jobApi()?.registerJob?.("core", {
