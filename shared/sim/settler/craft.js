@@ -72,7 +72,13 @@
     const canReceiveCraft = (...args) => ctx.canReceiveCraft(...args);
     const knapMaterialDurationScale = (...args) => ctx.knapMaterialDurationScale(...args);
     const haltAtBench = (...args) => ctx.haltAtBench(...args);
+    const pocketFail = (...args) => ctx.pocketFail(...args);
+    const fetchOneOrRoom = (...args) => ctx.fetchOneOrRoom(...args);
 
+
+function refuseTake(world, rec, settle, fire) {
+    return pocketFail(world, rec, settle, stationKey(fire), null);
+}
 
 function doCook(world, rec, settle, job) {
     const fire = job?.fire || job?.entry;
@@ -88,7 +94,7 @@ function doCook(world, rec, settle, job) {
             fire.catalyst = null;
             if (!takeOffFire(world, rec, settle, cat)) {
                 fire.catalyst = cat;
-                return halt();
+                return refuseTake(world, rec, settle, fire);
             }
             if (!bill.leftover) Settlement.noteBillCrafted(bill);
             emitEntry(world, fire);
@@ -112,7 +118,7 @@ function doCook(world, rec, settle, job) {
             fire.cook = null;
             if (!takeOffFire(world, rec, settle, spit)) {
                 fire.cook = spit;
-                return halt();
+                return refuseTake(world, rec, settle, fire);
             }
             emitEntry(world, fire);
             return finishPut(world, rec, settle);
@@ -121,7 +127,9 @@ function doCook(world, rec, settle, job) {
             if (cat) {
                 const walked = goOrWalk(world, rec, fire);
                 if (walked) return walked;
-                if (!takeFireCatalyst(world, rec, settle, fire)) return halt();
+                if (!takeFireCatalyst(world, rec, settle, fire)) {
+                    return refuseTake(world, rec, settle, fire);
+                }
                 return halt();
             }
         }
@@ -188,7 +196,7 @@ function doCook(world, rec, settle, job) {
         fire.cook = null;
         if (!takeOffFire(world, rec, settle, cook)) {
             fire.cook = cook;
-            return halt();
+            return refuseTake(world, rec, settle, fire);
         }
         if (!bill.leftover) Settlement.noteBillCrafted(bill);
         emitEntry(world, fire);
@@ -208,7 +216,7 @@ function doCook(world, rec, settle, job) {
         fire.cook = null;
         if (!takeOffFire(world, rec, settle, cook)) {
             fire.cook = cook;
-            return halt();
+            return refuseTake(world, rec, settle, fire);
         }
         emitEntry(world, fire);
         return finishPut(world, rec, settle);
@@ -237,7 +245,7 @@ function doCook(world, rec, settle, job) {
             fire.cook = null;
             if (!takeOffFire(world, rec, settle, cook)) {
                 fire.cook = cook;
-                return halt();
+                return refuseTake(world, rec, settle, fire);
             }
             emitEntry(world, fire);
             return finishPut(world, rec, settle);
@@ -245,7 +253,9 @@ function doCook(world, rec, settle, job) {
         if (cat) {
             const walked = goOrWalk(world, rec, fire);
             if (walked) return walked;
-            if (!takeFireCatalyst(world, rec, settle, fire)) return halt();
+            if (!takeFireCatalyst(world, rec, settle, fire)) {
+                return refuseTake(world, rec, settle, fire);
+            }
         }
         const found = findCookTool(world, rec, settle, method);
         if (!found) {
@@ -322,13 +332,16 @@ function doLeather(world, rec, settle, job) {
             rack.slots[0] = null;
             if (!givePawn(rec, hang)) {
                 rack.slots[0] = hang;
-                return halt();
+                return pocketFail(world, rec, settle, stationKey(rack), null);
             }
             emitEntry(world, rack);
             found = findStack(world, rec, settle, (s) => Settlement.hideAllowsStack(job.bill, s, getItem));
         }
         if (!found) return halt();
-        if (found.at !== rec) return fetchStack(world, rec, settle, found) || halt();
+        const soaked = fetchOneOrRoom(world, rec, settle, found, stationKey(rack), [
+            (s) => Settlement.hideAllowsStack(job.bill, s, getItem)
+        ]);
+        if (soaked) return soaked;
         rec._wadeWater = true;
         const c = rec.creature || world.creatures.get(rec.id);
         if (c) c._wadeWater = true;
@@ -357,7 +370,7 @@ function doLeather(world, rec, settle, job) {
         rack.slots[0] = null;
         if (!putInBasket(world, rec, settle, hang)) {
             rack.slots[0] = hang;
-            return haltAtRack(rec, rack);
+            return pocketFail(world, rec, settle, stationKey(rack), null);
         }
         Settlement.noteBillCrafted(job.bill);
         emitEntry(world, rack);
@@ -375,7 +388,10 @@ function doLeather(world, rec, settle, job) {
         }
         const found = findStack(world, rec, settle, (s) => Settlement.hideAllowsStack(job.bill, s, getItem));
         if (!found) return halt();
-        if (found.at !== rec) return fetchStack(world, rec, settle, found) || halt();
+        const hung = fetchOneOrRoom(world, rec, settle, found, stationKey(rack), [
+            (s) => Settlement.hideAllowsStack(job.bill, s, getItem)
+        ]);
+        if (hung) return hung;
         const walked = goOrWalk(world, rec, rack);
         if (walked) return walked;
         const one = takeOne(found);
@@ -406,8 +422,7 @@ function doLeather(world, rec, settle, job) {
             if (tool.at !== rec) {
                 const stack = tool.slots?.[tool.index];
                 if (!canGivePawn(rec, stack) && !(freeHandSlot(rec) && canGivePawn(rec, stack))) {
-                    stopLeather(world, rec, job, true);
-                    return halt();
+                    return pocketFail(world, rec, settle, stationKey(rack), [pred]);
                 }
                 return fetchStack(world, rec, settle, tool) || halt();
             }
@@ -481,6 +496,9 @@ function doLeather(world, rec, settle, job) {
             return halt();
         }
         const fetched = fetchBenchMats(world, rec, settle, job.bill, recipe);
+        if (fetched?.needsRoom) {
+            return pocketFail(world, rec, settle, stationKey(bench), fetched.keepPreds);
+        }
         if (fetched?.blocked) {
             stopLeather(world, rec, job, true);
             return halt();

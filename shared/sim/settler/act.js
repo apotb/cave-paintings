@@ -35,6 +35,7 @@
     const takeQty = (...args) => ctx.takeQty(...args);
     const getItem = (...args) => ctx.getItem(...args);
     const pickBasket = (...args) => ctx.pickBasket(...args);
+    const stashScan = (...args) => ctx.stashScan(...args);
     const storageNear = (...args) => ctx.storageNear(...args);
     const insertInEntry = (...args) => ctx.insertInEntry(...args);
     const beginWorkHold = (...args) => ctx.beginWorkHold(...args);
@@ -281,6 +282,47 @@ function finishPut(world, rec, settle, extraHalt) {
 function takeOffFire(world, rec, settle, stack) {
     if (!stack) return true;
     return putInBasket(world, rec, settle, stack);
+}
+
+/** One unit will fit in a pocket, a backpack slot, or onto a stack they already carry. */
+function acceptsOne(rec, stack) {
+    if (!stack?.id) return false;
+    const one = { ...stack, quantity: 1 };
+    if (!canCarry(rec, one, 1)) return false;
+    if (canGivePawn(rec, one)) return true;
+    return hasCarryRoom(rec, one);
+}
+
+/**
+ * The take failed because their hands are full. Stash something else, then
+ * try again. If nothing can be put away, drop the station instead of
+ * standing on "Taking …" forever.
+ */
+function pocketFail(world, rec, settle, key, keepPreds) {
+    endWorkHold(rec);
+    const preds = Array.isArray(keepPreds) ? keepPreds.filter((p) => typeof p === "function") : [];
+    const opts = keepGearOpts({ keepPreds: preds.length ? preds : null });
+    const stash = stashScan(world, rec, settle, opts);
+    if (stash.has && stash.basket) {
+        rec._carryRoom = { keepPreds: preds };
+        rec._settlerScan = null;
+        rec._settlerScanMs = SCAN_MS;
+        return halt();
+    }
+    rec._carryRoom = null;
+    if (key) skipJob(rec, key);
+    rec._settlerScan = null;
+    rec._settlerScanMs = SCAN_MS;
+    return halt();
+}
+
+/** One piece from storage. A full pile stays put when only one hide is needed. */
+function fetchOneOrRoom(world, rec, settle, found, key, keepPreds) {
+    if (!found || found.at === rec) return null;
+    if (!acceptsOne(rec, found.slots?.[found.index])) {
+        return pocketFail(world, rec, settle, key, keepPreds);
+    }
+    return fetchCookPiece(world, rec, settle, found) || halt();
 }
 
 function persistBills(world, settle, stationUid) {
@@ -712,6 +754,36 @@ function countInv(rec, pred) {
     return n;
 }
 
+function countCarried(rec, pred) {
+    let n = countInv(rec, pred);
+    for (const s of rec.overflow || []) {
+        if (s && pred(s)) n += Math.max(1, Number(s.quantity) || 1);
+    }
+    return n;
+}
+
+/** Keep the mats and tool this bill still needs so a stash does not put them back. */
+function craftKeepPreds(bill, recipe) {
+    const preds = [];
+    for (const ing of recipe?.ingredients || []) {
+        if (ing.hideStage) {
+            preds.push((s) => {
+                if (!s?.id) return false;
+                if (Settlement.hideStageOf(getItem(s.id), s.id) !== ing.hideStage) return false;
+                return hideAllowed(bill, s);
+            });
+        } else if (ing.id && ing.id !== "ANY_HIDE" && ing.id !== "ANY_LEATHER") {
+            const id = ing.id;
+            preds.push((s) => s?.id === id);
+        }
+    }
+    const toolClass = recipe?.requireTool?.toolClass;
+    if (toolClass) {
+        preds.push((s) => !!(s?.id) && Carry.stackToolClass(s, getItem(s.id)) === toolClass);
+    }
+    return preds;
+}
+
 function countSettle(world, rec, settle, pred) {
     let n = countInv(rec, pred);
     for (const b of basketsOf(world, settle)) {
@@ -791,29 +863,41 @@ function fetchOrBlock(world, rec, settle, found) {
     if (!found) return { blocked: true, halt: true };
     if (found.at === rec) return null;
     const stack = found.slots?.[found.index];
-    if (!canGivePawn(rec, stack)) return { blocked: true, halt: true };
+    if (!canGivePawn(rec, stack)) return { needsRoom: true };
     return fetchStack(world, rec, settle, found) || halt();
 }
 
+/** Take up to `want` from storage. A heavy stack used to refuse the whole pile. */
+function fetchCraftNeed(world, rec, settle, found, want, keepPreds) {
+    if (!found) return { blocked: true };
+    if (found.at === rec) return null;
+    const stack = found.slots?.[found.index];
+    if (!acceptsOne(rec, stack)) return { needsRoom: true, keepPreds };
+    const n = Math.max(1, Math.floor(Number(want) || 1));
+    return fetchCookQty(world, rec, settle, found, n) || halt();
+}
+
 function fetchBenchMats(world, rec, settle, bill, recipe) {
+    const keepPreds = craftKeepPreds(bill, recipe);
     for (const ing of recipe.ingredients || []) {
         if (ing.hideStage) {
-            const have = countInv(rec, (s) => {
+            const pred = (s) => {
                 if (Settlement.hideStageOf(getItem(s.id), s.id) !== ing.hideStage) return false;
                 return hideAllowed(bill, s);
-            });
-            if (have >= (ing.qty || 1)) continue;
-            const found = findBasketStack(world, rec, settle, (s) => {
-                if (Settlement.hideStageOf(getItem(s.id), s.id) !== ing.hideStage) return false;
-                return hideAllowed(bill, s);
-            });
-            return fetchOrBlock(world, rec, settle, found);
+            };
+            const need = Math.max(1, Math.floor(Number(ing.qty) || 1));
+            const have = countCarried(rec, pred);
+            if (have >= need) continue;
+            const found = findBasketStack(world, rec, settle, pred);
+            return fetchCraftNeed(world, rec, settle, found, need - have, keepPreds);
         }
         if (!ing.id || ing.id === "ANY_HIDE" || ing.id === "ANY_LEATHER") continue;
-        const have = countInv(rec, (s) => s.id === ing.id);
-        if (have >= (ing.qty || 1)) continue;
-        const found = findBasketStack(world, rec, settle, (s) => s.id === ing.id);
-        return fetchOrBlock(world, rec, settle, found);
+        const pred = (s) => s.id === ing.id;
+        const need = Math.max(1, Math.floor(Number(ing.qty) || 1));
+        const have = countCarried(rec, pred);
+        if (have >= need) continue;
+        const found = findBasketStack(world, rec, settle, pred);
+        return fetchCraftNeed(world, rec, settle, found, need - have, keepPreds);
     }
     const toolClass = recipe.requireTool?.toolClass || "awl";
     const awl = findStack(world, rec, settle, (s) => Carry.stackToolClass(s, getItem(s.id)) === toolClass);
@@ -821,9 +905,11 @@ function fetchBenchMats(world, rec, settle, bill, recipe) {
     if (awl.at !== rec) {
         const stack = awl.slots?.[awl.index];
         if (!canGivePawn(rec, stack) && !(freeHandSlot(rec) && canGivePawn(rec, stack))) {
-            return { blocked: true, halt: true };
+            return { needsRoom: true, keepPreds };
         }
-        return fetchOrBlock(world, rec, settle, awl);
+        const got = fetchOrBlock(world, rec, settle, awl);
+        if (got?.needsRoom) return { needsRoom: true, keepPreds };
+        return got;
     }
     if (!equipHand(rec, awl)) return { blocked: true, halt: true };
     return null;
@@ -1017,6 +1103,7 @@ function doStash(world, rec, settle, basket, keepBandageOrOpts) {
     StorageFilter.compactSlots(basket.slots, getItem, onMerge);
     emitEntry(world, basket);
     rec._haulDestUid = null;
+    rec._carryRoom = null;
     endWorkHold(rec);
     return halt();
 }
@@ -1228,6 +1315,9 @@ function doLightFire(world, rec, settle, fire) {
     ctx.walkHaulDest = walkHaulDest;
     ctx.finishPut = finishPut;
     ctx.takeOffFire = takeOffFire;
+    ctx.acceptsOne = acceptsOne;
+    ctx.pocketFail = pocketFail;
+    ctx.fetchOneOrRoom = fetchOneOrRoom;
     ctx.persistBills = persistBills;
     ctx.markPathIgnore = markPathIgnore;
     ctx.stationStandDist = stationStandDist;

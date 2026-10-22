@@ -1963,6 +1963,12 @@
      * Highest-priority next action for a parked settler. Phaser-free so tests
      * and both LocalSim / dedicated AI share one policy.
      */
+    /** A failed take asked for a free pocket. Dump cargo before trying again. */
+    function carryRoomStash(state) {
+        if (!state?.carryRoom || !state.hasStash || !state.stashBasket) return null;
+        return { type: "stash", target: state.stashBasket };
+    }
+
     function planWork(state = {}) {
         const AUTO = Number(state.autoEatBelow) > 0 ? Number(state.autoEatBelow) : 1000;
         const busy = !!state.busy;
@@ -1990,9 +1996,10 @@
             // Don't keep sewing just because the previous scan still had that job.
             // Same for cook: a paused or reordered bill must drop the roast hold.
             const nextLeather = state.leatherWork || state.benchBill;
-            const keepLeather = busyJob.type !== "leather" || sameLeatherJob(busyJob.target, nextLeather);
+            const room = !!state.carryRoom;
+            const keepLeather = busyJob.type !== "leather" || (sameLeatherJob(busyJob.target, nextLeather) && !room);
             const keepCraft = busyJob.type !== "craft" || state.rockWork;
-            const keepCook = busyJob.type !== "cook" || sameCookJob(busyJob.target, state.cookBill);
+            const keepCook = busyJob.type !== "cook" || (sameCookJob(busyJob.target, state.cookBill) && !room);
             // Hands full: drop the light hold so a stash can free a slot for the starter.
             const keepLight = busyJob.type !== "cook_light" || !state.light?.starterNeedsRoom;
             // A rod kept for fishing is no longer cargo. Finish that walk and
@@ -2022,6 +2029,8 @@
         }
         if (haulWrong) return { type: "haul", target: state.haulMerge };
         if (!busy && settlerShouldSleep(night, injured)) return { type: "idle" };
+        const carryStash = carryRoomStash(state);
+        if (carryStash) return carryStash;
         for (const job of enabledJobs(row)) {
             const registered = jobApi()?.get?.(job);
             if (registered?.plan) {

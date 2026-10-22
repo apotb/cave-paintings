@@ -361,6 +361,7 @@ function tick(world, mob, delta) {
             hasStash: stash.has,
             hasFoodStash: stash.hasFood,
             stashUrgent: stash.urgent,
+            carryRoom: !!scan.carryRoom,
             mergeNeedsRoom: mergeNeedsRoom(rec, scan.haulMerge),
             busy: hold,
             busyJob: rec._busyJob || null,

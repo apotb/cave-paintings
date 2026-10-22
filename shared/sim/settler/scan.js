@@ -1079,7 +1079,13 @@ function scanWork(world, rec, settle, claims) {
             || !!(pigmentPredFn && pigmentPredFn(s))
         : null;
     const keepFish = jobOn(enabled, "fish") || !!rec.fishChannel;
-    const keepPreds = keepFish ? fishGearPreds(world, rec, settle) : null;
+    const keepPreds = [];
+    if (keepFish) {
+        const fishPreds = fishGearPreds(world, rec, settle);
+        if (Array.isArray(fishPreds)) keepPreds.push(...fishPreds);
+    }
+    const carryPreds = rec._carryRoom?.keepPreds;
+    if (Array.isArray(carryPreds)) keepPreds.push(...carryPreds);
     const keepOpts = keepGearOpts({
         keepBandage,
         keepPigment: keepPigment || keepTally,
@@ -1112,7 +1118,8 @@ function scanWork(world, rec, settle, claims) {
         keepBandage,
         keepPigment: keepPigment || keepTally,
         isPigment,
-        keepPreds,
+        keepPreds: keepPreds.length ? keepPreds : null,
+        carryRoom: !!rec._carryRoom,
         bed: (night || injured) ? freeBed(world, rec, settle, claims, { medical: !!injured }) : null,
         stash,
         night,
