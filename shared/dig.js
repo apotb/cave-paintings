@@ -95,6 +95,20 @@
         return Math.max(0, y - taken);
     }
 
+    /**
+     * Animated part sheets still drawn. Part 1 is the last one left.
+     * A full hit of a 4-part nest (progress 0.25) drops part 4.
+     */
+    function animPartsLeft(def, entry) {
+        const parts = Math.floor(Number(def?.anim?.parts) || 0);
+        if (parts < 2) return 0;
+        const progress = Number(entry?.digProgress) || 0;
+        if (progress >= 1 - 1e-6) return 0;
+        const fromProgress = Math.min(parts, Math.floor(progress * parts + 1e-6));
+        const fromTaken = Math.min(parts, Math.max(0, Math.floor(Number(entry?.digTaken) || 0)));
+        return parts - Math.max(fromProgress, fromTaken);
+    }
+
     function tooltipName(def) {
         return def?.name || "Clay Deposit";
     }
@@ -254,6 +268,7 @@
         hitboxSize,
         yieldOf,
         remainingOf,
+        animPartsLeft,
         tooltipName,
         depositTooltip,
         barVisible,

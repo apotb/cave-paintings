@@ -195,14 +195,29 @@
             return loads;
         }
         if (t.anim) {
-            const loads = [{
+            const frameWidth = t.anim.frameWidth ?? 16;
+            const frameHeight = t.anim.frameHeight ?? 16;
+            const parts = Math.floor(Number(t.anim.parts) || 0);
+            if (parts >= 2) {
+                const loads = [];
+                for (let i = 1; i <= parts; i++) {
+                    loads.push({
+                        key: `${t.key}_${i}`,
+                        path: `assets/things/${t.key}/${t.key}_${i}.png`,
+                        spritesheet: true,
+                        frameWidth,
+                        frameHeight
+                    });
+                }
+                return loads;
+            }
+            return [{
                 key: t.key,
                 path: `assets/things/${t.key}.png`,
                 spritesheet: true,
-                frameWidth: t.anim.frameWidth ?? 16,
-                frameHeight: t.anim.frameHeight ?? 16
+                frameWidth,
+                frameHeight
             }];
-            return loads;
         }
         const loads = [{ key: t.key, path: `assets/things/${t.key}.png` }];
         if (t.dryingRack) {

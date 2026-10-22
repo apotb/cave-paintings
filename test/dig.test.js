@@ -296,7 +296,7 @@ test("bushes including snow take a quarter of clay health and drop sticks and le
     }
 });
 
-test("grub_nest loads as a two-frame sheet and does not queue the hole", () => {
+test("grub nest loads four animated grub sheets and drops them from 4 to 1", () => {
     const fs = require("fs");
     const path = require("path");
     const Place = require("../shared/place");
@@ -305,15 +305,34 @@ test("grub_nest loads as a two-frame sheet and does not queue the hole", () => {
     assert.equal(def.anim.frameHeight, 16);
     assert.equal(def.anim.frameRate, 2);
     assert.equal(def.anim.repeat, -1);
-    const png = fs.readFileSync(path.join(__dirname, "../assets/things/grub_nest.png"));
-    assert.equal(png.readUInt32BE(16), 32);
-    assert.equal(png.readUInt32BE(20), 16);
+    assert.equal(def.anim.parts, 4);
     const loads = Place.thingImageLoads(def);
-    const sheet = loads.find((l) => l.key === "grub_nest");
-    assert.equal(sheet.spritesheet, true);
-    assert.equal(sheet.frameWidth, 16);
-    assert.equal(sheet.frameHeight, 16);
+    assert.equal(loads.length, 4);
+    for (let i = 1; i <= 4; i++) {
+        const sheet = loads[i - 1];
+        assert.equal(sheet.key, `grub_nest_${i}`);
+        assert.equal(sheet.path, `assets/things/grub_nest/grub_nest_${i}.png`);
+        assert.equal(sheet.spritesheet, true);
+        assert.equal(sheet.frameWidth, 16);
+        assert.equal(sheet.frameHeight, 16);
+        const png = fs.readFileSync(path.join(__dirname, "..", sheet.path));
+        assert.equal(png.readUInt32BE(16), 32, sheet.path);
+        assert.equal(png.readUInt32BE(20), 16, sheet.path);
+    }
     assert.equal(loads.some((l) => l.key === "hole"), false);
+    assert.equal(loads.some((l) => l.key === "grub_nest"), false);
+
+    const stick = { id: "digging_stick" };
+    const frac = Dig.digFraction(stick, (id) => DataStore.getItem(id));
+    const entry = { id: "grub_nest", digProgress: 0 };
+    const seen = [Dig.animPartsLeft(def, entry)];
+    while (Dig.stillDiggable(def, entry) && seen.length < 8) {
+        Dig.applyDig(entry, def, frac, 1000);
+        seen.push(Dig.animPartsLeft(def, entry));
+    }
+    assert.deepEqual(seen, [4, 3, 2, 1, 0]);
+    assert.equal(Dig.animPartsLeft(def, { digProgress: 0.5, digTaken: 0 }), 2);
+    assert.equal(Dig.animPartsLeft(def, { digProgress: 0, digTaken: 3 }), 1);
 });
 
 test("clay_patch loads the hole overlay sprite", () => {

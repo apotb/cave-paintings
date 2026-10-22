@@ -389,7 +389,8 @@
             "frameWidth": 16,
             "frameHeight": 16,
             "frameRate": 2,
-            "repeat": -1
+            "repeat": -1,
+            "parts": 4
         },
         "diggable": {
             "item": "grub",

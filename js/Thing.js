@@ -23,12 +23,15 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
             this.once("destroy", () => {
                 this._holeSpr?.destroy();
                 this._holeSpr = null;
+                this._destroyGrubParts();
             });
         }
     }
 
     static textureKeyFor(scene, meta, rot) {
         if (!meta?.key) return "";
+        const parts = Math.floor(Number(meta.anim?.parts) || 0);
+        if (parts >= 2) return `${meta.key}_1`;
         if (typeof Place !== "undefined" && Array.isArray(meta.rotations) && meta.rotations.length) {
             const tex = Place.facingTextureKey(meta, rot);
             if (scene?.textures?.exists(tex)) return tex;
@@ -44,15 +47,21 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         };
     }
 
+    _animTextureKey() {
+        const parts = Math.floor(Number(this.meta?.anim?.parts) || 0);
+        if (parts >= 2 && this.meta?.key) return `${this.meta.key}_1`;
+        return this.meta.key;
+    }
+
     animKey() {
-        return `${this.meta.key}-anim`;
+        return `${this._animTextureKey()}-anim`;
     }
 
     ensureAnim() {
         const a = this.meta.anim;
         if (!a) return null;
         const key = this.animKey();
-        const texKey = this.meta.key;
+        const texKey = this._animTextureKey();
         const tex = this.scene.textures?.get?.(texKey);
         // frameTotal includes __BASE; a 4-frame sheet reports 5.
         const sheetFrames = Math.max(0, (Number(tex?.frameTotal) || 0) - 1);
@@ -82,6 +91,10 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
 
     applyVisual() {
         if (this.meta.anim) {
+            const texKey = this._animTextureKey();
+            if (texKey && this.texture?.key !== texKey && this.scene.textures?.exists?.(texKey)) {
+                this.setTexture(texKey);
+            }
             const key = this.ensureAnim();
             if (key) {
                 // Layer add / static physics can drop sprites off the Scene update
@@ -210,6 +223,107 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         }
     }
 
+    _grubPartsLeft() {
+        const parts = Math.floor(Number(this.meta?.anim?.parts) || 0);
+        if (typeof Dig !== "undefined" && Dig.animPartsLeft) {
+            return Dig.animPartsLeft(this.meta, this.entry);
+        }
+        return parts >= 2 ? parts : 0;
+    }
+
+    _grubFrameName() {
+        const frame = this.anims?.currentFrame;
+        if (!frame) return 0;
+        const name = frame.textureFrame;
+        if (typeof name === "string" || typeof name === "number") return name;
+        const idx = frame.index;
+        return Number.isFinite(idx) ? idx : 0;
+    }
+
+    _syncGrubFrames() {
+        const parts = this._grubParts;
+        if (!parts) return;
+        const name = this._grubFrameName();
+        for (let i = 2; i < parts.length; i++) {
+            const spr = parts[i];
+            if (!spr?.active) continue;
+            if (String(spr.frame?.name) !== String(name)) spr.setFrame(name);
+        }
+    }
+
+    _destroyGrubParts() {
+        const parts = this._grubParts;
+        this._grubParts = null;
+        if (!parts) return;
+        for (let i = 0; i < parts.length; i++) parts[i]?.destroy?.();
+    }
+
+    /**
+     * groundLayer draws in list order. Keep the extra grubs just above the nest
+     * so a later drop or deposit does not slip underneath them.
+     */
+    _placeGrubParts(layer) {
+        const list = layer?.list;
+        const parts = this._grubParts;
+        if (!Array.isArray(list) || !parts) return;
+        const ordered = [];
+        for (let i = 2; i < parts.length; i++) {
+            if (parts[i]) ordered.push(parts[i]);
+        }
+        if (!ordered.length) return;
+        for (let i = 0; i < ordered.length; i++) {
+            const idx = list.indexOf(ordered[i]);
+            if (idx >= 0) list.splice(idx, 1);
+        }
+        let at = list.indexOf(this);
+        if (at < 0) at = list.length - 1;
+        for (let i = 0; i < ordered.length; i++) {
+            list.splice(at + 1 + i, 0, ordered[i]);
+        }
+    }
+
+    _syncGrubParts() {
+        const count = Math.floor(Number(this.meta?.anim?.parts) || 0);
+        if (count < 2) return;
+        if (!this._grubPartsBound) {
+            this._grubPartsBound = true;
+            this.on("animationstart", () => this._syncGrubFrames());
+            this.on("animationupdate", () => this._syncGrubFrames());
+        }
+        const left = this._grubPartsLeft();
+        if (left > 0) {
+            const key = this.animKey();
+            this.addToUpdateList?.();
+            if (key && !this._animIsLive(key)) this.play(key);
+        }
+        const layer = this.scene.groundLayer || this.scene.mainLayer;
+        if (!this._grubParts) this._grubParts = [];
+        const show = this.visible && left > 0;
+        for (let i = 2; i <= count; i++) {
+            let spr = this._grubParts[i];
+            const tex = `${this.meta.key}_${i}`;
+            if (!spr?.active) {
+                if (!this.scene.textures?.exists?.(tex)) continue;
+                spr = this.scene.make.sprite({
+                    x: this.x,
+                    y: this.y,
+                    key: tex,
+                    frame: 0,
+                    add: false
+                });
+                spr.setOrigin(0.5, 1);
+                spr.setVisible(false);
+                this._grubParts[i] = spr;
+            }
+            if (layer && spr.displayList !== layer) layer.add(spr);
+            spr.setPosition(this.x, this.y);
+            spr.setDepth(0.5 + i * 0.001);
+            spr.setVisible(show && i <= left);
+        }
+        this._placeGrubParts(layer);
+        this._syncGrubFrames();
+    }
+
     _syncDigHole() {
         if (this.meta?.id === "grub_nest") {
             if (this._holeSpr) {
@@ -220,6 +334,7 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
             this.setVisible(!spent);
             if (this.input) this.input.enabled = !spent;
             if (spent && this.scene?._tooltipTarget === this) this.scene.hideTooltip?.();
+            this._syncGrubParts();
             return;
         }
         if (!this.meta?.diggable?.item) return;
