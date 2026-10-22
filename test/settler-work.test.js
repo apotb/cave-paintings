@@ -2135,6 +2135,153 @@ test("dedicated settler fleshes a hang over the scrape channel", () => {
     assert.equal(rec._workChannel, null);
 });
 
+function thingByUid(world, uid) {
+    for (const chunk of world.chunks.values()) {
+        const hit = (chunk.things || []).find((t) => t && t.uid === uid);
+        if (hit) return hit;
+    }
+    return null;
+}
+
+function rejoinWorld(world) {
+    return world.constructor.loadFromData(world.toSaveData(), {});
+}
+
+test("rejoining keeps a tailor's scrape instead of starting it over", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "pebble", toolClass: "scraper", knapQuality: "rough", quantity: 1 },
+            null, null, null, null
+        ]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0, research: 0
+    };
+    const rack = addRackInFront(world, settle, rec, "rack-rejoin");
+    rack.slots[0] = { id: "deer_hide", quantity: 1 };
+    Settlement.addBill(settle, rack.uid, { recipeId: "flesh_hide", mode: "count", n: 1, paused: false });
+    workOnce(world, rec);
+    assert.equal(rec._workChannel?.kind, "flesh");
+    const max = rec._workChannel.max;
+    world.tick(2000);
+    const mid = rec._workChannel?.remaining;
+    assert.ok(mid < max - 1000, `scrape should be underway (remaining ${mid}, max ${max})`);
+    const billLeft = Settlement.billsOf(settle, rack.uid)[0].remaining;
+
+    const loaded = rejoinWorld(world);
+    const rec2 = loaded.settlers[0];
+    const rack2 = thingByUid(loaded, "rack-rejoin");
+    assert.equal(rec2._workChannel?.kind, "flesh");
+    assert.ok(Math.abs(rec2._workChannel.remaining - mid) < 1, "the scrape timer survives the rejoin");
+    loaded.tick(500);
+    assert.equal(rec2._workChannel?.kind, "flesh", `should still be fleshing (${rec2._settlerAct})`);
+    assert.ok(rec2._workChannel.remaining < mid, "the scrape keeps going");
+    assert.ok(rec2._workChannel.remaining > mid - 1500, "it should not restart from the beginning");
+    assert.equal(rack2.slots[0]?.id, "deer_hide");
+    assert.equal(Settlement.billsOf(
+        loaded.settlements.find((s) => s.id === rec2.homeSettlementId),
+        rack2.uid
+    )[0].remaining, billLeft, "rejoin must not spend the bill a second time");
+});
+
+test("rejoining keeps a tailor sewing at the skinworking bench", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [
+            { id: "bone", quantity: 1 },
+            { id: "deer_leather", quantity: 1 },
+            { id: "leaf_cord", quantity: 4 },
+            null,
+            null
+        ]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0, research: 0
+    };
+    Research.unlock(pawn, "basic_furniture");
+    Research.unlock(pawn, "skinworking");
+    Research.unlock(pawn, "leatherworking");
+    const bench = addBenchInFront(world, settle, rec, "bench-rejoin");
+    Settlement.addBill(settle, bench.uid, { recipeId: "leather_pouch", mode: "forever", paused: false });
+    let started = false;
+    for (let i = 0; i < 40; i++) {
+        world.tick(16);
+        if (rec._workChannel?.kind === "craft") {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, `never started sewing (${rec._settlerAct})`);
+    const max = rec._workChannel.max;
+    world.tick(2000);
+    const mid = rec._workChannel?.remaining;
+    assert.ok(mid < max - 1000, `sew should be underway (remaining ${mid}, max ${max})`);
+
+    const loaded = rejoinWorld(world);
+    const rec2 = loaded.settlers[0];
+    assert.equal(rec2._workChannel?.kind, "craft");
+    assert.equal(rec2._workChannel.recipeId, "leather_pouch");
+    assert.ok(Math.abs(rec2._workChannel.remaining - mid) < 1);
+    loaded.tick(500);
+    assert.equal(rec2._workChannel?.kind, "craft", `should still be sewing (${rec2._settlerAct})`);
+    assert.ok(rec2._workChannel.remaining < mid);
+    assert.ok(rec2._workChannel.remaining > mid - 1500, "sewing should not start over");
+});
+
+test("rejoining keeps a tailor smoking instead of walking off the fire", () => {
+    const { world, pawn } = createTestWorld();
+    fillGrass(world);
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0, research: 0
+    };
+    const fire = addLitFire(world, settle, rec, "fire-rejoin");
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.cook = { id: "deer_hide_brained", quantity: 1, temp: 550 };
+    fire.cookProgress = 40;
+    fire.pitTemp = 600;
+    fire.burnRemaining = 40;
+    Research.unlock(pawn, "smoking");
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
+    let smoking = false;
+    for (let i = 0; i < 40; i++) {
+        world.tick(16);
+        if (/Smoking/i.test(rec._settlerAct || "")) {
+            smoking = true;
+            break;
+        }
+    }
+    assert.equal(smoking, true, `never started smoking (${rec._settlerAct})`);
+    fire.cookProgress = 40;
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 2, gather: 0, haul: 1, research: 0
+    };
+    const basket = addBasket(world, settle, rec.x + 48, rec.y, "haul-rejoin");
+    const chunk = originChunk(world);
+    chunk.drops.push({
+        uid: "stick-rejoin",
+        id: "stick",
+        quantity: 1,
+        x: rec.x + 24,
+        y: rec.y
+    });
+    const rack = addStation(world, settle, "drying_rack", rec.x - 48, rec.y, "rack-compete");
+    rack.slots[0] = { id: "deer_hide", quantity: 1 };
+    basket.slots[0] = { id: "pebble", toolClass: "scraper", knapQuality: "rough", quantity: 1 };
+    Settlement.addBill(settle, rack.uid, { recipeId: "flesh_hide", mode: "forever", paused: false });
+
+    const loaded = rejoinWorld(world);
+    const rec2 = loaded.settlers[0];
+    const fire2 = thingByUid(loaded, "fire-rejoin");
+    for (let i = 0; i < 30; i++) loaded.tick(16);
+    assert.match(rec2._settlerAct || "", /Smoking/i, `left the fire to ${rec2._settlerAct}`);
+    assert.equal(fire2.cook?.id, "deer_hide_brained");
+    assert.ok(fire2.cookProgress >= 40, `smoke progress reset to ${fire2.cookProgress}`);
+    assert.notEqual(rec2._workChannel?.kind, "flesh");
+});
+
 test("dedicated settler fleshes with a scraper that is only in the backpack", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {

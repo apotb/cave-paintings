@@ -100,6 +100,11 @@ const shellRequire = typeof require === "function" ? require : undefined;
     const chopTargetLive = (...args) => ctx.chopTargetLive(...args);
     const dropChopTarget = (...args) => ctx.dropChopTarget(...args);
     const claimsFor = (...args) => ctx.claimsFor(...args);
+    const leatherJobKey = (...args) => ctx.leatherJobKey(...args);
+    const stationKey = (...args) => ctx.stationKey(...args);
+    const thingKey = (...args) => ctx.thingKey(...args);
+    const dropKey = (...args) => ctx.dropKey(...args);
+    const stashKey = (...args) => ctx.stashKey(...args);
     const settlersOf = (...args) => ctx.settlersOf(...args);
     const scanWork = (...args) => ctx.scanWork(...args);
     const isWorkHold = (...args) => ctx.isWorkHold(...args);
@@ -140,6 +145,110 @@ const shellRequire = typeof require === "function" ? require : undefined;
     const doRock = (...args) => ctx.doRock(...args);
 
 
+function savedHaulKey(job) {
+    if (!job) return null;
+    if (job.claimKey) return job.claimKey;
+    if (job.kind && StorageFilter?.mergeClaimKey) {
+        const key = StorageFilter.mergeClaimKey(job);
+        if (key) return key;
+    }
+    return dropKey(job);
+}
+
+/** The live scan target for a job saved across rejoin, or null if it is gone. */
+function savedWorkTarget(saved, scan) {
+    if (!saved?.type || !scan) return null;
+    const claim = saved.claim || null;
+    const same = (key) => !claim || key === claim;
+    if (saved.type === "leather") {
+        const job = scan.leatherWork;
+        if (!job || !same(leatherJobKey(job))) return null;
+        return job;
+    }
+    if (saved.type === "cook") {
+        const job = scan.cookBill;
+        if (!job || !same(stationKey(job.fire || job.entry || job))) return null;
+        return job;
+    }
+    if (saved.type === "cook_light") {
+        const job = scan.unlitFire;
+        if (!job || !same(stationKey(job))) return null;
+        return job;
+    }
+    if (saved.type === "cook_stoke") {
+        const job = scan.stokeFire;
+        if (!job || !same(stationKey(job))) return null;
+        return job;
+    }
+    if (saved.type === "craft") {
+        const job = scan.rockWork;
+        if (!job || !same(stationKey(job.station || job.entry || job))) return null;
+        return job;
+    }
+    if (saved.type === "chop") {
+        const job = scan.chopTree;
+        if (!job || !same(thingKey(job))) return null;
+        return job;
+    }
+    if (saved.type === "gather") {
+        const job = scan.gatherThing;
+        if (!job || !same(thingKey(job))) return null;
+        return job;
+    }
+    if (saved.type === "dig") return scan.digThing || null;
+    if (saved.type === "haul") {
+        if (scan.haulDrop && same(savedHaulKey(scan.haulDrop))) return scan.haulDrop;
+        if (scan.haulMerge && same(savedHaulKey(scan.haulMerge))) return scan.haulMerge;
+        return null;
+    }
+    if (saved.type === "doctor") {
+        const id = saved.pawnId;
+        if (!id) return null;
+        return (scan.patients || []).find((p) => p && p.id === id) || null;
+    }
+    if (saved.type === "rescue") {
+        const id = saved.pawnId;
+        if (!id) return null;
+        return (scan.rescues || []).find((p) => p && p.id === id) || null;
+    }
+    if (saved.type === "research") {
+        const job = scan.researchCircle;
+        if (!job || !same(thingKey(job))) return null;
+        return job;
+    }
+    if (saved.type === "stash") {
+        const job = scan.stash?.basket;
+        if (!job || !same(stashKey(job))) return null;
+        return job;
+    }
+    return null;
+}
+
+/** Keep the station claimed before the first search, including during a channel. */
+function applySavedClaim(world, rec, settle) {
+    const saved = rec?._savedWork;
+    if (!saved || saved.claimed) return;
+    if (saved.claim) claimsFor(world, settle)?.claim(saved.claim, rec.id);
+    saved.claimed = true;
+}
+
+/**
+ * Point the saved job at this tick's live station. A copied bench from the
+ * save would cook and sew on an object the world no longer ticks.
+ */
+function rebindSavedWork(world, rec, settle, scan) {
+    const saved = rec?._savedWork;
+    if (!saved || !scan) return;
+    const target = savedWorkTarget(saved, scan);
+    rec._savedWork = null;
+    if (!target) {
+        if (!rec._workChannel) claimsFor(world, settle)?.release(rec.id);
+        return;
+    }
+    rec._workHold = true;
+    rec._busyJob = { type: saved.type, target };
+}
+
 /** At most a couple of full job searches per sim tick, so a camp of twenty doesn't all search on the same frame. */
 function allowSettlerScan(world) {
     if (!world || !world._simTickLive) return true;
@@ -167,6 +276,7 @@ function tick(world, mob, delta) {
 
     rec._wadeWater = !!rec._wadeWater;
     if (mob) mob._wadeWater = !!rec._wadeWater;
+    applySavedClaim(world, rec, settle);
     markPathIgnore(rec, rec.creature || mob, null, world);
 
     const leftBed = maybeLeaveBed(world, rec, mob);
@@ -244,6 +354,7 @@ function tick(world, mob, delta) {
         rec._settlerScanMs = 0;
         rec._settlerScan = scanWork(world, rec, settle, claims);
     }
+    rebindSavedWork(world, rec, settle, rec._settlerScan);
     const researchHold = isWorkHold(rec) && rec._busyJob?.type === "research";
     if (researchHold) rec._researchPoll = (rec._researchPoll || 0) + 1;
     else rec._researchPoll = 0;

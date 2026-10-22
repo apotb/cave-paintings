@@ -1003,6 +1003,12 @@
                 }
             };
         }
+        const workChannel = this._workChannelFromSnap(rec, snap.workChannel);
+        if (workChannel) rec._workChannel = workChannel;
+        if (!rec.fishChannel) {
+            const hold = this._workHoldFromSnap(snap.workHold);
+            if (hold) rec._savedWork = hold;
+        }
         for (const s of rec.inventory) Hide.migrateStackItemId(s);
         for (const s of rec.overflow) Hide.migrateStackItemId(s);
         this._ensureEquipment(rec);
@@ -1046,7 +1052,193 @@
             jobs: (s.jobs && typeof s.jobs === "object" && !Array.isArray(s.jobs))
                 ? Settlement.normalizeJobs(s.jobs)
                 : null,
-            fishChannel: this._persistFishChannel(s.fishChannel)
+            fishChannel: this._persistFishChannel(s.fishChannel),
+            workChannel: this._persistWorkChannel(s._workChannel),
+            workHold: this._persistWorkHold(s)
+        };
+    },
+
+    /**
+     * In-progress scrape, sew, knap, or tend. A rejoin used to drop this,
+     * so a tailor who had just started lost the whole channel.
+     */
+    _persistWorkChannel(ch) {
+        if (!ch || typeof ch !== "object") return null;
+        const max = Number(ch.max);
+        const kind = String(ch.kind || "");
+        if (!(max > 0) || !kind) return null;
+        const out = {
+            kind,
+            remaining: Math.max(0, Math.min(max, Number(ch.remaining) || 0)),
+            max,
+            slot: Math.max(0, ch.slot | 0)
+        };
+        if (ch.job) out.job = String(ch.job).slice(0, 32);
+        if (ch.uid) out.uid = String(ch.uid).slice(0, 80);
+        if (ch.recipeId) out.recipeId = String(ch.recipeId).slice(0, 64);
+        if (ch.toolClass) out.toolClass = String(ch.toolClass).slice(0, 32);
+        if (Array.isArray(ch.toolClasses) && ch.toolClasses.length) {
+            out.toolClasses = ch.toolClasses.map((c) => String(c || "")).filter(Boolean).slice(0, 8);
+        }
+        if (ch.bag === "overflow") out.bag = "overflow";
+        if (ch.patientId) out.patientId = String(ch.patientId).slice(0, 64);
+        if (ch.patientName) out.patientName = String(ch.patientName).slice(0, 24);
+        if (ch.itemId) out.itemId = String(ch.itemId).slice(0, 64);
+        if (ch.kind === "knap" && ch.bill?.id) out.billId = String(ch.bill.id);
+        if (Array.isArray(ch.targetHints) && ch.targetHints.length) {
+            const hints = [];
+            for (const h of ch.targetHints) {
+                if (!h || typeof h !== "object") continue;
+                const hint = {};
+                if (h.hediffId) hint.hediffId = String(h.hediffId);
+                if (h.partName) hint.partName = String(h.partName);
+                if (h.injuryId) hint.injuryId = String(h.injuryId);
+                if (h.injuryName) hint.injuryName = String(h.injuryName);
+                if (h.destroyedPartName) hint.destroyedPartName = String(h.destroyedPartName);
+                if (h.injuryIndex != null) hint.injuryIndex = h.injuryIndex | 0;
+                if (h.injurySeverity != null) hint.injurySeverity = Number(h.injurySeverity) || 0;
+                if (Object.keys(hint).length) hints.push(hint);
+            }
+            if (hints.length) out.targetHints = hints.slice(0, 8);
+        }
+        return out;
+    },
+
+    _workChannelFromSnap(rec, raw) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+        const max = Number(raw.max);
+        const kind = String(raw.kind || "");
+        if (!(max > 0) || !kind) return null;
+        const ch = {
+            kind,
+            remaining: Math.max(0, Math.min(max, Number(raw.remaining) || 0)),
+            max,
+            slot: Math.max(0, raw.slot | 0)
+        };
+        if (raw.job) ch.job = String(raw.job).slice(0, 32);
+        if (raw.uid) ch.uid = String(raw.uid).slice(0, 80);
+        if (raw.recipeId) ch.recipeId = String(raw.recipeId).slice(0, 64);
+        if (raw.toolClass) ch.toolClass = String(raw.toolClass).slice(0, 32);
+        if (Array.isArray(raw.toolClasses)) {
+            ch.toolClasses = raw.toolClasses.map((c) => String(c || "")).filter(Boolean).slice(0, 8);
+        }
+        if (raw.bag === "overflow") ch.bag = "overflow";
+        if (raw.patientId) ch.patientId = String(raw.patientId).slice(0, 64);
+        if (raw.patientName) ch.patientName = String(raw.patientName).slice(0, 24);
+        if (raw.itemId) ch.itemId = String(raw.itemId).slice(0, 64);
+        if (Array.isArray(raw.targetHints)) {
+            const hints = [];
+            for (const h of raw.targetHints) {
+                if (!h || typeof h !== "object") continue;
+                const hint = {};
+                if (h.hediffId) hint.hediffId = String(h.hediffId);
+                if (h.partName) hint.partName = String(h.partName);
+                if (h.injuryId) hint.injuryId = String(h.injuryId);
+                if (h.injuryName) hint.injuryName = String(h.injuryName);
+                if (h.destroyedPartName) hint.destroyedPartName = String(h.destroyedPartName);
+                if (h.injuryIndex != null) hint.injuryIndex = h.injuryIndex | 0;
+                if (h.injurySeverity != null) hint.injurySeverity = Number(h.injurySeverity) || 0;
+                if (Object.keys(hint).length) hints.push(hint);
+            }
+            if (hints.length) ch.targetHints = hints.slice(0, 8);
+        }
+        if (kind === "knap") {
+            const billId = raw.billId ? String(raw.billId) : "";
+            const settle = (this.settlements || []).find((s) => s && s.id === rec.homeSettlementId);
+            const bill = billId
+                ? Settlement.billsOf(settle, ch.uid).find((b) => b && b.id === billId)
+                : null;
+            if (!bill) return null;
+            ch.bill = bill;
+        }
+        return ch;
+    },
+
+    /** Station uid (or patient) for the job they were already doing. */
+    _workTargetClaim(plan) {
+        if (!plan) return null;
+        const target = plan.target;
+        const station = (entry) => (entry?.uid ? `station:${entry.uid}` : null);
+        const thing = (entry) => (entry?.uid ? `thing:${entry.uid}` : null);
+        const t = plan.type;
+        if (t === "cook" || t === "cook_light" || t === "cook_stoke") {
+            return station(target?.fire || target?.entry || target);
+        }
+        if (t === "leather") {
+            if (target?.drop?.uid) return `drop:${target.drop.uid}`;
+            return station(target?.station || target?.entry);
+        }
+        if (t === "craft") return station(target?.station || target?.entry || target);
+        if (t === "gather" || t === "chop" || t === "research") return thing(target);
+        if (t === "haul") {
+            if (target?.claimKey) return String(target.claimKey);
+            if (target?.kind && StorageFilter?.mergeClaimKey) {
+                const key = StorageFilter.mergeClaimKey(target);
+                if (key) return key;
+            }
+            if (target?.uid) return `drop:${target.uid}`;
+            return null;
+        }
+        if (t === "doctor" && target?.id) return `tend:${target.id}`;
+        if (t === "rescue" && target?.id) return `rescue:${target.id}`;
+        if (t === "stash" && target?.uid) return `stash:${target.uid}`;
+        return null;
+    },
+
+    _persistHoldFromChannel(ch) {
+        if (!ch?.kind) return null;
+        const station = ch.uid ? `station:${ch.uid}` : null;
+        if (ch.kind === "tend") {
+            return {
+                type: "doctor",
+                claim: ch.patientId ? `tend:${ch.patientId}` : null,
+                pawnId: ch.patientId || null
+            };
+        }
+        if (ch.kind === "rock" || ch.kind === "knap" || ch.job === "craft") {
+            return { type: "craft", claim: station, pawnId: null };
+        }
+        if (ch.kind === "flesh" || ch.kind === "brain" || ch.kind === "craft") {
+            return { type: "leather", claim: station, pawnId: null };
+        }
+        return null;
+    },
+
+    /**
+     * The station job itself, not just its timer. Without this a rejoin
+     * replans, and a smoker walks off the fire onto whatever is nearer.
+     */
+    _persistWorkHold(s) {
+        if (!s || s.fishChannel) return null;
+        const pending = s._savedWork;
+        if (pending?.type && !s._workHold) {
+            return {
+                type: String(pending.type),
+                claim: pending.claim || null,
+                pawnId: pending.pawnId || null
+            };
+        }
+        const plan = s._workHold && s._busyJob;
+        if (plan?.type && plan.type !== "fish" && plan.type !== "idle") {
+            const pawnId = (plan.type === "doctor" || plan.type === "rescue")
+                ? (plan.target?.id || null)
+                : null;
+            const claim = this._workTargetClaim(plan);
+            if (claim || plan.type === "dig") {
+                return { type: plan.type, claim: claim || null, pawnId };
+            }
+        }
+        return this._persistHoldFromChannel(s._workChannel);
+    },
+
+    _workHoldFromSnap(raw) {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+        const type = String(raw.type || "");
+        if (!type || type === "fish" || type === "idle") return null;
+        return {
+            type,
+            claim: raw.claim ? String(raw.claim).slice(0, 120) : null,
+            pawnId: raw.pawnId ? String(raw.pawnId).slice(0, 64) : null
         };
     },
 

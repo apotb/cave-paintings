@@ -322,6 +322,7 @@ function releaseWork(world, mob) {
     rec._workChannel = null;
     rec._workHold = false;
     rec._busyJob = null;
+    rec._savedWork = null;
     rec._researchPoll = 0;
     clearPaintBar(rec);
 }
