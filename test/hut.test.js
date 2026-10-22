@@ -259,7 +259,9 @@ test("a spatter from inside stops on the thatch, including beside the door", () 
         "a bunk shifted outside the thatch is pulled back in"
     );
     const ring = Place.ringWorld(entry, def, TS);
-    const outside = { x: ring.cx, y: ring.cy - (ring.outer + 4) };
+    // A chest above feet that are against the roof. The ring sits on the thatch,
+    // so outer+4 is a sleeper shift, not someone standing clear.
+    const outside = { x: ring.cx, y: ring.cy - (ring.outer + 8) };
     const stayed = Place.clipWallSpill(
         entry, def, TS, outside.x, outside.y, outside.x, outside.y - 10, 2
     );
@@ -321,6 +323,28 @@ test("turning into the hut wall does not carry a pawn through it", () => {
     );
     const buriedR = Math.hypot(buried.x - ring.cx, buried.y - ring.cy);
     assert.ok(buriedR <= keep + 0.05, "a body dug into the wall is pushed back to the circle");
+});
+
+test("walking down onto a hut stops at the thatch, not above it", () => {
+    const def = thingDef("hut");
+    const entry = placed(0);
+    const ring = Place.ringWorld(entry, def, TS);
+    const anchor = Place.spriteAnchor(entry, def, TS);
+    const hx = 4;
+    const hy = 2;
+    const fromY = ring.cy - (ring.outer + 6);
+    const held = Place.clampRingCenter(ring, ring.cx, fromY, ring.cx, fromY + 10, hx, hy);
+    const feetY = held.y + hy;
+    const thatchTop = anchor.y - 32 + 1;
+    const gap = thatchTop - feetY;
+    assert.ok(gap < 1.25, `feet stop ${gap.toFixed(2)}px above the roof`);
+    assert.ok(gap > -0.25, `feet sink into the roof by ${(-gap).toFixed(2)}px`);
+    const sideFrom = ring.cx + ring.outer + 6;
+    const side = Place.clampRingCenter(
+        ring, sideFrom, ring.cy, sideFrom - 10, ring.cy, hx, hy
+    );
+    const sideGap = (side.x - hx) - (ring.cx + ring.outer);
+    assert.ok(Math.abs(sideGap - 0.15) < 0.05, `side of the body should meet the wall, gap ${sideGap.toFixed(2)}`);
 });
 
 function stepCompanion(world, pawn, rec, tx, ty) {

@@ -2237,7 +2237,9 @@ function holdPawnInsideRings(pawn) {
     let slide = null;
     for (let i = 0; i < rings.length; i++) {
         const ring = rings[i];
-        const next = Place.clampRingCenter(ring, px, py, x, y, rad);
+        const next = (hx > 0 && hy > 0)
+            ? Place.clampRingCenter(ring, px, py, x, y, hx, hy)
+            : Place.clampRingCenter(ring, px, py, x, y, rad);
         if (Math.hypot(next.x - x, next.y - y) >= 0.05) {
             const pr = Math.hypot(px - ring.cx, py - ring.cy);
             slide = {

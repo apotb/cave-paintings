@@ -1009,11 +1009,23 @@
     }
 
     /**
+     * How far a body reaches from its center along `ang`.
+     * One radius is a circle. Passing `radiusY` uses the feet strip
+     * (half-width, half-height), so walking up to the thatch stops at the feet.
+     */
+    function _ringBodyExtent(ang, radius, radiusY) {
+        const hx = Math.max(0, Number(radius) || 0);
+        if (!Number.isFinite(Number(radiusY))) return hx;
+        const hy = Math.max(0, Number(radiusY) || 0);
+        return hx * Math.abs(Math.cos(ang)) + hy * Math.abs(Math.sin(ang));
+    }
+
+    /**
      * Keep a pawn center from crossing a round wall. A step that starts inside
      * stays inside; one that starts outside stays outside. The doorway is open.
      * A long jump is a teleport and is left alone.
      */
-    function clampRingCenter(ring, fromX, fromY, toX, toY, radius) {
+    function clampRingCenter(ring, fromX, fromY, toX, toY, radius, radiusY) {
         const x1 = Number(toX) || 0;
         const y1 = Number(toY) || 0;
         if (!ring) return { x: x1, y: y1 };
@@ -1026,9 +1038,9 @@
         const pdx = x0 - ring.cx;
         const pdy = y0 - ring.cy;
         const pr = Math.hypot(pdx, pdy);
-        const rad = Math.max(0, Number(radius) || 0);
         const skin = 0.15;
         const ang = r > 0.001 ? Math.atan2(dy, dx) : Math.atan2(pdy, pdx);
+        const rad = _ringBodyExtent(ang, radius, radiusY);
         if (_angleInDoor(ang, ring.door0, ring.door1)) return { x: x1, y: y1 };
         const mid = (ring.inner + ring.outer) * 0.5;
         if (pr <= mid) {

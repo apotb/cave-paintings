@@ -344,7 +344,7 @@
         "spriteSize": 32,
         "wallSplit": 22,
         "wallMask": "AAAAAAAf+AAAf/4AAeAHgAOAAcAHAADgDgAAcBwAADg4AAAcMAAADHAAAA5gAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGYAAABmAAAAZgAAAGcAAADjAAAAw4AAAcHAAAOA4AAHAHAADgA4ABwAHgB4AAYAYAAAAAAAAAAAA=",
-        "ring": { "cx": 16, "cy": 15, "inner": 12.2, "outer": 16, "door": [62, 118] },
+        "ring": { "cx": 16, "cy": 16, "inner": 12.2, "outer": 15.5, "door": [62, 118] },
         "doorClear": { "x": 10, "y": 28, "w": 12, "h": 2 },
         "hitboxSize": 0,
         "sleep": {
