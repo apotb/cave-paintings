@@ -82,6 +82,7 @@
     const cookInputPred = (...args) => ctx.cookInputPred(...args);
     const smokePitLive = (...args) => ctx.smokePitLive(...args);
     const fireNeedsLight = (...args) => ctx.fireNeedsLight(...args);
+    const simmerWillFill = (...args) => ctx.simmerWillFill(...args);
 
 
 function pawnItemQty(rec, id) {
@@ -146,6 +147,13 @@ function doCook(world, rec, settle, job) {
             return finishPut(world, rec, settle);
         }
         if (bill.leftover) {
+            endWorkHold(rec);
+            return halt();
+        }
+        // Don't light, fetch a shell, or load the pot until two ingredients
+        // are already in it or on the way into it.
+        const minSlots = Settlement.SIMMER_MIN_SLOTS || 2;
+        if (simmerWillFill(world, rec, settle, fire, bill) < minSlots) {
             endWorkHold(rec);
             return halt();
         }

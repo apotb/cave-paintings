@@ -2469,6 +2469,75 @@ test("dedicated settler skips a roast bill with no apples and simmers pork", () 
     assert.ok(simmeringPork(rec, fire), "should load coconut or pork for simmer");
 });
 
+test("dedicated settler does not simmer when only one ingredient is available", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    basket.slots[0] = { id: "cracked_coconut", quantity: 1 };
+    basket.slots[1] = { id: "apple", quantity: 1 };
+    const fire = addLitFire(world, settle, rec);
+    Settlement.addBill(settle, fire.uid, { recipeId: "simmer", mode: "forever", paused: false });
+    for (let i = 0; i < 24; i++) workOnce(world, rec);
+    assert.equal((fire.simmer || []).filter(Boolean).length, 0);
+    assert.notEqual(fire.catalyst?.id, "cracked_coconut");
+    assert.equal(basket.slots[1]?.id, "apple");
+    assert.equal(basket.slots[1]?.quantity, 1);
+    assert.equal(basket.slots[0]?.id, "cracked_coconut");
+});
+
+test("dedicated settler simmers when two ingredients will be in the dish", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    basket.slots[0] = { id: "cracked_coconut", quantity: 1 };
+    basket.slots[1] = { id: "apple", quantity: 1 };
+    basket.slots[2] = { id: "blueberry", quantity: 1 };
+    const fire = addLitFire(world, settle, rec);
+    fire.catalyst = null;
+    Settlement.addBill(settle, fire.uid, { recipeId: "simmer", mode: "forever", paused: false });
+    for (let i = 0; i < 32; i++) {
+        const n = (fire.simmer || []).filter(Boolean).length;
+        if (fire.catalyst?.id === "cracked_coconut" && n >= 2) break;
+        workOnce(world, rec);
+    }
+    assert.equal(fire.catalyst?.id, "cracked_coconut");
+    assert.equal((fire.simmer || []).filter(Boolean).length, 2);
+});
+
+test("dedicated settler leaves a one-ingredient pot alone", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const fire = addLitFire(world, settle, rec);
+    fire.catalyst = { id: "cracked_coconut", quantity: 1 };
+    fire.simmer = [{ id: "apple", quantity: 1 }, null, null, null];
+    Settlement.addBill(settle, fire.uid, { recipeId: "simmer", mode: "forever", paused: false });
+    for (let i = 0; i < 16; i++) workOnce(world, rec);
+    assert.equal((fire.simmer || []).filter(Boolean).length, 1);
+    assert.equal(fire.catalyst?.id, "cracked_coconut");
+    assert.notEqual(rec._settlerAct, "Simmering a meal");
+    assert.notEqual(rec._settlerAct, "Simmering");
+});
+
+test("dedicated settler finishes a simmer that already has one ingredient and one more in storage", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    basket.slots[0] = { id: "blueberry", quantity: 1 };
+    const fire = addLitFire(world, settle, rec);
+    fire.catalyst = { id: "cracked_coconut", quantity: 1 };
+    fire.simmer = [{ id: "apple", quantity: 1 }, null, null, null];
+    Settlement.addBill(settle, fire.uid, { recipeId: "simmer", mode: "forever", paused: false });
+    for (let i = 0; i < 24; i++) {
+        if ((fire.simmer || []).filter(Boolean).length >= 2) break;
+        workOnce(world, rec);
+    }
+    assert.equal((fire.simmer || []).filter(Boolean).length, 2);
+});
+
 test("dedicated settler simmers pork instead of roasting it when simmer is queued", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });

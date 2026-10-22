@@ -1612,6 +1612,39 @@ function heldPredQty(rec, pred) {
         + Settlement.countPredQty(rec.overflow, pred);
 }
 
+/**
+ * How many simmer ingredients will be in the pot: slots already loaded, plus
+ * what this settler is carrying or can take from a basket, capped by empty slots.
+ * Ground piles and other settlers' pockets are not counted. They cannot haul those
+ * into this dish, so they do not know those ingredients will be in it.
+ */
+function simmerWillFill(world, rec, settle, fire, bill) {
+    const pred = (s) => Settlement.cookInputReady(getItem, s, bill);
+    let inPot = 0;
+    for (const s of fire?.simmer || []) {
+        if (s && pred(s)) inPot += 1;
+    }
+    let haul = 0;
+    const countSlots = (list) => {
+        for (const s of list || []) {
+            if (!s || !pred(s)) continue;
+            haul += Math.max(1, Math.floor(Number(s.quantity) || 1));
+        }
+    };
+    countSlots(rec?.inventory);
+    countSlots(rec?.overflow);
+    const reserves = reservesOf(world, settle);
+    for (const b of basketsOf(world, settle)) {
+        const slots = b.slots || [];
+        for (let i = 0; i < slots.length; i++) {
+            const s = slots[i];
+            if (!s || !pred(s)) continue;
+            haul += reserves.available(`basket:${b.uid}:${i}`, s.quantity, rec.id);
+        }
+    }
+    return inPot + Math.min(Settlement.simmerEmptyCount(fire), haul);
+}
+
 function keepGearOpts(keepBandageOrOpts) {
     const preds = Array.isArray(keepBandageOrOpts?.keepPreds)
         ? keepBandageOrOpts.keepPreds.filter((p) => typeof p === "function")
@@ -1809,6 +1842,7 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     ctx.findHeld = findHeld;
     ctx.findStored = findStored;
     ctx.heldPredQty = heldPredQty;
+    ctx.simmerWillFill = simmerWillFill;
     ctx.keepGearOpts = keepGearOpts;
     ctx.stashScan = stashScan;
     ctx.depositKeepGear = depositKeepGear;

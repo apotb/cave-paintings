@@ -71,6 +71,7 @@
     const keepGearOpts = (...args) => ctx.keepGearOpts(...args);
     const stashScan = (...args) => ctx.stashScan(...args);
     const canGivePawn = (...args) => ctx.canGivePawn(...args);
+    const simmerWillFill = (...args) => ctx.simmerWillFill(...args);
 
 
 function haulMergeJob(world, rec, settle, claims) {
@@ -733,32 +734,12 @@ function cookHasWork(world, rec, settle, fire, bill, opts = {}) {
     if (method === "shell_simmer") {
         const cat = fire.catalyst;
         if (Settlement.cookOutputReady(getItem, cat, bill)) return true;
-        const filled = (fire.simmer || []).filter(Boolean).length;
-        if (filled >= (Settlement.SIMMER_MIN_SLOTS || 2) && Settlement.isCookTool(getItem, cat, method)) {
-            if (fireNeedsLight(fire) && !fireCanFuel(world, rec, settle, fire)) return false;
-            return true;
-        }
         const hasTool = Settlement.isCookTool(getItem, cat, method)
             || !!findStack(world, rec, settle, (s) => Settlement.isCookTool(getItem, s, method));
-        let stock = 0;
-        const countInv = (slots) => {
-            for (const s of slots || []) {
-                if (!s || !Settlement.cookInputReady(getItem, s, bill)) continue;
-                stock += Math.max(1, Number(s.quantity) || 1);
-            }
-        };
-        countInv(rec.inventory);
-        countInv(rec.overflow);
-        const reserves = reservesOf(world, settle);
-        for (const b of basketsOf(world, settle)) {
-            const slots = b.slots || [];
-            for (let i = 0; i < slots.length; i++) {
-                const s = slots[i];
-                if (!s || !Settlement.cookInputReady(getItem, s, bill)) continue;
-                stock += reserves.available(`basket:${b.uid}:${i}`, s.quantity, rec.id);
-            }
-        }
-        if (!(hasTool && stock >= 1)) return false;
+        // One ingredient never becomes a meal. Start only when the pot plus
+        // what they can haul will fill at least two slots.
+        const minSlots = Settlement.SIMMER_MIN_SLOTS || 2;
+        if (!(hasTool && simmerWillFill(world, rec, settle, fire, bill) >= minSlots)) return false;
         if (fireNeedsLight(fire) && !fireCanFuel(world, rec, settle, fire)) return false;
         return true;
     }
