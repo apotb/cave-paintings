@@ -5,6 +5,7 @@
 const Settings = {
     GUI_SCALE_KEY: "cp_gui_scale",
     MUSIC_VOLUME_KEY: "cp_music_volume",
+    AM_PM_KEY: "cp_am_pm",
     MUSIC_VOLUME_DEFAULT: 85,
     FORM_TEMPLATES_KEY: (typeof CraftTemplates !== "undefined" && CraftTemplates.STORAGE_KEY)
         || "cp_form_templates",
@@ -28,6 +29,7 @@ const Settings = {
                 guiScale: 0,
                 musicVolume: this.MUSIC_VOLUME_DEFAULT,
                 fullscreen: false,
+                amPm: false,
                 formTemplates: []
             };
         } catch (_) {
@@ -35,6 +37,7 @@ const Settings = {
                 guiScale: 0,
                 musicVolume: this.MUSIC_VOLUME_DEFAULT,
                 fullscreen: false,
+                amPm: false,
                 formTemplates: []
             };
         }
@@ -157,6 +160,32 @@ const Settings = {
 
     fullscreenButtonLabel(on) {
         return on ? "Fullscreen: On" : "Fullscreen: Off";
+    },
+
+    loadAmPm() {
+        const disk = this._readDisk();
+        if (disk) return !!disk.amPm;
+        try {
+            return localStorage.getItem(this.AM_PM_KEY) === "1";
+        } catch (_) {}
+        return false;
+    },
+
+    saveAmPm(on) {
+        const v = !!on;
+        if (this._readDisk()) {
+            this._optionsCache.amPm = v;
+            this._writeDisk();
+            return v;
+        }
+        try {
+            localStorage.setItem(this.AM_PM_KEY, v ? "1" : "0");
+        } catch (_) {}
+        return v;
+    },
+
+    amPmButtonLabel(on) {
+        return on ? "AM/PM: On" : "AM/PM: Off";
     },
 
     /** Phaser gain for the stored (or given) 0–100 percent. */

@@ -52,6 +52,10 @@ describe("electron/saves", () => {
         assert.deepEqual(got, next);
         const fs = await saves.writeOptions(root, { guiScale: 2, musicVolume: 40, fullscreen: true });
         assert.equal(fs.fullscreen, true);
+        assert.equal(fs.amPm, false);
+        const am = await saves.writeOptions(root, { guiScale: 2, musicVolume: 40, amPm: true });
+        assert.equal(am.amPm, true);
+        assert.equal(saves.readOptions(root).amPm, true);
     });
 
     it("preserves forming templates in options.json", async () => {

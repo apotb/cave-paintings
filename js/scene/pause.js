@@ -741,6 +741,25 @@
         this.time?.delayedCall?.(0, () => this._pauseUi?.fullscreen?.restoreHover?.());
     },
 
+    _amPmButtonLabel() {
+        const on = typeof Settings !== "undefined" && Settings.loadAmPm();
+        return typeof Settings !== "undefined"
+            ? Settings.amPmButtonLabel(on)
+            : (on ? "AM/PM: On" : "AM/PM: Off");
+    },
+
+    _cyclePauseAmPm() {
+        const cur = typeof Settings !== "undefined" && Settings.loadAmPm();
+        const next = !cur;
+        if (typeof Settings !== "undefined") Settings.saveAmPm(next);
+        else {
+            try { localStorage.setItem("cp_am_pm", next ? "1" : "0"); } catch (_) {}
+        }
+        this._pauseUi?.amPm?.setLabel?.(this._amPmButtonLabel());
+        this.updateClockText?.();
+        this.time?.delayedCall?.(0, () => this._pauseUi?.amPm?.restoreHover?.());
+    },
+
     _pauseAdd(node, depth = 50001) {
         if (!node) return node;
         this.uiLayer.add(node);
@@ -863,12 +882,21 @@
         const pad = Math.round(12 * s);
         const y0Off = Math.round(titleFs / 2) + titleGap + Math.round(guiH / 2);
         const fsYOff = fs ? y0Off + guiH + gap : y0Off;
-        const volLabelTopOff = (fs ? fsYOff : y0Off) + Math.round(guiH / 2) + gap;
+        const ampmYOff = (fs ? fsYOff : y0Off) + guiH + gap;
+        const volLabelTopOff = ampmYOff + Math.round(guiH / 2) + gap;
         const sliderYOff = volLabelTopOff + labelSlot + inner;
         const backYOff = sliderYOff + sliderH + handlePad + gap + Math.round(guiH / 2);
-        const totalH = titleFs + titleGap + guiH / 2 + backYOff + backH / 2;
-        let titleY = Math.round(h / 2 - totalH / 2 + titleFs / 2);
-        titleY = Math.max(titleFs / 2 + pad, titleY);
+        // Center the painted panel. backYOff already includes the title and the
+        // first button, so folding those in again shoved the stack upward.
+        const panelPadY = Math.round(16 * s);
+        const above = Math.round(12 * s) + panelPadY;
+        const below = backYOff + backH / 2 + panelPadY;
+        const span = above + below;
+        let titleY = Math.round((h - span) / 2 + above);
+        const minTitleY = Math.round(titleFs / 2 + pad);
+        const maxTitleY = Math.round(h - pad - (backYOff + backH / 2));
+        titleY = Math.max(minTitleY, titleY);
+        if (maxTitleY >= minTitleY) titleY = Math.min(titleY, maxTitleY);
         return {
             s,
             fs,
@@ -876,6 +904,7 @@
             titleY,
             y0: titleY + y0Off,
             fsY: titleY + fsYOff,
+            ampmY: titleY + ampmYOff,
             volLabelY: titleY + volLabelTopOff,
             sliderY: titleY + sliderYOff,
             backY: titleY + backYOff,
@@ -927,6 +956,13 @@
                 { size: "medium" }
             );
         }
+        const amPmBtn = this._pauseMenuButton(
+            w / 2,
+            L.ampmY,
+            this._amPmButtonLabel(),
+            () => this._cyclePauseAmPm(),
+            { size: "medium" }
+        );
         const volLabel = crispUiText(this.add.text(w / 2, L.volLabelY, "Music Volume", {
             fontFamily: PIXEL_UI_FONT,
             fontSize: `${pixelUiFontSize(16, L.s)}px`,
@@ -954,10 +990,11 @@
         this._pauseAdd(title);
         this._pauseAdd(guiScale);
         if (fullscreenBtn) this._pauseAdd(fullscreenBtn);
+        this._pauseAdd(amPmBtn);
         this._pauseAdd(volLabel);
         for (const n of volumeSlider.nodes) this._pauseAdd(n);
         this._pauseAdd(back);
-        this._pauseUi = { dim, panel, title, guiScale, fullscreen: fullscreenBtn, volLabel, volumeSlider, back };
+        this._pauseUi = { dim, panel, title, guiScale, fullscreen: fullscreenBtn, amPm: amPmBtn, volLabel, volumeSlider, back };
     },
 
     _closePauseMenu() {
@@ -1096,6 +1133,8 @@
             ui.guiScale?.setLabel?.(this._guiScaleButtonLabel());
             ui.fullscreen?.setPosition(w / 2, L.fsY);
             ui.fullscreen?.setLabel?.(this._fullscreenButtonLabel());
+            ui.amPm?.setPosition(w / 2, L.ampmY);
+            ui.amPm?.setLabel?.(this._amPmButtonLabel());
             ui.volLabel?.setPosition(w / 2, L.volLabelY);
             ui.volumeSlider?.setPosition?.(Math.floor(w / 2 - L.sliderW / 2), Math.round(L.sliderY));
             ui.back?.setPosition(w / 2, L.backY);

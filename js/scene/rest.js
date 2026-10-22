@@ -971,11 +971,11 @@
 
     updateClockText() {
         if (!this.clockText?.active || !this.clockText.scene) return;
-        const h = Math.floor(this.gameMinutes / 60);
-        const m = this.gameMinutes % 60;
-        const hh = String(h).padStart(2, "0");
-        const mm = String(m).padStart(2, "0");
-        this.clockText.setText(`Day ${this.gameDay}  ${hh}:${mm}`);
+        const ampm = typeof Settings !== "undefined" && Settings.loadAmPm();
+        const label = typeof ClockFormat !== "undefined"
+            ? ClockFormat.formatDayClock(this.gameDay, this.gameMinutes, ampm)
+            : `Day ${this.gameDay}`;
+        this.clockText.setText(label);
         crispUiText(this.clockText);
         const s = this.uiScale || 1;
         placeUiText(this.clockText, this.scale.width / 2, Math.round(8 * s), 0.5, 0);

@@ -927,6 +927,7 @@ class SceneMenu extends Phaser.Scene {
         this._createHslBars = null;
         this._optionsGuiScaleBtn = null;
         this._optionsFullscreenBtn = null;
+        this._optionsAmPmBtn = null;
         this.hostInput = this.passInput = this.nameInput = this.worldNameInput = this.seedInput = this.renameInput = null;
         this.modNameInput = this.modAuthorInput = this.modVersionInput = this.modDescriptionInput = this.modIdInput = null;
         this._versionLabel = null;
@@ -1344,11 +1345,11 @@ class SceneMenu extends Phaser.Scene {
         let mins = Math.floor(Number(clock?.gameMinutes) || 0);
         if (mins < 0) mins = 0;
         mins = mins % 1440;
-        const h = Math.floor(mins / 60);
-        const m = mins % 60;
-        const hh = String(h).padStart(2, "0");
-        const mm = String(m).padStart(2, "0");
-        return { day: `Day ${day}`, time: `${hh}:${mm}` };
+        const ampm = typeof Settings !== "undefined" && Settings.loadAmPm();
+        const time = typeof ClockFormat !== "undefined"
+            ? ClockFormat.formatMinutes(mins, ampm)
+            : `${String(Math.floor(mins / 60)).padStart(2, "0")}:${String(mins % 60).padStart(2, "0")}`;
+        return { day: `Day ${day}`, time };
     }
 
     _clearArmedDelete() {
@@ -2027,20 +2028,25 @@ class SceneMenu extends Phaser.Scene {
             ? Math.round(pixelUiFontSize(32, s) / 2)
             : Math.round(16 * s);
         const fsYOff = disk ? btnH + gap : 0;
-        const volLabelTopOff = fsYOff + Math.round(btnH / 2) + gap;
+        const ampmYOff = fsYOff + btnH + gap;
+        const volLabelTopOff = ampmYOff + Math.round(btnH / 2) + gap;
         const sliderYOff = volLabelTopOff + labelSlot + inner;
         const folderYOff = sliderYOff + sliderH + handlePad + gap + Math.round(btnH / 2);
         const backYOff = disk ? folderYOff + btnH + gap : folderYOff;
+        // Center the control stack. The first button used to sit at 42% of the
+        // window, so a taller stack (AM/PM, fullscreen) hung below the middle.
+        const stackSpan = backYOff + btnH;
+        let y0 = Math.round((h - stackSpan) / 2 + btnH / 2);
         const minY0 = Math.round(h * 0.14) + titleHalf + gap + Math.round(btnH / 2);
-        const preferredY0 = Math.round(h * 0.42);
         const maxY0 = h - pad - (backYOff + Math.round(btnH / 2));
-        let y0 = Math.max(minY0, preferredY0);
+        y0 = Math.max(minY0, y0);
         if (maxY0 >= minY0) y0 = Math.min(y0, maxY0);
         else y0 = minY0;
         return {
             w, h, s, disk,
             y0,
             fsY: y0 + fsYOff,
+            ampmY: y0 + ampmYOff,
             volLabelY: y0 + volLabelTopOff,
             sliderY: y0 + sliderYOff,
             folderY: y0 + folderYOff,
@@ -2083,6 +2089,21 @@ class SceneMenu extends Phaser.Scene {
         this.time?.delayedCall?.(0, () => this._optionsFullscreenBtn?.restoreHover?.());
     }
 
+    _amPmButtonLabel() {
+        const on = typeof Settings !== "undefined" && Settings.loadAmPm();
+        return typeof Settings !== "undefined"
+            ? Settings.amPmButtonLabel(on)
+            : (on ? "AM/PM: On" : "AM/PM: Off");
+    }
+
+    _cycleTitleAmPm() {
+        const cur = typeof Settings !== "undefined" && Settings.loadAmPm();
+        const next = !cur;
+        if (typeof Settings !== "undefined") Settings.saveAmPm(next);
+        this._optionsAmPmBtn?.setBtnText?.(this._amPmButtonLabel());
+        this.time?.delayedCall?.(0, () => this._optionsAmPmBtn?.restoreHover?.());
+    }
+
     _showOptions() {
         this._clear();
         this._phase = "options";
@@ -2104,6 +2125,12 @@ class SceneMenu extends Phaser.Scene {
                 () => this._cycleTitleFullscreen()
             );
         }
+        this._optionsAmPmBtn = this._button(
+            w / 2,
+            L.ampmY,
+            this._amPmButtonLabel(),
+            () => this._cycleTitleAmPm()
+        );
         const volLabel = this._track(this.add.text(w / 2, L.volLabelY, "Music Volume", {
             fontFamily: PIXEL_UI_FONT,
             fontSize: this._uiFont(16),

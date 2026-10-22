@@ -15,7 +15,11 @@
         }
         if (ev.kind === "chat" && ev.text) {
             const selfId = this._netPlayerId || this.net?.playerId;
-            const text = String(ev.text);
+            let text = String(ev.text);
+            if ((ev.system || ev.cmd) && typeof ClockFormat !== "undefined") {
+                const ampm = typeof Settings !== "undefined" && Settings.loadAmPm();
+                text = ClockFormat.presentClockText(text, ampm);
+            }
             const isJoin = / joined\.?$/.test(text);
             const isLeave = / left\.?$/.test(text);
             const isPlayerChat = !!(ev.from || /^<.+>\s/.test(text));

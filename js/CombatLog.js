@@ -703,11 +703,11 @@ class CombatLog {
                 return;
             }
             if (parts.length < 2) {
-                const h = Math.floor((this.scene.gameMinutes || 0) / 60);
-                const m = (this.scene.gameMinutes || 0) % 60;
-                this.push(
-                    `Day ${this.scene.gameDay}  ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
-                );
+                const ampm = typeof Settings !== "undefined" && Settings.loadAmPm();
+                const label = typeof ClockFormat !== "undefined"
+                    ? ClockFormat.formatDayClock(this.scene.gameDay, this.scene.gameMinutes, ampm)
+                    : `Day ${this.scene.gameDay}`;
+                this.push(label);
                 return;
             }
             const h = Number(parts[1]);
@@ -723,9 +723,11 @@ class CombatLog {
                 this.scene._lightSig = null;
                 this.scene.updateClockText?.();
                 this.scene.updateTimeTint?.();
-                this.push(
-                    `Set time to ${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor(m)).padStart(2, "0")}`
-                );
+                const ampm = typeof Settings !== "undefined" && Settings.loadAmPm();
+                const label = typeof ClockFormat !== "undefined"
+                    ? ClockFormat.formatHourMinute(h, m, ampm)
+                    : `${String(Math.floor(h)).padStart(2, "0")}:${String(Math.floor(m)).padStart(2, "0")}`;
+                this.push(`Set time to ${label}`);
             }
             return;
         }

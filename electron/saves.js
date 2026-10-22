@@ -36,7 +36,13 @@ function optionsPath(root) {
 }
 
 function defaultOptions() {
-    return { guiScale: 0, musicVolume: MUSIC_VOLUME_DEFAULT, fullscreen: false, formTemplates: [] };
+    return {
+        guiScale: 0,
+        musicVolume: MUSIC_VOLUME_DEFAULT,
+        fullscreen: false,
+        amPm: false,
+        formTemplates: []
+    };
 }
 
 function normalizeOptions(raw) {
@@ -50,6 +56,7 @@ function normalizeOptions(raw) {
             ? Math.max(0, Math.min(100, Math.round(vol)))
             : base.musicVolume,
         fullscreen: !!raw.fullscreen,
+        amPm: !!raw.amPm,
         formTemplates: CraftTemplates.sanitizeList(raw.formTemplates, Forming)
     };
 }

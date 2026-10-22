@@ -54,7 +54,11 @@ function setHour(hour, minute = 0) {
             type: NetProtocol.Actions.CHAT,
             text: `/time ${h} ${m}`
         });
-        return `Requesting Day ${scene.gameDay} ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}…`;
+        const ampm = typeof Settings !== "undefined" && Settings.loadAmPm();
+        const label = typeof ClockFormat !== "undefined"
+            ? ClockFormat.formatHourMinute(h, m, ampm)
+            : `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+        return `Requesting Day ${scene.gameDay} ${label}…`;
     }
     scene.gameMinutes = h * 60 + m;
     scene._lightSig = null; // force veil redraw
