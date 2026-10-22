@@ -2223,6 +2223,12 @@
         return !!fuel;
     }
 
+    /** The log already pulled into the pit. An empty slot is not "out of fuel". */
+    function _fireStillBurning(fire) {
+        if (typeof fire?.isBurning === "function") return !!fire.isBurning();
+        return (Number(_fireEntry(fire)?.burnRemaining) || 0) > 0;
+    }
+
     function _simmerFilled(fire) {
         if (typeof fire?.simmerFilledCount === "function") return fire.simmerFilledCount() || 0;
         const slots = _fireEntry(fire)?.simmerSlots;
@@ -2252,7 +2258,7 @@
             }
         }
         if (fire && !_fireIsLit(fire)) return "Lighting a fire";
-        if (fire && !_fireHasFuel(fire)) return "Stoking the fire";
+        if (fire && !_fireHasFuel(fire) && !_fireStillBurning(fire)) return "Stoking the fire";
         if (method === "shell_simmer") {
             if (_simmerFilled(fire) > 0) return "Simmering a meal";
             return "Simmering";

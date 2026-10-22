@@ -609,25 +609,33 @@ function goOrWalk(world, rec, target) {
         const slack = 4;
         const px = Number(rec.x) || 0;
         const py = Number(rec.y) || 0;
-        if (Math.hypot(px - stand.x, py - stand.y) <= slack) {
+        const dist = Math.hypot(px - stand.x, py - stand.y);
+        const poseBlocked = (pad) => !!(c && typeof world?._partyPoseBlocked === "function"
+            && world._partyPoseBlocked(c, stand.x, stand.y, pad, { load: false }));
+        const blocked0 = poseBlocked(0);
+        // Pathing stops a few pixels short of a tight pose. Snapping those
+        // last pixels into the fire just pops them back out, and the job
+        // (stoke, cook, tan) stays up for as long as they stand there.
+        const beside = dist <= slack
+            || (dist <= TS && near(px, py, Number(target.x) || 0, Number(target.y) || 0));
+        if (beside) {
             faceToward(rec, target.x, (Number(target.y) || 0) - 8);
-            rec.x = stand.x;
-            rec.y = stand.y;
-            if (c) {
-                c.x = stand.x;
-                c.y = stand.y;
-                c.vx = 0;
-                c.vy = 0;
-                c.setDesiredVel?.(0, 0);
+            if (!blocked0 && dist <= slack) {
+                rec.x = stand.x;
+                rec.y = stand.y;
+                if (c) {
+                    c.x = stand.x;
+                    c.y = stand.y;
+                    c.vx = 0;
+                    c.vy = 0;
+                    c.setDesiredVel?.(0, 0);
+                }
             }
             return null;
         }
-        // Pathing uses a 2px body pad. A basket on the marked tile makes that
-        // pose solid, so they stop short and never arrive — the job stays
-        // "Stoking the fire" until the basket moves. Stand beside it instead.
-        const standBlocked = !!(c && typeof world?._partyPoseBlocked === "function"
-            && world._partyPoseBlocked(c, stand.x, stand.y, 2, { load: false }));
-        if (!standBlocked) return walkTo(stand.x, stand.y, { openRadius: 0 });
+        // A basket on the marked tile makes that pose solid, so they stop
+        // short and never arrive. Stand beside it instead.
+        if (!poseBlocked(2)) return walkTo(stand.x, stand.y, { openRadius: 0 });
     }
     // Baskets and stations stay solid. Work from interact range when the
     // line is clear. If the thing itself is in the way, stand beside it
@@ -1281,10 +1289,22 @@ function stokeUntilKeep(world, rec, settle, fire) {
 
 function doStokeFire(world, rec, settle, fire) {
     if (!fire) return halt();
-    const walked = goOrWalk(world, rec, fire);
-    if (walked) return walked;
+    // Fuel comes out of storage. Once they are in reach, feed the pit.
+    // Waiting on the exact stand left them planted on "Stoking the fire".
+    if (!near(rec.x, rec.y, fire.x, fire.y)) {
+        const walked = goOrWalk(world, rec, fire);
+        if (walked) return walked;
+    }
     const facing = faceFire(rec, fire);
+    const before = Fire.burnMinutes(fire, getItem);
     stokeUntilKeep(world, rec, settle, fire);
+    const after = Fire.burnMinutes(fire, getItem);
+    const filt = FuelFilter ? FuelFilter.normalize(fire.fuelFilter) : { alwaysOn: true };
+    const keep = filt.alwaysOn && FuelFilter ? FuelFilter.KEEP_MINUTES : 0;
+    if (keep > 0 && after < keep && !(after > before + 0.01)) {
+        skipJob(rec, stationKey(fire));
+        if (rec._settlerScan) rec._settlerScan.stokeFire = null;
+    }
     return halt(facing ? { facing } : null);
 }
 

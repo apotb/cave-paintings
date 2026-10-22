@@ -1482,6 +1482,16 @@ test("planWork cook stokes after lighting and bills", () => {
         }),
         "Getting a Sharp Stick"
     );
+    assert.equal(
+        Settlement.actLabel({
+            type: "cook",
+            target: {
+                bill: { method: "stick_roast" },
+                fire: { id: "campfire", burnRemaining: 25, catalyst: null, fuel: [null, null] }
+            }
+        }),
+        "Getting a Sharp Stick"
+    );
     jobs.cook = 0;
     assert.equal(Settlement.planWork({
         kc: 2000,

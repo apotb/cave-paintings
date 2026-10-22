@@ -3549,6 +3549,41 @@ test("cook stokes from beside the fire when the stand is occupied", () => {
     assert.ok(stoking < 80, `stood on Stoking the fire for ${stoking} ticks`);
 });
 
+test("cook stokes from interact range without standing on the exact tile", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    cookOnlyJobs(settle, rec);
+    const fire = addStation(world, settle, "campfire", rec.x + 48, rec.y - 16, "fire-short");
+    fire.id = "campfire";
+    fire.fuel = [null, null];
+    fire.burnRemaining = 10;
+    fire.pitTemp = 600;
+    fire.maxTemp = 600;
+    const pose = Place.interactStandPose(fire, 16, world._thingDef(fire.id), world._ensureSettlerCreature(rec));
+    rec.x = pose.x - 10;
+    rec.y = pose.y;
+    const mob = world._ensureSettlerCreature(rec);
+    mob.x = rec.x;
+    mob.y = rec.y;
+    const basket = addBasket(world, settle, rec.x - 32, rec.y, "fuel-short");
+    basket.slots[0] = { id: "log", quantity: 8 };
+    const getItem = (id) => world._itemDef(id);
+    let stoking = 0;
+    for (let i = 0; i < 40; i++) {
+        world.tick(50);
+        if (rec._settlerAct === "Stoking the fire") stoking++;
+        if (Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES
+            && rec._settlerAct !== "Stoking the fire") break;
+    }
+    assert.ok(
+        Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES,
+        `never fueled (act=${rec._settlerAct} fuel=${JSON.stringify(fire.fuel)})`
+    );
+    assert.notEqual(rec._settlerAct, "Stoking the fire");
+    assert.ok(stoking < 12, `stood on Stoking the fire for ${stoking} ticks`);
+});
+
 test("always-on off does not top up a fire that already has fuel", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn);
