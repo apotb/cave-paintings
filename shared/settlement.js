@@ -2252,7 +2252,12 @@
             if (n) {
                 if (cookOutputReady(getItem, cook, bill)) return `Taking ${_lc(n)}`;
                 if (bill?.leftover) return `Taking ${_lc(n)}`;
-                if (method === "smoke_hide") return `Smoking ${_hideTypeNoun(cook, getItem)}`;
+                if (method === "smoke_hide") {
+                    if (job?.phase === "tend") {
+                        return _fireIsLit(fire) ? "Stoking the fire" : "Lighting a fire";
+                    }
+                    return `Smoking ${_hideTypeNoun(cook, getItem)}`;
+                }
                 const roast = method === "stick_roast" || title === "Roast";
                 return `${roast ? "Roasting" : "Cooking"} ${_lc(n)}`;
             }

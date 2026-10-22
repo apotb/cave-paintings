@@ -74,6 +74,7 @@
     const researchHolder = (...args) => ctx.researchHolder(...args);
     const fireCanFuel = (...args) => ctx.fireCanFuel(...args);
     const stationKey = (...args) => ctx.stationKey(...args);
+    const countItem = (...args) => ctx.countItem(...args);
 
 
 function mergeNeedsRoom(rec, job) {
@@ -1131,7 +1132,41 @@ function doGather(world, rec, target) {
     return halt();
 }
 
+function doHaulSmokeLeather(world, rec, settle, job) {
+    const fire = job?.fire;
+    const bill = job?.bill;
+    const key = job?.claimKey || stationKey(fire);
+    if (!fire || !bill) {
+        endWorkHold(rec);
+        return halt();
+    }
+    const cook = fire.cook;
+    const have = (id) => countItem(world, settle, id);
+    if (!cook || !Settlement.cookOutputReady(getItem, cook, bill) || !Settlement.billIsActive(bill, have, settle)) {
+        endWorkHold(rec);
+        return halt();
+    }
+    const basket = pickBasket(world, rec, settle, cook);
+    if (!basket) {
+        skipJob(rec, key);
+        endWorkHold(rec);
+        return halt();
+    }
+    const walked = goOrWalk(world, rec, fire);
+    if (walked) return walked;
+    fire.cook = null;
+    if (!takeOffFire(world, rec, settle, cook)) {
+        fire.cook = cook;
+        return pocketFail(world, rec, settle, key, null);
+    }
+    Settlement.noteBillCrafted(bill);
+    emitEntry(world, fire);
+    persistBills(world, settle, fire.uid);
+    return finishPut(world, rec, settle);
+}
+
 function doHaul(world, rec, settle, drop) {
+    if (drop?.kind === "smoke_out") return doHaulSmokeLeather(world, rec, settle, drop);
     if (!drop) return halt();
     if (!haulDropLive(world, drop)) {
         abandonHaul(world, rec, settle);

@@ -462,6 +462,7 @@ function tick(world, mob, delta) {
             leatherWork: scan.leatherWork,
             rockWork: scan.rockWork,
             haulDrop: scan.haulDrop,
+            haulOutput: scan.haulOutput,
             haulMerge: scan.haulMerge,
             gatherThing: scan.gatherThing,
             digThing: scan.digThing,

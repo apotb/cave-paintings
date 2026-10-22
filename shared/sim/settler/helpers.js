@@ -512,6 +512,7 @@ function voidPlan(scan, plan) {
     const t = plan.type;
     if (t === "haul") {
         scan.haulDrop = null;
+        scan.haulOutput = null;
         scan.haulMerge = null;
     } else if (t === "gather") scan.gatherThing = null;
     else if (t === "dig") scan.digThing = null;
@@ -1135,7 +1136,7 @@ function groundHaulDrop(job) {
     if (!job || job.type !== "haul") return null;
     const drop = job.target;
     if (!drop?.uid || !drop.id) return null;
-    if (drop.kind === "pack" || drop.kind === "move") return null;
+    if (drop.kind === "pack" || drop.kind === "move" || drop.kind === "smoke_out") return null;
     return drop;
 }
 

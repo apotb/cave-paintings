@@ -766,8 +766,41 @@ function cookHasWork(world, rec, settle, fire, bill, opts = {}) {
     return shouldTakeLeftoverStick(world, rec, settle, fire, bill);
 }
 
+/** Brained hide or finished leather on the cook slot. Roast and simmer leave it. */
+function smokeOccupiesFire(fire) {
+    const cook = fire?.cook;
+    if (!cook?.id) return false;
+    const bill = leftoverSmokeBill();
+    return Settlement.cookInputReady(getItem, cook, bill)
+        || Settlement.cookOutputReady(getItem, cook, bill);
+}
+
+/** Burning, fuel in the slots, or burn time left. A cold empty pit is not. */
+function smokePitLive(world, fire) {
+    if (!fire) return false;
+    if (Fire.isBurning(fire)) return true;
+    if (Number(fire.burnRemaining) > 0) return true;
+    if (world._campfireHasFuel?.(fire)) return true;
+    return false;
+}
+
+function smokePitOut(world, fire) {
+    return !smokePitLive(world, fire);
+}
+
+/** Fuel they can load, and a starter when the pit actually needs lighting. */
+function smokeCanTend(world, rec, settle, fire) {
+    if (!smokePitOut(world, fire)) return false;
+    if (!fireCanFuel(world, rec, settle, fire)) return false;
+    if (fireNeedsLight(fire)) {
+        return !!findStack(world, rec, settle, (s) => Settlement.isFirestarter(s, getItem));
+    }
+    return true;
+}
+
 function pickCookJob(world, rec, settle, f) {
     if (!f) return null;
+    if (smokeOccupiesFire(f)) return null;
     const haveMemo = Object.create(null);
     const have = (id) => {
         const k = String(id || "");
@@ -819,28 +852,84 @@ function pickSmokeJob(world, rec, settle, f) {
         if (haveMemo[k] == null) haveMemo[k] = countItem(world, settle, k);
         return haveMemo[k];
     };
-    const bills = Settlement.billsOf(settle, f.uid);
-    for (let i = 0; i < bills.length; i++) {
-        const bill = bills[i];
-        if (bill.kind === "make") continue;
+    const active = [];
+    for (const bill of Settlement.billsOf(settle, f.uid)) {
+        if (bill?.kind === "make") continue;
         if (!Settlement.billIsActive(bill, have, settle)) continue;
+        active.push(bill);
+    }
+    for (const bill of active) {
+        if (bill.method !== "smoke_hide") continue;
+        if (f.cook && Settlement.cookOutputReady(getItem, f.cook, bill)) {
+            return smokeJob(f, bill, { pri: 0, phase: "take" });
+        }
+    }
+    for (const bill of active) {
+        if (bill.method !== "smoke_hide") continue;
+        if (!(f.cook && Settlement.cookInputReady(getItem, f.cook, bill))) continue;
+        // The hide smokes on its own. Come back only when the pit is out.
+        if (smokeCanTend(world, rec, settle, f)) {
+            return smokeJob(f, bill, { pri: 1, phase: "tend" });
+        }
+        return null;
+    }
+    for (const bill of active) {
         const method = bill.method || "stick_roast";
         if (method === "smoke_hide") {
-            if (cookHasWork(world, rec, settle, f, bill)) return smokeJob(f, bill);
+            if (cookHasWork(world, rec, settle, f, bill)) return smokeJob(f, bill, { phase: "load" });
             continue;
         }
+        if (smokeOccupiesFire(f)) continue;
         if (method === "stick_roast" || method === "shell_simmer") {
             if (cookHasWork(world, rec, settle, f, bill, { ignoreLeftover: true })) return null;
         }
     }
-    const leftover = leftoverSmokeBill();
-    if (f.cook && (
-        Settlement.cookInputReady(getItem, f.cook, leftover)
-        || Settlement.cookOutputReady(getItem, f.cook, leftover)
-    )) {
-        return smokeJob(f, leftover);
-    }
     return null;
+}
+
+/** Finished leather on an active smoke bill. Haulers take it; a smoking hide stays. */
+function haulSmokeLeather(world, rec, settle, claims) {
+    const haveMemo = Object.create(null);
+    const have = (id) => {
+        const k = String(id || "");
+        if (haveMemo[k] == null) haveMemo[k] = countItem(world, settle, k);
+        return haveMemo[k];
+    };
+    let best = null;
+    let bestD = Infinity;
+    for (const f of stationsOf(world, settle, "campfire")) {
+        const key = stationKey(f);
+        if (claimedByOther(claims, key, rec.id) || isSkipped(rec, key)) continue;
+        const cook = f.cook;
+        if (!cook?.id) continue;
+        let bill = null;
+        for (const b of Settlement.billsOf(settle, f.uid)) {
+            if (b?.method !== "smoke_hide") continue;
+            if (!Settlement.billIsActive(b, have, settle)) continue;
+            if (!Settlement.cookOutputReady(getItem, cook, b)) continue;
+            bill = b;
+            break;
+        }
+        if (!bill) continue;
+        if (!canCarry(rec, cook, 1)) continue;
+        if (!pickBasket(world, rec, settle, cook)) continue;
+        const d = Math.hypot(rec.x - f.x, rec.y - f.y);
+        if (d < bestD) {
+            bestD = d;
+            best = {
+                kind: "smoke_out",
+                id: cook.id,
+                quantity: cook.quantity || 1,
+                x: f.x,
+                y: f.y,
+                uid: f.uid,
+                fire: f,
+                bill,
+                claimKey: key
+            };
+        }
+    }
+    return best;
 }
 
 function cookBill(world, rec, settle, claims) {
@@ -1106,6 +1195,7 @@ function scanWork(world, rec, settle, claims) {
         leatherWork: jobOn(enabled, "leather") ? leatherWork(world, rec, settle, claims) : null,
         rockWork: jobOn(enabled, "craft") ? rockWork(world, rec, settle, claims) : null,
         haulDrop: jobOn(enabled, "haul") ? haulDrop(world, rec, settle, claims) : null,
+        haulOutput: jobOn(enabled, "haul") ? haulSmokeLeather(world, rec, settle, claims) : null,
         haulMerge: jobOn(enabled, "haul") ? haulMergeJob(world, rec, settle, claims) : null,
         gatherThing: jobOn(enabled, "gather") ? gatherThing(world, rec, settle, claims) : null,
         digThing: jobOn(enabled, "gather") ? digThing(world, rec, settle, claims) : null,
@@ -1165,6 +1255,10 @@ function scanWork(world, rec, settle, claims) {
     ctx.leftoverSmokeBill = leftoverSmokeBill;
     ctx.smokeJob = smokeJob;
     ctx.pickSmokeJob = pickSmokeJob;
+    ctx.smokeOccupiesFire = smokeOccupiesFire;
+    ctx.smokePitLive = smokePitLive;
+    ctx.smokeCanTend = smokeCanTend;
+    ctx.haulSmokeLeather = haulSmokeLeather;
     ctx.cookBill = cookBill;
     ctx.rackHang = rackHang;
     ctx.soakReadyDrop = soakReadyDrop;

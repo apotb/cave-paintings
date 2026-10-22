@@ -1872,6 +1872,175 @@ test("dedicated settler loads a drying rack from a basket for smoke leather", ()
     assert.equal(fire.cook?.id, "deer_hide_brained");
 });
 
+function addMate(world, settle, pawn, opts = {}) {
+    const rec = world._settlerFromSnap({
+        id: opts.id || "settler2",
+        name: "Mate",
+        x: opts.x ?? pawn.x,
+        y: opts.y ?? pawn.y,
+        ownerId: pawn.id,
+        homeSettlementId: settle.id,
+        inventory: opts.inventory || [null, null, null, null, null]
+    });
+    settle.jobs[rec.id] = opts.jobs;
+    world.settlers.push(rec);
+    world._ensureSettlerCreature(rec);
+    return rec;
+}
+
+test("a smoking hide does not keep the tailor at the fire", () => {
+    const DataStore = require("../shared/DataStore");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
+    const fire = addLitFire(world, settle, rec);
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.cook = { id: "deer_hide_brained", quantity: 1, temp: 800 };
+    fire.pitTemp = 900;
+    fire.burnRemaining = 30;
+    fire.cookProgress = 0;
+    Research.unlock(pawn, "smoking");
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
+    workOnce(world, rec);
+    assert.equal(rec._workHold, false);
+    assert.equal(rec._settlerAct, "Idle");
+    assert.equal(fire.cook?.id, "deer_hide_brained");
+    Fire.tickCook(fire, (id) => DataStore.getItem(id), { worldMinute: 10 });
+    assert.ok((fire.cookProgress || 0) > 0, "hide should smoke with nobody watching");
+    assert.equal(fire.cook?.id, "deer_hide_brained");
+    workOnce(world, rec);
+    assert.equal(rec._workHold, false);
+    assert.equal(rec._settlerAct, "Idle");
+    assert.equal(fire.cook?.id, "deer_hide_brained");
+});
+
+test("tailor refuels a dead smoking fire and then leaves", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
+    const basket = addBasket(world, settle, rec.x + 32, rec.y);
+    basket.slots[0] = { id: "stick", quantity: 8 };
+    const fire = addLitFire(world, settle, rec);
+    fire.fuel = [null, null];
+    fire.burnRemaining = 0;
+    fire.pitTemp = 500;
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.cook = { id: "deer_hide_brained", quantity: 1 };
+    Research.unlock(pawn, "smoking");
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
+    let lit = false;
+    for (let i = 0; i < 24; i++) {
+        workOnce(world, rec);
+        if (Fire.isBurning(fire)) {
+            lit = true;
+            break;
+        }
+    }
+    assert.equal(lit, true, `fire stayed out (${rec._settlerAct})`);
+    assert.equal(fire.cook?.id, "deer_hide_brained");
+    assert.equal(rec._workHold, false);
+    workOnce(world, rec);
+    assert.equal(rec._settlerAct, "Idle");
+    assert.equal(rec._workHold, false);
+    assert.equal(fire.cook?.id, "deer_hide_brained");
+});
+
+test("tailor stores finished leather and the smoke bill counts it", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    const fire = addLitFire(world, settle, rec);
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.cook = { id: "deer_leather", quantity: 1 };
+    Research.unlock(pawn, "smoking");
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "count", n: 1, paused: false });
+    const bill = Settlement.billsOf(settle, fire.uid)[0];
+    assert.equal(bill.remaining, 1);
+    let took = false;
+    for (let i = 0; i < 24; i++) {
+        workOnce(world, rec);
+        if (!fire.cook) {
+            took = true;
+            break;
+        }
+    }
+    assert.equal(took, true, `leather stayed on the fire (${rec._settlerAct})`);
+    assert.equal(bill.remaining, 0);
+    assert.equal(settlerHas(rec, basket, "deer_leather"), true);
+});
+
+test("hauler stores finished leather and the smoke bill counts it", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const hauler = addMate(world, settle, pawn, {
+        id: "hauler1",
+        x: rec.x + 16,
+        y: rec.y,
+        jobs: { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1 }
+    });
+    const basket = addBasket(world, settle, hauler.x, hauler.y, "haul-basket");
+    const fire = addLitFire(world, settle, rec);
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.cook = { id: "deer_leather", quantity: 1 };
+    Research.unlock(pawn, "smoking");
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "count", n: 1, paused: false });
+    const bill = Settlement.billsOf(settle, fire.uid)[0];
+    let took = false;
+    for (let i = 0; i < 40; i++) {
+        workOnce(world, hauler);
+        if (!fire.cook) {
+            took = true;
+            break;
+        }
+    }
+    assert.equal(took, true, `hauler left the leather (${hauler._settlerAct})`);
+    assert.equal(bill.remaining, 0);
+    assert.equal(settlerHas(hauler, basket, "deer_leather"), true);
+});
+
+test("hauler leaves a hide that is still smoking", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const hauler = addMate(world, settle, pawn, {
+        id: "hauler2",
+        x: rec.x,
+        y: rec.y,
+        jobs: { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1 }
+    });
+    addBasket(world, settle, hauler.x, hauler.y, "haul-basket-2");
+    const fire = addLitFire(world, settle, rec);
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.cook = { id: "deer_hide_brained", quantity: 1 };
+    Research.unlock(pawn, "smoking");
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "count", n: 1, paused: false });
+    const bill = Settlement.billsOf(settle, fire.uid)[0];
+    for (let i = 0; i < 8; i++) workOnce(world, hauler);
+    assert.equal(fire.cook?.id, "deer_hide_brained");
+    assert.equal(bill.remaining, 1);
+    assert.equal(hauler._workHold, false);
+});
+
+test("a cook does not take a smoking hide off for a roast", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const basket = addBasket(world, settle, rec.x, rec.y);
+    basket.slots[0] = { id: "apple", quantity: 3 };
+    const fire = addLitFire(world, settle, rec);
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.catalystReserved = true;
+    fire.cook = { id: "deer_hide_brained", quantity: 1 };
+    Research.unlock(pawn, "smoking");
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
+    Settlement.addBill(settle, fire.uid, { recipeId: "roast", mode: "forever", paused: false });
+    for (let i = 0; i < 12; i++) workOnce(world, rec);
+    assert.equal(fire.cook?.id, "deer_hide_brained");
+    assert.equal(fire.catalyst?.id, "drying_rack");
+});
+
 test("dedicated settler smokes brained boar hide even when a roast bill is first", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
@@ -2356,12 +2525,12 @@ test("rejoining keeps a tailor sewing at the skinworking bench", () => {
     assert.ok(rec2._workChannel.remaining > mid - 1500, "sewing should not start over");
 });
 
-test("rejoining keeps a tailor smoking instead of walking off the fire", () => {
+test("rejoining leaves a smoking hide on the fire", () => {
     const { world, pawn } = createTestWorld();
     fillGrass(world);
     const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
     settle.jobs[rec.id] = {
-        doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0, research: 0
+        doctor: 0, cook: 0, chop: 0, leather: 2, gather: 0, haul: 1, research: 0
     };
     const fire = addLitFire(world, settle, rec, "fire-rejoin");
     fire.catalyst = { id: "drying_rack", quantity: 1 };
@@ -2371,19 +2540,6 @@ test("rejoining keeps a tailor smoking instead of walking off the fire", () => {
     fire.burnRemaining = 40;
     Research.unlock(pawn, "smoking");
     Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
-    let smoking = false;
-    for (let i = 0; i < 40; i++) {
-        world.tick(16);
-        if (/Smoking/i.test(rec._settlerAct || "")) {
-            smoking = true;
-            break;
-        }
-    }
-    assert.equal(smoking, true, `never started smoking (${rec._settlerAct})`);
-    fire.cookProgress = 40;
-    settle.jobs[rec.id] = {
-        doctor: 0, cook: 0, chop: 0, leather: 2, gather: 0, haul: 1, research: 0
-    };
     const basket = addBasket(world, settle, rec.x + 48, rec.y, "haul-rejoin");
     const chunk = originChunk(world);
     chunk.drops.push({
@@ -2402,10 +2558,9 @@ test("rejoining keeps a tailor smoking instead of walking off the fire", () => {
     const rec2 = loaded.settlers[0];
     const fire2 = thingByUid(loaded, "fire-rejoin");
     for (let i = 0; i < 30; i++) loaded.tick(16);
-    assert.match(rec2._settlerAct || "", /Smoking/i, `left the fire to ${rec2._settlerAct}`);
     assert.equal(fire2.cook?.id, "deer_hide_brained");
     assert.ok(fire2.cookProgress >= 40, `smoke progress reset to ${fire2.cookProgress}`);
-    assert.notEqual(rec2._workChannel?.kind, "flesh");
+    assert.doesNotMatch(rec2._settlerAct || "", /Smoking/i);
 });
 
 test("dedicated settler fleshes with a scraper that is only in the backpack", () => {

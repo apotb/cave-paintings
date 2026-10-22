@@ -1947,6 +1947,30 @@ test("actLabel names smoke and hidework by hide type, not the full allowlist", (
         Settlement.actLabel({
             type: "leather",
             target: {
+                kind: "smoke",
+                phase: "tend",
+                fire: { id: "unlit_campfire", cook: { id: "deer_hide_brained" } },
+                bill: { method: "smoke_hide", allowedIds: ["deer_hide_brained"] }
+            }
+        }, ctx),
+        "Lighting a fire"
+    );
+    assert.equal(
+        Settlement.actLabel({
+            type: "leather",
+            target: {
+                kind: "smoke",
+                phase: "tend",
+                fire: { id: "campfire", cook: { id: "deer_hide_brained" } },
+                bill: { method: "smoke_hide", allowedIds: ["deer_hide_brained"] }
+            }
+        }, ctx),
+        "Stoking the fire"
+    );
+    assert.equal(
+        Settlement.actLabel({
+            type: "leather",
+            target: {
                 bill: { method: "flesh_hide", allowedIds: ["deer_hide", "boar_hide"] },
                 station: { id: "drying_rack", slots: [{ id: "deer_hide" }] }
             }

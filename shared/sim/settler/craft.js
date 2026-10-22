@@ -74,10 +74,36 @@
     const haltAtBench = (...args) => ctx.haltAtBench(...args);
     const pocketFail = (...args) => ctx.pocketFail(...args);
     const fetchOneOrRoom = (...args) => ctx.fetchOneOrRoom(...args);
+    const smokePitLive = (...args) => ctx.smokePitLive(...args);
+    const fireNeedsLight = (...args) => ctx.fireNeedsLight(...args);
 
 
 function refuseTake(world, rec, settle, fire) {
     return pocketFail(world, rec, settle, stationKey(fire), null);
+}
+
+/** Hide is on the rack. Top the fire up, light it if it is out, then leave. */
+function leaveSmokingHide(world, rec, settle, fire) {
+    if (!Fire.isBurning(fire)) {
+        if (fireNeedsLight(fire)) {
+            const step = doLightFire(world, rec, settle, fire);
+            if (Fire.isBurning(fire)) {
+                endWorkHold(rec);
+                return halt();
+            }
+            return step;
+        }
+        const walked = goOrWalk(world, rec, fire);
+        if (walked) return walked;
+        stokeUntilKeep(world, rec, settle, fire);
+        if (typeof world._campfireEnsureBurning === "function") world._campfireEnsureBurning(fire);
+        emitEntry(world, fire);
+        endWorkHold(rec);
+        return halt();
+    }
+    stokeUntilKeep(world, rec, settle, fire);
+    endWorkHold(rec);
+    return halt();
 }
 
 function doCook(world, rec, settle, job) {
@@ -299,6 +325,11 @@ function doCook(world, rec, settle, job) {
         markCatalystReserved(fire);
         emitEntry(world, fire);
         world._dirtyPawnOwner(rec);
+    }
+    if (method === "smoke_hide"
+        && fire.cook
+        && Settlement.cookInputReady(getItem, fire.cook, bill)) {
+        return leaveSmokingHide(world, rec, settle, fire);
     }
     const walked = goOrWalk(world, rec, fire);
     if (walked) return walked;
