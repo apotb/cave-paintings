@@ -71,6 +71,15 @@ test("a water tile holds one bobber", () => {
     assert.equal(Fish.bobberTaken(3, 4, [], "other"), false);
 });
 
+test("a fishing stand centers the pawn on the tile", () => {
+    const pose = Fish.standPose(10, 2, 16);
+    assert.equal(pose.x + 8, (10 + 0.5) * 16, "body center is the tile center");
+    assert.ok(Math.abs((pose.y - 8) - (2 + 0.5) * 16) < 0.02);
+    assert.equal(Fish.feetCover(pose.x, pose.y, 10, 2), true);
+    assert.equal(Fish.lineHolds(pose.x, pose.y, 10, 1, 2), true, "an up-cast still holds");
+    assert.equal(Fish.lineHolds(pose.x, pose.y, 11, 2, 2), true, "a right-cast still holds");
+});
+
 test("a cast uses the tiles the feet cover, not the bottom-left corner", () => {
     const key = (x) => (x < 10 ? "water" : "grass");
     const spot = Fish.castTile(156, 40, "left", key);
@@ -1055,7 +1064,7 @@ test("rejoining does not haul a fisher's rod back to storage", () => {
         };
         world.chunks.set(ck, chunk);
     }
-    const basket = { uid: "rod-basket", id: "wicker_basket", x, y };
+    const basket = { uid: "rod-basket", id: "wicker_basket", x: x + 32, y };
     Place.ensureStorageEntry(basket, world._thingDef("wicker_basket"));
     chunk.things.push(basket);
     settle.stationUids = ["rod-basket"];

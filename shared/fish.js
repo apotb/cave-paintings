@@ -254,6 +254,21 @@
         return dy > 0 ? "down" : "up";
     }
 
+    /**
+     * Feet-left pose that puts a 16×16 pawn in the middle of the stand tile.
+     * The origin is the sprite's bottom-left, so the tile center is not the pose.
+     * Feet sit just inside the tile so a bottom-edge y still counts as this tile.
+     */
+    function standPose(standTx, standTy, tileSize) {
+        const ts = Number(tileSize) > 0 ? Number(tileSize) : TILE;
+        const cx = ((standTx | 0) + 0.5) * ts;
+        const cy = ((standTy | 0) + 0.5) * ts;
+        return {
+            x: cx - PAWN_W * 0.5,
+            y: Math.min(cy + PAWN_W * 0.5, ((standTy | 0) + 1) * ts) - 0.01
+        };
+    }
+
     /** True while the feet still cover the stand tile the cast started on. */
     function feetCover(x, y, standTx, standTy) {
         const left = Number(x) || 0;
@@ -412,6 +427,7 @@
         yieldForPop,
         measure,
         castTile,
+        standPose,
         shoreFacing,
         facingBobber,
         feetCover,

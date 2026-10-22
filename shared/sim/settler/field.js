@@ -323,6 +323,17 @@ function doResearch(world, rec, settle, circle, delta) {
         const walked = goOrWalk(world, rec, entry) || walkTo(stand.x, stand.y, { openRadius: 0 });
         return walkResearch(world, rec, entry, walked, delta);
     }
+    // Arrival stops a couple of pixels short. Plant the sprite on the circle.
+    rec.x = stand.x;
+    rec.y = stand.y;
+    const painter = rec.creature || world._ensureSettlerCreature?.(rec);
+    if (painter) {
+        painter.x = stand.x;
+        painter.y = stand.y;
+        painter.vx = 0;
+        painter.vy = 0;
+        painter.setDesiredVel?.(0, 0);
+    }
     const now = world.gameMinutes;
     if (rec._paintTickMin == null) rec._paintTickMin = now;
     let elapsed = Research.minuteDelta(now, rec._paintTickMin);
@@ -509,14 +520,49 @@ function doDig(world, rec, settle, patch, delta) {
     return halt();
 }
 
+function fishApi() {
+    if (typeof Fish !== "undefined" && Fish.standPose) return Fish;
+    try { return ctx.require?.("../fish"); } catch (_) { return null; }
+    return null;
+}
+
+/** Feet-left pose with the 16×16 body in the middle of the stand tile. */
+function fishStandFeet(standTx, standTy) {
+    const posed = fishApi()?.standPose?.(standTx, standTy, 16);
+    if (posed) return posed;
+    const ts = 16;
+    return {
+        x: ((standTx | 0) + 0.5) * ts - 8,
+        y: ((standTy | 0) + 1) * ts - 0.01
+    };
+}
+
+function plantFeet(rec, c, pose) {
+    rec.x = pose.x;
+    rec.y = pose.y;
+    if (!c) return;
+    c.x = pose.x;
+    c.y = pose.y;
+    c.vx = 0;
+    c.vy = 0;
+    c.setDesiredVel?.(0, 0);
+}
+
 function doFish(world, rec, settle, spot) {
     if (!spot) {
         endWorkHold(rec);
         return halt();
     }
     if (rec.fishChannel) {
-        const face = rec.fishChannel.facing || null;
-        if (face) rec.facing = face;
+        const ch = rec.fishChannel;
+        const pose = fishStandFeet(ch.standTx, ch.standTy);
+        const held = rec.creature || world._ensureSettlerCreature?.(rec);
+        plantFeet(rec, held, pose);
+        const face = ch.facing || null;
+        if (face) {
+            rec.facing = face;
+            if (held) held.facing = face;
+        }
         return halt(face ? { facing: face } : null);
     }
     if (world._bobberOn?.(spot.waterTx, spot.waterTy, rec.id)) {
@@ -551,22 +597,17 @@ function doFish(world, rec, settle, spot) {
         c.homeSettlementId = rec.homeSettlementId;
         c.ownerId = rec.ownerId;
     }
-    const ts = 16;
-    const feetX = (Number(spot.standTx) + 0.5) * ts;
-    const feetY = (Number(spot.standTy) + 0.5) * ts;
-    if (Math.hypot(rec.x - feetX, rec.y - feetY) > 6) {
-        return walkTo(feetX, feetY, { openRadius: 0 });
+    const pose = fishStandFeet(spot.standTx, spot.standTy);
+    // Pathing stops short of a pose on the tile corner. Close enough to
+    // snap; leaving them there puts the sprite beside the tile center.
+    if (Math.hypot(rec.x - pose.x, rec.y - pose.y) > 8) {
+        return walkTo(pose.x, pose.y, { openRadius: 0 });
     }
-    rec.x = feetX;
-    rec.y = feetY;
     const fdx = (spot.waterTx | 0) - (spot.standTx | 0);
     const fdy = (spot.waterTy | 0) - (spot.standTy | 0);
     rec.facing = fdx > 0 ? "right" : fdx < 0 ? "left" : fdy > 0 ? "down" : "up";
-    if (c) {
-        c.x = feetX;
-        c.y = feetY;
-        c.facing = rec.facing;
-    }
+    plantFeet(rec, c, pose);
+    if (c) c.facing = rec.facing;
     const started = world._tryStartFish?.(rec, { tx: spot.waterTx, ty: spot.waterTy });
     if (!started) {
         endWorkHold(rec);

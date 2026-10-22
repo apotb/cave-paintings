@@ -4277,7 +4277,7 @@ test("cook stokes from beside the fire when the stand is occupied", () => {
     assert.ok(stoking < 80, `stood on Stoking the fire for ${stoking} ticks`);
 });
 
-test("cook stokes from interact range without standing on the exact tile", () => {
+test("cook walks onto the interact spot before stoking", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn);
     rec.kc = 1600;
@@ -4297,19 +4297,29 @@ test("cook stokes from interact range without standing on the exact tile", () =>
     const basket = addBasket(world, settle, rec.x - 32, rec.y, "fuel-short");
     basket.slots[0] = { id: "log", quantity: 8 };
     const getItem = (id) => world._itemDef(id);
+    const before = Fire.burnMinutes(fire, getItem);
     let stoking = 0;
-    for (let i = 0; i < 40; i++) {
+    let fueledAt = null;
+    for (let i = 0; i < 80; i++) {
         world.tick(50);
         if (rec._settlerAct === "Stoking the fire") stoking++;
-        if (Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES
+        if (!fueledAt && Fire.burnMinutes(fire, getItem) > before + 0.01) {
+            fueledAt = { x: rec.x, y: rec.y };
+        }
+        if (fueledAt && Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES
             && rec._settlerAct !== "Stoking the fire") break;
     }
+    assert.ok(fueledAt, `never fueled (act=${rec._settlerAct} fuel=${JSON.stringify(fire.fuel)})`);
+    assert.ok(
+        Math.hypot(fueledAt.x - pose.x, fueledAt.y - pose.y) <= 1,
+        `should stoke from the interact spot, at ${fueledAt.x},${fueledAt.y} want ${pose.x},${pose.y}`
+    );
     assert.ok(
         Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES,
-        `never fueled (act=${rec._settlerAct} fuel=${JSON.stringify(fire.fuel)})`
+        `expected a full pit, got ${Fire.burnMinutes(fire, getItem)}`
     );
     assert.notEqual(rec._settlerAct, "Stoking the fire");
-    assert.ok(stoking < 12, `stood on Stoking the fire for ${stoking} ticks`);
+    assert.ok(stoking < 40, `stood on Stoking the fire for ${stoking} ticks`);
 });
 
 test("always-on off does not top up a fire that already has fuel", () => {

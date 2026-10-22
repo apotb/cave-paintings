@@ -613,24 +613,18 @@ function goOrWalk(world, rec, target) {
         const dist = Math.hypot(px - stand.x, py - stand.y);
         const poseBlocked = (pad) => !!(c && typeof world?._partyPoseBlocked === "function"
             && world._partyPoseBlocked(c, stand.x, stand.y, pad, { load: false }));
-        const blocked0 = poseBlocked(0);
-        // Pathing stops a few pixels short of a tight pose. Snapping those
-        // last pixels into the fire just pops them back out, and the job
-        // (stoke, cook, tan) stays up for as long as they stand there.
-        const beside = dist <= slack
-            || (dist <= TS && near(px, py, Number(target.x) || 0, Number(target.y) || 0));
-        if (beside) {
+        // The body has to be in the center of the interact tile. Being
+        // somewhere in reach is not using the station.
+        if (!poseBlocked(0) && dist <= slack) {
             faceToward(rec, target.x, (Number(target.y) || 0) - 8);
-            if (!blocked0 && dist <= slack) {
-                rec.x = stand.x;
-                rec.y = stand.y;
-                if (c) {
-                    c.x = stand.x;
-                    c.y = stand.y;
-                    c.vx = 0;
-                    c.vy = 0;
-                    c.setDesiredVel?.(0, 0);
-                }
+            rec.x = stand.x;
+            rec.y = stand.y;
+            if (c) {
+                c.x = stand.x;
+                c.y = stand.y;
+                c.vx = 0;
+                c.vy = 0;
+                c.setDesiredVel?.(0, 0);
             }
             return null;
         }
@@ -1382,12 +1376,8 @@ function stokeUntilKeep(world, rec, settle, fire) {
 
 function doStokeFire(world, rec, settle, fire) {
     if (!fire) return halt();
-    // Fuel comes out of storage. Once they are in reach, feed the pit.
-    // Waiting on the exact stand left them planted on "Stoking the fire".
-    if (!near(rec.x, rec.y, fire.x, fire.y)) {
-        const walked = goOrWalk(world, rec, fire);
-        if (walked) return walked;
-    }
+    const walked = goOrWalk(world, rec, fire);
+    if (walked) return walked;
     const facing = faceFire(rec, fire);
     const before = Fire.burnMinutes(fire, getItem);
     stokeUntilKeep(world, rec, settle, fire);
