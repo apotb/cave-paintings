@@ -663,6 +663,64 @@ function goOrWalk(world, rec, target) {
     return walkTo(pose.feetX, pose.feetY, { openRadius: 0 });
 }
 
+/** True when a step toward the interact-spot center is open. */
+function canReachStand(world, rec, target) {
+    const c = rec?.creature || world?._ensureSettlerCreature?.(rec);
+    const def = world?._thingDef?.(target?.id);
+    const pose = (typeof Place !== "undefined" && Place.interactStandPose)
+        ? Place.interactStandPose(target, TS, def, c)
+        : null;
+    if (!pose || !c || typeof world?._partyPoseBlocked !== "function") return false;
+    const blocked = (x, y) => world._partyPoseBlocked(c, x, y, 0, { load: false });
+    if (blocked(pose.x, pose.y)) return false;
+    const px = Number(rec.x) || 0;
+    const py = Number(rec.y) || 0;
+    const dx = pose.x - px;
+    const dy = pose.y - py;
+    const dist = Math.hypot(dx, dy);
+    if (!(dist > 4)) return true;
+    const step = Math.min(6, dist);
+    return !blocked(px + (dx / dist) * step, py + (dy / dist) * step);
+}
+
+/**
+ * Walk to a station. Pathing can report arrival while the feet are still
+ * short of the marked tile, and then the job just halts there. Once they
+ * have stood still within reach, use the station from where they are.
+ * Standing still out of reach drops the job, unless the interact tile
+ * itself is still open and they are on the way to it.
+ */
+function approachStation(world, rec, target) {
+    const walked = goOrWalk(world, rec, target);
+    if (!walked) {
+        rec._feetStill = 0;
+        return null;
+    }
+    const uid = target?.uid || target?.id || "";
+    if (rec._feetUid !== uid) {
+        rec._feetUid = uid;
+        rec._feetStill = 0;
+    }
+    const px = Number(rec.x) || 0;
+    const py = Number(rec.y) || 0;
+    const moved = Math.hypot(px - (rec._feetPx ?? px), py - (rec._feetPy ?? py));
+    rec._feetPx = px;
+    rec._feetPy = py;
+    if (moved > 0.35) rec._feetStill = 0;
+    else rec._feetStill = (rec._feetStill || 0) + 1;
+    if ((rec._feetStill || 0) < 24) return walked;
+    rec._feetStill = 0;
+    if (near(px, py, Number(target.x) || 0, Number(target.y) || 0)) return null;
+    if (canReachStand(world, rec, target)) return walked;
+    // The scan that offered this job is still cached. Drop it so the skip
+    // is seen on the next tick instead of the same haul being planned again.
+    rec._settlerScan = null;
+    rec._settlerScanMs = 0;
+    endWorkHold(rec);
+    skipJob(rec, stationKey(target));
+    return halt();
+}
+
 function blockedToward(world, rec, c, tx, ty, ignoreUid, pad = 2) {
     if (!c || typeof world?._partyPoseBlocked !== "function") return false;
     const px = Number(rec.x) || 0;
@@ -1152,7 +1210,7 @@ function doHaulSmokeLeather(world, rec, settle, job) {
         endWorkHold(rec);
         return halt();
     }
-    const walked = goOrWalk(world, rec, fire);
+    const walked = approachStation(world, rec, fire);
     if (walked) return walked;
     fire.cook = null;
     if (!takeOffFire(world, rec, settle, cook)) {
@@ -1436,6 +1494,7 @@ function doLightFire(world, rec, settle, fire) {
     ctx.stationStandDistFor = stationStandDistFor;
     ctx.stationStandFeet = stationStandFeet;
     ctx.goOrWalk = goOrWalk;
+    ctx.approachStation = approachStation;
     ctx.blockedToward = blockedToward;
     ctx.knapQualityDurationScale = knapQualityDurationScale;
     ctx.knapMaterialDurationScale = knapMaterialDurationScale;

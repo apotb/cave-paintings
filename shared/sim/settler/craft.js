@@ -20,6 +20,7 @@
     const halt = (...args) => ctx.halt(...args);
     const getItem = (...args) => ctx.getItem(...args);
     const goOrWalk = (...args) => ctx.goOrWalk(...args);
+    const approachStation = (...args) => ctx.approachStation(...args);
     const takeOffFire = (...args) => ctx.takeOffFire(...args);
     const emitEntry = (...args) => ctx.emitEntry(...args);
     const persistBills = (...args) => ctx.persistBills(...args);
@@ -74,6 +75,8 @@
     const haltAtBench = (...args) => ctx.haltAtBench(...args);
     const pocketFail = (...args) => ctx.pocketFail(...args);
     const fetchOneOrRoom = (...args) => ctx.fetchOneOrRoom(...args);
+    const acceptsOne = (...args) => ctx.acceptsOne(...args);
+    const cookInputPred = (...args) => ctx.cookInputPred(...args);
     const smokePitLive = (...args) => ctx.smokePitLive(...args);
     const fireNeedsLight = (...args) => ctx.fireNeedsLight(...args);
 
@@ -93,7 +96,7 @@ function leaveSmokingHide(world, rec, settle, fire) {
             }
             return step;
         }
-        const walked = goOrWalk(world, rec, fire);
+        const walked = approachStation(world, rec, fire);
         if (walked) return walked;
         stokeUntilKeep(world, rec, settle, fire);
         if (typeof world._campfireEnsureBurning === "function") world._campfireEnsureBurning(fire);
@@ -115,7 +118,7 @@ function doCook(world, rec, settle, job) {
     if (method === "shell_simmer") {
         const cat = fire.catalyst;
         if (cat && (bill.leftover || Settlement.cookOutputReady(getItem, cat, bill))) {
-            const walked = goOrWalk(world, rec, fire);
+            const walked = approachStation(world, rec, fire);
             if (walked) return walked;
             fire.catalyst = null;
             if (!takeOffFire(world, rec, settle, cat)) {
@@ -138,7 +141,7 @@ function doCook(world, rec, settle, job) {
         // The unit already burning has left the slot. Keep cooking through it.
         if (!world._campfireHasFuel(fire) && !(Number(fire.burnRemaining) > 0)) return halt();
         if (fire.cook) {
-            const walked = goOrWalk(world, rec, fire);
+            const walked = approachStation(world, rec, fire);
             if (walked) return walked;
             const spit = fire.cook;
             fire.cook = null;
@@ -217,7 +220,7 @@ function doCook(world, rec, settle, job) {
     const cook = fire.cook;
     reserveRoastCatalyst(world, rec, settle, fire, bill);
     if (cook && (bill.leftover || Settlement.cookOutputReady(getItem, cook, bill))) {
-        const walked = goOrWalk(world, rec, fire);
+        const walked = approachStation(world, rec, fire);
         if (walked) return walked;
         fire.cook = null;
         if (!takeOffFire(world, rec, settle, cook)) {
@@ -237,7 +240,7 @@ function doCook(world, rec, settle, job) {
         return finishPut(world, rec, settle);
     }
     if (cook && !Settlement.cookFitsBill(getItem, cook, bill)) {
-        const walked = goOrWalk(world, rec, fire);
+        const walked = approachStation(world, rec, fire);
         if (walked) return walked;
         fire.cook = null;
         if (!takeOffFire(world, rec, settle, cook)) {
@@ -262,11 +265,16 @@ function doCook(world, rec, settle, job) {
     }
     stokeUntilKeep(world, rec, settle, fire);
     // The unit already burning has left the slot. Keep cooking through it.
-    if (!world._campfireHasFuel(fire) && !(Number(fire.burnRemaining) > 0)) return halt();
+    // A dead pit with nothing to burn used to halt in place and keep the
+    // smoke job, so they froze wherever they stood.
+    if (!world._campfireHasFuel(fire) && !(Number(fire.burnRemaining) > 0)) {
+        endWorkHold(rec);
+        return halt();
+    }
     const cat = fire.catalyst;
     if (!Settlement.isCookTool(getItem, cat, method)) {
         if (cook) {
-            const walked = goOrWalk(world, rec, fire);
+            const walked = approachStation(world, rec, fire);
             if (walked) return walked;
             fire.cook = null;
             if (!takeOffFire(world, rec, settle, cook)) {
@@ -288,7 +296,11 @@ function doCook(world, rec, settle, job) {
             endWorkHold(rec);
             return halt();
         }
-        if (found.at !== rec) return fetchCookPiece(world, rec, settle, found) || halt();
+        if (found.at !== rec) {
+            return fetchOneOrRoom(world, rec, settle, found, stationKey(fire), [
+                (s) => Settlement.isCookTool(getItem, s, method)
+            ]) || halt();
+        }
         const walked = goOrWalk(world, rec, fire);
         if (walked) return walked;
         fire.catalyst = takeCookPiece(found);
@@ -314,9 +326,17 @@ function doCook(world, rec, settle, job) {
             return halt();
         }
         if (found.at !== rec) {
-            markCatalystReserved(fire);
-            emitEntry(world, fire);
-            return fetchCookPiece(world, rec, settle, found) || halt();
+            const keep = [cookInputPred(bill, job.skipInputIds)];
+            if (isRoastCookBill(bill)) {
+                keep.push((s) => Settlement.isCookTool(getItem, s, method));
+            }
+            // Hands full: stash something else, then come back. Taking the
+            // piece anyway halted on the rack with the smoke job forever.
+            if (acceptsOne(rec, found.slots?.[found.index])) {
+                markCatalystReserved(fire);
+                emitEntry(world, fire);
+            }
+            return fetchOneOrRoom(world, rec, settle, found, stationKey(fire), keep) || halt();
         }
         const walked = goOrWalk(world, rec, fire);
         if (walked) return walked;

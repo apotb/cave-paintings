@@ -719,6 +719,14 @@ function reservedSimmerInputIds(world, rec, settle, fire, bills, roastIndex, hav
     return skip;
 }
 
+/** Lit, fueled, or fuel this settler can load. A warm empty pit is not. */
+function pitCanCook(world, rec, settle, fire) {
+    if (Fire.isBurning(fire)) return true;
+    if (Number(fire?.burnRemaining) > 0) return true;
+    if (world._campfireHasFuel?.(fire)) return true;
+    return fireCanFuel(world, rec, settle, fire);
+}
+
 function cookHasWork(world, rec, settle, fire, bill, opts = {}) {
     const method = bill.method || "stick_roast";
     const skipInputIds = opts.skipInputIds;
@@ -754,14 +762,14 @@ function cookHasWork(world, rec, settle, fire, bill, opts = {}) {
         if (fireNeedsLight(fire) && !fireCanFuel(world, rec, settle, fire)) return false;
         return true;
     }
-    if (fire.cook && Settlement.cookFitsBill(getItem, fire.cook, bill)) return true;
+    if (fire.cook && Settlement.cookFitsBill(getItem, fire.cook, bill)) {
+        if (Settlement.cookOutputReady(getItem, fire.cook, bill)) return true;
+        return pitCanCook(world, rec, settle, fire);
+    }
     const hasTool = Settlement.isCookTool(getItem, fire.catalyst, method)
         || !!findCookTool(world, rec, settle, method);
     const hasFood = !!findCookFood(world, rec, settle, bill, skipInputIds);
-    if (hasTool && hasFood) {
-        if (fireNeedsLight(fire) && !fireCanFuel(world, rec, settle, fire)) return false;
-        return true;
-    }
+    if (hasTool && hasFood) return pitCanCook(world, rec, settle, fire);
     if (opts.ignoreLeftover || (skipInputIds && skipInputIds.size)) return false;
     return shouldTakeLeftoverStick(world, rec, settle, fire, bill);
 }

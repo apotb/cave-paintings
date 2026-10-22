@@ -1542,6 +1542,133 @@ test("tailor stops taking smoked leather when pockets and storage are both full"
     assert.notEqual(rec._settlerAct, "Taking deer leather");
 });
 
+function pinSettler(world, rec) {
+    const origin = { x: rec.x, y: rec.y };
+    const real = world._partyPoseBlocked.bind(world);
+    world._partyPoseBlocked = (creature, x, y, pad, opts) => {
+        if (creature && creature.id === rec.id && Math.hypot(x - origin.x, y - origin.y) > 1) {
+            return true;
+        }
+        return real(creature, x, y, pad, opts);
+    };
+}
+
+test("tailor takes smoked leather from beside a tile they cannot step onto", () => {
+    const { world, pawn } = createTestWorld();
+    fillGrass(world);
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0, research: 0
+    };
+    const fire = addLitFire(world, settle, rec);
+    fire.cook = { id: "deer_leather", quantity: 1 };
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    rec.x = fire.x;
+    rec.y = fire.y - 18;
+    const mob = world._ensureSettlerCreature(rec);
+    mob.x = rec.x;
+    mob.y = rec.y;
+    Research.unlock(pawn, "smoking");
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
+    pinSettler(world, rec);
+    let taking = 0;
+    for (let i = 0; i < 80; i++) {
+        world.tick(16);
+        if (rec._settlerAct === "Taking deer leather") taking++;
+    }
+    assert.equal(fire.cook, null, `leather stayed on the fire (${rec._settlerAct})`);
+    assert.equal(settlerHas(rec, null, "deer_leather"), true);
+    assert.ok(taking < 40, `stood on Taking deer leather for ${taking} ticks`);
+    assert.notEqual(rec._settlerAct, "Taking deer leather");
+});
+
+test("a tailor who cannot reach the fire stops fetching its leather", () => {
+    const { world, pawn } = createTestWorld();
+    fillGrass(world);
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600, x: 40, y: 40 });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0, research: 0
+    };
+    const fire = addStation(world, settle, "campfire", 400, 400, "far-leather");
+    fire.id = "campfire";
+    fire.fuel = [{ id: "stick", quantity: 4 }, null];
+    fire.burnRemaining = 30;
+    fire.pitTemp = 500;
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.cook = { id: "deer_leather", quantity: 1 };
+    Research.unlock(pawn, "smoking");
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
+    pinSettler(world, rec);
+    let taking = 0;
+    for (let i = 0; i < 80; i++) {
+        world.tick(16);
+        if (rec._settlerAct === "Taking deer leather") taking++;
+    }
+    assert.equal(fire.cook?.id, "deer_leather");
+    assert.ok(taking < 40, `stood on Taking deer leather for ${taking} ticks`);
+    assert.notEqual(rec._settlerAct, "Taking deer leather");
+    assert.equal(rec._workHold, false);
+});
+
+test("hauler takes smoked leather from beside a tile they cannot step onto", () => {
+    const { world, pawn } = createTestWorld();
+    fillGrass(world);
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1, research: 0
+    };
+    const fire = addLitFire(world, settle, rec);
+    fire.cook = { id: "deer_leather", quantity: 1 };
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    rec.x = fire.x;
+    rec.y = fire.y - 18;
+    const mob = world._ensureSettlerCreature(rec);
+    mob.x = rec.x;
+    mob.y = rec.y;
+    const basket = addBasket(world, settle, rec.x, rec.y, "leather-haul");
+    Research.unlock(pawn, "smoking");
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
+    pinSettler(world, rec);
+    let hauling = 0;
+    for (let i = 0; i < 80; i++) {
+        world.tick(16);
+        if (rec._settlerAct === "Hauling deer leather") hauling++;
+    }
+    assert.equal(fire.cook, null, `leather stayed on the fire (${rec._settlerAct})`);
+    assert.equal(settlerHas(rec, basket, "deer_leather"), true);
+    assert.ok(hauling < 40, `stood on Hauling deer leather for ${hauling} ticks`);
+    assert.notEqual(rec._settlerAct, "Hauling deer leather");
+});
+
+test("a hauler who cannot reach the fire stops fetching its leather", () => {
+    const { world, pawn } = createTestWorld();
+    fillGrass(world);
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600, x: 40, y: 40 });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1, research: 0
+    };
+    addBasket(world, settle, rec.x, rec.y, "leather-haul-far");
+    const fire = addStation(world, settle, "campfire", 400, 400, "far-haul-leather");
+    fire.id = "campfire";
+    fire.fuel = [{ id: "stick", quantity: 4 }, null];
+    fire.burnRemaining = 30;
+    fire.pitTemp = 500;
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.cook = { id: "deer_leather", quantity: 1 };
+    Research.unlock(pawn, "smoking");
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
+    pinSettler(world, rec);
+    let hauling = 0;
+    for (let i = 0; i < 80; i++) {
+        world.tick(16);
+        if (rec._settlerAct === "Hauling deer leather") hauling++;
+    }
+    assert.equal(fire.cook?.id, "deer_leather");
+    assert.ok(hauling < 40, `stood on Hauling deer leather for ${hauling} ticks`);
+    assert.notEqual(rec._settlerAct, "Hauling deer leather");
+    assert.equal(rec._workHold, false);
+});
+
 test("tailor takes one leather from a heavy stack and starts sewing", () => {
     const { world, pawn } = createTestWorld();
     fillGrass(world);
@@ -1870,6 +1997,97 @@ test("dedicated settler loads a drying rack from a basket for smoke leather", ()
     workOnce(world, rec);
     assert.equal(fire.catalyst?.id, "drying_rack", "should prop a drying rack on the fire");
     assert.equal(fire.cook?.id, "deer_hide_brained");
+});
+
+test("full hands stash before smoking instead of freezing on the rack", () => {
+    const { world, pawn } = createTestWorld();
+    fillGrass(world);
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [
+            { id: "sharp_stick", quantity: 1 },
+            { id: "deer_hide", quantity: 2 },
+            { id: "cracked_coconut", quantity: 1 },
+            { id: "bone", quantity: 4 },
+            { id: "wicker_basket", quantity: 1 }
+        ]
+    });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
+    const fire = addLitFire(world, settle, rec);
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    const rack = addStation(world, settle, "drying_rack", rec.x + 48, rec.y, "hang-full");
+    rack.slots[0] = { id: "deer_hide_brained", quantity: 1 };
+    const basket = addBasket(world, settle, rec.x - 48, rec.y, "stash-full");
+    Research.unlock(pawn, "smoking");
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
+    for (let i = 0; i < 400; i++) {
+        world.tick(16);
+        if (fire.cook?.id === "deer_hide_brained") break;
+    }
+    assert.equal(fire.cook?.id, "deer_hide_brained", `hide stayed on the rack (${rec._settlerAct})`);
+    assert.equal(rack.slots[0], null);
+    assert.ok(basket.slots.some((s) => s && s.id && s.id !== "deer_hide_brained"));
+});
+
+test("full hands with nowhere to stash drop the smoke job instead of freezing", () => {
+    const { world, pawn } = createTestWorld();
+    fillGrass(world);
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        x: 96,
+        y: 96,
+        inventory: [
+            { id: "sharp_stick", quantity: 1 },
+            { id: "deer_hide", quantity: 2 },
+            { id: "cracked_coconut", quantity: 1 },
+            { id: "bone", quantity: 4 },
+            { id: "wicker_basket", quantity: 1 }
+        ]
+    });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
+    const fire = addStation(world, settle, "campfire", 160, 48, "fire-full");
+    fire.fuel = [{ id: "stick", quantity: 8 }, null];
+    fire.burnRemaining = 40;
+    fire.pitTemp = 400;
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.cook = null;
+    const rack = addStation(world, settle, "drying_rack", 96, 64, "rack-full");
+    rack.slots[0] = { id: "deer_hide_brained", quantity: 1 };
+    Research.unlock(pawn, "smoking");
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
+    let smoking = 0;
+    for (let i = 0; i < 80; i++) {
+        world.tick(16);
+        if (rec._settlerAct === "Smoking hide") smoking++;
+    }
+    assert.notEqual(rec._settlerAct, "Smoking hide");
+    assert.equal(rec._workHold, false);
+    assert.equal(rack.slots[0]?.id, "deer_hide_brained");
+    assert.ok(smoking < 40, `stood on Smoking hide for ${smoking} ticks`);
+});
+
+test("a hide on a dead fire does not freeze the settler in place", () => {
+    const { world, pawn } = createTestWorld();
+    fillGrass(world);
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600, x: 200, y: 200 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
+    const fire = addStation(world, settle, "campfire", 80, 64, "fire-dead");
+    fire.id = "campfire";
+    fire.fuel = [null, null];
+    fire.burnRemaining = 0;
+    fire.pitTemp = 500;
+    fire.catalyst = { id: "drying_rack", quantity: 1 };
+    fire.cook = { id: "deer_hide_brained", quantity: 1 };
+    fire.cookProgress = 10;
+    Research.unlock(pawn, "smoking");
+    Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
+    const x0 = rec.x;
+    const y0 = rec.y;
+    for (let i = 0; i < 40; i++) world.tick(16);
+    assert.equal(rec._settlerAct, "Idle");
+    assert.equal(rec._workHold, false);
+    assert.equal(fire.cook?.id, "deer_hide_brained");
+    assert.ok(Math.hypot(rec.x - x0, rec.y - y0) < 8, "should not be pinned walking nowhere");
 });
 
 function addMate(world, settle, pawn, opts = {}) {
