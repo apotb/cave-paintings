@@ -1868,7 +1868,8 @@ function creaturePointerHit(sprite, worldX, worldY) {
 
 /**
  * Resting pawns, the pawn you control, and parked settlers are click-through
- * so world Things under them (campfire, basket, bench) can be hovered and opened.
+ * so world Things under them (campfire, basket, bench) can still be opened.
+ * Hover tips prefer a settler while the cursor is on their body.
  * Traveling companions stay clickable so you can switch to them.
  */
 function syncCreatureInputHit(sprite) {

@@ -163,6 +163,36 @@
                 && wpt.y >= sy - body && wpt.y <= sy;
         };
 
+        /** Parked settler whose body is under the cursor. Input stays off so buildings remain clickable. */
+        this._livingSettlerAt = (pointer) => {
+            if (!pointer) return null;
+            for (const p of this.settlers || []) {
+                if (!p?.active || p._resting || p.isBodyDead?.()) continue;
+                if (this._pointerOnCreature(pointer, p)) return p;
+            }
+            return null;
+        };
+
+        /**
+         * Placed shelters, stores, and stations. Their hit areas cover a settler
+         * standing on them; the settler tip should win while the cursor is on the body.
+         */
+        this._buildingHover = (obj) => {
+            if (!obj) return false;
+            const meta = obj.meta;
+            if (
+                meta?.storage || meta?.sleep || meta?.craftStation || meta?.settlement
+                || meta?.paintingCircle || meta?.floor || meta?.dryingRack || meta?.campfire
+            ) return true;
+            if (typeof LeanTo !== "undefined" && obj instanceof LeanTo) return true;
+            if (typeof Storage !== "undefined" && obj instanceof Storage) return true;
+            if (typeof Campfire !== "undefined" && obj instanceof Campfire) return true;
+            if (typeof CraftStation !== "undefined" && obj instanceof CraftStation) return true;
+            if (typeof SettlingStone !== "undefined" && obj instanceof SettlingStone) return true;
+            if (typeof PaintingCircle !== "undefined" && obj instanceof PaintingCircle) return true;
+            return false;
+        };
+
         this.hideWorldTooltip = () => {
             if (this._tooltipTarget && this._isUiTooltipTarget(this._tooltipTarget)) return;
             this.hideTooltip();
@@ -175,13 +205,14 @@
                 && !this._isUiTooltipTarget(target)
             ) return;
             // Native Phaser over-events still fire on the work object (tree, bush,
-            // campfire) while a pawn is under the cursor. Don't let those steal the tip.
+            // hut, pit) while a pawn is under the cursor. Don't let those steal the tip.
+            const hover = this._hoverTarget;
             if (
                 target
-                && target !== this._hoverTarget
+                && target !== hover
                 && !this._isUiTooltipTarget(target)
-                && this._isHoverPawn(this._hoverTarget)
-                && this._pointerOnCreature(this.input?.activePointer, this._hoverTarget)
+                && (this._isHoverPawn(hover) || hover?.role === "settler")
+                && this._pointerOnCreature(this.input?.activePointer, hover)
             ) return;
             this._tooltipSource = (typeof textOrFn === "function") ? textOrFn : () => textOrFn;
             this._tooltipTarget = target;
@@ -487,12 +518,14 @@
             }
 
             const switchAlly = this.partySys?.worldSwitchTarget?.(pointer);
+            // Body under the cursor, even when a hut or pit hit area covers them.
+            const settlerAt = this._livingSettlerAt(pointer);
 
             // The whole shelter beats a sleeper's standing AABB (90°/270°),
             // but not a standing ally you're trying to click. Your own bunk
             // stays hoverable unless the pointer is on HUD chrome the big
-            // AABB would steal.
-            if (!switchAlly) {
+            // AABB would steal. A standing settler on the floor wins instead.
+            if (!switchAlly && !settlerAt) {
                 for (let i = hits.length - 1; i >= 0; i--) {
                     const obj = hits[i];
                     if (!obj?.active || !obj.input?.enabled) continue;
@@ -515,8 +548,9 @@
             }
 
             // Standing companions beat trees under the cursor so chop/gather
-            // animations don't flicker the tip. Parked settlers do not — baskets
-            // and stations need to stay clickable while people work at them.
+            // animations don't flicker the tip. Parked settlers stay click-through
+            // (input disabled) so baskets and stations still open, but their tip
+            // wins while the cursor is on the body.
             const keepPawn = this._hoverTarget || this._tooltipTarget;
             if (this._isHoverPawn(keepPawn) && this._pointerOnCreature(pointer, keepPawn)) {
                 return keepPawn;
@@ -529,6 +563,7 @@
                 if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
                 if (this._skipOwnRestLeanTo?.(obj, pointer)) continue;
                 if (obj.role === "settler" && obj.homeSettlementId) continue;
+                if (settlerAt && this._buildingHover(obj)) continue;
                 // Dead party sprites stay click-through for loot; downed allies
                 // must still hover so the name / "Downed" tip can show.
                 if (
@@ -537,10 +572,7 @@
                 ) continue;
                 return obj;
             }
-            for (const p of this.settlers || []) {
-                if (!p?.active || p._resting || p.isBodyDead?.()) continue;
-                if (this._pointerOnCreature(pointer, p)) return p;
-            }
+            if (settlerAt) return settlerAt;
             return null;
         };
 
@@ -938,12 +970,15 @@
 
             // A tree/bush/fire can sit on top in the display list while the cursor is
             // still in the pawn's click box. Keep the pawn so the tip doesn't strobe.
+            // Same for a settler already hovered, when the next hit is the building
+            // they are standing on.
             if (
                 !blockWorld
-                && this._isHoverPawn(this._hoverTarget)
+                && (this._isHoverPawn(this._hoverTarget) || this._hoverTarget?.role === "settler")
                 && (!top || (!this._isUiTooltipTarget(top) && top !== this._hoverTarget))
                 && !this.pointerOverWorldUi?.(pointer)
                 && this._pointerOnCreature(pointer, this._hoverTarget)
+                && (this._isHoverPawn(this._hoverTarget) || !top || this._buildingHover(top))
             ) {
                 top = this._hoverTarget;
             }
