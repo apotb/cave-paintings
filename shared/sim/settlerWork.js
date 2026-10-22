@@ -323,7 +323,7 @@ function tick(world, mob, delta) {
             clearChopApproach(rec, rec.creature || mob);
         } else {
             const tree = rec._settlerScan?.chopTree;
-            if (tree && !chopTargetLive(world, tree)) dropChopTarget(rec, tree);
+            if (tree && !chopTargetLive(world, tree)) dropChopTarget(rec, tree, world, settle);
             const keep = (typeof rec._settlerAct === "string" && rec._settlerAct && rec._settlerAct !== "Idle")
                 ? rec._settlerAct
                 : "Chopping";

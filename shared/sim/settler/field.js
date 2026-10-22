@@ -27,6 +27,9 @@
     const heldPredQty = (...args) => ctx.heldPredQty(...args);
     const fetchCookQty = (...args) => ctx.fetchCookQty(...args);
     const findBestChopStack = (...args) => ctx.findBestChopStack(...args);
+    const equipHand = (...args) => ctx.equipHand(...args);
+    const claimsFor = (...args) => ctx.claimsFor(...args);
+    const findSettle = (...args) => ctx.findSettle(...args);
     const clearPaintBar = (...args) => ctx.clearPaintBar(...args);
     const fetchStack = (...args) => ctx.fetchStack(...args);
     const goOrWalk = (...args) => ctx.goOrWalk(...args);
@@ -48,9 +51,17 @@
     const depositWantsDig = (...args) => ctx.depositWantsDig(...args);
 
 
+function chopRingAim(tree, hs, index) {
+    const dist = Chop.standDist(hs, 0);
+    const a = ((Number(index) || 0) / 8) * Math.PI * 2;
+    return {
+        aimX: tree.x + Math.cos(a) * dist,
+        aimY: tree.y + Math.sin(a) * dist
+    };
+}
+
 function chopStandFeet(world, rec, c, tree, hs) {
     const body = c?.bodyCenter?.() || { x: rec.x, y: rec.y };
-    const dist = Chop.standDist(hs, 0);
     const pack = (aimX, aimY) => {
         const feetX = aimX + ((Number(rec.x) || 0) - body.x);
         const feetY = aimY + ((Number(rec.y) || 0) - body.y);
@@ -70,20 +81,29 @@ function chopStandFeet(world, rec, c, tree, hs) {
         }
         return true;
     };
+    // A blocked approach used to keep requesting the nearest stand. Pathing
+    // stops short of that point and reports arrival, so the pawn never leaves.
+    if (rec?._chopSide != null) {
+        for (let i = 0; i < 8; i++) {
+            const idx = (rec._chopSide + i) % 8;
+            const aim = chopRingAim(tree, hs, idx);
+            if (!free(aim.aimX, aim.aimY)) continue;
+            rec._chopSide = idx;
+            return pack(aim.aimX, aim.aimY);
+        }
+    }
     const prefer = Chop.ringStand(body.x, body.y, tree.x, tree.y, hs, 0);
     if (free(prefer.aimX, prefer.aimY)) return pack(prefer.aimX, prefer.aimY);
     let best = null;
     let bestD = Infinity;
     const start = rec._chopOrbit || 0;
     for (let i = 0; i < 8; i++) {
-        const a = ((start + i) / 8) * Math.PI * 2;
-        const aimX = tree.x + Math.cos(a) * dist;
-        const aimY = tree.y + Math.sin(a) * dist;
-        if (!free(aimX, aimY)) continue;
-        const d = Math.hypot(body.x - aimX, body.y - aimY);
+        const aim = chopRingAim(tree, hs, start + i);
+        if (!free(aim.aimX, aim.aimY)) continue;
+        const d = Math.hypot(body.x - aim.aimX, body.y - aim.aimY);
         if (d < bestD) {
             bestD = d;
-            best = { aimX, aimY };
+            best = aim;
         }
     }
     if (best) return pack(best.aimX, best.aimY);
@@ -96,6 +116,10 @@ function clearChopApproach(rec, c) {
         rec._chopIgnoreUid = null;
         rec._chopSidestep = false;
         rec._chopOrbit = 0;
+        rec._chopSide = null;
+        rec._chopTurns = 0;
+        rec._chopPx = null;
+        rec._chopPy = null;
         rec._chopMissMs = 0;
         if (rec._busyJob?.type === "chop" || rec._busyJob?.type === "dig") endWorkHold(rec);
     }
@@ -110,11 +134,13 @@ function chopTargetLive(world, tree) {
     return true;
 }
 
-function dropChopTarget(rec, tree) {
+function dropChopTarget(rec, tree, world, settle) {
     clearChopApproach(rec, rec.creature);
     if (rec._settlerScan) rec._settlerScan.chopTree = null;
     rec._settlerScanMs = SCAN_MS;
     if (tree) skipJob(rec, thingKey(tree));
+    const home = settle || (world && findSettle(world, rec));
+    if (world && home) claimsFor(world, home)?.release(rec.id);
 }
 
 function markChopTarget(rec, c, tree) {
@@ -314,7 +340,7 @@ function doResearch(world, rec, settle, circle, delta) {
 
 function doChop(world, rec, settle, tree, delta) {
     if (!chopTargetLive(world, tree)) {
-        dropChopTarget(rec, tree);
+        dropChopTarget(rec, tree, world, settle);
         return halt();
     }
     const found = findBestChopStack(world, rec, settle);
@@ -323,7 +349,12 @@ function doChop(world, rec, settle, tree, delta) {
         return halt();
     }
     if (found.at !== rec) return fetchStack(world, rec, settle, found) || halt();
-    rec.hotbarIndex = found.index;
+    // A backpack slot index is not a hotbar slot. Selecting it leaves them
+    // empty-handed in front of the trunk.
+    if (!equipHand(rec, found)) {
+        clearChopApproach(rec, rec.creature);
+        return halt();
+    }
     const c = rec.creature || world._ensureSettlerCreature(rec);
     if (c) {
         c.inventory = rec.inventory;
@@ -336,34 +367,72 @@ function doChop(world, rec, settle, tree, delta) {
     const body = c?.bodyCenter?.() || { x: rec.x, y: rec.y };
     const ang = Math.atan2(tree.y - body.y, tree.x - body.x);
     const hits = !!(Chop.aimHitsTrunk && Chop.aimHitsTrunk(body.x, body.y, ang, tree.x, tree.y, hs));
-    const pose = chopStandFeet(world, rec, c, tree, hs);
+    let pose = chopStandFeet(world, rec, c, tree, hs);
     const enter = 6;
     const leave = 10;
     if (rec._chopArrived && pose.dAim > leave) rec._chopArrived = false;
     if (!rec._chopArrived && pose.dAim <= enter) rec._chopArrived = true;
     const ai = c?.ai;
     if ((ai?._jamMs || 0) > 900 || (ai?._stuckMs || 0) > 1800) {
-        dropChopTarget(rec, tree);
+        dropChopTarget(rec, tree, world, settle);
         return halt();
     }
-    if (hits && rec._chopArrived) {
-        rec._chopMissMs = 0;
+    const stalled = chopFeetStalled(rec, delta);
+    const swing = () => {
         const chop = Chop.pickChopFromAttacks?.(BodyCombat.collectAttacks(c)) || null;
-        if (chop && c?.tryMeleeAttack) c.tryMeleeAttack(tree, chop);
-        else if (c?.startMeleeAttack) c.startMeleeAttack(ang);
-        return halt();
+        if (chop && c?.tryMeleeAttack) return !!c.tryMeleeAttack(tree, chop);
+        if (c?.startMeleeAttack) return !!c.startMeleeAttack(ang);
+        return false;
+    };
+    // In reach, or planted on the stand: hit. Waiting for the exact ring
+    // point is what left them standing against a stump forever.
+    if (hits && (rec._chopArrived || stalled)) {
+        if (swing()) {
+            rec._chopMissMs = 0;
+            rec._chopTurns = 0;
+            return halt();
+        }
     }
-    if (!rec._chopArrived) {
+    if (stalled) {
         rec._chopMissMs = 0;
+        rec._chopArrived = false;
+        rec._chopTurns = (rec._chopTurns || 0) + 1;
+        if (rec._chopTurns >= 8) {
+            dropChopTarget(rec, tree, world, settle);
+            return halt();
+        }
+        rec._chopSide = ((rec._chopSide ?? 0) + 1) % 8;
+        if (ai) {
+            ai._path = null;
+            ai._pathGoalX = null;
+            ai._pathGoalY = null;
+            ai._jamMs = 0;
+            ai._stuckMs = 0;
+        }
+        pose = chopStandFeet(world, rec, c, tree, hs);
+    }
+    if (!rec._chopArrived || !hits) {
         return walkTo(pose.feetX, pose.feetY, { openRadius: 0 });
     }
-    const dt = Number(delta) > 0 ? Number(delta) : 16;
-    rec._chopMissMs = (rec._chopMissMs || 0) + dt;
-    if (rec._chopMissMs > 900) {
-        dropChopTarget(rec, tree);
-        return halt();
-    }
     return halt();
+}
+
+/** Feet stopped while the stand is still out of reach. Path arrival does not count. */
+function chopFeetStalled(rec, delta) {
+    const dt = Number(delta) > 0 ? Number(delta) : 16;
+    const x = Number(rec.x) || 0;
+    const y = Number(rec.y) || 0;
+    const moved = rec._chopPx == null
+        ? 1
+        : Math.hypot(x - rec._chopPx, y - rec._chopPy);
+    rec._chopPx = x;
+    rec._chopPy = y;
+    if (moved > 0.4) {
+        rec._chopMissMs = 0;
+        return false;
+    }
+    rec._chopMissMs = (rec._chopMissMs || 0) + dt;
+    return rec._chopMissMs > 500;
 }
 
 function digTargetLive(world, patch) {

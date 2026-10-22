@@ -799,6 +799,132 @@ test("chopper walks around a stump blocking the preferred stand", () => {
     );
 });
 
+test("chopper hits when a stump blocks the near side of the trunk", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{
+            id: "blank",
+            quantity: 1,
+            toolClass: "chopper",
+            knapQuality: "rough",
+            knapDamage: 8
+        }, null, null, null, null]
+    });
+    rec.hotbarIndex = 0;
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 1, leather: 0, gather: 0, haul: 0 };
+    const chunk = originChunk(world);
+    const dist = Chop.standDist(5, 0);
+    const tree = { uid: "tree-face", id: "tree", x: rec.x, y: rec.y - 48, chopProgress: 0 };
+    chunk.things.push(tree);
+    chunk.things.push({
+        uid: "stump-face",
+        id: "tree_stump",
+        x: tree.x,
+        y: tree.y + dist
+    });
+    let still = 0;
+    let chipped = false;
+    for (let i = 0; i < 240; i++) {
+        const beforeX = rec.x;
+        const beforeY = rec.y;
+        world.tick(50);
+        if ((Number(tree.chopProgress) || 0) > 0) {
+            chipped = true;
+            break;
+        }
+        const moved = Math.hypot(rec.x - beforeX, rec.y - beforeY);
+        if (moved < 0.2 && /Chopping/i.test(rec._settlerAct || "")) still++;
+        else still = 0;
+    }
+    assert.equal(chipped, true, "should chop once in reach, even if the stand is blocked");
+    assert.ok(still < 40, `stood in front of the trunk for ${still} ticks without swinging`);
+});
+
+test("chopper does not stand forever at a trunk it cannot reach", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{
+            id: "blank",
+            quantity: 1,
+            toolClass: "chopper",
+            knapQuality: "rough",
+            knapDamage: 8
+        }, null, null, null, null]
+    });
+    rec.hotbarIndex = 0;
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 1, leather: 0, gather: 0, haul: 0 };
+    const chunk = originChunk(world);
+    const dist = Chop.standDist(5, 0);
+    const tree = { uid: "tree-ring", id: "tree", x: rec.x, y: rec.y - 64, chopProgress: 0 };
+    chunk.things.push(tree);
+    for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2;
+        chunk.things.push({
+            uid: "rock-ring-" + i,
+            id: "rock",
+            x: tree.x + Math.cos(a) * (dist + 2),
+            y: tree.y + Math.sin(a) * (dist + 2)
+        });
+    }
+    let still = 0;
+    let worst = 0;
+    for (let i = 0; i < 200; i++) {
+        const beforeX = rec.x;
+        const beforeY = rec.y;
+        world.tick(50);
+        if ((Number(tree.chopProgress) || 0) > 0) break;
+        const moved = Math.hypot(rec.x - beforeX, rec.y - beforeY);
+        const chopping = /Chopping/i.test(rec._settlerAct || "");
+        if (moved < 0.2 && chopping) still++;
+        else still = 0;
+        if (still > worst) worst = still;
+    }
+    assert.ok(
+        worst < 120,
+        `stood chopping a walled-off trunk for ${worst} ticks`
+    );
+});
+
+test("a chopper in a backpack is held before the swing", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [
+            { id: "stick", quantity: 1 },
+            { id: "leaf", quantity: 1 },
+            { id: "log", quantity: 1 },
+            { id: "pebble", quantity: 1 },
+            { id: "apple", quantity: 1 }
+        ]
+    });
+    rec.equipment.back = { id: "hide_bundle", quantity: 1 };
+    world._syncPlayerInvSize(rec);
+    rec.overflow[0] = {
+        id: "blank",
+        quantity: 1,
+        toolClass: "chopper",
+        knapQuality: "rough",
+        knapDamage: 8
+    };
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 1, leather: 0, gather: 0, haul: 0 };
+    const chunk = originChunk(world);
+    const tree = { uid: "tree-pack", id: "tree", x: rec.x + 40, y: rec.y, chopProgress: 0 };
+    chunk.things.push(tree);
+    let chipped = false;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if ((Number(tree.chopProgress) || 0) > 0) {
+            chipped = true;
+            break;
+        }
+    }
+    const held = rec.inventory?.[rec.hotbarIndex];
+    assert.equal(chipped, true, "backpack chopper should fell progress on the tree");
+    assert.equal(held?.toolClass, "chopper");
+});
+
 test("dedicated settler finishes chopping before eating", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {

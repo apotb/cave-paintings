@@ -167,7 +167,7 @@ function chopTree(world, rec, settle, claims) {
     const mine = claims?.held(rec.id);
     if (mine && mine.startsWith("thing:")) {
         const held = list.find((t) => thingKey(t.entry) === mine);
-        if (held) return held.entry;
+        if (held && !isSkipped(rec, mine)) return held.entry;
     }
     let best = null;
     let bestD = Infinity;
