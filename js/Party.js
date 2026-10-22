@@ -158,7 +158,9 @@ class PartySystem {
         pawn.setVelocity?.(0, 0);
         pawn._iceVx = 0;
         pawn._iceVy = 0;
-        if (typeof PlayerLook !== "undefined") {
+        // A lying body is already turned. Idle in the last walk direction swaps
+        // the frame and points the head the wrong way along the bed.
+        if (!(pawn._resting || pawn._prone || pawn._downed) && typeof PlayerLook !== "undefined") {
             PlayerLook.play(pawn, pawn.facing || "down", false);
         }
     }

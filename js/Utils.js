@@ -2025,6 +2025,14 @@ function setCreatureRest(sprite, resting, rot, thingDef) {
     if (posed) {
         if (sprite.rotation !== ang) sprite.setRotation(ang);
         if (sprite.scaleX !== scale || sprite.scaleY !== scale) sprite.setScale(scale);
+        // The bed turn assumes the right-facing frame. A standing clip (switching
+        // control plays idle in whatever direction they last walked) leaves the
+        // body rotated and the head pointing the other way. setFrame every tick
+        // drops the pointer-over list, so only correct a frame that is wrong.
+        if (sprite.anims?.isPlaying) sprite.anims.stop();
+        if (sprite.texture?.frameTotal > 7 && Number(sprite.frame?.name) !== 7) {
+            sprite.setFrame(7);
+        }
         if (sprite.body) {
             sprite.body.moves = false;
             sprite.setVelocity?.(0, 0);
@@ -2072,14 +2080,14 @@ function pinRestingCreature(sprite, scene) {
         if (dx * dx + dy * dy > 0.02) {
             if (typeof sprite.teleport === "function") sprite.teleport(pos.x, pos.y);
             else sprite.setPosition?.(pos.x, pos.y);
-            if (sprite.body) {
-                sprite.body.moves = false;
-                sprite.body.setVelocity?.(0, 0);
-                sprite.body.reset?.(pos.x, pos.y);
-            }
-        } else if (sprite.body) {
+        }
+        // Body.reset stores getTopLeft. On a rotated sleeper that corner is
+        // not the arcade position, and the next step would apply it as a delta.
+        if (sprite.body) {
             sprite.body.moves = false;
             sprite.body.setVelocity?.(0, 0);
+            sprite.setVelocity?.(0, 0);
+            syncPawnPhysicsPose(sprite);
         }
         sprite._physX = pos.x;
         sprite._physY = pos.y;
@@ -2207,6 +2215,8 @@ function holdPawnInsideRings(pawn) {
     const body = pawn?.body;
     const scene = pawn?.scene;
     if (!body?.enable || !body.position || !body.prev || !scene) return;
+    // Bunks sit against the thatch. A sleeper stays on the slot.
+    if (pawn._resting) return;
     if (typeof Place === "undefined" || !Place.clampRingCenter || !Place.ringWorld) return;
     const hx = body.halfWidth || 0;
     const hy = body.halfHeight || 0;
