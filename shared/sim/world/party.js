@@ -1178,7 +1178,7 @@
         while (left > 0) {
             const slice = Math.min(left, sliceMs);
             const dt = slice / 1000;
-            const swim = this._terrainSpeedMult(w.x, w.y - 1);
+            const swim = this._feetSpeedMult(c);
             const nx = w.x + vx * dt * swim;
             const ny = w.y + vy * dt * swim;
             if (!this._partyPoseBlocked(c, nx, c.y)) c.x = nx;
@@ -1217,7 +1217,7 @@
         }
         const ox = w.x;
         const oy = w.y;
-        const swim = this._terrainSpeedMult(w.x, w.y - 1);
+        const swim = this._feetSpeedMult(w);
         const nx = w.x + hx * speedPx * dt * swim;
         const ny = w.y + hy * speedPx * dt * swim;
         let movedX = false;
@@ -1433,7 +1433,35 @@
         return true;
     },
 
-    /** Move speed scale for standing in water (ice is not slowed). */
+    /**
+     * Move speed scale when the feet hitbox overlaps water.
+     * Ice is not slowed. Missing chunks count as dry, same as a point sample.
+     */
+    _feetSpeedMult(entity) {
+        if (!entity) return 1;
+        if (typeof Place === "undefined" || !Place.walkBodyOverlapsTile) {
+            return this._terrainSpeedMult(entity.x, entity.y - 1);
+        }
+        const wet = Place.walkBodyOverlapsTile(
+            entity.x, entity.y,
+            entity.width, entity.height, entity.hitboxSize,
+            TS,
+            (tx, ty) => {
+                const wx = tx * TS + TS * 0.5;
+                const wy = ty * TS + TS * 0.5;
+                const { cx, cy } = worldToChunk(wx, wy);
+                const c = this.chunks.get(chunkKey(cx, cy));
+                if (!c) return false;
+                const lx = tx - cx * CS;
+                const ly = ty - cy * CS;
+                if (lx < 0 || ly < 0 || lx >= CS || ly >= CS) return false;
+                return c.tiles[lx + ly * CS] === "water";
+            }
+        );
+        return wet ? 0.5 : 1;
+    },
+
+    /** Move speed scale for a world point in water (ice is not slowed). */
     _terrainSpeedMult(wx, wy) {
         const { cx, cy } = worldToChunk(wx, wy);
         const c = this.chunks.get(chunkKey(cx, cy));

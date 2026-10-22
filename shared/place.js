@@ -40,6 +40,28 @@
         return { left, right: left + hs, top: bottom - feetH, bottom };
     }
 
+    /**
+     * True when the feet strip covers a tile `pred(tx, ty)` accepts.
+     * Pose (x, y) is the sprite's bottom-left, half a tile left of these
+     * feet, so a point sample there counts as wading before the hitbox does.
+     * A strip that ends exactly on a tile edge stays in the tile it stands on.
+     */
+    function walkBodyOverlapsTile(x, y, width, height, hitboxSize, tileSize, pred) {
+        if (typeof pred !== "function") return false;
+        const box = walkBodyAt(x, y, width, height, hitboxSize);
+        const ts = Number(tileSize) > 0 ? Number(tileSize) : 16;
+        const x0 = Math.floor(box.left / ts);
+        const y0 = Math.floor(box.top / ts);
+        const x1 = Math.floor((box.right - 1e-4) / ts);
+        const y1 = Math.floor((box.bottom - 1e-4) / ts);
+        for (let ty = y0; ty <= y1; ty++) {
+            for (let tx = x0; tx <= x1; tx++) {
+                if (pred(tx, ty)) return true;
+            }
+        }
+        return false;
+    }
+
     function placeThingId(itemDef) {
         const id = itemDef?.place?.thing;
         return typeof id === "string" && id ? id : null;
@@ -1723,6 +1745,7 @@
         footprintWorldRect,
         hitboxWH,
         walkBodyAt,
+        walkBodyOverlapsTile,
         collisionWorldRect,
         collisionWorldRects,
         isGapFurniture,

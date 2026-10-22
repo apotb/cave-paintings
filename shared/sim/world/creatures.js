@@ -319,6 +319,7 @@
                 creature, x, y, pad, Object.assign({ load: false }, opts)
             ),
             terrainSpeedMult: (x, y) => self._terrainSpeedMult(x, y),
+            feetSpeedMult: (entity) => self._feetSpeedMult(entity),
             getRestWalkDest(mob) {
                 const spec = mob?._restWalk;
                 if (!spec?.uid) return null;

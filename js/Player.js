@@ -3939,6 +3939,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         const encumbrance = this.getEncumbrance();
         const moving = x !== 0 || y !== 0;
+        const terrainMult = this.scene.pawnTerrainSpeed?.(this)
+            ?? this.scene.terrainSpeedMult?.(this.x, this.y - 1)
+            ?? 1;
         const attacking = this.isAttacking();
         const fishing = this._netWorkChannel?.kind === "fish";
         const tending = !!this._tendChannel || !!this._eatChannel || !!this._skinChannel
@@ -3960,7 +3963,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 tileSize: this.scene.tileSize,
                 walkTiles: this.speed,
                 sprintFactor: this.sprintFactor,
-                terrainMult: this.scene.terrainSpeedMult?.(this.x, this.y - 1) ?? 1
+                terrainMult
             })
             : null;
         const canSprint = livingLegs >= 2
@@ -3990,7 +3993,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             * encumbrance.speedMultiplier
             * this.equipSpeedMultiplier
             * Math.max(0.05, Math.min(1.5, moveMul))
-            * (this.scene.terrainSpeedMult?.(this.x, this.y - 1) ?? 1);
+            * terrainMult;
 
         const wantVx = (prone || vomiting) ? 0 : x * speed;
         const wantVy = (prone || vomiting) ? 0 : y * speed;

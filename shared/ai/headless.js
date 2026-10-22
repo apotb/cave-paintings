@@ -1723,7 +1723,8 @@
                     attackSlow: false,
                     tileSize: TILE,
                     strollMul: this._strollMul != null ? this._strollMul : 1,
-                    terrainMult: this._world?.terrainSpeedMult?.(mob.x, mob.y - 1)
+                    terrainMult: this._world?.feetSpeedMult?.(mob)
+                        ?? this._world?.terrainSpeedMult?.(mob.x, mob.y - 1)
                 })
                 : null;
             if (moved) {

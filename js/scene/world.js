@@ -1087,7 +1087,27 @@
         return chunk.meta.tiles[localX + localY * cs] === "ice";
     },
 
-    /** Move speed scale for standing in water (ice is not slowed). */
+    /**
+     * Move speed scale when the feet hitbox overlaps water.
+     * Ice is not slowed. The sprite corner is not the sample: that sits
+     * half a tile left of the feet.
+     */
+    pawnTerrainSpeed(pawn) {
+        if (!pawn) return 1;
+        const ts = this.tileSize || 16;
+        if (typeof Place !== "undefined" && Place.walkBodyOverlapsTile) {
+            const wet = Place.walkBodyOverlapsTile(
+                pawn.x, pawn.y,
+                pawn.width, pawn.height, pawn.hitboxSize,
+                ts,
+                (tx, ty) => this._tileKeyAt(tx, ty) === "water"
+            );
+            return wet ? 0.5 : 1;
+        }
+        return this.terrainSpeedMult(pawn.x, pawn.y - 1);
+    },
+
+    /** Move speed scale for a world point in water (ice is not slowed). */
     terrainSpeedMult(wx, wy) {
         const chunk = this.getChunkAtWorld(wx, wy);
         if (!chunk?.isGenerated || !chunk.meta?.tiles) return 1;

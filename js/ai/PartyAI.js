@@ -364,6 +364,9 @@ class PartyAI {
     _applyWalk(pawn, nx, ny, sprint) {
         const scene = pawn.scene;
         const getDef = (id) => scene?.getItem?.(id);
+        const terrainMult = scene?.pawnTerrainSpeed?.(pawn)
+            ?? scene?.terrainSpeedMult?.(pawn.x, pawn.y - 1)
+            ?? 1;
         const moved = typeof Carry !== "undefined" && Carry.humanMoveSpeed
             ? Carry.humanMoveSpeed(pawn, {
                 getDef,
@@ -375,7 +378,7 @@ class PartyAI {
                 equipSpeedMultiplier: pawn.equipSpeedMultiplier,
                 strength: pawn.strength,
                 strollMul: this._strollMul != null ? this._strollMul : 1,
-                terrainMult: scene.terrainSpeedMult?.(pawn.x, pawn.y - 1) ?? 1
+                terrainMult
             })
             : null;
         const enc = pawn.getEncumbrance?.() || { speedMultiplier: 1 };
@@ -395,7 +398,7 @@ class PartyAI {
             moveMul *
             mul *
             (this._strollMul != null ? this._strollMul : 1) *
-            (scene.terrainSpeedMult?.(pawn.x, pawn.y - 1) ?? 1);
+            terrainMult;
         if (moved) pawn.isSprinting = moved.sprinting;
         applyEntityVelocity?.(pawn, nx * speed, ny * speed, scene.game?.loop?.delta || 16, scene);
         const ax = Math.abs(nx);

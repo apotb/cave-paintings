@@ -423,6 +423,32 @@ test("storage tooltip rows match the container width", () => {
     ]);
 });
 
+test("wading uses the feet strip, not the sprite's left corner", () => {
+    // Water is tile (0, 0): world x [0, 16), y [0, 16).
+    const water = (tx, ty) => tx === 0 && ty === 0;
+    // Feet of a 16px body with an 8px hitbox are x [12, 20) when the sprite
+    // origin sits at x=8. That overlaps the water. The old corner sample
+    // at the origin does too.
+    assert.equal(Place.walkBodyOverlapsTile(8, 16, 16, 16, 8, 16, water), true);
+
+    // Origin x=12 is still in the water (half a tile of sprite over the
+    // edge) but the feet [16, 24) are entirely on the next tile.
+    assert.equal(
+        Place.walkBodyOverlapsTile(12, 16, 16, 16, 8, 16, water),
+        false,
+        "sprite corner in the water is not wading"
+    );
+
+    // Feet just cross the edge: left = 11.5 + 4 = 15.5.
+    assert.equal(Place.walkBodyOverlapsTile(11.5, 16, 16, 16, 8, 16, water), true);
+
+    // Standing on the bottom edge of dry land above the water. Feet end at
+    // y=16, so they belong to the tile above, not the water below.
+    const below = (tx, ty) => ty === 1;
+    assert.equal(Place.walkBodyOverlapsTile(16, 16, 16, 16, 8, 16, below), false);
+    assert.equal(Place.walkBodyOverlapsTile(16, 16.5, 16, 16, 8, 16, below), true);
+});
+
 test("storage tooltip keeps unlike stacks apart", () => {
     const slots = [
         { id: "pebble", quantity: 3, stone: "granite" },
