@@ -1830,6 +1830,49 @@
         this._tickSettlerAI(dtMs, world);
     },
 
+    /**
+     * Settler pose step. A 12× frame is longer than the gap between drying
+     * racks, so the move is sliced, and a waypoint in front of that step
+     * ends the slice. Leftover time walks the next stand instead of
+     * waiting a frame — otherwise a 50ms tick stops at every cell.
+     */
+    _stepSettlerPose(cc, dt) {
+        const blocked = (px, py) => this._partyPoseBlocked(cc, px, py, 0, { load: false });
+        let vx = cc.vx || 0;
+        let vy = cc.vy || 0;
+        let timeLeft = Number(dt) || 0;
+        const speed = Math.hypot(vx, vy);
+        if (!(speed > 0) || !(timeLeft > 0) || typeof Path?.stepMove !== "function") {
+            return { arrived: false };
+        }
+        let arrived = false;
+        for (let hop = 0; hop < 3 && timeLeft > 0.001; hop++) {
+            const wp = cc.ai?._path?.[0] || null;
+            const step = Path.stepMove(
+                cc.x, cc.y, vx * timeLeft, vy * timeLeft, blocked, wp
+            );
+            const moved = Math.hypot(step.x - cc.x, step.y - cc.y);
+            cc.x = step.x;
+            cc.y = step.y;
+            timeLeft -= moved / speed;
+            arrived = !!step.arrived;
+            if (!arrived) break;
+            const path = cc.ai._path;
+            if (!path || !path.length) break;
+            if (Math.hypot(path[0].x - cc.x, path[0].y - cc.y) > 2) break;
+            path.shift();
+            const next = path[0];
+            if (!next) break;
+            const nd = Math.hypot(next.x - cc.x, next.y - cc.y) || 1;
+            vx = ((next.x - cc.x) / nd) * speed;
+            vy = ((next.y - cc.y) / nd) * speed;
+            arrived = false;
+        }
+        cc.vx = vx;
+        cc.vy = vy;
+        return { arrived };
+    },
+
     _tickSettlerAI(dtMs, world) {
         const scale = this._settlerTimeScale();
         const sdtMs = dtMs * scale;
@@ -1888,10 +1931,7 @@
             cc.applyDesiredVel(sdtMs);
             const ox = cc.x;
             const oy = cc.y;
-            const nx = cc.x + (cc.vx || 0) * dt;
-            const ny = cc.y + (cc.vy || 0) * dt;
-            if (!this._partyPoseBlocked(cc, nx, cc.y, 0, { load: false })) cc.x = nx;
-            if (!this._partyPoseBlocked(cc, cc.x, ny, 0, { load: false })) cc.y = ny;
+            const stepped = this._stepSettlerPose(cc, dt);
             rec.x = cc.x;
             rec.y = cc.y;
             this._maybeEjectIdleOverlap(rec, cc);
@@ -1904,7 +1944,8 @@
             rec.attackArt = cc.attackArt;
             rec.attackMax = cc.attackMax;
             if (
-                !rec._chopIgnoreUid
+                !stepped.arrived
+                && !rec._chopIgnoreUid
                 && Math.hypot(rec.x - ox, rec.y - oy) < 0.2
                 && (Math.abs(cc.vx) > 4 || Math.abs(cc.vy) > 4)
             ) {

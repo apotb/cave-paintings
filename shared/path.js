@@ -911,6 +911,76 @@
         return false;
     }
 
+    /**
+     * One integration step. 1× is about a pixel and stays a single axis
+     * split. Sleep runs the camp at 12×, so the same walk is ~11px — wider
+     * than the feet corridor between drying racks. The far pose is inside a
+     * rack, the whole step is dropped, and the next steer walks back to the
+     * waypoint it just sailed past.
+     * `halt` is that waypoint. Land on it instead of crossing it; the caller
+     * spends the leftover time on the next stand. Samples stay at 3px so a
+     * thin rack is not jumped. Open ground at 1× does not take the loop.
+     */
+    const MOVE_STEP_PX = 3;
+    const MOVE_MAX_SLICES = 40;
+
+    function stepMove(x, y, dx, dy, blocked, halt) {
+        const step = hypot(dx, dy);
+        if (!(step > 0) || typeof blocked !== "function") {
+            return { x: x + (dx || 0), y: y + (dy || 0), arrived: false };
+        }
+        let scale = 1;
+        let hx = null;
+        let hy = null;
+        if (halt && Number.isFinite(halt.x) && Number.isFinite(halt.y)) {
+            hx = halt.x;
+            hy = halt.y;
+            const wx = hx - x;
+            const wy = hy - y;
+            const dist = hypot(wx, wy);
+            if (dist <= ARRIVE_PX) {
+                return { x, y, arrived: true };
+            }
+            if (step > dist) {
+                const along = (dx * wx + dy * wy) / (step * dist);
+                if (along > 0.5) scale = dist / step;
+            }
+        }
+        const mx = dx * scale;
+        const my = dy * scale;
+        const travel = step * scale;
+        const arrivedAt = (px, py) => scale < 1
+            && hx != null
+            && hypot(px - hx, py - hy) <= ARRIVE_PX;
+        const split = (px, py, sx, sy) => {
+            let nx = px;
+            let ny = py;
+            if (!blocked(px + sx, py)) nx = px + sx;
+            if (!blocked(nx, py + sy)) ny = py + sy;
+            return { x: nx, y: ny };
+        };
+        if (travel <= MOVE_STEP_PX) {
+            const at = split(x, y, mx, my);
+            const reached = hypot(at.x - (x + mx), at.y - (y + my)) < 0.05;
+            return { x: at.x, y: at.y, arrived: reached && arrivedAt(at.x, at.y) };
+        }
+        let slices = Math.ceil(travel / MOVE_STEP_PX);
+        if (slices > MOVE_MAX_SLICES) slices = MOVE_MAX_SLICES;
+        const sx = mx / slices;
+        const sy = my / slices;
+        let cx = x;
+        let cy = y;
+        for (let i = 0; i < slices; i++) {
+            const at = split(cx, cy, sx, sy);
+            if (at.x === cx && at.y === cy) {
+                return { x: cx, y: cy, arrived: false };
+            }
+            cx = at.x;
+            cy = at.y;
+        }
+        return { x: cx, y: cy, arrived: arrivedAt(cx, cy) };
+    }
+
     return {
         TILE,
         LOOK_PX,
@@ -929,6 +999,7 @@
         cellStandOpen,
         cellOf,
         gapLanes,
-        inGapLane
+        inGapLane,
+        stepMove
     };
 });

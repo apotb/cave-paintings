@@ -1088,3 +1088,107 @@ test("a companion walks between campfires and a drying rack, not into a bench", 
         );
     }
 });
+
+test("stepMove keeps a short step on one axis split", () => {
+    let probes = 0;
+    const blocked = (x) => {
+        probes++;
+        return x >= 1;
+    };
+    const step = Path.stepMove(0, 0, 2, 1, blocked, null);
+    assert.equal(step.x, 0);
+    assert.equal(step.y, 1);
+    assert.equal(step.arrived, false);
+    assert.ok(probes <= 2, `short step probed ${probes} times`);
+});
+
+test("stepMove stops at a thin wall instead of jumping it or rejecting the step", () => {
+    const blocked = (x) => x >= 10 && x <= 14;
+    const step = Path.stepMove(0, 0, 40, 0, blocked, null);
+    assert.ok(step.x >= 6 && step.x < 10, `stopped at ${step.x}`);
+    assert.equal(step.arrived, false);
+});
+
+test("stepMove lands on a waypoint instead of sailing past it", () => {
+    const step = Path.stepMove(0, 0, 30, 0, () => false, { x: 8, y: 0 });
+    assert.ok(Math.hypot(step.x - 8, step.y) <= 2, `landed at ${step.x}`);
+    assert.equal(step.arrived, true);
+});
+
+test("a clear long step still covers the whole distance", () => {
+    const step = Path.stepMove(0, 0, 36, 0, () => false, null);
+    assert.ok(Math.abs(step.x - 36) < 0.05, `ended at ${step.x}`);
+    assert.equal(step.arrived, false);
+});
+
+test("a settler at sleep tick speed still walks between drying racks", () => {
+    const Place = require("../shared/place");
+    const Settlement = require("../shared/settlement");
+    const { createTestWorld, originChunk } = require("./helpers/simWorld");
+
+    function cross(startX, startYOff, stickX) {
+        const { world, pawn } = createTestWorld();
+        const chunk = originChunk(world);
+        const ty = 8;
+        for (let tx = 3; tx <= 12; tx++) {
+            const pos = Place.footprintWorldPos(tx, ty, 0, [1, 1], 16);
+            chunk.things.push({
+                uid: `rack-${tx}`,
+                id: "drying_rack",
+                x: pos.x,
+                y: pos.y,
+                rot: 0,
+                tx,
+                ty
+            });
+        }
+        world._chunkRectCache = null;
+        const rackY = (ty + 1) * 16;
+        const settle = Settlement.createSettlement({
+            x: startX,
+            y: rackY + startYOff,
+            ownerId: pawn.id
+        });
+        const rec = world._settlerFromSnap({
+            id: "settler1",
+            name: "Parked",
+            x: startX,
+            y: rackY + startYOff,
+            ownerId: pawn.id,
+            homeSettlementId: settle.id,
+            inventory: [null, null, null, null, null]
+        });
+        settle.jobs = {};
+        settle.jobs[rec.id] = Settlement.defaultJobs();
+        world.settlements.push(settle);
+        world.settlers.push(rec);
+        world._ensureSettlerCreature(rec);
+        chunk.lootableThings.push({
+            uid: "sticks-north",
+            id: "sticks",
+            x: stickX,
+            y: rackY - 64
+        });
+        world.tickSpeed = 12;
+        world.baseTickSpeed = 12;
+        const x0 = rec.x;
+        let maxDx = 0;
+        let minY = rec.y;
+        for (let i = 0; i < 80; i++) {
+            world.tick(16);
+            maxDx = Math.max(maxDx, Math.abs(rec.x - x0));
+            if (rec.y < minY) minY = rec.y;
+            if (rec.y < rackY - 12) break;
+        }
+        assert.ok(
+            minY < rackY - 12,
+            `from ${startX} should cross at 12×, ended ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`
+        );
+        return maxDx;
+    }
+
+    // Straight at a rack, where an 11px step used to sail past the gap
+    // waypoint and pace in front of the row.
+    const drift = cross(100, 24, 100);
+    assert.ok(drift < 28, `should use a gap, drifted ${drift.toFixed(1)}px`);
+});
