@@ -3171,6 +3171,60 @@ class PartySystem {
         }
     }
 
+    _restWalkBlocked(pawn, spec) {
+        if (!pawn || !spec?.uid) return true;
+        const scene = this.scene;
+        const lean = scene?.findLeanToByUid?.(spec.uid);
+        const entry = lean?.entry;
+        if (!entry) return true;
+        return !!scene._sleepSlotClaimed?.(entry, spec.slot, pawn.pawnId);
+    }
+
+    _restWalkKeysDown(pawn) {
+        const keys = pawn?.keys || this.scene?.keys;
+        const cursors = pawn?.cursors || this.scene?.cursors;
+        if (!keys && !cursors) return false;
+        return !!(cursors?.left?.isDown || keys?.A?.isDown
+            || cursors?.right?.isDown || keys?.D?.isDown
+            || cursors?.up?.isDown || keys?.W?.isDown
+            || cursors?.down?.isDown || keys?.S?.isDown);
+    }
+
+    /** Follow the sim when a bunk is taken or the walk moves to another spot. */
+    _applyNetRestWalk(pawn, row) {
+        if (!pawn || !row || !Object.prototype.hasOwnProperty.call(row, "restWalk")) return;
+        const raw = row.restWalk;
+        const next = raw?.uid
+            ? { uid: raw.uid, slot: Math.max(0, Math.floor(Number(raw.slot) || 0)) }
+            : null;
+        const controlled = pawn === this.scene?.player;
+        if (next && controlled && (pawn._restWalkDrop || this._restWalkKeysDown(pawn))) return;
+        const cur = pawn._restWalk;
+        const same = (!cur && !next)
+            || (cur && next && cur.uid === next.uid && (cur.slot || 0) === next.slot);
+        if (same) {
+            if (next) pawn._restWalkAck = true;
+            if (!next) pawn._restWalkDrop = false;
+            return;
+        }
+        // A pose from before Rest was ordered is still empty. Keep the local
+        // walk until the sim echoes it, unless that bunk is already taken.
+        if (!next && cur && !pawn._restWalkAck && !this._restWalkBlocked(pawn, cur)) return;
+        pawn._restWalk = next;
+        pawn._restWalkAck = !!next;
+        if (!next) pawn._restWalkDrop = false;
+        const intended = this.scene._intendedSleep?.();
+        if (next) intended?.set(pawn.pawnId, { uid: next.uid, slot: next.slot });
+        else intended?.delete(pawn.pawnId);
+        if (!controlled) return;
+        pawn.partyAI?._clearAvoid?.();
+        if (!next) {
+            pawn.setVelocity?.(0, 0);
+            pawn._iceVx = 0;
+            pawn._iceVy = 0;
+        }
+    }
+
     applyNetPoses(rp) {
         const scene = this.scene;
         if (!rp || !scene.simAuth()) return;
@@ -3178,6 +3232,7 @@ class PartySystem {
         const restCtrl = !!(ctrl && (ctrl._resting || ctrl._restWalk || rp.resting));
         const leadPawn = scene.leader
             || (scene.party || []).find((p) => p && p.pawnId === rp.id);
+        if (leadPawn) this._applyNetRestWalk(leadPawn, rp);
         if (leadPawn && leadPawn !== ctrl) {
             this._setNetPose(leadPawn, rp.x, rp.y, rp.facing, rp.prone, rp);
             if (typeof scene._applyPawnChannelVisual === "function") {
@@ -3208,6 +3263,7 @@ class PartySystem {
         for (const mem of rp.party || []) {
             const pawn = (scene.party || []).find((p) => p.pawnId === mem.id);
             if (!pawn) continue;
+            this._applyNetRestWalk(pawn, mem);
             if (pawn === ctrl) {
                 if (restCtrl || mem.resting || pawn._restWalk) {
                     this._setNetPose(pawn, mem.x, mem.y, mem.facing, mem.prone, mem);

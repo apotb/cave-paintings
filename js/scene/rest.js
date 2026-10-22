@@ -340,6 +340,8 @@
         this._cancelPawnChannels(pawn);
         if (pawn._resting) this._wakePawn(pawn, { moving: true });
         pawn._restWalk = { uid: entry.uid, slot };
+        pawn._restWalkDrop = false;
+        pawn._restWalkAck = false;
         pawn.lastSleep = { uid: entry.uid, slot };
         this._intendedSleep().set(id, { uid: entry.uid, slot });
         if (opts.autofill) this._autofillInjured(entry);
@@ -384,6 +386,59 @@
             taken.add(`${next.entry.uid}:${next.slot}`);
             this._orderRest(pawn, next.entry, next.slot, { autofill: false });
         }
+    },
+
+    /**
+     * The bunk this pawn is walking to was claimed. Say so, then take another
+     * spot in that shelter or the nearest other one. Stop here if none are free.
+     */
+    _redirectTakenRest(pawn) {
+        if (!pawn?._restWalk) return false;
+        const lean = this.findLeanToByUid?.(pawn._restWalk.uid);
+        const from = lean?.entry || null;
+        this._sleepLog("That spot is taken");
+        const same = from ? this._pickFreeSleepSlot(pawn, from, { only: true }) : null;
+        const next = same || this._pickFreeSleepSlot(pawn);
+        pawn.partyAI?._clearAvoid?.();
+        if (next?.entry && this._orderRest(pawn, next.entry, next.slot, { autofill: false })) {
+            return true;
+        }
+        pawn._restWalk = null;
+        pawn._restWalkDrop = true;
+        pawn.setVelocity?.(0, 0);
+        this._intendedSleep().delete(pawn.pawnId);
+        return false;
+    },
+
+    _pickFreeSleepSlot(pawn, preferEntry = null, opts = {}) {
+        if (!pawn || typeof Sleep === "undefined") return null;
+        const id = pawn.pawnId;
+        const only = !!opts.only;
+        const medical = !!Sleep.injuredForAutofill?.(pawn.anatomy);
+        const candidates = [];
+        const consider = (e, def) => {
+            if (!e) return;
+            const spr = this.findLeanToByUid(e.uid);
+            const x = spr?.x ?? e.x;
+            const y = spr?.y ?? e.y;
+            if (!only && !Sleep.inCampRange(pawn.x, pawn.y, x, y, this.tileSize)) return;
+            const n = Sleep.slotCount(def, e);
+            const heal = Sleep.healBonus ? Sleep.healBonus(def) : 8;
+            for (let i = 0; i < n; i++) {
+                if (this._sleepSlotClaimed(e, i, id)) continue;
+                candidates.push({ entry: e, slot: i, x, y, heal, def });
+            }
+        };
+        if (preferEntry) consider(preferEntry, this.getThing?.(preferEntry.id));
+        if (!only) {
+            this.forEachSleepEntry((e, def) => {
+                if (e === preferEntry) return;
+                consider(e, def);
+            });
+        }
+        return Sleep.pickSleepSlot
+            ? Sleep.pickSleepSlot(candidates, pawn, medical)
+            : (candidates[0] || null);
     },
 
     _occupySlot(pawn, entry, slot) {

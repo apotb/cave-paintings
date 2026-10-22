@@ -829,6 +829,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!(_result?.damage > 0)) return;
         if (this._restWalk) {
             this._restWalk = null;
+            this._restWalkDrop = true;
             this.scene?._intendedSleep?.().delete(this.pawnId);
         }
     }
@@ -3875,16 +3876,48 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 || this.cursors.down.isDown || this.keys.S.isDown;
             if (movingKeys) {
                 this._restWalk = null;
+                this._restWalkDrop = true;
                 this.partyAI?._clearAvoid?.();
                 this.scene._intendedSleep?.().delete(this.pawnId);
             }
         }
 
         if (this._restWalk && !this._resting) {
-            const spec = this._restWalk;
-            const lean = this.scene.findLeanToByUid?.(spec.uid);
-            const entry = lean?.entry;
-            const def = entry ? this.scene.getThing(entry.id) : null;
+            let spec = this._restWalk;
+            let lean = this.scene.findLeanToByUid?.(spec.uid);
+            let entry = lean?.entry;
+            let def = entry ? this.scene.getThing(entry.id) : null;
+            const taken = !!(entry && this.scene._sleepSlotClaimed?.(entry, spec.slot, this.pawnId));
+            if (!entry || typeof Sleep === "undefined") {
+                this._restWalk = null;
+            } else if (taken) {
+                // Stop on the road. The sim picks another bunk and the next
+                // pose follows it; offline play turns here itself.
+                if (this.scene.simAuth?.()) {
+                    this.setVelocity(0, 0);
+                    this._iceVx = 0;
+                    this._iceVy = 0;
+                    this.partyAI?._clearAvoid?.();
+                    this.syncSortDepth();
+                    this.syncFxRoot?.();
+                    this.syncNameLabel?.();
+                    return;
+                }
+                this.scene._redirectTakenRest?.(this);
+                if (!this._restWalk) {
+                    this.setVelocity(0, 0);
+                    this._iceVx = 0;
+                    this._iceVy = 0;
+                    this.syncSortDepth();
+                    this.syncFxRoot?.();
+                    this.syncNameLabel?.();
+                    return;
+                }
+                spec = this._restWalk;
+                lean = this.scene.findLeanToByUid?.(spec.uid);
+                entry = lean?.entry;
+                def = entry ? this.scene.getThing(entry.id) : null;
+            }
             if (!entry || typeof Sleep === "undefined") {
                 this._restWalk = null;
             } else {

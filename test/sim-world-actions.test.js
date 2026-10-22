@@ -1529,6 +1529,85 @@ test("rest-walk stand stays outside the bunk", () => {
     assert.ok(Math.hypot(stand1.x - bunk1.x, stand1.y - bunk1.y) > 8);
 });
 
+test("a taken bunk interrupts the rest walk and tries another spot", () => {
+    const { world, pawn } = createTestWorld();
+    const chunk = originChunk(world);
+    const entry = { uid: "lt-mid", id: "lean_to", x: 48, y: 48, tx: 2, ty: 2, rot: 0 };
+    Place.ensureSleepEntry(entry, { sleep: { slots: 2 }, footprint: [2, 1] });
+    chunk.things.push(entry);
+    pawn.x = 32;
+    pawn.y = 160;
+    world._orderRest(pawn, pawn, entry, 0, { autofill: false });
+    assert.equal(pawn._restWalk.slot, 0);
+    entry.occupants[0] = "someone-else";
+    world.tick(50);
+    assert.equal(pawn.x, 32, "should not finish the walk");
+    assert.equal(pawn.y, 160, "should not finish the walk");
+    assert.equal(pawn._restWalk?.uid, "lt-mid");
+    assert.equal(pawn._restWalk.slot, 1);
+    const logs = world.drainEvents().filter((e) => e.kind === "combat_log");
+    assert.ok(logs.some((e) => e.text === "That spot is taken"));
+    const snap = world.snapshotFor(pawn.id);
+    assert.equal(snap.players[0].restWalk.slot, 1);
+});
+
+test("a full shelter stops the rest walk where you are", () => {
+    const { world, pawn } = createTestWorld();
+    const chunk = originChunk(world);
+    const entry = {
+        uid: "lt-full",
+        id: "lean_to",
+        x: 48,
+        y: 48,
+        tx: 2,
+        ty: 2,
+        rot: 0,
+        occupants: ["a", "b"]
+    };
+    Place.ensureSleepEntry(entry, { sleep: { slots: 2 }, footprint: [2, 1] });
+    chunk.things.push(entry);
+    pawn.x = 32;
+    pawn.y = 160;
+    pawn._restWalk = { uid: entry.uid, slot: 0 };
+    pawn.lastSleep = { uid: entry.uid, slot: 0, rot: 0 };
+    world.tick(50);
+    assert.equal(pawn._restWalk, null);
+    assert.equal(pawn.x, 32);
+    assert.equal(pawn.y, 160);
+    const logs = world.drainEvents().filter((e) => e.kind === "combat_log");
+    assert.ok(logs.some((e) => e.text === "That spot is taken"));
+});
+
+test("a taken shelter sends the rest walk to another one", () => {
+    const { world, pawn } = createTestWorld();
+    const chunk = originChunk(world);
+    const full = {
+        uid: "lt-a",
+        id: "lean_to",
+        x: 48,
+        y: 48,
+        tx: 2,
+        ty: 2,
+        rot: 0,
+        occupants: ["a", "b"]
+    };
+    const other = { uid: "lt-b", id: "lean_to", x: 80, y: 48, tx: 4, ty: 2, rot: 0 };
+    Place.ensureSleepEntry(full, { sleep: { slots: 2 }, footprint: [2, 1] });
+    Place.ensureSleepEntry(other, { sleep: { slots: 2 }, footprint: [2, 1] });
+    chunk.things.push(full, other);
+    pawn.x = 32;
+    pawn.y = 160;
+    pawn._restWalk = { uid: full.uid, slot: 0 };
+    pawn.lastSleep = { uid: full.uid, slot: 0, rot: 0 };
+    world.tick(50);
+    assert.equal(pawn.x, 32);
+    assert.equal(pawn.y, 160);
+    assert.equal(pawn._restWalk?.uid, "lt-b");
+    assert.equal(pawn._resting, undefined);
+    const logs = world.drainEvents().filter((e) => e.kind === "combat_log");
+    assert.ok(logs.some((e) => e.text === "That spot is taken"));
+});
+
 test("wildlife movement and melee scale with tick speed", () => {
     const Party = require("../shared/party");
     assert.equal(Party.mobTimeScale(0), 0);

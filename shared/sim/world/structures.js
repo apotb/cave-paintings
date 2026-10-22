@@ -805,34 +805,10 @@
         }
         const { entry } = found;
         const def = this._sleepDef(entry);
+        // Someone reached this bunk while we were still walking. Say so now
+        // and turn toward another free spot, instead of finishing the trip.
         if (this._sleepSlotClaimed(entry, spec.slot, pawn.id)) {
-            const anatomy = (pawn.creature || this.creatures.get(pawn.id))?.anatomy;
-            const medical = !!(Sleep.injuredForAutofill && Sleep.injuredForAutofill(anatomy));
-            const next = this._pickFreeSleepSlot(pawn, null, { medical });
-            if (next) {
-                pawn._restWalk = { uid: next.entry.uid, slot: next.slot };
-                pawn.lastSleep = { uid: next.entry.uid, slot: next.slot, rot: next.entry.rot };
-                const c = pawn.creature || this.creatures.get(pawn.id);
-                if (c) {
-                    c._restWalk = pawn._restWalk;
-                    c.lastSleep = pawn.lastSleep;
-                }
-                return;
-            }
-            const stand = Sleep.restWalkStand
-                ? Sleep.restWalkStand(entry, spec.slot, TS, def)
-                : Sleep.besideWorldPos(entry, TS, def);
-            pawn.x = stand.x;
-            pawn.y = stand.y;
-            pawn._restWalk = null;
-            const c = pawn.creature || this.creatures.get(pawn.id);
-            if (c) {
-                c.x = stand.x;
-                c.y = stand.y;
-                c._restWalk = null;
-                c.setDesiredVel?.(0, 0);
-            }
-            this._sleepLog(session, "That spot is taken");
+            this._loseRestSpot(session, pawn, entry, spec.slot);
             return;
         }
         const stand = Sleep.restWalkStand
@@ -917,6 +893,65 @@
         this._tickCarries();
     },
 
+    /**
+     * The bunk we were walking to got claimed. Tell the owner, then take
+     * another spot in that shelter or the nearest other one in camp.
+     * Stay put when nothing is free — don't finish the walk.
+     * @returns {boolean} true when the walk continues toward a new bunk
+     */
+    _loseRestSpot(session, pawn, entry, slot) {
+        if (!pawn) return false;
+        const anatomy = (pawn.creature || this.creatures.get(pawn.id))?.anatomy;
+        const medical = !!(Sleep.injuredForAutofill && Sleep.injuredForAutofill(anatomy));
+        const same = entry
+            ? this._pickFreeSleepSlot(pawn, entry, { medical, only: true })
+            : null;
+        const next = same || this._pickFreeSleepSlot(pawn, null, { medical });
+        const switched = !!(next?.entry && (next.entry.uid !== entry?.uid || next.slot !== slot));
+        this._sleepLog(session, "That spot is taken");
+        const c = pawn.creature || this.creatures.get(pawn.id);
+        if (switched) {
+            pawn._restWalk = { uid: next.entry.uid, slot: next.slot };
+            pawn.lastSleep = { uid: next.entry.uid, slot: next.slot, rot: next.entry.rot };
+            if (c) {
+                c._restWalk = pawn._restWalk;
+                c.lastSleep = pawn.lastSleep;
+                this._dropRestPath(c);
+            }
+            return true;
+        }
+        pawn._restWalk = null;
+        pawn.vx = 0;
+        pawn.vy = 0;
+        if (c) {
+            c._restWalk = null;
+            c.vx = 0;
+            c.vy = 0;
+            c.setDesiredVel?.(0, 0);
+            this._dropRestPath(c);
+        }
+        return false;
+    },
+
+    _dropRestPath(creature) {
+        const ai = creature?.ai;
+        if (!ai) return;
+        ai._path = null;
+        ai._pathGoalX = null;
+        ai._pathGoalY = null;
+        ai._progGoalX = null;
+        ai._progGoalY = null;
+    },
+
+    _restWalkSnap(pawn) {
+        const w = pawn?._restWalk;
+        if (!w?.uid) return null;
+        return {
+            uid: w.uid,
+            slot: Math.max(0, Math.floor(Number(w.slot) || 0))
+        };
+    },
+
     _sleepSlotClaimed(entry, slot, exceptId) {
         if (!entry) return true;
         const occ = entry.occupants?.[slot];
@@ -946,6 +981,7 @@
     _pickFreeSleepSlot(pawn, preferEntry = null, opts = {}) {
         if (!pawn) return null;
         const medical = !!opts.medical;
+        const only = !!opts.only;
         const maxTiles = Number(opts.maxTiles) > 0 ? Number(opts.maxTiles) : Sleep.CAMP_TILES;
         const candidates = [];
         const consider = (e) => {
@@ -953,7 +989,7 @@
             const def = this._sleepDef(e);
             Place.ensureSleepEntry(e, def);
             const tiles = Math.hypot((pawn.x || 0) - e.x, (pawn.y || 0) - e.y) / TS;
-            if (tiles > maxTiles + 0.05) return;
+            if (!only && tiles > maxTiles + 0.05) return;
             const n = Sleep.slotCount(def, e);
             const heal = Sleep.healBonus ? Sleep.healBonus(def) : 8;
             for (let i = 0; i < n; i++) {
@@ -962,11 +998,13 @@
             }
         };
         if (preferEntry) consider(preferEntry);
-        for (const ch of this._chunksNear(pawn.x, pawn.y, 2)) {
-            if (!Array.isArray(ch.things)) continue;
-            for (const e of ch.things) {
-                if (e === preferEntry) continue;
-                consider(e);
+        if (!only) {
+            for (const ch of this._chunksNear(pawn.x, pawn.y, 2)) {
+                if (!Array.isArray(ch.things)) continue;
+                for (const e of ch.things) {
+                    if (e === preferEntry) continue;
+                    consider(e);
+                }
             }
         }
         return Sleep.pickSleepSlot
