@@ -772,6 +772,13 @@
                 }
             }
             this._ensureWandererCreature(w);
+            // A killing blow often lands after this director (settler / wildlife
+            // melee). The next pass used to rebuild a live body from the
+            // pre-fatal snapshot and the punch that followed finished them.
+            if (w.dead || w.creature?.isBodyDead?.()) {
+                this._finishWandererDeath(w, w.creature?._lastHitBy || null);
+                continue;
+            }
             if (moveScale > 0) {
                 if (w.hostile) this._stepHostileWanderer(w, moveDt);
                 else this._stepWanderer(w, moveDt);
@@ -902,7 +909,9 @@
         if (!w?.id) return null;
         w.heading = this._wandererHeading(w.heading);
         let creature = this.creatures.get(w.id);
-        if (creature && (creature._dead || creature.role !== "wanderer")) {
+        // A dead passerby stays dead until _finishWandererDeath. Replacing
+        // them here reloaded the pre-fatal body and cleared the kill.
+        if (creature && !creature._dead && creature.role !== "wanderer") {
             this.creatures.delete(w.id);
             creature = null;
         }
@@ -927,14 +936,20 @@
             this.creatures.set(w.id, creature);
         }
         w.creature = creature;
-        creature._dead = false;
-        creature.active = true;
         creature.role = "wanderer";
         creature.ownerId = null;
         creature.faction = Party.FACTION_WANDERERS;
         creature.x = w.x;
         creature.y = w.y;
         creature.inventory = w.inventory;
+        if (w.dead || creature._dead) {
+            creature._dead = true;
+            creature.active = false;
+            if (creature.anatomy) w.body = creature.anatomy.toJSON();
+            return creature;
+        }
+        creature._dead = false;
+        creature.active = true;
         if (w.hostile) this._ensureHostileWandererAI(w, creature);
         return creature;
     },
@@ -2065,6 +2080,15 @@
         return true;
     },
 
+    _reapDeadWanderers() {
+        for (const w of [...this.wanderers.values()]) {
+            if (!w || w.dead) continue;
+            const wc = w.creature || this.creatures.get(w.id);
+            if (!wc?.isBodyDead?.()) continue;
+            this._finishWandererDeath(w, wc._lastHitBy || null);
+        }
+    },
+
     _finishWandererDeath(w, killer) {
         if (!w || w.dead) return;
         w.dead = true;
@@ -2089,7 +2113,7 @@
             frame: 7,
             name: w.name || "Wanderer",
             loot: loot.filter(Boolean),
-            body: w.body || creature?.anatomy?.toJSON?.() || null,
+            body: creature?.anatomy?.toJSON?.() || w.body || null,
             bodyPlan: "human",
             mobId: "human",
             playerCorpse: false

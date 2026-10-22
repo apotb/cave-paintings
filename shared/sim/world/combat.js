@@ -2217,6 +2217,9 @@
 
         this._reapDeadPlayers();
         this._reapDeadCompanions();
+        // Settler and wildlife swings land after the wanderer pass. Reap here
+        // so that kill is a corpse before the next tick can rebuild them.
+        this._reapDeadWanderers();
         // Sync capacity deaths are handled above; fatal-part microtasks may still
         // be pending until after this call returns — next tick's reap catches them.
         this._reapDeadMobs();

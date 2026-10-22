@@ -2072,6 +2072,40 @@ test("snapshot keeps camp drops when the leader is far from the controlled pawn"
     );
 });
 
+test("a settler killing blow on a wanderer is not revived as a pincushion", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.connected = true;
+    const id = "w-execute";
+    world.wanderers.set(id, {
+        id,
+        name: "Og",
+        x: pawn.x + 16,
+        y: pawn.y,
+        facing: "down",
+        heading: { x: 1, y: 0 },
+        inventory: [null, null, null, null, null],
+        hostile: true,
+        recruitLocked: true,
+        refusedBy: []
+    });
+    const w = world.wanderers.get(id);
+    const c = world._ensureWandererCreature(w);
+    c._lastHitBy = pawn.creature;
+    c.anatomy.core.destroy();
+    c.anatomy.flushPendingFatal();
+    assert.equal(c.isBodyDead(), true);
+    // The old ensure deleted this corpse and spawned a live body from the
+    // pre-fatal snapshot, so the next player punch was the one that stuck.
+    const again = world._ensureWandererCreature(w);
+    assert.equal(again, c);
+    assert.equal(again.isBodyDead(), true);
+    world.tick(40);
+    assert.equal(world.wanderers.has(id), false);
+    let corpses = 0;
+    for (const chunk of world.chunks.values()) corpses += (chunk.corpses || []).length;
+    assert.equal(corpses, 1);
+});
+
 test("snapshot marks a downed wanderer prone before death", () => {
     const { world, pawn } = createTestWorld();
     pawn.connected = true;
