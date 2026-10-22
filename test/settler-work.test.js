@@ -2743,6 +2743,88 @@ test("rejoining keeps a tailor sewing at the skinworking bench", () => {
     assert.ok(rec2._workChannel.remaining > mid - 1500, "sewing should not start over");
 });
 
+test("rejoining keeps a researcher painting instead of starting over", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{ id: "blueberry", quantity: 2 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 1, research: 2
+    };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-rejoin",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, def);
+    chunk.things.push(entry);
+    chunk.drops.push({
+        uid: "stick-rejoin",
+        id: "stick",
+        quantity: 1,
+        x: rec.x + 24,
+        y: rec.y
+    });
+    let started = false;
+    for (let i = 0; i < 200; i++) {
+        world.tick(50);
+        if (entry.paintStarted && /Painting/i.test(rec._settlerAct || "")) {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, `never started painting (${rec._settlerAct})`);
+    entry.paintProgress = 0.4;
+    const qty = rec.inventory.find((s) => s && s.id === "blueberry")?.quantity;
+    rec.inventory[1] = { id: "apple", quantity: 1 };
+    addBasket(world, settle, rec.x + 48, rec.y, "food-rejoin");
+    const bed = { uid: "lt-rejoin", id: "lean_to", x: rec.x + 96, y: rec.y, rot: 0 };
+    Place.ensureSleepEntry(bed, world._thingDef("lean_to"));
+    chunk.things.push(bed);
+    world.gameMinutes = 1300;
+    const saved = world.toSaveData();
+    const hold = saved.settlers[0].workHold;
+
+    const loaded = world.constructor.loadFromData(saved, {});
+    const rec2 = loaded.settlers[0];
+    const entry2 = thingByUid(loaded, "pc-rejoin");
+    assert.equal(hold?.type, "research", `work hold was ${JSON.stringify(hold)}`);
+    assert.equal(entry2.paintStarted, true);
+    assert.ok(Math.abs(entry2.paintProgress - 0.4) < 1e-6, `progress saved as ${entry2.paintProgress}`);
+    const bar = loaded._publicSettler(rec2).channel;
+    assert.equal(bar?.kind, "paint");
+    assert.ok(Math.abs(bar.progress - 0.4) < 1e-6, `paint bar reset to ${bar?.progress}`);
+
+    // A camp can only search a couple of settlers per tick. Until this one
+    // is searched, night, food, and a higher-priority haul must not pull them off.
+    const mob2 = loaded._ensureSettlerCreature(rec2);
+    loaded._simTickLive = true;
+    loaded._queryGen = 3;
+    loaded._scanGen = 3;
+    loaded._scanLeft = 0;
+    for (let i = 0; i < 20; i++) loaded._tickSettlerWork(mob2, 16);
+    assert.match(rec2._settlerAct || "", /Painting/i, `left the circle early to ${rec2._settlerAct}`);
+    assert.equal(!!rec2._resting, false);
+    assert.equal(!!rec2._restWalk, false);
+    assert.equal(rec2.inventory.some((s) => s && s.id === "apple"), true);
+
+    loaded._simTickLive = false;
+    for (let i = 0; i < 40; i++) loaded.tick(50);
+    assert.match(rec2._settlerAct || "", /Painting/i, `left the circle to ${rec2._settlerAct}`);
+    assert.equal(rec2._busyJob?.type, "research");
+    assert.equal(entry2.paintStarted, true);
+    assert.ok(entry2.paintProgress >= 0.4, `paint progress reset to ${entry2.paintProgress}`);
+    assert.ok(entry2.paintProgress < 0.9, "should not finish the painting in one jump");
+    const qty2 = rec2.inventory.find((s) => s && s.id === "blueberry")?.quantity;
+    assert.equal(qty2, qty, "rejoin must not consume another pigment");
+    assert.equal(rec2.inventory.some((s) => s && s.id === "apple"), true, "should not abandon the painting to stash food");
+    assert.equal(loaded._publicSettler(rec2).channel?.kind, "paint");
+});
+
 test("rejoining leaves a smoking hide on the fire", () => {
     const { world, pawn } = createTestWorld();
     fillGrass(world);

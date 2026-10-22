@@ -1983,8 +1983,11 @@
         if (criticalPlan) return criticalPlan;
         const rescueStale = busyJob?.type === "rescue"
             && (!busyJob.target || busyJob.target.dead || busyJob.target._resting || busyJob.target.resting);
+        if (state.keepResume && busy && busyJob && !rescueStale) return busyJob;
         if (busy && busyJob && !poll && !rescueStale) {
-            if (busyJob.type === "research") {
+            // A job restored from a rejoin stays the job. Haul, food, and
+            // tailoring can take over a fresh plan, not one already underway.
+            if (busyJob.type === "research" && !state.keepResume) {
                 const foodFirst = stashFoodInsteadOfResearch(state);
                 if (foodFirst) return foodFirst;
                 const haulFirst = haulInsteadOfResearch(row, state);
@@ -2070,7 +2073,7 @@
             }
             if (job === "chop" && state.chopTree) return { type: "chop", target: state.chopTree };
             if (job === "research" && state.researchCircle) {
-                if (poll) {
+                if (poll && !state.keepResume) {
                     if ((Number(state.kc) || 0) < AUTO && state.canEat !== false) {
                         return { type: "eat" };
                     }
@@ -2079,8 +2082,10 @@
                         return { type: "idle" };
                     }
                 }
-                const foodFirst = stashFoodInsteadOfResearch(state);
-                if (foodFirst) return foodFirst;
+                if (!state.keepResume) {
+                    const foodFirst = stashFoodInsteadOfResearch(state);
+                    if (foodFirst) return foodFirst;
+                }
                 return { type: "research", target: state.researchCircle };
             }
         }

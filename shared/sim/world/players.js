@@ -1007,7 +1007,14 @@
         if (workChannel) rec._workChannel = workChannel;
         if (!rec.fishChannel) {
             const hold = this._workHoldFromSnap(snap.workHold);
-            if (hold) rec._savedWork = hold;
+            if (hold) {
+                rec._savedWork = hold;
+                rec._workHold = true;
+                rec._resumeWork = true;
+                const stub = this._workHoldStub(hold);
+                if (stub) rec._busyJob = { type: hold.type, target: stub };
+                this._restoreResearchBar(rec, hold);
+            }
         }
         for (const s of rec.inventory) Hide.migrateStackItemId(s);
         for (const s of rec.overflow) Hide.migrateStackItemId(s);
@@ -1208,10 +1215,49 @@
      * The station job itself, not just its timer. Without this a rejoin
      * replans, and a smoker walks off the fire onto whatever is nearer.
      */
+    /**
+     * Enough of a target to stay busy before the first search. The live
+     * station is attached on that search; this only keeps the claim.
+     */
+    _workHoldStub(hold) {
+        if (!hold) return null;
+        const claim = String(hold.claim || "");
+        const cut = claim.indexOf(":");
+        const kind = cut >= 0 ? claim.slice(0, cut) : "";
+        const id = cut >= 0 ? claim.slice(cut + 1) : "";
+        if ((hold.type === "doctor" || hold.type === "rescue") && (hold.pawnId || id)) {
+            return { id: hold.pawnId || id };
+        }
+        if (id && (kind === "thing" || kind === "station" || kind === "drop" || kind === "stash")) {
+            return { uid: id };
+        }
+        if (hold.type === "dig") return {};
+        return null;
+    },
+
+    /** The paint bar lives on the settler, the progress lives on the circle. */
+    _restoreResearchBar(rec, hold) {
+        if (!rec || hold?.type !== "research") return;
+        const claim = String(hold.claim || "");
+        if (!claim.startsWith("thing:")) return;
+        const entry = this._findThingByUid(claim.slice("thing:".length))?.entry;
+        const research = _research();
+        if (!entry || !research?.inProgress?.(entry)) return;
+        rec._paintChannel = {
+            progress: Math.max(0, Math.min(1, Number(entry.paintProgress) || 0)),
+            uid: entry.uid || null,
+            pigmentId: entry.paintPigment ? String(entry.paintPigment) : null
+        };
+        rec._resumePaint = {
+            uid: entry.uid || null,
+            painted: Math.max(0, Math.floor(Number(entry.painted) || 0))
+        };
+    },
+
     _persistWorkHold(s) {
         if (!s || s.fishChannel) return null;
         const pending = s._savedWork;
-        if (pending?.type && !s._workHold) {
+        if (pending?.type && pending.type !== "fish" && pending.type !== "idle") {
             return {
                 type: String(pending.type),
                 claim: pending.claim || null,

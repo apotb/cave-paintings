@@ -242,11 +242,22 @@ function rebindSavedWork(world, rec, settle, scan) {
     const target = savedWorkTarget(saved, scan);
     rec._savedWork = null;
     if (!target) {
-        if (!rec._workChannel) claimsFor(world, settle)?.release(rec.id);
+        rec._resumeWork = false;
+        if (!rec._workChannel) {
+            claimsFor(world, settle)?.release(rec.id);
+            endWorkHold(rec);
+        }
         return;
     }
     rec._workHold = true;
+    rec._resumeWork = true;
     rec._busyJob = { type: saved.type, target };
+    if (saved.type === "research" && !rec._resumePaint) {
+        rec._resumePaint = {
+            uid: target.uid || null,
+            painted: Math.max(0, Math.floor(Number(target.painted) || 0))
+        };
+    }
 }
 
 /** At most a couple of full job searches per sim tick, so a camp of twenty doesn't all search on the same frame. */
@@ -339,10 +350,12 @@ function tick(world, mob, delta) {
 
     if (eatReserveBroken(world, rec, settle)) {
         releaseFoodReserve(world, rec, settle);
-        endWorkHold(rec);
-        rec._settlerPlan = null;
-        rec._settlerScan = scanWork(world, rec, settle, claims);
-        rec._settlerScanMs = 0;
+        if (!rec._savedWork) {
+            endWorkHold(rec);
+            rec._settlerPlan = null;
+            rec._settlerScan = scanWork(world, rec, settle, claims);
+            rec._settlerScanMs = 0;
+        }
     }
 
     rec._settlerScanMs = (rec._settlerScanMs || 0) + (Number(delta) || 16);
@@ -355,6 +368,26 @@ function tick(world, mob, delta) {
         rec._settlerScan = scanWork(world, rec, settle, claims);
     }
     rebindSavedWork(world, rec, settle, rec._settlerScan);
+    if (rec._resumeWork && rec._resumePaint && rec._busyJob?.type === "research") {
+        const uid = rec._resumePaint.uid || rec._busyJob.target?.uid;
+        const painted = Math.floor(Number(world._findThingByUid?.(uid)?.entry?.painted) || 0);
+        if (painted > rec._resumePaint.painted) {
+            rec._resumeWork = false;
+            rec._resumePaint = null;
+        }
+    }
+    // The search has not run yet. Stay on the saved job. Planning now would
+    // walk them off onto haul, food, or bed, and a sleep locks out the rebind.
+    if (rec._savedWork && isWorkHold(rec) && rec._busyJob?.type !== "research") {
+        if (!workJobOn(settle, rec, rec._busyJob.type)) {
+            rec._savedWork = null;
+            rec._resumeWork = false;
+            endWorkHold(rec);
+        } else {
+            setSettlerAct(rec, mob, Settlement.actLabel(rec._busyJob, actCtx(world, rec, {})));
+            return halt();
+        }
+    }
     const researchHold = isWorkHold(rec) && rec._busyJob?.type === "research";
     if (researchHold) rec._researchPoll = (rec._researchPoll || 0) + 1;
     else rec._researchPoll = 0;
@@ -477,6 +510,7 @@ function tick(world, mob, delta) {
             mergeNeedsRoom: mergeNeedsRoom(rec, scan.haulMerge),
             busy: hold,
             busyJob: rec._busyJob || null,
+            keepResume: !!(rec._resumeWork && hold),
             reconsiderNeeds: pollNeeds,
             world,
             rec
@@ -505,6 +539,7 @@ function tick(world, mob, delta) {
 
         if (plan.type !== "doctor") reservesOf(world, settle).release(rec.id);
 
+        if (rec._resumeWork && plan.type !== rec._busyJob?.type) rec._resumeWork = false;
         if (Settlement.isBusyWork(plan.type)) beginWorkHold(rec, plan);
         else if (!delivering && plan.type !== "chop") endWorkHold(rec);
         rec._settlerPlan = delivering ? "stash" : plan.type;

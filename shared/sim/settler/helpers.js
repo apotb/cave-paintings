@@ -191,6 +191,9 @@ function endWorkHold(rec) {
     if (!rec) return;
     rec._workHold = false;
     rec._busyJob = null;
+    rec._resumeWork = false;
+    rec._resumePaint = null;
+    rec._savedWork = null;
     rec._researchMissMs = 0;
     rec._researchPx = null;
     rec._researchPy = null;
@@ -322,6 +325,8 @@ function releaseWork(world, mob) {
     rec._workChannel = null;
     rec._workHold = false;
     rec._busyJob = null;
+    rec._resumeWork = false;
+    rec._resumePaint = null;
     rec._savedWork = null;
     rec._researchPoll = 0;
     clearPaintBar(rec);
