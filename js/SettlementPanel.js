@@ -48,6 +48,18 @@ function settlementStarCells(rows) {
     return cells;
 }
 
+/** Filled gold favorite star, centered on the graphics origin. 15×14 cells. */
+function drawFavoriteStar(g, unit, color) {
+    const u = Math.max(1, unit | 0);
+    if (!drawFavoriteStar.cells) drawFavoriteStar.cells = settlementStarCells(SETTLEMENT_STAR_FILL);
+    const cells = drawFavoriteStar.cells;
+    const ox = -Math.floor(u / 2);
+    g.fillStyle(color == null ? 0xd4a84b : color, 1);
+    for (let i = 0; i < cells.length; i++) {
+        g.fillRect(cells[i][0] * u + ox, cells[i][1] * u, u, u);
+    }
+}
+
 class SettlementPanel {
     constructor(scene) {
         this.scene = scene;
@@ -798,7 +810,6 @@ class SettlementPanel {
         const GOLD_PRESS = 0xb08a3a;
         if (!this._starOutline) {
             this._starOutline = settlementStarCells(SETTLEMENT_STAR_OUTLINE);
-            this._starFill = settlementStarCells(SETTLEMENT_STAR_FILL);
         }
         const g = scene.add.graphics();
         const hitW = 15 * u;
@@ -814,9 +825,13 @@ class SettlementPanel {
         const paint = () => {
             const filled = !!pawn.favorite;
             const color = c._pressing ? GOLD_PRESS : (c._hovering ? GOLD_HOVER : GOLD);
-            const cells = filled ? this._starFill : this._starOutline;
-            const ox = -Math.floor(u / 2);
             g.clear();
+            if (filled) {
+                drawFavoriteStar(g, u, color);
+                return;
+            }
+            const cells = this._starOutline;
+            const ox = -Math.floor(u / 2);
             g.fillStyle(color, 1);
             for (let i = 0; i < cells.length; i++) {
                 g.fillRect(cells[i][0] * u + ox, cells[i][1] * u, u, u);

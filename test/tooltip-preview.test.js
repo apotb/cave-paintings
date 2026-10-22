@@ -303,3 +303,128 @@ test("a destroyed sculpture preview is rebuilt instead of setTexture on the dead
     assert.equal(scene.tooltipPreview.scene, scene);
     assert.equal(scene.tooltip.kids.includes(scene.tooltipPreview), true);
 });
+
+function loadParty() {
+    const sandbox = { console };
+    vm.createContext(sandbox);
+    vm.runInContext(
+        fs.readFileSync(path.join(ROOT, "js", "Party.js"), "utf8") + "\nthis.PartySystem = PartySystem;\n",
+        sandbox
+    );
+    return sandbox;
+}
+
+function loadStarHud() {
+    const sandbox = {
+        console,
+        pixelUiFontSize: (px) => px,
+        Phaser: { Math: { Clamp: (v, a, b) => Math.min(b, Math.max(a, v)) } }
+    };
+    vm.createContext(sandbox);
+    vm.runInContext(fs.readFileSync(path.join(ROOT, "js", "SettlementPanel.js"), "utf8"), sandbox);
+    vm.runInContext(fs.readFileSync(path.join(ROOT, "js", "scene", "hud.js"), "utf8"), sandbox);
+    return sandbox;
+}
+
+function starGfx() {
+    const g = {
+        visible: false,
+        x: 0,
+        y: 0,
+        rects: 0,
+        clear() { g.rects = 0; return g; },
+        fillStyle() { return g; },
+        fillRect() { g.rects += 1; return g; },
+        setVisible(v) { g.visible = !!v; return g; },
+        setPosition(x, y) { g.x = x; g.y = y; return g; }
+    };
+    return g;
+}
+
+function padText(w, h) {
+    const t = tipText(w, h);
+    t.pad = null;
+    t.setPadding = (p) => { t.pad = p; return t; };
+    return t;
+}
+
+test("favorited settler and party tooltips flag a star beside the name", () => {
+    const { PartySystem } = loadParty();
+    const scene = { party: [], settlers: [] };
+    const sys = new PartySystem(scene);
+    const settler = {
+        role: "settler",
+        favorite: true,
+        pawnName: "Ugg",
+        displayName: () => "Ugg",
+        kc: 40,
+        saturation: 0,
+        stomach: 100,
+        homeSettlementId: "camp"
+    };
+    const tipped = sys.hoverTooltip(settler);
+    assert.equal(tipped.star, true);
+    assert.equal(tipped.text.split("\n")[0], "Ugg");
+    settler.favorite = false;
+    const plain = sys.hoverTooltip(settler);
+    assert.equal(plain.star, undefined);
+
+    const mate = {
+        role: "companion",
+        favorite: true,
+        pawnName: "Aka",
+        displayName: () => "Aka"
+    };
+    scene.party = [mate];
+    const partyTip = sys.hoverTooltip(mate);
+    assert.equal(partyTip.star, true);
+    assert.equal(partyTip.text.split("\n")[0], "Aka");
+    const card = sys.withHeldTooltip(mate, "Aka\nWaiting");
+    assert.equal(card.star, true);
+
+    const hint = sys.withFavoriteStar(mate, "Click yourself to form clay");
+    assert.equal(hint, "Click yourself to form clay");
+    mate.favorite = false;
+    assert.equal(sys.hoverTooltip(mate).star, undefined);
+});
+
+test("a favorite star sits in the margin of the tooltip name", () => {
+    const { SceneMainHud } = loadStarHud();
+    const scene = previewScene(SceneMainHud, new Set());
+    scene.tooltipText = padText(100, 22);
+    scene.tooltipSub = padText(80, 16);
+    scene.tooltipHunger = starGfx();
+    scene.tooltipStar = starGfx();
+    scene._tooltipSource = () => ({ text: "Ugg\nIdle", star: true });
+    assert.equal(scene._applyTooltipPayload(), true);
+    assert.equal(scene.tooltipText.text, "Ugg");
+    assert.equal(scene.tooltipSub.text, "Idle");
+    assert.equal(scene.tooltipText.pad.left, 24);
+    assert.equal(scene.tooltipText.pad.bottom, 0);
+    assert.equal(scene.tooltipSub.pad.left, 6);
+    assert.equal(scene.tooltipSub.pad.top, 0);
+    assert.equal(scene.tooltipStar.visible, true);
+    assert.equal(scene.tooltipStar.rects > 0, true);
+    assert.equal(scene.tooltipStar.x, 13.5);
+    assert.equal(scene.tooltipStar.y, 14);
+
+    scene.tooltipText.displayHeight = 24;
+    scene._tooltipSource = () => ({
+        text: "Ugg\nChopping",
+        hunger: { kc: 10, sat: 0, stomach: 100 },
+        star: true
+    });
+    scene._applyTooltipPayload();
+    assert.equal(scene.tooltipText.text, "Ugg");
+    assert.equal(scene.tooltipSub.text, "Chopping");
+    assert.equal(scene.tooltipText.pad.left, 24);
+    assert.equal(scene.tooltipSub.pad.left, 6);
+
+    scene.tooltipText.displayHeight = 22;
+    scene._tooltipSource = () => ({ text: "Ugg\nIdle" });
+    scene._applyTooltipPayload();
+    assert.equal(scene.tooltipText.text, "Ugg\nIdle");
+    assert.equal(scene.tooltipText.pad.left, 6);
+    assert.equal(scene.tooltipSub.text, "");
+    assert.equal(scene.tooltipStar.visible, false);
+});

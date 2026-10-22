@@ -450,10 +450,11 @@
                 rows: Array.isArray(raw.rows) ? raw.rows : null,
                 lines: Array.isArray(raw.lines) ? raw.lines : null,
                 hunger: raw.hunger && typeof raw.hunger === "object" ? raw.hunger : null,
-                preview
+                preview,
+                star: !!raw.star
             };
         }
-        return { text: raw || "", rows: null, lines: null, hunger: null, preview: null };
+        return { text: raw || "", rows: null, lines: null, hunger: null, preview: null, star: false };
     },
 
     _splitTooltipText(text) {
@@ -531,11 +532,14 @@
 
     _applyTooltipPayload() {
         const raw = this._tooltipSource ? this._tooltipSource() : "";
-        const { text, rows, lines, hunger, preview } = this._tooltipPayload(raw);
+        const { text, rows, lines, hunger, preview, star } = this._tooltipPayload(raw);
         const useHunger = !!hunger;
-        const split = useHunger ? this._splitTooltipText(text) : { head: text, tail: "" };
-        const head = useHunger ? split.head : text;
-        const tail = useHunger ? split.tail : "";
+        const starOn = !!star;
+        // The star sits on the name only. Hunger already splits that line off;
+        // a star does the same so the job text stays in the unindented block.
+        const split = (useHunger || starOn) ? this._splitTooltipText(text) : { head: text, tail: "" };
+        const head = split.head;
+        const tail = split.tail;
         const gearSig = this._gearRowsSig(rows);
         const linesSig = this._tooltipLinesSig(lines);
         const extraSig = lines?.length ? `L:${linesSig}` : `G:${gearSig}`;
@@ -548,6 +552,7 @@
             && extraSig === this._tooltipGearSig
             && hungerSig === this._tooltipHungerSig
             && previewKey === (this._tooltipPreviewKey || "")
+            && (!!this._tooltipStarOn === starOn)
         ) {
             return !!(head || tail || this._tooltipGearH || this._tooltipHungerH || this._tooltipPreviewH);
         }
@@ -560,7 +565,8 @@
         if (lines?.length) this._syncTooltipLines(lines, extraSig);
         else this._syncTooltipGear(rows, extraSig);
         this._syncTooltipPreview(previewKey);
-        this._layoutTooltip(hunger);
+        this._layoutTooltip(hunger, starOn);
+        this._tooltipStarOn = starOn;
         this._tooltipDrawn = true;
         return !!(head || tail || this._tooltipGearH || this._tooltipHungerH || this._tooltipPreviewH);
     },
@@ -600,31 +606,76 @@
         g.setVisible(true);
     },
 
-    _layoutTooltip(hunger) {
+    _clearTooltipStar() {
+        this._tooltipStarOn = false;
+        this._tooltipStarIndent = 0;
+        const g = this.tooltipStar;
+        if (!g) return;
+        g.clear();
+        g.setVisible(false);
+    },
+
+    /** Extra left inset so the name clears the favorite star. */
+    _tooltipStarIndentFor(starOn) {
+        if (!starOn || !this.tooltipStar || !this.tooltipText?.text) return 0;
+        const s = this.uiScale || 1;
+        const u = Math.max(1, Math.round(s));
+        return 15 * u + Math.max(2, Math.round(3 * s));
+    },
+
+    /** Filled favorite star in the left margin of the name line. Padding is already set. */
+    _placeTooltipStar(starOn, topPad, bottomPad) {
+        const g = this.tooltipStar;
+        if (!g) return;
+        g.clear();
+        if (!starOn || !this.tooltipText?.text) {
+            g.setVisible(false);
+            return;
+        }
+        const s = this.uiScale || 1;
+        const u = Math.max(1, Math.round(s));
+        const starW = 15 * u;
+        if (typeof drawFavoriteStar === "function") drawFavoriteStar(g, u, 0xd4a84b);
+        const lines = Math.max(1, String(this.tooltipText.text || "").split("\n").length);
+        const fontH = (typeof pixelUiFontSize === "function")
+            ? pixelUiFontSize(16, s)
+            : Math.round(16 * s);
+        const inner = Math.max(fontH, (this.tooltipText.displayHeight || 0) - topPad - bottomPad);
+        const lineH = inner / lines;
+        g.setPosition(this._tooltipPadding + starW / 2, topPad + lineH / 2);
+        g.setVisible(true);
+    },
+
+    _layoutTooltip(hunger, star) {
         const pad = this._tooltipPadding;
         const s = this.uiScale || 1;
         const hungerOn = !!hunger;
         const tail = !!(this.tooltipSub?.text);
-        if (hungerOn) {
-            const headPad = {
-                left: pad, right: pad, top: pad, bottom: Math.round(2 * s)
-            };
-            this.tooltipText.setPadding(headPad);
-            this.tooltipMuted?.setPadding?.(headPad);
-            this.tooltipWarn?.setPadding?.(headPad);
-            this.tooltipEquip?.setPadding?.(headPad);
-            if (this.tooltipSub) {
+        const headTop = pad;
+        const starIndent = this._tooltipStarIndentFor(!!star);
+        this._tooltipStarIndent = starIndent;
+        const nameOnly = starIndent > 0 && tail;
+        // Drop the name's bottom pad when the job line follows immediately,
+        // so the split doesn't open a gap a single text block wouldn't have.
+        const headBottom = hungerOn ? Math.round(2 * s) : (nameOnly ? 0 : pad);
+        const left = pad + starIndent;
+        const headPad = { left, right: pad, top: headTop, bottom: headBottom };
+        this.tooltipText.setPadding(headPad);
+        this.tooltipMuted?.setPadding?.(headPad);
+        this.tooltipWarn?.setPadding?.(headPad);
+        this.tooltipEquip?.setPadding?.(headPad);
+        if (this.tooltipSub) {
+            if (hungerOn) {
                 this.tooltipSub.setPadding({
                     left: pad, right: pad, top: Math.round(2 * s), bottom: pad
                 });
+            } else if (nameOnly) {
+                this.tooltipSub.setPadding({ left: pad, right: pad, top: 0, bottom: pad });
+            } else {
+                this.tooltipSub.setPadding(pad);
             }
-        } else {
-            this.tooltipText.setPadding(pad);
-            this.tooltipMuted?.setPadding?.(pad);
-            this.tooltipWarn?.setPadding?.(pad);
-            this.tooltipEquip?.setPadding?.(pad);
-            if (this.tooltipSub) this.tooltipSub.setPadding(pad);
         }
+        this._placeTooltipStar(starIndent > 0, headTop, headBottom);
         if (this.tooltipText?.style?.wordWrapWidth) this.tooltipText.setWordWrapWidth(0);
         if (this.tooltipMuted?.style?.wordWrapWidth) this.tooltipMuted.setWordWrapWidth(0);
         if (this.tooltipWarn?.style?.wordWrapWidth) this.tooltipWarn.setWordWrapWidth(0);

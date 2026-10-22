@@ -1500,7 +1500,24 @@ class PartySystem {
 
     withHeldTooltip(pawn, text) {
         const rows = this.heldTooltipRows(pawn);
-        return rows.length ? { text: text || "", rows } : (text || "");
+        const tip = rows.length ? { text: text || "", rows } : (text || "");
+        return this.withFavoriteStar(pawn, tip);
+    }
+
+    /**
+     * Gold favorite star beside the name line. Tips that don't lead with the
+     * name (a self-click hint, a recruit line) stay plain.
+     */
+    withFavoriteStar(pawn, tip) {
+        if (!pawn?.favorite || tip == null || tip === "") return tip;
+        const text = typeof tip === "object" ? String(tip.text || "") : String(tip);
+        const first = text.split("\n")[0];
+        if (!first) return tip;
+        const shown = pawn.displayName?.() || pawn.pawnName || "";
+        const alt = pawn.pawnName || "";
+        if (first !== shown && first !== alt) return tip;
+        if (typeof tip === "object") return tip.star ? tip : { ...tip, star: true };
+        return { text, star: true };
     }
 
     hungerTooltip(pawn) {
@@ -1522,15 +1539,19 @@ class PartySystem {
     }
 
     withSettlerTooltip(pawn, text) {
-        if (this.settlerIsForeign(pawn)) return { text: text || "" };
+        if (this.settlerIsForeign(pawn)) return this.withFavoriteStar(pawn, { text: text || "" });
         const hunger = this.hungerTooltip(pawn);
         const held = this.withHeldTooltip(pawn, text);
-        if (held && typeof held === "object") return { ...held, hunger };
-        return { text: text || "", hunger };
+        if (held && typeof held === "object") return this.withFavoriteStar(pawn, { ...held, hunger });
+        return this.withFavoriteStar(pawn, { text: text || "", hunger });
     }
 
     /** World-hover tip: wanderer recruit text, or name + activity (incl. Downed). */
     hoverTooltip(pawn) {
+        return this.withFavoriteStar(pawn, this._hoverTooltip(pawn));
+    }
+
+    _hoverTooltip(pawn) {
         if (!pawn || pawn.isBodyDead?.()) return "";
         if (pawn.role === "wanderer") return this.recruitTooltip(pawn) || "";
         const name = pawn.displayName?.() || pawn.pawnName || "";

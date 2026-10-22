@@ -33,6 +33,7 @@
             ...tipStyle,
             color: this._tooltipStatCss("equip")
         })).setVisible(false);
+        this.tooltipStar = this.add.graphics().setVisible(false);
         this.tooltipHunger = this.add.graphics().setVisible(false);
         this.tooltipSub = crispUiText(this.add.text(0, 0, "", {
             fontFamily: PIXEL_UI_FONT,
@@ -44,7 +45,7 @@
         })).setVisible(false);
         this.tooltipGear = this.add.container(0, 0);
         this.tooltip.add([
-            this.tooltipBg, this.tooltipText, this.tooltipMuted, this.tooltipWarn, this.tooltipEquip, this.tooltipHunger, this.tooltipSub, this.tooltipGear
+            this.tooltipBg, this.tooltipStar, this.tooltipText, this.tooltipMuted, this.tooltipWarn, this.tooltipEquip, this.tooltipHunger, this.tooltipSub, this.tooltipGear
         ]);
         this.tooltip.clearMask?.(true);
         (this.tooltipLayer || this.uiLayer).add(this.tooltip);
@@ -58,6 +59,8 @@
         this._tooltipHungerSig = "";
         this._tooltipHungerW = 0;
         this._tooltipHungerH = 0;
+        this._tooltipStarOn = false;
+        this._tooltipStarIndent = 0;
         this._tooltipPreviewKey = "";
         this._tooltipPreviewW = 0;
         this._tooltipPreviewH = 0;
@@ -214,6 +217,7 @@
             this._clearTooltipGear();
             this._clearTooltipPreview?.();
             this._syncTooltipHunger(null, "");
+            this._clearTooltipStar?.();
             this.tooltipSub?.setText("");
             this.tooltipSub?.setVisible(false);
             this.tooltip.setVisible(false);
