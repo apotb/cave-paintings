@@ -26,6 +26,9 @@
     const persistBills = (...args) => ctx.persistBills(...args);
     const finishPut = (...args) => ctx.finishPut(...args);
     const endWorkHold = (...args) => ctx.endWorkHold(...args);
+    const beginWorkHold = (...args) => ctx.beginWorkHold(...args);
+    const bumpWork = (...args) => ctx.bumpWork(...args);
+    const strengthRoomQty = (...args) => ctx.strengthRoomQty(...args);
     const doLightFire = (...args) => ctx.doLightFire(...args);
     const stokeUntilKeep = (...args) => ctx.stokeUntilKeep(...args);
     const takeFireCatalyst = (...args) => ctx.takeFireCatalyst(...args);
@@ -80,6 +83,18 @@
     const smokePitLive = (...args) => ctx.smokePitLive(...args);
     const fireNeedsLight = (...args) => ctx.fireNeedsLight(...args);
 
+
+function pawnItemQty(rec, id) {
+    let n = 0;
+    const add = (slots) => {
+        for (const s of slots || []) {
+            if (s?.id === id) n += Math.max(1, Math.floor(Number(s.quantity) || 1));
+        }
+    };
+    add(rec?.inventory);
+    add(rec?.overflow);
+    return n;
+}
 
 function refuseTake(world, rec, settle, fire) {
     return pocketFail(world, rec, settle, stationKey(fire), null);
@@ -365,10 +380,30 @@ function doLeather(world, rec, settle, job) {
     }
     if (job.kind === "soak_pickup") {
         const drop = job.drop;
+        if (!drop?.id) return halt();
         const walked = goToDrop(world, rec, drop);
         if (walked) return walked;
-        world._tryPickup(rec, { dropId: drop.uid });
-        rec._haulDestUid = pickBasket(world, rec, settle, dropAsStack(drop))?.uid || null;
+        const stack = dropAsStack(drop);
+        // The whole pile used to come along, then the basket walk was dropped
+        // unless Haul was on. Take what still fits under strength and stash it.
+        const qty = strengthRoomQty(rec, stack, stack?.quantity || 1);
+        if (!(qty > 0)) {
+            stopLeather(world, rec, job, true);
+            return halt();
+        }
+        const had = pawnItemQty(rec, drop.id);
+        world._tryPickup(rec, { dropId: drop.uid, quantity: qty });
+        if (!(pawnItemQty(rec, drop.id) > had)) {
+            stopLeather(world, rec, job, true);
+            return halt();
+        }
+        const basket = pickBasket(world, rec, settle, stack);
+        if (basket) {
+            rec._haulDestUid = basket.uid;
+            rec._haulMergeOnly = false;
+            beginWorkHold(rec, { type: "stash", target: basket });
+            bumpWork(world, rec);
+        }
         return halt();
     }
     if (job.kind === "soak_drop") {
@@ -472,9 +507,13 @@ function doLeather(world, rec, settle, job) {
             }
             if (tool.at !== rec) {
                 const stack = tool.slots?.[tool.index];
-                if (!canGivePawn(rec, stack) && !(freeHandSlot(rec) && canGivePawn(rec, stack))) {
+                // One brain tans one hide. Hauling the whole stack left the
+                // rest in their pockets and emptied the basket.
+                const carry = need === "brain" && stack ? { ...stack, quantity: 1 } : stack;
+                if (!canGivePawn(rec, carry) && !(freeHandSlot(rec) && canGivePawn(rec, carry))) {
                     return pocketFail(world, rec, settle, stationKey(rack), [pred]);
                 }
+                if (need === "brain") return fetchCookPiece(world, rec, settle, tool) || halt();
                 return fetchStack(world, rec, settle, tool) || halt();
             }
             // A backpack index is not a hotbar slot. Selecting it starts a

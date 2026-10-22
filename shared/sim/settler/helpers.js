@@ -322,6 +322,9 @@ function releaseWork(world, mob) {
     if (settle) reservesOf(world, settle).release(rec.id);
     rec._haulDestUid = null;
     rec._haulMergeOnly = false;
+    rec._returnHides = false;
+    rec._hideKeepJob = null;
+    rec._returnHideStack = null;
     rec._workChannel = null;
     rec._workHold = false;
     rec._busyJob = null;
@@ -578,6 +581,19 @@ function canCarry(rec, stack, want = 1) {
         cap
     );
     return fit >= 1;
+}
+
+/** How many of `stack` still fit before a settler is slowed. Strength, not twice that. */
+function strengthRoomQty(rec, stack, want) {
+    if (!stack?.id) return 0;
+    const n = Math.max(0, Math.floor(Number(want) || 0));
+    if (!n) return 0;
+    const meta = getItem(stack.id);
+    const unitW = Carry.unitWeight(stack, meta);
+    const strength = Carry.strengthFromEquip(rec?.equipment, getItem, rec?.baseStrength);
+    const cap = Carry.pickupCap(strength, "settler");
+    const mass = Carry.gearMass(rec?.inventory, rec?.equipment, getItem, rec?.overflow);
+    return Carry.countFit(n, unitW, mass, cap);
 }
 
 function giveStack(world, rec, stack) {
@@ -1729,6 +1745,7 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     ctx.inRange = inRange;
     ctx.onMerge = onMerge;
     ctx.canCarry = canCarry;
+    ctx.strengthRoomQty = strengthRoomQty;
     ctx.giveStack = giveStack;
     ctx.takeOne = takeOne;
     ctx.takeQty = takeQty;

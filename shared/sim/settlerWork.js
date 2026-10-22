@@ -113,6 +113,7 @@ const shellRequire = typeof require === "function" ? require : undefined;
     const doEat = (...args) => ctx.doEat(...args);
     const eatAct = (...args) => ctx.eatAct(...args);
     const returnPreparedFood = (...args) => ctx.returnPreparedFood(...args);
+    const returnSurplusHides = (...args) => ctx.returnSurplusHides(...args);
     const heldPrepared = (...args) => ctx.heldPrepared(...args);
     const actCtx = (...args) => ctx.actCtx(...args);
     const mergeNeedsRoom = (...args) => ctx.mergeNeedsRoom(...args);
@@ -268,6 +269,18 @@ function allowSettlerScan(world) {
     return true;
 }
 
+function hideReturnWalk(world, rec, mob, settle) {
+    const back = returnSurplusHides(world, rec, settle);
+    if (!back) return null;
+    claimsFor(world, settle)?.release(rec.id);
+    endWorkHold(rec);
+    rec._settlerPlan = "stash";
+    setSettlerAct(rec, mob, Settlement.actLabel({ type: "stash" }, actCtx(world, rec, {
+        stashStack: rec._returnHideStack || null
+    })));
+    return back;
+}
+
 function tick(world, mob, delta) {
     beginSettleQueries(world);
     const rec = findRec(world, mob);
@@ -414,6 +427,7 @@ function tick(world, mob, delta) {
         && !rec._haulDestUid
         && !rec._haulMergeOnly
         && !rec._returnFood
+        && !rec._returnHides
         && !isWorkHold(rec)
     ) {
         const careNow = Settlement.jobEnabled(liveJobs, "doctor") && (scan.critical || []).length;
@@ -436,7 +450,8 @@ function tick(world, mob, delta) {
         && rec._settlerScanMs < SCAN_MS
         && !rec._haulDestUid
         && !rec._haulMergeOnly
-        && !rec._returnFood;
+        && !rec._returnFood
+        && !rec._returnHides;
     let stash;
     let delivering = false;
     let plan;
@@ -474,6 +489,10 @@ function tick(world, mob, delta) {
                 })));
                 return back;
             }
+        }
+        if (rec._returnHides) {
+            const back = hideReturnWalk(world, rec, mob, settle);
+            if (back) return back;
         }
 
         const planOpts = () => ({
@@ -540,6 +559,11 @@ function tick(world, mob, delta) {
         if (plan.type !== "doctor") reservesOf(world, settle).release(rec.id);
 
         if (rec._resumeWork && plan.type !== rec._busyJob?.type) rec._resumeWork = false;
+        if (!delivering && plan.type === "leather") {
+            rec._hideKeepJob = plan.target;
+            const back = hideReturnWalk(world, rec, mob, settle);
+            if (back) return back;
+        }
         if (Settlement.isBusyWork(plan.type)) beginWorkHold(rec, plan);
         else if (!delivering && plan.type !== "chop") endWorkHold(rec);
         rec._settlerPlan = delivering ? "stash" : plan.type;

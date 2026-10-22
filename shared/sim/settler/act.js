@@ -60,6 +60,7 @@
     const goToDrop = (...args) => ctx.goToDrop(...args);
     const leaveHaulDrop = (...args) => ctx.leaveHaulDrop(...args);
     const skipJob = (...args) => ctx.skipJob(...args);
+    const isSkipped = (...args) => ctx.isSkipped(...args);
     const dropAsStack = (...args) => ctx.dropAsStack(...args);
     const haulDropQty = (...args) => ctx.haulDropQty(...args);
     const reservesOf = (...args) => ctx.reservesOf(...args);
@@ -207,6 +208,140 @@ function returnPreparedFood(world, rec, settle) {
     }
     rec._returnFood = false;
     world._dirtyPawnOwner(rec);
+    return null;
+}
+
+function isHideStack(stack) {
+    if (!stack?.id) return false;
+    return !!Settlement.hideStageOf(getItem(stack.id), stack.id);
+}
+
+/** How many of this hide the job will actually spend. Other stages go back. */
+function hideKeepQty(world, job, stack) {
+    if (!job || !stack?.id) return 0;
+    const stage = Settlement.hideStageOf(getItem(stack.id), stack.id);
+    if (!stage) return 0;
+    const bill = job.bill;
+    const kind = job.kind;
+    if (kind === "bench") {
+        const recId = bill?.recipeId || bill?.outputId;
+        const recipe = recId && typeof world?._parseRecipe === "function"
+            ? world._parseRecipe(recId)
+            : null;
+        if (!recipe) return 0;
+        let n = 0;
+        for (const ing of recipe.ingredients || []) {
+            if (ing.hideStage !== stage) continue;
+            if (!hideAllowed(bill, stack)) continue;
+            n += Math.max(1, Math.floor(Number(ing.qty) || 1));
+        }
+        return n;
+    }
+    if (kind === "hang" || kind === "soak_drop") {
+        return Settlement.hideAllowsStack(bill, stack, getItem) ? 1 : 0;
+    }
+    if (kind === "smoke" || bill?.method === "smoke_hide") {
+        if ((job.phase || "load") !== "load") return 0;
+        if (stage !== "brained") return 0;
+        return hideAllowed(bill, stack) ? 1 : 0;
+    }
+    return 0;
+}
+
+function surplusHidePieces(world, rec, job) {
+    const need = new Map();
+    const holds = [];
+    const scan = (slots) => {
+        for (let i = 0; i < (slots || []).length; i++) {
+            const stack = slots[i];
+            if (!isHideStack(stack)) continue;
+            const stage = Settlement.hideStageOf(getItem(stack.id), stack.id);
+            const n = hideKeepQty(world, job, stack);
+            if (stage && n > (need.get(stage) || 0)) need.set(stage, n);
+            holds.push({ slots, index: i, stage });
+        }
+    };
+    scan(rec?.inventory);
+    scan(rec?.overflow);
+    const left = new Map(need);
+    const out = [];
+    for (const h of holds) {
+        const stack = h.slots[h.index];
+        if (!stack) continue;
+        const qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
+        const allowed = hideKeepQty(world, h.stage ? job : null, stack);
+        const keep = allowed > 0 && h.stage ? (left.get(h.stage) || 0) : 0;
+        const use = Math.min(qty, keep);
+        if (allowed > 0 && h.stage) left.set(h.stage, keep - use);
+        if (qty - use > 0) out.push({ slots: h.slots, index: h.index, qty: qty - use });
+    }
+    return out;
+}
+
+function clearHideReturn(rec) {
+    rec._returnHides = false;
+    rec._hideKeepJob = null;
+    rec._returnHideStack = null;
+}
+
+/**
+ * Walk surplus hides to a basket before the next tailoring job. A tunic keeps
+ * the three it needs; a rack that takes over puts the rest back.
+ */
+function returnSurplusHides(world, rec, settle) {
+    if (!rec._returnHides && isSkipped(rec, "hide-return")) return null;
+    const job = rec._hideKeepJob || null;
+    const pieces = () => surplusHidePieces(world, rec, job);
+    const first = pieces();
+    if (!first.length) {
+        clearHideReturn(rec);
+        return null;
+    }
+    let target = null;
+    let shown = null;
+    for (const p of first) {
+        const stack = p.slots[p.index];
+        if (!stack) continue;
+        const b = pickBasket(world, rec, settle, stack);
+        if (!b) continue;
+        target = b;
+        shown = stack;
+        break;
+    }
+    if (!target) {
+        clearHideReturn(rec);
+        return null;
+    }
+    rec._returnHides = true;
+    rec._returnHideStack = shown;
+    const walked = goOrWalk(world, rec, target);
+    if (walked) return walked;
+    let moved = false;
+    for (const p of pieces()) {
+        const stack = p.slots[p.index];
+        if (!stack) continue;
+        const b = pickBasket(world, rec, settle, stack);
+        if (!b || !storageNear(rec, b)) continue;
+        const piece = takeQty(p, p.qty);
+        if (!piece) continue;
+        if (!insertInEntry(world, b, piece)) {
+            const cur = p.slots[p.index];
+            if (!cur) p.slots[p.index] = piece;
+            else cur.quantity = (Number(cur.quantity) || 1) + (Number(piece.quantity) || 1);
+            continue;
+        }
+        emitEntry(world, b);
+        moved = true;
+    }
+    world._dirtyPawnOwner?.(rec);
+    if (!pieces().length) {
+        clearHideReturn(rec);
+        return null;
+    }
+    if (!moved) {
+        clearHideReturn(rec);
+        skipJob(rec, "hide-return");
+    }
     return null;
 }
 
@@ -1470,6 +1605,7 @@ function doLightFire(world, rec, settle, fire) {
     ctx.isPreparedStack = isPreparedStack;
     ctx.heldPrepared = heldPrepared;
     ctx.returnPreparedFood = returnPreparedFood;
+    ctx.returnSurplusHides = returnSurplusHides;
     ctx.fetchEatStack = fetchEatStack;
     ctx.putInBasket = putInBasket;
     ctx.walkHaulDest = walkHaulDest;

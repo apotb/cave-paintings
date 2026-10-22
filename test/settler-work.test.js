@@ -2995,6 +2995,130 @@ test("leather unload walks to a distant basket instead of teleporting the hide",
     assert.ok(rec.x > startX + 24, `should have walked toward storage, x=${rec.x} start=${startX}`);
 });
 
+function stackQty(slots, id) {
+    let n = 0;
+    for (const s of slots || []) {
+        if (s?.id === id) n += Math.max(1, Number(s.quantity) || 1);
+    }
+    return n;
+}
+
+function carriedQty(rec, id) {
+    return stackQty(rec.inventory, id) + stackQty(rec.overflow, id);
+}
+
+test("tailor picks up a soaked pile only up to strength and walks it to storage", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [null, null, null, null, null]
+    });
+    rec.kc = 1600;
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
+    addRackInFront(world, settle, rec, "rack-soak");
+    Settlement.addBill(settle, "rack-soak", { recipeId: "soak_hide", mode: "forever", paused: false });
+    const basket = addBasket(world, settle, rec.x + 16 * 8, rec.y, "basket-soak");
+    const chunk = originChunk(world);
+    chunk.drops.push({
+        uid: "soaked1",
+        id: "deer_hide_soaked",
+        quantity: 10,
+        x: rec.x,
+        y: rec.y
+    });
+    workOnce(world, rec);
+    assert.equal(carriedQty(rec, "deer_hide_soaked"), 6, "strength 15 holds six hides at 2.5");
+    const left = chunk.drops.find((d) => d.uid === "soaked1");
+    assert.equal(left?.quantity, 4, "the rest of the pile stays on the ground");
+    assert.equal(rec._busyJob?.type, "stash");
+    assert.equal(rec._haulDestUid, basket.uid);
+    let delivered = false;
+    for (let i = 0; i < 400; i++) {
+        world.tick(16);
+        if (stackQty(basket.slots, "deer_hide_soaked") >= 6) {
+            delivered = true;
+            break;
+        }
+    }
+    assert.equal(delivered, true, "should walk the soaked hides to the basket without Haul");
+    assert.equal(carriedQty(rec, "deer_hide_soaked"), 0);
+});
+
+test("tailor puts hides back before a rack job that does not need them", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "pebble", toolClass: "scraper", knapQuality: "rough", quantity: 1 },
+            { id: "deer_hide_dry", quantity: 3 },
+            null, null, null
+        ]
+    });
+    rec.kc = 1600;
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
+    const rack = addRackInFront(world, settle, rec, "rack-extra");
+    rack.slots[0] = { id: "deer_hide", quantity: 1 };
+    Settlement.addBill(settle, rack.uid, { recipeId: "flesh_hide", mode: "forever", paused: false });
+    const basket = addBasket(world, settle, rec.x + 16 * 8, rec.y, "basket-extra");
+    workOnce(world, rec);
+    assert.ok(!rec._workChannel, "should not flesh while still carrying the dried hides");
+    assert.equal(rec._returnHides, true);
+    assert.match(rec._settlerAct || "", /Hauling/i);
+    let delivered = false;
+    for (let i = 0; i < 400; i++) {
+        world.tick(16);
+        if (stackQty(basket.slots, "deer_hide_dry") >= 3) {
+            delivered = true;
+            break;
+        }
+    }
+    assert.equal(delivered, true, "dried hides should be back in the basket");
+    assert.equal(carriedQty(rec, "deer_hide_dry"), 0);
+});
+
+test("tailor keeps one hide a hang needs and puts the rest back", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "pebble", toolClass: "scraper", knapQuality: "rough", quantity: 1 },
+            { id: "deer_hide", quantity: 4 },
+            null, null, null
+        ]
+    });
+    rec.kc = 1600;
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
+    const rack = addRackInFront(world, settle, rec, "rack-keep");
+    Settlement.addBill(settle, rack.uid, { recipeId: "flesh_hide", mode: "forever", paused: false });
+    const basket = addBasket(world, settle, rec.x, rec.y, "basket-keep");
+    workOnce(world, rec);
+    const stowed = stackQty(basket.slots, "deer_hide");
+    const held = carriedQty(rec, "deer_hide");
+    const hung = rack.slots[0]?.id === "deer_hide" ? (rack.slots[0].quantity || 1) : 0;
+    assert.equal(stowed, 3, "three spare hides go back");
+    assert.equal(held + hung, 1, "one hide stays for the rack");
+});
+
+test("tailor keeps the hides a bench bill needs", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "deer_hide_dry", quantity: 3 },
+            { id: "leaf_cord", quantity: 8 },
+            { id: "bone", quantity: 1 },
+            null, null
+        ]
+    });
+    rec.kc = 1600;
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
+    Research.unlock(pawn, "basic_furniture");
+    Research.unlock(pawn, "skinworking");
+    const bench = addBenchInFront(world, settle, rec, "bench-keep");
+    addBasket(world, settle, rec.x + 16 * 8, rec.y, "basket-keep-bench");
+    Settlement.addBill(settle, bench.uid, { recipeId: "hide_tunic", mode: "forever", paused: false });
+    workOnce(world, rec);
+    assert.ok(!rec._returnHides);
+    assert.equal(carriedQty(rec, "deer_hide_dry"), 3);
+    assert.equal(rec._workChannel?.kind, "craft");
+});
+
 test("dedicated settler crafts at a bench over craftSeconds", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {
