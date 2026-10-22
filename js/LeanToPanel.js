@@ -310,7 +310,6 @@ class LeanToPanel {
         const ws = this._worldUiScale();
         const bw = 78 * ws;
         const bh = 28 * ws;
-        const clear = 2;
         const fontPx = pixelUiFontSize(16, s);
         this._actionBw = bw;
         this._actionBh = bh;
@@ -334,9 +333,15 @@ class LeanToPanel {
         }
 
         const objH = this.leanTo.displayHeight || 16;
-        this.actionBtn.setPosition(0, -(objH + clear + bh / 2));
+        const aboveY = typeof worldUiAboveY === "function"
+            ? worldUiAboveY(this.scene, objH, bh)
+            : -(objH + 2 + bh / 2);
+        this.actionBtn.setPosition(0, aboveY);
         this._medicalUi?.setSize?.(bh);
-        this._placeBottomRow(clear + bh / 2, bw, bh, 8 * ws);
+        const bottomY = typeof worldUiButtonY === "function"
+            ? worldUiButtonY(this.scene, 0, bh)
+            : 2 + bh / 2;
+        this._placeBottomRow(bottomY, bw, bh, 8 * ws);
 
         this.container.setPosition(this.leanTo.x, this.leanTo.y);
         this.refresh();

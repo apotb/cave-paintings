@@ -1280,6 +1280,7 @@ class DryingRack extends Storage {
             super.applyVisual();
         }
         this._syncHang(stack);
+        this._syncInteractMark();
     }
 
     setSlot(index, stack) {

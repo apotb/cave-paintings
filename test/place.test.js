@@ -81,6 +81,9 @@ test("skinworking bench interact tile is south at 0° and rotates with the bench
     const stand = Place.interactWorldPos(e0, TS, def);
     assert.equal(stand.x, t0.tx * TS + TS / 2);
     assert.equal(stand.y, t0.ty * TS + TS);
+    const pose = Place.interactStandPose(e0, TS, def, { width: 16, height: 16 });
+    assert.equal(pose.x + 8, stand.x, "body center sits on the spot");
+    assert.equal(pose.y - 8, t0.ty * TS + TS / 2);
 
     const t90 = Place.interactTileOf({ ...e0, rot: 90 }, TS, def);
     assert.equal(t90.tx, origin.tx - 1);
@@ -148,6 +151,71 @@ test("skinworking bench interact tile occupies placement and blocks other things
             getThing: (id) => id === "wicker_basket" ? basket : def
         })
     ), false);
+});
+
+test("campfire and drying rack interact tile is the south tile and blocks placement", () => {
+    for (const id of ["campfire", "unlit_campfire", "drying_rack"]) {
+        const def = thingDef(id);
+        const x = 40;
+        const y = 48;
+        const entry = { id: def.id, x, y, rot: 0 };
+        const origin = Place.originTileOf(entry, TS);
+        const tile = Place.interactTileOf(entry, TS, def);
+        assert.equal(tile.tx, origin.tx, id);
+        assert.equal(tile.ty, origin.ty + 1, id);
+        const stand = Place.interactWorldPos(entry, TS, def);
+        assert.equal(stand.x, tile.tx * TS + TS / 2, id);
+        assert.equal(stand.y, tile.ty * TS + TS, id);
+        const rect = Place.collisionWorldRect(entry, def, TS);
+        assert.equal(contains(rect, stand.x, stand.y - 2), false, `${id} interact tile stays walkable`);
+
+        const tx = origin.tx;
+        const ty = origin.ty;
+        const tiles = Place.placeOccupyTiles(tx, ty, 0, def);
+        assert.equal(tiles.length, 2, id);
+        assert.ok(tiles.some((t) => t.tx === tx && t.ty === ty + 1), id);
+        assert.equal(Place.entryOnTile(entry, tx, ty + 1, TS, def), true, id);
+        assert.equal(Place.canPlaceOnTile({
+            tileKey: "grass",
+            things: [entry],
+            lootables: [],
+            tx,
+            ty: ty + 1,
+            tileSize: TS,
+            getThing: (want) => want === def.id ? def : thingDef("wicker_basket")
+        }), false, id);
+    }
+});
+
+test("drying rack rotation moves only the interact tile", () => {
+    const def = thingDef("drying_rack");
+    assert.equal(Place.canRotate(def), true);
+    const loads = Place.thingImageLoads(def).map((l) => l.key);
+    assert.deepEqual(loads, ["drying_rack", "drying_rack_hanging"]);
+    const x = 40;
+    const y = 48;
+    const e0 = { id: def.id, x, y, rot: 0 };
+    const origin = Place.originTileOf(e0, TS);
+    const rect0 = Place.collisionWorldRect(e0, def, TS);
+    for (const rot of [90, 180, 270]) {
+        const rect = Place.collisionWorldRect({ ...e0, rot }, def, TS);
+        assert.deepEqual(rect, rect0, `${rot}° keeps the same sprite hitbox`);
+    }
+    const t0 = Place.interactTileOf(e0, TS, def);
+    assert.equal(t0.tx, origin.tx);
+    assert.equal(t0.ty, origin.ty + 1);
+    const t90 = Place.interactTileOf({ ...e0, rot: 90 }, TS, def);
+    assert.equal(t90.tx, origin.tx - 1);
+    assert.equal(t90.ty, origin.ty);
+    const t180 = Place.interactTileOf({ ...e0, rot: 180 }, TS, def);
+    assert.equal(t180.tx, origin.tx);
+    assert.equal(t180.ty, origin.ty - 1);
+    const t270 = Place.interactTileOf({ ...e0, rot: 270 }, TS, def);
+    assert.equal(t270.tx, origin.tx + 1);
+    assert.equal(t270.ty, origin.ty);
+    const tiles = Place.placeOccupyTiles(origin.tx, origin.ty, 90, def);
+    assert.equal(tiles.length, 2);
+    assert.ok(tiles.some((t) => t.tx === origin.tx - 1 && t.ty === origin.ty));
 });
 
 test("drying rack hitbox matches a campfire", () => {

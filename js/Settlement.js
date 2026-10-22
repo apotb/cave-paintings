@@ -2069,6 +2069,174 @@ class SettlementSystem {
         return true;
     }
 
+    /** Square world button. ↻, or ↺ while Shift is held. */
+    makeRotateButton(onClick) {
+        const scene = this.scene;
+        const BG = 0x120e0a;
+        const BG_PRESS = 0x0a0806;
+        const OUTLINE = 0x2a2218;
+        const OUTLINE_HOVER = 0xffffff;
+        const OUTLINE_PRESS = 0xd4a84b;
+        const size = 28;
+        const rect = scene.add.rectangle(0, 0, size, size, BG, 1)
+            .setStrokeStyle(2, OUTLINE)
+            .setInteractive({ useHandCursor: true });
+        const glyph = scene.add.text(0, 0, "↻", {
+            fontFamily: "sans-serif",
+            fontSize: "20px",
+            color: "#d4c4a8"
+        }).setOrigin(0.5);
+        // ↻ / ↺ sit high and left inside the em box. Padding keeps the stroke
+        // on the canvas so we can center the ink, not the font box.
+        glyph.setPadding?.(6, 6, 6, 6);
+        const btn = scene.add.container(0, 0, [rect, glyph]);
+        const ui = {
+            btn,
+            rect,
+            glyph,
+            text: glyph,
+            tooltipText: "Rotate",
+            _hovering: false,
+            _pressing: false,
+            _side: size
+        };
+        const shiftDown = (pointer) => !!(
+            pointer?.event?.shiftKey
+            || scene.player?.keys?.SHIFT?.isDown
+            || scene.input?.keyboard?.addKey?.("SHIFT")?.isDown
+        );
+        const strokeW = () => (typeof pixelUiWorldStroke === "function"
+            ? pixelUiWorldStroke(scene)
+            : 2 / (scene.worldZoom || 1));
+        const centerGlyphInk = () => {
+            glyph.setOrigin(0.5);
+            const canvas = glyph.canvas;
+            const ctx = canvas?.getContext?.("2d");
+            if (!ctx || !(canvas.width > 0) || !(canvas.height > 0)) {
+                glyph.setPosition(0, 0);
+                return false;
+            }
+            let pixels;
+            try {
+                pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            } catch (_) {
+                glyph.setPosition(0, 0);
+                return false;
+            }
+            const cw = canvas.width;
+            const ch = canvas.height;
+            let minX = cw;
+            let minY = ch;
+            let maxX = -1;
+            let maxY = -1;
+            for (let y = 0; y < ch; y++) {
+                const row = y * cw * 4;
+                for (let x = 0; x < cw; x++) {
+                    if (pixels[row + x * 4 + 3] < 24) continue;
+                    if (x < minX) minX = x;
+                    if (y < minY) minY = y;
+                    if (x > maxX) maxX = x;
+                    if (y > maxY) maxY = y;
+                }
+            }
+            if (maxX < 0) {
+                glyph.setPosition(0, 0);
+                return false;
+            }
+            const res = Number(glyph.style?.resolution) || 1;
+            const dx = ((minX + maxX) * 0.5) / res - (cw / res) * 0.5;
+            const dy = ((minY + maxY) * 0.5) / res - (ch / res) * 0.5;
+            glyph.setPosition(-dx * (glyph.scaleX || 1), -dy * (glyph.scaleY || 1));
+            return true;
+        };
+        const layoutIcon = () => {
+            if (!glyph?.active) return;
+            const mark = shiftDown() ? "↺" : "↻";
+            if (glyph.text !== mark) glyph.setText(mark);
+            const s = scene.uiScale || 1;
+            const zoom = scene.worldZoom || scene.cameras?.main?.zoom || 1;
+            const px = typeof pixelUiFontSize === "function" ? pixelUiFontSize(20, s) : Math.round(20 * s);
+            const sig = `${mark}|${px}|${zoom}`;
+            glyph.setFontSize(`${px}px`);
+            glyph.setScale(1 / (zoom || 1));
+            if (glyph._inkSig === sig) return;
+            if (centerGlyphInk()) glyph._inkSig = sig;
+        };
+        const paint = () => {
+            if (!rect?.active || !rect.geom) return;
+            const sw = strokeW();
+            if (ui._pressing) {
+                rect.setFillStyle(BG_PRESS, 1);
+                rect.setStrokeStyle(sw, OUTLINE_PRESS);
+            } else if (ui._hovering) {
+                rect.setFillStyle(BG, 1);
+                rect.setStrokeStyle(sw, OUTLINE_HOVER);
+            } else {
+                rect.setFillStyle(BG, 1);
+                rect.setStrokeStyle(sw, OUTLINE);
+            }
+            layoutIcon();
+        };
+        ui.paint = paint;
+        ui.syncShift = () => layoutIcon();
+        ui.setSize = (side) => {
+            if (!rect?.active || !rect.geom) return;
+            const n = Math.max(8, Number(side) || size);
+            ui._side = n;
+            rect.setSize(n, n);
+            if (rect.input) {
+                if (rect.input.hitArea?.setTo) rect.input.hitArea.setTo(0, 0, n, n);
+                else if (rect.input.hitArea?.setSize) rect.input.hitArea.setSize(n, n);
+            } else {
+                rect.setInteractive({ useHandCursor: true });
+            }
+            paint();
+        };
+        rect.on("pointerover", (pointer) => {
+            ui._hovering = true;
+            paint();
+            scene.showTooltip?.(() => "Rotate", pointer.x, pointer.y, rect);
+        });
+        rect.on("pointerout", (pointer) => {
+            if (pointer) {
+                const cam = scene.cameras?.main;
+                const pt = cam ? cam.getWorldPoint(pointer.x, pointer.y) : { x: pointer.x, y: pointer.y };
+                const b = rect.getBounds?.();
+                if (b && Phaser.Geom.Rectangle.Contains(b, pt.x, pt.y)) return;
+            }
+            ui._hovering = false;
+            ui._pressing = false;
+            paint();
+            if (scene._tooltipTarget === rect) scene.hideTooltip?.();
+        });
+        rect.on("pointerdown", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            if (pointer.rightButtonDown()) return;
+            ui._pressing = true;
+            paint();
+        });
+        rect.on("pointerup", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            const was = ui._pressing && ui._hovering;
+            const ccw = shiftDown(pointer);
+            ui._pressing = false;
+            paint();
+            if (was) onClick?.(ccw);
+        });
+        if (!this._rotateUis) {
+            this._rotateUis = [];
+            const refresh = () => {
+                for (const row of this._rotateUis) row.syncShift?.();
+            };
+            const kb = scene.input?.keyboard;
+            kb?.on("keydown-SHIFT", refresh);
+            kb?.on("keyup-SHIFT", refresh);
+        }
+        this._rotateUis.push(ui);
+        paint();
+        return ui;
+    }
+
     makeStationButton(onClick) {
         const scene = this.scene;
         const BG = 0x120e0a;
@@ -2395,6 +2563,40 @@ class SettlementSystem {
         }
         if (addOn && ui?.btn) ui.btn.setPosition(x, y);
         if (actionOn && actionBtn) actionBtn.setPosition(x, y);
+    }
+
+    /**
+     * Square rotate control just right of the take/destroy button.
+     * The visible buttons in the row are centered together.
+     */
+    placeRotateBeside(ui, opts = {}) {
+        if (!ui?.btn) return;
+        if (opts.visible === false) {
+            ui.btn.setVisible(false);
+            ui.rect?.disableInteractive?.();
+            if (this.scene._tooltipTarget === ui.rect) this.scene.hideTooltip?.();
+            return;
+        }
+        const x = Number(opts.x) || 0;
+        const y = Number(opts.y) || 0;
+        const gap = Number(opts.gap) || 8;
+        const addW = Number(opts.addW) || 28;
+        const actionW = Number(opts.actionW) || 78;
+        const side = Number(opts.side) || addW;
+        const parts = [];
+        if (opts.addOn && opts.addBtn) parts.push({ btn: opts.addBtn, w: addW });
+        if (opts.actionOn && opts.actionBtn) parts.push({ btn: opts.actionBtn, w: actionW });
+        parts.push({ btn: ui.btn, w: side });
+        const total = parts.reduce((sum, p) => sum + p.w, 0) + gap * (parts.length - 1);
+        let cursor = x - total / 2;
+        ui.setSize?.(side);
+        for (const p of parts) {
+            p.btn.setPosition(cursor + p.w / 2, y);
+            cursor += p.w + gap;
+        }
+        ui.btn.setVisible(true);
+        if (typeof ensurePointerInteractive === "function") ensurePointerInteractive(ui.rect);
+        else ui.rect?.setInteractive?.({ useHandCursor: true });
     }
 
     /** Workstation and settlement names in settler blue. */

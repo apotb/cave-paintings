@@ -511,6 +511,45 @@ function interiorRest(world, rec, c, target) {
     return { entry, def, out, inn: inn || fallback };
 }
 
+function poseBlockedAt(world, c, x, y) {
+    // Pathing plans with a 2px body pad. A point that is clear at pad 0 still
+    // gets replaced by a nearby stand, so arrival has to use the same pad.
+    return !!(c && typeof world?._partyPoseBlocked === "function"
+        && world._partyPoseBlocked(c, x, y, 2, { load: false }));
+}
+
+/** Ideal body-centered pose, or the nearest open feet along the tile bottom. */
+function resolveStand(world, c, ideal, tile) {
+    if (!ideal || !c || !tile) return ideal;
+    const sx = Number(c.x) || 0;
+    const sy = Number(c.y) || 0;
+    const open = (x, y) => {
+        if (poseBlockedAt(world, c, x, y)) return false;
+        const dist = Math.hypot(x - sx, y - sy);
+        if (!(dist > 4)) return true;
+        const steps = Math.ceil(dist / 4);
+        for (let i = 1; i < steps; i++) {
+            const t = i / steps;
+            if (poseBlockedAt(world, c, sx + (x - sx) * t, sy + (y - sy) * t)) return false;
+        }
+        return true;
+    };
+    if (open(ideal.x, ideal.y)) return ideal;
+    const y = tile.ty * TS + TS;
+    let best = null;
+    let bestD = Infinity;
+    for (let i = 0; i <= 8; i++) {
+        const x = tile.tx * TS + (TS * i) / 8;
+        if (!open(x, y)) continue;
+        const d = Math.abs(x - ideal.x);
+        if (d < bestD) {
+            bestD = d;
+            best = { x, y };
+        }
+    }
+    return best || ideal;
+}
+
 function goOrWalk(world, rec, target) {
     if (!target) return halt();
     const c = rec.creature || world?._ensureSettlerCreature?.(rec);
@@ -559,18 +598,36 @@ function goOrWalk(world, rec, target) {
         }
         return walkTo(paintStand.x, paintStand.y, { openRadius: 0 });
     }
-    const stand = typeof Place !== "undefined" && Place.interactWorldPos
-        ? Place.interactWorldPos(target, TS, def)
+    const ideal = typeof Place !== "undefined" && Place.interactStandPose
+        ? Place.interactStandPose(target, TS, def, c)
         : null;
+    const tile = ideal && typeof Place.interactTileOf === "function"
+        ? Place.interactTileOf(target, TS, def)
+        : null;
+    const stand = resolveStand(world, c, ideal, tile);
     if (stand) {
         const slack = 4;
         const px = Number(rec.x) || 0;
         const py = Number(rec.y) || 0;
         if (Math.hypot(px - stand.x, py - stand.y) <= slack) {
             faceToward(rec, target.x, (Number(target.y) || 0) - 8);
+            rec.x = stand.x;
+            rec.y = stand.y;
+            if (c) {
+                c.x = stand.x;
+                c.y = stand.y;
+                c.vx = 0;
+                c.vy = 0;
+                c.setDesiredVel?.(0, 0);
+            }
             return null;
         }
-        return walkTo(stand.x, stand.y, { openRadius: 0 });
+        // Pathing uses a 2px body pad. A basket on the marked tile makes that
+        // pose solid, so they stop short and never arrive — the job stays
+        // "Stoking the fire" until the basket moves. Stand beside it instead.
+        const standBlocked = !!(c && typeof world?._partyPoseBlocked === "function"
+            && world._partyPoseBlocked(c, stand.x, stand.y, 2, { load: false }));
+        if (!standBlocked) return walkTo(stand.x, stand.y, { openRadius: 0 });
     }
     // Baskets and stations stay solid. Work from interact range when the
     // line is clear. If the thing itself is in the way, stand beside it

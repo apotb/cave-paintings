@@ -4459,3 +4459,128 @@ test("visited camps carry the owner's character name and live online flag", () =
     assert.equal(camp.ownerName, "Birch");
 });
 
+test("rotate turns a campfire stand and skips a blocked facing", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    fillGrass(world);
+    const chunk = originChunk(world);
+    const fire = testCampfire(pawn);
+    chunk.things.push(fire);
+    const def = DataStore.getThing("campfire");
+    assert.ok(!def.rotations, "campfire keeps its spritesheet");
+    world.drainEvents();
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.CAMPFIRE,
+        op: "rotate",
+        uid: fire.uid,
+        x: fire.x,
+        y: fire.y
+    });
+    assert.equal(fire.rot, 90);
+    assert.deepEqual(Place.interactTileOf(fire, 16, def), { tx: 1, ty: 1 });
+    fire.rot = 0;
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.CAMPFIRE,
+        op: "rotate",
+        ccw: true,
+        uid: fire.uid,
+        x: fire.x,
+        y: fire.y
+    });
+    assert.equal(fire.rot, 270);
+    assert.deepEqual(Place.interactTileOf(fire, 16, def), { tx: 3, ty: 1 });
+    const ev = world.drainEvents().find((e) => e.kind === "campfire" && e.entry);
+    assert.equal(ev.entry.rot, 90);
+    assert.ok(!Place.thingImageLoads(def).some((l) => String(l.key).includes("campfire_90")));
+
+    fire.rot = 0;
+    chunk.things.push({
+        uid: "block_west",
+        id: "campfire",
+        x: 24,
+        y: 32,
+        fuel: [null, null],
+        cook: null,
+        catalyst: null,
+        simmer: [null, null, null, null]
+    });
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.CAMPFIRE,
+        op: "rotate",
+        uid: fire.uid,
+        x: fire.x,
+        y: fire.y
+    });
+    assert.equal(fire.rot, 180);
+    assert.deepEqual(Place.interactTileOf(fire, 16, def), { tx: 2, ty: 0 });
+
+    fire.rot = 0;
+    const CS = 8;
+    const waterAt = (tx, ty) => {
+        chunk.tiles[(tx % CS) + (ty % CS) * CS] = "water";
+    };
+    waterAt(1, 1);
+    waterAt(2, 0);
+    waterAt(3, 1);
+    world.drainEvents();
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.CAMPFIRE,
+        op: "rotate",
+        uid: fire.uid,
+        x: fire.x,
+        y: fire.y
+    });
+    assert.equal(Place.normalizeRot(fire.rot), 0);
+    assert.equal(world.drainEvents().some((e) => e.kind === "campfire" && e.entry), false);
+});
+
+test("rotate turns a drying rack spot and a skinworking bench, not a grindstone", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    fillGrass(world);
+    const chunk = originChunk(world);
+    const rack = {
+        uid: "rack_rot",
+        id: "drying_rack",
+        x: pawn.x,
+        y: pawn.y,
+        rot: 0,
+        slots: [null]
+    };
+    const bench = {
+        uid: "bench_rot",
+        id: "skinworking_bench",
+        x: pawn.x + 48,
+        y: pawn.y,
+        rot: 0
+    };
+    const stone = {
+        uid: "grind_rot",
+        id: "grindstone",
+        x: pawn.x,
+        y: pawn.y + 48,
+        rot: 0,
+        stone: "flint"
+    };
+    chunk.things.push(rack, bench, stone);
+    const turn = (entry) => world.handleAction(pawn.id, {
+        type: Protocol.Actions.STORAGE,
+        op: "rotate",
+        uid: entry.uid,
+        x: entry.x,
+        y: entry.y
+    });
+    turn(rack);
+    const rackDef = DataStore.getThing("drying_rack");
+    assert.equal(rack.rot, 90);
+    assert.deepEqual(Place.interactTileOf(rack, 16, rackDef), { tx: 1, ty: 1 });
+    assert.ok(!Place.thingImageLoads(rackDef).some((l) => /_90/.test(l.key)));
+
+    turn(bench);
+    const benchDef = DataStore.getThing("skinworking_bench");
+    assert.equal(bench.rot, 90);
+    assert.equal(Place.facingTextureKey(benchDef, bench.rot), "skinworking_bench_90");
+    assert.deepEqual(Place.interactTileOf(bench, 16, benchDef), { tx: 4, ty: 1 });
+
+    turn(stone);
+    assert.equal(Place.normalizeRot(stone.rot), 0);
+});
+

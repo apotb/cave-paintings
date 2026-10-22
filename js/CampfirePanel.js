@@ -288,12 +288,17 @@ class CampfirePanel {
         this._fuelUi = sys.makeWorldButton("Fuel", () => {
             if (this.campfire) sys.openFuelFilter?.(this.campfire);
         });
+        this._rotateUi = sys.makeRotateButton((ccw) => {
+            if (this.campfire) this.scene.tryRotateStation?.(this.campfire, { ccw });
+        });
         this.container.add(this._settleUi.btn);
         this.container.add(this._billUi.btn);
         this.container.add(this._fuelUi.btn);
+        this.container.add(this._rotateUi.btn);
         this._settleUi.btn.setVisible(false);
         this._billUi.btn.setVisible(false);
         this._fuelUi.btn.setVisible(false);
+        this._rotateUi.btn.setVisible(false);
     }
 
     _syncSettle() {
@@ -371,7 +376,9 @@ class CampfirePanel {
         this.scene.closeCraftStationMenu?.();
 
         if (this.campfire && this.campfire !== campfire) this._notifyCampfire("leave");
+        const prev = this.campfire;
         this.campfire = campfire;
+        this.scene._refreshStationInteractMarks?.(prev, campfire);
         if (campfire?.entry && !campfire.entry.uid) {
             campfire.entry.uid = `cf_${Math.round(campfire.x)}_${Math.round(campfire.y)}`;
         }
@@ -389,9 +396,11 @@ class CampfirePanel {
     }
 
     close() {
+        const prev = this.campfire;
         this._notifyCampfire("leave");
         this.visible = false;
         this.campfire = null;
+        this.scene._refreshStationInteractMarks?.(prev);
         this.container.setVisible(false);
         this.destroyBtn?.setVisible(false);
         this.destroyRect?.disableInteractive();
@@ -575,10 +584,14 @@ class CampfirePanel {
         const slotW = baseW * ws;
         const spacing = slotW + padding;
         const fireH = this.campfire.displayHeight;
-        const clear = 2;
-        const catalystY = -(fireH + clear + slotW / 2);
+        const catalystY = typeof worldUiAboveY === "function"
+            ? worldUiAboveY(this.scene, fireH, slotW)
+            : -(fireH + 2 + slotW / 2);
         const aboveY = catalystY - (slotW + padding);
-        const fuelY = clear + slotW / 2;
+        // Fuel slots travel with the buttons so the south interact circle
+        // stays between the fire and this row.
+        const below = typeof worldUiButtonClear === "function" ? worldUiButtonClear(this.scene) : 2;
+        const fuelY = below + slotW / 2;
 
         const positions = {
             cook: { x: 0, y: aboveY },
@@ -667,10 +680,16 @@ class CampfirePanel {
     _placeActionRow() {
         const row = this._actionRow;
         if (!row) return;
+        const addOn = !!this._settleUi?.btn?.visible;
+        const actionOn = this.visible && !!this.destroyBtn?.visible;
         this.scene.settlementSys?.placeAddActionRow(this._settleUi, this.destroyBtn, {
             y: row.y, gap: row.gap, addW: row.bh, actionW: row.bw,
-            addOn: !!this._settleUi?.btn?.visible,
-            actionOn: this.visible
+            addOn, actionOn
+        });
+        this.scene.settlementSys?.placeRotateBeside(this._rotateUi, {
+            y: row.y, gap: row.gap, addW: row.bh, actionW: row.bw, side: row.bh,
+            addOn, actionOn, visible: this.visible,
+            addBtn: this._settleUi?.btn, actionBtn: this.destroyBtn
         });
     }
 
@@ -1511,6 +1530,7 @@ class CampfirePanel {
         if (hit(this._settleUi?.rect, this._settleUi?.btn?.visible)) return true;
         if (hit(this._billUi?.rect, this._billUi?.btn?.visible)) return true;
         if (hit(this._fuelUi?.rect, this._fuelUi?.btn?.visible)) return true;
+        if (hit(this._rotateUi?.rect, this._rotateUi?.btn?.visible)) return true;
         return false;
     }
 }

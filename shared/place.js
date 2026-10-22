@@ -126,10 +126,12 @@
                 { key: t.wall, path: `assets/things/${t.key}/${partFile(t.key, t.wall)}.png` }
             ];
         }
-        // Recolored variant art (the grindstone) stays in one drawing. It lists
-        // rotations so the stand tile can turn, and does not ship 0/90/180/270 frames.
+        // Recolored variant art (the grindstone) and a drying rack stay in one
+        // drawing. They list rotations so the stand tile can turn, and do not
+        // ship 0/90/180/270 frames.
         const variantArt = Array.isArray(t.variants) && t.variants.length;
-        if (Array.isArray(t.rotations) && t.rotations.length && !variantArt) {
+        const spotOnly = !!t.dryingRack;
+        if (Array.isArray(t.rotations) && t.rotations.length && !variantArt && !spotOnly) {
             const loads = [];
             const seen = new Set();
             const shelter = !!(t.sleep && !(t.floor && t.wall));
@@ -330,12 +332,29 @@
         return { dx, dy };
     }
 
-    function interactTileOf(entry, tileSize, thingDef) {
+    function interactTileOf(entry, tileSize, thingDef, rot) {
         const off = interactOffset(thingDef);
         if (!off || !entry || entry.gone) return null;
         const origin = originTileOf(entry, tileSize);
-        const d = rotateTileDelta(off.dx, off.dy, entry.rot);
+        const d = rotateTileDelta(off.dx, off.dy, rot == null ? entry.rot : rot);
         return { tx: origin.tx + d.dx, ty: origin.ty + d.dy };
+    }
+
+    /**
+     * Next facing whose interact tile passes canPlace(tx, ty).
+     * Clockwise unless ccw is set. Null when the thing has no stand,
+     * or every other facing is blocked.
+     */
+    function nextSpotRot(entry, tileSize, thingDef, canPlace, ccw) {
+        if (!entry || !interactOffset(thingDef) || typeof canPlace !== "function") return null;
+        const turn = ccw ? rotateCCW : rotateCW;
+        let rot = normalizeRot(entry.rot);
+        for (let n = 0; n < 3; n++) {
+            rot = turn(rot);
+            const tile = interactTileOf(entry, tileSize, thingDef, rot);
+            if (tile && canPlace(tile.tx, tile.ty)) return rot;
+        }
+        return null;
     }
 
     /** Feet pose at the bottom-center of the interact tile, same as tileCenter. */
@@ -344,6 +363,22 @@
         if (!t) return null;
         const ts = Number(tileSize) || 16;
         return { x: t.tx * ts + ts / 2, y: t.ty * ts + ts };
+    }
+
+    /**
+     * Bottom-left feet that put a standing body in the middle of the interact
+     * tile. Pose x is the sprite's left edge, not its center.
+     */
+    function interactStandPose(entry, tileSize, thingDef, body) {
+        const spot = interactWorldPos(entry, tileSize, thingDef);
+        if (!spot) return null;
+        const ts = Number(tileSize) || 16;
+        const w = Number(body?.width) > 0 ? Number(body.width) : ts;
+        const h = Number(body?.height) > 0 ? Number(body.height) : ts;
+        return {
+            x: spot.x - w * 0.5,
+            y: spot.y - ts * 0.5 + h * 0.5
+        };
     }
 
     function appendUniqueTile(tiles, extra) {
@@ -1662,7 +1697,9 @@
         interactOffset,
         rotateTileDelta,
         interactTileOf,
+        nextSpotRot,
         interactWorldPos,
+        interactStandPose,
         occupyTiles,
         placeOccupyTiles,
         footprintTiles,

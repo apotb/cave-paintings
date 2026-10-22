@@ -327,10 +327,15 @@ class StoragePanel {
             if (kind === "rack") sys.openBills?.(this.storage);
             else sys.openStorageFilter?.(this.storage);
         });
+        this._rotateUi = sys.makeRotateButton((ccw) => {
+            if (this.storage) this.scene.tryRotateStation?.(this.storage, { ccw });
+        });
         this.container.add(this._settleUi.btn);
         this.container.add(this._billUi.btn);
+        this.container.add(this._rotateUi.btn);
         this._settleUi.btn.setVisible(false);
         this._billUi.btn.setVisible(false);
+        this._rotateUi.btn.setVisible(false);
     }
 
     _syncSettle() {
@@ -399,7 +404,9 @@ class StoragePanel {
             this.storage.syncPitLid?.(false);
             this._notifyStorage("leave");
         }
+        const prev = this.storage;
         this.storage = storage;
+        this.scene._refreshStationInteractMarks?.(prev, storage);
         if (storage) {
             storage._storageTipHold = false;
             if (this.scene._storageTipHold === storage) this.scene._storageTipHold = null;
@@ -426,6 +433,7 @@ class StoragePanel {
         this._notifyStorage("leave");
         this.visible = false;
         this.storage = null;
+        this.scene._refreshStationInteractMarks?.(prev);
         prev?.syncPitLid?.(false);
         this.container.setVisible(false);
         this._cancelDrag();
@@ -547,13 +555,14 @@ class StoragePanel {
         const slotW = baseW * ws;
         const spacing = slotW + padding;
         const objH = this.storage.displayHeight || 16;
-        const clear = 2;
         const n = this._slotCount();
         const cols = typeof Place !== "undefined"
             ? Place.storageLayoutCols(n)
             : Math.min(4, Math.max(1, n));
         const rows = Math.ceil(n / cols);
-        const bottomRowY = -(objH + clear + slotW / 2);
+        const bottomRowY = typeof worldUiAboveY === "function"
+            ? worldUiAboveY(this.scene, objH, slotW)
+            : -(objH + 2 + slotW / 2);
 
         const zoom = this.scene.worldZoom || 1;
         for (let i = 0; i < this.slotViews.length; i++) {
@@ -587,7 +596,9 @@ class StoragePanel {
             this.takeText.setFontSize(`${pixelUiFontSize(16, s)}px`);
             this.takeText.setScale(1 / zoom);
         }
-        const actionY = clear + bh / 2;
+        const actionY = typeof worldUiButtonY === "function"
+            ? worldUiButtonY(this.scene, 0, bh)
+            : 2 + bh / 2;
         const gap = 8 * ws;
         this._actionRow = { y: actionY, bw, bh, gap };
         this._settleUi?.setSize(bh);
@@ -606,10 +617,16 @@ class StoragePanel {
     _placeActionRow() {
         const row = this._actionRow;
         if (!row) return;
+        const addOn = !!this._settleUi?.btn?.visible;
+        const actionOn = !!this.takeBtn?.visible;
         this.scene.settlementSys?.placeAddActionRow(this._settleUi, this.takeBtn, {
             y: row.y, gap: row.gap, addW: row.bh, actionW: row.bw,
-            addOn: !!this._settleUi?.btn?.visible,
-            actionOn: !!this.takeBtn?.visible
+            addOn, actionOn
+        });
+        this.scene.settlementSys?.placeRotateBeside(this._rotateUi, {
+            y: row.y, gap: row.gap, addW: row.bh, actionW: row.bw, side: row.bh,
+            addOn, actionOn, visible: this.visible && this._isDryingRack(),
+            addBtn: this._settleUi?.btn, actionBtn: this.takeBtn
         });
         if (this._billUi) {
             this._billUi.btn.setPosition(0, row.y + row.bh + row.gap);
@@ -674,6 +691,7 @@ class StoragePanel {
         if (this.takeBtn?.visible && this.pointerOnTake(pointer)) return true;
         if (hit(this._settleUi?.rect, this._settleUi?.btn?.visible)) return true;
         if (hit(this._billUi?.rect, this._billUi?.btn?.visible)) return true;
+        if (hit(this._rotateUi?.rect, this._rotateUi?.btn?.visible)) return true;
         return false;
     }
 

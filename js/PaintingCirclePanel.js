@@ -145,7 +145,10 @@ class PaintingCirclePanel {
         const bw = 96 * ws;
         const bh = 28 * ws;
         const gap = 8 * ws;
-        this._row = { y: 2 + bh / 2, bw, bh, gap };
+        const y = typeof worldUiButtonY === "function"
+            ? worldUiButtonY(this.scene, 0, bh)
+            : 2 + bh / 2;
+        this._row = { y, bw, bh, gap };
         this._enableUi?.setSize?.(bh);
         this._enableUi?.paint?.();
         if (this._matUi) {

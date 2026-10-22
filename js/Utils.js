@@ -212,6 +212,27 @@ function pixelUiWorldStroke(scene) {
     return pixelUiStroke(scene?.uiScale || 1) / zoom;
 }
 
+/**
+ * World pixels between a station sprite and the popup rows above and below it.
+ * Half a tile, so the south interact circle stays partly in view. Same offset
+ * on every popup of this style, including stations with no interact spot.
+ * The sprite is bottom-anchored, so this gap on both sides puts the rows the
+ * same distance from the station's center.
+ */
+function worldUiButtonClear(scene) {
+    return (Number(scene?.tileSize) || 16) / 2;
+}
+
+/** Center Y for a button row whose top edge is `worldUiButtonClear` below `anchorY`. */
+function worldUiButtonY(scene, anchorY, buttonH) {
+    return (Number(anchorY) || 0) + worldUiButtonClear(scene) + (Number(buttonH) || 0) / 2;
+}
+
+/** Center Y for a row sitting `worldUiButtonClear` above a bottom-anchored sprite. */
+function worldUiAboveY(scene, spriteH, itemH) {
+    return -((Number(spriteH) || 0) + worldUiButtonClear(scene) + (Number(itemH) || 0) / 2);
+}
+
 function pixelUiFontSize(basePx, scale) {
     const cell = PIXEL_FONT_CELL;
     const raw = Math.max(cell, (Number(basePx) || cell) * (Number(scale) || 1));

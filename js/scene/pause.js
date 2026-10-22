@@ -1331,6 +1331,8 @@
         this._craftSettleUi?.rect?.disableInteractive?.();
         this._craftBillUi?.btn?.setVisible?.(false);
         this._craftBillUi?.rect?.disableInteractive?.();
+        this._craftRotateUi?.btn?.setVisible?.(false);
+        this._craftRotateUi?.rect?.disableInteractive?.();
         this._layoutCraftTakeButton();
     },
 
@@ -1355,7 +1357,17 @@
             const b = thing.entry?.uid;
             if (a && b && a === b) return true;
         }
+        if (this._sameStationThing(this.campfirePanel?.campfire, thing)) return true;
+        if (this._sameStationThing(this.storagePanel?.storage, thing)) return true;
         return false;
+    },
+
+    _sameStationThing(open, thing) {
+        if (!open || !thing) return false;
+        if (open === thing) return true;
+        const a = open.entry?.uid;
+        const b = thing.entry?.uid;
+        return !!(a && b && a === b);
     },
 
     _refreshStationInteractMarks(...things) {
@@ -1474,7 +1486,7 @@
         }
         if (!this.craftMenuVisible) {
             if (this._craftTakeBtn?.visible || this._craftSettleUi?.btn?.visible
-                || this._craftBillUi?.btn?.visible) {
+                || this._craftBillUi?.btn?.visible || this._craftRotateUi?.btn?.visible) {
                 this._hideCraftStationChrome();
             }
             return;

@@ -103,6 +103,7 @@
                 id: src.id || "campfire",
                 x,
                 y,
+                rot: typeof Place !== "undefined" ? Place.normalizeRot(src.rot) : (src.rot || 0),
                 rev: Number.isFinite(incomingRev) ? incomingRev : 0,
                 fuel: this._netCloneCampfireList(src.fuel, 2),
                 cook: this._netCloneCampfireStack(src.cook),
@@ -158,6 +159,9 @@
             entry.x = x;
             entry.y = y;
             if (Number.isFinite(incomingRev)) entry.rev = incomingRev;
+            if (src.rot != null) {
+                entry.rot = typeof Place !== "undefined" ? Place.normalizeRot(src.rot) : src.rot;
+            }
             if ("fuel" in src) entry.fuel = this._netCloneCampfireList(src.fuel, 2);
             if ("cook" in src) entry.cook = this._netCloneCampfireStack(src.cook);
             if ("catalyst" in src) entry.catalyst = this._netCloneCampfireStack(src.catalyst);

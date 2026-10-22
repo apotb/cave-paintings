@@ -74,25 +74,43 @@ function addStation(world, settle, id, x, y, uid) {
     return entry;
 }
 
-/** Snap the settler onto the south interact tile of a 0° skinworking bench. */
-function addBenchInFront(world, settle, rec, uid) {
+/** Plant the settler so their body fills the station's interact tile. */
+function standOnSpot(world, rec, entry) {
+    const c = world._ensureSettlerCreature(rec);
+    const pose = Place.interactStandPose(entry, 16, world._thingDef(entry.id), c);
+    if (!pose) return;
+    rec.x = pose.x;
+    rec.y = pose.y;
+    if (c) {
+        c.x = pose.x;
+        c.y = pose.y;
+        c.vx = 0;
+        c.vy = 0;
+    }
+}
+
+/** Place a 0° station one tile north and stand the settler in its spot. */
+function addInFront(world, settle, rec, id, uid) {
     const ts = 16;
     const tx = Math.floor(Number(rec.x) / ts);
     const ty = Math.floor((Number(rec.y) - 1) / ts);
-    rec.x = tx * ts + ts / 2;
-    rec.y = ty * ts + ts;
-    const c = world._ensureSettlerCreature(rec);
-    if (c) {
-        c.x = rec.x;
-        c.y = rec.y;
-    }
-    const bench = addStation(world, settle, "skinworking_bench", rec.x, rec.y - ts, uid);
-    bench.rot = 0;
-    return bench;
+    const entry = addStation(world, settle, id, tx * ts + ts / 2, ty * ts, uid);
+    entry.rot = 0;
+    standOnSpot(world, rec, entry);
+    return entry;
+}
+
+/** Snap the settler onto the south interact tile of a 0° skinworking bench. */
+function addBenchInFront(world, settle, rec, uid) {
+    return addInFront(world, settle, rec, "skinworking_bench", uid);
+}
+
+function addRackInFront(world, settle, rec, uid) {
+    return addInFront(world, settle, rec, "drying_rack", uid);
 }
 
 function addLitFire(world, settle, rec, uid = "fire1") {
-    const fire = addStation(world, settle, "campfire", rec.x, rec.y, uid);
+    const fire = addInFront(world, settle, rec, "campfire", uid);
     fire.fuel = [{ id: "stick", quantity: 8 }, null];
     fire.cook = null;
     fire.catalyst = { id: "sharp_stick", quantity: 1 };
@@ -1256,12 +1274,9 @@ test("dedicated settler faces the campfire while cooking", () => {
     });
     settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
     const fire = addLitFire(world, settle, rec);
-    rec.x = fire.x;
-    rec.y = fire.y + 16;
+    standOnSpot(world, rec, fire);
     rec.facing = "down";
     const mob = world._ensureSettlerCreature(rec);
-    mob.x = rec.x;
-    mob.y = rec.y;
     mob.facing = "down";
     Settlement.addBill(settle, fire.uid, { recipeId: "roast", mode: "forever", paused: false });
     workOnce(world, rec);
@@ -1301,14 +1316,10 @@ test("dedicated settler faces the drying rack while fleshing", () => {
         ]
     });
     settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
-    const rack = addStation(world, settle, "drying_rack", rec.x, rec.y, "rack-face");
+    const rack = addRackInFront(world, settle, rec, "rack-face");
     rack.slots[0] = { id: "deer_hide", quantity: 1 };
-    rec.x = rack.x;
-    rec.y = rack.y + 16;
     rec.facing = "down";
     const mob = world._ensureSettlerCreature(rec);
-    mob.x = rec.x;
-    mob.y = rec.y;
     mob.facing = "down";
     Settlement.addBill(settle, rack.uid, { recipeId: "flesh_hide", mode: "forever", paused: false });
     workOnce(world, rec);
@@ -1782,15 +1793,18 @@ test("dedicated settler takes a drying rack from a basket when the hide is still
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
     settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
-    const basket = addBasket(world, settle, rec.x, rec.y);
-    basket.slots[0] = { id: "drying_rack", quantity: 1 };
-    const hangRack = addStation(world, settle, "drying_rack", rec.x + 16, rec.y, "hang-rack");
-    hangRack.slots[0] = { id: "deer_hide_brained", quantity: 1 };
     const fire = addLitFire(world, settle, rec);
+    const basket = addBasket(world, settle, rec.x - 16, rec.y);
+    basket.slots[0] = { id: "drying_rack", quantity: 1 };
+    const hangRack = addStation(world, settle, "drying_rack", rec.x + 16, rec.y - 16, "hang-rack");
+    hangRack.slots[0] = { id: "deer_hide_brained", quantity: 1 };
     fire.catalyst = null;
     Research.unlock(pawn, "smoking");
     Settlement.addBill(settle, fire.uid, { recipeId: "smoke", mode: "forever", paused: false });
-    for (let i = 0; i < 8; i++) workOnce(world, rec);
+    for (let i = 0; i < 240; i++) {
+        world.tick(16);
+        if (fire.cook?.id === "deer_hide_brained") break;
+    }
     assert.equal(fire.catalyst?.id, "drying_rack", "should take the spare rack from storage");
     assert.equal(fire.cook?.id, "deer_hide_brained");
     assert.equal(hangRack.slots[0], null);
@@ -2100,7 +2114,7 @@ test("dedicated settler fleshes a hang over the scrape channel", () => {
             null, null, null, null
         ]
     });
-    const rack = addStation(world, settle, "drying_rack", rec.x, rec.y, "rack1");
+    const rack = addRackInFront(world, settle, rec, "rack1");
     rack.slots[0] = { id: "deer_hide", quantity: 1 };
     Settlement.addBill(settle, rack.uid, { recipeId: "flesh_hide", mode: "forever", paused: false });
     workOnce(world, rec);
@@ -2136,7 +2150,7 @@ test("dedicated settler fleshes with a scraper that is only in the backpack", ()
         { id: "pebble", toolClass: "scraper", knapQuality: "rough", quantity: 1 },
         null
     ];
-    const rack = addStation(world, settle, "drying_rack", rec.x, rec.y, "rack-pack");
+    const rack = addRackInFront(world, settle, rec, "rack-pack");
     rack.slots[0] = { id: "deer_hide", quantity: 1 };
     Settlement.addBill(settle, rack.uid, { recipeId: "flesh_hide", mode: "forever", paused: false });
     workOnce(world, rec);
@@ -2156,7 +2170,7 @@ test("a settler who cannot keep fleshing lets someone else take the rack", () =>
         ]
     });
     settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
-    const rack = addStation(world, settle, "drying_rack", rec.x, rec.y, "rack-give");
+    const rack = addRackInFront(world, settle, rec, "rack-give");
     rack.slots[0] = { id: "deer_hide", quantity: 1 };
     Settlement.addBill(settle, rack.uid, { recipeId: "flesh_hide", mode: "forever", paused: false });
     workOnce(world, rec);
@@ -2189,7 +2203,7 @@ test("dedicated settler leaves fleshed hide on the rack instead of stashing it",
             null, null, null, null
         ]
     });
-    const rack = addStation(world, settle, "drying_rack", rec.x, rec.y, "rack-leave");
+    const rack = addRackInFront(world, settle, rec, "rack-leave");
     addBasket(world, settle, rec.x + 16, rec.y, "basket-leave");
     rack.slots[0] = { id: "deer_hide", quantity: 1 };
     Settlement.addBill(settle, rack.uid, { recipeId: "flesh_hide", mode: "forever", paused: false });
@@ -2209,7 +2223,7 @@ test("dedicated settler unloads dried hide from the rack into a basket", () => {
     const { settle, rec } = parkSettler(world, pawn, {
         inventory: [null, null, null, null, null]
     });
-    const rack = addStation(world, settle, "drying_rack", rec.x, rec.y, "rack-dry");
+    const rack = addRackInFront(world, settle, rec, "rack-dry");
     const basket = addBasket(world, settle, rec.x + 16, rec.y, "basket-dry");
     rack.slots[0] = { id: "deer_hide_dry", quantity: 1 };
     Settlement.addBill(settle, rack.uid, { recipeId: "dry_hide", mode: "forever", paused: false });
@@ -2227,7 +2241,7 @@ test("leather unload walks to a distant basket instead of teleporting the hide",
         inventory: [null, null, null, null, null]
     });
     settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
-    const rack = addStation(world, settle, "drying_rack", rec.x, rec.y, "rack-far");
+    const rack = addRackInFront(world, settle, rec, "rack-far");
     const basket = addBasket(world, settle, rec.x + 16 * 8, rec.y, "basket-far");
     rack.slots[0] = { id: "deer_hide_dry", quantity: 1 };
     Settlement.addBill(settle, rack.uid, { recipeId: "dry_hide", mode: "forever", paused: false });
@@ -2297,13 +2311,13 @@ test("dedicated settler stands on the bench interact tile and faces north", () =
     Research.unlock(pawn, "skinworking");
     const bench = addStation(world, settle, "skinworking_bench", rec.x, rec.y, "bench-spot");
     const def = world._thingDef("skinworking_bench");
-    const stand = Place.interactWorldPos(bench, 16, def);
+    const stand = Place.interactStandPose(bench, 16, def, world._ensureSettlerCreature(rec));
     Settlement.addBill(settle, bench.uid, { recipeId: "hide_pouch", mode: "forever", paused: false });
     workOnce(world, rec);
     let arrived = false;
     for (let i = 0; i < 240; i++) {
         world.tick(16);
-        if (Math.hypot(rec.x - stand.x, rec.y - stand.y) <= 5) {
+        if (Math.hypot(rec.x - stand.x, rec.y - stand.y) <= 1) {
             arrived = true;
             break;
         }
@@ -2311,7 +2325,7 @@ test("dedicated settler stands on the bench interact tile and faces north", () =
     assert.equal(
         arrived,
         true,
-        `should stand on the interact tile, at ${rec.x},${rec.y} want ${stand.x},${stand.y}`
+        `should stand in the middle of the interact tile, at ${rec.x},${rec.y} want ${stand.x},${stand.y}`
     );
     for (let i = 0; i < 12; i++) world.tick(16);
     assert.equal(rec.facing, "up");
@@ -2966,6 +2980,10 @@ test("settler fetches a brain from a basket before approaching the rack", () => 
         }
     }
     assert.equal(heldBrain, true, "should pick up a brain before tanning");
+    const held = (rec.inventory || []).find((s) => s && s.id === "brain");
+    assert.equal(held?.quantity, 1, "should take one brain, not the stack");
+    assert.equal(basket.slots[0]?.id, "brain");
+    assert.equal(basket.slots[0]?.quantity, 1, "the rest of the stack stays in the basket");
     assert.equal(started, true, "should start tanning after the fetch");
     assert.ok(reversals < 8, `ran back and forth ${reversals} times`);
 });
@@ -2991,7 +3009,7 @@ test("settler walks around a lean-to to brain-tan at a rack", () => {
     settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
     const rack = addStation(
         world, settle, "drying_rack",
-        pos.x, box.top - 18,
+        pos.x, box.top - 50,
         "rack-brain"
     );
     rack.slots[0] = { id: "deer_hide_dehaired", quantity: 1 };
@@ -3036,7 +3054,7 @@ test("tailor walks around a lean-to to fetch brained hides for smoking", () => {
     fire.catalyst = { id: "drying_rack", quantity: 1 };
     const rack = addStation(
         world, settle, "drying_rack",
-        pos.x, box.top - 18,
+        pos.x, box.top - 50,
         "rack-smoke"
     );
     rack.slots[0] = { id: "deer_hide_brained", quantity: 1 };
@@ -3460,7 +3478,7 @@ function cookOnlyJobs(settle, rec) {
 }
 
 function addKeepFire(world, settle, rec, uid = "fire-fuel") {
-    const fire = addStation(world, settle, "campfire", rec.x + 16, rec.y, uid);
+    const fire = addInFront(world, settle, rec, "campfire", uid);
     fire.id = "campfire";
     fire.fuel = [null, null];
     fire.burnRemaining = 10;
@@ -3493,6 +3511,42 @@ test("always-on campfire is stoked to at least 12 hours of fuel", () => {
     workN(world, rec);
     const logsAfter = basket.slots[0]?.id === "log" ? (basket.slots[0].quantity || 0) : 0;
     assert.equal(logsAfter, logsLeft);
+});
+
+test("cook stokes from beside the fire when the stand is occupied", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    cookOnlyJobs(settle, rec);
+    const fire = addStation(world, settle, "campfire", rec.x + 64, rec.y - 16, "fire-blocked");
+    fire.id = "campfire";
+    fire.fuel = [null, null];
+    fire.burnRemaining = 10;
+    fire.pitTemp = 600;
+    fire.maxTemp = 600;
+    const def = world._thingDef(fire.id);
+    const spot = Place.interactWorldPos(fire, 16, def);
+    const pose = Place.interactStandPose(fire, 16, def, world._ensureSettlerCreature(rec));
+    const basket = addBasket(world, settle, spot.x, spot.y, "fuel-on-stand");
+    basket.slots[0] = { id: "log", quantity: 10 };
+    assert.equal(
+        world._partyPoseBlocked(world._ensureSettlerCreature(rec), pose.x, pose.y, 2, { load: false }),
+        true
+    );
+    const getItem = (id) => world._itemDef(id);
+    let stoking = 0;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if (rec._settlerAct === "Stoking the fire") stoking++;
+        if (Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES
+            && rec._settlerAct !== "Stoking the fire") break;
+    }
+    assert.ok(
+        Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES,
+        `never fueled (act=${rec._settlerAct} at ${rec.x.toFixed(0)},${rec.y.toFixed(0)} fuel=${JSON.stringify(fire.fuel)})`
+    );
+    assert.notEqual(rec._settlerAct, "Stoking the fire");
+    assert.ok(stoking < 80, `stood on Stoking the fire for ${stoking} ticks`);
 });
 
 test("always-on off does not top up a fire that already has fuel", () => {
@@ -3600,6 +3654,10 @@ test("cook relights a cold campfire that already holds fuel", () => {
     unlockFire(world, pawn);
     rec.inventory[0] = { id: "sharp_stick", quantity: 1 };
     const fire = addColdFire(world, settle, rec, "fire-pit", rec.x + 16);
+    standOnSpot(world, rec, fire);
+    const pitMob = world._ensureSettlerCreature(rec);
+    pitMob.x = rec.x;
+    pitMob.y = rec.y;
     fire.fuel = [{ id: "stick", quantity: 1 }, null];
     FuelFilter.applyToEntry(fire, { alwaysOn: false, preferLogs: false, offItems: ["stick", "log"] });
     const basket = addBasket(world, settle, rec.x, rec.y, "fuel-basket");
@@ -3677,6 +3735,10 @@ test("cook lights a cold campfire when allowed fuel is in storage", () => {
     unlockFire(world, pawn);
     rec.inventory[0] = { id: "sharp_stick", quantity: 1 };
     const fire = addColdFire(world, settle, rec, "fire-ok", rec.x + 16);
+    standOnSpot(world, rec, fire);
+    const okMob = world._ensureSettlerCreature(rec);
+    okMob.x = rec.x;
+    okMob.y = rec.y;
     const basket = addBasket(world, settle, rec.x, rec.y, "fuel-basket");
     basket.slots[0] = { id: "stick", quantity: 20 };
     workN(world, rec);
@@ -5210,10 +5272,11 @@ test("a stoker skips poultice units a doctor has reserved", () => {
     });
     const basket = addBasket(world, settle, fire.x, fire.y, "poul-fuel");
     basket.slots[0] = { id: "poultice", quantity: 10 };
+    const stokeStand = Place.interactStandPose(fire, 16, world._thingDef(fire.id), { width: 16, height: 16 });
     const stoker = addHomeSettler(world, pawn, settle, {
         id: "stoker",
-        x: fire.x,
-        y: fire.y,
+        x: stokeStand.x,
+        y: stokeStand.y,
         jobs: { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 }
     });
     stoker.kc = 1600;

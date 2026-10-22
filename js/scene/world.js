@@ -573,7 +573,7 @@
             if (pointer.rightButtonDown()) return;
             if (this.restBlocksWorldUi?.()) return;
             if (this.pointerOnCraftTake?.(pointer) || this.pointerOnCraftSettle?.(pointer)
-                || this.pointerOnCraftBills?.(pointer)) return;
+                || this.pointerOnCraftBills?.(pointer) || this.pointerOnCraftRotate?.(pointer)) return;
             if (this._pointerOverCraftMenu?.(pointer)) return;
             if (this.pointerOverWorldUi?.(pointer)) return;
             if (!thing.inRange?.()) return;
@@ -663,6 +663,7 @@
         if (this.pointerOnCraftTake?.(pointer)) return true;
         if (this.pointerOnCraftSettle?.(pointer)) return true;
         if (this.pointerOnCraftBills?.(pointer)) return true;
+        if (this.pointerOnCraftRotate?.(pointer)) return true;
         if (this._pointerOverCraftMenu?.(pointer)) return true;
         if (this.partyPanel?.containsPointer?.(pointer)) return true;
         if (this.healthPanel?.containsPointer?.(pointer)) return true;
@@ -2148,6 +2149,47 @@
         if (!station.inRange?.()) return false;
         this.closeCraftMenu();
         return this.tryPickupStorage(station);
+    },
+
+    tryRotateStation(thing, opts = {}) {
+        if (!thing?.entry) return false;
+        const id = thing.meta?.id || thing.entry.id;
+        if (id !== "campfire" && id !== "unlit_campfire"
+            && id !== "drying_rack" && id !== "skinworking_bench") return false;
+        if (thing.inRange && !thing.inRange()) return false;
+        const ccw = !!opts.ccw;
+        if (this.simAuth()) {
+            const fire = id === "campfire" || id === "unlit_campfire";
+            this._netSendMove?.(true);
+            this.net.sendAction({
+                type: fire ? NetProtocol.Actions.CAMPFIRE : NetProtocol.Actions.STORAGE,
+                op: "rotate",
+                ccw,
+                uid: thing.entry.uid,
+                x: thing.x,
+                y: thing.y,
+                pawnId: this.player?.pawnId
+            });
+            return true;
+        }
+        if (typeof Place === "undefined" || !Place.nextSpotRot) return false;
+        const ts = this.tileSize || 16;
+        const next = Place.nextSpotRot(thing.entry, ts, thing.meta, (tx, ty) => this._localSpotFree(thing, tx, ty), ccw);
+        if (next == null) return false;
+        thing.entry.rot = next;
+        thing.applyVisual?.();
+        return true;
+    },
+
+    _localSpotFree(thing, tx, ty) {
+        if (typeof Place === "undefined" || !Place.entryOnTile) return true;
+        const ts = this.tileSize || 16;
+        const kids = this.world?.things?.getChildren?.() || [];
+        for (const other of kids) {
+            if (!other?.active || other === thing || !other.entry) continue;
+            if (Place.entryOnTile(other.entry, tx, ty, ts, other.meta)) return false;
+        }
+        return true;
     },
 
     tryDestroyCampfire(campfire) {

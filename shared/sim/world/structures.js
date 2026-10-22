@@ -425,6 +425,37 @@
         };
     },
 
+    _spotTileFree(entry, tx, ty) {
+        const occ = this._placeOccForTile(tx, ty);
+        const things = occ.things.filter((t) => t !== entry);
+        return Place.canPlaceOnTile({
+            tileKey: occ.tileKey,
+            things,
+            lootables: occ.lootables,
+            tx,
+            ty,
+            tileSize: TS,
+            getThing: (id) => thingDefs().get(id),
+            placeDef: thingDefs().get(entry?.id)
+        });
+    },
+
+    /** Turn the stand tile. Campfire and drying rack stay one drawing; the bench uses its facing sprite. */
+    _rotateInteractSpot(chunk, entry, action = {}) {
+        if (!chunk || !entry) return false;
+        const id = entry.id;
+        if (id !== "campfire" && id !== "unlit_campfire"
+            && id !== "drying_rack" && id !== "skinworking_bench") return false;
+        const def = thingDefs().get(id);
+        const ccw = !!(action.ccw || action.dir === "ccw");
+        const next = Place.nextSpotRot(entry, TS, def, (tx, ty) => this._spotTileFree(entry, tx, ty), ccw);
+        if (next == null) return false;
+        entry.rot = next;
+        if (id === "campfire" || id === "unlit_campfire") this._emitCampfire(chunk, entry);
+        else this._emitStorage(chunk, entry);
+        return true;
+    },
+
     _trySleep(session, action = {}) {
         const op = String(action.op || "");
         if (op === "rest") this._sleepRest(session, action);
@@ -1425,6 +1456,10 @@
         const def = thingDefs().get(entry.id);
         const op = String(action.op || "");
         if (op === "attend" || op === "leave") return;
+        if (op === "rotate") {
+            this._rotateInteractSpot(chunk, entry, action);
+            return;
+        }
         const R = _research();
         if (R?.isPaintingCircle?.(def, entry)) {
             if (op !== "pickup") return;

@@ -221,6 +221,7 @@
             id: entry.id,
             x: entry.x,
             y: entry.y,
+            rot: Place.normalizeRot(entry.rot),
             cx: chunk?.cx,
             cy: chunk?.cy,
             rev: Number(entry.rev) || 0,
@@ -946,6 +947,10 @@
         }
         if (op === "destroy") {
             this._destroyCampfire(chunk, entry);
+            return;
+        }
+        if (op === "rotate") {
+            this._rotateInteractSpot(chunk, entry, action);
             return;
         }
         if (op === "inv_to_slot") this._campfireInvToSlot(p, entry, action);

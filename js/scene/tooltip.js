@@ -380,6 +380,7 @@
                 if (this._pointerOnWorldBtn?.(campP._settleUi, pointer)) return campP._settleUi.rect;
                 if (this._pointerOnWorldBtn?.(campP._billUi, pointer)) return campP._billUi.rect;
                 if (this._pointerOnWorldBtn?.(campP._fuelUi, pointer)) return campP._fuelUi.rect;
+                if (this._pointerOnWorldBtn?.(campP._rotateUi, pointer)) return campP._rotateUi.rect;
                 const campSlot = this._worldPanelSlotAt?.(campP, pointer);
                 if (campSlot) return campSlot;
                 const keepCamp = this._tooltipTarget || this._hoverTarget;
@@ -398,6 +399,7 @@
                 if (storeP.pointerOnTake?.(pointer)) return storeP.takeRect;
                 if (this._pointerOnWorldBtn?.(storeP._settleUi, pointer)) return storeP._settleUi.rect;
                 if (this._pointerOnWorldBtn?.(storeP._billUi, pointer)) return storeP._billUi.rect;
+                if (this._pointerOnWorldBtn?.(storeP._rotateUi, pointer)) return storeP._rotateUi.rect;
                 const storeSlot = this._worldPanelSlotAt?.(storeP, pointer);
                 if (storeSlot) return storeSlot;
                 const keepStore = this._tooltipTarget || this._hoverTarget;
@@ -436,7 +438,7 @@
             }
 
             if (this.pointerOnCraftTake?.(pointer) || this.pointerOnCraftSettle?.(pointer)
-                || this.pointerOnCraftBills?.(pointer)) {
+                || this.pointerOnCraftBills?.(pointer) || this.pointerOnCraftRotate?.(pointer)) {
                 for (let i = hits.length - 1; i >= 0; i--) {
                     const obj = hits[i];
                     if (!obj?.active || !obj.input?.enabled) continue;
@@ -446,6 +448,7 @@
                 const craftSlot = this._craftSlotAtPointer?.(pointer);
                 if (craftSlot) return craftSlot;
                 if (this.pointerOnCraftBills?.(pointer)) return this._craftBillUi?.rect;
+                if (this.pointerOnCraftRotate?.(pointer)) return this._craftRotateUi?.rect;
                 if (this.pointerOnCraftSettle?.(pointer)) return this._craftSettleUi?.rect;
                 if (this.pointerOnCraftTake?.(pointer)) return this._craftTakeRect;
                 const keepCraft = this._tooltipTarget || this._hoverTarget;
@@ -698,6 +701,8 @@
                     cur === panel._billUi?.text) return true;
                 if (cur === panel._fuelUi?.btn || cur === panel._fuelUi?.rect ||
                     cur === panel._fuelUi?.text) return true;
+                if (cur === panel._rotateUi?.btn || cur === panel._rotateUi?.rect ||
+                    cur === panel._rotateUi?.glyph) return true;
                 if (panel.slotViews?.some(v =>
                     v.slot === cur || v.icon === cur || v.fill === cur || v.qty === cur
                 )) return true;
@@ -717,6 +722,8 @@
                     cur === panel._settleUi?.icon) return true;
                 if (cur === panel._billUi?.btn || cur === panel._billUi?.rect ||
                     cur === panel._billUi?.text) return true;
+                if (cur === panel._rotateUi?.btn || cur === panel._rotateUi?.rect ||
+                    cur === panel._rotateUi?.glyph) return true;
                 if (panel.slotViews?.some(v =>
                     v.slot === cur || v.icon === cur || v.fill === cur || v.qty === cur
                 )) return true;
@@ -765,6 +772,8 @@
                     cur === this._craftSettleUi?.icon) return true;
                 if (cur === this._craftBillUi?.btn || cur === this._craftBillUi?.rect ||
                     cur === this._craftBillUi?.text) return true;
+                if (cur === this._craftRotateUi?.btn || cur === this._craftRotateUi?.rect ||
+                    cur === this._craftRotateUi?.glyph) return true;
                 cur = cur.parentContainer;
             }
             return false;

@@ -569,6 +569,7 @@
             this._craftSettleUi?.btn?.setVisible?.(false);
             this._craftSettleUi?.rect?.disableInteractive?.();
             this._layoutCraftBills(null, 0, 0, bw, bh, gap);
+            this._layoutCraftRotate();
             return;
         }
         if (!this._craftSettleUi) {
@@ -580,9 +581,8 @@
         }
         const ui = this._craftSettleUi;
         if (!ui) return;
-        const clear = 2;
         const x = station.x || 0;
-        const y = station.y + clear + bh / 2;
+        const y = worldUiButtonY(this, station.y, bh);
         ui.setSize(bh);
         sys.syncStationButton(ui, station);
         sys.placeAddActionRow(ui, this._craftTakeBtn, {
@@ -591,6 +591,54 @@
             actionOn: !!this._craftTakeBtn?.visible
         });
         this._layoutCraftBills(station, x, y, bw, bh, gap);
+        this._layoutCraftRotate();
+    },
+
+    _isSkinworkingBench(station) {
+        const id = station?.meta?.id || station?.entry?.id;
+        return id === "skinworking_bench";
+    },
+
+    _layoutCraftRotate() {
+        const station = this._craftStationThing;
+        const sys = this.settlementSys;
+        const show = !!(this.craftMenuVisible && station?.active && sys
+            && this._isSkinworkingBench(station));
+        if (!show) {
+            this._craftRotateUi?.btn?.setVisible?.(false);
+            this._craftRotateUi?.rect?.disableInteractive?.();
+            return;
+        }
+        if (this._craftRotateUi && !this._worldUiLive(this._craftRotateUi)) {
+            this._discardWorldUi("_craftRotateUi");
+        }
+        if (!this._craftRotateUi) {
+            this._craftRotateUi = sys.makeRotateButton((ccw) => {
+                if (this._craftStationThing) this.tryRotateStation?.(this._craftStationThing, { ccw });
+            });
+            this._placeCraftWorldBtn(this._craftRotateUi.btn);
+        }
+        const ui = this._craftRotateUi;
+        if (!ui) return;
+        const s = this.uiScale || 1;
+        const zoom = this.worldZoom || 1;
+        const ws = s / zoom;
+        const bw = this._craftTakeBw || 78 * ws;
+        const bh = this._craftTakeBh || 28 * ws;
+        const gap = 8 * ws;
+        sys.placeRotateBeside(ui, {
+            x: station.x || 0,
+            y: worldUiButtonY(this, station.y, bh),
+            gap,
+            addW: bh,
+            actionW: bw,
+            side: bh,
+            addOn: !!this._craftSettleUi?.btn?.visible,
+            actionOn: !!this._craftTakeBtn?.visible,
+            addBtn: this._craftSettleUi?.btn,
+            actionBtn: this._craftTakeBtn,
+            visible: true
+        });
     },
 
     _layoutCraftBills(station, x, y, bw, bh, gap) {
@@ -869,6 +917,8 @@
             btn.setVisible(false);
             this._craftTakeHovering = false;
             this._craftTakePressing = false;
+            this._craftRotateUi?.btn?.setVisible?.(false);
+            this._craftRotateUi?.rect?.disableInteractive?.();
             return;
         }
         const s = this.uiScale || 1;
@@ -876,7 +926,6 @@
         const ws = s / zoom;
         const bw = 78 * ws;
         const bh = 28 * ws;
-        const clear = 2;
         this._craftTakeBw = bw;
         this._craftTakeBh = bh;
         this._craftTakeRect.setSize(bw, bh);
@@ -890,7 +939,7 @@
         if (this._craftTakeRect.input?.hitArea?.setTo) {
             this._craftTakeRect.input.hitArea.setTo(0, 0, bw, bh);
         }
-        btn.setPosition(station.x, station.y + clear + bh / 2);
+        btn.setPosition(station.x, worldUiButtonY(this, station.y, bh));
         btn.setVisible(true);
         this._paintCraftTake();
     },
@@ -919,6 +968,10 @@
         if (!ui?.btn?.visible || !ui.rect || !pointer) return false;
         const pt = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
         return Phaser.Geom.Rectangle.Contains(ui.rect.getBounds(), pt.x, pt.y);
+    },
+
+    pointerOnCraftRotate(pointer) {
+        return this._pointerOnWorldBtn(this._craftRotateUi, pointer);
     },
 
     _syncCraftTakeHover() {
@@ -1498,7 +1551,7 @@
         }
         const ui = this._rockSettleUi;
         const x = rock.x || 0;
-        const y = (rock.y || 0) + 2 + bh / 2;
+        const y = worldUiButtonY(this, rock.y || 0, bh);
         ui.setSize(bh);
         sys.syncStationButton(ui, rock);
         sys.placeAddActionRow(ui, null, {

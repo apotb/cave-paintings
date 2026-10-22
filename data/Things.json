@@ -213,6 +213,7 @@
         "key": "campfire",
         "hitboxSize": 5,
         "campfire": true,
+        "interactOffset": [0, 1],
         "lit": true,
         "lightLevel": 12,
         "lightKind": "flame",
@@ -229,6 +230,7 @@
         "key": "unlit_campfire",
         "hitboxSize": 5,
         "campfire": true,
+        "interactOffset": [0, 1],
         "lit": false,
         "lightLevel": 0,
         "lightKind": "flame"
@@ -292,6 +294,8 @@
         "key": "drying_rack",
         "hitboxSize": 5,
         "dryingRack": true,
+        "interactOffset": [0, 1],
+        "rotations": [0, 90, 180, 270],
         "storage": {
             "slots": 1,
             "accept": "hide",
