@@ -1415,15 +1415,14 @@ class DryingRack extends Storage {
         const stack = this.hangingStack();
         if (!stack) return `${name} (empty)`;
         const meta = this.scene.getItem(stack.id);
-        const hideName = meta?.name || stack.id;
-        let text = `${name} (${hideName})`;
-        if (typeof Hide !== "undefined" && Hide.isFleshedHide(meta)) {
-            const prog = Hide.dryProgressOf(stack);
-            const max = Hide.DRY_MINUTES || 1440;
-            const pct = Math.max(0, Math.min(100, Math.floor((prog / max) * 100)));
-            text = `${name} (${hideName}, ${pct}% dry)`;
+        if (meta && typeof this.scene.formatItemTooltip === "function") {
+            const spoilPaused = typeof Hide !== "undefined" && Hide.pausesRackSpoil(meta);
+            const itemTip = this.scene.formatItemTooltip(
+                meta, stack.quantity, stack.spoilAt, stack, { spoilPaused }
+            );
+            return `${name}\n${itemTip}`;
         }
-        return { text, rows: [[stack]] };
+        return `${name}\n${meta?.name || stack.id}`;
     }
 
     _syncHang(stack) {
