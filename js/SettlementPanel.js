@@ -48,6 +48,17 @@ function settlementStarCells(rows) {
     return cells;
 }
 
+/** Job priority ink. 1 is gold, 2 keeps the panel parchment, 3 bronze, 4 gray. Off draws nothing. */
+function jobPriorityColor(pri) {
+    switch (pri | 0) {
+        case 1: return "#d4a84b";
+        case 2: return "#d4c4a8";
+        case 3: return "#cd7f32";
+        case 4: return "#8c8680";
+        default: return "#6a645c";
+    }
+}
+
 /** Filled gold favorite star, centered on the graphics origin. 15×14 cells. */
 function drawFavoriteStar(g, unit, color) {
     const u = Math.max(1, unit | 0);
@@ -1001,10 +1012,10 @@ class SettlementPanel {
                     .setOrigin(0, 0)
                     .setInteractive({ useHandCursor: true });
                 this._clipInput(bg);
-                const txt = scene.add.text(cellX + cellS / 2, rowH / 2, pri ? String(pri) : "–", {
+                const txt = scene.add.text(cellX + cellS / 2, rowH / 2, pri ? String(pri) : "", {
                     fontFamily: PIXEL_UI_FONT,
                     fontSize: `${pixelUiFontSize(11, sc)}px`,
-                    color: "#d4c4a8"
+                    color: jobPriorityColor(pri)
                 }).setOrigin(0.5);
                 if (typeof applyPixelUiFont === "function") applyPixelUiFont(txt, 11, sc);
                 let hovering = false;
