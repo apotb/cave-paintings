@@ -1303,13 +1303,21 @@ class SettlementPanel {
     _fillManage(sc) {
         const barW = Math.max(4, Math.round(5 * sc));
         const innerW = Math.max(80, Math.round(this._viewW - barW - 4 * sc));
-        const y = Math.round(8 * sc);
-        // Stroke is centered on the rect, and the body mask starts at x = 0.
+        const gap = Math.round(8 * sc);
+        let y = gap;
+        y = this._manageWideBtn(sc, y, innerW, "Schedule", () => {
+            this.scene.schedulePanel?.open(this.settle);
+        });
+        y = this._manageWideBtn(sc, y + gap, innerW, "All Settlement Resources", () => {
+            this.scene.resourceSummaryPanel?.open(this.settle);
+        });
+        return y + gap;
+    }
+
+    _manageWideBtn(sc, y, innerW, label, onClick) {
         const stroke = typeof pixelUiStroke === "function" ? pixelUiStroke(sc) : 2;
         const bw = Math.max(40, innerW - stroke);
-        const btn = this._btn(stroke + bw / 2, y, "All Settlement Resources", () => {
-            this.scene.resourceSummaryPanel?.open(this.settle);
-        }, true);
+        const btn = this._btn(stroke + bw / 2, y, label, onClick, true);
         const wrap = Math.max(40, bw - Math.round(12 * sc));
         if (typeof applyPixelUiFont === "function") applyPixelUiFont(btn._txt, 12, sc);
         btn._txt?.setWordWrapWidth?.(wrap, true);
@@ -1320,7 +1328,7 @@ class SettlementPanel {
         this._fitBtnHit(btn, bw, bh);
         btn._paint?.();
         this.body.add(btn);
-        return y + bh + 8 * sc;
+        return y + bh;
     }
 
     refreshStockLive() {

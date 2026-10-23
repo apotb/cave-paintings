@@ -504,6 +504,9 @@ class PartySystem {
         if (opts.jobs && typeof opts.jobs === "object" && typeof Settlement !== "undefined" && Settlement.rememberJobs) {
             Settlement.rememberJobs(pawn, opts.jobs);
         }
+        if (typeof opts.schedule === "string" && opts.schedule && typeof Settlement !== "undefined" && Settlement.rememberSchedule) {
+            Settlement.rememberSchedule(pawn, opts.schedule);
+        }
         pawn.favorite = !!opts.favorite;
         pawn.recomputeEquipmentEffects?.();
         pawn.capacities = new Capacities(pawn.anatomy);
@@ -2049,6 +2052,7 @@ class PartySystem {
         const settle = scene.settlementSys?.byId?.(settleId);
         if (settle && typeof Settlement !== "undefined" && Settlement.bindPawnJobs) {
             Settlement.bindPawnJobs(settle, wanderer);
+            Settlement.bindPawnSchedule?.(settle, wanderer);
             scene.settlementSys._syncJobOrder?.(settle);
         }
         wanderer._netTx = wanderer.x;
@@ -2974,6 +2978,7 @@ class PartySystem {
             lastSleep: p.lastSleep || null,
             resting: !!p._resting,
             jobs: (p.jobs && typeof p.jobs === "object") ? { ...p.jobs } : null,
+            schedule: typeof p.schedule === "string" && p.schedule ? p.schedule : null,
             favorite: !!p.favorite
         };
     }
@@ -3075,6 +3080,9 @@ class PartySystem {
                     }
                     if (m.jobs && typeof m.jobs === "object" && typeof Settlement !== "undefined" && Settlement.rememberJobs) {
                         Settlement.rememberJobs(existing, m.jobs);
+                    }
+                    if (typeof m.schedule === "string" && m.schedule && typeof Settlement !== "undefined" && Settlement.rememberSchedule) {
+                        Settlement.rememberSchedule(existing, m.schedule);
                     }
                     if (typeof m.favorite === "boolean") existing.favorite = m.favorite;
                     if (m.lastSleep) existing.lastSleep = m.lastSleep;

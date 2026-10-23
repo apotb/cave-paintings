@@ -978,7 +978,7 @@ test("dedicated settler finishes hauling before going to sleep", () => {
     const entry = { uid: "lt-haul", id: "lean_to", x: rec.x + 96, y: rec.y, tx: 8, ty: 2, rot: 0 };
     Place.ensureSleepEntry(entry, { sleep: { slots: 2 } });
     chunk.things.push(entry);
-    world.gameMinutes = 1300;
+    world.gameMinutes = 22 * 60;
     rec._settlerScan = null;
     rec._settlerScanMs = 280;
     workOnce(world, rec);
@@ -992,6 +992,23 @@ test("dedicated settler finishes hauling before going to sleep", () => {
     assert.equal(!!rec._resting, false);
     workOnce(world, rec);
     assert.ok(rec._restWalk || rec._resting, "should sleep after the haul");
+});
+
+test("work schedule keeps a settler working at night", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 0, gather: 1, haul: 0 };
+    Settlement.setSchedule(settle, rec.id, "w".repeat(24));
+    const chunk = originChunk(world);
+    chunk.lootableThings.push({ uid: "lt-night", id: "sticks", x: rec.x, y: rec.y });
+    const entry = { uid: "lt-work", id: "lean_to", x: rec.x + 96, y: rec.y, tx: 8, ty: 2, rot: 0 };
+    Place.ensureSleepEntry(entry, { sleep: { slots: 2 } });
+    chunk.things.push(entry);
+    world.gameMinutes = 1300;
+    workOnce(world, rec);
+    assert.equal(!!rec._restWalk, false, "work hour should not walk to bed");
+    assert.equal(!!rec._resting, false);
+    assert.match(rec._settlerAct || "", /Gathering/i);
 });
 
 test("dedicated settler stops chopping after the tree is a stump", () => {
@@ -4339,7 +4356,7 @@ test("settler walking to a lean-to is Going to sleep, not Idle", () => {
     const entry = { uid: "lt-go", id: "lean_to", x: rec.x + 80, y: rec.y, tx: 7, ty: 2, rot: 0 };
     Place.ensureSleepEntry(entry, { sleep: { slots: 2 } });
     chunk.things.push(entry);
-    world.gameMinutes = 1300;
+    world.gameMinutes = 22 * 60;
     rec.kc = 1600;
     workOnce(world, rec);
     assert.ok(rec._restWalk, "should start walking to the bunk");
@@ -5131,7 +5148,7 @@ test("settler rest-walks around a basket instead of running into it", () => {
     Place.ensureSleepEntry(entry, { sleep: { slots: 2 } });
     chunk.things.push(entry);
     rec._pathIgnoreUid = "basket1";
-    world.gameMinutes = 1300;
+    world.gameMinutes = 22 * 60;
     workOnce(world, rec);
     assert.ok(rec._restWalk, "should start walking to bed");
     assert.equal(rec._pathIgnoreUid, null, "must not keep ignoring the basket after depositing");
@@ -5303,7 +5320,7 @@ test("researcher leaves a painting to sleep instead of finishing it", () => {
     const bed = { uid: "lt-res", id: "lean_to", x: rec.x + 64, y: rec.y, tx: 6, ty: 2, rot: 0 };
     Place.ensureSleepEntry(bed, { sleep: { slots: 2 } });
     chunk.things.push(bed);
-    world.gameMinutes = 1300;
+    world.gameMinutes = 22 * 60;
     rec.kc = 1600;
     rec._researchPoll = 0;
     workOnce(world, rec);
@@ -6425,7 +6442,7 @@ test("offline owner's settler can go to sleep without a session", () => {
     const entry = { uid: "lt-off", id: "lean_to", x: rec.x + 80, y: rec.y, tx: 7, ty: 2, rot: 0 };
     Place.ensureSleepEntry(entry, { sleep: { slots: 2 } });
     chunk.things.push(entry);
-    world.gameMinutes = 1300;
+    world.gameMinutes = 22 * 60;
     rec.kc = 1600;
     assert.doesNotThrow(() => workOnce(world, rec));
     assert.ok(rec._restWalk, "should start walking to the bunk");

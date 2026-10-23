@@ -769,6 +769,9 @@
         if (m.jobs && typeof m.jobs === "object" && !Array.isArray(m.jobs)) {
             Settlement.rememberJobs(rec, m.jobs);
         }
+        if (typeof m.schedule === "string" && m.schedule) {
+            Settlement.rememberSchedule(rec, m.schedule);
+        }
         this._restoreLogoutPose(rec);
         this._ensureCompanionCreature(owner, rec);
         return rec;
@@ -984,6 +987,9 @@
         if (snap.jobs && typeof snap.jobs === "object" && !Array.isArray(snap.jobs)) {
             Settlement.rememberJobs(rec, snap.jobs);
         }
+        if (typeof snap.schedule === "string" && snap.schedule) {
+            Settlement.rememberSchedule(rec, snap.schedule);
+        }
         const fishChannel = this._fishChannelFromSnap(snap.fishChannel);
         if (fishChannel) {
             rec.fishChannel = fishChannel;
@@ -1058,6 +1064,9 @@
             resting: !!(s._resting || s.resting),
             jobs: (s.jobs && typeof s.jobs === "object" && !Array.isArray(s.jobs))
                 ? Settlement.normalizeJobs(s.jobs)
+                : null,
+            schedule: typeof s.schedule === "string" && s.schedule
+                ? Settlement.normalizeSchedule(s.schedule)
                 : null,
             fishChannel: this._persistFishChannel(s.fishChannel),
             workChannel: this._persistWorkChannel(s._workChannel),

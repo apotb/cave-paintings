@@ -500,6 +500,7 @@ function tick(world, mob, delta) {
             autoEatBelow: AUTO_EAT,
             canEat: false,
             isNight: scan.night,
+            assignment: scan.assignment,
             injured: scan.injured,
             isOrphan: false,
             bed: scan.bed || null,

@@ -367,6 +367,7 @@ class ResourceSummaryPanel {
             && scene._isSingleplayerSession?.()
         );
         if (!should && scene.researchTreePanel?.visible && scene.researchTreePanel._pauseWhileOpen) return;
+        if (!should && scene.schedulePanel?.visible && scene.schedulePanel._pauseWhileOpen) return;
         scene._setWorldSimFrozen?.(should);
     }
 

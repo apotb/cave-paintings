@@ -61,8 +61,11 @@ class SettlementSystem {
         bind(this.scene.pigmentFilterPanel);
         bind(this.scene.researchTreePanel);
         bind(this.scene.resourceSummaryPanel);
+        bind(this.scene.schedulePanel);
         const summary = this.scene.resourceSummaryPanel;
         if (summary?.visible) summary.refresh();
+        const schedule = this.scene.schedulePanel;
+        if (schedule?.visible) schedule.refresh();
         const tree = this.scene.researchTreePanel;
         if (tree?.visible) tree.refresh();
         const panel = this.scene.settlementPanel;
@@ -125,6 +128,7 @@ class SettlementSystem {
             lastSleep: snap.lastSleep,
             resting: snap.resting,
             jobs: snap.jobs,
+            schedule: snap.schedule,
             favorite: !!snap.favorite,
             ignoreCap: true
         });
@@ -1308,6 +1312,7 @@ class SettlementSystem {
         if (!scene.settlers.includes(pawn)) scene.settlers.push(pawn);
         if (typeof Settlement !== "undefined" && Settlement.bindPawnJobs) {
             Settlement.bindPawnJobs(target, pawn);
+            Settlement.bindPawnSchedule?.(target, pawn);
         }
         this._syncJobOrder(target, pawn.favorite ? (pawn.pawnId || pawn.id) : null);
         if (wasControl) scene.partySys?.switchControl?.(scene.leader);
@@ -1353,6 +1358,7 @@ class SettlementSystem {
         const fromName = from?.name || "";
         if (from && typeof Settlement !== "undefined" && Settlement.unbindPawnJobs) {
             Settlement.unbindPawnJobs(from, pawn);
+            Settlement.unbindPawnSchedule?.(from, pawn);
         }
         this.sendNet("pick", { pawnId: pawn.pawnId });
         scene.partySys?.adoptSettler?.(pawn);
@@ -1380,7 +1386,9 @@ class SettlementSystem {
         const d = S ? S.distTiles(from.x, from.y, dest.x, dest.y, ts) : 999;
         if (typeof Settlement !== "undefined") {
             Settlement.unbindPawnJobs?.(from, pawn);
+            Settlement.unbindPawnSchedule?.(from, pawn);
             Settlement.bindPawnJobs?.(dest, pawn);
+            Settlement.bindPawnSchedule?.(dest, pawn);
         }
         pawn.homeSettlementId = dest.id;
         this.sendNet("transfer", {
@@ -1516,6 +1524,7 @@ class SettlementSystem {
     closePanel() {
         this.scene.researchTreePanel?.close({ restore: false });
         this.scene.resourceSummaryPanel?.close({ restore: false });
+        this.scene.schedulePanel?.close({ restore: false });
         this.scene.settlementPanel?.close();
         this._drawRange(null, false);
         this._paintHud?.();
@@ -2670,6 +2679,9 @@ class SettlementSystem {
                 } else if (panel.tab === "research" && !tree?.visible && this._stockUiAcc > 600) {
                     this._stockUiAcc = 0;
                     panel.refresh();
+                } else if (this.scene.schedulePanel?.visible && this._stockUiAcc > 600) {
+                    this._stockUiAcc = 0;
+                    this.scene.schedulePanel.refresh();
                 }
             }
         }

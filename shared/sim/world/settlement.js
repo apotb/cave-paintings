@@ -260,6 +260,7 @@
             mem.homeSettlementId = dropSettle.id;
             mem.ownerId = p.id;
             Settlement.bindPawnJobs(dropSettle, mem);
+            Settlement.bindPawnSchedule(dropSettle, mem);
             this.settlers.push(mem);
             this._syncJobOrder(dropSettle, mem.favorite ? mem.id : null);
             SettlerWork.releaseWork(this, mem);
@@ -288,6 +289,7 @@
             rec.homeSettlementId = null;
             const from = fromId ? this.settlements.find((s) => s.id === fromId) : null;
             if (from) Settlement.unbindPawnJobs(from, rec);
+            if (from) Settlement.unbindPawnSchedule(from, rec);
             if (from) this._syncJobOrder(from);
             if (rec._resting || rec.resting || rec._restWalk) {
                 this._wakePawn(p, rec, { manual: true });
@@ -306,8 +308,10 @@
             if (!rec || !dest || dest.ownerId !== p.id) return;
             const from = this.settlements.find((s) => s.id === rec.homeSettlementId);
             if (from) Settlement.unbindPawnJobs(from, rec);
+            if (from) Settlement.unbindPawnSchedule(from, rec);
             rec.homeSettlementId = dest.id;
             Settlement.bindPawnJobs(dest, rec);
+            Settlement.bindPawnSchedule(dest, rec);
             const d = from ? Settlement.distTiles(from.x, from.y, dest.x, dest.y, TS) : 999;
             if (Settlement.transferMode(d) === "teleport") {
                 rec.x = dest.x + 12;
@@ -407,6 +411,16 @@
             const rec = (this.settlers || []).find((s) => s && String(s.id) === pid)
                 || (p.party || []).find((m) => m && String(m.id) === pid);
             if (rec) Settlement.rememberJobs(rec, row);
+            SettlerWork.bumpWork?.(this, rec);
+            this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "setSchedule" && settle && settle.ownerId === p.id) {
+            const pid = String(action.pawnId || "");
+            const row = Settlement.setSchedule(settle, pid, action.schedule);
+            const rec = (this.settlers || []).find((s) => s && String(s.id) === pid)
+                || (p.party || []).find((m) => m && String(m.id) === pid);
+            if (rec && row) Settlement.rememberSchedule(rec, row);
             SettlerWork.bumpWork?.(this, rec);
             this._youDirty.add(p.id);
             return;

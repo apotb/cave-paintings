@@ -869,6 +869,7 @@
             && !this._sculptUiOpen()
             && !this.researchTreePanel?.visible
             && !this.resourceSummaryPanel?.visible
+            && !this.schedulePanel?.visible
             && !downed
             && !p.isVomiting?.()
         ) {

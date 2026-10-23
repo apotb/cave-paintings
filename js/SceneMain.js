@@ -70,6 +70,7 @@ class SceneMain extends SceneBase {
         this.settlementPanel = null;
         this.researchTreePanel = null;
         this.resourceSummaryPanel = null;
+        this.schedulePanel = null;
         this.billsPanel = null;
         this.storageFilterPanel = null;
         this.fuelFilterPanel = null;
@@ -298,6 +299,7 @@ class SceneMain extends SceneBase {
         this.settlementPanel = new SettlementPanel(this);
         this.researchTreePanel = new ResearchTreePanel(this);
         this.resourceSummaryPanel = new ResourceSummaryPanel(this);
+        this.schedulePanel = new SchedulePanel(this);
         this.billsPanel = new BillsPanel(this);
         this.storageFilterPanel = new StorageFilterPanel(this);
         this.fuelFilterPanel = new FuelFilterPanel(this);
@@ -407,6 +409,9 @@ class SceneMain extends SceneBase {
             this.combatLog?.update?.();
             if (!this._gamePaused && this.researchTreePanel?.visible) {
                 this.researchTreePanel.refresh();
+            }
+            if (!this._gamePaused && this.schedulePanel?.visible) {
+                this.schedulePanel.refresh();
             }
             return;
         }
@@ -525,7 +530,8 @@ class SceneMain extends SceneBase {
         const knapping = this._sculptUiOpen();
         const naming = isHudTextOpen(this);
         const researchOpen = !!this.researchTreePanel?.visible
-            || !!this.resourceSummaryPanel?.visible;
+            || !!this.resourceSummaryPanel?.visible
+            || !!this.schedulePanel?.visible;
         if (!chatting && !knapping && !naming && !researchOpen && !this._gamePaused) {
             const ctrl = !!this.keys?.CTRL?.isDown;
             if (!ctrl) {
@@ -555,6 +561,7 @@ class SceneMain extends SceneBase {
         else this.player.update(time, delta);
         this.settlementSys?.update?.(time, delta);
         if (this.researchTreePanel?.visible) this.researchTreePanel.refresh();
+        if (this.schedulePanel?.visible) this.schedulePanel.refresh();
         this.updatePlaceGhost();
         if (this.isNet) {
             if (this.net?.isLocal && !this._worldBooting) this.net.tickFromScene?.(delta);

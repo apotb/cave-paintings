@@ -3214,6 +3214,46 @@ test("settler job priorities survive pick-up, drop-off, transfer, and relog", ()
     assert.equal(mem.jobs.gather, 2);
 });
 
+test("setSchedule is stored on the camp and the settler", () => {
+    const { world, pawn } = createTestWorld();
+    const home = Settlement.createSettlement({
+        x: pawn.x,
+        y: pawn.y,
+        ownerId: pawn.id
+    });
+    world.settlements.push(home);
+    const mem = world._companionFromSnap(pawn, {
+        id: "sched-og",
+        name: "Og",
+        x: pawn.x,
+        y: pawn.y
+    });
+    pawn.party.push(mem);
+    world._handleSettlement(pawn, {
+        op: "drop",
+        pawnId: mem.id,
+        settlementId: home.id
+    });
+    assert.equal(home.schedules[mem.id], Settlement.defaultSchedule());
+    const custom = Settlement.paintSchedule(Settlement.defaultSchedule(), 22, "recreation");
+    world._handleSettlement(pawn, {
+        op: "setSchedule",
+        settlementId: home.id,
+        pawnId: mem.id,
+        schedule: custom
+    });
+    assert.equal(home.schedules[mem.id].charAt(22), "r");
+    assert.equal(mem.schedule.charAt(22), "r");
+    world._handleSettlement(pawn, { op: "pick", pawnId: mem.id });
+    const back = (pawn.party || []).find((m) => m.id === mem.id);
+    assert.equal(back.schedule.charAt(22), "r");
+    const you = world.youPayload(pawn.id);
+    const row = (you.party || []).find((m) => m.id === mem.id);
+    assert.equal(row.schedule.charAt(22), "r");
+    const restored = world._companionFromSnap(pawn, row);
+    assert.equal(restored.schedule.charAt(22), "r");
+});
+
 test("a favorite drops in at the front of the camp list", () => {
     const { world, pawn } = createTestWorld();
     const settle = Settlement.createSettlement({

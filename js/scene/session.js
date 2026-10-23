@@ -199,7 +199,8 @@
                 resting: !!m.resting,
                 jobs: (m.jobs && typeof m.jobs === "object" && !Array.isArray(m.jobs))
                     ? { ...m.jobs }
-                    : null
+                    : null,
+                schedule: typeof m.schedule === "string" && m.schedule ? m.schedule : null
             }));
         };
         return {

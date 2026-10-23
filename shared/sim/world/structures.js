@@ -1209,7 +1209,14 @@
         this._wakePawn(session, pawn, { manual: true });
         pawn._manualRest = false;
         const settler = pawn.role === "settler" || !!pawn.homeSettlementId;
-        if (settler && Settlement?.isNight?.(this.gameMinutes)) {
+        const home = settler
+            ? (this.settlements || []).find((s) => s && s.id === pawn.homeSettlementId)
+            : null;
+        const scheduledSleep = settler && Settlement?.assignmentAt?.(
+            Settlement.scheduleFor?.(home, pawn.id),
+            this.gameMinutes
+        ) === "sleep";
+        if (scheduledSleep) {
             const next = this._pickFreeSleepSlot(pawn, null, { medical: false });
             if (next) this._orderRest(session, pawn, next.entry, next.slot, { autofill: false });
         }

@@ -349,6 +349,8 @@ class ResearchTreePanel {
             && this._pauseWhileOpen
             && scene._isSingleplayerSession?.()
         );
+        if (!should && scene.schedulePanel?.visible && scene.schedulePanel._pauseWhileOpen) return;
+        if (!should && scene.resourceSummaryPanel?.visible && scene.resourceSummaryPanel._pauseWhileOpen) return;
         scene._setWorldSimFrozen?.(should);
     }
 

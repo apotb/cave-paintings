@@ -1302,6 +1302,9 @@
                     jobs: (m.jobs && typeof m.jobs === "object" && !Array.isArray(m.jobs))
                         ? Settlement.normalizeJobs(m.jobs)
                         : null,
+                    schedule: typeof m.schedule === "string" && m.schedule
+                        ? Settlement.normalizeSchedule(m.schedule)
+                        : null,
                     favorite: !!m.favorite
                 };
             }),

@@ -740,6 +740,7 @@ class Hotbar {
             const p = this.scene.input.activePointer;
             if (hp?.visible && hp._pointerInInjView?.(p.x, p.y)) return;
             if (this.scene.settlementPanel?.containsPointer?.(p)) return;
+            if (this.scene.schedulePanel?.containsPointer?.(p)) return;
             if (this.scene.resourceSummaryPanel?.containsPointer?.(p)) return;
             if (this.scene.researchTreePanel?.containsPointer?.(p)) return;
             if (this.scene.billsPanel?.containsPointer?.(p)) return;

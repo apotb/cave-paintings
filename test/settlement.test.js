@@ -145,6 +145,49 @@ test("job priorities travel with a person between camps", () => {
     assert.equal(pawn.jobs.chop, 4);
 });
 
+test("schedule defaults to sleep from 22:00 through 06:00 and drops bad letters", () => {
+    const row = Settlement.defaultSchedule();
+    assert.equal(row.length, 24);
+    assert.equal(row, "ssssssaaaaaaaaaaaaaaaass");
+    assert.equal(Settlement.normalizeSchedule(null), row);
+    assert.equal(Settlement.normalizeSchedule(""), row);
+    assert.equal(Settlement.normalizeSchedule("xxxxxxxxxxxxxxxxxxxxxxxx"), row);
+    assert.equal(Settlement.normalizeSchedule("ssssssaaaaaaaaaaaaaassss"), row);
+    const bad = `x${row.slice(1, 6)}w${row.slice(7)}`;
+    const norm = Settlement.normalizeSchedule(bad);
+    assert.equal(norm.charAt(0), "s");
+    assert.equal(norm.charAt(6), "w");
+    assert.equal(Settlement.scheduleHour(20 * 60), 20);
+    assert.equal(Settlement.scheduleHour(1300), 21);
+    assert.equal(Settlement.scheduleHour(360), 6);
+    assert.equal(Settlement.scheduleHour(19 * 60 + 59), 19);
+    assert.equal(Settlement.assignmentAt(row, 20 * 60), "anything");
+    assert.equal(Settlement.assignmentAt(row, 21 * 60), "anything");
+    assert.equal(Settlement.assignmentAt(row, 22 * 60), "sleep");
+    assert.equal(Settlement.assignmentAt(row, 5 * 60 + 59), "sleep");
+    assert.equal(Settlement.assignmentAt(row, 6 * 60), "anything");
+    assert.equal(Settlement.paintSchedule(row, 10, "nope"), row);
+    assert.equal(Settlement.paintSchedule(row, 10, "work").charAt(10), "w");
+    assert.equal(Settlement.paintSchedule(row, [8, 9], "recreation").slice(8, 10), "rr");
+});
+
+test("schedules travel with a person between camps", () => {
+    const home = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p" });
+    const away = Settlement.createSettlement({ x: 800, y: 0, ownerId: "p" });
+    const pawn = { id: "og" };
+    Settlement.bindPawnSchedule(home, pawn);
+    assert.equal(home.schedules.og, Settlement.defaultSchedule());
+    const custom = Settlement.paintSchedule(home.schedules.og, [8, 9, 10], "work");
+    Settlement.setSchedule(home, "og", custom);
+    Settlement.unbindPawnSchedule(home, pawn);
+    assert.equal(pawn.schedule.charAt(8), "w");
+    Settlement.bindPawnSchedule(away, pawn);
+    assert.equal(away.schedules.og.charAt(8), "w");
+    assert.equal(away.schedules.og.charAt(9), "w");
+    assert.equal(away.schedules.og.charAt(0), "s");
+    assert.equal(pawn.schedule.charAt(10), "w");
+});
+
 test("rejoining a camp keeps a saved row when the person carries nothing yet", () => {
     const settle = Settlement.createSettlement({ x: 0, y: 0 });
     settle.jobs.og = Settlement.normalizeJobs({ cook: 1, haul: 0 });
@@ -1809,6 +1852,55 @@ test("night check matches veil clock", () => {
     assert.equal(Settlement.isNight(1230), true);
     assert.equal(Settlement.isNight(200), true);
     assert.equal(Settlement.isNight(800), false);
+});
+
+test("schedule assignment replaces the night clock for settlers", () => {
+    const jobs = Settlement.defaultJobs();
+    jobs.chop = 1;
+    const tree = { uid: "oak" };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        assignment: "sleep",
+        isNight: false,
+        bed: { slot: 0 },
+        jobs,
+        chopTree: tree
+    }).type, "sleep");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        assignment: "work",
+        isNight: true,
+        bed: { slot: 0 },
+        jobs,
+        chopTree: tree
+    }).type, "chop");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        assignment: "anything",
+        isNight: true,
+        bed: { slot: 0 },
+        jobs,
+        chopTree: tree
+    }).type, "chop");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        assignment: "recreation",
+        jobs,
+        chopTree: tree
+    }).type, "idle");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        assignment: "work",
+        injured: true,
+        bed: { slot: 0 },
+        jobs,
+        chopTree: tree
+    }).type, "sleep");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        isNight: true,
+        bed: { slot: 0 }
+    }).type, "sleep");
 });
 
 test("work claims are exclusive and move with the pawn", () => {

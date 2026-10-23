@@ -488,6 +488,7 @@
         if (this.paintingCirclePanel?.visible) this.paintingCirclePanel.close();
         if (this.settlementSys?.isNaming?.()) this.settlementSys._hideNamePrompt();
         if (typeof CraftTemplateUi !== "undefined") CraftTemplateUi.closeAll();
+        if (this.schedulePanel?.visible) this.schedulePanel.close({ restore: false });
         if (this.resourceSummaryPanel?.visible) this.resourceSummaryPanel.close({ restore: false });
         if (this.researchTreePanel?.visible) this.researchTreePanel.close({ restore: false });
         if (this.settlementPanel?.visible) this.settlementSys?.closePanel?.();
@@ -510,6 +511,7 @@
             this.settlementPanel?.visible ||
             this.researchTreePanel?.visible ||
             this.resourceSummaryPanel?.visible ||
+            this.schedulePanel?.visible ||
             this.billsPanel?.visible ||
             this.storageFilterPanel?.visible ||
             this.fuelFilterPanel?.visible ||
@@ -1288,6 +1290,10 @@
         }
         if (this.settlementSys?.isNaming?.()) {
             this.settlementSys._hideNamePrompt();
+            return;
+        }
+        if (this.schedulePanel?.visible) {
+            this.schedulePanel.handleEsc();
             return;
         }
         if (this.resourceSummaryPanel?.visible) {

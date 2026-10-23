@@ -230,6 +230,7 @@
             rec.homeSettlementId = park.id;
             rec.ownerId = p.id;
             Settlement.bindPawnJobs(park, rec);
+            Settlement.bindPawnSchedule(park, rec);
             this.settlers.push(rec);
             this._ensureSettlerCreature(rec);
             this._syncJobOrder(park);

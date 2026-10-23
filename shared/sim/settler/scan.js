@@ -1170,7 +1170,11 @@ function scanWork(world, rec, settle, claims) {
         isPigment,
         keepPreds
     });
-    const night = Settlement.isNight(world.gameMinutes);
+    const assignment = Settlement.assignmentAt(
+        Settlement.scheduleFor(settle, rec.id),
+        world.gameMinutes
+    );
+    const night = assignment === "sleep";
     const c = rec.creature || world.creatures.get(rec.id);
     const injured = Sleep.injuredForAutofill ? Sleep.injuredForAutofill(c?.anatomy) : false;
     const stash = stashScan(world, rec, settle, keepOpts);
@@ -1202,6 +1206,7 @@ function scanWork(world, rec, settle, claims) {
         bed: (night || injured) ? freeBed(world, rec, settle, claims, { medical: !!injured }) : null,
         stash,
         night,
+        assignment,
         injured,
         jobs
     };

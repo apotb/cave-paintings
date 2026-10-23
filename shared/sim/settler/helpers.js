@@ -224,7 +224,12 @@ function isWorkHold(rec) {
 }
 
 function settlerWantsBed(world, rec, mob) {
-    const night = Settlement.isNight(world.gameMinutes);
+    const settle = findSettle(world, rec);
+    const assignment = Settlement.assignmentAt(
+        Settlement.scheduleFor(settle, rec?.id),
+        world.gameMinutes
+    );
+    const night = assignment === "sleep";
     const c = rec.creature || world.creatures.get(rec.id) || mob;
     const injured = Sleep.injuredForAutofill ? Sleep.injuredForAutofill(c?.anatomy) : false;
     return Settlement.settlerShouldSleep(night, injured);

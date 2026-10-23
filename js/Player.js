@@ -3731,7 +3731,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const knapping = !!(this.scene.knappingPanel?.visible || this.scene.clayFormingPanel?.visible);
         const naming = isHudTextOpen(this.scene);
         const researchOpen = !!this.scene.researchTreePanel?.visible
-            || !!this.scene.resourceSummaryPanel?.visible;
+            || !!this.scene.resourceSummaryPanel?.visible
+            || !!this.scene.schedulePanel?.visible;
         const controlled = this.isControlled?.();
 
         // SP pause freezes everyone; channels still finish if we got here in MP.

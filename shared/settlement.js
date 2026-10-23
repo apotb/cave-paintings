@@ -411,6 +411,9 @@
         s.jobOrder = Array.isArray(s.jobOrder)
             ? s.jobOrder.map((id) => String(id || "")).filter(Boolean)
             : [];
+        s.schedules = s.schedules && typeof s.schedules === "object" && !Array.isArray(s.schedules)
+            ? s.schedules
+            : {};
         return s;
     }
 
@@ -1510,6 +1513,116 @@
         return carriedJobs(pawn);
     }
 
+    const SCHEDULE_HOURS = 24;
+    /** Hour 0–5 and 22–23 sleep, 6–21 anything. 22:00–06:00. */
+    const DEFAULT_SCHEDULE = "ssssssaaaaaaaaaaaaaaaass";
+    /** The first default, sleep from 20:00. Rows still stored as that become the new default. */
+    const PREVIOUS_DEFAULT_SCHEDULE = "ssssssaaaaaaaaaaaaaassss";
+    const SCHEDULE_LETTER = { a: "anything", w: "work", r: "recreation", s: "sleep" };
+    const SCHEDULE_CODE = { anything: "a", work: "w", recreation: "r", sleep: "s" };
+
+    function defaultSchedule() {
+        return DEFAULT_SCHEDULE;
+    }
+
+    /** Invalid letters fall back to that hour's default. Missing rows are the default. */
+    function normalizeSchedule(raw) {
+        const src = typeof raw === "string" ? raw : "";
+        let out = "";
+        for (let i = 0; i < SCHEDULE_HOURS; i++) {
+            const ch = src.charAt(i);
+            out += SCHEDULE_LETTER[ch] ? ch : DEFAULT_SCHEDULE.charAt(i);
+        }
+        if (out === PREVIOUS_DEFAULT_SCHEDULE) return DEFAULT_SCHEDULE;
+        return out;
+    }
+
+    function scheduleHour(gameMinutes) {
+        const m = ((Math.floor(Number(gameMinutes) || 0) % 1440) + 1440) % 1440;
+        return Math.floor(m / 60);
+    }
+
+    function assignmentAt(schedule, gameMinutes) {
+        const row = normalizeSchedule(schedule);
+        return SCHEDULE_LETTER[row.charAt(scheduleHour(gameMinutes))] || "anything";
+    }
+
+    function scheduleFor(settle, pawnId) {
+        return normalizeSchedule(settle?.schedules?.[pawnId]);
+    }
+
+    function setSchedule(settle, pawnId, raw) {
+        if (!settle || !pawnId) return null;
+        if (!settle.schedules || typeof settle.schedules !== "object") settle.schedules = {};
+        const row = normalizeSchedule(raw);
+        settle.schedules[pawnId] = row;
+        return row;
+    }
+
+    /** Paint one hour, or several, with a mode name. Unknown modes leave the row alone. */
+    function paintSchedule(row, hours, mode) {
+        const code = SCHEDULE_CODE[mode];
+        const cur = normalizeSchedule(row);
+        if (!code) return cur;
+        const chars = cur.split("");
+        const list = Array.isArray(hours) ? hours : [hours];
+        for (const hour of list) {
+            const i = Math.floor(Number(hour));
+            if (i >= 0 && i < SCHEDULE_HOURS) chars[i] = code;
+        }
+        return chars.join("");
+    }
+
+    function carriedSchedule(pawn) {
+        const raw = pawn?.schedule;
+        if (typeof raw !== "string" || !raw) return null;
+        if (![...raw].some((ch) => SCHEDULE_LETTER[ch])) return null;
+        return normalizeSchedule(raw);
+    }
+
+    function rememberSchedule(pawn, row) {
+        if (!pawn) return null;
+        const schedule = normalizeSchedule(row);
+        pawn.schedule = schedule;
+        return schedule;
+    }
+
+    /**
+     * Join a camp. Keep a schedule they already carry, else a row this camp
+     * still has for them, else the default hours.
+     */
+    function bindPawnSchedule(settle, pawn) {
+        if (!settle || !pawn) return null;
+        const id = pawnIdOf(pawn);
+        if (!id) return null;
+        if (!settle.schedules || typeof settle.schedules !== "object") settle.schedules = {};
+        const carried = carriedSchedule(pawn);
+        const row = carried
+            || (settle.schedules[id] ? normalizeSchedule(settle.schedules[id]) : defaultSchedule());
+        settle.schedules[id] = row;
+        pawn.schedule = row;
+        return pawn.schedule;
+    }
+
+    /** Leave a camp. The camp's current row becomes what they carry. */
+    function unbindPawnSchedule(settle, pawn) {
+        if (!pawn) return null;
+        const id = pawnIdOf(pawn);
+        const row = id && settle?.schedules ? settle.schedules[id] : null;
+        if (row) return rememberSchedule(pawn, row);
+        return carriedSchedule(pawn);
+    }
+
+    /**
+     * Explicit assignment wins. Older callers only pass isNight, which still
+     * means sleep for that whole plan.
+     */
+    function workAssignment(state) {
+        const raw = state && state.assignment;
+        if (raw === "sleep" || raw === "work" || raw === "recreation" || raw === "anything") return raw;
+        return state && state.isNight ? "sleep" : "anything";
+    }
+
     function ownedOf(list, ownerId) {
         return (list || []).filter((s) => s && s.ownerId === ownerId);
     }
@@ -1629,7 +1742,7 @@
         return Math.min(n, room);
     }
 
-    /** Night or untreated injury: stay in / go to a lean-to. Dawn + healthy: get up. */
+    /** Sleep hour or untreated injury: stay in / go to a lean-to. Wake hour + healthy: get up. */
     function settlerShouldSleep(isNight, injured) {
         return !!(isNight || injured);
     }
@@ -1973,8 +2086,10 @@
         const AUTO = Number(state.autoEatBelow) > 0 ? Number(state.autoEatBelow) : 1000;
         const busy = !!state.busy;
         const row = state.jobs || defaultJobs();
-        const night = !!state.isNight;
+        const assignment = workAssignment(state);
+        const night = assignment === "sleep";
         const injured = !!state.injured;
+        const onBreak = assignment === "recreation" && !injured;
         const busyJob = state.busyJob && isBusyWork(state.busyJob.type) && jobEnabled(row, state.busyJob.type)
             ? state.busyJob
             : null;
@@ -2016,6 +2131,8 @@
         const haulRescue = doctorRescuePlan(row, state);
         if (haulRescue) return haulRescue;
         if (state.isOrphan) return { type: "idle" };
+        // A research stand still checks hunger before it drops the painting.
+        if (onBreak && !poll) return { type: "idle" };
         if (!busy && settlerShouldSleep(night, injured) && state.bed) {
             return { type: "sleep", target: state.bed };
         }
@@ -2081,6 +2198,7 @@
                         if (state.bed) return { type: "sleep", target: state.bed };
                         return { type: "idle" };
                     }
+                    if (onBreak) return { type: "idle" };
                 }
                 if (!state.keepResume) {
                     const foodFirst = stashFoodInsteadOfResearch(state);
@@ -2098,6 +2216,7 @@
                 if (state.bed) return { type: "sleep", target: state.bed };
                 return { type: "idle" };
             }
+            if (onBreak) return { type: "idle" };
         }
         return { type: "idle" };
     }
@@ -2973,6 +3092,18 @@
         rememberJobs,
         bindPawnJobs,
         unbindPawnJobs,
+        defaultSchedule,
+        normalizeSchedule,
+        scheduleHour,
+        assignmentAt,
+        scheduleFor,
+        setSchedule,
+        paintSchedule,
+        rememberSchedule,
+        bindPawnSchedule,
+        unbindPawnSchedule,
+        carriedSchedule,
+        workAssignment,
         pawnIdOf,
         normalizeJobOrder,
         sortByJobOrder,
