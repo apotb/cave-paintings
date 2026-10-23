@@ -2,8 +2,6 @@ Fix UI size 1 issues (e.g. tech tree, settlement menu)
 
 Agriculture -- will unlock a tutorial tip that you can open to learn about soil and farming mechanics
 
-Schedule tab for settlement
-
 Assign tab for settlement -- manage weapons, apparel, medical policy
 
 More rock types -- obsidian, quartz, basalt, etc

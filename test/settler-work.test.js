@@ -392,8 +392,10 @@ test("settler movement and channels scale with tick speed", () => {
         const chunk = originChunk(world);
         chunk.lootableThings.push({ uid: "lt-far", id: "sticks", x: rec.x + 160, y: rec.y });
         const x0 = rec.x;
+        const y0 = rec.y;
         for (let i = 0; i < 8; i++) world.tick(40);
-        return Math.abs(rec.x - x0);
+        // Camp plants are scattered, so the gather heading is not along X.
+        return Math.hypot(rec.x - x0, rec.y - y0);
     }
 
     const d1 = walkDist(1);
