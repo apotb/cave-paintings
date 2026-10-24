@@ -53,6 +53,7 @@
         });
         this.equipmentBtn.setOrigin(0.5, 0.5).setScale(6 * s);
         this.uiLayer.add(this.equipmentBtn);
+        this._syncSideMenuButtons();
 
         // Help (hover for controls; hold-click shows pressed art only)
         this._helpPressed = false;
@@ -77,6 +78,25 @@
         this.input.on('pointerup', () => {
             this._releasePressButton('_helpPressed', this.help, 'help');
         });
+    },
+
+    /** Craft, equipment, and health sit under the settlement tab. */
+    _syncSideMenuButtons() {
+        const hide = !!this.settlementPanel?.visible;
+        const apply = (btn, open, openKey, idleKey) => {
+            if (!btn) return;
+            btn.setVisible(!hide);
+            if (btn.input) btn.input.enabled = !hide;
+            if (hide) {
+                if (this._tooltipTarget === btn) this.hideTooltip?.();
+                if (this._hoverTarget === btn) this._hoverTarget = null;
+            } else {
+                btn.setTexture(open ? openKey : idleKey);
+            }
+        };
+        apply(this.craft, this.craftMenuVisible, "craft_open", "craft");
+        apply(this.equipmentBtn, this.equipmentPanel?.visible, "equipment_open", "equipment");
+        apply(this.healthBtn, this.healthPanel?.visible, "health_open", "health");
     },
 
     /** Clear a momentary press texture. */
@@ -391,6 +411,52 @@
     },
 
     /**
+     * World point the camera centers on. The settlement tab eases X by whole
+     * screen pixels; the water backdrop uses this same point. Stepping twice
+     * in one frame (water, then the follow) would rush the slide.
+     */
+    _cameraFocus() {
+        const player = this.player;
+        const cam = this.cameras?.main;
+        if (!player || !cam) return null;
+        const z = this.worldZoom || cam.zoom || 1;
+        const c = typeof player.bodyCenter === "function"
+            ? player.bodyCenter()
+            : { x: player.x, y: player.y };
+        if (!c || !Number.isFinite(c.x) || !Number.isFinite(c.y)) return null;
+        let focusX = Math.round(c.x * z) / z;
+        const focusY = Math.round(c.y * z) / z;
+        let shift = 0;
+        const panel = this.settlementPanel;
+        const bg = panel?.bg;
+        if (panel?.visible && panel.root?.visible && bg && typeof cameraPanelShiftPixels === "function") {
+            const viewW = cam.width || this.scale?.width || 0;
+            const stroke = Number(bg.lineWidth) || 0;
+            const panelRight = (panel.root.x || 0) + (bg.displayWidth || bg.width || 0) + stroke * 0.5;
+            if (viewW > 0) shift = cameraPanelShiftPixels(panelRight, viewW);
+        }
+        const frame = this.game?.loop?.frame;
+        const goalChanged = shift !== this._settlementCamGoal;
+        if (frame == null || frame !== this._settlementCamFrame || goalChanged) {
+            if (goalChanged || this._settlementCamFrom == null) {
+                this._settlementCamFrom = this._settlementCamPixels || 0;
+                this._settlementCamElapsed = 0;
+            }
+            const dt = Math.max(0, Math.min(50, Number(this.game?.loop?.delta) || 16.7));
+            const dur = 700;
+            this._settlementCamElapsed = Math.min(dur, (this._settlementCamElapsed || 0) + dt);
+            this._settlementCamPixels = (typeof easePixelShift === "function")
+                ? easePixelShift(this._settlementCamFrom, shift, this._settlementCamElapsed / dur)
+                : shift;
+            this._settlementCamFrame = frame;
+            this._settlementCamGoal = shift;
+        }
+        const pixels = this._settlementCamPixels || 0;
+        if (pixels) focusX -= pixels / z;
+        return { x: focusX, y: focusY, zoom: z };
+    },
+
+    /**
      * After physics: remember the true pose, then snap camera scroll and
      * on-screen pawns to integer screen pixels (1/zoom world units). Physics
      * keeps using the unsnapped pose via restorePlayerPhysicsPos on preupdate.
@@ -413,13 +479,9 @@
         for (const s of this.settlers || []) save(s);
         for (const w of this.partySys?.wanderers || []) save(w);
 
-        const c = typeof player.bodyCenter === "function"
-            ? player.bodyCenter()
-            : { x: player.x, y: player.y };
-        cam.centerOn(
-            Math.round(c.x * z) / z,
-            Math.round(c.y * z) / z
-        );
+        const focus = this._cameraFocus();
+        if (!focus) return;
+        cam.centerOn(focus.x, focus.y);
         if (typeof snapCameraScrollToPixels === "function") snapCameraScrollToPixels(cam, z);
         else {
             cam.scrollX = Math.round(cam.scrollX * z) / z;

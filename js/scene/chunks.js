@@ -389,11 +389,7 @@
             }
         }
 
-        if (this._waterSprite) {
-            const w = (roundUpToEven(this.scale.width / this.tileSize / this.worldZoom) + 2) * this.tileSize;
-            const h = (roundUpToEven(this.scale.height / this.tileSize / this.worldZoom) + 2) * this.tileSize;
-            this._waterSprite.setSize(w, h);
-        }
+        this._syncWaterSprite();
 
         this.markLightDirty();
         this.updateLightVeil();
@@ -407,25 +403,21 @@
 
     _syncWaterSprite() {
         const spr = this._waterSprite;
-        const p = this.player;
-        if (!spr?.active || !p || typeof p.posX !== "function") return;
-        const wx = Math.round(p.posX());
-        const wy = Math.round(p.posY());
-        if (!Number.isFinite(wx) || !Number.isFinite(wy)) return;
-        const ts = this.tileSize;
-        const x = wx * ts;
-        const y = wy * ts;
-        const cam = this.cameras?.main?.worldView;
-        const left = spr.x - spr.width * spr.originX;
-        const top = spr.y - spr.height * spr.originY;
-        const covers = cam
-            && left <= cam.x
-            && top <= cam.y
-            && left + spr.width >= cam.right
-            && top + spr.height >= cam.bottom;
-        if (covers && wx === this._oldWaterX && wy === this._oldWaterY) return;
-        this._oldWaterX = wx;
-        this._oldWaterY = wy;
+        const cam = this.cameras?.main;
+        if (!spr?.active || !cam || typeof waterSheetSize !== "function") return;
+        const focus = this._cameraFocus?.();
+        if (!focus) return;
+        const ts = this.tileSize || 16;
+        const size = waterSheetSize(cam.width, cam.height, focus.zoom, ts);
+        // setSize reallocates the tile canvas. The sheet is sized for the
+        // window, and the settlement slide only moves it.
+        if (spr.width !== size.width || spr.height !== size.height) spr.setSize(size.width, size.height);
+        const cx = Math.round(focus.x / ts) * ts;
+        const cy = Math.round(focus.y / ts) * ts;
+        const ox = spr.originX ?? 0.5;
+        const oy = spr.originY ?? 0.5;
+        const x = (cx - size.width * 0.5) + size.width * ox;
+        const y = (cy - size.height * 0.5) + size.height * oy;
         if (spr.x !== x || spr.y !== y) spr.setPosition(x, y);
     },
 

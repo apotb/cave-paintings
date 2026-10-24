@@ -8,6 +8,10 @@ vm.createContext(context);
 vm.runInContext(
     fs.readFileSync(require.resolve("../js/Utils.js"), "utf8")
     + "\nthis.cameraPixelFrac = cameraPixelFrac;\n"
+    + "this.cameraFocusXBesidePanel = cameraFocusXBesidePanel;\n"
+    + "this.cameraPanelShiftPixels = cameraPanelShiftPixels;\n"
+    + "this.easePixelShift = easePixelShift;\n"
+    + "this.waterSheetSize = waterSheetSize;\n"
     + "this.snapCameraScrollToPixels = snapCameraScrollToPixels;\n"
     + "this.snapWorldToScreenPixel = snapWorldToScreenPixel;\n",
     context
@@ -37,6 +41,117 @@ test("even viewport stays on whole pixels", () => {
     context.snapCameraScrollToPixels(cam, 3);
     const sy = screenOf(64, cam.scrollY, cam.height, 3);
     assert.ok(Math.abs(sy - Math.round(sy)) < 1e-6);
+});
+
+test("open settlement tab centers the body in the gap to its right", () => {
+    const viewW = 1512;
+    const zoom = 3;
+    const bodyX = 100;
+    const panelRight = 320;
+    const focusX = context.cameraFocusXBesidePanel(bodyX, panelRight, viewW, zoom);
+    const rounded = Math.round(focusX * zoom) / zoom;
+    const cam = {
+        scrollX: rounded - viewW * 0.5,
+        scrollY: 0,
+        width: viewW,
+        height: 901,
+        zoom
+    };
+    context.snapCameraScrollToPixels(cam, zoom);
+    const sx = screenOf(bodyX, cam.scrollX, viewW, zoom);
+    const target = (panelRight + viewW) * 0.5;
+    assert.ok(Math.abs(sx - target) < 1, `screen ${sx} target ${target}`);
+    assert.ok(sx > viewW * 0.5);
+});
+
+test("settlement offset stays locked to the body while it moves", () => {
+    const viewW = 1513;
+    const zoom = 3;
+    const panelRight = 321.5;
+    const half = viewW * 0.5;
+    let prevDelta = null;
+    for (let i = 0; i <= 90; i++) {
+        const bodyX = i / 10;
+        const closed = Math.round(bodyX * zoom) / zoom;
+        const open = context.cameraFocusXBesidePanel(closed, panelRight, viewW, zoom);
+        const camClosed = { scrollX: closed - half, scrollY: 0, width: viewW, height: 901, zoom };
+        const camOpen = { scrollX: open - half, scrollY: 0, width: viewW, height: 901, zoom };
+        context.snapCameraScrollToPixels(camClosed, zoom);
+        context.snapCameraScrollToPixels(camOpen, zoom);
+        const delta = screenOf(bodyX, camOpen.scrollX, viewW, zoom)
+            - screenOf(bodyX, camClosed.scrollX, viewW, zoom);
+        if (prevDelta == null) prevDelta = delta;
+        assert.ok(Math.abs(delta - prevDelta) < 1e-6, `delta drifted to ${delta} at x ${bodyX}`);
+        assert.ok(Math.abs(delta - Math.round(delta)) < 1e-6, `delta ${delta} is not a whole pixel`);
+    }
+});
+
+function worldAtScreen(screen, scroll, viewSize, zoom) {
+    const half = viewSize * 0.5;
+    const origin = Math.floor(half + 0.5);
+    const translate = origin - zoom * half;
+    return scroll + (screen - translate) / zoom;
+}
+
+test("water sheet keeps one size and still covers the shifted view", () => {
+    const viewW = 1512;
+    const viewH = 901;
+    const zoom = 3;
+    const bodyX = 400;
+    const bodyY = 300;
+    const panelRight = 420;
+    const focusX = context.cameraFocusXBesidePanel(bodyX, panelRight, viewW, zoom);
+    const size = context.waterSheetSize(viewW, viewH, zoom, 16);
+    const again = context.waterSheetSize(viewW, viewH, zoom, 16);
+    assert.equal(size.width, again.width);
+    assert.equal(size.height, again.height);
+    const place = (fx, fy) => {
+        const cx = Math.round(fx / 16) * 16;
+        const cy = Math.round(fy / 16) * 16;
+        return { left: cx - size.width / 2, top: cy - size.height / 2 };
+    };
+    const sheet = place(focusX, bodyY);
+    assert.equal(sheet.left % 16, 0);
+    assert.equal(sheet.top % 16, 0);
+    const half = viewW * 0.5;
+    const cam = { scrollX: focusX - half, scrollY: bodyY - viewH * 0.5, width: viewW, height: viewH, zoom };
+    context.snapCameraScrollToPixels(cam, zoom);
+    const worldLeft = worldAtScreen(0, cam.scrollX, viewW, zoom);
+    const worldRight = worldAtScreen(viewW, cam.scrollX, viewW, zoom);
+    const worldTop = worldAtScreen(0, cam.scrollY, viewH, zoom);
+    const worldBottom = worldAtScreen(viewH, cam.scrollY, viewH, zoom);
+    assert.ok(sheet.left <= worldLeft, `left ${sheet.left} > ${worldLeft}`);
+    assert.ok(sheet.left + size.width >= worldRight);
+    assert.ok(sheet.top <= worldTop);
+    assert.ok(sheet.top + size.height >= worldBottom);
+    assert.deepEqual(size, context.waterSheetSize(viewW, viewH, zoom, 16));
+    assert.notEqual(place(bodyX, bodyY).left, sheet.left);
+});
+
+test("settlement camera shift starts and ends slowly", () => {
+    const goal = 180;
+    const dur = 700;
+    let prev = 0;
+    let early = 0;
+    let mid = null;
+    for (let ms = 0; ms <= dur; ms += 16.7) {
+        const next = context.easePixelShift(0, goal, ms / dur);
+        assert.equal(next, Math.round(next));
+        assert.ok(next >= prev && next <= goal, `${prev} -> ${next}`);
+        prev = next;
+        if (ms <= 80) early = next;
+        if (mid == null && ms >= dur * 0.5) mid = next;
+    }
+    assert.equal(prev, goal);
+    assert.ok(early < goal * 0.12, `early move ${early} is still a lurch`);
+    assert.ok(Math.abs(mid - goal / 2) <= 2);
+    let back = goal;
+    for (let ms = 0; ms <= dur; ms += 16.7) {
+        const next = context.easePixelShift(goal, 0, ms / dur);
+        assert.ok(next <= back && next >= 0);
+        back = next;
+    }
+    assert.equal(back, 0);
 });
 
 test("sprite snap matches the camera grid", () => {

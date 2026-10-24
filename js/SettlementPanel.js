@@ -347,6 +347,7 @@ class SettlementPanel {
         this.root.setVisible(true);
         this.layout();
         this._syncTabs();
+        this.scene._syncSideMenuButtons?.();
     }
 
     close() {
@@ -359,6 +360,7 @@ class SettlementPanel {
         this.scene.settlementSys?._drawRange?.(null, false);
         // Escape leaves the pointer inside the control, so pointerout never runs.
         this._dismissTooltip();
+        this.scene._syncSideMenuButtons?.();
     }
 
     _dismissTooltip() {

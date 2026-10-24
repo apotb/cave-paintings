@@ -107,10 +107,6 @@ class SceneMain extends SceneBase {
         this._craftMenuData = null;
         this.fpsText = this.locXText = this.locYText = null;
         this._waterSprite = null;
-        // Scene instance is reused. Stale tile coords would skip the first
-        // backdrop move, so water stays off-camera until the player changes tiles.
-        this._oldWaterX = null;
-        this._oldWaterY = null;
         this.groundLayer = this.mainLayer = this.uiLayer = this.veilLayer = this.worldHudLayer = null;
         this._hoverTarget = null;
         this._tooltipTarget = null;
@@ -181,11 +177,18 @@ class SceneMain extends SceneBase {
         };
         this.scale.on("resize", this._onGameResize);
 
-        // Water
+        // Water. Size follows the window only. Resizing the tile canvas is a hitch,
+        // so the settlement camera slides this sprite instead of rebuilding it.
+        const waterSheet = (typeof waterSheetSize === "function")
+            ? waterSheetSize(this.scale.width, this.scale.height, this.worldZoom, this.tileSize)
+            : {
+                width: (roundUpToEven(this.scale.width / this.tileSize / this.worldZoom) + 2) * this.tileSize,
+                height: (roundUpToEven(this.scale.height / this.tileSize / this.worldZoom) + 2) * this.tileSize
+            };
         this._waterSprite = this.add.tileSprite(
             this.scale.width / 2, this.scale.height / 2,
-            (roundUpToEven(this.scale.width / this.tileSize / this.worldZoom) + 2) * this.tileSize,
-            (roundUpToEven(this.scale.height / this.tileSize / this.worldZoom) + 2) * this.tileSize,
+            waterSheet.width,
+            waterSheet.height,
             'water', 0
         ).setDepth(-1);
         this._waterFrame = 1;

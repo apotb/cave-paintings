@@ -510,6 +510,57 @@ function cameraPixelFrac(viewSize, zoom) {
     return shift - Math.floor(shift);
 }
 
+/**
+ * World X for camera.centerOn so `bodyX` lands halfway between `panelRight`
+ * and the right edge of the view. The shift is a whole number of screen
+ * pixels. A fractional pixel would make Math.round slip against the body
+ * while it walks, and the follow would jitter. centerOn sets scroll = focus
+ * - view/2, and preRender draws that focus at floor(view/2 + 0.5).
+ */
+function cameraPanelShiftPixels(panelRight, viewWidth) {
+    const view = Number(viewWidth) || 0;
+    const half = view * 0.5;
+    const origin = Math.floor(half + 0.5);
+    const right = Number.isFinite(panelRight) ? panelRight : 0;
+    const screenX = (right + view) * 0.5;
+    return Math.round(screenX - origin);
+}
+
+function cameraFocusXBesidePanel(bodyX, panelRight, viewWidth, zoom) {
+    const z = zoom || 1;
+    return bodyX - cameraPanelShiftPixels(panelRight, viewWidth) / z;
+}
+
+/**
+ * Whole-pixel position along a smoothstep from `from` to `to`. `t` is 0..1.
+ * Speed is zero at both ends so the settlement camera does not lurch.
+ */
+function easePixelShift(from, to, t) {
+    const a = from | 0;
+    const b = to | 0;
+    const u = Math.max(0, Math.min(1, Number(t) || 0));
+    const s = u * u * (3 - 2 * u);
+    return Math.round(a + (b - a) * s);
+}
+
+/**
+ * Water sheet size for a viewport. Independent of where the camera is aimed,
+ * so opening the settlement tab does not resize the tile canvas.
+ */
+function waterSheetSize(viewWidth, viewHeight, zoom, tileSize) {
+    const z = zoom || 1;
+    const ts = tileSize || 16;
+    const evenTiles = (view) => {
+        let n = Math.ceil((Number(view) || 0) / z / ts) + 2;
+        if (n % 2) n += 1;
+        return n;
+    };
+    return {
+        width: evenTiles(viewWidth) * ts,
+        height: evenTiles(viewHeight) * ts
+    };
+}
+
 /** Lock camera scroll so world pixels land on whole screen pixels after zoom. */
 function snapCameraScrollToPixels(cam, zoom) {
     const z = zoom || cam?.zoom || 1;
