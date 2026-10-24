@@ -2881,7 +2881,7 @@
         return ` (${pct}%)`;
     }
 
-    function resourceName(stack, def, getItem, separate) {
+    function resourceName(stack, def, getItem, separate, withDurability) {
         let name = "";
         if (separate && (stack.formClass || stack.id === "clay_figurine" || def?.id === "clay_figurine")) {
             const custom = String(stack.customName || "").trim();
@@ -2899,7 +2899,9 @@
             const custom = String(stack.customName || "").trim();
             name = custom || def?.name || stack.id || "";
         }
-        return name ? name + resourceDurabilitySuffix(stack, def) : "";
+        if (!name) return "";
+        if (withDurability === false) return name;
+        return name + resourceDurabilitySuffix(stack, def);
     }
 
     /** Name order for the resource list. A missing percent is full durability. */
@@ -2935,10 +2937,12 @@
      * Baskets, settler inventories, and ground drops. Worn gear and station
      * fuel are not in those piles. Goods merge by display name. Equipment
      * names include durability unless it is full, so matching durability
-     * stacks and a different percent stays its own row. Figurines stay one
-     * row per stack.
+     * stacks and a different percent stays its own row. Pass
+     * { durability: false } to drop the percent from the name and merge those
+     * rows. Figurines stay one row per stack.
      */
-    function summarizeResources(baskets, pawns, drops, getItem) {
+    function summarizeResources(baskets, pawns, drops, getItem, opts) {
+        const withDurability = opts?.durability !== false;
         const rows = [];
         const merged = new Map();
         const addStack = (stack) => {
@@ -2950,7 +2954,7 @@
             const normalized = stack.id ? stack : Object.assign({}, stack, { id });
             const def = typeof getItem === "function" ? getItem(id) : null;
             const separate = resourceSeparate(normalized, def);
-            const name = resourceName(normalized, def, getItem, separate);
+            const name = resourceName(normalized, def, getItem, separate, withDurability);
             if (!name) return;
             const categoryId = resourceCategoryId(normalized, def);
             if (separate && resourceFigurine(normalized, def)) {

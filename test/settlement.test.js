@@ -2232,3 +2232,48 @@ test("summarizeResources totals held goods and keeps varied stacks apart", () =>
     assert.equal(named("Hide Tunic (80%)").length, 1);
     assert.equal(qty("Hide Tunic (80%)"), 1);
 });
+
+test("summarizeResources merges durability when the option is off", () => {
+    const getItem = (id) => DataStore.getItem(id);
+    const Durability = require("../shared/durability");
+    const chopper = {
+        id: "stone_tool",
+        toolClass: "chopper",
+        knapQuality: "rough",
+        stone: "andesite",
+        quantity: 1
+    };
+    const chopperMax = Durability.maxDurability(chopper, getItem("stone_tool"));
+    const rows = Settlement.summarizeResources(
+        [{
+            slots: [
+                chopper,
+                Object.assign({}, chopper, { durability: chopperMax * 0.4 }),
+                { id: "stone_tool", toolClass: "knife", knapQuality: "fine", stone: "granite", quantity: 1 },
+                { id: "stone_tool", toolClass: "knife", knapQuality: "crude", stone: "granite", durability: 12, quantity: 1 }
+            ]
+        }],
+        [{
+            inventory: [
+                { id: "digging_stick", quantity: 1 },
+                { id: "digging_stick", durability: 25, quantity: 1 },
+                { id: "hide_tunic", durability: 55, quantity: 1 },
+                { id: "hide_tunic", durability: 88, quantity: 1 }
+            ]
+        }],
+        [],
+        getItem,
+        { durability: false }
+    );
+    const qty = (name) => rows.filter((r) => r.name === name).reduce((n, r) => n + r.qty, 0);
+    const named = (name) => rows.filter((r) => r.name === name);
+    assert.equal(rows.some((r) => /\(\d+%\)/.test(r.name)), false);
+    assert.equal(named("Andesite Chopper (rough)").length, 1);
+    assert.equal(qty("Andesite Chopper (rough)"), 2);
+    assert.equal(named("Digging Stick").length, 1);
+    assert.equal(qty("Digging Stick"), 2);
+    assert.equal(named("Hide Tunic").length, 1);
+    assert.equal(qty("Hide Tunic"), 2);
+    assert.equal(named("Granite Knife (fine)").length, 1);
+    assert.equal(named("Granite Knife (crude)").length, 1);
+});

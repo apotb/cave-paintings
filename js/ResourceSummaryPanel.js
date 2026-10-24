@@ -17,6 +17,7 @@ class ResourceSummaryPanel {
         this._sig = null;
         this._pauseWhileOpen = true;
         this._showCategories = false;
+        this._showDurability = true;
         this._sort = null;
         this._scrollDrag = null;
         this.root = scene.add.container(0, 0).setScrollFactor(0).setDepth(16100).setVisible(false);
@@ -62,6 +63,7 @@ class ResourceSummaryPanel {
         this.categoryBtn = this._checkBtn("Categories", () => this._toggleCategories());
         this.categoryBtn._checked = false;
         this.categoryBtn._paint?.();
+        this.durabilityBtn = this._checkBtn("Durability", () => this._toggleDurability());
         this.pauseBtn = this._checkBtn("Pause game", () => this._togglePause());
         this.body = scene.add.container(0, 0);
         this._maskGfx = scene.make.graphics({ x: 0, y: 0, add: false });
@@ -71,7 +73,8 @@ class ResourceSummaryPanel {
         this.root.add([
             this.dim, this.frame, this.title, this.headerBg, this.headerName, this.headerAmount,
             this.headerNameHit, this.headerAmountHit,
-            this.body, this.scrollTrack, this.scrollThumb, this.categoryBtn, this.pauseBtn, this.closeBtn
+            this.body, this.scrollTrack, this.scrollThumb,
+            this.categoryBtn, this.durabilityBtn, this.pauseBtn, this.closeBtn
         ]);
     }
 
@@ -348,6 +351,17 @@ class ResourceSummaryPanel {
         if (this.visible) this.layout();
     }
 
+    _toggleDurability() {
+        this._showDurability = !this._showDurability;
+        if (this.durabilityBtn) {
+            this.durabilityBtn._checked = this._showDurability;
+            this.durabilityBtn._paint?.();
+        }
+        this._scroll = 0;
+        this._sig = null;
+        if (this.visible) this.layout();
+    }
+
     _togglePause() {
         if (!this.scene._isSingleplayerSession?.()) return;
         this._pauseWhileOpen = !this._pauseWhileOpen;
@@ -416,7 +430,8 @@ class ResourceSummaryPanel {
             sys.addedBaskets(settle),
             sys.settlersOf(settle.id),
             sys.dropsInRange(settle),
-            (id) => this.scene.getItem?.(id)
+            (id) => this.scene.getItem?.(id),
+            { durability: this._showDurability !== false }
         );
     }
 
@@ -561,7 +576,7 @@ class ResourceSummaryPanel {
         const rows = this._collect();
         const sortSig = (!this._showCategories && this._sort) ? `${this._sort.key}:${this._sort.dir}` : "default";
         const sig = rows.map((r) => `${r.categoryId}|${r.name}|${r.qty}`).join(";")
-            + `:${this._viewW}x${this._viewH}:${this.scene.uiScale || 1}:${this._showCategories ? 1 : 0}:${sortSig}`;
+            + `:${this._viewW}x${this._viewH}:${this.scene.uiScale || 1}:${this._showCategories ? 1 : 0}:${this._showDurability !== false ? 1 : 0}:${sortSig}`;
         if (sig === this._sig && this.body.list?.length) return;
         const keep = this._scroll;
         this._sig = sig;
@@ -694,6 +709,15 @@ class ResourceSummaryPanel {
                 anchorRight = this.pauseBtn.x - pauseW / 2 - gap;
             }
         }
+        if (this.durabilityBtn) {
+            this.durabilityBtn.setVisible(true);
+            this.durabilityBtn._checked = this._showDurability !== false;
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(this.durabilityBtn._txt, 12, s);
+            const durW = this._checkBtnWidth(this.durabilityBtn, s);
+            this.durabilityBtn.setPosition(anchorRight - durW / 2, headerY);
+            this._sizeCheckBtn(this.durabilityBtn, durW, closeH);
+            anchorRight = this.durabilityBtn.x - durW / 2 - gap;
+        }
         if (this.categoryBtn) {
             this.categoryBtn.setVisible(true);
             this.categoryBtn._checked = !!this._showCategories;
@@ -736,6 +760,7 @@ class ResourceSummaryPanel {
         if (this.headerNameHit?.input?.enabled && this._pointerStillOn(this.headerNameHit, pointer)) return this.headerNameHit;
         if (this.headerAmountHit?.input?.enabled && this._pointerStillOn(this.headerAmountHit, pointer)) return this.headerAmountHit;
         if (this.categoryBtn?.visible && this._pointerStillOn(this.categoryBtn._bg, pointer)) return this.categoryBtn._bg;
+        if (this.durabilityBtn?.visible && this._pointerStillOn(this.durabilityBtn._bg, pointer)) return this.durabilityBtn._bg;
         if (this.pauseBtn?.visible && this._pointerStillOn(this.pauseBtn._bg, pointer)) return this.pauseBtn._bg;
         if (this._pointerStillOn(this.closeBtn?._bg, pointer)) return this.closeBtn._bg;
         if (this._pointerInFrame(pointer)) return this.frame;
