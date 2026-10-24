@@ -1546,12 +1546,40 @@ function stokeUntilKeep(world, rec, settle, fire) {
     return n > 0 || world._campfireHasFuel(fire) || Fire.burnMinutes(fire, getItem) > 0;
 }
 
+function interactStand(world, rec, target) {
+    const c = rec?.creature || world?._ensureSettlerCreature?.(rec);
+    const def = world?._thingDef?.(target?.id);
+    if (!Place?.interactStandPose) return null;
+    return Place.interactStandPose(target, TS, def, c);
+}
+
+function onInteractSpot(world, rec, target) {
+    const pose = interactStand(world, rec, target);
+    if (!pose) return false;
+    return Math.hypot((Number(rec.x) || 0) - pose.x, (Number(rec.y) || 0) - pose.y) <= 1;
+}
+
+function dropStoke(rec, fire) {
+    skipJob(rec, stationKey(fire));
+    if (rec._settlerScan) rec._settlerScan.stokeFire = null;
+    return halt();
+}
+
 function doStokeFire(world, rec, settle, fire) {
     if (!fire) return halt();
-    rec._closeOpenPose = true;
-    const walked = goOrWalk(world, rec, fire);
-    rec._closeOpenPose = false;
-    if (walked) return walked;
+    // Wood goes in only from the marked tile. A blocked spot is not a
+    // cue to feed the pit from beside it.
+    if (!onInteractSpot(world, rec, fire)) {
+        const pose = interactStand(world, rec, fire);
+        const c = rec.creature || world?._ensureSettlerCreature?.(rec);
+        const spotBlocked = !!(pose && c && world._partyPoseBlocked?.(c, pose.x, pose.y, 0, { load: false }));
+        if (!pose || spotBlocked) return dropStoke(rec, fire);
+        rec._closeOpenPose = true;
+        const walked = goOrWalk(world, rec, fire);
+        rec._closeOpenPose = false;
+        if (walked) return walked;
+        if (!onInteractSpot(world, rec, fire)) return dropStoke(rec, fire);
+    }
     const facing = faceFire(rec, fire);
     const before = Fire.burnMinutes(fire, getItem);
     stokeUntilKeep(world, rec, settle, fire);

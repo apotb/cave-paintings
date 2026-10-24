@@ -4453,7 +4453,7 @@ test("always-on campfire is stoked to at least 12 hours of fuel", () => {
     assert.equal(logsAfter, logsLeft);
 });
 
-test("cook stokes from beside the fire when the stand is occupied", () => {
+test("cook does not stoke from beside the fire when the stand is occupied", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn);
     rec.kc = 1600;
@@ -4470,23 +4470,23 @@ test("cook stokes from beside the fire when the stand is occupied", () => {
     const basket = addBasket(world, settle, spot.x, spot.y, "fuel-on-stand");
     basket.slots[0] = { id: "log", quantity: 10 };
     assert.equal(
-        world._partyPoseBlocked(world._ensureSettlerCreature(rec), pose.x, pose.y, 2, { load: false }),
+        world._partyPoseBlocked(world._ensureSettlerCreature(rec), pose.x, pose.y, 0, { load: false }),
         true
     );
     const getItem = (id) => world._itemDef(id);
+    const before = Fire.burnMinutes(fire, getItem);
     let stoking = 0;
-    for (let i = 0; i < 160; i++) {
+    for (let i = 0; i < 40; i++) {
         world.tick(50);
         if (rec._settlerAct === "Stoking fire") stoking++;
-        if (Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES
-            && rec._settlerAct !== "Stoking fire") break;
     }
     assert.ok(
-        Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES,
-        `never fueled (act=${rec._settlerAct} at ${rec.x.toFixed(0)},${rec.y.toFixed(0)} fuel=${JSON.stringify(fire.fuel)})`
+        Fire.burnMinutes(fire, getItem) <= before + 0.01,
+        `fueled off the spot (act=${rec._settlerAct} fuel=${JSON.stringify(fire.fuel)})`
     );
+    assert.equal(basket.slots[0]?.quantity, 10);
     assert.notEqual(rec._settlerAct, "Stoking fire");
-    assert.ok(stoking < 80, `stood on Stoking fire for ${stoking} ticks`);
+    assert.ok(stoking < 8, `stood on Stoking fire for ${stoking} ticks`);
 });
 
 test("cook walks onto the interact spot before stoking", () => {
