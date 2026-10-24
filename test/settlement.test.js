@@ -675,6 +675,18 @@ test("worn gear counts toward an until bill and not toward carried stock", () =>
     assert.equal(Settlement.countEquipStock(pawns, "leather_kilt"), 2);
     assert.equal(Settlement.countEquipStock(pawns, "leather_pouch"), 1);
     assert.equal(Settlement.countPawnStock(pawns, "leather_kilt"), 3);
+    const asleep = {
+        _resting: true,
+        inventory: [{ id: "raw_fish", quantity: 6 }, { id: "cracked_coconut", quantity: 2 }],
+        overflow: [{ id: "bone", quantity: 1 }]
+    };
+    assert.equal(Settlement.countPawnStock([asleep], "raw_fish"), 0);
+    assert.equal(Settlement.countPawnStock([asleep], "cracked_coconut"), 0);
+    assert.equal(Settlement.countPawnStock([asleep], "bone"), 0);
+    assert.equal(Settlement.countPawnStock([{
+        _restWalk: { uid: "bed" },
+        inventory: [{ id: "raw_fish", quantity: 2 }]
+    }], "raw_fish"), 0);
     assert.equal(Settlement.countToolClassEquip([
         { equipment: { back: { id: "stone_tool", toolClass: "knife", quantity: 1 } } },
         { dead: true, equipment: { back: { id: "stone_tool", toolClass: "knife", quantity: 1 } } }
@@ -1114,6 +1126,17 @@ test("planWork: eat, night sleep, jobs, orphan idle", () => {
         jobs: Settlement.defaultJobs(),
         haulMerge: misplacedNight
     }).type, "sleep");
+    const pocketBasket = { uid: "pockets" };
+    const haulOffNight = Settlement.defaultJobs();
+    haulOffNight.haul = 0;
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        isNight: true,
+        bed: { slot: 0 },
+        jobs: haulOffNight,
+        stashBasket: pocketBasket,
+        hasStash: true
+    }).type, "stash");
     assert.equal(Settlement.planWork({ kc: 2000, isOrphan: true }).type, "idle");
     assert.equal(Settlement.planWork({
         kc: 2000,
@@ -1455,7 +1478,7 @@ test("planWork drops a busy job as soon as that priority is turned off", () => {
         busyJob: { type: "stash", target: { uid: "b1" } },
         stashBasket: { uid: "b1" },
         hasStash: true
-    }).type, "idle");
+    }).type, "stash");
     const fishHaul = Settlement.defaultJobs();
     for (const id of Settlement.JOBS) fishHaul[id] = 0;
     fishHaul.fish = 3;
@@ -1723,7 +1746,7 @@ test("settlers keep the best weapon (and a bandage while tending) when stashing"
     ), false);
 });
 
-test("planWork dumps full pockets before other jobs, leftovers before idle", () => {
+test("planWork puts carried goods away before other work, idle, and sleep", () => {
     const jobs = Settlement.defaultJobs();
     const basket = { x: 8, y: 8, slots: [] };
     assert.equal(Settlement.planWork({
@@ -1748,7 +1771,18 @@ test("planWork dumps full pockets before other jobs, leftovers before idle", () 
         patients: [{ id: "hurt" }],
         stashBasket: basket,
         hasStash: true,
+        stashUnneeded: true,
         stashUrgent: false
+    }).type, "stash");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        patients: [{ id: "hurt" }],
+        stashBasket: basket,
+        hasStash: true,
+        stashUrgent: false,
+        busy: true,
+        busyJob: { type: "doctor", target: { id: "hurt" } }
     }).type, "doctor");
     assert.equal(Settlement.planWork({
         kc: 2000,
@@ -1756,6 +1790,16 @@ test("planWork dumps full pockets before other jobs, leftovers before idle", () 
         gatherThing: { id: "stick_bush" },
         stashBasket: basket,
         hasStash: true,
+        stashUnneeded: true,
+        stashUrgent: false
+    }).type, "stash");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        gatherThing: { id: "stick_bush" },
+        stashBasket: basket,
+        hasStash: true,
+        stashUnneeded: false,
         stashUrgent: false
     }).type, "gather");
     const idleJobs = Settlement.defaultJobs();
@@ -1771,7 +1815,7 @@ test("planWork dumps full pockets before other jobs, leftovers before idle", () 
         stashBasket: basket,
         hasStash: true,
         stashUrgent: false
-    }).type, "idle");
+    }).type, "stash");
     const haulOff = Settlement.defaultJobs();
     haulOff.haul = 0;
     assert.equal(Settlement.planWork({
@@ -1780,15 +1824,16 @@ test("planWork dumps full pockets before other jobs, leftovers before idle", () 
         gatherThing: { id: "stick_bush" },
         stashBasket: basket,
         hasStash: true,
+        stashUnneeded: true,
         stashUrgent: true
-    }).type, "gather");
+    }).type, "stash");
     assert.equal(Settlement.planWork({
         kc: 2000,
         jobs: haulOff,
         stashBasket: basket,
         hasStash: true,
         stashUrgent: true
-    }).type, "idle");
+    }).type, "stash");
     const paintJobs = Settlement.defaultJobs();
     paintJobs.doctor = 0;
     paintJobs.cook = 0;
@@ -1812,7 +1857,18 @@ test("planWork dumps full pockets before other jobs, leftovers before idle", () 
         researchCircle: circle,
         stashBasket: basket,
         hasStash: true,
+        stashUnneeded: true,
         stashUrgent: false
+    }).type, "stash");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs: paintJobs,
+        researchCircle: circle,
+        stashBasket: basket,
+        hasStash: true,
+        stashUrgent: false,
+        busy: true,
+        busyJob: { type: "research", target: circle }
     }).type, "research");
 });
 
@@ -1843,8 +1899,9 @@ test("planWork dumps leftover food before research even if haul is lower priorit
         stashBasket: basket,
         hasStash: true,
         hasFoodStash: false,
+        stashUnneeded: true,
         stashUrgent: false
-    }).type, "research");
+    }).type, "stash");
     assert.equal(Settlement.planWork({
         kc: 2000,
         jobs,

@@ -1064,6 +1064,99 @@ test("dedicated settler finishes hauling before going to sleep", () => {
     assert.ok(rec._restWalk || rec._resting, "should sleep after the haul");
 });
 
+test("settler puts shells, bones, and fish away before sleeping", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [
+            { id: "raw_fish", quantity: 4 },
+            { id: "cracked_coconut", quantity: 2 },
+            { id: "bone", quantity: 3 },
+            { id: "sharp_stick", quantity: 1 },
+            null
+        ]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, fish: 0, leather: 0, craft: 0, gather: 0, haul: 0, research: 0
+    };
+    const basket = addBasket(world, settle, rec.x, rec.y, "night-pockets");
+    const chunk = originChunk(world);
+    const entry = { uid: "lt-pockets", id: "lean_to", x: rec.x + 96, y: rec.y, tx: 8, ty: 2, rot: 0 };
+    Place.ensureSleepEntry(entry, { sleep: { slots: 2 } });
+    chunk.things.push(entry);
+    world.gameMinutes = 22 * 60;
+    workOnce(world, rec);
+    assert.equal(!!rec._restWalk, false, "should not walk to bed while holding camp goods");
+    assert.equal(!!rec._resting, false);
+    const qty = (id) => (basket.slots || []).reduce(
+        (n, s) => n + (s && s.id === id ? (s.quantity || 1) : 0),
+        0
+    );
+    assert.equal(qty("raw_fish"), 4);
+    assert.equal(qty("cracked_coconut"), 2);
+    assert.equal(qty("bone"), 3);
+    assert.ok(rec.inventory.some((s) => s && s.id === "sharp_stick"), "best weapon stays in hand");
+    workOnce(world, rec);
+    assert.ok(rec._restWalk || rec._resting, "should sleep after the drop-off");
+});
+
+test("sleeping settler gets up to return carried food", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [
+            { id: "raw_fish", quantity: 3 },
+            { id: "cracked_coconut", quantity: 1 },
+            null, null, null
+        ]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, fish: 0, leather: 0, craft: 0, gather: 0, haul: 0, research: 0
+    };
+    const basket = addBasket(world, settle, rec.x, rec.y, "sleeper-pockets");
+    const chunk = originChunk(world);
+    const entry = { uid: "lt-sleeper", id: "lean_to", x: rec.x + 96, y: rec.y, tx: 8, ty: 2, rot: 0 };
+    Place.ensureSleepEntry(entry, { sleep: { slots: 2 } });
+    chunk.things.push(entry);
+    world.gameMinutes = 22 * 60;
+    rec._resting = true;
+    rec.resting = true;
+    const mob = world._ensureSettlerCreature(rec);
+    mob._resting = true;
+    workOnce(world, rec);
+    assert.equal(!!rec._resting, false, "should leave the bed to drop off food");
+    workOnce(world, rec);
+    assert.equal(
+        (basket.slots || []).some((s) => s && s.id === "raw_fish" && s.quantity === 3),
+        true
+    );
+    assert.equal(
+        (basket.slots || []).some((s) => s && s.id === "cracked_coconut"),
+        true
+    );
+    assert.equal((rec.inventory || []).some((s) => s), false);
+});
+
+test("carried goods are put away before gathering when haul is off", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{ id: "bone", quantity: 2 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, fish: 0, leather: 0, craft: 0, gather: 1, haul: 0, research: 0
+    };
+    const basket = addBasket(world, settle, rec.x, rec.y, "before-gather");
+    const chunk = originChunk(world);
+    chunk.lootableThings.push({ uid: "lt-after", id: "sticks", x: rec.x + 48, y: rec.y });
+    workOnce(world, rec);
+    assert.ok((basket.slots || []).some((s) => s && s.id === "bone"), "bones go into storage first");
+    assert.ok(
+        chunk.lootableThings.some((e) => e.uid === "lt-after" && e.id === "sticks"),
+        "should not harvest while still carrying the bones"
+    );
+});
+
 test("work schedule keeps a settler working at night", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
@@ -1375,8 +1468,9 @@ test("dedicated settler does not haul when haul is off", () => {
     workOnce(world, rec);
     workOnce(world, rec);
     assert.ok(chunk.drops.some((d) => d.uid === "d-off"), "ground drop stays when haul is off");
-    assert.ok(rec.inventory.some((s) => s && s.id === "stick"), "carried sticks stay on the settler");
-    assert.ok(!(basket.slots || []).some((s) => s && (s.id === "stick" || s.id === "leaf")));
+    assert.ok(!(rec.inventory || []).some((s) => s && s.id === "stick"), "carried sticks go back to storage");
+    assert.ok((basket.slots || []).some((s) => s && s.id === "stick"), "basket should hold the sticks");
+    assert.ok(!(basket.slots || []).some((s) => s && s.id === "leaf"), "haul off does not pick the pile up");
     assert.equal(rec._settlerAct, "Idle");
 });
 
@@ -7094,7 +7188,9 @@ test("digging stick waits for the nearest knife or scraper", () => {
     assert.equal(far.slots[0]?.toolClass, "knife");
     assert.equal(rec.inventory[rec.hotbarIndex]?.toolClass, "scraper");
     world.tick(13000);
-    assert.ok(rec.inventory.some((s) => s && s.id === "digging_stick"));
+    const heldStick = [...(rec.inventory || []), ...(near.slots || []), ...(far.slots || [])]
+        .some((s) => s && s.id === "digging_stick");
+    assert.equal(heldStick, true, "the finished stick is in hand or back in storage");
     assert.equal(rec.inventory.some((s) => s && s.id === "log"), false);
 });
 

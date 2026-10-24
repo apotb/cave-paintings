@@ -1157,6 +1157,40 @@ function rockWork(world, rec, settle, claims) {
     return best;
 }
 
+/** Inputs and tools a live cook or craft bill will spend. Surplus stays unneeded. */
+function jobCargoPreds(world, cookJob, rockJob) {
+    const preds = [];
+    const bill = cookJob?.bill;
+    if (bill) {
+        preds.push((s) => Settlement.cookInputReady(getItem, s, bill));
+        const method = bill.method || "stick_roast";
+        preds.push((s) => Settlement.isCookTool(getItem, s, method));
+    }
+    const rb = rockJob?.bill;
+    if (!rb) return preds;
+    if (rb.kind === "knap" || rb.toolClass) {
+        preds.push((s) => Settlement.blankMatchesBill(rb, s));
+    }
+    const recipe = rb.recipeId && typeof world?._parseRecipe === "function"
+        ? world._parseRecipe(rb.recipeId)
+        : null;
+    for (const ing of recipe?.ingredients || []) {
+        if (!ing) continue;
+        if (ing.hideStage) {
+            const stage = ing.hideStage;
+            preds.push((s) => Settlement.hideStageOf(getItem(s?.id), s?.id) === stage);
+        } else if (ing.id && ing.id !== "ANY_HIDE" && ing.id !== "ANY_LEATHER") {
+            const id = ing.id;
+            preds.push((s) => s?.id === id);
+        }
+    }
+    const toolClass = recipe?.requireTool?.toolClass;
+    if (toolClass) {
+        preds.push((s) => !!(s?.id) && Carry.stackToolClass(s, getItem(s.id)) === toolClass);
+    }
+    return preds;
+}
+
 function scanWork(world, rec, settle, claims) {
     const jobs = Settlement.jobsFor(settle, rec.id);
     const enabled = new Set(Settlement.enabledJobs(jobs));
@@ -1195,15 +1229,20 @@ function scanWork(world, rec, settle, claims) {
     const injured = Sleep.injuredForAutofill ? Sleep.injuredForAutofill(c?.anatomy) : false;
     const downed = pawnDowned(world, rec);
     const stash = stashScan(world, rec, settle, keepOpts);
+    const cookJob = jobOn(enabled, "cook") ? cookBill(world, rec, settle, claims) : null;
+    const hideWork = jobOn(enabled, "leather") ? leatherWork(world, rec, settle, claims) : null;
+    const rockJob = jobOn(enabled, "craft") ? rockWork(world, rec, settle, claims) : null;
+    // Tailoring already keeps what the bill spends and walks the rest back.
+    const jobKeepPreds = hideWork ? [] : jobCargoPreds(world, cookJob, rockJob);
     return {
         unlitFire: jobOn(enabled, "cook") ? unlitFire(world, rec, settle, claims) : null,
         light: jobOn(enabled, "cook") ? lightOpts(world, rec, settle) : {
             hasFirestarter: false, hasFuel: false, hasGroundRecipe: false
         },
-        cookBill: jobOn(enabled, "cook") ? cookBill(world, rec, settle, claims) : null,
+        cookBill: cookJob,
         stokeFire: jobOn(enabled, "cook") ? stokeFire(world, rec, settle, claims) : null,
-        leatherWork: jobOn(enabled, "leather") ? leatherWork(world, rec, settle, claims) : null,
-        rockWork: jobOn(enabled, "craft") ? rockWork(world, rec, settle, claims) : null,
+        leatherWork: hideWork,
+        rockWork: rockJob,
         haulDrop: jobOn(enabled, "haul") ? haulDrop(world, rec, settle, claims) : null,
         haulOutput: jobOn(enabled, "haul") ? haulSmokeLeather(world, rec, settle, claims) : null,
         haulMerge: jobOn(enabled, "haul") ? haulMergeJob(world, rec, settle, claims) : null,
@@ -1219,6 +1258,7 @@ function scanWork(world, rec, settle, claims) {
         keepPigment: keepPigment || keepTally,
         isPigment,
         keepPreds: keepPreds.length ? keepPreds : null,
+        jobKeepPreds: jobKeepPreds.length ? jobKeepPreds : null,
         carryRoom: !!rec._carryRoom,
         bed: (night || injured) ? freeBed(world, rec, settle, claims, { medical: !!injured }) : null,
         stash,

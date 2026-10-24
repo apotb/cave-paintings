@@ -280,9 +280,31 @@ function setSleepAct(world, rec, mob, asleep) {
     ));
 }
 
+function pocketsOccupied(rec) {
+    const has = (slots) => (slots || []).some((s) => s && s.id);
+    return has(rec?.inventory) || has(rec?.overflow);
+}
+
+/** Healthy sleeper still holding something a basket will take. */
+function shouldDumpBeforeSleep(world, rec, mob) {
+    if (!pocketsOccupied(rec)) return false;
+    const c = rec.creature || world.creatures.get(rec.id) || mob;
+    if (Sleep.injuredForAutofill && Sleep.injuredForAutofill(c?.anatomy)) return false;
+    const now = Date.now();
+    if (rec._pocketDumpAt && now < rec._pocketDumpAt) return false;
+    const settle = findSettle(world, rec);
+    if (!settle) return false;
+    if (!stashScan(world, rec, settle).has) {
+        rec._pocketDumpAt = now + (SCAN_MS || 280);
+        return false;
+    }
+    return true;
+}
+
 function maybeLeaveBed(world, rec, mob) {
     if (!rec._resting && !rec.resting && !rec._restWalk) return null;
     if (settlerWantsBed(world, rec, mob)) {
+        if (shouldDumpBeforeSleep(world, rec, mob)) return leaveBed(world, rec, mob);
         if (rec._resting || rec.resting) {
             setSleepAct(world, rec, mob, true);
             return halt();

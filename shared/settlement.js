@@ -480,10 +480,21 @@
         return n;
     }
 
+    /**
+     * Awake pockets count as camp stock. Someone in bed, or walking to bed,
+     * is not a basket: cooks and eaters cannot take those stacks, so an
+     * until-bill must not treat them as already owned.
+     */
+    function pocketsCountAsStock(pawn) {
+        if (!pawn) return false;
+        if (pawn._resting || pawn.resting || pawn._restWalk) return false;
+        return true;
+    }
+
     function countPawnStock(pawns, itemId) {
         let n = 0;
         for (const p of pawns || []) {
-            if (!p) continue;
+            if (!pocketsCountAsStock(p)) continue;
             n += countInSlots(p.inventory, itemId);
             n += countInSlots(p.overflow, itemId);
         }
@@ -2222,11 +2233,25 @@
         const haulRescue = doctorRescuePlan(row, state);
         if (haulRescue) return haulRescue;
         if (state.isOrphan) return { type: "idle" };
+        const nightSleep = !busy && settlerShouldSleep(night, injured);
+        // Bed is not a basket. Healthy settlers drop camp goods off before
+        // lying down, even when Haul is off.
+        if (nightSleep && !injured && state.hasStash && state.stashBasket) {
+            return { type: "stash", target: state.stashBasket };
+        }
         if (hurtWantsBed) return { type: "sleep", target: state.bed };
         // A research stand still checks hunger before it drops the painting.
-        if (onBreak && !poll) return { type: "idle" };
-        if (!busy && settlerShouldSleep(night, injured) && state.bed) {
-            return { type: "sleep", target: state.bed };
+        if (onBreak && !poll) {
+            if (state.hasStash && state.stashBasket) {
+                return { type: "stash", target: state.stashBasket };
+            }
+            return { type: "idle" };
+        }
+        if (nightSleep && state.bed) return { type: "sleep", target: state.bed };
+        // Shells, bones, fish, and anything else this job will not use go
+        // back before the next task. Mats the bill still needs stay in hand.
+        if (state.stashUnneeded && state.stashBasket) {
+            return { type: "stash", target: state.stashBasket, keepJobMats: true };
         }
         const haulOn = enabledJobs(row).includes("haul");
         if (haulOn && state.stashUrgent && state.stashBasket) {
@@ -2299,7 +2324,7 @@
                 return { type: "research", target: state.researchCircle };
             }
         }
-        if (haulOn && state.hasStash && state.stashBasket) {
+        if (state.hasStash && state.stashBasket) {
             return { type: "stash", target: state.stashBasket };
         }
         if (poll) {

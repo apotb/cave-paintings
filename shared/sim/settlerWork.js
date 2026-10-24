@@ -417,6 +417,16 @@ function tick(world, mob, delta) {
         isPigment: scan.isPigment || null,
         keepPreds: scan.keepPreds || null
     });
+    const jobMatsOpts = () => {
+        const extra = scan.jobKeepPreds;
+        if (!Array.isArray(extra) || !extra.length) return keepOpts;
+        return keepGearOpts({
+            keepBandage: !!keepOpts.keepBandage,
+            keepPigment: !!keepOpts.keepPigment,
+            isPigment: keepOpts.isPigment || null,
+            keepPreds: [...(keepOpts.keepPreds || []), ...extra]
+        });
+    };
     // Last search found nothing to do. Replanning every idle person every
     // frame is what pegs a slow laptop at 30 fps inside a camp.
     if (
@@ -460,6 +470,12 @@ function tick(world, mob, delta) {
         plan = rec._busyJob;
     } else {
         stash = stashScan(world, rec, settle, keepOpts);
+        let stashUnneeded = false;
+        if (stash.has && !scan.leatherWork) {
+            const extra = scan.jobKeepPreds;
+            stashUnneeded = !Array.isArray(extra) || !extra.length
+                || stashScan(world, rec, settle, jobMatsOpts()).has;
+        }
         const haulOn = Settlement.enabledJobs(liveJobs).includes("haul");
         delivering = !!(rec._haulDestUid && (stash.has || rec._haulMergeOnly)
             && (haulOn || rec._busyJob?.type === "stash"));
@@ -527,6 +543,7 @@ function tick(world, mob, delta) {
             hasStash: stash.has,
             hasFoodStash: stash.hasFood,
             stashUrgent: stash.urgent,
+            stashUnneeded,
             carryRoom: !!scan.carryRoom,
             mergeNeedsRoom: mergeNeedsRoom(rec, scan.haulMerge),
             busy: hold,
@@ -600,7 +617,7 @@ function tick(world, mob, delta) {
     }
 
     if (plan.type === "stash" && plan.target) {
-        return doStash(world, rec, settle, plan.target, keepOpts);
+        return doStash(world, rec, settle, plan.target, plan.keepJobMats ? jobMatsOpts() : keepOpts);
     }
     const registeredJob = jobsApi().forType(plan.type);
     if (registeredJob?.perform) {
