@@ -66,6 +66,7 @@ describe("mod create", () => {
         assert.equal(bare.description, undefined);
         assert.equal(Scaffold.cleanDescription("x".repeat(200)).length, 160);
         assert.equal(Scaffold.gameVersionSpec("0.3.2"), ">=0.3.2");
+        assert.equal(Scaffold.gameVersionSpec("0.4.3.1"), ">=0.4.3.1");
         assert.equal(Scaffold.gameVersionSpec("nope"), "");
         assert.equal(Scaffold.crc32(new TextEncoder().encode("123456789")), 0xCBF43926);
     });

@@ -47,7 +47,7 @@ Every file under `data/` is optional. A missing script is an error only when `mo
 
 `dependencies` is an array of mod ids. Use `[]` when there are none. A missing dependency or a cycle throws.
 
-`gameVersion` is compared with [version.json](../version.json). Operators are `>=`, `>`, `<=`, `<`, and `=`, then `x.y.z`. A bare version means `=`.
+`gameVersion` is compared with [version.json](../version.json). Operators are `>=`, `>`, `<=`, `<`, and `=`, then `x.y.z` or `x.y.z.w`. A bare version means `=`. A missing fourth number is 0, so `>=0.4.3` still matches a `0.4.3.1` hotfix.
 
 `name` is the label in the Mods screen. `author` and `version` are stored with the mod. The save and the join check use `version`.
 

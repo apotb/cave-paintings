@@ -1,9 +1,11 @@
 delete process.env.ELECTRON_RUN_AS_NODE;
 delete process.env.ATOM_SHELL_INTERNAL_RUN_AS_NODE;
 
+const path = require("path");
 const { spawn } = require("child_process");
 const cli = require.resolve("electron-builder/cli.js");
-const child = spawn(process.execPath, [cli, ...process.argv.slice(2)], {
+const allowHotfix = path.join(__dirname, "..", "scripts", "electron-builder-version.js");
+const child = spawn(process.execPath, ["-r", allowHotfix, cli, ...process.argv.slice(2)], {
     stdio: "inherit",
     env: process.env
 });

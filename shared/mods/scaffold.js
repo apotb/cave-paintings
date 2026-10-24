@@ -63,7 +63,7 @@
 
     function gameVersionSpec(version) {
         const text = String(version || "").trim();
-        if (!/^\d+\.\d+\.\d+$/.test(text)) return "";
+        if (!/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(text)) return "";
         return `>=${text}`;
     }
 

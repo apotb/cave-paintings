@@ -59,15 +59,15 @@ function resolveLocalVersion() {
 function parseGameVersion(raw) {
     const s = String(raw || "").trim().replace(/^[vV]/, "");
     const parts = s.split(/[.+-]/).map((p) => parseInt(p, 10));
-    const out = [0, 0, 0];
-    for (let i = 0; i < 3; i++) out[i] = Number.isFinite(parts[i]) ? parts[i] : 0;
+    const out = [0, 0, 0, 0];
+    for (let i = 0; i < 4; i++) out[i] = Number.isFinite(parts[i]) ? parts[i] : 0;
     return out;
 }
 
 function compareGameVersions(a, b) {
     const pa = parseGameVersion(a);
     const pb = parseGameVersion(b);
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
         if (pa[i] > pb[i]) return 1;
         if (pa[i] < pb[i]) return -1;
     }

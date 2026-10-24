@@ -155,6 +155,15 @@ test("missing place.thing throws", () => {
     ], VERSION), /example\.bad: place\.thing "example\.bad\.missing" does not exist/);
 });
 
+test("a hotfix satisfies the release it patches", () => {
+    assert.equal(Loader.gameVersionMatches(">=0.4.3", "0.4.3.1"), true);
+    assert.equal(Loader.gameVersionMatches(">=0.4.3", "0.4.3"), true);
+    assert.equal(Loader.gameVersionMatches(">=0.4.3.1", "0.4.3.1"), true);
+    assert.equal(Loader.gameVersionMatches(">=0.4.3.1", "0.4.3.2"), true);
+    assert.equal(Loader.gameVersionMatches(">=0.4.3.2", "0.4.3.1"), false);
+    assert.equal(Loader.gameVersionMatches(">=0.4.3.1", "0.4.3"), false);
+});
+
 test("a gameVersion the install does not satisfy throws", () => {
     const store = emptyStore();
     const bad = pack("example.bad", { items: [{ id: "example.bad.chip", name: "Chip" }] });

@@ -203,20 +203,20 @@
     }
 
     function parseVer(text) {
-        const m = String(text || "").trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+        const m = String(text || "").trim().match(/^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?/);
         if (!m) return null;
-        return [Number(m[1]), Number(m[2]), Number(m[3])];
+        return [Number(m[1]), Number(m[2]), Number(m[3]), m[4] == null ? 0 : Number(m[4])];
     }
 
     function cmpVer(a, b) {
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < 4; i++) {
             if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
         }
         return 0;
     }
 
     function gameVersionMatches(spec, actual) {
-        const m = String(spec || "").trim().match(/^(>=|<=|>|<|=)?\s*(\d+\.\d+\.\d+)$/);
+        const m = String(spec || "").trim().match(/^(>=|<=|>|<|=)?\s*(\d+\.\d+\.\d+(?:\.\d+)?)$/);
         if (!m) {
             throw new Error(`Bad gameVersion "${spec}"`);
         }
