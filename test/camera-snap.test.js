@@ -154,6 +154,34 @@ test("settlement camera shift starts and ends slowly", () => {
     assert.equal(back, 0);
 });
 
+test("covering menus keep the settlement camera offset", () => {
+    const pauseSrc = fs.readFileSync(require.resolve("../js/scene/pause.js"), "utf8");
+    vm.runInContext(pauseSrc, context);
+    const bg = { lineWidth: 2, displayWidth: 300, width: 300 };
+    const scene = (rootVisible, open) => ({
+        player: {
+            x: 100,
+            y: 80,
+            bodyCenter() { return { x: 100, y: 80 }; }
+        },
+        cameras: { main: { width: 1512, height: 901, zoom: 3 } },
+        worldZoom: 3,
+        game: { loop: { frame: null, delta: 700 } },
+        settlementPanel: {
+            visible: open,
+            root: { visible: rootVisible, x: 16 },
+            bg
+        }
+    });
+    const focus = (rootVisible, open) => context.SceneMainPause._cameraFocus.call(scene(rootVisible, open));
+    const shown = focus(true, true);
+    const covered = focus(false, true);
+    const closed = focus(false, false);
+    assert.equal(covered.x, shown.x);
+    assert.notEqual(closed.x, shown.x);
+    assert.ok(shown.x < 100);
+});
+
 test("sprite snap matches the camera grid", () => {
     const cam = { scrollX: 3, scrollY: 9, width: 1001, height: 777, zoom: 3 };
     context.snapCameraScrollToPixels(cam, 3);

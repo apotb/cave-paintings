@@ -429,7 +429,9 @@
         let shift = 0;
         const panel = this.settlementPanel;
         const bg = panel?.bg;
-        if (panel?.visible && panel.root?.visible && bg && typeof cameraPanelShiftPixels === "function") {
+        // Schedule, resources, and the research tree hide the panel root while
+        // the settlement menu stays open. The camera keeps the same offset.
+        if (panel?.visible && panel.root && bg && typeof cameraPanelShiftPixels === "function") {
             const viewW = cam.width || this.scale?.width || 0;
             const stroke = Number(bg.lineWidth) || 0;
             const panelRight = (panel.root.x || 0) + (bg.displayWidth || bg.width || 0) + stroke * 0.5;
