@@ -135,7 +135,7 @@ function fetchCookPiece(world, rec, settle, found) {
     if (!stack) return halt();
     if (takeToPawn(world, rec, stack) <= 0) {
         restorePiece(found, stack);
-        return halt();
+        return halt({ carryFail: true });
     }
     if (found.entry) emitEntry(world, found.entry);
     world._dirtyPawnOwner(rec);
@@ -149,13 +149,13 @@ function fetchCookQty(world, rec, settle, found, want) {
     if (walked) return walked;
     const avail = foundAvail(world, rec, settle, found);
     const cap = Math.min(Math.max(1, Math.floor(Number(want) || 1)), avail);
-    if (!(cap > 0)) return halt();
+    if (!(cap > 0)) return halt({ carryFail: true });
     const stack = takeQty(found, cap);
     if (!stack) return halt();
     const qty = Math.max(1, Number(stack.quantity) || 1);
     const got = takeToPawn(world, rec, stack);
     if (got < qty) restorePiece(found, { ...stack, quantity: qty - got });
-    if (got <= 0) return halt();
+    if (got <= 0) return halt({ carryFail: true });
     if (found.entry) emitEntry(world, found.entry);
     world._dirtyPawnOwner(rec);
     return halt();
@@ -458,7 +458,9 @@ function fetchOneOrRoom(world, rec, settle, found, key, keepPreds) {
     if (!acceptsOne(rec, found.slots?.[found.index])) {
         return pocketFail(world, rec, settle, key, keepPreds);
     }
-    return fetchCookPiece(world, rec, settle, found) || halt();
+    const step = fetchCookPiece(world, rec, settle, found);
+    if (step?.carryFail) return pocketFail(world, rec, settle, key, keepPreds);
+    return step || halt();
 }
 
 function persistBills(world, settle, stationUid) {
@@ -885,6 +887,32 @@ function approachStation(world, rec, target) {
     endWorkHold(rec);
     skipJob(rec, stationKey(target));
     return halt();
+}
+
+/**
+ * Load a campfire from its marked tile. Pathing parks a few pixels short of
+ * an open spot and then stands there, so simmer never puts the shell on.
+ * An open pose gets that last step. A blocked pose still uses the old
+ * arrival, or a basket on the tile would make the job give up.
+ */
+function useInteractSpot(world, rec, target) {
+    if (onInteractSpot(world, rec, target)) return null;
+    const pose = interactStand(world, rec, target);
+    const c = rec?.creature || world?._ensureSettlerCreature?.(rec);
+    const spotBlocked = !!(pose && c && typeof world?._partyPoseBlocked === "function"
+        && world._partyPoseBlocked(c, pose.x, pose.y, 0, { load: false }));
+    if (pose && !spotBlocked) {
+        rec._closeOpenPose = true;
+        const walked = goOrWalk(world, rec, target);
+        rec._closeOpenPose = false;
+        if (walked) return walked;
+        if (onInteractSpot(world, rec, target)) return null;
+        if (stepClear(world, c, Number(rec.x) || 0, Number(rec.y) || 0, pose.x, pose.y)) {
+            plantAtStand(rec, c, pose, target);
+            if (onInteractSpot(world, rec, target)) return null;
+        }
+    }
+    return goOrWalk(world, rec, target);
 }
 
 function blockedToward(world, rec, c, tx, ty, ignoreUid, pad = 2) {
@@ -1688,6 +1716,7 @@ function doLightFire(world, rec, settle, fire) {
     ctx.stationStandFeet = stationStandFeet;
     ctx.goOrWalk = goOrWalk;
     ctx.approachStation = approachStation;
+    ctx.useInteractSpot = useInteractSpot;
     ctx.blockedToward = blockedToward;
     ctx.knapQualityDurationScale = knapQualityDurationScale;
     ctx.knapMaterialDurationScale = knapMaterialDurationScale;

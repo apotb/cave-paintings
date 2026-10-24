@@ -21,6 +21,7 @@
     const getItem = (...args) => ctx.getItem(...args);
     const goOrWalk = (...args) => ctx.goOrWalk(...args);
     const approachStation = (...args) => ctx.approachStation(...args);
+    const useInteractSpot = (...args) => ctx.useInteractSpot(...args);
     const takeOffFire = (...args) => ctx.takeOffFire(...args);
     const emitEntry = (...args) => ctx.emitEntry(...args);
     const persistBills = (...args) => ctx.persistBills(...args);
@@ -177,7 +178,7 @@ function doCook(world, rec, settle, job) {
         }
         if (!Settlement.isCookTool(getItem, cat, method)) {
             if (cat) {
-                const walked = goOrWalk(world, rec, fire);
+                const walked = useInteractSpot(world, rec, fire);
                 if (walked) return walked;
                 if (!takeFireCatalyst(world, rec, settle, fire)) {
                     return refuseTake(world, rec, settle, fire);
@@ -188,6 +189,18 @@ function doCook(world, rec, settle, job) {
         if (!Array.isArray(fire.simmer)) fire.simmer = [null, null, null, null];
         const toolPred = (s) => Settlement.isCookTool(getItem, s, method);
         const ingPred = (s) => Settlement.cookInputReady(getItem, s, bill);
+        const simmerKeep = [toolPred, ingPred];
+        const fetchSimmer = (found, qty) => {
+            const stack = found?.slots?.[found.index];
+            if (!acceptsOne(rec, stack)) {
+                return pocketFail(world, rec, settle, stationKey(fire), simmerKeep);
+            }
+            const step = qty > 1
+                ? fetchCookQty(world, rec, settle, found, qty)
+                : fetchCookPiece(world, rec, settle, found);
+            if (step?.carryFail) return pocketFail(world, rec, settle, stationKey(fire), simmerKeep);
+            return step || halt();
+        };
         const needTool = !Settlement.isCookTool(getItem, fire.catalyst, method);
         if (needTool && !findHeld(rec, toolPred)) {
             const found = findStored(world, rec, settle, toolPred);
@@ -195,15 +208,13 @@ function doCook(world, rec, settle, job) {
                 endWorkHold(rec);
                 return halt();
             }
-            return fetchCookPiece(world, rec, settle, found) || halt();
+            return fetchSimmer(found, 1);
         }
         const empty = Settlement.simmerEmptyCount(fire);
         const heldIng = heldPredQty(rec, ingPred);
         if (empty > heldIng) {
             const stored = findStored(world, rec, settle, ingPred);
-            if (stored) {
-                return fetchCookQty(world, rec, settle, stored, empty - heldIng) || halt();
-            }
+            if (stored) return fetchSimmer(stored, empty - heldIng);
         }
         if (needTool) {
             const held = findHeld(rec, toolPred);
@@ -211,14 +222,14 @@ function doCook(world, rec, settle, job) {
                 endWorkHold(rec);
                 return halt();
             }
-            const walked = goOrWalk(world, rec, fire);
+            const walked = useInteractSpot(world, rec, fire);
             if (walked) return walked;
             fire.catalyst = takeCookPiece(held);
             emitEntry(world, fire);
             world._dirtyPawnOwner(rec);
         }
         if (Settlement.simmerEmptyCount(fire) > 0 && heldPredQty(rec, ingPred) > 0) {
-            const walked = goOrWalk(world, rec, fire);
+            const walked = useInteractSpot(world, rec, fire);
             if (walked) return walked;
             let placed = 0;
             while (Settlement.simmerEmptyCount(fire) > 0) {

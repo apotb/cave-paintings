@@ -2674,6 +2674,82 @@ test("dedicated settler hauls coconut and four simmer ingredients before loading
     }
 });
 
+test("simmer puts away unneeded cargo instead of standing at the shells", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "pebble", quantity: 2 },
+            { id: "leaf", quantity: 4 },
+            { id: "flint", quantity: 1 },
+            { id: "bone", quantity: 1 },
+            { id: "clay", quantity: 1 }
+        ]
+    });
+    rec.kc = 1600;
+    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const basket = addBasket(world, settle, rec.x, rec.y, "shells");
+    basket.slots[0] = { id: "cracked_coconut", quantity: 1 };
+    basket.slots[1] = { id: "apple", quantity: 4 };
+    const fire = addLitFire(world, settle, rec, "fire-full");
+    fire.catalyst = null;
+    const bills = Settlement.addBill(settle, fire.uid, { recipeId: "simmer", mode: "forever", paused: false });
+    rec._workHold = true;
+    rec._busyJob = { type: "cook", target: { fire, bill: bills[0], entry: fire } };
+    let still = 0;
+    let last = `${rec.x},${rec.y}`;
+    for (let i = 0; i < 40; i++) {
+        world.tick(50);
+        const here = `${rec.x.toFixed(1)},${rec.y.toFixed(1)}`;
+        if (rec._settlerAct === "Simmering" && here === last) still++;
+        else still = 0;
+        last = here;
+        if (fire.catalyst?.id === "cracked_coconut"
+            && (fire.simmer || []).filter((s) => s?.id === "apple").length >= 4) break;
+    }
+    assert.equal(fire.catalyst?.id, "cracked_coconut");
+    assert.equal((fire.simmer || []).filter((s) => s && s.id === "apple").length, 4);
+    assert.ok(still < 12, `stood on Simmering without moving for ${still} ticks`);
+});
+
+test("simmer steps onto the campfire spot instead of standing on the lip", () => {
+    const { world, pawn } = createTestWorld();
+    fillGrass(world);
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "cracked_coconut", quantity: 1 },
+            { id: "apple", quantity: 4 },
+            null, null, null
+        ]
+    });
+    rec.kc = 1600;
+    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const fire = addStation(world, settle, "campfire", rec.x, rec.y, "fire-lip");
+    fire.fuel = [{ id: "stick", quantity: 8 }, null];
+    fire.cook = null;
+    fire.catalyst = null;
+    fire.simmer = [null, null, null, null];
+    fire.cookProgress = 0;
+    fire.burnRemaining = 30;
+    fire.pitTemp = 500;
+    fire.maxTemp = 600;
+    const pose = Place.interactStandPose(fire, 16, world._thingDef(fire.id), world._ensureSettlerCreature(rec));
+    Settlement.addBill(settle, fire.uid, { recipeId: "simmer", mode: "forever", paused: false });
+    let loadedAt = null;
+    for (let i = 0; i < 40; i++) {
+        world.tick(50);
+        if (!loadedAt && fire.catalyst?.id === "cracked_coconut") {
+            loadedAt = { x: rec.x, y: rec.y };
+        }
+        if (loadedAt && (fire.simmer || []).filter((s) => s?.id === "apple").length >= 4) break;
+    }
+    assert.ok(loadedAt, `never loaded the pot (act=${rec._settlerAct} at ${rec.x.toFixed(1)},${rec.y.toFixed(1)})`);
+    assert.ok(
+        Math.hypot(loadedAt.x - pose.x, loadedAt.y - pose.y) <= 1,
+        `should simmer from the interact spot, at ${loadedAt.x},${loadedAt.y} want ${pose.x},${pose.y}`
+    );
+    assert.equal((fire.simmer || []).filter((s) => s && s.id === "apple").length, 4);
+});
+
 function simmeringPork(rec, fire) {
     const coconutOn = fire.catalyst?.id === "cracked_coconut";
     const porkInPot = (fire.simmer || []).some((s) => s && s.id === "raw_pork");
