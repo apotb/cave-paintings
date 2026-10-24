@@ -455,6 +455,36 @@
         return !(Number(pawn?.kc) > 0);
     }
 
+    function hediffsApi() {
+        if (typeof globalThis !== "undefined" && globalThis.Hediffs) return globalThis.Hediffs;
+        if (typeof require === "function") {
+            try { return require("./body/Hediff"); } catch (_) { /* browser */ }
+        }
+        return null;
+    }
+
+    /**
+     * Raw meat is emergency food. An empty stomach starts malnutrition at its
+     * initial stage; settlers wait until that reaches minor before eating it.
+     */
+    function allowsEmergencyEat(pawn) {
+        if (!isStarving(pawn)) return false;
+        const anatomy = pawn?.anatomy || pawn?.creature?.anatomy || null;
+        const h = anatomy?.hediff?.("malnutrition");
+        if (!h) return false;
+        const H = hediffsApi();
+        if (typeof H?.malnutritionNotable === "function") {
+            return H.malnutritionNotable(h, anatomy.ctx || pawn?.ctx || pawn?.scene);
+        }
+        return (Number(h.severity) || 0) >= 0.2;
+    }
+
+    function eatAllowFlags(opts) {
+        const allowPoison = !!opts?.allowPoison;
+        const allowReserved = opts?.allowReserved == null ? allowPoison : !!opts.allowReserved;
+        return { allowPoison, allowReserved };
+    }
+
     /**
      * How many discrete food items to take from a storage stack for one sitting.
      * Leftover meals stay a single stack. Discrete food: enough to reach `until`
@@ -517,7 +547,7 @@
         const skipSlot = opts.skipHeld?.slot;
         const getFood = opts.getFood;
         const getItem = opts.getItem;
-        const allowPoison = !!opts.allowPoison;
+        const { allowPoison, allowReserved } = eatAllowFlags(opts);
         const ex = Number(eater.x) || 0;
         const ey = Number(eater.y) || 0;
         const eaterId = eater.id || eater.pawnId;
@@ -544,7 +574,7 @@
                     if (!(Number(food?.kc ?? 0) > 0)) continue;
                     const poison = Number(food?.foodPoisonChance ?? 0) > 0;
                     if (poison && !allowPoison) continue;
-                    if (isReservedAutoEat(stack, food) && !allowPoison) continue;
+                    if (isReservedAutoEat(stack, food) && !allowReserved) continue;
                     const spoil = Number(stack.spoilAt ?? stack.spoilLeft ?? Infinity);
                     candidates.push({
                         pawn: p,
@@ -577,7 +607,7 @@
         const interact = (Number(opts.interactTiles) || INTERACT_TILES) * ts;
         const seek = (Number(opts.seekTiles) || FOLLOW_DETACH) * ts;
         const getFood = opts.getFood;
-        const allowPoison = !!opts.allowPoison;
+        const { allowPoison, allowReserved } = eatAllowFlags(opts);
         const ex = Number(eater.x) || 0;
         const ey = Number(eater.y) || 0;
         for (const bag of extraBags || []) {
@@ -591,7 +621,7 @@
                 if (!(Number(food?.kc ?? 0) > 0)) continue;
                 const poison = Number(food?.foodPoisonChance ?? 0) > 0;
                 if (poison && !allowPoison) continue;
-                if (isReservedAutoEat(stack, food) && !allowPoison) continue;
+                if (isReservedAutoEat(stack, food) && !allowReserved) continue;
                 if (typeof opts.availableQty === "function") {
                     const avail = Number(opts.availableQty({
                         stack,
@@ -1264,6 +1294,7 @@
         inInteractRange,
         isReservedAutoEat,
         isStarving,
+        allowsEmergencyEat,
         eatTakeQty,
         pickAutoEat,
         nearestLiving,

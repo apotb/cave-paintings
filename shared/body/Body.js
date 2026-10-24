@@ -390,6 +390,7 @@
                     tendMinutesLeft: 0,
                     luck: null
                 };
+                if (id === "malnutrition") h.announced = false;
                 this.hediffs.push(h);
             }
             this.markDirty();
@@ -557,15 +558,21 @@
                 planId: this.planId,
                 bloodLoss: this.bloodLoss,
                 destroyedBleed: this.destroyedBleed.slice(),
-                hediffs: (this.hediffs || []).map((h) => ({
-                    id: h.id,
-                    severity: Number(h.severity) || 0,
-                    partName: h.partName || null,
-                    tended: !!h.tended,
-                    tendQuality: Number(h.tendQuality) || 0,
-                    tendMinutesLeft: Number(h.tendMinutesLeft) || 0,
-                    luck: Number.isFinite(Number(h.luck)) ? Number(h.luck) : null
-                })),
+                hediffs: (this.hediffs || []).map((h) => {
+                    const row = {
+                        id: h.id,
+                        severity: Number(h.severity) || 0,
+                        partName: h.partName || null,
+                        tended: !!h.tended,
+                        tendQuality: Number(h.tendQuality) || 0,
+                        tendMinutesLeft: Number(h.tendMinutesLeft) || 0,
+                        luck: Number.isFinite(Number(h.luck)) ? Number(h.luck) : null
+                    };
+                    if (h.id === "malnutrition" && (h.announced === true || h.announced === false)) {
+                        row.announced = h.announced;
+                    }
+                    return row;
+                }),
                 immunities: { ...(this.immunities || {}) },
                 malnutritionRatePerDay: this.malnutritionRatePerDay,
                 core: this.core.toJSON()
@@ -576,15 +583,21 @@
             if (!data) return;
             this.bloodLoss = Number(data.bloodLoss) || 0;
             this.destroyedBleed = (data.destroyedBleed || []).slice();
-            this.hediffs = (data.hediffs || []).map((h) => ({
-                id: h.id,
-                severity: Number(h.severity) || 0,
-                partName: h.partName || undefined,
-                tended: !!h.tended,
-                tendQuality: Number(h.tendQuality) || 0,
-                tendMinutesLeft: Number(h.tendMinutesLeft) || 0,
-                luck: Number.isFinite(Number(h.luck)) ? Number(h.luck) : null
-            }));
+            this.hediffs = (data.hediffs || []).map((h) => {
+                const row = {
+                    id: h.id,
+                    severity: Number(h.severity) || 0,
+                    partName: h.partName || undefined,
+                    tended: !!h.tended,
+                    tendQuality: Number(h.tendQuality) || 0,
+                    tendMinutesLeft: Number(h.tendMinutesLeft) || 0,
+                    luck: Number.isFinite(Number(h.luck)) ? Number(h.luck) : null
+                };
+                if (h.id === "malnutrition" && (h.announced === true || h.announced === false)) {
+                    row.announced = h.announced;
+                }
+                return row;
+            });
             const imm = data.immunities && typeof data.immunities === "object" ? data.immunities : {};
             this.immunities = {};
             for (const [k, v] of Object.entries(imm)) {

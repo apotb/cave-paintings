@@ -268,7 +268,10 @@ function eatSeekOpts(world, rec, settle, extraBags) {
         tileSize: TS,
         seekTiles,
         interactTiles: INTERACT_TILES,
-        allowPoison: Party.isStarving(rec),
+        allowPoison: typeof Party.allowsEmergencyEat === "function"
+            ? Party.allowsEmergencyEat(rec)
+            : Party.isStarving(rec),
+        allowReserved: Party.isStarving(rec),
         getItem,
         getFood: (s) => world._foodForEat(s),
         availableQty(info) {

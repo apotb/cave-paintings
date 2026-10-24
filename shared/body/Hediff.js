@@ -290,6 +290,42 @@
             return `${this._logName(owner)} starved to death`;
         },
 
+        /** Severity where malnutrition leaves the initial (trivial) stage. */
+        malnutritionNotableMin(ctxOrDef) {
+            const def = ctxOrDef?.stages ? ctxOrDef : this.def(ctxOrDef, "malnutrition");
+            const stages = def?.stages || [];
+            for (const s of stages) {
+                if (String(s?.label || "") !== "minor") continue;
+                const n = Number(s.minSeverity);
+                return Number.isFinite(n) ? n : 0;
+            }
+            return null;
+        },
+
+        /** True once malnutrition has reached minor or worse. */
+        malnutritionNotable(hediff, ctx) {
+            if (!hediff) return false;
+            const min = this.malnutritionNotableMin(hediff.def || ctx);
+            if (min == null) return false;
+            return (Number(hediff.severity) || 0) + 1e-9 >= min;
+        },
+
+        /**
+         * Speak "is malnourished" the first time a new bout reaches minor.
+         * Saves from before that gate omit `announced`; those already got the
+         * line at onset, so they stay quiet.
+         * @returns {boolean} true when the onset line was just pushed
+         */
+        _announceMalnutritionOnset(h, ctx, owner) {
+            if (!h || h.announced === true) return false;
+            if (!this.malnutritionNotable(h, ctx)) return false;
+            const speak = h.announced === false;
+            h.announced = true;
+            if (!speak) return false;
+            this._pushCondition(ctx, owner, this._logName(owner), "is malnourished");
+            return true;
+        },
+
         /**
          * Roll food-poison chance after a successful eat.
          * First hit → severity 1.0 (initial). Re-poison while already sick restarts
@@ -472,13 +508,14 @@
                 if (!h) {
                     h = body.addHediff("malnutrition", 0);
                     if (!h) return;
-                    this._pushCondition(ctx, owner, this._logName(owner), "is malnourished");
                 }
+                if (h.announced == null && this.malnutritionNotable(h, ctx)) h.announced = true;
                 const prev = this.stageFor(h, ctx)?.label;
                 h.severity = Math.min(1, (Number(h.severity) || 0) + gainPerMin);
                 body.markDirty?.();
+                const onset = this._announceMalnutritionOnset(h, ctx, owner);
                 const next = this.stageFor(h, ctx)?.label;
-                if (next && next !== prev && prev) {
+                if (!onset && h.announced === true && next && next !== prev && prev) {
                     this._pushCondition(
                         ctx, owner, `${this._logName(owner)}'s`, `malnutrition is now ${next}`
                     );
@@ -492,19 +529,23 @@
             }
 
             if (!h) return;
+            if (h.announced == null && this.malnutritionNotable(h, ctx)) h.announced = true;
+            const told = h.announced !== false;
             const prev = this.stageFor(h, ctx)?.label;
             h.severity = (Number(h.severity) || 0) - recoverPerMin;
             if (h.severity <= 0) {
                 body.removeHediff("malnutrition");
-                this._pushCondition(
-                    ctx, owner, this._logName(owner), "is no longer malnourished",
-                    this.CONDITION_YELLOW
-                );
+                if (told) {
+                    this._pushCondition(
+                        ctx, owner, this._logName(owner), "is no longer malnourished",
+                        this.CONDITION_YELLOW
+                    );
+                }
                 return;
             }
             body.markDirty?.();
             const next = this.stageFor(h, ctx)?.label;
-            if (next && next !== prev) {
+            if (told && next && next !== prev) {
                 this._pushCondition(
                     ctx, owner, `${this._logName(owner)}'s`, `malnutrition is now ${next}`,
                     this.CONDITION_YELLOW

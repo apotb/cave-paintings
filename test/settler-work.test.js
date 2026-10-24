@@ -262,6 +262,74 @@ test("settler walks to roasted food in a basket instead of eating raw in hand", 
     );
 });
 
+function setMalnutrition(world, rec, severity) {
+    const c = world._ensureSettlerCreature(rec);
+    const existing = c.anatomy.hediff("malnutrition");
+    if (existing) {
+        existing.severity = severity;
+        return existing;
+    }
+    return c.anatomy.addHediff("malnutrition", severity);
+}
+
+test("settler does not eat raw meat during initial malnutrition", () => {
+    const { world, pawn } = createTestWorld();
+    const { rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "raw_venison", quantity: 2 },
+            { id: "blueberry", quantity: 4 },
+            null, null, null
+        ]
+    });
+    rec.kc = 0;
+    setMalnutrition(world, rec, 0.05);
+    workOnce(world, rec);
+    assert.equal(rec.eatChannel?.itemId, "blueberry");
+});
+
+test("settler with only raw meat waits until malnutrition is minor", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "raw_venison", quantity: 2 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, fish: 0, leather: 0, craft: 0, gather: 0, haul: 0, research: 0
+    };
+    rec.kc = 0;
+    setMalnutrition(world, rec, 0.05);
+    workOnce(world, rec);
+    assert.equal(rec.eatChannel ?? null, null);
+
+    setMalnutrition(world, rec, 0.2);
+    rec._workHold = false;
+    rec._busyJob = null;
+    rec._settlerPlan = null;
+    workOnce(world, rec);
+    assert.equal(rec.eatChannel?.itemId, "raw_venison");
+});
+
+test("settler does not eat raw meat at minor malnutrition while hunger remains", () => {
+    const { world, pawn } = createTestWorld();
+    const { rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "raw_venison", quantity: 2 }, null, null, null, null]
+    });
+    rec.kc = 80;
+    setMalnutrition(world, rec, 0.4);
+    workOnce(world, rec);
+    assert.equal(rec.eatChannel ?? null, null);
+});
+
+test("settler still eats a coconut shell on an empty stomach during initial malnutrition", () => {
+    const { world, pawn } = createTestWorld();
+    const { rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "cracked_coconut", quantity: 1 }, null, null, null, null]
+    });
+    rec.kc = 0;
+    setMalnutrition(world, rec, 0.05);
+    workOnce(world, rec);
+    assert.equal(rec.eatChannel?.itemId, "cracked_coconut");
+});
+
 test("full-pocket settler hauls one item to the nearest storage then gets food", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {

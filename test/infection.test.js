@@ -1,4 +1,5 @@
 const { test } = require("node:test");
+const assert = require("node:assert/strict");
 const { loadDefs, DataStore, GameMath } = require("./helpers/load");
 const { Body } = require("../shared/body/Body");
 const Hediffs = require("../shared/body/Hediff");
@@ -292,4 +293,98 @@ GameMath.setRng(() => 0.5);
 
 
 
+});
+
+function malnourishedOwner(lines, fed) {
+    const ctx = {
+        data: DataStore,
+        math: GameMath,
+        combatLog: { push(text) { lines.push(text); } }
+    };
+    const owner = {
+        kind: "player",
+        name: "Ada",
+        _malnutritionFed: !!fed,
+        kc: fed ? 400 : 0,
+        saturation: 0,
+        _dead: false,
+        isBodyDead() { return this._dead; },
+        onBodyFatal() { this._dead = true; }
+    };
+    owner.anatomy = new Body(ctx, "human", owner);
+    owner.anatomy.malnutritionRatePerDay = 0.45;
+    return owner;
+}
+
+test("malnutrition chat waits until the minor stage", () => {
+    const lines = [];
+    const owner = malnourishedOwner(lines, false);
+    const ctx = owner.anatomy.ctx;
+    Hediffs._tickMalnutrition(owner, owner.anatomy, ctx);
+    const h = owner.anatomy.hediff("malnutrition");
+    assert.equal(Hediffs.stageFor(h, ctx).label, "trivial");
+    assert.equal(h.announced, false);
+    assert.deepEqual(lines, []);
+
+    h.severity = Hediffs.malnutritionNotableMin(ctx) - 0.0001;
+    Hediffs._tickMalnutrition(owner, owner.anatomy, ctx);
+    assert.equal(Hediffs.stageFor(h, ctx).label, "minor");
+    assert.equal(lines.filter((t) => t === "Ada is malnourished").length, 1);
+    assert.equal(lines.some((t) => t.includes("now minor")), false);
+
+    lines.length = 0;
+    h.severity = 0.3999;
+    Hediffs._tickMalnutrition(owner, owner.anatomy, ctx);
+    assert.equal(lines.some((t) => t.includes("now moderate")), true);
+    assert.equal(lines.some((t) => t === "Ada is malnourished"), false);
+});
+
+test("clearing initial malnutrition does not say they recovered", () => {
+    const lines = [];
+    const owner = malnourishedOwner(lines, false);
+    Hediffs._tickMalnutrition(owner, owner.anatomy, owner.anatomy.ctx);
+    owner._malnutritionFed = true;
+    owner.anatomy.hediff("malnutrition").severity = 0.00001;
+    Hediffs._tickMalnutrition(owner, owner.anatomy, owner.anatomy.ctx);
+    assert.equal(owner.anatomy.hediff("malnutrition"), null);
+    assert.deepEqual(lines, []);
+});
+
+test("recovering from minor malnutrition announces it", () => {
+    const lines = [];
+    const owner = malnourishedOwner(lines, false);
+    const h = owner.anatomy.addHediff("malnutrition", 0.25);
+    Hediffs._tickMalnutrition(owner, owner.anatomy, owner.anatomy.ctx);
+    assert.equal(h.announced, true);
+    assert.equal(lines.includes("Ada is malnourished"), true);
+    lines.length = 0;
+    owner._malnutritionFed = true;
+    h.severity = 0.00001;
+    Hediffs._tickMalnutrition(owner, owner.anatomy, owner.anatomy.ctx);
+    assert.equal(lines.includes("Ada is no longer malnourished"), true);
+});
+
+test("an old malnutrition save does not repeat the onset line", () => {
+    const lines = [];
+    const owner = malnourishedOwner(lines, false);
+    const h = owner.anatomy.addHediff("malnutrition", 0.4);
+    delete h.announced;
+    Hediffs._tickMalnutrition(owner, owner.anatomy, owner.anatomy.ctx);
+    assert.equal(h.announced, true);
+    assert.equal(lines.some((t) => t.includes("malnourished")), false);
+});
+
+test("malnutrition announced flag round-trips", () => {
+    const owner = malnourishedOwner([], true);
+    const h = owner.anatomy.addHediff("malnutrition", 0.05);
+    assert.equal(h.announced, false);
+    const json = owner.anatomy.toJSON();
+    assert.equal(json.hediffs.find((row) => row.id === "malnutrition").announced, false);
+    const clone = new Body(owner.anatomy.ctx, "human", owner);
+    clone.loadJSON(json);
+    assert.equal(clone.hediff("malnutrition").announced, false);
+    delete json.hediffs.find((row) => row.id === "malnutrition").announced;
+    const legacy = new Body(owner.anatomy.ctx, "human", owner);
+    legacy.loadJSON(json);
+    assert.equal(legacy.hediff("malnutrition").announced, undefined);
 });

@@ -2679,6 +2679,9 @@ class PartySystem {
             const starving = typeof P.isStarving === "function"
                 ? P.isStarving(pawn)
                 : !(Number(pawn.kc) > 0);
+            const rawOk = typeof P.allowsEmergencyEat === "function"
+                ? P.allowsEmergencyEat(pawn)
+                : starving;
             const sitting = this._eatSittings.get(pawn.pawnId);
             const until = sitting ? P.AUTO_EAT_UNTIL : P.AUTO_EAT_BELOW;
             if (sitting && pawn.kc >= until) {
@@ -2694,9 +2697,10 @@ class PartySystem {
                 1.25,
                 Number(pawn.partyAI?._workInteractTiles?.()) || 1
             ) + 0.7;
-            const pick = this._pickAutoEat(pawn, starving, ts, {
+            const pick = this._pickAutoEat(pawn, rawOk, ts, {
                 seekTiles,
-                interactTiles
+                interactTiles,
+                allowReserved: starving
             });
             if (!pick) {
                 pawn.partyAI?.setEatSeek?.(null);
@@ -2747,6 +2751,7 @@ class PartySystem {
             return Party.pickAutoEat(eater, members, {
                 tileSize: ts,
                 allowPoison,
+                allowReserved: extra.allowReserved,
                 skipPawnId,
                 skipHeld,
                 extraBags,
@@ -2782,8 +2787,9 @@ class PartySystem {
                     if (!(Number(food?.kc ?? 0) > 0)) continue;
                     const poison = Number(food?.foodPoisonChance ?? 0) > 0;
                     if (poison && !allowPoison) continue;
+                    const allowReserved = extra.allowReserved == null ? allowPoison : !!extra.allowReserved;
                     const reserved = food.autoEat === "malnourished" || stack.id === "cracked_coconut";
-                    if (reserved && !allowPoison) continue;
+                    if (reserved && !allowReserved) continue;
                     const spoil = Number(stack.spoilAt ?? stack.spoilLeft ?? Infinity);
                     const prepared = (typeof StorageFilter !== "undefined" && StorageFilter.isPreparedFood)
                         ? !!StorageFilter.isPreparedFood(stack, meta)
