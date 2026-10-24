@@ -352,6 +352,9 @@
         }
         const showOverlay = this.player === leader || !this.partySys?.living?.()?.length;
         this.deathOverlay?.setVisible(showOverlay);
+        if (showOverlay && this.deathOverlay && this.uiLayer?.bringToTop) {
+            this.uiLayer.bringToTop(this.deathOverlay);
+        }
         this.layoutDeathOverlay();
         this.partyPanel?.refresh?.();
     },

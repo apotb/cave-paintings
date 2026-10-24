@@ -1173,6 +1173,13 @@ test("/kms aliases /kill", () => {
     const { world, pawn, Protocol } = createTestWorld();
     world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/kms" });
     assert.equal(pawn.dead, true);
+    const brain = pawn.creature.anatomy.part("Brain");
+    assert.equal(brain.isDead(), true);
+    assert.equal(brain.destroySource, "magic");
+    const events = world.drainEvents();
+    assert.ok(events.some((e) => e.kind === "death" && e.text === "Tester died"));
+    assert.ok(events.some((e) => e.kind === "chat" && e.text === "Tester died" && e.to === pawn.id));
+    assert.ok(events.some((e) => e.kind === "combat_log" && e.text === "Tester died"));
 });
 
 test("/kms kills the controlled companion and leaves the leader alive", () => {

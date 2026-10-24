@@ -983,6 +983,41 @@
         this.pushEvent({ kind: "chat", text: msg, system: true });
     },
 
+    /**
+     * /kms (and /kill) — cut the brain with source "magic" so the health tab
+     * shows Brain: Destroyed, "From magic". Does not kill; the caller does.
+     */
+    _magicDestroyBrain(session, pawn) {
+        if (!session || !pawn) return { error: "No brain to destroy." };
+        const isLeader = pawn === session || pawn.id === session.id;
+        const creature = isLeader
+            ? (this._ensurePlayerCreature(session) || pawn.creature)
+            : (this._ensureCompanionCreature(session, pawn) || pawn.creature);
+        const brain = creature?.anatomy?.part?.("Brain");
+        if (!brain) return { error: "No brain to destroy." };
+        const who = pawn.name || "Someone";
+        if (brain.isDead()) return { error: `${who}'s brain is already destroyed.` };
+        const defs = (typeof DataStore?.getInjuryDefs === "function" && DataStore.getInjuryDefs()) || {};
+        const idef = defs.brain_cut || defs.cut || {};
+        const dmg = Math.max(0.1, brain.hp(), brain.mhp);
+        brain.injure({
+            id: idef.id || "brain_cut",
+            name: idef.name || "Cut",
+            severity: dmg,
+            permanent: false,
+            bleeding: (Number(idef.bleedRate) || 0) > 0,
+            bleedRate: Number(idef.bleedRate) || 0,
+            painPerSeverity: Number(idef.painPerSeverity) || 0.04,
+            tended: false,
+            tendQuality: 0,
+            scarPending: false,
+            scarSeverity: 0,
+            sourceLabel: "magic"
+        });
+        if (creature.anatomy) pawn.body = creature.anatomy.toJSON();
+        return { ok: true };
+    },
+
     _kill(p, killer, action = {}) {
         if (!p) return;
         const alreadyDead = !!p.dead;

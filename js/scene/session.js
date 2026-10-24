@@ -340,8 +340,17 @@
             && this.simAuth()
             && !this.deathOverlay?.visible
         ) {
+            // /kms cuts the brain on the sim. Load that body before the death
+            // screen, or the health tab still shows an intact brain.
+            if (you.body && youPawn.anatomy?.loadJSON) {
+                try {
+                    youPawn.anatomy.loadJSON(you.body);
+                    youPawn.capacities = new Capacities(youPawn.anatomy);
+                } catch (_) {}
+            }
             youPawn._bodyDead = true;
             youPawn.setVelocity(0, 0);
+            this.healthPanel?.refresh?.();
             // Server already authored the corpse — don't dump a second empty one.
             this.onPlayerDied(null, { spawnCorpse: false });
             return;

@@ -558,6 +558,19 @@
         if (cmd === "/kill" || cmd === "/kms") {
             const pawn = this._actionPawn(p, action) || p;
             const companion = pawn !== p && (p.party || []).some((m) => m && m.id === pawn.id);
+            const victim = companion ? pawn : p;
+            if (victim.dead) {
+                this.announceCmd(`${victim.name || "Someone"} is already dead.`, { to: p.id });
+                return;
+            }
+            const magic = this._magicDestroyBrain(p, victim);
+            if (!magic?.ok) {
+                this.announceCmd(magic?.error || "No brain to destroy.", { to: p.id });
+                return;
+            }
+            // A controlled death is only copied onto the fight feed. Chat is
+            // where the death line stays visible.
+            const controlled = (p.controlId || p.id) === victim.id;
             if (companion) {
                 this._killCompanion(p, pawn, null);
                 p.party = (p.party || []).filter((m) => m && m.id !== pawn.id);
@@ -567,6 +580,19 @@
                 this._youDirty.add(p.id);
             } else {
                 this._kill(p, null);
+            }
+            if (controlled) {
+                const name = victim.name || "Someone";
+                this.pushEvent({
+                    kind: "chat",
+                    text: Protocol.deathMessage(name, null, null),
+                    system: true,
+                    to: p.id,
+                    segments: [
+                        { text: name, color: "#80e080" },
+                        { text: "died", color: "#ef5a5a" }
+                    ]
+                });
             }
             this.announceCmd(`${p.name} used ${cmd}`, { except: p.id });
             return;
