@@ -58,7 +58,7 @@ test("held keyboard modifiers count when the pointer event does not", () => {
     ), 3);
 });
 
-test("stone spear quality sits in front of the name", () => {
+test("stone spear quality sits after the name", () => {
     sandbox.Stone = Stone;
     const tip = craft.formatItemTooltip.call(
         {},
@@ -68,11 +68,11 @@ test("stone spear quality sits in front of the name", () => {
         { id: "stone_spear", knapMaterial: "pebble", stone: "andesite", knapQuality: "rough" }
     );
     const lines = tip.split("\n");
-    assert.equal(lines[0], "Rough Andesite Spear");
+    assert.equal(lines[0], "Andesite Spear (rough)");
     assert.equal(lines.includes("Rough"), false);
 });
 
-test("spear tip quality sits in front of the name", () => {
+test("spear tip quality sits after the name", () => {
     sandbox.Stone = Stone;
     const tip = craft.formatItemTooltip.call(
         {},
@@ -82,6 +82,6 @@ test("spear tip quality sits in front of the name", () => {
         { id: "stone_tool", toolClass: "spear_tip", knapMaterial: "pebble", stone: "diorite", knapQuality: "fine" }
     );
     const lines = tip.split("\n");
-    assert.equal(lines[0], "Fine Diorite Spear Tip");
+    assert.equal(lines[0], "Diorite Spear Tip (fine)");
     assert.equal(lines.includes("Fine"), false);
 });

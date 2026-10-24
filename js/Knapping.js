@@ -1085,10 +1085,11 @@ const Knapping = {
             hand_axe: "Hand-axe",
             cleaver: "Cleaver"
         };
-        const qLabel = quality.charAt(0).toUpperCase() + quality.slice(1);
-        const name = toolClass === "blank"
-            ? `${matLabel} ${classNames[toolClass]}`
-            : `${qLabel} ${matLabel} ${classNames[toolClass]}`;
+        const plain = `${matLabel} ${classNames[toolClass]}`;
+        const fromStone = (typeof Stone !== "undefined" && Stone.displayName)
+            ? Stone.displayName(named)
+            : null;
+        const name = fromStone || (toolClass === "blank" ? plain : `${plain} (${quality})`);
 
         const preview = this.previewLine(toolClass, quality, reject, rejectClass);
 

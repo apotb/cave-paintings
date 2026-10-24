@@ -2257,6 +2257,10 @@
     function _itemName(stackOrId, getItem) {
         if (stackOrId == null) return "";
         if (typeof stackOrId === "string") return getItem?.(stackOrId)?.name || stackOrId;
+        if (stackOrId.knapQuality) {
+            const live = stoneMod()?.displayName?.(stackOrId, getItem);
+            if (live) return live;
+        }
         if (stackOrId.customName) return stackOrId.customName;
         const nested = stackOrId.item;
         if (nested?.name) return nested.name;

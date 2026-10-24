@@ -164,7 +164,7 @@ test("craft preview follows the first stuff stack and clears when it is gone", (
     const diorite = Stone.craftPreviewStack(spear, [hotbar]);
     assert.equal(diorite.stone, "diorite");
     assert.equal(diorite.knapQuality, "fine");
-    assert.equal(Stone.displayName(diorite), "Fine Diorite Spear");
+    assert.equal(Stone.displayName(diorite), "Diorite Spear (fine)");
 
     hotbar[1] = { id: "stone_tool", quantity: 1, toolClass: "spear_tip", knapMaterial: "pebble", stone: "limestone" };
     assert.equal(Stone.craftPreviewStack(spear, [hotbar]).stone, "limestone");

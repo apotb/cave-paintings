@@ -1287,7 +1287,7 @@ test("/give stone_spear keeps the stone", () => {
     assert.equal(stack.knapMaterial, "pebble");
     assert.equal(stack.knapQuality, "rough");
     const chats = world.drainEvents().filter((e) => e.kind === "chat");
-    assert.ok(chats.some((e) => e.text === "Gave 1× Rough Granite Spear"));
+    assert.ok(chats.some((e) => e.text === "Gave 1× Granite Spear (rough)"));
     world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give stone_spear 1 quartz" });
     const bad = world.drainEvents().filter((e) => e.kind === "chat");
     assert.ok(bad.some((e) => e.text === 'Unknown stone "quartz".'));
@@ -1300,7 +1300,7 @@ test("/give stone_spear keeps the stone", () => {
     assert.equal(plain.knapMaterial, "pebble");
     assert.equal(plain.knapQuality, "rough");
     const named = world.drainEvents().filter((e) => e.kind === "chat");
-    assert.ok(named.some((e) => e.text === "Gave 1× Rough Andesite Spear"));
+    assert.ok(named.some((e) => e.text === "Gave 1× Andesite Spear (rough)"));
     world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give stone_spear 1 flint" });
     const flint = pawn.inventory.find((s) => s && s.id === "stone_spear" && s.knapMaterial === "flint");
     assert.ok(flint);
@@ -1309,7 +1309,7 @@ test("/give stone_spear keeps the stone", () => {
     assert.equal(flint.knapQuality, "rough");
     world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give grindstone 1 flint" });
     const flintChats = world.drainEvents().filter((e) => e.kind === "chat");
-    assert.ok(flintChats.some((e) => e.text === "Gave 1× Rough Flint Spear"));
+    assert.ok(flintChats.some((e) => e.text === "Gave 1× Flint Spear (rough)"));
     assert.ok(flintChats.some((e) => e.text === 'Unknown stone "flint".'));
     assert.equal(pawn.inventory.some((s) => s && s.id === "grindstone" && s.stone === "flint"), false);
 });

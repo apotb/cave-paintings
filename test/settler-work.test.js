@@ -6867,7 +6867,7 @@ test("dedicated settler knaps the nearest allowed blank and until counts only th
     assert.ok(knife, "should knap a knife");
     assert.equal(knife.stone, "andesite");
     assert.equal(knife.knapQuality, "crude");
-    assert.match(knife.customName || "", /Crude Andesite Knife/);
+    assert.match(knife.customName || "", /Andesite Knife \(crude\)/);
     assert.equal(knife.knapIconData, undefined);
     assert.equal(rec.inventory.some((s) => s && s.toolClass === "scraper"), true);
 

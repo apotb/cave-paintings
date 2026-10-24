@@ -131,6 +131,10 @@
     }
 
     function stackDisplayName(stack, itemDef) {
+        if (stack?.knapQuality) {
+            const live = stoneApi()?.displayName?.(stack);
+            if (live) return live;
+        }
         return stack?.customName || itemDef?.name || stack?.id || "item";
     }
 

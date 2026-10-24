@@ -300,15 +300,15 @@ test("a spear with no rock keeps the Stone Spear name", () => {
     assert.equal(Stone.displayName({ id: "stone_spear", knapMaterial: "flint" }), "Flint Spear");
     assert.equal(
         Stone.displayName({ id: "stone_spear", knapMaterial: "pebble", knapQuality: "rough" }),
-        "Rough Andesite Spear"
+        "Andesite Spear (rough)"
     );
     assert.equal(
         Stone.displayName({ id: "stone_spear", knapMaterial: "pebble", stone: "granite", knapQuality: "crude" }),
-        "Crude Granite Spear"
+        "Granite Spear (crude)"
     );
     assert.equal(
         Stone.displayName({ id: "stone_spear", knapMaterial: "flint", knapQuality: "fine" }),
-        "Fine Flint Spear"
+        "Flint Spear (fine)"
     );
 });
 

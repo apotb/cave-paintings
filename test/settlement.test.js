@@ -2109,23 +2109,23 @@ test("actLabel names smoke and hidework by hide type, not the full allowlist", (
 
 test("resourceNameCmp lists higher durability before lower", () => {
     const names = [
-        "Rough Andesite Chopper (40%)",
+        "Andesite Chopper (rough) (40%)",
         "Digging Stick",
-        "Rough Andesite Chopper",
-        "Rough Andesite Chopper (8%)",
+        "Andesite Chopper (rough)",
+        "Andesite Chopper (rough) (8%)",
         "Digging Stick (50%)",
-        "Rough Andesite Chopper (68%)",
+        "Andesite Chopper (rough) (68%)",
         "Apple"
     ];
     names.sort(Settlement.resourceNameCmp);
     assert.deepEqual(names, [
+        "Andesite Chopper (rough)",
+        "Andesite Chopper (rough) (68%)",
+        "Andesite Chopper (rough) (40%)",
+        "Andesite Chopper (rough) (8%)",
         "Apple",
         "Digging Stick",
-        "Digging Stick (50%)",
-        "Rough Andesite Chopper",
-        "Rough Andesite Chopper (68%)",
-        "Rough Andesite Chopper (40%)",
-        "Rough Andesite Chopper (8%)"
+        "Digging Stick (50%)"
     ]);
 });
 
@@ -2202,16 +2202,16 @@ test("summarizeResources totals held goods and keeps varied stacks apart", () =>
     assert.equal(named("Dried Deer Hide").length, 1);
     assert.equal(qty("Andesite Grindstone"), 3);
     assert.equal(qty("Granite Grindstone"), 1);
-    assert.equal(named("Fine Granite Knife").length, 1);
-    assert.equal(qty("Fine Granite Knife"), 2);
-    assert.equal(named("Fine Granite Knife")[0].sample.knapIconData, "pic-a");
-    assert.equal(named("Rough Andesite Hand-axe")[0].sample.knapIconData, "pic-drop");
-    assert.equal(named("Rough Andesite Hand-axe")[0].sample.toolClass, "hand_axe");
-    assert.equal(named("Crude Granite Knife").length, 1);
+    assert.equal(named("Granite Knife (fine)").length, 1);
+    assert.equal(qty("Granite Knife (fine)"), 2);
+    assert.equal(named("Granite Knife (fine)")[0].sample.knapIconData, "pic-a");
+    assert.equal(named("Andesite Hand-axe (rough)")[0].sample.knapIconData, "pic-drop");
+    assert.equal(named("Andesite Hand-axe (rough)")[0].sample.toolClass, "hand_axe");
+    assert.equal(named("Granite Knife (crude)").length, 1);
     assert.equal(named("Clay Animal Figurine").length, 1);
     assert.equal(named("Little Deer").length, 1);
     assert.equal(named("Clay Animal Figurine")[0].categoryId, "art");
-    assert.equal(named("Fine Granite Knife")[0].categoryId, "tools");
+    assert.equal(named("Granite Knife (fine)")[0].categoryId, "tools");
     assert.equal(named("Stick")[0].categoryId, "materials/wood");
     assert.equal(named("Bone").length, 1);
     assert.equal(qty("Bone"), 159);
@@ -2219,12 +2219,12 @@ test("summarizeResources totals held goods and keeps varied stacks apart", () =>
     assert.equal(qty("Digging Stick"), 2);
     assert.equal(named("Digging Stick (50%)").length, 1);
     assert.equal(qty("Digging Stick (50%)"), 1);
-    assert.equal(named("Rough Andesite Chopper").length, 1);
-    assert.equal(qty("Rough Andesite Chopper"), 2);
-    assert.equal(named("Rough Andesite Chopper (68%)").length, 1);
-    assert.equal(qty("Rough Andesite Chopper (68%)"), 2);
-    assert.equal(named("Rough Andesite Chopper (40%)").length, 1);
-    assert.equal(qty("Rough Andesite Chopper (40%)"), 1);
+    assert.equal(named("Andesite Chopper (rough)").length, 1);
+    assert.equal(qty("Andesite Chopper (rough)"), 2);
+    assert.equal(named("Andesite Chopper (rough) (68%)").length, 1);
+    assert.equal(qty("Andesite Chopper (rough) (68%)"), 2);
+    assert.equal(named("Andesite Chopper (rough) (40%)").length, 1);
+    assert.equal(qty("Andesite Chopper (rough) (40%)"), 1);
     assert.equal(named("Hide Tunic").length, 1);
     assert.equal(qty("Hide Tunic"), 1);
     assert.equal(named("Hide Tunic (50%)").length, 1);

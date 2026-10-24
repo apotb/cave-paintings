@@ -535,15 +535,19 @@
             const matName = isFlintStack(stack)
                 ? props("flint", getItem).name
                 : propsOf(stack, getItem).name;
-            const q = QUALITY_NAME[stack.knapQuality];
-            return q ? `${q} ${matName} Spear` : `${matName} Spear`;
+            return withQuality(`${matName} Spear`, stack.knapQuality);
         }
         const cls = CLASS_NAME[stack.toolClass];
         if (!cls) return null;
         const matName = propsOf(stack, getItem).name;
-        // Flakes stay unnamed by quality. Spear tips and finished tools put it first.
-        const q = stack.toolClass === "blank" ? null : QUALITY_NAME[stack.knapQuality];
-        return q ? `${q} ${matName} ${cls}` : `${matName} ${cls}`;
+        // Flakes stay unnamed by quality. Spear tips and finished tools put it after the name.
+        const quality = stack.toolClass === "blank" ? null : stack.knapQuality;
+        return withQuality(`${matName} ${cls}`, quality);
+    }
+
+    /** "Andesite Chopper (fine)". Unknown bands stay off the name. */
+    function withQuality(base, quality) {
+        return QUALITY_NAME[quality] ? `${base} (${quality})` : base;
     }
 
     /** Class base × hardness/5 × quality. Null when this stack is not a knapped class. */
