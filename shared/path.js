@@ -479,10 +479,20 @@
             // 10px window turns the settler at the next waypoint while they
             // are still in front of the row, and the wall slide paces them
             // there. Inside 6px they are already in the mouth: keeping the
-            // stand lets the next replan aim them back out, which is the
-            // step-left then step-right hitch.
+            // stand lets the next replan aim them back out. That early drop
+            // is only safe when the next stand still leads forward. A tree
+            // waypoint's next stand points back across the trunk, and taking
+            // it walks the hauler into open ground.
+            let turnBack = false;
+            if (dist <= 6 && dist > ARRIVE_PX && path.length > 1) {
+                const wx = path[0].x - from.x;
+                const wy = path[0].y - from.y;
+                const nx = path[1].x - from.x;
+                const ny = path[1].y - from.y;
+                turnBack = wx * nx + wy * ny < 0;
+            }
             if (
-                dist > 6
+                (dist > 6 || turnBack)
                 && path.length > 1
                 && !losClear(from.x, from.y, path[1].x, path[1].y, blocked, {
                     stepPx: 3,
