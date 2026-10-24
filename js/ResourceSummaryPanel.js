@@ -462,7 +462,9 @@ class ResourceSummaryPanel {
             return items.map((row) => ({ kind: "item", row, depth: 0 }));
         }
         const SF = typeof StorageFilter !== "undefined" ? StorageFilter : null;
-        const tree = SF?.CATEGORY_TREE || [];
+        const tree = (typeof Settlement !== "undefined" && Settlement.resourceCategoryTree)
+            ? Settlement.resourceCategoryTree(rows)
+            : (SF?.CATEGORY_TREE || []);
         const byCat = new Map();
         for (const row of rows || []) {
             const id = row.categoryId || "junk";

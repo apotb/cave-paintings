@@ -2934,10 +2934,66 @@
         if (key && String(key).startsWith("tool:")) {
             const cls = String(key).slice(5);
             const row = (SF.TOOL_CLASSES || []).find((t) => t.cls === cls || t.id === key);
-            return row?.category || "tools";
+            if (row?.category && row.category !== "tools") return row.category;
+            return `tools/${row?.cls || cls}`;
         }
         if (key && String(key).startsWith("art:")) return "art";
-        return (SF.leafCategory && SF.leafCategory(def, null)) || "junk";
+        const leaf = (SF.leafCategory && SF.leafCategory(def, null)) || "junk";
+        if (leaf === "tools") {
+            const cls = def?.toolClass ? String(def.toolClass) : "";
+            if (cls) return `tools/${cls}`;
+            const id = def?.id || stack?.id || "";
+            if (id) return `tools/${id}`;
+        }
+        return leaf;
+    }
+
+    /** Headings for tool types. Plural, because each one holds every item of that kind. */
+    const TOOL_GROUP_NAMES = {
+        awl: "Awls",
+        chopper: "Choppers",
+        cleaver: "Cleavers",
+        digger: "Shovels",
+        flimsy_rod: "Fishing Rods",
+        hand_axe: "Hand-axes",
+        knife: "Knives",
+        scraper: "Scrapers"
+    };
+
+    function resourceGroupName(categoryId) {
+        const id = String(categoryId || "");
+        if (!id.startsWith("tools/")) return "";
+        const cls = id.slice(6);
+        if (TOOL_GROUP_NAMES[cls]) return TOOL_GROUP_NAMES[cls];
+        return cls.replace(/_/g, " ").replace(/(^|\s)([a-z])/g, (_m, sp, ch) => sp + ch.toUpperCase());
+    }
+
+    /**
+     * Category tree for the settlement resource list. Tool types that live
+     * under Tools become children (Awls, Knives, Shovels). Spear tips and
+     * flakes stay on their own category.
+     */
+    function resourceCategoryTree(rows) {
+        const tree = storageFilterMod()?.CATEGORY_TREE || [];
+        const groups = new Set();
+        for (const row of rows || []) {
+            const id = String(row?.categoryId || "");
+            if (id.startsWith("tools/")) groups.add(id);
+        }
+        if (!groups.size) return tree;
+        const extra = [];
+        for (const id of groups) {
+            extra.push({ id, name: resourceGroupName(id) });
+        }
+        extra.sort((a, b) => resourceNameCmp(a.name, b.name));
+        return tree.map((n) => {
+            if (n.id !== "tools") return n;
+            const prior = n.children || [];
+            const seen = new Set(prior.map((c) => c.id));
+            const children = prior.concat(extra.filter((c) => !seen.has(c.id)));
+            children.sort((a, b) => resourceNameCmp(a.name, b.name));
+            return { id: n.id, name: n.name, children };
+        });
     }
 
     function resourceDurabilitySuffix(stack, def) {
@@ -3134,6 +3190,7 @@
         dropItemId,
         summarizeResources,
         resourceNameCmp,
+        resourceCategoryTree,
         stockTarget,
         stockShort,
         makeBill,

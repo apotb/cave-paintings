@@ -2239,8 +2239,16 @@ test("summarizeResources totals held goods and keeps varied stacks apart", () =>
     assert.equal(named("Clay Animal Figurine").length, 1);
     assert.equal(named("Little Deer").length, 1);
     assert.equal(named("Clay Animal Figurine")[0].categoryId, "art");
-    assert.equal(named("Granite Knife (fine)")[0].categoryId, "tools");
+    assert.equal(named("Granite Knife (fine)")[0].categoryId, "tools/knife");
+    assert.equal(named("Andesite Chopper (rough)")[0].categoryId, "tools/chopper");
+    assert.equal(named("Andesite Hand-axe (rough)")[0].categoryId, "tools/hand_axe");
+    assert.equal(named("Bone")[0].categoryId, "tools/awl");
+    assert.equal(named("Digging Stick")[0].categoryId, "tools/digger");
     assert.equal(named("Stick")[0].categoryId, "materials/wood");
+    const toolNode = Settlement.resourceCategoryTree(rows, getItem).find((n) => n.id === "tools");
+    assert.deepEqual((toolNode?.children || []).map((c) => c.name), [
+        "Awls", "Choppers", "Hand-axes", "Knives", "Shovels"
+    ]);
     assert.equal(named("Bone").length, 1);
     assert.equal(qty("Bone"), 159);
     assert.equal(named("Digging Stick").length, 1);
@@ -2304,4 +2312,30 @@ test("summarizeResources merges durability when the option is off", () => {
     assert.equal(qty("Hide Tunic"), 2);
     assert.equal(named("Granite Knife (fine)").length, 1);
     assert.equal(named("Granite Knife (crude)").length, 1);
+});
+
+test("summarizeResources nests each tool type and leaves spear tips in stone", () => {
+    const getItem = (id) => DataStore.getItem(id);
+    const rows = Settlement.summarizeResources(
+        [{
+            slots: [
+                { id: "flint_tool", toolClass: "spear_tip", knapMaterial: "flint", quantity: 1 },
+                { id: "stone_tool", toolClass: "blank", knapMaterial: "flint", quantity: 2 },
+                { id: "flimsy_rod", quantity: 1 },
+                { id: "bone", quantity: 3 },
+                { id: "stone_tool", toolClass: "awl", stone: "granite", quantity: 1 }
+            ]
+        }],
+        [],
+        [],
+        getItem
+    );
+    const named = (name) => rows.find((r) => r.name === name);
+    assert.equal(named("Flint Spear Tip")?.categoryId, "materials/stone");
+    assert.equal(named("Flint Flake")?.categoryId, "materials/stone");
+    assert.equal(named("Flimsy Rod")?.categoryId, "tools/flimsy_rod");
+    assert.equal(named("Bone")?.categoryId, "tools/awl");
+    assert.equal(named("Granite Awl")?.categoryId, "tools/awl");
+    const toolNode = Settlement.resourceCategoryTree(rows, getItem).find((n) => n.id === "tools");
+    assert.deepEqual((toolNode?.children || []).map((c) => c.name), ["Awls", "Fishing Rods"]);
 });
