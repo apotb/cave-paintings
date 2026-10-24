@@ -2126,9 +2126,25 @@
             const inBed = !!(rowCare.inBed || pawn._resting || pawn.resting);
             const downed = !!rowCare.downed && !inBed;
             if (downed && rowCare.hasBed) return { type: "rescue", target: pawn };
+            // A free bunk means they lie down first. Tend once they are in it.
+            if (!inBed && rowCare.hasBed) continue;
             if (rowCare.canTend) return { type: "doctor", target: pawn };
         }
         return null;
+    }
+
+    /** True when this doctor job still points at someone who can be bandaged now. */
+    function doctorTargetLive(state, target) {
+        if (!target) return false;
+        const id = target.id;
+        const hit = (p) => !!(p && (p === target || (id && p.id === id)));
+        if ((state.patients || []).some(hit)) return true;
+        return (state.critical || []).some((row) => {
+            const pawn = row?.pawn || row;
+            if (!hit(pawn)) return false;
+            if (row?.hasBed && !row?.inBed && !(pawn?._resting || pawn?.resting)) return false;
+            return !!row?.canTend;
+        });
     }
 
     /** Downed, not bleeding: haul after eating, before sleep. */
@@ -2167,8 +2183,14 @@
         if (criticalPlan) return criticalPlan;
         const rescueStale = busyJob?.type === "rescue"
             && (!busyJob.target || busyJob.target.dead || busyJob.target._resting || busyJob.target.resting);
-        if (state.keepResume && busy && busyJob && !rescueStale) return busyJob;
-        if (busy && busyJob && !poll && !rescueStale) {
+        const doctorStale = busyJob?.type === "doctor" && !doctorTargetLive(state, busyJob.target);
+        // A wound with a free bunk leaves other work so they can lie down.
+        const hurtWantsBed = !!(injured && state.bed && !state.downed);
+        const bedBreak = !!(hurtWantsBed && busyJob
+            && busyJob.type !== "doctor" && busyJob.type !== "rescue");
+        const dropHold = rescueStale || doctorStale || bedBreak;
+        if (state.keepResume && busy && busyJob && !dropHold) return busyJob;
+        if (busy && busyJob && !poll && !dropHold) {
             // A job restored from a rejoin stays the job. Haul, food, and
             // tailoring can take over a fresh plan, not one already underway.
             if (busyJob.type === "research" && !state.keepResume) {
@@ -2196,10 +2218,11 @@
                 || !!state.stashUrgent;
             if (keepLeather && keepCraft && keepCook && keepLight && keepStash) return busyJob;
         }
-        if (!busy && (Number(state.kc) || 0) < AUTO && state.canEat !== false) return { type: "eat" };
+        if ((!busy || dropHold) && (Number(state.kc) || 0) < AUTO && state.canEat !== false) return { type: "eat" };
         const haulRescue = doctorRescuePlan(row, state);
         if (haulRescue) return haulRescue;
         if (state.isOrphan) return { type: "idle" };
+        if (hurtWantsBed) return { type: "sleep", target: state.bed };
         // A research stand still checks hunger before it drops the painting.
         if (onBreak && !poll) return { type: "idle" };
         if (!busy && settlerShouldSleep(night, injured) && state.bed) {

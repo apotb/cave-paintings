@@ -62,6 +62,62 @@ test("planWork carries a bleeding patient before eating or sleeping", () => {
     assert.equal(haul.type, "rescue");
 });
 
+test("planWork waits on a free bunk, tends in bed or standing, and a wound leaves other work", () => {
+    const jobs = Settlement.defaultJobs();
+    const walker = { id: "walk" };
+    const lying = { id: "lie", _resting: true };
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        critical: [{ pawn: walker, downed: false, inBed: false, hasBed: true, canTend: true, mins: 2 }]
+    }).type, "idle");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        critical: [{ pawn: lying, downed: false, inBed: true, hasBed: false, canTend: true, mins: 2 }]
+    }).type, "doctor");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        critical: [{ pawn: walker, downed: false, inBed: false, hasBed: false, canTend: true, mins: 2 }]
+    }).type, "doctor");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        injured: true,
+        bed: { slot: 0 },
+        busy: true,
+        busyJob: { type: "cook", target: { uid: "fire" } },
+        cookBill: { uid: "fire" }
+    }).type, "sleep");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        injured: true,
+        downed: true,
+        bed: { slot: 0 },
+        busy: true,
+        busyJob: { type: "chop", target: { uid: "tree" } },
+        chopTree: { uid: "tree" }
+    }).type, "chop");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        injured: true,
+        bed: { slot: 0 },
+        busy: true,
+        busyJob: { type: "doctor", target: lying },
+        patients: [lying]
+    }).type, "doctor");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        busy: true,
+        busyJob: { type: "doctor", target: walker },
+        chopTree: { uid: "tree" }
+    }).type, "chop");
+});
+
 test("a downed settler is put in the better bed and a walking one is not carried", () => {
     const { world, pawn } = createTestWorld();
     const chunk = originChunk(world);
@@ -258,6 +314,59 @@ test("a doctor carries the closer-to-death patient before eating, then bandages"
     workOnce(world, doctor);
     assert.equal(doctor._busyJob?.type, "doctor");
     assert.equal(doctor._busyJob?.target?.id, "worse");
+});
+
+test("a doctor waits for a walking patient to reach a medical bed", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: doctor } = parkDoctor(world, pawn);
+    const patient = addPatient(world, settle, {
+        id: "walk",
+        x: doctor.x + 48,
+        y: doctor.y,
+        bleed: 0.06
+    });
+    const chunk = originChunk(world);
+    chunk.things.push({
+        uid: "lean",
+        id: "lean_to",
+        x: doctor.x + 32,
+        y: doctor.y,
+        occupants: [null, null]
+    });
+    const hut = addHut(world, doctor.x + 160, doctor.y, "med-hut");
+    hut.medical = true;
+    workOnce(world, doctor);
+    assert.notEqual(doctor._busyJob?.type, "doctor");
+    assert.notEqual(doctor._workChannel?.kind, "tend");
+    workOnce(world, patient);
+    assert.equal(patient._restWalk?.uid, "med-hut");
+    const bed = world._rescueBedFor(patient, { medical: true, settle });
+    assert.equal(bed.entry.uid, "med-hut");
+    assert.equal(world._occupySlot(pawn, patient, bed.entry, bed.slot), true);
+    doctor.x = patient.x;
+    doctor.y = patient.y;
+    const dc = world._ensureSettlerCreature(doctor);
+    dc.x = patient.x;
+    dc.y = patient.y;
+    workOnce(world, doctor);
+    assert.equal(doctor._busyJob?.type, "doctor");
+    assert.equal(doctor._busyJob?.target?.id, patient.id);
+    assert.equal(doctor._workChannel?.kind, "tend");
+});
+
+test("a doctor tends a walking patient standing when no bed is free", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec: doctor } = parkDoctor(world, pawn);
+    const patient = addPatient(world, settle, {
+        id: "walk",
+        x: doctor.x,
+        y: doctor.y,
+        bleed: 0.06
+    });
+    workOnce(world, doctor);
+    assert.equal(doctor._busyJob?.type, "doctor");
+    assert.equal(doctor._busyJob?.target, patient);
+    assert.equal(doctor._workChannel?.kind, "tend");
 });
 
 test("a hungry doctor eats before hauling someone downed who is not bleeding", () => {

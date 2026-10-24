@@ -392,6 +392,24 @@ function pawnInBed(pawn) {
     return !!(pawn && (pawn._resting || pawn.resting));
 }
 
+/**
+ * A medical bunk, otherwise any free bed. The possessed pawn is bandaged
+ * where they stand unless they are already walking into one.
+ * Party members only count a bunk inside camp range, which is as far as they walk.
+ */
+function patientWaitsForBed(world, settle, claims, patient) {
+    if (!patient || patient.dead || pawnInBed(patient)) return false;
+    if (patient._restWalk) return true;
+    const owner = world.players?.get?.(patient.ownerId);
+    const controlId = owner?.controlId || owner?.id;
+    if (controlId && patient.id === controlId) return false;
+    if (patient.homeSettlementId && settle) {
+        return !!freeBed(world, patient, settle, claims, { medical: true });
+    }
+    const tiles = (Sleep && Sleep.CAMP_TILES) || 12;
+    return !!world._rescueBedFor?.(patient, { medical: true, maxTiles: tiles });
+}
+
 function bleedMinutes(world, pawn) {
     const c = pawnCreature(world, pawn);
     const body = c?.anatomy;
@@ -411,7 +429,6 @@ function medicineFor(world, rec, settle, patient, claims) {
  */
 function settlerCare(world, rec, settle, claims) {
     const rows = [];
-    const campBed = freeBed(world, rec, settle, claims, { medical: true });
     const consider = (p) => {
         if (!p || p === rec || p.id === rec.id || p.dead) return;
         if (!inRange(settle, p.x, p.y)) return;
@@ -426,8 +443,11 @@ function settlerCare(world, rec, settle, claims) {
         const mins = bleedMinutes(world, p);
         if (!downed && mins == null) return;
         if (downed && inBed && mins == null) return;
+        const waits = patientWaitsForBed(world, settle, claims, p);
+        // Walkers with a bunk lie down first. Tend them once they are in it.
+        if (!downed && waits) return;
         const canTend = medicineFor(world, rec, settle, p, claims);
-        const hasBed = !inBed && !!campBed;
+        const hasBed = waits;
         rows.push({
             pawn: p,
             downed,
@@ -469,6 +489,7 @@ function settlerPatients(world, rec, settle, claims) {
         const key = pawnWorkKey(p, "tend");
         if (claimedByOther(claims, key, rec.id) || isSkipped(rec, key)) return;
         if (!patientNeedsTend(world, p)) return;
+        if (patientWaitsForBed(world, settle, claims, p)) return;
         const sources = listMedicineSources(world, rec, settle, p, claims);
         if (!sources.some((s) => sourceAvail(world, rec, settle, s, rec.id) > 0)) return;
         out.push(p);
@@ -1172,6 +1193,7 @@ function scanWork(world, rec, settle, claims) {
     const night = assignment === "sleep";
     const c = rec.creature || world.creatures.get(rec.id);
     const injured = Sleep.injuredForAutofill ? Sleep.injuredForAutofill(c?.anatomy) : false;
+    const downed = pawnDowned(world, rec);
     const stash = stashScan(world, rec, settle, keepOpts);
     return {
         unlitFire: jobOn(enabled, "cook") ? unlitFire(world, rec, settle, claims) : null,
@@ -1203,6 +1225,7 @@ function scanWork(world, rec, settle, claims) {
         night,
         assignment,
         injured,
+        downed,
         jobs
     };
 }
@@ -1214,6 +1237,7 @@ function scanWork(world, rec, settle, claims) {
     ctx.freeBed = freeBed;
     ctx.pawnCreature = pawnCreature;
     ctx.patientNeedsTend = patientNeedsTend;
+    ctx.patientWaitsForBed = patientWaitsForBed;
     ctx.dropPatient = dropPatient;
     ctx.settlerPatients = settlerPatients;
     ctx.settlerCare = settlerCare;

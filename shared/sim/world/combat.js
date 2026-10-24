@@ -1313,6 +1313,24 @@
         return !!(rec.prone || c?._downed || c?._prone || c?._resting || c?.isIncapacitated?.());
     },
 
+    /**
+     * Medical bed, else any free bed, within the distance this pawn will walk.
+     * The possessed pawn is tended standing unless they already chose a bunk.
+     */
+    _shouldWaitForBed(pawn) {
+        if (!pawn || pawn.dead || pawn._resting || pawn.resting) return false;
+        if (pawn._restWalk) return true;
+        const session = this._sessionOfPawn?.(pawn);
+        const controlId = session?.controlId || session?.id;
+        if (controlId && pawn.id === controlId) return false;
+        if (pawn.homeSettlementId) {
+            const settle = (this.settlements || []).find((s) => s.id === pawn.homeSettlementId);
+            if (settle) return !!this._rescueBedFor?.(pawn, { medical: true, settle });
+        }
+        const tiles = (typeof Sleep !== "undefined" && Sleep.CAMP_TILES) || Party.FOLLOW_DETACH || 12;
+        return !!this._rescueBedFor?.(pawn, { medical: true, maxTiles: tiles });
+    },
+
     _shouldDelaySleep(session, pawn) {
         if (!session || !pawn || pawn._resting || pawn._restWalk) return false;
         const members = this._ownedPawns(session).filter((m) => m && !m.dead);
@@ -1321,15 +1339,18 @@
         if (c?.ai?.assistTarget) return true;
         if (pawn.tending || c?._tending) return true;
         if (c?.ai?.tendSeek) return true;
-        for (const m of members) {
-            if (!m || m === pawn) continue;
-            const mc = m.creature || this.creatures.get(m.id);
-            const seek = mc?.ai?.tendSeek;
-            if (seek && (seek === c || seek === pawn || seek.id === pawn.id)) return true;
+        const waitBed = this._shouldWaitForBed(pawn);
+        if (!waitBed) {
+            for (const m of members) {
+                if (!m || m === pawn) continue;
+                const mc = m.creature || this.creatures.get(m.id);
+                const seek = mc?.ai?.tendSeek;
+                if (seek && (seek === c || seek === pawn || seek.id === pawn.id)) return true;
+            }
         }
         if (this._pickPartyAutoTend(pawn, members, control)) return true;
         const anatomy = c?.anatomy;
-        if (anatomy && BodyHealing.pickTendTarget?.(anatomy)
+        if (!waitBed && anatomy && BodyHealing.pickTendTarget?.(anatomy)
             && members.some((m) => this._pawnHasBandage(m))) {
             return true;
         }
@@ -1395,6 +1416,7 @@
         const anatomyOf = (m) => (m.creature || this.creatures.get(m.id))?.anatomy;
         for (const p of members || []) {
             if (!p || p.dead) continue;
+            if (this._shouldWaitForBed(p)) continue;
             if (opts.lyingOnly) {
                 if (p === tender || p.id === tender.id) continue;
                 if (!this._pawnIsLyingDown(p)) continue;
@@ -1546,6 +1568,7 @@
         const mark = (tender, patient) => {
             if (!tender || !patient || tender === patient || patient.id === tender.id) return;
             if (this._pawnIsDowned(patient)) return;
+            if (patient._restWalk || this._shouldWaitForBed(patient)) return;
             if (!near(tender, patient)) return;
             held.add(patient.id);
         };
@@ -1636,6 +1659,15 @@
                 continue;
             }
             if (rec._resting || rec._restWalk) {
+                if (rec._resting && !rec._restWalk) {
+                    const lying = this._pickPartyAutoTend(rec, members, control);
+                    const self = lying && (lying.patient === rec || lying.patient.id === rec.id);
+                    if (self) {
+                        cc.ai.tendSeek = null;
+                        this._beginPawnTend(rec, lying);
+                        continue;
+                    }
+                }
                 if (!this._wakeRestingTender(session, rec, members, control)) {
                     cc.ai.tendSeek = null;
                     continue;

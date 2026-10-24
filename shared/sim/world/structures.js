@@ -1022,7 +1022,8 @@
         if (c?.ai?.assistTarget) return;
         if (c?._tending || c?.ai?.tendSeek) return;
         if (this._shouldDelaySleep(session, pawn)) return;
-        if (this._partyNeedsAutoTend(session)) return;
+        // A free bunk is where the doctor will tend them. Go lie down.
+        if (this._partyNeedsAutoTend(session) && !this._shouldWaitForBed(pawn)) return;
         if (session.lastHitMob && Date.now() - (Number(session.lastHitAt) || 0) < 8000) return;
         const control = this._actionPawn(session, { pawnId: controlId });
         if (control && Math.hypot(control.vx || 0, control.vy || 0) > 8) return;

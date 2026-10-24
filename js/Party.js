@@ -385,13 +385,7 @@ class PartySystem {
         scene.equipmentPanel?.refresh?.();
         from?.syncNameLabel?.();
         pawn.syncNameLabel?.();
-        const cam = scene.cameras?.main;
-        if (cam && pawn) {
-            const c = typeof pawn.bodyCenter === "function"
-                ? pawn.bodyCenter()
-                : { x: pawn.x, y: pawn.y };
-            cam.centerOn(c.x, c.y);
-        }
+        scene.syncCameraToPlayer?.();
         scene.partyPanel?.refresh?.();
         scene.settlementPanel?.refresh?.();
         scene._chunkLoadBurst = 32;
@@ -2155,6 +2149,20 @@ class PartySystem {
             }
             if (pawn._resting || pawn._restWalk) {
                 const dedicated = !!(scene.simAuth());
+                if (pawn._resting && !pawn._restWalk && !dedicated) {
+                    const selfJob = this._pickAutoTend(pawn);
+                    if (selfJob?.patient === pawn) {
+                        pawn.partyAI?.setTendSeek?.(null);
+                        pawn.beginTend?.(selfJob.patient, {
+                            slot: selfJob.slot,
+                            bag: selfJob.bag,
+                            sourcePawn: selfJob.source,
+                            silent: true,
+                            target: selfJob.target
+                        });
+                        continue;
+                    }
+                }
                 if (dedicated || !this._wakeRestingTender(pawn)) {
                     pawn.partyAI?.setTendSeek?.(null);
                     continue;
@@ -2200,9 +2208,10 @@ class PartySystem {
         const ch = pawn._tendChannel;
         if (ch && !ch.corpse) return true;
         if (pawn.partyAI?.tendSeek) return true;
-        if (this._isTendTargeted(pawn)) return true;
+        const waitBed = this._waitsForBed(pawn);
+        if (this._isTendTargeted(pawn) && !waitBed) return true;
         if (this._pickAutoTend(pawn)) return true;
-        if (this._pawnNeedsTend(pawn) && this._partyHasBandage()) return true;
+        if (this._pawnNeedsTend(pawn) && this._partyHasBandage() && !waitBed) return true;
         if (pawn._eatChannel || pawn.partyAI?.eatSeek) return true;
         const P = typeof Party !== "undefined" ? Party : { AUTO_EAT_BELOW: 1000 };
         const mal = !!pawn.anatomy?.hediff?.("malnutrition");
@@ -2339,6 +2348,19 @@ class PartySystem {
         return false;
     }
 
+    /**
+     * Medical bed, else any free bed. Downed allies are bandaged where they
+     * fell on this client; the sim carries them when a bunk is free.
+     * The player is tended standing unless they are already walking to a bunk.
+     */
+    _waitsForBed(pawn) {
+        if (!pawn || pawn.isBodyDead?.() || pawn._resting) return false;
+        if (pawn._restWalk) return true;
+        if (pawn === this.scene?.player || pawn.isControlled?.()) return false;
+        if (pawn._downed || pawn._prone || pawn.isIncapacitated?.() || pawn.isImmobile?.()) return false;
+        return !!this.scene?._pickFreeSleepSlot?.(pawn);
+    }
+
     _pawnNeedsTend(pawn) {
         if (!pawn?.anatomy || pawn.isBodyDead?.()) return false;
         return !!BodyHealing?.pickTendTarget?.(pawn.anatomy);
@@ -2444,6 +2466,7 @@ class PartySystem {
         let selfJob = null;
         for (const p of scene.party || []) {
             if (!p || p.isBodyDead?.() || !p.anatomy) continue;
+            if (this._waitsForBed(p)) continue;
             if (opts.lyingOnly) {
                 if (p === tender) continue;
                 if (!this._isLyingDown(p)) continue;

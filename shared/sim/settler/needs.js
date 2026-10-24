@@ -22,6 +22,7 @@
     const dropPatient = (...args) => ctx.dropPatient(...args);
     const halt = (...args) => ctx.halt(...args);
     const patientNeedsTend = (...args) => ctx.patientNeedsTend(...args);
+    const patientWaitsForBed = (...args) => ctx.patientWaitsForBed(...args);
     const pawnCreature = (...args) => ctx.pawnCreature(...args);
     const claimsFor = (...args) => ctx.claimsFor(...args);
     const listMedicineSources = (...args) => ctx.listMedicineSources(...args);
@@ -57,6 +58,10 @@ function doDoctor(world, rec, settle, patient) {
         return halt();
     }
     if (!patientNeedsTend(world, patient)) {
+        dropPatient(world, rec, patient, false);
+        return halt();
+    }
+    if (patientWaitsForBed(world, settle, claimsFor(world, settle), patient)) {
         dropPatient(world, rec, patient, false);
         return halt();
     }

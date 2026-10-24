@@ -502,6 +502,7 @@ function tick(world, mob, delta) {
             isNight: scan.night,
             assignment: scan.assignment,
             injured: scan.injured,
+            downed: !!scan.downed,
             isOrphan: false,
             bed: scan.bed || null,
             jobs: liveJobs,

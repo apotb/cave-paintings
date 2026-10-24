@@ -1395,6 +1395,55 @@ test("resting doctor gets up to tend a lying ally", () => {
     assert.equal(patient._resting, true);
 });
 
+test("companion doctor waits for a patient to reach a bed, then tends", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.controlId = pawn.id;
+    const doctor = makeCompanion("doc", {
+        x: pawn.x + 16,
+        y: pawn.y,
+        inventory: [{ id: "leaf_cord", quantity: 2 }, null, null, null, null]
+    });
+    const patient = makeCompanion("pat", { x: pawn.x + 32, y: pawn.y });
+    partyOf(world, pawn, doctor, patient);
+    cutArm(patient.creature);
+    const entry = {
+        uid: "lt-tend",
+        id: "lean_to",
+        x: patient.x,
+        y: patient.y,
+        occupants: [null, null]
+    };
+    originChunk(world).things.push(entry);
+    const rows = [{ rec: doctor, creature: doctor.creature }];
+    world._assignPartyTendSeeks(pawn, rows, pawn.id);
+    assert.equal(doctor.tendChannel || null, null);
+    assert.equal(doctor.creature.ai?.tendSeek || null, null);
+    world._tryInjuredRest(pawn, patient);
+    assert.equal(patient._restWalk?.uid, "lt-tend");
+    assert.equal(world._occupySlot(pawn, patient, entry, patient._restWalk.slot), true);
+    doctor.x = patient.x;
+    doctor.y = patient.y;
+    doctor.creature.x = patient.x;
+    doctor.creature.y = patient.y;
+    world._assignPartyTendSeeks(pawn, rows, pawn.id);
+    assert.equal(doctor.tendChannel?.patientId, patient.id);
+});
+
+test("companion doctor tends a standing patient when no bed is free", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.controlId = pawn.id;
+    const doctor = makeCompanion("doc", {
+        x: pawn.x,
+        y: pawn.y,
+        inventory: [{ id: "leaf_cord", quantity: 2 }, null, null, null, null]
+    });
+    const patient = makeCompanion("pat", { x: pawn.x, y: pawn.y });
+    partyOf(world, pawn, doctor, patient);
+    cutArm(patient.creature);
+    world._assignPartyTendSeeks(pawn, [{ rec: doctor, creature: doctor.creature }], pawn.id);
+    assert.equal(doctor.tendChannel?.patientId, patient.id);
+});
+
 test("resting doctor stays down if the wounded ally is standing", () => {
     const { world, pawn } = createTestWorld();
     const doctor = makeCompanion("doc", {
