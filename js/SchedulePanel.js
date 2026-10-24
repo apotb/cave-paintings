@@ -534,7 +534,7 @@ class SchedulePanel {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         const rows = here.map((p) => {
             const pid = p.pawnId || p.id;
-            return `${pid}:${S ? S.scheduleFor(this.settle, pid) : ""}`;
+            return `${pid}${p.favorite ? "*" : ""}:${S ? S.scheduleFor(this.settle, pid) : ""}`;
         }).join("|");
         const g = this._geom || {};
         return `${rows}|${g.gridW}x${g.viewH || this._viewH}`;
@@ -653,13 +653,13 @@ class SchedulePanel {
             const pid = p.pawnId || p.id;
             const row = scene.add.container(0, r * cellS);
             const name = (p.displayName?.() || "?").slice(0, 8);
+            const controlled = !!(p.isControlled?.() || p === scene.player);
             const nt = scene.add.text(Math.round(4 * s), cellS / 2, name, {
                 fontFamily: PIXEL_UI_FONT,
                 fontSize: `${pixelUiFontSize(11, s)}px`,
-                color: "#d4c4a8"
+                color: p.favorite ? "#d4a84b" : (controlled ? "#b8ffb8" : "#d4c4a8")
             }).setOrigin(0, 0.5);
             if (typeof applyPixelUiFont === "function") applyPixelUiFont(nt, 11, s);
-            if (p.isControlled?.() || p === scene.player) nt.setColor("#b8ffb8");
             row.add(nt);
             const sched = S ? S.scheduleFor(this.settle, pid) : "a".repeat(24);
             const cells = [];

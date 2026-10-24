@@ -495,7 +495,7 @@ class SettlementPanel {
             const jobs = here.map((p) => {
                 const pid = p.pawnId || p.id;
                 try {
-                    return `${pid}:${JSON.stringify(this.settle.jobs?.[pid] || {})}`;
+                    return `${pid}${p.favorite ? "*" : ""}:${JSON.stringify(this.settle.jobs?.[pid] || {})}`;
                 } catch (_) {
                     return String(pid);
                 }
@@ -995,13 +995,13 @@ class SettlementPanel {
             const row = scene.add.container(0, rowY);
             if (typeof row.setSize === "function") row.setSize(gridW, rowH);
             const name = (p.displayName?.() || "?").slice(0, 8);
+            const controlled = !!(p.isControlled?.() || p === scene.player);
             const nt = scene.add.text(Math.round(4 * sc), rowH / 2, name, {
                 fontFamily: PIXEL_UI_FONT,
                 fontSize: `${pixelUiFontSize(11, sc)}px`,
-                color: "#d4c4a8"
+                color: p.favorite ? "#d4a84b" : (controlled ? "#b8ffb8" : "#d4c4a8")
             }).setOrigin(0, 0.5);
             if (typeof applyPixelUiFont === "function") applyPixelUiFont(nt, 11, sc);
-            if (p.isControlled?.() || p === scene.player) nt.setColor("#b8ffb8");
             row.add(nt);
             const jobRow = S ? S.jobsFor(this.settle, pid) : {};
             for (let i = 0; i < nJobs; i++) {
