@@ -686,6 +686,34 @@ function resolveStand(world, c, ideal, tile) {
     return best || ideal;
 }
 
+function plantAtStand(rec, c, stand, target) {
+    faceToward(rec, target.x, (Number(target.y) || 0) - 8);
+    rec.x = stand.x;
+    rec.y = stand.y;
+    if (c) {
+        c.x = stand.x;
+        c.y = stand.y;
+        c.vx = 0;
+        c.vy = 0;
+        c.setDesiredVel?.(0, 0);
+    }
+}
+
+/** The last few pixels to an open pose, clear of solids. */
+function stepClear(world, c, x0, y0, x1, y1) {
+    if (!c || typeof world?._partyPoseBlocked !== "function") return true;
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const dist = Math.hypot(dx, dy);
+    if (!(dist > 2)) return true;
+    const steps = Math.max(1, Math.ceil(dist / 3));
+    for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        if (world._partyPoseBlocked(c, x0 + dx * t, y0 + dy * t, 0, { load: false })) return false;
+    }
+    return true;
+}
+
 function goOrWalk(world, rec, target) {
     if (!target) return halt();
     const c = rec.creature || world?._ensureSettlerCreature?.(rec);
@@ -748,19 +776,28 @@ function goOrWalk(world, rec, target) {
         const dist = Math.hypot(px - stand.x, py - stand.y);
         const poseBlocked = (pad) => !!(c && typeof world?._partyPoseBlocked === "function"
             && world._partyPoseBlocked(c, stand.x, stand.y, pad, { load: false }));
+        const uid = target.uid || target.id || "";
+        if (rec._poseUid !== uid) {
+            rec._poseUid = uid;
+            rec._poseStill = 0;
+            rec._poseBest = dist;
+        }
+        if (dist < (Number(rec._poseBest) || dist) - 0.35) {
+            rec._poseBest = dist;
+            rec._poseStill = 0;
+        } else if (dist <= 8) rec._poseStill = (rec._poseStill || 0) + 1;
+        else rec._poseStill = 0;
+        // Pathing parks a few pixels off an open pose and calls that
+        // arrival. They then sit on "Stoking the fire" and never step
+        // the rest of the way. The pose is open, so put them on it.
+        // Only this last gap: a wider snap pulls a hauler off a detour.
+        const parked = !!rec._closeOpenPose && dist <= 8 && (rec._poseStill || 0) >= 6
+            && stepClear(world, c, px, py, stand.x, stand.y);
         // The body has to be in the center of the interact tile. Being
         // somewhere in reach is not using the station.
-        if (!poseBlocked(0) && dist <= slack) {
-            faceToward(rec, target.x, (Number(target.y) || 0) - 8);
-            rec.x = stand.x;
-            rec.y = stand.y;
-            if (c) {
-                c.x = stand.x;
-                c.y = stand.y;
-                c.vx = 0;
-                c.vy = 0;
-                c.setDesiredVel?.(0, 0);
-            }
+        if (!poseBlocked(0) && (dist <= slack || parked)) {
+            rec._poseStill = 0;
+            plantAtStand(rec, c, stand, target);
             return null;
         }
         // A basket on the marked tile makes that pose solid, so they stop
@@ -1511,7 +1548,9 @@ function stokeUntilKeep(world, rec, settle, fire) {
 
 function doStokeFire(world, rec, settle, fire) {
     if (!fire) return halt();
+    rec._closeOpenPose = true;
     const walked = goOrWalk(world, rec, fire);
+    rec._closeOpenPose = false;
     if (walked) return walked;
     const facing = faceFire(rec, fire);
     const before = Fire.burnMinutes(fire, getItem);

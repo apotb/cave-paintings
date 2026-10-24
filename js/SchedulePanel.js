@@ -44,6 +44,8 @@ class SchedulePanel {
         this._scrollDrag = null;
         this._pressInside = false;
         this._geom = null;
+        this._nameNeed = 0;
+        this._nameWidths = new Map();
         this._pauseWhileOpen = false;
         this.root = scene.add.container(0, 0).setScrollFactor(0).setDepth(16100).setVisible(false);
         scene.uiLayer?.add(this.root);
@@ -388,6 +390,65 @@ class SchedulePanel {
         return this.scene.settlementSys?.settlersOf?.(this.settle?.id) || [];
     }
 
+    _settlerName(pawn) {
+        const raw = pawn?.displayName?.();
+        if (raw == null || raw === "") return "?";
+        return String(raw);
+    }
+
+    _namePad(s) {
+        return Math.round(4 * s);
+    }
+
+    _nameProbeText() {
+        if (this._nameProbe?.scene) return this._nameProbe;
+        const probe = this.scene.add.text(0, 0, "", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "8px"
+        });
+        probe.setVisible(false);
+        this._nameProbe = probe;
+        return probe;
+    }
+
+    /** Pixel width of a schedule name at the row font size. */
+    _nameTextWidth(label, s) {
+        const text = String(label || "");
+        const px = typeof pixelUiFontSize === "function" ? pixelUiFontSize(11, s) : 8;
+        const key = `${px}\0${text}`;
+        const cached = this._nameWidths.get(key);
+        if (cached > 0) return cached;
+        const probe = this._nameProbeText();
+        if (typeof applyPixelUiFont === "function") applyPixelUiFont(probe, 11, s);
+        else probe.setFontSize(`${px}px`);
+        probe.setText(text);
+        const w = Math.ceil(probe.displayWidth || probe.width || 0);
+        if (w > 0) {
+            this._nameWidths.set(key, w);
+            return w;
+        }
+        return Math.max(1, text.length) * px;
+    }
+
+    /**
+     * Name column stays at the old fixed width for short names, and grows
+     * when a longer name would otherwise run under the hour cells.
+     */
+    _nameColumnWidth(here, s) {
+        const minW = Math.round(56 * s);
+        const pad = this._namePad(s);
+        let widest = 0;
+        for (let i = 0; i < (here?.length || 0); i++) {
+            widest = Math.max(widest, this._nameTextWidth(this._settlerName(here[i]), s));
+        }
+        return Math.max(minW, pad + widest + pad);
+    }
+
+    _nameNeedFor(here, s) {
+        if (!here?.length) return 0;
+        return this._nameColumnWidth(here, s);
+    }
+
     layout() {
         const scene = this.scene;
         const s = scene.uiScale || 1;
@@ -401,6 +462,7 @@ class SchedulePanel {
         const barW = Math.max(4, Math.round(5 * s));
         const barGap = Math.round(4 * s);
         const here = this.visible ? this._here() : [];
+        this._nameNeed = this._nameNeedFor(here, s);
         const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
         this.dim.setSize(W, H);
         if (this.dim.input?.hitArea?.setSize) this.dim.input.hitArea.setSize(W, H);
@@ -434,11 +496,24 @@ class SchedulePanel {
             frameH = titleH + gap + Math.round(28 * s) + bottom;
         } else {
             const availW = Math.max(220, W - margin * 2);
-            nameW = Math.round(56 * s);
+            const minNameW = Math.round(56 * s);
+            nameW = Math.max(minNameW, this._nameNeed || minNameW);
             cellS = Math.round(20 * s);
             const inner = availW - pad * 2 - barGap - barW;
             if (nameW + cellS * 24 > inner) {
                 cellS = Math.max(8, Math.floor((inner - nameW) / 24));
+            }
+            // Hour cells can shrink to the existing minimum. Past that, the
+            // window fills the screen and the name column takes what is left.
+            if (nameW + cellS * 24 > inner) {
+                const room = inner - 8 * 24;
+                if (room >= minNameW) {
+                    cellS = 8;
+                    nameW = room;
+                } else {
+                    nameW = minNameW;
+                    cellS = Math.max(8, Math.floor((inner - nameW) / 24));
+                }
             }
             gridW = nameW + cellS * 24;
             const modeH = Math.round(22 * s);
@@ -534,7 +609,8 @@ class SchedulePanel {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         const rows = here.map((p) => {
             const pid = p.pawnId || p.id;
-            return `${pid}${p.favorite ? "*" : ""}:${S ? S.scheduleFor(this.settle, pid) : ""}`;
+            const name = this._settlerName(p);
+            return `${pid}${p.favorite ? "*" : ""}:${name}:${S ? S.scheduleFor(this.settle, pid) : ""}`;
         }).join("|");
         const g = this._geom || {};
         return `${rows}|${g.gridW}x${g.viewH || this._viewH}`;
@@ -550,7 +626,8 @@ class SchedulePanel {
         this._tickDragScroll();
         if (!this.visible || !this.settle || !this._geom || this._drag) return;
         const here = this._here();
-        if (!this._inLayout && this._geom.rows !== here.length) {
+        const nameNeed = this._nameNeedFor(here, this.scene.uiScale || 1);
+        if (!this._inLayout && (this._geom.rows !== here.length || nameNeed !== this._nameNeed)) {
             this.layout();
             return;
         }
@@ -652,9 +729,9 @@ class SchedulePanel {
             const p = here[r];
             const pid = p.pawnId || p.id;
             const row = scene.add.container(0, r * cellS);
-            const name = (p.displayName?.() || "?").slice(0, 8);
+            const name = this._settlerName(p);
             const controlled = !!(p.isControlled?.() || p === scene.player);
-            const nt = scene.add.text(Math.round(4 * s), cellS / 2, name, {
+            const nt = scene.add.text(this._namePad(s), cellS / 2, name, {
                 fontFamily: PIXEL_UI_FONT,
                 fontSize: `${pixelUiFontSize(11, s)}px`,
                 color: p.favorite ? "#d4a84b" : (controlled ? "#b8ffb8" : "#d4c4a8")

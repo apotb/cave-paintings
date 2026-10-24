@@ -4534,6 +4534,46 @@ test("cook walks onto the interact spot before stoking", () => {
     assert.ok(stoking < 40, `stood on Stoking the fire for ${stoking} ticks`);
 });
 
+test("cook who starts on the campfire still steps onto the spot and stokes", () => {
+    const { world, pawn } = createTestWorld();
+    fillGrass(world);
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    cookOnlyJobs(settle, rec);
+    const fire = addStation(world, settle, "campfire", rec.x, rec.y, "fire-underfoot");
+    fire.id = "campfire";
+    fire.fuel = [null, null];
+    fire.burnRemaining = 40;
+    fire.pitTemp = 500;
+    fire.maxTemp = 600;
+    const pose = Place.interactStandPose(fire, 16, world._thingDef(fire.id), world._ensureSettlerCreature(rec));
+    const basket = addBasket(world, settle, rec.x + 40, rec.y, "fuel-underfoot");
+    basket.slots[0] = { id: "log", quantity: 8 };
+    const getItem = (id) => world._itemDef(id);
+    let stoking = 0;
+    let fueledAt = null;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if (rec._settlerAct === "Stoking the fire") stoking++;
+        if (!fueledAt && Fire.burnMinutes(fire, getItem) > 40) {
+            fueledAt = { x: rec.x, y: rec.y };
+        }
+        if (fueledAt && Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES
+            && rec._settlerAct !== "Stoking the fire") break;
+    }
+    assert.ok(fueledAt, `never fueled (act=${rec._settlerAct} at ${rec.x.toFixed(1)},${rec.y.toFixed(1)} fuel=${JSON.stringify(fire.fuel)})`);
+    assert.ok(
+        Math.hypot(fueledAt.x - pose.x, fueledAt.y - pose.y) <= 1,
+        `should stoke from the interact spot, at ${fueledAt.x},${fueledAt.y} want ${pose.x},${pose.y}`
+    );
+    assert.ok(
+        Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES,
+        `expected a full pit, got ${Fire.burnMinutes(fire, getItem)}`
+    );
+    assert.notEqual(rec._settlerAct, "Stoking the fire");
+    assert.ok(stoking < 80, `stood on Stoking the fire for ${stoking} ticks`);
+});
+
 test("always-on off does not top up a fire that already has fuel", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn);
