@@ -265,9 +265,19 @@ class SettlementSystem {
     setJobOrder(settle, pawnId, toIndex) {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         if (!S?.moveJobOrder || !settle || !pawnId) return false;
-        const ids = this.settlersOf(settle.id).map((p) => p.pawnId || p.id);
+        const people = this.settlersOf(settle.id);
+        const ids = people.map((p) => p.pawnId || p.id);
         const before = (settle.jobOrder || []).join(",");
-        S.moveJobOrder(settle, pawnId, toIndex, ids);
+        const fav = new Map(people.map((p) => [String(p.pawnId || p.id), !!p.favorite]));
+        const to = S.clampJobOrderIndex
+            ? S.clampJobOrderIndex(
+                S.normalizeJobOrder(settle, ids),
+                pawnId,
+                toIndex,
+                (oid) => !!fav.get(String(oid))
+            )
+            : toIndex;
+        S.moveJobOrder(settle, pawnId, to, ids);
         this._syncJobOrder(settle);
         if ((settle.jobOrder || []).join(",") === before) return false;
         this.sendNet("setJobOrder", {

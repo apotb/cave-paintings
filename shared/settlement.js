@@ -1370,6 +1370,29 @@
     }
 
     /**
+     * Jobs-list drag stays inside one favorite run.
+     * Favorites are a block at the top. A starred settler can slide among
+     * other stars, and an unstarred settler among the rest, but the index
+     * stops where the other group starts. isFavorite(id) reads the current flag.
+     */
+    function clampJobOrderIndex(order, pawnId, toIndex, isFavorite) {
+        const ids = Array.isArray(order) ? order : [];
+        const n = ids.length;
+        const to = Math.max(0, Math.min(Math.max(0, n - 1), Math.floor(Number(toIndex) || 0)));
+        if (typeof isFavorite !== "function" || n < 2) return to;
+        const id = String(pawnId || "");
+        const from = ids.findIndex((raw) => String(raw || "") === id);
+        if (from < 0) return to;
+        const fav = !!isFavorite(id);
+        const same = (raw) => !!isFavorite(String(raw || "")) === fav;
+        let lo = from;
+        let hi = from;
+        while (lo > 0 && same(ids[lo - 1])) lo--;
+        while (hi < n - 1 && same(ids[hi + 1])) hi++;
+        return Math.max(lo, Math.min(hi, to));
+    }
+
+    /**
      * Park this settler just after every other favorite.
      * Favoriting lands them at the bottom of the favorites. Unfavoriting
      * drops them under the favorites that remain. Everyone else stays put.
@@ -3108,6 +3131,7 @@
         normalizeJobOrder,
         sortByJobOrder,
         moveJobOrder,
+        clampJobOrderIndex,
         placeFavoriteOrder,
         applyFavoriteToList,
         applyJobOrderToList,

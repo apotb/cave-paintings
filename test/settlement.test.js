@@ -214,6 +214,35 @@ test("moveJobOrder relocates a settler in the jobs list", () => {
     assert.deepEqual(Settlement.moveJobOrder(settle, "ann", 1, ["ann", "bo", "cy"]), ["bo", "ann", "cy"]);
 });
 
+test("clampJobOrderIndex stops a jobs drag at the favorite boundary", () => {
+    const order = ["a", "b", "c", "d", "e"];
+    const fav = new Set(["a", "b", "c"]);
+    const isFav = (id) => fav.has(id);
+    assert.equal(Settlement.clampJobOrderIndex(order, "c", 4, isFav), 2);
+    assert.equal(Settlement.clampJobOrderIndex(order, "a", 1, isFav), 1);
+    assert.equal(Settlement.clampJobOrderIndex(order, "d", 0, isFav), 3);
+    assert.equal(Settlement.clampJobOrderIndex(order, "e", 3, isFav), 3);
+    assert.equal(Settlement.clampJobOrderIndex(order, "e", 4, isFav), 4);
+    assert.equal(Settlement.clampJobOrderIndex(order, "a", 4, () => false), 4);
+    assert.equal(Settlement.clampJobOrderIndex(["a", "b", "c"], "c", 0, () => true), 0);
+    const mixed = ["a", "d", "b", "e"];
+    const fav2 = new Set(["a", "b"]);
+    assert.equal(Settlement.clampJobOrderIndex(mixed, "a", 3, (id) => fav2.has(id)), 0);
+    assert.equal(Settlement.clampJobOrderIndex(mixed, "b", 0, (id) => fav2.has(id)), 2);
+
+    const settle = Settlement.createSettlement({ x: 0, y: 0 });
+    const ids = ["a", "b", "c", "d"];
+    const stars = new Set(["a", "b"]);
+    const star = (id) => stars.has(id);
+    Settlement.normalizeJobOrder(settle, ids);
+    const down = Settlement.clampJobOrderIndex(settle.jobOrder, "b", 3, star);
+    assert.deepEqual(Settlement.moveJobOrder(settle, "b", down, ids), ["a", "b", "c", "d"]);
+    const up = Settlement.clampJobOrderIndex(settle.jobOrder, "c", 0, star);
+    assert.deepEqual(Settlement.moveJobOrder(settle, "c", up, ids), ["a", "b", "c", "d"]);
+    const swap = Settlement.clampJobOrderIndex(settle.jobOrder, "b", 0, star);
+    assert.deepEqual(Settlement.moveJobOrder(settle, "b", swap, ids), ["b", "a", "c", "d"]);
+});
+
 test("placeFavoriteOrder parks a star at the bottom of the favorites", () => {
     const place = (start, pawnId, favorites) => {
         const settle = Settlement.createSettlement({ x: 0, y: 0 });

@@ -1082,7 +1082,7 @@ class SettlementPanel {
             row.add(nameHit);
             this.body.add(row);
             this._jobRowIds.push(pid);
-            this._jobRows.push({ pawnId: pid, row, from: r });
+            this._jobRows.push({ pawnId: pid, row, from: r, favorite: !!p.favorite });
         }
 
         const rows = here.length;
@@ -1165,12 +1165,25 @@ class SettlementPanel {
             if (pointer.y < top + edge) this._setScroll(this._scroll - Math.round(8 * (this.scene.uiScale || 1)));
             else if (pointer.y > bot - edge) this._setScroll(this._scroll + Math.round(8 * (this.scene.uiScale || 1)));
         }
-        const to = this._jobIndexAtPointer(pointer);
+        const to = this._clampJobDragIndex(this._jobIndexAtPointer(pointer));
         if (to === this._jobDrag.to) return;
         this._jobDrag.to = to;
         this._layoutJobRows(this._jobPreviewIds());
         const rec = (this._jobRows || []).find((r) => r.pawnId === this._jobDrag.pawnId);
         this._floatJobRow(rec?.row);
+    }
+
+    /**
+     * The row slides until it meets the other favorite group, then stops.
+     * Stars stay above the rest. The table itself does not split.
+     */
+    _clampJobDragIndex(to) {
+        const drag = this._jobDrag;
+        const ids = this._jobRowIds || [];
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!drag || !S?.clampJobOrderIndex) return to;
+        const fav = new Map((this._jobRows || []).map((r) => [String(r.pawnId), !!r.favorite]));
+        return S.clampJobOrderIndex(ids, drag.pawnId, to, (id) => !!fav.get(String(id)));
     }
 
     _beginJobDrag() {
