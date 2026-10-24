@@ -556,7 +556,18 @@
             return;
         }
         if (cmd === "/kill" || cmd === "/kms") {
-            this._kill(p, null);
+            const pawn = this._actionPawn(p, action) || p;
+            const companion = pawn !== p && (p.party || []).some((m) => m && m.id === pawn.id);
+            if (companion) {
+                this._killCompanion(p, pawn, null);
+                p.party = (p.party || []).filter((m) => m && m.id !== pawn.id);
+                if ((p.controlId || p.id) === pawn.id) {
+                    this._setControlId(p, p.id, { allowDead: true });
+                }
+                this._youDirty.add(p.id);
+            } else {
+                this._kill(p, null);
+            }
             this.announceCmd(`${p.name} used ${cmd}`, { except: p.id });
             return;
         }

@@ -1175,6 +1175,36 @@ test("/kms aliases /kill", () => {
     assert.equal(pawn.dead, true);
 });
 
+test("/kms kills the controlled companion and leaves the leader alive", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const buddy = makeCompanion("buddy", {
+        name: "Buddy",
+        inventory: [{ id: "stick", quantity: 1 }, null, null, null, null]
+    });
+    pawn.party = [buddy];
+    pawn.inventory[0] = { id: "leaf", quantity: 1 };
+    world._ensureCompanionCreature(pawn, buddy);
+    pawn.controlId = buddy.id;
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.CHAT,
+        text: "/kms",
+        pawnId: buddy.id
+    });
+    assert.equal(pawn.dead, false);
+    assert.equal(buddy.dead, true);
+    assert.equal(pawn.party.some((m) => m && m.id === buddy.id), false);
+    assert.equal(pawn.controlId, pawn.id);
+    assert.equal(pawn.inventory[0]?.id, "leaf");
+    const corpse = (originChunk(world).corpses || []).find((c) => c && c.name === "Buddy");
+    assert.ok(corpse);
+    assert.ok((corpse.loot || []).some((s) => s && s.id === "stick"));
+    const events = world.drainEvents();
+    assert.ok(events.some((e) => e.kind === "party_death" && e.pawnId === buddy.id));
+    world.tick(50);
+    assert.equal(pawn.dead, false);
+    assert.equal(world.creatures.get(buddy.id), undefined);
+});
+
 test("/give pebble keeps the stone, and /set stamps it on rocks and piles", () => {
     const { world, pawn, Protocol } = createTestWorld();
     world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give pebble 4 granite" });
