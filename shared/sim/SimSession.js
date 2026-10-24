@@ -85,7 +85,10 @@
                 return;
             }
             this.sim.handleAction(playerId, action);
-            this.flushYou(playerId);
+            // Job priority is already on the client. YOU copies every body.
+            const skipYou = action?.type === Protocol.Actions.SETTLEMENT
+                && action.op === "setJobs";
+            if (!skipYou) this.flushYou(playerId);
             this.flushEvents();
         }
 
@@ -141,6 +144,9 @@
         flushYou(playerId) {
             const you = this.sim.youPayload(playerId);
             if (you) this._send(playerId, Protocol.Types.YOU, you);
+            // handleAction also drains dirty ids. Leaving this set sent
+            // the same payload twice on one click.
+            this.sim._youDirty?.delete(playerId);
         }
 
         flushEvents() {

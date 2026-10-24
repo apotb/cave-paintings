@@ -1018,6 +1018,7 @@ class SettlementPanel {
                     color: jobPriorityColor(pri)
                 }).setOrigin(0.5);
                 if (typeof applyPixelUiFont === "function") applyPixelUiFont(txt, 11, sc);
+                let cur = pri | 0;
                 let hovering = false;
                 let pressing = false;
                 const paint = () => {
@@ -1049,17 +1050,23 @@ class SettlementPanel {
                     if (!was || !this._pointerInBody(pointer)) return;
                     const right = !!(pointer.rightButtonReleased?.() || pointer.button === 2);
                     const next = S
-                        ? (right ? S.cyclePriority(pri) : S.raisePriority(pri))
+                        ? (right ? S.cyclePriority(cur) : S.raisePriority(cur))
                         : 0;
-                    const row = S?.setJob(this.settle, pid, j, next);
-                    if (row) S?.rememberJobs?.(p, row);
+                    // Rebuilding the grid rasterizes every name and cell. One
+                    // digit does not need that, and it was the click hitch.
+                    const saved = S?.setJob(this.settle, pid, j, next);
+                    if (saved) S?.rememberJobs?.(p, saved);
                     this.scene.settlementSys?.bumpWorkCache?.();
                     this.scene.settlementSys?.sendNet("setJobs", {
                         settlementId: this.settle.id,
                         pawnId: pid,
                         jobs: this.settle.jobs?.[pid]
                     });
-                    this.refresh();
+                    cur = (saved && saved[j]) || 0;
+                    const label = cur ? String(cur) : "";
+                    if (txt.text !== label) txt.setText(label);
+                    txt.setColor(jobPriorityColor(cur));
+                    this._contentSigVal = this._contentSig();
                 });
                 row.add(bg);
                 row.add(txt);

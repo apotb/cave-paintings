@@ -412,7 +412,8 @@
                 || (p.party || []).find((m) => m && String(m.id) === pid);
             if (rec) Settlement.rememberJobs(rec, row);
             SettlerWork.bumpWork?.(this, rec);
-            this._youDirty.add(p.id);
+            // The click already wrote this row on the client. A YOU would
+            // serialize every settler's body in the same frame.
             return;
         }
         if (op === "setSchedule" && settle && settle.ownerId === p.id) {

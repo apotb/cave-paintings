@@ -3251,6 +3251,52 @@ test("settler job priorities survive pick-up, drop-off, transfer, and relog", ()
     assert.equal(mem.jobs.gather, 2);
 });
 
+test("changing a job priority does not serialize YOU", () => {
+    const SimSession = require("../shared/sim/SimSession");
+    const { world, pawn, Protocol } = createTestWorld();
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    const rec = world._settlerFromSnap({
+        id: "pri-1",
+        name: "Pri",
+        x: pawn.x,
+        y: pawn.y,
+        ownerId: pawn.id,
+        homeSettlementId: settle.id,
+        inventory: [null, null, null, null, null]
+    });
+    settle.jobs = { [rec.id]: Settlement.defaultJobs() };
+    world.settlements.push(settle);
+    world.settlers.push(rec);
+    world._ensureSettlerCreature(rec);
+    let yous = 0;
+    const session = new SimSession({
+        sim: world,
+        send: (_id, type) => {
+            if (type === Protocol.Types.YOU) yous++;
+        }
+    });
+    session._connected.add(pawn.id);
+    const jobs = Settlement.normalizeJobs(settle.jobs[rec.id]);
+    jobs.haul = 1;
+    session.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "setJobs",
+        settlementId: settle.id,
+        pawnId: rec.id,
+        jobs
+    });
+    assert.equal(settle.jobs[rec.id].haul, 1);
+    assert.equal(rec.jobs.haul, 1);
+    assert.equal(yous, 0);
+    session.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "setStock",
+        settlementId: settle.id,
+        stock: settle.stock
+    });
+    assert.equal(yous, 1);
+});
+
 test("setSchedule is stored on the camp and the settler", () => {
     const { world, pawn } = createTestWorld();
     const home = Settlement.createSettlement({
