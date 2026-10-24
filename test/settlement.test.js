@@ -1035,7 +1035,7 @@ test("job tooltip lists work inside the column", () => {
     const cook = Settlement.jobTooltip("cook");
     assert.match(cook, /^Cook\n/);
     assert.match(cook, /^- Work at Campfire$/m);
-    assert.match(cook, /^- Light campfires$/m);
+    assert.match(cook, /^- Light fires$/m);
     assert.match(cook, /^- Stoke fires$/m);
     assert.doesNotMatch(cook, /Roast at campfire/);
     assert.doesNotMatch(cook, /Smoke leather/);
@@ -1546,7 +1546,7 @@ test("planWork cook stokes after lighting and bills", () => {
         jobs,
         stokeFire: fire
     }).type, "cook_stoke");
-    assert.equal(Settlement.actLabel({ type: "cook_stoke" }), "Stoking the fire");
+    assert.equal(Settlement.actLabel({ type: "cook_stoke" }), "Stoking fire");
     assert.equal(
         Settlement.actLabel({
             type: "cook",
@@ -2074,7 +2074,7 @@ test("actLabel names smoke and hidework by hide type, not the full allowlist", (
                 bill: { method: "smoke_hide", allowedIds: ["deer_hide_brained"] }
             }
         }, ctx),
-        "Lighting a fire"
+        "Lighting fire"
     );
     assert.equal(
         Settlement.actLabel({
@@ -2086,7 +2086,7 @@ test("actLabel names smoke and hidework by hide type, not the full allowlist", (
                 bill: { method: "smoke_hide", allowedIds: ["deer_hide_brained"] }
             }
         }, ctx),
-        "Stoking the fire"
+        "Stoking fire"
     );
     assert.equal(
         Settlement.actLabel({

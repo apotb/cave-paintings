@@ -94,7 +94,7 @@
         doctor: ["Carry the downed to a bed", "Tend the wounded"],
         cook: [
             "Work at Campfire",
-            "Light campfires",
+            "Light fires",
             "Stoke fires"
         ],
         chop: ["Chop trees"],
@@ -2401,7 +2401,7 @@
                 if (bill?.leftover) return `Taking ${_lc(n)}`;
                 if (method === "smoke_hide") {
                     if (job?.phase === "tend") {
-                        return _fireIsLit(fire) ? "Stoking the fire" : "Lighting a fire";
+                        return _fireIsLit(fire) ? "Stoking fire" : "Lighting fire";
                     }
                     return `Smoking ${_hideTypeNoun(cook, getItem)}`;
                 }
@@ -2409,8 +2409,8 @@
                 return `${roast ? "Roasting" : "Cooking"} ${_lc(n)}`;
             }
         }
-        if (fire && !_fireIsLit(fire)) return "Lighting a fire";
-        if (fire && !_fireHasFuel(fire) && !_fireStillBurning(fire)) return "Stoking the fire";
+        if (fire && !_fireIsLit(fire)) return "Lighting fire";
+        if (fire && !_fireHasFuel(fire) && !_fireStillBurning(fire)) return "Stoking fire";
         if (method === "shell_simmer") {
             if (_simmerFilled(fire) > 0) return "Simmering a meal";
             return "Simmering";
@@ -2501,8 +2501,8 @@
             return who && who !== "Someone" ? `Attacking ${who}` : "Attacking";
         }
         if (t === "eat") return "Getting food";
-        if (t === "cook_light") return "Lighting a fire";
-        if (t === "cook_stoke") return "Stoking the fire";
+        if (t === "cook_light") return "Lighting fire";
+        if (t === "cook_stoke") return "Stoking fire";
         if (t === "flesh") return "Fleshing hides";
         if (t === "brain") return "Brain-tanning hides";
         if (t === "craft") {

@@ -565,7 +565,7 @@ function lightOpts(world, rec, settle) {
     scan(rec.overflow, true);
     for (const b of basketsOf(world, settle)) scan(b.slots, false);
     // A starter in a basket does no good when the hotbar cannot take it.
-    // Cook would otherwise stand on "Lighting a fire" and never ignite.
+    // Cook would otherwise stand on "Lighting fire" and never ignite.
     let starterNeedsRoom = false;
     if (hasFirestarter && !starterHeld && storedStarter) {
         starterNeedsRoom = !canGivePawn(rec, { ...storedStarter, quantity: 1 });

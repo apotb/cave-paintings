@@ -4477,16 +4477,16 @@ test("cook stokes from beside the fire when the stand is occupied", () => {
     let stoking = 0;
     for (let i = 0; i < 160; i++) {
         world.tick(50);
-        if (rec._settlerAct === "Stoking the fire") stoking++;
+        if (rec._settlerAct === "Stoking fire") stoking++;
         if (Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES
-            && rec._settlerAct !== "Stoking the fire") break;
+            && rec._settlerAct !== "Stoking fire") break;
     }
     assert.ok(
         Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES,
         `never fueled (act=${rec._settlerAct} at ${rec.x.toFixed(0)},${rec.y.toFixed(0)} fuel=${JSON.stringify(fire.fuel)})`
     );
-    assert.notEqual(rec._settlerAct, "Stoking the fire");
-    assert.ok(stoking < 80, `stood on Stoking the fire for ${stoking} ticks`);
+    assert.notEqual(rec._settlerAct, "Stoking fire");
+    assert.ok(stoking < 80, `stood on Stoking fire for ${stoking} ticks`);
 });
 
 test("cook walks onto the interact spot before stoking", () => {
@@ -4514,12 +4514,12 @@ test("cook walks onto the interact spot before stoking", () => {
     let fueledAt = null;
     for (let i = 0; i < 80; i++) {
         world.tick(50);
-        if (rec._settlerAct === "Stoking the fire") stoking++;
+        if (rec._settlerAct === "Stoking fire") stoking++;
         if (!fueledAt && Fire.burnMinutes(fire, getItem) > before + 0.01) {
             fueledAt = { x: rec.x, y: rec.y };
         }
         if (fueledAt && Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES
-            && rec._settlerAct !== "Stoking the fire") break;
+            && rec._settlerAct !== "Stoking fire") break;
     }
     assert.ok(fueledAt, `never fueled (act=${rec._settlerAct} fuel=${JSON.stringify(fire.fuel)})`);
     assert.ok(
@@ -4530,8 +4530,8 @@ test("cook walks onto the interact spot before stoking", () => {
         Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES,
         `expected a full pit, got ${Fire.burnMinutes(fire, getItem)}`
     );
-    assert.notEqual(rec._settlerAct, "Stoking the fire");
-    assert.ok(stoking < 40, `stood on Stoking the fire for ${stoking} ticks`);
+    assert.notEqual(rec._settlerAct, "Stoking fire");
+    assert.ok(stoking < 40, `stood on Stoking fire for ${stoking} ticks`);
 });
 
 test("cook who starts on the campfire still steps onto the spot and stokes", () => {
@@ -4554,12 +4554,12 @@ test("cook who starts on the campfire still steps onto the spot and stokes", () 
     let fueledAt = null;
     for (let i = 0; i < 160; i++) {
         world.tick(50);
-        if (rec._settlerAct === "Stoking the fire") stoking++;
+        if (rec._settlerAct === "Stoking fire") stoking++;
         if (!fueledAt && Fire.burnMinutes(fire, getItem) > 40) {
             fueledAt = { x: rec.x, y: rec.y };
         }
         if (fueledAt && Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES
-            && rec._settlerAct !== "Stoking the fire") break;
+            && rec._settlerAct !== "Stoking fire") break;
     }
     assert.ok(fueledAt, `never fueled (act=${rec._settlerAct} at ${rec.x.toFixed(1)},${rec.y.toFixed(1)} fuel=${JSON.stringify(fire.fuel)})`);
     assert.ok(
@@ -4570,8 +4570,8 @@ test("cook who starts on the campfire still steps onto the spot and stokes", () 
         Fire.burnMinutes(fire, getItem) >= FuelFilter.KEEP_MINUTES,
         `expected a full pit, got ${Fire.burnMinutes(fire, getItem)}`
     );
-    assert.notEqual(rec._settlerAct, "Stoking the fire");
-    assert.ok(stoking < 80, `stood on Stoking the fire for ${stoking} ticks`);
+    assert.notEqual(rec._settlerAct, "Stoking fire");
+    assert.ok(stoking < 80, `stood on Stoking fire for ${stoking} ticks`);
 });
 
 test("always-on off does not top up a fire that already has fuel", () => {
@@ -4651,7 +4651,7 @@ test("cook does not walk to relight when the only fuel is rejected", () => {
     basket.slots[0] = { id: "stick", quantity: 20 };
     const step = workOnce(world, rec);
     assert.equal(step?.walkTo, undefined);
-    assert.notEqual(rec._settlerAct, "Lighting a fire");
+    assert.notEqual(rec._settlerAct, "Lighting fire");
     assert.equal(fire.id, "unlit_campfire");
     assert.equal(basket.slots[0]?.quantity, 20);
 
@@ -4665,7 +4665,7 @@ test("cook does not walk to relight when the only fuel is rejected", () => {
     basket.slots[1] = { id: "apple", quantity: 4 };
     const cooking = workOnce(world, rec);
     assert.equal(cooking?.walkTo, undefined);
-    assert.notEqual(rec._settlerAct, "Lighting a fire");
+    assert.notEqual(rec._settlerAct, "Lighting fire");
     assert.equal(fire.id, "unlit_campfire");
     assert.equal(basket.slots[0]?.quantity, 20);
     assert.equal(basket.slots[1]?.quantity, 4);
@@ -4714,15 +4714,15 @@ test("cook clears a full hotbar before lighting instead of standing on it", () =
     let lighting = 0;
     for (let i = 0; i < 160; i++) {
         world.tick(50);
-        if (rec._settlerAct === "Lighting a fire") lighting++;
+        if (rec._settlerAct === "Lighting fire") lighting++;
         if (fire.id === "campfire" && (fire.burnRemaining || 0) > 0) break;
     }
     assert.equal(fire.id, "campfire", `fire stayed cold act=${rec._settlerAct} inv=${JSON.stringify(rec.inventory)}`);
     assert.ok((fire.burnRemaining || 0) > 0);
-    assert.ok(lighting < 40, `stood on Lighting a fire for ${lighting} ticks`);
+    assert.ok(lighting < 40, `stood on Lighting fire for ${lighting} ticks`);
 });
 
-test("cook does not stand on Lighting a fire when the starter will not fit", () => {
+test("cook does not stand on Lighting fire when the starter will not fit", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {
         kc: 1600,
@@ -4746,10 +4746,10 @@ test("cook does not stand on Lighting a fire when the starter will not fit", () 
     let lighting = 0;
     for (let i = 0; i < 40; i++) {
         world.tick(50);
-        if (rec._settlerAct === "Lighting a fire") lighting++;
+        if (rec._settlerAct === "Lighting fire") lighting++;
     }
     assert.equal(fire.id, "unlit_campfire");
-    assert.ok(lighting < 8, `stood on Lighting a fire for ${lighting} ticks`);
+    assert.ok(lighting < 8, `stood on Lighting fire for ${lighting} ticks`);
 });
 
 test("cook lights a cold campfire when allowed fuel is in storage", () => {

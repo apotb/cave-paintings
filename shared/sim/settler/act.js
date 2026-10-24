@@ -788,7 +788,7 @@ function goOrWalk(world, rec, target) {
         } else if (dist <= 8) rec._poseStill = (rec._poseStill || 0) + 1;
         else rec._poseStill = 0;
         // Pathing parks a few pixels off an open pose and calls that
-        // arrival. They then sit on "Stoking the fire" and never step
+        // arrival. They then sit on "Stoking fire" and never step
         // the rest of the way. The pose is open, so put them on it.
         // Only this last gap: a wider snap pulls a hauler off a detour.
         const parked = !!rec._closeOpenPose && dist <= 8 && (rec._poseStill || 0) >= 6
