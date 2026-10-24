@@ -1762,9 +1762,12 @@
     /**
      * Pathing grows the body so settlers don't kiss trunks. Campfires
      * and drying racks leave a gap the body can take, and the same
-     * margin seals the row into a wall they pace along. A shallow clip
-     * of the edge still counts as the gap; standing in the middle of
-     * one does not. A skinworking bench is not part of that opening.
+     * margin seals the row into a wall they pace along. The opening
+     * includes the approach, not only the feet already between the
+     * stations — otherwise the walker slides along the face and waits
+     * before stepping through. A shallow clip of the edge still counts
+     * as the gap; standing in the middle of one does not. A
+     * skinworking bench is not part of that opening.
      */
     _gapClear(creature, body, pad) {
         const p = Math.max(0, Number(pad) || 0);
@@ -1788,6 +1791,30 @@
         return this._betweenStations(body, hits);
     },
 
+    /**
+     * The pathing pad overlaps a campfire or drying rack, and the body
+     * itself does not. Sliding on that margin is the sideways shuffle
+     * in front of the gap. Trunks and real overlaps still slide.
+     */
+    _gapMarginOnly(creature, x, y) {
+        if (this._partyPoseBlocked(creature, x, y, 0, {
+            load: false,
+            sleepFootprint: false
+        })) return false;
+        const body = this._creatureBodyAt(creature, x, y);
+        const hits = [];
+        this._aabbHitsThing(
+            body.left - 2, body.right + 2, body.top - 2, body.bottom + 2,
+            x, y, 64, creature, hits
+        );
+        if (!hits.length) return false;
+        for (let i = 0; i < hits.length; i++) {
+            const def = thingDefs().get(hits[i].t?.id);
+            if (!def || !Place.isGapFurniture?.(def)) return false;
+        }
+        return true;
+    },
+
     _betweenStations(body, hits) {
         const seen = new Set();
         for (let i = 0; i < hits.length; i++) {
@@ -1807,7 +1834,11 @@
             const def = thingDefs().get(rect.t.id);
             if (!def || !Place.isGapFurniture?.(def)) continue;
             const lanes = Path.gapLanes(hits.concat(rect), { squeeze });
-            if (Path.inGapLane(lanes, feetX, feetY, 8)) return true;
+            // Same reach as the path slack. A shorter one left the corridor
+            // open to A* and closed to the walker, so the heading into the
+            // gap was thrown out and they slid along the station, stopped,
+            // then stepped through a second later.
+            if (Path.inGapLane(lanes, feetX, feetY, 20)) return true;
         }
         return false;
     },

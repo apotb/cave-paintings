@@ -1428,7 +1428,18 @@
                 from, nx, ny, blocked, { bank: this._bankSlide },
                 { look, goal: to, cell: TILE, prefer: this._shorePrefer }
             );
-            if (slid) {
+            // Pad 2 kisses a campfire or rack before the body does. Treating
+            // that as a wall zeroes the heading and they strafe, then wait,
+            // then step through. The body can still walk this heading.
+            const gapMargin = world?.gapMarginOnly?.(
+                mob, from.x + nx * look, from.y + ny * look
+            );
+            if (gapMargin) {
+                this._bankSlide = null;
+                this._bankTravel = 0;
+                this._bankFlipped = false;
+                this._heldSlide = null;
+            } else if (slid) {
                 nx = slid.nx;
                 ny = slid.ny;
                 this._bankSlide = slid.bank;

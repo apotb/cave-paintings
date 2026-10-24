@@ -475,11 +475,14 @@
         while (path.length) {
             const dist = hypot(from.x - path[0].x, from.y - path[0].y);
             if (!(dist < WAYPOINT_PX)) break;
-            // The gap stand sits on the rack. Dropping it from 10px away
-            // turns the settler at the next waypoint while they are still
-            // in front of the row, and the wall slide paces them there.
+            // The gap stand sits on the rack. Dropping it from most of the
+            // 10px window turns the settler at the next waypoint while they
+            // are still in front of the row, and the wall slide paces them
+            // there. Inside 6px they are already in the mouth: keeping the
+            // stand lets the next replan aim them back out, which is the
+            // step-left then step-right hitch.
             if (
-                dist > ARRIVE_PX
+                dist > 6
                 && path.length > 1
                 && !losClear(from.x, from.y, path[1].x, path[1].y, blocked, {
                     stepPx: 3,
@@ -629,7 +632,7 @@
                         planned = other;
                     }
                 }
-                path = planned;
+                path = consumeWaypoints(from, planned, blocked);
                 pathGoal = dest;
                 stuckMs = 0;
                 replanned = true;

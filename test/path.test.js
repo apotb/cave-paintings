@@ -1192,3 +1192,105 @@ test("a settler at sleep tick speed still walks between drying racks", () => {
     const drift = cross(100, 24, 100);
     assert.ok(drift < 28, `should use a gap, drifted ${drift.toFixed(1)}px`);
 });
+
+test("a settler walks between a campfire and a drying rack without shuffling", () => {
+    const Place = require("../shared/place");
+    const Settlement = require("../shared/settlement");
+    const { createTestWorld, originChunk } = require("./helpers/simWorld");
+    const prevNow = Date.now;
+    let now = prevNow();
+    Date.now = () => now;
+    try {
+        function cross(startX) {
+            now += 5000;
+            const { world, pawn } = createTestWorld();
+            const chunk = originChunk(world);
+            const ty = 8;
+            for (const it of [
+                { id: "campfire", tx: 5 },
+                { id: "drying_rack", tx: 6 }
+            ]) {
+                const def = world._thingDef(it.id);
+                const pos = Place.footprintWorldPos(it.tx, ty, 0, def.footprint || [1, 1], 16);
+                chunk.things.push({
+                    uid: `${it.id}-${startX}`,
+                    id: it.id,
+                    x: pos.x,
+                    y: pos.y,
+                    rot: 0,
+                    tx: it.tx,
+                    ty
+                });
+            }
+            world._chunkRectCache = null;
+            const rackY = (ty + 1) * 16;
+            const settle = Settlement.createSettlement({
+                x: startX,
+                y: rackY + 40,
+                ownerId: pawn.id
+            });
+            const rec = world._settlerFromSnap({
+                id: "settler1",
+                name: "Parked",
+                x: startX,
+                y: rackY + 40,
+                ownerId: pawn.id,
+                homeSettlementId: settle.id,
+                inventory: [null, null, null, null, null]
+            });
+            world.settlements.push(settle);
+            world.settlers.push(rec);
+            const cc = world._ensureSettlerCreature(rec);
+            let flips = 0;
+            let prevSign = 0;
+            let still = 0;
+            let maxStill = 0;
+            let shuffle = 0;
+            let minY = rec.y;
+            for (let i = 0; i < 120; i++) {
+                now += 16;
+                cc.x = rec.x;
+                cc.y = rec.y;
+                cc.role = "settler";
+                cc.homeSettlementId = settle.id;
+                cc._resting = false;
+                world._aiStuckDt = 16;
+                cc.ai._walkToward(startX, rackY - 48, false, world._aiWorld(), 16);
+                cc.applyDesiredVel(16);
+                const bx = cc.x;
+                const by = cc.y;
+                world._stepSettlerPose(cc, 0.016);
+                rec.x = cc.x;
+                rec.y = cc.y;
+                const moved = Math.hypot(cc.x - bx, cc.y - by);
+                const vx = cc.vx || 0;
+                const vy = cc.vy || 0;
+                if (rec.y > rackY - 8) {
+                    const sign = Math.abs(vx) > 8 ? Math.sign(vx) : 0;
+                    if (sign && prevSign && sign !== prevSign) flips++;
+                    if (sign) prevSign = sign;
+                    if (Math.abs(vx) > 36 && Math.abs(vy) < 12) shuffle++;
+                    if (moved < 0.15) {
+                        still++;
+                        maxStill = Math.max(maxStill, still);
+                    } else still = 0;
+                }
+                if (rec.y < minY) minY = rec.y;
+                if (rec.y < rackY - 16) break;
+            }
+            assert.ok(
+                minY < rackY - 12,
+                `from ${startX} should cross, ended ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`
+            );
+            assert.ok(flips < 2, `from ${startX} reversed in front of the gap (${flips})`);
+            assert.equal(shuffle, 0, `from ${startX} strafed along the stations (${shuffle} frames)`);
+            assert.ok(maxStill < 8, `from ${startX} stood still for ${maxStill} frames`);
+        }
+        cross(88);
+        cross(96);
+        cross(100);
+        cross(104);
+    } finally {
+        Date.now = prevNow;
+    }
+});
