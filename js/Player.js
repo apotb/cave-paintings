@@ -3042,8 +3042,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     _cancelCraft() {
         if (!this._craftChannel) return;
+        const fromQueue = !!this._craftChannel.fromQueue;
         this._craftChannel = null;
         this._hideChannelBar();
+        if (fromQueue) this.scene._onCraftQueueCancelled?.();
     }
 
     _tickCraft(delta) {
@@ -3077,11 +3079,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._showChannelBar(Phaser.Math.Clamp(prog, 0, 1));
         if (this._craftChannel.remaining > 0) return;
 
+        const fromQueue = !!this._craftChannel.fromQueue;
         const repeatLeft = Math.max(1, Math.floor(Number(this._craftChannel.repeat) || 1));
         this._craftChannel = null;
         this.scene._finishCraft?.(recipe, this);
         this.scene.hotbar && (this.scene.hotbar.dirty = true);
-        if (!(repeatLeft > 1 && this.beginCraft(recipe, station, repeatLeft - 1))) {
+        if (fromQueue) {
+            this.scene._onCraftQueueStep?.();
+            if (!this._craftChannel) this._hideChannelBar();
+        } else if (!(repeatLeft > 1 && this.beginCraft(recipe, station, repeatLeft - 1))) {
             this._hideChannelBar();
         }
         if (this.isControlled?.()) {

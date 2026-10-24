@@ -681,8 +681,19 @@
         const w = d?.gridW || 0;
         const h = d?.gridH || 0;
         if (w > 0 && h > 0) {
-            return pointer.x >= x && pointer.x <= x + w
-                && pointer.y >= y && pointer.y <= y + h;
+            let left = x;
+            let top = y;
+            let right = x + w;
+            let bottom = y + h;
+            const extra = this._craftQueueScreenSpan?.();
+            if (extra) {
+                left = Math.min(left, extra.left);
+                right = Math.max(right, extra.right);
+                top = Math.min(top, extra.top);
+                bottom = Math.max(bottom, extra.bottom);
+            }
+            return pointer.x >= left && pointer.x <= right
+                && pointer.y >= top && pointer.y <= bottom;
         }
         if (!this.craftContainer.getBounds) return false;
         return Phaser.Geom.Rectangle.Contains(this.craftContainer.getBounds(), pointer.x, pointer.y);

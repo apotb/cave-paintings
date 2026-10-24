@@ -252,6 +252,8 @@
         this._craftStationThing = null;
         this._craftFromStation = false;
         this._craftPage = 0;
+        this._craftQueue = [];
+        this._craftQueueLive = false;
         this.craftContainer = this.add.container(0, 0).setVisible(false);
         this.uiLayer.add(this.craftContainer);
         this._data = [];
@@ -372,11 +374,13 @@
             this.positionCraftMenu();
             this._layoutCraftTakeButton();
             this._layoutCraftSettle();
+            this._layoutCraftQueue();
             return;
         }
         const keepRecipeId = this._craftHoverRecipeId();
         this._craftMenuRefreshing = true;
         if (this._hoverTarget?.parentContainer === this.craftContainer) this._hoverTarget = null;
+        this._detachCraftQueueLayer();
         this.craftContainer.removeAll(true);
         this._data = [];
         this._craftMenuSig = sig;
@@ -418,6 +422,7 @@
         this._craftMenuData = {
             cols, rows, gridW,
             gridH: gridY + gridH,
+            queueTop: gridY,
             slotW, slotH, pad,
             pages
         };
@@ -455,7 +460,7 @@
                 lines.push('—');
 
                 for (const ingredient of recipe.ingredients) {
-                    const have = this._craftIngredientHave(ingredient);
+                    const have = Math.max(0, this._craftIngredientHave(ingredient) - this._craftQueuedNeed(ingredient));
                     lines.push(`${this._craftIngredientLabel(ingredient)}: ${have}/${ingredient.qty}`);
                 }
 
@@ -523,9 +528,11 @@
             this._data.push({ slot, icon, qty: quantity, recipe, tt });
         }
 
+        this._attachCraftQueueLayer();
         this.positionCraftMenu();
         this._layoutCraftTakeButton();
         this._layoutCraftSettle();
+        this._layoutCraftQueue();
         this._craftMenuRefreshing = false;
         this._restoreCraftTooltip(keepRecipeId);
     },
@@ -847,6 +854,12 @@
             if (!key || icon.texture?.key === key || !this.textures?.exists?.(key)) continue;
             icon.setTexture(key);
         }
+        const views = this._craftQueueViews || [];
+        for (let i = 0; i < views.length; i++) {
+            const view = views[i];
+            if (!view?.slot?.visible) continue;
+            this._setCraftQueueIcon(view);
+        }
     },
 
     _buildCraftTakeButton() {
@@ -1010,7 +1023,7 @@
         }).map((meta) => {
             const r = meta.recipe, ingredients = [];
             let requireThing = null, requireStation = null, quantity = 1;
-            let craftSeconds = 0, requireTool = null;
+            let craftSeconds = null, requireTool = null;
             for (const [k, v] of Object.entries(r)) {
                 if (k === "QUANTITY") quantity = +v || 1;
                 else if (k === "REQUIRE_THING") requireThing = String(v);
@@ -1046,7 +1059,8 @@
                 quantity,
                 requireThing,
                 requireStation,
-                craftSeconds,
+                // No explicit time: half a second, and the click joins the queue.
+                craftSeconds: craftSeconds == null ? 0.5 : craftSeconds,
                 requireTool
             };
         });
@@ -1356,18 +1370,496 @@
         return Math.max(1, Math.ceil(left / wear));
     },
 
+    /**
+     * Half-size column to the right of the recipe grid.
+     * The first run sits at the top of the columns and crafts first.
+     * Later runs appear under it. Back-to-back crafts of the same item share one box.
+     */
+    _craftQueueGeom() {
+        const d = this._craftMenuData;
+        const slotW = d?.slotW || 64;
+        const slotH = d?.slotH || 64;
+        const pad = d?.pad ?? 4;
+        const qw = slotW / 2;
+        const qh = slotH / 2;
+        const gridW = d?.gridW || 0;
+        const gridH = d?.gridH || 0;
+        return { qw, qh, pad, gridW, gridH, top: d?.queueTop || 0, x: gridW + pad };
+    },
+
+    _craftQueueSame(a, b) {
+        return !!(a && b && a.id === b.id);
+    },
+
+    /** Consecutive crafts of one item, in queue order. */
+    _craftQueueGroups(jobs) {
+        const list = jobs || this._craftQueue || [];
+        const groups = [];
+        for (let i = 0; i < list.length; i++) {
+            const recipe = list[i]?.recipe;
+            if (!recipe) continue;
+            const prev = groups[groups.length - 1];
+            if (prev && this._craftQueueSame(prev.recipe, recipe)) prev.count += 1;
+            else groups.push({ recipe, count: 1 });
+        }
+        return groups;
+    },
+
+    _craftQueueSlotPos(i) {
+        const g = this._craftQueueGeom();
+        const step = g.qh + g.pad;
+        return {
+            x: g.x,
+            y: g.top + i * step,
+            w: g.qw,
+            h: g.qh
+        };
+    },
+
+    _craftQueueLimit() {
+        const g = this._craftQueueGeom();
+        const step = g.qh + g.pad;
+        if (!(step > 0)) return 1;
+        const top = (this.craftContainer?.y || 0) + g.top;
+        const screenH = this.scale?.height;
+        const space = screenH > top ? screenH - top : g.qh;
+        return Math.max(1, Math.floor((space + g.pad) / step));
+    },
+
+    /**
+     * How many more crafts fit. A run of the same item shares one box,
+     * so it does not spend another slot. A new item needs a free box.
+     */
+    _craftQueueRoom(recipe) {
+        const groups = this._craftQueueGroups();
+        const limit = this._craftQueueLimit();
+        const tail = groups[groups.length - 1];
+        if (recipe && tail && this._craftQueueSame(tail.recipe, recipe)) return 999;
+        const open = limit - groups.length;
+        if (!recipe) return Math.max(0, open);
+        return open > 0 ? 999 : 0;
+    },
+
+    _craftQueueScreenSpan() {
+        const jobs = this._craftQueue;
+        const d = this._craftMenuData;
+        const c = this.craftContainer;
+        if (!this.craftMenuVisible || !jobs?.length || !d || !c) return null;
+        const g = this._craftQueueGeom();
+        const n = this._craftQueueGroups(jobs).length;
+        const localBottom = g.top + n * g.qh + (n - 1) * g.pad;
+        return {
+            left: c.x + g.gridW,
+            right: c.x + g.x + g.qw,
+            top: c.y + g.top,
+            bottom: c.y + localBottom
+        };
+    },
+
+    _craftIngredientsMatch(a, b) {
+        if (!a || !b) return false;
+        if (a.hideStage || b.hideStage) return !!a.hideStage && a.hideStage === b.hideStage;
+        if (a.id !== b.id) return false;
+        return (a.toolClass || null) === (b.toolClass || null);
+    },
+
+    _craftQueuedNeed(ingredient) {
+        let n = 0;
+        for (const job of this._craftQueue || []) {
+            for (const ing of job.recipe?.ingredients || []) {
+                if (!this._craftIngredientsMatch(ing, ingredient)) continue;
+                n += Math.max(1, Math.floor(Number(ing.qty) || 1));
+            }
+        }
+        return n;
+    },
+
+    _craftToolKey(recipe) {
+        const rt = recipe?.requireTool;
+        if (!rt) return "";
+        const classes = (typeof Carry !== "undefined" && Carry.recipeToolClasses)
+            ? Carry.recipeToolClasses(rt).slice()
+            : (rt.toolClass ? [String(rt.toolClass)] : []);
+        if (!classes.length) return "";
+        classes.sort();
+        return classes.join(",");
+    },
+
+    _craftQueuedToolUses(recipe) {
+        const key = this._craftToolKey(recipe);
+        if (!key) return 0;
+        let n = 0;
+        for (const job of this._craftQueue || []) {
+            if (this._craftToolKey(job.recipe) !== key) continue;
+            if (this._craftToolRepeats(job.recipe) == null) continue;
+            n += 1;
+        }
+        return n;
+    },
+
+    /** How many more of this recipe fit in pockets, the held tool, and the queue. */
+    _craftQueueAfford(recipe, pawn) {
+        const who = pawn || this.player;
+        if (!recipe) return 0;
+        if (recipe.requireThing && !this.hasNearbyThing(recipe.requireThing, who)) return 0;
+        if (recipe.requireStation && !this._findNearbyCraftStation(recipe.requireStation, who)) return 0;
+        if (recipe.requireTool && !this._heldMatchesCraftTool(recipe.requireTool, who)) return 0;
+        let n = 999;
+        for (const ing of recipe.ingredients || []) {
+            const qty = Math.max(1, Math.floor(Number(ing.qty) || 1));
+            const have = (this._craftIngredientHave(ing, who) || 0) - this._craftQueuedNeed(ing);
+            n = Math.min(n, Math.floor(have / qty));
+        }
+        const tool = this._craftToolRepeats(recipe, who);
+        if (tool != null) n = Math.min(n, tool - this._craftQueuedToolUses(recipe));
+        return Math.max(0, Math.floor(n));
+    },
+
+    _craftPlayerBusy(player) {
+        if (!player) return true;
+        return !!(
+            player._eatChannel || player._tendChannel || player._skinChannel
+            || player._fleshChannel || player._brainChannel || player._craftChannel
+            || player._bodyDead || player.isAttacking?.() || player.isVomiting?.()
+            || player.isIncapacitated?.()
+        );
+    },
+
+    _stationForCraft(recipe) {
+        if (!recipe) return null;
+        if (recipe.requireStation) {
+            return this._findNearbyCraftStation(recipe.requireStation) || this._craftStationThing || null;
+        }
+        if (recipe.requireThing) return this._findNearbyThing(recipe.requireThing);
+        return null;
+    },
+
+    _enqueueCrafts(recipe, count) {
+        let n = Math.floor(Number(count));
+        if (!Number.isFinite(n) || n < 1) return 0;
+        if (!this._craftQueue) this._craftQueue = [];
+        n = Math.min(n, this._craftQueueAfford(recipe), this._craftQueueRoom(recipe));
+        if (n < 1) return 0;
+        for (let i = 0; i < n; i++) this._craftQueue.push({ recipe });
+        this._pumpCraftQueue();
+        this._layoutCraftQueue();
+        return n;
+    },
+
+    _pumpCraftQueue() {
+        const q = this._craftQueue;
+        if (!q?.length) {
+            this._craftQueueLive = false;
+            return;
+        }
+        const player = this.player;
+        if (!player || player._craftChannel || this._craftPlayerBusy(player)) return;
+        let guard = q.length;
+        while (q.length && guard-- > 0) {
+            const job = q[0];
+            const recipe = job?.recipe;
+            if (!recipe || !this.canCraft(recipe, player)) {
+                q.shift();
+                continue;
+            }
+            const station = this._stationForCraft(recipe);
+            const needPlace = !!(recipe.requireStation || recipe.requireThing);
+            if (needPlace && !station) {
+                q.shift();
+                continue;
+            }
+            const ok = player.beginCraft?.(recipe, station, 1) === true;
+            if (player._craftChannel) {
+                if (ok) {
+                    player._craftChannel.fromQueue = true;
+                    this._craftQueueLive = true;
+                }
+                return;
+            }
+            q.shift();
+        }
+        this._craftQueueLive = false;
+    },
+
+    _onCraftQueueStep() {
+        this._craftQueueLive = false;
+        if (this._craftQueue?.length) this._craftQueue.shift();
+        this._pumpCraftQueue();
+        this._layoutCraftQueue();
+    },
+
+    _onCraftQueueCancelled() {
+        this._craftQueue = [];
+        this._craftQueueLive = false;
+        this._layoutCraftQueue();
+    },
+
+    _updateCraftQueue() {
+        const player = this.player;
+        if (player?._bodyDead) {
+            if (this._craftQueue?.length || this._craftQueueLive) {
+                this._craftQueue = [];
+                this._craftQueueLive = false;
+                this._layoutCraftQueue();
+            }
+            this._drawCraftQueueSweep();
+            return;
+        }
+        const ch = player?._craftChannel;
+        if (this._craftQueueLive && (!ch || !ch.fromQueue)) {
+            this._craftQueue = [];
+            this._craftQueueLive = false;
+            this._layoutCraftQueue();
+        } else if (!ch && this._craftQueue?.length && !this._craftPlayerBusy(player)) {
+            this._pumpCraftQueue();
+            this._layoutCraftQueue();
+        }
+        if (this.craftMenuVisible) this._layoutCraftQueue();
+        this._drawCraftQueueSweep();
+    },
+
+    _detachCraftQueueLayer() {
+        const layer = this._craftQueueLayer;
+        if (!layer?.active) return;
+        layer.parentContainer?.remove(layer);
+    },
+
+    _attachCraftQueueLayer() {
+        const layer = this._craftQueueLayer;
+        if (!layer?.active || !this.craftContainer) return;
+        if (layer.parentContainer !== this.craftContainer) this.craftContainer.add(layer);
+    },
+
+    _ensureCraftQueueLayer() {
+        let layer = this._craftQueueLayer;
+        if (!layer?.active || !layer.scene) {
+            layer = this.add.container(0, 0).setVisible(false);
+            const sweep = this.add.graphics();
+            layer.add(sweep);
+            this._craftQueueLayer = layer;
+            this._craftQueueSweep = sweep;
+            this._craftQueueViews = [];
+            this._craftQueueSig = "";
+        }
+        this._attachCraftQueueLayer();
+        return layer;
+    },
+
+    _makeCraftQueueView(layer) {
+        const slot = this.add.image(0, 0, "slot").setOrigin(0, 0);
+        const icon = this.add.image(0, 0, "slot").setOrigin(0.5, 0.5);
+        const qty = crispUiText(this.add.text(0, 0, "", {
+            fontSize: `${pixelUiFontSize(8, 1)}px`,
+            fontFamily: PIXEL_UI_FONT,
+            stroke: "#000",
+            strokeThickness: 2,
+            align: "right"
+        }).setOrigin(1, 1).setVisible(false));
+        const view = { slot, icon, qty, recipe: null };
+        slot.on("pointerover", (p) => {
+            const recipe = view.recipe;
+            if (!recipe || !slot.visible) return;
+            this.showTooltip(() => {
+                const item = this.getItem(recipe.id);
+                const stack = this._craftPreviewStack(recipe);
+                return this.formatItemTooltip(item, recipe.quantity || 1, null, stack);
+            }, p.x, p.y, slot);
+        });
+        slot.on("pointerout", () => {
+            if (this._tooltipTarget === slot) this.hideTooltip();
+        });
+        slot.on("pointerdown", (_pointer, _x, _y, event) => {
+            event?.stopPropagation?.();
+        });
+        layer.add(slot);
+        layer.add(icon);
+        layer.add(qty);
+        return view;
+    },
+
+    _setCraftQueueIcon(view) {
+        const icon = view?.icon;
+        const recipe = view?.recipe;
+        if (!icon?.active || !recipe) return;
+        const key = this._craftRecipeIconKey(recipe);
+        if (!key || !this.textures?.exists?.(key) || icon.texture?.key === key) return;
+        icon.setTexture(key);
+    },
+
+    _craftQueueSigNow() {
+        const d = this._craftMenuData || {};
+        const ids = (this._craftQueue || []).map((j) => j.recipe?.id || "").join(",");
+        return [
+            this.craftMenuVisible ? 1 : 0,
+            ids,
+            d.slotW, d.slotH, d.pad, d.gridW, d.gridH, d.queueTop,
+            this.uiScale || 1
+        ].join("|");
+    },
+
+    _layoutCraftQueue() {
+        if (!this.craftContainer?.scene && !this._craftQueue?.length) return;
+        const layer = this._ensureCraftQueueLayer();
+        if (!layer) return;
+        const jobs = this._craftQueue || [];
+        const groups = this._craftQueueGroups(jobs);
+        const show = !!(this.craftMenuVisible && groups.length && this._craftMenuData);
+        const sig = this._craftQueueSigNow();
+        if (sig === this._craftQueueSig) {
+            layer.setVisible(show);
+            return;
+        }
+        this._craftQueueSig = sig;
+        const views = this._craftQueueViews || (this._craftQueueViews = []);
+        const ui = this.uiScale || 1;
+        while (views.length < groups.length) views.push(this._makeCraftQueueView(layer));
+        for (let i = 0; i < views.length; i++) {
+            const view = views[i];
+            const group = groups[i];
+            const on = !!(show && group);
+            view.recipe = group?.recipe || null;
+            view.count = group?.count || 0;
+            view.slot.setVisible(on);
+            view.icon.setVisible(on);
+            if (!on) {
+                view.qty.setVisible(false);
+                if (view.slot.input) view.slot.disableInteractive();
+                if (this._tooltipTarget === view.slot) this.hideTooltip?.();
+                continue;
+            }
+            const pos = this._craftQueueSlotPos(i, groups.length);
+            view.slot.setScale(ui / 2);
+            view.slot.setPosition(Math.round(pos.x), Math.round(pos.y));
+            view.icon.setScale(1.5 * ui);
+            const cx = view.slot.x + view.slot.displayWidth / 2;
+            const cy = view.slot.y + view.slot.displayHeight / 2;
+            view.icon.setPosition(Math.round(cx), Math.round(cy));
+            this._setCraftQueueIcon(view);
+            const run = group.count;
+            const out = Math.floor(Number(group.recipe?.quantity) || 1);
+            const num = run > 1 ? run : (out > 1 ? out : 0);
+            view.qty.setText(num > 0 ? String(num) : "");
+            view.qty.setVisible(num > 0);
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(view.qty, 8, ui);
+            view.qty.setStroke("#000000", 2);
+            const inset = 2 * ui;
+            view.qty.setPosition(
+                Math.round(view.slot.x + view.slot.displayWidth - inset),
+                Math.round(view.slot.y + view.slot.displayHeight - inset)
+            );
+            if (!view.slot.input) view.slot.setInteractive({ cursor: "default" });
+            else view.slot.input.enabled = true;
+        }
+        if (this._craftQueueSweep) layer.bringToTop(this._craftQueueSweep);
+        for (let i = 0; i < views.length; i++) {
+            if (views[i].qty?.visible) layer.bringToTop(views[i].qty);
+        }
+        layer.setVisible(show);
+        if (show) this.craftContainer?.bringToTop?.(layer);
+    },
+
+    /**
+     * Clockwise pie from 12 o'clock, clipped to the slot.
+     * The filled sector is the trail; the last edge is the spinning line.
+     */
+    _craftSweepPoly(x, y, w, h, progress) {
+        const p = Number(progress);
+        if (!(p > 0) || !(w > 0) || !(h > 0)) return [];
+        const left = x;
+        const top = y;
+        const right = x + w;
+        const bottom = y + h;
+        if (p >= 1) {
+            return [
+                { x: left, y: top },
+                { x: right, y: top },
+                { x: right, y: bottom },
+                { x: left, y: bottom }
+            ];
+        }
+        const cx = (left + right) / 2;
+        const cy = (top + bottom) / 2;
+        const start = -Math.PI / 2;
+        const sweep = p * Math.PI * 2;
+        const tau = Math.PI * 2;
+        const norm = (angle) => {
+            let d = (angle - start) % tau;
+            if (d < 0) d += tau;
+            return d;
+        };
+        const edge = (angle) => {
+            const dx = Math.cos(angle);
+            const dy = Math.sin(angle);
+            let t = Infinity;
+            if (dx > 1e-8) t = Math.min(t, (right - cx) / dx);
+            else if (dx < -1e-8) t = Math.min(t, (left - cx) / dx);
+            if (dy > 1e-8) t = Math.min(t, (bottom - cy) / dy);
+            else if (dy < -1e-8) t = Math.min(t, (top - cy) / dy);
+            if (!Number.isFinite(t) || t < 0) t = 0;
+            return { x: cx + dx * t, y: cy + dy * t };
+        };
+        const pts = [{ x: cx, y: cy }, edge(start)];
+        const corners = [
+            { x: right, y: top },
+            { x: right, y: bottom },
+            { x: left, y: bottom },
+            { x: left, y: top }
+        ];
+        const mid = [];
+        for (let i = 0; i < corners.length; i++) {
+            const c = corners[i];
+            const d = norm(Math.atan2(c.y - cy, c.x - cx));
+            if (d > 1e-3 && d < sweep - 1e-3) mid.push({ x: c.x, y: c.y, d });
+        }
+        mid.sort((a, b) => a.d - b.d);
+        for (let i = 0; i < mid.length; i++) pts.push({ x: mid[i].x, y: mid[i].y });
+        pts.push(edge(start + sweep));
+        return pts;
+    },
+
+    _craftQueueProgress() {
+        const ch = this.player?._craftChannel;
+        if (!ch?.fromQueue || !(ch.max > 0)) return 0;
+        return Phaser.Math.Clamp(1 - ch.remaining / ch.max, 0, 1);
+    },
+
+    _drawCraftQueueSweep() {
+        const g = this._craftQueueSweep;
+        if (!g?.active) return;
+        g.clear();
+        const slot = this._craftQueueViews?.[0]?.slot;
+        if (!slot?.visible || !this.craftMenuVisible || !this._craftQueueLive) return;
+        const box = { x: slot.x, y: slot.y, w: slot.displayWidth, h: slot.displayHeight };
+        if (!(box.w > 0) || !(box.h > 0)) return;
+        const progress = this._craftQueueProgress();
+        if (!(progress > 0)) return;
+        const poly = this._craftSweepPoly(box.x, box.y, box.w, box.h, progress);
+        if (poly.length < 3) return;
+        g.fillStyle(0x8a8a8a, 0.78);
+        g.beginPath();
+        g.moveTo(poly[0].x, poly[0].y);
+        for (let i = 1; i < poly.length; i++) g.lineTo(poly[i].x, poly[i].y);
+        g.closePath();
+        g.fillPath();
+        if (progress < 0.999) {
+            const end = poly[poly.length - 1];
+            const cx = box.x + box.w / 2;
+            const cy = box.y + box.h / 2;
+            const thick = Math.max(1, Math.round(Math.min(box.w, box.h) * 0.06));
+            g.lineStyle(thick, 0xe4e4e4, 0.95);
+            g.beginPath();
+            g.moveTo(cx, cy);
+            g.lineTo(end.x, end.y);
+            g.strokePath();
+        }
+    },
+
     doCraft(recipe, count = 1) {
         let n = Math.floor(Number(count));
         if (!Number.isFinite(n) || n < 1) n = 1;
         n = Math.min(999, n);
-        if (recipe.craftSeconds > 0) {
-            let station = null;
-            if (recipe.requireStation) {
-                station = this._findNearbyCraftStation(recipe.requireStation) || this._craftStationThing;
-            } else if (recipe.requireThing) {
-                station = this._findNearbyThing(recipe.requireThing);
-            }
-            return this.player.beginCraft?.(recipe, station, n) !== false;
+        if ((Number(recipe.craftSeconds) || 0) > 0) {
+            return this._enqueueCrafts(recipe, n) > 0;
         }
         if (this.simAuth()) {
             this._finishCraft(recipe, this.player, n);

@@ -743,7 +743,8 @@
         "recipe": {
             "sharp_stick": 1,
             "stick": 2,
-            "leaf_cord": 6
+            "leaf_cord": 6,
+            "CRAFT_SECONDS": 4
         }
     },
     {
@@ -809,7 +810,8 @@
                 "toolClass": "spear_tip"
             },
             "leaf_cord": 2,
-            "pitch": 1
+            "pitch": 1,
+            "CRAFT_SECONDS": 4
         }
     },
     {
@@ -892,7 +894,8 @@
         "recipe": {
             "stick": 2,
             "leaf_cord": 3,
-            "sharp_stick": 1
+            "sharp_stick": 1,
+            "CRAFT_SECONDS": 4
         }
     },
     {
@@ -909,7 +912,8 @@
         },
         "recipe": {
             "leaf_cord": 6,
-            "leaf": 20
+            "leaf": 20,
+            "CRAFT_SECONDS": 3
         }
     },
     {
@@ -932,7 +936,8 @@
         },
         "recipe": {
             "leaf_cord": 5,
-            "leaf": 15
+            "leaf": 15,
+            "CRAFT_SECONDS": 3
         }
     },
     {
@@ -952,7 +957,8 @@
         },
         "recipe": {
             "leaf_cord": 3,
-            "leaf": 12
+            "leaf": 12,
+            "CRAFT_SECONDS": 3
         }
     },
     {
@@ -1220,7 +1226,8 @@
         "recipe": {
             "leaf_cord": 3,
             "leaf": 10,
-            "stick": 2
+            "stick": 2,
+            "CRAFT_SECONDS": 3
         }
     },
     {
@@ -1230,7 +1237,8 @@
         "maxStack": 99,
         "recipe": {
             "stick": 4,
-            "leaf_cord": 4
+            "leaf_cord": 4,
+            "CRAFT_SECONDS": 3
         }
     },
     {
@@ -1247,7 +1255,8 @@
         "recipe": {
             "stick_frame": 5,
             "stick": 3,
-            "leaf_cord": 12
+            "leaf_cord": 12,
+            "CRAFT_SECONDS": 8
         }
     },
     {
@@ -1265,7 +1274,8 @@
         "recipe": {
             "stick_frame": 2,
             "stick": 10,
-            "leaf_cord": 2
+            "leaf_cord": 2,
+            "CRAFT_SECONDS": 8
         }
     },
     {
@@ -1285,7 +1295,8 @@
         ],
         "recipe": {
             "stick": 3,
-            "leaf_cord": 2
+            "leaf_cord": 2,
+            "CRAFT_SECONDS": 2
         }
     },
     {
@@ -1303,7 +1314,8 @@
             "log": 4,
             "stick_frame": 1,
             "leaf_cord": 6,
-            "stick": 8
+            "stick": 8,
+            "CRAFT_SECONDS": 16
         }
     },
     {
@@ -1339,7 +1351,8 @@
             "log": 6,
             "stick": 10,
             "leaf_cord": 8,
-            "leaf": 20
+            "leaf": 20,
+            "CRAFT_SECONDS": 20
         }
     },
     {
@@ -1360,7 +1373,8 @@
             "stick": 20,
             "leaf_cord": 12,
             "leaf": 40,
-            "stick_frame": 4
+            "stick_frame": 4,
+            "CRAFT_SECONDS": 40
         }
     },
     {
@@ -1381,7 +1395,8 @@
             "ANY_HIDE": {
                 "qty": 2,
                 "hideStage": "dried"
-            }
+            },
+            "CRAFT_SECONDS": 8
         }
     },
     {
@@ -1398,7 +1413,8 @@
         ],
         "recipe": {
             "pebble": 12,
-            "leaf_cord": 6
+            "leaf_cord": 6,
+            "CRAFT_SECONDS": 8
         }
     },
     {

@@ -610,6 +610,7 @@ class SceneMain extends SceneBase {
         this.leanToPanel?.update();
         this.paintingCirclePanel?.update();
         this._updateCraftStationMenu();
+        this._updateCraftQueue?.();
         this._updateRockStation?.();
         this.corpsePanel?.update();
         this.updateLightVeil();
