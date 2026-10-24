@@ -566,6 +566,7 @@
                     inventory: w.inventory,
                     hostile: w.hostile,
                     recruitLocked: w.recruitLocked,
+                    band: w.band,
                     refusedBy: w.refusedBy
                 });
                 pawn._netFromX = w.x;
@@ -604,6 +605,7 @@
                 pawn.heading = w.heading || pawn.heading;
                 pawn.hostile = !!w.hostile;
                 pawn.recruitLocked = !!w.recruitLocked;
+                pawn.band = !!w.band;
                 pawn.refusedBy = new Set(w.refusedBy || []);
                 if (w.prone && pawn.isAttacking?.()) pawn._endAttack?.();
                 else if (w.attacking && Number.isFinite(w.attackAngle) && !pawn.isAttacking?.()) {

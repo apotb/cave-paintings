@@ -1974,6 +1974,61 @@ test("a full party recruits into the camp when both stand inside it", () => {
     assert.equal(ev?.settlementId, settle.id);
 });
 
+test("a band of wanderers cannot be recruited, even inside camp", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    world.rng = () => 0;
+    pawn.x = 0;
+    pawn.y = 0;
+    pawn.hotbarIndex = 0;
+    pawn.inventory[0] = { id: "apple", quantity: 3 };
+    const settle = Settlement.createSettlement({
+        x: 0, y: 0, ownerId: pawn.id, name: "Home"
+    });
+    world.settlements.push(settle);
+    const id = "w-band";
+    putWanderer(world, id, 16, 0);
+    const w = world.wanderers.get(id);
+    w.band = true;
+    world.handleAction(pawn.id, { type: Protocol.Actions.RECRUIT, wandererId: id });
+    assert.equal(world.wanderers.has(id), true);
+    assert.equal((pawn.party || []).some((m) => m.id === id), false);
+    assert.equal(world.settlers.some((s) => s.id === id), false);
+    assert.equal(pawn.inventory[0].quantity, 3, "an offer is not spent on a band");
+    assert.equal(world._events.some((e) => e.kind === "recruit"), false);
+
+    fillTravelParty(pawn);
+    pawn.x = 0;
+    pawn.y = 0;
+    world.handleAction(pawn.id, { type: Protocol.Actions.RECRUIT, wandererId: id });
+    assert.equal(world.wanderers.has(id), true);
+    assert.equal(world.settlers.some((s) => s.id === id), false);
+
+    const row = world._publicWanderer(w);
+    assert.equal(row.band, true);
+    const loaded = world._wandererRecordFromSnap(row);
+    assert.equal(loaded.band, true);
+});
+
+test("a full party spawns a band, and a party with room spawns one passerby", () => {
+    const { world, pawn } = createTestWorld();
+    world.rng = () => 0;
+    pawn.x = 32;
+    pawn.y = 32;
+    const solo = world._spawnWandererNear(pawn);
+    assert.equal(solo, 1);
+    const one = [...world.wanderers.values()];
+    assert.equal(one.length, 1);
+    assert.equal(one[0].band, false);
+    world.wanderers.clear();
+
+    fillTravelParty(pawn);
+    const pack = world._spawnWandererNear(pawn);
+    assert.ok(pack >= 2 && pack <= 6, `pack was ${pack}`);
+    const band = [...world.wanderers.values()];
+    assert.equal(band.length, pack);
+    for (const w of band) assert.equal(w.band, true);
+});
+
 test("room in the party still recruits into the party inside a camp", () => {
     const { world, pawn, Protocol } = createTestWorld();
     world.rng = () => 0;

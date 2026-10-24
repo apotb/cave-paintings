@@ -556,6 +556,7 @@ class PartySystem {
         pawn.pawnName = opts.name || this._freshName();
         pawn.hostile = !!opts.hostile;
         pawn.recruitLocked = !!opts.recruitLocked;
+        pawn.band = !!opts.band;
         pawn.refusedBy = new Set(opts.refusedBy || []);
         const dirs = [{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }];
         pawn.heading = opts.heading || dirs[Math.floor(Math.random() * 4)];
@@ -611,6 +612,7 @@ class PartySystem {
         pawn.faction = (typeof Party !== "undefined" && Party.FACTION_WANDERERS) || "Wanderers";
         pawn.hostile = false;
         pawn.recruitLocked = false;
+        pawn.band = false;
         pawn.refusedBy = pawn.refusedBy instanceof Set ? pawn.refusedBy : new Set();
         const h = heading && Number.isFinite(Number(heading.x)) && Number.isFinite(Number(heading.y))
             ? { x: Number(heading.x), y: Number(heading.y) }
@@ -667,7 +669,7 @@ class PartySystem {
     tryRecruit(wanderer) {
         const scene = this.scene;
         const me = scene.player;
-        if (!wanderer || wanderer.role !== "wanderer" || wanderer.hostile || wanderer.recruitLocked) {
+        if (!wanderer || wanderer.role !== "wanderer" || wanderer.hostile || wanderer.recruitLocked || wanderer.band) {
             return false;
         }
         if (!me || me.isBodyDead?.()) return false;
@@ -1598,6 +1600,11 @@ class PartySystem {
         const name = wanderer.displayName?.() || wanderer.pawnName || "Wanderer";
         if (wanderer.hostile || wanderer.recruitLocked) return name;
         const lines = [name];
+        // A band of 2–6 will not join, even if the party later has room.
+        if (wanderer.band) {
+            lines.push("Cannot be recruited");
+            return lines.join("\n");
+        }
         const full = (scene.party?.length || 0) >= P.CAP;
         const camp = full ? this._recruitCamp(wanderer) : null;
         if (full && !camp) {
@@ -2875,6 +2882,7 @@ class PartySystem {
             ? Party.wandererPackOffsets(pack, anchor.heading, ts * 1.35)
             : [{ x: 0, y: 0 }];
         let spawned = 0;
+        const made = [];
         for (const off of line) {
             let x = anchor.x + off.x;
             let y = anchor.y + off.y;
@@ -2886,7 +2894,13 @@ class PartySystem {
             const inv = typeof Party !== "undefined" && Party.rollWandererInventory
                 ? Party.rollWandererInventory(undefined, { fullParty: full, x, y, tileSize: ts })
                 : null;
-            if (this.spawnWanderer({ x, y, heading: anchor.heading, inventory: inv })) spawned++;
+            const pawn = this.spawnWanderer({ x, y, heading: anchor.heading, inventory: inv });
+            if (!pawn) continue;
+            made.push(pawn);
+            spawned++;
+        }
+        if (made.length >= 2) {
+            for (const pawn of made) pawn.band = true;
         }
         return spawned;
     }
@@ -2946,6 +2960,7 @@ class PartySystem {
             body: w.anatomy?.toJSON?.(),
             hostile: !!w.hostile,
             recruitLocked: !!w.recruitLocked,
+            band: !!w.band,
             refusedBy: [...(w.refusedBy || [])]
         };
     }

@@ -348,6 +348,31 @@ function padText(w, h) {
     return t;
 }
 
+test("a band of wanderers cannot be recruited", () => {
+    const { PartySystem } = loadParty();
+    const scene = {
+        party: [{}],
+        player: { getHeldItem: () => ({ id: "apple", food: { kc: 40 } }) },
+        getItem: () => ({ food: { kc: 40 } })
+    };
+    const sys = new PartySystem(scene);
+    const band = {
+        role: "wanderer",
+        pawnName: "Og",
+        displayName: () => "Og",
+        hostile: false,
+        recruitLocked: false,
+        band: true
+    };
+    assert.equal(sys.recruitTooltip(band), "Og\nCannot be recruited");
+    scene.party = [{}, {}, {}, {}, {}, {}];
+    assert.equal(sys.recruitTooltip(band), "Og\nCannot be recruited");
+
+    const solo = { ...band, band: false };
+    scene.party = [{}];
+    assert.equal(sys.recruitTooltip(solo), "Og\nClick to recruit\nThey look interested");
+});
+
 test("favorited settler and party tooltips flag a star beside the name", () => {
     const { PartySystem } = loadParty();
     const scene = { party: [], settlers: [] };

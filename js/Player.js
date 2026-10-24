@@ -90,6 +90,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.wandererAI = null;
         this.hostile = false;
         this.recruitLocked = false;
+        /** Arrived with a band of 2–6. Those passersby will not join. */
+        this.band = false;
         this.refusedBy = null;
         this.heading = null;
         this._nameLabel = null;

@@ -179,7 +179,7 @@
     _handleRecruit(p, action) {
         const wid = action.wandererId;
         const w = this.wanderers.get(wid);
-        if (!w || w.hostile || w.recruitLocked) return;
+        if (!w || w.hostile || w.recruitLocked || w.band) return;
         const control = (p.party || []).find((m) => m.id === p.controlId) || p;
         if (!Party.inInteractRange(control, w, TS)) return;
         // Party list is companions only. Headcount includes the leader.
@@ -683,6 +683,7 @@
             inventory: w.inventory,
             hostile: !!w.hostile,
             recruitLocked: !!w.recruitLocked,
+            band: !!w.band,
             refusedBy: Array.isArray(w.refusedBy)
                 ? w.refusedBy
                 : [...(w.refusedBy || [])],
@@ -728,6 +729,7 @@
             inventory: snap.inventory || null,
             hostile: !!snap.hostile,
             recruitLocked: !!snap.recruitLocked,
+            band: !!snap.band,
             refusedBy: Array.isArray(snap.refusedBy) ? snap.refusedBy : [],
             body: snap.body || null,
             dead: false,
@@ -1079,6 +1081,7 @@
             this.isBlocked(px, py)
             || this._partyPoseBlocked(probe, px, py, 0, { load: false });
         let spawned = 0;
+        const made = [];
         for (const off of line) {
             let sx = x + off.x;
             let sy = y + off.y;
@@ -1124,10 +1127,18 @@
                 inventory,
                 hostile: false,
                 recruitLocked: false,
+                band: false,
                 refusedBy: [],
                 _avoidSide: this.rng() < 0.5 ? -1 : 1
             });
+            made.push(id);
             spawned++;
+        }
+        if (made.length >= 2) {
+            for (const id of made) {
+                const w = this.wanderers.get(id);
+                if (w) w.band = true;
+            }
         }
         return spawned;
     },

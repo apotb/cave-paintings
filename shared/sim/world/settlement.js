@@ -542,6 +542,7 @@
             body: rec.body || c?.anatomy?.toJSON?.() || null,
             hostile: false,
             recruitLocked: false,
+            band: false,
             refusedBy: [],
             kc: rec.kc,
             overflow: rec.overflow,
