@@ -1752,6 +1752,64 @@ test("tailor clears junk before taking sewing mats out of storage", () => {
     assert.equal(started, true, `never started sewing (${rec._settlerAct})`);
 });
 
+test("an until bill counts kilts worn by the owner, party, and settlers", () => {
+    const kilt = () => ({ id: "leather_kilt", quantity: 1 });
+    const camp = (wear) => {
+        const { world, pawn } = createTestWorld();
+        fillGrass(world);
+        const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+        settle.jobs[rec.id] = {
+            doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0, research: 0
+        };
+        Research.unlock(pawn, "basic_furniture");
+        Research.unlock(pawn, "skinworking");
+        Research.unlock(pawn, "leatherworking");
+        const bench = addBenchInFront(world, settle, rec, "bench-worn-kilt");
+        const basket = addBasket(world, settle, rec.x + 32, rec.y, "kilt-mats");
+        basket.slots[0] = { id: "deer_leather", quantity: 4 };
+        basket.slots[1] = { id: "leaf_cord", quantity: 10 };
+        basket.slots[2] = { id: "bone", quantity: 1 };
+        Settlement.addBill(settle, bench.uid, {
+            recipeId: "leather_kilt", mode: "until", n: 1, paused: false
+        });
+        const buddy = { id: "buddy", dead: false, equipment: { legs: null } };
+        pawn.party = [buddy];
+        rec.equipment = { head: null, torso: null, legs: null, feet: null, back: null, waist: [] };
+        wear({ pawn, rec, buddy, settle, bench });
+        return { world, rec, basket, settle, bench };
+    };
+    const ticksUntilCraft = (world, rec, n = 500) => {
+        for (let i = 0; i < n; i++) {
+            world.tick(16);
+            if (rec._workChannel?.kind === "craft") return i;
+        }
+        return -1;
+    };
+
+    const open = camp(() => {});
+    const control = ticksUntilCraft(open.world, open.rec);
+    assert.ok(control >= 0, `never started sewing (${open.rec._settlerAct})`);
+
+    const worn = [
+        ({ pawn }) => { pawn.equipment.legs = kilt(); },
+        ({ rec }) => { rec.equipment.legs = kilt(); },
+        ({ buddy }) => { buddy.equipment.legs = kilt(); }
+    ];
+    for (const wear of worn) {
+        const run = camp(wear);
+        const hit = ticksUntilCraft(run.world, run.rec, control + 40);
+        assert.equal(hit, -1, `sewed despite a worn kilt (${run.rec._settlerAct})`);
+        assert.equal(run.basket.slots[0]?.quantity, 4);
+    }
+
+    const short = camp(({ buddy, settle, bench }) => {
+        buddy.equipment.legs = kilt();
+        Settlement.billsOf(settle, bench.uid)[0].n = 2;
+    });
+    const again = ticksUntilCraft(short.world, short.rec);
+    assert.ok(again >= 0, `until 2 should still sew when only one kilt is worn (${short.rec._settlerAct})`);
+});
+
 test("dedicated settler keeps the roasting stick when more food remains", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {

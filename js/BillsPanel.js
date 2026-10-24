@@ -495,11 +495,15 @@ class BillsPanel {
         return this.scene.settlementSys?.countItem?.(this.settle, id) || 0;
     }
 
+    _countOwned(id) {
+        return this.scene.settlementSys?.countBillHave?.(this.settle, id) || 0;
+    }
+
     _shortageSig() {
         return this._list().map((b) => {
             const done = this._billComplete(b) ? 1 : 0;
             const short = this._billShort(b) ? 1 : 0;
-            const qty = this._S()?.billQtyLabel?.(b, (id) => this._countItem(id)) || "";
+            const qty = this._S()?.billQtyLabel?.(b, (id) => this._countOwned(id)) || "";
             return `${b.id}:${short}:${done}:${qty}`;
         }).join("|");
     }
@@ -507,14 +511,14 @@ class BillsPanel {
     _billComplete(bill) {
         const S = this._S();
         if (!S?.billIsComplete || !bill) return false;
-        return S.billIsComplete(bill, (id) => this._countItem(id));
+        return S.billIsComplete(bill, (id) => this._countOwned(id));
     }
 
     _billShort(bill) {
         const S = this._S();
         if (!S?.billWantsMaterials || !S?.billHasMaterials || !bill) return false;
         const countItem = (id) => this._countItem(id);
-        if (!S.billWantsMaterials(bill, countItem)) return false;
+        if (!S.billWantsMaterials(bill, (id) => this._countOwned(id))) return false;
         return !S.billHasMaterials(bill, {
             countItem,
             getItem: (id) => this.scene.getItem?.(id),
@@ -938,7 +942,7 @@ class BillsPanel {
         this.body.add(minus);
         if (!forever) {
             const qtyColor = complete ? "#e07070" : "#d4c4a8";
-            const qtyText = S.billQtyLabel(bill, (id) => this._countItem(id));
+            const qtyText = S.billQtyLabel(bill, (id) => this._countOwned(id));
             const qty = this._label(qtyText, modeLeft + small + gap, qtyY, 12, qtyColor);
             qty.setOrigin(0, 0.5);
         }

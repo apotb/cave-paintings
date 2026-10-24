@@ -638,6 +638,50 @@ class SettlementSystem {
         );
     }
 
+    /** Camp settlers, plus the owner and their party when this is their camp. */
+    billPeople(settle) {
+        const seen = new Set();
+        const objs = new Set();
+        const out = [];
+        const add = (p) => {
+            if (!p || objs.has(p) || p.dead) return;
+            if (typeof p.isBodyDead === "function" && p.isBodyDead()) return;
+            const id = p.pawnId || p.id;
+            if (id != null && id !== "") {
+                const key = String(id);
+                if (seen.has(key)) return;
+                seen.add(key);
+            }
+            objs.add(p);
+            out.push(p);
+        };
+        if (!settle) return out;
+        for (const s of this.settlersOf(settle.id)) add(s);
+        const ownerId = settle.ownerId != null && settle.ownerId !== "" ? String(settle.ownerId) : "";
+        const scene = this.scene;
+        const player = scene?.player;
+        const ids = [player?.pawnId, player?.id, this.ownerId()]
+            .filter((id) => id != null && id !== "")
+            .map(String);
+        if (!ownerId || ids.includes(ownerId)) {
+            add(player);
+            for (const m of scene?.party || []) add(m);
+        }
+        return out;
+    }
+
+    /** Baskets, packs, drops, stations, and gear worn by anyone in the camp. */
+    countBillHave(settle, itemId) {
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!S || !settle) return 0;
+        const people = this.billPeople(settle);
+        if (typeof itemId === "string" && itemId.startsWith("tool:")) {
+            const cls = itemId.slice(5);
+            return this.countToolClass(settle, cls) + (S.countToolClassEquip?.(people, cls) || 0);
+        }
+        return this.countItem(settle, itemId) + (S.countEquipStock?.(people, itemId) || 0);
+    }
+
     countBlank(settle, bill) {
         const S = typeof Settlement !== "undefined" ? Settlement : null;
         if (!S?.blankMatchesBill || !settle || !bill) return 0;

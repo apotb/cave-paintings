@@ -70,7 +70,7 @@
     const putInBasket = (...args) => ctx.putInBasket(...args);
     const knapQualityDurationScale = (...args) => ctx.knapQualityDurationScale(...args);
     const manipScale = (...args) => ctx.manipScale(...args);
-    const countItem = (...args) => ctx.countItem(...args);
+    const countBillHave = (...args) => ctx.countBillHave(...args);
     const stopLeather = (...args) => ctx.stopLeather(...args);
     const fetchBenchMats = (...args) => ctx.fetchBenchMats(...args);
     const canReceiveCraft = (...args) => ctx.canReceiveCraft(...args);
@@ -588,7 +588,7 @@ function doLeather(world, rec, settle, job) {
         const bench = job.station;
         const recId = job.bill.recipeId || job.bill.outputId;
         const recipe = recId ? world._parseRecipe(recId) : null;
-        const have = (id) => countItem(world, settle, id);
+        const have = (id) => countBillHave(world, settle, id);
         if (!recipe || (job.bill && !Settlement.billIsActive(job.bill, have, settle))) {
             stopLeather(world, rec, job, false);
             return halt();
@@ -753,10 +753,7 @@ function doRock(world, rec, settle, job) {
     const rock = job?.station;
     const bill = job?.bill;
     if (!rock || !bill) return halt();
-    const have = (id) => {
-        if (typeof id === "string" && id.startsWith("tool:")) return ctx.countToolClass(world, settle, id.slice(5));
-        return countItem(world, settle, id);
-    };
+    const have = (id) => countBillHave(world, settle, id);
     if (!Settlement.billIsActive(bill, have, settle)) {
         stopRock(rec, job, false);
         return halt();

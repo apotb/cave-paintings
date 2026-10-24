@@ -91,7 +91,7 @@
     };
     /** Work inside each column. Station bills are one line; order is the bill list. */
     const JOB_WORK = {
-        doctor: ["Carry the downed to a bed", "Tend the wounded"],
+        doctor: ["Carry the downed to a bed", "Tend the wounded in a bed, or standing if none is free"],
         cook: [
             "Work at Campfire",
             "Light fires",
@@ -486,6 +486,52 @@
             if (!p) continue;
             n += countInSlots(p.inventory, itemId);
             n += countInSlots(p.overflow, itemId);
+        }
+        return n;
+    }
+
+    const WORN_KEYS = ["head", "torso", "legs", "feet", "back"];
+
+    function pawnAlive(p) {
+        if (!p || p.dead) return false;
+        if (typeof p.isBodyDead === "function" && p.isBodyDead()) return false;
+        return true;
+    }
+
+    function forEachWorn(equipment, fn) {
+        if (!equipment || typeof equipment !== "object") return;
+        for (const key of WORN_KEYS) {
+            const stack = equipment[key];
+            if (stack) fn(stack);
+        }
+        const waist = equipment.waist;
+        if (!Array.isArray(waist)) return;
+        for (const stack of waist) {
+            if (stack) fn(stack);
+        }
+    }
+
+    /** Apparel and belt items currently worn. Packs and baskets are separate. */
+    function countEquipStock(pawns, itemId) {
+        if (!itemId) return 0;
+        let n = 0;
+        for (const p of pawns || []) {
+            if (!pawnAlive(p)) continue;
+            forEachWorn(p.equipment, (s) => {
+                if (s.id === itemId) n += stackQty(s);
+            });
+        }
+        return n;
+    }
+
+    function countToolClassEquip(pawns, toolClass) {
+        if (!toolClass) return 0;
+        let n = 0;
+        for (const p of pawns || []) {
+            if (!pawnAlive(p)) continue;
+            forEachWorn(p.equipment, (s) => {
+                if (s.toolClass === toolClass) n += stackQty(s);
+            });
         }
         return n;
     }
@@ -3059,6 +3105,8 @@
         countInSlots,
         countStock,
         countPawnStock,
+        countEquipStock,
+        countToolClassEquip,
         countDropStock,
         dropItemId,
         summarizeResources,

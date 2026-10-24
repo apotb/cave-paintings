@@ -1075,6 +1075,45 @@ function countItem(world, settle, itemId) {
         + Settlement.countDropStock(dropsOf(world, settle), itemId);
 }
 
+/** Settlers of this camp, its owner, and that owner's party. */
+function colonyPawns(world, settle) {
+    const q = settleQ(world, settle);
+    if (q.colony) return q.colony;
+    const seen = new Set();
+    const out = [];
+    const add = (p) => {
+        if (!p || p.dead) return;
+        if (typeof p.isBodyDead === "function" && p.isBodyDead()) return;
+        const id = p.id || p.pawnId;
+        if (id != null && id !== "") {
+            const key = String(id);
+            if (seen.has(key)) return;
+            seen.add(key);
+        }
+        out.push(p);
+    };
+    for (const s of settlersOf(world, settle)) add(s);
+    const owner = settle?.ownerId ? world.players?.get?.(settle.ownerId) : null;
+    if (owner) {
+        add(owner);
+        for (const m of owner.party || []) add(m);
+    }
+    q.colony = out;
+    return out;
+}
+
+/** Stored goods plus anything these people are wearing. For until-bills. */
+function countBillHave(world, settle, itemId) {
+    const people = colonyPawns(world, settle);
+    if (typeof itemId === "string" && itemId.startsWith("tool:")) {
+        const cls = itemId.slice(5);
+        return countToolClass(world, settle, cls)
+            + Settlement.countToolClassEquip(people, cls);
+    }
+    return countItem(world, settle, itemId)
+        + Settlement.countEquipStock(people, itemId);
+}
+
 function haulDropQty(world, rec, settle, drop) {
     const stack = dropAsStack(drop);
     if (!stack) return 0;
@@ -1820,6 +1859,7 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     ctx.settlersOf = settlersOf;
     ctx.countStored = countStored;
     ctx.countItem = countItem;
+    ctx.countBillHave = countBillHave;
     ctx.haulDropQty = haulDropQty;
     ctx.pickBasket = pickBasket;
     ctx.dropAsStack = dropAsStack;

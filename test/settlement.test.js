@@ -659,6 +659,34 @@ test("completed count and fulfilled until bills are complete with red qty labels
     assert.equal(Settlement.billIsComplete(forever), false);
 });
 
+test("worn gear counts toward an until bill and not toward carried stock", () => {
+    const worn = { id: "leather_kilt", quantity: 1 };
+    const pawns = [
+        {
+            equipment: {
+                legs: worn,
+                waist: [{ id: "leather_pouch", quantity: 1 }, null]
+            }
+        },
+        { equipment: { legs: { id: "leather_kilt", quantity: 1 } } },
+        { dead: true, equipment: { legs: { id: "leather_kilt", quantity: 1 } } },
+        { inventory: [{ id: "leather_kilt", quantity: 3 }] }
+    ];
+    assert.equal(Settlement.countEquipStock(pawns, "leather_kilt"), 2);
+    assert.equal(Settlement.countEquipStock(pawns, "leather_pouch"), 1);
+    assert.equal(Settlement.countPawnStock(pawns, "leather_kilt"), 3);
+    assert.equal(Settlement.countToolClassEquip([
+        { equipment: { back: { id: "stone_tool", toolClass: "knife", quantity: 1 } } },
+        { dead: true, equipment: { back: { id: "stone_tool", toolClass: "knife", quantity: 1 } } }
+    ], "knife"), 1);
+    const bill = Settlement.makeBill({
+        recipeId: "leather_kilt", mode: "until", n: 1, paused: false
+    });
+    const have = (id) => Settlement.countEquipStock(pawns, id);
+    assert.equal(Settlement.billIsActive(bill, have), false);
+    assert.equal(Settlement.billQtyLabel(bill, have), "2/1");
+});
+
 test("interest keys cover settlement chunks when player is far", () => {
     const settle = Settlement.createSettlement({ x: 800, y: 800 });
     const keys = Settlement.chunkKeysFor(settle, 16, 8);

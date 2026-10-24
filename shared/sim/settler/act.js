@@ -75,7 +75,7 @@
     const researchHolder = (...args) => ctx.researchHolder(...args);
     const fireCanFuel = (...args) => ctx.fireCanFuel(...args);
     const stationKey = (...args) => ctx.stationKey(...args);
-    const countItem = (...args) => ctx.countItem(...args);
+    const countBillHave = (...args) => ctx.countBillHave(...args);
 
 
 function mergeNeedsRoom(rec, job) {
@@ -1365,7 +1365,7 @@ function doHaulSmokeLeather(world, rec, settle, job) {
         return halt();
     }
     const cook = fire.cook;
-    const have = (id) => countItem(world, settle, id);
+    const have = (id) => countBillHave(world, settle, id);
     if (!cook || !Settlement.cookOutputReady(getItem, cook, bill) || !Settlement.billIsActive(bill, have, settle)) {
         endWorkHold(rec);
         return halt();

@@ -34,6 +34,7 @@
     const isSkipped = (...args) => ctx.isSkipped(...args);
     const lootablesOf = (...args) => ctx.lootablesOf(...args);
     const countItem = (...args) => ctx.countItem(...args);
+    const countBillHave = (...args) => ctx.countBillHave(...args);
     const thingKey = (...args) => ctx.thingKey(...args);
     const findStack = (...args) => ctx.findStack(...args);
     const findBestChopStack = (...args) => ctx.findBestChopStack(...args);
@@ -63,7 +64,6 @@
     const workJobOn = (...args) => ctx.workJobOn(...args);
     const benchHasWork = (...args) => ctx.benchHasWork(...args);
     const rockBillReady = (...args) => ctx.rockBillReady(...args);
-    const countToolClass = (...args) => ctx.countToolClass(...args);
     const leatherJobKey = (...args) => ctx.leatherJobKey(...args);
     const jobOn = (...args) => ctx.jobOn(...args);
     const researchCircle = (...args) => ctx.researchCircle(...args);
@@ -793,7 +793,7 @@ function pickCookJob(world, rec, settle, f) {
     const haveMemo = Object.create(null);
     const have = (id) => {
         const k = String(id || "");
-        if (haveMemo[k] == null) haveMemo[k] = countItem(world, settle, k);
+        if (haveMemo[k] == null) haveMemo[k] = countBillHave(world, settle, k);
         return haveMemo[k];
     };
     const canLeather = workJobOn(settle, rec, "leather");
@@ -838,7 +838,7 @@ function pickSmokeJob(world, rec, settle, f) {
     const haveMemo = Object.create(null);
     const have = (id) => {
         const k = String(id || "");
-        if (haveMemo[k] == null) haveMemo[k] = countItem(world, settle, k);
+        if (haveMemo[k] == null) haveMemo[k] = countBillHave(world, settle, k);
         return haveMemo[k];
     };
     const active = [];
@@ -881,7 +881,7 @@ function haulSmokeLeather(world, rec, settle, claims) {
     const haveMemo = Object.create(null);
     const have = (id) => {
         const k = String(id || "");
-        if (haveMemo[k] == null) haveMemo[k] = countItem(world, settle, k);
+        if (haveMemo[k] == null) haveMemo[k] = countBillHave(world, settle, k);
         return haveMemo[k];
     };
     let best = null;
@@ -1037,7 +1037,7 @@ function rackBillJob(world, rec, settle, rack, bill) {
 }
 
 function leatherWork(world, rec, settle, claims) {
-    const have = (id) => countItem(world, settle, id);
+    const have = (id) => countBillHave(world, settle, id);
     const jobs = [];
     for (const rack of stationsOf(world, settle, "rack")) {
         for (const bill of Settlement.billsOf(settle, rack.uid)) {
@@ -1086,12 +1086,7 @@ function leatherWork(world, rec, settle, claims) {
 }
 
 function rockWork(world, rec, settle, claims) {
-    const have = (id) => {
-        if (typeof id === "string" && id.startsWith("tool:")) {
-            return countToolClass(world, settle, id.slice(5));
-        }
-        return countItem(world, settle, id);
-    };
+    const have = (id) => countBillHave(world, settle, id);
     const jobs = [];
     for (const rock of stationsOf(world, settle, "rock")) {
         for (const bill of Settlement.billsOf(settle, rock.uid)) {
