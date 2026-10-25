@@ -168,7 +168,7 @@
             { id: "roast", name: "Roast", kind: "cook", method: "stick_roast" },
             { id: "simmer", name: "Simmer", kind: "cook", method: "shell_simmer" },
             { id: "smoke", name: "Smoke leather", kind: "cook", method: "smoke_hide" },
-            { id: "pitch", name: "Make Pitch", kind: "make", outputId: "pitch" }
+            { id: "pitch", name: "Make pitch", kind: "make", outputId: "pitch" }
         ],
         rack: [
             { id: "flesh_hide", name: "Flesh hides", kind: "hide", method: "flesh_hide" },
@@ -186,10 +186,10 @@
         })),
         grind: [],
         rock: [
-            { id: "cracked_coconut", name: "Make Coconut Shell", kind: "make", outputId: "cracked_coconut" },
-            { id: "sharp_stick", name: "Make Sharp Stick", kind: "make", outputId: "sharp_stick" },
-            { id: "poultice", name: "Make Poultice", kind: "make", outputId: "poultice" },
-            { id: "digging_stick", name: "Make Digging Stick", kind: "make", outputId: "digging_stick" },
+            { id: "cracked_coconut", name: "Make coconut shell", kind: "make", outputId: "cracked_coconut" },
+            { id: "sharp_stick", name: "Make sharp stick", kind: "make", outputId: "sharp_stick" },
+            { id: "poultice", name: "Make poultice", kind: "make", outputId: "poultice" },
+            { id: "digging_stick", name: "Make digging stick", kind: "make", outputId: "digging_stick" },
             { id: "knap_knife", name: "Knap knife", kind: "knap", toolClass: "knife" },
             { id: "knap_scraper", name: "Knap scraper", kind: "knap", toolClass: "scraper" },
             { id: "knap_chopper", name: "Knap chopper", kind: "knap", toolClass: "chopper" },
@@ -1135,12 +1135,12 @@
 
     function billRecipeTitle(rec) {
         if (!rec) return "Bill";
-        if (rec.kind === "craft" && rec.name) {
-            const n = String(rec.name);
-            if (/^make\s/i.test(n)) return n;
-            return `Make ${n}`;
+        const raw = rec.name ? String(rec.name).trim() : "";
+        if ((rec.kind === "craft" || rec.kind === "make") && raw) {
+            const item = raw.replace(/^make\s+/i, "");
+            if (item) return `Make ${_lc(item)}`;
         }
-        return rec.name || rec.id || "Bill";
+        return raw || rec.id || "Bill";
     }
 
     function billTitle(bill) {
@@ -2604,6 +2604,11 @@
         if (t === "flesh") return "Fleshing hides";
         if (t === "brain") return "Brain-tanning hides";
         if (t === "craft") {
+            const bill = plan?.bill || plan?.target?.bill;
+            if (bill) {
+                const title = billTitle(bill);
+                if (title && title !== "Bill") return title;
+            }
             const rock = plan?.target?.station || plan?.target;
             if (stationKind(rock?.id) === "rock") {
                 const name = stoneApi()?.rockLabel?.(rock);

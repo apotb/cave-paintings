@@ -7010,8 +7010,8 @@ test("a saved job row leaves Craft off and a new person gets it on", () => {
 test("rock bills list crafts before knapping, and hand-axe stone is gated", () => {
     const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
     const names = Settlement.billRecipesFor("rock", s).map((r) => r.name);
-    assert.deepEqual(names.slice(0, 2), ["Make Coconut Shell", "Make Sharp Stick"]);
-    assert.equal(names.includes("Make Poultice"), false);
+    assert.deepEqual(names.slice(0, 2), ["Make coconut shell", "Make sharp stick"]);
+    assert.equal(names.includes("Make poultice"), false);
     assert.equal(names.includes("Knap knife"), true);
     assert.equal(names.includes("Knap hand-axe"), false);
     Research.unlock(s, "herbalism");
@@ -7019,10 +7019,10 @@ test("rock bills list crafts before knapping, and hand-axe stone is gated", () =
     Research.unlock(s, "hand_axe");
     const unlocked = Settlement.billRecipesFor("rock", s);
     assert.deepEqual(unlocked.slice(0, 4).map((r) => r.name), [
-        "Make Coconut Shell",
-        "Make Sharp Stick",
-        "Make Poultice",
-        "Make Digging Stick"
+        "Make coconut shell",
+        "Make sharp stick",
+        "Make poultice",
+        "Make digging stick"
     ]);
     const axe = unlocked.find((r) => r.toolClass === "hand_axe");
     const knife = unlocked.find((r) => r.toolClass === "knife");
@@ -7059,7 +7059,7 @@ test("dedicated settler cracks a coconut at a rock", () => {
     workOnce(world, rec);
     assert.equal(rec._workChannel?.kind, "rock");
     assert.equal(rec._workChannel?.job, "craft");
-    assert.match(rec._settlerAct || "", /Crafting at Andesite Rock/);
+    assert.equal(rec._settlerAct, "Make coconut shell");
     assert.equal(rec.inventory.some((s) => s && s.id === "cracked_coconut"), false);
     world.tick(400);
     assert.equal(rec.inventory.some((s) => s && s.id === "cracked_coconut"), false);
@@ -7107,6 +7107,8 @@ test("a coconut bill takes one nut from a stockpile", () => {
     Settlement.addBill(settle, rock.uid, {
         recipeId: "cracked_coconut", mode: "count", n: 1, paused: false
     });
+    workOnce(world, rec);
+    assert.equal(rec._settlerAct, "Make coconut shell");
     let started = false;
     for (let i = 0; i < 80; i++) {
         world.tick(50);
@@ -7156,6 +7158,7 @@ test("dedicated settler knaps the nearest allowed blank and until counts only th
         }
     }
     assert.equal(started, true);
+    assert.equal(rec._settlerAct, "Knap knife");
     assert.equal(near.slots[0], null);
     assert.equal(far.slots[0]?.id, "flint");
     world.tick(21000);
@@ -7299,6 +7302,7 @@ test("a Leather settler still finishes a bench bill after Craft exists", () => {
     workOnce(world, rec);
     assert.equal(rec._workChannel?.kind, "craft");
     assert.equal(rec._workChannel?.job, "leather");
+    assert.equal(rec._settlerAct, "Make hide pouch");
     world.tick(13000);
     assert.ok(rec.inventory.some((s) => s && s.id === "hide_pouch"));
 });
@@ -7318,7 +7322,7 @@ test("craft settler makes pitch at a lit campfire", () => {
     assert.equal(rec._workChannel?.kind, "rock");
     assert.equal(rec._workChannel?.job, "craft");
     assert.equal(rec._workChannel?.recipeId, "pitch");
-    assert.equal(rec._settlerAct, "Crafting");
+    assert.equal(rec._settlerAct, "Make pitch");
     assert.equal(rec.inventory.some((s) => s && s.id === "pitch"), false);
     let made = null;
     for (let i = 0; i < 30; i++) {
@@ -7328,6 +7332,22 @@ test("craft settler makes pitch at a lit campfire", () => {
     }
     assert.equal(made?.quantity, 1);
     assert.equal(rec.inventory.some((s) => s && s.id === "stick"), false);
+});
+
+test("a renamed craft bill is the settler's activity", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "stick", quantity: 8 }, null, null, null, null]
+    });
+    Research.unlock(pawn, "hafting");
+    settle.jobs[rec.id] = craftOnly();
+    const fire = addLitFire(world, settle, rec, "fire-tar");
+    Settlement.addBill(settle, fire.uid, {
+        recipeId: "pitch", mode: "count", n: 1, paused: false, name: "Tar"
+    });
+    workOnce(world, rec);
+    assert.equal(rec._workChannel?.kind, "rock");
+    assert.equal(rec._settlerAct, "Tar");
 });
 
 test("pitch bill waits for a lit campfire", () => {

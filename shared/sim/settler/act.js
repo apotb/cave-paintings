@@ -1039,6 +1039,18 @@ function actCtx(world, rec, extra = {}) {
     };
 }
 
+/** Bill title for a craft channel. A recipe id alone still names catalog bills. */
+function craftBillTitle(ch) {
+    const fromBill = (bill) => {
+        if (!bill) return "";
+        const title = Settlement.billTitle(bill);
+        if (!title || title === "Bill") return "";
+        if (!bill.name && bill.recipeId && title === String(bill.recipeId)) return "";
+        return title;
+    };
+    return fromBill(ch?.bill) || fromBill(ch?.recipeId ? { recipeId: ch.recipeId } : null);
+}
+
 function workChannelLabel(world, rec) {
     const ch = rec?._workChannel;
     if (!ch) return "Idle";
@@ -1049,15 +1061,17 @@ function workChannelLabel(world, rec) {
         }
         return "Tending";
     }
-    if (ch.kind === "craft") {
-        const recipe = world._parseRecipe?.(ch.recipeId);
-        if (recipe?.name) {
-            const n = String(recipe.name);
-            return /^make\s/i.test(n) ? n : `Crafting ${n}`;
+    if (ch.kind === "craft" || ch.kind === "rock" || ch.kind === "knap") {
+        const title = craftBillTitle(ch);
+        if (title) return title;
+        if (ch.kind === "craft") {
+            const recipe = world._parseRecipe?.(ch.recipeId);
+            if (recipe?.name) {
+                const n = String(recipe.name);
+                return /^make\s/i.test(n) ? n : `Crafting ${n}`;
+            }
+            return "Crafting";
         }
-        return "Crafting";
-    }
-    if (ch.kind === "rock" || ch.kind === "knap") {
         const rock = ch.uid ? world._findThingByUid(ch.uid)?.entry : null;
         return Settlement.actLabel({ type: "craft", target: rock }, actCtx(world, rec));
     }

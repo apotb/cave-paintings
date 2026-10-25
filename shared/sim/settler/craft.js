@@ -642,7 +642,8 @@ function doLeather(world, rec, settle, job) {
             slot: rec.hotbarIndex,
             uid: bench.uid,
             recipeId: recId,
-            toolClass: recipe.requireTool?.toolClass || null
+            toolClass: recipe.requireTool?.toolClass || null,
+            bill: job.bill
         };
         Settlement.noteBillCrafted(job.bill);
         persistBills(world, settle, bench.uid);

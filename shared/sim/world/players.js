@@ -1100,7 +1100,9 @@
         if (ch.patientId) out.patientId = String(ch.patientId).slice(0, 64);
         if (ch.patientName) out.patientName = String(ch.patientName).slice(0, 24);
         if (ch.itemId) out.itemId = String(ch.itemId).slice(0, 64);
-        if (ch.kind === "knap" && ch.bill?.id) out.billId = String(ch.bill.id);
+        if ((ch.kind === "knap" || ch.kind === "rock" || ch.kind === "craft") && ch.bill?.id) {
+            out.billId = String(ch.bill.id);
+        }
         if (Array.isArray(ch.targetHints) && ch.targetHints.length) {
             const hints = [];
             for (const h of ch.targetHints) {
@@ -1158,14 +1160,14 @@
             }
             if (hints.length) ch.targetHints = hints.slice(0, 8);
         }
-        if (kind === "knap") {
+        if (kind === "knap" || kind === "rock" || kind === "craft") {
             const billId = raw.billId ? String(raw.billId) : "";
             const settle = (this.settlements || []).find((s) => s && s.id === rec.homeSettlementId);
             const bill = billId
                 ? Settlement.billsOf(settle, ch.uid).find((b) => b && b.id === billId)
                 : null;
-            if (!bill) return null;
-            ch.bill = bill;
+            if (kind === "knap" && !bill) return null;
+            if (bill) ch.bill = bill;
         }
         return ch;
     },

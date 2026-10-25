@@ -329,7 +329,7 @@ test("shared camp requires both points inside the same claim", () => {
     assert.equal(Settlement.sharedCamp([camp], 0, 0, 16, 0, ts, "other"), null);
 });
 
-test("campfire bills catalog is Roast, Simmer, Smoke leather, and Make Pitch", () => {
+test("campfire bills catalog is Roast, Simmer, Smoke leather, and Make pitch", () => {
     const recipes = Settlement.billRecipesFor("campfire");
     assert.equal(recipes.length, 4);
     assert.equal(recipes[0].id, "roast");
@@ -341,13 +341,13 @@ test("campfire bills catalog is Roast, Simmer, Smoke leather, and Make Pitch", (
     assert.equal(recipes[3].id, "pitch");
     assert.equal(recipes[3].kind, "make");
     assert.equal(recipes[3].outputId, "pitch");
-    assert.equal(Settlement.billRecipeTitle(recipes[3]), "Make Pitch");
+    assert.equal(Settlement.billRecipeTitle(recipes[3]), "Make pitch");
     const pitchInputs = Settlement.billInputsFor(recipes[3]);
     assert.equal(pitchInputs.length, 1);
     assert.equal(pitchInputs[0].id, "stick");
     assert.equal(pitchInputs[0].qty, 8);
     const pitchBill = Settlement.makeBill({ recipeId: "pitch" });
-    assert.equal(Settlement.billTitle(pitchBill), "Make Pitch");
+    assert.equal(Settlement.billTitle(pitchBill), "Make pitch");
     assert.equal(pitchBill.kind, "make");
     assert.equal(pitchBill.outputId, "pitch");
     assert.equal(Settlement.billStationKindOf("smoke"), "campfire");
@@ -556,8 +556,8 @@ test("bench bills catalog sewn hide and leather goods", () => {
     assert.equal(bill.outputId, "hide_pouch");
     Settlement.syncBillResults(bill, () => null);
     assert.deepEqual(bill.resultIds, ["hide_pouch"]);
-    assert.equal(Settlement.billTitle(bill), "Make Hide Pouch");
-    assert.equal(Settlement.billRecipeTitle(pouch), "Make Hide Pouch");
+    assert.equal(Settlement.billTitle(bill), "Make hide pouch");
+    assert.equal(Settlement.billRecipeTitle(pouch), "Make hide pouch");
 });
 
 test("bill until-you-have counts across baskets", () => {
@@ -2084,6 +2084,43 @@ test("actLabel names gather, chop, haul, doctor, and idle jobs", () => {
     assert.equal(
         Settlement.actLabel({ type: "sleep", target: { id: "lean_to" } }, { ...ctx, asleep: true }),
         "Sleeping in a lean-to"
+    );
+});
+
+test("actLabel names the craft bill a settler is doing", () => {
+    assert.equal(
+        Settlement.actLabel({
+            type: "craft",
+            target: {
+                station: { id: "rock", stone: "andesite" },
+                bill: { recipeId: "cracked_coconut", kind: "make" }
+            }
+        }),
+        "Make coconut shell"
+    );
+    assert.equal(
+        Settlement.actLabel({
+            type: "craft",
+            bill: { recipeId: "pitch", kind: "make" },
+            target: { id: "campfire" }
+        }),
+        "Make pitch"
+    );
+    assert.equal(
+        Settlement.actLabel({
+            type: "craft",
+            bill: { recipeId: "knap_knife", kind: "knap", toolClass: "knife" },
+            target: { id: "rock", stone: "andesite" }
+        }),
+        "Knap knife"
+    );
+    assert.equal(
+        Settlement.actLabel({
+            type: "craft",
+            bill: { recipeId: "pitch", kind: "make", name: "Tar" },
+            target: { id: "campfire" }
+        }),
+        "Tar"
     );
 });
 
