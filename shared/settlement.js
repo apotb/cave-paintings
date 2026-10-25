@@ -59,6 +59,13 @@
         } catch (_) { /* optional */ }
         return null;
     }
+    function fishMod() {
+        if (typeof Fish !== "undefined" && Fish.measure) return Fish;
+        try {
+            if (typeof require === "function") return require("./fish");
+        } catch (_) { /* optional */ }
+        return null;
+    }
     function knownJobIds() {
         const ids = JOBS.slice();
         for (const job of jobApi()?.list?.() || []) {
@@ -350,6 +357,41 @@
     function filterStockItems(present) {
         const set = present instanceof Set ? present : new Set(present || []);
         return STOCK_ITEMS.filter((id) => set.has(id));
+    }
+
+    /** A fishable body touches the camp. Depleted pools still count while they refill. */
+    function rangeSuppliesFish(settle, tileSize, isWater) {
+        const Fish = fishMod();
+        if (!Fish?.measure || !settle || typeof isWater !== "function") return false;
+        const ts = Number(tileSize) > 0 ? Number(tileSize) : 16;
+        const r = Number(settle.radiusTiles) > 0 ? Number(settle.radiusTiles) : RADIUS_TILES;
+        const minTx = Math.floor((Number(settle.x) - r * ts) / ts);
+        const maxTx = Math.ceil((Number(settle.x) + r * ts) / ts);
+        const minTy = Math.floor((Number(settle.y) - r * ts) / ts);
+        const maxTy = Math.ceil((Number(settle.y) + r * ts) / ts);
+        const seen = new Set();
+        for (let ty = minTy; ty <= maxTy; ty++) {
+            for (let tx = minTx; tx <= maxTx; tx++) {
+                const key = tx + "," + ty;
+                if (seen.has(key)) continue;
+                const wx = (tx + 0.5) * ts;
+                const wy = (ty + 0.5) * ts;
+                if (!inRange(settle, wx, wy, ts)) continue;
+                if (!isWater(tx, ty)) continue;
+                const measured = Fish.measure(tx, ty, isWater);
+                const tiles = measured?.tiles;
+                if (Array.isArray(tiles)) {
+                    for (let i = 0; i < tiles.length; i++) {
+                        const pair = tiles[i];
+                        if (pair) seen.add(pair[0] + "," + pair[1]);
+                    }
+                } else {
+                    seen.add(key);
+                }
+                if (measured?.open || Number(measured?.max) >= 1) return true;
+            }
+        }
+        return false;
     }
 
     function distTiles(ax, ay, bx, by, tileSize) {
@@ -3240,6 +3282,7 @@
         normalizeStock,
         stockItemsFromThing,
         filterStockItems,
+        rangeSuppliesFish,
         distTiles,
         inRange,
         circlesOverlap,

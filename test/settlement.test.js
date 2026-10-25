@@ -850,6 +850,37 @@ test("stock list only includes resources from local plants and trees", () => {
     );
 });
 
+test("raw fish is stockable when camp range touches a fishable pool", () => {
+    const settle = Settlement.createSettlement({ x: 8, y: 8 });
+    const pond = new Set();
+    for (let y = 0; y < 10; y++) {
+        for (let x = 0; x < 10; x++) pond.add(`${x},${y}`);
+    }
+    assert.equal(Settlement.rangeSuppliesFish(settle, 16, (x, y) => pond.has(`${x},${y}`)), true);
+    assert.deepEqual(
+        Settlement.filterStockItems(new Set(["raw_fish", "stick"])),
+        ["stick", "raw_fish"]
+    );
+
+    const puddle = new Set();
+    for (let x = 0; x < 20; x++) puddle.add(`${x},0`);
+    assert.equal(Settlement.rangeSuppliesFish(settle, 16, (x, y) => puddle.has(`${x},${y}`)), false);
+
+    const far = new Set();
+    for (let y = 0; y < 10; y++) {
+        for (let x = 0; x < 10; x++) far.add(`${x + 200},${y + 200}`);
+    }
+    assert.equal(Settlement.rangeSuppliesFish(settle, 16, (x, y) => far.has(`${x},${y}`)), false);
+    assert.equal(Settlement.rangeSuppliesFish(settle, 16, null), false);
+    assert.equal(Settlement.rangeSuppliesFish(settle, 16, () => true), true);
+
+    const edge = new Set();
+    for (let y = 0; y < 10; y++) {
+        for (let x = 30; x < 41; x++) edge.add(`${x},${y}`);
+    }
+    assert.equal(Settlement.rangeSuppliesFish(settle, 16, (x, y) => edge.has(`${x},${y}`)), true);
+});
+
 test("gather/chop stop at stock targets in added baskets", () => {
     const settle = Settlement.createSettlement({ x: 0, y: 0 });
     settle.stock = Settlement.normalizeStock({ stick: 10, log: 12, leaf: 0 });

@@ -624,7 +624,21 @@ class SettlementSystem {
             const id = S.dropItemId(drops[i]);
             if (id) found.add(id);
         }
+        if (!found.has("raw_fish") && S.rangeSuppliesFish && this._rangeHasFish(settle, ts)) {
+            found.add("raw_fish");
+        }
         return S.filterStockItems(found);
+    }
+
+    /** Fishable water inside the camp. Matches the settler cast, which reads WorldGen. */
+    _rangeHasFish(settle, ts) {
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!S?.rangeSuppliesFish || !settle) return false;
+        const WG = typeof WorldGen !== "undefined" ? WorldGen : null;
+        const isWater = WG?.tileKeyAt
+            ? (x, y) => WG.tileKeyAt(x, y) === "water"
+            : (x, y) => this.scene?._tileKeyAt?.(x, y) === "water";
+        return S.rangeSuppliesFish(settle, ts, isWater);
     }
 
     countToolClass(settle, toolClass) {
