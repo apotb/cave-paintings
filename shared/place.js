@@ -11,6 +11,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
     const BLOCKED = { water: true, ice: true };
     const _maskBytes = new Map();
+    const _frontStripCache = new Map();
     const _wallBoxCache = new WeakMap();
     const _figurineRectCache = new WeakMap();
     /** Walk solid is this tall, sitting on the feet. Wider obstacles still use hitboxSize. */
@@ -739,6 +740,73 @@
         const byte = bytes[i >> 3];
         if (byte == null) return false;
         return ((byte >> (7 - (i & 7))) & 1) === 1;
+    }
+
+    /**
+     * Near-wall slices of a round hut. Each strip sorts at its own south
+     * edge. One depth at the sprite bottom paints the bottom corners over
+     * a pawn whose feet are still north of that edge.
+     * `dy` is added to the sprite anchor. Cached; do not mutate.
+     */
+    function frontWallStrips(thingDef, rot) {
+        const mask = thingDef?.wallMask;
+        if (!mask) return null;
+        const size = Math.max(1, Math.floor(Number(thingDef.spriteSize) || 32));
+        const split = Math.max(0, Math.min(size, Math.floor(Number(thingDef.wallSplit) || 22)));
+        const r = normalizeRot(rot);
+        const cacheKey = `${size}|${split}|${r}|${mask}`;
+        const hit = _frontStripCache.get(cacheKey);
+        if (hit) return hit;
+        // Baked wall textures rotate clockwise around the sprite center.
+        const solidDest = (dx, dy) => {
+            let sx = dx;
+            let sy = dy;
+            if (r === 90) {
+                sx = size - 1 - dy;
+                sy = dx;
+            } else if (r === 180) {
+                sx = size - 1 - dx;
+                sy = size - 1 - dy;
+            } else if (r === 270) {
+                sx = dy;
+                sy = size - 1 - dx;
+            }
+            return wallMaskSolid(mask, sx, sy, size);
+        };
+        const strips = [];
+        let runX = -1;
+        let runBottom = -1;
+        const flush = (x1) => {
+            if (runX < 0) return;
+            strips.push({
+                x: runX,
+                y: split,
+                w: x1 - runX,
+                h: Math.max(1, size - split),
+                // Just behind the scanline of the lowest opaque pixel, so a
+                // pawn standing on that edge draws in front of this column.
+                dy: -(size - 1 - runBottom) - 0.5
+            });
+            runX = -1;
+            runBottom = -1;
+        };
+        for (let x = 0; x < size; x++) {
+            let bottom = -1;
+            for (let y = split; y < size; y++) {
+                if (solidDest(x, y)) bottom = y;
+            }
+            if (bottom < 0) {
+                flush(x);
+                continue;
+            }
+            if (runX >= 0 && bottom === runBottom) continue;
+            flush(x);
+            runX = x;
+            runBottom = bottom;
+        }
+        flush(size);
+        _frontStripCache.set(cacheKey, strips);
+        return strips;
     }
 
     /**
@@ -1776,6 +1844,7 @@
         wallDiskHits,
         clampRingCenter,
         wallMaskSolid,
+        frontWallStrips,
         doorClearsPixel,
         meshAlphaBoxes,
         isSleepThing,

@@ -182,6 +182,74 @@ test("hut wall mask matches the sprite and the doorway stays walkable", () => {
     assert.equal(hit(turned, anchor.x + wall.dx, anchor.y + wall.dy), true, "wall follows rotation");
 });
 
+test("hut front corners sort behind a pawn whose feet are above the south edge", () => {
+    const def = thingDef("hut");
+    const size = 32;
+    const split = def.wallSplit;
+    const anchorY = 32;
+    // Clockwise bake, matching Place.frontWallStrips / ensureHutTextures.
+    const destSolid = (rot, dx, dy) => {
+        let sx = dx;
+        let sy = dy;
+        if (rot === 90) {
+            sx = size - 1 - dy;
+            sy = dx;
+        } else if (rot === 180) {
+            sx = size - 1 - dx;
+            sy = size - 1 - dy;
+        } else if (rot === 270) {
+            sx = dy;
+            sy = size - 1 - dx;
+        }
+        return WALL_OPAQUE[sy][sx];
+    };
+    const stripAt = (strips, x) => strips.find((s) => x >= s.x && x < s.x + s.w);
+    for (const rot of [0, 90, 180, 270]) {
+        const strips = Place.frontWallStrips(def, rot);
+        assert.ok(strips.length > 1, `rot ${rot} is sliced`);
+        assert.equal(Place.frontWallStrips(def, rot), strips, "cached");
+        let south = strips[0];
+        let corner = strips[0];
+        const covered = new Set();
+        for (const s of strips) {
+            assert.equal(s.y, split, `rot ${rot} stays in the near band`);
+            assert.ok(s.w > 0 && s.x >= 0 && s.x + s.w <= size);
+            if (s.dy > south.dy) south = s;
+            if (s.dy < corner.dy) corner = s;
+            for (let x = s.x; x < s.x + s.w; x++) {
+                assert.equal(covered.has(x), false, `rot ${rot} col ${x} once`);
+                covered.add(x);
+                let bottom = -1;
+                for (let y = split; y < size; y++) {
+                    if (destSolid(rot, x, y)) bottom = y;
+                }
+                assert.ok(bottom >= split, `rot ${rot} col ${x} has pixels`);
+                assert.equal(s.dy, -(size - 1 - bottom) - 0.5, `rot ${rot} col ${x} depth`);
+            }
+        }
+        for (let x = 0; x < size; x++) {
+            let any = false;
+            for (let y = split; y < size; y++) {
+                if (destSolid(rot, x, y)) any = true;
+            }
+            assert.equal(!!stripAt(strips, x), any, `rot ${rot} col ${x} coverage`);
+        }
+        assert.ok(corner.dy < south.dy - 2, `rot ${rot} corners sit north of the south wall`);
+        const feet = anchorY + (corner.dy + south.dy) / 2;
+        const pawnDepth = feet | 0;
+        assert.ok(pawnDepth > anchorY + corner.dy, `rot ${rot} pawn in front of the corner`);
+        assert.ok(pawnDepth < anchorY + south.dy, `rot ${rot} pawn behind the south wall`);
+    }
+    const south = Place.frontWallStrips(def, 0);
+    assert.equal(stripAt(south, 15), undefined, "doorway is open");
+    assert.equal(stripAt(south, 2).dy, -8.5, "outer corner");
+    assert.equal(stripAt(south, 9).dy, -2.5, "door jamb");
+    const feet = anchorY - 6;
+    assert.ok((feet | 0) > anchorY + stripAt(south, 2).dy);
+    assert.ok((feet | 0) < anchorY + stripAt(south, 9).dy);
+    assert.equal(Place.frontWallStrips({ wallSplit: 22, spriteSize: 32 }, 0), null);
+});
+
 test("blood and vomit stop at the hut wall and can leave by the door", () => {
     const def = thingDef("hut");
     const entry = placed(0);

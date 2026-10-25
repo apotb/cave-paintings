@@ -1765,12 +1765,36 @@ class Hut extends LeanTo {
         }
         const split = Number(this.meta.wallSplit) || 22;
         const size = Number(this.meta.spriteSize) || 32;
+        const y = Number(this.y) || 0;
         this._backSpr = this._wallPiece(
-            this._backSpr, tex, 0, 0, size, split, (Number(this.y) || 0) - size - 1
+            this._backSpr, tex, 0, 0, size, split, y - size - 1
         );
-        this._frontSpr = this._wallPiece(
-            this._frontSpr, tex, 0, split, size, Math.max(1, size - split), (Number(this.y) || 0) + 2
-        );
+        // Column slices: the round corners sit north of the south edge, so
+        // they must not share the door sill's depth.
+        const strips = (typeof Place !== "undefined" && Place.frontWallStrips)
+            ? Place.frontWallStrips(this.meta, this.entry?.rot)
+            : null;
+        const pieces = (strips && strips.length) ? strips : [{
+            x: 0,
+            y: split,
+            w: size,
+            h: Math.max(1, size - split),
+            dy: 2
+        }];
+        this._syncFrontStrips(tex, y, pieces);
+    }
+
+    _syncFrontStrips(tex, y, pieces) {
+        if (!this._frontSprs) this._frontSprs = [];
+        while (this._frontSprs.length > pieces.length) {
+            this._frontSprs.pop().destroy();
+        }
+        for (let i = 0; i < pieces.length; i++) {
+            const p = pieces[i];
+            this._frontSprs[i] = this._wallPiece(
+                this._frontSprs[i], tex, p.x, p.y, p.w, p.h, y + p.dy
+            );
+        }
     }
 
     _wallPiece(spr, tex, cx, cy, cw, ch, depth) {
@@ -1827,9 +1851,10 @@ class Hut extends LeanTo {
             this._backSpr.destroy();
             this._backSpr = null;
         }
-        if (this._frontSpr) {
-            this._frontSpr.destroy();
-            this._frontSpr = null;
+        const fronts = this._frontSprs;
+        this._frontSprs = null;
+        if (fronts) {
+            for (let i = 0; i < fronts.length; i++) fronts[i]?.destroy?.();
         }
     }
 

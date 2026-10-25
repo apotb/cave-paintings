@@ -1595,7 +1595,7 @@
         if (this._placeGhostFrame) this._placeGhostFrame.setVisible(false);
         if (this._placeGhostInteract) this._placeGhostInteract.setVisible(false);
         if (this._hutGhostBack) this._hutGhostBack.setVisible(false);
-        if (this._hutGhostFront) this._hutGhostFront.setVisible(false);
+        this._hideHutGhostFronts();
         this._placeGhostTile = null;
         this._placeGhostValid = false;
     },
@@ -1689,7 +1689,7 @@
             this._syncHutGhostWalls(info.thingDef, gx, gy, rot, valid);
         } else {
             if (this._hutGhostBack) this._hutGhostBack.setVisible(false);
-            if (this._hutGhostFront) this._hutGhostFront.setVisible(false);
+            this._hideHutGhostFronts();
         }
         const frameTex = !hutGhost && (typeof Place !== "undefined" && info.thingDef?.sleep)
             ? Place.rotationWallTextureKey(info.thingDef.key, rot)
@@ -1732,6 +1732,12 @@
         return spr;
     },
 
+    _hideHutGhostFronts() {
+        const list = this._hutGhostFronts;
+        if (!list) return;
+        for (let i = 0; i < list.length; i++) list[i]?.setVisible(false);
+    },
+
     _syncHutGhostWalls(thingDef, x, y, rot, valid) {
         if (typeof ensureHutTextures === "function") ensureHutTextures(this, thingDef);
         const key = (typeof Place !== "undefined")
@@ -1739,7 +1745,7 @@
             : thingDef.wall;
         if (!key || !this.textures.exists(key)) {
             if (this._hutGhostBack) this._hutGhostBack.setVisible(false);
-            if (this._hutGhostFront) this._hutGhostFront.setVisible(false);
+            this._hideHutGhostFronts();
             return;
         }
         const size = Number(thingDef.spriteSize) || 32;
@@ -1748,9 +1754,26 @@
         this._hutGhostBack = this._hutGhostPiece(
             this._hutGhostBack, key, x, y, 0, 0, size, split, y - size - 1, tint
         );
-        this._hutGhostFront = this._hutGhostPiece(
-            this._hutGhostFront, key, x, y, 0, split, size, Math.max(1, size - split), y + 2, tint
-        );
+        const strips = (typeof Place !== "undefined" && Place.frontWallStrips)
+            ? Place.frontWallStrips(thingDef, rot)
+            : null;
+        const pieces = (strips && strips.length) ? strips : [{
+            x: 0,
+            y: split,
+            w: size,
+            h: Math.max(1, size - split),
+            dy: 2
+        }];
+        if (!this._hutGhostFronts) this._hutGhostFronts = [];
+        while (this._hutGhostFronts.length > pieces.length) {
+            this._hutGhostFronts.pop().destroy();
+        }
+        for (let i = 0; i < pieces.length; i++) {
+            const p = pieces[i];
+            this._hutGhostFronts[i] = this._hutGhostPiece(
+                this._hutGhostFronts[i], key, x, y, p.x, p.y, p.w, p.h, y + p.dy, tint
+            );
+        }
         if (this._placeGhostFrame) this._placeGhostFrame.setVisible(false);
     },
 
