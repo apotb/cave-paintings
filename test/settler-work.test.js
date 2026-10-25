@@ -1878,6 +1878,38 @@ test("tailor takes one leather from a heavy stack and starts sewing", () => {
     assert.ok((basket.slots[0]?.quantity || 0) >= 30, "should leave the rest of the stack in storage");
 });
 
+test("tailor takes one bone from a stack and starts sewing", () => {
+    const { world, pawn } = createTestWorld();
+    fillGrass(world);
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0, research: 0
+    };
+    Research.unlock(pawn, "basic_furniture");
+    Research.unlock(pawn, "skinworking");
+    Research.unlock(pawn, "leatherworking");
+    const bench = addBenchInFront(world, settle, rec, "bench-bone");
+    const basket = addBasket(world, settle, rec.x + 32, rec.y, "bone-stack");
+    basket.slots[0] = { id: "deer_leather", quantity: 3 };
+    basket.slots[1] = { id: "leaf_cord", quantity: 8 };
+    basket.slots[2] = { id: "bone", quantity: 12 };
+    Settlement.addBill(settle, bench.uid, { recipeId: "leather_pouch", mode: "forever", paused: false });
+    let started = false;
+    for (let i = 0; i < 500; i++) {
+        world.tick(16);
+        if (rec._workChannel?.kind === "craft") {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, `never started sewing (${rec._settlerAct})`);
+    const held = (rec.inventory || []).find((s) => s?.id === "bone")
+        || (rec.overflow || []).find((s) => s?.id === "bone");
+    assert.equal(held?.quantity, 1, "should take one bone, not the stack");
+    assert.equal(basket.slots[2]?.id, "bone");
+    assert.equal(basket.slots[2]?.quantity, 11, "the rest of the stack stays in the basket");
+});
+
 test("tailor clears junk before taking sewing mats out of storage", () => {
     const { world, pawn } = createTestWorld();
     fillGrass(world);

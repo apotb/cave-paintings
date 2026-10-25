@@ -1236,8 +1236,17 @@ function fetchBenchMats(world, rec, settle, bill, recipe) {
     if (!awl) return { blocked: true, halt: true };
     if (awl.at !== rec) {
         const stack = awl.slots?.[awl.index];
-        if (!canGivePawn(rec, stack) && !(freeHandSlot(rec) && canGivePawn(rec, stack))) {
+        // A bone sews once. Hauling the stack left the rest in their
+        // pockets and emptied the basket. A knapped awl is the tool itself.
+        const single = !!(stack && Carry.isSingleUseTool(stack, getItem(stack.id)));
+        const carry = single ? { ...stack, quantity: 1 } : stack;
+        if (!canGivePawn(rec, carry) && !(freeHandSlot(rec) && canGivePawn(rec, carry))) {
             return { needsRoom: true, keepPreds };
+        }
+        if (single) {
+            const got = fetchCookPiece(world, rec, settle, awl);
+            if (got?.carryFail) return { needsRoom: true, keepPreds };
+            return got || halt();
         }
         const got = fetchOrBlock(world, rec, settle, awl);
         if (got?.needsRoom) return { needsRoom: true, keepPreds };
