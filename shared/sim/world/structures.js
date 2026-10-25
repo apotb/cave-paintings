@@ -815,14 +815,19 @@
             ? Sleep.restWalkStand(entry, spec.slot, TS, def)
             : null;
         const pos = Sleep.sleeperWorldPos(entry, spec.slot, TS, def);
-        const arrive = Sleep.ARRIVE_PX || 16;
+        // A hut's round wall stops the body a few pixels outside the usual
+        // 16px mark. At the 12× rest clock that last step never slips through,
+        // so they slide on the thatch and stay "Going to sleep".
+        const arrive = (Sleep.ARRIVE_PX || 16) + (def?.sleep?.interior ? 8 : 0);
+        const px = Number(pawn.x) || 0;
+        const py = Number(pawn.y) || 0;
         let close = false;
         if (stand) {
-            close = Math.hypot(Number(pawn.x) - stand.x, Number(pawn.y) - stand.y) < arrive;
+            close = Math.hypot(px - stand.x, py - stand.y) < arrive;
         }
         if (!close) {
-            const cx = Number(pawn.x) + TS * 0.5;
-            const cy = Number(pawn.y) - TS * 0.5;
+            const cx = px + TS * 0.5;
+            const cy = py - TS * 0.5;
             close = Math.hypot(cx - pos.x, cy - pos.y) < arrive;
         }
         if (close) {

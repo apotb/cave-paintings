@@ -3935,7 +3935,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                     : null;
                 const pos = Sleep.sleeperWorldPos(entry, spec.slot, this.scene.tileSize, def);
                 const c = this.bodyCenter?.() || { x: this.x, y: this.y };
-                const arrive = Sleep.ARRIVE_PX || 16;
+                // Match the sim: a hut wall holds the body just outside 16px,
+                // and a fast rest tick never steps through it.
+                const arrive = (Sleep.ARRIVE_PX || 16) + (def?.sleep?.interior ? 8 : 0);
                 const dStand = stand
                     ? Math.hypot(this.x - stand.x, this.y - stand.y)
                     : Infinity;

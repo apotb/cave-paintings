@@ -4647,6 +4647,100 @@ test("settler rest-walk occupies the lean-to instead of standing beside it", () 
     assert.equal(pub.lastSleep?.uid, "lt-settler");
 });
 
+function placeCampHut(world, rot, tx, ty) {
+    const def = world._thingDef("hut");
+    const placed = Place.footprintWorldPos(tx, ty, rot, def.footprint, 16);
+    const entry = {
+        uid: `hut-${rot}-${tx}-${ty}`,
+        id: "hut",
+        rot,
+        tx,
+        ty,
+        x: placed.x,
+        y: placed.y
+    };
+    Place.ensureSleepEntry(entry, def);
+    originChunk(world).things.push(entry);
+    return { entry, def };
+}
+
+test("a settler at the 12x rest clock lies down in a hut", () => {
+    for (const rot of [0, 90, 180, 270]) {
+        const { world, pawn } = createTestWorld();
+        world.baseTickSpeed = 12;
+        world.tickSpeed = 12;
+        const { rec } = parkSettler(world, pawn, { x: 40, y: 180 });
+        const { entry } = placeCampHut(world, rot, 4, 4);
+        world.gameMinutes = 22 * 60;
+        rec.kc = 1600;
+        let vomited = false;
+        let slept = false;
+        for (let i = 0; i < 200 && !(slept && /^Sleeping/.test(rec._settlerAct || "")); i++) {
+            world.tick(50);
+            // The reported stick happened after a vomit, once the camp clock
+            // was already at the rest speed. Vomit on the failing approach.
+            if (!vomited && rot === 0 && rec._restWalk && !rec._resting) {
+                world._beginPlayerVomit(rec.creature, 800);
+                vomited = true;
+            }
+            if (rec._resting && (entry.occupants || []).includes(rec.id)) slept = true;
+        }
+        assert.equal(vomited || rot !== 0, true, "rot 0 should have vomited on the way");
+        assert.equal(
+            slept,
+            true,
+            `rot ${rot} stuck as ${rec._settlerAct} at ${Number(rec.x).toFixed(1)},${Number(rec.y).toFixed(1)}`
+        );
+        assert.match(rec._settlerAct || "", /^Sleeping/);
+    }
+});
+
+test("hut rest arrival covers the wall gap; a lean-to still uses 16px", () => {
+    const parkShort = (world, pawn, entry, def) => {
+        const { rec } = parkSettler(world, pawn, { x: entry.x, y: entry.y });
+        world._orderRest(pawn, rec, entry, 0, { autofill: false });
+        const stand = Sleep.restWalkStand(entry, 0, 16, def);
+        const bed = Sleep.sleeperWorldPos(entry, 0, 16, def);
+        const dx = stand.x - bed.x;
+        const dy = stand.y - bed.y;
+        const len = Math.hypot(dx, dy) || 1;
+        rec.x = stand.x + (dx / len) * 20;
+        rec.y = stand.y + (dy / len) * 20;
+        const cc = world._ensureSettlerCreature(rec);
+        cc.x = rec.x;
+        cc.y = rec.y;
+        const dStand = Math.hypot(rec.x - stand.x, rec.y - stand.y);
+        const dBed = Math.hypot(rec.x + 8 - bed.x, rec.y - 8 - bed.y);
+        assert.ok(dStand > 16 && dStand < 24, `stand ${dStand}`);
+        assert.ok(dBed > 16, `bed ${dBed}`);
+        world._tickSleepWalks(16);
+        return rec;
+    };
+
+    const { world, pawn } = createTestWorld();
+    const { entry, def } = placeCampHut(world, 0, 4, 4);
+    const hutSleeper = parkShort(world, pawn, entry, def);
+    assert.equal(hutSleeper._resting, true);
+    assert.equal(entry.occupants[0], hutSleeper.id);
+
+    const { world: w2, pawn: p2 } = createTestWorld();
+    const leanDef = { sleep: { slots: 2 } };
+    const lean = {
+        uid: "lt-gap",
+        id: "lean_to",
+        x: 64,
+        y: 64,
+        tx: 4,
+        ty: 4,
+        rot: 0
+    };
+    Place.ensureSleepEntry(lean, leanDef);
+    originChunk(w2).things.push(lean);
+    const leanSleeper = parkShort(w2, p2, lean, leanDef);
+    assert.equal(!!leanSleeper._resting, false);
+    assert.ok(leanSleeper._restWalk);
+});
+
 test("settler walking to a lean-to is Going to sleep, not Idle", () => {
     const { world, pawn } = createTestWorld();
     const { rec } = parkSettler(world, pawn);
