@@ -595,6 +595,21 @@
     const SLEEP_HORIZONTAL_NORTH_SLACK = 6;
 
     /**
+     * Y-sort baseline. Sprites sort at the feet anchor. An upward
+     * skinworking bench is drawn at the north of its tile, so sorting at
+     * the anchor paints it over anyone standing in the empty pixels south
+     * of the legs. Sort that facing at the hitbox bottom.
+     */
+    function sortDepth(entry, thingDef, tileSize) {
+        const y = Number(entry?.y) || 0;
+        if (!entry || thingDef?.id !== "skinworking_bench") return y;
+        if (normalizeRot(entry.rot) !== 180) return y;
+        const rect = collisionWorldRect(entry, thingDef, tileSize);
+        // Half a pixel behind the legs so a pawn standing on that line draws over the bench.
+        return rect ? rect.bottom - 0.5 : y;
+    }
+
+    /**
      * Walk collision in world pixels.
      * 1×1: hs×hs at the feet, or a rotation-aware AABB from `hitbox`.
      * Sleep 90/270: footprint minus the open/bedding side (walk onto the laying spot).
@@ -615,11 +630,14 @@
                 ? Math.min(FURNITURE_NORTH_SLACK, Math.max(0, box.h - 1))
                 : 0;
             if (box.oriented && r === 180) {
+                // Upward skinworking bench shares the 0° height, but the
+                // legs hang one pixel below that box.
+                const drop = thingDef?.id === "skinworking_bench" ? 1 : 0;
                 return {
                     left: x - hx,
                     right: x + hx,
                     top: y - ts + slack,
-                    bottom: y - ts + box.h
+                    bottom: y - ts + box.h + drop
                 };
             }
             return {
@@ -1824,6 +1842,7 @@
         entryFootprintTiles,
         footprintWorldRect,
         hitboxWH,
+        sortDepth,
         walkBodyAt,
         walkBodyOverlapsTile,
         collisionWorldRect,

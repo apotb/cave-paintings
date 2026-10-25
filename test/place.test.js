@@ -37,10 +37,21 @@ test("bench hitbox follows rotation instead of a 5×5 at the feet", () => {
     const r180 = Place.collisionWorldRect({ id: def.id, x, y, rot: 180 }, def, TS);
     assert.ok(r180.top < y - 10, "180° table sits at the north of the tile");
     assert.ok(r180.top >= y - 14, "180° north slack is not the full tile edge");
+    assert.equal(r180.bottom, y - 5, "180° covers the lower leg pixel");
     assert.ok(r180.bottom <= y - 4, "180° must not keep a feet box in empty south pixels");
     assert.equal(contains(r180, x, y - 12), true);
+    assert.equal(contains(r180, x, y - 6), true, "180° lower leg pixel is solid");
+    assert.equal(contains(r180, x, y - 5), false, "sand under the upward legs stays walkable");
     assert.equal(contains(r180, x, y - 15), false);
     assert.equal(contains(r180, x, y - 1), false);
+
+    assert.equal(Place.sortDepth({ id: def.id, x, y, rot: 0 }, def, TS), y);
+    assert.equal(
+        Place.sortDepth({ id: def.id, x, y, rot: 180 }, def, TS),
+        r180.bottom - 0.5,
+        "upward bench sorts at the legs so a pawn in front draws over it"
+    );
+    assert.ok(r180.bottom < y);
 });
 
 test("grindstone placement rotates the stand tile and keeps variant art", () => {

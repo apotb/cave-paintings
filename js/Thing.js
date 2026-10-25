@@ -89,7 +89,18 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
         );
     }
 
+    _syncSortDepth() {
+        if (!this.entry) return;
+        if (this.meta?.diggable?.item || this.meta?.figurine || this.meta?.id === "storage_pit") return;
+        const ts = this.scene?.tileSize || 16;
+        const d = (typeof Place !== "undefined" && Place.sortDepth)
+            ? Place.sortDepth(this.entry, this.meta, ts)
+            : this.y;
+        if (this.depth !== d) this.setDepth(d);
+    }
+
     applyVisual() {
+        this._syncSortDepth();
         if (this.meta.anim) {
             const texKey = this._animTextureKey();
             if (texKey && this.texture?.key !== texKey && this.scene.textures?.exists?.(texKey)) {
