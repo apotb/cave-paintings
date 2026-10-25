@@ -2863,8 +2863,16 @@ class PartySystem {
             dirs.sort((a, b) => (vy > 0 ? b.y - a.y : a.y - b.y));
         }
         const partyN = scene.party?.length || 1;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        const nearCamp = !!(S?.wandererBandAt && S.wandererBandAt(
+            scene.settlementSys?.list,
+            scene.settlers,
+            origin.x,
+            origin.y,
+            ts
+        ));
         const pack = typeof Party !== "undefined" && Party.wandererPackSize
-            ? Party.wandererPackSize(partyN)
+            ? Party.wandererPackSize(partyN, undefined, { band: nearCamp })
             : 1;
         const full = typeof Party !== "undefined" && Party.isPartyFull
             ? Party.isPartyFull(partyN)

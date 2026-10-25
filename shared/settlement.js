@@ -1735,6 +1735,42 @@
         return hits[0] || null;
     }
 
+    /** A camp this full draws wanderers in a group instead of one passerby. */
+    const WANDERER_BAND_SETTLERS = 5;
+
+    function settlerLiving(p) {
+        if (!p || p.dead) return false;
+        if (typeof p.isBodyDead === "function" && p.isBodyDead()) return false;
+        return true;
+    }
+
+    /** Settlers of this camp standing inside its radius. */
+    function settlersInside(settle, settlers, tileSize) {
+        if (!settle) return 0;
+        let n = 0;
+        for (const s of settlers || []) {
+            if (!settlerLiving(s)) continue;
+            if (s.homeSettlementId !== settle.id) continue;
+            const x = Number(s.x);
+            const y = Number(s.y);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+            if (!inRange(settle, x, y, tileSize)) continue;
+            n++;
+        }
+        return n;
+    }
+
+    /**
+     * Wanderers spawn just off the person they walk toward. That spawn is
+     * near a settlement when the person is inside it, and the settlement
+     * draws a group once five of its own settlers are standing in the radius.
+     */
+    function wandererBandAt(list, settlers, x, y, tileSize) {
+        const settle = atPoint(list, x, y, tileSize);
+        if (!settle) return false;
+        return settlersInside(settle, settlers, tileSize) >= WANDERER_BAND_SETTLERS;
+    }
+
     /** Owned camp that contains both points, or null. */
     function sharedCamp(list, ax, ay, bx, by, tileSize, ownerId) {
         const camp = atPoint(list, ax, ay, tileSize, ownerId);
@@ -3164,6 +3200,7 @@
 
     return {
         RADIUS_TILES,
+        WANDERER_BAND_SETTLERS,
         WALK_TRANSFER_TILES,
         IDLE_ROAM_SOFT,
         IDLE_ROAM_HARD,
@@ -3304,6 +3341,8 @@
         ownedOf,
         mergeOwned,
         atPoint,
+        settlersInside,
+        wandererBandAt,
         sharedCamp,
         unlinkStation,
         removeStation,

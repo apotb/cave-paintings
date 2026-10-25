@@ -2029,6 +2029,76 @@ test("a full party spawns a band, and a party with room spawns one passerby", ()
     for (const w of band) assert.equal(w.band, true);
 });
 
+function campWithSettlers(world, pawn, count, settlerAt) {
+    const settle = Settlement.createSettlement({
+        x: pawn.x, y: pawn.y, ownerId: pawn.id, name: "Home"
+    });
+    world.settlements.push(settle);
+    const at = settlerAt || ((i) => ({ x: pawn.x + 16, y: pawn.y }));
+    for (let i = 0; i < count; i++) {
+        const pos = at(i);
+        world.settlers.push({
+            id: `camp-s${i}`,
+            homeSettlementId: settle.id,
+            x: pos.x,
+            y: pos.y,
+            dead: false
+        });
+    }
+    return settle;
+}
+
+test("a camp with five settlers inside draws a wanderer band", () => {
+    const { world, pawn } = createTestWorld();
+    world.rng = () => 0;
+    pawn.x = 32;
+    pawn.y = 32;
+    campWithSettlers(world, pawn, 5);
+    const pack = world._spawnWandererNear(pawn);
+    assert.ok(pack >= 2 && pack <= 6, `pack was ${pack}`);
+    const band = [...world.wanderers.values()];
+    assert.equal(band.length, pack);
+    for (const w of band) assert.equal(w.band, true);
+});
+
+test("four settlers inside a camp still draw one passerby", () => {
+    const { world, pawn } = createTestWorld();
+    world.rng = () => 0;
+    pawn.x = 32;
+    pawn.y = 32;
+    campWithSettlers(world, pawn, 4);
+    assert.equal(world._spawnWandererNear(pawn), 1);
+    assert.equal([...world.wanderers.values()][0].band, false);
+});
+
+test("five settlers outside the camp, or a camp the pawn is not in, draw one passerby", () => {
+    const { world, pawn } = createTestWorld();
+    world.rng = () => 0;
+    pawn.x = 32;
+    pawn.y = 32;
+    campWithSettlers(world, pawn, 5, () => ({ x: pawn.x + 40 * 16, y: pawn.y }));
+    assert.equal(world._spawnWandererNear(pawn), 1);
+    world.wanderers.clear();
+    world.settlements.length = 0;
+    world.settlers.length = 0;
+
+    const far = Settlement.createSettlement({
+        x: pawn.x + 80 * 16, y: pawn.y, ownerId: pawn.id, name: "Far"
+    });
+    world.settlements.push(far);
+    for (let i = 0; i < 5; i++) {
+        world.settlers.push({
+            id: `far-s${i}`,
+            homeSettlementId: far.id,
+            x: far.x,
+            y: far.y,
+            dead: false
+        });
+    }
+    assert.equal(world._spawnWandererNear(pawn), 1);
+    assert.equal([...world.wanderers.values()][0].band, false);
+});
+
 test("room in the party still recruits into the party inside a camp", () => {
     const { world, pawn, Protocol } = createTestWorld();
     world.rng = () => 0;

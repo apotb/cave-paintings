@@ -246,6 +246,17 @@ test("wanderer stone spear and pebbles use the rock on the spawn tile", () => {
     assert.equal(bareSpear.knapMaterial, undefined);
 });
 
+test("wanderer bands are 2–6 for a full party or a populated settlement", () => {
+    const lo = () => 0;
+    const hi = () => 0.999;
+    assert.equal(Party.wandererPackSize(1, lo), 1);
+    assert.equal(Party.wandererPackSize(5, lo), 1);
+    assert.equal(Party.wandererPackSize(6, lo), 2);
+    assert.equal(Party.wandererPackSize(6, hi), 6);
+    assert.equal(Party.wandererPackSize(1, lo, { band: true }), 2);
+    assert.equal(Party.wandererPackSize(1, hi, { band: true }), 6);
+});
+
 test("pickAutoEat prefers soonest-spoil raw when no prepared food exists", () => {
     const eater = {
         id: "s",

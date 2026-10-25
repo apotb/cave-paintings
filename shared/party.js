@@ -733,9 +733,13 @@
         return (Number(partyCount) || 1) >= CAP;
     }
 
-    /** 1 passerby, or a band of 2–6 once the party is full. Bands will not join. */
-    function wandererPackSize(partyCount, rng) {
-        if (!isPartyFull(partyCount)) return 1;
+    /**
+     * 1 passerby, or a band of 2–6. A band shows up when the party is full,
+     * or when the spawn is near a settlement with at least five settlers
+     * inside it (`opts.band`). Bands will not join.
+     */
+    function wandererPackSize(partyCount, rng, opts) {
+        if (!isPartyFull(partyCount) && !(opts && opts.band)) return 1;
         return _randInt(rng, PACK_FULL[0], PACK_FULL[1]);
     }
 

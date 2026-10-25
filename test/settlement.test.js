@@ -1034,6 +1034,36 @@ test("owner-filtered atPoint ignores another player's camp", () => {
     assert.equal(Settlement.atPoint(list, 0, 0, 16)?.ownerId, "owner");
 });
 
+test("a camp draws a wanderer band once five of its settlers stand inside", () => {
+    const settle = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p", name: "Home" });
+    const settlers = [];
+    for (let i = 0; i < 4; i++) {
+        settlers.push({ id: `s${i}`, homeSettlementId: settle.id, x: 16, y: 0, dead: false });
+    }
+    assert.equal(Settlement.WANDERER_BAND_SETTLERS, 5);
+    assert.equal(Settlement.settlersInside(settle, settlers, 16), 4);
+    assert.equal(Settlement.wandererBandAt([settle], settlers, 0, 0, 16), false);
+
+    settlers.push({ id: "s4", homeSettlementId: settle.id, x: 16, y: 16, dead: false });
+    assert.equal(Settlement.wandererBandAt([settle], settlers, 0, 0, 16), true);
+
+    settlers[4].x = 40 * 16;
+    assert.equal(Settlement.wandererBandAt([settle], settlers, 0, 0, 16), false);
+    settlers[4].x = 16;
+
+    assert.equal(Settlement.wandererBandAt([settle], settlers, 40 * 16, 0, 16), false);
+
+    settlers[4].dead = true;
+    assert.equal(Settlement.wandererBandAt([settle], settlers, 0, 0, 16), false);
+    settlers[4].dead = false;
+    settlers[4].isBodyDead = () => true;
+    assert.equal(Settlement.wandererBandAt([settle], settlers, 0, 0, 16), false);
+    delete settlers[4].isBodyDead;
+
+    settlers[4].homeSettlementId = "other";
+    assert.equal(Settlement.wandererBandAt([settle], settlers, 0, 0, 16), false);
+});
+
 test("idle home stand does not overlap the stone hitbox", () => {
     const settle = { x: 100, y: 200 };
     const home = Settlement.idleHome(settle);

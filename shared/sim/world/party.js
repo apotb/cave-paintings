@@ -1073,7 +1073,10 @@
         }
         if (!found) return false;
         const partyN = (p.party?.length || 0) + 1;
-        const pack = Party.wandererPackSize(partyN, () => this.rng());
+        const nearCamp = Settlement.wandererBandAt(
+            this.settlements, this.settlers, p.x, p.y, TS
+        );
+        const pack = Party.wandererPackSize(partyN, () => this.rng(), { band: nearCamp });
         const full = Party.isPartyFull(partyN);
         const line = Party.wandererPackOffsets(pack, inward, TS * 1.35);
         const probe = { hitboxSize: 8, width: 16, height: 16 };
