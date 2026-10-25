@@ -787,14 +787,12 @@ function goOrWalk(world, rec, target) {
         if (dist < (Number(rec._poseBest) || dist) - 0.35) {
             rec._poseBest = dist;
             rec._poseStill = 0;
-        } else if (dist <= 8) rec._poseStill = (rec._poseStill || 0) + 1;
+        } else if (dist <= 14) rec._poseStill = (rec._poseStill || 0) + 1;
         else rec._poseStill = 0;
-        // Pathing parks a few pixels off an open pose and calls that
-        // arrival. They then sit on "Stoking fire" and never step
-        // the rest of the way. The pose is open, so put them on it.
-        // Only this last gap: a wider snap pulls a hauler off a detour.
-        const parked = !!rec._closeOpenPose && dist <= 8 && (rec._poseStill || 0) >= 6
-            && stepClear(world, c, px, py, stand.x, stand.y);
+        // Pathing parks short of an open pose and calls that arrival.
+        // The body fits on the tile (pad 0). A straight step can still clip
+        // the fire, and then they stand on the lip and never use it.
+        const parked = !!rec._closeOpenPose && dist <= 14 && (rec._poseStill || 0) >= 4;
         // The body has to be in the center of the interact tile. Being
         // somewhere in reach is not using the station.
         if (!poseBlocked(0) && (dist <= slack || parked)) {
@@ -895,6 +893,23 @@ function approachStation(world, rec, target) {
  * An open pose gets that last step. A blocked pose still uses the old
  * arrival, or a basket on the tile would make the job give up.
  */
+/** Ticks spent not moving while trying to use this station. */
+function spotStill(rec, target) {
+    const uid = target?.uid || target?.id || "";
+    const px = Number(rec.x) || 0;
+    const py = Number(rec.y) || 0;
+    if (rec._spotUid !== uid) {
+        rec._spotUid = uid;
+        rec._spotStill = 0;
+    }
+    const moved = Math.hypot(px - (rec._spotPx ?? px), py - (rec._spotPy ?? py));
+    rec._spotPx = px;
+    rec._spotPy = py;
+    if (moved > 0.35) rec._spotStill = 0;
+    else rec._spotStill = (rec._spotStill || 0) + 1;
+    return rec._spotStill || 0;
+}
+
 function useInteractSpot(world, rec, target) {
     if (onInteractSpot(world, rec, target)) return null;
     const pose = interactStand(world, rec, target);
@@ -905,14 +920,25 @@ function useInteractSpot(world, rec, target) {
         rec._closeOpenPose = true;
         const walked = goOrWalk(world, rec, target);
         rec._closeOpenPose = false;
-        if (walked) return walked;
-        if (onInteractSpot(world, rec, target)) return null;
-        if (stepClear(world, c, Number(rec.x) || 0, Number(rec.y) || 0, pose.x, pose.y)) {
+        if (!walked) {
+            if (onInteractSpot(world, rec, target)) return null;
             plantAtStand(rec, c, pose, target);
             if (onInteractSpot(world, rec, target)) return null;
         }
+        // Pathing reported a walk, then the feet stopped. An open tile gets
+        // the snap. Otherwise load from here — standing on "Simmering" with
+        // the shell in hand never fills the pot.
+        if (walked && spotStill(rec, target) >= 8 && near(rec.x, rec.y, target.x, target.y)) {
+            plantAtStand(rec, c, pose, target);
+            if (onInteractSpot(world, rec, target)) return null;
+            return null;
+        }
+        if (walked) return walked;
     }
-    return goOrWalk(world, rec, target);
+    const walked = goOrWalk(world, rec, target);
+    if (!walked) return null;
+    if (spotStill(rec, target) >= 8 && near(rec.x, rec.y, target.x, target.y)) return null;
+    return walked;
 }
 
 function blockedToward(world, rec, c, tx, ty, ignoreUid, pad = 2) {

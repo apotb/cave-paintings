@@ -154,7 +154,20 @@ function doCook(world, rec, settle, job) {
         // Don't light, fetch a shell, or load the pot until two ingredients
         // are already in it or on the way into it.
         const minSlots = Settlement.SIMMER_MIN_SLOTS || 2;
-        if (simmerWillFill(world, rec, settle, fire, bill) < minSlots) {
+        const willFill = simmerWillFill(world, rec, settle, fire, bill);
+        if (willFill < minSlots) {
+            endWorkHold(rec);
+            return halt();
+        }
+        // The shell is on and nothing else will go in. The fire finishes the
+        // meal on its own. Holding this job parks them on "Simmering" with
+        // the next shell and fish still in their hands.
+        const shellOn = Settlement.isCookTool(getItem, fire.catalyst, method);
+        let filled = 0;
+        for (const s of fire.simmer || []) {
+            if (s && Settlement.cookInputReady(getItem, s, bill)) filled += 1;
+        }
+        if (shellOn && filled >= minSlots && willFill <= filled && !fireNeedsLight(fire)) {
             endWorkHold(rec);
             return halt();
         }
@@ -542,7 +555,7 @@ function doLeather(world, rec, settle, job) {
                 return halt();
             }
         }
-        const walked = goOrWalk(world, rec, rack);
+        const walked = useInteractSpot(world, rec, rack);
         if (walked) {
             if (walkStuck(world, rec)) {
                 stopLeather(world, rec, job, true);
@@ -613,7 +626,7 @@ function doLeather(world, rec, settle, job) {
             return halt();
         }
         if (fetched) return fetched;
-        const walked = goOrWalk(world, rec, bench);
+        const walked = useInteractSpot(world, rec, bench);
         if (walked) return walked;
         for (const ing of recipe.ingredients || []) {
             if (world._countMatchingItems(rec, ing) < ing.qty) {
@@ -778,7 +791,7 @@ function doRock(world, rec, settle, job) {
             return halt();
         }
         if (blank.at !== rec) return fetchStack(world, rec, settle, blank) || halt();
-        const walked = goOrWalk(world, rec, rock);
+        const walked = useInteractSpot(world, rec, rock);
         if (walked) return walked;
         if (!canReceiveTool(world, rec, settle)) {
             stopRock(rec, job, true);
@@ -840,7 +853,7 @@ function doRock(world, rec, settle, job) {
             }
         }
     }
-    const walked = goOrWalk(world, rec, rock);
+    const walked = useInteractSpot(world, rec, rock);
     if (walked) return walked;
     for (const ing of recipe.ingredients || []) {
         const need = Math.max(1, Math.floor(Number(ing.qty) || 1));

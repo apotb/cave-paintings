@@ -2853,6 +2853,72 @@ test("dedicated settler simmers when two ingredients will be in the dish", () =>
     assert.equal((fire.simmer || []).filter(Boolean).length, 2);
 });
 
+test("simmer loads after stopping short of an open campfire spot", () => {
+    const { world, pawn } = createTestWorld();
+    fillGrass(world);
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "cracked_coconut", quantity: 1 },
+            { id: "raw_fish", quantity: 4 },
+            { id: "stick", quantity: 1 },
+            null, null
+        ]
+    });
+    rec.kc = 1600;
+    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const fire = addLitFire(world, settle, rec, "fire-lip-stuck");
+    fire.catalyst = null;
+    const pose = Place.interactStandPose(fire, 16, world._thingDef(fire.id), world._ensureSettlerCreature(rec));
+    rec.x = pose.x + 10;
+    rec.y = pose.y;
+    const c = world._ensureSettlerCreature(rec);
+    c.x = rec.x;
+    c.y = rec.y;
+    Settlement.addBill(settle, fire.uid, { recipeId: "simmer", mode: "forever", paused: false });
+    for (let i = 0; i < 8; i++) {
+        if (fire.catalyst?.id === "cracked_coconut"
+            && (fire.simmer || []).filter((s) => s?.id === "raw_fish").length >= 4) break;
+        workOnce(world, rec);
+    }
+    assert.equal(fire.catalyst?.id, "cracked_coconut");
+    assert.equal((fire.simmer || []).filter((s) => s && s.id === "raw_fish").length, 4);
+    assert.ok(
+        Math.hypot(rec.x - pose.x, rec.y - pose.y) <= 1,
+        `should be on the interact spot, at ${rec.x},${rec.y} want ${pose.x},${pose.y}`
+    );
+});
+
+test("dedicated settler does not stand on a pot that is already simmering", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "cracked_coconut", quantity: 1 },
+            { id: "raw_fish", quantity: 4 },
+            { id: "stick", quantity: 1 },
+            null, null
+        ]
+    });
+    rec.kc = 1600;
+    settle.jobs[rec.id] = { doctor: 0, cook: 1, chop: 0, leather: 0, gather: 0, haul: 0 };
+    const fire = addLitFire(world, settle, rec, "fire-full-pot");
+    fire.catalyst = { id: "cracked_coconut", quantity: 1 };
+    fire.simmer = [
+        { id: "raw_fish", quantity: 1 },
+        { id: "raw_fish", quantity: 1 },
+        { id: "raw_fish", quantity: 1 },
+        { id: "raw_fish", quantity: 1 }
+    ];
+    fire.pitTemp = 800;
+    fire.burnRemaining = 40;
+    Settlement.addBill(settle, fire.uid, { recipeId: "simmer", mode: "forever", paused: false });
+    for (let i = 0; i < 6; i++) workOnce(world, rec);
+    assert.equal(fire.catalyst?.id, "cracked_coconut");
+    assert.equal((fire.simmer || []).filter(Boolean).length, 4);
+    assert.notEqual(rec._settlerAct, "Simmering");
+    assert.notEqual(rec._settlerAct, "Simmering a meal");
+    assert.equal(rec.inventory.some((s) => s?.id === "cracked_coconut"), true);
+});
+
 test("dedicated settler leaves a one-ingredient pot alone", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
@@ -3560,6 +3626,42 @@ test("dedicated settler crafts at a bench over craftSeconds", () => {
         "pouch should exist after CRAFT_SECONDS"
     );
     assert.equal(rec._workChannel, null);
+});
+
+test("tailor sews after stopping short of the bench spot", () => {
+    const { world, pawn } = createTestWorld();
+    fillGrass(world);
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "deer_leather", quantity: 3 },
+            { id: "leaf_cord", quantity: 8 },
+            { id: "bone", quantity: 1 },
+            null, null
+        ]
+    });
+    rec.kc = 1600;
+    settle.jobs[rec.id] = { doctor: 0, cook: 0, chop: 0, leather: 1, gather: 0, haul: 0 };
+    Research.unlock(pawn, "basic_furniture");
+    Research.unlock(pawn, "skinworking");
+    Research.unlock(pawn, "leatherworking");
+    const bench = addBenchInFront(world, settle, rec, "bench-lip");
+    const pose = Place.interactStandPose(bench, 16, world._thingDef(bench.id), world._ensureSettlerCreature(rec));
+    rec.x = pose.x + 10;
+    rec.y = pose.y;
+    const c = world._ensureSettlerCreature(rec);
+    c.x = rec.x;
+    c.y = rec.y;
+    Settlement.addBill(settle, bench.uid, { recipeId: "leather_tunic", mode: "forever", paused: false });
+    for (let i = 0; i < 8; i++) {
+        if (rec._workChannel?.kind === "craft") break;
+        workOnce(world, rec);
+    }
+    assert.equal(rec._workChannel?.kind, "craft", `should start sewing (act=${rec._settlerAct})`);
+    assert.equal(rec._workChannel?.recipeId, "leather_tunic");
+    assert.ok(
+        Math.hypot(rec.x - pose.x, rec.y - pose.y) <= 1,
+        `should be on the interact spot, at ${rec.x},${rec.y} want ${pose.x},${pose.y}`
+    );
 });
 
 test("dedicated settler stands on the bench interact tile and faces north", () => {

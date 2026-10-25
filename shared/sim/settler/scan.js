@@ -760,8 +760,17 @@ function cookHasWork(world, rec, settle, fire, bill, opts = {}) {
         // One ingredient never becomes a meal. Start only when the pot plus
         // what they can haul will fill at least two slots.
         const minSlots = Settlement.SIMMER_MIN_SLOTS || 2;
-        if (!(hasTool && simmerWillFill(world, rec, settle, fire, bill) >= minSlots)) return false;
+        const willFill = simmerWillFill(world, rec, settle, fire, bill);
+        if (!(hasTool && willFill >= minSlots)) return false;
         if (fireNeedsLight(fire) && !fireCanFuel(world, rec, settle, fire)) return false;
+        // Already simmering, and this settler cannot add another ingredient.
+        // Leave it. Come back when the meal is ready or the fire goes out.
+        const shellOn = Settlement.isCookTool(getItem, cat, method);
+        let filled = 0;
+        for (const s of fire?.simmer || []) {
+            if (s && Settlement.cookInputReady(getItem, s, bill)) filled += 1;
+        }
+        if (shellOn && filled >= minSlots && willFill <= filled && !fireNeedsLight(fire)) return false;
         return true;
     }
     if (fire.cook && Settlement.cookFitsBill(getItem, fire.cook, bill)) {

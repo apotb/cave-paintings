@@ -2512,9 +2512,11 @@
 
     function _simmerFilled(fire) {
         if (typeof fire?.simmerFilledCount === "function") return fire.simmerFilledCount() || 0;
-        const slots = _fireEntry(fire)?.simmerSlots;
-        if (Array.isArray(slots)) return slots.filter(Boolean).length;
-        return 0;
+        const entry = _fireEntry(fire);
+        const slots = Array.isArray(entry?.simmer) ? entry.simmer
+            : (Array.isArray(entry?.simmerSlots) ? entry.simmerSlots : null);
+        if (!slots) return 0;
+        return slots.filter((s) => s && s.id).length;
     }
 
     function _cookActLabel(job, getItem) {
