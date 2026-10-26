@@ -4455,6 +4455,7 @@ class SceneMenu extends Phaser.Scene {
             panel.appendChild(upload);
         }
         const specs = [];
+        specs.push({ label: finishLabel, onClick: finishMods });
         if (canUpload && upload) {
             specs.push({ label: "Add Mod", onClick: () => upload.click() });
         } else if (electronMods) {
@@ -4466,7 +4467,6 @@ class SceneMenu extends Phaser.Scene {
                 }
             });
         }
-        specs.push({ label: finishLabel, onClick: finishMods });
         specs.push({
             label: "Create Mod",
             width: Math.round(180 * s),
