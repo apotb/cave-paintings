@@ -595,17 +595,18 @@
     const SLEEP_HORIZONTAL_NORTH_SLACK = 6;
 
     /**
-     * Y-sort baseline. Sprites sort at the feet anchor. An upward
-     * skinworking bench is drawn at the north of its tile, so sorting at
-     * the anchor paints it over anyone standing in the empty pixels south
-     * of the legs. Sort that facing at the hitbox bottom.
+     * Y-sort baseline. Sprites sort at the feet anchor. An upward bench or
+     * basket is drawn at the north of its tile, so sorting at the anchor
+     * paints it over anyone standing in the empty pixels south of the
+     * body. Sort that facing at the hitbox bottom.
      */
     function sortDepth(entry, thingDef, tileSize) {
         const y = Number(entry?.y) || 0;
-        if (!entry || thingDef?.id !== "skinworking_bench") return y;
+        const id = thingDef?.id;
+        if (!entry || (id !== "skinworking_bench" && id !== "wicker_basket")) return y;
         if (normalizeRot(entry.rot) !== 180) return y;
         const rect = collisionWorldRect(entry, thingDef, tileSize);
-        // Half a pixel behind the legs so a pawn standing on that line draws over the bench.
+        // Half a pixel behind the south edge so a pawn standing on that line draws over the sprite.
         return rect ? rect.bottom - 0.5 : y;
     }
 
@@ -630,9 +631,12 @@
                 ? Math.min(FURNITURE_NORTH_SLACK, Math.max(0, box.h - 1))
                 : 0;
             if (box.oriented && r === 180) {
-                // Upward skinworking bench shares the 0° height, but the
-                // legs hang one pixel below that box.
-                const drop = thingDef?.id === "skinworking_bench" ? 1 : 0;
+                // Upward facings share the 0° height, but the drawing hangs
+                // below that box: bench legs by one pixel, the basket by two.
+                const id = thingDef?.id;
+                const drop = id === "skinworking_bench" ? 1
+                    : id === "wicker_basket" ? 2
+                    : 0;
                 return {
                     left: x - hx,
                     right: x + hx,

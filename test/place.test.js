@@ -255,6 +255,19 @@ test("basket hitbox is wide at 0° and narrow at 90°", () => {
     assert.ok(r0.top >= y - 9, "0° must not use the empty pixels above the handle");
     assert.equal(contains(r0, x, y - 11), false, "sand / handle above the basket body is walkable");
     assert.equal(contains(r0, x, y - 2), true);
+
+    const r180 = Place.collisionWorldRect({ id: def.id, x, y, rot: 180 }, def, TS);
+    assert.equal(r180.bottom, y - 3, "180° covers the basket body and a pixel under it");
+    assert.equal(r180.bottom - r180.top, r0.bottom - r0.top + 2, "180° is the 0° height plus the two-pixel drop");
+    assert.equal(contains(r180, x, y - 5), true, "180° last wicker pixel is solid");
+    assert.equal(contains(r180, x, y - 4), true, "180° pixel under the basket is solid");
+    assert.equal(contains(r180, x, y - 3), false, "sand under the upward basket stays walkable");
+    assert.equal(Place.sortDepth({ id: def.id, x, y, rot: 0 }, def, TS), y);
+    assert.equal(
+        Place.sortDepth({ id: def.id, x, y, rot: 180 }, def, TS),
+        r180.bottom - 0.5,
+        "upward basket sorts at the wicker so a pawn in front draws over it"
+    );
 });
 
 test("lean-to facings are a floor and a wall", () => {
