@@ -571,6 +571,7 @@
         });
         thing.on("pointerdown", (pointer) => {
             if (pointer.rightButtonDown()) return;
+            if (this.partySys?.settlerOwnsPointer?.(pointer)) return;
             if (this.restBlocksWorldUi?.()) return;
             if (this.pointerOnCraftTake?.(pointer) || this.pointerOnCraftSettle?.(pointer)
                 || this.pointerOnCraftBills?.(pointer) || this.pointerOnCraftRotate?.(pointer)) return;
@@ -623,6 +624,7 @@
         if (this.partyPanel?.visible && this.partyPanel.containsPointer?.(pointer)) return true;
         if (this.healthPanel?.visible && this.healthPanel.containsPointer?.(pointer)) return true;
         if (this.equipmentPanel?.visible && this.equipmentPanel.containsPointer?.(pointer)) return true;
+        if (this.bioPanel?.visible && this.bioPanel.containsPointer?.(pointer)) return true;
         if (this.settlementSys?.hudContains?.(pointer)) return true;
         return false;
     },
@@ -1293,6 +1295,7 @@
                 thing.setInteractive?.({ cursor: "pointer" });
                 thing.on("pointerdown", (pointer) => {
                     if (pointer?.rightButtonDown?.()) return;
+                    if (this.partySys?.settlerOwnsPointer?.(pointer)) return;
                     if (typeof ModClient !== "undefined") ModClient.openPanel(panelId, this, thing);
                 });
             }

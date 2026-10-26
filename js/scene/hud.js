@@ -515,10 +515,171 @@
         obj.setVisible(!!overlay);
     },
 
-    _syncTooltipStatColor(text) {
+    _syncTooltipStatColor(text, spans) {
+        this._tooltipSpans = spans || null;
+        if (spans) {
+            this._syncTooltipOverlay(this.tooltipMuted, "");
+            this._syncTooltipOverlay(this.tooltipWarn, "");
+            this._syncTooltipOverlay(this.tooltipEquip, "");
+            return;
+        }
         this._syncTooltipOverlay(this.tooltipMuted, this._tooltipColorOverlay(text, "muted"));
         this._syncTooltipOverlay(this.tooltipWarn, this._tooltipColorOverlay(text, "warn"));
         this._syncTooltipOverlay(this.tooltipEquip, this._tooltipColorOverlay(text, "equip"));
+    },
+
+    _tooltipMeasure() {
+        if (this._tipMeasure) return this._tipMeasure;
+        const style = this.tooltipText?.style || {};
+        this._tipMeasure = this.make.text({
+            add: false,
+            style: {
+                fontFamily: style.fontFamily || PIXEL_UI_FONT,
+                fontSize: style.fontSize || "16px",
+                color: "#ffffff",
+                stroke: "#000000",
+                strokeThickness: style.strokeThickness || 2,
+                padding: 0
+            }
+        });
+        return this._tipMeasure;
+    },
+
+    /** Pixel passion star, centered on x, y. A filled polygon blurs into a circle here. */
+    _fillTooltipStar(parent, x, y, unit) {
+        const mark = this.add.graphics();
+        mark.setPosition(Math.round(x), Math.round(y));
+        const u = Math.max(1, unit | 0);
+        if (typeof drawFavoriteStar === "function") {
+            drawFavoriteStar(mark, u, 0xe6c15a);
+        }
+        parent.add(mark);
+        return mark;
+    },
+
+    /** Draw a marked tip as separate white, gray, and gold runs so they cannot drift. */
+    _placeTooltipSpans() {
+        const root = this.tooltipSpans;
+        if (!root) return;
+        root.removeAll(true);
+        this._tooltipSpanW = 0;
+        this._tooltipSpanH = 0;
+        const spans = this._tooltipSpans;
+        const plain = spans ? (this.tooltipText?.text || "") : "";
+        if (this.tooltipText) this.tooltipText.setVisible(!spans && !!this.tooltipText.text);
+        if (!spans || !plain) return;
+        const style = this.tooltipText.style;
+        const measure = this._tooltipMeasure();
+        measure.setFontFamily(style.fontFamily);
+        measure.setFontSize(style.fontSize);
+        measure.setStroke("#000000", style.strokeThickness || 0);
+        measure.setPadding(0);
+        measure.setText("A");
+        const one = measure.height;
+        measure.setText("A\nA");
+        const step = Math.max(1, measure.height - one);
+        const pad = this.tooltipText.padding || { left: 0, right: 0, top: 0, bottom: 0 };
+        const plainLines = plain.split("\n");
+        const goldLines = String(spans.gold || "").split("\n");
+        const mutedLines = String(spans.muted || "").split("\n");
+        const orangeLines = String(spans.orange || "").split("\n");
+        const centerLines = String(spans.center || "").split("\n");
+        const starLines = String(spans.stars || "").split("\n");
+        const runsOf = (mask, line) => {
+            const found = [];
+            let i = 0;
+            while (i < (mask || "").length) {
+                if (!mask[i] || mask[i] === " ") { i += 1; continue; }
+                const start = i;
+                i += 1;
+                while (i < line.length && !(mask[i] === " " && line[i] !== " ")) i += 1;
+                found.push([start, i]);
+            }
+            return found;
+        };
+        let maxRight = 0;
+        let maxBottom = 0;
+        const placed = [];
+        // Just under one line tall. A full font pixel per cell makes the
+        // 14-tall star dwarf the letters.
+        const fontPx = parseFloat(style.fontSize) || one || 16;
+        const starUnit = Math.max(1, Math.round(fontPx * 0.875 / 14));
+        const starW = 15 * starUnit;
+        const starH = 14 * starUnit;
+        let cursorY = pad.top || 0;
+        plainLines.forEach((line, row) => {
+            const kind = new Array(line.length).fill("w");
+            for (const [start, end] of runsOf(mutedLines[row], line)) {
+                for (let i = start; i < end && i < line.length; i++) kind[i] = "m";
+            }
+            for (const [start, end] of runsOf(goldLines[row], line)) {
+                for (let i = start; i < end && i < line.length; i++) kind[i] = "g";
+            }
+            for (const [start, end] of runsOf(orangeLines[row], line)) {
+                for (let i = start; i < end && i < line.length; i++) kind[i] = "o";
+            }
+            for (const [start, end] of runsOf(starLines[row], line)) {
+                for (let i = start; i < end && i < line.length; i++) kind[i] = "s";
+            }
+            const hasStar = kind.some((k, i) => k === "s" && line[i] !== " ");
+            const rowH = hasStar ? Math.max(step, starH) : step;
+            let x = pad.left || 0;
+            const y = cursorY + (hasStar ? Math.round((rowH - one) / 2) : 0);
+            const rowTexts = [];
+            let i = 0;
+            while (i < line.length) {
+                const k = kind[i];
+                let j = i + 1;
+                while (j < line.length && kind[j] === k) j += 1;
+                const body = line.slice(i, j);
+                if (k === "s") {
+                    for (let n = 0; n < body.length; n++) {
+                        if (body[n] === " ") {
+                            measure.setText(" ");
+                            x += measure.width;
+                            continue;
+                        }
+                        this._fillTooltipStar(root, x + starW / 2, cursorY + rowH / 2, starUnit);
+                        x += starW;
+                    }
+                } else if (body.trim()) {
+                    const color = k === "g" ? "#e6c15a" : (k === "o" ? "#f0a040" : (k === "m" ? "#a0a0a0" : "#ffffff"));
+                    const t = this.add.text(0, 0, body, {
+                        fontFamily: style.fontFamily,
+                        fontSize: style.fontSize,
+                        color,
+                        stroke: "#000000",
+                        strokeThickness: style.strokeThickness || 0,
+                        padding: 0
+                    });
+                    if (typeof crispUiText === "function") crispUiText(t);
+                    t.setOrigin(0, 0);
+                    t.setPosition(x, y);
+                    root.add(t);
+                    rowTexts.push(t);
+                    x += t.width;
+                } else {
+                    measure.setText(body);
+                    x += measure.width;
+                }
+                i = j;
+            }
+            maxRight = Math.max(maxRight, x);
+            maxBottom = Math.max(maxBottom, cursorY + (hasStar ? rowH : one));
+            cursorY += rowH;
+            placed.push({
+                texts: rowTexts,
+                end: x,
+                center: /[^ \n]/.test(centerLines[row] || "")
+            });
+        });
+        for (const row of placed) {
+            if (!row.center || !row.texts.length) continue;
+            const shift = Math.round((maxRight - row.end) / 2);
+            if (shift > 0) for (const t of row.texts) t.x += shift;
+        }
+        this._tooltipSpanW = maxRight + (pad.right || 0);
+        this._tooltipSpanH = maxBottom + (pad.bottom || 0);
     },
 
     _hungerSig(h) {
@@ -532,7 +693,10 @@
 
     _applyTooltipPayload() {
         const raw = this._tooltipSource ? this._tooltipSource() : "";
-        const { text, rows, lines, hunger, preview, star } = this._tooltipPayload(raw);
+        const spans = typeof Skills !== "undefined" && Skills.tipLayers && typeof raw === "string"
+            ? Skills.tipLayers(raw)
+            : null;
+        const { text, rows, lines, hunger, preview, star } = this._tooltipPayload(spans ? spans.plain : raw);
         const useHunger = !!hunger;
         const starOn = !!star;
         // The star sits on the name only. Hunger already splits that line off;
@@ -557,7 +721,7 @@
             return !!(head || tail || this._tooltipGearH || this._tooltipHungerH || this._tooltipPreviewH);
         }
         this.tooltipText.setText(head);
-        this._syncTooltipStatColor(head);
+        this._syncTooltipStatColor(head, spans);
         if (this.tooltipSub) {
             this.tooltipSub.setText(tail);
             this.tooltipSub.setVisible(!!tail);
@@ -681,10 +845,12 @@
         if (this.tooltipWarn?.style?.wordWrapWidth) this.tooltipWarn.setWordWrapWidth(0);
         if (this.tooltipEquip?.style?.wordWrapWidth) this.tooltipEquip.setWordWrapWidth(0);
         this._syncTooltipHunger(hunger, this._hungerSig(hunger));
+        this._placeTooltipSpans();
         const hasText = !!(this.tooltipText?.text);
-        this.tooltipText?.setVisible(hasText);
-        const tw = hasText ? (this.tooltipText.displayWidth || 0) : 0;
-        const th = hasText ? (this.tooltipText.displayHeight || 0) : 0;
+        const spanOn = !!this._tooltipSpans;
+        if (!spanOn) this.tooltipText?.setVisible(hasText);
+        const tw = spanOn ? (this._tooltipSpanW || 0) : (hasText ? (this.tooltipText.displayWidth || 0) : 0);
+        const th = spanOn ? (this._tooltipSpanH || 0) : (hasText ? (this.tooltipText.displayHeight || 0) : 0);
         const sw = tail ? (this.tooltipSub.displayWidth || 0) : 0;
         const sh = tail ? (this.tooltipSub.displayHeight || 0) : 0;
         const gw = this._tooltipGearW || 0;

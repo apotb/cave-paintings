@@ -38,6 +38,31 @@ function stoneApi() {
     try { return require("../stone"); } catch (_) { return null; }
 }
 
+function skillsApi(creature) {
+    const sim = creature?.ctx?.sim;
+    if (typeof sim?._skillsApi === "function") {
+        const api = sim._skillsApi();
+        if (api) return api;
+    }
+    if (typeof Skills !== "undefined") return Skills;
+    try { return require("../skills"); } catch (_) { return null; }
+}
+
+function workSwing(attack) {
+    if (!attack) return false;
+    let chop = typeof Chop !== "undefined" ? Chop : null;
+    let dig = typeof Dig !== "undefined" ? Dig : null;
+    if (!chop) {
+        try { chop = require("../chop"); } catch (_) { chop = null; }
+    }
+    if (!dig) {
+        try { dig = require("../dig"); } catch (_) { dig = null; }
+    }
+    if (chop?.isChopAttack?.(attack)) return true;
+    if (dig?.isDigAttack?.(attack)) return true;
+    return false;
+}
+
 /** Scale tip stab by rock hardness and knap quality (matches js/Utils). */
 function weaponMetaWithKnapQuality(meta, stack) {
     if (!meta?.weapon) return meta;
@@ -316,6 +341,12 @@ class SimCreature {
         };
     }
 
+    /** Backstory or trait shut off melee. Chopping and digging are not attacks. */
+    refusesMelee() {
+        const skills = skillsApi(this);
+        return !!(skills && this.bio && skills.incapable(this.bio, "melee"));
+    }
+
     isBodyDead() {
         return this._dead;
     }
@@ -484,6 +515,7 @@ class SimCreature {
             ? (this.ctx.sim?._pickPlayerAttack?.(this, ang) || BodyCombat.pickAttack(this))
             : BodyCombat.pickAttack(this);
         if (!attack) return false;
+        if (!workSwing(attack) && this.refusesMelee()) return false;
 
         const scale = this.capacities.actionDurationScale();
         const durationMs = MeleeMath.meleeAttackDurationMs(attack.cooldown || 2, scale);
@@ -523,6 +555,7 @@ class SimCreature {
 
         const atk = attack || BodyCombat.pickAttack(this);
         if (!atk) return false;
+        if (!workSwing(atk) && this.refusesMelee()) return false;
 
         const c = this.bodyCenter();
         const tc =
@@ -682,9 +715,10 @@ class SimCreature {
             x: c.x,
             y: c.y,
             key: this.def?.key || (this.kind === "player" ? "human" : "human"),
-            look: this.look || null,
+            look: this.look || this.entry?.look || null,
             frame: 7,
-            name: this.def?.name || this.name || "Corpse",
+            name: this.name || this.def?.name || "Corpse",
+            bio: this.bio || this.entry?.bio || null,
             loot,
             body: this.anatomy?.toJSON?.(),
             bodyPlan: this.def?.bodyPlan || this.anatomy?.planId || "human",
@@ -764,6 +798,9 @@ function createMobCreature(entry, def, dataStore, extras = {}) {
         ctx: extras
     });
     creature.faction = Party.FACTION_WILDLIFE;
+    if (entry?.name) creature.name = entry.name;
+    if (entry?.look) creature.look = entry.look;
+    if (entry?.bio) creature.bio = entry.bio;
     return creature;
 }
 

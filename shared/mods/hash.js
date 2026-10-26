@@ -252,6 +252,41 @@
         return out;
     }
 
+    function copyBackstory(row) {
+        const out = {};
+        put(out, "id", take(row, "id"));
+        put(out, "slot", take(row, "slot"));
+        put(out, "title", take(row, "title"));
+        put(out, "desc", take(row, "desc"));
+        const skills = numberMap(row.skills);
+        const passions = numberMap(row.passions);
+        if (skills) out.skills = skills;
+        if (passions) out.passions = passions;
+        const disable = pickList(row, "disable");
+        const traits = pickList(row, "traits");
+        if (disable) out.disable = disable;
+        if (traits) out.traits = traits;
+        return out;
+    }
+
+    function copyTrait(row) {
+        const out = {};
+        put(out, "id", take(row, "id"));
+        put(out, "title", take(row, "title"));
+        put(out, "desc", take(row, "desc"));
+        put(out, "commonality", take(row, "commonality"));
+        put(out, "learning", take(row, "learning"));
+        const skills = numberMap(row.skills);
+        const passions = numberMap(row.passions);
+        if (skills) out.skills = skills;
+        if (passions) out.passions = passions;
+        const conflicts = pickList(row, "conflicts");
+        const disable = pickList(row, "disable");
+        if (conflicts) out.conflicts = conflicts;
+        if (disable) out.disable = disable;
+        return out;
+    }
+
     function copyMob(mob) {
         const out = {};
         put(out, "id", take(mob, "id"));
@@ -526,6 +561,8 @@
             items: hashedItems(src.items),
             things: byId(src.things).map(copyThing),
             techs: byId(src.techs).map(copyTech),
+            backstories: byId(src.backstories).map(copyBackstory),
+            traits: byId(src.traits).map(copyTrait),
             mobs: byId(src.mobs).map(copyMob),
             bodyPlans: mapOf(src.bodyPlans, copyBodyPlan),
             injuries: mapOf(src.injuries, copyInjury),

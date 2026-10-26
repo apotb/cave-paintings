@@ -673,6 +673,9 @@
             look: opts.look || null,
             frame: opts.frame != null ? opts.frame : 7,
             name: opts.name || "Corpse",
+            bio: opts.bio && typeof opts.bio === "object"
+                ? JSON.parse(JSON.stringify(opts.bio))
+                : null,
             loot: (opts.loot || []).filter(Boolean),
             body: opts.body || null,
             bodyPlan: opts.bodyPlan || "human",
@@ -695,6 +698,7 @@
             existing.look = entry.look;
             existing.frame = entry.frame;
             existing.name = entry.name;
+            if (entry.bio) existing.bio = entry.bio;
             existing.loot = entry.loot;
             existing.body = entry.body;
             existing.bodyPlan = entry.bodyPlan;
@@ -861,8 +865,10 @@
                 x: c.x,
                 y: c.y,
                 key: mob.def?.key || "human",
+                look: mob.look || mob.entry?.look || null,
                 frame: 7,
-                name: mob.def?.name || mob.name || "Corpse",
+                name: mob.name || mob.def?.name || "Corpse",
+                bio: mob.bio || mob.entry?.bio || null,
                 loot: this._lootFromMobDef(mob.def?.id || mob.entry?.id),
                 body: mob.anatomy?.toJSON?.() || null,
                 bodyPlan: mob.def?.bodyPlan || mob.anatomy?.planId || "human",
@@ -887,6 +893,7 @@
                 look: corpse.look || null,
                 frame: corpse.frame != null ? corpse.frame : 7,
                 name: corpse.name,
+                bio: corpse.bio || null,
                 loot: corpse.loot || [],
                 body: corpse.body || null,
                 bodyPlan: corpse.bodyPlan || "human",

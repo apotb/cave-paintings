@@ -216,6 +216,7 @@
                 look: c.look || null,
                 frame,
                 name: c.name || "Corpse",
+                bio: c.bio || null,
                 loot,
                 body: c.body || null,
                 bodyPlan: c.bodyPlan || "human",
@@ -268,6 +269,8 @@
             spr.entry.key = key;
             spr.entry.frame = frame;
             spr.entry.name = c.name || spr.entry.name || "Corpse";
+            if (c.look) spr.entry.look = c.look;
+            if (c.bio) spr.entry.bio = c.bio;
             spr.entry.skinned = !!c.skinned;
             spr.entry.body = c.body != null ? c.body : spr.entry.body;
             spr.entry.bodyPlan = c.bodyPlan || spr.entry.bodyPlan || "human";
@@ -353,13 +356,22 @@
         }
     },
 
+    _netMobTex(kind, look) {
+        const def = this.getMob?.(kind);
+        let texKey = def?.key || kind;
+        if (look && typeof PlayerLook !== "undefined") {
+            texKey = PlayerLook.resolveTexture(this, texKey, look);
+        }
+        if (this.textures.exists(texKey)) return texKey;
+        if (this.textures.exists(kind)) return kind;
+        if (this.textures.exists("deer")) return "deer";
+        return null;
+    },
+
     _netMakeMob(m) {
         const kind = m.kind || "deer";
         const def = this.getMob?.(kind);
-        const texKey = def?.key || kind;
-        const tex = this.textures.exists(texKey) ? texKey
-            : (this.textures.exists(kind) ? kind
-                : (this.textures.exists("deer") ? "deer" : null));
+        const tex = this._netMobTex(kind, m.look);
         const root = this.add.container(m.x, m.y);
         this.mainLayer.add(root);
         let spr;
@@ -425,6 +437,7 @@
             attackMax: 0,
             attackAngle: 0,
             look: m.look || null,
+            bio: m.bio || null,
             panic: !!m.panic,
             hostile: !!m.hostile,
             prone: !!m.prone
@@ -464,7 +477,17 @@
             entry.hostile = !!m.hostile;
             entry.state = m.state || entry.state;
             entry.prone = !!m.prone;
-            if (m.look) entry.look = m.look;
+            if (m.look) {
+                entry.look = m.look;
+                const tex = this._netMobTex(entry.kind, m.look);
+                if (tex && tex !== entry.tex && entry.spr?.setTexture) {
+                    this._netEnsureMobAnims(tex);
+                    entry.tex = tex;
+                    entry.spr.setTexture(tex, 1);
+                    entry.animKey = null;
+                }
+            }
+            if (m.bio) entry.bio = m.bio;
             if (m.prone) {
                 this._netClearRemoteAttack(entry);
             } else if (m.attacking && Number.isFinite(m.attackAngle)) {

@@ -1203,6 +1203,20 @@ function jobCargoPreds(world, cookJob, rockJob) {
 function scanWork(world, rec, settle, claims) {
     const jobs = Settlement.jobsFor(settle, rec.id);
     const enabled = new Set(Settlement.enabledJobs(jobs));
+    if (typeof Skills !== "undefined" && rec?.bio) {
+        for (const name of [...enabled]) {
+            const skill = Skills.jobSkill(name);
+            if (skill && Skills.incapable(rec.bio, skill)) enabled.delete(name);
+        }
+    } else if (world._skillsApi && rec?.bio) {
+        const skills = world._skillsApi();
+        if (skills) {
+            for (const name of [...enabled]) {
+                const skill = skills.jobSkill(name);
+                if (skill && skills.incapable(rec.bio, skill)) enabled.delete(name);
+            }
+        }
+    }
     const doctorOn = jobOn(enabled, "doctor");
     const patients = doctorOn ? settlerPatients(world, rec, settle, claims) : [];
     const care = doctorOn ? settlerCare(world, rec, settle, claims) : { critical: [], rescues: [] };

@@ -213,10 +213,11 @@
             });
             return;
         }
-        const rec = this._companionFromSnap(p, {
+            const rec = this._companionFromSnap(p, {
             id: w.id,
             name: w.name,
             look: w.look,
+            bio: w.bio,
             x: w.x,
             y: w.y,
             facing: w.facing,
@@ -257,6 +258,79 @@
             settled: !!park,
             settlementId: park ? park.id : null,
             settlementName: park ? (park.name || "") : null
+        });
+    },
+
+    /**
+     * Send one of your companions or settlers away. Gear is destroyed, not dropped.
+     * They walk off and will not accept another recruit.
+     */
+    _handleBanish(p, action) {
+        const id = action?.pawnId;
+        if (!p || !id || id === p.id) return;
+        let rec = null;
+        let partyIndex = -1;
+        const party = p.party || [];
+        for (let i = 0; i < party.length; i++) {
+            if (party[i] && party[i].id === id && !party[i].dead) {
+                rec = party[i];
+                partyIndex = i;
+                break;
+            }
+        }
+        if (!rec) {
+            rec = (this.settlers || []).find((s) => s && s.id === id && s.ownerId === p.id && !s.dead) || null;
+        }
+        if (!rec) return;
+        if (p.controlId === id) this._setControlId(p, p.id, { allowDead: true });
+        this._cancelChannels(rec);
+        const creature = rec.creature || this.creatures.get(rec.id);
+        if (!Number.isFinite(Number(rec.x)) && creature) rec.x = creature.x;
+        if (!Number.isFinite(Number(rec.y)) && creature) rec.y = creature.y;
+        const empty = emptyInv(Math.max(5, Array.isArray(rec.inventory) ? rec.inventory.length : 5));
+        const eq = this._emptyEquipment();
+        rec.inventory = empty;
+        rec.overflow = [];
+        rec.equipment = eq;
+        rec.hotbarIndex = 0;
+        if (creature) {
+            creature.inventory = empty;
+            creature.overflow = [];
+            creature.equipment = eq;
+            creature.hotbarIndex = 0;
+        }
+        if (partyIndex >= 0) party.splice(partyIndex, 1);
+        else this.settlers = (this.settlers || []).filter((s) => s !== rec);
+        const ox = Number(rec.x);
+        const oy = Number(rec.y);
+        let hx = (Number.isFinite(ox) ? ox : 0) - (Number(p.x) || 0);
+        let hy = (Number.isFinite(oy) ? oy : 0) - (Number(p.y) || 0);
+        if (Math.hypot(hx, hy) < 0.01) {
+            hx = 1;
+            hy = 0;
+        }
+        this._releaseSettlerAsWanderer(rec, { x: hx, y: hy });
+        const gone = this.wanderers.get(rec.id);
+        if (gone) {
+            gone.recruitLocked = true;
+            gone.inventory = empty;
+            gone.overflow = [];
+            gone.equipment = eq;
+        }
+        const name = rec.name || "Someone";
+        this._youDirty.add(p.id);
+        this.pushEvent({
+            kind: "banish",
+            pawnId: id,
+            name,
+            heading: gone?.heading || { x: hx, y: hy },
+            to: p.id
+        });
+        this.pushEvent({
+            kind: "combat_log",
+            text: `${name} has been banished`,
+            feed: true,
+            to: p.id
         });
     },
 
@@ -554,8 +628,12 @@
             if (one) targets = [one];
         }
         if (!targets.length) return false;
+        const skills = this._skillsApi?.();
+        if (skills && tender.bio && skills.incapable(tender.bio, "medical")) return false;
         const seconds = Number(meta.bandage.channelSeconds) || 5;
-        const max = seconds * 1000 * this._manipulationDurationScale(tender);
+        const med = skills && tender.bio ? skills.effectiveLevel(tender.bio, "medical") : null;
+        const tendRate = med == null ? 1 : Math.max(0.05, skills.tendSpeed(med));
+        const max = seconds * 1000 * this._manipulationDurationScale(tender) / tendRate;
         tender.tendChannel = {
             remaining: max,
             max,
@@ -677,6 +755,7 @@
             id: w.id,
             name: w.name,
             look: w.look,
+            bio: w.bio || null,
             x: w.x,
             y: w.y,
             facing: prone ? "right" : w.facing,
@@ -718,7 +797,7 @@
         const x = Number(snap.x);
         const y = Number(snap.y);
         if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-        return {
+        const rec = {
             id: snap.id,
             name: snap.name,
             look: snap.look || null,
@@ -732,9 +811,12 @@
             band: !!snap.band,
             refusedBy: Array.isArray(snap.refusedBy) ? snap.refusedBy : [],
             body: snap.body || null,
+            bio: snap.bio || null,
             dead: false,
             _avoidSide: 1
         };
+        this._ensureBio?.(rec);
+        return rec;
     },
 
     _mobTimeScale() {
@@ -939,6 +1021,7 @@
             this.creatures.set(w.id, creature);
         }
         w.creature = creature;
+        creature.bio = w.bio || null;
         creature.role = "wanderer";
         creature.ownerId = null;
         creature.faction = Party.FACTION_WANDERERS;
@@ -1119,10 +1202,12 @@
             });
             const id = uuid();
             const h = inward;
+            const bio = this._skillsApi()?.generate(() => this.rng()) || null;
             this.wanderers.set(id, {
                 id,
                 name: CavemanNames.generate(() => this.rng(), { avoid: this._livingNames() }),
                 look: Look.randomLook(),
+                bio,
                 x: sx,
                 y: sy,
                 facing: h.x > 0 ? "right" : h.x < 0 ? "left" : h.y > 0 ? "down" : "up",
@@ -2158,6 +2243,7 @@
             look: w.look || null,
             frame: 7,
             name: w.name || "Wanderer",
+            bio: w.bio || creature?.bio || null,
             loot: loot.filter(Boolean),
             body: creature?.anatomy?.toJSON?.() || w.body || null,
             bodyPlan: "human",

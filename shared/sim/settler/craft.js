@@ -401,6 +401,24 @@ function doCook(world, rec, settle, job) {
     const walked = goOrWalk(world, rec, fire);
     if (walked) return walked;
     stokeUntilKeep(world, rec, settle, fire);
+    if (method !== "smoke_hide") {
+        const skills = world._skillsApi?.();
+        const cookLv = skills && rec.bio ? skills.effectiveLevel(rec.bio, "cooking") : null;
+        if (skills && rec.bio && skills.incapable(rec.bio, "cooking")) {
+            endWorkHold(rec);
+            return halt();
+        }
+        if (cookLv != null) {
+            fire._skillCook = skills.cookSpeed(cookLv);
+            if (rec._cookXpMin == null) rec._cookXpMin = world.gameMinutes;
+            let elapsed = world.gameMinutes - rec._cookXpMin;
+            if (elapsed < 0) elapsed += 24 * 60;
+            if (elapsed > 0 && elapsed < 30) {
+                skills.award(rec.bio, "cooking", skills.XP_MINUTE * elapsed, { day: world.gameDay });
+                rec._cookXpMin = world.gameMinutes;
+            }
+        }
+    }
     const facing = faceFire(rec, fire);
     return halt(facing ? { facing } : null);
 }
@@ -708,8 +726,11 @@ function holdTool(rec, found, classes) {
     return classes.includes(cls);
 }
 
-/** 40% crude, 30% rough, 20% break, 10% fine. Null is a shattered blank. */
-function settlerKnapQuality(world) {
+/** 40% crude, 30% rough, 20% break, 10% fine at crafting 8. Null is a shattered blank. */
+function settlerKnapQuality(world, rec) {
+    const skills = world._skillsApi?.();
+    const lv = skills?.pawnLevel?.(rec, "crafting");
+    if (skills && lv != null) return skills.knapQuality(lv, world.rng);
     const roll = typeof world.rng === "function" ? world.rng() : Math.random();
     if (roll < 0.4) return "crude";
     if (roll < 0.7) return "rough";
@@ -717,9 +738,9 @@ function settlerKnapQuality(world) {
     return "fine";
 }
 
-function settlerKnapStack(world, toolClass, blank) {
+function settlerKnapStack(world, toolClass, blank, rec) {
     const StoneApi = stoneMod();
-    const quality = settlerKnapQuality(world);
+    const quality = settlerKnapQuality(world, rec);
     if (!quality) return null;
     const flint = blank?.id === "flint";
     const stack = {
@@ -752,7 +773,7 @@ function finishSettlerKnap(world, rec, ch) {
     if (index < 0) return;
     const blank = takeOne({ slots: inv, index });
     if (!blank) return;
-    const tool = settlerKnapStack(world, ch.toolClass, blank);
+    const tool = settlerKnapStack(world, ch.toolClass, blank, rec);
     if (!tool) {
         world._dirtyPawnOwner?.(rec);
         return;

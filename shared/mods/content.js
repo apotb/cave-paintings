@@ -93,6 +93,8 @@
         ["mobs", "Mobs.json"],
         ["things", "Things.json"],
         ["techs", "Techs.json"],
+        ["backstories", "Backstories.json"],
+        ["traits", "Traits.json"],
         ["structures", "Structures.json"]
     ];
 
@@ -411,7 +413,9 @@
             items: loaded.items,
             mobs: loaded.mobs,
             things: loaded.things,
-            techs: loaded.techs
+            techs: loaded.techs,
+            backstories: loaded.backstories,
+            traits: loaded.traits
         });
         _structures = loaded.structures;
         Structures?.loadConfig?.(_structures);
@@ -523,6 +527,8 @@
             items: store.itemsList || [],
             things: store.thingsList || [],
             techs: store.techsList || [],
+            backstories: store.backstoriesList || [],
+            traits: store.traitsList || [],
             mobs: store.mobsList || [],
             bodyPlans: store.bodyPlans || {},
             injuries: store.injuries || {},
@@ -653,6 +659,8 @@
         putJson(json, "items", store.itemsList || []);
         putJson(json, "things", store.thingsList || []);
         putJson(json, "techs", store.techsList || []);
+        putJson(json, "backstories", store.backstoriesList || []);
+        putJson(json, "traits", store.traitsList || []);
         putJson(json, "mobs", store.mobsList || []);
         putJson(json, "bodyPlans", store.bodyPlans || {});
         putJson(json, "injuries", store.injuries || {});

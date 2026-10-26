@@ -143,8 +143,15 @@ function doDoctor(world, rec, settle, patient) {
         dropPatient(world, rec, patient, false);
         return halt();
     }
+    const skills = world._skillsApi?.();
+    if (skills && rec.bio && skills.incapable(rec.bio, "medical")) {
+        dropPatient(world, rec, patient, true);
+        return halt();
+    }
     const seconds = Number(meta.bandage.channelSeconds) || 5;
-    const max = seconds * 1000 * manipScale(world, rec);
+    const med = skills && rec.bio ? skills.effectiveLevel(rec.bio, "medical") : null;
+    const tendRate = med == null ? 1 : Math.max(0.05, skills.tendSpeed(med));
+    const max = seconds * 1000 * manipScale(world, rec) / tendRate;
     rec._workChannel = {
         kind: "tend",
         remaining: max,

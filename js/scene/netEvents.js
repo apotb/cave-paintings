@@ -176,6 +176,9 @@
         if (ev.kind === "recruit") {
             this.partySys?.onRecruitResult?.(ev);
         }
+        if (ev.kind === "banish") {
+            this.partySys?.onBanished?.(ev);
+        }
         if (ev.kind === "vomit") {
             this._netApplyVomitEvent(ev);
         }

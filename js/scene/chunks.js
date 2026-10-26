@@ -318,13 +318,17 @@
         this._layoutLocationDebug?.();
 
         if (this.craft) {
-            this.craft.setScale(6 * s).setPosition(44 * s, this.scale.height / 2);
+            this.craft.setScale(6 * s).setPosition(44 * s, this.scale.height / 2 + 52 * s);
+            if (this.bioBtn) {
+                this.bioBtn.setScale(6 * s).setPosition(44 * s, this.scale.height / 2 - 156 * s);
+            }
             if (this.equipmentBtn) {
-                this.equipmentBtn.setScale(6 * s).setPosition(44 * s, this.scale.height / 2 - 104 * s);
+                this.equipmentBtn.setScale(6 * s).setPosition(44 * s, this.scale.height / 2 - 52 * s);
             }
             if (this.healthBtn) {
-                this.healthBtn.setScale(6 * s).setPosition(44 * s, this.scale.height / 2 + 104 * s);
+                this.healthBtn.setScale(6 * s).setPosition(44 * s, this.scale.height / 2 + 156 * s);
             }
+            this.bioPanel?.layout?.();
             this.healthPanel?.layout?.();
             this.combatLog?.layout?.();
             this.layoutDeathOverlay();
@@ -359,6 +363,10 @@
             this.equipmentPanel.layout();
         } else if (this.equipmentPanel) {
             this.equipmentPanel.layout();
+        }
+        if (this.bioPanel?.visible) {
+            this.bioPanel.refresh();
+            this.bioPanel.layout();
         }
 
         if (this.campfirePanel?.visible) this.campfirePanel.layout();

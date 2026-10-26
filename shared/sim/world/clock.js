@@ -46,11 +46,29 @@
         });
     },
 
+    _decayBios() {
+        const day = this.gameDay;
+        const api = this._skillsApi?.();
+        if (!api) return;
+        const touch = (pawn) => {
+            if (!pawn || pawn.dead) return;
+            this._ensureBio?.(pawn);
+            if (pawn.bio) api.rollDay(pawn.bio, day);
+        };
+        for (const p of this.players.values()) {
+            touch(p);
+            for (const m of p.party || []) touch(m);
+        }
+        for (const s of this.settlers || []) touch(s);
+        for (const w of this.wanderers.values()) touch(w);
+    },
+
     _worldMinute() {
         this.gameMinutes += 1;
         if (this.gameMinutes >= 24 * 60) {
             this.gameMinutes = 0;
             this.gameDay += 1;
+            this._decayBios();
         }
         for (const p of this.players.values()) {
             if (!p.connected) continue;
@@ -1153,6 +1171,7 @@
                     look: corpse.look || null,
                     frame: corpse.frame != null ? corpse.frame : 7,
                     name: corpse.name || "Corpse",
+                    bio: corpse.bio || null,
                     loot: corpse.loot || [],
                     body: corpse.body || null,
                     bodyPlan: corpse.bodyPlan || "human",
@@ -1179,7 +1198,9 @@
             const row = {
                 id: mob.id,
                 kind: mob.def?.id || mob.entry?.id || "deer",
-                name: mob.def?.name || mob.name,
+                name: mob.name || mob.def?.name,
+                look: mob.look || mob.entry?.look || null,
+                bio: mob.bio || mob.entry?.bio || null,
                 x: mob.x,
                 y: mob.y,
                 facing: mob.facing || "down",
@@ -1259,6 +1280,7 @@
             restRot: p.lastSleep?.rot,
             lastSleep: p.lastSleep || null,
             look: p.look || Look.normalizeLook(null),
+            bio: p.bio || null,
             eatChannel: this._eatChannelSnap(p.eatChannel),
             tendChannel: this._tendChannelSnap(p.tendChannel),
             vomit: this._isVomiting(p)
@@ -1305,7 +1327,8 @@
                     schedule: typeof m.schedule === "string" && m.schedule
                         ? Settlement.normalizeSchedule(m.schedule)
                         : null,
-                    favorite: !!m.favorite
+                    favorite: !!m.favorite,
+                    bio: m.bio || null
                 };
             }),
             controlId: p.controlId || p.id,

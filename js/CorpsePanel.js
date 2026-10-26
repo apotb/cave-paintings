@@ -184,6 +184,12 @@ class CorpsePanel {
         if (hp?.isInspecting?.()) hp.close();
     }
 
+    _closeCorpseBio() {
+        const bio = this.scene.bioPanel;
+        if (!bio?.visible || bio._viewingCorpse !== this.corpse) return;
+        bio.close();
+    }
+
     /**
      * @param {boolean} [skipCompact] if true, skip rewriting entry (used while destroying)
      */
@@ -192,6 +198,7 @@ class CorpsePanel {
         this._cancelDrag();
         this.scene.hideTooltip();
         this._closeCorpseHealth();
+        this._closeCorpseBio();
 
         const corpse = this.corpse;
         const sessionEmpty = !this.session.some(Boolean);

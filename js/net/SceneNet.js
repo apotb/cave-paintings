@@ -16,6 +16,8 @@ class SceneNet extends Phaser.Scene {
         this.load.json("items", "data/Items.json");
         this.load.json("things", "data/Things.json");
         this.load.json("techs", "data/Techs.json");
+        this.load.json("backstories", "data/Backstories.json");
+        this.load.json("traits", "data/Traits.json");
         this.load.json("mobs", "data/Mobs.json");
         if (typeof PlayerLook !== "undefined") PlayerLook.loadParts(this);
 

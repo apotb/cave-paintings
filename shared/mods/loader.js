@@ -20,9 +20,11 @@
         "injuries.json",
         "hediffs.json",
         "structures.json",
-        "scatters.json"
+        "scatters.json",
+        "backstories.json",
+        "traits.json"
     ];
-    const LIST_KINDS = ["items", "things", "mobs", "techs"];
+    const LIST_KINDS = ["items", "things", "mobs", "techs", "backstories", "traits"];
     const MAP_KINDS = ["bodyPlans", "injuries", "hediffs"];
     const BASE_SOURCE = "cave-paintings.base";
 
@@ -157,6 +159,16 @@
             qualifyIdList(modId, row.unlocks && row.unlocks.items, locals);
             qualifyIdList(modId, row.unlocks && row.unlocks.jobs, locals);
             qualifyIdList(modId, row.unlocks && row.unlocks.bills, locals);
+        }
+        for (const row of data.backstories || []) {
+            if (!row || typeof row !== "object") continue;
+            row.id = qualifyDef(modId, row.id);
+            qualifyIdList(modId, row.traits, locals);
+        }
+        for (const row of data.traits || []) {
+            if (!row || typeof row !== "object") continue;
+            row.id = qualifyDef(modId, row.id);
+            qualifyIdList(modId, row.conflicts, locals);
         }
         for (const kind of MAP_KINDS) {
             const map = data[kind];
@@ -337,6 +349,8 @@
         stampList(store.thingsList, BASE_SOURCE);
         stampList(store.mobsList, BASE_SOURCE);
         stampList(store.techsList, BASE_SOURCE);
+        stampList(store.backstoriesList, BASE_SOURCE);
+        stampList(store.traitsList, BASE_SOURCE);
         stampMap(store.bodyPlans, BASE_SOURCE);
         stampMap(store.injuries, BASE_SOURCE);
         stampMap(store.hediffs, BASE_SOURCE);
@@ -539,6 +553,8 @@
         if (Array.isArray(data.items)) out.items = data.items;
         if (Array.isArray(data.things)) out.things = data.things;
         if (Array.isArray(data.techs)) out.techs = data.techs;
+        if (Array.isArray(data.backstories)) out.backstories = data.backstories;
+        if (Array.isArray(data.traits)) out.traits = data.traits;
         if (Array.isArray(data.mobs)) out.mobs = data.mobs;
         if (data.bodyPlans && typeof data.bodyPlans === "object") out.bodyPlans = data.bodyPlans;
         if (data.injuries && typeof data.injuries === "object") out.injuries = data.injuries;

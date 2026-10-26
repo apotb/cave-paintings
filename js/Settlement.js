@@ -100,8 +100,12 @@ class SettlementSystem {
         if (!sys || !Array.isArray(world?.settlers)) return;
         for (const snap of world.settlers) {
             if (!snap?.id) continue;
-            if ((scene.party || []).some((p) => p.pawnId === snap.id)) continue;
-            if ((scene.settlers || []).some((p) => p?.active && p.pawnId === snap.id)) continue;
+            const existing = (scene.party || []).find((p) => p && p.pawnId === snap.id)
+                || (scene.settlers || []).find((p) => p?.active && p.pawnId === snap.id);
+            if (existing) {
+                if (snap.bio) existing.bio = snap.bio;
+                continue;
+            }
             this._spawnSettlerPawn(snap);
         }
     }
@@ -130,6 +134,7 @@ class SettlementSystem {
             jobs: snap.jobs,
             schedule: snap.schedule,
             favorite: !!snap.favorite,
+            bio: snap.bio,
             ignoreCap: true
         });
         if (!pawn) return null;
@@ -1582,6 +1587,7 @@ class SettlementSystem {
         if (isHudTextOpen(scene)) return;
         // Side menus exclude each other; world UIs (campfire / basket / lean-to) stay open
         if (scene.craftMenuVisible) scene.closeCraftMenu();
+        if (scene.bioPanel?.visible) scene.bioPanel.close();
         if (scene.equipmentPanel?.visible) scene.equipmentPanel.close();
         if (scene.healthPanel?.visible) scene.healthPanel.close();
         scene.settlementPanel?.open(settle);

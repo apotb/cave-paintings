@@ -624,7 +624,9 @@
         }
 
         const foodTemp = heatCookSlot(entry, recipe.temp);
-        const rate = cookRate(foodTemp, recipe.temp);
+        const skill = Number(entry._skillCook);
+        if (entry._skillCook != null) delete entry._skillCook;
+        const rate = cookRate(foodTemp, recipe.temp) * (Number.isFinite(skill) && skill > 0 ? skill : 1);
         entry.roastBarMinutes = recipe.minutes;
         const done = applyCookProgress(entry, recipe.minutes, rate);
         if (rate <= 0 && (entry.cookProgress || 0) <= 0) {

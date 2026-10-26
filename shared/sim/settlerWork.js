@@ -440,7 +440,7 @@ function tick(world, mob, delta) {
         && !rec._returnHides
         && !isWorkHold(rec)
     ) {
-        const careNow = Settlement.jobEnabled(liveJobs, "doctor") && (scan.critical || []).length;
+        const careNow = Settlement.jobEnabled(liveJobs, "doctor", rec) && (scan.critical || []).length;
         const eat = careNow ? null : doEat(world, rec, settle, keepOpts);
         if (eat) {
             rec._researchPoll = 0;
@@ -454,7 +454,7 @@ function tick(world, mob, delta) {
     const reuseHold = isWorkHold(rec)
         && rec._busyJob?.type
         && rec._busyJob.type !== "research"
-        && Settlement.jobEnabled(liveJobs, rec._busyJob.type)
+        && Settlement.jobEnabled(liveJobs, rec._busyJob.type, rec)
         && rec._settlerScan
         && rec._settlerScanMs > 0
         && rec._settlerScanMs < SCAN_MS
@@ -486,7 +486,7 @@ function tick(world, mob, delta) {
         }
 
         const hold = isWorkHold(rec) || delivering;
-        const careNow = Settlement.jobEnabled(liveJobs, "doctor") && (scan.critical || []).length;
+        const careNow = Settlement.jobEnabled(liveJobs, "doctor", rec) && (scan.critical || []).length;
         if (!hold && !careNow) {
             const eat = doEat(world, rec, settle, keepOpts);
             if (eat) {

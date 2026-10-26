@@ -20,6 +20,8 @@
         mobsList: null,
         thingsList: null,
         techsList: null,
+        backstoriesList: null,
+        traitsList: null,
         _ready: false,
         generation: 0
     };
@@ -41,6 +43,8 @@
         store.mobsList = Array.isArray(payload.mobs) ? payload.mobs : [];
         store.thingsList = Array.isArray(payload.things) ? payload.things : [];
         store.techsList = Array.isArray(payload.techs) ? payload.techs : [];
+        store.backstoriesList = Array.isArray(payload.backstories) ? payload.backstories : [];
+        store.traitsList = Array.isArray(payload.traits) ? payload.traits : [];
         store.itemsById = _indexById(store.itemsList);
         store.mobsById = _indexById(store.mobsList);
         store.thingsById = _indexById(store.thingsList);
@@ -83,7 +87,9 @@
             items: json.get("items") || [],
             mobs: json.get("mobs") || [],
             things: json.get("things") || [],
-            techs: json.get("techs") || []
+            techs: json.get("techs") || [],
+            backstories: json.get("backstories") || [],
+            traits: json.get("traits") || []
         });
     }
 
@@ -104,7 +110,9 @@
             items: read("Items.json"),
             mobs: read("Mobs.json"),
             things: read("Things.json"),
-            techs: read("Techs.json")
+            techs: read("Techs.json"),
+            backstories: read("Backstories.json"),
+            traits: read("Traits.json")
         });
     }
 

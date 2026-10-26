@@ -68,6 +68,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
             look: opts.look || null,
             frame: opts.frame != null ? opts.frame : 7,
             name: opts.name || "Corpse",
+            bio: opts.bio || null,
             loot,
             body: opts.body || null,
             bodyPlan: opts.bodyPlan || opts.body?.planId || "human",

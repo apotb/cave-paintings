@@ -1,0 +1,124 @@
+[
+    {
+        "id": "tribe_child",
+        "slot": "child",
+        "title": "Tribe child",
+        "desc": "Born and raised in a tribe of hunter-gatherers.",
+        "skills": { "animals": 2, "cooking": 2, "plants": 1 }
+    },
+    {
+        "id": "peaceful_tribe_child",
+        "slot": "child",
+        "title": "Peaceful tribe child",
+        "desc": "Grew up in a peaceful tribe of hunter-gatherers and traders. Taught diplomacy and respect from a young age.",
+        "skills": { "social": 2, "intellectual": 1 },
+        "passions": { "social": 1 }
+    },
+    {
+        "id": "savage_tribe_child",
+        "slot": "child",
+        "title": "Savage tribe child",
+        "desc": "Spent their childhood in a savage tribe of hunters and warriors. Took their first life at the age of 10.",
+        "skills": { "melee": 2, "shooting": 1 },
+        "passions": { "melee": 1 }
+    },
+    {
+        "id": "grub_catcher",
+        "slot": "child",
+        "title": "Grub catcher",
+        "desc": "Digging up grubs by the shore was a favorite pasttime for <name> as a child. Before learning how to fish, they would eat grubs raw, and then wonder why they got sick so often.",
+        "skills": { "animals": 2, "cooking": 1 },
+        "passions": { "animals": 1 }
+    },
+    {
+        "id": "hearth_tender",
+        "slot": "child",
+        "title": "Hearth tender",
+        "desc": "Tasked with keeping the fire fed from a young age, <name> learned to cook and care for the hearth. They became a master of fire and cooking.",
+        "skills": { "cooking": 5, "plants": -2 },
+        "passions": { "cooking": 1 }
+    },
+    {
+        "id": "stone_knapper",
+        "slot": "adult",
+        "title": "Stone knapper",
+        "desc": "<name> spent years chipping away at stones, turning mere pebbles into refined tools and weapons. They became a master of stone knapping and weapon crafting.",
+        "skills": { "crafting": 4, "melee": 2 },
+        "passions": { "crafting": 1 }
+    },
+    {
+        "id": "forager",
+        "slot": "adult",
+        "title": "Forager",
+        "desc": "<name> knows where to find the best berries, nuts, and other resources in the wild. Whether it's a dark night or the middle of the winter, they can find food anywhere.",
+        "skills": { "plants": 6 },
+        "passions": { "plants": 1 }
+    },
+    {
+        "id": "veteran",
+        "slot": "adult",
+        "title": "Veteran",
+        "desc": "<name> has spent years in the wild, fighting off predators and other dangers. Many of their comrades did not survive. The sight of an open wound brings back traumatic memories.",
+        "skills": { "melee": 4, "shooting": 4 },
+        "passions": { "melee": 1, "shooting": 1 },
+        "disable": ["medical"]
+    },
+    {
+        "id": "hunter",
+        "slot": "adult",
+        "title": "Hunter",
+        "desc": "Knocking down prey with a single shot is a common occurance for <name>. They have a keen eye for target acquisition and a steady hand.",
+        "skills": { "shooting": 4, "animals": 2 },
+        "passions": { "shooting": 1 }
+    },
+    {
+        "id": "trader",
+        "slot": "adult",
+        "title": "Trader",
+        "desc": "Years of trading with other tribes and settlements have taught <name> the value of diplomacy and negotiation. They can reliably negotiate a profitable deal, and have a knack for finding the best bargains.",
+        "skills": { "social": 4, "intellectual": 2 },
+        "passions": { "social": 1 }
+    },
+    {
+        "id": "herbalist",
+        "slot": "adult",
+        "title": "Herbalist",
+        "desc": "Wild plants have been a source of medicine for <name> for years. While others might accidentally poison themselves, <name> knows which ones are safe, and especially which ones are useful.",
+        "skills": { "plants": 4, "medical": 2 },
+        "passions": { "plants": 1 }
+    },
+    {
+        "id": "medic",
+        "slot": "adult",
+        "title": "Medic",
+        "desc": "Having sworn an oath to never harm another living being, <name> has dedicated their life to helping the sick and wounded. They have a deep understanding of the human body and how to heal it.",
+        "skills": { "medical": 8, "plants": 2 },
+        "passions": { "medical": 2 },
+        "disable": ["melee", "shooting"]
+    },
+    {
+        "id": "diplomat",
+        "slot": "adult",
+        "title": "Diplomat",
+        "desc": "Years of diplomacy have taught <name> the value of negotiation and compromise. They can reliably negotiate a profitable deal, and have a knack for finding the best bargains.",
+        "skills": { "social": 4, "intellectual": 2 },
+        "passions": { "social": 1 }
+    },
+    {
+        "id": "philosopher",
+        "slot": "adult",
+        "title": "Philosopher",
+        "desc": "Studying the nature of the universe might prove fruitless to some, but not to <name>. They have dedicated their life to understanding the world we live in. They're a bit of a shut-in.",
+        "skills": { "intellectual": 8 },
+        "passions": { "intellectual": 2 },
+        "disable": ["social"]
+    },
+    {
+        "id": "cook",
+        "slot": "adult",
+        "title": "Cook",
+        "desc": "<name> knows how to bring the flavor out of any ingredient. They are frequently entrusted with cooking for the tribe, with their dishes being a common sight at feasts and celebrations.",
+        "skills": { "cooking": 6 },
+        "passions": { "cooking": 1 }
+    }
+]

@@ -560,6 +560,7 @@
             // Do not loadJSON(p.body) here — that would wipe live combat injuries.
         }
         p.creature = creature;
+        creature.bio = p.bio || null;
         creature.x = p.x;
         creature.y = p.y;
         creature.facing = p.facing || creature.facing;

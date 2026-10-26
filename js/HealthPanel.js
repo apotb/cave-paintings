@@ -209,23 +209,62 @@ class HealthPanel {
             if (title && title !== "Health" && title !== "Corpse") return title;
             return "They";
         }
+        const pawn = this._subjectPawn();
+        if (pawn && pawn !== this.scene.player) {
+            return pawn.displayName?.() || pawn.pawnName || "They";
+        }
         return "You";
+    }
+
+    /** Selected settler while one is followed; otherwise the controlled pawn. */
+    _subjectPawn() {
+        if (this._inspectBody) return null;
+        const focus = this.scene.focusPawn;
+        if (focus?.active && !focus.isBodyDead?.()) return focus;
+        return this.scene.player || null;
+    }
+
+    _subjectBody() {
+        if (this._inspectBody) return this._inspectBody;
+        return this._subjectPawn()?.anatomy || null;
+    }
+
+    _subjectTitle() {
+        if (this._inspectTitle) return this._inspectTitle;
+        const pawn = this._subjectPawn();
+        return pawn?.displayName?.()
+            || pawn?.pawnName
+            || this.scene.playerName
+            || "Health";
     }
 
     isInspecting() {
         return !!this._inspectBody;
     }
 
-    /** Open player health (clears corpse inspect). */
+    /** Open health for the selected corpse, the followed settler, or the controlled pawn. */
     open() {
-        if (this.scene.settlementPanel?.visible) this.scene.settlementSys?.closePanel?.();
+        const scene = this.scene;
+        const corpsePanel = scene.corpsePanel;
+        if (corpsePanel?.visible && corpsePanel.corpse?.active) {
+            corpsePanel._showCorpseHealth();
+            return;
+        }
+        const keep = !!scene.focusPawn;
+        if (keep) scene._retainFocus = true;
+        try {
+            if (scene.settlementPanel?.visible) scene.settlementSys?.closePanel?.();
+            if (scene.bioPanel?.visible) scene.bioPanel.close();
+        } finally {
+            if (keep) scene._retainFocus = false;
+        }
         this._inspectBody = null;
         this._inspectTitle = null;
         this._injScroll = 0;
         this.visible = true;
         this.root.setVisible(true);
         this.refresh({ force: true });
-        this.scene.healthBtn?.setTexture("health_open");
+        scene.healthBtn?.setTexture("health_open");
     }
 
     /**
@@ -235,9 +274,11 @@ class HealthPanel {
      */
     openInspect(body, title) {
         if (!body) return;
-        if (this.scene.settlementPanel?.visible) this.scene.settlementSys?.closePanel?.();
         this._inspectBody = body;
         this._inspectTitle = title || "Corpse";
+        this.scene.partySys?.releaseSettlerFocus?.();
+        if (this.scene.settlementPanel?.visible) this.scene.settlementSys?.closePanel?.();
+        if (this.scene.bioPanel?.visible) this.scene.bioPanel.close();
         this._injScroll = 0;
         this.visible = true;
         this.root.setVisible(true);
@@ -258,6 +299,7 @@ class HealthPanel {
             const hovering = pointerHitsInteractive(btn, p);
             btn.setTexture(hovering ? "health_hover" : "health");
         }
+        this.scene.partySys?.releaseSettlerFocus?.();
     }
 
     containsPointer(pointer) {
@@ -316,7 +358,7 @@ class HealthPanel {
 
     layout() {
         const s = this.scene.uiScale || 1;
-        const body = this._inspectBody || this.scene.player?.anatomy;
+        const body = this._subjectBody();
         const showDoll = this._showsDoll(body);
         // No diagram → drop the doll column; keep roughly the old stats-column width
         const panelW = (showDoll ? 300 : 180) * s;
@@ -550,7 +592,7 @@ class HealthPanel {
                     } else if (row._capKey !== "bloodLoss" && !(row._capValue < 0.999)) {
                         return "";
                     }
-                    const body = this._inspectBody || this.scene.player?.anatomy;
+                    const body = this._subjectBody();
                     if (!body) return "";
                     const caps = new Capacities(body);
                     const lines = caps.explain(row._capKey);
@@ -581,7 +623,7 @@ class HealthPanel {
         const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
         if (!opts.force && now - (this._lastRefreshAt || 0) < 200) return;
         this._lastRefreshAt = now;
-        const body = this._inspectBody || this.scene.player?.anatomy;
+        const body = this._subjectBody();
         if (!body) return;
 
         this._healthRefreshing = true;
@@ -589,10 +631,7 @@ class HealthPanel {
         const caps = new Capacities(body);
         const c = caps.all();
         const pct = (v) => `${Math.round(v * 100)}%`;
-        const title = this._inspectTitle
-            || this.scene.player?.displayName?.()
-            || this.scene.playerName
-            || "Health";
+        const title = this._subjectTitle();
         this.title.setText(title);
 
         // Hoverable capacities (Pain is display-only; Blood Loss always tips)
@@ -822,7 +861,7 @@ class HealthPanel {
         this.scene.time.delayedCall(0, () => {
             this._overlayRefreshQueued = false;
             if (!this.visible) return;
-            const body = this._inspectBody || this.scene.player?.anatomy;
+            const body = this._subjectBody();
             if (body) this._refreshPartOverlays(body);
         });
     }

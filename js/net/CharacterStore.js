@@ -214,16 +214,27 @@ const CharacterStore = (() => {
         });
     }
 
+    function withBio(row) {
+        if (!row || typeof Skills === "undefined") return row;
+        row.bio = Skills.ensure(row.bio, row.id);
+        if (Array.isArray(row.party)) {
+            for (const m of row.party) {
+                if (m) m.bio = Skills.ensure(m.bio, m.id || row.id);
+            }
+        }
+        return row;
+    }
+
     async function get(id) {
         const api = diskApi();
-        if (api) return api.get("characters", id);
+        if (api) return withBio(await api.get("characters", id));
         const db = await openDb();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(STORE, "readonly");
             const req = tx.objectStore(STORE).get(id);
             req.onsuccess = () => {
                 db.close();
-                resolve(req.result || null);
+                resolve(withBio(req.result || null));
             };
             req.onerror = () => {
                 db.close();
@@ -265,6 +276,7 @@ const CharacterStore = (() => {
         else row.updatedAt = Number(character.updatedAt) || Date.now();
         row.name = normalizeName(row.name);
         row.look = normalizeLook(row.look);
+        withBio(row);
         row.favorite = !!row.favorite;
         normalizeCharacterSpoil(row);
         if (await nameTaken(row.name, row.id)) {
@@ -279,9 +291,10 @@ const CharacterStore = (() => {
         return row;
     }
 
-    async function create(name, look, lastMods) {
+    async function create(name, look, lastMods, bio) {
         const c = defaultCharacter(name);
         c.look = normalizeLook(look);
+        if (bio && typeof Skills !== "undefined") c.bio = Skills.normalize(bio);
         if (Array.isArray(lastMods)) c.lastMods = copyLastMods(lastMods);
         return put(c);
     }
@@ -369,6 +382,7 @@ const CharacterStore = (() => {
             mhp: character.mhp,
             body: character.body ? (clone(character.body) || character.body) : null,
             look: normalizeLook(character.look),
+            bio: typeof Skills !== "undefined" ? Skills.ensure(character.bio, character.id) : (character.bio || null),
             party: Array.isArray(character.party)
                 ? character.party.map((m) => {
                     const cm = clone(m) || { ...m };
@@ -410,6 +424,9 @@ const CharacterStore = (() => {
         if (you.body !== undefined) next.body = you.body ? (clone(you.body) || null) : null;
         if (you.look) next.look = normalizeLook(you.look);
         else next.look = normalizeLook(next.look);
+        if (typeof Skills !== "undefined") {
+            next.bio = Skills.ensure(you.bio || next.bio, next.id);
+        } else if (you.bio) next.bio = you.bio;
         if (Array.isArray(you.party)) {
             next.party = you.party.map((m) => {
                 const cm = clone(m) || { id: m?.id, name: m?.name };

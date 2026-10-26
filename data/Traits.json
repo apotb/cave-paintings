@@ -1,0 +1,27 @@
+[
+    {
+        "id": "fast_learner",
+        "title": "Fast learner",
+        "desc": "Learns new skills very quickly.",
+        "commonality": 1,
+        "conflicts": ["slow_learner"],
+        "learning": 0.5
+    },
+    {
+        "id": "slow_learner",
+        "title": "Slow learner",
+        "desc": "Doesn't catch on to new concepts very quickly.",
+        "commonality": 0.2,
+        "conflicts": ["fast_learner"],
+        "learning": -0.5
+    },
+    {
+        "id": "brawler",
+        "title": "Brawler",
+        "desc": "Refuses to fight with anything but a melee weapon.",
+        "commonality": 1,
+        "skills": { "melee": 4 },
+        "passions": { "melee": 1 },
+        "disable": ["shooting"]
+    }
+]

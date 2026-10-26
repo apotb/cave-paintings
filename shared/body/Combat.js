@@ -288,6 +288,25 @@
             }
             const host = hostOf(target);
             const math = mathOf(target);
+            const skills = (typeof Skills !== "undefined")
+                ? Skills
+                : (() => { try { return require("../skills"); } catch (_) { return null; } })();
+            const day = attacker?.ctx?.sim?.gameDay ?? target?.ctx?.sim?.gameDay;
+            if (skills && attacker?.bio && skills.incapable(attacker.bio, "melee")) return null;
+            if (skills && attacker?.bio) {
+                const lv = skills.effectiveLevel(attacker.bio, "melee");
+                if (lv == null || math.random() >= skills.meleeHitChance(lv)) return null;
+            }
+            if (skills && target?.bio && !skills.incapable(target.bio, "melee")) {
+                const lv = skills.effectiveLevel(target.bio, "melee");
+                if (lv != null && math.random() < skills.meleeDodgeChance(lv)) {
+                    skills.award(target.bio, "melee", skills.XP_HIT, { day });
+                    return { dodged: true, damage: 0, part: null };
+                }
+            }
+            if (skills && attacker?.bio && !skills.incapable(attacker.bio, "melee")) {
+                skills.award(attacker.bio, "melee", skills.XP_HIT, { day });
+            }
             const defs = injuryDefs(host);
             let victimPart = target.anatomy.rollLimb();
             if (!victimPart || victimPart.isDead()) {

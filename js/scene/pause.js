@@ -8,7 +8,22 @@
 
     createButtons() {
         const s = this.uiScale || 1;
-        this.craft = this.add.image(44 * s, this.scale.height / 2, 'craft');
+        this.bioBtn = this.add.image(44 * s, this.scale.height / 2 - 156 * s, "bio");
+        lockPixelHit(this.bioBtn, "bio", { cursor: "pointer" });
+        this.bioBtn.on("pointerdown", () => {
+            if (this._gamePaused) return;
+            this.toggleBioMenu();
+        });
+        this.bioBtn.on("pointerover", () => {
+            if (!this.bioPanel?.visible) this.bioBtn.setTexture("bio_hover");
+        });
+        this.bioBtn.on("pointerout", () => {
+            this.bioBtn.setTexture(this.bioPanel?.visible ? "bio_open" : "bio");
+        });
+        this.bioBtn.setOrigin(0.5, 0.5).setScale(6 * s);
+        this.uiLayer.add(this.bioBtn);
+
+        this.craft = this.add.image(44 * s, this.scale.height / 2 + 52 * s, 'craft');
         lockPixelHit(this.craft, 'craft', { cursor: 'pointer' });
         this.craft.on('pointerdown', (pointer) => {
             if (this._gamePaused) return;
@@ -24,7 +39,7 @@
         this.craft.setOrigin(0.5, 0.5).setScale(6 * s);
         this.uiLayer.add(this.craft);
 
-        this.healthBtn = this.add.image(44 * s, this.scale.height / 2 + 104 * s, "health");
+        this.healthBtn = this.add.image(44 * s, this.scale.height / 2 + 156 * s, "health");
         lockPixelHit(this.healthBtn, "health", { cursor: "pointer" });
         this.healthBtn.on("pointerdown", () => {
             if (this._gamePaused) return;
@@ -39,7 +54,7 @@
         this.healthBtn.setOrigin(0.5, 0.5).setScale(6 * s);
         this.uiLayer.add(this.healthBtn);
 
-        this.equipmentBtn = this.add.image(44 * s, this.scale.height / 2 - 104 * s, 'equipment');
+        this.equipmentBtn = this.add.image(44 * s, this.scale.height / 2 - 52 * s, 'equipment');
         lockPixelHit(this.equipmentBtn, 'equipment', { cursor: 'pointer' });
         this.equipmentBtn.on('pointerdown', () => {
             if (this._gamePaused) return;
@@ -94,6 +109,7 @@
                 btn.setTexture(open ? openKey : idleKey);
             }
         };
+        apply(this.bioBtn, this.bioPanel?.visible, "bio_open", "bio");
         apply(this.craft, this.craftMenuVisible, "craft_open", "craft");
         apply(this.equipmentBtn, this.equipmentPanel?.visible, "equipment_open", "equipment");
         apply(this.healthBtn, this.healthPanel?.visible, "health_open", "health");
@@ -126,6 +142,7 @@
             "Ctrl+Q — Drop 10",
             "F — Pick up dropped items",
             "1-9 — Hotbar slots",
+            "B — Bio",
             "C — Crafting",
             "E — Equipment",
             "H — Health",
@@ -411,18 +428,89 @@
     },
 
     /**
-     * World point the camera centers on. The settlement tab eases X by whole
-     * screen pixels; the water backdrop uses this same point. Stepping twice
-     * in one frame (water, then the follow) would rush the slide.
+     * World point the camera centers on. A followed settler wins over the
+     * controlled pawn until that follow would leave the player off-screen.
+     * The settlement tab eases X by whole screen pixels; the water backdrop
+     * uses this same point. Stepping twice in one frame (water, then the
+     * follow) would rush the slide.
      */
-    _cameraFocus() {
+    _pawnViewCenter(pawn) {
+        if (!pawn) return null;
+        // Feet plus a fixed 16×16 body. bodyCenter() uses the live frame
+        // size, and walk frames change that size. The camera then steps
+        // every frame while the subject stays centered, so the leader and
+        // anyone following them look like they jitter.
+        if (pawn._prone && Number.isFinite(pawn.x) && Number.isFinite(pawn.y)) {
+            return { x: pawn.x, y: pawn.y };
+        }
+        if (Number.isFinite(pawn.x) && Number.isFinite(pawn.y)) {
+            return { x: pawn.x + 8, y: pawn.y - 8 };
+        }
+        const c = typeof pawn.bodyCenter === "function"
+            ? pawn.bodyCenter()
+            : null;
+        if (!c || !Number.isFinite(c.x) || !Number.isFinite(c.y)) return null;
+        return c;
+    },
+
+    /**
+     * Player center is outside the view that would keep the settler centered.
+     * Same size as the current camera, so a settler you can see stays followed.
+     */
+    _playerOffFocusedView(player, focus, cam, zoom) {
+        const pc = this._pawnViewCenter(player);
+        const sc = this._pawnViewCenter(focus);
+        const z = zoom || cam?.zoom || 1;
+        const halfW = ((cam?.width || 0) / z) * 0.5;
+        const halfH = ((cam?.height || 0) / z) * 0.5;
+        if (!pc || !sc || !(halfW > 0) || !(halfH > 0) || !(z > 0)) return false;
+        return Math.abs(pc.x - sc.x) > halfW || Math.abs(pc.y - sc.y) > halfH;
+    },
+
+    /** Drop settler camera follow once the controlled pawn leaves that view. */
+    _releaseSettlerCamera() {
+        if (!this._followFocusedSettler) return;
+        const focus = this.focusPawn;
         const player = this.player;
+        if (!focus?.active || focus.isBodyDead?.() || !player?.active) {
+            this._followFocusedSettler = false;
+            return;
+        }
+        const cam = this.cameras?.main;
+        const z = this.worldZoom || cam?.zoom || 1;
+        if (!this._playerOffFocusedView(player, focus, cam, z)) return;
+        this._followFocusedSettler = false;
+        this._clearCameraPanelShift?.();
+    },
+
+    _cameraSubject() {
+        if (typeof this._releaseSettlerCamera === "function") this._releaseSettlerCamera();
+        const focus = this._followFocusedSettler ? this.focusPawn : null;
+        if (focus?.active && !focus.isBodyDead?.()) return focus;
+        return this.player;
+    },
+
+    /** Drop a leftover settlement-tab slide so a settler snap lands on them. */
+    _clearCameraPanelShift() {
+        this._settlementCamPixels = 0;
+        this._settlementCamFrom = 0;
+        this._settlementCamGoal = 0;
+        this._settlementCamElapsed = 0;
+        this._settlementCamFrame = null;
+    },
+
+    _cameraFocus() {
+        if (typeof this._releaseSettlerCamera === "function") this._releaseSettlerCamera();
+        const followed = this._followFocusedSettler ? this.focusPawn : null;
+        const player = (followed?.active && !followed.isBodyDead?.()) ? followed : this.player;
         const cam = this.cameras?.main;
         if (!player || !cam) return null;
         const z = this.worldZoom || cam.zoom || 1;
-        const c = typeof player.bodyCenter === "function"
-            ? player.bodyCenter()
-            : { x: player.x, y: player.y };
+        const c = typeof this._pawnViewCenter === "function"
+            ? this._pawnViewCenter(player)
+            : (typeof player.bodyCenter === "function"
+                ? player.bodyCenter()
+                : { x: player.x, y: player.y });
         if (!c || !Number.isFinite(c.x) || !Number.isFinite(c.y)) return null;
         let focusX = Math.round(c.x * z) / z;
         const focusY = Math.round(c.y * z) / z;
@@ -467,9 +555,18 @@
      * walk. Camera targets the sprite center (not feet / origin 0,1).
      */
     syncCameraToPlayer() {
-        const player = this.player;
         const cam = this.cameras?.main;
-        if (!player?.active || !cam) return;
+        if (!cam) return;
+        if (
+            this.focusPawn
+            && !this.partySys?._clearingFocus
+            && (!this.focusPawn.active || this.focusPawn.isBodyDead?.())
+        ) {
+            this.partySys?.clearSettlerFocus?.();
+            return;
+        }
+        const player = this._cameraSubject();
+        if (!player?.active) return;
         const z = this.worldZoom || cam.zoom || 1;
         const save = (p) => {
             if (!p?.active) return;
@@ -497,17 +594,33 @@
             return p.x > view.x - pad && p.x < view.right + pad
                 && p.y > view.y - pad && p.y < view.bottom + pad;
         };
-        const snap = (p) => {
-            if (!p?.active) return;
-            if (p !== player && !onScreen(p)) return;
-            const s = typeof snapWorldToScreenPixel === "function"
-                ? snapWorldToScreenPixel(cam, p.x, p.y, z)
-                : { x: Math.round(p.x * z) / z, y: Math.round(p.y * z) / z };
+        const place = (p, s) => {
             if (p.x !== s.x || p.y !== s.y) p.setPosition(s.x, s.y);
             p.syncFxRoot?.();
         };
+        // The subject is snapped onto the camera grid. Everyone else keeps
+        // their true offset from that subject, quantized to one screen pixel.
+        // An independent snap rounds a different fraction than the scroll, so
+        // the leader and anyone following them step back a pixel every other
+        // frame while the camera is locked on someone else.
+        const subjectSnap = typeof snapWorldToScreenPixel === "function"
+            ? snapWorldToScreenPixel(cam, player.x, player.y, z)
+            : { x: Math.round(player.x * z) / z, y: Math.round(player.y * z) / z };
+        place(player, subjectSnap);
+        const subjectTrue = { x: player._physX, y: player._physY };
+        const snap = (p) => {
+            if (!p?.active || p === player) return;
+            if (!onScreen(p)) return;
+            const pawnTrue = {
+                x: Number.isFinite(p._physX) ? p._physX : p.x,
+                y: Number.isFinite(p._physY) ? p._physY : p.y
+            };
+            const s = typeof snapWorldOffsetToSubject === "function"
+                ? snapWorldOffsetToSubject(subjectSnap, subjectTrue, pawnTrue, z)
+                : pawnTrue;
+            place(p, s);
+        };
         for (const p of this.party || []) snap(p);
-        if (!(this.party || []).includes(player)) snap(player);
         for (const s of this.settlers || []) snap(s);
         for (const w of this.partySys?.wanderers || []) snap(w);
     },
@@ -546,6 +659,7 @@
     closeOpenMenus() {
         this.hideChannelBar?.();
         if (this.craftMenuVisible) this.closeCraftMenu();
+        if (this.bioPanel?.visible) this.bioPanel.close();
         if (this.equipmentPanel?.visible) this.equipmentPanel.close();
         if (this.healthPanel?.visible) this.healthPanel.close();
         if (this.corpsePanel?.visible) this.corpsePanel.close();
@@ -569,6 +683,7 @@
     _anyGameplayMenuOpen() {
         return !!(
             this.craftMenuVisible ||
+            this.bioPanel?.visible ||
             this.equipmentPanel?.visible ||
             this.healthPanel?.visible ||
             this.corpsePanel?.visible ||
@@ -1421,10 +1536,16 @@
             this.healthPanel.close();
             return;
         }
-        // Side menus exclude each other; also close the settlement overlay
-        if (this.craftMenuVisible) this.closeCraftMenu();
-        if (this.equipmentPanel?.visible) this.equipmentPanel.close();
-        if (this.settlementPanel?.visible) this.settlementSys?.closePanel?.();
+        const keep = !!this.focusPawn;
+        if (keep) this._retainFocus = true;
+        try {
+            if (this.craftMenuVisible) this.closeCraftMenu();
+            if (this.bioPanel?.visible) this.bioPanel.close();
+            if (this.equipmentPanel?.visible) this.equipmentPanel.close();
+            if (this.settlementPanel?.visible) this.settlementSys?.closePanel?.();
+        } finally {
+            if (keep) this._retainFocus = false;
+        }
         this.healthPanel.open();
     },
 
@@ -1532,6 +1653,7 @@
             else this.closeCraftMenu();
             return;
         }
+        if (this.bioPanel?.visible) this.bioPanel.close();
         if (this.equipmentPanel?.visible) this.equipmentPanel.close();
         if (this.healthPanel?.visible) this.healthPanel.close();
         if (this.settlementPanel?.visible) this.settlementSys?.closePanel?.();
@@ -1557,6 +1679,7 @@
             return;
         }
         if (this.craftMenuVisible && !this._craftFromStation) this.closeCraftMenu();
+        if (this.bioPanel?.visible) this.bioPanel.close();
         if (this.equipmentPanel?.visible) this.equipmentPanel.close();
         if (this.healthPanel?.visible) this.healthPanel.close();
         if (this.settlementPanel?.visible) this.settlementSys?.closePanel?.();
@@ -1615,6 +1738,13 @@
         if (this._sculptUiOpen()) return;
         if (isHudTextOpen(this)) return;
         this.equipmentPanel.toggle();
+    },
+
+    toggleBioMenu() {
+        if (!this.bioPanel) return;
+        if (this._sculptUiOpen()) return;
+        if (isHudTextOpen(this)) return;
+        this.bioPanel.toggle();
     },
     };
 })(typeof globalThis !== "undefined" ? globalThis : this);

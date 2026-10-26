@@ -991,6 +991,13 @@ test("attack starts melee", () => {
     assert.equal(pawn.creature.isAttacking(), true);
 });
 
+test("incapable of melee does not start an attack", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.bio = { adulthood: "medic", childhood: null, traits: [], skills: {} };
+    world.handleAction(pawn.id, { type: Protocol.Actions.ATTACK, angle: 0 });
+    assert.equal(!!pawn.creature?.isAttacking?.(), false);
+});
+
 test("corpse_take moves loot to inventory", () => {
     const { world, pawn, Protocol } = createTestWorld();
     const chunk = originChunk(world);
@@ -1903,6 +1910,75 @@ test("recruiting a wanderer drops stroll AI so they follow instead of walking of
     assert.equal(ai instanceof WandererStrollAI, false);
 });
 
+test("banish destroys a companion's gear and sends them off", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const id = "mate-banish";
+    pawn.party = [{
+        id,
+        name: "Sela",
+        x: pawn.x + 10,
+        y: pawn.y,
+        facing: "left",
+        dead: false,
+        inventory: [{ id: "stick", quantity: 2 }, null, null, null, null],
+        overflow: [{ id: "leaf", quantity: 1 }],
+        equipment: {
+            head: { id: "hide_cap", quantity: 1 },
+            torso: null,
+            legs: null,
+            feet: null,
+            back: null,
+            waist: []
+        },
+        hotbarIndex: 0
+    }];
+    world.handleAction(pawn.id, { type: Protocol.Actions.BANISH, pawnId: pawn.id });
+    assert.equal((pawn.party || []).length, 1);
+    world.handleAction(pawn.id, { type: Protocol.Actions.BANISH, pawnId: id });
+    assert.equal((pawn.party || []).some((m) => m.id === id), false);
+    const gone = world.wanderers.get(id);
+    assert.ok(gone);
+    assert.equal(gone.recruitLocked, true);
+    assert.equal((gone.inventory || []).some((s) => s && s.id), false);
+    assert.equal((gone.overflow || []).some((s) => s && s.id), false);
+    assert.equal(gone.equipment?.head || null, null);
+    const ev = (world._events || []).find((e) => e.kind === "banish");
+    assert.equal(ev?.pawnId, id);
+    assert.equal(ev?.name, "Sela");
+});
+
+test("banish turns your settler out and ignores someone else's", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    world.settlers = world.settlers || [];
+    world.settlers.push({
+        id: "set-mine",
+        name: "Mog",
+        ownerId: pawn.id,
+        x: pawn.x,
+        y: pawn.y + 8,
+        dead: false,
+        inventory: [{ id: "pebble", quantity: 3 }],
+        equipment: { head: null, torso: null, legs: null, feet: null, back: null, waist: [] }
+    });
+    world.settlers.push({
+        id: "set-theirs",
+        name: "Other",
+        ownerId: "someone-else",
+        x: pawn.x,
+        y: pawn.y,
+        dead: false,
+        inventory: [{ id: "stick", quantity: 1 }]
+    });
+    world.handleAction(pawn.id, { type: Protocol.Actions.BANISH, pawnId: "set-theirs" });
+    assert.equal(world.settlers.some((s) => s.id === "set-theirs"), true);
+    assert.equal(world.wanderers.has("set-theirs"), false);
+    world.handleAction(pawn.id, { type: Protocol.Actions.BANISH, pawnId: "set-mine" });
+    assert.equal(world.settlers.some((s) => s.id === "set-mine"), false);
+    const gone = world.wanderers.get("set-mine");
+    assert.ok(gone);
+    assert.equal((gone.inventory || []).some((s) => s && s.id), false);
+});
+
 function fillTravelParty(pawn) {
     pawn.party = [];
     for (let i = 0; i < Party.CAP - 1; i++) {
@@ -2760,8 +2836,11 @@ function landHit(attacker, target) {
     const attack = BodyCombat.pickAttack(attacker);
     assert.ok(attack, "attacker should have a melee verb");
     attack.def = { ...(attack.def || {}), variance: 0 };
-    const result = BodyCombat.applyHit(attacker, target, attack);
-    assert.ok(result, "hit should land");
+    let result = null;
+    for (let i = 0; i < 30 && !result?.damage; i++) {
+        result = BodyCombat.applyHit(attacker, target, attack);
+    }
+    assert.ok(result?.damage, "hit should land");
     return result;
 }
 
@@ -2851,6 +2930,21 @@ test("settler joins a boar fight at camp without crashing", () => {
     const cc = world._ensureSettlerCreature(rec);
     assert.equal(cc.ai?.assistTarget, boar);
     assert.equal(cc._settlerAct, `Attacking ${boar.displayName()}`);
+});
+
+test("a companion incapable of melee does not swing", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.controlId = pawn.id;
+    const buddy = addTestCompanion(world, pawn);
+    buddy.bio = { adulthood: "medic", childhood: null, traits: [], skills: {} };
+    spawnHostileBoar(world, pawn.x + 10, pawn.y);
+    let swung = false;
+    for (let i = 0; i < 12; i++) {
+        world.tick(50);
+        if ((buddy.creature?.attackTimer || 0) > 0 || (buddy.attackTimer || 0) > 0) swung = true;
+    }
+    assert.equal(swung, false);
+    assert.equal(buddy.creature?.ai?.assistTarget || null, null);
 });
 
 test("companion attacks a hostile animal on the leader", () => {
@@ -3548,7 +3642,11 @@ test("a favorite drops in at the front of the camp list", () => {
     assert.equal(parked.favorite, true);
     const saved = world._persistSettler(parked);
     assert.equal(saved.favorite, true);
+    assert.ok(saved.bio && saved.bio.skills);
     assert.equal(world._settlerFromSnap(saved).favorite, true);
+    assert.equal(world._publicSettler(parked).bio, parked.bio);
+    const filled = world._settlerFromSnap({ ...saved, bio: null });
+    assert.ok(filled.bio && filled.bio.gender);
     assert.equal(world._publicSettler(parked).favorite, true);
     world._handleSettlement(pawn, { op: "pick", pawnId: fav.id });
     const back = pawn.party.find((m) => m.id === fav.id);

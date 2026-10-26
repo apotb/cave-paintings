@@ -1369,6 +1369,11 @@ function finishWorkChannel(world, rec, ch) {
     }
     if (ch.kind === "knap") {
         ctx.finishSettlerKnap(world, rec, ch);
+        const skills = world._skillsApi?.();
+        if (skills && rec.bio && !skills.incapable(rec.bio, "crafting")) {
+            const minutes = Math.max(1 / 60, (Number(ch.max) || 0) / 60000);
+            skills.award(rec.bio, "crafting", skills.XP_MINUTE * minutes, { day: world.gameDay });
+        }
         return;
     }
     if (ch.kind === "tend") {
@@ -1390,7 +1395,7 @@ function jobsOn(settle, rec) {
 }
 
 function workJobOn(settle, rec, type) {
-    return Settlement.jobEnabled(jobsOn(settle, rec), type);
+    return Settlement.jobEnabled(jobsOn(settle, rec), type, rec);
 }
 
 /**

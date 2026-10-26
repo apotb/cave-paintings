@@ -47,6 +47,7 @@ class EquipmentPanel {
         if (isHudTextOpen(this.scene)) return;
         // Side menus exclude each other; world UIs (corpse / campfire) can stay open
         if (this.scene.craftMenuVisible) this.scene.closeCraftMenu();
+        if (this.scene.bioPanel?.visible) this.scene.bioPanel.close();
         if (this.scene.healthPanel?.visible) this.scene.healthPanel.close();
         if (this.scene.settlementPanel?.visible) this.scene.settlementSys?.closePanel?.();
         this.visible = true;

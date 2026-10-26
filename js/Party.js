@@ -49,7 +49,8 @@ class PartySystem {
         player.faction = (typeof Party !== "undefined" && Party.partyFactionId)
             ? Party.partyFactionId(id)
             : `party:${id}`;
-        player.pawnName = scene.playerName || scene.character?.name || "Player";
+        player.pawnName = scene.displayName || scene.character?.name || scene.playerName || "Player";
+        if (scene.character?.bio) player.bio = scene.character.bio;
         player.hotbarIndex = player.hotbarIndex || 0;
         if (scene.character?.lastSleep) player.lastSleep = scene.character.lastSleep;
         // Rest is per-world (lean-to occupancy / this world's pose). Character
@@ -221,7 +222,12 @@ class PartySystem {
             if (scene.pointerOverWorldUi?.(pointer) || scene._pointerOverHudChrome?.(pointer)) return;
             if (pointer.rightButtonDown?.()) return;
             if (scene._gamePaused || scene._sculptUiOpen?.()) return;
+            if (this.handleSettlerClick(pointer)) return;
             this.trySelfHeldAction(scene.player, pointer);
+        });
+        scene.input.on("pointerup", () => {
+            this._settlerClickToken = null;
+            this._settlerClickHit = false;
         });
         scene.input.on("gameobjectdown", (_pointer, obj) => {
             if (scene._gamePaused || scene._sculptUiOpen?.()) return;
@@ -246,16 +252,13 @@ class PartySystem {
                 this.tryRecruit(obj);
                 return;
             }
-            if (obj?.role === "settler") {
-                if (this.trySettlerClick(obj)) return;
+            if (obj?.role === "settler" || this.settlerOwnsPointer(_pointer)) {
+                if (this.handleSettlerClick(_pointer)) return;
             }
             if (scene.party?.includes(obj) && obj !== scene.player) {
                 if (obj._resting) {
-                    const lean = scene.findLeanToByUid?.(obj.lastSleep?.uid);
-                    if (lean?._pointerStillOver?.(_pointer)) {
-                        scene.openLeanToPanel?.(lean, _pointer);
-                        return;
-                    }
+                    this.tryAllyClick(obj);
+                    return;
                 }
                 const P = typeof Party !== "undefined" ? Party : null;
                 const downed = P?.walkThrough?.(obj);
@@ -465,6 +468,7 @@ class PartySystem {
             ? Party.partyFactionId(pawn.ownerId)
             : `party:${pawn.ownerId}`;
         pawn.pawnName = opts.name || this._freshName();
+        if (opts.bio) pawn.bio = opts.bio;
         pawn.hotbarIndex = opts.hotbarIndex || 0;
         if (Array.isArray(opts.inventory)) {
             try {
@@ -554,6 +558,7 @@ class PartySystem {
         pawn.role = "wanderer";
         pawn.faction = (typeof Party !== "undefined" && Party.FACTION_WANDERERS) || "Wanderers";
         pawn.pawnName = opts.name || this._freshName();
+        if (opts.bio) pawn.bio = opts.bio;
         pawn.hostile = !!opts.hostile;
         pawn.recruitLocked = !!opts.recruitLocked;
         pawn.band = !!opts.band;
@@ -588,6 +593,40 @@ class PartySystem {
         pawn.syncNameLabel?.();
         this.wanderers.push(pawn);
         return pawn;
+    }
+
+    /** Sim told us this companion or settler was banished. They leave with nothing. */
+    onBanished(ev) {
+        const scene = this.scene;
+        const id = ev?.pawnId;
+        if (!scene || !id) return;
+        const pawn = (scene.party || []).find((p) => p && p.pawnId === id)
+            || (scene.settlers || []).find((p) => p && p.pawnId === id);
+        if (!pawn || pawn === scene.leader) return;
+        if (scene.player === pawn) {
+            const next = scene.leader && scene.leader !== pawn && !scene.leader.isBodyDead?.()
+                ? scene.leader
+                : (scene.party || []).find((p) => p && p !== pawn && !p.isBodyDead?.());
+            if (next) this.switchControl(next, { silentNet: true });
+        }
+        const slots = Math.max(5, pawn.inventory?.length || 5);
+        pawn.inventory = Array.from({ length: slots }, () => null);
+        pawn.overflow = [];
+        pawn.hotbarIndex = 0;
+        if (pawn.equipment) {
+            pawn.equipment.head = null;
+            pawn.equipment.torso = null;
+            pawn.equipment.legs = null;
+            pawn.equipment.feet = null;
+            pawn.equipment.back = null;
+            pawn.equipment.waist = [];
+        }
+        scene.party = (scene.party || []).filter((p) => p !== pawn);
+        this.releaseSettlerAsWanderer(pawn, ev.heading || { x: 1, y: 0 });
+        pawn.recruitLocked = true;
+        if (scene.focusPawn === pawn) scene.bioPanel?.close?.();
+        scene.partyPanel?.refresh?.();
+        scene.hotbar && (scene.hotbar.dirty = true);
     }
 
     /** Camp is gone: this person walks off as a recruitable / attackable passerby. */
@@ -721,7 +760,155 @@ class PartySystem {
             scene.combatLog?.push("Party is full");
             return false;
         }
-        return scene.settlementSys?.pickOrphan?.(pawn);
+        return !!scene.settlementSys?.pickOrphan?.(pawn);
+    }
+
+    /**
+     * Person under the cursor whose bio should win over a building.
+     * Standing settlers, plus anyone asleep in a shelter. Trees, loot, and
+     * other hits still win. Right-click, menus, and HUD do not count.
+     */
+    settlerOwnsPointer(pointer) {
+        const scene = this.scene;
+        if (!pointer || pointer.rightButtonDown?.()) return null;
+        if (scene._gamePaused || scene._sculptUiOpen?.()) return null;
+        if (scene.pointerOverWorldUi?.(pointer) || scene._pointerOverHudChrome?.(pointer)) return null;
+        const pawn = scene._livingSettlerAt?.(pointer) || this._restingPersonUnderPointer(pointer);
+        if (!pawn?.active || pawn.isBodyDead?.()) return null;
+        if (pawn === scene.player) return null;
+        const hits = scene.input?.hitTestPointer?.(pointer) || [];
+        for (let i = hits.length - 1; i >= 0; i--) {
+            const obj = hits[i];
+            if (!obj?.active || !obj.input?.enabled) continue;
+            if (obj === pawn || obj.role === "settler") continue;
+            if (scene.party?.includes(obj)) continue;
+            if (scene._isUiTooltipTarget?.(obj)) return null;
+            if (scene._buildingHover?.(obj)) continue;
+            return null;
+        }
+        return pawn;
+    }
+
+    /** Asleep settler whose body is under the cursor. Party members switch instead. */
+    _restingPersonUnderPointer(pointer) {
+        const scene = this.scene;
+        const onBody = scene._pointerOnCreature;
+        if (!pointer || typeof onBody !== "function") return null;
+        for (const pawn of scene.settlers || []) {
+            if (!pawn || pawn === scene.player) continue;
+            if (scene.party?.includes(pawn)) continue;
+            if (!pawn.active || pawn.isBodyDead?.() || !pawn._resting) continue;
+            if (onBody(pointer, pawn)) return pawn;
+        }
+        return null;
+    }
+
+    /**
+     * Bandage, force-feed, and recruit keep the click. Otherwise open this
+     * settler's bio and follow them with the camera. One press is handled once.
+     */
+    handleSettlerClick(pointer) {
+        if (!pointer || pointer.rightButtonDown?.()) return false;
+        const token = pointer.downTime;
+        if (token != null && token === this._settlerClickToken) return !!this._settlerClickHit;
+        const pawn = this.settlerOwnsPointer(pointer);
+        const hit = !!(pawn && this._applySettlerClick(pawn));
+        if (token != null) {
+            this._settlerClickToken = token;
+            this._settlerClickHit = hit;
+        }
+        return hit;
+    }
+
+    _applySettlerClick(pawn) {
+        if (this._tryCareClick(pawn)) return true;
+        if (this.trySettlerClick(pawn)) return true;
+        return this.focusSettler(pawn);
+    }
+
+    /** Tend or force-feed. A failed attempt still consumes the click. */
+    _tryCareClick(pawn) {
+        const scene = this.scene;
+        const me = scene.player;
+        if (!me || !pawn || pawn === me || me.isBodyDead?.()) return false;
+        const held = me.getHeldItem?.();
+        const meta = held ? scene.getItem?.(held.id) : null;
+        const bandage = !!meta?.bandage;
+        const food = held?.food || meta?.food;
+        const feed = Number(food?.kc ?? 0) > 0 && this._needsForceFeed(pawn);
+        if (!bandage && !feed) return false;
+        const P = typeof Party !== "undefined" ? Party : null;
+        if (P && !P.inInteractRange(me, pawn, scene.tileSize)) {
+            const name = pawn.displayName?.() || pawn.pawnName || "They";
+            scene.combatLog?.push(`${name} is too far away`);
+            return true;
+        }
+        if (bandage) {
+            me.beginTend?.(pawn);
+            return true;
+        }
+        me.beginEat?.(held, {
+            patient: pawn,
+            sourcePawn: me,
+            slot: scene.hotbar?.activeIndex
+        });
+        return true;
+    }
+
+    /** Follow this settler. Bio and health read them until either tab closes. */
+    focusSettler(pawn) {
+        const scene = this.scene;
+        if (!pawn?.active || pawn.isBodyDead?.() || pawn === scene.player) return false;
+        scene.focusPawn = pawn;
+        scene._followFocusedSettler = true;
+        scene._chunkLoadBurst = 32;
+        if (scene.net?.ensureChunksAround && Number.isFinite(pawn.x) && Number.isFinite(pawn.y)) {
+            const r = Math.max(2, scene.genDistance || scene.renderDistance || 6);
+            scene.net.ensureChunksAround(pawn.x, pawn.y, r);
+        }
+        const bio = scene.bioPanel;
+        if (!bio?.open) {
+            scene.focusPawn = null;
+            return false;
+        }
+        if (bio.visible) {
+            bio._sig = "";
+            bio.refresh?.();
+        } else {
+            bio.open();
+        }
+        if (!bio.visible) {
+            scene.focusPawn = null;
+            return false;
+        }
+        scene._clearCameraPanelShift?.();
+        scene.syncCameraToPlayer?.();
+        return true;
+    }
+
+    /** Drop settler follow. Open bio/health close themselves unless a switch is in progress. */
+    clearSettlerFocus() {
+        const scene = this.scene;
+        if (this._clearingFocus || !scene.focusPawn) return;
+        this._clearingFocus = true;
+        scene.focusPawn = null;
+        scene._followFocusedSettler = false;
+        scene._clearCameraPanelShift?.();
+        const prev = scene._retainFocus;
+        scene._retainFocus = true;
+        if (scene.bioPanel?.visible) scene.bioPanel.close();
+        if (scene.healthPanel?.visible && !scene.healthPanel.isInspecting?.()) {
+            scene.healthPanel.close();
+        }
+        scene._retainFocus = prev;
+        this._clearingFocus = false;
+        scene.syncCameraToPlayer?.();
+    }
+
+    /** Panel close returns the camera unless bio and health are swapping. */
+    releaseSettlerFocus() {
+        if (this.scene._retainFocus) return;
+        this.clearSettlerFocus();
     }
 
     _consumeRecruitFood(pawn) {
@@ -1233,11 +1420,9 @@ class PartySystem {
         return !!(pawn._downed || pawn._prone || pawn.isIncapacitated?.());
     }
 
-    /** Standing / downed ally under the cursor — not sleepers (those stay click-through). */
+    /** Ally under the cursor, including someone asleep in a shelter. */
     worldSwitchTarget(pointer) {
-        const p = this._partyMemberUnderPointer(pointer);
-        if (!p || p._resting) return null;
-        return p;
+        return this._partyMemberUnderPointer(pointer);
     }
 
     _partyMemberUnderPointer(pointer) {
@@ -1598,13 +1783,19 @@ class PartySystem {
         const P = typeof Party !== "undefined" ? Party : { CAP: 6 };
         if (!wanderer || wanderer.role !== "wanderer") return "";
         const name = wanderer.displayName?.() || wanderer.pawnName || "Wanderer";
-        if (wanderer.hostile || wanderer.recruitLocked) return name;
         const lines = [name];
+        const bio = wanderer.bio;
+        if (bio && typeof Skills !== "undefined") {
+            const books = Skills.catalogs().backstories;
+            lines.push(`${Skills.genderLabel(bio.gender)}, age ${bio.age}`);
+            lines.push(`${Skills.titleOf(books, bio.childhood)}, ${Skills.titleOf(books, bio.adulthood)}`);
+        }
         // A band of 2–6 will not join, even if the party later has room.
         if (wanderer.band) {
             lines.push("Cannot be recruited");
             return lines.join("\n");
         }
+        if (wanderer.hostile || wanderer.recruitLocked) return lines.join("\n");
         const full = (scene.party?.length || 0) >= P.CAP;
         const camp = full ? this._recruitCamp(wanderer) : null;
         if (full && !camp) {
@@ -3031,7 +3222,8 @@ class PartySystem {
             resting: !!p._resting,
             jobs: (p.jobs && typeof p.jobs === "object") ? { ...p.jobs } : null,
             schedule: typeof p.schedule === "string" && p.schedule ? p.schedule : null,
-            favorite: !!p.favorite
+            favorite: !!p.favorite,
+            bio: p.bio || null
         };
     }
 
@@ -3137,6 +3329,7 @@ class PartySystem {
                         Settlement.rememberSchedule(existing, m.schedule);
                     }
                     if (typeof m.favorite === "boolean") existing.favorite = m.favorite;
+                    if (m.bio) existing.bio = m.bio;
                     if (m.lastSleep) existing.lastSleep = m.lastSleep;
                     if (typeof m.resting === "boolean") {
                         existing._resting = !!m.resting;
@@ -3192,6 +3385,10 @@ class PartySystem {
                     continue;
                 }
                 if (!ids.has(p.pawnId) && !p.isBodyDead?.()) {
+                    if (p.role === "wanderer" || this.wanderers.includes(p)) {
+                        scene.party = (scene.party || []).filter((m) => m !== p);
+                        continue;
+                    }
                     this.onMemberDied(p, null, { spawn: false });
                 }
             }
@@ -3367,10 +3564,16 @@ class PartySystem {
             const prevTx = Number.isFinite(pawn._netTx) ? pawn._netTx : pawn.x;
             const prevTy = Number.isFinite(pawn._netTy) ? pawn._netTy : pawn.y;
             pawn._netSnapDist = Math.hypot(x - prevTx, y - prevTy);
-            pawn._netFromX = pawn.x;
-            pawn._netFromY = pawn.y;
-            pawn._netTx = x;
-            pawn._netTy = y;
+            const fromX = Number.isFinite(pawn._physX) ? pawn._physX : pawn.x;
+            const fromY = Number.isFinite(pawn._physY) ? pawn._physY : pawn.y;
+            const moving = motion?.moving !== false && pawn._netMoving !== false;
+            const target = (typeof Party !== "undefined" && Party.puppetContinueTarget)
+                ? Party.puppetContinueTarget(fromX, fromY, prevTx, prevTy, x, y, moving)
+                : { x, y };
+            pawn._netFromX = fromX;
+            pawn._netFromY = fromY;
+            pawn._netTx = target.x;
+            pawn._netTy = target.y;
             const now = performance.now();
             pawn._netSnapDt = (typeof Party !== "undefined" && Party.puppetSnapGapMs)
                 ? Party.puppetSnapGapMs(pawn._netSnapAt, now)

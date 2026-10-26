@@ -593,6 +593,28 @@ function snapWorldToScreenPixel(cam, x, y, zoom) {
 }
 
 /**
+ * Place a pawn that is not the camera subject on the same pixel grid.
+ * Snapping that pawn on its own rounds a different fraction than the
+ * scroll, so someone walking in step with the subject steps backward
+ * one screen pixel every other frame. Quantizing the true offset from
+ * the subject and adding it to the subject's snapped feet keeps a
+ * fixed follow gap still on screen.
+ */
+function snapWorldOffsetToSubject(subjectSnap, subjectTrue, pawnTrue, zoom) {
+    const z = zoom || 1;
+    if (!subjectSnap || !subjectTrue || !pawnTrue || !z
+        || !Number.isFinite(subjectSnap.x) || !Number.isFinite(subjectSnap.y)
+        || !Number.isFinite(subjectTrue.x) || !Number.isFinite(subjectTrue.y)
+        || !Number.isFinite(pawnTrue.x) || !Number.isFinite(pawnTrue.y)) {
+        return pawnTrue ? { x: pawnTrue.x, y: pawnTrue.y } : { x: 0, y: 0 };
+    }
+    return {
+        x: subjectSnap.x + Math.round((pawnTrue.x - subjectTrue.x) * z) / z,
+        y: subjectSnap.y + Math.round((pawnTrue.y - subjectTrue.y) * z) / z
+    };
+}
+
+/**
  * Place a world HUD object so its quad top-left sits on a screen pixel.
  * Origin 0.5 + odd glyph width otherwise samples between texels and flickers.
  */
@@ -1491,6 +1513,32 @@ function itemIconDataUrl(scene, itemId) {
     return textureToDataUrl(scene, key);
 }
 
+/**
+ * Data URL of the sprite a carried stack uses. Knapped tools keep their
+ * carved picture instead of the stone_tool item art.
+ */
+function stackIconDataUrl(scene, stack) {
+    if (!scene || !stack?.id) return null;
+    const textures = scene.textures;
+    const meta = scene.getItem?.(stack.id) || { id: stack.id, key: stack.id };
+    let key = stackIconKey(meta, stack, scene);
+    if (
+        (stack.toolClass || stack.knapIconData)
+        && typeof Knapping !== "undefined"
+        && Knapping.ensureShapeTexture
+    ) {
+        const knapKey = Knapping.ensureShapeTexture(scene, stack);
+        if (knapKey && textures?.exists?.(knapKey)) key = knapKey;
+    } else if (stack.knapIcon && textures?.exists?.(stack.knapIcon)) {
+        key = stack.knapIcon;
+    }
+    if (key && textures?.exists?.(key)) {
+        const url = textureToDataUrl(scene, key);
+        if (url) return url;
+    }
+    return itemIconDataUrl(scene, stack.id);
+}
+
 /** Drag ghost: shell + optional tinted fill (Container). */
 function createStackDragIcon(scene, x, y, stack, meta, scale) {
     const tint = mealFillTint(stack, id => scene.getItem(id));
@@ -1923,7 +1971,9 @@ function creaturePointerHit(sprite, worldX, worldY) {
 
 /**
  * Resting pawns, the pawn you control, and parked settlers are click-through
- * so world Things under them (campfire, basket, bench) can still be opened.
+ * so world Things under them (campfire, basket, bench) can still be opened
+ * beside the body. A click on a sleeping settler opens their bio.
+ * A click on a sleeping party member switches to them.
  * Hover tips prefer a settler while the cursor is on their body.
  * Traveling companions stay clickable so you can switch to them.
  */

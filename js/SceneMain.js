@@ -84,7 +84,7 @@ class SceneMain extends SceneBase {
         this.keys = null;
         this.key1 = this.key2 = this.key3 = this.key4 = this.key5 = null;
         this.key6 = this.key7 = this.key8 = this.key9 = this.key0 = null;
-        this.keyC = this.keyE = this.keyH = this.keyT = this.keyR = this.keyEsc = null;
+        this.keyC = this.keyE = this.keyH = this.keyB = this.keyT = this.keyR = this.keyEsc = null;
         this.tooltip = null;
         this.tooltipText = null;
         this.tooltipPreview = null;
@@ -211,6 +211,14 @@ class SceneMain extends SceneBase {
         resolveCraftedWeights(this.items());
         resolveCraftedFuel(this.items());
 
+        // Set before the leader is spawned. The scene is reused, so a leftover
+        // playerName would otherwise stick for every later character.
+        this.playerName = this.displayName
+            || this.character?.name
+            || this.welcome?.you?.name
+            || localStorage.getItem("cp_display_name")
+            || "Player";
+
         // Player
         this.partySys = new PartySystem(this);
         this.partySys.bindSceneKeys();
@@ -290,6 +298,7 @@ class SceneMain extends SceneBase {
         this.settlementSys = new SettlementSystem(this);
         this.settlers = [];
         this.equipmentPanel = new EquipmentPanel(this);
+        this.bioPanel = new BioPanel(this);
         this.campfirePanel = new CampfirePanel(this);
         this.leanToPanel = new LeanToPanel(this);
         this.storagePanel = new StoragePanel(this);
@@ -325,15 +334,11 @@ class SceneMain extends SceneBase {
         this.keyC = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.C);
         this.keyE = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
         this.keyH = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.H);
+        this.keyB = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.B);
         this.keyT = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.T);
         this.keyR = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
         this.keyEsc = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
         this.placeRot = 0;
-        /** Display name (chat / MP) */
-        this.playerName = this.displayName
-            || this.welcome?.you?.name
-            || localStorage.getItem("cp_display_name")
-            || "Player";
 
         if (this.isNet) this._setupNetPlay();
         // Player pose is final now. Place the backdrop before the first paint
@@ -450,6 +455,7 @@ class SceneMain extends SceneBase {
             });
         };
         pushAnchor(this.player);
+        pushAnchor(this.focusPawn);
         for (const p of this.party || []) {
             if (!p || p === this.player) continue;
             if (typeof Party !== "undefined" && Party.beyondFollowLeash?.(p, this.player, ts)) {
@@ -552,6 +558,7 @@ class SceneMain extends SceneBase {
             if (Phaser.Input.Keyboard.JustDown(this.keyC)) this.toggleCraftMenu();
             if (Phaser.Input.Keyboard.JustDown(this.keyE)) this.toggleEquipmentMenu();
             if (Phaser.Input.Keyboard.JustDown(this.keyH)) this.toggleHealthMenu();
+            if (Phaser.Input.Keyboard.JustDown(this.keyB)) this.toggleBioMenu();
             this._handlePlaceRotate();
             // Chat open is handled by CombatLog's window keydown listener (avoids
             // JustDown(T) dying after keyboard.enabled toggles miss the T keyup).
@@ -609,6 +616,8 @@ class SceneMain extends SceneBase {
         this.storagePanel?.update();
         this.leanToPanel?.update();
         this.paintingCirclePanel?.update();
+        if (this.bioPanel?.visible) this.bioPanel.refresh();
+        if (this.healthPanel?.visible) this.healthPanel.refresh();
         this._updateCraftStationMenu();
         this._updateCraftQueue?.();
         this._updateRockStation?.();

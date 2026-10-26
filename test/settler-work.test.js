@@ -7368,6 +7368,10 @@ test("dedicated settler knaps the nearest allowed blank and until counts only th
         ]
     });
     world.rng = () => 0;
+    rec.bio.childhood = "den_child";
+    rec.bio.adulthood = "forager";
+    rec.bio.traits = [];
+    rec.bio.skills.crafting.level = 8;
     settle.jobs[rec.id] = craftOnly();
     const rock = addRock(world, settle, rec, "rock-knap");
     const near = addBasket(world, settle, rec.x + 16, rec.y, "near-blank");
@@ -7420,6 +7424,10 @@ test("a broken knap spends the blank and leaves no tool", () => {
         inventory: [{ id: "pebble", stone: "andesite", quantity: 1 }, null, null, null, null]
     });
     world.rng = () => 0.75;
+    rec.bio.childhood = "den_child";
+    rec.bio.adulthood = "forager";
+    rec.bio.traits = [];
+    rec.bio.skills.crafting.level = 8;
     settle.jobs[rec.id] = craftOnly();
     const rock = addRock(world, settle, rec, "rock-break");
     Settlement.addBill(settle, rock.uid, {

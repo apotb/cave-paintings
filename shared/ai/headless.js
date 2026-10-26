@@ -505,10 +505,12 @@
             const edgeDist = this._distToHurtbox(mc.x, mc.y, player);
             const inReach = edgeDist <= strikeR;
 
-            if (inReach) this._meleeHold = true;
+            const noMelee = !!mob.refusesMelee?.();
+            if (!noMelee && inReach) this._meleeHold = true;
             else if (edgeDist > strikeR + this.MELEE_RESUME_PAD) this._meleeHold = false;
 
             if (
+                !noMelee &&
                 !swinging &&
                 atk &&
                 inReach &&
@@ -696,6 +698,10 @@
         }
 
         setAssist(target) {
+            if (this.mob?.refusesMelee?.()) {
+                this._clearCombat();
+                return;
+            }
             this.assistTarget = target && !target.isBodyDead?.() ? target : null;
             if (!this.assistTarget) this._meleeHold = false;
         }
@@ -762,20 +768,23 @@
                 const home = world?.getSettlement?.(mob);
                 const next = world?.getAssistTarget?.(mob) || null;
                 if (next && this._settlerDefendOk(next, home)) {
-                    world?.dropCarry?.(mob);
-                    world?.interruptSettlerForCombat?.(mob);
-                    if (mob.isIncapacitated?.() || mob.isImmobile?.()) {
+                    if (mob.refusesMelee?.()) {
                         this._clearCombat();
-                        mob.setDesiredVel?.(0, 0);
-                        return;
+                    } else {
+                        world?.dropCarry?.(mob);
+                        world?.interruptSettlerForCombat?.(mob);
+                        if (mob.isIncapacitated?.() || mob.isImmobile?.()) {
+                            this._clearCombat();
+                            mob.setDesiredVel?.(0, 0);
+                            return;
+                        }
+                        this.assistTarget = next;
+                        const who = next.displayName?.() || next.name || "";
+                        this.mob._settlerAct = String(who).trim()
+                            ? `Attacking ${String(who).trim()}`
+                            : "Attacking";
+                        if (this._tickCombat(delta, world, home || { x: mob.x, y: mob.y }) !== false) return;
                     }
-                    this.assistTarget = next;
-                    const who = next.displayName?.() || next.name || "";
-                    this.mob._settlerAct = String(who).trim()
-                        ? `Attacking ${String(who).trim()}`
-                        : "Attacking";
-                    this._tickCombat(delta, world, home || { x: mob.x, y: mob.y });
-                    return;
                 }
                 this.assistTarget = null;
                 if (mob._resting || mob._restWalk) {
@@ -847,7 +856,7 @@
             }
 
             const next = world?.getAssistTarget?.(mob) || null;
-            const ok = next && this._assistStillOk(next, follow, world);
+            const ok = next && this._assistStillOk(next, follow, world) && !mob.refusesMelee?.();
             if (ok) {
                 if (next !== this.assistTarget) {
                     this.assistTarget = next;
@@ -859,8 +868,7 @@
                 this._clearCombat();
             }
             if (this.assistTarget) {
-                this._tickCombat(delta, world, follow);
-                return;
+                if (this._tickCombat(delta, world, follow) !== false) return;
             }
             if (mob._wokeFromRest) {
                 const delay = !!(
@@ -1098,6 +1106,10 @@
 
         _tickCombat(delta, world, follow) {
             const mob = this.mob;
+            if (mob?.refusesMelee?.()) {
+                this._clearCombat();
+                return false;
+            }
             const target = this.assistTarget;
             if (!target || !Number.isFinite(target.x) || !Number.isFinite(target.y)) return;
             this._world = world;

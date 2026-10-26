@@ -13,7 +13,8 @@ vm.runInContext(
     + "this.easePixelShift = easePixelShift;\n"
     + "this.waterSheetSize = waterSheetSize;\n"
     + "this.snapCameraScrollToPixels = snapCameraScrollToPixels;\n"
-    + "this.snapWorldToScreenPixel = snapWorldToScreenPixel;\n",
+    + "this.snapWorldToScreenPixel = snapWorldToScreenPixel;\n"
+    + "this.snapWorldOffsetToSubject = snapWorldOffsetToSubject;\n",
     context
 );
 
@@ -180,6 +181,55 @@ test("covering menus keep the settlement camera offset", () => {
     assert.equal(covered.x, shown.x);
     assert.notEqual(closed.x, shown.x);
     assert.ok(shown.x < 100);
+});
+
+test("settler follow releases when the player leaves that view", () => {
+    const pauseSrc = fs.readFileSync(require.resolve("../js/scene/pause.js"), "utf8");
+    vm.runInContext(pauseSrc, context);
+    const cam = { width: 300, height: 180, zoom: 3 };
+    const player = { x: 0, y: 0, active: true };
+    const settler = { x: 40, y: 0, active: true };
+    const off = (focus) => context.SceneMainPause._playerOffFocusedView(player, focus, cam, 3);
+    assert.equal(off(settler), false);
+    assert.equal(off({ x: 60, y: 0 }), true);
+    assert.equal(off({ x: 0, y: 20 }), false);
+    assert.equal(off({ x: 0, y: -70 }), true);
+});
+
+test("a follower walking with the camera subject does not step backward", () => {
+    const z = 3;
+    const viewW = 1512;
+    const viewH = 901;
+    let subject = 200.1;
+    let follower = 80.3;
+    let prev = null;
+    for (let i = 0; i < 48; i++) {
+        subject += 0.5;
+        follower += 0.5;
+        const focusX = Math.round((subject + 8) * z) / z;
+        const focusY = Math.round(40 * z) / z;
+        const cam = {
+            scrollX: focusX - viewW / 2,
+            scrollY: focusY - viewH / 2,
+            width: viewW,
+            height: viewH,
+            zoom: z
+        };
+        context.snapCameraScrollToPixels(cam, z);
+        const subjectSnap = context.snapWorldToScreenPixel(cam, subject, 100, z);
+        const placed = context.snapWorldOffsetToSubject(
+            subjectSnap,
+            { x: subject, y: 100 },
+            { x: follower, y: 100 },
+            z
+        );
+        const sx = screenOf(placed.x, cam.scrollX, viewW, z);
+        const sy = screenOf(placed.y, cam.scrollY, viewH, z);
+        assert.ok(Math.abs(sx - Math.round(sx)) < 1e-6, `x ${sx}`);
+        assert.ok(Math.abs(sy - Math.round(sy)) < 1e-6, `y ${sy}`);
+        if (prev != null) assert.equal(sx, prev);
+        prev = sx;
+    }
 });
 
 test("sprite snap matches the camera grid", () => {

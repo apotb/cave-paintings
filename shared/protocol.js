@@ -86,6 +86,8 @@
         /** Lie down in / wake from / destroy a lean-to. */
         SLEEP: "sleep",
         RECRUIT: "recruit",
+        /** Send a companion or settler away. Their gear is destroyed. */
+        BANISH: "banish",
         SWITCH_CONTROL: "switch_control",
         PARTY_EAT: "party_eat",
         /** Finish force-feeding a downed party member (dedicated MP). */

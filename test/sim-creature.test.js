@@ -118,6 +118,21 @@ test("boar tusk swing art is white; other unarmed verbs stay uncolored", () => {
     assert.equal(otherArt.color, undefined);
 });
 
+test("incapable of melee refuses a swing but still chops", () => {
+    seedRng(2);
+    const p = player();
+    p.bio = { adulthood: "medic", childhood: null, traits: [], skills: {} };
+    assert.equal(p.refusesMelee(), true);
+    assert.equal(p.startMeleeAttack(0), false);
+    assert.equal(p.isAttacking(), false);
+    assert.equal(p.tryMeleeAttack(
+        { x: 20, y: 0 },
+        { id: "knap_chopper_chop", range: 12, cooldown: 1, unarmed: true }
+    ), true);
+    assert.equal(p.isAttacking(), true);
+    restoreRng();
+});
+
 test("startMeleeAttack refuses a prone creature", () => {
     seedRng(2);
     const p = player();

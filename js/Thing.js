@@ -747,6 +747,7 @@ class Campfire extends Thing {
         });
         this.on('pointerdown', (pointer) => {
             if (pointer.rightButtonDown()) return;
+            if (this.scene.partySys?.settlerOwnsPointer?.(pointer)) return;
             if (this.scene.pointerOverWorldUi?.(pointer)) return;
             if (this.scene.restBlocksWorldUi?.()) return;
             if (!this.inRange()) return;
@@ -1233,6 +1234,7 @@ class Storage extends Thing {
         });
         this.on("pointerdown", (pointer) => {
             if (pointer.rightButtonDown()) return;
+            if (this.scene.partySys?.settlerOwnsPointer?.(pointer)) return;
             if (this.scene.pointerOverWorldUi?.(pointer)) return;
             if (this.scene.restBlocksWorldUi?.()) return;
             if (!this.inRange()) return;
@@ -1536,6 +1538,7 @@ class LeanTo extends Thing {
         });
         this.on("pointerdown", (pointer) => {
             if (pointer.rightButtonDown()) return;
+            if (this.scene.partySys?.settlerOwnsPointer?.(pointer)) return;
             if (this.scene.pointerOverWorldUi?.(pointer)) return;
             this.scene.openLeanToPanel?.(this, pointer);
         });
@@ -1926,6 +1929,7 @@ class SettlingStone extends Thing {
         });
         this.on("pointerdown", (pointer) => {
             if (pointer.rightButtonDown()) return;
+            if (scene.partySys?.settlerOwnsPointer?.(pointer)) return;
             if (scene._gamePaused) return;
             if (scene.pointerOverWorldUi?.(pointer)) return;
             if (scene.restBlocksWorldUi?.()) return;
@@ -1976,6 +1980,7 @@ class PaintingCircle extends Thing {
         });
         this.on("pointerdown", (pointer) => {
             if (pointer.rightButtonDown()) return;
+            if (this.scene.partySys?.settlerOwnsPointer?.(pointer)) return;
             if (this.scene.pointerOverWorldUi?.(pointer)) return;
             if (this.scene.restBlocksWorldUi?.()) return;
             if (!this.inRange()) return;

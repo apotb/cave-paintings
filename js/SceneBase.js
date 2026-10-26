@@ -104,7 +104,8 @@ class SceneBase extends Phaser.Scene {
         // Queue any resolved item/thing textures the warm cache does not have yet.
         if (typeof Content !== "undefined") Content.queueTextures(this);
         if (this.cache?.json?.exists?.("items") && this.cache?.json?.exists?.("structures")
-            && this.cache?.json?.exists?.("techs") && this.textures?.exists("grass")
+            && this.cache?.json?.exists?.("techs") && this.cache?.json?.exists?.("backstories")
+            && this.cache?.json?.exists?.("traits") && this.textures?.exists("grass")
             && this.textures?.exists("slot")) {
             return;
         }
@@ -112,6 +113,8 @@ class SceneBase extends Phaser.Scene {
         this.load.json("items", "data/Items.json");
         this.load.json("things", "data/Things.json");
         this.load.json("techs", "data/Techs.json");
+        this.load.json("backstories", "data/Backstories.json");
+        this.load.json("traits", "data/Traits.json");
         this.load.json("structures", "data/Structures.json");
         this.load.json("bodyPlans", "data/BodyPlans.json");
         this.load.json("injuries", "data/Injuries.json");
@@ -172,6 +175,12 @@ class SceneBase extends Phaser.Scene {
             "equipment",
             "equipment_hover",
             "equipment_open",
+            "bio",
+            "bio_hover",
+            "bio_open",
+            "boot",
+            "boot_hover",
+            "boot_open",
             "help",
             "help_hover",
             "help_open",

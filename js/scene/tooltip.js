@@ -44,8 +44,9 @@
             padding: { left: this._tooltipPadding, right: this._tooltipPadding, top: this._tooltipPadding, bottom: this._tooltipPadding }
         })).setVisible(false);
         this.tooltipGear = this.add.container(0, 0);
+        this.tooltipSpans = this.add.container(0, 0);
         this.tooltip.add([
-            this.tooltipBg, this.tooltipStar, this.tooltipText, this.tooltipMuted, this.tooltipWarn, this.tooltipEquip, this.tooltipHunger, this.tooltipSub, this.tooltipGear
+            this.tooltipBg, this.tooltipStar, this.tooltipText, this.tooltipMuted, this.tooltipWarn, this.tooltipEquip, this.tooltipHunger, this.tooltipSub, this.tooltipSpans, this.tooltipGear
         ]);
         this.tooltip.clearMask?.(true);
         (this.tooltipLayer || this.uiLayer).add(this.tooltip);
@@ -164,7 +165,7 @@
                 && wpt.y >= sy - body && wpt.y <= sy;
         };
 
-        /** Parked settler whose body is under the cursor. Input stays off so buildings remain clickable. */
+        /** Parked settler whose body is under the cursor. Input stays off so a station can still be opened beside the body. */
         this._livingSettlerAt = (pointer) => {
             if (!pointer) return null;
             for (const p of this.settlers || []) {
@@ -290,6 +291,16 @@
                     }
                     return form.backdrop;
                 }
+            }
+
+            // Bio rows drop out of hitTestPointer. Keep the row under the cursor
+            // or each hover scan pointerouts the tip and it flashes.
+            const bioP = this.bioPanel;
+            if (bioP?.visible && bioP.containsPointer?.(pointer)) {
+                return this._pickMaskedPanelHover(
+                    pointer, hits, bioP.bg,
+                    (obj) => this._isUnderBioPanel(obj)
+                );
             }
 
             // Health panel blocks world/UI behind it
@@ -556,9 +567,9 @@
             }
 
             // Standing companions beat trees under the cursor so chop/gather
-            // animations don't flicker the tip. Parked settlers stay click-through
-            // (input disabled) so baskets and stations still open, but their tip
-            // wins while the cursor is on the body.
+            // animations don't flicker the tip. A settler's body wins over the
+            // station they stand on; that click opens their bio. Trees and
+            // other loose hits still take the click.
             const keepPawn = this._hoverTarget || this._tooltipTarget;
             if (this._isHoverPawn(keepPawn) && this._pointerOnCreature(pointer, keepPawn)) {
                 return keepPawn;
@@ -636,6 +647,22 @@
             let cur = obj;
             while (cur) {
                 if (cur === panel.root || cur === panel.bg) return true;
+                cur = cur.parentContainer;
+            }
+            return false;
+        };
+
+        this._isUnderBioPanel = (obj) => {
+            const panel = this.bioPanel;
+            if (!panel || !obj) return false;
+            let cur = obj;
+            while (cur) {
+                if (
+                    cur === panel.container
+                    || cur === panel.bg
+                    || cur === panel.texts
+                    || cur === panel.bootBtn
+                ) return true;
                 cur = cur.parentContainer;
             }
             return false;

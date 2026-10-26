@@ -340,7 +340,17 @@ function doResearch(world, rec, settle, circle, delta) {
     if (elapsed > 60) elapsed = 1;
     rec._paintTickMin = now;
     if (elapsed > 0 && Research.inProgress(entry)) {
-        const r = Research.addPaintMinutes(entry, elapsed);
+        const skills = world._skillsApi?.();
+        if (skills && rec.bio && skills.incapable(rec.bio, "intellectual")) {
+            endWorkHold(rec);
+            return halt();
+        }
+        const mind = skills && rec.bio ? skills.effectiveLevel(rec.bio, "intellectual") : null;
+        const speed = mind == null ? 1 : Math.max(0.05, skills.researchSpeed(mind));
+        const r = Research.addPaintMinutes(entry, elapsed * speed);
+        if (skills && rec.bio && mind != null) {
+            skills.award(rec.bio, "intellectual", skills.XP_MINUTE * elapsed, { day: world.gameDay });
+        }
         if (r.changed) emitEntry(world, entry);
     }
     rec._researchMissMs = 0;

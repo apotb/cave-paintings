@@ -370,18 +370,30 @@
                     kc: row.kc,
                     saturation: row.saturation,
                     stomach: row.stomach,
-                    favorite: !!row.favorite
+                    favorite: !!row.favorite,
+                    bio: row.bio
                 });
             }
             if (!pawn) continue;
+            if (row.bio) pawn.bio = row.bio;
             pawn.ownerId = row.ownerId || pawn.ownerId;
             pawn.homeSettlementId = row.homeSettlementId || null;
             pawn.role = "settler";
             if (typeof syncCreatureInputHit === "function") syncCreatureInputHit(pawn);
-            pawn._netFromX = pawn.x;
-            pawn._netFromY = pawn.y;
-            pawn._netTx = row.x;
-            pawn._netTy = row.y;
+            {
+                const prevTx = Number.isFinite(pawn._netTx) ? pawn._netTx : pawn.x;
+                const prevTy = Number.isFinite(pawn._netTy) ? pawn._netTy : pawn.y;
+                const fromX = Number.isFinite(pawn._physX) ? pawn._physX : pawn.x;
+                const fromY = Number.isFinite(pawn._physY) ? pawn._physY : pawn.y;
+                const target = (typeof Party !== "undefined" && Party.puppetContinueTarget)
+                    ? Party.puppetContinueTarget(fromX, fromY, prevTx, prevTy, row.x, row.y, !!row.moving)
+                    : { x: row.x, y: row.y };
+                pawn._netSnapDist = Math.hypot(row.x - prevTx, row.y - prevTy);
+                pawn._netFromX = fromX;
+                pawn._netFromY = fromY;
+                pawn._netTx = target.x;
+                pawn._netTy = target.y;
+            }
             {
                 const now = performance.now();
                 pawn._netSnapDt = (typeof Party !== "undefined" && Party.puppetSnapGapMs)
@@ -567,7 +579,8 @@
                     hostile: w.hostile,
                     recruitLocked: w.recruitLocked,
                     band: w.band,
-                    refusedBy: w.refusedBy
+                    refusedBy: w.refusedBy,
+                    bio: w.bio
                 });
                 pawn._netFromX = w.x;
                 pawn._netFromY = w.y;
@@ -587,11 +600,19 @@
                 }
                 const prevTx = Number.isFinite(pawn._netTx) ? pawn._netTx : pawn.x;
                 const prevTy = Number.isFinite(pawn._netTy) ? pawn._netTy : pawn.y;
+                const fromX = Number.isFinite(pawn._physX) ? pawn._physX : pawn.x;
+                const fromY = Number.isFinite(pawn._physY) ? pawn._physY : pawn.y;
+                const moving = typeof w.moving === "boolean"
+                    ? w.moving
+                    : !!(w.heading && (Math.abs(Number(w.heading.x)) + Math.abs(Number(w.heading.y)) > 0));
+                const target = (typeof Party !== "undefined" && Party.puppetContinueTarget)
+                    ? Party.puppetContinueTarget(fromX, fromY, prevTx, prevTy, w.x, w.y, moving && pawn._netMoving !== false)
+                    : { x: w.x, y: w.y };
                 pawn._netSnapDist = Math.hypot(w.x - prevTx, w.y - prevTy);
-                pawn._netFromX = pawn.x;
-                pawn._netFromY = pawn.y;
-                pawn._netTx = w.x;
-                pawn._netTy = w.y;
+                pawn._netFromX = fromX;
+                pawn._netFromY = fromY;
+                pawn._netTx = target.x;
+                pawn._netTy = target.y;
                 const now = performance.now();
                 pawn._netSnapDt = (typeof Party !== "undefined" && Party.puppetSnapGapMs)
                     ? Party.puppetSnapGapMs(pawn._netSnapAt, now)
@@ -604,6 +625,7 @@
                 pawn.facing = w.prone ? "right" : (w.facing || pawn.facing);
                 pawn.heading = w.heading || pawn.heading;
                 pawn.hostile = !!w.hostile;
+                if (w.bio) pawn.bio = w.bio;
                 pawn.recruitLocked = !!w.recruitLocked;
                 pawn.band = !!w.band;
                 pawn.refusedBy = new Set(w.refusedBy || []);

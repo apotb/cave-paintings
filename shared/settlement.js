@@ -17,6 +17,11 @@
     const IDLE_STAND_MIN_MS = 2000;
     const IDLE_STAND_MAX_MS = 6000;
     const NAME_MAX = 20;
+    function skillsMod() {
+        if (typeof Skills !== "undefined") return Skills;
+        try { return require("./skills"); } catch (_) { return null; }
+    }
+
     function researchMod() {
         if (typeof Research !== "undefined") return Research;
         try {
@@ -1949,7 +1954,12 @@
     function jobEnabled(row, typeOrName) {
         const name = knownJobIds().includes(typeOrName) ? typeOrName : jobForWork(typeOrName);
         if (!name) return true;
-        return normalizeJobs(row)[name] >= 1;
+        if (normalizeJobs(row)[name] < 1) return false;
+        const skills = skillsMod();
+        const skill = skills?.jobSkill ? skills.jobSkill(name) : null;
+        const who = arguments[2] || row;
+        if (skill && who?.bio && skills.incapable(who.bio, skill)) return false;
+        return true;
     }
 
     function sameLeatherJob(held, next) {
@@ -2208,7 +2218,7 @@
 
     /** Bleeding patients: carry or tend before hunger, sleep, and other work. */
     function doctorCarePlan(row, state) {
-        if (!jobEnabled(row, "doctor")) return null;
+        if (!jobEnabled(row, "doctor", state.rec)) return null;
         for (const rowCare of state.critical || []) {
             const pawn = careRowOpen(rowCare);
             if (!pawn) continue;
@@ -2238,7 +2248,7 @@
 
     /** Downed, not bleeding: haul after eating, before sleep. */
     function doctorRescuePlan(row, state) {
-        if (!jobEnabled(row, "doctor")) return null;
+        if (!jobEnabled(row, "doctor", state.rec)) return null;
         for (const pawn of state.rescues || []) {
             if (!pawn || pawn.dead || pawn._resting || pawn.resting) continue;
             return { type: "rescue", target: pawn };
@@ -2264,7 +2274,7 @@
         const night = assignment === "sleep";
         const injured = !!state.injured;
         const onBreak = assignment === "recreation" && !injured;
-        const busyJob = state.busyJob && isBusyWork(state.busyJob.type) && jobEnabled(row, state.busyJob.type)
+        const busyJob = state.busyJob && isBusyWork(state.busyJob.type) && jobEnabled(row, state.busyJob.type, state.rec)
             ? state.busyJob
             : null;
         const poll = !!(busy && busyJob && state.reconsiderNeeds && busyJob.type === "research");

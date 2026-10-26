@@ -195,7 +195,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
     }
 
     displayName() {
-        return this.def?.name || this.def?.id || "Someone";
+        return this.entry?.name || this.def?.name || this.def?.id || "Someone";
     }
 
     getHeldWeaponMeta() {
@@ -498,8 +498,10 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             x: c.x,
             y: c.y,
             key,
+            look: this.entry?.look || null,
             frame: 7,
-            name: this.def?.name || "Corpse",
+            name: this.entry?.name || this.def?.name || "Corpse",
+            bio: this.entry?.bio || null,
             loot,
             body: this.anatomy?.toJSON?.(),
             bodyPlan: this.def?.bodyPlan || this.anatomy?.planId || "human",

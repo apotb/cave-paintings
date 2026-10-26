@@ -162,6 +162,33 @@
         };
     }
     /**
+     * Next pose to walk toward after a snapshot.
+     * Extrapolation keeps a late puppet moving, so the sprite is often past
+     * the packet that just arrived. Lerping back to that packet is a hitch
+     * every tick, and it shows up on anyone the camera is not glued to.
+     * While they are still walking, drop only the backward part of the
+     * correction. A real turn (the new step points back at the sprite) is
+     * kept. Stopping still returns the exact server pose.
+     */
+    function puppetContinueTarget(fromX, fromY, prevTx, prevTy, nextX, nextY, moving) {
+        if (!moving || !Number.isFinite(fromX) || !Number.isFinite(fromY)
+            || !Number.isFinite(nextX) || !Number.isFinite(nextY)) {
+            return { x: nextX, y: nextY };
+        }
+        const hx = nextX - (Number(prevTx) || 0);
+        const hy = nextY - (Number(prevTy) || 0);
+        const hl = Math.hypot(hx, hy);
+        if (!(hl > 0.5)) return { x: nextX, y: nextY };
+        const nx = hx / hl;
+        const ny = hy / hl;
+        const along = (nextX - fromX) * nx + (nextY - fromY) * ny;
+        if (along >= 0) return { x: nextX, y: nextY };
+        return {
+            x: nextX - along * nx,
+            y: nextY - along * ny
+        };
+    }
+    /**
      * Latch follower sprint so they don't flicker on a distance ring around
      * the leader. Start past `FOLLOW_SPRINT` (or `FOLLOW_CATCH` while the
      * leader is already sprinting); drop only after closing to `FOLLOW_SPRINT_DROP`.
@@ -1263,6 +1290,7 @@
         puppetSnapGapMs,
         puppetTeleportPx,
         puppetLerpXY,
+        puppetContinueTarget,
         walkAnimTimeScale,
         followWantSprint,
         followLeashPx,

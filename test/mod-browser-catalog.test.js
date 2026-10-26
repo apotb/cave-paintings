@@ -15,6 +15,8 @@ const CORE_FILES = [
     ["mobs", "Mobs.json"],
     ["things", "Things.json"],
     ["techs", "Techs.json"],
+    ["backstories", "Backstories.json"],
+    ["traits", "Traits.json"],
     ["structures", "Structures.json"]
 ];
 

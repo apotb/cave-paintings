@@ -679,6 +679,9 @@
             const b = Math.max(0, Number(base) || 0);
             const cap = Math.max(0, Number(max) || 0.7);
             let rolled = b * m.floatBetween(0, 1.25);
+            if (opts && Number.isFinite(Number(opts.medicalLevel))) {
+                rolled *= 0.2 + 0.1 * Number(opts.medicalLevel);
+            }
             if (opts && opts.selfTend) rolled *= Hediffs?.SELF_TEND_FACTOR || 0.7;
             return m.clamp(rolled, 0, cap);
         },

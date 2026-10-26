@@ -136,6 +136,12 @@ class SceneMenu extends Phaser.Scene {
                 this.load.image(key, `assets/ui/title/${id}.png`);
             }
         }
+        if (!this.cache?.json?.exists?.("backstories")) {
+            this.load.json("backstories", "data/Backstories.json");
+        }
+        if (!this.cache?.json?.exists?.("traits")) {
+            this.load.json("traits", "data/Traits.json");
+        }
         if (!this.cache.audio.exists("title")) {
             this.load.audio("title", "assets/audio/title.ogg");
         }
@@ -182,6 +188,11 @@ class SceneMenu extends Phaser.Scene {
         }
         this._onMenuKeydown = (e) => this._handleMenuEscape(e);
         document.addEventListener("keydown", this._onMenuKeydown, true);
+        if (this._onMenuPointerDown) {
+            document.removeEventListener("pointerdown", this._onMenuPointerDown, true);
+        }
+        this._onMenuPointerDown = (e) => this._blurMenuInputOnOutside(e);
+        document.addEventListener("pointerdown", this._onMenuPointerDown, true);
         if (this._onModsFolderFocus) {
             window.removeEventListener("focus", this._onModsFolderFocus);
         }
@@ -674,7 +685,7 @@ class SceneMenu extends Phaser.Scene {
         return {
             host: this.hostInput?.value,
             pass: this.passInput?.value,
-            name: this.nameInput?.value,
+            name: this.nameInput ? this.nameInput.value : (this._createName ?? ""),
             worldName: this.worldNameInput?.value,
             seed: this.seedInput?.value,
             renameName: this.renameInput?.value,
@@ -685,12 +696,13 @@ class SceneMenu extends Phaser.Scene {
             modId: this.modIdInput?.value,
             faceIdx: this._createFaceIdx,
             look: this._createLook,
-            lookPart: this._createLookPart
+            lookPart: this._createLookPart,
+            bio: this._createBio
         };
     }
 
     _menuInputKeys() {
-        return ["hostInput", "passInput", "nameInput", "worldNameInput", "seedInput", "renameInput", "modNameInput", "modAuthorInput", "modVersionInput", "modDescriptionInput", "modIdInput"];
+        return ["hostInput", "passInput", "nameInput", "ageInput", "worldNameInput", "seedInput", "renameInput", "modNameInput", "modAuthorInput", "modVersionInput", "modDescriptionInput", "modIdInput"];
     }
 
     _snapshotDomFocus() {
@@ -727,6 +739,16 @@ class SceneMenu extends Phaser.Scene {
         return this._menuInputKeys().some((key) => this[key] === a);
     }
 
+    /** A click on the canvas does not move DOM focus, so drop it ourselves. */
+    _blurMenuInputOnOutside(e) {
+        if (!this.sys?.isActive?.()) return;
+        if (!this._anyMenuInputFocused()) return;
+        const target = e?.target;
+        if (target && this._menuInputKeys().some((key) => this[key] === target)) return;
+        const active = document.activeElement;
+        if (active && typeof active.blur === "function") active.blur();
+    }
+
     /** Phaser keyboard must stay off while a menu field is focused. */
     _syncKeyboardForDom() {
         const kb = this.input?.keyboard;
@@ -742,6 +764,13 @@ class SceneMenu extends Phaser.Scene {
         if (this._startingSp) return;
         if (!this.sys?.isActive?.()) return;
         if (this._phase === "root") return;
+        if (this._traitMenu) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation?.();
+            this._closeCreateTraitMenu();
+            return;
+        }
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation?.();
@@ -890,6 +919,7 @@ class SceneMenu extends Phaser.Scene {
     }
 
     _clear() {
+        this._closeCreateTraitMenu();
         this._unbindCardListScroll();
         this._unbindCreateHslInput();
         this._unbindVolumeSlider();
@@ -928,7 +958,7 @@ class SceneMenu extends Phaser.Scene {
         this._optionsGuiScaleBtn = null;
         this._optionsFullscreenBtn = null;
         this._optionsAmPmBtn = null;
-        this.hostInput = this.passInput = this.nameInput = this.worldNameInput = this.seedInput = this.renameInput = null;
+        this.hostInput = this.passInput = this.nameInput = this.ageInput = this.worldNameInput = this.seedInput = this.renameInput = null;
         this.modNameInput = this.modAuthorInput = this.modVersionInput = this.modDescriptionInput = this.modIdInput = null;
         this._versionLabel = null;
         this._updateLabel = null;
@@ -1752,14 +1782,17 @@ class SceneMenu extends Phaser.Scene {
 
     _domInput(x, y, width, placeholder, value, opts = {}) {
         const s = this._uiScale();
-        const fontPx = typeof pixelUiFontSize === "function" ? pixelUiFontSize(16, s) : Math.round(16 * s);
-        const pad = Math.round(8 * s);
+        const fontPx = opts.fontPx != null
+            ? opts.fontPx
+            : (typeof pixelUiFontSize === "function" ? pixelUiFontSize(16, s) : Math.round(16 * s));
+        const pad = opts.pad != null ? opts.pad : Math.round(8 * s);
         const border = Math.max(1, Math.round(s));
         const el = document.createElement("input");
         el.type = opts.type || "text";
         el.placeholder = placeholder;
         el.value = value || "";
         if (opts.autocomplete) el.autocomplete = opts.autocomplete;
+        if (opts.inputMode) el.inputMode = opts.inputMode;
         if (opts.maxLength != null) el.maxLength = opts.maxLength;
         el.spellcheck = false;
         el.style.cssText = [
@@ -1777,8 +1810,11 @@ class SceneMenu extends Phaser.Scene {
             "z-index:1000",
             "pointer-events:auto",
             `outline:${border}px solid #6a5a4a`,
-            "box-sizing:border-box"
-        ].join(";");
+            "box-sizing:border-box",
+            `line-height:${fontPx}px`,
+            opts.height ? `height:${Math.round(opts.height)}px` : "",
+            opts.align ? `text-align:${opts.align}` : ""
+        ].filter(Boolean).join(";");
         // Keep Phaser from treating clicks/keys on this field as game input
         for (const ev of ["mousedown", "mouseup", "touchstart", "touchend", "pointerdown", "pointerup"]) {
             el.addEventListener(ev, (e) => e.stopPropagation());
@@ -1867,7 +1903,9 @@ class SceneMenu extends Phaser.Scene {
         if (!el || !text) return;
         const point = this._tipClientPoint(source);
         if (!point) return;
-        el.textContent = text;
+        const html = typeof Skills !== "undefined" && Skills.tipHtml ? Skills.tipHtml(text) : null;
+        if (html) el.innerHTML = html;
+        else el.textContent = text;
         el.style.display = "block";
         const rect = el.getBoundingClientRect();
         let x = point.x + 16;
@@ -2645,6 +2683,7 @@ class SceneMenu extends Phaser.Scene {
     }
 
     _copyCreateColor() {
+        if (!this._createAdvanced) return;
         const look = this._createLookNormalized();
         const part = this._createLookPart || "head";
         const color = look[part] >>> 0;
@@ -2656,6 +2695,7 @@ class SceneMenu extends Phaser.Scene {
     }
 
     async _pasteCreateColor() {
+        if (!this._createAdvanced) return;
         let color = this._copiedColor;
         try {
             const text = await navigator.clipboard?.readText?.();
@@ -2720,6 +2760,7 @@ class SceneMenu extends Phaser.Scene {
     }
 
     _hslSetFromPointer(kind, pointer) {
+        if (!this._createAdvanced) return;
         const bars = this._createHslBars;
         if (!bars || !this._createHsl) return;
         const t = Phaser.Math.Clamp((pointer.worldX - bars.x) / bars.w, 0, 1);
@@ -2761,7 +2802,712 @@ class SceneMenu extends Phaser.Scene {
         this._applyCreateHsl();
     }
 
+    _ensureBioCatalogs() {
+        const store = (typeof DataStore !== "undefined") ? DataStore._store : null;
+        if (!store) return;
+        if (store.backstoriesList?.length && store.traitsList?.length) return;
+        const json = this.cache?.json;
+        const backstories = json?.get?.("backstories");
+        const traits = json?.get?.("traits");
+        if (Array.isArray(backstories) && backstories.length) store.backstoriesList = backstories;
+        if (Array.isArray(traits) && traits.length) store.traitsList = traits;
+    }
+
+    _rebuildCreateCharacter() {
+        const drafts = this._snapshotDrafts();
+        this._showCreateCharacter({
+            next: this._charNext,
+            drafts,
+            relayout: true
+        });
+    }
+
+    _rollCreateName() {
+        return typeof CavemanNames !== "undefined" ? CavemanNames.generate() : "Og";
+    }
+
+    _rerollCreateCharacter() {
+        this._ensureBioCatalogs();
+        if (!this._createAdvanced) this._createName = this._rollCreateName();
+        if (typeof Skills !== "undefined") this._createBio = Skills.generate(Math.random);
+        if (typeof Look !== "undefined") this._createLook = Look.randomLook();
+        this._rebuildCreateCharacter();
+    }
+
+    _placeCreateAgeInput(x, y, lineH) {
+        const s = this._uiScale();
+        const fontPx = typeof pixelUiFontSize === "function" ? pixelUiFontSize(8, s) : Math.round(8 * s);
+        const pad = Math.max(1, Math.round(2 * s));
+        const width = this._menuTextWidth("70", 8) + pad * 2 + Math.round(8 * s);
+        const height = Math.max(lineH, fontPx + pad * 2);
+        const top = Math.round(y + (lineH - height) / 2);
+        const el = this._domInput(Math.round(x), top, Math.ceil(width), "", String(this._createBio?.age ?? ""), {
+            fontPx,
+            pad,
+            height,
+            align: "center",
+            inputMode: "numeric",
+            maxLength: 2
+        });
+        this.ageInput = el;
+        const bio = this._createBio;
+        el.addEventListener("input", () => {
+            const cleaned = el.value.replace(/\D/g, "").slice(0, 2);
+            if (cleaned !== el.value) el.value = cleaned;
+            const n = parseInt(cleaned, 10);
+            if (bio && Number.isFinite(n) && n >= 14 && n <= 70) bio.age = n;
+        });
+        el.addEventListener("blur", () => this._commitCreateAge());
+        el.addEventListener("keydown", (e) => {
+            if (e.key !== "Enter") return;
+            this._commitCreateAge();
+            el.blur();
+        });
+    }
+
+    _commitCreateAge() {
+        const el = this.ageInput;
+        const bio = this._createBio;
+        if (!el || !bio) return;
+        const n = parseInt(String(el.value).replace(/\D/g, ""), 10);
+        if (!Number.isFinite(n)) {
+            el.value = String(bio.age);
+            return;
+        }
+        bio.age = Math.max(14, Math.min(70, n));
+        el.value = String(bio.age);
+    }
+
+    _makeCreateTraitButton(parent, label, filled) {
+        const s = this._uiScale();
+        const padX = Math.round(6 * s);
+        const padY = Math.round(2 * s);
+        const box = this.add.container(0, 0);
+        parent.add(box);
+        const text = this.add.text(0, 0, label, {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: this._uiFont(8),
+            color: filled ? "#f2ead8" : "#8a8478"
+        }).setOrigin(0, 0);
+        crispUiText(text);
+        const w = Math.ceil(text.width + padX * 2);
+        const h = Math.ceil(text.height + padY * 2);
+        const stroke = this._uiStroke();
+        const rect = this.add.rectangle(0, 0, w, h, 0x120e0a, 1)
+            .setOrigin(0, 0)
+            .setStrokeStyle(stroke, 0x2a2218)
+            .setInteractive({ useHandCursor: true });
+        text.setPosition(padX, padY);
+        box.add([rect, text]);
+        box.setSize(w, h);
+        rect.on("pointerover", () => rect.setStrokeStyle(stroke, 0xffffff));
+        rect.on("pointerout", () => rect.setStrokeStyle(stroke, 0x2a2218));
+        return { box, rect };
+    }
+
+    _closeCreateTraitMenu() {
+        if (this._traitMenuArm) {
+            this._traitMenuArm.remove?.();
+            this._traitMenuArm = null;
+        }
+        if (this._traitMenuCloser) {
+            this.input?.off?.("pointerdown", this._traitMenuCloser);
+            this._traitMenuCloser = null;
+        }
+        try { this._traitMenu?.destroy(true); } catch (_) {}
+        this._traitMenu = null;
+        this._traitMenuBounds = null;
+        this._traitMenuSlot = null;
+    }
+
+    _setCreateTrait(slot, id) {
+        const bio = this._createBio;
+        if (!bio) return;
+        const ids = (bio.traits || []).filter(Boolean);
+        const S = typeof Skills !== "undefined" ? Skills : null;
+        if (id && S) {
+            const traits = S.catalogs().traits || [];
+            const row = traits.find((item) => item.id === id);
+            const have = ids.filter((_, i) => i !== slot);
+            if (S.traitConflicts(row, have, traits)) return;
+        }
+        const kept = ids.slice();
+        kept[slot] = id || null;
+        bio.traits = kept.filter(Boolean).slice(0, 3);
+        this._closeCreateTraitMenu();
+        this._rebuildCreateCharacter();
+    }
+
+    _openCreateTraitMenu(slot, x, y) {
+        this._closeCreateTraitMenu();
+        const S = typeof Skills !== "undefined" ? Skills : null;
+        const bio = this._createBio;
+        if (!S || !bio) return;
+        const traits = S.catalogs().traits || [];
+        const ids = (bio.traits || []).filter(Boolean);
+        const current = ids[slot] || null;
+        const have = ids.filter((_, i) => i !== slot);
+        const rows = [{ id: null, title: "None", locked: false, tip: "" }];
+        for (const row of traits) {
+            if (!row?.id) continue;
+            rows.push({
+                id: row.id,
+                title: row.title || "Unknown",
+                locked: S.traitConflicts(row, have, traits),
+                tip: S.traitTip(row, this._createName)
+            });
+        }
+        this._mountCreatePickMenu(slot, rows, current, (pick) => this._setCreateTrait(slot, pick), x, y);
+    }
+
+    _setCreateBackstory(key, id) {
+        const bio = this._createBio;
+        if (!bio || (key !== "childhood" && key !== "adulthood") || !id) return;
+        bio[key] = id;
+        this._closeCreateTraitMenu();
+        this._rebuildCreateCharacter();
+    }
+
+    _openCreateBackstoryMenu(slot, key, x, y) {
+        const S = typeof Skills !== "undefined" ? Skills : null;
+        const bio = this._createBio;
+        if (!S || !bio) return;
+        const current = bio[key] || null;
+        const rows = [];
+        for (const row of S.catalogs().backstories || []) {
+            if (!row?.id || row.slot !== slot) continue;
+            rows.push({
+                id: row.id,
+                title: row.title || "Unknown",
+                locked: false,
+                tip: S.backstoryTip(row, this._createName)
+            });
+        }
+        if (!rows.length) return;
+        this._mountCreatePickMenu(slot, rows, current, (pick) => this._setCreateBackstory(key, pick), x, y);
+    }
+
+    _mountCreatePickMenu(slot, rows, current, onPick, x, y) {
+        this._closeCreateTraitMenu();
+        const s = this._uiScale();
+        const pad = Math.round(6 * s);
+        const gap = Math.round(2 * s);
+        const labels = rows.map((row) => crispUiText(this.add.text(0, 0, row.title, {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: this._uiFont(8),
+            color: row.locked ? "#6a6058" : "#f2ead8"
+        }).setOrigin(0, 0)));
+        const textH = Math.max(...labels.map((t) => t.height));
+        const rowH = textH + Math.round(4 * s);
+        const innerW = Math.max(...labels.map((t) => t.width)) + Math.round(8 * s);
+        const w = innerW + pad * 2;
+        const h = pad * 2 + rows.length * rowH + Math.max(0, rows.length - 1) * gap;
+        let left = Math.round(x);
+        let top = Math.round(y + Math.round(4 * s));
+        if (left + w > this.scale.width - 8) left = Math.max(8, this.scale.width - w - 8);
+        if (top + h > this.scale.height - 8) top = Math.max(8, Math.round(y - h - Math.round(4 * s)));
+        const root = this.add.container(left, top).setDepth(80);
+        const bg = this.add.rectangle(0, 0, w, h, 0x16130f, 0.98)
+            .setOrigin(0, 0)
+            .setStrokeStyle(Math.max(2, Math.round(2 * s)), 0x000000);
+        root.add(bg);
+        const stroke = this._uiStroke();
+        rows.forEach((row, i) => {
+            const ry = pad + i * (rowH + gap);
+            const selected = row.id === current;
+            const hit = this.add.rectangle(pad, ry, innerW, rowH, 0x120e0a, selected || row.locked ? 1 : 0.01)
+                .setOrigin(0, 0)
+                .setStrokeStyle(stroke, selected ? 0xd4a84b : 0x2a2218)
+                .setInteractive({ useHandCursor: !row.locked });
+            if (row.locked) hit.setFillStyle(0x1a1612, 1);
+            labels[i].setPosition(pad + Math.round(4 * s), ry + Math.round((rowH - labels[i].height) / 2));
+            root.add(hit);
+            root.add(labels[i]);
+            if (row.tip) this._bindMenuTip(hit, row.tip);
+            if (!row.locked) {
+                hit.on("pointerover", () => {
+                    if (!selected) hit.setStrokeStyle(stroke, 0xffffff);
+                });
+                hit.on("pointerout", () => hit.setStrokeStyle(stroke, selected ? 0xd4a84b : 0x2a2218));
+                hit.on("pointerdown", () => {
+                    this._hideHoverTip(this._menuTip);
+                    const pick = row.id;
+                    this.time.delayedCall(0, () => onPick(pick));
+                });
+            }
+        });
+        this._traitMenu = root;
+        this._traitMenuSlot = slot;
+        this._traitMenuBounds = new Phaser.Geom.Rectangle(left, top, w, h);
+        this._traitMenuArm = this.time.delayedCall(0, () => {
+            this._traitMenuArm = null;
+            if (!this._traitMenu) return;
+            this._traitMenuCloser = (pointer) => {
+                const b = this._traitMenuBounds;
+                if (!b) return;
+                const px = pointer.worldX;
+                const py = pointer.worldY;
+                if (Phaser.Geom.Rectangle.Contains(b, px, py)) return;
+                const pickers = [
+                    ...(this._traitPickButtons || []),
+                    ...(this._storyPickButtons || [])
+                ];
+                for (const btn of pickers) {
+                    const bb = btn.getBounds?.();
+                    if (bb && Phaser.Geom.Rectangle.Contains(bb, px, py)) return;
+                }
+                this._closeCreateTraitMenu();
+            };
+            this.input.on("pointerdown", this._traitMenuCloser);
+        });
+    }
+
+    _bindMenuTip(obj, text) {
+        if (!obj || !text) return;
+        if (!obj.input) obj.setInteractive({ useHandCursor: true });
+        const show = (p) => this._placeHoverTip(this._ensureMenuTip(), p, text);
+        obj.on("pointerover", show);
+        obj.on("pointermove", show);
+        obj.on("pointerout", () => this._hideHoverTip(this._menuTip));
+    }
+
+    _fillMenuStar(g, x, y, r) {
+        const pts = [];
+        for (let i = 0; i < 10; i++) {
+            const a = -Math.PI / 2 + i * Math.PI / 5;
+            const rad = i % 2 === 0 ? r : r * 0.42;
+            pts.push(new Phaser.Geom.Point(x + Math.cos(a) * rad, y + Math.sin(a) * rad));
+        }
+        g.fillStyle(0xe6c15a, 1);
+        g.fillPoints(pts, true);
+    }
+
+    _pixelGlyph(g, u, color, cells) {
+        g.fillStyle(0x000000, 1);
+        for (let i = 0; i < cells.length; i++) {
+            const x = cells[i][0] - 3;
+            const y = cells[i][1] - 3;
+            g.fillRect(x * u - u, y * u - u, 3 * u, 3 * u);
+        }
+        g.fillStyle(color, 1);
+        for (let i = 0; i < cells.length; i++) {
+            const x = cells[i][0] - 3;
+            const y = cells[i][1] - 3;
+            g.fillRect(x * u, y * u, u, u);
+        }
+    }
+
+    _drawCheckGlyph(g, on, sc) {
+        if (!g) return;
+        g.clear();
+        const u = Math.max(1, Math.round(sc));
+        if (on) {
+            this._pixelGlyph(g, u, 0x5cbf63, [
+                [0, 3], [1, 4], [2, 5], [3, 4], [4, 3], [5, 2], [6, 1]
+            ]);
+        } else {
+            const cross = [];
+            for (let i = 0; i <= 6; i++) cross.push([i, i], [i, 6 - i]);
+            this._pixelGlyph(g, u, 0xc44c3c, cross);
+        }
+    }
+
+    /** Green check / red cross toggle, matching the settlement "Pause game" control. */
+    _checkButton(x, y, label, checked, onClick) {
+        const s = this._uiScale();
+        const pad = Math.round(8 * s);
+        const glyphW = Math.round(14 * s);
+        const textGap = Math.round(6 * s);
+        const text = crispUiText(this.add.text(0, 0, label, {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: this._uiFont(16),
+            color: "#d4e8d0"
+        }).setOrigin(0, 0.5));
+        const bw = pad + Math.ceil(text.width) + textGap + glyphW + pad;
+        const bh = this._buttonSizePreset("small").height;
+        const glyph = this.add.graphics();
+        const stroke = this._uiStroke();
+        const rect = this.add.rectangle(0, 0, bw, bh, 0x1e3d1a, 1)
+            .setStrokeStyle(stroke, 0x5cbf63)
+            .setInteractive({ useHandCursor: true });
+        const root = this.add.container(Math.round(x), Math.round(y), [rect, text, glyph]);
+        root._checked = !!checked;
+        root.btnWidth = bw;
+        root.btnHeight = bh;
+        let hovering = false;
+        let pressing = false;
+        const paint = () => {
+            const on = !!root._checked;
+            const strokeColor = pressing ? 0xd4a84b : (hovering ? 0xffffff : (on ? 0x5cbf63 : 0xc44c3c));
+            rect.setFillStyle(on ? 0x1e3d1a : 0x3a1816, 1);
+            rect.setStrokeStyle(stroke, strokeColor);
+            text.setColor(on ? "#d4e8d0" : "#e8c0b8");
+            text.setPosition(Math.round(-bw / 2 + pad), 0);
+            glyph.setPosition(Math.round(bw / 2 - Math.round(12 * s)), 0);
+            this._drawCheckGlyph(glyph, on, s);
+        };
+        rect.on("pointerover", () => {
+            hovering = true;
+            paint();
+        });
+        rect.on("pointerout", () => {
+            hovering = false;
+            pressing = false;
+            paint();
+        });
+        rect.on("pointerdown", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            pressing = true;
+            paint();
+        });
+        rect.on("pointerup", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            const was = pressing;
+            pressing = false;
+            paint();
+            if (was && hovering) onClick?.();
+        });
+        this._track(root);
+        paint();
+        return root;
+    }
+
+    _menuTextWidth(value, basePx) {
+        const t = this.add.text(0, 0, String(value ?? ""), {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: this._uiFont(basePx)
+        });
+        crispUiText(t);
+        const width = t.width || 0;
+        t.destroy();
+        return width;
+    }
+
+    _createBioSlotWidth() {
+        const s = this._uiScale();
+        const S = typeof Skills !== "undefined" ? Skills : null;
+        const w = (text) => this._menuTextWidth(text, 8);
+        if (!S) return w("No bio");
+        const books = S.catalogs().backstories || [];
+        const traits = S.catalogs().traits || [];
+        const indent = Math.round(8 * s);
+        const labelW = Math.max(w("Childhood"), w("Adulthood"));
+        const valueX = labelW + Math.round(10 * s);
+        const metaW = w("Female, ") + w("age 70");
+        let maxTitle = w("Unknown");
+        for (const row of books) maxTitle = Math.max(maxTitle, w(row?.title || "Unknown"));
+        let maxTrait = Math.max(w("None"), w("Trait —"), w("Unknown"));
+        for (const row of traits) maxTrait = Math.max(maxTrait, w(row?.title || "Unknown"));
+        let maxIncap = w("None");
+        for (const id of S.SKILL_IDS) maxIncap = Math.max(maxIncap, w(S.labelOf(id)));
+        return Math.max(
+            metaW,
+            valueX + maxTitle,
+            w("Traits"),
+            indent + maxTrait,
+            w("Incapable of"),
+            indent + maxIncap
+        );
+    }
+
+    _paintCreateBio({ splitSkills = false } = {}) {
+        const s = this._uiScale();
+        const S = typeof Skills !== "undefined" ? Skills : null;
+        const bio = this._createBio;
+        const root = this.add.container(0, 0);
+        this._track(root);
+        const marks = this.add.graphics();
+        root.add(marks);
+        const mk = (value, color, parent = root) => {
+            const t = this.add.text(0, 0, value, {
+                fontFamily: PIXEL_UI_FONT,
+                fontSize: this._uiFont(8),
+                color: color || "#f2ead8"
+            }).setOrigin(0, 0);
+            crispUiText(t);
+            parent.add(t);
+            return t;
+        };
+        if (!S || !bio) {
+            const missing = mk("No bio", "#8a8070");
+            return { root, width: missing.width, height: missing.height };
+        }
+        const books = S.catalogs().backstories || [];
+        const traits = S.catalogs().traits || [];
+        const advanced = !!this._createAdvanced;
+        const gap = Math.round(4 * s);
+        const sectionGap = Math.round(12 * s);
+        const indent = Math.round(8 * s);
+        const click = (obj, fn) => {
+            if (!advanced || !obj) return;
+            if (!obj.input) obj.setInteractive({ useHandCursor: true });
+            obj.on("pointerdown", () => {
+                this._hideHoverTip(this._menuTip);
+                fn();
+            });
+        };
+
+        const ageX = this._menuTextWidth("Female, ", 8);
+        const ageSlot = this._menuTextWidth("age 70", 8);
+        const ageGap = Math.round(4 * s);
+        const agePad = Math.max(1, Math.round(2 * s));
+        const ageBoxW = this._menuTextWidth("70", 8) + agePad * 2 + Math.round(8 * s);
+        const genderLabel = S.genderLabel(bio.gender);
+        const genderSlot = Math.max(this._menuTextWidth("Male", 8), this._menuTextWidth("Female", 8)) + Math.round(6 * s) * 2;
+        let gender;
+        const toggleGender = () => {
+            bio.gender = bio.gender === "male" ? "female" : "male";
+            this._rebuildCreateCharacter();
+        };
+        if (advanced) {
+            const btn = this._makeCreateTraitButton(root, genderLabel, true);
+            gender = btn.box;
+            btn.rect.on("pointerdown", () => {
+                this._hideHoverTip(this._menuTip);
+                toggleGender();
+            });
+        } else {
+            gender = mk(`${genderLabel},`, "#f2ead8");
+        }
+        const ageWord = advanced ? mk("age", "#f2ead8") : null;
+        const age = advanced ? null : mk(`age ${bio.age}`, "#f2ead8");
+        let ageAnchor = null;
+
+        const cycleBook = (slot, key) => {
+            const list = books.filter((row) => row.slot === slot);
+            if (!list.length) return;
+            const i = Math.max(0, list.findIndex((row) => row.id === bio[key]));
+            bio[key] = list[(i + 1) % list.length].id;
+            this._rebuildCreateCharacter();
+        };
+        const childLabel = mk("Childhood", "#9a9186");
+        const adultLabel = mk("Adulthood", "#9a9186");
+        const childDef = books.find((row) => row.id === bio.childhood);
+        const adultDef = books.find((row) => row.id === bio.adulthood);
+        this._storyPickButtons = [];
+        let childTitle;
+        let adultTitle;
+        if (advanced) {
+            const childBtn = this._makeCreateTraitButton(root, S.titleOf(books, bio.childhood), !!bio.childhood);
+            const adultBtn = this._makeCreateTraitButton(root, S.titleOf(books, bio.adulthood), !!bio.adulthood);
+            childTitle = childBtn.box;
+            adultTitle = adultBtn.box;
+            if (childDef) this._bindMenuTip(childBtn.rect, S.backstoryTip(childDef, this._createName));
+            if (adultDef) this._bindMenuTip(adultBtn.rect, S.backstoryTip(adultDef, this._createName));
+            const toggleStory = (slot, key, btn) => {
+                this._hideHoverTip(this._menuTip);
+                if (this._traitMenu && this._traitMenuSlot === slot) {
+                    this._closeCreateTraitMenu();
+                    return;
+                }
+                const m = btn.box.getWorldTransformMatrix();
+                this._openCreateBackstoryMenu(slot, key, m.tx, m.ty + btn.box.height);
+            };
+            childBtn.rect.on("pointerdown", () => toggleStory("child", "childhood", childBtn));
+            adultBtn.rect.on("pointerdown", () => toggleStory("adult", "adulthood", adultBtn));
+            this._storyPickButtons.push(childBtn.box, adultBtn.box);
+        } else {
+            childTitle = mk(S.titleOf(books, bio.childhood), "#f2ead8");
+            adultTitle = mk(S.titleOf(books, bio.adulthood), "#f2ead8");
+            this._bindMenuTip(childTitle, S.backstoryTip(childDef, this._createName));
+            this._bindMenuTip(adultTitle, S.backstoryTip(adultDef, this._createName));
+            click(childTitle, () => cycleBook("child", "childhood"));
+            click(adultTitle, () => cycleBook("adult", "adulthood"));
+        }
+
+        const traitsHead = mk("Traits", "#d4c45a");
+        const traitLines = [];
+        const ids = (bio.traits || []).filter(Boolean);
+        this._traitPickButtons = [];
+        const holdTraitRow = () => {
+            const hold = mk("None", "#8a8478");
+            hold.setVisible(false);
+            traitLines.push(hold);
+        };
+        for (let slot = 0; slot < 3; slot++) {
+            const id = ids[slot] || null;
+            if (!id && !advanced) {
+                if (slot === 0 && !ids.length) traitLines.push(mk("None", "#8a8478"));
+                else holdTraitRow();
+                continue;
+            }
+            const def = id ? traits.find((row) => row.id === id) : null;
+            if (advanced) {
+                const btn = this._makeCreateTraitButton(root, id ? (def?.title || "Unknown") : "None", !!id);
+                traitLines.push(btn.box);
+                if (def) this._bindMenuTip(btn.rect, S.traitTip(def, this._createName));
+                btn.rect.on("pointerdown", () => {
+                    this._hideHoverTip(this._menuTip);
+                    if (this._traitMenu && this._traitMenuSlot === slot) {
+                        this._closeCreateTraitMenu();
+                        return;
+                    }
+                    const m = btn.box.getWorldTransformMatrix();
+                    this._openCreateTraitMenu(slot, m.tx, m.ty + btn.box.height);
+                });
+                this._traitPickButtons.push(btn.box);
+                continue;
+            }
+            const title = mk(id ? (def?.title || "Unknown") : "Trait —", id ? "#f2ead8" : "#8a8478");
+            traitLines.push(title);
+            if (def) this._bindMenuTip(title, S.traitTip(def, this._createName));
+        }
+
+        const incapHead = mk("Incapable of", "#d4c45a");
+        const incapLines = [];
+        const incapIds = S.SKILL_IDS.filter((id) => S.incapable(bio, id));
+        if (!incapIds.length) {
+            incapLines.push(mk("None", "#8a8478"));
+        } else {
+            for (const id of incapIds) {
+                const line = mk(S.labelOf(id), "#8a8478");
+                this._bindMenuTip(line, S.incapableTip(bio, id));
+                incapLines.push(line);
+            }
+        }
+
+        const skillHost = splitSkills ? this._track(this.add.container(0, 0)) : root;
+        const skillMarks = splitSkills ? this.add.graphics() : marks;
+        if (splitSkills) skillHost.add(skillMarks);
+        const skillRows = [];
+        for (const id of S.SKILL_IDS) {
+            const off = S.incapable(bio, id);
+            const level = S.effectiveLevel(bio, id);
+            const row = bio.skills?.[id] || { level: 0, xp: 0, passion: 0 };
+            skillRows.push({
+                id,
+                label: mk(S.labelOf(id), off ? "#6a6058" : "#ffffff", skillHost),
+                num: off ? null : mk(String(level), "#ffffff", skillHost),
+                passion: off ? 0 : S.passionOf(bio, id),
+                xp: off ? 0 : Math.max(0, Number(row.xp) || 0),
+                trained: Math.max(0, Math.floor(Number(row.level) || 0)),
+                shown: off ? 0 : level,
+                tip: S.skillTip(bio, id)
+            });
+        }
+
+        let cy = 0;
+        const metaH = Math.max(gender.height, ageWord?.height || age?.height || 0);
+        gender.setPosition(0, cy);
+        if (ageWord) {
+            const ageLeft = genderSlot + ageGap;
+            ageWord.setPosition(ageLeft, cy + Math.round((metaH - ageWord.height) / 2));
+            ageAnchor = {
+                x: ageLeft + ageWord.width + ageGap,
+                y: cy,
+                h: metaH,
+                w: ageBoxW
+            };
+        } else if (age) {
+            age.setPosition(ageX, cy);
+        }
+        cy += metaH + sectionGap;
+        const colTop = cy;
+        const labelW = Math.max(childLabel.width, adultLabel.width);
+        const valueX = labelW + Math.round(10 * s);
+        childLabel.setPosition(0, cy);
+        childTitle.setPosition(valueX, cy);
+        cy += Math.max(childLabel.height, childTitle.height) + gap;
+        adultLabel.setPosition(0, cy);
+        adultTitle.setPosition(valueX, cy);
+        cy += Math.max(adultLabel.height, adultTitle.height) + sectionGap;
+        traitsHead.setPosition(0, cy);
+        cy += traitsHead.height + gap;
+        for (const line of traitLines) {
+            line.setPosition(indent, cy);
+            cy += line.height + gap;
+        }
+        cy += sectionGap - gap;
+        incapHead.setPosition(0, cy);
+        cy += incapHead.height + gap;
+        for (const line of incapLines) {
+            line.setPosition(indent, cy);
+            cy += line.height + gap;
+        }
+        const leftEnd = cy;
+        const metaRight = ageAnchor ? ageAnchor.x + ageAnchor.w : ageX + ageSlot;
+        let maxTitle = Math.max(this._menuTextWidth("None", 8), this._menuTextWidth("Unknown", 8));
+        for (const row of books) {
+            maxTitle = Math.max(maxTitle, this._menuTextWidth(row?.title || "Unknown", 8));
+        }
+        const storyPad = advanced ? Math.round(6 * s) * 2 : 0;
+        const leftInner = Math.max(
+            metaRight,
+            valueX + maxTitle + storyPad,
+            traitsHead.width,
+            ...traitLines.map((line) => indent + line.width),
+            incapHead.width,
+            ...incapLines.map((line) => indent + line.width)
+        );
+        const bodyH = typeof pixelUiFontSize === "function" ? pixelUiFontSize(8, s) : Math.round(8 * s);
+        const barH = Math.max(bodyH, skillRows.reduce((n, row) => Math.max(n, row.label?.height || 0), 0));
+        const rowH = barH + Math.max(2, Math.round(2 * s)) + Math.round(6 * s);
+        const nameW = skillRows.reduce((n, row) => Math.max(n, row.label.width), 0);
+        const numSample = this.add.text(0, 0, "20", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: this._uiFont(8)
+        });
+        crispUiText(numSample);
+        const numW = Math.max(numSample.width, skillRows.reduce((n, row) => Math.max(n, row.num?.width || 0), 0));
+        numSample.destroy();
+        const starR = Math.max(3, Math.round(3.5 * s));
+        const starGap = Math.round(starR * 2 + 2 * s);
+        const starSlot = starGap * 2;
+        const skillX = splitSkills ? 0 : leftInner + Math.round(18 * s);
+        const skillTop = splitSkills ? 0 : colTop;
+        const numRight = skillX + nameW + Math.round(8 * s) + starSlot + numW;
+        const barPad = Math.max(2, Math.round(2 * s));
+        skillRows.forEach((row, i) => {
+            const sy = skillTop + i * rowH;
+            row.label.setPosition(skillX, sy);
+            const barW = Math.max(8, nameW) + barPad * 2;
+            const barX = skillX - barPad;
+            const barY = sy - barPad;
+            if (row.num) {
+                row.num.setPosition(numRight - row.num.width, sy);
+                skillMarks.fillStyle(0x2a2a2a, 1);
+                skillMarks.fillRect(barX, barY, barW, barH + barPad * 2);
+                const frac = S.levelProgress(row.shown, row.trained, row.xp);
+                skillMarks.fillStyle(0x5a5a5a, 1);
+                skillMarks.fillRect(barX, barY, Math.max(0, Math.round(barW * frac)), barH + barPad * 2);
+                const starBase = numRight - numW - Math.round(4 * s);
+                for (let n = 0; n < row.passion; n++) {
+                    this._fillMenuStar(skillMarks, starBase - starR - n * starGap, sy + bodyH / 2, starR);
+                }
+            }
+            const zoneY = row.num ? barY : sy;
+            const zoneH = row.num ? barH + barPad * 2 : barH;
+            const zone = this.add.rectangle(barX, zoneY, Math.max(8, numRight - barX), zoneH, 0x000000, 0.001)
+                .setOrigin(0, 0);
+            skillHost.add(zone);
+            zone.setInteractive({ useHandCursor: true });
+            this._bindMenuTip(zone, row.tip);
+            if (advanced && bio.skills?.[row.id]) {
+                zone.on("pointerdown", (pointer) => {
+                    const bounds = zone.getBounds();
+                    const at = bounds.width > 0 ? (pointer.x - bounds.left) / bounds.width : 0.5;
+                    if (at < 0.34 || at > 0.66) return;
+                    const skill = bio.skills[row.id];
+                    skill.passion = ((skill.passion || 0) + 1) % 3;
+                    this._rebuildCreateCharacter();
+                });
+            }
+        });
+        const skillsHeight = skillRows.length ? skillRows.length * rowH : 0;
+        const skillsWidth = Math.ceil(Math.max(0, numRight - skillX));
+        return {
+            root,
+            width: Math.ceil(splitSkills ? leftInner : numRight),
+            height: Math.ceil(splitSkills ? leftEnd : Math.max(leftEnd, skillTop + skillsHeight)),
+            skills: splitSkills ? skillHost : null,
+            skillsWidth,
+            skillsHeight,
+            ageAnchor
+        };
+    }
+
     _showCreateCharacter({ next = null, drafts = null, relayout = false } = {}) {
+        this._ensureBioCatalogs();
         this._clear();
         this._phase = "createCharacter";
         this._charNext = next;
@@ -2773,8 +3519,14 @@ class SceneMenu extends Phaser.Scene {
         const L = typeof Look !== "undefined" ? Look : null;
         if (drafts?.look) this._createLook = L ? L.normalizeLook(drafts.look) : drafts.look;
         else if (!relayout || !this._createLook) {
-            this._createLook = L ? L.normalizeLook(null) : this._createLookNormalized();
+            this._createLook = L ? L.randomLook() : this._createLookNormalized();
         }
+        if (drafts?.bio && typeof Skills !== "undefined") this._createBio = Skills.normalize(drafts.bio);
+        else if (!relayout || !this._createBio) {
+            this._createBio = typeof Skills !== "undefined" ? Skills.generate(Math.random) : null;
+        }
+        if (drafts && drafts.name != null) this._createName = String(drafts.name);
+        else if (!relayout || this._createName == null) this._createName = this._rollCreateName();
         this._createLookPart = drafts?.lookPart || this._createLookPart || "head";
 
         const s = this._uiScale();
@@ -2801,7 +3553,9 @@ class SceneMenu extends Phaser.Scene {
         const arrowSpan = Math.round(52 * s);
         const leftControlsH = Math.max(lookDiceSize, rotateR * 2);
         const leftW = Math.max(previewW, arrowSpan * 2 + rotateR * 2, lookDiceSize);
-        const leftH = previewH + Math.round(12 * s) + leftControlsH;
+        const rerollGap = Math.round(10 * s);
+        const checkGap = Math.round(10 * s);
+        const checkH = this._buttonSizePreset("small").height;
 
         const parts = L?.PARTS || ["head", "eyes", "arms", "shirt", "pants", "shoes"];
         const labels = L?.PART_LABELS || {};
@@ -2812,21 +3566,92 @@ class SceneMenu extends Phaser.Scene {
         const pairGap = this._buttonSizePreset("medium").width + Math.round(16 * s);
         const pairW = this._buttonSizePreset("medium").width * 2 + Math.round(16 * s);
         const rightW = Math.max(fieldW, rowW, pairW);
-        const formH = swatchH + labelBelow + gap + sliderStep * 2 + barH + gap + smallBtnH + gap + nameH + formToBtn + btnH;
+        const formH = swatchH + labelBelow + gap + sliderStep * 2 + barH + gap + smallBtnH + gap + nameH + formToBtn + btnH + checkGap + checkH;
 
-        const totalW = leftW + colGap + rightW;
-        const blockH = Math.max(leftH, formH);
         const titleBottom = Math.round(h * 0.14 + Math.round(24 * s));
         const minTop = titleBottom + Math.round(8 * s);
+        const bio = this._paintCreateBio({ splitSkills: !this._createAdvanced });
+        const idDice = this._diceButtonSize();
+        const toggleAdvanced = () => {
+            this._createAdvanced = !this._createAdvanced;
+            this._rebuildCreateCharacter();
+        };
+        const previewKey = typeof PlayerLook !== "undefined"
+            ? PlayerLook.ensure(this, this._createLook, { key: PlayerLook.PREVIEW_KEY, replace: true })
+            : "human";
+        const placeSprite = (midX, footY) => {
+            const spr = this.add.sprite(0, 0, previewKey, 1);
+            spr.setOrigin(0, 1);
+            spr.setScale(previewScale);
+            spr.setPosition(Math.floor(midX - previewW / 2), footY);
+            this._pixelFilter(previewKey);
+            this._track(spr);
+            this._previewSprite = spr;
+            const playWalk = () => {
+                const facing = facings[this._createFaceIdx];
+                if (typeof PlayerLook !== "undefined") PlayerLook.play(spr, facing, true);
+            };
+            playWalk();
+            return playWalk;
+        };
+
+        if (!this._createAdvanced) {
+            const margin = Math.round(16 * s);
+            const midX = Math.round(w / 2);
+            const nameText = this._track(this.add.text(0, 0, this._createName || "", {
+                fontFamily: PIXEL_UI_FONT,
+                fontSize: this._uiFont(16),
+                color: "#f4f0e6"
+            }).setOrigin(0.5, 0));
+            const charHalf = arrowSpan + rotateR;
+            const slotW = Math.ceil(this._createBioSlotWidth());
+            const leftX = Math.max(margin, Math.round(midX - charHalf - colGap - slotW));
+            const skillX = Math.round(midX + charHalf + colGap);
+            const nameGap = Math.round(10 * s);
+            const stackH = idDice + rerollGap + previewH + Math.round(12 * s) + rotateR * 2
+                + nameGap + nameText.height + formToBtn + btnH + checkGap + checkH;
+            let top = Math.round((h - stackH) / 2);
+            if (top < minTop) top = minTop;
+            const footY = top + idDice + rerollGap + previewH;
+            const playWalk = placeSprite(midX, footY);
+            this._diceButton(midX, Math.round(top + idDice / 2), () => this._rerollCreateCharacter(), idDice);
+            const arrowY = Math.round(footY + Math.round(12 * s) + rotateR);
+            this._roundArrow(Math.floor(midX - arrowSpan), arrowY, "↺", () => {
+                this._createFaceIdx = (this._createFaceIdx + 1) % 4;
+                playWalk();
+            });
+            this._roundArrow(Math.floor(midX + arrowSpan), arrowY, "↻", () => {
+                this._createFaceIdx = (this._createFaceIdx + 3) % 4;
+                playWalk();
+            });
+            nameText.setPosition(midX, Math.round(arrowY + rotateR + nameGap));
+            const btnY = Math.round(nameText.y + nameText.height + formToBtn + btnH / 2);
+            this._button(midX - pairGap / 2, btnY, "Back", () => this._showCharacters({ next: this._charNext }));
+            this._button(midX + pairGap / 2, btnY, "Create", () => this._submitCreateCharacter());
+            const checkY = Math.round(btnY + btnH / 2 + checkGap + checkH / 2);
+            this._checkButton(midX, checkY, "Advanced mode", false, toggleAdvanced);
+            const columnY = Math.round(footY - previewH);
+            bio.root.setPosition(leftX, columnY);
+            if (bio.skills) bio.skills.setPosition(skillX, columnY);
+            if (this.status) this.status.setPosition(midX, Math.min(h - 16, checkY + checkH / 2 + Math.round(18 * s)));
+            return;
+        }
+
+        const bioW = bio.width;
+        const totalW = bioW + colGap + leftW + colGap + rightW;
+        const charH = previewH + Math.round(12 * s) + leftControlsH;
+        const bioDiceGap = Math.round(12 * s);
+        const bioColH = bio.height + bioDiceGap + idDice;
+        const blockH = Math.max(charH, formH, bioColH);
         const maxBot = h - Math.round(24 * s);
         let colTop = Math.round((h - blockH) / 2);
         if (colTop < minTop) colTop = minTop;
         if (colTop + blockH > maxBot) colTop = Math.max(minTop, maxBot - blockH);
 
         const blockLeft = Math.round((w - totalW) / 2);
-        const leftMidX = blockLeft + Math.round(leftW / 2);
-        const formMidX = blockLeft + leftW + colGap + Math.round(rightW / 2);
-        const leftTop = colTop + Math.round((blockH - leftH) / 2);
+        const leftMidX = blockLeft + bioW + colGap + Math.round(leftW / 2);
+        const formMidX = blockLeft + bioW + colGap + leftW + colGap + Math.round(rightW / 2);
+        const leftTop = colTop + Math.round((blockH - charH) / 2);
         const formTop = colTop + Math.round((blockH - formH) / 2);
         const footY = Math.round(leftTop + previewH);
         const arrowY = Math.round(footY + Math.round(12 * s) + leftControlsH / 2);
@@ -2835,24 +3660,21 @@ class SceneMenu extends Phaser.Scene {
         const copyY = Math.round(sliderTop + sliderStep * 2 + barH + gap + smallBtnH / 2);
         const nameY = Math.round(copyY + smallBtnH / 2 + gap);
         const btnY = Math.round(nameY + nameH + formToBtn + btnH / 2);
-
-        const previewKey = typeof PlayerLook !== "undefined"
-            ? PlayerLook.ensure(this, this._createLook, { key: PlayerLook.PREVIEW_KEY, replace: true })
-            : "human";
-        const spr = this.add.sprite(0, 0, previewKey, 1);
-        const footX = Math.floor(leftMidX - previewW / 2);
-        spr.setOrigin(0, 1);
-        spr.setScale(previewScale);
-        spr.setPosition(footX, footY);
-        this._pixelFilter(previewKey);
-        this._track(spr);
-        this._previewSprite = spr;
-
-        const playWalk = () => {
-            const facing = facings[this._createFaceIdx];
-            if (typeof PlayerLook !== "undefined") PlayerLook.play(spr, facing, true);
-        };
-        playWalk();
+        bio.root.setPosition(blockLeft, colTop);
+        if (bio.ageAnchor) {
+            this._placeCreateAgeInput(
+                bio.root.x + bio.ageAnchor.x,
+                bio.root.y + bio.ageAnchor.y,
+                bio.ageAnchor.h
+            );
+        }
+        this._diceButton(
+            blockLeft + idDice / 2,
+            Math.round(colTop + bio.height + bioDiceGap + idDice / 2),
+            () => this._rerollCreateCharacter(),
+            idDice
+        );
+        const playWalk = placeSprite(leftMidX, footY);
 
         this._roundArrow(Math.floor(leftMidX - arrowSpan), arrowY, "↺", () => {
             this._createFaceIdx = (this._createFaceIdx + 1) % 4;
@@ -2926,12 +3748,11 @@ class SceneMenu extends Phaser.Scene {
         this._button(formMidX - copyGap, copyY, "Copy", () => this._copyCreateColor(), { size: "small" });
         this._button(formMidX + copyGap, copyY, "Paste", () => this._pasteCreateColor(), { size: "small" });
 
-        const nameVal = drafts?.name != null ? drafts.name : "";
         const formLeft = Math.floor(formMidX - fieldW / 2);
         const nameDiceSize = this._diceButtonSize();
         const nameDiceGap = Math.round(8 * s);
         const nameW = Math.max(120, fieldW - nameDiceGap - nameDiceSize);
-        this.nameInput = this._domInput(formLeft, nameY, nameW, "Name", nameVal);
+        this.nameInput = this._domInput(formLeft, nameY, nameW, "Name", this._createName || "");
         this.nameInput.maxLength = 24;
         this._clearStatusOnInput(this.nameInput);
         const nameInputH = this.nameInput.offsetHeight || nameH;
@@ -2939,7 +3760,8 @@ class SceneMenu extends Phaser.Scene {
             formLeft + fieldW - nameDiceSize / 2,
             nameY + nameInputH / 2,
             () => {
-                const gen = typeof CavemanNames !== "undefined" ? CavemanNames.generate() : "Og";
+                const gen = this._rollCreateName();
+                this._createName = gen;
                 if (this.nameInput) this.nameInput.value = gen;
             },
             nameDiceSize
@@ -2947,30 +3769,36 @@ class SceneMenu extends Phaser.Scene {
         if (!relayout) this.nameInput.focus();
 
         this._button(formMidX - pairGap / 2, btnY, "Back", () => this._showCharacters({ next: this._charNext }));
-        this._button(formMidX + pairGap / 2, btnY, "Create", async () => {
-            try {
-                const name = (this.nameInput?.value || "").trim();
-                if (!name) {
-                    this.status?.setText("Enter a name.");
-                    this.nameInput?.focus();
-                    return;
-                }
-                let lastMods;
-                try {
-                    const state = await this._modMenuState();
-                    lastMods = state ? state.mods : undefined;
-                } catch (err) {
-                    console.warn("[mods] could not record enabled mods", err);
-                }
-                const c = await CharacterStore.create(name, this._createLookNormalized(), lastMods);
-                this._selectedCharacter = c;
-                await this._showCharacters({ next: this._charNext });
-            } catch (e) {
-                this.status?.setText(String(e.message || e));
-            }
-        });
+        this._button(formMidX + pairGap / 2, btnY, "Create", () => this._submitCreateCharacter());
+        const checkY = Math.round(btnY + btnH / 2 + checkGap + checkH / 2);
+        this._checkButton(formMidX, checkY, "Advanced mode", true, toggleAdvanced);
         if (this.status) {
-            this.status.setPosition(w / 2, Math.min(h - 16, btnY + btnH / 2 + 22));
+            this.status.setPosition(w / 2, Math.min(h - 16, checkY + checkH / 2 + Math.round(18 * s)));
+        }
+    }
+
+    async _submitCreateCharacter() {
+        try {
+            this._commitCreateAge();
+            const name = (this.nameInput?.value ?? this._createName ?? "").trim();
+            if (!name) {
+                this.status?.setText("Enter a name.");
+                this.nameInput?.focus();
+                return;
+            }
+            this._createName = name;
+            let lastMods;
+            try {
+                const state = await this._modMenuState();
+                lastMods = state ? state.mods : undefined;
+            } catch (err) {
+                console.warn("[mods] could not record enabled mods", err);
+            }
+            const c = await CharacterStore.create(name, this._createLookNormalized(), lastMods, this._createBio);
+            this._selectedCharacter = c;
+            await this._showCharacters({ next: this._charNext });
+        } catch (e) {
+            this.status?.setText(String(e.message || e));
         }
     }
 
@@ -3914,7 +4742,7 @@ class SceneMenu extends Phaser.Scene {
             }
         }
         this._dom = this._dom.filter((o) => o && !o.tagName);
-        this.hostInput = this.passInput = this.nameInput = this.worldNameInput = this.seedInput = this.renameInput = null;
+        this.hostInput = this.passInput = this.nameInput = this.ageInput = this.worldNameInput = this.seedInput = this.renameInput = null;
         this.modNameInput = this.modAuthorInput = this.modVersionInput = this.modDescriptionInput = this.modIdInput = null;
         this._syncKeyboardForDom();
     }
@@ -3939,6 +4767,10 @@ class SceneMenu extends Phaser.Scene {
         if (this._onMenuKeydown) {
             document.removeEventListener("keydown", this._onMenuKeydown, true);
             this._onMenuKeydown = null;
+        }
+        if (this._onMenuPointerDown) {
+            document.removeEventListener("pointerdown", this._onMenuPointerDown, true);
+            this._onMenuPointerDown = null;
         }
         try { this._fullscreenWatchOff?.(); } catch (_) {}
         this._fullscreenWatchOff = null;

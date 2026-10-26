@@ -77,7 +77,16 @@
         if (!loot?.item) return;
 
         const harvestedId = best.id;
-        const qty = Math.max(1, Math.floor(Number(loot.yield) || 1));
+        const skills = this._skillsApi?.();
+        if (skills && p.bio && skills.incapable(p.bio, "plants")) return;
+        const baseQty = Math.max(1, Math.floor(Number(loot.yield) || 1));
+        const plantLv = skills && p.bio ? skills.effectiveLevel(p.bio, "plants") : null;
+        const qty = (skills && plantLv != null)
+            ? skills.yieldCount(baseQty, skills.plantHarvestYield(plantLv), () => this.rng())
+            : baseQty;
+        if (skills && p.bio && plantLv != null) {
+            skills.award(p.bio, "plants", skills.XP_HARVEST, { day: this.gameDay });
+        }
         const stone = (loot.item === "pebble" && typeof Stone !== "undefined")
             ? Stone.normalizeStone?.(best.stone)
             : null;

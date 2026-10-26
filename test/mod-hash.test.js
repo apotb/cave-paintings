@@ -28,6 +28,8 @@ function freshMerged(extraPacks) {
         thingsList: readJson("Things.json"),
         mobsList: readJson("Mobs.json"),
         techsList: readJson("Techs.json"),
+        backstoriesList: readJson("Backstories.json"),
+        traitsList: readJson("Traits.json"),
         bodyPlans: readJson("BodyPlans.json"),
         injuries: readJson("Injuries.json"),
         hediffs: readJson("Hediffs.json")
@@ -59,6 +61,8 @@ function freshMerged(extraPacks) {
         items: store.itemsList,
         things: store.thingsList,
         techs: store.techsList,
+        backstories: store.backstoriesList,
+        traits: store.traitsList,
         mobs: store.mobsList,
         bodyPlans: store.bodyPlans,
         injuries: store.injuries,

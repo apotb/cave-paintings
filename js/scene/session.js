@@ -108,6 +108,7 @@
             hp: pl.hp,
             mhp: pl.mhp,
             look: pl.look || this.character?.look || null,
+            bio: pl.bio || this.character?.bio || null,
             facing: pl.facing,
             x: pl.x,
             y: pl.y,
@@ -200,7 +201,8 @@
                 jobs: (m.jobs && typeof m.jobs === "object" && !Array.isArray(m.jobs))
                     ? { ...m.jobs }
                     : null,
-                schedule: typeof m.schedule === "string" && m.schedule ? m.schedule : null
+                schedule: typeof m.schedule === "string" && m.schedule ? m.schedule : null,
+                bio: m.bio || null
             }));
         };
         return {
@@ -375,6 +377,11 @@
                 hotbarIndex: you.hotbarIndex
             };
             this._flushPendingYouGear();
+        }
+        if (you.bio) {
+            const leader = this.leader || youPawn;
+            if (leader) leader.bio = you.bio;
+            if (youPawn && youPawn === leader) youPawn.bio = you.bio;
         }
         if (typeof you.kc === "number") youPawn.kc = you.kc;
         if (typeof you.saturation === "number") youPawn.saturation = you.saturation;

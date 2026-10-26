@@ -91,6 +91,19 @@
         }
     },
 
+    /** Command-spawned humans are people: a name, a look, and a full bio. */
+    _rollSpawnedHuman(entry, def) {
+        if (!entry || !def) return;
+        const id = String(def.id || entry.id || "").toLowerCase();
+        if (id !== "human" && def.bodyPlan !== "human") return;
+        if (!entry.name) {
+            const avoid = typeof this._livingNames === "function" ? this._livingNames() : [];
+            entry.name = CavemanNames.generate(() => this.rng(), { avoid });
+        }
+        if (!entry.look) entry.look = Look.randomLook();
+        if (!entry.bio) entry.bio = this._skillsApi()?.generate(() => this.rng()) || null;
+    },
+
     _ensureMobUids(c) {
         if (!c || !Array.isArray(c.mobs)) return;
         for (const m of c.mobs) {
@@ -162,6 +175,7 @@
             homeX: wx,
             homeY: wy
         };
+        this._rollSpawnedHuman(entry, def);
         c.mobs.push(entry);
         const creature = createMobCreature(
             entry,
@@ -516,6 +530,20 @@
         }
     },
 
+    _skillsApi() {
+        if (typeof Skills !== "undefined") return Skills;
+        try { return require("../../skills"); } catch (_) { return null; }
+    },
+
+    _ensureBio(pawn) {
+        if (!pawn) return null;
+        const api = this._skillsApi();
+        if (!api) return pawn.bio || null;
+        pawn.bio = api.ensure(pawn.bio, pawn.id || pawn.name || "pawn");
+        if (pawn.creature) pawn.creature.bio = pawn.bio;
+        return pawn.bio;
+    },
+
     _applyCharacterSnapshot(p, character) {
         if (character.name) p.name = String(character.name).slice(0, 24);
         if (typeof character.kc === "number") p.kc = character.kc;
@@ -551,6 +579,8 @@
             p.look = Look.normalizeLook(character.look);
             if (p.creature) p.creature.look = p.look;
         }
+        if (character.bio) p.bio = character.bio;
+        this._ensureBio(p);
         if (Array.isArray(character.party)) {
             p.party = character.party.map((m) => this._companionFromSnap(p, m));
         }
@@ -764,8 +794,10 @@
             techs: m.techs && typeof m.techs === "object" && !Array.isArray(m.techs)
                 ? { ...m.techs }
                 : Object.create(null),
-            quarantine: Array.isArray(m.quarantine) ? m.quarantine.filter((s) => s && s.id) : []
+            quarantine: Array.isArray(m.quarantine) ? m.quarantine.filter((s) => s && s.id) : [],
+            bio: m.bio || null
         };
+        this._ensureBio(rec);
         if (m.jobs && typeof m.jobs === "object" && !Array.isArray(m.jobs)) {
             Settlement.rememberJobs(rec, m.jobs);
         }
@@ -804,6 +836,7 @@
             this.creatures.set(rec.id, creature);
         }
         rec.creature = creature;
+        creature.bio = rec.bio || null;
         creature.x = rec.x;
         creature.y = rec.y;
         this._sharePawnGear(rec, creature);
@@ -982,8 +1015,10 @@
             favorite: !!snap.favorite,
             lastSleep: snap.lastSleep || null,
             resting: !!snap.resting,
-            _resting: !!snap.resting
+            _resting: !!snap.resting,
+            bio: snap.bio || null
         };
+        this._ensureBio(rec);
         if (snap.jobs && typeof snap.jobs === "object" && !Array.isArray(snap.jobs)) {
             Settlement.rememberJobs(rec, snap.jobs);
         }
@@ -1070,7 +1105,8 @@
                 : null,
             fishChannel: this._persistFishChannel(s.fishChannel),
             workChannel: this._persistWorkChannel(s._workChannel),
-            workHold: this._persistWorkHold(s)
+            workHold: this._persistWorkHold(s),
+            bio: s.bio || null
         };
     },
 
@@ -1384,7 +1420,8 @@
             equipment: this._clonePersistEquipment(
                 this._equipmentWithItems(s.equipment, c?.equipment)
             ),
-            hotbarIndex: s.hotbarIndex ?? 0
+            hotbarIndex: s.hotbarIndex ?? 0,
+            bio: s.bio || c?.bio || null
         };
     },
 
@@ -1411,6 +1448,7 @@
             this.creatures.set(rec.id, creature);
         }
         rec.creature = creature;
+        creature.bio = rec.bio || null;
         creature.x = rec.x;
         creature.y = rec.y;
         this._sharePawnGear(rec, creature);

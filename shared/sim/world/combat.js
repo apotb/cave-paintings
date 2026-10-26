@@ -686,12 +686,20 @@
             return;
         }
 
+        const skills = this._skillsApi?.();
+        const medicalLevel = skills && tender.bio ? skills.effectiveLevel(tender.bio, "medical") : null;
         const quality = BodyHealing.rollTendQuality(
             Number(meta.bandage.tendQuality) || 0.4,
             Number(meta.bandage.tendQualityMax) || 0.7,
             undefined,
-            { selfTend: tender.id === patientPawn.id }
+            {
+                selfTend: tender.id === patientPawn.id,
+                medicalLevel: medicalLevel == null ? undefined : medicalLevel
+            }
         );
+        if (skills && tender.bio && medicalLevel != null) {
+            skills.award(tender.bio, "medical", skills.XP_TEND, { day: this.gameDay });
+        }
         for (const t of applied) BodyHealing.applyTend(patientCreature.anatomy, t, quality);
 
         held.quantity = Math.max(0, Math.floor(Number(held.quantity) || 1) - 1);
@@ -834,6 +842,8 @@
     _tryAttack(p, angle, pawnId = null) {
         const actor = this._actionPawn(p, { pawnId });
         if (!actor || actor.dead || actor._resting) return;
+        const skills = this._skillsApi?.();
+        if (skills && actor.bio && skills.incapable(actor.bio, "melee")) return;
         if (actor.eatChannel || this._pawnVomiting(actor)) return;
         let creature = actor === p
             ? (this._syncPlayerCreature(p) || this._ensurePlayerCreature(p))
@@ -1071,6 +1081,7 @@
                 look: p.look || null,
                 frame: 7,
                 name: p.name || "Player",
+                bio: p.bio || creature?.bio || null,
                 loot: loot.filter(Boolean),
                 body: p.body || creature?.anatomy?.toJSON?.() || null,
                 bodyPlan: "human",
@@ -1148,6 +1159,7 @@
             look: mem.look || null,
             frame: 7,
             name: mem.name || "Companion",
+            bio: mem.bio || creature?.bio || null,
             loot: loot.filter(Boolean),
             body: mem.body || creature?.anatomy?.toJSON?.() || null,
             bodyPlan: "human",

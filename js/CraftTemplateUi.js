@@ -151,6 +151,9 @@ const CraftTemplateUi = {
         const label = document.createElement("div");
         label.textContent = String(opts.title || "Are you sure?");
         label.style.cssText = this._labelCss(fontPx, s);
+        label.style.whiteSpace = "pre-wrap";
+        label.style.lineHeight = "1.35";
+        box.style.maxWidth = `${Math.round(380 * s)}px`;
 
         const row = document.createElement("div");
         row.style.cssText = [
@@ -170,6 +173,81 @@ const CraftTemplateUi = {
         row.appendChild(this._mkBtn("Cancel", s, fontPx, stroke, () => finish(false)));
         row.appendChild(this._mkBtn(String(opts.confirm || "OK"), s, fontPx, stroke, () => finish(true)));
         box.appendChild(label);
+        const lines = Array.isArray(opts.lines) ? opts.lines.filter(Boolean) : [];
+        if (lines.length) {
+            const smallPx = typeof pixelUiFontSize === "function" ? pixelUiFontSize(14, s) : Math.round(14 * s);
+            if (opts.lead) {
+                const lead = document.createElement("div");
+                lead.textContent = String(opts.lead);
+                lead.style.cssText = this._labelCss(smallPx, s);
+                lead.style.whiteSpace = "pre-wrap";
+                lead.style.lineHeight = "1.35";
+                box.appendChild(lead);
+            }
+            const list = document.createElement("div");
+            const iconRows = lines.some((line) => line && typeof line === "object");
+            if (iconRows) {
+                const iconPx = Math.round(16 * s);
+                list.style.cssText = [
+                    "display:flex",
+                    "flex-direction:column",
+                    `gap:${Math.round(4 * s)}px`,
+                    `max-height:${Math.round(180 * s)}px`,
+                    "overflow-y:auto",
+                    `margin-bottom:${Math.round(8 * s)}px`,
+                    "width:100%"
+                ].join(";");
+                for (const line of lines) {
+                    const label = typeof line === "string" ? line : String(line.label || "");
+                    const iconSrc = typeof line === "object" ? line.iconSrc : null;
+                    const item = document.createElement("div");
+                    item.style.cssText = [
+                        "display:flex",
+                        "align-items:center",
+                        `gap:${Math.round(6 * s)}px`,
+                        "width:100%"
+                    ].join(";");
+                    if (iconSrc) {
+                        const img = document.createElement("img");
+                        img.src = String(iconSrc);
+                        img.alt = "";
+                        img.width = iconPx;
+                        img.height = iconPx;
+                        img.style.cssText = [
+                            `width:${iconPx}px`,
+                            `height:${iconPx}px`,
+                            "image-rendering:pixelated",
+                            "image-rendering:crisp-edges",
+                            "flex-shrink:0"
+                        ].join(";");
+                        item.appendChild(img);
+                    }
+                    const name = document.createElement("span");
+                    name.textContent = label;
+                    name.style.cssText = [
+                        "color:#f2ead8",
+                        "font-family:PrimaryFont,monospace",
+                        `font-size:${smallPx}px`,
+                        "line-height:1.35"
+                    ].join(";");
+                    item.appendChild(name);
+                    list.appendChild(item);
+                }
+            } else {
+                list.textContent = lines.join("\n");
+                list.style.cssText = [
+                    "color:#f2ead8",
+                    "font-family:PrimaryFont,monospace",
+                    "white-space:pre-wrap",
+                    `font-size:${smallPx}px`,
+                    "line-height:1.35",
+                    `max-height:${Math.round(180 * s)}px`,
+                    "overflow-y:auto",
+                    `margin-bottom:${Math.round(8 * s)}px`
+                ].join(";");
+            }
+            box.appendChild(list);
+        }
         box.appendChild(row);
         wrap.appendChild(box);
         wrap.addEventListener("mousedown", (e) => {

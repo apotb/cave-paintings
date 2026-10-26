@@ -331,6 +331,10 @@
             this._handleRecruit(p, action);
             return;
         }
+        if (type === Protocol.Actions.BANISH) {
+            this._handleBanish(p, action);
+            return;
+        }
         if (type === Protocol.Actions.GIVE_ITEM) {
             this._handleGiveItem(p, action);
             return;
@@ -1256,6 +1260,9 @@
         const id = String(action.id || "").slice(0, 64);
         const recipe = this._parseRecipe(id);
         if (!recipe) return;
+        const skills = this._skillsApi?.();
+        const tailoring = recipe.requireStation === "skinworking_bench";
+        if (tailoring && skills && p.bio && skills.incapable(p.bio, "crafting")) return;
         const R = _research();
         if (R?.recipeUnlocked) {
             const holder = this._researchHolder(p.ownerId || session.id);
@@ -1280,7 +1287,13 @@
         }
         if (replace && made > 0) this._replaceEmptiedIngredientSlot(p, recipe, made, replace);
         if (storageDirty && store) this._emitStorage(store.chunk, store.entry);
-        if (made > 0) this._dirtyPawnOwner(p);
+        if (made > 0) {
+            this._dirtyPawnOwner(p);
+            if (tailoring && skills && p.bio && !skills.incapable(p.bio, "crafting")) {
+                const minutes = Math.max(1 / 60, (Number(recipe.craftSeconds) || 0) / 60);
+                skills.award(p.bio, "crafting", skills.XP_MINUTE * minutes * made, { day: this.gameDay });
+            }
+        }
     },
 
     _snapshotCraftBags(p) {
@@ -1559,8 +1572,14 @@
         if (creature._attackChoppedTree) return;
         if (!Chop.isChopAttack(creature.currentAttack)) return;
         const held = creature.getHeldItem?.();
-        const frac = Chop.chopFraction(held);
+        let frac = Chop.chopFraction(held);
         if (!(frac > 0)) return;
+        const skills = this._skillsApi?.();
+        const pawn = this._pawnRecordForCreature?.(null, creature) || creature;
+        const bio = pawn?.bio || creature.bio;
+        if (skills && bio && skills.incapable(bio, "plants")) return;
+        const plantLv = skills && bio ? skills.effectiveLevel(bio, "plants") : null;
+        if (plantLv != null) frac *= Math.max(0.05, skills.plantWorkSpeed(plantLv));
         const c = creature.bodyCenter?.() || { x: creature.x, y: creature.y };
         const chopSeg = Chop.aimSegment(c.x, c.y, creature.attackAngle, Chop.AIM_REACH);
         let best = null;
@@ -1590,6 +1609,9 @@
         creature.attackHitSet.add(best);
         creature._attackChoppedTree = true;
         const result = Chop.applyChop(best, frac);
+        if (skills && bio && plantLv != null) {
+            skills.award(bio, "plants", skills.XP_MINUTE, { day: this.gameDay });
+        }
         if (!creature._attackWoreHeld) {
             this._wearPlayerHeld(creature.id, 1);
             creature._attackWoreHeld = true;
@@ -2139,6 +2161,8 @@
         if (!Number.isInteger(slot) || slot < 0 || slot >= inv.length) return;
 
         if (op === "consume") {
+            const skills = this._skillsApi?.();
+            if (skills && p.bio && skills.incapable(p.bio, "crafting")) return;
             if (p._knapSession) return;
             const held = inv[slot];
             if (!held?.id || !(held.quantity > 0)) return;
@@ -2164,7 +2188,8 @@
                 rework: !!rework,
                 durability: held.durability,
                 knapQuality: held.knapQuality || null,
-                toolClass: held.toolClass || null
+                toolClass: held.toolClass || null,
+                startedMin: this.gameMinutes
             };
             this._youDirty.add(p.id);
             return;
@@ -2207,6 +2232,12 @@
                 );
             }
             this._insertUniqueStack(p, stack, session.slot);
+            const skills = this._skillsApi?.();
+            if (skills && p.bio && !skills.incapable(p.bio, "crafting")) {
+                let elapsed = this.gameMinutes - (Number(session.startedMin) || this.gameMinutes);
+                if (elapsed < 0) elapsed += 24 * 60;
+                skills.award(p.bio, "crafting", skills.XP_MINUTE * Math.max(1, elapsed), { day: this.gameDay });
+            }
         }
     },
 
@@ -2365,8 +2396,12 @@
         if (!started?.ok) return;
         const session = this._sessionOfPawn(pawn) || p;
         const controlId = session?.controlId || session?.id || null;
+        const skills = this._skillsApi?.();
+        if (skills && pawn.bio && skills.incapable(pawn.bio, "animals")) return;
         const hook = !action.job && !!controlId && pawn.id === controlId;
-        const wait = hook ? F.biteWaitMs(this.rng) : F.CAST_MS;
+        const fishLv = skills && pawn.bio ? skills.effectiveLevel(pawn.bio, "animals") : null;
+        const fishRate = fishLv == null ? 1 : Math.max(0.05, skills.fishSpeed(fishLv));
+        const wait = hook ? F.biteWaitMs(this.rng) / fishRate : F.CAST_MS;
         pawn.fishChannel = {
             remaining: wait,
             max: wait,
@@ -2525,6 +2560,10 @@
             const haul = Math.max(1, Math.floor(Number(ch.haul) || 1));
             this._giveFishStack(pawn, F.FISH_ID, haul);
         }
+        const fishSkills = this._skillsApi?.();
+        if (fishSkills && pawn.bio && rolled?.kind !== "snag" && !fishSkills.incapable(pawn.bio, "animals")) {
+            fishSkills.award(pawn.bio, "animals", fishSkills.XP_CATCH, { day: this.gameDay });
+        }
         pawn._workHold = false;
         pawn._busyJob = null;
         pawn._settlerScan = null;
@@ -2557,6 +2596,16 @@
             return;
         }
         this._lockFishFacing(pawn);
+        const fishSkills = this._skillsApi?.();
+        if (fishSkills && pawn.bio && !fishSkills.incapable(pawn.bio, "animals")) {
+            if (ch._xpMin == null) ch._xpMin = this.gameMinutes;
+            let fishElapsed = this.gameMinutes - ch._xpMin;
+            if (fishElapsed < 0) fishElapsed += 24 * 60;
+            if (fishElapsed > 0 && fishElapsed < 30) {
+                fishSkills.award(pawn.bio, "animals", fishSkills.XP_MINUTE * fishElapsed, { day: this.gameDay });
+                ch._xpMin = this.gameMinutes;
+            }
+        }
         if (ch.hook && !this._fishPawnControlled(pawn)) {
             if (!ch.bite) {
                 ch.remaining -= Number(dtMs) || 0;

@@ -152,6 +152,13 @@ test("puppet lerp keeps walking across late snapshots at high tick speed", () =>
 
     assert.ok(Party.puppetSnapGapMs(1000, 1800) > 100);
     assert.ok(Party.puppetSnapGapMs(1000, 1800) <= 1250);
+
+    const next = Party.puppetContinueTarget(late.x, late.y, 40, 0, 46, 0, true);
+    assert.ok(next.x + 1e-6 >= late.x, `late pose pulled backward to ${next.x} from ${late.x}`);
+    const turned = Party.puppetContinueTarget(50, 0, 40, 0, 30, 0, true);
+    assert.ok(turned.x < 50, "a real turn still aims back at the server pose");
+    const stopped = Party.puppetContinueTarget(late.x, late.y, 40, 0, 46, 0, false);
+    assert.equal(stopped.x, 46);
 });
 
 test("eatTakeQty takes only enough discrete food to reach AUTO_EAT_UNTIL", () => {

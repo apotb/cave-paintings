@@ -1719,6 +1719,15 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const attack = this._pickMeleeAttack(angle)
             || (opts.silentNet ? { unarmed: !opts.art || !!opts.art.unarmed, range: opts.art?.range || 4, cooldown: 2 } : null);
         if (!attack) return false;
+        // A server swing already passed the melee check. Local input must not
+        // start a fist or weapon attack when this pawn cannot fight. Chop and
+        // dig still go through.
+        const workSwing = (typeof Chop !== "undefined" && Chop.isChopAttack(attack))
+            || (typeof Dig !== "undefined" && Dig.isDigAttack(attack));
+        if (!opts.silentNet && !workSwing
+            && typeof Skills !== "undefined" && Skills.incapable(this.bio, "melee")) {
+            return false;
+        }
 
         const scale = this.capacities.actionDurationScale();
         const durationMs = meleeAttackDurationMs(attack.cooldown || 2, scale);
