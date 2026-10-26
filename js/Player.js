@@ -3582,6 +3582,19 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
+     * The wall the paint flecks are flying toward. The body has to use the
+     * same direction, or a drop-off leaves them facing the way they walked in.
+     */
+    _paintWorkFacing() {
+        if (typeof paintFxChannel !== "function" || !paintFxChannel(this)) return null;
+        const R = typeof Research !== "undefined" ? Research : null;
+        if (!R?.workFacing || typeof paintFxCircle !== "function") return null;
+        const circle = paintFxCircle(this, this.scene);
+        const face = circle?.entry ? R.workFacing(circle.entry) : null;
+        return face || null;
+    }
+
+    /**
      * Dedicated MP: uncontrolled party members follow server poses.
      * Linear interp across the snapshot interval (same as net mobs) so they
      * don't idle-then-step every 15 Hz tick.
@@ -3706,8 +3719,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
         const moving = !!this._puppetMoving;
         const fishFace = this._fishBobberFacing();
+        const paintFace = this._paintWorkFacing();
         if (fishFace) {
             this.facing = fishFace;
+        } else if (paintFace) {
+            this.facing = paintFace;
+            this._netFacing = paintFace;
         } else if (moving) {
             const dx = tx - fromX;
             const dy = ty - fromY;

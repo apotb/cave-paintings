@@ -291,6 +291,11 @@ function tick(world, mob, delta) {
     }
     releaseStaleNightScan(world, rec, mob);
     const settle = findSettle(world, rec);
+    if (rec.role === "companion" || rec.role === "player") {
+        endWorkHold(rec);
+        setSettlerAct(rec, mob, "Idle");
+        return null;
+    }
     if (!settle) {
         const leftBed = maybeLeaveBed(world, rec, mob);
         if (leftBed) return leftBed;

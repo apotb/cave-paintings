@@ -222,6 +222,10 @@ function afterFetch(world, rec, entry, walked, delta, haveIt) {
 }
 
 function doResearch(world, rec, settle, circle, delta) {
+    if (!rec || rec.role === "companion" || rec.role === "player" || !rec.homeSettlementId) {
+        clearPaintBar(rec);
+        return halt();
+    }
     const entry = liveCircle(world, settle, circle);
     if (!entry || !Research) {
         stopResearch(rec, null, false);

@@ -779,6 +779,40 @@
         return (this.settlers || []).find((s) => s && s.id === id) || null;
     },
 
+    _inTravelParty(rec) {
+        if (!rec) return false;
+        for (const pl of this.players.values()) {
+            if ((pl.party || []).some((m) => m && (m === rec || m.id === rec.id))) return true;
+        }
+        return false;
+    },
+
+    /** Drop camp work for someone who is traveling. Claims release only while they are still in the settler list. */
+    _releaseJoinedPawn(rec) {
+        if (!rec) return;
+        SettlerWork.releaseWork(this, rec);
+        rec._paintChannel = null;
+        rec._paintTickMin = null;
+        rec._workChannel = null;
+        rec._workHold = false;
+        rec._busyJob = null;
+        rec._resumeWork = false;
+        rec._resumePaint = null;
+        rec._savedWork = null;
+        if (rec._settlerAct === "Painting") rec._settlerAct = null;
+        rec.role = rec.role === "player" ? "player" : "companion";
+        rec.homeSettlementId = null;
+        const cc = rec.creature || this.creatures.get(rec.id);
+        if (cc) {
+            cc.role = rec.role;
+            cc.homeSettlementId = null;
+            if (cc._settlerAct === "Painting") cc._settlerAct = null;
+            cc.vx = 0;
+            cc.vy = 0;
+            cc.setDesiredVel?.(0, 0);
+        }
+    },
+
     _sessionOfPawn(pawn) {
         if (!pawn) return null;
         if (this.players.has(pawn.id)) return this.players.get(pawn.id);
@@ -1834,6 +1868,18 @@
                 cc.fishChannel = rec.fishChannel || null;
                 cc.ownerId = p.id;
                 cc.role = rec.role === "settler" ? "companion" : (rec.role || "companion");
+                if (rec !== p && (p.party || []).includes(rec)) {
+                    if ((this.settlers || []).some((s) => s && (s === rec || s.id === rec.id))) {
+                        SettlerWork.releaseWork(this, rec);
+                    }
+                    rec.role = "companion";
+                    cc.role = "companion";
+                    rec.homeSettlementId = null;
+                    rec._paintChannel = null;
+                    rec._paintTickMin = null;
+                    if (rec._settlerAct === "Painting") rec._settlerAct = null;
+                    if (cc._settlerAct === "Painting") cc._settlerAct = null;
+                }
                 cc.homeSettlementId = rec.homeSettlementId || null;
                 this._bindPartyAI(cc);
                 if (Party.beyondFollowLeash(rec, controlRec, TS) && !rec._carryPawnId) {
@@ -1956,6 +2002,18 @@
         const scale = this._settlerTimeScale();
         const sdtMs = dtMs * scale;
         const dt = sdtMs / 1000;
+        const joined = [];
+        for (const rec of this.settlers || []) {
+            if (!rec || rec.dead) continue;
+            if (rec.role === "companion" || rec.role === "player" || this._inTravelParty(rec)) {
+                joined.push(rec);
+            }
+        }
+        if (joined.length) {
+            const ids = new Set(joined.map((r) => r.id));
+            for (const rec of joined) this._releaseJoinedPawn(rec);
+            this.settlers = (this.settlers || []).filter((s) => s && !ids.has(s.id));
+        }
         for (const rec of this.settlers || []) {
             if (!rec || rec.dead) continue;
             const cc = this._ensureSettlerCreature(rec);

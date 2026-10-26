@@ -55,6 +55,12 @@ class PartyAI {
         pawn?._cancelBrain?.();
         if (pawn?.isAttacking?.()) pawn._endAttack?.();
         pawn?._clearChopBar?.();
+        if (pawn) {
+            pawn._paintChannel = null;
+            if (pawn._netWorkChannel?.kind === "paint") pawn._netWorkChannel = null;
+            if (typeof clearPaintFlecks === "function") clearPaintFlecks(pawn);
+            pawn.syncPawnChannelBar?.();
+        }
         this._halt(pawn);
     }
 

@@ -280,25 +280,50 @@
             return;
         }
         if (op === "pick" || op === "pickOrphan") {
-            const rec = this.settlers.find((s) => s.id === action.pawnId);
+            const rec = this.settlers.find((s) => s && String(s.id) === String(action.pawnId));
             if (!rec || rec.ownerId !== p.id) return;
             if ((p.party || []).length + 1 >= Party.CAP) return;
             const fromId = rec.homeSettlementId;
-            this.settlers = this.settlers.filter((s) => s !== rec);
+            if (rec._resting || rec.resting || rec._restWalk) {
+                this._wakePawn(p, rec, { manual: true });
+            }
+            rec._settlerAct = null;
+            // Still a settler here. releaseWork only finds camp records, and
+            // the paint bar is what keeps flecks flying at the circle.
+            SettlerWork.releaseWork(this, rec);
+            rec._paintChannel = null;
+            rec._paintTickMin = null;
+            rec._workChannel = null;
+            rec._workHold = false;
+            rec._busyJob = null;
+            rec._resumeWork = false;
+            rec._resumePaint = null;
+            rec._savedWork = null;
+            const pid = String(rec.id);
+            this.settlers = (this.settlers || []).filter((s) => s && String(s.id) !== pid);
             rec.role = "companion";
             rec.homeSettlementId = null;
             const from = fromId ? this.settlements.find((s) => s.id === fromId) : null;
             if (from) Settlement.unbindPawnJobs(from, rec);
             if (from) Settlement.unbindPawnSchedule(from, rec);
             if (from) this._syncJobOrder(from);
-            if (rec._resting || rec.resting || rec._restWalk) {
-                this._wakePawn(p, rec, { manual: true });
-            }
-            rec._settlerAct = null;
-            SettlerWork.releaseWork(this, rec);
             if (!p.party) p.party = [];
-            p.party.push(rec);
-            this._ensureCompanionCreature(p, rec);
+            if (!p.party.some((m) => m && String(m.id) === pid)) p.party.push(rec);
+            const cc = this._ensureCompanionCreature(p, rec);
+            if (cc) {
+                cc.role = "companion";
+                cc.homeSettlementId = null;
+                if (cc._settlerAct === "Painting") cc._settlerAct = null;
+                cc.vx = 0;
+                cc.vy = 0;
+                cc.setDesiredVel?.(0, 0);
+                if (cc.ai) {
+                    cc.ai._path = null;
+                    cc.ai._pathGoalX = null;
+                    cc.ai._pathGoalY = null;
+                    if (cc.ai._settlerAct === "Painting") cc.ai._settlerAct = null;
+                }
+            }
             this._youDirty.add(p.id);
             return;
         }

@@ -719,7 +719,12 @@
                 mob.setDesiredVel?.(0, 0);
                 return;
             }
-            const settler = mob.role === "settler" || !!mob.homeSettlementId;
+            // A traveling companion is never a settler, even if a camp id is
+            // still stuck on the creature. That id used to send them back to
+            // the painting circle after they joined the party.
+            const settler = mob.role !== "companion"
+                && mob.role !== "player"
+                && (mob.role === "settler" || !!mob.homeSettlementId);
             if (!settler && mob._resting) {
                 this._clearCombat();
                 mob.setDesiredVel?.(0, 0);
@@ -1261,7 +1266,9 @@
 
         _walkToward(tx, ty, sprint, world, delta) {
             const mob = this.mob;
-            const settler = mob.role === "settler" || !!mob.homeSettlementId;
+            const settler = mob.role !== "companion"
+                && mob.role !== "player"
+                && (mob.role === "settler" || !!mob.homeSettlementId);
             // Companions used a point sample (isBlocked). The stand point of a
             // tree tile is often clear while the 8×8 body is not, so they
             // walked into trunks and furniture and stopped. Plan with the

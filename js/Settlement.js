@@ -1433,8 +1433,10 @@ class SettlementSystem {
             Settlement.unbindPawnJobs(from, pawn);
             Settlement.unbindPawnSchedule?.(from, pawn);
         }
-        this.sendNet("pick", { pawnId: pawn.pawnId });
+        // Join locally first so the YOU for this pick cannot leave the pawn
+        // parked as a settler and keep the paint channel.
         scene.partySys?.adoptSettler?.(pawn);
+        this.sendNet("pick", { pawnId: pawn.pawnId || pawn.id });
         if (from) this._syncJobOrder(from);
         scene.partyPanel?.refresh?.();
         scene.settlementPanel?.refresh?.();

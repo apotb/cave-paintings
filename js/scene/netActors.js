@@ -344,8 +344,11 @@
         const oid = sys.ownerId();
         for (const row of incoming) {
             if (!row?.id) continue;
-            const partyHit = (this.party || []).find((p) => p && p.pawnId === row.id);
-            if (partyHit && partyHit.role !== "settler") continue;
+            const partyHit = (this.party || []).find((p) => p && String(p.pawnId) === String(row.id));
+            if (partyHit && partyHit.role !== "settler") {
+                if (typeof clearPawnPaintWork === "function") clearPawnPaintWork(partyHit);
+                continue;
+            }
             if (partyHit && partyHit.role === "settler") {
                 this.party = (this.party || []).filter((p) => p !== partyHit);
                 if (!this.settlers) this.settlers = [];
@@ -465,7 +468,12 @@
             if (typeof row.kc === "number") pawn.kc = row.kc;
             if (typeof row.saturation === "number") pawn.saturation = row.saturation;
             if (typeof row.stomach === "number") pawn.stomach = row.stomach;
-            if (row.facing) pawn.facing = row.facing;
+            if (row.facing) {
+                pawn.facing = row.facing;
+                // Idle puppets read `_netFacing`. Party poses set it while they
+                // follow; settler snapshots used to leave the old direction.
+                pawn._netFacing = row.facing;
+            }
             this._applyPawnNetAttack(pawn, row);
             if (row.ownerId && row.ownerId !== oid) {
                 pawn.faction = `party:${row.ownerId}`;

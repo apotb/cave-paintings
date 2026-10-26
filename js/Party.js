@@ -2305,12 +2305,20 @@ class PartySystem {
         scene.settlers = (scene.settlers || []).filter((p) => p !== pawn);
         pawn.role = "companion";
         pawn.homeSettlementId = null;
+        if (typeof clearPawnPaintWork === "function") clearPawnPaintWork(pawn);
+        else {
+            pawn._paintChannel = null;
+            if (pawn._netWorkChannel?.kind === "paint") pawn._netWorkChannel = null;
+            if (typeof clearPaintFlecks === "function") clearPaintFlecks(pawn);
+        }
         if (typeof syncCreatureInputHit === "function") syncCreatureInputHit(pawn);
         pawn.ownerId = scene.leader?.ownerId || pawn.ownerId || scene._netPlayerId;
         pawn.leaderId = scene.leader?.pawnId || pawn.leaderId;
         pawn.faction = (typeof Party !== "undefined" && Party.partyFactionId)
             ? Party.partyFactionId(pawn.ownerId)
             : `party:${pawn.ownerId}`;
+        if (!scene.party) scene.party = [];
+        if (!scene.party.includes(pawn)) scene.party.push(pawn);
         if (!pawn.partyAI) pawn.partyAI = new PartyAI(pawn);
         pawn.partyAI.stopWork?.();
         pawn._settlerAct = null;
@@ -2323,8 +2331,6 @@ class PartySystem {
         pawn.partyAI._holdFollow = false;
         pawn.partyAI._pathRange = (S?.RADIUS_TILES || 32) + 4;
         pawn.partyAI._pathOpenRadius = 2;
-        if (!scene.party) scene.party = [];
-        if (!scene.party.includes(pawn)) scene.party.push(pawn);
         pawn.syncNameLabel?.();
         return pawn;
     }
@@ -3521,6 +3527,7 @@ class PartySystem {
             const pawn = (scene.party || []).find((p) => p.pawnId === mem.id);
             if (!pawn) continue;
             this._applyNetRestWalk(pawn, mem);
+            if (typeof clearPawnPaintWork === "function") clearPawnPaintWork(pawn);
             if (pawn === ctrl) {
                 if (restCtrl || mem.resting || pawn._restWalk) {
                     this._setNetPose(pawn, mem.x, mem.y, mem.facing, mem.prone, mem);
@@ -3550,6 +3557,7 @@ class PartySystem {
                 scene._applyPawnChannelVisual(pawn, mem.eatChannel || null, "eat");
                 scene._applyPawnChannelVisual(pawn, mem.tendChannel || null, "tend");
             }
+            if (typeof clearPawnPaintWork === "function") clearPawnPaintWork(pawn);
             if (Object.prototype.hasOwnProperty.call(mem, "activity")) {
                 const act = typeof mem.activity === "string" && mem.activity ? mem.activity : null;
                 pawn._settlerAct = act;

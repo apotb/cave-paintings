@@ -2884,6 +2884,21 @@ function clearPaintFlecks(host) {
     host._paintFx = null;
 }
 
+/** Stop the body-to-circle flecks and the paint bar. Eat and fish channels stay. */
+function clearPawnPaintWork(host) {
+    if (!host) return;
+    host._paintChannel = null;
+    if (host._netWorkChannel?.kind === "paint") {
+        host._netWorkChannel = null;
+        try { host.syncPawnChannelBar?.(); } catch (_) {}
+    }
+    if (host._settlerAct === "Painting") {
+        host._settlerAct = null;
+        if (host.partyAI) host.partyAI._settlerAct = null;
+    }
+    clearPaintFlecks(host);
+}
+
 function _tickPaintFleckBits(st, dt) {
     if (!st?.bits) return;
     for (let i = st.bits.length - 1; i >= 0; i--) {
@@ -2967,6 +2982,11 @@ function paintFxCircle(host, scene) {
 }
 
 function tickPaintFlecks(host, scene, delta) {
+    const party = scene?.party || host?.scene?.party;
+    if (host && (host.role !== "settler" || (party && party.includes(host)))) {
+        clearPawnPaintWork(host);
+        return;
+    }
     const ch = paintFxChannel(host);
     let st = host?._paintFx;
     if (!ch && !st?.bits?.length) {

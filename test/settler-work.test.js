@@ -5854,6 +5854,184 @@ test("settler research consumes pigment on start and resumes without extra pigme
     );
 });
 
+test("picking up a painter clears the paint channel and its work claim", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{ id: "blueberry", quantity: 2 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const entry = {
+        uid: "pc-pick",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, world._thingDef("painting_circle"));
+    chunk.things.push(entry);
+
+    let started = false;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if (entry.paintStarted) {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, "should be painting before pickup");
+    assert.equal(rec._paintChannel?.uid, "pc-pick");
+    const claims = world._settlerClaims?.get(settle.id);
+    assert.ok(claims?.held(rec.id), "painting should hold the circle");
+    const frozen = Number(entry.paintProgress) || 0;
+
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "pick",
+        pawnId: rec.id,
+        settlementId: settle.id
+    });
+    assert.equal((pawn.party || []).some((m) => m.id === rec.id), true);
+    assert.equal(rec._paintChannel, null);
+    assert.equal(rec._workHold, false);
+    assert.equal(rec._busyJob, null);
+    assert.equal(claims.held(rec.id), null);
+    assert.equal(entry.paintStarted, true, "the circle keeps the unfinished painting");
+
+    pawn.x = rec.x + 400;
+    pawn.y = rec.y;
+    const leader = world._ensurePlayerCreature(pawn);
+    leader.x = pawn.x;
+    leader.y = pawn.y;
+    const sx = rec.x;
+    const sy = rec.y;
+    for (let i = 0; i < 400; i++) world.tick(50);
+    assert.equal(Number(entry.paintProgress) || 0, frozen, "a companion must not keep painting");
+    assert.equal(rec._paintChannel, null);
+    assert.equal(world.settlers.some((s) => s && s.id === rec.id), false);
+    assert.ok(
+        Math.hypot(rec.x - sx, rec.y - sy) > 24,
+        `should leave the circle, stayed at ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`
+    );
+});
+
+test("dropping a painter back off faces them at the wall they are painting", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{ id: "blueberry", quantity: 2 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const entry = {
+        uid: "pc-face",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y,
+        painted: 4
+    };
+    Research.ensureEntry(entry, world._thingDef("painting_circle"));
+    chunk.things.push(entry);
+    assert.equal(Research.workFacing(entry), "left");
+
+    let started = false;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if (entry.paintStarted) {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, "should be painting the left wall");
+    assert.equal(rec.facing, "left");
+
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "pick",
+        pawnId: rec.id,
+        settlementId: settle.id
+    });
+    rec.facing = "down";
+    if (rec.creature) rec.creature.facing = "down";
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "drop",
+        pawnId: rec.id,
+        settlementId: settle.id
+    });
+    assert.equal(rec.role, "settler");
+
+    let painting = false;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if (rec._paintChannel?.uid === entry.uid) {
+            painting = true;
+            break;
+        }
+    }
+    assert.equal(painting, true, "should resume the unfinished painting");
+    assert.equal(rec.facing, "left", "body should face the wall the flecks fly toward");
+    assert.equal(world._publicSettler(rec).facing, "left");
+});
+
+test("a painter who is in the party and the camp list stops painting", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{ id: "blueberry", quantity: 2 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const entry = {
+        uid: "pc-both",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, world._thingDef("painting_circle"));
+    chunk.things.push(entry);
+
+    let started = false;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if (entry.paintStarted) {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, "should be painting before pickup");
+    const frozen = Number(entry.paintProgress) || 0;
+
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "pick",
+        pawnId: rec.id,
+        settlementId: settle.id
+    });
+    rec.role = "settler";
+    rec.homeSettlementId = settle.id;
+    rec._paintChannel = { progress: frozen, uid: entry.uid, pigmentId: "blueberry" };
+    rec._paintTickMin = world.gameMinutes - 5;
+    world.settlers.push(rec);
+
+    pawn.x = rec.x + 400;
+    pawn.y = rec.y;
+    const leader = world._ensurePlayerCreature(pawn);
+    leader.x = pawn.x;
+    leader.y = pawn.y;
+    for (let i = 0; i < 80; i++) world.tick(50);
+    assert.equal(Number(entry.paintProgress) || 0, frozen, "party membership wins over the camp list");
+    assert.equal(rec._paintChannel, null);
+    assert.equal(world.settlers.some((s) => s && s.id === rec.id), false);
+    assert.equal((pawn.party || []).some((m) => m && m.id === rec.id), true);
+});
+
 test("researcher leaves a painting to sleep instead of finishing it", () => {
     const Research = require("../shared/research");
     const { world, pawn } = createTestWorld();
