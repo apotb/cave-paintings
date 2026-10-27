@@ -2266,6 +2266,22 @@
         return { type: "stash", target: state.stashBasket };
     }
 
+    /**
+     * Hunger, sleep, and a recreation hour. A research poll checks these
+     * even when the painting was restored after rejoin.
+     */
+    function researchNeedsBreak(state, night, injured, onBreak, autoEat) {
+        if ((Number(state.kc) || 0) < autoEat && state.canEat !== false) {
+            return { type: "eat" };
+        }
+        if (settlerShouldSleep(night, injured)) {
+            if (state.bed) return { type: "sleep", target: state.bed };
+            return { type: "idle" };
+        }
+        if (onBreak) return { type: "idle" };
+        return null;
+    }
+
     function planWork(state = {}) {
         const AUTO = Number(state.autoEatBelow) > 0 ? Number(state.autoEatBelow) : 1000;
         const busy = !!state.busy;
@@ -2288,7 +2304,13 @@
         const bedBreak = !!(hurtWantsBed && busyJob
             && busyJob.type !== "doctor" && busyJob.type !== "rescue");
         const dropHold = rescueStale || doctorStale || bedBreak;
-        if (state.keepResume && busy && busyJob && !dropHold) return busyJob;
+        if (state.keepResume && busy && busyJob && !dropHold) {
+            if (poll && busyJob.type === "research") {
+                const needs = researchNeedsBreak(state, night, injured, onBreak, AUTO);
+                if (needs) return needs;
+            }
+            return busyJob;
+        }
         if (busy && busyJob && !poll && !dropHold) {
             // A job restored from a rejoin stays the job. Haul, food, and
             // tailoring can take over a fresh plan, not one already underway.
@@ -2395,15 +2417,9 @@
             }
             if (job === "chop" && state.chopTree) return { type: "chop", target: state.chopTree };
             if (job === "research" && state.researchCircle) {
-                if (poll && !state.keepResume) {
-                    if ((Number(state.kc) || 0) < AUTO && state.canEat !== false) {
-                        return { type: "eat" };
-                    }
-                    if (settlerShouldSleep(night, injured)) {
-                        if (state.bed) return { type: "sleep", target: state.bed };
-                        return { type: "idle" };
-                    }
-                    if (onBreak) return { type: "idle" };
+                if (poll) {
+                    const needs = researchNeedsBreak(state, night, injured, onBreak, AUTO);
+                    if (needs) return needs;
                 }
                 if (!state.keepResume) {
                     const foodFirst = stashFoodInsteadOfResearch(state);
@@ -2416,12 +2432,8 @@
             return { type: "stash", target: state.stashBasket };
         }
         if (poll) {
-            if ((Number(state.kc) || 0) < AUTO && state.canEat !== false) return { type: "eat" };
-            if (settlerShouldSleep(night, injured)) {
-                if (state.bed) return { type: "sleep", target: state.bed };
-                return { type: "idle" };
-            }
-            if (onBreak) return { type: "idle" };
+            const needs = researchNeedsBreak(state, night, injured, onBreak, AUTO);
+            if (needs) return needs;
         }
         return { type: "idle" };
     }

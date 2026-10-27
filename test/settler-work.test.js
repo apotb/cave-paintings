@@ -6067,10 +6067,14 @@ test("researcher leaves a painting to sleep instead of finishing it", () => {
     world.gameMinutes = 22 * 60;
     rec.kc = 1600;
     rec._researchPoll = 0;
+    rec._resumeWork = true;
+    rec._resumePaint = { uid: entry.uid, painted: Math.floor(Number(entry.painted) || 0) };
     workOnce(world, rec);
     assert.equal(rec._busyJob?.type, "research");
     assert.equal(!!rec._restWalk, false);
     assert.equal(!!rec._resting, false);
+    rec._resumeWork = true;
+    rec._resumePaint = { uid: entry.uid, painted: Math.floor(Number(entry.painted) || 0) };
     rec._researchPoll = Settlement.RESEARCH_NEEDS_TICKS - 1;
     workOnce(world, rec);
     assert.ok(rec._restWalk || rec._resting, "should go to sleep after a needs poll");
