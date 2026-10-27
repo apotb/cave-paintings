@@ -1351,7 +1351,7 @@ test("planWork research stand yields to eat and sleep on a needs poll", () => {
     assert.equal(Settlement.RESEARCH_NEEDS_TICKS, 10);
 });
 
-test("planWork resumed research still sleeps and eats on a needs poll", () => {
+test("planWork resumed research polls for other jobs the same way it polls for sleep", () => {
     const jobs = Settlement.defaultJobs();
     for (const j of Settlement.JOBS) jobs[j] = 0;
     jobs.research = 3;
@@ -1368,25 +1368,54 @@ test("planWork resumed research still sleeps and eats on a needs poll", () => {
         keepResume: true
     };
     assert.equal(Settlement.planWork(base).type, "research");
-    assert.equal(Settlement.planWork({ ...base, reconsiderNeeds: true }).type, "research");
+    assert.equal(Settlement.planWork({ ...base, reconsiderNeeds: true }).type, "haul");
     assert.equal(Settlement.planWork({
         ...base,
         kc: 200,
         reconsiderNeeds: true
-    }).type, "eat");
+    }).type, "haul");
     assert.equal(Settlement.planWork({
         ...base,
         kc: 2000,
         isNight: true,
         bed: { slot: 0 },
         reconsiderNeeds: true
+    }).type, "haul");
+    const quiet = { ...base, haulDrop: null };
+    assert.equal(Settlement.planWork({ ...quiet, reconsiderNeeds: true }).type, "research");
+    assert.equal(Settlement.planWork({
+        ...quiet,
+        kc: 200,
+        reconsiderNeeds: true
+    }).type, "eat");
+    assert.equal(Settlement.planWork({
+        ...quiet,
+        kc: 2000,
+        isNight: true,
+        bed: { slot: 0 },
+        reconsiderNeeds: true
     }).type, "sleep");
     assert.equal(Settlement.planWork({
-        ...base,
+        ...quiet,
         kc: 2000,
         isNight: true,
         reconsiderNeeds: true
     }).type, "idle");
+    jobs.haul = 0;
+    jobs.chop = 3;
+    const tree = { uid: "t1", id: "tree" };
+    assert.equal(Settlement.planWork({
+        ...quiet,
+        chopTree: tree,
+        reconsiderNeeds: true
+    }).type, "chop");
+    jobs.chop = 4;
+    jobs.research = 1;
+    assert.equal(Settlement.planWork({
+        ...quiet,
+        chopTree: tree,
+        reconsiderNeeds: true
+    }).type, "research");
 });
 
 test("planWork research poll takes a higher-priority job before eat or sleep", () => {

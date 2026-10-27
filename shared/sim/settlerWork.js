@@ -409,12 +409,15 @@ function tick(world, mob, delta) {
     const researchHold = isWorkHold(rec) && rec._busyJob?.type === "research";
     if (researchHold) rec._researchPoll = (rec._researchPoll || 0) + 1;
     else rec._researchPoll = 0;
-    const pollNeeds = researchHold
+    const pollDue = researchHold
         && rec._researchPoll >= (Settlement.RESEARCH_NEEDS_TICKS || 10);
-    if (pollNeeds && allowSettlerScan(world)) {
+    if (pollDue && allowSettlerScan(world)) {
         rec._settlerScan = scanWork(world, rec, settle, claims);
         rec._settlerScanMs = 0;
     }
+    // Sleep and other jobs share this poll. Both wait until a search has
+    // run, so a rejoin does not walk off the circle on an empty scan.
+    const pollNeeds = pollDue && !!rec._settlerScan;
     const scan = rec._settlerScan || {};
     const keepOpts = keepGearOpts({
         keepBandage: !!scan.keepBandage,

@@ -2268,7 +2268,7 @@
 
     /**
      * Hunger, sleep, and a recreation hour. A research poll checks these
-     * even when the painting was restored after rejoin.
+     * after higher-priority work, including a painting restored after rejoin.
      */
     function researchNeedsBreak(state, night, injured, onBreak, autoEat) {
         if ((Number(state.kc) || 0) < autoEat && state.canEat !== false) {
@@ -2304,16 +2304,15 @@
         const bedBreak = !!(hurtWantsBed && busyJob
             && busyJob.type !== "doctor" && busyJob.type !== "rescue");
         const dropHold = rescueStale || doctorStale || bedBreak;
-        if (state.keepResume && busy && busyJob && !dropHold) {
-            if (poll && busyJob.type === "research") {
-                const needs = researchNeedsBreak(state, night, injured, onBreak, AUTO);
-                if (needs) return needs;
-            }
+        // A restored painting stays until the research poll. That poll scans
+        // jobs the same way it scans sleep, then falls through below.
+        if (state.keepResume && busy && busyJob && !dropHold
+            && !(poll && busyJob.type === "research")) {
             return busyJob;
         }
         if (busy && busyJob && !poll && !dropHold) {
-            // A job restored from a rejoin stays the job. Haul, food, and
-            // tailoring can take over a fresh plan, not one already underway.
+            // Between polls, an underway job stays put. Haul, food, and
+            // tailoring can still take a research stand that was not restored.
             if (busyJob.type === "research" && !state.keepResume) {
                 const foodFirst = stashFoodInsteadOfResearch(state);
                 if (foodFirst) return foodFirst;
@@ -2421,7 +2420,7 @@
                     const needs = researchNeedsBreak(state, night, injured, onBreak, AUTO);
                     if (needs) return needs;
                 }
-                if (!state.keepResume) {
+                if (!state.keepResume || poll) {
                     const foodFirst = stashFoodInsteadOfResearch(state);
                     if (foodFirst) return foodFirst;
                 }

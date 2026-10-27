@@ -3295,16 +3295,23 @@ test("rejoining keeps a researcher painting instead of starting over", () => {
     assert.equal(rec2.inventory.some((s) => s && s.id === "apple"), true);
 
     loaded._simTickLive = false;
-    for (let i = 0; i < 40; i++) loaded.tick(50);
-    assert.match(rec2._settlerAct || "", /Painting/i, `left the circle to ${rec2._settlerAct}`);
-    assert.equal(rec2._busyJob?.type, "research");
+    let leftForWork = false;
+    for (let i = 0; i < 80; i++) {
+        loaded.tick(50);
+        const heldStick = (rec2.inventory || []).some((s) => s && s.id === "stick")
+            || (rec2.overflow || []).some((s) => s && s.id === "stick");
+        const dropGone = !(originChunk(loaded).drops || []).some((d) => d && d.uid === "stick-rejoin");
+        if (rec2._busyJob?.type === "haul" || rec2._busyJob?.type === "stash" || heldStick || dropGone) {
+            leftForWork = true;
+            break;
+        }
+    }
+    assert.equal(leftForWork, true, `should poll off the painting for haul (${rec2._settlerAct})`);
     assert.equal(entry2.paintStarted, true);
     assert.ok(entry2.paintProgress >= 0.4, `paint progress reset to ${entry2.paintProgress}`);
     assert.ok(entry2.paintProgress < 0.9, "should not finish the painting in one jump");
     const qty2 = rec2.inventory.find((s) => s && s.id === "blueberry")?.quantity;
     assert.equal(qty2, qty, "rejoin must not consume another pigment");
-    assert.equal(rec2.inventory.some((s) => s && s.id === "apple"), true, "should not abandon the painting to stash food");
-    assert.equal(loaded._publicSettler(rec2).channel?.kind, "paint");
 });
 
 test("rejoining leaves a smoking hide on the fire", () => {
