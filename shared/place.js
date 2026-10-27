@@ -550,13 +550,14 @@
     }
 
     /**
-     * Campfires, drying racks, and the grindstone are small stations people
-     * line up. A body can step between them. The skinworking bench is wider
-     * than the tile gap beside it, so a passer runs into the board. Trees,
-     * baskets, and shelters stay solid at the normal margin.
+     * Campfires, drying racks, the grindstone, and wicker baskets are small
+     * pieces people line up. A body can step between them. The skinworking
+     * bench is wider than the tile gap beside it, so a passer runs into the
+     * board. Trees and shelters stay solid at the normal margin.
      */
     function isGapFurniture(thingDef) {
         if (!thingDef || thingDef.id === "skinworking_bench") return false;
+        if (thingDef.id === "wicker_basket") return true;
         return !!(thingDef.campfire || thingDef.dryingRack || thingDef.craftStation);
     }
 
@@ -577,6 +578,77 @@
 
     /** A passer may clip this far into the edge of gap furniture, per side. */
     const GAP_SQUEEZE = 2;
+    /**
+     * Baskets are wider than a rack, so the opening between two tiles is
+     * narrower than a body. A deeper clip keeps that opening walkable.
+     * The middle of one basket stays solid.
+     */
+    const BASKET_GAP_SQUEEZE = 4;
+
+    function gapSqueeze(thingDef) {
+        if (!isGapFurniture(thingDef)) return 0;
+        if (thingDef.id === "wicker_basket") return BASKET_GAP_SQUEEZE;
+        return GAP_SQUEEZE;
+    }
+
+    /**
+     * "x" when `body` is between a left-right pair, "y" for a column.
+     * The span is the centers, so the approach in front of the opening
+     * counts. A lone piece returns null.
+     */
+    function furnitureGapAxis(rects, body) {
+        if (!body || !rects) return null;
+        const cx = (body.left + body.right) * 0.5;
+        const cy = (body.top + body.bottom) * 0.5;
+        for (let i = 0; i < rects.length; i++) {
+            const a = rects[i];
+            if (!a) continue;
+            const acx = (a.left + a.right) * 0.5;
+            const acy = (a.top + a.bottom) * 0.5;
+            for (let j = i + 1; j < rects.length; j++) {
+                const b = rects[j];
+                if (!b) continue;
+                const bcx = (b.left + b.right) * 0.5;
+                const bcy = (b.top + b.bottom) * 0.5;
+                const dx = Math.abs(acx - bcx);
+                const dy = Math.abs(acy - bcy);
+                if (dy <= 10 && dx > 0 && dx <= 20
+                    && cx > Math.min(acx, bcx) && cx < Math.max(acx, bcx)) {
+                    return "x";
+                }
+                if (dx <= 10 && dy > 0 && dy <= 20
+                    && cy > Math.min(acy, bcy) && cy < Math.max(acy, bcy)) {
+                    return "y";
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The overlap is the side that faces the neighbor, not the face being
+     * walked into. A shallow front hit used to cancel collision until the
+     * squeeze ran out, then the body was thrown back. Holding into a basket
+     * shook. No overlap (path margin only) stays allowed. Crossing the mouth
+     * of the opening is allowed: the center is still outside the basket, and
+     * only a few pixels of the side overlap.
+     */
+    function gapSideClip(body, rect, axis, squeeze) {
+        if (!body || !rect || (axis !== "x" && axis !== "y")) return false;
+        if (gapIntrusion(body, rect) === Infinity) return false;
+        const ox = Math.min(body.right, rect.right) - Math.max(body.left, rect.left);
+        const oy = Math.min(body.bottom, rect.bottom) - Math.max(body.top, rect.top);
+        if (!(ox > 0 && oy > 0)) return true;
+        const cap = Number(squeeze) > 0 ? Number(squeeze) : GAP_SQUEEZE;
+        const cx = (body.left + body.right) * 0.5;
+        const cy = (body.top + body.bottom) * 0.5;
+        if (axis === "x") {
+            if (cx > rect.left && cx < rect.right && oy < ox) return false;
+            return ox <= cap;
+        }
+        if (cy > rect.top && cy < rect.bottom && ox < oy) return false;
+        return oy <= cap;
+    }
 
     /**
      * Empty/handle pixels on the north of 1×1 furniture (baskets, benches).
@@ -1853,7 +1925,11 @@
         collisionWorldRects,
         isGapFurniture,
         gapIntrusion,
+        gapSqueeze,
+        furnitureGapAxis,
+        gapSideClip,
         GAP_SQUEEZE,
+        BASKET_GAP_SQUEEZE,
         figurineCollisionRects,
         spriteAnchor,
         rotateAnchorOffset,

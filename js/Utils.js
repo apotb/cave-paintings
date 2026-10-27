@@ -2321,6 +2321,8 @@ function overlappingThingSprite(pawn) {
                 return false;
             }
         }
+        // A shallow clip between two baskets or racks is the opening, not a snag.
+        if (allowsFurnitureGap(pawn, t)) return false;
         hit = t;
         return true;
     });
@@ -2331,9 +2333,56 @@ function pawnPoseHitsThing(pawn, x, y) {
     return pawnPoseBlocked(pawn, x, y, 0);
 }
 
+/** "x" or "y" when the body is between two neighboring gap pieces. */
+function bodyInFurnitureGap(pawn, bare) {
+    const scene = pawn?.scene;
+    if (!scene || !bare || typeof Place === "undefined" || !Place.isGapFurniture) return null;
+    if (!Place.furnitureGapAxis) return null;
+    const stations = [];
+    forThingsNearAabb(
+        scene,
+        bare.left - 24, bare.right + 24, bare.top - 24, bare.bottom + 24,
+        (thing) => {
+            const tb = thing?.body;
+            if (!tb || !tb.enable || pawnIgnoresThing(pawn, thing)) return false;
+            if (!Place.isGapFurniture(thing.meta)) return false;
+            stations.push(tb);
+            return false;
+        }
+    );
+    return Place.furnitureGapAxis(stations, bare);
+}
+
+/**
+ * True when this overlap is only the edge of a gap the body is allowed
+ * through. The middle of a basket or rack still collides.
+ */
+function allowsFurnitureGap(pawn, thing) {
+    const body = pawn?.body;
+    const tb = thing?.body;
+    if (!body || !tb?.enable || !thing?.meta) return false;
+    if (typeof Place === "undefined" || !Place.isGapFurniture || !Place.gapIntrusion) return false;
+    if (!Place.isGapFurniture(thing.meta)) return false;
+    const bare = { left: body.left, right: body.right, top: body.top, bottom: body.bottom };
+    const axis = bodyInFurnitureGap(pawn, bare);
+    if (!axis || !Place.gapSideClip) return false;
+    const squeeze = Place.gapSqueeze?.(thing.meta) || Place.GAP_SQUEEZE || 2;
+    return Place.gapSideClip(bare, tb, axis, squeeze);
+}
+
+function collidingPawnAndThing(a, b) {
+    const aThing = !!(a?.meta && a?.entry);
+    const bThing = !!(b?.meta && b?.entry);
+    if (aThing && !bThing) return { pawn: b, thing: a };
+    if (bThing && !aThing) return { pawn: a, thing: b };
+    return null;
+}
+
 /** Hut walls are resolved as a circle. The box pieces only snag and jitter. */
 function pawnThingCollide(a, b) {
     if (a?.meta?.ring || b?.meta?.ring) return false;
+    const pair = collidingPawnAndThing(a, b);
+    if (pair && allowsFurnitureGap(pair.pawn, pair.thing)) return false;
     if (typeof Sleep !== "undefined" && Sleep.collideProcess) return Sleep.collideProcess(a, b);
     return true;
 }
@@ -2488,60 +2537,31 @@ function pawnPoseBlocked(pawn, x, y, pad = 0) {
         return matched;
     };
     let hit = overlaps(left, right, top, bottom);
-    // A row of campfires or racks is a gap the body can take. A skinworking
-    // bench is wider than that opening, so it stays solid.
+    // A row of campfires, racks, or baskets is a gap the body can take. A
+    // skinworking bench is wider than that opening, so it stays solid.
     // The path margin, and a pixel of the edge, must not seal it. Standing
     // in the middle of one stays blocked. Hut doors are handled below.
-    if (hit && typeof Place !== "undefined" && Place.isGapFurniture && Place.gapIntrusion) {
+    if (hit && typeof Place !== "undefined" && Place.isGapFurniture && Place.gapSideClip) {
         const bare = { left: left + p, right: right - p, top: top + p, bottom: bottom - p };
-        const squeeze = Place.GAP_SQUEEZE || 2;
-        let foreign = false;
-        let any = false;
-        forThingsNearAabb(scene, left, right, top, bottom, (thing) => {
-            const tb = thing?.body;
-            if (!tb || !tb.enable || pawnIgnoresThing(pawn, thing)) return false;
-            if (!(right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom)) {
-                return false;
-            }
-            any = true;
-            if (!Place.isGapFurniture(thing.meta) || Place.gapIntrusion(bare, tb) > squeeze) {
-                foreign = true;
-                return true;
-            }
-            return false;
-        });
-        if (any && !foreign) {
-            const stations = [];
-            forThingsNearAabb(scene, left - 24, right + 24, top - 24, bottom + 24, (thing) => {
+        const axis = bodyInFurnitureGap(pawn, bare);
+        if (axis) {
+            let foreign = false;
+            let any = false;
+            forThingsNearAabb(scene, left, right, top, bottom, (thing) => {
                 const tb = thing?.body;
                 if (!tb || !tb.enable || pawnIgnoresThing(pawn, thing)) return false;
-                if (!Place.isGapFurniture(thing.meta)) return false;
-                stations.push(tb);
+                if (!(right > tb.left && left < tb.right && bottom > tb.top && top < tb.bottom)) {
+                    return false;
+                }
+                any = true;
+                const squeeze = Place.gapSqueeze?.(thing.meta) || Place.GAP_SQUEEZE || 2;
+                if (!Place.isGapFurniture(thing.meta) || !Place.gapSideClip(bare, tb, axis, squeeze)) {
+                    foreign = true;
+                    return true;
+                }
                 return false;
             });
-            let between = false;
-            for (let i = 0; i < stations.length && !between; i++) {
-                for (let j = i + 1; j < stations.length; j++) {
-                    const a = stations[i];
-                    const b = stations[j];
-                    const acx = (a.left + a.right) * 0.5;
-                    const acy = (a.top + a.bottom) * 0.5;
-                    const bcx = (b.left + b.right) * 0.5;
-                    const bcy = (b.top + b.bottom) * 0.5;
-                    const dx = Math.abs(acx - bcx);
-                    const dy = Math.abs(acy - bcy);
-                    const row = (dy <= 10 && dx > 0 && dx <= 20)
-                        || (dx <= 10 && dy > 0 && dy <= 20);
-                    if (!row) continue;
-                    const cx = (bare.left + bare.right) * 0.5;
-                    const cy = (bare.top + bare.bottom) * 0.5;
-                    const along = dx >= dy
-                        ? cx > Math.min(acx, bcx) && cx < Math.max(acx, bcx)
-                        : cy > Math.min(acy, bcy) && cy < Math.max(acy, bcy);
-                    if (along) { between = true; break; }
-                }
-            }
-            if (between) hit = false;
+            if (any && !foreign) hit = false;
         }
     }
     // Path margin seals a hut door the body can walk through. Ignore that

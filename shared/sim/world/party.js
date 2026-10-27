@@ -1502,6 +1502,7 @@
         // A 1px pad welds adjacent stations into one wall. Gap furniture
         // keeps the raw box the player walks, so the space between them fits.
         const pad = (def && Place.isGapFurniture?.(def)) ? 0 : 1;
+        const gapSqueeze = Place.gapSqueeze?.(def) || 0;
         let rect = null;
         if (typeof Place !== "undefined" && Place.collisionWorldRect) {
             const raw = Place.collisionWorldRect(t, def, TS);
@@ -1514,6 +1515,7 @@
                     bottom: raw.bottom + pad,
                     r: Math.max(raw.right - raw.left, raw.bottom - raw.top) * 0.5 + pad
                 };
+                if (gapSqueeze > 0) rect.gapSqueeze = gapSqueeze;
             }
         }
         const hs = Number(def?.hitboxSize);
@@ -1527,6 +1529,7 @@
                 bottom: t.y + pad,
                 r: hx + pad
             };
+            if (gapSqueeze > 0) rect.gapSqueeze = gapSqueeze;
         }
         cache.set(t, { x, y, rot, id, rect });
         return rect;
@@ -1638,6 +1641,7 @@
             }
             // Same raw box as the player. The extra pixel welds a station row shut.
             const pad = (def && Place.isGapFurniture?.(def)) ? 0 : 1;
+            const gapSqueeze = Place.gapSqueeze?.(def) || 0;
             const raw = (typeof Place !== "undefined" && Place.collisionWorldRects)
                 ? Place.collisionWorldRects(t, def, TS)
                 : [];
@@ -1645,14 +1649,16 @@
             if (raw.length) {
                 for (let ri = 0; ri < raw.length; ri++) {
                     const src = raw[ri];
-                    rects.push({
+                    const rect = {
                         t,
                         left: src.left - pad,
                         right: src.right + pad,
                         top: src.top - pad,
                         bottom: src.bottom + pad,
                         r: Math.max(src.right - src.left, src.bottom - src.top) * 0.5 + pad
-                    });
+                    };
+                    if (gapSqueeze > 0) rect.gapSqueeze = gapSqueeze;
+                    rects.push(rect);
                 }
             } else {
                 const one = this._thingRect(t);
@@ -1860,14 +1866,14 @@
     },
 
     /**
-     * Pathing grows the body so settlers don't kiss trunks. Campfires
-     * and drying racks leave a gap the body can take, and the same
-     * margin seals the row into a wall they pace along. The opening
+     * Pathing grows the body so settlers don't kiss trunks. Campfires,
+     * drying racks, and wicker baskets leave a gap the body can take, and
+     * the same margin seals the row into a wall they pace along. The opening
      * includes the approach, not only the feet already between the
      * stations — otherwise the walker slides along the face and waits
-     * before stepping through. A shallow clip of the edge still counts
-     * as the gap; standing in the middle of one does not. A
-     * skinworking bench is not part of that opening.
+     * before stepping through. A shallow clip of the side still counts
+     * as the gap. The face and the middle stay solid, so holding into a
+     * basket does not bounce. A skinworking bench is not part of that opening.
      */
     _gapClear(creature, body, pad) {
         const p = Math.max(0, Number(pad) || 0);
@@ -1877,18 +1883,33 @@
             (body.left + body.right) * 0.5, (body.top + body.bottom) * 0.5,
             64, creature, hits
         );
-        if (!hits.length) return false;
-        const squeeze = (typeof Place !== "undefined" && Place.GAP_SQUEEZE) || 2;
+        if (!hits.length || !Place.furnitureGapAxis || !Place.gapSideClip) return false;
+        const feetX = body.left - 4;
+        const feetY = body.bottom;
+        const near = this._thingRectsNear(feetX, feetY, 40);
+        const stations = [];
+        const seen = new Set();
+        for (let i = 0; i < near.length; i++) {
+            const rect = near[i];
+            const uid = rect && rect.t && rect.t.uid;
+            if (!uid || seen.has(uid)) continue;
+            const def = thingDefs().get(rect.t.id);
+            if (!def || !Place.isGapFurniture?.(def)) continue;
+            seen.add(uid);
+            stations.push(rect);
+        }
+        const axis = Place.furnitureGapAxis(stations, body);
+        if (!axis) return false;
         for (let i = 0; i < hits.length; i++) {
             const tb = hits[i];
             const def = thingDefs().get(tb.t?.id);
             if (!def || !Place.isGapFurniture?.(def)) return false;
-            const depth = Place.gapIntrusion?.(body, tb);
-            if (!(depth <= squeeze)) return false;
+            const squeeze = Place.gapSqueeze?.(def) || Place.GAP_SQUEEZE || 2;
+            // A front-face graze is solid. Only the side facing the neighbor
+            // may clip, or holding into a basket bounces on the threshold.
+            if (!Place.gapSideClip(body, tb, axis, squeeze)) return false;
         }
-        // A lone station stays solid. The pass is the opening between two,
-        // so a campfire beside a lean-to is still walked around.
-        return this._betweenStations(body, hits);
+        return true;
     },
 
     /**
@@ -1913,34 +1934,6 @@
             if (!def || !Place.isGapFurniture?.(def)) return false;
         }
         return true;
-    },
-
-    _betweenStations(body, hits) {
-        const seen = new Set();
-        for (let i = 0; i < hits.length; i++) {
-            const uid = hits[i].t && hits[i].t.uid;
-            if (uid) seen.add(uid);
-        }
-        if (seen.size >= 2) return true;
-        if (typeof Path === "undefined" || !Path.gapLanes || !Path.inGapLane) return false;
-        const feetX = body.left - 4;
-        const feetY = body.bottom;
-        const rects = this._thingRectsNear(feetX, feetY, 40);
-        const squeeze = ((Place.GAP_SQUEEZE || 2) * 2);
-        for (let i = 0; i < rects.length; i++) {
-            const rect = rects[i];
-            const uid = rect && rect.t && rect.t.uid;
-            if (!uid || seen.has(uid)) continue;
-            const def = thingDefs().get(rect.t.id);
-            if (!def || !Place.isGapFurniture?.(def)) continue;
-            const lanes = Path.gapLanes(hits.concat(rect), { squeeze });
-            // Same reach as the path slack. A shorter one left the corridor
-            // open to A* and closed to the walker, so the heading into the
-            // gap was thrown out and they slid along the station, stopped,
-            // then stepped through a second later.
-            if (Path.inGapLane(lanes, feetX, feetY, 20)) return true;
-        }
-        return false;
     },
 
     /**

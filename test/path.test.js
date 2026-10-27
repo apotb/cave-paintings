@@ -955,6 +955,97 @@ test("a companion walks between a row of drying racks", () => {
     assert.ok(flips < 2, `paced in front of the gap (${flips} reversals)`);
 });
 
+test("a companion walks between a row of wicker baskets", () => {
+    const Place = require("../shared/place");
+    const { createTestWorld, originChunk } = require("./helpers/simWorld");
+    const { world, pawn } = createTestWorld();
+    const chunk = originChunk(world);
+    const def = world._thingDef("wicker_basket");
+    assert.equal(Place.isGapFurniture(def), true);
+    const ty = 8;
+    for (let tx = 3; tx <= 12; tx++) {
+        const pos = Place.footprintWorldPos(tx, ty, 0, [1, 1], 16);
+        chunk.things.push({
+            uid: `basket-${tx}`,
+            id: "wicker_basket",
+            x: pos.x,
+            y: pos.y,
+            rot: 0,
+            tx,
+            ty
+        });
+    }
+    world._chunkRectCache = null;
+    world._solidRects = null;
+    const rowY = (ty + 1) * 16;
+    const rec = world._companionFromSnap(pawn, {
+        id: "buddy",
+        name: "Buddy",
+        x: 104,
+        y: rowY + 48,
+        inventory: [null, null, null, null, null]
+    });
+    pawn.party = [rec];
+    const cc = world._ensureCompanionCreature(pawn, rec);
+    const poseOpts = { load: false, sleepFootprint: false };
+    assert.equal(
+        world._partyPoseBlocked(cc, 104, rowY, 2, poseOpts),
+        false,
+        "path padding must leave the gap between baskets open"
+    );
+    assert.equal(
+        world._partyPoseBlocked(cc, 96, rowY, 0, poseOpts),
+        true,
+        "the basket itself stays solid"
+    );
+    assert.equal(
+        world._partyPoseBlocked(cc, 96, rowY + 5, 0, poseOpts),
+        true,
+        "a shallow hit on the basket face stays solid"
+    );
+    rec.x = 104;
+    rec.y = rowY + 20;
+    cc.x = rec.x;
+    cc.y = rec.y;
+    const dest = { x: 104, y: rowY - 48 };
+    const x0 = rec.x;
+    let minY = rec.y;
+    let maxDx = 0;
+    let flips = 0;
+    let prevSign = 0;
+    for (let i = 0; i < 400; i++) {
+        cc.x = rec.x;
+        cc.y = rec.y;
+        cc.role = "companion";
+        cc.homeSettlementId = null;
+        cc._resting = false;
+        cc.ai._walkToward(dest.x, dest.y, false, world._aiWorld(), 16);
+        const vx = cc.vx || 0;
+        const sign = Math.abs(vx) > 8 ? Math.sign(vx) : 0;
+        if (sign && prevSign && sign !== prevSign && rec.y > rowY - 2) flips++;
+        if (sign) prevSign = sign;
+        cc.applyDesiredVel(16);
+        const nx = cc.x + (cc.vx || 0) * 0.016;
+        const ny = cc.y + (cc.vy || 0) * 0.016;
+        if (!world._partyPoseBlocked(cc, nx, cc.y, 0, poseOpts)) cc.x = nx;
+        if (!world._partyPoseBlocked(cc, cc.x, ny, 0, poseOpts)) cc.y = ny;
+        rec.x = cc.x;
+        rec.y = cc.y;
+        if (rec.y < minY) minY = rec.y;
+        maxDx = Math.max(maxDx, Math.abs(rec.x - x0));
+        if (rec.y < rowY - 12) break;
+    }
+    assert.ok(
+        minY < rowY - 12,
+        `should cross the row, ended ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`
+    );
+    assert.ok(
+        maxDx < 24,
+        `should use a gap, not walk around the row (drifted ${maxDx.toFixed(1)}px)`
+    );
+    assert.ok(flips < 3, `paced in front of the gap (${flips} reversals)`);
+});
+
 test("a companion walks between campfires and a drying rack, not into a bench", () => {
     const Place = require("../shared/place");
     const { createTestWorld, originChunk } = require("./helpers/simWorld");
@@ -1191,6 +1282,71 @@ test("a settler at sleep tick speed still walks between drying racks", () => {
     // waypoint and pace in front of the row.
     const drift = cross(100, 24, 100);
     assert.ok(drift < 28, `should use a gap, drifted ${drift.toFixed(1)}px`);
+});
+
+test("a settler at sleep tick speed still walks between wicker baskets", () => {
+    const Place = require("../shared/place");
+    const Settlement = require("../shared/settlement");
+    const { createTestWorld, originChunk } = require("./helpers/simWorld");
+    const { world, pawn } = createTestWorld();
+    const chunk = originChunk(world);
+    const ty = 8;
+    for (let tx = 3; tx <= 12; tx++) {
+        const pos = Place.footprintWorldPos(tx, ty, 0, [1, 1], 16);
+        chunk.things.push({
+            uid: `basket-${tx}`,
+            id: "wicker_basket",
+            x: pos.x,
+            y: pos.y,
+            rot: 0,
+            tx,
+            ty
+        });
+    }
+    world._chunkRectCache = null;
+    const rowY = (ty + 1) * 16;
+    const startX = 104;
+    const settle = Settlement.createSettlement({
+        x: startX,
+        y: rowY + 24,
+        ownerId: pawn.id
+    });
+    const rec = world._settlerFromSnap({
+        id: "settler1",
+        name: "Parked",
+        x: startX,
+        y: rowY + 24,
+        ownerId: pawn.id,
+        homeSettlementId: settle.id,
+        inventory: [null, null, null, null, null]
+    });
+    settle.jobs = {};
+    settle.jobs[rec.id] = Settlement.defaultJobs();
+    world.settlements.push(settle);
+    world.settlers.push(rec);
+    world._ensureSettlerCreature(rec);
+    chunk.lootableThings.push({
+        uid: "sticks-north",
+        id: "sticks",
+        x: startX,
+        y: rowY - 64
+    });
+    world.tickSpeed = 12;
+    world.baseTickSpeed = 12;
+    const x0 = rec.x;
+    let maxDx = 0;
+    let minY = rec.y;
+    for (let i = 0; i < 80; i++) {
+        world.tick(16);
+        maxDx = Math.max(maxDx, Math.abs(rec.x - x0));
+        if (rec.y < minY) minY = rec.y;
+        if (rec.y < rowY - 12) break;
+    }
+    assert.ok(
+        minY < rowY - 12,
+        `should cross at 12×, ended ${rec.x.toFixed(1)},${rec.y.toFixed(1)}`
+    );
+    assert.ok(maxDx < 28, `should use a gap, drifted ${maxDx.toFixed(1)}px`);
 });
 
 test("a settler walks between a campfire and a drying rack without shuffling", () => {

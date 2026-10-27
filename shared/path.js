@@ -854,7 +854,15 @@
         const bodyW = ro - lo;
         const bodyH = to;
         const squeeze = Number(opts && opts.squeeze) > 0 ? Number(opts.squeeze) : 0;
-        const half = squeeze * 0.5;
+        // Per-rect `gapSqueeze` is one side. A pair uses the stricter side so
+        // a basket does not pull a rack's lane into the rack itself.
+        const pairSqueeze = (a, b) => {
+            const as = Number(a && a.gapSqueeze);
+            const bs = Number(b && b.gapSqueeze);
+            if (as > 0 && bs > 0) return Math.min(as, bs) * 2;
+            if (as > 0 || bs > 0) return Math.max(as, bs) * 2;
+            return squeeze;
+        };
         const maxSep = Number(opts && opts.maxSep) > 0 ? Number(opts.maxSep) : 20;
         const align = Number(opts && opts.align) > 0 ? Number(opts.align) : 10;
         const lanes = [];
@@ -874,8 +882,10 @@
                 if (dy <= align && dx > 0 && dx <= maxSep) {
                     const left = acx <= bcx ? a : b;
                     const right = acx <= bcx ? b : a;
+                    const extra = pairSqueeze(left, right);
+                    const half = extra * 0.5;
                     const gap = right.left - left.right;
-                    if (gap + squeeze > bodyW) {
+                    if (gap + extra > bodyW) {
                         const min = left.right - lo - half;
                         const max = right.left - ro + half;
                         if (max > min) {
@@ -891,8 +901,10 @@
                 if (dx <= align && dy > 0 && dy <= maxSep) {
                     const upper = acy <= bcy ? a : b;
                     const lower = acy <= bcy ? b : a;
+                    const extra = pairSqueeze(upper, lower);
+                    const half = extra * 0.5;
                     const gap = lower.top - upper.bottom;
-                    if (gap + squeeze > bodyH) {
+                    if (gap + extra > bodyH) {
                         const min = upper.bottom + to - half;
                         const max = lower.top + half;
                         if (max > min) {

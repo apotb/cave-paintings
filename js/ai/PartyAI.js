@@ -178,6 +178,7 @@ class PartyAI {
                 : !!(
                     thing?.meta?.dryingRack
                     || thing?.meta?.campfire
+                    || thing?.meta?.id === "wicker_basket"
                     || (thing?.meta?.craftStation && thing?.meta?.id !== "skinworking_bench")
                 );
             if (!gap) return false;
@@ -185,7 +186,12 @@ class PartyAI {
             seen.add(thing);
             const tb = thing.body;
             if (!tb?.enable) return false;
-            racks.push({ left: tb.left, right: tb.right, top: tb.top, bottom: tb.bottom });
+            const rack = { left: tb.left, right: tb.right, top: tb.top, bottom: tb.bottom };
+            const squeeze = typeof Place !== "undefined" && Place.gapSqueeze
+                ? Place.gapSqueeze(thing.meta)
+                : 0;
+            if (squeeze > 0) rack.gapSqueeze = squeeze;
+            racks.push(rack);
             return false;
         });
         if (racks.length < 2) return null;
