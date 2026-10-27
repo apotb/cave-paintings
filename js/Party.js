@@ -604,6 +604,8 @@ class PartySystem {
         const pawn = (scene.party || []).find((p) => p && p.pawnId === id)
             || (scene.settlers || []).find((p) => p && p.pawnId === id);
         if (!pawn || pawn === scene.leader) return;
+        const bio = scene.bioPanel;
+        const showing = !!(bio?.visible && bio._pawn?.() === pawn);
         if (scene.player === pawn) {
             const next = scene.leader && scene.leader !== pawn && !scene.leader.isBodyDead?.()
                 ? scene.leader
@@ -625,7 +627,11 @@ class PartySystem {
         scene.party = (scene.party || []).filter((p) => p !== pawn);
         this.releaseSettlerAsWanderer(pawn, ev.heading || { x: 1, y: 0 });
         pawn.recruitLocked = true;
-        if (scene.focusPawn === pawn) scene.bioPanel?.close?.();
+        if (showing) bio.close();
+        else if (scene.focusPawn === pawn) {
+            scene.focusPawn = null;
+            scene._followFocusedSettler = false;
+        }
         scene.partyPanel?.refresh?.();
         scene.hotbar && (scene.hotbar.dirty = true);
     }

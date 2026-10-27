@@ -88,8 +88,11 @@
             // Job priority is already on the client. YOU copies every body.
             const skipYou = action?.type === Protocol.Actions.SETTLEMENT
                 && action.op === "setJobs";
+            // A party snapshot that already dropped them is applied as a death.
+            // The banish event has to land first so they walk off instead.
+            if (action?.type === Protocol.Actions.BANISH) this.flushEvents();
             if (!skipYou) this.flushYou(playerId);
-            this.flushEvents();
+            if (action?.type !== Protocol.Actions.BANISH) this.flushEvents();
         }
 
         tick(dtMs) {

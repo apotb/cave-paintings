@@ -121,12 +121,12 @@ class BioPanel {
         return pawn?.displayName?.() || pawn?.pawnName || pawn?.name || "them";
     }
 
-    /** Party companions and your settlers. Not you, and not a wanderer. */
+    /** Companions and your settlers. The leader stays. Wanderers and other camps stay. */
     _canBanish(pawn) {
         const scene = this.scene;
         if (!pawn || pawn.isBodyDead?.()) return false;
-        if (pawn === scene.player || pawn === scene.leader || pawn.isControlled?.()) return false;
-        if ((scene.party || []).includes(pawn)) return pawn.role !== "leader";
+        if (pawn === scene.leader || pawn.role === "leader") return false;
+        if ((scene.party || []).includes(pawn)) return true;
         if (pawn.role === "settler") {
             if (scene.partySys?.settlerIsForeign?.(pawn)) return false;
             return true;
