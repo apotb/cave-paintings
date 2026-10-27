@@ -1514,14 +1514,40 @@ function itemIconDataUrl(scene, itemId) {
 }
 
 /**
+ * Baked sprite for a stack whose art is a tinted body plus a shade or tip
+ * overlay. Pebble shade marks live on variant 2. A grindstone always stamps
+ * its mask. Null leaves the plain item key.
+ */
+function stuffedStackIconKey(scene, stack) {
+    if (!scene || !stack?.id) return null;
+    const id = stack.id;
+    if (id === "pebble" && typeof ensureStoneTexture === "function") {
+        return ensureStoneTexture(scene, "pebble", 2, stack.stone);
+    }
+    if (id === "grindstone" && typeof ensureStoneTexture === "function") {
+        return ensureStoneTexture(scene, "grindstone", 1, stack.stone);
+    }
+    if (id === "painting_circle" && typeof ensurePaintingCircleTexture === "function") {
+        return ensurePaintingCircleTexture(scene, stack.stone);
+    }
+    if ((id === "stone_spear" || id === "flint_spear") && typeof ensureSpearTexture === "function") {
+        return ensureSpearTexture(scene, stack.knapMaterial, stack.stone);
+    }
+    return null;
+}
+
+/**
  * Data URL of the sprite a carried stack uses. Knapped tools keep their
- * carved picture instead of the stone_tool item art.
+ * carved picture instead of the stone_tool item art. Stuffed stones keep
+ * the tinted body and shade overlay instead of the plain item frame.
  */
 function stackIconDataUrl(scene, stack) {
     if (!scene || !stack?.id) return null;
     const textures = scene.textures;
     const meta = scene.getItem?.(stack.id) || { id: stack.id, key: stack.id };
     let key = stackIconKey(meta, stack, scene);
+    const stuffed = stuffedStackIconKey(scene, stack);
+    if (stuffed && textures?.exists?.(stuffed)) key = stuffed;
     if (
         (stack.toolClass || stack.knapIconData)
         && typeof Knapping !== "undefined"
