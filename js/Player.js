@@ -997,6 +997,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             bodyPlan: this.anatomy?.planId || "human",
             mobId: "human",
             playerCorpse,
+            sourceUid: this.pawnId || this.uid || null,
             persist: opts.persist !== false
         });
     }

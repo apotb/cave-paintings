@@ -246,7 +246,9 @@ class HealthPanel {
     open() {
         const scene = this.scene;
         const corpsePanel = scene.corpsePanel;
-        if (corpsePanel?.visible && corpsePanel.corpse?.active) {
+        const watched = corpsePanel?.visible && corpsePanel.corpse
+            && (corpsePanel.corpse.active || corpsePanel.corpse.entry?.downedLiving);
+        if (watched) {
             corpsePanel._showCorpseHealth();
             return;
         }
@@ -272,14 +274,17 @@ class HealthPanel {
      * @param {Body} body
      * @param {string} title
      */
-    openInspect(body, title) {
+    openInspect(body, title, opts) {
         if (!body) return;
+        const retarget = !!opts?.retarget;
         this._inspectBody = body;
         this._inspectTitle = title || "Corpse";
-        this.scene.partySys?.releaseSettlerFocus?.();
-        if (this.scene.settlementPanel?.visible) this.scene.settlementSys?.closePanel?.();
-        if (this.scene.bioPanel?.visible) this.scene.bioPanel.close();
-        this._injScroll = 0;
+        if (!retarget) {
+            this.scene.partySys?.releaseSettlerFocus?.();
+            if (this.scene.settlementPanel?.visible) this.scene.settlementSys?.closePanel?.();
+            if (this.scene.bioPanel?.visible) this.scene.bioPanel.close();
+            this._injScroll = 0;
+        }
         this.visible = true;
         this.root.setVisible(true);
         this.refresh({ force: true });

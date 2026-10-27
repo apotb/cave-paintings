@@ -733,6 +733,7 @@ class PartySystem {
             if (!entry || entry.dead) return null;
             return {
                 id: entry.id,
+                netMob: true,
                 ally: false,
                 downed: !!(entry.prone && !entry.resting),
                 name: entry.name || entry.kind || "Creature",
@@ -801,10 +802,27 @@ class PartySystem {
             entry,
             sprite: subject.sprite,
             get active() {
-                if (holder._netMobId || holder === scene.netMobs?.get(subject.id)) {
-                    return !!(holder.prone && !holder.dead && !holder.resting);
+                if (subject.netMob) {
+                    const live = scene.netMobs?.get(subject.id);
+                    if (!live || live.dead) return false;
+                    return !!(live.prone && !live.resting);
                 }
                 return !!(P.isDowned?.(holder) && holder.active !== false && !holder.isBodyDead?.());
+            },
+            /** True once this downed enemy is dead or has left the world. Standing up is not death. */
+            subjectDied() {
+                if (subject.netMob) {
+                    const live = scene.netMobs?.get(subject.id);
+                    if (!live) return true;
+                    return !!(live.dead);
+                }
+                return !!(
+                    holder.isBodyDead?.()
+                    || holder._bodyDead
+                    || holder._dead
+                    || holder.dead
+                    || holder.active === false
+                );
             },
             get x() {
                 const c = holder.bodyCenter?.();

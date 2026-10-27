@@ -520,7 +520,8 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             loot,
             body: this.anatomy?.toJSON?.(),
             bodyPlan: this.def?.bodyPlan || this.anatomy?.planId || "human",
-            mobId: this.def?.id || null
+            mobId: this.def?.id || null,
+            sourceUid: this.entry?.uid || this.uid || null
         };
 
         if (dedicated) {

@@ -3383,6 +3383,7 @@ test("wanderer corpse uses body center, not feet x / y-8", () => {
     assert.equal(corpses[0].x, 48 + 8);
     assert.equal(corpses[0].y, 64 - 8);
     assert.notEqual(corpses[0].x, 48);
+    assert.equal(corpses[0].sourceUid, id);
 });
 
 function berries(qty = 4) {

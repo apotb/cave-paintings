@@ -225,6 +225,7 @@
                 diedAt: c.diedAt,
                 stage: c.stage === "carcass" ? "carcass" : "corpse",
                 playerCorpse: !!c.playerCorpse,
+                sourceUid: c.sourceUid || null,
                 netSync: true
             };
             if (opts.pending) {
@@ -276,6 +277,7 @@
             spr.entry.bodyPlan = c.bodyPlan || spr.entry.bodyPlan || "human";
             spr.entry.mobId = c.mobId != null ? c.mobId : spr.entry.mobId;
             spr.entry.playerCorpse = !!(c.playerCorpse || spr.entry.playerCorpse);
+            if (c.sourceUid) spr.entry.sourceUid = c.sourceUid;
             spr.entry.loot = loot;
             if (c.diedAt != null) spr.entry.diedAt = c.diedAt;
             if (c.stage) spr.entry.stage = c.stage;

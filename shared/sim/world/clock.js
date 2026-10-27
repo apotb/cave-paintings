@@ -1200,6 +1200,7 @@
                     playerCorpse: !!corpse.playerCorpse,
                     diedAt: corpse.diedAt,
                     stage: corpse.stage || "corpse",
+                    sourceUid: corpse.sourceUid || null,
                     cx: c.cx,
                     cy: c.cy
                 });

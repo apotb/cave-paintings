@@ -2249,7 +2249,8 @@
             body: creature?.anatomy?.toJSON?.() || w.body || null,
             bodyPlan: "human",
             mobId: "human",
-            playerCorpse: false
+            playerCorpse: false,
+            sourceUid: w.id
         });
         this.wanderers.delete(w.id);
         this.creatures.delete(w.id);

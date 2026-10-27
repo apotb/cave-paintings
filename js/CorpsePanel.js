@@ -3,6 +3,9 @@
  * Empty holes stick while anything remains; taking the last item closes and despawns.
  */
 class CorpsePanel {
+    /** How long to keep a dying enemy's panel open while their corpse catches up. */
+    static DEATH_HOLD_MS = 2000;
+
     constructor(scene) {
         this.scene = scene;
         this.visible = false;
@@ -124,13 +127,116 @@ class CorpsePanel {
 
     update() {
         if (this.visible && this.corpse && (!this.corpse.active || !this.corpse.inRange?.())) {
-            this.close();
-        } else if (this.visible && this.corpse?.entry?.downedLiving) {
-            this.layout();
+            if (!this._stayWithDeadSubject()) this.close();
+            else if (this.corpse?.entry?.downedLiving) this.layout();
+        } else {
+            this._deathHoldUntil = 0;
+            if (this.visible && this.corpse?.entry?.downedLiving) this.layout();
         }
         // Sampled after input, so a click that just opened the menu does not
         // also count as the click that closes it.
         this._armedToClose = this.visible;
+    }
+
+    /**
+     * A downed enemy just died under an open panel. Keep bio and health on them
+     * by following the corpse that replaced them. Standing up still closes.
+     * @returns {boolean} true when the panel should stay open
+     */
+    _stayWithDeadSubject() {
+        const view = this.corpse;
+        if (!view?.entry?.downedLiving) return false;
+        if (typeof view.subjectDied !== "function" || !view.subjectDied()) return false;
+        if (typeof view.inRange === "function" && !view.inRange()) return false;
+        const next = CorpsePanel.findDeathCorpse(
+            view,
+            this._corpseCandidates(),
+            this.scene.tileSize || 16
+        );
+        if (next) {
+            this.followOntoCorpse(next);
+            return true;
+        }
+        const now = this.scene.time?.now ?? Date.now();
+        if (!this._deathHoldUntil) this._deathHoldUntil = now + CorpsePanel.DEATH_HOLD_MS;
+        return now < this._deathHoldUntil;
+    }
+
+    _corpseCandidates() {
+        const list = [];
+        const seen = new Set();
+        const push = (spr) => {
+            if (!spr || seen.has(spr)) return;
+            seen.add(spr);
+            list.push(spr);
+        };
+        for (const spr of this.scene.corpses?.getChildren?.() || []) push(spr);
+        const net = this.scene.netCorpses;
+        if (net?.values) {
+            for (const spr of net.values()) push(spr);
+        }
+        return list;
+    }
+
+    /**
+     * Corpse sprite that replaced a downed enemy. sourceUid wins; otherwise the
+     * nearest same-name body within two tiles.
+     * @param {{ lootId?: string, entry?: { name?: string }, x?: number, y?: number }} view
+     * @param {object[]} corpses
+     * @param {number} [tileSize]
+     */
+    static findDeathCorpse(view, corpses, tileSize = 16) {
+        if (!view) return null;
+        const id = view.lootId ? String(view.lootId) : "";
+        const name = String(view.entry?.name || "");
+        const x = Number(view.x) || 0;
+        const y = Number(view.y) || 0;
+        const tile = Math.max(8, Number(tileSize) || 16);
+        const maxD = (tile * 2) * (tile * 2);
+        let best = null;
+        let bestD = maxD;
+        const seen = new Set();
+        for (const spr of corpses || []) {
+            if (!spr || seen.has(spr) || spr === view) continue;
+            seen.add(spr);
+            if (spr.active === false || !spr.entry || spr.entry.downedLiving) continue;
+            const uid = spr.entry.sourceUid ? String(spr.entry.sourceUid) : "";
+            if (id && uid && uid === id) return spr;
+            const dx = (Number(spr.x) || 0) - x;
+            const dy = (Number(spr.y) || 0) - y;
+            const d = dx * dx + dy * dy;
+            if (d > bestD) continue;
+            if (name && spr.entry.name && spr.entry.name !== name) continue;
+            bestD = d;
+            best = spr;
+        }
+        return best;
+    }
+
+    /** Swap an open downed panel onto the corpse without closing bio or health. */
+    followOntoCorpse(corpse) {
+        if (!this.visible || !corpse?.entry || corpse.entry.downedLiving) return false;
+        const healthOpen = !!this.scene.healthPanel?.visible;
+        const bio = this.scene.bioPanel;
+        const bioOpen = !!bio?.visible;
+        this._deathHoldUntil = 0;
+        this.corpse = corpse;
+        this.session = (corpse.entry.loot || []).map((s) => (
+            typeof cloneItemStack === "function" ? cloneItemStack(s) : s
+        ));
+        this._hadLootOnOpen = this.session.some(Boolean);
+        if (!this.session.length) this.session = [null];
+        const dy = Number(corpse.y) || 0;
+        this.container?.setDepth?.(Math.max(250, dy + 80));
+        this._rebuildSlots();
+        this.layout();
+        this.refresh();
+        if (healthOpen) this._showCorpseHealth({ retarget: true });
+        if (bioOpen) {
+            bio._sig = "";
+            bio.refresh?.();
+        }
+        return true;
     }
 
     open(corpse) {
@@ -145,6 +251,7 @@ class CorpsePanel {
         this.scene._closeRockStation?.();
         if (this.scene.settlementPanel?.visible) this.scene.settlementSys?.closePanel?.();
 
+        this._deathHoldUntil = 0;
         this.corpse = corpse;
         this.session = (corpse.entry.loot || []).map(s => cloneItemStack(s));
         this._hadLootOnOpen = this.session.some(Boolean);
@@ -162,12 +269,12 @@ class CorpsePanel {
         this._showCorpseHealth();
     }
 
-    _showCorpseHealth() {
+    _showCorpseHealth(opts) {
         const entry = this.corpse?.entry;
         const hp = this.scene.healthPanel;
         if (!hp) return;
         if (!entry?.body) {
-            if (hp.visible) hp.close();
+            if (hp.visible && !opts?.retarget) hp.close();
             return;
         }
         const planId = entry.bodyPlan || entry.body.planId || "human";
@@ -183,7 +290,7 @@ class CorpsePanel {
             : downed
                 ? `${name} (downed)`
                 : `${name} (${carcass ? "carcass" : "corpse"})`;
-        hp.openInspect(body, label);
+        hp.openInspect(body, label, opts?.retarget ? { retarget: true } : undefined);
     }
 
     _closeCorpseHealth() {
@@ -202,6 +309,7 @@ class CorpsePanel {
      */
     close(skipCompact = false) {
         if (!this.visible && !this.corpse) return;
+        this._deathHoldUntil = 0;
         this._cancelDrag();
         this.scene.hideTooltip();
         this._closeCorpseHealth();
