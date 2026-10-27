@@ -618,6 +618,7 @@ class SimCreature {
             if (!target || target === this || target.isBodyDead?.()) continue;
             if (this.attackHitSet.has(target)) continue;
             if (Party?.sameFaction?.(this, target)) continue;
+            if (Party?.sparesDowned?.(this, target)) continue;
             if (this.ctx?.sim?._companionMayStrike && !this.ctx.sim._companionMayStrike(this, target)) {
                 continue;
             }

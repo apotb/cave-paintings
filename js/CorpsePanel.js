@@ -125,6 +125,8 @@ class CorpsePanel {
     update() {
         if (this.visible && this.corpse && (!this.corpse.active || !this.corpse.inRange?.())) {
             this.close();
+        } else if (this.visible && this.corpse?.entry?.downedLiving) {
+            this.layout();
         }
         // Sampled after input, so a click that just opened the menu does not
         // also count as the click that closes it.
@@ -140,6 +142,8 @@ class CorpsePanel {
         if (this.scene.storagePanel?.visible) this.scene.storagePanel.close();
         if (this.scene.leanToPanel?.visible) this.scene.leanToPanel.close();
         if (this.scene.craftMenuVisible) this.scene.closeCraftMenu();
+        this.scene._closeRockStation?.();
+        if (this.scene.settlementPanel?.visible) this.scene.settlementSys?.closePanel?.();
 
         this.corpse = corpse;
         this.session = (corpse.entry.loot || []).map(s => cloneItemStack(s));
@@ -173,9 +177,12 @@ class CorpsePanel {
         const carcass = typeof CorpseDecay !== "undefined" && CorpseDecay.isCarcass
             ? CorpseDecay.isCarcass(entry, this.scene.worldMinuteIndex?.())
             : entry.stage === "carcass";
+        const downed = !!entry.downedLiving;
         const label = name === "Corpse"
             ? (carcass ? "Carcass" : "Corpse")
-            : `${name} (${carcass ? "carcass" : "corpse"})`;
+            : downed
+                ? `${name} (downed)`
+                : `${name} (${carcass ? "carcass" : "corpse"})`;
         hp.openInspect(body, label);
     }
 
@@ -202,18 +209,21 @@ class CorpsePanel {
 
         const corpse = this.corpse;
         const sessionEmpty = !this.session.some(Boolean);
+        const living = !!corpse?.entry?.downedLiving;
         if (corpse && !skipCompact) {
             if (!this._dedicatedNet()) {
                 corpse.setLootFromSession(this.session);
             }
-            if (sessionEmpty || corpse.isEmpty?.()) {
+            if (sessionEmpty || (!living && corpse.isEmpty?.())) {
                 this.visible = false;
                 this.corpse = null;
                 this.session = [];
                 this.container.setVisible(false);
                 this._clearSlots();
-                if (this._dedicatedNet()) this._notifyServerDismiss(corpse);
-                else corpse.removeForever?.();
+                if (!living) {
+                    if (this._dedicatedNet()) this._notifyServerDismiss(corpse);
+                    else corpse.removeForever?.();
+                }
                 return;
             }
         }
@@ -434,9 +444,31 @@ class CorpsePanel {
         return !!(this.scene.simAuth());
     }
 
-    /** Tell the dedicated server we took qty from a corpse slot. */
+    /** Tell the dedicated server we took qty from a corpse or downed enemy. */
     _notifyServerTake(index, quantity, opts = null) {
         if (!this._dedicatedNet()) return;
+        if (this.corpse?.entry?.downedLiving) {
+            const targetId = this.corpse.lootId;
+            const stack = this.session[index];
+            if (!targetId || !(quantity > 0) || !stack?.id) return;
+            const player = this.scene.player;
+            this.scene._netSendMove?.(true);
+            this.scene.net.sendAction({
+                type: NetProtocol.Actions.DOWNED_TAKE,
+                targetId,
+                index,
+                itemId: stack.id,
+                quantity,
+                equipIfEmpty: !!opts?.equipIfEmpty,
+                pawnId: player?.pawnId,
+                toPawnId: opts?.toPawnId || undefined,
+                inv: Number.isInteger(opts?.inv) ? opts.inv : undefined,
+                bag: opts?.bag || undefined,
+                x: player?.x,
+                y: player?.y
+            });
+            return;
+        }
         const id = this.corpse?.entry?.id;
         const stack = this.session[index];
         if (!id || !(quantity > 0) || !stack?.id) return;
@@ -477,9 +509,25 @@ class CorpsePanel {
         });
     }
 
+    /** Refresh an open downed-enemy panel after a snapshot rewrites their bags. */
+    syncDownedPawn(id) {
+        if (!this.visible || !this.corpse?.entry?.downedLiving) return;
+        if (!id || this.corpse.lootId !== id) return;
+        this.syncFromEntry();
+        const hp = this.scene.healthPanel;
+        const body = this.corpse.entry?.body;
+        if (hp?.isInspecting?.() && body && hp._inspectBody?.loadJSON) {
+            hp._inspectBody.loadJSON(body);
+            hp.refresh?.({ force: true });
+        }
+    }
+
     /** Rebuild session from authoritative entry loot (dedicated snapshots / events). */
     syncFromEntry() {
         if (!this.corpse?.entry || !this.visible) return;
+        if (this.corpse.entry.downedLiving && typeof this.corpse.syncLoot === "function") {
+            this.corpse.syncLoot();
+        }
         const loot = (this.corpse.entry.loot || [])
             .filter(Boolean)
             .map((s) => (typeof cloneItemStack === "function" ? cloneItemStack(s) : { ...s }));

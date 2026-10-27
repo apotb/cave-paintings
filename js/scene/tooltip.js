@@ -415,7 +415,11 @@
                             if (this._isUnderCorpsePanel(obj)) return obj;
                         }
                     }
-                    if (overBody) return body;
+                    if (overBody) {
+                        // A downed enemy's loot view is a plain object. Hover the sprite.
+                        if (typeof body.emit === "function") return body;
+                        if (body.sprite && typeof body.sprite.emit === "function") return body.sprite;
+                    }
                     return corpseP.bg;
                 }
             }
@@ -1030,7 +1034,9 @@
                 if (this._hoverTarget) {
                     const prev = this._hoverTarget;
                     this._hoverTarget = null;
-                    if (prev.active && prev.input?.enabled) prev.emit("pointerout", pointer);
+                    if (typeof prev.emit === "function" && prev.active && prev.input?.enabled) {
+                        prev.emit("pointerout", pointer);
+                    }
                 }
                 this._fishHoverOn = true;
                 this.showTooltip(fishTip, pointer.x, pointer.y, null);
@@ -1046,7 +1052,7 @@
                 const prev = this._hoverTarget;
                 this._hoverTarget = top;
 
-                if (prev && prev.active && prev.input?.enabled) {
+                if (prev && typeof prev.emit === "function" && prev.active && prev.input?.enabled) {
                     prev.emit("pointerout", pointer);
                 } else if (this._tooltipTarget && this._tooltipTarget !== top) {
                     this.hideTooltip();
@@ -1057,7 +1063,7 @@
                     this.hideTooltip();
                 }
 
-                if (top) top.emit("pointerover", pointer);
+                if (top && typeof top.emit === "function") top.emit("pointerover", pointer);
                 else this.hideWorldTooltip();
             } else if (top && this.tooltip?.visible && this.tooltip.scene) {
                 this.positionTooltip(pointer.x, pointer.y);
@@ -1070,7 +1076,7 @@
             ) {
                 // Rest pinning used to drop Phaser's over-state without a mouse
                 // move; pointerover never fired again until you left and re-entered.
-                top.emit("pointerover", pointer);
+                if (typeof top.emit === "function") top.emit("pointerover", pointer);
             }
 
             this.input.setDefaultCursor(top ? this._cursorFor(top) : "default");

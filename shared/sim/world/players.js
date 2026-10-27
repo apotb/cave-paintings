@@ -284,7 +284,13 @@
             wanderers: [...this.wanderers.values()]
                 .filter((w) => w && !w.dead)
                 .map((w) => this._publicWanderer(w)),
-            settlements: this.settlements || [],
+            settlements: (this.settlements || []).map((s) => {
+                if (!s || (!s._hostileList && s._hostileGen == null)) return s;
+                const copy = { ...s };
+                delete copy._hostileList;
+                delete copy._hostileGen;
+                return copy;
+            }),
             researchSpentByOwner: this.researchSpentByOwner && typeof this.researchSpentByOwner === "object"
                 ? { ...this.researchSpentByOwner }
                 : {},
@@ -417,11 +423,14 @@
                 if (name) s.ownerName = name;
             }
             if ("ownerOnline" in s) delete s.ownerOnline;
-            out.push({
+            const pub = {
                 ...s,
                 ownerName: s.ownerName || "",
                 ownerOnline: online
-            });
+            };
+            delete pub._hostileList;
+            delete pub._hostileGen;
+            out.push(pub);
         }
         return out;
     },

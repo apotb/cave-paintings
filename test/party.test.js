@@ -278,3 +278,28 @@ test("pickAutoEat prefers soonest-spoil raw when no prepared food exists", () =>
     const pick = Party.pickAutoEat(eater, [eater], { getFood: (s) => s.food });
     assert.equal(pick.stack.id, "blueberry");
 });
+
+test("settlers and party members spare downed foes", () => {
+    const boar = { kind: "mob", _prone: true, isBodyDead() { return false; } };
+    const settler = { role: "settler", kind: "player" };
+    const friend = { role: "companion", kind: "player" };
+    const you = { role: "leader", kind: "player", isControlled() { return true; } };
+    const wolf = { kind: "mob" };
+    const sleeper = { _prone: true, _resting: true };
+    assert.equal(Party.isDowned(boar), true);
+    assert.equal(Party.isDowned(sleeper), false);
+    assert.equal(Party.isDowned({ dead: true, _prone: true }), false);
+    assert.equal(Party.sparesDowned(settler, boar), true);
+    assert.equal(Party.sparesDowned(friend, boar), true);
+    assert.equal(Party.sparesDowned(you, boar), false);
+    assert.equal(Party.sparesDowned(wolf, { role: "leader", _downed: true }), false);
+    const guy = {
+        inventory: [{ id: "stick", quantity: 2 }, null],
+        equipment: { head: { id: "hide_cap", quantity: 1 }, torso: null, legs: null, feet: null, back: null, waist: [] }
+    };
+    const src = Party.carriedLootSources(guy);
+    assert.equal(src[0].bag, "equip");
+    assert.equal(src[0].slot, "head");
+    assert.equal(src[1].bag, "hotbar");
+    assert.equal(src[1].stack.id, "stick");
+});

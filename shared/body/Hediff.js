@@ -375,8 +375,10 @@
             if (owner.isBodyDead?.()) return;
 
             // Players track hunger (client Player.hungerTick, or dedicated SimCreature kind).
-            // Mobs must not gain malnutrition.
-            if (this._ownerTracksHunger(owner)) {
+            // Mobs and wanderers have no hunger bar, so they must not gain malnutrition.
+            if (owner.role === "wanderer") {
+                body.removeHediff?.("malnutrition");
+            } else if (this._ownerTracksHunger(owner)) {
                 this._tickMalnutrition(owner, body, ctx);
                 if (owner.isBodyDead?.()) return;
             }

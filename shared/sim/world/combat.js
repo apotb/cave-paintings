@@ -123,6 +123,7 @@
 
     _partySetAssist(session, enemy) {
         if (!session || !enemy) return;
+        if (Party.isDowned?.(enemy)) return;
         const controlId = session.controlId || session.id;
         for (const p of this._livingPartyOf(session)) {
             if (p.id === controlId) continue;
@@ -175,6 +176,8 @@
             p.lastHitMob = null;
             return null;
         }
+        // Leave them down. The hunt resumes if they get back up.
+        if (Party.isDowned?.(hit)) return null;
         if (Date.now() - (Number(p.lastHitAt) || 0) > 8000) {
             p.lastHitMob = null;
             p.huntKind = null;
@@ -209,6 +212,7 @@
     _hostileInSettlement(settle, ent, settler) {
         if (!ent || !settle) return false;
         if (ent.isBodyDead?.() || ent._dead || ent.dead) return false;
+        if (Party.isDowned?.(ent)) return false;
         if (Party.sameFaction?.(settler, ent)) return false;
         if (!Settlement.inRange(settle, ent.x, ent.y, TS)) return false;
         const owner = Party.ownerIdOf(ent);
@@ -223,11 +227,20 @@
      */
     _settlementHostiles(settle) {
         if (!settle) return [];
+        // Never hang this list on the settlement. It is saved with the world,
+        // and the creatures point back at the sim.
+        if (settle._hostileList || settle._hostileGen != null) {
+            delete settle._hostileList;
+            delete settle._hostileGen;
+        }
         const gen = this._queryGen | 0;
-        if (settle._hostileGen === gen && settle._hostileList) return settle._hostileList;
+        if (!this._hostileBySettle) this._hostileBySettle = new WeakMap();
+        const cached = this._hostileBySettle.get(settle);
+        if (cached && cached.gen === gen) return cached.list;
         const list = [];
         const push = (ent) => {
             if (!ent || ent.isBodyDead?.() || ent._dead || ent.dead) return;
+            if (Party.isDowned?.(ent)) return;
             if (!Settlement.inRange(settle, ent.x, ent.y, TS)) return;
             const owner = Party.ownerIdOf(ent);
             if (owner && this.players.has(owner)) return;
@@ -242,8 +255,7 @@
             if (!w || w.dead) continue;
             push(this._ensureWandererCreature(w) || w);
         }
-        settle._hostileGen = gen;
-        settle._hostileList = list;
+        this._hostileBySettle.set(settle, { gen, list });
         return list;
     },
 
@@ -427,6 +439,7 @@
      * session already owns the aggro.
      */
     _playerCanFight(a, b) {
+        if (Party.sparesDowned?.(a, b)) return false;
         if (a?.role === "wanderer" && b?.role === "wanderer") return false;
         const oa = Party.ownerIdOf(a);
         const ob = Party.ownerIdOf(b);

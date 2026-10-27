@@ -5092,3 +5092,129 @@ test("rotate turns a drying rack spot and a skinworking bench, not a grindstone"
     assert.equal(Place.normalizeRot(stone.rot), 0);
 });
 
+test("party members leave a downed quarry for the player", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.connected = true;
+    const buddy = addTestCompanion(world, pawn);
+    const boar = spawnHostileBoar(world, pawn.x + 12, pawn.y);
+    const you = world._ensurePlayerCreature(pawn);
+    landHit(you, boar);
+    boar.isIncapacitated = () => true;
+    boar.refreshCapacities?.();
+    for (let i = 0; i < 10; i++) world.tick(50);
+    assert.equal(buddy.creature?.ai?.assistTarget || null, null);
+});
+
+test("the possessed pawn can still strike a downed enemy", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.connected = true;
+    const buddy = addTestCompanion(world, pawn);
+    const boar = spawnHostileBoar(world, pawn.x, pawn.y);
+    boar.isIncapacitated = () => true;
+    boar._prone = true;
+    const you = world._ensurePlayerCreature(pawn);
+    const friend = world._ensureCompanionCreature(pawn, buddy);
+    you.x = boar.x;
+    you.y = boar.y;
+    friend.x = boar.x;
+    friend.y = boar.y;
+    assert.equal(you.isControlled(), true);
+    assert.equal(Party.sparesDowned(friend, boar), true);
+    assert.equal(Party.sparesDowned(you, boar), false);
+    const before = JSON.stringify(boar.anatomy.toJSON());
+    friend.tryMeleeAttack(boar);
+    friend.attackTimer = friend.attackMax * 0.5;
+    friend.tickMelee(16, [boar]);
+    assert.equal(JSON.stringify(boar.anatomy.toJSON()), before);
+    you.tryMeleeAttack(boar);
+    you.attackTimer = you.attackMax * 0.5;
+    you.tickMelee(16, [boar]);
+    assert.notEqual(JSON.stringify(boar.anatomy.toJSON()), before);
+});
+
+test("a downed wanderer's inventory can be taken without killing them", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.connected = true;
+    const id = "w-loot";
+    world.wanderers.set(id, {
+        id,
+        name: "Og",
+        x: pawn.x + 8,
+        y: pawn.y,
+        facing: "down",
+        heading: { x: 1, y: 0 },
+        inventory: [{ id: "stick", quantity: 2 }, null, null, null, null],
+        hostile: true,
+        dead: false
+    });
+    const w = world.wanderers.get(id);
+    const c = world._ensureWandererCreature(w);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.DOWNED_TAKE,
+        targetId: id,
+        index: 0,
+        itemId: "stick",
+        quantity: 1,
+        x: pawn.x,
+        y: pawn.y
+    });
+    assert.equal(w.inventory[0].quantity, 2, "awake wanderers keep their gear");
+    c.isIncapacitated = () => true;
+    c._prone = true;
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.DOWNED_TAKE,
+        targetId: id,
+        index: 0,
+        itemId: "stick",
+        quantity: 1,
+        x: pawn.x,
+        y: pawn.y
+    });
+    assert.equal(w.inventory[0].quantity, 1);
+    assert.ok(pawn.inventory.some((s) => s && s.id === "stick"));
+    assert.equal(w.dead || false, false);
+    assert.equal(world.wanderers.has(id), true);
+});
+
+test("downed wanderers bleed and heal on the world minute", () => {
+    const { world, pawn } = createTestWorld();
+    const id = "w-bleed";
+    world.wanderers.set(id, {
+        id,
+        name: "Og",
+        x: pawn.x + 8,
+        y: pawn.y,
+        facing: "down",
+        heading: { x: 0, y: 0 },
+        inventory: [null, null, null, null, null],
+        hostile: true,
+        dead: false
+    });
+    const w = world.wanderers.get(id);
+    const c = world._ensureWandererCreature(w);
+    const arm = c.anatomy.part("Left Arm") || c.anatomy.core;
+    arm.injure({
+        id: "cut",
+        severity: 20,
+        bleeding: true,
+        bleedRate: 0.06,
+        tended: false
+    });
+    world._worldMinute();
+    assert.ok((c.anatomy.bloodLoss || 0) > 0, "blood loss should advance");
+    assert.ok((w.body?.bloodLoss || 0) > 0, "snapshot body should carry the loss");
+    const wound = arm.injuries[0];
+    wound.bleeding = false;
+    wound.tended = true;
+    const before = wound.severity;
+    let healed = false;
+    for (let i = 0; i < 20 && arm.injuries.includes(wound); i++) {
+        const sev = wound.severity;
+        world._worldMinute();
+        if (wound.severity < sev || !arm.injuries.includes(wound)) healed = true;
+    }
+    assert.equal(healed, true, `severity stayed ${before}`);
+    assert.equal(c.anatomy.hediff("malnutrition"), null);
+    assert.equal(world.wanderers.has(id), true);
+});
+

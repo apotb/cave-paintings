@@ -406,13 +406,18 @@
                 return !other?.dead;
             },
             getAssistTarget(mob) {
+                let target = null;
                 if (mob?.role === "settler" || mob?.homeSettlementId) {
-                    return self._settlerDefenseTarget(mob);
+                    target = self._settlerDefenseTarget(mob);
+                } else {
+                    target = this.getDuelTarget(mob);
+                    if (!target) {
+                        const owner = self._sessionOwnerOf(mob);
+                        target = self._chaseTarget(owner);
+                    }
                 }
-                const duel = this.getDuelTarget(mob);
-                if (duel) return duel;
-                const owner = self._sessionOwnerOf(mob);
-                return self._chaseTarget(owner);
+                if (target && Party.sparesDowned?.(mob, target)) return null;
+                return target;
             },
             shouldDelaySleep(mob) {
                 const pawn = self._findOwnedPawn(mob?.id);

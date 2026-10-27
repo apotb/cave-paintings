@@ -70,6 +70,9 @@ class PartyAI {
         if (pawn) pawn.isSprinting = false;
     }
     setAssist(target) {
+        if (target && typeof Party !== "undefined" && Party.sparesDowned?.(this.pawn, target)) {
+            target = null;
+        }
         if (target && target !== this.assistTarget) {
             this._clearAvoid();
         }

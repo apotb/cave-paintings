@@ -379,6 +379,10 @@
             this._tryCorpseTake(p, action);
             return;
         }
+        if (type === Protocol.Actions.DOWNED_TAKE) {
+            this._tryDownedTake(p, action);
+            return;
+        }
         if (type === Protocol.Actions.CORPSE_SKIN) {
             this._tryCorpseSkin(p, action);
             return;

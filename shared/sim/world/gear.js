@@ -1127,6 +1127,131 @@
         }
     },
 
+    /**
+     * Living downed foe the player is allowed to loot. Allies stay medical.
+     * @returns {{ holder: object, creature: object, ownerId: string|null }|null}
+     */
+    _resolveDownedLoot(id) {
+        if (!id) return null;
+        const pack = (holder, creature, ownerId) => {
+            if (!holder || holder.dead) return null;
+            const body = creature || holder;
+            if (body.isBodyDead?.() || body._dead) return null;
+            if (!Party.isDowned?.(body)) return null;
+            return { holder, creature: body, ownerId: ownerId || null };
+        };
+        const w = this.wanderers.get(id);
+        if (w) {
+            const c = w.creature || this._ensureWandererCreature(w);
+            return pack(w, c, null);
+        }
+        const mob = this.mobs.get(id);
+        if (mob) return pack(mob, mob, null);
+        for (const p of this.players.values()) {
+            if (!p) continue;
+            if (p.id === id) {
+                const c = p.creature || this.creatures.get(p.id);
+                return pack(p, c, p.id);
+            }
+            for (const m of p.party || []) {
+                if (!m || m.id !== id) continue;
+                const c = m.creature || this.creatures.get(m.id);
+                return pack(m, c, p.id);
+            }
+        }
+        for (const s of this.settlers || []) {
+            if (!s || s.id !== id) continue;
+            const c = s.creature || this.creatures.get(s.id);
+            return pack(s, c, s.ownerId || null);
+        }
+        return null;
+    },
+
+    _clearCarriedSource(holder, src) {
+        if (!holder || !src) return;
+        const qty = Math.floor(Number(src.stack?.quantity) || 0);
+        if (qty > 0) return;
+        if (src.bag === "hotbar" && Array.isArray(holder.inventory)) holder.inventory[src.slot] = null;
+        else if (src.bag === "overflow" && Array.isArray(holder.overflow)) holder.overflow[src.slot] = null;
+        else if (src.bag === "equip" && holder.equipment) holder.equipment[src.slot] = null;
+        else if (src.bag === "waist" && Array.isArray(holder.equipment?.waist)) {
+            holder.equipment.waist[src.slot] = null;
+        }
+    },
+
+    /** Take carried gear off a downed enemy. They stay on the ground. */
+    _tryDownedTake(p, action = {}) {
+        const actor = this._actionPawn(p, action) || p;
+        if (!actor || actor.dead) return;
+        if (Number.isFinite(action.x) && Number.isFinite(action.y)) {
+            actor.x = action.x;
+            actor.y = action.y;
+            if (actor === p) p.poseAuth = true;
+        }
+        const targetId = String(action.targetId || "").slice(0, 64);
+        const found = this._resolveDownedLoot(targetId);
+        if (!found) return;
+        const { holder, creature, ownerId } = found;
+        const actorBody = actor.creature || this.creatures.get(actor.id) || actor;
+        if (Party.sameFaction?.(actorBody, creature) || Party.sameFaction?.(actor, holder)) return;
+        const dx = (creature.x ?? holder.x) - actor.x;
+        const dy = (creature.y ?? holder.y) - actor.y;
+        const r = TS * (HARVEST_RANGE_TILES + 2);
+        if (dx * dx + dy * dy > r * r) return;
+        const sources = Party.carriedLootSources(holder);
+        const wantId = action.itemId ? String(action.itemId) : null;
+        let slot = Math.floor(Number(action.index));
+        let src = Number.isInteger(slot) && slot >= 0 ? sources[slot] : null;
+        if (!src?.stack?.id || (wantId && src.stack.id !== wantId)) {
+            slot = sources.findIndex((s) => s?.stack && (!wantId || s.stack.id === wantId));
+            src = slot >= 0 ? sources[slot] : null;
+        }
+        if (!src?.stack?.id) return;
+        const stack = src.stack;
+        const dest = action.toPawnId ? this._partyGiveDest(p, action, actor) : actor;
+        if (action.toPawnId && !dest) return;
+        const receiver = dest || actor;
+
+        if (action.equipIfEmpty) {
+            const equipKey = this._emptyEquipSlotForItem(receiver, stack.id);
+            if (equipKey) {
+                const one = this._cloneGearStack(stack, 1);
+                this._setEquipStack(receiver, equipKey, one);
+                stack.quantity = (Math.floor(Number(stack.quantity) || 1)) - 1;
+                this._clearCarriedSource(holder, src);
+                this._syncWaistSlots(receiver);
+                this._syncPlayerInvSize(receiver);
+                this._youDirty.add(p.id);
+                if (ownerId) this._youDirty.add(ownerId);
+                return;
+            }
+        }
+
+        const want = Math.max(1, Math.floor(Number(action.quantity) || 1));
+        const takeQty = Math.min(Math.max(1, Math.floor(Number(stack.quantity) || 1)), want);
+        const prefer = Math.floor(Number(action.inv));
+        const bag = this._normBag(action.bag);
+        const left = action.toPawnId
+            ? this._giveOwnedStack(receiver, { ...stack, quantity: takeQty })
+            : (Number.isInteger(prefer) && prefer >= 0
+                ? this._placeInBagSlot(receiver, { ...stack, quantity: takeQty }, prefer, bag)
+                : this._give(receiver, stack.id, takeQty, this._stackExtrasFrom(stack)));
+        const taken = takeQty - left;
+        if (taken <= 0) {
+            this._youDirty.add(p.id);
+            return;
+        }
+        stack.quantity = (Math.floor(Number(stack.quantity) || 1)) - taken;
+        this._clearCarriedSource(holder, src);
+        if (creature && creature !== holder) {
+            creature.inventory = holder.inventory;
+            if (holder.equipment) creature.equipment = holder.equipment;
+            if (holder.overflow) creature.overflow = holder.overflow;
+        }
+        this._youDirty.add(p.id);
+        if (ownerId) this._youDirty.add(ownerId);
+    },
+
     /** First empty equipment slot key for item id, or null if none / not gear. */
     _emptyEquipSlotForItem(p, itemId) {
         if (!p || !itemId) return null;

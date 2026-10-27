@@ -243,6 +243,7 @@ class PartySystem {
                 return;
             }
             if (this.trySelfHeldAction(scene.player, _pointer)) return;
+            if (this.tryDownedLoot(obj)) return;
             const switchAlly = this.worldSwitchTarget(_pointer);
             if (switchAlly && typeof LeanTo !== "undefined" && obj instanceof LeanTo) {
                 this.tryAllyClick(switchAlly);
@@ -703,6 +704,155 @@ class PartySystem {
             scene.tileSize || 16,
             sys.ownerId()
         );
+    }
+
+    /** Allies and the awake stay on their own click paths. */
+    _downedLootAlly(obj) {
+        const scene = this.scene;
+        if (!obj) return false;
+        if (obj === scene.player || obj === scene.leader) return true;
+        if ((scene.party || []).includes(obj)) return true;
+        if ((scene.settlers || []).includes(obj) && !this.settlerIsForeign(obj)) return true;
+        if (obj.role === "companion" || obj.role === "leader") return true;
+        if (obj.role === "wanderer" && !obj.hostile) return true;
+        if (typeof Party !== "undefined" && Party.sameFaction?.(scene.player, obj)) return true;
+        return false;
+    }
+
+    _downedLootSubject(obj) {
+        const scene = this.scene;
+        if (!obj) return null;
+        if (obj._netMobId) {
+            const entry = scene.netMobs?.get(obj._netMobId);
+            if (!entry || entry.dead) return null;
+            return {
+                id: entry.id,
+                ally: false,
+                downed: !!(entry.prone && !entry.resting),
+                name: entry.name || entry.kind || "Creature",
+                body: entry.body || null,
+                bio: entry.bio || null,
+                bodyPlan: scene.getMob?.(entry.kind)?.bodyPlan || "human",
+                sprite: obj,
+                holder: entry
+            };
+        }
+        if (obj.role === "settler" && this.settlerIsForeign(obj)) return null;
+        return {
+            id: obj.pawnId || obj.uid || obj.id || null,
+            ally: this._downedLootAlly(obj),
+            downed: typeof Party !== "undefined" && Party.isDowned?.(obj),
+            name: obj.displayName?.() || obj.pawnName || obj.def?.name || "Someone",
+            body: obj.anatomy?.toJSON?.() || obj.body || null,
+            bio: obj.bio || null,
+            bodyPlan: obj.anatomy?.planId || obj.def?.bodyPlan || "human",
+            sprite: obj,
+            holder: obj
+        };
+    }
+
+    /**
+     * Click a downed enemy to open their carried gear, the same grid as a corpse.
+     * @returns {boolean} true when this click belongs to that panel
+     */
+    tryDownedLoot(obj) {
+        const subject = this._downedLootSubject(obj);
+        if (!subject?.id || subject.ally || !subject.downed) return false;
+        const scene = this.scene;
+        const panel = scene.corpsePanel;
+        const lootId = subject.id;
+        if (panel?.visible && panel.corpse?.entry?.downedLiving && panel.corpse.lootId === lootId) {
+            panel.close();
+            return true;
+        }
+        const view = this._downedLootView(subject);
+        if (!view) return true;
+        panel?.open?.(view);
+        return true;
+    }
+
+    _downedLootView(subject) {
+        const scene = this.scene;
+        const holder = subject.holder;
+        const P = typeof Party !== "undefined" ? Party : null;
+        if (!holder || !P?.carriedLootSources) return null;
+        const clone = (stack) => {
+            if (!stack) return null;
+            return typeof cloneItemStack === "function" ? cloneItemStack(stack) : { ...stack };
+        };
+        const entry = {
+            id: `downed:${subject.id}`,
+            downedLiving: true,
+            name: subject.name || "Someone",
+            body: subject.body || null,
+            bio: subject.bio || holder.bio || null,
+            bodyPlan: subject.bodyPlan || "human",
+            stage: "downed",
+            loot: []
+        };
+        const view = {
+            lootId: subject.id,
+            entry,
+            sprite: subject.sprite,
+            get active() {
+                if (holder._netMobId || holder === scene.netMobs?.get(subject.id)) {
+                    return !!(holder.prone && !holder.dead && !holder.resting);
+                }
+                return !!(P.isDowned?.(holder) && holder.active !== false && !holder.isBodyDead?.());
+            },
+            get x() {
+                const c = holder.bodyCenter?.();
+                if (c && Number.isFinite(c.x)) return c.x;
+                return Number(holder.x) || 0;
+            },
+            get y() {
+                const c = holder.bodyCenter?.();
+                if (c && Number.isFinite(c.y)) return c.y;
+                return Number(holder.y) || 0;
+            },
+            inRange() {
+                const player = scene.player;
+                if (!player) return false;
+                const pc = typeof player.bodyCenter === "function"
+                    ? player.bodyCenter()
+                    : { x: player.x, y: player.y };
+                const dx = this.x - pc.x;
+                const dy = this.y - pc.y;
+                const r = (scene.tileSize || 16) * (player.interactionRange || 4);
+                return dx * dx + dy * dy <= r * r;
+            },
+            getBounds() {
+                return subject.sprite?.getBounds?.() || null;
+            },
+            isEmpty() {
+                return false;
+            },
+            syncLoot() {
+                const sources = P.carriedLootSources(holder);
+                entry.loot = sources.map((s) => clone(s.stack)).filter(Boolean);
+                if (holder.anatomy?.toJSON) entry.body = holder.anatomy.toJSON();
+                else if (holder.body) entry.body = holder.body;
+                if (holder.bio) entry.bio = holder.bio;
+                view._sources = sources.map((s) => ({ bag: s.bag, slot: s.slot }));
+            },
+            setLootFromSession(session) {
+                if (scene.simAuth?.()) return;
+                const sources = view._sources || [];
+                for (let i = 0; i < sources.length; i++) {
+                    const src = sources[i];
+                    const stack = session?.[i];
+                    const next = stack && (Number(stack.quantity) || 0) > 0 ? clone(stack) : null;
+                    if (src.bag === "hotbar" && Array.isArray(holder.inventory)) holder.inventory[src.slot] = next;
+                    else if (src.bag === "overflow" && Array.isArray(holder.overflow)) holder.overflow[src.slot] = next;
+                    else if (src.bag === "equip" && holder.equipment) holder.equipment[src.slot] = next;
+                    else if (src.bag === "waist" && Array.isArray(holder.equipment?.waist)) {
+                        holder.equipment.waist[src.slot] = next;
+                    }
+                }
+            }
+        };
+        view.syncLoot();
+        return view;
     }
 
     tryRecruit(wanderer) {
@@ -1278,6 +1428,7 @@ class PartySystem {
 
     _playerCanFight(a, b) {
         const P = typeof Party !== "undefined" ? Party : null;
+        if (P?.sparesDowned?.(a, b)) return false;
         if (a?.role === "wanderer" && b?.role === "wanderer") return false;
         const oa = P?.ownerIdOf?.(a) || a?.ownerId || a?._remote?.ownerId;
         const ob = P?.ownerIdOf?.(b) || b?.ownerId || b?._remote?.ownerId;

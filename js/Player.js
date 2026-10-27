@@ -2087,6 +2087,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 if (this.attackHitSet.has(target)) continue;
                 if (target.isBodyDead?.()) continue;
                 if (typeof Party !== "undefined" && Party.sameFaction?.(this, target)) continue;
+                if (typeof Party !== "undefined" && Party.sparesDowned?.(this, target)) continue;
 
                 if (!meleeSegmentHitsTarget(seg.a, seg.b, radius, target)) continue;
 

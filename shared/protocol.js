@@ -70,6 +70,8 @@
         TEND: "tend",
         /** Take qty from corpse loot slot (dedicated MP; server-authored). */
         CORPSE_TAKE: "corpse_take",
+        /** Take qty from a living downed enemy's carried gear. */
+        DOWNED_TAKE: "downed_take",
         /** Finish knife-skinning a corpse (dedicated MP; server-authored). */
         CORPSE_SKIN: "corpse_skin",
         /** Finish scraping a raw hide on a drying rack (dedicated MP; server-authored). */

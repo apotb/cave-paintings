@@ -1241,6 +1241,62 @@
         return entity.role === "settler" || !!entity.homeSettlementId;
     }
 
+    /**
+     * Incapacitated but alive. Sleeping is not downed: they chose the bed.
+     * Pain shock, unconsciousness, and a broken ability to move all count.
+     */
+    function isDowned(entity) {
+        if (!entity) return false;
+        if (entity.isBodyDead?.() || entity._bodyDead || entity._dead || entity.dead) return false;
+        if (entity._resting || entity.resting) return false;
+        if (entity._downed || entity._netProne) return true;
+        if (entity.isIncapacitated?.() || entity.isImmobile?.()) return true;
+        if (entity._prone || entity.prone) return true;
+        return false;
+    }
+
+    /**
+     * Settlers and uncontrolled party members leave a downed foe for the
+     * player. The possessed pawn, wildlife, and hostile wanderers still strike.
+     */
+    function sparesDowned(attacker, target) {
+        if (!attacker || !isDowned(target)) return false;
+        if (attacker.isControlled?.()) return false;
+        if (attacker.role === "wanderer" || attacker.kind === "mob") return false;
+        if (
+            attacker.role === "settler"
+            || attacker.role === "companion"
+            || attacker.role === "leader"
+            || attacker.role === "player"
+            || attacker.homeSettlementId
+            || attacker.kind === "player"
+        ) return true;
+        return false;
+    }
+
+    /**
+     * Carried stacks in the same order a corpse dumps them.
+     * @returns {{ bag: string, slot: string|number, stack: object }[]}
+     */
+    function carriedLootSources(entity) {
+        const out = [];
+        if (!entity) return out;
+        const push = (bag, slot, stack) => {
+            if (stack?.id && (Number(stack.quantity) || 0) > 0) out.push({ bag, slot, stack });
+        };
+        const eq = entity.equipment;
+        if (eq) {
+            for (const key of ["head", "torso", "legs", "feet", "back"]) push("equip", key, eq[key]);
+            const waist = Array.isArray(eq.waist) ? eq.waist : [];
+            for (let i = 0; i < waist.length; i++) push("waist", i, waist[i]);
+        }
+        const over = Array.isArray(entity.overflow) ? entity.overflow : [];
+        for (let i = 0; i < over.length; i++) push("overflow", i, over[i]);
+        const inv = Array.isArray(entity.inventory) ? entity.inventory : [];
+        for (let i = 0; i < inv.length; i++) push("hotbar", i, inv[i]);
+        return out;
+    }
+
     /** Downed / dead / corpse — walk and clicks pass through. */
     function walkThrough(entity) {
         if (!entity) return true;
@@ -1345,6 +1401,9 @@
         publicPawn,
         traversesWater,
         walkThrough,
+        isDowned,
+        sparesDowned,
+        carriedLootSources,
         assignDuels,
         duelStandPoint,
         duelRepulse

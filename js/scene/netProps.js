@@ -389,6 +389,7 @@
         const hitOpts = tex
             ? { cursor: "pointer", pixelPerfect: true }
             : { cursor: "pointer" };
+        spr._netMobId = m.id;
         spr.setInteractive(hitOpts);
         spr.on("pointerover", (pointer) => {
             const live = this.netMobs.get(m.id);
@@ -477,6 +478,9 @@
             entry.hostile = !!m.hostile;
             entry.state = m.state || entry.state;
             entry.prone = !!m.prone;
+            if (m.body) entry.body = m.body;
+            if (Array.isArray(m.inventory)) entry.inventory = m.inventory;
+            if (entry.prone) this.corpsePanel?.syncDownedPawn?.(entry.id);
             if (m.look) {
                 entry.look = m.look;
                 const tex = this._netMobTex(entry.kind, m.look);

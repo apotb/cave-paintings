@@ -702,6 +702,7 @@
                 this._clearCombat();
                 return;
             }
+            if (target && Party?.sparesDowned?.(this.mob, target)) target = null;
             this.assistTarget = target && !target.isBodyDead?.() ? target : null;
             if (!this.assistTarget) this._meleeHold = false;
         }
@@ -772,7 +773,7 @@
             if (settler) {
                 const home = world?.getSettlement?.(mob);
                 const next = world?.getAssistTarget?.(mob) || null;
-                if (next && this._settlerDefendOk(next, home)) {
+                if (next && this._settlerDefendOk(next, home) && !Party?.sparesDowned?.(mob, next)) {
                     if (mob.refusesMelee?.()) {
                         this._clearCombat();
                     } else {
@@ -861,7 +862,8 @@
             }
 
             const next = world?.getAssistTarget?.(mob) || null;
-            const ok = next && this._assistStillOk(next, follow, world) && !mob.refusesMelee?.();
+            const ok = next && this._assistStillOk(next, follow, world) && !mob.refusesMelee?.()
+                && !Party?.sparesDowned?.(mob, next);
             if (ok) {
                 if (next !== this.assistTarget) {
                     this.assistTarget = next;
@@ -1117,6 +1119,10 @@
             }
             const target = this.assistTarget;
             if (!target || !Number.isFinite(target.x) || !Number.isFinite(target.y)) return;
+            if (Party?.sparesDowned?.(mob, target)) {
+                this._clearCombat();
+                return false;
+            }
             this._world = world;
             const P = Party || {};
             const leash = this._combatLeashPx(world, follow);
@@ -1202,6 +1208,7 @@
 
         _settlerDefendOk(target, home) {
             if (!target || target.isBodyDead?.() || target._dead || target.dead) return false;
+            if (Party?.sparesDowned?.(this.mob, target)) return false;
             if (!Number.isFinite(target.x) || !Number.isFinite(target.y)) return false;
             if (home && Settlement?.inRange?.(home, target.x, target.y, TILE)) return true;
             const dSelf = Math.hypot(target.x - this.mob.x, target.y - this.mob.y);
@@ -1210,6 +1217,7 @@
 
         _assistStillOk(target, follow, world) {
             if (!target || target.isBodyDead?.()) return false;
+            if (Party?.sparesDowned?.(this.mob, target)) return false;
             if (!follow || !Number.isFinite(follow.x) || !Number.isFinite(follow.y)) return false;
             if (!Number.isFinite(target.x) || !Number.isFinite(target.y)) return false;
             const leash = this._combatLeashPx(world, follow);

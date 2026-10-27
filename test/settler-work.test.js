@@ -7799,3 +7799,22 @@ test("a cook does not roast from a Make Pitch bill", () => {
     assert.equal(rec._workChannel ?? null, null);
 });
 
+test("settlers stop attacking a downed hostile and resume if it gets up", () => {
+    const { world, pawn } = createTestWorld();
+    const { rec } = parkSettler(world, pawn);
+    const cc = world._ensureSettlerCreature(rec);
+    const boar = spawnHostileBoar(world, rec.x + 12, rec.y);
+    boar.isIncapacitated = () => true;
+    boar.refreshCapacities?.();
+    for (let i = 0; i < 8; i++) world.tick(50);
+    assert.equal(cc.ai?.assistTarget || null, null);
+    boar.isIncapacitated = () => false;
+    boar._prone = false;
+    boar.refreshCapacities?.();
+    for (let i = 0; i < 8; i++) world.tick(50);
+    assert.equal(cc.ai?.assistTarget, boar);
+    const settle = world.settlements.find((s) => s.id === rec.homeSettlementId);
+    assert.equal(settle?._hostileList, undefined);
+    JSON.stringify(world.toSaveData());
+});
+

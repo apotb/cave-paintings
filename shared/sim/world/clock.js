@@ -133,6 +133,26 @@
                 }
             }
         }
+        for (const w of [...this.wanderers.values()]) {
+            if (!w || w.dead) continue;
+            const wc = w.creature || this._ensureWandererCreature(w);
+            if (!wc || wc.isBodyDead?.()) {
+                if (wc?.isBodyDead?.()) this._finishWandererDeath(w, wc._lastHitBy || null);
+                continue;
+            }
+            if (BodyHealing?.minuteTick) BodyHealing.minuteTick(wc, wc.ctx);
+            if (wc.isBodyDead()) {
+                w.body = wc.anatomy?.toJSON?.() || w.body;
+                this._finishWandererDeath(w, wc._lastHitBy || null);
+                continue;
+            }
+            if (wc.anatomy?._dirty) {
+                w.body = wc.anatomy.toJSON();
+                wc.refreshCapacities?.();
+                wc.anatomy._dirty = false;
+            }
+            w.prone = this._creatureIsProne(wc);
+        }
         this._reapDeadCompanions();
         for (const mob of [...this.mobs.values()]) {
             if (!mob) continue;

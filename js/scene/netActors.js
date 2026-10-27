@@ -634,6 +634,19 @@
                 pawn.heading = w.heading || pawn.heading;
                 pawn.hostile = !!w.hostile;
                 if (w.bio) pawn.bio = w.bio;
+                if (Array.isArray(w.inventory)) {
+                    const clone = (s) => {
+                        if (!s) return null;
+                        return typeof cloneItemStack === "function" ? cloneItemStack(s) : { ...s };
+                    };
+                    pawn.inventory = w.inventory.map(clone);
+                }
+                if (w.prone && w.body && pawn.anatomy?.loadJSON && typeof Capacities !== "undefined") {
+                    pawn.anatomy.loadJSON(w.body);
+                    pawn.capacities = new Capacities(pawn.anatomy);
+                    pawn._refreshDownedState?.();
+                }
+                this.corpsePanel?.syncDownedPawn?.(pawn.pawnId);
                 pawn.recruitLocked = !!w.recruitLocked;
                 pawn.band = !!w.band;
                 pawn.refusedBy = new Set(w.refusedBy || []);
