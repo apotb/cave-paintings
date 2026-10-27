@@ -1587,6 +1587,7 @@
         return c.tiles[lx + ly * CS] === "water" ? 0.5 : 1;
     },
 
+    /** Lower half of the sprite. AI routes use this; the steered pawn bumps on the feet. */
     _creatureBodyAt(creature, x, y) {
         const hs = Number(creature?.hitboxSize) || 8;
         const w = Number(creature?.width) || 16;
@@ -2043,7 +2044,7 @@
         return hit;
     },
 
-    /** Nearest stand pose whose 8×8 body is clear of solids and blocked tiles. */
+    /** Nearest stand pose whose body is clear of solids and blocked tiles. */
     _findFreeCreaturePose(creature, ox, oy, maxR = 24, opts = {}) {
         if (!creature || !Number.isFinite(ox) || !Number.isFinite(oy)) return null;
         const blocked = (x, y) => this._partyPoseBlocked(creature, x, y, 1, {

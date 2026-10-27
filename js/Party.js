@@ -1477,13 +1477,25 @@ class PartySystem {
         if (entry._combatTarget) return entry._combatTarget;
         const t = {
             _remote: entry,
+            kind: "player",
+            maskKey: "human",
+            width: 16,
+            height: 16,
             hitboxSize: 8,
+            get facing() { return entry.facing || "down"; },
+            get _prone() { return !!(entry.prone || entry.resting); },
+            get _resting() { return !!entry.resting; },
+            get lastSleep() { return entry.lastSleep || null; },
             isBodyDead() { return !!entry.dead; },
             bodyCenter() {
                 if (entry.resting) return { x: entry.x, y: entry.y };
                 return { x: entry.x + 8, y: entry.y - 8 };
             },
             hurtbox(pad = 0) {
+                if (typeof SpriteMask !== "undefined" && SpriteMask.bounds) {
+                    const box = SpriteMask.bounds(this, pad);
+                    if (box) return box;
+                }
                 const p = Number(pad) || 0;
                 if (entry.resting) {
                     const hw = 16 * 0.35;

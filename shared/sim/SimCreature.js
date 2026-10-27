@@ -38,6 +38,11 @@ function stoneApi() {
     try { return require("../stone"); } catch (_) { return null; }
 }
 
+function spriteMaskApi() {
+    if (typeof SpriteMask !== "undefined" && SpriteMask.bounds) return SpriteMask;
+    try { return require("../spriteMask"); } catch (_) { return null; }
+}
+
 function skillsApi(creature) {
     const sim = creature?.ctx?.sim;
     if (typeof sim?._skillsApi === "function") {
@@ -246,6 +251,8 @@ class SimCreature {
     }
 
     hurtbox(pad = 0) {
+        const box = spriteMaskApi()?.bounds?.(this, pad);
+        if (box) return box;
         if (this._prone) {
             const c = this.bodyCenter();
             const hw = this.width * 0.35;
@@ -622,8 +629,7 @@ class SimCreature {
             if (this.ctx?.sim?._companionMayStrike && !this.ctx.sim._companionMayStrike(this, target)) {
                 continue;
             }
-            const rad = target.role === "wanderer" ? radius + 8 : radius;
-            if (!MeleeMath.meleeSegmentHitsTarget(seg.a, seg.b, rad, target)) continue;
+            if (!MeleeMath.meleeSegmentHitsTarget(seg.a, seg.b, radius, target)) continue;
 
             this.attackHitSet.add(target);
             BodyCombat.applyHit(this, target, attack);

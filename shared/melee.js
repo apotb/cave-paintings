@@ -4,9 +4,10 @@
 (function (root, factory) {
     if (typeof module === "object" && module.exports) {
         const GameMath = require("./gameMath");
-        module.exports = factory(GameMath);
+        const SpriteMask = require("./spriteMask");
+        module.exports = factory(GameMath, SpriteMask);
     } else {
-        root.MeleeMath = factory(root.GameMath);
+        root.MeleeMath = factory(root.GameMath, root.SpriteMask);
         // Browser globals matching js/Utils.js names (shims may alias)
         const M = root.MeleeMath;
         root.meleeThrustCurve = M.meleeThrustCurve;
@@ -18,7 +19,7 @@
         root.meleeEdgeDist = M.meleeEdgeDist;
         root.meleeSwingWouldHit = M.meleeSwingWouldHit;
     }
-})(typeof globalThis !== "undefined" ? globalThis : this, function (GameMath) {
+})(typeof globalThis !== "undefined" ? globalThis : this, function (GameMath, SpriteMask) {
     const clamp = GameMath?.clamp || ((v, a, b) => Math.max(a, Math.min(b, v)));
 
     /**
@@ -121,9 +122,13 @@
         return Math.max((8 / REF_FPS) * 1000, ms);
     }
 
-    /** Distance from a point to a target's hurtbox (0 if inside). */
+    /** Distance from a point to a target's body (0 if on an opaque pixel). */
     function meleeEdgeDist(ax, ay, target) {
         if (!target) return Infinity;
+        if (SpriteMask?.edgeDist) {
+            const d = SpriteMask.edgeDist(ax, ay, target);
+            if (d != null) return d;
+        }
         const box = typeof target.hurtbox === "function" ? target.hurtbox(0) : null;
         if (box) {
             const cx = clamp(ax, box.left, box.right);
@@ -157,8 +162,15 @@
         return false;
     }
 
-    /** Unarmed / melee segment vs a damageable target. */
+    /**
+     * Unarmed / melee segment vs a damageable target.
+     * Living sprites use their opaque pixels. The radius is the weapon, not the body.
+     */
     function meleeSegmentHitsTarget(a, b, radius, target) {
+        if (SpriteMask?.segmentHits) {
+            const hit = SpriteMask.segmentHits(a.x, a.y, b.x, b.y, radius, target);
+            if (hit != null) return hit;
+        }
         if (typeof target.hurtbox === "function") {
             return meleeSegmentHitsRect(a.x, a.y, b.x, b.y, target.hurtbox(0), radius);
         }

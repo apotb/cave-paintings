@@ -414,6 +414,7 @@
         }
 
         _distToHurtbox(ax, ay, target) {
+            if (MeleeMath?.meleeEdgeDist) return MeleeMath.meleeEdgeDist(ax, ay, target);
             const box = typeof target.hurtbox === "function" ? target.hurtbox(0) : null;
             if (!box) {
                 const pc =

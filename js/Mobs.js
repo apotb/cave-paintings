@@ -98,8 +98,19 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         scene.physics.add.existing(this);
         scene.mainLayer.add(this);
         this.setOrigin(0, 1);
-        this.body.setSize(hitboxSize, hitboxSize)
-            .setOffset((this.width - hitboxSize) / 2, hitboxSize);
+        // Humans bump on the feet. Other creatures keep a square on the lower body.
+        const human = this.def?.bodyPlan === "human" || this.def?.id === "human" || this.def?.key === "human";
+        if (human && typeof applyCreatureWalkBody === "function") {
+            applyCreatureWalkBody(this);
+        } else if (human) {
+            const feetH = Math.min(hitboxSize, 4);
+            const w = this.width || 16;
+            const h = this.height || 16;
+            this.body.setSize(hitboxSize, feetH).setOffset((w - hitboxSize) / 2, h - feetH);
+        } else {
+            this.body.setSize(hitboxSize, hitboxSize)
+                .setOffset((this.width - hitboxSize) / 2, hitboxSize);
+        }
 
         if (!scene.mobs) scene.mobs = scene.physics.add.group();
         scene.mobs.add(this);
@@ -376,9 +387,13 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Melee hurtbox (origin bottom-left when standing).
+     * Opaque body bounds for melee. Walk collision stays on the feet.
      */
     hurtbox(pad = 0) {
+        if (typeof SpriteMask !== "undefined" && SpriteMask.bounds) {
+            const box = SpriteMask.bounds(this, pad);
+            if (box) return box;
+        }
         if (this._prone) {
             const hw = this.width * 0.35;
             const hh = this.height * 0.35;

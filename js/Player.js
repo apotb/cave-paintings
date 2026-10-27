@@ -1598,10 +1598,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     /**
-     * Solid body bounds for melee (origin bottom-left when standing).
-     * Insets empty frame edges so the box matches the drawn character.
+     * Opaque body bounds for melee. Walk collision stays on the feet.
      */
     hurtbox(pad = 0) {
+        if (typeof SpriteMask !== "undefined" && SpriteMask.bounds) {
+            const box = SpriteMask.bounds(this, pad);
+            if (box) return box;
+        }
         if (this._prone) {
             const hw = this.width * 0.35;
             const hh = this.height * 0.35;
