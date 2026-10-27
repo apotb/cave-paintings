@@ -1,7 +1,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { createTestWorld, originChunk, emptyChunk, chunkKey } = require("./helpers/simWorld");
-const { loadDefs, DataStore, restoreRng, seedRng } = require("./helpers/load");
+const { loadDefs, DataStore, restoreRng, seedRng, GameMath } = require("./helpers/load");
 const Place = require("../shared/place");
 const Hide = require("../shared/hide");
 const BodyHealing = require("../shared/body/Healing");
@@ -2915,6 +2915,79 @@ test("combat log names use party green, settler blue, and enemy red", () => {
     assert.equal(line.segments[0].text, buddy.name);
     assert.equal(line.segments[0].color, ALLY);
     restoreRng();
+});
+
+test("a hitbox touch that fails accuracy or dodge logs a miss", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.connected = true;
+    pawn.controlId = pawn.id;
+    const youC = world._ensurePlayerCreature(pawn);
+    const boar = spawnHostileBoar(world, pawn.x + 8, pawn.y);
+    const ALLY = Party.COLOR_ALLY || "#80e080";
+    const ENEMY = "#ef5a5a";
+    const WEAPON = "#f0a040";
+    const thrust = {
+        damage: 8,
+        type: "sharp",
+        verb: "thrust",
+        unarmed: false,
+        weaponName: "stone spear",
+        def: { variance: 0 },
+        sourcePart: { name: "Right Hand" }
+    };
+
+    youC.bio = {
+        adulthood: null,
+        childhood: null,
+        traits: [],
+        skills: { melee: { level: 0, xp: 0, passion: 0 } }
+    };
+    world.drainEvents();
+    GameMath.setRng(() => 0.99);
+    try {
+        const missed = BodyCombat.applyHit(youC, boar, thrust);
+        assert.equal(missed?.missed, true);
+        assert.equal(missed?.dodged, false);
+        assert.equal(missed?.damage, 0);
+        const line = firstHitLine(world, pawn.id);
+        assert.equal(line.combat, true);
+        assert.equal(line.feed, true);
+        assert.deepEqual(line.segments.map((s) => s.text), [
+            pawn.name, "missed", "Wild Boar", "with", "stone spear"
+        ]);
+        assert.equal(line.segments[0].color, ALLY);
+        assert.equal(line.segments[2].color, ENEMY);
+        assert.equal(line.segments[4].color, WEAPON);
+    } finally {
+        GameMath.setRng(() => world.rng());
+    }
+
+    youC.bio = {
+        adulthood: null,
+        childhood: null,
+        traits: [],
+        skills: { melee: { level: 20, xp: 0, passion: 0 } }
+    };
+    const boarAtk = BodyCombat.pickAttack(boar);
+    assert.ok(boarAtk);
+    world.drainEvents();
+    GameMath.setRng(() => 0);
+    try {
+        const dodged = BodyCombat.applyHit(boar, youC, boarAtk);
+        assert.equal(dodged?.missed, true);
+        assert.equal(dodged?.dodged, true);
+        assert.equal(dodged?.damage, 0);
+        const line = firstHitLine(world, pawn.id);
+        const tool = boarAtk.sourcePart?.name || boarAtk.weaponName;
+        assert.deepEqual(line.segments.map((s) => s.text), [
+            "Wild Boar", "missed", pawn.name, "with", tool
+        ]);
+        assert.equal(line.segments[0].color, ENEMY);
+        assert.equal(line.segments[2].color, ALLY);
+        assert.equal(line.segments[4].color, WEAPON);
+    } finally {
+        GameMath.setRng(() => world.rng());
+    }
 });
 
 test("settler joins a boar fight at camp without crashing", () => {

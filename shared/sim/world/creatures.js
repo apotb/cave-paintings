@@ -214,7 +214,6 @@
         const attacker = opts.attacker;
         const target = opts.target;
         const partName = opts.victimPartName;
-        if (!partName) return null;
 
         const WEAPON = "#f0a040";
         const atkColor = this._combatLogNameColor(attacker, viewerId);
@@ -223,6 +222,25 @@
 
         const actorName = (entity) =>
             entity?.displayName?.() || entity?.name || entity?.def?.name || "Someone";
+
+        if (opts.missed) {
+            const weaponName =
+                !attack.unarmed && attack.weaponName
+                    ? attack.weaponName
+                    : attack.sourcePart?.name || attack.weaponName || "blow";
+            const vicName = vicIsYou
+                ? actorName(target)
+                : (target.def?.name || target.displayName?.() || "foe");
+            return [
+                { text: actorName(attacker), color: atkColor },
+                { text: "missed" },
+                { text: vicName, color: vicColor },
+                { text: "with" },
+                { text: weaponName, color: WEAPON }
+            ];
+        }
+
+        if (!partName) return null;
 
         if (opts.destroyed) {
             const who = vicIsYou

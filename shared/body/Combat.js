@@ -101,6 +101,45 @@
         return named || entity?.pawnName || entity?.name || entity?.def?.name || fallback;
     }
 
+    function attackToolName(attack) {
+        if (!attack?.unarmed && attack?.weaponName) return attack.weaponName;
+        return attack?.sourcePart?.name || attack?.weaponName || "blow";
+    }
+
+    /** Hitbox contact that dealt nothing: low accuracy, or the target dodged. */
+    function logMiss(attacker, target, attack) {
+        const host = hostOf(target);
+        const log =
+            host?.combatLog ||
+            target?.scene?.combatLog ||
+            attacker?.scene?.combatLog ||
+            null;
+        if (typeof log?.push !== "function" || !attack) return;
+        const player = host?.player || target?.scene?.player;
+        const colors = combatLogColors();
+        const atkColor = combatLogActorColor(attacker, player, host);
+        const vicColor = combatLogActorColor(target, player, host);
+        const vicIsYou = target === player;
+        const vicName = vicIsYou
+            ? logName(target)
+            : (target?.def?.name || target?.displayName?.() || "foe");
+        log.push(null, {
+            combat: true,
+            attacker,
+            target,
+            attack,
+            missed: true,
+            damage: 0,
+            segments: [
+                { text: logName(attacker), color: atkColor },
+                { text: "missed" },
+                { text: vicName, color: vicColor },
+                { text: "with" },
+                { text: attackToolName(attack), color: colors.weapon }
+            ]
+        });
+    }
+
     function parseAttackColor(v) {
         if (v == null) return null;
         if (typeof v === "number" && Number.isFinite(v)) return (v >>> 0) & 0xffffff;
@@ -295,13 +334,18 @@
             if (skills && attacker?.bio && skills.incapable(attacker.bio, "melee")) return null;
             if (skills && attacker?.bio) {
                 const lv = skills.effectiveLevel(attacker.bio, "melee");
-                if (lv == null || math.random() >= skills.meleeHitChance(lv)) return null;
+                if (lv == null) return null;
+                if (math.random() >= skills.meleeHitChance(lv)) {
+                    logMiss(attacker, target, attack);
+                    return { missed: true, dodged: false, damage: 0, part: null };
+                }
             }
             if (skills && target?.bio && !skills.incapable(target.bio, "melee")) {
                 const lv = skills.effectiveLevel(target.bio, "melee");
                 if (lv != null && math.random() < skills.meleeDodgeChance(lv)) {
                     skills.award(target.bio, "melee", skills.XP_HIT, { day });
-                    return { dodged: true, damage: 0, part: null };
+                    logMiss(attacker, target, attack);
+                    return { missed: true, dodged: true, damage: 0, part: null };
                 }
             }
             if (skills && attacker?.bio && !skills.incapable(attacker.bio, "melee")) {
