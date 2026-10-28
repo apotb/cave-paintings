@@ -454,10 +454,36 @@
                 if (!pawn) pawn = this.settlementSys?._spawnSettlerPawn?.(row);
                 if (pawn) {
                     this._netApplySettlerGear(pawn, row);
+                    // Snapshots omit the body. YOU carries the healed anatomy;
+                    // without this the health tab stays on the spawn injuries.
+                    this._applyNetBody(pawn, row.body);
                     if (typeof row.favorite === "boolean") pawn.favorite = row.favorite;
                 }
             }
         }
+    },
+
+    /**
+     * Copy a sim body onto a pawn. Same JSON is a no-op so a YOU every
+     * game minute does not rebuild capacities.
+     * @returns {boolean} true when the anatomy changed
+     */
+    _applyNetBody(pawn, body) {
+        if (!pawn || !body || typeof pawn.anatomy?.loadJSON !== "function") return false;
+        let sig = "";
+        try { sig = JSON.stringify(body); } catch (_) { return false; }
+        if (!sig || sig === pawn._netBodySig) return false;
+        try { pawn.anatomy.loadJSON(body); } catch (_) { return false; }
+        if (typeof Capacities !== "undefined") {
+            pawn.capacities = new Capacities(pawn.anatomy);
+        }
+        pawn._refreshDownedState?.();
+        pawn._netBodySig = sig;
+        const hp = this.healthPanel;
+        if (hp?.visible && !hp.isInspecting?.() && hp._subjectPawn?.() === pawn) {
+            hp.refresh?.({ force: true });
+        }
+        return true;
     },
 
     _sculptUiOpen() {

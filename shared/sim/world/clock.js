@@ -124,7 +124,7 @@
         }
         for (const rec of this.settlers || []) {
             if (!rec || rec.dead) continue;
-            const cc = rec.creature || this.creatures.get(rec.id);
+            const cc = rec.creature || this.creatures.get(rec.id) || this._ensureSettlerCreature?.(rec);
             const fed = (Number(rec.kc) > 0) || (Number(rec.saturation) > 0);
             Hunger.applyStarve(rec, this._hungerDrainForPawn(rec, cc));
             if (cc && !cc.isBodyDead?.()) {
@@ -136,9 +136,11 @@
                     if (cc.isBodyDead()) {
                         rec.body = cc.anatomy?.toJSON?.() || rec.body;
                         rec.dead = true;
+                        this._dirtyPawnOwner?.(rec);
                     } else if (cc.anatomy?._dirty) {
                         rec.body = cc.anatomy.toJSON();
                         cc.anatomy._dirty = false;
+                        this._dirtyPawnOwner?.(rec);
                     }
                 }
             }
