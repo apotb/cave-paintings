@@ -2958,6 +2958,8 @@ test("a hitbox touch that fails accuracy or dodge logs a miss", () => {
         assert.equal(line.segments[0].color, ALLY);
         assert.equal(line.segments[2].color, ENEMY);
         assert.equal(line.segments[4].color, WEAPON);
+        assert.equal(line.impact?.kind, "miss");
+        assert.ok(Number.isFinite(line.impact.x) && Number.isFinite(line.impact.y));
     } finally {
         GameMath.setRng(() => world.rng());
     }
@@ -2985,9 +2987,165 @@ test("a hitbox touch that fails accuracy or dodge logs a miss", () => {
         assert.equal(line.segments[0].color, ENEMY);
         assert.equal(line.segments[2].color, ALLY);
         assert.equal(line.segments[4].color, WEAPON);
+        assert.equal(line.impact?.kind, "miss");
     } finally {
         GameMath.setRng(() => world.rng());
     }
+});
+
+test("party and settler blows play impact fx without a fight-feed line", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.connected = true;
+    pawn.controlId = pawn.id;
+    const buddy = addTestCompanion(world, pawn);
+    const buddyC = world._ensureCompanionCreature(pawn, buddy);
+    buddyC.bio = null;
+    const settlerRec = {
+        id: "set-fx",
+        name: "Parked",
+        x: pawn.x,
+        y: pawn.y,
+        facing: "down",
+        ownerId: pawn.id,
+        homeSettlementId: "settle-1",
+        inventory: [null, null, null, null, null],
+        equipment: { head: null, torso: null, legs: null, feet: null, back: null, waist: [] },
+        hotbarIndex: 0
+    };
+    world.settlers.push(settlerRec);
+    const settlerC = world._ensureSettlerCreature(settlerRec);
+    settlerC.bio = null;
+    const sharp = {
+        damage: 8,
+        type: "sharp",
+        verb: "thrust",
+        unarmed: false,
+        weaponName: "stone spear",
+        def: { variance: 0 },
+        sourcePart: { name: "Right Hand" }
+    };
+    const fxFor = (events) => events.filter((e) => e.kind === "combat_fx" && e.to === pawn.id);
+    const logsFor = (events) => events.filter((e) =>
+        e.kind === "combat_log" && e.to === pawn.id && e.segments?.length
+    );
+
+    const boar = spawnHostileBoar(world, pawn.x + 8, pawn.y);
+    boar.bio = null;
+    world.drainEvents();
+    const cut = BodyCombat.applyHit(buddyC, boar, sharp);
+    assert.equal(cut?.injury?.bleeding, true);
+    let events = world.drainEvents();
+    assert.equal(logsFor(events).length, 0);
+    let fx = fxFor(events);
+    assert.equal(fx.length, 1);
+    assert.equal(fx[0].impact?.kind, "blood");
+
+    const bluntBoar = spawnHostileBoar(world, pawn.x + 24, pawn.y);
+    bluntBoar.bio = null;
+    world.drainEvents();
+    const bruise = BodyCombat.applyHit(settlerC, bluntBoar, {
+        ...sharp,
+        type: "blunt",
+        verb: "smash",
+        weaponName: "club",
+        damage: 6
+    });
+    assert.equal(bruise?.injury?.bleeding, false);
+    events = world.drainEvents();
+    assert.equal(logsFor(events).length, 0);
+    fx = fxFor(events);
+    assert.equal(fx.length, 1);
+    assert.equal(fx[0].impact?.kind, "blunt");
+
+    buddyC.bio = {
+        adulthood: null,
+        childhood: null,
+        traits: [],
+        skills: { melee: { level: 0, xp: 0, passion: 0 } }
+    };
+    const missBoar = spawnHostileBoar(world, pawn.x + 40, pawn.y);
+    missBoar.bio = null;
+    world.drainEvents();
+    GameMath.setRng(() => 0.99);
+    try {
+        const missed = BodyCombat.applyHit(buddyC, missBoar, sharp);
+        assert.equal(missed?.missed, true);
+    } finally {
+        GameMath.setRng(() => world.rng());
+    }
+    events = world.drainEvents();
+    assert.equal(logsFor(events).length, 0);
+    fx = fxFor(events);
+    assert.equal(fx.length, 1);
+    assert.equal(fx[0].impact?.kind, "miss");
+
+    const attacker = spawnHostileBoar(world, settlerC.x + 8, settlerC.y);
+    attacker.bio = null;
+    world.drainEvents();
+    const struck = BodyCombat.applyHit(attacker, settlerC, sharp);
+    assert.equal(struck?.injury?.bleeding, true);
+    events = world.drainEvents();
+    assert.equal(logsFor(events).length, 0);
+    fx = fxFor(events);
+    assert.equal(fx.length, 1);
+    assert.equal(fx[0].impact?.kind, "blood");
+
+    world.handleAction(pawn.id, { type: Protocol.Actions.SWITCH_CONTROL, pawnId: buddy.id });
+    const heldBoar = spawnHostileBoar(world, pawn.x + 56, pawn.y);
+    heldBoar.bio = null;
+    buddyC.bio = null;
+    world.drainEvents();
+    BodyCombat.applyHit(buddyC, heldBoar, sharp);
+    events = world.drainEvents();
+    assert.equal(logsFor(events).length, 1);
+    assert.equal(logsFor(events)[0].impact?.kind, "blood");
+    assert.equal(fxFor(events).length, 0);
+});
+
+test("a bleeding hit spurts blood and a blunt hit kicks dust", () => {
+    const { world, pawn } = createTestWorld();
+    pawn.connected = true;
+    pawn.controlId = pawn.id;
+    const youC = world._ensurePlayerCreature(pawn);
+    const boar = spawnHostileBoar(world, pawn.x + 8, pawn.y);
+    youC.bio = null;
+    boar.bio = null;
+    const sharp = {
+        damage: 8,
+        type: "sharp",
+        verb: "thrust",
+        unarmed: false,
+        weaponName: "stone spear",
+        def: { variance: 0 },
+        sourcePart: { name: "Right Hand" }
+    };
+
+    world.drainEvents();
+    const cut = BodyCombat.applyHit(youC, boar, sharp);
+    assert.equal(cut?.injury?.bleeding, true);
+    let line = firstHitLine(world, pawn.id);
+    assert.equal(line.impact?.kind, "blood");
+    assert.equal(line.impact.heavy, undefined);
+    assert.ok(Number.isFinite(line.impact.angle));
+
+    const bluntBoar = spawnHostileBoar(world, pawn.x + 24, pawn.y);
+    bluntBoar.bio = null;
+    const blunt = { ...sharp, type: "blunt", verb: "smash", weaponName: "club", damage: 6 };
+    world.drainEvents();
+    const bruise = BodyCombat.applyHit(youC, bluntBoar, blunt);
+    assert.equal(bruise?.injury?.bleeding, false);
+    line = firstHitLine(world, pawn.id);
+    assert.equal(line.impact?.kind, "blunt");
+    assert.equal(line.impact.heavy, undefined);
+
+    const hardBoar = spawnHostileBoar(world, pawn.x + 40, pawn.y);
+    hardBoar.bio = null;
+    world.drainEvents();
+    const hard = BodyCombat.applyHit(youC, hardBoar, { ...sharp, damage: 12 });
+    assert.equal(hard?.injury?.bleeding, true);
+    line = firstHitLine(world, pawn.id);
+    assert.equal(line.impact?.kind, "blood");
+    assert.equal(line.impact.heavy, true);
 });
 
 test("settler joins a boar fight at camp without crashing", () => {

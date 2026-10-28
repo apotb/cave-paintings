@@ -61,6 +61,32 @@
         return { x: Number(target?.x) || 0, y: Number(target?.y) || 0 };
     }
 
+    /** Direction of the blow, from attacker through the target. */
+    function blowAngle(attacker, target) {
+        const at = hitPoint(target);
+        const from = attacker ? hitPoint(attacker) : null;
+        if (!from) return null;
+        const dx = at.x - from.x;
+        const dy = at.y - from.y;
+        if (dx * dx + dy * dy < 0.25) return null;
+        return Math.atan2(dy, dx);
+    }
+
+    function combatImpact(attacker, target, kind, heavy) {
+        const at = hitPoint(target);
+        const angle = blowAngle(attacker, target);
+        const impact = { x: at.x, y: at.y, kind };
+        if (angle != null) impact.angle = angle;
+        if (heavy) impact.heavy = true;
+        return impact;
+    }
+
+    function showImpact(host, target, impact) {
+        if (!impact) return;
+        if (typeof host?.spawnCombatImpact === "function") host.spawnCombatImpact(impact);
+        else target?.scene?.spawnCombatImpact?.(impact);
+    }
+
     function combatLogColors() {
         const ally = (typeof CombatLog !== "undefined" && CombatLog.COLOR_YOU)
             || Party?.COLOR_ALLY
@@ -109,6 +135,8 @@
     /** Hitbox contact that dealt nothing: low accuracy, or the target dodged. */
     function logMiss(attacker, target, attack) {
         const host = hostOf(target);
+        const impact = combatImpact(attacker, target, "miss");
+        showImpact(host, target, impact);
         const log =
             host?.combatLog ||
             target?.scene?.combatLog ||
@@ -130,6 +158,7 @@
             attack,
             missed: true,
             damage: 0,
+            impact,
             segments: [
                 { text: logName(attacker), color: atkColor },
                 { text: "missed" },
@@ -541,6 +570,15 @@
                 BodyHealing.spawnHitBleedBurst?.(target, host, injury, victimPart, destroyed);
             }
 
+            // Bleed sprays blood. A bruise or a blunted edge kicks dust instead.
+            const impact = combatImpact(
+                attacker,
+                target,
+                injury.bleeding ? "blood" : "blunt",
+                destroyed || damage >= 9
+            );
+            showImpact(host, target, impact);
+
             if (typeof log?.push === "function") {
                 const subj = logName(attacker);
                 const verb = attack.verb || "hit";
@@ -566,6 +604,7 @@
                 };
                 log.push(null, {
                     ...logOpts,
+                    impact,
                     segments: [
                         { text: subj, color: atkColor },
                         { text: verb },

@@ -308,12 +308,16 @@ class SimWorld {
         this._combatLog = {
             push: (msg, opts = null) => {
                 const o = opts || {};
-                const recipients = this._combatLogRecipients(o);
-                if (!recipients.length) {
+                const audience = this._combatLogAudience(o);
+                const recipients = this._combatLogRecipients(o, audience);
+                const hasFx = !!(o.impact || (o.deflected && o.spark));
+                if (!recipients.length && !hasFx) {
                     // No player audience (mob vs mob, etc.) — do not spam the world
                     return;
                 }
+                const gotLog = new Set();
                 for (const id of recipients) {
+                    gotLog.add(id);
                     const segments = this._combatLogSegmentsForViewer(o, id) || o.segments || null;
                     this.pushEvent({
                         kind: "combat_log",
@@ -324,6 +328,20 @@ class SimWorld {
                         color: o.color || null,
                         deflected: !!o.deflected,
                         spark: o.spark || null,
+                        impact: o.impact || null,
+                        to: id
+                    });
+                }
+                // Fight text stays on the pawn you control. The blow still
+                // shows when a party member or settler is the one swinging.
+                if (!hasFx) return;
+                for (const id of audience) {
+                    if (gotLog.has(id)) continue;
+                    this.pushEvent({
+                        kind: "combat_fx",
+                        impact: o.impact || null,
+                        deflected: !!o.deflected,
+                        spark: o.deflected ? (o.spark || null) : null,
                         to: id
                     });
                 }

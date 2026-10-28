@@ -128,7 +128,8 @@
         return !!cid && pid === cid;
     },
 
-    _combatLogRecipients(opts = {}) {
+    /** Players who own someone in this exchange, before the acting-pawn filter. */
+    _combatLogAudience(opts = {}) {
         const ids = new Set();
         const add = (v) => {
             if (!v) return;
@@ -149,7 +150,11 @@
         add(opts.attacker);
         add(opts.target);
         add(opts.participants);
-        const list = [...ids];
+        return [...ids];
+    },
+
+    _combatLogRecipients(opts = {}, audience = null) {
+        const list = audience || this._combatLogAudience(opts);
         if (opts.combat || opts.feed) {
             return list.filter((id) =>
                 this._isViewerActingPawn(opts.attacker, id)

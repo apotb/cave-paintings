@@ -158,9 +158,10 @@
                 segments: ev.segments || null,
                 color: ev.color || null
             });
-            if (ev.deflected && ev.spark) {
-                this.spawnApparelDeflectSpark?.(ev.spark.x, ev.spark.y);
-            }
+            this._playCombatFx(ev);
+        }
+        if (ev.kind === "combat_fx") {
+            this._playCombatFx(ev);
         }
         if (ev.kind === "pvp_hit") {
             this.partySys?.onPvpHit?.(ev);
@@ -226,6 +227,15 @@
 
     onEvent(kind, fn) {
         if (typeof ModKinds !== "undefined") ModKinds.onEvent("scene", kind, fn);
+    },
+
+    /** Miss puff, blood spurt, blunt thud, or apparel spark. */
+    _playCombatFx(ev) {
+        if (!ev) return;
+        if (ev.deflected && ev.spark) {
+            this.spawnApparelDeflectSpark?.(ev.spark.x, ev.spark.y);
+        }
+        if (ev.impact) this.spawnCombatImpact?.(ev.impact);
     },
 
     /**

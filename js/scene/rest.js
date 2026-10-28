@@ -1094,6 +1094,135 @@
     },
 
     /**
+     * Short speck burst. cone null sprays a ring; otherwise a fan around angle.
+     * drop pulls the end downward so droplets arc.
+     */
+    _burstSpecks(x, y, spec) {
+        if (!this.add || !(Number.isFinite(x) && Number.isFinite(y))) return;
+        const n = Phaser.Math.Between(spec.min, spec.max);
+        const base = Number.isFinite(spec.angle) ? spec.angle : Math.random() * Math.PI * 2;
+        const cone = spec.cone;
+        for (let i = 0; i < n; i++) {
+            const size = Phaser.Math.Between(spec.size[0], spec.size[1]);
+            const p = this.add.rectangle(x, y, size, size, spec.colors[i % spec.colors.length], 1)
+                .setDepth((y || 0) + 32);
+            this.mainLayer?.add(p);
+            let angle;
+            if (cone == null) {
+                angle = base + (i / n) * Math.PI * 2 + Phaser.Math.FloatBetween(-0.1, 0.1);
+            } else {
+                const t = n === 1 ? 0.5 : i / (n - 1);
+                angle = base + (t - 0.5) * cone + Phaser.Math.FloatBetween(-0.06, 0.06);
+            }
+            const dist = Phaser.Math.FloatBetween(spec.dist[0], spec.dist[1]);
+            const drop = spec.drop || 0;
+            const dur = Phaser.Math.Between(spec.dur[0], spec.dur[1]);
+            const delay = (spec.stagger || 0) * i;
+            this.tweens.add({
+                targets: p,
+                x: x + Math.cos(angle) * dist,
+                y: y + Math.sin(angle) * dist + drop * dist,
+                duration: dur,
+                delay,
+                ease: spec.ease || "Sine.easeOut"
+            });
+            this.tweens.add({
+                targets: p,
+                alpha: 0,
+                delay: delay + Math.floor(dur * 0.45),
+                duration: Math.max(60, Math.floor(dur * 0.55)),
+                ease: "Sine.easeIn",
+                onComplete: () => p.destroy()
+            });
+        }
+    },
+
+    /** Gray puff just short of the body when a swing fails to land. */
+    spawnMissPuff(x, y, angle) {
+        let ox = x;
+        let oy = y;
+        if (Number.isFinite(angle)) {
+            ox -= Math.cos(angle) * 5;
+            oy -= Math.sin(angle) * 5;
+        }
+        this._burstSpecks(ox, oy, {
+            min: 5,
+            max: 7,
+            colors: [0xe8e8e8, 0xffffff, 0xc8c8c8, 0xb0b0b0],
+            size: [1, 2],
+            cone: null,
+            dist: [6, 12],
+            dur: [220, 360],
+            angle: Math.random() * Math.PI * 2
+        });
+    },
+
+    /** Red droplets leaving the far side of a bleeding wound. */
+    spawnBloodSpurt(x, y, angle, heavy) {
+        if (this.bloodDraw === false) return;
+        const ang = Number.isFinite(angle) ? angle : Math.random() * Math.PI * 2;
+        this._burstSpecks(x + Math.cos(ang) * 2, y + Math.sin(ang) * 2, {
+            min: heavy ? 7 : 5,
+            max: heavy ? 9 : 7,
+            colors: [0x9a2018, 0xc03028, 0xe04838, 0x6b1010, 0xf06048],
+            size: [2, 2],
+            cone: 1.4,
+            angle: ang,
+            dist: [14, 26],
+            drop: 0.25,
+            dur: [240, 380],
+            stagger: 8,
+            ease: "Quad.easeOut"
+        });
+    },
+
+    /** Pale impact mark and a kick of dust. Bruises and blunted edges. */
+    spawnBluntImpact(x, y, angle) {
+        if (!this.add || !(Number.isFinite(x) && Number.isFinite(y))) return;
+        const depth = (y || 0) + 33;
+        const flash = 0xfff6dc;
+        const h = this.add.rectangle(x, y, 5, 1, flash, 1).setDepth(depth);
+        const v = this.add.rectangle(x, y, 1, 5, flash, 1).setDepth(depth);
+        this.mainLayer?.add(h);
+        this.mainLayer?.add(v);
+        this.tweens.add({
+            targets: [h, v],
+            alpha: 0,
+            delay: 50,
+            duration: 180,
+            ease: "Sine.easeOut",
+            onComplete: () => {
+                h.destroy();
+                v.destroy();
+            }
+        });
+        const ang = Number.isFinite(angle) ? angle : Math.random() * Math.PI * 2;
+        this._burstSpecks(x, y, {
+            min: 5,
+            max: 7,
+            colors: [0xe4d8c4, 0xc4b498, 0x8a7a62, 0x6a5c4a, 0xf4f0e8],
+            size: [1, 2],
+            cone: Number.isFinite(angle) ? 2.4 : null,
+            angle: ang,
+            dist: [6, 12],
+            drop: 0.2,
+            dur: [240, 380]
+        });
+    },
+
+    /** Miss puff, blood spurt, or blunt thud. Payload comes from the combat log. */
+    spawnCombatImpact(impact) {
+        if (!impact || !this.add) return;
+        const x = Number(impact.x);
+        const y = Number(impact.y);
+        if (!(Number.isFinite(x) && Number.isFinite(y))) return;
+        const angle = Number.isFinite(Number(impact.angle)) ? Number(impact.angle) : null;
+        if (impact.kind === "blood") this.spawnBloodSpurt(x, y, angle, !!impact.heavy);
+        else if (impact.kind === "blunt") this.spawnBluntImpact(x, y, angle);
+        else this.spawnMissPuff(x, y, angle);
+    },
+
+    /**
      * Pull a spill back to the near side of a hut wall. The entrance stays open.
      */
     clipGroundSpill(x0, y0, x1, y1, margin) {
