@@ -15,7 +15,13 @@ vm.runInContext(
     context
 );
 
-const { CorpsePanel, PartySystem } = context;
+vm.runInContext(
+    fs.readFileSync(path.join(__dirname, "../js/BioPanel.js"), "utf8")
+        + "\nthis.BioPanel = BioPanel;\n",
+    context
+);
+
+const { CorpsePanel, PartySystem, BioPanel } = context;
 
 function downedView(over = {}) {
     return {
@@ -217,4 +223,118 @@ test("a removed downed mob is dead, and standing back up is not", () => {
     pawn._dead = false;
     pawn._downed = false;
     assert.equal(person.subjectDied(), false);
+});
+
+test("bio stays on a downed human after their view goes inactive", () => {
+    const view = downedView();
+    const bio = Object.create(BioPanel.prototype);
+    bio.scene = { corpsePanel: { visible: true, corpse: view } };
+    assert.equal(bio._selectedCorpse(), view);
+});
+
+test("a destroyed downed human keeps the open tab on their corpse", () => {
+    context.spriteFrameCenter = (spr) => ({ x: spr.x, y: spr.y });
+    const pawn = {
+        scene: {},
+        x: 400,
+        y: 400,
+        originX: 0.5,
+        originY: 0.5,
+        active: true,
+        _downed: true,
+        _bodyDead: false,
+        inventory: [],
+        isBodyDead() { return !!this._bodyDead; }
+    };
+    const player = {
+        x: 400,
+        y: 400,
+        interactionRange: 4,
+        bodyCenter: () => ({ x: 408, y: 392 })
+    };
+    const scene = {
+        tileSize: 16,
+        player,
+        simAuth() { return false; }
+    };
+    const sys = new PartySystem(scene);
+    const view = sys._downedLootView({
+        id: "og",
+        holder: pawn,
+        name: "Og",
+        sprite: pawn
+    });
+    assert.equal(view.x, 400);
+    assert.equal(view.y, 400);
+    pawn._bodyDead = true;
+    pawn.active = false;
+    pawn.scene = null;
+    pawn.x = 0;
+    pawn.y = 0;
+    const body = corpseAt({ x: 400, y: 400 });
+    const { panel, closed } = harness(view, [body]);
+    panel.update();
+    assert.equal(closed.length, 0);
+    assert.equal(panel.visible, true);
+    assert.equal(panel.followed, body);
+});
+
+test("killing a followed downed human keeps bio and health open", () => {
+    context.Body = class {
+        loadJSON() {}
+    };
+    const pawn = {
+        active: true,
+        role: "settler",
+        _downed: true,
+        pawnId: "ada",
+        x: 10,
+        y: 20,
+        displayName: () => "Ada",
+        bio: { age: 30 },
+        anatomy: {
+            planId: "human",
+            toJSON() { return { planId: "human" }; }
+        },
+        isBodyDead() { return true; }
+    };
+    let inspected = null;
+    const scene = {
+        focusPawn: pawn,
+        player: { pawnId: "me" },
+        leader: { pawnId: "me" },
+        tileSize: 16,
+        time: { now: 1 },
+        corpses: { getChildren: () => [] },
+        bioPanel: {
+            visible: true,
+            _selectedCorpse() { return null; },
+            pinCorpse(corpse) { this.pinned = corpse; },
+            close() { this.visible = false; }
+        },
+        healthPanel: {
+            visible: true,
+            isInspecting() { return false; },
+            openInspect(_body, title) { inspected = title; this.visible = true; },
+            close() { this.visible = false; }
+        }
+    };
+    const sys = new PartySystem(scene);
+    sys._preserveDownedInspect(pawn);
+    assert.equal(scene._keepDeathPanels, true);
+    assert.equal(scene.bioPanel.pinned.entry.name, "Ada");
+    assert.equal(inspected, "Ada (downed)");
+    sys.clearSettlerFocus();
+    assert.equal(scene.focusPawn, null);
+    assert.equal(scene.bioPanel.visible, true);
+    assert.equal(scene.healthPanel.visible, true);
+
+    const standing = { ...pawn, _downed: false, _prone: false, _netProne: false, _resting: false };
+    scene.focusPawn = standing;
+    scene._keepDeathPanels = false;
+    scene.bioPanel.pinned = null;
+    sys._preserveDownedInspect(standing);
+    assert.equal(scene._keepDeathPanels, false);
+    sys.clearSettlerFocus();
+    assert.equal(scene.bioPanel.visible, false);
 });

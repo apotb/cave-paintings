@@ -2068,14 +2068,26 @@ function setCreatureProne(sprite, prone) {
             if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
             sprite.setRotation(-Math.PI / 2);
             sprite.clearTint?.();
+            // A prone flag without the centered origin leaves the body on the
+            // feet. The inventory then sits low and left of a corpse.
+            if (sprite.originX !== 0.5 || sprite.originY !== 0.5) {
+                sprite.x += 8;
+                sprite.y -= 8;
+                sprite.setOrigin(0.5, 0.5);
+                sprite._physX = sprite.x;
+                sprite._physY = sprite.y;
+                syncPawnPhysicsPose(sprite);
+            }
         } else if (sprite.scaleX !== 1 || sprite.scaleY !== 1) {
             sprite.setScale(1);
         }
         return;
     }
 
-    const w = sprite.width || 16;
-    const h = sprite.height || 16;
+    // Fixed 16×16, same as corpse placement. A walk frame's live width
+    // would drop the body (and its inventory) off that center.
+    const w = 16;
+    const h = 16;
 
     if (want) {
         // bottom-left origin → center
@@ -3146,15 +3158,44 @@ function _spawnSleepPlus(host, scene, st, pos) {
  */
 function creatureFeetPose(sprite) {
     if (!sprite) return { x: 0, y: 0 };
-    const w = sprite.width || 16;
-    const h = sprite.height || 16;
     if (sprite._prone) {
         return {
-            x: sprite.x - w * 0.5,
-            y: sprite.y + h * 0.5
+            x: sprite.x - 8,
+            y: sprite.y + 8
         };
     }
     return { x: sprite.x, y: sprite.y };
+}
+
+/**
+ * World position of a sprite's frame center.
+ * A corpse stores this point. A feet-origin body, or a sprite parented to a
+ * feet-anchored puppet, does not — the inventory grid uses this so it sits
+ * in the same place it does over a corpse.
+ */
+function spriteFrameCenter(spr) {
+    if (!spr) return null;
+    const w = Number(spr.width) > 0 ? Number(spr.width) : 16;
+    const h = Number(spr.height) > 0 ? Number(spr.height) : 16;
+    const ox = Number.isFinite(Number(spr.originX)) ? Number(spr.originX) : 0;
+    const oy = Number.isFinite(Number(spr.originY)) ? Number(spr.originY) : 1;
+    let x = Number(spr.x) || 0;
+    let y = Number(spr.y) || 0;
+    const parent = spr.parentContainer;
+    if (parent) {
+        x += Number(parent.x) || 0;
+        y += Number(parent.y) || 0;
+    }
+    const lx = (0.5 - ox) * w;
+    const ly = (0.5 - oy) * h;
+    const rot = Number(spr.rotation) || 0;
+    if (!rot) return { x: x + lx, y: y + ly };
+    const c = Math.cos(rot);
+    const s = Math.sin(rot);
+    return {
+        x: x + lx * c - ly * s,
+        y: y + lx * s + ly * c
+    };
 }
 
 /**

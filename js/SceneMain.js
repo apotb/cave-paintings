@@ -616,12 +616,14 @@ class SceneMain extends SceneBase {
         this.storagePanel?.update();
         this.leanToPanel?.update();
         this.paintingCirclePanel?.update();
+        // Follow a downed body onto its corpse before bio/health refresh, or
+        // those tabs treat the death as the panel vanishing and close.
+        this.corpsePanel?.update();
         if (this.bioPanel?.visible) this.bioPanel.refresh();
         if (this.healthPanel?.visible) this.healthPanel.refresh();
         this._updateCraftStationMenu();
         this._updateCraftQueue?.();
         this._updateRockStation?.();
-        this.corpsePanel?.update();
         this.updateLightVeil();
         this._syncWaterSprite();
         this._cullOffscreenPointer?.();

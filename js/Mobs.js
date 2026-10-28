@@ -379,7 +379,10 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
     }
 
     bodyCenter() {
-        if (this._prone) return { x: this.x, y: this.y };
+        if (this.originX === 0.5 && this.originY === 0.5) {
+            return { x: this.x, y: this.y };
+        }
+        if (this._prone) return { x: this.x + 8, y: this.y - 8 };
         return {
             x: this.x + this.width * 0.5,
             y: this.y - this.height * 0.5

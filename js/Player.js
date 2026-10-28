@@ -1572,9 +1572,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return this.isAttacking() || (this.scene.time?.now ?? 0) < this.tooltipBlockUntil;
     }
 
-    /** Player body center in world space (origin is bottom-left). */
     bodyCenter() {
-        if (this._prone) return { x: this.x, y: this.y };
+        if (this.originX === 0.5 && this.originY === 0.5) {
+            return { x: this.x, y: this.y };
+        }
+        if (this._prone || this._downed || this._netProne) {
+            return { x: this.x + 8, y: this.y - 8 };
+        }
         return {
             x: this.x + this.width * 0.5,
             y: this.y - this.height * 0.5
@@ -1583,7 +1587,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     /** Body center in fxRoot local space (root is pinned to this.x/this.y). */
     bodyCenterLocal() {
-        if (this._prone) return { x: 0, y: 0 };
+        if (this.originX === 0.5 && this.originY === 0.5) return { x: 0, y: 0 };
+        if (this._prone || this._downed || this._netProne) return { x: 8, y: -8 };
         return {
             x: this.width * 0.5,
             y: -this.height * 0.5
@@ -3642,11 +3647,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (downed) {
             this.facing = "right";
             // Server pose is feet-anchored. Apply it first, then origin shift.
-            if (this._prone) {
-                const w = this.width || 16;
-                const h = this.height || 16;
-                this.x = tx + w * 0.5;
-                this.y = ty - h * 0.5;
+            if (this._prone && this.originX === 0.5 && this.originY === 0.5) {
+                this.x = tx + 8;
+                this.y = ty - 8;
             } else {
                 this.x = tx;
                 this.y = ty;

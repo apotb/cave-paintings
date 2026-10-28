@@ -79,8 +79,9 @@ class BioPanel {
     }
 
     close() {
-        const viewingCorpse = !!this._viewingCorpse;
+        const viewingCorpse = !!this._viewingCorpse || !!this._pinnedCorpse;
         this._viewingCorpse = null;
+        this._pinnedCorpse = null;
         this.visible = false;
         this.container.setVisible(false);
         if (this.scene._tooltipTarget && this.texts?.list?.includes?.(this.scene._tooltipTarget)) {
@@ -102,11 +103,24 @@ class BioPanel {
         return !!(b && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y));
     }
 
+    /** Keep bio on a dead human after their pawn is gone. */
+    pinCorpse(corpse) {
+        if (!corpse?.entry) return;
+        this._pinnedCorpse = corpse;
+        this._sig = "";
+        if (this.visible) this.refresh();
+    }
+
     _selectedCorpse() {
+        const pinned = this._pinnedCorpse;
+        if (pinned?.entry && pinned.active !== false) return pinned;
         const panel = this.scene.corpsePanel;
         const corpse = panel?.visible ? panel.corpse : null;
-        if (!corpse?.active || !corpse.entry) return null;
-        return corpse;
+        if (!corpse?.entry) return null;
+        // A downed human's view goes inactive the instant they die, one step
+        // before the panel follows onto the corpse. Still their bio.
+        if (corpse.active || corpse.entry.downedLiving) return corpse;
+        return null;
     }
 
     _pawn() {

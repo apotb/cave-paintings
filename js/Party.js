@@ -346,12 +346,10 @@ class PartySystem {
         if (this._isDedicatedNet() && (pawn._netProne || pawn._downed || pawn._prone || pawn.isIncapacitated?.())) {
             const tx = pawn._netTx;
             const ty = pawn._netTy;
-            const w = pawn.width || 16;
-            const h = pawn.height || 16;
             if (Number.isFinite(tx) && Number.isFinite(ty)) {
-                if (pawn._prone) {
-                    pawn.x = tx + w * 0.5;
-                    pawn.y = ty - h * 0.5;
+                if (pawn._prone && pawn.originX === 0.5 && pawn.originY === 0.5) {
+                    pawn.x = tx + 8;
+                    pawn.y = ty - 8;
                 } else {
                     pawn.x = tx;
                     pawn.y = ty;
@@ -825,14 +823,32 @@ class PartySystem {
                 );
             },
             get x() {
-                const c = holder.bodyCenter?.();
-                if (c && Number.isFinite(c.x)) return c.x;
-                return Number(holder.x) || 0;
+                return this._anchor().x;
             },
             get y() {
-                const c = holder.bodyCenter?.();
-                if (c && Number.isFinite(c.y)) return c.y;
-                return Number(holder.y) || 0;
+                return this._anchor().y;
+            },
+            /** Same point a corpse stores: center of the lying body, not the feet. */
+            _anchor() {
+                const spr = subject.sprite?.scene ? subject.sprite : null;
+                const live = spr || (holder?.scene ? holder : null);
+                if (live && typeof spriteFrameCenter === "function") {
+                    const c = spriteFrameCenter(live);
+                    if (c && Number.isFinite(c.x) && Number.isFinite(c.y)) {
+                        this._lastAnchor = { x: c.x, y: c.y };
+                        return this._lastAnchor;
+                    }
+                }
+                // The pawn is destroyed on death. Keep the last body center so
+                // the open tab is not treated as out of range and closed.
+                if (this._lastAnchor) return this._lastAnchor;
+                const src = holder?.originX === 0.5 ? holder : spr;
+                if (src?.originX === 0.5 && src?.originY === 0.5) {
+                    return { x: Number(src.x) || 0, y: Number(src.y) || 0 };
+                }
+                const x = Number(holder?.x) || 0;
+                const y = Number(holder?.y) || 0;
+                return { x: x + 8, y: y - 8 };
             },
             inRange() {
                 const player = scene.player;
@@ -1065,16 +1081,20 @@ class PartySystem {
         const scene = this.scene;
         if (this._clearingFocus || !scene.focusPawn) return;
         this._clearingFocus = true;
+        const keep = !!scene._keepDeathPanels;
+        scene._keepDeathPanels = false;
         scene.focusPawn = null;
         scene._followFocusedSettler = false;
         scene._clearCameraPanelShift?.();
-        const prev = scene._retainFocus;
-        scene._retainFocus = true;
-        if (scene.bioPanel?.visible) scene.bioPanel.close();
-        if (scene.healthPanel?.visible && !scene.healthPanel.isInspecting?.()) {
-            scene.healthPanel.close();
+        if (!keep) {
+            const prev = scene._retainFocus;
+            scene._retainFocus = true;
+            if (scene.bioPanel?.visible) scene.bioPanel.close();
+            if (scene.healthPanel?.visible && !scene.healthPanel.isInspecting?.()) {
+                scene.healthPanel.close();
+            }
+            scene._retainFocus = prev;
         }
-        scene._retainFocus = prev;
         this._clearingFocus = false;
         scene.syncCameraToPlayer?.();
     }
@@ -1278,8 +1298,128 @@ class PartySystem {
         return true;
     }
 
+    /**
+     * Bio or health is open on this downed human. Keep that sheet when the
+     * killing blow lands, instead of dropping it or swapping it to the player.
+     */
+    _preserveDownedInspect(pawn) {
+        const scene = this.scene;
+        if (!pawn || pawn === scene.leader || pawn._resting) return;
+        if (!(pawn._downed || pawn._prone || pawn._netProne)) return;
+        const bio = scene.bioPanel;
+        const health = scene.healthPanel;
+        const shows = (panelOpen) => {
+            if (!panelOpen) return false;
+            if (scene.focusPawn === pawn) return true;
+            return !scene.focusPawn && scene.player === pawn;
+        };
+        const corpseOpen = bio?._selectedCorpse?.();
+        const bioOn = !!(shows(bio?.visible) && !corpseOpen);
+        const healthOn = !!(shows(health?.visible) && !health?.isInspecting?.());
+        if (!bioOn && !healthOn) return;
+        const name = pawn.displayName?.() || pawn.pawnName || "Someone";
+        const center = pawn.bodyCenter?.();
+        const watch = {
+            id: String(pawn.pawnId || pawn.uid || pawn.id || ""),
+            name,
+            x: Number.isFinite(center?.x) ? center.x : (Number(pawn.x) || 0),
+            y: Number.isFinite(center?.y) ? center.y : (Number(pawn.y) || 0),
+            until: (scene.time?.now ?? Date.now()) + 2000,
+            health: healthOn,
+            bio: bioOn,
+            plan: pawn.anatomy?.planId || "human",
+            body: pawn.anatomy?.toJSON?.() || null,
+            record: pawn.bio || null
+        };
+        this._deathPanelWatch = watch;
+        this._bindDeathPanels(watch, this._corpseForDeadPawn(watch));
+        scene._keepDeathPanels = true;
+    }
+
+    _corpseSprites() {
+        const scene = this.scene;
+        const list = [];
+        const seen = new Set();
+        const push = (spr) => {
+            if (!spr || seen.has(spr)) return;
+            seen.add(spr);
+            list.push(spr);
+        };
+        for (const spr of scene.corpses?.getChildren?.() || []) push(spr);
+        if (scene.netCorpses?.values) {
+            for (const spr of scene.netCorpses.values()) push(spr);
+        }
+        return list;
+    }
+
+    _corpseForDeadPawn(watch) {
+        if (!watch || typeof CorpsePanel === "undefined" || !CorpsePanel.findDeathCorpse) return null;
+        return CorpsePanel.findDeathCorpse({
+            lootId: watch.id,
+            x: watch.x,
+            y: watch.y,
+            entry: { name: watch.name, downedLiving: true }
+        }, this._corpseSprites(), this.scene.tileSize || 16);
+    }
+
+    _bindDeathPanels(watch, corpse) {
+        if (!watch) return;
+        const scene = this.scene;
+        const name = corpse?.entry?.name || watch.name || "Someone";
+        const label = corpse ? `${name} (corpse)` : `${name} (downed)`;
+        if (watch.health && scene.healthPanel?.visible && scene.healthPanel.openInspect) {
+            const json = corpse?.entry?.body || watch.body;
+            const plan = corpse?.entry?.bodyPlan || watch.plan || "human";
+            let body = null;
+            if (json && typeof Body !== "undefined") {
+                try {
+                    body = new Body(scene, plan, null);
+                    body.loadJSON(json);
+                } catch (_) {
+                    body = null;
+                }
+            }
+            if (body) scene.healthPanel.openInspect(body, label, { retarget: true });
+        }
+        if (watch.bio && scene.bioPanel?.visible && scene.bioPanel.pinCorpse) {
+            const subject = corpse?.entry
+                ? corpse
+                : {
+                    active: true,
+                    entry: {
+                        id: watch.id,
+                        name: watch.name,
+                        bio: corpse?.entry?.bio || watch.record || null
+                    }
+                };
+            scene.bioPanel.pinCorpse(subject);
+        }
+    }
+
+    /** Corpse sprites arrive a snapshot after the pawn. Move the open tabs onto them. */
+    _tickDeathPanels() {
+        const watch = this._deathPanelWatch;
+        if (!watch) return;
+        const scene = this.scene;
+        if (watch.bio && !scene.bioPanel?.visible) watch.bio = false;
+        if (watch.health && !scene.healthPanel?.visible) watch.health = false;
+        if (!watch.bio && !watch.health) {
+            this._deathPanelWatch = null;
+            return;
+        }
+        const corpse = this._corpseForDeadPawn(watch);
+        if (corpse) {
+            this._bindDeathPanels(watch, corpse);
+            this._deathPanelWatch = null;
+            return;
+        }
+        const now = scene.time?.now ?? Date.now();
+        if (now >= watch.until) this._deathPanelWatch = null;
+    }
+
     onMemberDied(pawn, killer, opts = {}) {
         const scene = this.scene;
+        this._preserveDownedInspect(pawn);
         if (!pawn || pawn.role === "wanderer") {
             this._wandererDied(pawn, killer);
             return;
@@ -2192,6 +2332,7 @@ class PartySystem {
     update(time, delta) {
         const scene = this.scene;
         if ((scene._gamePaused || scene._worldSimFrozen) && scene._isSingleplayerSession?.()) return;
+        this._tickDeathPanels();
 
         for (const p of scene.party || []) {
             if (!p?.active) continue;
@@ -2213,6 +2354,7 @@ class PartySystem {
             this._puppetWanderer(w, delta);
             w.syncNameLabel?.();
         }
+        this._tickDeathPanels();
         this._tickBandage();
         this._tickFood();
         this._tickDirector(delta);
@@ -2237,11 +2379,10 @@ class PartySystem {
         if (Number.isFinite(tx) && Number.isFinite(ty)) {
             if (downed) {
                 w.facing = "right";
-                const bw = w.width || 16;
-                const bh = w.height || 16;
-                if (w._prone) {
-                    w.x = tx + bw * 0.5;
-                    w.y = ty - bh * 0.5;
+                // Feet until the centered origin is on, then the corpse's body center.
+                if (w._prone && w.originX === 0.5 && w.originY === 0.5) {
+                    w.x = tx + 8;
+                    w.y = ty - 8;
                 } else {
                     w.x = tx;
                     w.y = ty;
