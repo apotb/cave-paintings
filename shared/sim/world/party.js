@@ -632,8 +632,8 @@
         if (skills && tender.bio && skills.incapable(tender.bio, "medical")) return false;
         const seconds = Number(meta.bandage.channelSeconds) || 5;
         const med = skills && tender.bio ? skills.effectiveLevel(tender.bio, "medical") : null;
-        const tendRate = med == null ? 1 : Math.max(0.05, skills.tendSpeed(med));
-        const max = seconds * 1000 * this._manipulationDurationScale(tender) / tendRate;
+        const tendRate = med == null ? 1 : skills.jobRate(tender, "tend", skills.workOpts?.(this, tender));
+        const max = seconds * 1000 / tendRate;
         tender.tendChannel = {
             remaining: max,
             max,

@@ -350,7 +350,7 @@ function doResearch(world, rec, settle, circle, delta) {
             return halt();
         }
         const mind = skills && rec.bio ? skills.effectiveLevel(rec.bio, "intellectual") : null;
-        const speed = mind == null ? 1 : Math.max(0.05, skills.researchSpeed(mind));
+        const speed = mind == null ? 1 : skills.jobRate(rec, "research", skills.workOpts?.(world, rec));
         const r = Research.addPaintMinutes(entry, elapsed * speed);
         if (skills && rec.bio && mind != null) {
             skills.award(rec.bio, "intellectual", skills.XP_MINUTE * elapsed, { day: world.gameDay });

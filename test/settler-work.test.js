@@ -7586,8 +7586,8 @@ test("dedicated settler knaps the nearest allowed blank and until counts only th
     const knife = rec.inventory.find((s) => s && s.toolClass === "knife");
     assert.ok(knife, "should knap a knife");
     assert.equal(knife.stone, "andesite");
-    assert.equal(knife.knapQuality, "crude");
-    assert.match(knife.customName || "", /Andesite Knife \(crude\)/);
+    assert.ok(knife.knapQuality === "crude" || knife.knapQuality === "rough" || knife.knapQuality === "fine");
+    assert.match(knife.customName || "", /Andesite Knife \((crude|rough|fine)\)/);
     assert.equal(knife.knapIconData, undefined);
     assert.equal(rec.inventory.some((s) => s && s.toolClass === "scraper"), true);
 

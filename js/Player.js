@@ -2294,7 +2294,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             hunger: this.hunger,
             sprinting: !!this.isSprinting,
             encumbranceHungerRate: this.getEncumbrance().hungerRate,
-            hungerRateFactor: this.capacities.hungerRateFactor?.() || 1,
+            hungerRateFactor: (typeof Skills !== "undefined" && Skills.calorieFactor)
+                ? Skills.calorieFactor(this)
+                : (this.capacities.hungerRateFactor?.() || 1),
             resting: this._resting
         });
         this.starve(tick);
@@ -2693,9 +2695,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const target = targets[0];
         const targetHints = targets.map((t) => BodyHealing.tendTargetHint?.(t)).filter(Boolean);
         const seconds = Number(meta.bandage.channelSeconds) || 5;
-        // Manipulation slows/speeds tending the same way Eating slows/speeds food.
-        const scale = this.capacities.manipulationDurationScale();
-        const max = seconds * 1000 * scale;
+        const tendRate = (typeof Skills !== "undefined" && Skills.jobRate)
+            ? Skills.jobRate(this, "tend", Skills.workOpts?.(this.scene, this))
+            : 1;
+        const max = seconds * 1000 / tendRate;
         this._tendChannel = {
             remaining: max,
             max,
@@ -3037,14 +3040,16 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
 
         const seconds = Math.max(0.1, Number(recipe.craftSeconds) || 1);
-        const scale = this.capacities.manipulationDurationScale();
         const quality = typeof knapQualityDurationScale === "function"
             ? knapQualityDurationScale(item?.knapQuality)
             : 1;
         const material = typeof knapMaterialDurationScale === "function"
             ? knapMaterialDurationScale(item?.stone || item?.knapMaterial)
             : 1;
-        const max = seconds * 1000 * scale * quality * material;
+        const labor = (typeof Skills !== "undefined" && Skills.jobRate)
+            ? Skills.jobRate(this, "labor", Skills.workOpts?.(this.scene, this))
+            : 1;
+        const max = seconds * 1000 / labor * quality * material;
         let repeat = Math.floor(Number(repeatLeft));
         if (!Number.isFinite(repeat) || repeat < 1) repeat = 1;
         this._craftChannel = {
@@ -3220,11 +3225,14 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             return;
         }
 
+        const tendFactor = (typeof Skills !== "undefined" && Skills.tendQualityFactor)
+            ? Skills.tendQualityFactor(this)
+            : undefined;
         const quality = BodyHealing.rollTendQuality(
             ch.qualityBase,
             ch.qualityMax,
             undefined,
-            { selfTend: this === patient }
+            { selfTend: this === patient, tendFactor }
         );
         for (const t of applied) BodyHealing.applyTend(body, t, quality);
         if (typeof src.loseItem === "function") src.loseItem(held, 1);
@@ -3774,7 +3782,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const naming = isHudTextOpen(this.scene);
         const researchOpen = !!this.scene.researchTreePanel?.visible
             || !!this.scene.resourceSummaryPanel?.visible
-            || !!this.scene.schedulePanel?.visible;
+            || !!this.scene.schedulePanel?.visible
+            || !!this.scene.statsPanel?.visible;
         const controlled = this.isControlled?.();
 
         // SP pause freezes everyone; channels still finish if we got here in MP.

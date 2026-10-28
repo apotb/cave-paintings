@@ -351,6 +351,7 @@ class ResearchTreePanel {
         );
         if (!should && scene.schedulePanel?.visible && scene.schedulePanel._pauseWhileOpen) return;
         if (!should && scene.resourceSummaryPanel?.visible && scene.resourceSummaryPanel._pauseWhileOpen) return;
+        if (!should && scene.statsPanel?.visible && scene.statsPanel._pauseWhileOpen) return;
         scene._setWorldSimFrozen?.(should);
     }
 

@@ -22,6 +22,102 @@
         "commonality": 1,
         "skills": { "melee": 4 },
         "passions": { "melee": 1 },
-        "disable": ["shooting"]
+        "disable": ["shooting"],
+        "stats": { "meleeHitScore": 4 }
+    },
+    {
+        "id": "foodie",
+        "title": "Foodie",
+        "desc": "Lives to cook, and eats more than their share.",
+        "commonality": 1,
+        "skills": { "cooking": 4 },
+        "stats": { "calories": 0.25 }
+    },
+    {
+        "id": "wimp",
+        "title": "Wimp",
+        "desc": "<name> can't handle much more than a papercut.",
+        "commonality": 1,
+        "conflicts": ["tough"],
+        "factors": { "painThreshold": 0.5 }
+    },
+    {
+        "id": "tough",
+        "title": "Tough",
+        "desc": "<name> is abnormally resistant to damage.",
+        "commonality": 1.1,
+        "conflicts": ["wimp"],
+        "factors": { "incomingDamage": 0.5 }
+    },
+    {
+        "id": "precise",
+        "title": "Precise",
+        "desc": "Works at a slower pace, but produces higher quality work.",
+        "commonality": 2,
+        "conflicts": ["sloppy"],
+        "stats": { "laborSpeed": -0.1, "craftingQuality": 0.2 }
+    },
+    {
+        "id": "sloppy",
+        "title": "Sloppy",
+        "desc": "Works at a faster pace, but produces lower quality work.",
+        "commonality": 2,
+        "conflicts": ["precise"],
+        "stats": { "laborSpeed": 0.1, "craftingQuality": -0.2 }
+    },
+    {
+        "id": "storyteller",
+        "title": "Storyteller",
+        "desc": "<name> loves using their imagination, but doesn't like doing much else.",
+        "commonality": 1,
+        "skills": { "intellectual": 4 },
+        "passions": { "intellectual": 1 },
+        "stats": { "researchSpeed": 0.2, "laborSpeed": -0.2 }
+    },
+    {
+        "id": "hard_worker",
+        "title": "Hard worker",
+        "desc": "<name> has a strong work ethic. They will work faster than average.",
+        "commonality": 2,
+        "conflicts": ["lazy"],
+        "stats": { "workSpeed": 0.15 }
+    },
+    {
+        "id": "lazy",
+        "title": "Lazy",
+        "desc": "<name> can never be bothered to do more than the bare minimum. They will slack off and work slower than average.",
+        "commonality": 2,
+        "conflicts": ["hard_worker"],
+        "stats": { "workSpeed": -0.15 }
+    },
+    {
+        "id": "night_owl",
+        "title": "Night Owl",
+        "desc": "<name> prefers the cover of night. They are unaffected by the penalties of darkness, and actually rejoice in it.",
+        "commonality": 1.3
+    },
+    {
+        "id": "pyromaniac",
+        "title": "Pyromaniac",
+        "desc": "Later, fires lift the mood, a cold camp drags it down, and a break may start a fire.",
+        "commonality": 0
+    },
+    {
+        "id": "man_eater",
+        "title": "Man-eater",
+        "desc": "Later, human corpses and flesh do not sour the mood.",
+        "commonality": 0
+    },
+    {
+        "id": "austere",
+        "title": "Austere",
+        "desc": "Later, living conditions do not move the mood.",
+        "commonality": 0
+    },
+    {
+        "id": "murderous",
+        "title": "Murderous",
+        "desc": "Later, a kill lifts the mood, and too long without one ends in a break.",
+        "commonality": 0
     }
 ]

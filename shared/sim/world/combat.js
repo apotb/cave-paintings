@@ -701,12 +701,16 @@
 
         const skills = this._skillsApi?.();
         const medicalLevel = skills && tender.bio ? skills.effectiveLevel(tender.bio, "medical") : null;
+        const tendFactor = skills?.tendQualityFactor
+            ? skills.tendQualityFactor(tender)
+            : undefined;
         const quality = BodyHealing.rollTendQuality(
             Number(meta.bandage.tendQuality) || 0.4,
             Number(meta.bandage.tendQualityMax) || 0.7,
             undefined,
             {
                 selfTend: tender.id === patientPawn.id,
+                tendFactor,
                 medicalLevel: medicalLevel == null ? undefined : medicalLevel
             }
         );

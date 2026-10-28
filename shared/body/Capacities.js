@@ -701,9 +701,19 @@
             return `${Math.round(hours)} hours`;
         }
 
+        painThreshold() {
+            const owner = this.body?.owner;
+            let skills = null;
+            if (typeof Skills !== "undefined") skills = Skills;
+            else {
+                try { skills = require("../skills"); } catch (_) { skills = null; }
+            }
+            if (skills?.painThreshold && owner) return skills.painThreshold(owner);
+            return Math.max(0.01, Number(this.body?.plan?.painShockThreshold) || 0.8);
+        }
+
         isPainShock() {
-            const t = Number(this.body.plan?.painShockThreshold) || 0.8;
-            return this.pain() >= t;
+            return this.pain() >= this.painThreshold();
         }
 
         isUnconscious() {

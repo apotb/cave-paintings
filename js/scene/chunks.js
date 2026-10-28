@@ -368,6 +368,7 @@
             this.bioPanel.refresh();
             this.bioPanel.layout();
         }
+        if (this.statsPanel?.visible) this.statsPanel.layout();
 
         if (this.campfirePanel?.visible) this.campfirePanel.layout();
         if (this.storagePanel?.visible) this.storagePanel.layout();

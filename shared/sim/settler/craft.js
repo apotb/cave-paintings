@@ -409,7 +409,7 @@ function doCook(world, rec, settle, job) {
             return halt();
         }
         if (cookLv != null) {
-            fire._skillCook = skills.cookSpeed(cookLv);
+            fire._skillCook = skills.jobRate(rec, "cook", skills.workOpts?.(world, rec));
             if (rec._cookXpMin == null) rec._cookXpMin = world.gameMinutes;
             let elapsed = world.gameMinutes - rec._cookXpMin;
             if (elapsed < 0) elapsed += 24 * 60;
@@ -664,7 +664,8 @@ function doLeather(world, rec, settle, job) {
         const seconds = Math.max(0.1, Number(recipe.craftSeconds) || 1);
         const quality = knapQualityDurationScale(held?.knapQuality);
         const material = knapMaterialDurationScale(held?.stone || held?.knapMaterial);
-        const max = seconds * 1000 * manipScale(world, rec) * quality * material;
+        const labor = world._skillsApi?.()?.jobRate?.(rec, "labor", world._skillsApi().workOpts?.(world, rec)) || 1;
+        const max = seconds * 1000 / labor * quality * material;
         rec._workChannel = {
             kind: "craft",
             job: "leather",
@@ -730,7 +731,10 @@ function holdTool(rec, found, classes) {
 function settlerKnapQuality(world, rec) {
     const skills = world._skillsApi?.();
     const lv = skills?.pawnLevel?.(rec, "crafting");
-    if (skills && lv != null) return skills.knapQuality(lv, world.rng);
+    if (skills && lv != null) {
+        const offset = skills.traitStat?.(rec.bio, "craftingQuality") || 0;
+        return skills.knapQuality(lv, world.rng, offset);
+    }
     const roll = typeof world.rng === "function" ? world.rng() : Math.random();
     if (roll < 0.4) return "crude";
     if (roll < 0.7) return "rough";
@@ -818,7 +822,8 @@ function doRock(world, rec, settle, job) {
             stopRock(rec, job, true);
             return halt();
         }
-        const max = KNAP_SECONDS * 1000 * manipScale(world, rec);
+        const labor = world._skillsApi?.()?.jobRate?.(rec, "labor", world._skillsApi().workOpts?.(world, rec)) || 1;
+        const max = KNAP_SECONDS * 1000 / labor;
         rec._workChannel = {
             kind: "knap",
             job: "craft",
@@ -892,7 +897,8 @@ function doRock(world, rec, settle, job) {
         return halt();
     }
     const seconds = Math.max(0.1, Number(recipe.craftSeconds) || 1);
-    const max = seconds * 1000 * manipScale(world, rec);
+    const labor = world._skillsApi?.()?.jobRate?.(rec, "labor", world._skillsApi().workOpts?.(world, rec)) || 1;
+    const max = seconds * 1000 / labor;
     rec._workChannel = {
         kind: "rock",
         job: "craft",

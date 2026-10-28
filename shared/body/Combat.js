@@ -364,14 +364,14 @@
             if (skills && attacker?.bio) {
                 const lv = skills.effectiveLevel(attacker.bio, "melee");
                 if (lv == null) return null;
-                if (math.random() >= skills.meleeHitChance(lv)) {
+                if (math.random() >= skills.meleeHitChance(attacker)) {
                     logMiss(attacker, target, attack);
                     return { missed: true, dodged: false, damage: 0, part: null };
                 }
             }
             if (skills && target?.bio && !skills.incapable(target.bio, "melee")) {
                 const lv = skills.effectiveLevel(target.bio, "melee");
-                if (lv != null && math.random() < skills.meleeDodgeChance(lv)) {
+                if (lv != null && math.random() < skills.meleeDodgeChance(target)) {
                     skills.award(target.bio, "melee", skills.XP_HIT, { day });
                     logMiss(attacker, target, attack);
                     return { missed: true, dodged: true, damage: 0, part: null };
@@ -407,6 +407,11 @@
                     random: () => math.random()
                 });
                 damage = armor.damage;
+            }
+            if (skills) {
+                const taken = skills.incomingDamageFactor?.(target);
+                if (Number.isFinite(taken)) damage *= taken;
+                damage = Math.round(damage * 10) / 10;
             }
 
             const brokeApparel = (armor && Durability)

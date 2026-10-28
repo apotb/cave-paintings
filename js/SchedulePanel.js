@@ -343,6 +343,7 @@ class SchedulePanel {
         );
         if (!should && scene.researchTreePanel?.visible && scene.researchTreePanel._pauseWhileOpen) return;
         if (!should && scene.resourceSummaryPanel?.visible && scene.resourceSummaryPanel._pauseWhileOpen) return;
+        if (!should && scene.statsPanel?.visible && scene.statsPanel._pauseWhileOpen) return;
         scene._setWorldSimFrozen?.(should);
     }
 

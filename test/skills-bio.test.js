@@ -66,10 +66,40 @@ test("a backstory passion shows while that story is selected", () => {
         skills: { [skillId]: { level: 3, xp: 0, passion: 0 }, melee: { level: 1, xp: 0, passion: 2 } }
     });
     assert.equal(Skills.passionOf(bio, skillId), granted);
-    assert.equal(Skills.passionOf(bio, "melee"), story.passions.melee == null ? 2 : Math.max(0, Math.min(2, Math.floor(Number(story.passions.melee)))));
+    const storyMelee = story.passions.melee == null ? 0 : Math.max(0, Math.floor(Number(story.passions.melee)));
+    assert.equal(Skills.passionOf(bio, "melee"), Math.min(2, 2 + storyMelee));
     bio.childhood = null;
     assert.equal(Skills.passionOf(bio, skillId), 0);
     assert.equal(Skills.passionOf(bio, "melee"), 2);
+});
+
+test("passions add up to two stars, and the creator tip lists each source", () => {
+    const cat = {
+        backstories: [{ id: "thinker", slot: "adult", title: "Philosopher", passions: { intellectual: 2 } }],
+        traits: [{ id: "teller", title: "Storyteller", passions: { intellectual: 1 } }]
+    };
+    const bio = Skills.normalize({
+        gender: "female",
+        age: 30,
+        childhood: null,
+        adulthood: "thinker",
+        traits: ["teller"],
+        skills: { intellectual: { level: 0, xp: 0, passion: 0 } }
+    });
+    assert.equal(Skills.passionOf(bio, "intellectual", cat), 2);
+    cat.backstories[0].passions.intellectual = 1;
+    assert.equal(Skills.passionOf(bio, "intellectual", cat), 2);
+    bio.skills.intellectual.passion = 1;
+    cat.traits = [];
+    assert.equal(Skills.passionOf(bio, "intellectual", cat), 2);
+    const quiet = Skills.tipLayers(Skills.skillTip(bio, "intellectual", cat)).plain;
+    assert.equal(/\* (Base|Philosopher)/.test(quiet), false);
+    cat.traits = [{ id: "teller", title: "Storyteller", passions: { intellectual: 1 } }];
+    bio.skills.intellectual.passion = 1;
+    cat.backstories[0].passions.intellectual = 2;
+    const shown = Skills.tipLayers(Skills.skillTip(bio, "intellectual", cat, { passionSources: true }));
+    assert.match(shown.plain, /\* Base\n\* \* Philosopher\n\* Storyteller$/);
+    assert.equal((shown.stars.match(/\*/g) || []).length, 4);
 });
 
 test("a skill bar fills across levels 0 through 20", () => {
@@ -129,7 +159,9 @@ test("a trait lists the stat changes it makes", () => {
         desc: "<name> learns quickly.",
         learning: 0.5
     }, "Mog");
-    assert.match(study, /Mog learns quickly\.\n\n {2}Learning rate \+50%/);
+    assert.match(study, /\{o\}Mog\{\/o\} learns quickly\.\n\n {2}Learning rate \+50%/);
+    assert.equal(Skills.tipLayers(study).orange.replace(/Mog/g, "").trim(), "");
+    assert.match(Skills.tipHtml(study), /color:#f0a040[^>]*>Mog</);
     const brawler = Skills.traitTip({
         desc: "Fights up close.",
         skills: { melee: 4 },
@@ -469,4 +501,177 @@ test("a spawned human keeps a wanderer bio on its corpse", () => {
     assert.notEqual(corpse.bio, entry.bio);
     assert.equal(corpse.bio.childhood, entry.bio.childhood);
     assert.equal(corpse.bio.skills.melee.level, entry.bio.skills.melee.level);
+});
+
+function capsOf(manip = 1, sight = 1, moving = 1) {
+    return {
+        manipulation: () => manip,
+        sight: () => sight,
+        moving: () => moving
+    };
+}
+
+function statPawn(skill, level, traits = [], extra = {}) {
+    const skills = {};
+    for (const id of Skills.SKILL_IDS) {
+        const lv = extra.levels?.[id] ?? (id === skill ? level : 0);
+        skills[id] = { level: lv, xp: 0, passion: 0 };
+    }
+    return {
+        bio: Skills.normalize({
+            gender: "female",
+            age: extra.age ?? 30,
+            childhood: null,
+            adulthood: null,
+            traits,
+            skills
+        }),
+        capacities: extra.capacities || capsOf()
+    };
+}
+
+test("trait percents add, pairs conflict, and the mood traits do not roll", () => {
+    const traits = DataStore._store.traitsList;
+    const byId = (id) => traits.find((row) => row.id === id);
+    assert.equal(Skills.traitConflicts(byId("wimp"), ["tough"], traits), true);
+    assert.equal(Skills.traitConflicts(byId("precise"), ["sloppy"], traits), true);
+    assert.equal(Skills.traitConflicts(byId("sloppy"), ["precise"], traits), true);
+    assert.equal(Skills.traitConflicts(byId("hard_worker"), ["lazy"], traits), true);
+    assert.equal(Skills.traitConflicts(byId("precise"), ["storyteller"], traits), false);
+    const both = { traits: ["precise", "storyteller"] };
+    assert.ok(Math.abs(Skills.traitStat(both, "laborSpeed") + 0.3) < 1e-9);
+    const pawn = statPawn("crafting", 0, ["precise", "storyteller"]);
+    assert.ok(Math.abs(Skills.laborSpeed(pawn) - 0.7) < 1e-9);
+    const foodie = byId("foodie");
+    const lines = Skills.effectLines(foodie);
+    assert.ok(lines.some((line) => line.includes("Cooking") && line.includes("+4")));
+    assert.ok(lines.some((line) => line.includes("Daily calories") && line.includes("+25%")));
+    assert.equal(Skills.effectiveLevel({ traits: ["foodie"], skills: {} }, "cooking"), 4);
+    const banned = new Set(["pyromaniac", "man_eater", "austere", "murderous"]);
+    let sawOwl = false;
+    for (let i = 0; i < 400; i++) {
+        const bio = Skills.generate(Math.random);
+        for (const id of bio.traits) assert.equal(banned.has(id), false, id);
+        if (bio.traits.includes("night_owl")) sawOwl = true;
+    }
+    assert.equal(sawOwl, true);
+    for (const id of banned) assert.equal(byId(id).commonality, 0);
+});
+
+test("a healthy pawn matches the skill curves, and a weak hand is slower", () => {
+    for (let level = 0; level <= 20; level++) {
+        const pawn = statPawn("melee", level, [], {
+            levels: {
+                melee: level,
+                shooting: level,
+                cooking: level,
+                plants: level,
+                medical: level,
+                intellectual: level,
+                animals: level
+            }
+        });
+        const floored = (n) => Math.max(0.1, n);
+        assert.equal(Skills.cookSpeed(pawn), Skills.cookSpeed(level));
+        assert.equal(Skills.tendSpeed(pawn), Skills.tendSpeed(level));
+        assert.equal(Skills.plantWorkSpeed(pawn), floored(Skills.plantWorkSpeed(level)));
+        assert.equal(Skills.researchSpeed(pawn), floored(Skills.researchSpeed(level)));
+        assert.equal(Skills.meleeHitChance(pawn), Skills.meleeHitChance(level));
+        assert.equal(Skills.meleeDodgeChance(pawn), Skills.meleeDodgeChance(level));
+        assert.equal(Skills.shootingAccuracy(pawn), Skills.shootingAccuracy(level));
+    }
+    assert.equal(Skills.tendQualityFactor(8), 1);
+    const doctor = statPawn("medical", 20);
+    assert.ok(Math.abs(Skills.tendQualityFactor(doctor) - 1.55) < 0.01);
+    assert.equal(Skills.plantHarvestYield(20), 1.13);
+    const full = statPawn("melee", 8, [], {
+        levels: { melee: 8, cooking: 8, plants: 8, medical: 8, intellectual: 8, animals: 8 }
+    });
+    const weak = statPawn("melee", 8, [], {
+        levels: { melee: 8, cooking: 8, plants: 8, medical: 8, intellectual: 8, animals: 8 },
+        capacities: capsOf(0.5, 1, 1)
+    });
+    assert.ok(Skills.cookSpeed(weak) < Skills.cookSpeed(full));
+    assert.ok(Skills.tendSpeed(weak) < Skills.tendSpeed(full));
+    assert.ok(Skills.plantWorkSpeed(weak) < Skills.plantWorkSpeed(full));
+    assert.ok(Skills.researchSpeed(weak) < Skills.researchSpeed(full));
+    assert.ok(Skills.fishSpeed(weak) < Skills.fishSpeed(full));
+    assert.ok(Skills.meleeHitChance(weak) < Skills.meleeHitChance(full));
+});
+
+test("labor and work speed scale a craft, and knap grades follow the center", () => {
+    const plain = statPawn("crafting", 10);
+    const tuned = statPawn("crafting", 10, ["precise", "hard_worker"]);
+    assert.ok(Math.abs(Skills.jobRate(tuned, "work") - 1.15) < 1e-9);
+    assert.ok(Math.abs(Skills.jobRate(tuned, "labor") - 0.9 * 1.15) < 1e-9);
+    const seconds = 10;
+    const plainDur = seconds / Skills.jobRate(plain, "labor");
+    const tunedDur = seconds / Skills.jobRate(tuned, "labor");
+    assert.ok(tunedDur < plainDur);
+    assert.equal(Skills.knapCenter(10, 0.2), 0.7);
+    assert.equal(Skills.knapCenter(10, -0.2), 0.3);
+    const rolls = () => seqRng([0.5, 0.5, 0.25]);
+    assert.equal(Skills.knapQuality(10, rolls(), 0), "rough");
+    assert.equal(Skills.knapQuality(10, rolls(), 0.2), "fine");
+    assert.equal(Skills.knapQuality(10, rolls(), -0.2), "crude");
+    for (let i = 0; i < 30; i++) {
+        const grade = Skills.knapQuality(12, Math.random);
+        if (grade != null) assert.ok(grade === "crude" || grade === "rough" || grade === "fine");
+    }
+});
+
+test("shooting accuracy falls off every five tiles", () => {
+    const pawn = statPawn("shooting", 8);
+    const near = Skills.shootingAccuracyAt(pawn, 5);
+    const far = Skills.shootingAccuracyAt(pawn, 40);
+    assert.ok(near < Skills.shootingAccuracy(pawn));
+    assert.ok(far < near);
+    assert.equal(Skills.shootingAccuracyAt(8, 10), Skills.shootingAccuracy(8) * 0.85);
+    const report = Skills.describeStat(pawn, "shooting");
+    assert.equal(report.rangeTable, true);
+    const shooter = report.lines.findIndex((line) => line.label === "Skill factor");
+    assert.equal(report.lines[shooter + 1].blank, true);
+    assert.equal(report.lines[shooter + 2].label, "5 tiles");
+    assert.ok(report.lines.some((line) => line.label === "5 tiles"));
+    assert.ok(report.lines.some((line) => line.label === "40 tiles"));
+    assert.equal(report.valueText, report.lines.find((line) => line.label === "5 tiles").value);
+});
+
+test("pain, darkness, and melee dps follow the stat factors", () => {
+    assert.equal(Skills.painThreshold({ bio: { traits: ["wimp"] } }), 0.4);
+    assert.equal(Skills.incomingDamageFactor({ bio: { traits: ["tough"] } }), 0.5);
+    const plain = statPawn("plants", 10);
+    const owl = statPawn("plants", 10, ["night_owl"]);
+    const blind = statPawn("plants", 10, [], { capacities: capsOf(1, 0, 1) });
+    const black = { brightness: 0, minutes: 0 };
+    assert.equal(Skills.globalWorkSpeed(plain, black), 0.8);
+    assert.equal(Skills.globalWorkSpeed(plain, { brightness: 0.3, minutes: 0 }), 1);
+    assert.equal(Skills.globalWorkSpeed(owl, black), 1);
+    assert.equal(Skills.globalWorkSpeed(blind, black), 1);
+    const fighter = statPawn("melee", 10);
+    const hit = Skills.meleeHitChance(fighter);
+    const attacks = [
+        { name: "Fist", damage: 4, cooldown: 2 },
+        { name: "Bite", damage: 6, cooldown: 2 }
+    ];
+    const report = Skills.describeStat(fighter, "meleeDps", { attacks });
+    let sumW = 0;
+    let dps = 0;
+    for (const attack of attacks) {
+        const weight = attack.damage * attack.damage;
+        sumW += weight;
+        dps += weight * (attack.damage * hit / attack.cooldown);
+    }
+    assert.ok(Math.abs(report.final - dps / sumW) < 1e-9);
+    const cook = Skills.describeStat(statPawn("cooking", 8), "cook");
+    assert.match(cook.sentence, /cook/i);
+    assert.equal(cook.lines.find((line) => line.label === "Cooking skill").value, "8");
+    assert.equal(cook.lines.find((line) => line.label === "Skill factor").value, "88%");
+    assert.ok(cook.lines.findIndex((line) => line.label === "Skill factor")
+        < cook.lines.findIndex((line) => line.label === "Work speed"));
+    assert.ok(cook.lines.some((line) => line.label === "Work speed"));
+    assert.equal(cook.lines.some((line) => line.label === "Score"), false);
+    const tend = Skills.describeStat(statPawn("medical", 8), "tend");
+    assert.equal(tend.lines.find((line) => line.label === "Medical skill").value, "8");
+    assert.equal(tend.lines.find((line) => line.label === "Skill factor").value, "88%");
 });

@@ -201,6 +201,17 @@
         };
 
         this.showTooltip = (textOrFn, x, y, target=null) => {
+            // The stats window sits under the tooltip layer, so tips from the
+            // hotbar and the world would paint across it.
+            if (this.statsPanel?.visible) {
+                let node = target;
+                let inside = false;
+                while (node) {
+                    if (node === this.statsPanel.root) { inside = true; break; }
+                    node = node.parentContainer;
+                }
+                if (!inside) return;
+            }
             // Combat / name-camp overlay suppress world (thing/mob/drop) tooltips, not side UI
             if (
                 (this.player?.blocksTooltips?.() || isHudTextOpen(this))
@@ -259,6 +270,11 @@
         };
 
         this._pickHoverTarget = (pointer) => {
+            const statsP = this.statsPanel;
+            if (statsP?.visible && statsP.containsPointer?.(pointer)) {
+                return statsP.hoverObjAt?.(pointer) || statsP.dim;
+            }
+
             const hits = this.input.hitTestPointer(pointer);
 
             // Knapping modal blocks world behind it (help uses pixel hit like main HUD)
@@ -666,6 +682,7 @@
                     || cur === panel.bg
                     || cur === panel.texts
                     || cur === panel.bootBtn
+                    || cur === panel.infoBtn
                 ) return true;
                 cur = cur.parentContainer;
             }

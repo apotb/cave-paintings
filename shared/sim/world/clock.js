@@ -41,7 +41,17 @@
             hunger: pawn.hunger,
             sprinting: !!pawn.sprint,
             encumbranceHungerRate: enc.hungerRate,
-            hungerRateFactor: creature?.capacities?.hungerRateFactor?.() || 1,
+            hungerRateFactor: (() => {
+                const skills = this._skillsApi?.();
+                if (skills?.calorieFactor) {
+                    return skills.calorieFactor({
+                        bio: pawn?.bio || creature?.bio,
+                        capacities: creature?.capacities,
+                        hunger: pawn?.hunger
+                    });
+                }
+                return creature?.capacities?.hungerRateFactor?.() || 1;
+            })(),
             resting: pawn._resting
         });
     },

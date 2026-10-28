@@ -47,6 +47,21 @@ class BioPanel {
         });
         this.container.add(this.bootBtn);
         this._bootPressed = false;
+        this.infoBtn = scene.add.image(0, 0, "info").setOrigin(0.5, 0.5).setVisible(false);
+        if (typeof lockPixelHit === "function") lockPixelHit(this.infoBtn, "info", { useHandCursor: true });
+        else this.infoBtn.setInteractive({ useHandCursor: true });
+        this.infoBtn.on("pointerover", () => {
+            if (!this.scene.statsPanel?.visible) this.infoBtn.setTexture("info_hover");
+        });
+        this.infoBtn.on("pointerout", () => this._paintInfo());
+        this.infoBtn.on("pointerdown", (pointer) => {
+            if (pointer?.button != null && pointer.button !== 0) return;
+            pointer?.event?.stopPropagation?.();
+            this.scene.statsPanel?.toggle?.(this._subject());
+            this._paintInfo();
+        });
+        this.container.add(this.infoBtn);
+        this._showInfo = false;
         this._rows = [];
         this._bounds = new Phaser.Geom.Rectangle(0, 0, 8, 8);
     }
@@ -84,6 +99,7 @@ class BioPanel {
         this._pinnedCorpse = null;
         this.visible = false;
         this.container.setVisible(false);
+        this.scene.statsPanel?.close?.();
         if (this.scene._tooltipTarget && this.texts?.list?.includes?.(this.scene._tooltipTarget)) {
             this.scene.hideTooltip?.();
         }
@@ -93,7 +109,9 @@ class BioPanel {
                 && pointerHitsInteractive(btn, this.scene.input.activePointer);
             btn.setTexture(hovering ? "bio_hover" : "bio");
         }
-        if (this.scene._tooltipTarget === this.bootBtn) this.scene.hideTooltip?.();
+        if (this.scene._tooltipTarget === this.bootBtn || this.scene._tooltipTarget === this.infoBtn) {
+            this.scene.hideTooltip?.();
+        }
         if (!viewingCorpse) this.scene.partySys?.releaseSettlerFocus?.();
     }
 
@@ -128,6 +146,21 @@ class BioPanel {
         const focus = this.scene.focusPawn;
         if (focus?.active && !focus.isBodyDead?.()) return focus;
         return this.scene.player || null;
+    }
+
+    /** Whoever the sheet is showing, so the stat window reads the same body. */
+    _subject() {
+        const corpse = this._selectedCorpse();
+        if (corpse?.entry) {
+            return {
+                bio: corpse.entry.bio || null,
+                anatomy: corpse.entry.anatomy || corpse.anatomy || null,
+                x: corpse.x,
+                y: corpse.y,
+                hunger: corpse.entry.hunger
+            };
+        }
+        return this._pawn();
     }
 
     _pawnName() {
@@ -194,6 +227,18 @@ class BioPanel {
         const hovering = typeof pointerHitsInteractive === "function"
             && pointerHitsInteractive(btn, this.scene.input?.activePointer);
         btn.setTexture(hovering ? "boot_hover" : "boot");
+    }
+
+    _paintInfo() {
+        const btn = this.infoBtn;
+        if (!btn?.visible) return;
+        if (this.scene.statsPanel?.visible) {
+            btn.setTexture("info_open");
+            return;
+        }
+        const hovering = typeof pointerHitsInteractive === "function"
+            && pointerHitsInteractive(btn, this.scene.input?.activePointer);
+        btn.setTexture(hovering ? "info_hover" : "info");
     }
 
     _askBanish() {
@@ -361,6 +406,7 @@ class BioPanel {
             skills: []
         };
         this._block = block;
+        this._showInfo = !!(bio && S);
         if (!bio || !S) {
             block.meta = this._text("No record yet", "#8a8070", 8);
             return;
@@ -474,7 +520,7 @@ class BioPanel {
         const starGap = Math.round(starR * 2 + 2 * s);
         const starSlot = starGap * 2;
         const leftInner = Math.max(
-            b?.name?.width || 0,
+            (b?.name?.width || 0),
             b?.meta?.width || 0,
             labelW + Math.round(10 * s) + Math.max(b?.childTitle?.width || 0, b?.adultTitle?.width || 0),
             (b?.traitsHead?.width || 0),
@@ -520,16 +566,37 @@ class BioPanel {
         });
         const skillEnd = skills.length ? colTop + skills.length * rowH : colTop;
         const showBoot = this._canBanish(this._pawn());
+        const showInfo = !!this._showInfo;
         const bootScale = Math.max(2, Math.round(2 * s));
         const bootPx = 16 * bootScale;
         const contentRight = skills.length ? numRight : pad + leftInner;
-        const nameEnd = pad + (b?.name?.width || 0) + (showBoot ? Math.round(6 * s) + bootPx : 0);
+        const headerGap = Math.round(6 * s);
+        let headerW = 0;
+        if (showInfo) headerW += bootPx;
+        if (showBoot) headerW += (headerW ? headerGap : 0) + bootPx;
+        if (headerW) headerW += headerGap;
+        const nameEnd = pad + (b?.name?.width || 0) + headerW;
         const w = Math.round(Math.max(contentRight, nameEnd) + pad);
+        const headerY = pad + bootPx / 2;
+        let headerRight = w - pad;
+        if (this.infoBtn) {
+            this.infoBtn.setVisible(showInfo);
+            if (showInfo) {
+                this.infoBtn.setScale(bootScale);
+                this.infoBtn.setPosition(headerRight - bootPx / 2, headerY);
+                if (this.infoBtn.input) this.infoBtn.input.enabled = true;
+                else this.infoBtn.setInteractive({ useHandCursor: true });
+                headerRight -= bootPx + headerGap;
+                this._paintInfo();
+            } else if (this.infoBtn.input) {
+                this.infoBtn.input.enabled = false;
+            }
+        }
         if (this.bootBtn) {
             this.bootBtn.setVisible(!!showBoot);
             if (showBoot) {
                 this.bootBtn.setScale(bootScale);
-                this.bootBtn.setPosition(w - pad - bootPx / 2, pad + bootPx / 2);
+                this.bootBtn.setPosition(headerRight - bootPx / 2, headerY);
                 if (this.bootBtn.input) this.bootBtn.input.enabled = true;
                 else this.bootBtn.setInteractive({ useHandCursor: true });
                 this._paintBoot();

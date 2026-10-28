@@ -1583,7 +1583,7 @@
         const bio = pawn?.bio || creature.bio;
         if (skills && bio && skills.incapable(bio, "plants")) return;
         const plantLv = skills && bio ? skills.effectiveLevel(bio, "plants") : null;
-        if (plantLv != null) frac *= Math.max(0.05, skills.plantWorkSpeed(plantLv));
+        if (plantLv != null) frac *= skills.jobRate(pawn, "plant", skills.workOpts?.(this, pawn));
         const c = creature.bodyCenter?.() || { x: creature.x, y: creature.y };
         const chopSeg = Chop.aimSegment(c.x, c.y, creature.attackAngle, Chop.AIM_REACH);
         let best = null;
@@ -2404,7 +2404,7 @@
         if (skills && pawn.bio && skills.incapable(pawn.bio, "animals")) return;
         const hook = !action.job && !!controlId && pawn.id === controlId;
         const fishLv = skills && pawn.bio ? skills.effectiveLevel(pawn.bio, "animals") : null;
-        const fishRate = fishLv == null ? 1 : Math.max(0.05, skills.fishSpeed(fishLv));
+        const fishRate = fishLv == null ? 1 : skills.jobRate(pawn, "fish", skills.workOpts?.(this, pawn));
         const wait = hook ? F.biteWaitMs(this.rng) / fishRate : F.CAST_MS;
         pawn.fishChannel = {
             remaining: wait,

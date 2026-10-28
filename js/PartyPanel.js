@@ -306,7 +306,8 @@ class PartyPanel {
         g.fillRect(x, y, w, h);
         g.fillStyle(0xD24A43, 1);
         g.fillRect(x, y, w * pain, h);
-        const shockT = Number(pawn.anatomy?.plan?.painShockThreshold) || 0.8;
+        const shockT = pawn.capacities?.painThreshold?.()
+            || Number(pawn.anatomy?.plan?.painShockThreshold) || 0.8;
         const tickW = Math.max(1, Math.round(s));
         g.fillStyle(0x444444, 1);
         g.fillRect(x + Math.round(w * Phaser.Math.Clamp(shockT, 0, 1)) - Math.floor(tickW / 2), y, tickW, h);

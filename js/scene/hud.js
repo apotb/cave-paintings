@@ -97,7 +97,8 @@
         this.painBar.clear();
         this._drawBar(this.painBar, x, y, w, h, pain, 0x000000, 0x222222, 0xD24A43, border);
         // Pain-shock threshold tick (RimWorld default 80%) — inside the bar only
-        const shockT = Number(this.player.anatomy?.plan?.painShockThreshold) || 0.8;
+        const shockT = this.player.capacities?.painThreshold?.()
+            || Number(this.player.anatomy?.plan?.painShockThreshold) || 0.8;
         const tickX = x + Math.round(w * Phaser.Math.Clamp(shockT, 0, 1));
         const tickW = Math.max(1, Math.round(s));
         this.painBar.fillStyle(0x444444, 1);

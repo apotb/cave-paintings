@@ -3382,7 +3382,7 @@ class SceneMenu extends Phaser.Scene {
                 xp: off ? 0 : Math.max(0, Number(row.xp) || 0),
                 trained: Math.max(0, Math.floor(Number(row.level) || 0)),
                 shown: off ? 0 : level,
-                tip: S.skillTip(bio, id)
+                tip: S.skillTip(bio, id, null, { passionSources: true })
             });
         }
 

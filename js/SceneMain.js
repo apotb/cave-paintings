@@ -299,6 +299,7 @@ class SceneMain extends SceneBase {
         this.settlers = [];
         this.equipmentPanel = new EquipmentPanel(this);
         this.bioPanel = new BioPanel(this);
+        this.statsPanel = new StatsPanel(this);
         this.campfirePanel = new CampfirePanel(this);
         this.leanToPanel = new LeanToPanel(this);
         this.storagePanel = new StoragePanel(this);
@@ -540,7 +541,8 @@ class SceneMain extends SceneBase {
         const naming = isHudTextOpen(this);
         const researchOpen = !!this.researchTreePanel?.visible
             || !!this.resourceSummaryPanel?.visible
-            || !!this.schedulePanel?.visible;
+            || !!this.schedulePanel?.visible
+            || !!this.statsPanel?.visible;
         if (!chatting && !knapping && !naming && !researchOpen && !this._gamePaused) {
             const ctrl = !!this.keys?.CTRL?.isDown;
             if (!ctrl) {

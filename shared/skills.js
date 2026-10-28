@@ -240,6 +240,29 @@
         if (Number.isFinite(Number(row.learning)) && Number(row.learning) !== 0) {
             lines.push(`Learning rate ${formatSigned(Math.round(Number(row.learning) * 100))}%`);
         }
+        const statLabels = {
+            calories: "Daily calories",
+            laborSpeed: "General labor speed",
+            craftingQuality: "Crafting quality",
+            researchSpeed: "Research speed",
+            workSpeed: "General work speed",
+            meleeHitScore: "Melee hit chance"
+        };
+        for (const key of Object.keys(statLabels)) {
+            const v = row.stats && row.stats[key];
+            if (!Number.isFinite(Number(v)) || Number(v) === 0) continue;
+            if (key === "meleeHitScore") lines.push(`${statLabels[key]} ${formatSigned(v)}`);
+            else lines.push(`${statLabels[key]} ${formatSigned(Math.round(Number(v) * 100))}%`);
+        }
+        const factorLabels = {
+            painThreshold: "Pain threshold",
+            incomingDamage: "Damage taken"
+        };
+        for (const key of Object.keys(factorLabels)) {
+            const v = row.factors && row.factors[key];
+            if (!Number.isFinite(Number(v)) || Number(v) === 1) continue;
+            lines.push(`${factorLabels[key]} ×${Math.round(Number(v) * 100)}%`);
+        }
         for (const id of row.disable || []) lines.push(`Incapable of ${labelOf(id)}`);
         return lines;
     }
@@ -284,7 +307,17 @@
     }
 
     /** Skill hover: name, blurb, level split into learned plus offsets, progress, and learning. */
-    function skillTip(bio, skillId, cat) {
+    function skillTip(bio, skillId, cat, opts) {
+        const finish = (lines) => {
+            if (opts?.passionSources) {
+                const sources = passionSourceLines(bio, skillId, cat);
+                if (sources.length) {
+                    lines.push("");
+                    lines.push(...sources);
+                }
+            }
+            return lines.join("\n");
+        };
         const label = labelOf(skillId);
         const blurb = SKILL_BLURBS[skillId] || "";
         const lines = [markTip("g", label)];
@@ -298,7 +331,7 @@
             if (cause) lines.push(cause);
             lines.push("");
             lines.push(progressTip(trained, row.xp));
-            return lines.join("\n");
+            return finish(lines);
         }
         const shown = effectiveLevel(bio, skillId, cat);
         lines.push(`Skill level: ${markTip("g", `${shown} - ${levelTitle(shown)}`)}`);
@@ -315,7 +348,7 @@
         lines.push(`Learning speed: ${markTip("g", pctText(interest * base))}`);
         lines.push(markTip("m", `- Base value: ${pctText(base)}`));
         lines.push(markTip("m", `- Passion: x${pctText(interest)}`));
-        return lines.join("\n");
+        return finish(lines);
     }
 
     function blankLike(text) {
@@ -469,8 +502,14 @@
         if (!row) return "Unknown";
         const who = String(name || "").trim();
         let desc = String(row.desc || "");
-        if (who) desc = desc.replace(/<name>/g, who);
-        desc = wrapWords(desc, 42);
+        if (who) {
+            desc = wrapWords(
+                desc.replace(/<name>/g, `\u0001${who}\u0002`),
+                42
+            ).replace(/\u0001([\s\S]*?)\u0002/g, (_, body) => markTip("o", body));
+        } else {
+            desc = wrapWords(desc, 42);
+        }
         const effects = effectLines(row).map((line) => `  ${line}`);
         if (desc && effects.length) return `${desc}\n\n${effects.join("\n")}`;
         return desc || effects.join("\n") || row.title || "Unknown";
@@ -492,22 +531,378 @@
         return causes.map(causeLine).join("\n");
     }
 
-    function researchSpeed(level) { return linear(level, 0.08, 0.115); }
-    function plantWorkSpeed(level) { return linear(level, 0.08, 0.115); }
-    function plantHarvestYield(level) { return linear(level, 0.6, 0.05); }
-    function cookSpeed(level) { return linear(level, 0.4, 0.06); }
-    function tendQualityFactor(level) { return linear(level, 0.2, 0.1); }
-    function tendSpeed(level) { return linear(level, 0.4, 0.06); }
-    function fishSpeed(level) { return linear(level, 0.75, 0.025); }
+    const HIT_CURVE = [[-20, 0.05], [-10, 0.10], [0, 0.50], [10, 0.80], [20, 0.90], [40, 0.96], [60, 0.98]];
+    const DODGE_CURVE = [[5, 0], [20, 0.30], [60, 0.50]];
+    const SHOOT_CURVE = [
+        [-20, 0.70], [-10, 0.80], [-6, 0.83], [-4, 0.85], [-2, 0.87],
+        [0, 0.89], [2, 0.93], [4, 0.94], [6, 0.95], [8, 0.96], [10, 0.97],
+        [12, 0.975], [14, 0.98], [16, 0.98333], [18, 0.98666], [20, 0.99],
+        [22, 0.9925], [26, 0.995], [30, 0.9965], [40, 0.998], [60, 0.999]
+    ];
+    // Share of the shooter's accuracy that remains at each distance.
+    const SHOOT_DISTANCE = [
+        [5, 0.95], [10, 0.85], [15, 0.72], [20, 0.58],
+        [25, 0.45], [30, 0.34], [35, 0.25], [40, 0.18]
+    ];
+    const COOK_CURVE = [[-20, 0.01], [0, 0.4], [20, 1.6]];
+    const TEND_QUALITY_CURVE = [[0, 0], [1, 1], [2, 1.5], [4, 2]];
+    const AGE_WORK = [[4, 0.2], [12, 0.8], [18, 1]];
+    const GLOW_WORK = [[0, 0.8], [0.3, 1]];
+    const PLANT_YIELD = [
+        0.60, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 0.975, 1.00,
+        1.01, 1.02, 1.03, 1.04, 1.05, 1.06, 1.07, 1.08, 1.09, 1.10, 1.12, 1.13
+    ];
+    const SKY_DARK = [
+        [0, 0.94], [300, 0.94], [360, 0.28], [420, 0.10], [540, 0.02],
+        [660, 0], [840, 0], [1020, 0.06], [1050, 0.10], [1080, 0.16],
+        [1140, 0.34], [1200, 0.58], [1230, 0.80], [1260, 0.94], [1440, 0.94]
+    ];
 
-    function tableAt(table, level) {
-        const lv = clamp(Math.floor(Number(level) || 0), 0, table.length - 1);
-        return table[lv];
+    function curveAt(points, x) {
+        const n = Number(x);
+        if (!points.length || !Number.isFinite(n)) return points[0] ? points[0][1] : 0;
+        if (n <= points[0][0]) return points[0][1];
+        const last = points[points.length - 1];
+        if (n >= last[0]) return last[1];
+        for (let i = 1; i < points.length; i++) {
+            const a = points[i - 1];
+            const b = points[i];
+            if (n <= b[0]) {
+                const span = b[0] - a[0];
+                const u = span === 0 ? 0 : (n - a[0]) / span;
+                return a[1] + (b[1] - a[1]) * u;
+            }
+        }
+        return last[1];
     }
 
-    function meleeHitChance(level) { return tableAt(HIT, level); }
-    function meleeDodgeChance(level) { return tableAt(DODGE, level); }
-    function shootingAccuracy(level) { return tableAt(SHOOT, level); }
+    function isPawn(value) {
+        return !!value && typeof value === "object";
+    }
+
+    function traitStat(bio, key, cat) {
+        let n = 0;
+        for (const row of activeDefs(bio, cat)) {
+            const v = row.stats && row.stats[key];
+            if (Number.isFinite(Number(v))) n += Number(v);
+        }
+        return n;
+    }
+
+    function traitFactor(bio, key, cat) {
+        let n = 1;
+        for (const row of activeDefs(bio, cat)) {
+            const v = row.factors && row.factors[key];
+            if (Number.isFinite(Number(v))) n *= Number(v);
+        }
+        return n;
+    }
+
+    function hasTrait(bio, id) {
+        return Array.isArray(bio?.traits) && bio.traits.includes(id);
+    }
+
+    function capsOf(pawn, opts) {
+        if (pawn?.capacities) return pawn.capacities;
+        if (pawn?.creature?.capacities) return pawn.creature.capacities;
+        const world = opts?.world;
+        const found = world?._ensureSettlerCreature?.(pawn) || world?.creatures?.get?.(pawn?.id);
+        return found?.capacities || null;
+    }
+
+    function capValue(pawn, key, opts) {
+        const caps = capsOf(pawn, opts);
+        const fn = caps?.[key];
+        const n = typeof fn === "function" ? Number(fn.call(caps)) : Number(fn);
+        return Number.isFinite(n) ? n : 1;
+    }
+
+    function capOffset(cap, scale, max) {
+        const c = max == null ? cap : Math.min(cap, max);
+        return scale * (c - 1);
+    }
+
+    function capFactor(cap, weight, max) {
+        const c = max == null ? cap : Math.min(cap, max);
+        return 1 - weight + weight * c;
+    }
+
+    function skillLevel(pawn, skillId, opts) {
+        if (!isPawn(pawn)) return clamp(Math.floor(Number(pawn) || 0), 0, 20);
+        const lv = effectiveLevel(pawn.bio, skillId, opts?.cat);
+        return lv == null ? 0 : lv;
+    }
+
+    function skyDarkness(minutes) {
+        const t = ((Number(minutes) % 1440) + 1440) % 1440;
+        return curveAt(SKY_DARK, t);
+    }
+
+    function lightPunch(dist, radiusPx) {
+        if (!(radiusPx > 0)) return 0;
+        const u = dist / radiusPx;
+        if (u >= 1) return 0;
+        if (u <= 0) return 1;
+        if (u <= 0.4) return 1 + (0.85 - 1) * (u / 0.4);
+        return 0.85 * (1 - (u - 0.4) / 0.6);
+    }
+
+    function tileBrightness(opts = {}) {
+        if (Number.isFinite(Number(opts.brightness))) {
+            return Math.max(0, Math.min(1, Number(opts.brightness)));
+        }
+        const sky = skyDarkness(opts.minutes);
+        if (sky < 0.03) return 1;
+        let remain = sky;
+        const tile = Number(opts.tileSize) > 0 ? Number(opts.tileSize) : 16;
+        const x = Number(opts.x) || 0;
+        const y = Number(opts.y) || 0;
+        for (const fire of opts.fires || []) {
+            const r = (Number(fire.radiusTiles) || 0) * tile;
+            if (!(r > 0)) continue;
+            const dx = x - (Number(fire.x) || 0);
+            const dy = y - (Number(fire.y) || 0);
+            remain *= 1 - lightPunch(Math.hypot(dx, dy), r);
+        }
+        return 1 - remain;
+    }
+
+    function fireApi() {
+        if (typeof Fire !== "undefined") return Fire;
+        try { return require("./fire"); } catch (_) { return null; }
+    }
+
+    function workOpts(host, pawn) {
+        if (!host || !pawn || host.gameMinutes == null) return { world: host || null };
+        const x = Number(pawn.x) || 0;
+        const y = Number(pawn.y) || 0;
+        const fires = [];
+        const FireApi = fireApi();
+        const chunks = typeof host._chunksNear === "function" ? host._chunksNear(x, y, 3) : [];
+        for (const chunk of chunks || []) {
+            for (const thing of chunk?.things || []) {
+                if (typeof host._isCampfireEntry === "function" && !host._isCampfireEntry(thing)) continue;
+                if (typeof host._isCampfireEntry !== "function" && !thing?.campfire && !thing?.meta?.campfire) continue;
+                const entry = thing.entry || thing;
+                const radiusTiles = FireApi?.lightRadiusForEntry?.(entry) || 0;
+                if (!(radiusTiles > 0)) continue;
+                fires.push({
+                    x: Number(entry.x ?? thing.x) || 0,
+                    y: Number(entry.y ?? thing.y) || 0,
+                    radiusTiles
+                });
+            }
+        }
+        if (!fires.length && typeof host.getCampfires === "function") {
+            for (const fire of host.getCampfires() || []) {
+                const entry = fire.entry || fire;
+                const radiusTiles = FireApi?.lightRadiusForEntry?.(entry) || 0;
+                if (!(radiusTiles > 0)) continue;
+                fires.push({ x: Number(fire.x) || 0, y: Number(fire.y) || 0, radiusTiles });
+            }
+        }
+        return {
+            world: host,
+            minutes: host.gameMinutes,
+            x,
+            y,
+            fires,
+            tileSize: Number(host.tileSize) > 0 ? Number(host.tileSize) : 16
+        };
+    }
+
+    function globalWorkSpeed(pawn, opts) {
+        if (!isPawn(pawn)) return 1;
+        const base = 1 + traitStat(pawn.bio, "workSpeed", opts?.cat);
+        const age = Number(pawn.bio?.age);
+        const ageF = Number.isFinite(age) ? curveAt(AGE_WORK, age) : 1;
+        let dark = 1;
+        const sight = capValue(pawn, "sight", opts);
+        if (sight !== 0 && !hasTrait(pawn.bio, "night_owl") && opts && opts.minutes != null) {
+            dark = curveAt(GLOW_WORK, tileBrightness(opts));
+        }
+        return Math.max(0.3, base * ageF * dark);
+    }
+
+    function laborSpeed(pawn, opts) {
+        if (!isPawn(pawn)) return 1;
+        const base = 1 + traitStat(pawn.bio, "laborSpeed", opts?.cat);
+        const manip = capFactor(capValue(pawn, "manipulation", opts), 1, null);
+        const sight = capFactor(capValue(pawn, "sight", opts), 0.5, 1);
+        return Math.max(0.1, base * manip * sight * globalWorkSpeed(pawn, opts));
+    }
+
+    function floorSpeed(n) {
+        return Math.max(0.1, n);
+    }
+
+    function researchSpeed(levelOrPawn, opts) {
+        if (!isPawn(levelOrPawn)) return linear(levelOrPawn, 0.08, 0.115);
+        const skill = linear(skillLevel(levelOrPawn, "intellectual", opts), 0.08, 0.115);
+        const manip = capFactor(capValue(levelOrPawn, "manipulation", opts), 0.5, 1.1);
+        const sight = capFactor(capValue(levelOrPawn, "sight", opts), 0.5, 1.1);
+        const story = 1 + traitStat(levelOrPawn.bio, "researchSpeed", opts?.cat);
+        return floorSpeed(skill * manip * sight * story * globalWorkSpeed(levelOrPawn, opts));
+    }
+
+    function plantWorkSpeed(levelOrPawn, opts) {
+        if (!isPawn(levelOrPawn)) return linear(levelOrPawn, 0.08, 0.115);
+        const skill = linear(skillLevel(levelOrPawn, "plants", opts), 0.08, 0.115);
+        const manip = capFactor(capValue(levelOrPawn, "manipulation", opts), 1, null);
+        const sight = capFactor(capValue(levelOrPawn, "sight", opts), 0.3, 1);
+        return floorSpeed(skill * manip * sight * globalWorkSpeed(levelOrPawn, opts));
+    }
+
+    function plantHarvestYield(levelOrPawn, opts) {
+        const lv = isPawn(levelOrPawn)
+            ? skillLevel(levelOrPawn, "plants", opts)
+            : clamp(Math.floor(Number(levelOrPawn) || 0), 0, 20);
+        const base = PLANT_YIELD[clamp(lv, 0, 20)];
+        if (!isPawn(levelOrPawn)) return base;
+        const manip = capFactor(capValue(levelOrPawn, "manipulation", opts), 0.3, null);
+        const sight = capFactor(capValue(levelOrPawn, "sight", opts), 0.2, 1);
+        return base * manip * sight;
+    }
+
+    function cookScore(pawn, opts) {
+        return skillLevel(pawn, "cooking", opts)
+            + capOffset(capValue(pawn, "manipulation", opts), 16, 1.5)
+            + capOffset(capValue(pawn, "sight", opts), 4, 1.5);
+    }
+
+    function cookSpeed(levelOrPawn, opts) {
+        if (!isPawn(levelOrPawn)) return curveAt(COOK_CURVE, Number(levelOrPawn) || 0);
+        return floorSpeed(curveAt(COOK_CURVE, cookScore(levelOrPawn, opts)) * globalWorkSpeed(levelOrPawn, opts));
+    }
+
+    function tendQualityRaw(levelOrPawn, opts) {
+        if (!isPawn(levelOrPawn)) return linear(levelOrPawn, 0.2, 0.1);
+        const skill = linear(skillLevel(levelOrPawn, "medical", opts), 0.2, 0.1);
+        const manip = capFactor(capValue(levelOrPawn, "manipulation", opts), 1, 1.4);
+        const sight = capFactor(capValue(levelOrPawn, "sight", opts), 0.7, 1.4);
+        return skill * manip * sight;
+    }
+
+    function tendQualityFactor(levelOrPawn, opts) {
+        return curveAt(TEND_QUALITY_CURVE, tendQualityRaw(levelOrPawn, opts));
+    }
+
+    function tendSpeed(levelOrPawn, opts) {
+        if (!isPawn(levelOrPawn)) return linear(levelOrPawn, 0.4, 0.06);
+        const skill = linear(skillLevel(levelOrPawn, "medical", opts), 0.4, 0.06);
+        const manip = capFactor(capValue(levelOrPawn, "manipulation", opts), 1, null);
+        const sight = capFactor(capValue(levelOrPawn, "sight", opts), 0.8, 1.3);
+        return floorSpeed(skill * manip * sight * globalWorkSpeed(levelOrPawn, opts));
+    }
+
+    function fishSpeed(levelOrPawn, opts) {
+        if (!isPawn(levelOrPawn)) return linear(levelOrPawn, 0.75, 0.025);
+        const skill = linear(skillLevel(levelOrPawn, "animals", opts), 0.75, 0.025);
+        const manip = capFactor(capValue(levelOrPawn, "manipulation", opts), 0.5, null);
+        return floorSpeed(skill * manip * globalWorkSpeed(levelOrPawn, opts));
+    }
+
+    function meleeHitScore(pawn, opts) {
+        const level = isPawn(pawn) ? skillLevel(pawn, "melee", opts) : (Number(pawn) || 0);
+        if (!isPawn(pawn)) return level;
+        return level
+            + capOffset(capValue(pawn, "manipulation", opts), 12, 1.5)
+            + capOffset(capValue(pawn, "sight", opts), 12, 1.5)
+            + traitStat(pawn.bio, "meleeHitScore", opts?.cat);
+    }
+
+    function meleeHitChance(levelOrPawn, opts) {
+        return curveAt(HIT_CURVE, meleeHitScore(levelOrPawn, opts));
+    }
+
+    function meleeDodgeScore(pawn, opts) {
+        const level = isPawn(pawn) ? skillLevel(pawn, "melee", opts) : (Number(pawn) || 0);
+        if (!isPawn(pawn)) return level;
+        return level
+            + capOffset(capValue(pawn, "moving", opts), 18, null)
+            + capOffset(capValue(pawn, "sight", opts), 8, 1.4);
+    }
+
+    function meleeDodgeChance(levelOrPawn, opts) {
+        return Math.max(0, curveAt(DODGE_CURVE, meleeDodgeScore(levelOrPawn, opts)));
+    }
+
+    function shootingScore(pawn, opts) {
+        const level = isPawn(pawn) ? skillLevel(pawn, "shooting", opts) : (Number(pawn) || 0);
+        if (!isPawn(pawn)) return level;
+        return level
+            + capOffset(capValue(pawn, "sight", opts), 12, 2)
+            + capOffset(capValue(pawn, "manipulation", opts), 8, 1);
+    }
+
+    function shootingAccuracy(levelOrPawn, opts) {
+        return curveAt(SHOOT_CURVE, shootingScore(levelOrPawn, opts));
+    }
+
+    function shootingAccuracyAt(levelOrPawn, tiles, opts) {
+        return shootingAccuracy(levelOrPawn, opts) * curveAt(SHOOT_DISTANCE, tiles);
+    }
+
+    function painThreshold(pawn) {
+        const base = Number(pawn?.anatomy?.plan?.painShockThreshold) || 0.8;
+        return Math.max(0.01, base * traitFactor(pawn?.bio, "painThreshold"));
+    }
+
+    function incomingDamageFactor(pawn) {
+        return traitFactor(pawn?.bio, "incomingDamage");
+    }
+
+    function calorieFactor(pawn) {
+        let f = 1 + traitStat(pawn?.bio, "calories");
+        const hed = pawn?.capacities?.hungerRateFactor?.();
+        if (Number.isFinite(Number(hed)) && Number(hed) > 0) f *= Number(hed);
+        return f;
+    }
+
+    function jobRate(pawn, id, opts) {
+        switch (id) {
+            case "cook": return cookSpeed(pawn, opts);
+            case "tend": return tendSpeed(pawn, opts);
+            case "tendQuality": return tendQualityFactor(pawn, opts);
+            case "plant": return plantWorkSpeed(pawn, opts);
+            case "plantYield": return plantHarvestYield(pawn, opts);
+            case "fish": return fishSpeed(pawn, opts);
+            case "research": return researchSpeed(pawn, opts);
+            case "labor": return laborSpeed(pawn, opts);
+            case "work": return globalWorkSpeed(pawn, opts);
+            default: return 1;
+        }
+    }
+
+    function pct(n) {
+        const v = Math.round(Number(n) * 1000) / 10;
+        return `${v}%`;
+    }
+
+    function carryApi() {
+        if (typeof Carry !== "undefined") return Carry;
+        try { return require("./carry"); } catch (_) { return null; }
+    }
+
+    function moveParts(pawn) {
+        const moving = capValue(pawn, "moving");
+        const move = Math.max(0.05, Math.min(1.5, Number.isFinite(moving) ? moving : 1));
+        let enc = 1;
+        let gear = 1;
+        const CarryApi = carryApi();
+        if (CarryApi?.humanMoveSpeed) {
+            const got = CarryApi.humanMoveSpeed(pawn, { wantSprint: false, attackSlow: false });
+            enc = Number(got?.encumbrance?.speedMultiplier);
+            if (!Number.isFinite(enc) || enc <= 0) enc = 1;
+            const tile = 16;
+            const base = 3.5 * tile * move;
+            const speed = Number(got?.speed) || base;
+            gear = base * enc > 0 ? speed / (base * enc) : 1;
+            if (!Number.isFinite(gear) || gear <= 0) gear = 1;
+        }
+        const tiles = 3.5 * move * enc * gear;
+        return { move, enc, gear, tiles };
+    }
 
     function roll(rng) {
         const n = typeof rng === "function" ? Number(rng()) : Math.random();
@@ -570,17 +965,32 @@
         return false;
     }
 
-    /** Rolled passion, then each current backstory and trait overwrites its own skills. */
+    /** Rolled passion, plus each current backstory and trait, capped at two stars. */
     function passionOf(bio, skillId, cat) {
-        const stored = bio?.skills?.[skillId];
-        let passion = clamp(Math.floor(Number(stored?.passion) || 0), 0, 2);
+        let passion = 0;
+        for (const source of passionParts(bio, skillId, cat)) passion += source.count;
+        return clamp(passion, 0, 2);
+    }
+
+    function passionParts(bio, skillId, cat) {
+        const parts = [];
+        const base = Math.floor(Number(bio?.skills?.[skillId]?.passion) || 0);
+        if (base > 0) parts.push({ label: "Base", count: base });
         for (const row of activeDefs(bio, cat)) {
             if (!row?.passions || !Object.prototype.hasOwnProperty.call(row.passions, skillId)) continue;
-            const v = Number(row.passions[skillId]);
-            if (!Number.isFinite(v)) continue;
-            passion = clamp(Math.floor(v), 0, 2);
+            const count = Math.floor(Number(row.passions[skillId]) || 0);
+            if (!(count > 0)) continue;
+            parts.push({ label: row.title || "Unknown", count });
         }
-        return passion;
+        return parts;
+    }
+
+    function passionSourceLines(bio, skillId, cat) {
+        return passionParts(bio, skillId, cat).map((part) => {
+            const n = clamp(part.count, 1, 2);
+            const stars = Array.from({ length: n }, () => "{s}*{/s}").join(" ");
+            return `${stars} ${part.label}`;
+        });
     }
 
     function generate(rng, cat) {
@@ -766,23 +1176,319 @@
         return whole + extra;
     }
 
-    function knapQuality(level, rng) {
+    function knapBands(level) {
         const shift = (clamp(Math.floor(Number(level) || 0), 0, 20) - 8) * 0.04;
         let fine = Math.max(0.02, 0.1 + shift);
         let broken = Math.max(0.02, 0.2 - shift);
         const rough = 0.3;
         const crude = 0.4;
         const sum = fine + broken + rough + crude;
-        fine /= sum;
-        broken /= sum;
-        const rCrude = crude / sum;
-        const rRough = rough / sum;
-        const n = roll(rng);
-        if (n < rCrude) return "crude";
-        if (n < rCrude + rRough) return "rough";
-        if (n < rCrude + rRough + broken) return null;
+        return {
+            crude: crude / sum,
+            rough: rough / sum,
+            broken: broken / sum,
+            fine: fine / sum
+        };
+    }
+
+    function shatterChance(level) {
+        return knapBands(level).broken;
+    }
+
+    function knapCenter(level, offset) {
+        return clamp(Math.floor(Number(level) || 0), 0, 20) / 20 + (Number(offset) || 0);
+    }
+
+    function knapGrade(sample) {
+        if (sample < 0.45) return "crude";
+        if (sample < 0.7) return "rough";
         return "fine";
     }
+
+    /**
+     * The first roll uses the old crude, rough, broken, fine bands.
+     * A broken band is a failed blank. Any other band survives, and the
+     * gaussian then picks crude, rough, or fine.
+     */
+    function knapQuality(level, rng, offset = 0) {
+        const bands = knapBands(level);
+        const n = roll(rng);
+        const roughEnd = bands.crude + bands.rough;
+        if (n >= roughEnd && n < roughEnd + bands.broken) return null;
+        let u = roll(rng);
+        const v = roll(rng);
+        if (!(u > 0)) u = 1e-9;
+        const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+        const center = knapCenter(level, offset);
+        return knapGrade(center + z * (z < 0 ? 0.12 : 0.16));
+    }
+
+    function statSentence(id) {
+        const text = {
+            meleeDps: "Damage per second of the attacks this pawn can use, weighted by how often each is picked.",
+            meleeHit: "Chance a melee blow lands before the target tries to dodge.",
+            meleeDodge: "Chance to avoid a melee blow that would otherwise land.",
+            shooting: "Chance to hit a target at each distance, before cover and the target's size.",
+            incomingDamage: "Amount of damage taken after armor calculations.",
+            painThreshold: "Pain threshold before collapsing from pain shock.",
+            moveSpeed: "Default walk speed when not sprinting, performing an action, or encumbered.",
+            calories: "Base rate of calorie consumption when not sprinting or resting.",
+            learning: "Base rate of skill XP gain before passion multipliers.",
+            workSpeed: "Multiplier on all timed work.",
+            laborSpeed: "Multplier on labor work, such as crafting, tailoring, and smithing.",
+            craftingQuality: "Shifts the calculation of quality to favor a better outcome.",
+            cook: "How fast cooking jobs are completed.",
+            tend: "How fast tending is completed.",
+            tendQuality: "Quality multiplier of a tend after the medicine's own roll.",
+            plant: "How fast plants cutting and harvesting is completed.",
+            plantYield: "Multiplier on how much a plant's harvest yields.",
+            fish: "How fast a bite comes when fishing.",
+            research: "How fast research tasks are completed."
+        };
+        return text[id] || "";
+    }
+
+    function describeStat(pawn, id, opts) {
+        const o = opts || {};
+        const lines = [];
+        const push = (label, value) => lines.push({ label, value });
+        let final = 0;
+        let valueText = "";
+        if (id === "meleeHit") {
+            const level = isPawn(pawn) ? skillLevel(pawn, "melee", o) : (Number(pawn) || 0);
+            push("Melee skill", String(level));
+            if (isPawn(pawn)) {
+                push("Manipulation", formatSigned(Math.round(capOffset(capValue(pawn, "manipulation", o), 12, 1.5) * 10) / 10));
+                push("Sight", formatSigned(Math.round(capOffset(capValue(pawn, "sight", o), 12, 1.5) * 10) / 10));
+                const extra = traitStat(pawn.bio, "meleeHitScore", o.cat);
+                if (extra) push("Brawler", formatSigned(extra));
+            }
+            push("Skill factor", pct(meleeHitChance(pawn, o)));
+            final = meleeHitChance(pawn, o);
+            valueText = pct(final);
+        } else if (id === "meleeDodge") {
+            const level = isPawn(pawn) ? skillLevel(pawn, "melee", o) : (Number(pawn) || 0);
+            push("Melee skill", String(level));
+            if (isPawn(pawn)) {
+                push("Moving", formatSigned(Math.round(capOffset(capValue(pawn, "moving", o), 18, null) * 10) / 10));
+                push("Sight", formatSigned(Math.round(capOffset(capValue(pawn, "sight", o), 8, 1.4) * 10) / 10));
+            }
+            push("Skill factor", pct(meleeDodgeChance(pawn, o)));
+            final = meleeDodgeChance(pawn, o);
+            valueText = pct(final);
+        } else if (id === "shooting") {
+            const level = isPawn(pawn) ? skillLevel(pawn, "shooting", o) : (Number(pawn) || 0);
+            push("Shooting skill", String(level));
+            if (isPawn(pawn)) {
+                push("Sight", formatSigned(Math.round(capOffset(capValue(pawn, "sight", o), 12, 2) * 10) / 10));
+                push("Manipulation", formatSigned(Math.round(capOffset(capValue(pawn, "manipulation", o), 8, 1) * 10) / 10));
+            }
+            const acc = shootingAccuracy(pawn, o);
+            push("Skill factor", pct(acc));
+            lines.push({ blank: true });
+            for (const [tiles] of SHOOT_DISTANCE) {
+                push(`${tiles} tiles`, pct(shootingAccuracyAt(pawn, tiles, o)));
+            }
+            final = shootingAccuracyAt(pawn, SHOOT_DISTANCE[0][0], o);
+            valueText = pct(final);
+        } else if (id === "incomingDamage") {
+            const factor = isPawn(pawn) ? incomingDamageFactor(pawn) : 1;
+            push("After armor", "100%");
+            if (factor !== 1) push("Tough", `×${Math.round(factor * 100)}%`);
+            final = factor;
+            valueText = pct(final);
+        } else if (id === "painThreshold") {
+            const base = Number(pawn?.anatomy?.plan?.painShockThreshold) || 0.8;
+            push("Body", pct(base));
+            const factor = isPawn(pawn) ? traitFactor(pawn.bio, "painThreshold") : 1;
+            if (factor !== 1) push("Wimp", `×${Math.round(factor * 100)}%`);
+            final = isPawn(pawn) ? painThreshold(pawn) : base;
+            valueText = pct(final);
+        } else if (id === "moveSpeed") {
+            const parts = moveParts(isPawn(pawn) ? pawn : {});
+            push("Base", "3.5 tiles");
+            push("Moving", `×${pct(parts.move)}`);
+            push("Encumbrance", `×${pct(parts.enc)}`);
+            push("Worn gear", `×${pct(parts.gear)}`);
+            final = parts.tiles;
+            valueText = `${Math.round(final * 100) / 100} tiles/s`;
+        } else if (id === "calories") {
+            const hunger = Number(pawn?.hunger);
+            const base = Number.isFinite(hunger) && hunger > 0 ? hunger : 2000;
+            push("Base", `${Math.round(base)} kcal`);
+            const food = isPawn(pawn) ? traitStat(pawn.bio, "calories") : 0;
+            if (food) push("Foodie", formatSigned(Math.round(food * 100)) + "%");
+            const hed = pawn?.capacities?.hungerRateFactor?.();
+            if (Number.isFinite(Number(hed)) && Number(hed) !== 1) push("Body", `×${pct(hed)}`);
+            final = base * (isPawn(pawn) ? calorieFactor(pawn) : 1);
+            valueText = `${Math.round(final)} kcal/day`;
+        } else if (id === "learning") {
+            const base = isPawn(pawn) ? learningFactor(pawn.bio, o.cat) : 1;
+            push("Base", pct(base));
+            final = base;
+            valueText = pct(final);
+        } else if (id === "workSpeed") {
+            const add = isPawn(pawn) ? traitStat(pawn.bio, "workSpeed", o.cat) : 0;
+            push("Base", pct(1 + add));
+            const age = Number(pawn?.bio?.age);
+            const ageF = Number.isFinite(age) ? curveAt(AGE_WORK, age) : 1;
+            push("Age", `×${pct(ageF)}`);
+            let dark = 1;
+            if (isPawn(pawn) && capValue(pawn, "sight", o) !== 0 && !hasTrait(pawn.bio, "night_owl") && o.minutes != null) {
+                dark = curveAt(GLOW_WORK, tileBrightness(o));
+            }
+            push("Light", `×${pct(dark)}`);
+            final = isPawn(pawn) ? globalWorkSpeed(pawn, o) : 1;
+            valueText = pct(final);
+        } else if (id === "laborSpeed") {
+            const add = isPawn(pawn) ? traitStat(pawn.bio, "laborSpeed", o.cat) : 0;
+            push("Base", pct(1 + add));
+            if (isPawn(pawn)) {
+                push("Manipulation", `×${pct(capFactor(capValue(pawn, "manipulation", o), 1, null))}`);
+                push("Sight", `×${pct(capFactor(capValue(pawn, "sight", o), 0.5, 1))}`);
+                push("Work speed", `×${pct(globalWorkSpeed(pawn, o))}`);
+            }
+            final = isPawn(pawn) ? laborSpeed(pawn, o) : 1;
+            valueText = pct(final);
+        } else if (id === "craftingQuality") {
+            const add = isPawn(pawn) ? traitStat(pawn.bio, "craftingQuality", o.cat) : 0;
+            const level = isPawn(pawn) ? skillLevel(pawn, "crafting", o) : 0;
+            push("Crafting skill", String(level));
+            push("Center", String(Math.round(knapCenter(level, add) * 100) / 100));
+            if (add) push("Trait", formatSigned(Math.round(add * 100)) + "%");
+            final = 1 + add;
+            valueText = pct(final);
+        } else if (id === "cook") {
+            const level = isPawn(pawn) ? skillLevel(pawn, "cooking", o) : (Number(pawn) || 0);
+            push("Cooking skill", String(level));
+            if (isPawn(pawn)) {
+                push("Manipulation", formatSigned(Math.round(capOffset(capValue(pawn, "manipulation", o), 16, 1.5) * 10) / 10));
+                push("Sight", formatSigned(Math.round(capOffset(capValue(pawn, "sight", o), 4, 1.5) * 10) / 10));
+            }
+            const cookPoints = isPawn(pawn) ? cookScore(pawn, o) : (Number(pawn) || 0);
+            push("Skill factor", pct(curveAt(COOK_CURVE, cookPoints)));
+            push("Work speed", `×${pct(isPawn(pawn) ? globalWorkSpeed(pawn, o) : 1)}`);
+            final = cookSpeed(pawn, o);
+            valueText = pct(final);
+        } else if (id === "tend") {
+            if (isPawn(pawn)) {
+                const level = skillLevel(pawn, "medical", o);
+                push("Medical skill", String(level));
+                push("Skill factor", pct(linear(level, 0.4, 0.06)));
+                push("Manipulation", `×${pct(capFactor(capValue(pawn, "manipulation", o), 1, null))}`);
+                push("Sight", `×${pct(capFactor(capValue(pawn, "sight", o), 0.8, 1.3))}`);
+            }
+            push("Work speed", `×${pct(isPawn(pawn) ? globalWorkSpeed(pawn, o) : 1)}`);
+            final = tendSpeed(pawn, o);
+            valueText = pct(final);
+        } else if (id === "tendQuality") {
+            if (isPawn(pawn)) {
+                const level = skillLevel(pawn, "medical", o);
+                push("Medical skill", String(level));
+                push("Skill factor", pct(linear(level, 0.2, 0.1)));
+                push("Manipulation", `×${pct(capFactor(capValue(pawn, "manipulation", o), 1, 1.4))}`);
+                push("Sight", `×${pct(capFactor(capValue(pawn, "sight", o), 0.7, 1.4))}`);
+                push("Raw", pct(tendQualityRaw(pawn, o)));
+            }
+            final = tendQualityFactor(pawn, o);
+            valueText = pct(final);
+        } else if (id === "plant") {
+            if (isPawn(pawn)) {
+                const level = skillLevel(pawn, "plants", o);
+                push("Plants skill", String(level));
+                push("Skill factor", pct(linear(level, 0.08, 0.115)));
+                push("Manipulation", `×${pct(capFactor(capValue(pawn, "manipulation", o), 1, null))}`);
+                push("Sight", `×${pct(capFactor(capValue(pawn, "sight", o), 0.3, 1))}`);
+            }
+            push("Work speed", `×${pct(isPawn(pawn) ? globalWorkSpeed(pawn, o) : 1)}`);
+            final = plantWorkSpeed(pawn, o);
+            valueText = pct(final);
+        } else if (id === "plantYield") {
+            const lv = isPawn(pawn) ? skillLevel(pawn, "plants", o) : clamp(Math.floor(Number(pawn) || 0), 0, 20);
+            push("Plants skill", String(lv));
+            push("Skill factor", pct(PLANT_YIELD[clamp(lv, 0, 20)]));
+            if (isPawn(pawn)) {
+                push("Manipulation", `×${pct(capFactor(capValue(pawn, "manipulation", o), 0.3, null))}`);
+                push("Sight", `×${pct(capFactor(capValue(pawn, "sight", o), 0.2, 1))}`);
+            }
+            final = plantHarvestYield(pawn, o);
+            valueText = pct(final);
+        } else if (id === "fish") {
+            if (isPawn(pawn)) {
+                const level = skillLevel(pawn, "animals", o);
+                push("Animals skill", String(level));
+                push("Skill factor", pct(linear(level, 0.75, 0.025)));
+                push("Manipulation", `×${pct(capFactor(capValue(pawn, "manipulation", o), 0.5, null))}`);
+            }
+            push("Work speed", `×${pct(isPawn(pawn) ? globalWorkSpeed(pawn, o) : 1)}`);
+            final = fishSpeed(pawn, o);
+            valueText = pct(final);
+        } else if (id === "research") {
+            if (isPawn(pawn)) {
+                const level = skillLevel(pawn, "intellectual", o);
+                push("Intellectual skill", String(level));
+                push("Skill factor", pct(linear(level, 0.08, 0.115)));
+                push("Manipulation", `×${pct(capFactor(capValue(pawn, "manipulation", o), 0.5, 1.1))}`);
+                push("Sight", `×${pct(capFactor(capValue(pawn, "sight", o), 0.5, 1.1))}`);
+                const story = traitStat(pawn.bio, "researchSpeed", o.cat);
+                if (story) push("Storyteller", formatSigned(Math.round(story * 100)) + "%");
+            }
+            push("Work speed", `×${pct(isPawn(pawn) ? globalWorkSpeed(pawn, o) : 1)}`);
+            final = researchSpeed(pawn, o);
+            valueText = pct(final);
+        } else if (id === "meleeDps") {
+            const hit = meleeHitChance(pawn, o);
+            const attacks = o.attacks || [];
+            let sumW = 0;
+            const rows = [];
+            for (const attack of attacks) {
+                const damage = Math.max(0, Number(attack.damage) || 0);
+                const cooldown = Math.max(0.2, Number(attack.cooldown) || 2);
+                const mult = Number(attack.weightMultiplier);
+                const weight = damage * damage * (Number.isFinite(mult) ? mult : 1);
+                if (!(weight > 0) || !(cooldown > 0)) continue;
+                sumW += weight;
+                const part = damage * hit / cooldown;
+                rows.push({ attack, weight, part });
+                push(attack.name || "Attack", `${Math.round(damage * 10) / 10} × ${pct(hit)} / ${cooldown}`);
+            }
+            final = 0;
+            if (sumW > 0) {
+                for (const row of rows) final += (row.weight / sumW) * row.part;
+            }
+            valueText = `${Math.round(final * 100) / 100}`;
+        }
+        return {
+            id,
+            sentence: statSentence(id),
+            lines,
+            final,
+            valueText,
+            rangeTable: id === "shooting"
+        };
+    }
+
+    const STAT_ROWS = [
+        { group: "Combat", id: "meleeDps", label: "Melee DPS" },
+        { group: "Combat", id: "meleeHit", label: "Melee hit chance" },
+        { group: "Combat", id: "meleeDodge", label: "Melee dodge chance" },
+        { group: "Combat", id: "shooting", label: "Shooting accuracy" },
+        { group: "Combat", id: "incomingDamage", label: "Damage taken" },
+        { group: "Body", id: "painThreshold", label: "Pain threshold" },
+        { group: "Body", id: "moveSpeed", label: "Move speed" },
+        { group: "Hunger", id: "calories", label: "Calories" },
+        { group: "Work", id: "learning", label: "Learning rate" },
+        { group: "Work", id: "workSpeed", label: "General work speed" },
+        { group: "Work", id: "laborSpeed", label: "General labor speed" },
+        { group: "Work", id: "craftingQuality", label: "Crafting quality" },
+        { group: "Work", id: "cook", label: "Cooking speed" },
+        { group: "Work", id: "tend", label: "Medical tend speed" },
+        { group: "Work", id: "tendQuality", label: "Medical tend quality" },
+        { group: "Work", id: "plant", label: "Plant work speed" },
+        { group: "Work", id: "plantYield", label: "Plant harvest yield" },
+        { group: "Work", id: "fish", label: "Fishing speed" },
+        { group: "Work", id: "research", label: "Research speed" }
+    ];
 
     function jobSkill(jobId) {
         return JOB_SKILL[jobId] || null;
@@ -836,6 +1542,24 @@
         meleeHitChance,
         meleeDodgeChance,
         shootingAccuracy,
+        shootingAccuracyAt,
+        traitStat,
+        traitFactor,
+        hasTrait,
+        globalWorkSpeed,
+        laborSpeed,
+        jobRate,
+        workOpts,
+        tileBrightness,
+        skyDarkness,
+        painThreshold,
+        incomingDamageFactor,
+        calorieFactor,
+        shatterChance,
+        knapCenter,
+        knapGrade,
+        describeStat,
+        STAT_ROWS,
         generate,
         rngFromId,
         normalize,

@@ -1057,7 +1057,11 @@ const Knapping = {
             0.15,
             1
         );
-        const quality = sharpness >= 0.7 ? "fine" : sharpness >= 0.45 ? "rough" : "crude";
+        const qualityOffset = (typeof Skills !== "undefined" && Skills.traitStat)
+            ? Skills.traitStat(this.scene?.player?.bio, "craftingQuality")
+            : 0;
+        const graded = sharpness + qualityOffset;
+        const quality = graded >= 0.7 ? "fine" : graded >= 0.45 ? "rough" : "crude";
 
         const stoneId = material === "flint"
             ? null

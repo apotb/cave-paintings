@@ -659,6 +659,7 @@
     closeOpenMenus() {
         this.hideChannelBar?.();
         if (this.craftMenuVisible) this.closeCraftMenu();
+        if (this.statsPanel?.visible) this.statsPanel.close();
         if (this.bioPanel?.visible) this.bioPanel.close();
         if (this.equipmentPanel?.visible) this.equipmentPanel.close();
         if (this.healthPanel?.visible) this.healthPanel.close();
@@ -684,6 +685,7 @@
         return !!(
             this.craftMenuVisible ||
             this.bioPanel?.visible ||
+            this.statsPanel?.visible ||
             this.equipmentPanel?.visible ||
             this.healthPanel?.visible ||
             this.corpsePanel?.visible ||
@@ -1472,6 +1474,10 @@
         }
         if (this.settlementSys?.isNaming?.()) {
             this.settlementSys._hideNamePrompt();
+            return;
+        }
+        if (this.statsPanel?.visible) {
+            this.statsPanel.handleEsc();
             return;
         }
         if (this.schedulePanel?.visible) {

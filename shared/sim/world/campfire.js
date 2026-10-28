@@ -82,7 +82,7 @@
         const baseQty = Math.max(1, Math.floor(Number(loot.yield) || 1));
         const plantLv = skills && p.bio ? skills.effectiveLevel(p.bio, "plants") : null;
         const qty = (skills && plantLv != null)
-            ? skills.yieldCount(baseQty, skills.plantHarvestYield(plantLv), () => this.rng())
+            ? skills.yieldCount(baseQty, skills.plantHarvestYield(p, skills.workOpts?.(this, p)), () => this.rng())
             : baseQty;
         if (skills && p.bio && plantLv != null) {
             skills.award(p.bio, "plants", skills.XP_HARVEST, { day: this.gameDay });

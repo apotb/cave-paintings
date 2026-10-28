@@ -382,6 +382,7 @@ class ResourceSummaryPanel {
         );
         if (!should && scene.researchTreePanel?.visible && scene.researchTreePanel._pauseWhileOpen) return;
         if (!should && scene.schedulePanel?.visible && scene.schedulePanel._pauseWhileOpen) return;
+        if (!should && scene.statsPanel?.visible && scene.statsPanel._pauseWhileOpen) return;
         scene._setWorldSimFrozen?.(should);
     }
 

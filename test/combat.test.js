@@ -83,6 +83,41 @@ test("boar tusk verbs carry white attack color; bite and headbutt do not", () =>
     for (const a of others) assert.equal(a.color, undefined);
 });
 
+test("a tough victim takes half the damage that gets past armor", () => {
+    function deer(id) {
+        const def = DataStore.getMob("deer");
+        const mob = createMobCreature(
+            { uid: id, id: "deer", x: 8, y: 0, homeX: 8, homeY: 0 },
+            def,
+            DataStore,
+            { worldMinuteIndex: () => 100 }
+        );
+        const math = {
+            random: () => 0,
+            between: (a) => a,
+            clamp: (n, lo, hi) => Math.max(lo, Math.min(hi, n)),
+            floatBetween: (a) => a
+        };
+        mob.math = math;
+        if (mob.anatomy?.ctx) mob.anatomy.ctx.math = math;
+        else if (mob.ctx) mob.ctx.math = math;
+        return mob;
+    }
+    const atk = player("atk-tough");
+    const attack = BodyCombat.pickAttack(atk);
+    assert.ok(attack);
+    attack.def = { ...(attack.def || {}), variance: 0 };
+    const plain = deer("plain");
+    plain.bio = { traits: [] };
+    const hardy = deer("hardy");
+    hardy.bio = { traits: ["tough"] };
+    const a = BodyCombat.applyHit(atk, plain, attack);
+    const b = BodyCombat.applyHit(atk, hardy, attack);
+    assert.ok(a && !a.missed && a.damage > 0);
+    assert.ok(b && !b.missed && b.damage > 0);
+    assert.ok(Math.abs(b.damage * 2 - a.damage) <= 0.11);
+});
+
 test("meleeWeaponAverageDps is finite for a held spear def", () => {
     const spear = DataStore.getItem("sharp_stick");
     assert.ok(spear?.weapon);
