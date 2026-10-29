@@ -202,6 +202,8 @@ class SceneBase extends Phaser.Scene {
             "load_alt",
             "load_alt_hover",
             "load_alt_open",
+            "pause",
+            "play",
             "health",
             "health_hover",
             "health_open",

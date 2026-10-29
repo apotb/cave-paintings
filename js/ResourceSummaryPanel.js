@@ -64,7 +64,7 @@ class ResourceSummaryPanel {
         this.categoryBtn._checked = false;
         this.categoryBtn._paint?.();
         this.durabilityBtn = this._checkBtn("Durability", () => this._toggleDurability());
-        this.pauseBtn = this._checkBtn("Pause game", () => this._togglePause());
+        this.pauseBtn = makePauseGameButton(scene, () => this._togglePause(), true);
         this.body = scene.add.container(0, 0);
         this._maskGfx = scene.make.graphics({ x: 0, y: 0, add: false });
         this.body.setMask(new Phaser.Display.Masks.BitmapMask(scene, this._maskGfx));
@@ -704,11 +704,10 @@ class ResourceSummaryPanel {
         if (this.pauseBtn) {
             this.pauseBtn.setVisible(sp);
             this.pauseBtn._checked = !!this._pauseWhileOpen;
-            if (typeof applyPixelUiFont === "function") applyPixelUiFont(this.pauseBtn._txt, 12, s);
             if (sp) {
-                const pauseW = this._checkBtnWidth(this.pauseBtn, s);
+                const pauseW = closeH;
                 this.pauseBtn.setPosition(anchorRight - pauseW / 2, headerY);
-                this._sizeCheckBtn(this.pauseBtn, pauseW, closeH);
+                this._sizeCheckBtn(this.pauseBtn, pauseW, pauseW);
                 anchorRight = this.pauseBtn.x - pauseW / 2 - gap;
             }
         }

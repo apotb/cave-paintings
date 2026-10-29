@@ -68,9 +68,7 @@ class SchedulePanel {
             color: "#d4c4a8"
         }).setOrigin(0, 0.5);
         this.closeBtn = this._chromeBtn("Close", () => this.close());
-        this.pauseBtn = this._checkBtn("Pause game", () => this._togglePause());
-        this.pauseBtn._checked = false;
-        this.pauseBtn._paint?.();
+        this.pauseBtn = makePauseGameButton(scene, () => this._togglePause(), false);
         this.modes = scene.add.container(0, 0);
         this.hourBar = scene.add.container(0, 0);
         this.body = scene.add.container(0, 0);
@@ -125,78 +123,6 @@ class SchedulePanel {
         return c;
     }
 
-    _checkBtn(label, onClick) {
-        const scene = this.scene;
-        const bg = scene.add.rectangle(0, 0, 148, 22, 0x3a1816, 1)
-            .setInteractive({ useHandCursor: true, cursor: "pointer" });
-        const txt = scene.add.text(0, 0, label, {
-            fontFamily: PIXEL_UI_FONT,
-            fontSize: "14px",
-            color: "#e8c0b8"
-        }).setOrigin(0, 0.5);
-        const glyph = scene.add.graphics();
-        const c = scene.add.container(0, 0, [bg, txt, glyph]);
-        c._bg = bg;
-        c._txt = txt;
-        c._glyph = glyph;
-        c._w = 148;
-        c._h = 22;
-        c._label = label;
-        c._checked = false;
-        c._hovering = false;
-        c._pressing = false;
-        const paint = () => {
-            const s = scene.uiScale || 1;
-            const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
-            const on = !!c._checked;
-            bg.setFillStyle(on ? 0x1e3d1a : 0x3a1816, 1);
-            const stroke = c._pressing ? 0xd4a84b : (c._hovering ? 0xffffff : (on ? 0x5cbf63 : 0xc44c3c));
-            bg.setStrokeStyle(sw, stroke);
-            txt.setColor(on ? "#d4e8d0" : "#e8c0b8");
-            this._layoutCheck(c, s);
-        };
-        c._paint = paint;
-        bg.on("pointerover", () => { c._hovering = true; paint(); });
-        bg.on("pointerout", () => { c._hovering = false; c._pressing = false; paint(); });
-        bg.on("pointerdown", (p, _x, _y, event) => {
-            event?.stopPropagation?.();
-            if (p?.rightButtonDown?.() || p?.button === 2) return;
-            c._pressing = true;
-            paint();
-        });
-        bg.on("pointerup", (p) => {
-            const was = c._pressing;
-            c._pressing = false;
-            paint();
-            if (!was || (p?.button && p.button !== 0)) return;
-            onClick();
-        });
-        paint();
-        return c;
-    }
-
-    _layoutCheck(c, s) {
-        if (!c) return;
-        const w = c._w || 0;
-        const pad = Math.round(8 * s);
-        if (c._txt) {
-            c._txt.setOrigin(0, 0.5);
-            c._txt.setPosition(Math.round(-w / 2 + pad), 0);
-            c._txt.setText(c._label || "");
-        }
-        if (c._glyph) {
-            c._glyph.setPosition(Math.round(w / 2 - Math.round(12 * s)), 0);
-            this._drawStatusGlyph(c._glyph, c._checked ? "on" : "off", s);
-        }
-    }
-
-    _checkBtnWidth(c, s) {
-        const padX = Math.round(8 * s);
-        const glyphW = Math.round(14 * s);
-        const textW = Math.ceil(c?._txt?.width || 70);
-        return padX + textW + Math.round(4 * s) + glyphW + padX;
-    }
-
     _sizeCheckBtn(c, w, h) {
         if (!c) return;
         c._w = w;
@@ -205,36 +131,6 @@ class SchedulePanel {
         if (c._bg.input?.hitArea?.setSize) c._bg.input.hitArea.setSize(w, h);
         else if (c._bg.input?.hitArea?.setTo) c._bg.input.hitArea.setTo(0, 0, w, h);
         c._paint?.();
-    }
-
-    _pixelGlyph(g, u, color, cells) {
-        g.fillStyle(0x000000, 1);
-        for (let i = 0; i < cells.length; i++) {
-            const x = cells[i][0] - 3;
-            const y = cells[i][1] - 3;
-            g.fillRect(x * u - u, y * u - u, 3 * u, 3 * u);
-        }
-        g.fillStyle(color, 1);
-        for (let i = 0; i < cells.length; i++) {
-            const x = cells[i][0] - 3;
-            const y = cells[i][1] - 3;
-            g.fillRect(x * u, y * u, u, u);
-        }
-    }
-
-    _drawStatusGlyph(g, state, sc) {
-        if (!g) return;
-        g.clear();
-        const u = Math.max(1, Math.round(sc));
-        if (state === "on") {
-            this._pixelGlyph(g, u, 0x5cbf63, [
-                [0, 3], [1, 4], [2, 5], [3, 4], [4, 3], [5, 2], [6, 1]
-            ]);
-        } else {
-            const cross = [];
-            for (let i = 0; i <= 6; i++) cross.push([i, i], [i, 6 - i]);
-            this._pixelGlyph(g, u, 0xc44c3c, cross);
-        }
     }
 
     _modeBtn(x, y, w, h, mode, label) {
@@ -473,13 +369,12 @@ class SchedulePanel {
         if (this.pauseBtn) {
             this.pauseBtn.setVisible(sp);
             this.pauseBtn._checked = !!this._pauseWhileOpen;
-            if (typeof applyPixelUiFont === "function") applyPixelUiFont(this.pauseBtn._txt, 12, s);
             if (sp) this.pauseBtn._bg.setInteractive({ useHandCursor: true, cursor: "pointer" });
             else this.pauseBtn._bg.disableInteractive?.();
         }
         const closeW = Math.round(52 * s);
         const closeH = Math.round(22 * s);
-        const pauseW = sp && this.pauseBtn ? this._checkBtnWidth(this.pauseBtn, s) : 0;
+        const pauseW = sp && this.pauseBtn ? closeH : 0;
         this.closeBtn._bg.setSize(closeW, closeH);
         if (this.closeBtn._bg.input?.hitArea?.setSize) {
             this.closeBtn._bg.input.hitArea.setSize(closeW, closeH);
@@ -542,7 +437,7 @@ class SchedulePanel {
                 this.closeBtn.x - closeW / 2 - gap - pauseW / 2,
                 frameY + titleH / 2
             );
-            this._sizeCheckBtn(this.pauseBtn, pauseW, closeH);
+            this._sizeCheckBtn(this.pauseBtn, closeH, closeH);
         }
 
         const modeY = frameY + titleH + gap;

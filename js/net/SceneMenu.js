@@ -3112,7 +3112,7 @@ class SceneMenu extends Phaser.Scene {
         }
     }
 
-    /** Green check / red cross toggle, matching the settlement "Pause game" control. */
+    /** Green check / red cross toggle. */
     _checkButton(x, y, label, checked, onClick) {
         const s = this._uiScale();
         const pad = Math.round(8 * s);

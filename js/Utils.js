@@ -210,6 +210,103 @@ function pixelUiStroke(uiScale) {
     return Math.max(2, Math.round(2 * (Number(uiScale) || 1)));
 }
 
+/**
+ * Square pause toggle for the research, stats, schedule, and resources menus.
+ * Same rectangle button as Close, with equal width and height.
+ * Green while the game is playing, red while it is paused.
+ * Green shows play.png while the game is playing. Red shows pause.png while it is paused.
+ */
+function makePauseGameButton(scene, onClick, checked) {
+    const side = 22;
+    const bg = scene.add.rectangle(0, 0, side, side, 0x1e3d1a, 1)
+        .setInteractive({ useHandCursor: true });
+    const crisp = (key) => {
+        if (!scene.textures?.exists?.(key)) return;
+        try {
+            const tex = scene.textures.get(key);
+            if (tex?.setFilter && typeof Phaser !== "undefined") {
+                tex.setFilter(Phaser.Textures.FilterMode.NEAREST);
+            }
+            if (typeof clampTextureWrap === "function") clampTextureWrap(tex);
+        } catch (_) {}
+    };
+    crisp("pause");
+    crisp("play");
+    let icon = null;
+    const firstKey = scene.textures?.exists?.("pause") ? "pause" : (scene.textures?.exists?.("play") ? "play" : null);
+    if (firstKey) icon = scene.add.image(0, 0, firstKey).setOrigin(0, 0);
+    const c = scene.add.container(0, 0, icon ? [bg, icon] : [bg]);
+    c._bg = bg;
+    c._icon = icon;
+    c._w = side;
+    c._h = side;
+    c._checked = checked !== false;
+    c._hovering = false;
+    c._pressing = false;
+    const tipText = () => (c._checked ? "Resume game" : "Pause game");
+    const layoutIcon = (size, strokeW) => {
+        if (!icon) return;
+        const fw = icon.frame?.realWidth || icon.width || 16;
+        const fh = icon.frame?.realHeight || icon.height || 16;
+        const glyph = Math.max(1, fw, fh);
+        const room = Math.max(1, size - strokeW * 2);
+        const scale = Math.max(1, Math.floor(room / glyph));
+        const dw = fw * scale;
+        const dh = fh * scale;
+        icon.setScale(scale);
+        icon.setPosition(Math.floor(-dw / 2), Math.floor(-dh / 2));
+    };
+    c._paint = () => {
+        const ui = scene.uiScale || 1;
+        const size = Math.max(8, Math.round(Math.min(c._w || side, c._h || side)));
+        const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(ui) : 2;
+        const paused = !!c._checked;
+        const fill = paused ? 0x3a1816 : 0x1e3d1a;
+        const stroke = c._pressing ? 0xd4a84b : (c._hovering ? 0xffffff : (paused ? 0xc44c3c : 0x5cbf63));
+        bg.setFillStyle(fill, 1);
+        bg.setStrokeStyle(sw, stroke);
+        if (icon) {
+            const key = paused ? "pause" : "play";
+            if (scene.textures?.exists?.(key) && icon.texture?.key !== key) icon.setTexture(key);
+        }
+        layoutIcon(size, sw);
+        if (c._hovering && scene._tooltipTarget === bg) scene.refreshTooltip?.();
+    };
+    const showTip = (p) => {
+        if (!p) return;
+        scene.showTooltip?.(tipText, p.x, p.y, bg);
+    };
+    bg.on("pointerover", (p) => {
+        c._hovering = true;
+        c._paint();
+        showTip(p);
+    });
+    bg.on("pointerout", (p) => {
+        const b = bg.getBounds?.();
+        if (p && b && Phaser.Geom.Rectangle.Contains(b, p.x, p.y)) return;
+        c._hovering = false;
+        c._pressing = false;
+        c._paint();
+        if (scene._tooltipTarget === bg) scene.hideTooltip?.();
+    });
+    bg.on("pointerdown", (p, _x, _y, event) => {
+        event?.stopPropagation?.();
+        if (p?.rightButtonDown?.() || p?.button === 2) return;
+        if (p?.button && p.button !== 0) return;
+        c._pressing = true;
+        c._paint();
+    });
+    bg.on("pointerup", (p) => {
+        const was = c._pressing;
+        c._pressing = false;
+        c._paint();
+        if (!was || (p?.button && p.button !== 0)) return;
+        onClick?.(p);
+    });
+    c._paint();
+    return c;
+}
+
 /** Same outline in world units so zoomed station buttons match the HUD. */
 function pixelUiWorldStroke(scene) {
     const zoom = Number(scene?.worldZoom || scene?.cameras?.main?.zoom || 1) || 1;

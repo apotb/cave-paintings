@@ -89,7 +89,7 @@ class ResearchTreePanel {
             if (scene._tooltipTarget === this.ageHit) scene.hideTooltip?.();
         });
         this.closeBtn = this._btn("Close", () => this.close());
-        this.pauseBtn = this._checkBtn("Pause game", () => this._togglePause());
+        this.pauseBtn = makePauseGameButton(scene, () => this._togglePause(), true);
         this.researchBtn = this._btn("Research", () => this._spendSelected());
         this._researchDisabledReason = "";
         this.researchBtn._bg.on("pointerover", (pointer) => {
@@ -206,83 +206,6 @@ class ResearchTreePanel {
         return c;
     }
 
-    _checkBtn(label, onClick) {
-        const scene = this.scene;
-        const w = 148;
-        const h = 22;
-        const bg = scene.add.rectangle(0, 0, w, h, 0x1e3d1a, 1)
-            .setInteractive({ useHandCursor: true });
-        const txt = scene.add.text(0, 0, label, {
-            fontFamily: PIXEL_UI_FONT,
-            fontSize: "14px",
-            color: "#d4e8d0"
-        }).setOrigin(0, 0.5);
-        const glyph = scene.add.graphics();
-        const c = scene.add.container(0, 0, [bg, txt, glyph]);
-        c._bg = bg;
-        c._txt = txt;
-        c._glyph = glyph;
-        c._w = w;
-        c._h = h;
-        c._label = label;
-        c._check = true;
-        c._checked = true;
-        c._hovering = false;
-        c._pressing = false;
-        const paint = () => {
-            const s = scene.uiScale || 1;
-            const sw = typeof pixelUiStroke === "function" ? pixelUiStroke(s) : 2;
-            const colors = this._rowColors(c._checked ? "on" : "off");
-            if (c._pressing) {
-                bg.setFillStyle(colors.fill, 1);
-                bg.setStrokeStyle(sw, 0xd4a84b);
-            } else if (c._hovering) {
-                bg.setFillStyle(colors.fill, 1);
-                bg.setStrokeStyle(sw, 0xffffff);
-            } else {
-                bg.setFillStyle(colors.fill, 1);
-                bg.setStrokeStyle(sw, colors.stroke);
-            }
-            txt.setColor(colors.text);
-            this._layoutCheck(c, s);
-        };
-        c._paint = paint;
-        bg.on("pointerover", () => { c._hovering = true; paint(); });
-        bg.on("pointerout", () => {
-            c._hovering = false;
-            c._pressing = false;
-            paint();
-        });
-        bg.on("pointerdown", (p) => {
-            if (p?.button && p.button !== 0) return;
-            c._pressing = true;
-            paint();
-        });
-        bg.on("pointerup", (p) => {
-            const was = c._pressing;
-            c._pressing = false;
-            paint();
-            if (was) onClick?.(p);
-        });
-        paint();
-        return c;
-    }
-
-    _layoutCheck(c, s) {
-        if (!c?._check) return;
-        const w = c._w || 0;
-        const pad = Math.round(8 * s);
-        if (c._txt) {
-            c._txt.setOrigin(0, 0.5);
-            c._txt.setPosition(Math.round(-w / 2 + pad), 0);
-            c._txt.setText(c._label || "");
-        }
-        if (c._glyph) {
-            c._glyph.setPosition(Math.round(w / 2 - Math.round(12 * s)), 0);
-            this._drawStatusGlyph(c._glyph, c._checked ? "on" : "off", s);
-        }
-    }
-
     _sizeCheckBtn(c, w, h) {
         if (!c) return;
         c._w = w;
@@ -293,43 +216,6 @@ class ResearchTreePanel {
         const s = this.scene.uiScale || 1;
         if (c._txt && typeof applyPixelUiFont === "function") applyPixelUiFont(c._txt, 12, s);
         c._paint?.();
-    }
-
-    _pixelGlyph(g, u, color, cells) {
-        g.fillStyle(0x000000, 1);
-        for (let i = 0; i < cells.length; i++) {
-            const x = cells[i][0] - 3;
-            const y = cells[i][1] - 3;
-            g.fillRect(x * u - u, y * u - u, 3 * u, 3 * u);
-        }
-        g.fillStyle(color, 1);
-        for (let i = 0; i < cells.length; i++) {
-            const x = cells[i][0] - 3;
-            const y = cells[i][1] - 3;
-            g.fillRect(x * u, y * u, u, u);
-        }
-    }
-
-    _drawStatusGlyph(g, state, sc) {
-        if (!g) return;
-        g.clear();
-        const u = Math.max(1, Math.round(sc));
-        if (state === "on") {
-            this._pixelGlyph(g, u, 0x5cbf63, [
-                [0, 3], [1, 4], [2, 5], [3, 4], [4, 3], [5, 2], [6, 1]
-            ]);
-        } else {
-            const cross = [];
-            for (let i = 0; i <= 6; i++) {
-                cross.push([i, i], [i, 6 - i]);
-            }
-            this._pixelGlyph(g, u, 0xc44c3c, cross);
-        }
-    }
-
-    _rowColors(state) {
-        if (state === "on") return { fill: 0x1e3d1a, stroke: 0x5cbf63, text: "#d4e8d0" };
-        return { fill: 0x3a1816, stroke: 0xc44c3c, text: "#e8c0b8" };
     }
 
     _togglePause() {
@@ -1749,20 +1635,13 @@ class ResearchTreePanel {
         if (this.pauseBtn) {
             this.pauseBtn.setVisible(sp);
             this.pauseBtn._checked = !!this._pauseWhileOpen;
-            if (typeof applyPixelUiFont === "function") {
-                applyPixelUiFont(this.pauseBtn._txt, 12, s);
-            }
-            const padX = Math.round(8 * s);
-            const glyphW = Math.round(14 * s);
-            const textW = Math.ceil(this.pauseBtn._txt?.width || 70);
-            const pauseW = padX + textW + Math.round(4 * s) + glyphW + padX;
-            const pauseH = closeH;
+            const pauseSide = closeH;
             const gap = Math.round(8 * s);
             this.pauseBtn.setPosition(
-                this.closeBtn.x - closeW / 2 - gap - pauseW / 2,
+                this.closeBtn.x - closeW / 2 - gap - pauseSide / 2,
                 headerY
             );
-            this._sizeCheckBtn(this.pauseBtn, pauseW, pauseH);
+            this._sizeCheckBtn(this.pauseBtn, pauseSide, pauseSide);
         }
         this.pointsTxt.setPosition(pad + detailW + Math.round(14 * s), headerY);
         const innerPad = Math.round(12 * s);
