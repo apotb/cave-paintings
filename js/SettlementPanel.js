@@ -779,9 +779,26 @@ class SettlementPanel {
                 scene.showTooltip(() => this._personActionTip(p), pointer.x, pointer.y, hit);
             });
             hit.on("pointerout", (pointer) => {
+                if (!this._pointerStillOn(hit, pointer)) hit._pressing = false;
                 if (this._refreshing) return;
                 if (this._pointerStillOn(hit, pointer)) return;
                 if (scene._tooltipTarget === hit) scene.hideTooltip?.();
+            });
+            hit.on("pointerdown", (pointer, _lx, _ly, event) => {
+                event?.stopPropagation?.();
+                if (pointer.rightButtonDown?.() || pointer.button === 2) return;
+                if (!this._pointerInBody(pointer)) return;
+                hit._pressing = true;
+            });
+            hit.on("pointerup", (pointer, _lx, _ly, event) => {
+                event?.stopPropagation?.();
+                const was = !!hit._pressing;
+                hit._pressing = false;
+                if (!was) return;
+                if (pointer.rightButtonReleased?.() || pointer.button === 2) return;
+                if (!this._pointerInBody(pointer)) return;
+                if (scene._tooltipTarget === hit) scene.hideTooltip?.();
+                scene.statsPanel?.open?.(p);
             });
             this.body.add(hit);
             let edge = x + colW;

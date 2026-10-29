@@ -622,6 +622,7 @@ class SceneMain extends SceneBase {
         // those tabs treat the death as the panel vanishing and close.
         this.corpsePanel?.update();
         if (this.bioPanel?.visible) this.bioPanel.refresh();
+        if (this.statsPanel?.visible && this.statsPanel.page === "bio") this.statsPanel.syncBio();
         if (this.healthPanel?.visible) this.healthPanel.refresh();
         this._updateCraftStationMenu();
         this._updateCraftQueue?.();

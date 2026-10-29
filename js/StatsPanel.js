@@ -1,5 +1,6 @@
 /**
- * Fullscreen stat window opened from a bio. List on the left, sources on the right.
+ * Details window. Stats is the list on the left and sources on the right.
+ * Humans also have a Bio tab with the same sheet as the in-world bio panel.
  * Same shell as the research tree: opaque frame, dimmed world, pause, and close.
  */
 class StatsPanel {
@@ -7,19 +8,31 @@ class StatsPanel {
         this.scene = scene;
         this.visible = false;
         this.pawn = null;
-        this.selected = "meleeHit";
+        this.page = "stats";
+        this.selected = null;
         this._scroll = 0;
+        this._bioScroll = 0;
         this._pauseWhileOpen = true;
         this._sizeSig = "";
+        this._bioSig = "";
+        this._bioProgress = "";
         this.root = scene.add.container(0, 0).setScrollFactor(0).setDepth(16200).setVisible(false);
         scene.uiLayer?.add(this.root);
         this._build();
         scene.input.on("wheel", (_p, _over, _dx, dy) => {
             if (!this.visible) return;
             const ptr = scene.input.activePointer;
+            const step = dy * 0.4;
+            if (this.page === "bio") {
+                const b = this._bioBounds;
+                if (!b || ptr.x < b.x || ptr.x > b.x + b.w || ptr.y < b.y || ptr.y > b.y + b.h) return;
+                this._bioScroll = Math.max(0, Math.min(this._maxBioScroll(), this._bioScroll + step));
+                this._placeBio();
+                return;
+            }
             const b = this._listBounds;
             if (!b || ptr.x < b.x || ptr.x > b.x + b.w || ptr.y < b.y || ptr.y > b.y + b.h) return;
-            this._scroll = Math.max(0, Math.min(this._maxScroll(), this._scroll + dy * 0.4));
+            this._scroll = Math.max(0, Math.min(this._maxScroll(), this._scroll + step));
             this._placeRows();
         });
     }
@@ -38,7 +51,7 @@ class StatsPanel {
             .setInteractive({ cursor: "default" });
         this.divider = scene.add.rectangle(0, 0, 2, 10, 0x2a2218, 1).setOrigin(0, 0);
         this.portrait = scene.add.sprite(0, 0, "human", 1).setOrigin(0.5, 0.5).setVisible(false);
-        this.title = scene.add.text(0, 0, "Stats", {
+        this.title = scene.add.text(0, 0, "Details", {
             fontFamily: typeof PIXEL_UI_FONT !== "undefined" ? PIXEL_UI_FONT : "monospace",
             fontSize: "16px",
             color: "#d4c4a8"
@@ -47,13 +60,24 @@ class StatsPanel {
         this.pauseBtn = makePauseGameButton(scene, () => this._togglePause(), true);
         this.left = scene.add.container(0, 0);
         this.right = scene.add.container(0, 0);
+        this.tabGfx = scene.add.graphics();
+        this.tabStats = this._makeTab("stats", "Stats");
+        this.tabBio = this._makeTab("bio", "Bio");
+        this.bioRoot = scene.add.container(0, 0).setVisible(false);
+        this.bioBars = scene.add.graphics();
+        this.bioTexts = scene.add.container(0, 0);
+        this.bioRoot.add([this.bioBars, this.bioTexts]);
         this._maskGfx = scene.make.graphics({ x: 0, y: 0, add: false });
         this._detailMaskGfx = scene.make.graphics({ x: 0, y: 0, add: false });
+        this._bioMaskGfx = scene.make.graphics({ x: 0, y: 0, add: false });
         this.left.setMask(new Phaser.Display.Masks.BitmapMask(scene, this._maskGfx));
         this.right.setMask(new Phaser.Display.Masks.BitmapMask(scene, this._detailMaskGfx));
+        this.bioRoot.setMask(new Phaser.Display.Masks.BitmapMask(scene, this._bioMaskGfx));
         this.root.add([
             this.dim, this.frame, this.listBg, this.divider,
-            this.left, this.right, this.portrait, this.title, this.pauseBtn, this.closeBtn
+            this.left, this.right, this.bioRoot,
+            this.portrait, this.title, this.pauseBtn, this.closeBtn,
+            this.tabGfx, this.tabStats.txt, this.tabStats.hit, this.tabBio.txt, this.tabBio.hit
         ]);
         this.dim.on("pointerup", (p) => {
             if (!this.visible || (p?.button && p.button !== 0)) return;
@@ -62,8 +86,38 @@ class StatsPanel {
         });
         this._rows = [];
         this._detail = [];
+        this._bioHits = [];
+        this._tabSpecs = [];
         this._listH = 0;
         this._viewH = 0;
+        this._bioH = 0;
+        this._bioViewH = 0;
+    }
+
+    _makeTab(id, label) {
+        const scene = this.scene;
+        const txt = scene.add.text(0, 0, label, {
+            fontFamily: typeof PIXEL_UI_FONT !== "undefined" ? PIXEL_UI_FONT : "monospace",
+            fontSize: "14px",
+            color: "#a89880"
+        }).setOrigin(0.5, 0.5);
+        const hit = scene.add.rectangle(0, 0, 10, 10, 0x000000, 0.001).setOrigin(0, 0);
+        hit.setInteractive({ useHandCursor: true });
+        hit._tabId = id;
+        hit._hover = false;
+        hit.on("pointerover", () => {
+            hit._hover = true;
+            this._paintTabs();
+        });
+        hit.on("pointerout", () => {
+            hit._hover = false;
+            this._paintTabs();
+        });
+        hit.on("pointerup", (p) => {
+            if (p?.button && p.button !== 0) return;
+            this._setPage(id);
+        });
+        return { id, txt, hit };
     }
 
     toggle(pawn) {
@@ -73,6 +127,11 @@ class StatsPanel {
 
     open(pawn) {
         this.pawn = pawn || null;
+        this.page = "stats";
+        this.selected = null;
+        this._bioScroll = 0;
+        this._bioSig = "";
+        this._bioProgress = "";
         this.visible = true;
         this.root.setVisible(true);
         this.scene.hideTooltip?.();
@@ -110,6 +169,23 @@ class StatsPanel {
         if (!this.containsPointer(pointer)) return null;
         if (this._over(this.pauseBtn?._bg, pointer)) return this.pauseBtn._bg;
         if (this._over(this.closeBtn?._bg, pointer)) return this.closeBtn._bg;
+        for (let i = (this._tabSpecs || []).length - 1; i >= 0; i--) {
+            const spec = this._tabSpecs[i];
+            if (spec.hidden) continue;
+            if (this._over(spec.hit, pointer)) return spec.hit;
+        }
+        if (this.page === "bio") {
+            const view = this._bioBounds;
+            const inView = view && pointer.x >= view.x && pointer.x <= view.x + view.w
+                && pointer.y >= view.y && pointer.y <= view.y + view.h;
+            if (inView) {
+                for (let i = this._bioHits.length - 1; i >= 0; i--) {
+                    const hit = this._bioHits[i];
+                    if (this._over(hit, pointer)) return hit;
+                }
+            }
+            return this.dim;
+        }
         const b = this._listBounds;
         if (b && pointer.x >= b.x && pointer.x <= b.x + b.w && pointer.y >= b.y && pointer.y <= b.y + b.h) {
             for (let i = this._rows.length - 1; i >= 0; i--) {
@@ -127,17 +203,32 @@ class StatsPanel {
         return !!(bounds && Phaser.Geom.Rectangle.Contains(bounds, pointer.x, pointer.y));
     }
 
+    _setPage(page) {
+        if (page === "bio" && !this._hasBioTab()) page = "stats";
+        if (page === this.page) return;
+        this.page = page;
+        this.scene.hideTooltip?.();
+        this._sizeSig = "";
+        this.refresh();
+    }
+
     refresh() {
         if (!this.visible) return;
+        if (this.page === "bio" && !this._hasBioTab()) this.page = "stats";
+        const m = this._metrics();
+        this._sizeSig = `${m.W}x${m.H}:${m.s}:${this.page}`;
+        if (this.page === "bio") {
+            this._refreshBio();
+            this.layout();
+            return;
+        }
         this._clear(this.left);
         this._clear(this.right);
         this._rows = [];
         this._detail = [];
-        const m = this._metrics();
-        this._sizeSig = `${m.W}x${m.H}:${m.s}`;
         const entries = this._entries();
-        if (!entries.some((row) => row.id === this.selected)) {
-            this.selected = entries.find((row) => row.id)?.id || "meleeHit";
+        if (this.selected && !entries.some((row) => row.id === this.selected)) {
+            this.selected = null;
         }
         this.highlight = this.scene.add.rectangle(0, 0, 10, 10, 0xe6c15a, 1).setOrigin(0, 0);
         this.left.add(this.highlight);
@@ -200,7 +291,7 @@ class StatsPanel {
     layout() {
         if (!this.visible) return;
         const m = this._metrics();
-        const sig = `${m.W}x${m.H}:${m.s}`;
+        const sig = `${m.W}x${m.H}:${m.s}:${this.page}`;
         if (sig !== this._sizeSig) {
             this.refresh();
             return;
@@ -210,7 +301,7 @@ class StatsPanel {
         if (this.dim.input?.hitArea?.setSize) this.dim.input.hitArea.setSize(m.W, m.H);
         this.frame.setPosition(m.pad, m.pad).setSize(m.frameW, m.frameH);
         this.frame.setStrokeStyle(typeof pixelUiStroke === "function" ? pixelUiStroke(m.s) : 2, 0x2a2218);
-        const headerY = m.pad + Math.round(18 * m.s);
+        const headerY = m.pad + m.titleRow / 2;
         const name = this._title();
         this.title.setText(name);
         if (typeof applyPixelUiFont === "function") applyPixelUiFont(this.title, 16, m.s);
@@ -241,7 +332,18 @@ class StatsPanel {
             );
             this._sizeCheckBtn(this.pauseBtn, pauseSide, pauseSide);
         }
+        this._layoutTabs(m);
+        const statsOn = this.page !== "bio";
+        this.listBg.setVisible(statsOn);
+        this.divider.setVisible(statsOn);
+        this.left.setVisible(statsOn);
+        this.right.setVisible(statsOn);
+        this.bioRoot.setVisible(!statsOn);
         const top = m.pad + m.header;
+        if (!statsOn) {
+            this._layoutBioFrame(m, top);
+            return;
+        }
         const listH = Math.max(40, m.frameH - m.header - m.inset);
         this.listBg.setPosition(m.pad, top).setSize(m.listW, listH);
         if (this.listBg.input?.hitArea?.setSize) this.listBg.input.hitArea.setSize(m.listW, listH);
@@ -281,12 +383,14 @@ class StatsPanel {
         const pad = Math.round(18 * s);
         const frameW = Math.max(200, W - pad * 2);
         const frameH = Math.max(180, H - pad * 2);
-        const header = Math.round(36 * s);
+        const titleRow = Math.round(36 * s);
+        const tabH = Math.round(26 * s);
+        const header = titleRow + tabH;
         const inset = Math.round(12 * s);
         const listW = Math.max(Math.round(220 * s), Math.round(frameW * 0.34));
         const div = Math.max(1, Math.round(2 * s));
         const detailW = Math.max(40, frameW - listW - div - inset * 2);
-        return { s, W, H, pad, frameW, frameH, header, inset, listW, div, detailW };
+        return { s, W, H, pad, frameW, frameH, titleRow, tabH, header, inset, listW, div, detailW };
     }
 
     _maxScroll() {
@@ -368,7 +472,445 @@ class StatsPanel {
         if (named) return named;
         const fromBio = this.scene.bioPanel?._pawnName?.();
         if (fromBio && fromBio !== "them") return fromBio;
-        return "Stats";
+        const corpseName = this.scene.bioPanel?._selectedCorpse?.()?.entry?.name;
+        if (corpseName) return corpseName;
+        return "Details";
+    }
+
+    /** Humans, and anyone who already has a bio record, get the Bio tab. */
+    _hasBioTab() {
+        const p = this.pawn;
+        if (!p) return false;
+        const plan = p.anatomy?.planId || p.bodyPlan || p.def?.bodyPlan || p.entry?.bodyPlan;
+        if (plan === "human") return true;
+        return !!p.bio;
+    }
+
+    _sheetName() {
+        const titled = this._title();
+        return titled && titled !== "Details" ? titled : "them";
+    }
+
+    _subjectBio() {
+        return this.pawn?.bio || null;
+    }
+
+    _layoutTabs(m) {
+        const s = m.s;
+        const showBio = this._hasBioTab();
+        this.tabBio.txt.setVisible(showBio);
+        this.tabBio.hit.setVisible(showBio);
+        if (this.tabBio.hit.input) this.tabBio.hit.input.enabled = showBio;
+        const tabs = showBio ? [this.tabStats, this.tabBio] : [this.tabStats];
+        const gap = Math.round(4 * s);
+        const padX = Math.round(14 * s);
+        const slack = Math.round(4 * s);
+        const border = Math.max(1, Math.round(s));
+        let x = m.pad + Math.round(12 * s);
+        const baseY = m.pad + m.titleRow;
+        const specs = [];
+        for (const tab of tabs) {
+            if (typeof applyPixelUiFont === "function") applyPixelUiFont(tab.txt, 12, s);
+            const w = Math.max(Math.round(72 * s), Math.ceil(tab.txt.width) + padX * 2);
+            const active = this.page === tab.id;
+            const h = active ? m.tabH : Math.max(border * 3, m.tabH - slack);
+            const y = baseY + (m.tabH - h);
+            tab.hit.setPosition(x, y);
+            tab.hit.setSize(w, h);
+            if (tab.hit.input?.hitArea?.setSize) tab.hit.input.hitArea.setSize(w, h);
+            else if (tab.hit.input?.hitArea?.setTo) tab.hit.input.hitArea.setTo(0, 0, w, h);
+            tab.txt.setPosition(x + w / 2, baseY + m.tabH / 2);
+            specs.push({
+                id: tab.id,
+                hit: tab.hit,
+                txt: tab.txt,
+                x, y, w, h,
+                active,
+                hover: !!tab.hit._hover
+            });
+            x += w + gap;
+        }
+        this._tabSpecs = specs;
+        this._tabBaseline = { x: m.pad, y: m.pad + m.header - border, w: m.frameW };
+        this._tabBorder = border;
+        this._paintTabs();
+    }
+
+    _paintTabs() {
+        const g = this.tabGfx;
+        if (!g) return;
+        g.clear();
+        const border = this._tabBorder || 1;
+        const base = this._tabBaseline;
+        if (base) {
+            g.fillStyle(0x2a2218, 1);
+            g.fillRect(base.x, base.y, base.w, border);
+        }
+        const specs = this._tabSpecs || [];
+        const draw = (spec) => {
+            const hover = !!spec.hit?._hover;
+            const fill = spec.active ? 0x120e0a : (hover ? 0x1a1510 : 0x0c0a08);
+            g.fillStyle(fill, 1);
+            g.fillRect(spec.x, spec.y, spec.w, spec.h);
+            g.fillStyle(0x2a2218, 1);
+            g.fillRect(spec.x, spec.y, spec.w, border);
+            g.fillRect(spec.x, spec.y, border, spec.h);
+            g.fillRect(spec.x + spec.w - border, spec.y, border, spec.h);
+            if (!spec.active) g.fillRect(spec.x, spec.y + spec.h - border, spec.w, border);
+            else if (base) {
+                g.fillStyle(fill, 1);
+                g.fillRect(spec.x + border, base.y, Math.max(1, spec.w - border * 2), border);
+            }
+            spec.txt?.setColor(spec.active ? "#f4f0e6" : (hover ? "#d4c4a8" : "#a89880"));
+        };
+        for (const spec of specs) if (!spec.active) draw(spec);
+        for (const spec of specs) if (spec.active) draw(spec);
+    }
+
+    _refreshBio() {
+        const bio = this._subjectBio();
+        this._bioSig = this._bioStructSig(bio);
+        this._bioProgress = this._bioProgressSig(bio);
+        this._paintBio(bio);
+    }
+
+    /** Live skill XP while the Bio tab is open. A level or backstory change rebuilds the sheet. */
+    syncBio() {
+        if (!this.visible || this.page !== "bio") return;
+        const bio = this._subjectBio();
+        if (this._bioStructSig(bio) !== this._bioSig) {
+            this._sizeSig = "";
+            this.refresh();
+            return;
+        }
+        const progress = this._bioProgressSig(bio);
+        if (progress === this._bioProgress) return;
+        this._bioProgress = progress;
+        this._syncBioSkills(bio);
+    }
+
+    _bioStructSig(bio) {
+        const S = typeof Skills !== "undefined" ? Skills : null;
+        const parts = [this._sheetName(), this.scene.uiScale || 1];
+        if (!bio || !S) return parts.join("|");
+        parts.push(bio.gender, bio.age, bio.childhood, bio.adulthood, (bio.traits || []).join(","));
+        for (const id of S.SKILL_IDS) parts.push(S.incapable(bio, id) ? "x" : ".");
+        return parts.join("|");
+    }
+
+    _bioProgressSig(bio) {
+        const S = typeof Skills !== "undefined" ? Skills : null;
+        if (!bio || !S) return "";
+        const parts = [];
+        for (const id of S.SKILL_IDS) {
+            const row = bio.skills?.[id];
+            parts.push(
+                Math.floor(Number(row?.level) || 0),
+                Math.round(Number(row?.xp) || 0),
+                Math.floor(Number(row?.passion) || 0)
+            );
+        }
+        return parts.join(",");
+    }
+
+    _bioText(value, color, size) {
+        const t = this._text(value, color, size);
+        this.bioTexts.add(t);
+        return t;
+    }
+
+    _bioTip(obj, tip) {
+        if (!obj || !tip) return;
+        obj.setInteractive({ useHandCursor: true });
+        const read = typeof tip === "function" ? tip : () => tip;
+        obj.on("pointerover", (p) => {
+            const view = this._bioBounds;
+            if (view && (p.x < view.x || p.x > view.x + view.w || p.y < view.y || p.y > view.y + view.h)) return;
+            this.scene.showTooltip?.(() => read(), p.x, p.y, obj);
+        });
+        obj.on("pointerout", () => {
+            if (this.scene._tooltipTarget === obj) this.scene.hideTooltip?.();
+        });
+        this._bioHits.push(obj);
+    }
+
+    _paintBio(bio) {
+        if (this._bioHits.includes(this.scene._tooltipTarget)) this.scene.hideTooltip?.();
+        this.bioTexts.removeAll(true);
+        this.bioBars.clear();
+        this._bioHits = [];
+        const S = typeof Skills !== "undefined" ? Skills : null;
+        const name = this._sheetName();
+        const cat = S ? S.catalogs() : { backstories: [], traits: [] };
+        const block = {
+            meta: null,
+            childLabel: null,
+            childTitle: null,
+            adultLabel: null,
+            adultTitle: null,
+            traitsHead: null,
+            traits: [],
+            incapHead: null,
+            incaps: [],
+            skills: []
+        };
+        this._bioBlock = block;
+        if (!bio || !S) {
+            block.meta = this._bioText("No record yet", "#8a8070", 12);
+            return;
+        }
+        block.meta = this._bioText(`${S.genderLabel(bio.gender)}, age ${bio.age}`, "#f2ead8", 12);
+        const child = S.titleOf(cat.backstories, bio.childhood);
+        const adult = S.titleOf(cat.backstories, bio.adulthood);
+        const childDef = (cat.backstories || []).find((row) => row.id === bio.childhood);
+        const adultDef = (cat.backstories || []).find((row) => row.id === bio.adulthood);
+        block.childLabel = this._bioText("Childhood", "#9a9186", 12);
+        block.childTitle = this._bioText(child, "#f2ead8", 12);
+        this._bioTip(block.childTitle, S.backstoryTip(childDef, name));
+        block.adultLabel = this._bioText("Adulthood", "#9a9186", 12);
+        block.adultTitle = this._bioText(adult, "#f2ead8", 12);
+        this._bioTip(block.adultTitle, S.backstoryTip(adultDef, name));
+        block.traitsHead = this._bioText("Traits", "#d4c45a", 12);
+        const traits = Array.isArray(bio.traits) ? bio.traits : [];
+        if (!traits.length) {
+            block.traits.push(this._bioText("None", "#8a8478", 12));
+        } else {
+            for (const id of traits) {
+                const def = (cat.traits || []).find((row) => row.id === id);
+                const line = this._bioText(def?.title || "Unknown", "#f2ead8", 12);
+                this._bioTip(line, def ? S.traitTip(def, name) : "Unknown");
+                block.traits.push(line);
+            }
+        }
+        const incapable = S.SKILL_IDS.filter((id) => S.incapable(bio, id));
+        block.incapHead = this._bioText("Incapable of", "#d4c45a", 12);
+        if (!incapable.length) {
+            block.incaps.push(this._bioText("None", "#8a8478", 12));
+        } else {
+            for (const id of incapable) {
+                const line = this._bioText(S.labelOf(id), "#8a8478", 12);
+                this._bioTip(line, S.incapableTip(bio, id));
+                block.incaps.push(line);
+            }
+        }
+        for (const id of S.SKILL_IDS) {
+            const off = S.incapable(bio, id);
+            const level = S.effectiveLevel(bio, id);
+            const row = bio.skills?.[id] || { level: 0, xp: 0, passion: 0 };
+            const label = this._bioText(S.labelOf(id), off ? "#6a6058" : "#ffffff", 12);
+            const num = off ? null : this._bioText(String(level), "#ffffff", 12);
+            const trained = Math.max(0, Math.floor(Number(row.level) || 0));
+            const xp = off ? 0 : Math.max(0, Number(row.xp) || 0);
+            const skill = {
+                label,
+                num,
+                tip: S.skillTip(bio, id),
+                passion: off ? 0 : S.passionOf(bio, id),
+                xp,
+                trained,
+                shown: off ? 0 : level,
+                frac: off || level == null ? 0 : S.levelProgress(level, trained, xp),
+                off,
+                hit: null
+            };
+            block.skills.push(skill);
+        }
+    }
+
+    _syncBioSkills(bio) {
+        const S = typeof Skills !== "undefined" ? Skills : null;
+        const skills = this._bioBlock?.skills || [];
+        if (!S || !bio) return;
+        let i = 0;
+        for (const id of S.SKILL_IDS) {
+            const row = skills[i++];
+            if (!row) break;
+            const off = S.incapable(bio, id);
+            const level = S.effectiveLevel(bio, id);
+            const stored = bio.skills?.[id] || { level: 0, xp: 0, passion: 0 };
+            const trained = Math.max(0, Math.floor(Number(stored.level) || 0));
+            const xp = off ? 0 : Math.max(0, Number(stored.xp) || 0);
+            row.tip = S.skillTip(bio, id);
+            row.passion = off ? 0 : S.passionOf(bio, id);
+            row.xp = xp;
+            row.trained = trained;
+            row.shown = off ? 0 : level;
+            row.frac = off || level == null ? 0 : S.levelProgress(level, trained, xp);
+            row.off = off;
+            if (row.num && level != null) row.num.setText(String(level));
+        }
+        this._placeBio();
+        const target = this.scene._tooltipTarget;
+        if (target && skills.some((row) => row.hit === target)) this.scene.refreshTooltip?.();
+    }
+
+    _layoutBioFrame(m, top) {
+        const h = Math.max(40, m.frameH - m.header - m.inset);
+        const w = Math.max(40, m.frameW - m.inset * 2);
+        const x = m.pad + m.inset;
+        this.bioRoot.setPosition(x, top);
+        this._bioViewH = h;
+        this._bioViewW = w;
+        this._bioBounds = { x, y: top, w, h };
+        this._bioScroll = Math.max(0, Math.min(this._maxBioScroll(), this._bioScroll));
+        this._bioMaskGfx.clear();
+        this._bioMaskGfx.fillStyle(0xffffff, 1);
+        this._bioMaskGfx.fillRect(x, top, w, h);
+        this._placeBio();
+    }
+
+    _maxBioScroll() {
+        return Math.max(0, (this._bioH || 0) - (this._bioViewH || 0));
+    }
+
+    _placeBio() {
+        const s = this.scene.uiScale || 1;
+        const b = this._bioBlock;
+        if (!b) return;
+        const viewW = this._bioViewW || 200;
+        const margin = Math.round(14 * s);
+        const gap = Math.round(6 * s);
+        const sectionGap = Math.round(14 * s);
+        const indent = Math.round(10 * s);
+        const colGap = Math.round(28 * s);
+        const labelW = Math.max(b.childLabel?.width || 0, b.adultLabel?.width || 0);
+        const valueGap = Math.round(12 * s);
+        const maxLeft = Math.min(
+            Math.round(320 * s),
+            Math.max(Math.round(160 * s), Math.floor(viewW * 0.5) - colGap)
+        );
+        const valueWrap = Math.max(40, maxLeft - labelW - valueGap);
+        const lineWrap = Math.max(40, maxLeft - indent);
+        if (b.childTitle) b.childTitle.setWordWrapWidth(valueWrap);
+        if (b.adultTitle) b.adultTitle.setWordWrapWidth(valueWrap);
+        for (const line of b.traits || []) line.setWordWrapWidth(lineWrap);
+        for (const line of b.incaps || []) line.setWordWrapWidth(lineWrap);
+        if (b.meta) b.meta.setWordWrapWidth(Math.max(40, maxLeft));
+
+        const leftW = Math.max(
+            b.meta?.width || 0,
+            b.childLabel ? labelW + valueGap + (b.childTitle?.width || 0) : 0,
+            b.adultLabel ? labelW + valueGap + (b.adultTitle?.width || 0) : 0,
+            b.traitsHead?.width || 0,
+            ...(b.traits || []).map((t) => indent + (t.width || 0)),
+            b.incapHead?.width || 0,
+            ...(b.incaps || []).map((t) => indent + (t.width || 0))
+        );
+
+        let localY = 0;
+        const metaY = localY;
+        if (b.meta) {
+            localY += b.meta.height;
+            if (b.childLabel || b.traitsHead || b.incapHead || (b.skills || []).length) localY += sectionGap;
+        }
+        const colTop = localY;
+        const childY = localY;
+        if (b.childLabel) localY += Math.max(b.childLabel.height, b.childTitle?.height || 0) + gap;
+        const adultY = localY;
+        if (b.adultLabel) localY += Math.max(b.adultLabel.height, b.adultTitle?.height || 0) + sectionGap;
+        const traitTops = [];
+        const traitsHeadY = localY;
+        if (b.traitsHead) localY += b.traitsHead.height + gap;
+        for (const line of b.traits || []) {
+            traitTops.push(localY);
+            localY += line.height + gap;
+        }
+        if (b.traitsHead) localY += sectionGap - gap;
+        const incapHeadY = localY;
+        if (b.incapHead) localY += b.incapHead.height + gap;
+        const incapTops = [];
+        for (const line of b.incaps || []) {
+            incapTops.push(localY);
+            localY += line.height + gap;
+        }
+        const leftEnd = localY;
+
+        const skills = b.skills || [];
+        const fontPx = typeof pixelUiFontSize === "function" ? pixelUiFontSize(12, s) : Math.round(12 * s);
+        const barH = Math.max(fontPx, skills.reduce((n, row) => Math.max(n, row.label?.height || 0), 0));
+        const rowH = barH + Math.max(2, Math.round(2 * s)) + Math.round(8 * s);
+        const nameW = skills.reduce((n, row) => Math.max(n, row.label?.width || 0), 0);
+        const numW = skills.reduce((n, row) => Math.max(n, row.num?.width || fontPx), 0);
+        const starR = Math.max(3, Math.round(4 * s));
+        const starGap = Math.round(starR * 2 + 2 * s);
+        const starSlot = starGap * 2;
+        const skillsBlockW = nameW + Math.round(8 * s) + starSlot + numW;
+        const beside = !skills.length || margin + leftW + colGap + skillsBlockW <= viewW - margin;
+        const skillXLocal = beside ? leftW + colGap : 0;
+        const originY = beside ? colTop : leftEnd + (leftEnd > 0 ? sectionGap : 0);
+        const barPad = Math.max(2, Math.round(2 * s));
+        const contentLeft = skills.length ? Math.min(0, skillXLocal - barPad) : 0;
+        const contentH = Math.max(leftEnd, skills.length ? originY + skills.length * rowH : originY);
+        const shiftX = margin - contentLeft;
+        const oy = margin - (this._bioScroll || 0);
+        const valueX = shiftX + labelW + valueGap;
+
+        if (b.meta) b.meta.setPosition(shiftX, metaY + oy);
+        if (b.childLabel) {
+            b.childLabel.setPosition(shiftX, childY + oy);
+            b.childTitle?.setPosition(valueX, childY + oy);
+        }
+        if (b.adultLabel) {
+            b.adultLabel.setPosition(shiftX, adultY + oy);
+            b.adultTitle?.setPosition(valueX, adultY + oy);
+        }
+        if (b.traitsHead) b.traitsHead.setPosition(shiftX, traitsHeadY + oy);
+        (b.traits || []).forEach((line, i) => line.setPosition(shiftX + indent, traitTops[i] + oy));
+        if (b.incapHead) b.incapHead.setPosition(shiftX, incapHeadY + oy);
+        (b.incaps || []).forEach((line, i) => line.setPosition(shiftX + indent, incapTops[i] + oy));
+
+        this.bioBars.clear();
+        const skillX = shiftX + skillXLocal;
+        skills.forEach((row, i) => {
+            const sy = originY + i * rowH + oy;
+            row.label.setPosition(skillX, sy);
+            const barW = Math.max(8, nameW) + barPad * 2;
+            const barX = skillX - barPad;
+            const barY = sy - barPad;
+            const numRight = skillX + nameW + Math.round(8 * s) + starSlot + numW;
+            if (row.num) {
+                row.num.setPosition(numRight - row.num.width, sy);
+                this.bioBars.fillStyle(0x2a2a2a, 1);
+                this.bioBars.fillRect(barX, barY, barW, barH + barPad * 2);
+                this.bioBars.fillStyle(0x5a5a5a, 1);
+                this.bioBars.fillRect(barX, barY, Math.max(0, Math.round(barW * (row.frac || 0))), barH + barPad * 2);
+                const starBase = numRight - numW - Math.round(4 * s);
+                for (let n = 0; n < (row.passion || 0); n++) {
+                    this._bioStar(starBase - starR - n * starGap, sy + fontPx / 2, starR);
+                }
+            }
+            const lineW = Math.max(barW, (row.num ? numRight : skillX + nameW) - barX);
+            const hitY = row.num ? barY : sy;
+            const hitH = row.num ? barH + barPad * 2 : barH;
+            let hit = row.hit?.active ? row.hit : null;
+            if (!hit) {
+                hit = this.scene.add.rectangle(0, 0, lineW, hitH, 0x000000, 0.001).setOrigin(0, 0);
+                this.bioTexts.add(hit);
+                row.hit = hit;
+                this._bioTip(hit, () => row.tip);
+            }
+            hit.setPosition(barX, hitY);
+            hit.setSize(lineW, hitH);
+            if (hit.input?.hitArea?.setSize) hit.input.hitArea.setSize(lineW, hitH);
+            else if (hit.input?.hitArea?.setTo) hit.input.hitArea.setTo(0, 0, lineW, hitH);
+        });
+        this._bioH = contentH + margin;
+        const clamped = Math.max(0, Math.min(this._maxBioScroll(), this._bioScroll));
+        if (clamped !== this._bioScroll) {
+            this._bioScroll = clamped;
+            this._placeBio();
+        }
+    }
+
+    _bioStar(x, y, r) {
+        const pts = [];
+        for (let i = 0; i < 10; i++) {
+            const a = -Math.PI / 2 + i * Math.PI / 5;
+            const rad = i % 2 === 0 ? r : r * 0.42;
+            pts.push(new Phaser.Geom.Point(x + Math.cos(a) * rad, y + Math.sin(a) * rad));
+        }
+        this.bioBars.fillStyle(0xe6c15a, 1);
+        this.bioBars.fillPoints(pts, true);
     }
 
     _entries() {
@@ -441,11 +983,20 @@ class StatsPanel {
     _paintDetail(entry, m) {
         const s = m?.s || this.scene.uiScale || 1;
         const wrap = m?.detailW || 320;
-        if (!entry) return;
+        const topGap = Math.round(14 * s);
+        if (!entry) {
+            const prompt = this._text("Click a stat to see more details", "#f4f0e6", 16);
+            prompt.setWordWrapWidth(wrap);
+            prompt.setPosition(0, topGap);
+            this.right.add(prompt);
+            this._detail.push(prompt);
+            return;
+        }
         const title = this._text(entry.label, "#f4f0e6", 16);
+        title.setPosition(0, topGap);
         this.right.add(title);
         this._detail.push(title);
-        let y = title.height + Math.round(10 * s);
+        let y = topGap + title.height + Math.round(10 * s);
         if (entry.cap) {
             const shown = this._statValue(entry);
             const caps = this._caps();
