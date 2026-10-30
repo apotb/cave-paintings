@@ -398,6 +398,10 @@ const CharacterStore = (() => {
             leaderDead: !!character.leaderDead,
             lastSleep: character.lastSleep || null,
             resting: !!character.resting,
+            groundSleep: !!character.groundSleep,
+            needs: character.needs && typeof character.needs === "object"
+                ? { ...character.needs }
+                : null,
             techs: cloneTechs(character.techs),
             techGrantRev: Math.max(0, Math.floor(Number(character.techGrantRev) || 0)),
             quarantine: cloneOverflow(character.quarantine)
@@ -446,6 +450,10 @@ const CharacterStore = (() => {
             next.lastSleep = you.lastSleep || null;
         }
         if (typeof you.resting === "boolean") next.resting = !!you.resting;
+        if (typeof you.groundSleep === "boolean") next.groundSleep = !!you.groundSleep;
+        if (you.needs && typeof you.needs === "object") {
+            next.needs = { ...you.needs };
+        }
         if (you.techs && typeof you.techs === "object" && !Array.isArray(you.techs)) {
             next.techs = cloneTechs(you.techs);
         }
@@ -496,6 +504,8 @@ const CharacterStore = (() => {
             leaderDead: !!raw.leaderDead,
             lastSleep: raw.lastSleep || null,
             resting: !!raw.resting,
+            groundSleep: !!raw.groundSleep,
+            needs: raw.needs && typeof raw.needs === "object" ? { ...raw.needs } : null,
             techs: cloneTechs(raw.techs),
             techGrantRev: Math.max(0, Math.floor(Number(raw.techGrantRev) || 0)),
             quarantine: Array.isArray(raw.quarantine) ? clone(raw.quarantine) : []

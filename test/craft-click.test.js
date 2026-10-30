@@ -72,6 +72,44 @@ test("stone spear quality sits after the name", () => {
     assert.equal(lines.includes("Rough"), false);
 });
 
+test("a placed bed names its rest effectiveness", () => {
+    sandbox.Needs = require("../shared/needs");
+    const tip = craft.formatItemTooltip.call(
+        {
+            getThing(id) {
+                if (id === "lean_to") return { sleep: { restEffectiveness: 0.95 } };
+                if (id === "hut") return { sleep: { restEffectiveness: 1 } };
+                return null;
+            }
+        },
+        {
+            id: "hut",
+            name: "Hut",
+            place: { thing: "hut" },
+            tooltip: ["Fits up to 4 people"]
+        },
+        1,
+        null,
+        null
+    );
+    const lines = tip.split("\n");
+    assert.equal(lines[0], "Hut");
+    assert.ok(lines.includes("Rest effectiveness: 100%"));
+    assert.ok(lines.includes("Fits up to 4 people"));
+    const lean = craft.formatItemTooltip.call(
+        {
+            getThing(id) {
+                return id === "lean_to" ? { sleep: { restEffectiveness: 0.95 } } : null;
+            }
+        },
+        { id: "lean_to", name: "Lean-to", place: { thing: "lean_to" } },
+        1,
+        null,
+        null
+    );
+    assert.ok(lean.split("\n").includes("Rest effectiveness: 95%"));
+});
+
 test("spear tip quality sits after the name", () => {
     sandbox.Stone = Stone;
     const tip = craft.formatItemTooltip.call(

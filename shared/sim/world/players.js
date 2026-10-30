@@ -455,6 +455,11 @@
         if (typeof saved.facing === "string" && saved.facing) p.facing = saved.facing;
         if (saved.lastSleep) p.lastSleep = saved.lastSleep;
         if (typeof saved.resting === "boolean") p._resting = !!saved.resting;
+        if (saved.groundSleep) {
+            p._groundSleep = true;
+            p.prone = true;
+        }
+        if (saved.needs && typeof saved.needs === "object") p.needs = { ...saved.needs };
     },
 
     /**
@@ -486,6 +491,8 @@
                 y: p.y,
                 facing: p.facing || "down",
                 resting: !!p._resting,
+                groundSleep: !!p._groundSleep,
+                needs: p.needs ? { ...p.needs } : null,
                 lastSleep: p.lastSleep || null
             };
             for (const m of p.party || []) {
@@ -495,6 +502,8 @@
                     y: m.y,
                     facing: m.facing || "down",
                     resting: !!m._resting,
+                    groundSleep: !!m._groundSleep,
+                    needs: m.needs ? { ...m.needs } : null,
                     lastSleep: m.lastSleep || null
                 };
             }
@@ -525,6 +534,8 @@
             y: p.y,
             facing: p.facing || "down",
             resting: !!p._resting,
+            groundSleep: !!p._groundSleep,
+            needs: p.needs ? { ...p.needs } : null,
             lastSleep: p.lastSleep || null
         };
         for (const m of p.party || []) {
@@ -534,6 +545,8 @@
                 y: m.y,
                 facing: m.facing || "down",
                 resting: !!m._resting,
+                groundSleep: !!m._groundSleep,
+                needs: m.needs ? { ...m.needs } : null,
                 lastSleep: m.lastSleep || null
             };
         }
@@ -596,6 +609,8 @@
         if (character.controlId) p.controlId = character.controlId;
         if (character.lastSleep) p.lastSleep = character.lastSleep;
         if (typeof character.resting === "boolean") p._joinRestHint = !!character.resting;
+        if (character.needs && typeof character.needs === "object") p.needs = { ...character.needs };
+        if (typeof character.groundSleep === "boolean") p._groundSleep = !!character.groundSleep;
         if (character.techs && typeof character.techs === "object" && !Array.isArray(character.techs)) {
             p.techs = { ...character.techs };
         }
@@ -799,6 +814,8 @@
             favorite: !!m.favorite,
             lastSleep: m.lastSleep || null,
             _resting: false,
+            _groundSleep: !!m.groundSleep,
+            needs: m.needs && typeof m.needs === "object" ? { ...m.needs } : null,
             _joinRestHint: !!m.resting,
             techs: m.techs && typeof m.techs === "object" && !Array.isArray(m.techs)
                 ? { ...m.techs }
@@ -1025,6 +1042,8 @@
             lastSleep: snap.lastSleep || null,
             resting: !!snap.resting,
             _resting: !!snap.resting,
+            _groundSleep: !!snap.groundSleep,
+            needs: snap.needs && typeof snap.needs === "object" ? { ...snap.needs } : null,
             bio: snap.bio || null
         };
         this._ensureBio(rec);
@@ -1106,6 +1125,8 @@
             favorite: !!s.favorite,
             lastSleep: s.lastSleep || null,
             resting: !!(s._resting || s.resting),
+            groundSleep: !!s._groundSleep,
+            needs: s.needs && typeof s.needs === "object" ? { ...s.needs } : null,
             jobs: (s.jobs && typeof s.jobs === "object" && !Array.isArray(s.jobs))
                 ? Settlement.normalizeJobs(s.jobs)
                 : null,
@@ -1394,8 +1415,10 @@
             role: "settler",
             favorite: !!s.favorite,
             dead: !!s.dead,
-            prone: !!(s.dead || s.prone || s._resting || this._creatureIsProne(c)),
+            prone: !!(s.dead || s.prone || s._resting || s._groundSleep || this._creatureIsProne(c)),
             resting: !!s._resting,
+            groundSleep: !!s._groundSleep,
+            needs: s.needs && typeof s.needs === "object" ? { ...s.needs } : null,
             injured: !!(typeof Sleep !== "undefined" && Sleep.injuredForAutofill
                 ? Sleep.injuredForAutofill(c?.anatomy || s.anatomy)
                 : false),

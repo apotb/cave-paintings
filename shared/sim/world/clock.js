@@ -12,7 +12,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function (ctx) {
     "use strict";
     const {
-        Protocol, Look, rng, Spoil, Durability, Apparel, Chop, Place, Sleep, Hunger, Path, Hide, Carry, Fire, Party, Settlement, StorageFilter, FuelFilter, CavemanNames, CorpseDecay, GameMath, DataStore, BodyHealing, Hediffs, BodyCombat, BodyMod, Capacities, HeadlessAI, SimCreatureMod, WorldGen, SettlerWork, mulberry32, hash2D, uuid, Body, createAI, PartyAI, WandererStrollAI, NeutralAnimalAI, createPlayerCreature, createMobCreature, feetToBodyCenter, CS, TS, CHUNK_PX, SPEED, SPRINT, MELEE_RANGE, INTEREST, SIM_CHUNKS, DROP_LIFE_MS, HARVEST_RANGE_TILES, BLOCKED, _research, _contentApi, _actionsApi, _kindsApi, _forming, _dig, _defGeneration, thingDefs, mobDefs, itemDefs, chunkKey, worldToChunk, emptyInv, dedupeCorpses
+        Protocol, Look, rng, Spoil, Durability, Apparel, Chop, Place, Sleep, Hunger, Needs, Path, Hide, Carry, Fire, Party, Settlement, StorageFilter, FuelFilter, CavemanNames, CorpseDecay, GameMath, DataStore, BodyHealing, Hediffs, BodyCombat, BodyMod, Capacities, HeadlessAI, SimCreatureMod, WorldGen, SettlerWork, mulberry32, hash2D, uuid, Body, createAI, PartyAI, WandererStrollAI, NeutralAnimalAI, createPlayerCreature, createMobCreature, feetToBodyCenter, CS, TS, CHUNK_PX, SPEED, SPRINT, MELEE_RANGE, INTEREST, SIM_CHUNKS, DROP_LIFE_MS, HARVEST_RANGE_TILES, BLOCKED, _research, _contentApi, _actionsApi, _kindsApi, _forming, _dig, _defGeneration, thingDefs, mobDefs, itemDefs, chunkKey, worldToChunk, emptyInv, dedupeCorpses
     } = ctx;
     return {
 
@@ -52,8 +52,83 @@
                 }
                 return creature?.capacities?.hungerRateFactor?.() || 1;
             })(),
-            resting: pawn._resting
+            resting: !!(pawn._resting || pawn._groundSleep)
         });
+    },
+
+    _restEffectivenessFor(pawn) {
+        if (pawn?._groundSleep && !pawn._resting) return Needs.GROUND_EFFECTIVENESS;
+        if (!pawn?._resting) return 1;
+        const uid = pawn.lastSleep?.uid;
+        const found = uid && this._findSleepByUid ? this._findSleepByUid(uid, pawn) : null;
+        const def = found?.entry && this._sleepDef ? this._sleepDef(found.entry) : null;
+        return Needs.effectivenessFor(def, false);
+    },
+
+    _beginGroundSleep(pawn) {
+        if (!pawn || pawn.dead || pawn._groundSleep || pawn._resting) return;
+        pawn._groundSleep = true;
+        pawn.prone = true;
+        pawn.vx = 0;
+        pawn.vy = 0;
+        pawn._restWalk = null;
+        const c = pawn.creature || this.creatures?.get?.(pawn.id);
+        if (c) {
+            c._groundSleep = true;
+            c._prone = true;
+            c.vx = 0;
+            c.vy = 0;
+            c._restWalk = null;
+            c.setDesiredVel?.(0, 0);
+        }
+        this._cancelChannels?.(pawn);
+        this._dirtyPawnOwner?.(pawn);
+        this._applyRestClock?.();
+    },
+
+    _clearGroundSleep(pawn, opts = {}) {
+        if (!pawn?._groundSleep) return;
+        if (!Needs.canWakeFromGround(opts) && !opts.stand) return;
+        pawn._groundSleep = false;
+        const c = pawn.creature || this.creatures?.get?.(pawn.id);
+        if (c) c._groundSleep = false;
+        const downed = !!(c?.isImmobile?.() || c?.isIncapacitated?.());
+        if (!downed) {
+            pawn.prone = false;
+            if (c) c._prone = false;
+        }
+        this._dirtyPawnOwner?.(pawn);
+        this._applyRestClock?.();
+    },
+
+    /** One game minute of Rest for a human. Recreation, beauty, and comfort stay put. */
+    _tickHumanNeeds(pawn) {
+        if (!pawn || pawn.dead || !Needs) return;
+        const creature = pawn.creature || this.creatures?.get?.(pawn.id);
+        Needs.ensure(pawn);
+        if (creature) creature.needs = pawn.needs;
+        // tickRest keeps this same object, so immunity later in the minute sees it.
+        if (pawn._resting && pawn._groundSleep) {
+            pawn._groundSleep = false;
+            if (creature) creature._groundSleep = false;
+        }
+        const caps = creature?.capacities;
+        const asleep = !!(pawn._resting || pawn._groundSleep);
+        const result = Needs.tickRest(pawn, {
+            asleep,
+            effectiveness: asleep ? this._restEffectivenessFor(pawn) : 1,
+            restRateMultiplier: Needs.restRateMultiplier({
+                bloodPumping: caps?.bloodPumping?.(),
+                digestion: caps?.digestion?.(),
+                breathing: caps?.breathing?.()
+            }),
+            sleepFallRate: Needs.sleepFallRate(pawn)
+        });
+        if (pawn._groundSleep && !pawn._resting && pawn.needs.rest >= Needs.WAKE_AT) {
+            this._clearGroundSleep(pawn, { stand: true });
+        } else if (result.hitZero && !pawn._resting && !pawn._groundSleep) {
+            this._beginGroundSleep(pawn);
+        }
     },
 
     _decayBios() {
@@ -84,6 +159,7 @@
             if (!p.connected) continue;
             if (!p.dead) {
             const creature = p.creature || this.creatures.get(p.id);
+            this._tickHumanNeeds(p);
             // Snapshot before drain — same as Player.hungerTick (fed minute still recovers)
             const fed = (Number(p.kc) > 0) || (Number(p.saturation) > 0);
             const tick = this._hungerDrainForPawn(p, creature);
@@ -107,6 +183,7 @@
         }
             for (const mem of p.party || []) {
                 if (mem.dead) continue;
+                this._tickHumanNeeds(mem);
                 this._tickPlayerSpoilLeft(mem);
                 const mFed = (Number(mem.kc) > 0) || (Number(mem.saturation) > 0);
                 const mcPre = mem.creature || this.creatures.get(mem.id);
@@ -125,6 +202,7 @@
         for (const rec of this.settlers || []) {
             if (!rec || rec.dead) continue;
             const cc = rec.creature || this.creatures.get(rec.id) || this._ensureSettlerCreature?.(rec);
+            this._tickHumanNeeds(rec);
             const fed = (Number(rec.kc) > 0) || (Number(rec.saturation) > 0);
             Hunger.applyStarve(rec, this._hungerDrainForPawn(rec, cc));
             if (cc && !cc.isBodyDead?.()) {
@@ -148,6 +226,7 @@
         for (const w of [...this.wanderers.values()]) {
             if (!w || w.dead) continue;
             const wc = w.creature || this._ensureWandererCreature(w);
+            this._tickHumanNeeds(w);
             if (!wc || wc.isBodyDead?.()) {
                 if (wc?.isBodyDead?.()) this._finishWandererDeath(w, wc._lastHitBy || null);
                 continue;
@@ -1074,7 +1153,7 @@
     },
 
     _poseMotion(rec, session = null) {
-        if (rec?.dead || rec?.prone || rec?._resting || rec?.creature?._prone || rec?.creature?._resting) {
+        if (rec?.dead || rec?.prone || rec?._resting || rec?._groundSleep || rec?.creature?._prone || rec?.creature?._resting || rec?.creature?._groundSleep) {
             return { vx: 0, vy: 0, moving: false };
         }
         const vx = Number(rec?.vx) || Number(rec?.creature?.vx) || 0;
@@ -1114,8 +1193,9 @@
                 moving: motion.moving,
                 sprint: p.sprint,
                 dead: p.dead,
-                prone: !!(p.dead || p.prone || p._resting),
+                prone: !!(p.dead || p.prone || p._resting || p._groundSleep),
                 resting: !!p._resting,
+                groundSleep: !!p._groundSleep,
                 injured: !!(typeof Sleep !== "undefined" && Sleep.injuredForAutofill
                     ? Sleep.injuredForAutofill(p.creature?.anatomy || p.anatomy)
                     : false),
@@ -1146,8 +1226,9 @@
                         vy: mm.vy,
                         moving: mm.moving,
                         dead: !!m.dead,
-                        prone: !!(m.dead || m.prone || m.creature?._prone || m._resting),
+                        prone: !!(m.dead || m.prone || m.creature?._prone || m._resting || m._groundSleep),
                         resting: !!m._resting,
+                        groundSleep: !!m._groundSleep,
                         injured: !!(typeof Sleep !== "undefined" && Sleep.injuredForAutofill
                             ? Sleep.injuredForAutofill(m.creature?.anatomy || m.anatomy)
                             : false),
@@ -1308,8 +1389,10 @@
             hp: p.hp,
             mhp: p.mhp,
             dead: p.dead,
-            prone: !!(p.dead || p.prone || creature?._prone || p._resting),
+            prone: !!(p.dead || p.prone || creature?._prone || p._resting || p._groundSleep),
             resting: !!p._resting,
+            groundSleep: !!p._groundSleep,
+            needs: Needs.toJSON(p),
             restRot: p.lastSleep?.rot,
             lastSleep: p.lastSleep || null,
             look: p.look || Look.normalizeLook(null),
@@ -1347,8 +1430,10 @@
                     y: m.y,
                     facing: m.facing,
                     dead: !!m.dead,
-                    prone: !!(m.dead || m.prone || c?._prone || m._resting),
+                    prone: !!(m.dead || m.prone || c?._prone || m._resting || m._groundSleep),
                     resting: !!m._resting,
+                    groundSleep: !!m._groundSleep,
+                    needs: Needs.toJSON(m),
                     restRot: m.lastSleep?.rot,
                     lastSleep: m.lastSleep || null,
                     eatChannel: this._eatChannelSnap(m.eatChannel),

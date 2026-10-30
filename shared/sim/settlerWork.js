@@ -285,6 +285,11 @@ function tick(world, mob, delta) {
     beginSettleQueries(world);
     const rec = findRec(world, mob);
     if (!rec || rec.dead) return null;
+    if (rec._groundSleep || mob?._groundSleep) {
+        mob?.setDesiredVel?.(0, 0);
+        setSettlerAct(rec, mob, "Exhausted");
+        return halt();
+    }
     if (world._isVomiting?.(rec) || mob?.isVomiting?.()) {
         setSettlerAct(rec, mob, "Vomiting");
         return halt();

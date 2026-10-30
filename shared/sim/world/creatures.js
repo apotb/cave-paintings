@@ -614,6 +614,8 @@
         }
         creature._vomitRemainingMs = Number(p.vomitRemainingMs) || 0;
         creature._resting = !!p._resting;
+        creature._groundSleep = !!p._groundSleep;
+        if (p.needs) creature.needs = p.needs;
         creature._restWalk = p._restWalk || null;
         creature.lastSleep = p.lastSleep || null;
         return creature;

@@ -330,7 +330,8 @@
         "key": "lean_to",
         "hitboxSize": 5,
         "sleep": {
-            "slots": 2
+            "slots": 2,
+            "restEffectiveness": 0.95
         },
         "footprint": [2, 1],
         "rotations": [0, 90, 180, 270]
@@ -349,6 +350,7 @@
         "hitboxSize": 0,
         "sleep": {
             "slots": 4,
+            "restEffectiveness": 1,
             "healBonus": 12,
             "interior": true,
             "points": [[-6.5, -19.3], [6.5, -19.6], [-6.5, -12.3], [6.3, -12.7]]

@@ -600,17 +600,47 @@ class StatsPanel {
 
     _bioProgressSig(bio) {
         const S = typeof Skills !== "undefined" ? Skills : null;
-        if (!bio || !S) return "";
         const parts = [];
-        for (const id of S.SKILL_IDS) {
-            const row = bio.skills?.[id];
-            parts.push(
-                Math.floor(Number(row?.level) || 0),
-                Math.round(Number(row?.xp) || 0),
-                Math.floor(Number(row?.passion) || 0)
-            );
+        if (bio && S) {
+            for (const id of S.SKILL_IDS) {
+                const row = bio.skills?.[id];
+                parts.push(
+                    Math.floor(Number(row?.level) || 0),
+                    Math.round(Number(row?.xp) || 0),
+                    Math.floor(Number(row?.passion) || 0)
+                );
+            }
+        }
+        if (typeof Needs !== "undefined") {
+            for (const def of Needs.DEFS) parts.push(Math.round(Needs.level(this.pawn?.needs, def.id) * 1000));
         }
         return parts.join(",");
+    }
+
+    /** One 8×8 row of needs.png. Cropping the sheet and then scaling it squashes every icon into a dash. */
+    _needIconFrame(def) {
+        const tex = this.scene.textures.get("needs");
+        const name = `need:${def.id}`;
+        if (!tex.has(name)) {
+            const crop = Needs.iconCrop(def.icon);
+            tex.add(name, 0, crop.x, crop.y, crop.w, crop.h);
+        }
+        return name;
+    }
+
+    _makeNeedRows(container) {
+        const rows = [];
+        const api = typeof Needs !== "undefined" ? Needs : null;
+        if (!api || !container) return rows;
+        for (const def of api.DEFS) {
+            let icon = null;
+            if (this.scene.textures?.exists("needs")) {
+                icon = this.scene.add.image(0, 0, "needs", this._needIconFrame(def)).setOrigin(0, 0);
+                container.add(icon);
+            }
+            rows.push({ def, icon, hit: null });
+        }
+        return rows;
     }
 
     _bioText(value, color, size) {
@@ -655,6 +685,7 @@ class StatsPanel {
             skills: []
         };
         this._bioBlock = block;
+        block.needRows = this._makeNeedRows(this.bioTexts);
         if (!bio || !S) {
             block.meta = this._bioText("No record yet", "#8a8070", 12);
             return;
@@ -741,7 +772,11 @@ class StatsPanel {
         }
         this._placeBio();
         const target = this.scene._tooltipTarget;
-        if (target && skills.some((row) => row.hit === target)) this.scene.refreshTooltip?.();
+            const needHits = this._bioBlock?.needRows || [];
+            if (target && (
+                skills.some((row) => row.hit === target)
+                || needHits.some((row) => row.hit === target)
+            )) this.scene.refreshTooltip?.();
     }
 
     _layoutBioFrame(m, top) {
@@ -835,12 +870,23 @@ class StatsPanel {
         const starGap = Math.round(starR * 2 + 2 * s);
         const starSlot = starGap * 2;
         const skillsBlockW = nameW + Math.round(8 * s) + starSlot + numW;
+        const needRows = b.needRows || [];
+        const needIcon = Math.max(8, Math.round(16 * s));
+        const needGapY = Math.max(2, Math.round(4 * s));
+        const needRowH = needIcon + needGapY;
+        const needsTop = leftEnd + (needRows.length && leftEnd > 0 ? sectionGap : 0);
+        const needsH = needRows.length * needRowH;
         const beside = !skills.length || margin + leftW + colGap + skillsBlockW <= viewW - margin;
         const skillXLocal = beside ? leftW + colGap : 0;
-        const originY = beside ? colTop : leftEnd + (leftEnd > 0 ? sectionGap : 0);
+        const originY = beside
+            ? colTop
+            : (needRows.length
+                ? needsTop + needsH + sectionGap
+                : leftEnd + (leftEnd > 0 ? sectionGap : 0));
         const barPad = Math.max(2, Math.round(2 * s));
         const contentLeft = skills.length ? Math.min(0, skillXLocal - barPad) : 0;
-        const contentH = Math.max(leftEnd, skills.length ? originY + skills.length * rowH : originY);
+        const skillBottom = skills.length ? originY + skills.length * rowH : 0;
+        const contentH = Math.max(leftEnd, needsTop + needsH, skillBottom);
         const shiftX = margin - contentLeft;
         const oy = margin - (this._bioScroll || 0);
         const valueX = shiftX + labelW + valueGap;
@@ -894,6 +940,41 @@ class StatsPanel {
             if (hit.input?.hitArea?.setSize) hit.input.hitArea.setSize(lineW, hitH);
             else if (hit.input?.hitArea?.setTo) hit.input.hitArea.setTo(0, 0, lineW, hitH);
         });
+        const needApi = typeof Needs !== "undefined" ? Needs : null;
+        if (needRows.length && needApi) {
+            const iconGap = Math.round(4 * s);
+            const barW = Math.max(Math.round(48 * s), leftW - needIcon - iconGap);
+            needRows.forEach((row, i) => {
+                const y = needsTop + i * needRowH + oy;
+                const x = shiftX;
+                if (row.icon) {
+                    row.icon.setPosition(x, y);
+                    row.icon.setDisplaySize(needIcon, needIcon);
+                }
+                const barX = x + needIcon + iconGap;
+                this.bioBars.fillStyle(0x000000, 0.6);
+                this.bioBars.fillRect(barX - 1, y - 1, barW + 2, needIcon + 2);
+                this.bioBars.fillStyle(0x222222, 0.85);
+                this.bioBars.fillRect(barX, y, barW, needIcon);
+                const fillW = Math.floor(barW * needApi.level(this.pawn?.needs, row.def.id));
+                if (fillW > 0) {
+                    this.bioBars.fillStyle(row.def.color, 1);
+                    this.bioBars.fillRect(barX, y, fillW, needIcon);
+                }
+                const hitW = needIcon + iconGap + barW;
+                let hit = row.hit?.active ? row.hit : null;
+                if (!hit) {
+                    hit = this.scene.add.rectangle(0, 0, hitW, needIcon, 0x000000, 0.001).setOrigin(0, 0);
+                    this.bioTexts.add(hit);
+                    row.hit = hit;
+                    this._bioTip(hit, () => needApi.tooltip(this.pawn?.needs, row.def.id));
+                }
+                hit.setPosition(x, y);
+                hit.setSize(hitW, needIcon);
+                if (hit.input?.hitArea?.setSize) hit.input.hitArea.setSize(hitW, needIcon);
+                else if (hit.input?.hitArea?.setTo) hit.input.hitArea.setTo(0, 0, hitW, needIcon);
+            });
+        }
         this._bioH = contentH + margin;
         const clamped = Math.max(0, Math.min(this._maxBioScroll(), this._bioScroll));
         if (clamped !== this._bioScroll) {

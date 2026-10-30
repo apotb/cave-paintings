@@ -124,6 +124,17 @@
         const cc = control.creature || this.creatures.get(control.id);
         let justWoke = false;
         if (
+            control._groundSleep
+            && Math.hypot(x, y) > 0.01
+            && !control.dead
+            && !cc?.isImmobile?.()
+            && !cc?.isIncapacitated?.()
+            && !this._pawnVomiting(control)
+        ) {
+            this._clearGroundSleep(control, { controlled: true, stand: true });
+            justWoke = true;
+        }
+        if (
             control._resting
             && Math.hypot(x, y) > 0.01
             && !control.dead
@@ -137,6 +148,7 @@
         const poseLocked = !!(
             control.dead
             || control._resting
+            || control._groundSleep
             || control._tendHold
             || control.prone
             || cc?._prone

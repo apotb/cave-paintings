@@ -1708,7 +1708,10 @@ class LeanTo extends Thing {
         }
         const who = this.occupantName(slot);
         const name = this.meta?.name || "Lean-to";
-        return `${name}\n${who}`;
+        const rest = (typeof Needs !== "undefined" && Needs.effectivenessLine)
+            ? Needs.effectivenessLine(this.meta)
+            : "";
+        return rest ? `${name}\n${rest}\n${who}` : `${name}\n${who}`;
     }
 }
 

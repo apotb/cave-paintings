@@ -319,17 +319,48 @@ class BioPanel {
 
     _progressSigOf(bio) {
         const S = typeof Skills !== "undefined" ? Skills : null;
-        if (!bio || !S) return "";
         const parts = [];
-        for (const id of S.SKILL_IDS) {
-            const row = bio.skills?.[id];
-            parts.push(
-                Math.floor(Number(row?.level) || 0),
-                Math.round(Number(row?.xp) || 0),
-                Math.floor(Number(row?.passion) || 0)
-            );
+        if (bio && S) {
+            for (const id of S.SKILL_IDS) {
+                const row = bio.skills?.[id];
+                parts.push(
+                    Math.floor(Number(row?.level) || 0),
+                    Math.round(Number(row?.xp) || 0),
+                    Math.floor(Number(row?.passion) || 0)
+                );
+            }
+        }
+        const pawn = this._pawn();
+        if (typeof Needs !== "undefined") {
+            for (const def of Needs.DEFS) parts.push(Math.round(Needs.level(pawn?.needs, def.id) * 1000));
         }
         return parts.join(",");
+    }
+
+    /** One 8×8 row of needs.png. Cropping the sheet and then scaling it squashes every icon into a dash. */
+    _needIconFrame(def) {
+        const tex = this.scene.textures.get("needs");
+        const name = `need:${def.id}`;
+        if (!tex.has(name)) {
+            const crop = Needs.iconCrop(def.icon);
+            tex.add(name, 0, crop.x, crop.y, crop.w, crop.h);
+        }
+        return name;
+    }
+
+    _makeNeedRows() {
+        const rows = [];
+        const api = typeof Needs !== "undefined" ? Needs : null;
+        if (!api) return rows;
+        for (const def of api.DEFS) {
+            let icon = null;
+            if (this.scene.textures?.exists("needs")) {
+                icon = this.scene.add.image(0, 0, "needs", this._needIconFrame(def)).setOrigin(0, 0);
+                this.texts.add(icon);
+            }
+            rows.push({ def, icon, hit: null });
+        }
+        return rows;
     }
 
     _syncSkillProgress(bio) {
@@ -356,7 +387,11 @@ class BioPanel {
         }
         this.layout();
         const target = this.scene._tooltipTarget;
-        if (target && skills.some((row) => row.hit === target)) this.scene.refreshTooltip?.();
+        const needHits = this._block?.needRows || [];
+        if (target && (
+            skills.some((row) => row.hit === target)
+            || needHits.some((row) => row.hit === target)
+        )) this.scene.refreshTooltip?.();
     }
 
     _font(size) {
@@ -406,6 +441,7 @@ class BioPanel {
             skills: []
         };
         this._block = block;
+        block.needRows = this._makeNeedRows();
         this._showInfo = !!(bio && S);
         if (!bio || !S) {
             block.meta = this._text("No record yet", "#8a8070", 8);
@@ -565,6 +601,47 @@ class BioPanel {
             if (hit.input?.hitArea?.setTo) hit.input.hitArea.setTo(0, 0, lineW, hitH);
         });
         const skillEnd = skills.length ? colTop + skills.length * rowH : colTop;
+        const needRows = b?.needRows || [];
+        const needApi = typeof Needs !== "undefined" ? Needs : null;
+        const needIcon = Math.max(8, Math.round(12 * s));
+        const needGapY = Math.max(2, Math.round(3 * s));
+        const needRowH = needIcon + needGapY;
+        const needsTop = leftEnd + (needRows.length ? sectionGap : 0);
+        const needsH = needRows.length * needRowH;
+        if (needRows.length && needApi) {
+            const iconGap = Math.round(3 * s);
+            const barW = Math.max(Math.round(40 * s), Math.min(leftInner, Math.round(96 * s)) - needIcon);
+            const pawn = this._pawn();
+            needRows.forEach((row, i) => {
+                const y = needsTop + i * needRowH;
+                const x = pad;
+                if (row.icon) {
+                    row.icon.setPosition(x, y);
+                    row.icon.setDisplaySize(needIcon, needIcon);
+                }
+                const barX = x + needIcon + iconGap;
+                this.bars.fillStyle(0x000000, 0.6);
+                this.bars.fillRect(barX - 1, y - 1, barW + 2, needIcon + 2);
+                this.bars.fillStyle(0x222222, 0.85);
+                this.bars.fillRect(barX, y, barW, needIcon);
+                const fillW = Math.floor(barW * needApi.level(pawn?.needs, row.def.id));
+                if (fillW > 0) {
+                    this.bars.fillStyle(row.def.color, 1);
+                    this.bars.fillRect(barX, y, fillW, needIcon);
+                }
+                const hitW = needIcon + iconGap + barW;
+                let hit = row.hit?.active ? row.hit : null;
+                if (!hit) {
+                    hit = this.scene.add.rectangle(0, 0, hitW, needIcon, 0x000000, 0.001).setOrigin(0, 0);
+                    this.texts.add(hit);
+                    row.hit = hit;
+                    this._hit(hit, () => needApi.tooltip(this._pawn()?.needs, row.def.id));
+                }
+                hit.setPosition(x, y);
+                hit.setSize(hitW, needIcon);
+                if (hit.input?.hitArea?.setTo) hit.input.hitArea.setTo(0, 0, hitW, needIcon);
+            });
+        }
         const showBoot = this._canBanish(this._pawn());
         const showInfo = !!this._showInfo;
         const bootScale = Math.max(2, Math.round(2 * s));
@@ -604,7 +681,7 @@ class BioPanel {
                 this.bootBtn.input.enabled = false;
             }
         }
-        const h = Math.round(Math.max(leftEnd, skillEnd) + pad);
+        const h = Math.round(Math.max(leftEnd, skillEnd, needsTop + needsH) + pad);
         const margin = Math.round(4 * s);
         let left = btn.x + btn.displayWidth / 2 + margin;
         if (left + w > this.scene.scale.width - margin) {

@@ -152,6 +152,14 @@
             const bf = this._bloodFiltration(owner, body, ctx);
             let igs = bf * 0.5 + 0.5;
             if (owner?._resting) igs *= this.REST_IGS_FACTOR;
+            const rest = owner?.needs?.rest;
+            if (Number.isFinite(Number(rest))) {
+                let api = typeof Needs !== "undefined" ? Needs : null;
+                if (!api) {
+                    try { api = require("../needs"); } catch (_) { api = null; }
+                }
+                if (api?.immunityFactor) igs *= api.immunityFactor(rest);
+            }
             return igs;
         },
 

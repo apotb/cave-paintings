@@ -214,6 +214,13 @@
             }
         }
 
+        const placeId = item.place?.thing;
+        if (placeId && typeof Needs !== "undefined" && Needs.effectivenessLine) {
+            const placed = typeof this.getThing === "function" ? this.getThing(placeId) : null;
+            const restLine = Needs.effectivenessLine(placed);
+            if (restLine) lines.push(restLine);
+        }
+
         // Static tooltips only when not a custom-named meal
         if (!stack?.customName && Array.isArray(item.tooltip)) {
             const holder = this._playerResearchHolder?.() || null;

@@ -117,6 +117,8 @@
             party: extra.party || [],
             lastSleep: pl.lastSleep || null,
             resting: !!pl._resting,
+            groundSleep: !!pl._groundSleep,
+            needs: (typeof Needs !== "undefined") ? Needs.toJSON(pl) : (pl.needs || null),
             techs: pl.techs && typeof pl.techs === "object" ? { ...pl.techs } : (this.character?.techs || {}),
             techGrantRev: pl.techGrantRev ?? this.character?.techGrantRev ?? 0,
             quarantine: Array.isArray(pl.quarantine)
@@ -198,6 +200,8 @@
                 y: m.y,
                 lastSleep: m.lastSleep || null,
                 resting: !!m.resting,
+                groundSleep: !!m.groundSleep,
+                needs: m.needs && typeof m.needs === "object" ? { ...m.needs } : null,
                 jobs: (m.jobs && typeof m.jobs === "object" && !Array.isArray(m.jobs))
                     ? { ...m.jobs }
                     : null,
@@ -386,6 +390,11 @@
         if (typeof you.kc === "number") youPawn.kc = you.kc;
         if (typeof you.saturation === "number") youPawn.saturation = you.saturation;
         if (typeof you.stomach === "number") youPawn.stomach = you.stomach;
+        if (you.needs && typeof you.needs === "object") {
+            if (typeof Needs !== "undefined") Needs.apply(youPawn, you.needs);
+            else youPawn.needs = { ...you.needs };
+        }
+        if (typeof you.groundSleep === "boolean") youPawn._groundSleep = !!you.groundSleep;
         if (you.techs && typeof you.techs === "object" && !Array.isArray(you.techs)) {
             youPawn.techs = you.techs;
             if (this.player && this.player !== youPawn) this.player.techs = you.techs;
@@ -458,6 +467,11 @@
                     // without this the health tab stays on the spawn injuries.
                     this._applyNetBody(pawn, row.body);
                     if (typeof row.favorite === "boolean") pawn.favorite = row.favorite;
+                    if (row.needs && typeof row.needs === "object") {
+                        if (typeof Needs !== "undefined") Needs.apply(pawn, row.needs);
+                        else pawn.needs = { ...row.needs };
+                    }
+                    if (typeof row.groundSleep === "boolean") pawn._groundSleep = !!row.groundSleep;
                 }
             }
         }

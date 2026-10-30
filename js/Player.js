@@ -51,6 +51,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.stomach = 1600;
         this.hunger = 2000;
         this.saturation = 0;
+        this.needs = (typeof Needs !== "undefined")
+            ? Needs.fresh()
+            : { rest: 1, recreation: 1, beauty: 1, comfort: 1 };
+        this._groundSleep = false;
 
         // Inventory / hotbar
         this.inventory = [];
@@ -3833,6 +3837,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 || !!this.scene.partySys?._isTendTargeted?.(this);
             const prone = !!(
                 this._netProne
+                || this._groundSleep
                 || this._downed
                 || this.isImmobile?.()
                 || this.isIncapacitated?.()
@@ -3865,7 +3870,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this.body && !this.body.enable) {
             this.body.enable = true;
             const lying = !!(
-                this._downed || this._prone || this._resting
+                this._downed || this._prone || this._resting || this._groundSleep
                 || this.isImmobile?.() || this.isIncapacitated?.()
             );
             this.body.moves = !lying;
@@ -3895,19 +3900,25 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const incapacitated = this.isIncapacitated();
         const immobile = this.isImmobile();
         const vomiting = this.isVomiting();
-        if (this._resting && this.cursors && this.keys) {
-            const movingKeys = this.cursors.left.isDown || this.keys.A.isDown
-                || this.cursors.right.isDown || this.keys.D.isDown
-                || this.cursors.up.isDown || this.keys.W.isDown
-                || this.cursors.down.isDown || this.keys.S.isDown;
-            if (movingKeys) this.scene._tryWakePlayer?.();
+        const movingKeys = !!(this.cursors && this.keys && (
+            this.cursors.left.isDown || this.keys.A.isDown
+            || this.cursors.right.isDown || this.keys.D.isDown
+            || this.cursors.up.isDown || this.keys.W.isDown
+            || this.cursors.down.isDown || this.keys.S.isDown
+        ));
+        if (this._groundSleep && movingKeys && this === this.scene?.player) {
+            this._groundSleep = false;
+            if (!this._downed && !this.isIncapacitated?.() && !this.isImmobile?.()) {
+                setCreatureProne?.(this, false);
+            }
         }
+        if (this._resting && movingKeys) this.scene._tryWakePlayer?.();
         if (this._wakeIframes > 0) this._wakeIframes--;
         const skipMove = !!this._skipMove;
         this._skipMove = false;
         const resting = !!this._resting;
         const restWalk = !!this._restWalk;
-        const prone = immobile || incapacitated || resting;
+        const prone = immobile || incapacitated || resting || !!this._groundSleep;
         if (this.body) {
             this.body.moves = !prone && !vomiting;
             if (prone || vomiting) {

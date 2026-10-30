@@ -169,6 +169,7 @@ class SceneBase extends Phaser.Scene {
             "active_slot",
             "status",
             "bar_icons",
+            "needs",
             "craft",
             "craft_hover",
             "craft_open",

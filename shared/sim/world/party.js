@@ -767,8 +767,10 @@
                 ? w.refusedBy
                 : [...(w.refusedBy || [])],
             heading: this._wandererHeading(w.heading),
-            moving: prone || !(this._wandererTimeScale() > 0) ? false : !!w._moved,
-            prone,
+            moving: prone || w._groundSleep || !(this._wandererTimeScale() > 0) ? false : !!w._moved,
+            prone: prone || !!w._groundSleep,
+            groundSleep: !!w._groundSleep,
+            needs: w.needs && typeof w.needs === "object" ? { ...w.needs } : null,
             body: w.body || c?.anatomy?.toJSON?.() || null,
             attacking: prone ? false : attacking,
             attackAngle: attacking && !prone ? (c?.attackAngle ?? w.attackAngle ?? null) : null,
@@ -812,6 +814,9 @@
             refusedBy: Array.isArray(snap.refusedBy) ? snap.refusedBy : [],
             body: snap.body || null,
             bio: snap.bio || null,
+            needs: snap.needs && typeof snap.needs === "object" ? { ...snap.needs } : null,
+            _groundSleep: !!snap.groundSleep,
+            prone: !!snap.groundSleep,
             dead: false,
             _avoidSide: 1
         };
@@ -1234,6 +1239,15 @@
     _stepWanderer(w, dtMs) {
         const c = this._ensureWandererCreature(w);
         if (!c) return;
+        if (w._groundSleep || c._groundSleep) {
+            w._groundSleep = true;
+            c._groundSleep = true;
+            w.prone = true;
+            c._prone = true;
+            c.setDesiredVel?.(0, 0);
+            w._moved = false;
+            return;
+        }
         w.heading = this._wandererHeading(w.heading);
         const hlen = Math.hypot(w.heading.x, w.heading.y) || 1;
         const hx = w.heading.x / hlen;

@@ -689,6 +689,7 @@
         pawn._restWalk = null;
         pawn._resting = true;
         pawn.resting = true;
+        pawn._groundSleep = false;
         pawn.lastSleep = { uid: entry.uid, slot, rot: entry.rot };
         const def = this._sleepDef(entry);
         const bonus = Sleep.healBonus ? Sleep.healBonus(def) : 8;
@@ -706,6 +707,7 @@
             c.vy = 0;
             c.setDesiredVel?.(0, 0);
             c._resting = true;
+            c._groundSleep = false;
             c._restWalk = null;
             c.lastSleep = pawn.lastSleep;
             c._restHealBonus = bonus;
@@ -1315,7 +1317,7 @@
         if (!sessions.length) return false;
         for (const p of sessions) {
             for (const pawn of this._livingPartyOf(p)) {
-                if (!pawn._resting) return false;
+                if (!pawn._resting && !pawn._groundSleep) return false;
             }
         }
         return true;
@@ -1372,6 +1374,8 @@
         if (attacker && Party.sameFaction?.(victimCreature, attacker)) return;
         if (!attacker || attacker === victimCreature) return;
         const victim = this._findOwnedPawn(victimCreature.id);
+        const sleeper = victim || this.wanderers?.get?.(victimCreature.id);
+        if (sleeper?._groundSleep) this._clearGroundSleep(sleeper, { damage: true, stand: true });
         if (!victim) return;
         if (victim.homeSettlementId || victimCreature.homeSettlementId || victimCreature.role === "settler") {
             this._aggroSettlement(victimCreature, attacker);

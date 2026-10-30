@@ -892,7 +892,7 @@
 
     _tryAttack(p, angle, pawnId = null) {
         const actor = this._actionPawn(p, { pawnId });
-        if (!actor || actor.dead || actor._resting) return;
+        if (!actor || actor.dead || actor._resting || actor._groundSleep) return;
         const skills = this._skillsApi?.();
         if (skills && actor.bio && skills.incapable(actor.bio, "melee")) return;
         if (actor.eatChannel || this._pawnVomiting(actor)) return;
@@ -1878,6 +1878,8 @@
                 cc.facing = rec.facing || cc.facing;
                 cc._restWalk = rec._restWalk || null;
                 cc._resting = !!rec._resting;
+                cc._groundSleep = !!rec._groundSleep;
+                if (rec.needs) cc.needs = rec.needs;
                 cc._wokeFromRest = !!rec._wokeFromRest;
                 this._sharePawnGear(rec, cc);
                 cc.hotbarIndex = rec.hotbarIndex ?? 0;
@@ -2039,6 +2041,8 @@
             cc.y = rec.y;
             cc.facing = rec.facing || cc.facing;
             cc._resting = !!rec._resting;
+            cc._groundSleep = !!rec._groundSleep;
+            if (rec.needs) cc.needs = rec.needs;
             cc._restWalk = rec._restWalk || null;
             cc._wadeWater = !!rec._wadeWater;
             this._sharePawnGear(rec, cc);

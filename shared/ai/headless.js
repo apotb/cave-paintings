@@ -721,6 +721,12 @@
                 mob.setDesiredVel?.(0, 0);
                 return;
             }
+            if (mob._groundSleep) {
+                this._clearCombat();
+                mob.setDesiredVel?.(0, 0);
+                mob._prone = true;
+                return;
+            }
             // A traveling companion is never a settler, even if a camp id is
             // still stuck on the creature. That id used to send them back to
             // the painting circle after they joined the party.

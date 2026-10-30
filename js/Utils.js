@@ -2980,8 +2980,8 @@ function sleepZzzHostPos(host) {
 
 function sleepZzzIsResting(host) {
     if (!host) return false;
-    if (host.root) return !!(host.resting && !host.dead && host.root.active);
-    return !!(host._resting && host.active && !host.isBodyDead?.() && !host._bodyDead);
+    if (host.root) return !!((host.resting || host.groundSleep) && !host.dead && host.root.active);
+    return !!((host._resting || host._groundSleep) && host.active && !host.isBodyDead?.() && !host._bodyDead);
 }
 
 function sleepHealIsInjured(host) {

@@ -35,8 +35,9 @@
         const SimCreatureMod = require("./SimCreature");
         const WorldGen = require("./WorldGen");
         const SettlerWork = require("./settlerWork");
+        const Needs = require("../needs");
         module.exports = factory(
-            Protocol, Look, rng, Spoil, Durability, Apparel, Chop, Place, Sleep, Hunger,
+            Protocol, Look, rng, Spoil, Durability, Apparel, Chop, Place, Sleep, Hunger, Needs,
             Path, Hide, Carry, Fire, Party, Settlement, StorageFilter, FuelFilter, CavemanNames,
             CorpseDecay, GameMath, DataStore, BodyHealing, Hediffs, BodyCombat, BodyMod,
             Capacities, HeadlessAI, SimCreatureMod, WorldGen, SettlerWork,
@@ -56,7 +57,7 @@
     } else {
         const api = factory(
             root.NetProtocol, root.Look, root.NetRng, root.Spoil || root.NetSpoil, root.Durability, root.Apparel,
-            root.Chop, root.Place, root.Sleep, root.Hunger, root.Path, root.Hide, root.Carry,
+            root.Chop, root.Place, root.Sleep, root.Hunger, root.Needs, root.Path, root.Hide, root.Carry,
             root.Fire, root.Party, root.Settlement, root.StorageFilter, root.FuelFilter, root.CavemanNames,
             root.CorpseDecay, root.GameMath, root.DataStore, root.BodyHealing, root.Hediffs,
             root.BodyCombat, { Body: root.Body }, root.Capacities, root.HeadlessAI,
@@ -80,7 +81,7 @@
         root.worldToChunk = api.worldToChunk;
     }
 })(typeof globalThis !== "undefined" ? globalThis : this, function (
-    Protocol, Look, rng, Spoil, Durability, Apparel, Chop, Place, Sleep, Hunger,
+    Protocol, Look, rng, Spoil, Durability, Apparel, Chop, Place, Sleep, Hunger, Needs,
     Path, Hide, Carry, Fire, Party, Settlement, StorageFilter, FuelFilter, CavemanNames,
     CorpseDecay, GameMath, DataStore, BodyHealing, Hediffs, BodyCombat, BodyMod,
     Capacities, HeadlessAI, SimCreatureMod, WorldGen, SettlerWork,
@@ -484,7 +485,7 @@ class SimWorld {
 }
 
     const ctx = {
-        Protocol, Look, rng, Spoil, Durability, Apparel, Chop, Place, Sleep, Hunger, Path, Hide, Carry, Fire, Party, Settlement, StorageFilter, FuelFilter, CavemanNames, CorpseDecay, GameMath, DataStore, BodyHealing, Hediffs, BodyCombat, BodyMod, Capacities, HeadlessAI, SimCreatureMod, WorldGen, SettlerWork, mulberry32, hash2D, uuid, Body, createAI, PartyAI, WandererStrollAI, NeutralAnimalAI, createPlayerCreature, createMobCreature, feetToBodyCenter, CS, TS, CHUNK_PX, SPEED, SPRINT, MELEE_RANGE, INTEREST, SIM_CHUNKS, DROP_LIFE_MS, HARVEST_RANGE_TILES, BLOCKED, _research, _contentApi, _actionsApi, _kindsApi, _forming, _dig, _defGeneration, thingDefs, mobDefs, itemDefs, chunkKey, worldToChunk, emptyInv, dedupeCorpses
+        Protocol, Look, rng, Spoil, Durability, Apparel, Chop, Place, Sleep, Hunger, Needs, Path, Hide, Carry, Fire, Party, Settlement, StorageFilter, FuelFilter, CavemanNames, CorpseDecay, GameMath, DataStore, BodyHealing, Hediffs, BodyCombat, BodyMod, Capacities, HeadlessAI, SimCreatureMod, WorldGen, SettlerWork, mulberry32, hash2D, uuid, Body, createAI, PartyAI, WandererStrollAI, NeutralAnimalAI, createPlayerCreature, createMobCreature, feetToBodyCenter, CS, TS, CHUNK_PX, SPEED, SPRINT, MELEE_RANGE, INTEREST, SIM_CHUNKS, DROP_LIFE_MS, HARVEST_RANGE_TILES, BLOCKED, _research, _contentApi, _actionsApi, _kindsApi, _forming, _dig, _defGeneration, thingDefs, mobDefs, itemDefs, chunkKey, worldToChunk, emptyInv, dedupeCorpses
     };
     for (let mixinIndex = 0; mixinIndex < mixinFactories.length; mixinIndex++) {
         const installMixin = mixinFactories[mixinIndex];

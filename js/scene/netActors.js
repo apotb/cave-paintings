@@ -379,6 +379,11 @@
             }
             if (!pawn) continue;
             if (row.bio) pawn.bio = row.bio;
+            if (row.needs && typeof row.needs === "object") {
+                if (typeof Needs !== "undefined") Needs.apply(pawn, row.needs);
+                else pawn.needs = { ...row.needs };
+            }
+            if (typeof row.groundSleep === "boolean") pawn._groundSleep = !!row.groundSleep;
             pawn.ownerId = row.ownerId || pawn.ownerId;
             pawn.homeSettlementId = row.homeSettlementId || null;
             pawn.role = "settler";
@@ -588,8 +593,12 @@
                     recruitLocked: w.recruitLocked,
                     band: w.band,
                     refusedBy: w.refusedBy,
-                    bio: w.bio
+                    bio: w.bio,
+                    needs: w.needs,
+                    groundSleep: w.groundSleep
                 });
+                if (w.needs && typeof Needs !== "undefined") Needs.apply(pawn, w.needs);
+                if (typeof w.groundSleep === "boolean") pawn._groundSleep = !!w.groundSleep;
                 pawn._netFromX = w.x;
                 pawn._netFromY = w.y;
                 pawn._netTx = w.x;
@@ -634,6 +643,11 @@
                 pawn.heading = w.heading || pawn.heading;
                 pawn.hostile = !!w.hostile;
                 if (w.bio) pawn.bio = w.bio;
+                if (w.needs && typeof w.needs === "object") {
+                    if (typeof Needs !== "undefined") Needs.apply(pawn, w.needs);
+                    else pawn.needs = { ...w.needs };
+                }
+                if (typeof w.groundSleep === "boolean") pawn._groundSleep = !!w.groundSleep;
                 if (Array.isArray(w.inventory)) {
                     const clone = (s) => {
                         if (!s) return null;

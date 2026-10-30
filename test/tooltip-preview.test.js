@@ -229,8 +229,12 @@ test("stat lines gray, and spoil time turns light red at 6h", () => {
     assert.equal(scene._tooltipStatColor("Hardness: 5"), "muted");
     assert.equal(scene._tooltipStatColor("Toughness: 40%"), "muted");
     assert.equal(scene._tooltipStatColor("Beauty: +2.0"), "muted");
+    assert.equal(scene._tooltipStatColor("Beauty: -1.0"), "muted");
+    assert.equal(scene._tooltipStatColor("Beauty: 100%"), "");
     assert.equal(scene._tooltipStatColor("Stack total: 0.4 kg"), "muted");
     assert.equal(scene._tooltipStatColor("Tend quality: 35%"), "muted");
+    assert.equal(scene._tooltipStatColor("Rest effectiveness: 95%"), "muted");
+    assert.equal(scene._tooltipStatColor("Rest effectiveness: 100%"), "muted");
     assert.equal(scene._tooltipStatColor("Stick"), "");
     assert.equal(scene._tooltipStatColor("Slot: back"), "equip");
     assert.equal(scene._tooltipStatColor("+ 2 pack slots"), "equip");

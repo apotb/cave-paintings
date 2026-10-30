@@ -3554,6 +3554,8 @@ class PartySystem {
             y: p.y,
             lastSleep: p.lastSleep || null,
             resting: !!p._resting,
+            groundSleep: !!p._groundSleep,
+            needs: (typeof Needs !== "undefined") ? Needs.toJSON(p) : (p.needs || null),
             jobs: (p.jobs && typeof p.jobs === "object") ? { ...p.jobs } : null,
             schedule: typeof p.schedule === "string" && p.schedule ? p.schedule : null,
             favorite: !!p.favorite,
@@ -3609,6 +3611,11 @@ class PartySystem {
                     if (typeof m.kc === "number") existing.kc = m.kc;
                     if (typeof m.saturation === "number") existing.saturation = m.saturation;
                     if (typeof m.stomach === "number") existing.stomach = m.stomach;
+                    if (m.needs && typeof m.needs === "object") {
+                        if (typeof Needs !== "undefined") Needs.apply(existing, m.needs);
+                        else existing.needs = { ...m.needs };
+                    }
+                    if (typeof m.groundSleep === "boolean") existing._groundSleep = !!m.groundSleep;
                     if (dedicated) {
                         existing._netEating = !!m.eatChannel;
                         if (typeof scene._applyPawnChannelVisual === "function") {
@@ -3820,7 +3827,7 @@ class PartySystem {
         const scene = this.scene;
         if (!rp || !scene.simAuth()) return;
         const ctrl = scene.player;
-        const restCtrl = !!(ctrl && (ctrl._resting || ctrl._restWalk || rp.resting));
+        const restCtrl = !!(ctrl && (ctrl._resting || ctrl._restWalk || ctrl._groundSleep || rp.resting || rp.groundSleep));
         const leadPawn = scene.leader
             || (scene.party || []).find((p) => p && p.pawnId === rp.id);
         if (leadPawn) this._applyNetRestWalk(leadPawn, rp);
@@ -3839,6 +3846,7 @@ class PartySystem {
         if (restCtrl && ctrl.pawnId === rp.id) {
             this._setNetPose(ctrl, rp.x, rp.y, rp.facing, rp.prone, rp);
             if (typeof rp.resting === "boolean") ctrl._resting = !!rp.resting;
+            if (typeof rp.groundSleep === "boolean") ctrl._groundSleep = !!rp.groundSleep;
             if (rp.lastSleep) ctrl.lastSleep = rp.lastSleep;
             if (ctrl._resting && typeof pinRestingCreature === "function") {
                 pinRestingCreature(ctrl, scene);
@@ -3860,6 +3868,7 @@ class PartySystem {
                 if (restCtrl || mem.resting || pawn._restWalk) {
                     this._setNetPose(pawn, mem.x, mem.y, mem.facing, mem.prone, mem);
                     if (typeof mem.resting === "boolean") pawn._resting = !!mem.resting;
+                    if (typeof mem.groundSleep === "boolean") pawn._groundSleep = !!mem.groundSleep;
                     if (mem.lastSleep) pawn.lastSleep = mem.lastSleep;
                     if (pawn._resting && typeof pinRestingCreature === "function") {
                         pinRestingCreature(pawn, scene);
@@ -3872,6 +3881,7 @@ class PartySystem {
                 continue;
             }
             this._setNetPose(pawn, mem.x, mem.y, mem.facing, mem.prone, mem);
+            if (typeof mem.groundSleep === "boolean") pawn._groundSleep = !!mem.groundSleep;
             if (typeof mem.resting === "boolean") {
                 pawn._resting = !!mem.resting;
                 if (pawn._resting) {
