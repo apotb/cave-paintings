@@ -2479,6 +2479,105 @@ function allowsFurnitureGap(pawn, thing) {
     return Place.gapSideClip(bare, tb, axis, squeeze);
 }
 
+function nearbyGapRects(pawn, bare) {
+    const rects = [];
+    const scene = pawn?.scene;
+    if (!scene || !bare) return rects;
+    forThingsNearAabb(
+        scene,
+        bare.left - 24, bare.right + 24, bare.top - 24, bare.bottom + 24,
+        (thing) => {
+            const tb = thing?.body;
+            if (!tb || !tb.enable || pawnIgnoresThing(pawn, thing)) return false;
+            if (typeof Place === "undefined" || !Place.isGapFurniture?.(thing.meta)) return false;
+            rects.push({ left: tb.left, right: tb.right, top: tb.top, bottom: tb.bottom });
+            return false;
+        }
+    );
+    return rects;
+}
+
+/**
+ * Baskets are taller than the feet. Arcade separates on Y and then on X, so
+ * a side hit — diagonal, or a left/right reverse — shoves the body off the
+ * wall and back. Separate the entered face only. The opening between two
+ * baskets keeps its squeeze; everything else stops on the surface.
+ * Returns true when Arcade should not also separate this pair.
+ */
+function resolveBasketCollision(pawn, thing) {
+    const body = pawn?.body;
+    const tb = thing?.body;
+    if (!body || !tb?.enable || typeof Place === "undefined" || !Place.basketSeparation) return false;
+    const bare = { left: body.left, right: body.right, top: body.top, bottom: body.bottom };
+    const cx = (bare.left + bare.right) * 0.5;
+    const cy = (bare.top + bare.bottom) * 0.5;
+    const touch = Place.basketTouchGap?.(nearbyGapRects(pawn, bare), tb, cx, cy);
+    const squeeze = Place.gapSqueeze?.(thing.meta) || 0;
+    const gap = touch ? { axis: touch.axis, start: touch.start, end: touch.end, squeeze } : null;
+    const w = bare.right - bare.left;
+    const h = bare.bottom - bare.top;
+    const prev = body.prev ? {
+        left: body.prev.x,
+        right: body.prev.x + w,
+        top: body.prev.y,
+        bottom: body.prev.y + h
+    } : null;
+    const vx = body.velocity?.x || 0;
+    const vy = body.velocity?.y || 0;
+    const sep = Place.basketSeparation(bare, prev, tb, vx, vy, gap);
+    if (!sep || !(sep.push > 0)) return true;
+    if (sep.axis === "x") {
+        body.x += sep.dir * sep.push;
+        if (body.velocity && ((sep.dir < 0 && vx > 0) || (sep.dir > 0 && vx < 0))) body.velocity.x = 0;
+    } else {
+        body.y += sep.dir * sep.push;
+        if (body.velocity && ((sep.dir < 0 && vy > 0) || (sep.dir > 0 && vy < 0))) body.velocity.y = 0;
+    }
+    body.updateCenter?.();
+    return true;
+}
+
+/**
+ * A side clip deeper than the squeeze used to flip collision on and throw
+ * the pawn back to the surface, which walked them in again. Hold them on
+ * the squeeze instead. A push straight into the side stays a solid stop.
+ * Returns true when Arcade should not also separate this pair.
+ */
+function holdFurnitureGap(pawn, thing) {
+    if (allowsFurnitureGap(pawn, thing)) return true;
+    const body = pawn?.body;
+    const tb = thing?.body;
+    if (!body || !tb?.enable || !thing?.meta) return false;
+    if (typeof Place === "undefined" || !Place.gapClipExcess || !Place.isGapFurniture) return false;
+    if (!Place.isGapFurniture(thing.meta)) return false;
+    const bare = { left: body.left, right: body.right, top: body.top, bottom: body.bottom };
+    const axis = bodyInFurnitureGap(pawn, bare);
+    if (!axis) return false;
+    const squeeze = Place.gapSqueeze?.(thing.meta) || Place.GAP_SQUEEZE || 2;
+    const excess = Place.gapClipExcess(bare, tb, axis, squeeze);
+    if (!(excess > 0)) return false;
+    const cx = (bare.left + bare.right) * 0.5;
+    const cy = (bare.top + bare.bottom) * 0.5;
+    const tcx = (tb.left + tb.right) * 0.5;
+    const tcy = (tb.top + tb.bottom) * 0.5;
+    if (axis === "x") {
+        const dir = cx < tcx ? -1 : 1;
+        body.x += dir * excess;
+        body.updateCenter?.();
+        if (body.velocity && ((dir < 0 && body.velocity.x > 0) || (dir > 0 && body.velocity.x < 0))) {
+            body.velocity.x = 0;
+        }
+    } else {
+        const dir = cy < tcy ? -1 : 1;
+        body.y += dir * excess;
+        body.updateCenter?.();
+        if (body.velocity && ((dir < 0 && body.velocity.y > 0) || (dir > 0 && body.velocity.y < 0))) {
+            body.velocity.y = 0;
+        }
+    }
+    return true;
+}
+
 function collidingPawnAndThing(a, b) {
     const aThing = !!(a?.meta && a?.entry);
     const bThing = !!(b?.meta && b?.entry);
@@ -2491,7 +2590,11 @@ function collidingPawnAndThing(a, b) {
 function pawnThingCollide(a, b) {
     if (a?.meta?.ring || b?.meta?.ring) return false;
     const pair = collidingPawnAndThing(a, b);
-    if (pair && allowsFurnitureGap(pair.pawn, pair.thing)) return false;
+    if (pair && (pair.thing.meta?.id === "wicker_basket" || pair.thing.entry?.id === "wicker_basket")) {
+        resolveBasketCollision(pair.pawn, pair.thing);
+        return false;
+    }
+    if (pair && holdFurnitureGap(pair.pawn, pair.thing)) return false;
     if (typeof Sleep !== "undefined" && Sleep.collideProcess) return Sleep.collideProcess(a, b);
     return true;
 }

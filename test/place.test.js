@@ -473,6 +473,78 @@ test("wading uses the feet strip, not the sprite's left corner", () => {
     assert.equal(Place.walkBodyOverlapsTile(16, 16.5, 16, 16, 8, 16, below), true);
 });
 
+test("pushing into a basket's side is not the gap opening", () => {
+    const basket = { left: 0, right: 10, top: 0, bottom: 8 };
+    // Feet just inside the right side, still outside the middle.
+    const side = { left: 7, right: 15, top: 4, bottom: 8 };
+    assert.equal(Place.gapClipExcess(side, basket, "x", 4), 0, "a shallow side clip is the opening");
+    assert.equal(Place.gapSideClip(side, basket, "x", 4), true);
+    // Center still outside the basket, overlap deeper than the squeeze.
+    const deep = { left: 4, right: 18, top: 2, bottom: 6 };
+    assert.equal(Place.gapClipExcess(deep, basket, "x", 4), 2, "past the squeeze is only the extra pixels");
+    assert.equal(Place.gapSideClip(deep, basket, "x", 4), false);
+    const face = { left: 1, right: 9, top: 6, bottom: 10 };
+    assert.equal(Place.gapClipExcess(face, basket, "x", 4), null, "the face stays solid");
+    assert.equal(Place.gapSideClip(face, basket, "x", 4), false);
+    const middle = { left: 2, right: 8, top: 2, bottom: 6 };
+    assert.equal(Place.gapClipExcess(middle, basket, "x", 4), null, "the middle stays solid");
+});
+
+test("the basket opening is the inner gap, not the span between centers", () => {
+    const left = { left: 0, right: 10, top: 0, bottom: 8 };
+    const right = { left: 16, right: 26, top: 0, bottom: 8 };
+    assert.deepEqual(Place.basketGapSlot([left, right], 13, 4), { axis: "x", start: 10, end: 16 });
+    assert.equal(Place.basketGapSlot([left, right], 5, 4), null, "the side of a basket is not the opening");
+});
+
+test("a basket side stops on that side for diagonals and direction changes", () => {
+    const basket = { left: 0, right: 10, top: 0, bottom: 8 };
+    // Feet fully beside the tall side, one pixel in, diagonal velocity.
+    const beside = { left: -7, right: 1, top: 4, bottom: 8 };
+    const prevBeside = { left: -8, right: 0, top: 3.2, bottom: 7.2 };
+    const diag = Place.basketSeparation(beside, prevBeside, basket, 40, 40, null);
+    assert.equal(diag.axis, "x");
+    assert.equal(diag.push, 1);
+    assert.equal(diag.dir, -1);
+    // Same overlap, velocity reversed. Still only the side, same distance.
+    const turned = Place.basketSeparation(beside, prevBeside, basket, -40, 0, null);
+    assert.equal(turned.axis, "x");
+    assert.equal(turned.push, 1);
+    // Front face, including a diagonal into it, moves on Y only.
+    const front = { left: 1, right: 9, top: 7, bottom: 11 };
+    const prevFront = { left: 1, right: 9, top: 8, bottom: 12 };
+    const intoFront = Place.basketSeparation(front, prevFront, basket, 40, 40, null);
+    assert.equal(intoFront.axis, "y");
+    assert.equal(intoFront.push, 1);
+    // Opening between two baskets: a shallow side clip stays, a deep one
+    // only loses the extra, and the along-gap axis is left alone.
+    const gap = { axis: "x", start: 10, end: 16, squeeze: 2 };
+    const passing = { left: 8, right: 16, top: 2, bottom: 6 };
+    const through = Place.basketSeparation(passing, passing, basket, 0, 40, gap);
+    assert.equal(through.axis, "x");
+    assert.equal(through.push, 0);
+    const drifting = { left: 7, right: 15, top: 2, bottom: 6 };
+    const held = Place.basketSeparation(drifting, drifting, basket, 40, 40, gap);
+    assert.equal(held.axis, "x");
+    assert.equal(held.push, 1);
+    // Center has left the opening and sunk into the inner face. Only the
+    // extra past the squeeze comes back, so the two baskets do not trade the body.
+    const opening = { axis: "x", start: 10, end: 16, squeeze: 4 };
+    const sunk = { left: 5, right: 13, top: 2, bottom: 6 };
+    const inner = Place.basketSeparation(sunk, sunk, basket, -40, 40, opening);
+    assert.equal(inner.axis, "x");
+    assert.equal(inner.push, 1);
+    const outer = { left: -7, right: 1, top: 2, bottom: 6 };
+    const prevOuter = { left: -8, right: 0, top: 2, bottom: 6 };
+    const wall = Place.basketSeparation(outer, prevOuter, basket, 40, 40, opening);
+    assert.equal(wall.axis, "x");
+    assert.equal(wall.push, 1);
+    const left = { left: 0, right: 10, top: 0, bottom: 8 };
+    const right = { left: 16, right: 26, top: 0, bottom: 8 };
+    assert.deepEqual(Place.basketTouchGap([left, right], left, 9, 4), { axis: "x", start: 10, end: 16 });
+    assert.equal(Place.basketTouchGap([left, right], left, 2, 4), null);
+});
+
 test("storage tooltip keeps unlike stacks apart", () => {
     const slots = [
         { id: "pebble", quantity: 3, stone: "granite" },
