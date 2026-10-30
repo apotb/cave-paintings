@@ -1271,8 +1271,12 @@
         _pickBestWeapon(world) {
             const mob = this.mob;
             const getItem = world?.getItem;
-            if (!mob?.inventory || typeof Party?.bestMeleeSlot !== "function") return;
-            const slot = Party.bestMeleeSlot(mob.inventory, getItem, mob.hotbarIndex || 0);
+            if (!mob?.inventory) return;
+            const slot = typeof BodyCombat?.fightWeaponSlot === "function"
+                ? BodyCombat.fightWeaponSlot(mob, getItem)
+                : (typeof Party?.bestMeleeSlot === "function"
+                    ? Party.bestMeleeSlot(mob.inventory, getItem, mob.hotbarIndex || 0)
+                    : (mob.hotbarIndex || 0));
             if (slot !== mob.hotbarIndex) {
                 mob.hotbarIndex = slot;
                 this._atkCache = null;

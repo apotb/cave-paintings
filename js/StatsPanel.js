@@ -1040,7 +1040,9 @@ class StatsPanel {
         const S = typeof Skills !== "undefined" ? Skills : null;
         const opts = S?.workOpts?.(this.scene, this.pawn) || {};
         if (typeof BodyCombat !== "undefined") {
-            const attacks = BodyCombat.collectAttacks?.(this.pawn) || [];
+            const attacks = typeof BodyCombat.collectFightAttacks === "function"
+                ? BodyCombat.collectFightAttacks(this.pawn, (id) => this.scene?.getItem?.(id))
+                : (BodyCombat.collectAttacks?.(this.pawn) || []);
             opts.attacks = attacks.map((a) => ({
                 name: a.name,
                 damage: a.damage,

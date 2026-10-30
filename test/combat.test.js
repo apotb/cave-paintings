@@ -118,6 +118,31 @@ test("a tough victim takes half the damage that gets past armor", () => {
     assert.ok(Math.abs(b.damage * 2 - a.damage) <= 0.11);
 });
 
+test("settler fight attacks use the best inventory weapon, not the held stack", () => {
+    const p = player();
+    p.role = "settler";
+    p.inventory[0] = { id: "leaf", quantity: 1 };
+    p.inventory[1] = { id: "sharp_stick", quantity: 1 };
+    p.hotbarIndex = 0;
+    const held = BodyCombat.collectAttacks(p);
+    const fight = BodyCombat.collectFightAttacks(p, (id) => DataStore.getItem(id));
+    assert.equal(p.hotbarIndex, 0);
+    assert.equal(held.some((a) => a.name === "Point (Stab)"), false);
+    assert.equal(fight.some((a) => a.name === "Point (Stab)"), true);
+});
+
+test("a controlled pawn's fight attacks stay on the selected stack", () => {
+    const p = player();
+    p.role = "leader";
+    p.isControlled = () => true;
+    p.inventory[0] = { id: "leaf", quantity: 1 };
+    p.inventory[1] = { id: "sharp_stick", quantity: 1 };
+    p.hotbarIndex = 0;
+    const fight = BodyCombat.collectFightAttacks(p, (id) => DataStore.getItem(id));
+    assert.equal(p.hotbarIndex, 0);
+    assert.equal(fight.some((a) => a.name === "Point (Stab)"), false);
+});
+
 test("meleeWeaponAverageDps is finite for a held spear def", () => {
     const spear = DataStore.getItem("sharp_stick");
     assert.ok(spear?.weapon);

@@ -238,6 +238,47 @@
             return { dps: avgDmg / avgCd, type: bestType };
         },
 
+        /**
+         * Pawns that draw a weapon when a fight starts. The controlled pawn
+         * swings whatever they have selected.
+         */
+        drawsBestMelee(owner) {
+            if (!owner?.inventory || owner.isControlled?.()) return false;
+            const role = owner.role;
+            if (role === "player" || role === "leader") return false;
+            return role === "settler"
+                || role === "companion"
+                || role === "wanderer"
+                || !!owner.homeSettlementId;
+        },
+
+        /** Hotbar slot this pawn would hold while attacking. */
+        fightWeaponSlot(owner, getItem) {
+            const current = owner?.hotbarIndex || 0;
+            if (!this.drawsBestMelee(owner) || typeof Party?.bestMeleeSlot !== "function") {
+                return current;
+            }
+            return Party.bestMeleeSlot(owner.inventory, getItem, current);
+        },
+
+        /**
+         * Attacks used in a fight. Settlers and other party pawns are scored
+         * with their best melee stack, even when another item is in hand.
+         */
+        collectFightAttacks(owner, getItem) {
+            if (!owner) return [];
+            const slot = this.fightWeaponSlot(owner, getItem);
+            const current = owner.hotbarIndex || 0;
+            if (slot === current) return this.collectAttacks(owner);
+            const prev = owner.hotbarIndex;
+            owner.hotbarIndex = slot;
+            try {
+                return this.collectAttacks(owner);
+            } finally {
+                owner.hotbarIndex = prev;
+            }
+        },
+
         collectAttacks(owner) {
             const body = owner.anatomy;
             if (!body) return [];
