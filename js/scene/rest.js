@@ -142,6 +142,7 @@
     },
 
     openLeanToPanel(leanTo, pointer) {
+        if (this.partySys?.tryLeaderFollowClick?.(pointer)) return;
         const switchAlly = this.partySys?.worldSwitchTarget?.(pointer);
         if (switchAlly) {
             this.partySys.tryAllyClick(switchAlly);

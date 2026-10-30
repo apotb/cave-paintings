@@ -377,6 +377,48 @@ test("a band of wanderers cannot be recruited", () => {
     assert.equal(sys.recruitTooltip(solo), "Og\nClick to recruit\nThey look interested");
 });
 
+test("camera follow gives the controlled leader the ally hover tip", () => {
+    const { PartySystem } = loadParty();
+    const settler = {
+        active: true,
+        role: "settler",
+        pawnName: "Ada",
+        displayName: () => "Ada",
+        homeSettlementId: "camp"
+    };
+    const scene = {
+        player: null,
+        leader: null,
+        party: [],
+        settlers: [settler],
+        focusPawn: null,
+        _followFocusedSettler: false
+    };
+    const leader = {
+        role: "leader",
+        pawnName: "Ash",
+        displayName: () => "Ash",
+        inventory: [{ id: "spear", quantity: 1 }],
+        inventorySize: 1,
+        isControlled: () => scene.player === leader
+    };
+    scene.player = leader;
+    scene.leader = leader;
+    scene.party = [leader];
+    const sys = new PartySystem(scene);
+    assert.equal(sys.hoverTooltip(leader), "Ash\nWaiting");
+    scene.focusPawn = settler;
+    scene._followFocusedSettler = true;
+    const followed = sys.hoverTooltip(leader);
+    assert.equal(followed.text, "Ash\nWaiting");
+    assert.equal(followed.rows.length, 1);
+    const settlerTip = sys.hoverTooltip(settler);
+    const settlerText = typeof settlerTip === "object" ? settlerTip.text : settlerTip;
+    assert.equal(settlerText.split("\n")[0], "Ada");
+    scene._followFocusedSettler = false;
+    assert.equal(sys.hoverTooltip(leader), "Ash\nWaiting");
+});
+
 test("favorited settler and party tooltips flag a star beside the name", () => {
     const { PartySystem } = loadParty();
     const scene = { party: [], settlers: [] };

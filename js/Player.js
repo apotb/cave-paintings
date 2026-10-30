@@ -456,8 +456,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const label = this.ensureNameLabel();
         if (!label) return;
         this.applyNameLabelScale();
-        const controlled = this.isControlled();
-        const hide = controlled || this._bodyDead;
+        const hide = this.scene.partySys?.nameTagHidden
+            ? this.scene.partySys.nameTagHidden(this)
+            : (this.isControlled() || this._bodyDead);
         label.setVisible(!hide);
         if (hide) {
             this._nameCrown?.setVisible(false);
@@ -490,10 +491,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return this._nameCrown;
     }
 
-    /** Crown over the leader nametag while you are controlling someone else. */
+    /** Crown over the leader nametag while the viewpoint is someone else. */
     _syncNameCrown() {
         const scene = this.scene;
-        const show = this === scene.leader && !this.isControlled() && !this._bodyDead;
+        const show = scene.partySys?.showLeaderCrown
+            ? scene.partySys.showLeaderCrown(this)
+            : (this === scene.leader && !this.isControlled() && !this._bodyDead);
         if (!show) {
             this._nameCrown?.setVisible(false);
             return;

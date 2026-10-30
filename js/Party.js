@@ -222,17 +222,21 @@ class PartySystem {
             if (scene.pointerOverWorldUi?.(pointer) || scene._pointerOverHudChrome?.(pointer)) return;
             if (pointer.rightButtonDown?.()) return;
             if (scene._gamePaused || scene._sculptUiOpen?.()) return;
+            if (this.tryLeaderFollowClick(pointer)) return;
             if (this.handleSettlerClick(pointer)) return;
             this.trySelfHeldAction(scene.player, pointer);
         });
         scene.input.on("pointerup", () => {
             this._settlerClickToken = null;
             this._settlerClickHit = false;
+            this._leaderFollowToken = null;
+            this._leaderFollowHit = false;
         });
         scene.input.on("gameobjectdown", (_pointer, obj) => {
             if (scene._gamePaused || scene._sculptUiOpen?.()) return;
             if (scene.pointerOverWorldUi?.(_pointer) || scene._pointerOverHudChrome?.(_pointer)) return;
             if (_pointer.rightButtonDown?.()) return;
+            if (this.tryLeaderFollowClick(_pointer)) return;
             const careAlly = this._partyMemberUnderPointer(_pointer);
             if (
                 careAlly
@@ -1045,6 +1049,29 @@ class PartySystem {
         return true;
     }
 
+    /**
+     * Who name tags treat as the pawn you're on. Camera follow pretends you
+     * switched to the settler until the camera comes back.
+     */
+    nameViewpoint() {
+        const scene = this.scene;
+        const focus = scene._followFocusedSettler ? scene.focusPawn : null;
+        if (focus?.active && !focus.isBodyDead?.()) return focus;
+        return scene.player || null;
+    }
+
+    nameTagHidden(pawn) {
+        if (!pawn || pawn._bodyDead || pawn.isBodyDead?.()) return true;
+        return pawn === this.nameViewpoint();
+    }
+
+    /** Crown over the leader while the name-tag viewpoint is someone else. */
+    showLeaderCrown(pawn) {
+        if (!pawn || pawn !== this.scene.leader) return false;
+        if (pawn._bodyDead || pawn.isBodyDead?.()) return false;
+        return pawn !== this.nameViewpoint();
+    }
+
     /** Follow this settler. Bio and health read them until either tab closes. */
     focusSettler(pawn) {
         const scene = this.scene;
@@ -1192,6 +1219,59 @@ class PartySystem {
         }
         if (pawn === me) return false;
         return this.switchControl(pawn);
+    }
+
+    /**
+     * Drop the settler camera follow and point open bio/health at whoever
+     * you control. The panels stay open.
+     */
+    returnFollowedSheet() {
+        const scene = this.scene;
+        const was = scene.focusPawn;
+        scene.focusPawn = null;
+        scene._followFocusedSettler = false;
+        scene._clearCameraPanelShift?.();
+        if (scene.bioPanel?.visible) {
+            scene.bioPanel._sig = "";
+            scene.bioPanel.refresh?.();
+        }
+        if (scene.healthPanel?.visible && !scene.healthPanel.isInspecting?.()) {
+            scene.healthPanel.refresh?.();
+        }
+        if (scene.statsPanel?.visible) scene.statsPanel.open?.(scene.player);
+        scene.syncCameraToPlayer?.();
+        was?.syncNameLabel?.();
+        scene.leader?.syncNameLabel?.();
+        scene.player?.syncNameLabel?.();
+    }
+
+    /**
+     * During settler camera follow, a click on the crowned leader is a party
+     * click and then the sheet returns. One press is handled once. Clay does not.
+     */
+    tryLeaderFollowClick(pointer) {
+        if (!pointer || pointer.rightButtonDown?.()) return false;
+        const token = pointer.downTime;
+        if (token != null && token === this._leaderFollowToken) return !!this._leaderFollowHit;
+        const hit = this._applyLeaderFollowClick(pointer);
+        if (token != null) {
+            this._leaderFollowToken = token;
+            this._leaderFollowHit = hit;
+        }
+        return hit;
+    }
+
+    _applyLeaderFollowClick(pointer) {
+        const scene = this.scene;
+        if (!scene._followFocusedSettler || !scene.focusPawn) return false;
+        const leader = scene.leader;
+        if (!this.showLeaderCrown(leader)) return false;
+        if (scene.pointerOverWorldUi?.(pointer) || scene._pointerOverHudChrome?.(pointer)) return false;
+        if (scene._gamePaused || scene._sculptUiOpen?.()) return false;
+        if (!scene._pointerOnCreature?.(pointer, leader)) return false;
+        if ((scene.party || []).includes(leader)) this.tryAllyClick(leader);
+        this.returnFollowedSheet();
+        return true;
     }
 
     /** Click your own pawn to form clay you're holding. */
@@ -2084,7 +2164,8 @@ class PartySystem {
             || (this.scene.party || []).includes(pawn);
         if (inParty) {
             const text = busy ? `${name}\n${busy}` : name;
-            if (pawn.isControlled?.()) {
+            const viewingElsewhere = pawn === this.scene.leader && this.nameViewpoint() !== pawn;
+            if (pawn.isControlled?.() && !viewingElsewhere) {
                 const selfTip = this.selfHeldActionTooltip(pawn);
                 const downed = !!(pawn._downed || pawn._prone || pawn.isIncapacitated?.());
                 if (selfTip) {

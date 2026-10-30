@@ -141,7 +141,8 @@
         /** Traveling companions we keep hovered over trees so work anims don't strobe the tip. */
         this._isHoverPawn = (obj) => {
             if (!obj?.active || obj._resting) return false;
-            if (obj === this.player) return false;
+            // Camera follow crowns the leader even while you still control them.
+            if (obj === this.player && !this.partySys?.showLeaderCrown?.(obj)) return false;
             if (obj.role === "settler") return false;
             const role = obj.role;
             if (role === "companion" || role === "leader" || role === "wanderer") {
@@ -556,7 +557,15 @@
                 if (this._isUiTooltipTarget(obj)) return obj;
             }
 
-            const switchAlly = this.partySys?.worldSwitchTarget?.(pointer);
+            let switchAlly = this.partySys?.worldSwitchTarget?.(pointer);
+            if (
+                !switchAlly
+                && this._followFocusedSettler
+                && this.partySys?.showLeaderCrown?.(this.leader)
+                && this._pointerOnCreature?.(pointer, this.leader)
+            ) {
+                switchAlly = this.leader;
+            }
             // Body under the cursor, even when a hut or pit hit area covers them.
             const settlerAt = this._livingSettlerAt(pointer);
 
