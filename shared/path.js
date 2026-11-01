@@ -854,8 +854,7 @@
         const bodyW = ro - lo;
         const bodyH = to;
         const squeeze = Number(opts && opts.squeeze) > 0 ? Number(opts.squeeze) : 0;
-        // Per-rect `gapSqueeze` is one side. A pair uses the stricter side so
-        // a basket does not pull a rack's lane into the rack itself.
+        // Per-rect `gapSqueeze` is one side. A pair uses the stricter side.
         const pairSqueeze = (a, b) => {
             const as = Number(a && a.gapSqueeze);
             const bs = Number(b && b.gapSqueeze);

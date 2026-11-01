@@ -549,16 +549,9 @@
         return { w: hs, h: hs, oriented: false };
     }
 
-    /**
-     * Campfires, drying racks, the grindstone, and wicker baskets are small
-     * pieces people line up. A body can step between them. The skinworking
-     * bench is wider than the tile gap beside it, so a passer runs into the
-     * board. Trees and shelters stay solid at the normal margin.
-     */
+    /** A body can step between neighboring drying racks. */
     function isGapFurniture(thingDef) {
-        if (!thingDef || thingDef.id === "skinworking_bench") return false;
-        if (thingDef.id === "wicker_basket") return true;
-        return !!(thingDef.campfire || thingDef.dryingRack || thingDef.craftStation);
+        return !!(thingDef && thingDef.dryingRack);
     }
 
     /** How far `body` intrudes into `rect`. Infinity when its center is inside. */
@@ -576,19 +569,11 @@
         return Math.min(ox, oy);
     }
 
-    /** A passer may clip this far into the edge of gap furniture, per side. */
+    /** A passer may clip this far into the edge of a drying rack, per side. */
     const GAP_SQUEEZE = 2;
-    /**
-     * Baskets are wider than a rack, so the opening between two tiles is
-     * narrower than a body. A deeper clip keeps that opening walkable.
-     * The middle of one basket stays solid.
-     */
-    const BASKET_GAP_SQUEEZE = 4;
 
     function gapSqueeze(thingDef) {
-        if (!isGapFurniture(thingDef)) return 0;
-        if (thingDef.id === "wicker_basket") return BASKET_GAP_SQUEEZE;
-        return GAP_SQUEEZE;
+        return isGapFurniture(thingDef) ? GAP_SQUEEZE : 0;
     }
 
     /**
@@ -650,170 +635,14 @@
     /**
      * The overlap is the side that faces the neighbor, not the face being
      * walked into. A shallow front hit used to cancel collision until the
-     * squeeze ran out, then the body was thrown back. Holding into a basket
-     * shook. No overlap (path margin only) stays allowed. Crossing the mouth
-     * of the opening is allowed: the center is still outside the basket, and
-     * only a few pixels of the side overlap.
+     * squeeze ran out, then the body was thrown back. No overlap (path
+     * margin only) stays allowed. Crossing the mouth of the opening is
+     * allowed: the center is still outside the rack, and only a few pixels
+     * of the side overlap.
      */
     function gapSideClip(body, rect, axis, squeeze) {
         const excess = gapClipExcess(body, rect, axis, squeeze);
         return excess != null && excess <= 0;
-    }
-
-    /**
-     * Inner opening between a neighboring pair, when `cx, cy` is actually
-     * in that opening. Between the centers is wider and includes the side
-     * of each basket.
-     */
-    function basketGapSlot(rects, cx, cy) {
-        if (!rects) return null;
-        for (let i = 0; i < rects.length; i++) {
-            const a = rects[i];
-            if (!a) continue;
-            const acx = (a.left + a.right) * 0.5;
-            const acy = (a.top + a.bottom) * 0.5;
-            for (let j = i + 1; j < rects.length; j++) {
-                const b = rects[j];
-                if (!b) continue;
-                const bcx = (b.left + b.right) * 0.5;
-                const bcy = (b.top + b.bottom) * 0.5;
-                const dx = Math.abs(acx - bcx);
-                const dy = Math.abs(acy - bcy);
-                if (dy <= 10 && dx > 0 && dx <= 20) {
-                    const left = acx <= bcx ? a : b;
-                    const right = left === a ? b : a;
-                    const start = left.right;
-                    const end = right.left;
-                    if (end > start && cx > start && cx < end) return { axis: "x", start, end };
-                }
-                if (dx <= 10 && dy > 0 && dy <= 20) {
-                    const top = acy <= bcy ? a : b;
-                    const bottom = top === a ? b : a;
-                    const start = top.bottom;
-                    const end = bottom.top;
-                    if (end > start && cy > start && cy < end) return { axis: "y", start, end };
-                }
-            }
-        }
-        return null;
-    }
-
-    function sameAabb(a, b) {
-        return !!a && !!b
-            && Math.abs(a.left - b.left) < 0.75 && Math.abs(a.right - b.right) < 0.75
-            && Math.abs(a.top - b.top) < 0.75 && Math.abs(a.bottom - b.bottom) < 0.75;
-    }
-
-    /**
-     * Opening that `rect` shares with a neighbor, when the body center is on
-     * that opening's side of the basket. The outer face stays a wall.
-     */
-    function basketTouchGap(rects, rect, cx, cy) {
-        if (!rects || !rect) return null;
-        for (let i = 0; i < rects.length; i++) {
-            const a = rects[i];
-            if (!a) continue;
-            const acx = (a.left + a.right) * 0.5;
-            const acy = (a.top + a.bottom) * 0.5;
-            for (let j = i + 1; j < rects.length; j++) {
-                const b = rects[j];
-                if (!b) continue;
-                const bcx = (b.left + b.right) * 0.5;
-                const bcy = (b.top + b.bottom) * 0.5;
-                const dx = Math.abs(acx - bcx);
-                const dy = Math.abs(acy - bcy);
-                if (dy <= 10 && dx > 0 && dx <= 20) {
-                    const left = acx <= bcx ? a : b;
-                    const right = left === a ? b : a;
-                    const start = left.right;
-                    const end = right.left;
-                    if (end > start) {
-                        const tcx = (rect.left + rect.right) * 0.5;
-                        if (sameAabb(rect, left) && cx > tcx) return { axis: "x", start, end };
-                        if (sameAabb(rect, right) && cx < tcx) return { axis: "x", start, end };
-                    }
-                }
-                if (dx <= 10 && dy > 0 && dy <= 20) {
-                    const top = acy <= bcy ? a : b;
-                    const bottom = top === a ? b : a;
-                    const start = top.bottom;
-                    const end = bottom.top;
-                    if (end > start) {
-                        const tcy = (rect.top + rect.bottom) * 0.5;
-                        if (sameAabb(rect, top) && cy > tcy) return { axis: "y", start, end };
-                        if (sameAabb(rect, bottom) && cy < tcy) return { axis: "y", start, end };
-                    }
-                }
-            }
-        }
-        return null;
-    }
-
-    /**
-     * One-axis separation from a basket. Arcade resolves Y first, and the
-     * feet are shorter than the basket, so a side hit (and any diagonal)
-     * gets shoved up and down as well as back. Push only the face that was
-     * entered. Against the opening between two baskets, keep the squeeze
-     * instead of throwing the body back to the surface — that throw is the
-     * rubberband, including when the stick changes direction.
-     * `dir` is the sign to add to x or y. `push` is 0 when the overlap stays.
-     */
-    function basketSeparation(body, prev, rect, vx, vy, gap) {
-        if (!body || !rect) return null;
-        const ox = Math.min(body.right, rect.right) - Math.max(body.left, rect.left);
-        const oy = Math.min(body.bottom, rect.bottom) - Math.max(body.top, rect.top);
-        if (!(ox > 0 && oy > 0)) return null;
-        const cx = (body.left + body.right) * 0.5;
-        const cy = (body.top + body.bottom) * 0.5;
-        const tcx = (rect.left + rect.right) * 0.5;
-        const tcy = (rect.top + rect.bottom) * 0.5;
-        const w = body.right - body.left;
-        const h = body.bottom - body.top;
-        const squeeze = gap && Number(gap.squeeze) > 0 ? Number(gap.squeeze) : 0;
-        const inSlot = !!(gap && (
-            (gap.axis === "x" && cx > gap.start && cx < gap.end)
-            || (gap.axis === "y" && cy > gap.start && cy < gap.end)
-        ));
-        const edge = 0.75;
-        const facesOpening = !!(gap && (
-            (gap.axis === "x" && (
-                (Math.abs(rect.right - gap.start) <= edge && cx > tcx)
-                || (Math.abs(rect.left - gap.end) <= edge && cx < tcx)
-            ))
-            || (gap.axis === "y" && (
-                (Math.abs(rect.bottom - gap.start) <= edge && cy > tcy)
-                || (Math.abs(rect.top - gap.end) <= edge && cy < tcy)
-            ))
-        ));
-        const alongside = !!(gap && (gap.axis === "x" ? oy >= h - 0.05 : ox >= w - 0.05));
-        const inOpening = inSlot || (facesOpening && alongside);
-        let axis;
-        if (inOpening) {
-            axis = gap.axis;
-        } else {
-            const prevLeft = prev && Number.isFinite(prev.left) ? prev.left : body.left;
-            const prevTop = prev && Number.isFinite(prev.top) ? prev.top : body.top;
-            const prevRight = prev && Number.isFinite(prev.right) ? prev.right : prevLeft + w;
-            const prevBottom = prev && Number.isFinite(prev.bottom) ? prev.bottom : prevTop + h;
-            const eps = 0.05;
-            const fromX = prevRight <= rect.left + eps || prevLeft >= rect.right - eps;
-            const fromY = prevBottom <= rect.top + eps || prevTop >= rect.bottom - eps;
-            const absX = Math.abs(Number(vx) || 0);
-            const absY = Math.abs(Number(vy) || 0);
-            const fullX = ox >= w - 0.05;
-            const fullY = oy >= h - 0.05;
-            if (fullY && !fullX) axis = "x";
-            else if (fullX && !fullY) axis = "y";
-            else if (fromX && !fromY) axis = "x";
-            else if (fromY && !fromX) axis = "y";
-            else if (absX > absY + 0.5) axis = "x";
-            else if (absY > absX + 0.5) axis = "y";
-            else axis = ox <= oy ? "x" : "y";
-        }
-        const depth = axis === "x" ? ox : oy;
-        const allow = inOpening ? squeeze : 0;
-        const dir = axis === "x" ? (cx < tcx ? -1 : 1) : (cy < tcy ? -1 : 1);
-        return { axis, push: Math.max(0, depth - allow), dir };
     }
 
     /**
@@ -2095,11 +1924,7 @@
         furnitureGapAxis,
         gapClipExcess,
         gapSideClip,
-        basketGapSlot,
-        basketTouchGap,
-        basketSeparation,
         GAP_SQUEEZE,
-        BASKET_GAP_SQUEEZE,
         figurineCollisionRects,
         spriteAnchor,
         rotateAnchorOffset,

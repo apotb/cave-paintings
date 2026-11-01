@@ -175,12 +175,7 @@ class PartyAI {
         forThingsNearAabb(scene, x - r, x + r, y - r, y + r, (thing) => {
             const gap = typeof Place !== "undefined" && Place.isGapFurniture
                 ? Place.isGapFurniture(thing?.meta)
-                : !!(
-                    thing?.meta?.dryingRack
-                    || thing?.meta?.campfire
-                    || thing?.meta?.id === "wicker_basket"
-                    || (thing?.meta?.craftStation && thing?.meta?.id !== "skinworking_bench")
-                );
+                : !!thing?.meta?.dryingRack;
             if (!gap) return false;
             if (seen.has(thing)) return false;
             seen.add(thing);

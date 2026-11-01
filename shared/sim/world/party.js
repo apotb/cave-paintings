@@ -1880,14 +1880,12 @@
     },
 
     /**
-     * Pathing grows the body so settlers don't kiss trunks. Campfires,
-     * drying racks, and wicker baskets leave a gap the body can take, and
-     * the same margin seals the row into a wall they pace along. The opening
-     * includes the approach, not only the feet already between the
-     * stations — otherwise the walker slides along the face and waits
-     * before stepping through. A shallow clip of the side still counts
-     * as the gap. The face and the middle stay solid, so holding into a
-     * basket does not bounce. A skinworking bench is not part of that opening.
+     * Pathing grows the body so settlers don't kiss trunks. Drying racks
+     * leave a gap the body can take, and the same margin seals the row into
+     * a wall they pace along. The opening includes the approach, not only
+     * the feet already between the racks — otherwise the walker slides along
+     * the face and waits before stepping through. A shallow clip of the side
+     * still counts as the gap. The face and the middle stay solid.
      */
     _gapClear(creature, body, pad) {
         const p = Math.max(0, Number(pad) || 0);
@@ -1920,14 +1918,14 @@
             if (!def || !Place.isGapFurniture?.(def)) return false;
             const squeeze = Place.gapSqueeze?.(def) || Place.GAP_SQUEEZE || 2;
             // A front-face graze is solid. Only the side facing the neighbor
-            // may clip, or holding into a basket bounces on the threshold.
+            // may clip.
             if (!Place.gapSideClip(body, tb, axis, squeeze)) return false;
         }
         return true;
     },
 
     /**
-     * The pathing pad overlaps a campfire or drying rack, and the body
+     * The pathing pad overlaps a drying rack, and the body
      * itself does not. Sliding on that margin is the sideways shuffle
      * in front of the gap. Trunks and real overlaps still slide.
      */
