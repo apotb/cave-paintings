@@ -2880,29 +2880,15 @@ class SceneMenu extends Phaser.Scene {
 
     _makeCreateTraitButton(parent, label, filled) {
         const s = this._uiScale();
-        const padX = Math.round(6 * s);
-        const padY = Math.round(2 * s);
-        const box = this.add.container(0, 0);
-        parent.add(box);
-        const text = this.add.text(0, 0, label, {
-            fontFamily: PIXEL_UI_FONT,
-            fontSize: this._uiFont(8),
-            color: filled ? "#f2ead8" : "#8a8478"
-        }).setOrigin(0, 0);
-        crispUiText(text);
-        const w = Math.ceil(text.width + padX * 2);
-        const h = Math.ceil(text.height + padY * 2);
-        const stroke = this._uiStroke();
-        const rect = this.add.rectangle(0, 0, w, h, 0x120e0a, 1)
-            .setOrigin(0, 0)
-            .setStrokeStyle(stroke, 0x2a2218)
-            .setInteractive({ useHandCursor: true });
-        text.setPosition(padX, padY);
-        box.add([rect, text]);
-        box.setSize(w, h);
+        const px = typeof pixelUiFontSize === "function" ? pixelUiFontSize(8, s) : Math.round(8 * s);
+        const chip = makeBioChip(this, label, s, px);
+        if (!filled) chip.text.setColor("#8a8478");
+        parent.add(chip.box);
+        const { rect, stroke } = chip;
+        rect.setInteractive({ useHandCursor: true });
         rect.on("pointerover", () => rect.setStrokeStyle(stroke, 0xffffff));
         rect.on("pointerout", () => rect.setStrokeStyle(stroke, 0x2a2218));
-        return { box, rect };
+        return { box: chip.box, rect };
     }
 
     _closeCreateTraitMenu() {
@@ -3185,29 +3171,9 @@ class SceneMenu extends Phaser.Scene {
 
     _createBioSlotWidth() {
         const s = this._uiScale();
-        const S = typeof Skills !== "undefined" ? Skills : null;
         const w = (text) => this._menuTextWidth(text, 8);
-        if (!S) return w("No bio");
-        const books = S.catalogs().backstories || [];
-        const traits = S.catalogs().traits || [];
-        const indent = Math.round(8 * s);
         const labelW = Math.max(w("Childhood"), w("Adulthood"));
-        const valueX = labelW + Math.round(10 * s);
-        const metaW = w("Female, ") + w("age 70");
-        let maxTitle = w("Unknown");
-        for (const row of books) maxTitle = Math.max(maxTitle, w(row?.title || "Unknown"));
-        let maxTrait = Math.max(w("None"), w("Trait —"), w("Unknown"));
-        for (const row of traits) maxTrait = Math.max(maxTrait, w(row?.title || "Unknown"));
-        let maxIncap = w("None");
-        for (const id of S.SKILL_IDS) maxIncap = Math.max(maxIncap, w(S.labelOf(id)));
-        return Math.max(
-            metaW,
-            valueX + maxTitle,
-            w("Traits"),
-            indent + maxTrait,
-            w("Incapable of"),
-            indent + maxIncap
-        );
+        return labelW + Math.round(10 * s) + bioNameSlotWidth(w(bioNameSample()), s);
     }
 
     _paintCreateBio({ splitSkills = false } = {}) {
@@ -3237,15 +3203,6 @@ class SceneMenu extends Phaser.Scene {
         const advanced = !!this._createAdvanced;
         const gap = Math.round(4 * s);
         const sectionGap = Math.round(12 * s);
-        const indent = Math.round(8 * s);
-        const click = (obj, fn) => {
-            if (!advanced || !obj) return;
-            if (!obj.input) obj.setInteractive({ useHandCursor: true });
-            obj.on("pointerdown", () => {
-                this._hideHoverTip(this._menuTip);
-                fn();
-            });
-        };
 
         const ageX = this._menuTextWidth("Female, ", 8);
         const ageSlot = this._menuTextWidth("age 70", 8);
@@ -3273,27 +3230,18 @@ class SceneMenu extends Phaser.Scene {
         const age = advanced ? null : mk(`age ${bio.age}`, "#f2ead8");
         let ageAnchor = null;
 
-        const cycleBook = (slot, key) => {
-            const list = books.filter((row) => row.slot === slot);
-            if (!list.length) return;
-            const i = Math.max(0, list.findIndex((row) => row.id === bio[key]));
-            bio[key] = list[(i + 1) % list.length].id;
-            this._rebuildCreateCharacter();
-        };
         const childLabel = mk("Childhood", "#9a9186");
         const adultLabel = mk("Adulthood", "#9a9186");
         const childDef = books.find((row) => row.id === bio.childhood);
         const adultDef = books.find((row) => row.id === bio.adulthood);
         this._storyPickButtons = [];
-        let childTitle;
-        let adultTitle;
+        const childBtn = this._makeCreateTraitButton(root, S.titleOf(books, bio.childhood), !!bio.childhood);
+        const adultBtn = this._makeCreateTraitButton(root, S.titleOf(books, bio.adulthood), !!bio.adulthood);
+        const childTitle = childBtn.box;
+        const adultTitle = adultBtn.box;
+        this._bindMenuTip(childBtn.rect, S.backstoryTip(childDef, this._createName));
+        this._bindMenuTip(adultBtn.rect, S.backstoryTip(adultDef, this._createName));
         if (advanced) {
-            const childBtn = this._makeCreateTraitButton(root, S.titleOf(books, bio.childhood), !!bio.childhood);
-            const adultBtn = this._makeCreateTraitButton(root, S.titleOf(books, bio.adulthood), !!bio.adulthood);
-            childTitle = childBtn.box;
-            adultTitle = adultBtn.box;
-            if (childDef) this._bindMenuTip(childBtn.rect, S.backstoryTip(childDef, this._createName));
-            if (adultDef) this._bindMenuTip(adultBtn.rect, S.backstoryTip(adultDef, this._createName));
             const toggleStory = (slot, key, btn) => {
                 this._hideHoverTip(this._menuTip);
                 if (this._traitMenu && this._traitMenuSlot === slot) {
@@ -3301,38 +3249,21 @@ class SceneMenu extends Phaser.Scene {
                     return;
                 }
                 const m = btn.box.getWorldTransformMatrix();
-                this._openCreateBackstoryMenu(slot, key, m.tx, m.ty + btn.box.height);
+                this._openCreateBackstoryMenu(slot, key, m.tx, m.ty + (btn.box.chipH || btn.box.height));
             };
             childBtn.rect.on("pointerdown", () => toggleStory("child", "childhood", childBtn));
             adultBtn.rect.on("pointerdown", () => toggleStory("adult", "adulthood", adultBtn));
             this._storyPickButtons.push(childBtn.box, adultBtn.box);
-        } else {
-            childTitle = mk(S.titleOf(books, bio.childhood), "#f2ead8");
-            adultTitle = mk(S.titleOf(books, bio.adulthood), "#f2ead8");
-            this._bindMenuTip(childTitle, S.backstoryTip(childDef, this._createName));
-            this._bindMenuTip(adultTitle, S.backstoryTip(adultDef, this._createName));
-            click(childTitle, () => cycleBook("child", "childhood"));
-            click(adultTitle, () => cycleBook("adult", "adulthood"));
         }
 
         const traitsHead = mk("Traits", "#d4c45a");
         const traitLines = [];
         const ids = (bio.traits || []).filter(Boolean);
         this._traitPickButtons = [];
-        const holdTraitRow = () => {
-            const hold = mk("None", "#8a8478");
-            hold.setVisible(false);
-            traitLines.push(hold);
-        };
-        for (let slot = 0; slot < 3; slot++) {
-            const id = ids[slot] || null;
-            if (!id && !advanced) {
-                if (slot === 0 && !ids.length) traitLines.push(mk("None", "#8a8478"));
-                else holdTraitRow();
-                continue;
-            }
-            const def = id ? traits.find((row) => row.id === id) : null;
-            if (advanced) {
+        if (advanced) {
+            for (let slot = 0; slot < 3; slot++) {
+                const id = ids[slot] || null;
+                const def = id ? traits.find((row) => row.id === id) : null;
                 const btn = this._makeCreateTraitButton(root, id ? (def?.title || "Unknown") : "None", !!id);
                 traitLines.push(btn.box);
                 if (def) this._bindMenuTip(btn.rect, S.traitTip(def, this._createName));
@@ -3343,14 +3274,19 @@ class SceneMenu extends Phaser.Scene {
                         return;
                     }
                     const m = btn.box.getWorldTransformMatrix();
-                    this._openCreateTraitMenu(slot, m.tx, m.ty + btn.box.height);
+                    this._openCreateTraitMenu(slot, m.tx, m.ty + (btn.box.chipH || btn.box.height));
                 });
                 this._traitPickButtons.push(btn.box);
-                continue;
             }
-            const title = mk(id ? (def?.title || "Unknown") : "Trait —", id ? "#f2ead8" : "#8a8478");
-            traitLines.push(title);
-            if (def) this._bindMenuTip(title, S.traitTip(def, this._createName));
+        } else if (!ids.length) {
+            traitLines.push(mk("None", "#8a8478"));
+        } else {
+            for (const id of ids) {
+                const def = traits.find((row) => row.id === id);
+                const btn = this._makeCreateTraitButton(root, def?.title || "Unknown", true);
+                traitLines.push(btn.box);
+                this._bindMenuTip(btn.rect, def ? S.traitTip(def, this._createName) : "Unknown");
+            }
         }
 
         const incapHead = mk("Incapable of", "#d4c45a");
@@ -3360,9 +3296,9 @@ class SceneMenu extends Phaser.Scene {
             incapLines.push(mk("None", "#8a8478"));
         } else {
             for (const id of incapIds) {
-                const line = mk(S.labelOf(id), "#8a8478");
-                this._bindMenuTip(line, S.incapableTip(bio, id));
-                incapLines.push(line);
+                const btn = this._makeCreateTraitButton(root, S.labelOf(id), true);
+                this._bindMenuTip(btn.rect, S.incapableTip(bio, id));
+                incapLines.push(btn.box);
             }
         }
 
@@ -3387,7 +3323,7 @@ class SceneMenu extends Phaser.Scene {
         }
 
         let cy = 0;
-        const metaH = Math.max(gender.height, ageWord?.height || age?.height || 0);
+        const metaH = Math.max(gender.chipH || gender.height, ageWord?.height || age?.height || 0);
         gender.setPosition(0, cy);
         if (ageWord) {
             const ageLeft = genderSlot + ageGap;
@@ -3405,40 +3341,39 @@ class SceneMenu extends Phaser.Scene {
         const colTop = cy;
         const labelW = Math.max(childLabel.width, adultLabel.width);
         const valueX = labelW + Math.round(10 * s);
-        childLabel.setPosition(0, cy);
-        childTitle.setPosition(valueX, cy);
-        cy += Math.max(childLabel.height, childTitle.height) + gap;
-        adultLabel.setPosition(0, cy);
-        adultTitle.setPosition(valueX, cy);
-        cy += Math.max(adultLabel.height, adultTitle.height) + sectionGap;
-        traitsHead.setPosition(0, cy);
-        cy += traitsHead.height + gap;
-        for (const line of traitLines) {
-            line.setPosition(indent, cy);
-            cy += line.height + gap;
-        }
-        cy += sectionGap - gap;
-        incapHead.setPosition(0, cy);
-        cy += incapHead.height + gap;
-        for (const line of incapLines) {
-            line.setPosition(indent, cy);
-            cy += line.height + gap;
-        }
-        const leftEnd = cy;
-        const metaRight = ageAnchor ? ageAnchor.x + ageAnchor.w : ageX + ageSlot;
-        let maxTitle = Math.max(this._menuTextWidth("None", 8), this._menuTextWidth("Unknown", 8));
-        for (const row of books) {
-            maxTitle = Math.max(maxTitle, this._menuTextWidth(row?.title || "Unknown", 8));
-        }
-        const storyPad = advanced ? Math.round(6 * s) * 2 : 0;
-        const leftInner = Math.max(
-            metaRight,
-            valueX + maxTitle + storyPad,
-            traitsHead.width,
-            ...traitLines.map((line) => indent + line.width),
-            incapHead.width,
-            ...incapLines.map((line) => indent + line.width)
+        const spanW = (obj) => uiBoxSize(obj).w || obj?.width || 0;
+        const columnW = this._createBioSlotWidth();
+        const chipH = Math.max(
+            uiBoxSize(childTitle).h,
+            uiBoxSize(adultTitle).h,
+            ...traitLines.map((line) => uiBoxSize(line).h),
+            ...incapLines.map((line) => uiBoxSize(line).h)
         );
+        const placeStory = (label, title, after) => {
+            const titleH = uiBoxSize(title).h || title.height || 0;
+            const row = Math.max(label.height, titleH);
+            label.setPosition(0, cy + Math.round((row - label.height) / 2));
+            title.setPosition(valueX, cy + Math.round((row - titleH) / 2));
+            cy += row + after;
+        };
+        placeStory(childLabel, childTitle, gap);
+        placeStory(adultLabel, adultTitle, sectionGap);
+        const placeFlow = (head, items, trail) => {
+            head.setPosition(0, cy);
+            cy += head.height + gap;
+            const flow = flowChipRows(items.map(spanW), columnW, gap, gap, chipH, 2);
+            items.forEach((item, i) => {
+                const p = flow.places[i];
+                if (!p) return;
+                const dy = item._chipBox ? 0 : Math.max(0, Math.round((chipH - (item.height || 0)) / 2));
+                item.setPosition(p.x, cy + p.y + dy);
+            });
+            cy += flow.reservedH + trail;
+        };
+        placeFlow(traitsHead, traitLines, sectionGap);
+        placeFlow(incapHead, incapLines, 0);
+        const leftEnd = cy;
+        const leftInner = columnW;
         const bodyH = typeof pixelUiFontSize === "function" ? pixelUiFontSize(8, s) : Math.round(8 * s);
         const barH = Math.max(bodyH, skillRows.reduce((n, row) => Math.max(n, row.label?.height || 0), 0));
         const rowH = barH + Math.max(2, Math.round(2 * s)) + Math.round(6 * s);

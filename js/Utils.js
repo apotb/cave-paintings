@@ -340,6 +340,97 @@ function pixelUiFontSize(basePx, scale) {
     return Math.max(cell, Math.round(raw / cell) * cell);
 }
 
+/**
+ * Dark label chip used on the bio sheet. `chipW` / `chipH` are the layout size.
+ * Hover stroke is left to the caller so a clipped sheet can ignore offscreen hits.
+ */
+function makeBioChip(scene, label, scale, fontPx) {
+    const s = Number(scale) || 1;
+    const padX = Math.round(6 * s);
+    const padY = Math.round(2 * s);
+    const stroke = Math.max(2, Math.round(2 * s));
+    const text = scene.add.text(0, 0, String(label ?? ""), {
+        fontFamily: typeof PIXEL_UI_FONT !== "undefined" ? PIXEL_UI_FONT : "monospace",
+        fontSize: `${Math.round(Number(fontPx) || 8)}px`,
+        color: "#f2ead8"
+    }).setOrigin(0, 0);
+    if (typeof crispUiText === "function") crispUiText(text);
+    const w = Math.ceil((text.width || 0) + padX * 2);
+    const h = Math.ceil((text.height || 0) + padY * 2);
+    const rect = scene.add.rectangle(0, 0, w, h, 0x120e0a, 1)
+        .setOrigin(0, 0)
+        .setStrokeStyle(stroke, 0x2a2218);
+    text.setPosition(padX, padY);
+    const box = scene.add.container(0, 0, [rect, text]);
+    if (box.setSize) box.setSize(w, h);
+    box.chipW = w;
+    box.chipH = h;
+    box._chipBox = true;
+    return { box, rect, text, stroke, width: w, height: h };
+}
+
+function uiBoxSize(obj) {
+    if (!obj) return { w: 0, h: 0 };
+    const w = obj.chipW != null ? obj.chipW : obj.width;
+    const h = obj.chipH != null ? obj.chipH : obj.height;
+    return { w: Number(w) || 0, h: Number(h) || 0 };
+}
+
+/** Backstory names sit in a slot this many characters wide on every bio sheet. */
+const BIO_NAME_CHARS = 18;
+
+function bioNameSample() {
+    return "n".repeat(BIO_NAME_CHARS);
+}
+
+/** Value area for a backstory chip: 24 characters, plus the chip's horizontal padding. */
+function bioNameSlotWidth(textWidth, scale) {
+    const pad = Math.round(6 * (Number(scale) || 1)) * 2;
+    return Math.ceil((Number(textWidth) || 0) + pad);
+}
+
+function measureUiText(scene, value, fontPx) {
+    const px = Math.round(Number(fontPx) || 8);
+    const text = scene.add.text(0, 0, String(value ?? ""), {
+        fontFamily: typeof PIXEL_UI_FONT !== "undefined" ? PIXEL_UI_FONT : "monospace",
+        fontSize: `${px}px`
+    }).setOrigin(0, 0);
+    if (typeof crispUiText === "function") crispUiText(text);
+    const width = text.width || 0;
+    text.destroy();
+    return width;
+}
+
+/**
+ * Pack chip widths into rows. A chip wider than `maxWidth` keeps its row.
+ * Rows after `reservedRows` are still placed, so extra chips draw over
+ * whatever the caller lays out next. `reservedH` is only the reserved rows.
+ */
+function flowChipRows(widths, maxWidth, gapX, gapY, rowH, reservedRows) {
+    const places = [];
+    const limit = Math.max(0, Number(maxWidth) || 0);
+    const gx = Math.max(0, Number(gapX) || 0);
+    const gy = Math.max(0, Number(gapY) || 0);
+    const rh = Math.max(0, Number(rowH) || 0);
+    const keep = Math.max(0, Math.floor(Number(reservedRows) || 0));
+    let x = 0;
+    let row = 0;
+    let width = 0;
+    for (const raw of Array.isArray(widths) ? widths : []) {
+        const w = Math.max(0, Number(raw) || 0);
+        if (x > 0 && x + w > limit) {
+            row += 1;
+            x = 0;
+        }
+        places.push({ x, y: row * (rh + gy), row });
+        const right = x + w;
+        if (right > width) width = right;
+        x += w + gx;
+    }
+    const reservedH = keep <= 0 ? 0 : keep * rh + Math.max(0, keep - 1) * gy;
+    return { places, reservedH, width };
+}
+
 /** Fit `frameW`×`frameH` inside a box without stretching. */
 function uiIconDisplaySize(frameW, frameH, maxW, maxH) {
     const fw = Math.max(1, Number(frameW) || 1);

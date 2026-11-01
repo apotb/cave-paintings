@@ -100,9 +100,7 @@ class BioPanel {
         this.visible = false;
         this.container.setVisible(false);
         this.scene.statsPanel?.close?.();
-        if (this.scene._tooltipTarget && this.texts?.list?.includes?.(this.scene._tooltipTarget)) {
-            this.scene.hideTooltip?.();
-        }
+        if (this._ownsTipTarget(this.scene._tooltipTarget)) this.scene.hideTooltip?.();
         const btn = this.scene.bioBtn;
         if (btn) {
             const hovering = typeof pointerHitsInteractive === "function"
@@ -399,6 +397,26 @@ class BioPanel {
         return typeof pixelUiFontSize === "function" ? pixelUiFontSize(size, s) : Math.round(size * s);
     }
 
+    _ownsTipTarget(obj) {
+        let node = obj;
+        while (node) {
+            if (node === this.texts) return true;
+            node = node.parentContainer;
+        }
+        return false;
+    }
+
+    _chip(label, tip) {
+        const chip = makeBioChip(this.scene, label, this.scene.uiScale || 1, this._font(8));
+        this.texts.add(chip.box);
+        const { rect, stroke } = chip;
+        rect.setInteractive({ useHandCursor: true });
+        if (tip) this._hit(rect, tip);
+        rect.on("pointerover", () => rect.setStrokeStyle(stroke, 0xffffff));
+        rect.on("pointerout", () => rect.setStrokeStyle(stroke, 0x2a2218));
+        return chip.box;
+    }
+
     _text(value, color, size) {
         const t = this.scene.add.text(0, 0, value, {
             fontFamily: typeof PIXEL_UI_FONT !== "undefined" ? PIXEL_UI_FONT : "monospace",
@@ -424,6 +442,7 @@ class BioPanel {
     }
 
     _rebuild(name, bio) {
+        if (this._ownsTipTarget(this.scene._tooltipTarget)) this.scene.hideTooltip?.();
         this.texts.removeAll(true);
         const S = typeof Skills !== "undefined" ? Skills : null;
         const cat = S ? S.catalogs() : { backstories: [], traits: [] };
@@ -453,11 +472,9 @@ class BioPanel {
         const childDef = (cat.backstories || []).find((row) => row.id === bio.childhood);
         const adultDef = (cat.backstories || []).find((row) => row.id === bio.adulthood);
         block.childLabel = this._text("Childhood", "#9a9186", 8);
-        block.childTitle = this._text(child, "#f2ead8", 8);
-        this._hit(block.childTitle, S.backstoryTip(childDef, name));
+        block.childTitle = this._chip(child, S.backstoryTip(childDef, name));
         block.adultLabel = this._text("Adulthood", "#9a9186", 8);
-        block.adultTitle = this._text(adult, "#f2ead8", 8);
-        this._hit(block.adultTitle, S.backstoryTip(adultDef, name));
+        block.adultTitle = this._chip(adult, S.backstoryTip(adultDef, name));
         block.traitsHead = this._text("Traits", "#d4c45a", 8);
         const traits = Array.isArray(bio.traits) ? bio.traits : [];
         if (!traits.length) {
@@ -465,9 +482,7 @@ class BioPanel {
         } else {
             for (const id of traits) {
                 const def = (cat.traits || []).find((row) => row.id === id);
-                const line = this._text(def?.title || "Unknown", "#f2ead8", 8);
-                this._hit(line, def ? S.traitTip(def, name) : "Unknown");
-                block.traits.push(line);
+                block.traits.push(this._chip(def?.title || "Unknown", def ? S.traitTip(def, name) : "Unknown"));
             }
         }
         const incapable = S.SKILL_IDS.filter((id) => S.incapable(bio, id));
@@ -476,9 +491,7 @@ class BioPanel {
             block.incaps.push(this._text("None", "#8a8478", 8));
         } else {
             for (const id of incapable) {
-                const line = this._text(S.labelOf(id), "#8a8478", 8);
-                this._hit(line, S.incapableTip(bio, id));
-                block.incaps.push(line);
+                block.incaps.push(this._chip(S.labelOf(id), S.incapableTip(bio, id)));
             }
         }
         for (const id of S.SKILL_IDS) {
@@ -510,10 +523,19 @@ class BioPanel {
         const pad = Math.round(8 * s);
         const gap = Math.round(4 * s);
         const sectionGap = Math.round(12 * s);
-        const indent = Math.round(8 * s);
         const b = this._block;
         const labelW = Math.max(b?.childLabel?.width || 0, b?.adultLabel?.width || 0);
-        const valueX = pad + labelW + Math.round(10 * s);
+        const valueGap = Math.round(10 * s);
+        const valueX = pad + labelW + valueGap;
+        const chips = [...(b?.traits || []), ...(b?.incaps || [])];
+        const nameSlot = bioNameSlotWidth(measureUiText(this.scene, bioNameSample(), this._font(8)), s);
+        const flowW = labelW + valueGap + nameSlot;
+        const chipH = Math.max(
+            uiBoxSize(b?.childTitle).h,
+            uiBoxSize(b?.adultTitle).h,
+            ...chips.map((obj) => uiBoxSize(obj).h),
+            this._font(8)
+        );
         let y = pad;
         if (b?.name) {
             b.name.setPosition(pad, y);
@@ -524,26 +546,31 @@ class BioPanel {
             y += b.meta.height + sectionGap;
         }
         const colTop = y;
-        const placeLine = (obj, x) => {
-            if (!obj) return;
-            obj.setPosition(x, y);
-            y += obj.height + gap;
+        const placeStory = (label, title, after) => {
+            if (!label) return;
+            const titleH = uiBoxSize(title).h;
+            const row = Math.max(label.height, titleH);
+            label.setPosition(pad, y + Math.round((row - label.height) / 2));
+            title?.setPosition(valueX, y + Math.round((row - titleH) / 2));
+            y += row + after;
         };
-        if (b?.childLabel) {
-            b.childLabel.setPosition(pad, y);
-            b.childTitle?.setPosition(valueX, y);
-            y += Math.max(b.childLabel.height, b.childTitle?.height || 0) + gap;
-        }
-        if (b?.adultLabel) {
-            b.adultLabel.setPosition(pad, y);
-            b.adultTitle?.setPosition(valueX, y);
-            y += Math.max(b.adultLabel.height, b.adultTitle?.height || 0) + sectionGap;
-        }
-        placeLine(b?.traitsHead, pad);
-        for (const line of b?.traits || []) placeLine(line, pad + indent);
-        if (b?.traitsHead) y += sectionGap - gap;
-        placeLine(b?.incapHead, pad);
-        for (const line of b?.incaps || []) placeLine(line, pad + indent);
+        placeStory(b?.childLabel, b?.childTitle, gap);
+        placeStory(b?.adultLabel, b?.adultTitle, sectionGap);
+        const placeFlow = (head, items, trail) => {
+            if (!head) return;
+            head.setPosition(pad, y);
+            y += head.height + gap;
+            const flow = flowChipRows(items.map((obj) => uiBoxSize(obj).w), flowW, gap, gap, chipH, 2);
+            items.forEach((obj, i) => {
+                const p = flow.places[i];
+                if (!p) return;
+                const dy = obj._chipBox ? 0 : Math.max(0, Math.round((chipH - (obj.height || 0)) / 2));
+                obj.setPosition(pad + p.x, y + p.y + dy);
+            });
+            y += flow.reservedH + trail;
+        };
+        placeFlow(b?.traitsHead, b?.traits || [], sectionGap);
+        placeFlow(b?.incapHead, b?.incaps || [], 0);
         const leftEnd = y;
 
         const skills = b?.skills || [];
@@ -555,15 +582,7 @@ class BioPanel {
         const starR = Math.max(3, Math.round(3.5 * s));
         const starGap = Math.round(starR * 2 + 2 * s);
         const starSlot = starGap * 2;
-        const leftInner = Math.max(
-            (b?.name?.width || 0),
-            b?.meta?.width || 0,
-            labelW + Math.round(10 * s) + Math.max(b?.childTitle?.width || 0, b?.adultTitle?.width || 0),
-            (b?.traitsHead?.width || 0),
-            ...(b?.traits || []).map((t) => indent + (t.width || 0)),
-            (b?.incapHead?.width || 0),
-            ...(b?.incaps || []).map((t) => indent + (t.width || 0))
-        );
+        const leftInner = flowW;
         const skillX = pad + leftInner + Math.round(18 * s);
         const numRight = skillX + nameW + Math.round(8 * s) + (skills.length ? starSlot + numW : 0);
         this.bars.clear();
