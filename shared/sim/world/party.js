@@ -751,10 +751,12 @@
         const c = w.creature || this.creatures.get(w.id);
         const attacking = !!(c?.attackTimer > 0 || w.attackTimer > 0);
         const prone = this._creatureIsProne(c) || !!w.prone;
+        const worn = Apparel.equippedIds(w.equipment);
         return {
             id: w.id,
             name: w.name,
             look: w.look,
+            ...(worn.length ? { worn } : {}),
             bio: w.bio || null,
             x: w.x,
             y: w.y,

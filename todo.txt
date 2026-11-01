@@ -12,8 +12,6 @@ Replace Settling Stone with Hearth: Log x4, Dried hide x1, Pebble x8, Leaf cord 
 
 Better party management Kenshi-esque -- choose which severity of injuries to tend, make certain party members bodyguards that will only attack enemies near you, etc
 
-Visible apparel on body
-
 Bows
 
 Burials / ritual -- early spiritualism
@@ -32,9 +30,9 @@ More animals -- lynx (neutral), auroch (scared)
 
 Icons in tooltips
 
-Needs beyond hunger: sleep, recreation, socialization, etc
+Personalities and socializing
 
-Backstories, personalities, job preferences, skills, socializing, and more randomly generated personalized stuff
+Wealth: actual money in-game, but won't be unlockable till much later via Currency tech, and you then will need Accounting tech to see your net worth.
 
 ---
 

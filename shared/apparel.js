@@ -181,6 +181,45 @@
         return out;
     }
 
+    function equippedIds(equipment) {
+        const ids = [];
+        for (const row of wornSlots(equipment)) {
+            if (row.stack?.id) ids.push(row.stack.id);
+        }
+        return ids;
+    }
+
+    /** Feet before legs before torso before head. Same-slot ties keep input order. */
+    const VISUAL_SLOT_ORDER = ["feet", "legs", "torso", "head", "back", "waist"];
+
+    /**
+     * Paint order for worn item ids: inner apparel layers first.
+     * @param {string[]} ids
+     * @param {(id: string) => object|null|undefined} [getItem]
+     * @returns {string[]}
+     */
+    function visualDrawOrder(ids, getItem) {
+        const list = Array.isArray(ids) ? ids : [];
+        const rows = [];
+        for (let i = 0; i < list.length; i++) {
+            const id = list[i];
+            if (!id) continue;
+            const def = typeof getItem === "function" ? getItem(id) : null;
+            const layer = layerOf(def);
+            const layerIndex = layer ? ARMOR_LAYER_ORDER.indexOf(layer) : -1;
+            // skin is last in ARMOR_LAYER_ORDER and must paint first.
+            const innerFirst = layerIndex < 0
+                ? ARMOR_LAYER_ORDER.length
+                : (ARMOR_LAYER_ORDER.length - 1 - layerIndex);
+            const slot = String(def?.equip?.slot || "");
+            let slotRank = VISUAL_SLOT_ORDER.indexOf(slot);
+            if (slotRank < 0) slotRank = VISUAL_SLOT_ORDER.length;
+            rows.push({ id, innerFirst, slotRank, i });
+        }
+        rows.sort((a, b) => a.innerFirst - b.innerFirst || a.slotRank - b.slotRank || a.i - b.i);
+        return rows.map((row) => row.id);
+    }
+
     function setSlot(equipment, key, stack) {
         if (!equipment) return;
         if (String(key).startsWith("waist:")) {
@@ -396,6 +435,8 @@
         itemCoversPart,
         occupancyConflict,
         wornSlots,
+        equippedIds,
+        visualDrawOrder,
         setSlot,
         coveringPieces,
         resolveHit,

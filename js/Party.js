@@ -626,6 +626,7 @@ class PartySystem {
             pawn.equipment.back = null;
             pawn.equipment.waist = [];
         }
+        pawn.recomputeEquipmentEffects?.();
         scene.party = (scene.party || []).filter((p) => p !== pawn);
         this.releaseSettlerAsWanderer(pawn, ev.heading || { x: 1, y: 0 });
         pawn.recruitLocked = true;

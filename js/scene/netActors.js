@@ -56,6 +56,45 @@
         return playerId;
     },
 
+    _netWornSig(worn) {
+        return Array.isArray(worn) && worn.length ? worn.join("+") : "";
+    },
+
+    /** Rebake a remote puppet when colors or worn item ids change. */
+    _netSyncRemoteLook(entry, look, worn) {
+        if (!entry?.spr) return;
+        const wornSig = this._netWornSig(worn);
+        const lookChanged = !!(look && typeof Look !== "undefined" && !Look.looksEqual(entry.look, look));
+        const wornChanged = wornSig !== (entry.wornSig || "");
+        if (!lookChanged && !wornChanged) return;
+        const nextLook = look || entry.look;
+        if (typeof PlayerLook !== "undefined") {
+            PlayerLook.apply(entry.spr, nextLook, { worn: Array.isArray(worn) ? worn : [] });
+            entry.tex = entry.spr.texture?.key;
+            entry.animKey = null;
+            if (lookChanged && entry.fist) entry.fist.setFillStyle(PlayerLook.fistColor(nextLook), 1);
+        }
+        if (nextLook) entry.look = nextLook;
+        entry.wornSig = wornSig;
+    },
+
+    /** Wanderer puppets are Player sprites. `worn` is the visible item id list. */
+    _netApplyPawnWorn(pawn, worn, look) {
+        if (!pawn || typeof PlayerLook === "undefined") return;
+        const list = Array.isArray(worn) ? worn.filter((id) => typeof id === "string" && id) : [];
+        const sig = list.join("+");
+        const lookSame = !look || (typeof Look !== "undefined" && Look.looksEqual(pawn.look, look));
+        if (sig === (pawn._wornLookSig || "") && lookSame && pawn.texture?.key && pawn.texture.key !== "human") {
+            return;
+        }
+        if (look) pawn.look = typeof Look !== "undefined" ? Look.normalizeLook(look) : look;
+        const moving = !!(pawn.anims?.isPlaying && /-walk-/.test(pawn.anims.currentAnim?.key || ""));
+        const key = PlayerLook.apply(pawn, pawn.look, { worn: list });
+        if (!key || key === "human") return;
+        pawn._wornLookSig = sig;
+        PlayerLook.play(pawn, pawn.facing || "down", moving);
+    },
+
     _netRemoveRemotesForOwner(ownerId) {
         if (!ownerId || !this.remotePlayers) return;
         for (const [id, entry] of [...this.remotePlayers]) {
@@ -75,7 +114,7 @@
         this.mainLayer.add(root);
 
         const lookKey = typeof PlayerLook !== "undefined"
-            ? PlayerLook.ensure(this, rp.look)
+            ? PlayerLook.ensure(this, rp.look, { worn: rp.worn || [] })
             : "human";
         const spr = this.add.sprite(0, 0, lookKey, 1).setOrigin(0, 1);
         root.add(spr);
@@ -159,6 +198,7 @@
             lastSleep: rp.lastSleep || null,
             restRot: rp.restRot ?? rp.lastSleep?.rot,
             look: rp.look || null,
+            wornSig: this._netWornSig(rp.worn),
             tex: spr.texture?.key
         };
         this._setRemoteSortDepth(entry);
@@ -206,15 +246,7 @@
                 : null;
             entry.displayName = rp.name || entry.displayName || "?";
             entry.name.setText(entry.displayName);
-            if (rp.look && typeof Look !== "undefined" && !Look.looksEqual(entry.look, rp.look)) {
-                if (typeof PlayerLook !== "undefined") {
-                    PlayerLook.apply(entry.spr, rp.look);
-                    entry.tex = entry.spr.texture?.key;
-                    entry.animKey = null;
-                    if (entry.fist) entry.fist.setFillStyle(PlayerLook.fistColor(rp.look), 1);
-                }
-                entry.look = rp.look;
-            }
+            this._netSyncRemoteLook(entry, rp.look, rp.worn);
             entry.ownerId = rp.id;
             entry.pawnId = rp.id;
             entry.dead = !!rp.dead;
@@ -294,13 +326,7 @@
                 mEntry.root.setVisible(!mem.dead);
                 mEntry.name?.setVisible(!mem.dead);
                 if (mem.dead) mEntry.bubble?.setVisible(false);
-                if (mem.look && typeof Look !== "undefined" && !Look.looksEqual(mEntry.look, mem.look)) {
-                    if (typeof PlayerLook !== "undefined") {
-                        PlayerLook.apply(mEntry.spr, mem.look);
-                        mEntry.tex = mEntry.spr.texture?.key;
-                    }
-                    mEntry.look = mem.look;
-                }
+                this._netSyncRemoteLook(mEntry, mem.look, mem.worn);
                 if (mem.dead || mem.prone) {
                     this._netClearRemoteAttack(mEntry);
                 } else if (mem.attacking && Number.isFinite(mem.attackAngle)) {
@@ -672,6 +698,7 @@
                     });
                 }
             }
+            if (pawn) this._netApplyPawnWorn(pawn, w.worn, w.look);
         }
         sys.wanderers = sys.wanderers.filter((p) => {
             if (seen.has(p.pawnId)) return true;

@@ -1143,6 +1143,24 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.equipSpeedMultiplier = speedMul;
         this.syncInventorySize();
         this.syncOverflowSize();
+        this.syncWornLook();
+    }
+
+    /** Rebake the walk sheet when the visible apparel set changes. */
+    syncWornLook() {
+        if (typeof PlayerLook === "undefined" || !this.scene) return;
+        const worn = (typeof Apparel !== "undefined" && Apparel.equippedIds)
+            ? Apparel.equippedIds(this.equipment)
+            : [];
+        const sig = worn.join("+");
+        if (sig === (this._wornLookSig || "") && this.texture?.key && this.texture.key !== "human") return;
+        const moving = !!(this.anims?.isPlaying && /-walk-/.test(this.anims.currentAnim?.key || ""));
+        const key = PlayerLook.apply(this, this.look, { worn });
+        if (!key || key === "human") return;
+        this._wornLookSig = sig;
+        PlayerLook.play(this, this.facing || "down", moving);
+        const stats = this.scene.statsPanel;
+        if (stats?.visible && stats.pawn === this) stats._syncPortrait?.();
     }
 
     /** Resize hotbar inventory to base + equipment hotbar grants; overflow drops at feet. */

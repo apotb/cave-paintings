@@ -1182,6 +1182,7 @@
         for (const p of this.players.values()) {
             if (!p.connected) continue;
             const motion = this._poseMotion(p, p);
+            const worn = Apparel.equippedIds(p.equipment);
             players.push({
                 id: p.id,
                 name: p.name,
@@ -1214,8 +1215,10 @@
                     : 0,
                 attackArt: !p.prone && !p.dead && p.attackTimer > 0 ? (p.attackArt || null) : null,
                 look: p.look || Look.normalizeLook(null),
+                ...(worn.length ? { worn } : {}),
                 party: (p.party || []).map((m) => {
                     const mm = this._poseMotion(m, p);
+                    const memberWorn = Apparel.equippedIds(m.equipment);
                     return {
                         id: m.id,
                         name: m.name,
@@ -1236,6 +1239,7 @@
                         lastSleep: m.lastSleep || null,
                         restWalk: this._restWalkSnap(m),
                         look: m.look || Look.normalizeLook(null),
+                        ...(memberWorn.length ? { worn: memberWorn } : {}),
                         eatChannel: this._eatChannelSnap(m.eatChannel),
                         tendChannel: this._tendChannelSnap(m.tendChannel),
                         fish: this._fishSnap(m),

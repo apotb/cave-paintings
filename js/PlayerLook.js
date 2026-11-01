@@ -1,6 +1,7 @@
 /**
  * Bake a player look into a 48×64 spritesheet (16×16 frames) via canvas multiply.
- * Depends on shared/look.js (`Look`) and the six `player-*` part textures.
+ * Depends on shared/look.js (`Look`), shared/apparel.js (`Apparel`), the six
+ * `player-*` part textures, and precolored sheets in assets/player/armor.
  */
 const PlayerLook = (() => {
     const SHEET_W = 48;
@@ -8,6 +9,21 @@ const PlayerLook = (() => {
     const FRAME = 16;
     const FRAMES = 12;
     const DIRS = ["down", "left", "right", "up"];
+    /** Worn sheets. Item-icon keys stay on the item id, so these use a prefix. */
+    const ARMOR_IDS = [
+        "cactus_flower",
+        "hide_loincloth",
+        "hide_tunic",
+        "leaf_loincloth",
+        "leaf_sandals",
+        "leaf_wrap",
+        "leather_kilt",
+        "leather_tunic"
+    ];
+
+    function armorTextureKey(id) {
+        return `player-armor-${id}`;
+    }
 
     function data() {
         return typeof Look !== "undefined" ? Look : null;
@@ -27,17 +43,54 @@ const PlayerLook = (() => {
             if (scene.textures?.exists(key)) continue;
             scene.load.image(key, `assets/player/${part}.png`);
         }
+        for (const id of ARMOR_IDS) {
+            const key = armorTextureKey(id);
+            if (scene.textures?.exists(key)) continue;
+            scene.load.image(key, `assets/player/armor/${id}.png`);
+        }
     }
 
-    function partImage(scene, part) {
-        const L = data();
-        const key = L.partTextureKey(part);
-        if (!scene.textures.exists(key)) return null;
+    function sourceImage(scene, key) {
+        if (!scene?.textures?.exists(key)) return null;
         const tex = scene.textures.get(key);
         return tex.getSourceImage?.() || tex.source?.[0]?.image || null;
     }
 
-    function paint(canvas, scene, look) {
+    function partImage(scene, part) {
+        const L = data();
+        return sourceImage(scene, L.partTextureKey(part));
+    }
+
+    /**
+     * Equipped ids whose armor sheet is loaded, inner layers first.
+     * @param {Phaser.Scene} scene
+     * @param {string[]} [worn]
+     * @returns {string[]}
+     */
+    function orderedWorn(scene, worn) {
+        const ids = Array.isArray(worn) ? worn.filter((id) => typeof id === "string" && id) : [];
+        const getItem = (id) => {
+            if (typeof scene?.getItem === "function") {
+                const def = scene.getItem(id);
+                if (def) return def;
+            }
+            if (typeof DataStore !== "undefined" && DataStore.getItem) return DataStore.getItem(id);
+            return null;
+        };
+        const ordered = (typeof Apparel !== "undefined" && Apparel.visualDrawOrder)
+            ? Apparel.visualDrawOrder(ids, getItem)
+            : ids.slice();
+        return ordered.filter((id) => !!sourceImage(scene, armorTextureKey(id)));
+    }
+
+    function textureKey(look, wornIds) {
+        const L = data();
+        const base = L ? L.lookKey(look) : "look-default";
+        if (!wornIds || !wornIds.length) return base;
+        return `${base}~${wornIds.join("+")}`;
+    }
+
+    function paint(canvas, scene, look, wornIds) {
         const L = data();
         const ctx = canvas.getContext("2d");
         ctx.clearRect(0, 0, SHEET_W, SHEET_H);
@@ -61,6 +114,15 @@ const PlayerLook = (() => {
             octx.drawImage(img, 0, 0);
             ctx.globalCompositeOperation = "source-over";
             ctx.drawImage(off, 0, 0);
+        }
+        // Sheets are precolored overlays. They cover one body region each and
+        // leave arms, eyes, and uncovered skin transparent.
+        const worn = Array.isArray(wornIds) ? wornIds : [];
+        for (const id of worn) {
+            const img = sourceImage(scene, armorTextureKey(id));
+            if (!img) continue;
+            ctx.globalCompositeOperation = "source-over";
+            ctx.drawImage(img, 0, 0);
         }
     }
 
@@ -119,13 +181,14 @@ const PlayerLook = (() => {
      * Bake (or reuse) a spritesheet for this look.
      * @param {Phaser.Scene} scene
      * @param {object} look
-     * @param {{ key?: string, replace?: boolean }} [opts]
+     * @param {{ key?: string, replace?: boolean, worn?: string[] }} [opts]
      * @returns {string} texture key
      */
     function ensure(scene, look, opts = {}) {
         const L = data();
         const n = L ? L.normalizeLook(look) : look;
-        const key = opts.key || (L ? L.lookKey(n) : "look-default");
+        const worn = opts.key ? [] : orderedWorn(scene, opts.worn);
+        const key = opts.key || textureKey(n, worn);
         if (!scene?.textures) return key;
         if (!partsReady(scene)) {
             return scene.textures.exists("human") ? "human" : key;
@@ -139,7 +202,7 @@ const PlayerLook = (() => {
         const canvas = document.createElement("canvas");
         canvas.width = SHEET_W;
         canvas.height = SHEET_H;
-        paint(canvas, scene, n);
+        paint(canvas, scene, n, worn);
 
         if (scene.textures.exists(key)) {
             const tex = scene.textures.get(key);
@@ -214,6 +277,8 @@ const PlayerLook = (() => {
     return {
         partsReady,
         loadParts,
+        armorTextureKey,
+        orderedWorn,
         ensure,
         ensureAnims,
         apply,

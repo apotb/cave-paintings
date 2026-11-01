@@ -2528,8 +2528,11 @@ class SceneMenu extends Phaser.Scene {
         let y = viewTop + cardH / 2 + outlinePad;
 
         for (const c of list) {
+            const worn = (typeof Apparel !== "undefined" && Apparel.equippedIds)
+                ? Apparel.equippedIds(c.equipment)
+                : [];
             const lookKey = typeof PlayerLook !== "undefined"
-                ? PlayerLook.ensure(this, c.look)
+                ? PlayerLook.ensure(this, c.look, { worn })
                 : "human";
             const spr = this.add.sprite(0, 0, lookKey, 1);
             this._placePixelIcon(spr, 0, 0, 3 * this._uiScale());

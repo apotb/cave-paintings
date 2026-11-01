@@ -265,6 +265,29 @@ assert(Math.abs(DataStore.getItem("leather_pack").weight - 3.9) < 1e-9, "pack in
 assert(Math.abs(DataStore.getItem("hide_bundle").weight - 2.7) < 1e-9, "bundle inherit");
 assert(!DataStore.getItem("hide_pouch").weightFixed, "pouch not weightFixed");
 
+const drawn = Apparel.visualDrawOrder(
+    ["cactus_flower", "hide_tunic", "leaf_wrap", "leaf_sandals", "leaf_pouch", "leather_kilt"],
+    (id) => DataStore.getItem(id)
+);
+assert(drawn.join(",") === [
+    "leaf_sandals",
+    "leather_kilt",
+    "leaf_wrap",
+    "hide_tunic",
+    "cactus_flower",
+    "leaf_pouch"
+].join(","), `draw order ${drawn.join(",")}`);
+
+const eqVis = emptyEquip();
+eqVis.feet = { id: "leaf_sandals", quantity: 1 };
+eqVis.torso = { id: "leaf_wrap", quantity: 1 };
+eqVis.waist = [{ id: "leaf_pouch", quantity: 1 }];
+assert(
+    Apparel.equippedIds(eqVis).join(",") === "leaf_wrap,leaf_sandals,leaf_pouch",
+    `equipped ids ${Apparel.equippedIds(eqVis).join(",")}`
+);
+assert(Apparel.equippedIds(null).length === 0, "equipped ids of nothing");
+
 
 
 });

@@ -102,7 +102,9 @@ class SceneBase extends Phaser.Scene {
         }
         // Second Play → Leave → Play: textures/json already live in the game caches.
         // Queue any resolved item/thing textures the warm cache does not have yet.
+        // Body and armor sheets too — this return used to skip them on the warm path.
         if (typeof Content !== "undefined") Content.queueTextures(this);
+        if (typeof PlayerLook !== "undefined") PlayerLook.loadParts(this);
         if (this.cache?.json?.exists?.("items") && this.cache?.json?.exists?.("structures")
             && this.cache?.json?.exists?.("techs") && this.cache?.json?.exists?.("backstories")
             && this.cache?.json?.exists?.("traits") && this.textures?.exists("grass")
@@ -140,9 +142,6 @@ class SceneBase extends Phaser.Scene {
                 }
             }
         });
-
-        // Player part sheets (composited at runtime); Human mob uses assets/mobs/human.png
-        if (typeof PlayerLook !== "undefined") PlayerLook.loadParts(this);
 
         this.load.json("mobs", "data/Mobs.json");
         // Queue mob textures (skip keys already queued/loaded, e.g. player)
