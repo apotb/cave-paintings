@@ -2911,14 +2911,22 @@ class SceneMenu extends Phaser.Scene {
         if (!bio) return;
         const ids = (bio.traits || []).filter(Boolean);
         const S = typeof Skills !== "undefined" ? Skills : null;
-        if (id && S) {
-            const traits = S.catalogs().traits || [];
-            const row = traits.find((item) => item.id === id);
+        const traits = S ? (S.catalogs().traits || []) : [];
+        const next = id || null;
+        const prev = ids[slot] || null;
+        if (next && S) {
+            const row = traits.find((item) => item.id === next);
             const have = ids.filter((_, i) => i !== slot);
             if (S.traitConflicts(row, have, traits)) return;
         }
+        if (S && next !== prev) {
+            const oldRow = prev ? traits.find((item) => item.id === prev) : null;
+            const newRow = next ? traits.find((item) => item.id === next) : null;
+            if (oldRow) S.shiftTraitGrants(bio, oldRow, -1);
+            if (newRow) S.shiftTraitGrants(bio, newRow, 1);
+        }
         const kept = ids.slice();
-        kept[slot] = id || null;
+        kept[slot] = next;
         bio.traits = kept.filter(Boolean).slice(0, 3);
         this._closeCreateTraitMenu();
         this._rebuildCreateCharacter();

@@ -88,7 +88,7 @@ test("passions add up to two stars, and the creator tip lists each source", () =
     });
     assert.equal(Skills.passionOf(bio, "intellectual", cat), 2);
     cat.backstories[0].passions.intellectual = 1;
-    assert.equal(Skills.passionOf(bio, "intellectual", cat), 2);
+    assert.equal(Skills.passionOf(bio, "intellectual", cat), 1);
     bio.skills.intellectual.passion = 1;
     cat.traits = [];
     assert.equal(Skills.passionOf(bio, "intellectual", cat), 2);
@@ -98,64 +98,72 @@ test("passions add up to two stars, and the creator tip lists each source", () =
     bio.skills.intellectual.passion = 1;
     cat.backstories[0].passions.intellectual = 2;
     const shown = Skills.tipLayers(Skills.skillTip(bio, "intellectual", cat, { passionSources: true }));
-    assert.match(shown.plain, /\* Base\n\* \* Philosopher\n\* Storyteller$/);
-    assert.equal((shown.stars.match(/\*/g) || []).length, 4);
+    assert.match(shown.plain, /\* Base\n\* \* Philosopher$/);
+    assert.equal(/Storyteller/.test(shown.plain), false);
+    assert.equal((shown.stars.match(/\*/g) || []).length, 3);
     assert.equal((shown.down.match(/\*/g) || []).length, 0);
 });
 
-test("a negative passion takes stars away, down to none", () => {
+test("a trait's skills and passions are written in at creation", () => {
     const brawler = DataStore._store.traitsList.find((row) => row.id === "brawler");
+    const shoot = Math.floor(Number(brawler.skills.shooting));
+    const melee = Math.floor(Number(brawler.skills.melee));
     const penalty = Math.floor(Number(brawler.passions.shooting));
     const grant = Math.floor(Number(brawler.passions.melee));
-    assert.ok(penalty < 0 && penalty >= -2);
-    assert.ok(grant > 0 && grant <= 2);
-    const cat = {
-        backstories: [{ id: "scout", slot: "adult", title: "Scout", passions: { shooting: 1 } }],
-        traits: [{ id: "brawler", title: "Brawler", passions: { melee: grant, shooting: penalty } }]
-    };
+    assert.ok(shoot < 0 && melee > 0 && penalty < 0 && grant > 0);
     const bio = Skills.normalize({
         gender: "female",
         age: 30,
-        childhood: null,
-        adulthood: "scout",
-        traits: ["brawler"],
+        traits: [],
         skills: {
-            shooting: { level: 4, xp: 0, passion: 2 },
-            melee: { level: 4, xp: 0, passion: 1 }
+            shooting: { level: 12, xp: 40, passion: 2 },
+            melee: { level: 3, xp: 0, passion: 0 }
         }
     });
-    assert.equal(Skills.passionOf(bio, "shooting", cat), Math.max(0, Math.min(2, 2 + 1 + penalty)));
-    assert.equal(Skills.passionOf(bio, "melee", cat), Math.min(2, 1 + grant));
-    bio.skills.shooting.passion = 0;
-    cat.backstories = [];
-    assert.equal(Skills.passionOf(bio, "shooting", cat), 0);
-    assert.equal(Skills.award(bio, "shooting", 100, { day: 4, catalogs: cat }), 35);
-    const lines = Skills.effectLines({
-        skills: { melee: 4, shooting: -10 },
-        passions: { melee: 1, shooting: -2 }
-    });
-    assert.deepEqual(lines.slice(0, 4), [
-        "Melee +4",
-        "Shooting -10",
-        "{s}*{/s} Melee",
-        "{d}*{/d} {d}*{/d} Shooting"
-    ]);
+    Skills.shiftTraitGrants(bio, brawler, 1);
+    bio.traits = ["brawler"];
+    assert.equal(bio.skills.shooting.level, Math.max(0, Math.min(20, 12 + shoot)));
+    assert.equal(bio.skills.shooting.xp, 40);
+    assert.equal(bio.skills.melee.level, Math.max(0, Math.min(20, 3 + melee)));
+    assert.equal(bio.skills.shooting.passion, Math.max(0, Math.min(2, 2 + penalty)));
+    assert.equal(bio.skills.melee.passion, Math.max(0, Math.min(2, grant)));
+    assert.equal(Skills.effectiveLevel(bio, "shooting"), bio.skills.shooting.level);
+    assert.equal(Skills.passionOf(bio, "shooting"), bio.skills.shooting.passion);
+    const baked = bio.skills.shooting.level;
+    bio.skills.shooting.level = 20;
+    assert.equal(Skills.effectiveLevel(bio, "shooting"), 20);
+    bio.skills.shooting.level = baked;
+    Skills.shiftTraitGrants(bio, brawler, -1);
+    assert.equal(bio.skills.shooting.level, 12);
+    assert.equal(bio.skills.shooting.passion, 2);
+    assert.equal(bio.skills.melee.level, 3);
+    assert.equal(bio.skills.melee.passion, 0);
     const tip = Skills.traitTip(brawler, "Mog");
-    const layers = Skills.tipLayers(tip);
-    assert.equal((layers.stars.match(/\*/g) || []).length, grant);
-    assert.equal((layers.down.match(/\*/g) || []).length, Math.abs(penalty));
-    assert.match(layers.plain, /\* Melee/);
-    assert.match(layers.plain, /\* \* Shooting/);
-    const html = Skills.tipHtml(tip);
-    assert.equal((html.match(/class="tip-star"/g) || []).length, grant);
-    assert.equal((html.match(/class="tip-star-down"/g) || []).length, Math.abs(penalty));
-    assert.match(html, /fill="#c44c3c"/);
-    bio.skills.shooting.passion = 2;
-    cat.backstories = [{ id: "scout", slot: "adult", title: "Scout", passions: { shooting: 1 } }];
-    const sources = Skills.tipLayers(Skills.skillTip(bio, "shooting", cat, { passionSources: true }));
-    assert.match(sources.plain, /\* \* Base\n\* Scout\n\* \* Brawler$/);
-    assert.equal((sources.stars.match(/\*/g) || []).length, 3);
-    assert.equal((sources.down.match(/\*/g) || []).length, Math.abs(penalty));
+    assert.equal(/Shooting|\{s\}|\{d\}/.test(tip), false);
+    assert.match(tip, /Melee hit chance/);
+    const cat = {
+        backstories: [
+            { id: "child", slot: "child", title: "Child" },
+            { id: "adult", slot: "adult", title: "Adult" }
+        ],
+        traits: [{
+            id: "brawler",
+            title: "Brawler",
+            commonality: 1,
+            skills: { melee: 4, shooting: -10 },
+            passions: { melee: 1, shooting: -2 }
+        }]
+    };
+    const rolled = Skills.generate(() => 0.5, cat);
+    assert.deepEqual(rolled.traits, ["brawler"]);
+    assert.equal(rolled.skills.shooting.level, 0);
+    assert.equal(rolled.skills.melee.level, 8);
+    assert.equal(rolled.skills.cooking.level, 4);
+    assert.equal(rolled.skills.melee.passion, 1);
+    assert.equal(rolled.skills.shooting.passion, 0);
+    assert.equal(Skills.effectiveLevel(rolled, "melee", cat), 8);
+    rolled.skills.shooting.level = 20;
+    assert.equal(Skills.effectiveLevel(rolled, "shooting", cat), 20);
 });
 
 test("a skill bar fills across levels 0 through 20", () => {
@@ -201,7 +209,8 @@ test("social sits between medical and intellectual", () => {
 });
 
 test("a trait lists the stat changes it makes", () => {
-    assert.deepEqual(Skills.effectLines({ skills: { melee: -2, medical: 3 } }), ["Melee -2", "Medical +3"]);
+    assert.deepEqual(Skills.effectLines({ skills: { melee: -2, medical: 3 } }), []);
+    assert.deepEqual(Skills.effectLines({ passions: { melee: 2, shooting: -2 } }), []);
     assert.deepEqual(Skills.effectLines({ learning: 0.5 }), ["Learning rate +50%"]);
     assert.deepEqual(Skills.effectLines({ learning: -0.5 }), ["Learning rate -50%"]);
     assert.deepEqual(Skills.effectLines({ disable: ["medical"] }), ["Incapable of Medical"]);
@@ -210,7 +219,7 @@ test("a trait lists the stat changes it makes", () => {
         skills: { melee: -2, medical: 3 }
     });
     assert.equal(Skills.tipLayers(soft), null);
-    assert.match(soft, /Good with a bandage, poor with a club\.\n\n {2}Melee -2\n {2}Medical \+3/);
+    assert.match(soft, /^Good with a bandage, poor with a club\.$/);
     const study = Skills.traitTip({
         desc: "<name> learns quickly.",
         learning: 0.5
@@ -224,17 +233,15 @@ test("a trait lists the stat changes it makes", () => {
         passions: { melee: 2, shooting: 1 },
         disable: ["shooting"]
     });
-    const layers = Skills.tipLayers(brawler);
-    assert.match(layers.plain, /Fights up close\.\n\n {2}Melee \+4\n {2}\* \* Melee\n {2}\* Shooting\n {2}Incapable of Shooting/);
-    assert.equal((layers.stars.match(/\*/g) || []).length, 3);
-    assert.equal(/passion/i.test(layers.plain), false);
-    assert.equal((Skills.tipHtml(brawler).match(/class="tip-star"/g) || []).length, 3);
-    assert.match(Skills.tipHtml(brawler), /width="0\.9375em"/);
+    assert.match(brawler, /Fights up close\.\n\n {2}Incapable of Shooting/);
+    assert.equal(Skills.tipLayers(brawler), null);
+    assert.equal(/\{[sd]\}/.test(brawler), false);
+    assert.equal(Skills.tipHtml(brawler), null);
     assert.deepEqual(Skills.effectLines({
         skills: { melee: 4 },
         passions: { melee: 2 },
         disable: ["shooting"]
-    }), ["Melee +4", "{s}*{/s} {s}*{/s} Melee", "Incapable of Shooting"]);
+    }), ["Incapable of Shooting"]);
 });
 
 test("a backstory tip is the story, then each skill change", () => {
@@ -271,8 +278,8 @@ test("an incapable skill names the backstory or trait that caused it", () => {
     assert.equal(Skills.incapableTip(bio, "medical"), "Adulthood: Veteran");
     assert.equal(Skills.incapable(bio, "shooting"), false);
     assert.equal(Skills.incapableTip(bio, "shooting"), "");
-    assert.equal(Skills.passionOf(bio, "shooting"), 0);
-    assert.equal(Skills.effectiveLevel(bio, "shooting"), 0);
+    assert.equal(Skills.passionOf(bio, "shooting"), 1);
+    assert.equal(Skills.effectiveLevel(bio, "shooting"), 4);
     assert.equal(Skills.incapableTip(bio, "melee"), "");
 });
 
@@ -322,10 +329,11 @@ test("a skill tip splits the shown level from what was learned", () => {
     assert.equal(off.includes("Skill level"), false);
     const shot = Skills.tipLayers(Skills.skillTip(blocked, "shooting")).plain;
     assert.equal(/Incapable/.test(shot), false);
-    assert.match(shot, /Skill level: 0 - Never heard of it/);
-    assert.match(shot, /- Learned level: 0\n- Veteran: \+4\n- Brawler: -10/);
-    assert.match(shot, /Learning speed: 35%/);
-    assert.match(shot, /- Passion: x35%/);
+    assert.match(shot, /Skill level: 4 - Apprentice/);
+    assert.match(shot, /- Learned level: 0\n- Veteran: \+4/);
+    assert.equal(/Brawler/.test(shot), false);
+    assert.match(shot, /Learning speed: 100%/);
+    assert.match(shot, /- Passion: x100%/);
     assert.match(shot, /Progress to next learned level: 0 \/ 1000/);
     const html = Skills.tipHtml(Skills.skillTip(bio, "medical"));
     assert.match(html, /color:#e6c15a/);
@@ -606,9 +614,12 @@ test("trait percents add, pairs conflict, and the mood traits do not roll", () =
     assert.ok(Math.abs(Skills.laborSpeed(pawn) - 0.7) < 1e-9);
     const foodie = byId("foodie");
     const lines = Skills.effectLines(foodie);
-    assert.ok(lines.some((line) => line.includes("Cooking") && line.includes("+4")));
+    assert.equal(lines.some((line) => line.includes("Cooking")), false);
     assert.ok(lines.some((line) => line.includes("Daily calories") && line.includes("+25%")));
-    assert.equal(Skills.effectiveLevel({ traits: ["foodie"], skills: {} }, "cooking"), 4);
+    assert.equal(Skills.effectiveLevel({ traits: ["foodie"], skills: { cooking: { level: 2, xp: 0, passion: 0 } } }, "cooking"), 2);
+    const cooked = Skills.normalize({ skills: { cooking: { level: 2, xp: 0, passion: 0 } } });
+    Skills.shiftTraitGrants(cooked, foodie, 1);
+    assert.equal(cooked.skills.cooking.level, 6);
     const banned = new Set(["pyromaniac", "man_eater", "austere", "murderous"]);
     let sawOwl = false;
     for (let i = 0; i < 400; i++) {

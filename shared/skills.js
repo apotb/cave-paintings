@@ -145,23 +145,33 @@
         }
     }
 
-    function activeDefs(bio, cat) {
+    function storyDefs(bio, cat) {
         const c = useCatalogs(cat);
         const rows = [];
         const child = defOf(c.backstories, bio?.childhood);
         const adult = defOf(c.backstories, bio?.adulthood);
         if (child) rows.push(child);
         if (adult) rows.push(adult);
-        const traits = byId(c.traits);
+        return rows;
+    }
+
+    function traitDefs(bio, cat) {
+        const traits = byId(useCatalogs(cat).traits);
+        const rows = [];
         for (const id of bio?.traits || []) {
             if (traits[id]) rows.push(traits[id]);
         }
         return rows;
     }
 
+    function activeDefs(bio, cat) {
+        return storyDefs(bio, cat).concat(traitDefs(bio, cat));
+    }
+
+    /** Backstory skill offsets. Trait grants are written into the skill when the bio is created. */
     function offsetOf(bio, skillId, cat) {
         let n = 0;
-        for (const row of activeDefs(bio, cat)) {
+        for (const row of storyDefs(bio, cat)) {
             const v = row.skills && row.skills[skillId];
             if (Number.isFinite(Number(v))) n += Number(v);
         }
@@ -234,20 +244,10 @@
         return `${marks} ${labelOf(skillId)}`;
     }
 
-    /** Skill offsets, then passions, then learning and disables a trait shows. */
+    /** Learning, stats, factors, and disables a trait shows. Skill levels and passions are applied once at creation. */
     function effectLines(row) {
         if (!row) return [];
         const lines = [];
-        const passions = [];
-        for (const id of SKILL_IDS) {
-            const v = row.skills && row.skills[id];
-            if (Number.isFinite(Number(v)) && Number(v) !== 0) {
-                lines.push(`${labelOf(id)} ${formatSigned(v)}`);
-            }
-            const passion = passionCount(row, id);
-            if (passion) passions.push(passionLine(id, passion));
-        }
-        lines.push(...passions);
         if (Number.isFinite(Number(row.learning)) && Number(row.learning) !== 0) {
             lines.push(`Learning rate ${formatSigned(Math.round(Number(row.learning) * 100))}%`);
         }
@@ -306,10 +306,10 @@
         return `{${kind}}${text}{/${kind}}`;
     }
 
-    /** Titles of backstories and traits that change this skill, in bio order. */
+    /** Titles of backstories that change this skill, in bio order. */
     function skillOffsetLines(bio, skillId, cat) {
         const lines = [];
-        for (const row of activeDefs(bio, cat)) {
+        for (const row of storyDefs(bio, cat)) {
             const v = row.skills && row.skills[skillId];
             if (!Number.isFinite(Number(v)) || Number(v) === 0) continue;
             lines.push(`- ${row.title || "Unknown"}: ${formatSigned(v)}`);
@@ -983,7 +983,7 @@
         return false;
     }
 
-    /** Rolled passion, plus each current backstory and trait. A negative takes stars away. The result stays between none and two. */
+    /** Rolled passion, plus each current backstory. Trait passions are already in the base. The result stays between none and two. */
     function passionOf(bio, skillId, cat) {
         let passion = 0;
         for (const source of passionParts(bio, skillId, cat)) passion += source.count;
@@ -994,12 +994,35 @@
         const parts = [];
         const base = Math.floor(Number(bio?.skills?.[skillId]?.passion) || 0);
         if (base > 0) parts.push({ label: "Base", count: base });
-        for (const row of activeDefs(bio, cat)) {
+        for (const row of storyDefs(bio, cat)) {
             const count = passionCount(row, skillId);
             if (!count) continue;
             parts.push({ label: row.title || "Unknown", count });
         }
         return parts;
+    }
+
+    /**
+     * Add or remove one trait's skill levels and passions on the stored skill.
+     * sign 1 writes them in, sign -1 takes them back out. The stored level can still reach 20.
+     */
+    function shiftTraitGrants(bio, row, sign) {
+        if (!bio || !row) return bio;
+        const dir = sign < 0 ? -1 : 1;
+        if (!bio.skills || typeof bio.skills !== "object") bio.skills = emptySkills();
+        for (const id of SKILL_IDS) {
+            if (!bio.skills[id]) bio.skills[id] = { level: 0, xp: 0, passion: 0 };
+            const skill = bio.skills[id];
+            const levels = Number(row.skills && row.skills[id]);
+            if (Number.isFinite(levels) && levels !== 0) {
+                skill.level = clamp(Math.floor((Number(skill.level) || 0) + dir * levels), 0, 20);
+            }
+            const passion = passionCount(row, id);
+            if (passion) {
+                skill.passion = clamp(Math.floor((Number(skill.passion) || 0) + dir * passion), 0, 2);
+            }
+        }
+        return bio;
     }
 
     function passionSourceLines(bio, skillId, cat) {
@@ -1060,6 +1083,10 @@
             if (conflictsWith(trait, bio.traits, c)) continue;
             if (disablesOverlap(trait, bio, c)) continue;
             bio.traits.push(trait.id);
+        }
+        for (const id of bio.traits) {
+            const trait = defOf(c.traits, id);
+            if (trait) shiftTraitGrants(bio, trait, 1);
         }
         return bio;
     }
@@ -1537,6 +1564,7 @@
         genderLabel,
         titleOf,
         effectLines,
+        shiftTraitGrants,
         traitConflicts,
         levelTitle,
         skillTip,
