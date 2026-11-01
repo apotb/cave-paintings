@@ -547,12 +547,12 @@
     },
 
     /** Pixel passion star, centered on x, y. A filled polygon blurs into a circle here. */
-    _fillTooltipStar(parent, x, y, unit) {
+    _fillTooltipStar(parent, x, y, unit, color) {
         const mark = this.add.graphics();
         mark.setPosition(Math.round(x), Math.round(y));
         const u = Math.max(1, unit | 0);
         if (typeof drawFavoriteStar === "function") {
-            drawFavoriteStar(mark, u, 0xe6c15a);
+            drawFavoriteStar(mark, u, color == null ? 0xe6c15a : color);
         }
         parent.add(mark);
         return mark;
@@ -586,6 +586,7 @@
         const orangeLines = String(spans.orange || "").split("\n");
         const centerLines = String(spans.center || "").split("\n");
         const starLines = String(spans.stars || "").split("\n");
+        const downLines = String(spans.down || "").split("\n");
         const runsOf = (mask, line) => {
             const found = [];
             let i = 0;
@@ -622,7 +623,10 @@
             for (const [start, end] of runsOf(starLines[row], line)) {
                 for (let i = start; i < end && i < line.length; i++) kind[i] = "s";
             }
-            const hasStar = kind.some((k, i) => k === "s" && line[i] !== " ");
+            for (const [start, end] of runsOf(downLines[row], line)) {
+                for (let i = start; i < end && i < line.length; i++) kind[i] = "d";
+            }
+            const hasStar = kind.some((k, i) => (k === "s" || k === "d") && line[i] !== " ");
             const rowH = hasStar ? Math.max(step, starH) : step;
             let x = pad.left || 0;
             const y = cursorY + (hasStar ? Math.round((rowH - one) / 2) : 0);
@@ -633,14 +637,20 @@
                 let j = i + 1;
                 while (j < line.length && kind[j] === k) j += 1;
                 const body = line.slice(i, j);
-                if (k === "s") {
+                if (k === "s" || k === "d") {
                     for (let n = 0; n < body.length; n++) {
                         if (body[n] === " ") {
                             measure.setText(" ");
                             x += measure.width;
                             continue;
                         }
-                        this._fillTooltipStar(root, x + starW / 2, cursorY + rowH / 2, starUnit);
+                        this._fillTooltipStar(
+                            root,
+                            x + starW / 2,
+                            cursorY + rowH / 2,
+                            starUnit,
+                            k === "d" ? 0xc44c3c : 0xe6c15a
+                        );
                         x += starW;
                     }
                 } else if (body.trim()) {

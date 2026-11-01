@@ -213,14 +213,25 @@
         if (!row?.passions || !Object.prototype.hasOwnProperty.call(row.passions, skillId)) return 0;
         const v = Number(row.passions[skillId]);
         if (!Number.isFinite(v) || v === 0) return 0;
-        return clamp(Math.floor(v), 0, 2);
+        const n = Math.floor(v);
+        if (n === 0) return 0;
+        return clamp(n, -2, 2);
     }
 
-    /** One or two star marks, then the skill name. `{s}` is drawn as a gold star. */
+    /** Gold `{s}` stars for a gain, red `{d}` stars for a loss. At most two. */
+    function passionMarks(count) {
+        const v = Math.floor(Number(count) || 0);
+        if (!v) return "";
+        const n = clamp(Math.abs(v), 1, 2);
+        const tag = v < 0 ? "d" : "s";
+        return Array.from({ length: n }, () => `{${tag}}*{/${tag}}`).join(" ");
+    }
+
+    /** One or two star marks, then the skill name. */
     function passionLine(skillId, count) {
-        const n = clamp(Math.floor(Number(count) || 0), 1, 2);
-        const stars = Array.from({ length: n }, () => "{s}*{/s}").join(" ");
-        return `${stars} ${labelOf(skillId)}`;
+        const marks = passionMarks(count);
+        if (!marks) return "";
+        return `${marks} ${labelOf(skillId)}`;
     }
 
     /** Skill offsets, then passions, then learning and disables a trait shows. */
@@ -356,7 +367,10 @@
     }
 
     /** Pixel star. A smooth polygon at this size reads as a circle in the pixel font. */
-    function tipStarSvg() {
+    function tipStarSvg(fill) {
+        const down = typeof fill === "string";
+        const color = down ? fill : "#e6c15a";
+        const cls = down ? "tip-star-down" : "tip-star";
         const rows = [
             ".......#.......",
             ".......#.......",
@@ -379,20 +393,21 @@
                 if (rows[y][x] === "#") rects.push(`<rect x="${x}" y="${y}" width="1" height="1"/>`);
             }
         }
-        return `<svg class="tip-star" viewBox="0 0 15 14" width="0.9375em" height="0.875em" aria-hidden="true" style="display:inline-block;vertical-align:middle;shape-rendering:crispEdges" fill="#e6c15a">${rects.join("")}</svg>`;
+        return `<svg class="${cls}" viewBox="0 0 15 14" width="0.9375em" height="0.875em" aria-hidden="true" style="display:inline-block;vertical-align:middle;shape-rendering:crispEdges" fill="${color}">${rects.join("")}</svg>`;
     }
 
-    /** Split {m}, {g}, {o}, {c}, and {s} marks into aligned copies. `{s}` is a star. */
+    /** Split {m}, {g}, {o}, {c}, {s}, and {d} marks into aligned copies. `{s}` is a gold star, `{d}` a lost one. */
     function tipLayers(text) {
         const src = String(text || "");
-        if (!/\{[mgcos]\}/.test(src)) return null;
-        const re = /\{(m|g|c|o|s)\}([\s\S]*?)\{\/\1\}/g;
+        if (!/\{[mgcosd]\}/.test(src)) return null;
+        const re = /\{(m|g|c|o|s|d)\}([\s\S]*?)\{\/\1\}/g;
         let plain = "";
         let gold = "";
         let muted = "";
         let center = "";
         let orange = "";
         let stars = "";
+        let down = "";
         let last = 0;
         let match;
         const pushGap = (chunk) => {
@@ -403,6 +418,7 @@
             center += gap;
             orange += gap;
             stars += gap;
+            down += gap;
         };
         while ((match = re.exec(src))) {
             pushGap(src.slice(last, match.index));
@@ -414,10 +430,11 @@
             center += match[1] === "c" ? body : gap;
             orange += match[1] === "o" ? body : gap;
             stars += match[1] === "s" ? body : gap;
+            down += match[1] === "d" ? body : gap;
             last = match.index + match[0].length;
         }
         pushGap(src.slice(last));
-        return { plain, gold, muted, center, orange, stars };
+        return { plain, gold, muted, center, orange, stars, down };
     }
 
     function escapeTip(text) {
@@ -430,8 +447,8 @@
     /** HTML for the menu hover, with the description gray and the values gold. */
     function tipHtml(text) {
         const src = String(text || "");
-        if (!/\{[mgcos]\}/.test(src)) return null;
-        const re = /\{(m|g|c|o|s)\}([\s\S]*?)\{\/\1\}/g;
+        if (!/\{[mgcosd]\}/.test(src)) return null;
+        const re = /\{(m|g|c|o|s|d)\}([\s\S]*?)\{\/\1\}/g;
         const colors = { g: "#e6c15a", m: "#a0a0a0", o: "#f0a040" };
         let html = "";
         let last = 0;
@@ -442,9 +459,10 @@
             html += escapeTip(chunk);
             if (match[1] === "c") {
                 html += `<div style="text-align:center">${escapeTip(match[2])}</div>`;
-            } else if (match[1] === "s") {
+            } else if (match[1] === "s" || match[1] === "d") {
                 const n = Math.max(1, [...match[2]].filter((ch) => ch !== " ").length);
-                html += Array.from({ length: n }, tipStarSvg).join("");
+                const star = match[1] === "d" ? () => tipStarSvg("#c44c3c") : tipStarSvg;
+                html += Array.from({ length: n }, star).join("");
             } else {
                 html += `<span style="color:${colors[match[1]]}">${escapeTip(match[2])}</span>`;
             }
@@ -965,7 +983,7 @@
         return false;
     }
 
-    /** Rolled passion, plus each current backstory and trait, capped at two stars. */
+    /** Rolled passion, plus each current backstory and trait. A negative takes stars away. The result stays between none and two. */
     function passionOf(bio, skillId, cat) {
         let passion = 0;
         for (const source of passionParts(bio, skillId, cat)) passion += source.count;
@@ -977,20 +995,15 @@
         const base = Math.floor(Number(bio?.skills?.[skillId]?.passion) || 0);
         if (base > 0) parts.push({ label: "Base", count: base });
         for (const row of activeDefs(bio, cat)) {
-            if (!row?.passions || !Object.prototype.hasOwnProperty.call(row.passions, skillId)) continue;
-            const count = Math.floor(Number(row.passions[skillId]) || 0);
-            if (!(count > 0)) continue;
+            const count = passionCount(row, skillId);
+            if (!count) continue;
             parts.push({ label: row.title || "Unknown", count });
         }
         return parts;
     }
 
     function passionSourceLines(bio, skillId, cat) {
-        return passionParts(bio, skillId, cat).map((part) => {
-            const n = clamp(part.count, 1, 2);
-            const stars = Array.from({ length: n }, () => "{s}*{/s}").join(" ");
-            return `${stars} ${part.label}`;
-        });
+        return passionParts(bio, skillId, cat).map((part) => `${passionMarks(part.count)} ${part.label}`);
     }
 
     function generate(rng, cat) {

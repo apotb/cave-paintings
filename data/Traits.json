@@ -18,11 +18,10 @@
     {
         "id": "brawler",
         "title": "Brawler",
-        "desc": "Refuses to fight with anything but a melee weapon.",
+        "desc": "Exceptionally skilled at melee combat.",
         "commonality": 1,
-        "skills": { "melee": 4 },
-        "passions": { "melee": 1 },
-        "disable": ["shooting"],
+        "skills": { "melee": 4, "shooting": -10 },
+        "passions": { "melee": 1, "shooting": -2 },
         "stats": { "meleeHitScore": 4 }
     },
     {

@@ -100,6 +100,62 @@ test("passions add up to two stars, and the creator tip lists each source", () =
     const shown = Skills.tipLayers(Skills.skillTip(bio, "intellectual", cat, { passionSources: true }));
     assert.match(shown.plain, /\* Base\n\* \* Philosopher\n\* Storyteller$/);
     assert.equal((shown.stars.match(/\*/g) || []).length, 4);
+    assert.equal((shown.down.match(/\*/g) || []).length, 0);
+});
+
+test("a negative passion takes stars away, down to none", () => {
+    const brawler = DataStore._store.traitsList.find((row) => row.id === "brawler");
+    const penalty = Math.floor(Number(brawler.passions.shooting));
+    const grant = Math.floor(Number(brawler.passions.melee));
+    assert.ok(penalty < 0 && penalty >= -2);
+    assert.ok(grant > 0 && grant <= 2);
+    const cat = {
+        backstories: [{ id: "scout", slot: "adult", title: "Scout", passions: { shooting: 1 } }],
+        traits: [{ id: "brawler", title: "Brawler", passions: { melee: grant, shooting: penalty } }]
+    };
+    const bio = Skills.normalize({
+        gender: "female",
+        age: 30,
+        childhood: null,
+        adulthood: "scout",
+        traits: ["brawler"],
+        skills: {
+            shooting: { level: 4, xp: 0, passion: 2 },
+            melee: { level: 4, xp: 0, passion: 1 }
+        }
+    });
+    assert.equal(Skills.passionOf(bio, "shooting", cat), Math.max(0, Math.min(2, 2 + 1 + penalty)));
+    assert.equal(Skills.passionOf(bio, "melee", cat), Math.min(2, 1 + grant));
+    bio.skills.shooting.passion = 0;
+    cat.backstories = [];
+    assert.equal(Skills.passionOf(bio, "shooting", cat), 0);
+    assert.equal(Skills.award(bio, "shooting", 100, { day: 4, catalogs: cat }), 35);
+    const lines = Skills.effectLines({
+        skills: { melee: 4, shooting: -10 },
+        passions: { melee: 1, shooting: -2 }
+    });
+    assert.deepEqual(lines.slice(0, 4), [
+        "Melee +4",
+        "Shooting -10",
+        "{s}*{/s} Melee",
+        "{d}*{/d} {d}*{/d} Shooting"
+    ]);
+    const tip = Skills.traitTip(brawler, "Mog");
+    const layers = Skills.tipLayers(tip);
+    assert.equal((layers.stars.match(/\*/g) || []).length, grant);
+    assert.equal((layers.down.match(/\*/g) || []).length, Math.abs(penalty));
+    assert.match(layers.plain, /\* Melee/);
+    assert.match(layers.plain, /\* \* Shooting/);
+    const html = Skills.tipHtml(tip);
+    assert.equal((html.match(/class="tip-star"/g) || []).length, grant);
+    assert.equal((html.match(/class="tip-star-down"/g) || []).length, Math.abs(penalty));
+    assert.match(html, /fill="#c44c3c"/);
+    bio.skills.shooting.passion = 2;
+    cat.backstories = [{ id: "scout", slot: "adult", title: "Scout", passions: { shooting: 1 } }];
+    const sources = Skills.tipLayers(Skills.skillTip(bio, "shooting", cat, { passionSources: true }));
+    assert.match(sources.plain, /\* \* Base\n\* Scout\n\* \* Brawler$/);
+    assert.equal((sources.stars.match(/\*/g) || []).length, 3);
+    assert.equal((sources.down.match(/\*/g) || []).length, Math.abs(penalty));
 });
 
 test("a skill bar fills across levels 0 through 20", () => {
@@ -213,7 +269,10 @@ test("an incapable skill names the backstory or trait that caused it", () => {
         skills: Skills.emptySkills()
     });
     assert.equal(Skills.incapableTip(bio, "medical"), "Adulthood: Veteran");
-    assert.equal(Skills.incapableTip(bio, "shooting"), "Trait: Brawler");
+    assert.equal(Skills.incapable(bio, "shooting"), false);
+    assert.equal(Skills.incapableTip(bio, "shooting"), "");
+    assert.equal(Skills.passionOf(bio, "shooting"), 0);
+    assert.equal(Skills.effectiveLevel(bio, "shooting"), 0);
     assert.equal(Skills.incapableTip(bio, "melee"), "");
 });
 
@@ -262,8 +321,11 @@ test("a skill tip splits the shown level from what was learned", () => {
     assert.match(off, /Adulthood: Veteran/);
     assert.equal(off.includes("Skill level"), false);
     const shot = Skills.tipLayers(Skills.skillTip(blocked, "shooting")).plain;
-    assert.match(shot, /Incapable/);
-    assert.match(shot, /Trait: Brawler/);
+    assert.equal(/Incapable/.test(shot), false);
+    assert.match(shot, /Skill level: 0 - Never heard of it/);
+    assert.match(shot, /- Learned level: 0\n- Veteran: \+4\n- Brawler: -10/);
+    assert.match(shot, /Learning speed: 35%/);
+    assert.match(shot, /- Passion: x35%/);
     assert.match(shot, /Progress to next learned level: 0 \/ 1000/);
     const html = Skills.tipHtml(Skills.skillTip(bio, "medical"));
     assert.match(html, /color:#e6c15a/);
