@@ -943,7 +943,10 @@
     },
 
     _tooltipLinesSig(lines) {
-        return (lines || []).map((l) => `${l?.icon || ""}:${l?.mark || ""}:${l?.plain ? 1 : 0}:${l?.label || ""}:${l?.value ?? ""}:${l?.value2 ?? ""}:${l?.hangMinus ? 1 : 0}`).join("|");
+        return (lines || []).map((l) => {
+            const icons = Array.isArray(l?.icons) ? l.icons.join(",") : "";
+            return `${l?.icon || ""}:${icons}:${l?.mark || ""}:${l?.plain ? 1 : 0}:${l?.label || ""}:${l?.value ?? ""}:${l?.value2 ?? ""}:${l?.hangMinus ? 1 : 0}`;
+        }).join("|");
     },
 
     /** Same green check / red cross as the storage filter rows. */
@@ -1014,7 +1017,51 @@
         this._tooltipGearH = Math.max(0, y + inset);
     },
 
+    _stopTooltipIconCycle() {
+        const ev = this._tooltipIconCycle;
+        this._tooltipIconCycle = null;
+        this._tooltipIconCycleImgs = null;
+        ev?.remove?.(false);
+    },
+
+    /** Swap a multi-icon row's texture. The line signature does not include the frame. */
+    _advanceTooltipIconCycle() {
+        const alive = [];
+        for (const img of this._tooltipIconCycleImgs || []) {
+            if (!img?.scene || img.active === false) continue;
+            const keys = img._cycleIcons;
+            if (!Array.isArray(keys) || keys.length < 2) continue;
+            img._cycleIndex = ((img._cycleIndex || 0) + 1) % keys.length;
+            const key = keys[img._cycleIndex];
+            if (!key || !this.textures?.exists?.(key)) continue;
+            img.setTexture(key);
+            const box = img._cycleBox || Math.round(16 * (this.uiScale || 1));
+            if (typeof fitUiIcon === "function") fitUiIcon(img, box, box);
+            else img.setDisplaySize(box, box);
+            alive.push(img);
+        }
+        this._tooltipIconCycleImgs = alive;
+        return alive.length > 0;
+    },
+
+    _startTooltipIconCycle(imgs) {
+        this._stopTooltipIconCycle();
+        const list = (imgs || []).filter((img) => Array.isArray(img?._cycleIcons) && img._cycleIcons.length > 1);
+        if (!list.length || typeof this.time?.delayedCall !== "function") return;
+        this._tooltipIconCycleImgs = list;
+        const arm = () => {
+            if (!this._tooltipIconCycleImgs?.length) return;
+            this._tooltipIconCycle = this.time.delayedCall(750, () => {
+                this._tooltipIconCycle = null;
+                if (!this._advanceTooltipIconCycle()) return;
+                arm();
+            });
+        };
+        arm();
+    },
+
     _clearTooltipGear() {
+        this._stopTooltipIconCycle();
         this._tooltipGearSig = null;
         this._tooltipGearW = 0;
         this._tooltipGearH = 0;
@@ -1214,13 +1261,24 @@
         const valGap = Math.round(16 * s);
         const textX = pad + iconS + iconGap;
         const made = [];
+        const cycleImgs = [];
         let y = 0;
         for (const line of list) {
             const midY = y + rowH / 2;
-            const iconKey = line?.icon;
+            const cycle = Array.isArray(line?.icons)
+                ? line.icons.filter((k) => k && this.textures.exists(k))
+                : [];
+            const iconKey = cycle[0] || line?.icon;
             if (iconKey && this.textures.exists(iconKey)) {
-                const img = this.add.image(pad + iconS / 2, midY, iconKey)
-                    .setDisplaySize(iconS, iconS);
+                const img = this.add.image(pad + iconS / 2, midY, iconKey).setOrigin(0.5, 0.5);
+                if (typeof fitUiIcon === "function") fitUiIcon(img, iconS, iconS);
+                else img.setDisplaySize(iconS, iconS);
+                if (cycle.length > 1) {
+                    img._cycleIcons = cycle;
+                    img._cycleIndex = 0;
+                    img._cycleBox = iconS;
+                    cycleImgs.push(img);
+                }
                 this.tooltipGear.add(img);
             }
             const label = crispUiText(this.add.text(textX, midY, String(line?.label || ""), {
@@ -1285,6 +1343,7 @@
         }
         this._tooltipGearW = (hasVal2 ? val2X : valX) + pad;
         this._tooltipGearH = Math.max(0, y);
+        this._startTooltipIconCycle(cycleImgs);
     },
     };
 })(typeof globalThis !== "undefined" ? globalThis : this);

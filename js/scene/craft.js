@@ -460,31 +460,7 @@
             this.craftContainer.add(quantity);
 
             // Tooltip. The preview stack is live, so the name follows the first stuff stack.
-            const tt = () => {
-                const lines = [];
-                const stack = this._craftPreviewStack(recipe);
-                lines.push(this.formatItemTooltip(this.getItem(recipe.id), recipe.quantity, null, stack));
-                lines.push('—');
-
-                for (const ingredient of recipe.ingredients) {
-                    const have = Math.max(0, this._craftIngredientHave(ingredient) - this._craftQueuedNeed(ingredient));
-                    lines.push(`${this._craftIngredientLabel(ingredient)}: ${have}/${ingredient.qty}`);
-                }
-
-                if (recipe.requireThing) {
-                    const thing = this.getThing(recipe.requireThing);
-                    lines.push(`Requires nearby ${thing?.name || recipe.requireThing}`);
-                }
-                if (recipe.requireStation) {
-                    const thing = this.getThing(recipe.requireStation);
-                    lines.push(`Requires ${thing?.name || recipe.requireStation}`);
-                }
-                if (recipe.requireTool && this._craftRequireToolLabel(recipe.requireTool)) {
-                    lines.push(`Requires held ${this._craftRequireToolLabel(recipe.requireTool)}`);
-                }
-
-                return lines.join('\n');
-            };
+            const tt = () => this._craftRecipeTooltip(recipe);
 
             slot.on('pointerover', (p) => this.showTooltip(tt, p.x, p.y, slot));
             slot.on('pointerout', () => {
@@ -1071,6 +1047,151 @@
                 requireTool
             };
         });
+    },
+
+    /**
+     * Crafted-item text, then icon rows: ingredients, a nearby thing, a station,
+     * and a held tool. Several held tools list every picture; the tip cycles them.
+     */
+    _craftRecipeTooltip(recipe) {
+        const stack = this._craftPreviewStack(recipe);
+        const head = this.formatItemTooltip(this.getItem(recipe.id), recipe.quantity, null, stack);
+        const lines = [];
+        for (const ingredient of recipe.ingredients || []) {
+            const have = Math.max(0, this._craftIngredientHave(ingredient) - this._craftQueuedNeed(ingredient));
+            lines.push({
+                icon: this._craftIngredientIcon(ingredient),
+                label: this._craftIngredientLabel(ingredient),
+                value: `${have}/${ingredient.qty}`
+            });
+        }
+        if (recipe.requireThing) {
+            const thing = this.getThing(recipe.requireThing);
+            lines.push({
+                icon: this._craftStationIcon(recipe.requireThing),
+                label: `Requires nearby ${thing?.name || recipe.requireThing}`
+            });
+        }
+        if (recipe.requireStation) {
+            const thing = this.getThing(recipe.requireStation);
+            lines.push({
+                icon: this._craftStationIcon(recipe.requireStation),
+                label: `Requires ${thing?.name || recipe.requireStation}`
+            });
+        }
+        const toolLabel = recipe.requireTool ? this._craftRequireToolLabel(recipe.requireTool) : "";
+        if (toolLabel) {
+            const icons = this._craftRequireToolIcons(recipe.requireTool);
+            const row = { label: `Requires held ${toolLabel}` };
+            if (icons.length) row.icon = icons[0];
+            if (icons.length > 1) row.icons = icons;
+            lines.push(row);
+        }
+        return { text: `${head}\n—`, lines };
+    },
+
+    /** Item, deer hide, andesite stone, or andesite knap picture for one ingredient row. */
+    _craftIngredientIcon(ingredient) {
+        if (!ingredient) return null;
+        if (ingredient.hideStage) {
+            const id = (typeof Settlement !== "undefined" && Settlement.hideItemId)
+                ? Settlement.hideItemId("deer", ingredient.hideStage)
+                : null;
+            const key = this._craftItemIconKey(id);
+            if (key) return key;
+        }
+        if (ingredient.toolClass) {
+            const key = this._craftToolClassIcon(ingredient.toolClass);
+            if (key) return key;
+        }
+        const id = ingredient.id;
+        if (id && typeof Stone !== "undefined" && Stone.isStuffableItem?.(id)) {
+            const stack = { id, quantity: 1, stone: "andesite" };
+            if (id === "flint_spear") stack.knapMaterial = "flint";
+            else if (id === "stone_spear") stack.knapMaterial = "andesite";
+            if (typeof stuffedStackIconKey === "function") {
+                const key = stuffedStackIconKey(this, stack);
+                if (key && this.textures?.exists?.(key)) return key;
+            }
+        }
+        if (
+            id
+            && id !== "flint"
+            && typeof Stone !== "undefined"
+            && Stone.normalizeStone
+            && !Stone.isStuffableItem?.(id)
+        ) {
+            const stone = Stone.normalizeStone(id);
+            if (stone && typeof ensureStoneTexture === "function") {
+                const key = ensureStoneTexture(this, "pebble", 1, stone);
+                if (key && this.textures?.exists?.(key)) return key;
+            }
+        }
+        return this._craftItemIconKey(id);
+    },
+
+    /** Andesite rock, grindstone, or painting circle. Other stations use their world sprite. */
+    _craftStationIcon(thingId) {
+        if (!thingId) return null;
+        if (thingId === "rock" && typeof ensureStoneTexture === "function") {
+            const key = ensureStoneTexture(this, "rock", 1, "andesite");
+            if (key && this.textures?.exists?.(key)) return key;
+        }
+        if (thingId === "grindstone" && typeof ensureStoneTexture === "function") {
+            const key = ensureStoneTexture(this, "grindstone", 1, "andesite");
+            if (key && this.textures?.exists?.(key)) return key;
+        }
+        if (thingId === "painting_circle" && typeof ensurePaintingCircleTexture === "function") {
+            const key = ensurePaintingCircleTexture(this, "andesite");
+            if (key && this.textures?.exists?.(key)) return key;
+        }
+        const meta = this.getThing?.(thingId);
+        if (typeof Thing !== "undefined" && meta && Thing.textureKeyFor) {
+            const key = Thing.textureKeyFor(this, meta, 0);
+            if (key && this.textures?.exists?.(key)) return key;
+        }
+        const fallback = meta?.key || thingId;
+        if (fallback && this.textures?.exists?.(fallback)) return fallback;
+        return null;
+    },
+
+    _craftItemIconKey(itemId) {
+        if (!itemId) return null;
+        const def = this.getItem?.(itemId) || { id: itemId, key: itemId };
+        if (typeof Place !== "undefined" && Place.itemIconKey) {
+            const key = Place.itemIconKey(
+                def,
+                (id) => this.getThing?.(id),
+                (k) => this.textures?.exists?.(k)
+            );
+            if (key && this.textures?.exists?.(key)) return key;
+        }
+        if (def?.key && this.textures?.exists?.(def.key)) return def.key;
+        if (this.textures?.exists?.(itemId)) return itemId;
+        return null;
+    },
+
+    /** Andesite knap picture for one tool class. */
+    _craftToolClassIcon(toolClass) {
+        if (!toolClass || typeof Knapping === "undefined" || !Knapping.carveShapeIcon) return null;
+        const data = Knapping.carveShapeIcon(this, toolClass, "andesite");
+        if (!data || !Knapping.ensureToolTexture) return null;
+        const key = Knapping.ensureToolTexture(this, { knapIconData: data, toolClass });
+        if (key && this.textures?.exists?.(key)) return key;
+        return null;
+    },
+
+    /** Andesite pictures for every class a held-tool line accepts, in recipe order. */
+    _craftRequireToolIcons(requireTool) {
+        const classes = (typeof Carry !== "undefined" && Carry.recipeToolClasses)
+            ? Carry.recipeToolClasses(requireTool)
+            : (requireTool?.toolClass ? [requireTool.toolClass] : []);
+        const icons = [];
+        for (const cls of classes) {
+            const key = this._craftToolClassIcon(cls);
+            if (key) icons.push(key);
+        }
+        return icons;
     },
 
     /** Display name for a craft ingredient (supports knapped tip / any-hide requirements). */

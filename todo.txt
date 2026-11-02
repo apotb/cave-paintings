@@ -24,8 +24,6 @@ Rename, recolor, or otherwise label storage containers
 
 More animals -- lynx (neutral), auroch (scared)
 
-Icons in tooltips
-
 Personalities and socializing
 
 Wealth: actual money system in-game, but won't be unlockable till much later via Currency tech, and you then will need Accounting tech to see your net worth.
