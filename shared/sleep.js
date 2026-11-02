@@ -306,6 +306,20 @@
         return false;
     }
 
+    /** Craft time, stations, and tool wear are not materials. Carry owns the list. */
+    function isSalvageSkip(id, raw) {
+        let Carry = null;
+        if (typeof globalThis !== "undefined" && globalThis.Carry?.isRecipeMetaKey) {
+            Carry = globalThis.Carry;
+        } else if (typeof module === "object" && module.exports) {
+            Carry = require("./carry");
+        }
+        if (Carry?.isRecipeMetaKey?.(id)) return true;
+        if (id === "QUANTITY") return true;
+        if (Carry?.hideStageOf?.(raw)) return true;
+        return !!(raw && typeof raw === "object" && raw.hideStage);
+    }
+
     /**
      * Per-unit 50% salvage of a recipe map `{ id: qty }`.
      */
@@ -314,8 +328,7 @@
         const out = [];
         if (!recipe || typeof recipe !== "object") return out;
         for (const [id, raw] of Object.entries(recipe)) {
-            if (Place && Place.isRecipeMetaKey && Place.isRecipeMetaKey(id)) continue;
-            if (id === "QUANTITY") continue;
+            if (isSalvageSkip(id, raw)) continue;
             const qty = (raw && typeof raw === "object") ? (+raw.qty || 1) : (+raw || 0);
             let n = 0;
             for (let i = 0; i < qty; i++) {

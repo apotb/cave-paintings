@@ -875,6 +875,7 @@
         const tiles = Place.entryFootprintTiles(entry, TS, def);
         const piles = Sleep.scatterSalvagePiles(stacks, tiles, TS, () => this.rng());
         for (const pile of piles) {
+            if (!itemDefs().get(pile.id)) continue;
             this._pushDrop(pile.x, pile.y, { id: pile.id, quantity: pile.quantity });
         }
         const i = chunk.things.indexOf(entry);

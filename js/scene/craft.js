@@ -7,11 +7,15 @@
     root.SceneMainCraft = {
 
     formatItemTooltip(item, quantity, spoilAt, stack = null, opts = null) {
+        if (!item) {
+            const label = stack?.customName || stack?.id || "Unknown";
+            return quantity > 1 ? `${label} x${quantity}` : String(label);
+        }
         const lines = [];
         const liveName = (stack && typeof Stone !== "undefined" && Stone.displayName)
             ? Stone.displayName(stack, (id) => this.getItem?.(id))
             : null;
-        const displayName = liveName || stack?.customName || item.name;
+        const displayName = liveName || stack?.customName || item.name || item.id || "Unknown";
         let name = quantity > 1 ? `${displayName} x${quantity}` : displayName;
         const food = stack?.food || item.food;
         let namePct = null;

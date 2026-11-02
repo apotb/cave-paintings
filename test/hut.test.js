@@ -527,6 +527,20 @@ test("a companion who stands up inside a hut can path out the door", () => {
     }
 });
 
+test("breaking a lean-to or hut salvages materials, not craft time", () => {
+    const lean = Sleep.salvageStacks(DataStore.getItem("lean_to").recipe, () => 0);
+    const hut = Sleep.salvageStacks(DataStore.getItem("hut").recipe, () => 0);
+    assert.deepEqual(lean.map((s) => s.id).sort(), ["leaf", "leaf_cord", "log", "stick"]);
+    assert.deepEqual(
+        hut.map((s) => s.id).sort(),
+        ["leaf", "leaf_cord", "log", "stick", "stick_frame"]
+    );
+    assert.equal(lean.find((s) => s.id === "log").quantity, 6);
+    assert.equal(hut.find((s) => s.id === "stick_frame").quantity, 4);
+    const hearth = Sleep.salvageStacks(DataStore.getItem("hearth").recipe, () => 0);
+    assert.equal(hearth.some((s) => s.id === "CRAFT_SECONDS" || s.id === "ANY_HIDE"), false);
+});
+
 test("hut is researched after camping and crafts just after the lean-to", () => {
     const items = require("../data/Items.json");
     const ids = items.filter(Boolean).map((it) => it.id);
