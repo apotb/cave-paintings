@@ -126,6 +126,20 @@
         this._dirtyPawnOwner?.(pawn);
     },
 
+    _noteBegan(pawn) {
+        if (!Thoughts || !pawn || pawn.dead) return;
+        Thoughts.noteBegan(pawn, this.worldMinuteIndex());
+        Thoughts.refresh(pawn, this.worldMinuteIndex());
+        this._dirtyPawnOwner?.(pawn);
+    },
+
+    _noteJoined(pawn, leaderName) {
+        if (!Thoughts || !pawn || pawn.dead) return;
+        Thoughts.noteJoined(pawn, leaderName, this.worldMinuteIndex());
+        Thoughts.refresh(pawn, this.worldMinuteIndex());
+        this._dirtyPawnOwner?.(pawn);
+    },
+
     _thoughtPawn(thing) {
         if (!thing) return null;
         const id = thing.id;

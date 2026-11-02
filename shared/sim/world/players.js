@@ -372,6 +372,10 @@
             return existing;
         }
         const p = this._freshPawn(playerId, displayName);
+        const carriedThoughts = !!(
+            (character && typeof character.thoughts === "object" && character.thoughts)
+            || (this.poses?.[playerId]?.thoughts)
+        );
         if (character && typeof character === "object") {
             this._applyCharacterSnapshot(p, character);
         }
@@ -395,6 +399,7 @@
             this.pushEvent({ kind: "chat", text: `${p.name} joined`, system: true });
         }
         this._rememberOwnerName(p);
+        if (!carriedThoughts) this._noteBegan?.(p);
         return p;
     },
 

@@ -247,6 +247,7 @@
                 rec.body = rec.creature.anatomy.toJSON();
             }
         }
+        this._noteJoined?.(rec, p.name);
         this.wanderers.delete(wid);
         this._youDirty.add(p.id);
         this.pushEvent({

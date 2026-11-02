@@ -622,3 +622,107 @@ test("settlement complaints rank the strongest penalties and hide the score", ()
     const debug = Thoughts.settlementTip(crowd, true);
     assert.match(debug, /\{n\}Ate raw meat  P=-7 N=6 T=/);
 });
+
+test("a new main character starts optimistic, and that memory fades after ten days", () => {
+    const p = pawn({ id: "founder", name: "Ada", role: "player" });
+    assert.equal(Thoughts.noteBegan(p, 0), true);
+    assert.equal(Thoughts.noteBegan(p, 100), false);
+    Thoughts.refresh(p, 0);
+    assert.equal(p.thoughts.lines[0].offset, 10);
+    assert.equal(p.thoughts.lines[0].label, "Initial optimism");
+    assert.equal(p.thoughts.lines[0].quote, "This is the beginning of something wonderful.");
+    assert.equal(Math.round(p.needs.mood * 100), 60);
+    Thoughts.refresh(p, 10 * Thoughts.DAY - 1);
+    assert.equal(p.thoughts.lines[0].label, "Initial optimism");
+    Thoughts.refresh(p, 10 * Thoughts.DAY);
+    assert.equal(p.thoughts.lines.some((row) => row.label === "Initial optimism"), false);
+
+    const { SimWorld } = require("../shared/sim/SimWorld");
+    const world = SimWorld.createNew({ worldName: "optimism", seed: 2 });
+    const fresh = world.addPlayer("freshoptimism01", "Ada", { name: "Ada" }, { silentJoin: true });
+    assert.equal(fresh.thoughts.lines[0].label, "Initial optimism");
+    assert.equal(fresh.thoughts.lines[0].quote, "This is the beginning of something wonderful.");
+    world.removePlayer("freshoptimism01");
+    const back = world.addPlayer("freshoptimism01", "Ada", null, { silentJoin: true });
+    assert.equal(back.thoughts.lines.filter((row) => row.label === "Initial optimism").length, 1);
+
+    const quiet = pawn({ id: "quiet" });
+    const old = world.addPlayer("oldoptimism0001", "Bo", {
+        name: "Bo",
+        thoughts: Thoughts.toJSON(quiet)
+    }, { silentJoin: true });
+    assert.equal(old.thoughts.lines.some((row) => row.label === "Initial optimism"), false);
+});
+
+test("joining the tribe is a five-day memory that names the main character", () => {
+    const p = pawn({ id: "recruit" });
+    assert.equal(Thoughts.noteJoined(p, "  Ada  ", 0), true);
+    Thoughts.refresh(p, 0);
+    assert.equal(p.thoughts.lines[0].offset, 5);
+    assert.equal(p.thoughts.lines[0].label, "Joined the tribe");
+    assert.equal(p.thoughts.lines[0].quote, "I've been accepted into Ada's tribe");
+    const copy = pawn({ id: "copy" });
+    Thoughts.apply(copy, Thoughts.toJSON(p));
+    Thoughts.refresh(copy, 0);
+    assert.equal(copy.thoughts.lines[0].quote, "I've been accepted into Ada's tribe");
+    Thoughts.refresh(p, 5 * Thoughts.DAY);
+    assert.equal(p.thoughts.lines.some((row) => row.label === "Joined the tribe"), false);
+
+    const { world, pawn: leader, Protocol } = createTestWorld();
+    const Party = require("../shared/party");
+    leader.name = "Ada";
+    world.rng = () => 0;
+    world.wanderers.set("w-join-party", {
+        id: "w-join-party",
+        name: "Og",
+        x: leader.x,
+        y: leader.y,
+        facing: "right",
+        heading: { x: 1, y: 0 },
+        inventory: [null, null, null, null, null],
+        hostile: false,
+        recruitLocked: false,
+        refusedBy: []
+    });
+    world.handleAction(leader.id, { type: Protocol.Actions.RECRUIT, wandererId: "w-join-party" });
+    const mate = (leader.party || []).find((m) => m.id === "w-join-party");
+    assert.equal(mate.thoughts.lines[0].quote, "I've been accepted into Ada's tribe");
+
+    leader.party = [];
+    for (let i = 0; i < Party.CAP - 1; i++) {
+        leader.party.push({ id: `mate-${i}`, dead: false, x: 0, y: 0 });
+    }
+    leader.x = 0;
+    leader.y = 0;
+    const settle = Settlement.createSettlement({ x: 0, y: 0, ownerId: leader.id, name: "Home" });
+    world.settlements.push(settle);
+    world.wanderers.set("w-join-camp", {
+        id: "w-join-camp",
+        name: "Nia",
+        x: 16,
+        y: 0,
+        facing: "right",
+        heading: { x: 1, y: 0 },
+        inventory: [null, null, null, null, null],
+        hostile: false,
+        recruitLocked: false,
+        refusedBy: []
+    });
+    world.handleAction(leader.id, { type: Protocol.Actions.RECRUIT, wandererId: "w-join-camp" });
+    const settler = world.settlers.find((s) => s.id === "w-join-camp");
+    assert.equal(settler.role, "settler");
+    assert.equal(settler.thoughts.lines[0].offset, 5);
+    assert.equal(settler.thoughts.lines[0].quote, "I've been accepted into Ada's tribe");
+
+    const parked = world._companionFromSnap(leader, {
+        id: "already",
+        name: "Already",
+        x: 0,
+        y: 0
+    });
+    leader.party = [parked];
+    world._handleSettlement(leader, { op: "drop", pawnId: parked.id, settlementId: settle.id });
+    const moved = world.settlers.find((s) => s.id === "already");
+    assert.equal(moved.role, "settler");
+    assert.equal(!!moved.thoughts?.lines?.some((row) => row.label === "Joined the tribe"), false);
+});

@@ -15,6 +15,7 @@
     /**
      * Every line the mood tooltip can show. Edit the wording here.
      * A thought is [label, quote]. {name} in namedDeath is the person who died.
+     * {name} in joined is the main character who accepted them.
      * {part} in lost_part is the body part, such as "Left Arm".
      */
     const TEXT = {
@@ -69,6 +70,8 @@
             darkness: ["Darkness", "I can't see a thing."],
             darkness_joy: ["Darkness", "The darkness surrounds me like a blanket. It comforts me."],
             lost_part: ["{part} is gone", "A part of my body, gone forever..."],
+            began: ["Initial optimism", "This is the beginning of something wonderful."],
+            joined: ["Joined the tribe", "I've been accepted into {name}'s tribe"]
         }
     };
 
@@ -166,7 +169,17 @@
         darkness_joy: def("darkness_joy", { offset: 3 }),
         lost_small: lostDef("lost_small", -3),
         lost_mid: lostDef("lost_mid", -8),
-        lost_major: lostDef("lost_major", -12)
+        lost_major: lostDef("lost_major", -12),
+        began: def("began", {
+            offset: 10,
+            duration: 10 * DAY,
+            stackLimit: 1
+        }),
+        joined: def("joined", {
+            offset: 5,
+            duration: 5 * DAY,
+            stackLimit: 1
+        })
     };
 
     /** Brightness below this is dark enough to slow work. Matches the work-light curve. */
@@ -261,6 +274,7 @@
                 expires
             };
             if (typeof row.part === "string" && row.part) keptRow.part = row.part.slice(0, 48);
+            if (typeof row.name === "string" && row.name) keptRow.name = row.name.slice(0, 24);
             kept.push(keptRow);
         }
         state.memories = kept;
@@ -304,7 +318,8 @@
                 id: row.id,
                 label: row.label,
                 expires: row.expires,
-                part: row.part || null
+                part: row.part || null,
+                name: row.name || null
             })),
             seen: src.seen.slice(),
             lost: src.lost.slice(),
@@ -364,7 +379,13 @@
         return state.seen.includes(String(id));
     }
 
-    function addMemory(pawn, id, now, label) {
+    function memoryRow(id, label, expires, extra) {
+        const row = { id, label, expires };
+        if (typeof extra?.name === "string" && extra.name) row.name = extra.name.slice(0, 24);
+        return row;
+    }
+
+    function addMemory(pawn, id, now, label, extra) {
         const def = DEFS[id];
         if (!def || nullified(pawn, def)) return false;
         const state = ensure(pawn);
@@ -375,7 +396,7 @@
         }
         if (def.refresh || def.stackLimit === 1) {
             state.memories = state.memories.filter((row) => row.id !== id || row.label !== name);
-            state.memories.push({ id, label: name, expires });
+            state.memories.push(memoryRow(id, name, expires, extra));
             return true;
         }
         const same = state.memories.filter((row) => row.id === id);
@@ -387,8 +408,32 @@
             }
             state.memories = state.memories.filter((row) => row !== oldest);
         }
-        state.memories.push({ id, label: name, expires });
+        state.memories.push(memoryRow(id, name, expires, extra));
         return true;
+    }
+
+    /** First moment of a new main character. One copy, and it does not restart. */
+    function noteBegan(pawn, now) {
+        if (!pawn) return false;
+        const state = ensure(pawn);
+        if (state.memories.some((row) => row.id === "began")) return false;
+        return addMemory(pawn, "began", now);
+    }
+
+    /** Accepted into the main character's tribe. The quote keeps that name. */
+    function noteJoined(pawn, leaderName, now) {
+        if (!pawn) return false;
+        const name = String(leaderName || "").trim().slice(0, 24);
+        if (!name) return false;
+        ensure(pawn);
+        return addMemory(pawn, "joined", now, null, { name });
+    }
+
+    function filledQuote(def, mem) {
+        const quote = def?.quote || "";
+        if (!quote.includes("{name}")) return quote;
+        const name = typeof mem?.name === "string" && mem.name ? mem.name : "someone";
+        return quote.replace("{name}", name);
     }
 
     function noteSleep(pawn, place, now) {
@@ -601,7 +646,7 @@
             rows.push({
                 id: mem.id,
                 label: mem.label || def.label,
-                quote: def.quote,
+                quote: filledQuote(def, mem),
                 offset: def.offset
             });
         }
@@ -916,6 +961,8 @@
         hasSeen,
         noteSleep,
         noteMeal,
+        noteBegan,
+        noteJoined,
         noteKill,
         witness,
         seeCorpse,
