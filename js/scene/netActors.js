@@ -416,25 +416,51 @@
             pawn.role = "settler";
             if (typeof syncCreatureInputHit === "function") syncCreatureInputHit(pawn);
             {
-                const prevTx = Number.isFinite(pawn._netTx) ? pawn._netTx : pawn.x;
-                const prevTy = Number.isFinite(pawn._netTy) ? pawn._netTy : pawn.y;
-                const fromX = Number.isFinite(pawn._physX) ? pawn._physX : pawn.x;
-                const fromY = Number.isFinite(pawn._physY) ? pawn._physY : pawn.y;
-                const target = (typeof Party !== "undefined" && Party.puppetContinueTarget)
-                    ? Party.puppetContinueTarget(fromX, fromY, prevTx, prevTy, row.x, row.y, !!row.moving)
-                    : { x: row.x, y: row.y };
-                pawn._netSnapDist = Math.hypot(row.x - prevTx, row.y - prevTy);
-                pawn._netFromX = fromX;
-                pawn._netFromY = fromY;
-                pawn._netTx = target.x;
-                pawn._netTy = target.y;
-            }
-            {
+                // Previous server pose to this sample. The presentation clock
+                // may be backdated so a sprite already past that pose is not
+                // pulled backward. The packet time stays on `_netPacketAt`
+                // so the next gap is the real interval.
                 const now = performance.now();
-                pawn._netSnapDt = (typeof Party !== "undefined" && Party.puppetSnapGapMs)
-                    ? Party.puppetSnapGapMs(pawn._netSnapAt, now)
+                const P = typeof Party !== "undefined" ? Party : null;
+                const gap = P?.puppetSnapGapMs
+                    ? P.puppetSnapGapMs(pawn._netPacketAt, now)
                     : 1000 / ((typeof NetProtocol !== "undefined" && NetProtocol.SNAPSHOT_HZ) || 15);
-                pawn._netSnapAt = now;
+                const teleport = P?.puppetTeleportPx?.({
+                    tickSpeed: this.tickSpeed,
+                    tileSize: this.tileSize,
+                    snapDtMs: gap
+                }) || 72;
+                const seg = P?.puppetSegment?.({
+                    prevX: pawn._netTx,
+                    prevY: pawn._netTy,
+                    nextX: row.x,
+                    nextY: row.y,
+                    displayedX: pawn.x,
+                    displayedY: pawn.y,
+                    now,
+                    gap,
+                    moving: !!row.moving,
+                    teleportPx: teleport
+                });
+                if (seg) {
+                    pawn._netSnapDist = seg.snapDist;
+                    pawn._netFromX = seg.fromX;
+                    pawn._netFromY = seg.fromY;
+                    pawn._netTx = seg.tx;
+                    pawn._netTy = seg.ty;
+                    pawn._netSnapDt = seg.snapDt;
+                    pawn._netSnapAt = seg.snapAt;
+                } else {
+                    const hasPrev = Number.isFinite(pawn._netTx) && Number.isFinite(pawn._netTy);
+                    pawn._netFromX = hasPrev ? pawn._netTx : row.x;
+                    pawn._netFromY = hasPrev ? pawn._netTy : row.y;
+                    pawn._netTx = row.x;
+                    pawn._netTy = row.y;
+                    pawn._netSnapDist = Math.hypot(row.x - pawn._netFromX, row.y - pawn._netFromY);
+                    pawn._netSnapDt = gap;
+                    pawn._netSnapAt = now;
+                }
+                pawn._netPacketAt = now;
             }
             pawn._netMoving = !!row.moving;
             pawn._netProne = !!row.prone;
@@ -643,26 +669,50 @@
                     pawn.x = w.x;
                     pawn.y = w.y;
                 }
-                const prevTx = Number.isFinite(pawn._netTx) ? pawn._netTx : pawn.x;
-                const prevTy = Number.isFinite(pawn._netTy) ? pawn._netTy : pawn.y;
-                const fromX = Number.isFinite(pawn._physX) ? pawn._physX : pawn.x;
-                const fromY = Number.isFinite(pawn._physY) ? pawn._physY : pawn.y;
+                const now = performance.now();
+                const P = typeof Party !== "undefined" ? Party : null;
+                const gap = P?.puppetSnapGapMs
+                    ? P.puppetSnapGapMs(pawn._netPacketAt, now)
+                    : 1000 / ((typeof NetProtocol !== "undefined" && NetProtocol.SNAPSHOT_HZ) || 15);
                 const moving = typeof w.moving === "boolean"
                     ? w.moving
                     : !!(w.heading && (Math.abs(Number(w.heading.x)) + Math.abs(Number(w.heading.y)) > 0));
-                const target = (typeof Party !== "undefined" && Party.puppetContinueTarget)
-                    ? Party.puppetContinueTarget(fromX, fromY, prevTx, prevTy, w.x, w.y, moving && pawn._netMoving !== false)
-                    : { x: w.x, y: w.y };
-                pawn._netSnapDist = Math.hypot(w.x - prevTx, w.y - prevTy);
-                pawn._netFromX = fromX;
-                pawn._netFromY = fromY;
-                pawn._netTx = target.x;
-                pawn._netTy = target.y;
-                const now = performance.now();
-                pawn._netSnapDt = (typeof Party !== "undefined" && Party.puppetSnapGapMs)
-                    ? Party.puppetSnapGapMs(pawn._netSnapAt, now)
-                    : 1000 / ((typeof NetProtocol !== "undefined" && NetProtocol.SNAPSHOT_HZ) || 15);
-                pawn._netSnapAt = now;
+                const teleport = P?.puppetTeleportPx?.({
+                    tickSpeed: this.tickSpeed,
+                    tileSize: this.tileSize,
+                    snapDtMs: gap
+                }) || 72;
+                const seg = P?.puppetSegment?.({
+                    prevX: pawn._netTx,
+                    prevY: pawn._netTy,
+                    nextX: w.x,
+                    nextY: w.y,
+                    displayedX: pawn.x,
+                    displayedY: pawn.y,
+                    now,
+                    gap,
+                    moving,
+                    teleportPx: teleport
+                });
+                if (seg) {
+                    pawn._netSnapDist = seg.snapDist;
+                    pawn._netFromX = seg.fromX;
+                    pawn._netFromY = seg.fromY;
+                    pawn._netTx = seg.tx;
+                    pawn._netTy = seg.ty;
+                    pawn._netSnapDt = seg.snapDt;
+                    pawn._netSnapAt = seg.snapAt;
+                } else {
+                    const hasPrev = Number.isFinite(pawn._netTx) && Number.isFinite(pawn._netTy);
+                    pawn._netFromX = hasPrev ? pawn._netTx : w.x;
+                    pawn._netFromY = hasPrev ? pawn._netTy : w.y;
+                    pawn._netTx = w.x;
+                    pawn._netTy = w.y;
+                    pawn._netSnapDist = Math.hypot(w.x - pawn._netFromX, w.y - pawn._netFromY);
+                    pawn._netSnapDt = gap;
+                    pawn._netSnapAt = now;
+                }
+                pawn._netPacketAt = now;
                 pawn._netMoving = typeof w.moving === "boolean"
                     ? w.moving
                     : !!(w.heading && (Math.abs(Number(w.heading.x)) + Math.abs(Number(w.heading.y)) > 0));

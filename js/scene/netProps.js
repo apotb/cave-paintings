@@ -428,6 +428,7 @@
             tx: m.x,
             ty: m.y,
             snapAt: now,
+            packetAt: now,
             snapDt: 1000 / (NetProtocol.SNAPSHOT_HZ || 15),
             facing: m.facing || "down",
             moving: !!m.moving,
@@ -459,15 +460,50 @@
                 entry = this._netMakeMob(m);
                 this.netMobs.set(m.id, entry);
             } else {
-                entry.fromX = entry.x;
-                entry.fromY = entry.y;
-                entry.tx = m.x;
-                entry.ty = m.y;
-                const prevAt = entry.snapAt;
-                entry.snapAt = now;
-                entry.snapDt = (typeof Party !== "undefined" && Party.puppetSnapGapMs)
+                const prevAt = entry.packetAt;
+                const gap = (typeof Party !== "undefined" && Party.puppetSnapGapMs)
                     ? Party.puppetSnapGapMs(prevAt, now)
                     : snapDt;
+                const moving = typeof m.moving === "boolean" ? m.moving : entry.serverMoving !== false;
+                const teleport = (typeof Party !== "undefined" && Party.puppetTeleportPx)
+                    ? Party.puppetTeleportPx({
+                        tickSpeed: this.tickSpeed,
+                        tileSize: this.tileSize,
+                        snapDtMs: gap,
+                        speedTiles: 3.5
+                    })
+                    : 72;
+                const seg = (typeof Party !== "undefined" && Party.puppetSegment)
+                    ? Party.puppetSegment({
+                        prevX: entry.tx,
+                        prevY: entry.ty,
+                        nextX: m.x,
+                        nextY: m.y,
+                        displayedX: entry.x,
+                        displayedY: entry.y,
+                        now,
+                        gap,
+                        moving,
+                        teleportPx: teleport
+                    })
+                    : null;
+                if (seg) {
+                    entry.fromX = seg.fromX;
+                    entry.fromY = seg.fromY;
+                    entry.tx = seg.tx;
+                    entry.ty = seg.ty;
+                    entry.snapAt = seg.snapAt;
+                    entry.snapDt = seg.snapDt;
+                } else {
+                    const hasPrev = Number.isFinite(entry.tx) && Number.isFinite(entry.ty);
+                    entry.fromX = hasPrev ? entry.tx : m.x;
+                    entry.fromY = hasPrev ? entry.ty : m.y;
+                    entry.tx = m.x;
+                    entry.ty = m.y;
+                    entry.snapAt = now;
+                    entry.snapDt = gap;
+                }
+                entry.packetAt = now;
             }
             entry.kind = m.kind || entry.kind;
             if (m.name) entry.name = m.name;
@@ -521,8 +557,7 @@
         for (const entry of this.netMobs.values()) {
             const snapDt = entry.snapDt || (1000 / 15);
             const age = now - (entry.snapAt || now);
-            let u = snapDt > 0 ? age / snapDt : 1;
-            if (u > 1) u = 1 + Math.min(0.15, (u - 1) * 0.25);
+            const u = snapDt > 0 ? age / snapDt : 1;
 
             const err = Math.hypot(entry.tx - entry.fromX, entry.ty - entry.fromY);
             const prevX = entry.x;

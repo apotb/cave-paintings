@@ -1238,6 +1238,8 @@
             seen.add(p);
             const t = Number(p._netSnapAt);
             if (Number.isFinite(t)) p._netSnapAt = t + n;
+            const packet = Number(p._netPacketAt);
+            if (Number.isFinite(packet)) p._netPacketAt = packet + n;
         };
         bumpPawn(this.player);
         for (const p of this.party || []) bumpPawn(p);
@@ -1246,6 +1248,8 @@
         for (const entry of this.netMobs?.values?.() || []) {
             const t = Number(entry?.snapAt);
             if (Number.isFinite(t)) entry.snapAt = t + n;
+            const packet = Number(entry?.packetAt);
+            if (Number.isFinite(packet)) entry.packetAt = packet + n;
         }
         for (const entry of this.remotePlayers?.values?.() || []) {
             const t = Number(entry?.snapAt);

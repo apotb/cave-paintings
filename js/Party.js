@@ -2583,6 +2583,8 @@ class PartySystem {
         if (typeof applyCreatureSortDepth === "function") applyCreatureSortDepth(w);
         else w.setDepth(w.y | 0);
         w.syncFxRoot?.();
+        w._physX = w.x;
+        w._physY = w.y;
     }
 
     onRecruitResult(ev) {
@@ -3991,24 +3993,50 @@ class PartySystem {
     _setNetPose(pawn, x, y, facing, prone, motion = null) {
         if (!pawn) return;
         if (Number.isFinite(x) && Number.isFinite(y)) {
-            const prevTx = Number.isFinite(pawn._netTx) ? pawn._netTx : pawn.x;
-            const prevTy = Number.isFinite(pawn._netTy) ? pawn._netTy : pawn.y;
-            pawn._netSnapDist = Math.hypot(x - prevTx, y - prevTy);
-            const fromX = Number.isFinite(pawn._physX) ? pawn._physX : pawn.x;
-            const fromY = Number.isFinite(pawn._physY) ? pawn._physY : pawn.y;
-            const moving = motion?.moving !== false && pawn._netMoving !== false;
-            const target = (typeof Party !== "undefined" && Party.puppetContinueTarget)
-                ? Party.puppetContinueTarget(fromX, fromY, prevTx, prevTy, x, y, moving)
-                : { x, y };
-            pawn._netFromX = fromX;
-            pawn._netFromY = fromY;
-            pawn._netTx = target.x;
-            pawn._netTy = target.y;
             const now = performance.now();
-            pawn._netSnapDt = (typeof Party !== "undefined" && Party.puppetSnapGapMs)
-                ? Party.puppetSnapGapMs(pawn._netSnapAt, now)
+            const P = typeof Party !== "undefined" ? Party : null;
+            const gap = P?.puppetSnapGapMs
+                ? P.puppetSnapGapMs(pawn._netPacketAt, now)
                 : 1000 / ((typeof NetProtocol !== "undefined" && NetProtocol.SNAPSHOT_HZ) || 15);
-            pawn._netSnapAt = now;
+            const moving = typeof motion?.moving === "boolean"
+                ? motion.moving
+                : pawn._netMoving !== false;
+            const teleport = P?.puppetTeleportPx?.({
+                tickSpeed: this.scene?.tickSpeed,
+                tileSize: this.scene?.tileSize,
+                snapDtMs: gap
+            }) || 72;
+            const seg = P?.puppetSegment?.({
+                prevX: pawn._netTx,
+                prevY: pawn._netTy,
+                nextX: x,
+                nextY: y,
+                displayedX: pawn.x,
+                displayedY: pawn.y,
+                now,
+                gap,
+                moving,
+                teleportPx: teleport
+            });
+            if (seg) {
+                pawn._netSnapDist = seg.snapDist;
+                pawn._netFromX = seg.fromX;
+                pawn._netFromY = seg.fromY;
+                pawn._netTx = seg.tx;
+                pawn._netTy = seg.ty;
+                pawn._netSnapDt = seg.snapDt;
+                pawn._netSnapAt = seg.snapAt;
+            } else {
+                const hasPrev = Number.isFinite(pawn._netTx) && Number.isFinite(pawn._netTy);
+                pawn._netFromX = hasPrev ? pawn._netTx : x;
+                pawn._netFromY = hasPrev ? pawn._netTy : y;
+                pawn._netTx = x;
+                pawn._netTy = y;
+                pawn._netSnapDist = Math.hypot(x - pawn._netFromX, y - pawn._netFromY);
+                pawn._netSnapDt = gap;
+                pawn._netSnapAt = now;
+            }
+            pawn._netPacketAt = now;
         } else {
             if (Number.isFinite(x)) pawn._netTx = x;
             if (Number.isFinite(y)) pawn._netTy = y;

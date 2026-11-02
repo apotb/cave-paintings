@@ -103,8 +103,11 @@
         return Math.max(72, expected * 4);
     }
     /**
-     * Interpolate a puppet toward the latest snapshot, then keep walking in
-     * the last heading if the next snap is late.
+     * Interpolate a puppet from the previous server pose to the latest one.
+     * Past the segment end, keep the same speed. Holding there freezes the
+     * sprite while the camera keeps moving, so they slip backward and then
+     * catch up. `puppetSegment` backdates the next clock so that lead is not
+     * rewound when the packet arrives.
      */
     function puppetLerpXY(opts = {}) {
         const fromX = Number(opts.fromX);
@@ -135,58 +138,82 @@
             };
         }
         if (!opts.moving) return { x: tx, y: ty, snapped: false };
-        const overshoot = Math.min(Math.max(0, (age - snapDt) / 1000), 0.9);
         const dx = tx - fromX;
         const dy = ty - fromY;
         const len = Math.hypot(dx, dy);
-        let nx = 0;
-        let ny = 0;
-        if (len > 0.5) {
-            nx = dx / len;
-            ny = dy / len;
-        } else {
-            const hx = Number(opts.heading?.x);
-            const hy = Number(opts.heading?.y);
-            const hl = Math.hypot(hx, hy);
-            if (!(hl > 0.1)) return { x: tx, y: ty, snapped: false };
-            nx = hx / hl;
-            ny = hy / hl;
-        }
-        const speed = len > 0.5 && snapDt > 0
-            ? len / (snapDt / 1000)
-            : (Number(opts.speedPx) > 0 ? Number(opts.speedPx) : 0);
+        if (!(len > 0.5)) return { x: tx, y: ty, snapped: false };
+        const overshoot = Math.min(Math.max(0, (age - snapDt) / 1000), 0.9);
+        const speed = len / (snapDt / 1000);
         return {
-            x: tx + nx * speed * overshoot,
-            y: ty + ny * speed * overshoot,
+            x: tx + (dx / len) * speed * overshoot,
+            y: ty + (dy / len) * speed * overshoot,
             snapped: false
         };
     }
     /**
-     * Next pose to walk toward after a snapshot.
-     * Extrapolation keeps a late puppet moving, so the sprite is often past
-     * the packet that just arrived. Lerping back to that packet is a hitch
-     * every tick, and it shows up on anyone the camera is not glued to.
-     * While they are still walking, drop only the backward part of the
-     * correction. A real turn (the new step points back at the sprite) is
-     * kept. Stopping still returns the exact server pose.
+     * Server-pose segment from `prev` to `next`.
+     * `displayed` is where the sprite already is. When that point lies along
+     * the step, the clock is backdated so the pose at `now` stays there
+     * instead of jumping to `prev`. A point still behind the step stretches
+     * the gap so the speed stays the server step over the real packet gap.
+     * The returned `snapAt` is the presentation clock. Callers must keep the
+     * packet arrival time separately — the next gap is measured from that,
+     * and a backdated clock would shrink it.
      */
-    function puppetContinueTarget(fromX, fromY, prevTx, prevTy, nextX, nextY, moving) {
-        if (!moving || !Number.isFinite(fromX) || !Number.isFinite(fromY)
-            || !Number.isFinite(nextX) || !Number.isFinite(nextY)) {
-            return { x: nextX, y: nextY };
+    function puppetSegment(opts = {}) {
+        const nextX = Number(opts.nextX);
+        const nextY = Number(opts.nextY);
+        const prevX = Number(opts.prevX);
+        const prevY = Number(opts.prevY);
+        const now = Number.isFinite(Number(opts.now)) ? Number(opts.now) : 0;
+        const gap = Number(opts.gap) > 0 ? Number(opts.gap) : snapshotIntervalMs();
+        const moving = !!opts.moving;
+        const teleport = Number(opts.teleportPx) > 0 ? Number(opts.teleportPx) : 72;
+        const dispX = Number(opts.displayedX);
+        const dispY = Number(opts.displayedY);
+        const hasPrev = Number.isFinite(prevX) && Number.isFinite(prevY);
+        const hasDisp = Number.isFinite(dispX) && Number.isFinite(dispY);
+        const ends = (x, y, dist) => ({
+            fromX: x,
+            fromY: y,
+            tx: x,
+            ty: y,
+            snapAt: now,
+            snapDt: gap,
+            snapDist: Number.isFinite(dist) ? dist : 0
+        });
+        const seg = (fromX, fromY, tx, ty, snapAt, snapDt, dist) => ({
+            fromX, fromY, tx, ty, snapAt, snapDt, snapDist: dist
+        });
+        if (!Number.isFinite(nextX) || !Number.isFinite(nextY)) {
+            return ends(hasPrev ? prevX : 0, hasPrev ? prevY : 0, 0);
         }
-        const hx = nextX - (Number(prevTx) || 0);
-        const hy = nextY - (Number(prevTy) || 0);
-        const hl = Math.hypot(hx, hy);
-        if (!(hl > 0.5)) return { x: nextX, y: nextY };
-        const nx = hx / hl;
-        const ny = hy / hl;
-        const along = (nextX - fromX) * nx + (nextY - fromY) * ny;
-        if (along >= 0) return { x: nextX, y: nextY };
-        return {
-            x: nextX - along * nx,
-            y: nextY - along * ny
-        };
+        if (!hasPrev) return ends(nextX, nextY, 0);
+        const dist = Math.hypot(nextX - prevX, nextY - prevY);
+        if (!(dist > 0.5) || dist > teleport) return ends(nextX, nextY, dist);
+        if (!moving) {
+            if (!hasDisp) return seg(prevX, prevY, nextX, nextY, now, gap, dist);
+            return seg(dispX, dispY, nextX, nextY, now, gap, dist);
+        }
+        if (!hasDisp) return seg(prevX, prevY, nextX, nextY, now, gap, dist);
+        const nx = (nextX - prevX) / dist;
+        const ny = (nextY - prevY) / dist;
+        const along = (dispX - prevX) * nx + (dispY - prevY) * ny;
+        const perp = Math.hypot(dispX - (prevX + nx * along), dispY - (prevY + ny * along));
+        const speed = dist / (gap / 1000);
+        if (perp > 1.5) {
+            const cover = Math.hypot(nextX - dispX, nextY - dispY);
+            const snapDt = speed > 1 ? (cover / speed) * 1000 : gap;
+            return seg(dispX, dispY, nextX, nextY, now, snapDt, dist);
+        }
+        if (along < 0) {
+            const cover = dist - along;
+            const snapDt = speed > 1 ? (cover / speed) * 1000 : gap;
+            return seg(prevX + nx * along, prevY + ny * along, nextX, nextY, now, snapDt, dist);
+        }
+        const maxAlong = dist + speed * 0.9;
+        const clamped = Math.min(along, maxAlong);
+        return seg(prevX, prevY, nextX, nextY, now - (clamped / dist) * gap, gap, dist);
     }
     /**
      * Latch follower sprint so they don't flicker on a distance ring around
@@ -1346,7 +1373,7 @@
         puppetSnapGapMs,
         puppetTeleportPx,
         puppetLerpXY,
-        puppetContinueTarget,
+        puppetSegment,
         walkAnimTimeScale,
         followWantSprint,
         followLeashPx,

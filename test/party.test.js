@@ -106,7 +106,7 @@ test("companionFollowLabel uses you for the leader and Waiting with no follow ta
     );
 });
 
-test("puppet lerp keeps walking across late snapshots at high tick speed", () => {
+test("puppet lerp keeps speed past the segment and does not rewind", () => {
     assert.ok(Party.puppetTeleportPx({ tickSpeed: 20, snapDtMs: 200 }) > 72);
     const mid = Party.puppetLerpXY({
         fromX: 0,
@@ -122,6 +122,19 @@ test("puppet lerp keeps walking across late snapshots at high tick speed", () =>
     assert.equal(mid.x, 20);
     assert.equal(mid.snapped, false);
 
+    const end = Party.puppetLerpXY({
+        fromX: 0,
+        fromY: 0,
+        tx: 40,
+        ty: 0,
+        snapAt: 1000,
+        snapDtMs: 200,
+        now: 1200,
+        teleportPx: 200,
+        moving: true
+    });
+    assert.equal(end.x, 40);
+
     const late = Party.puppetLerpXY({
         fromX: 0,
         fromY: 0,
@@ -133,8 +146,36 @@ test("puppet lerp keeps walking across late snapshots at high tick speed", () =>
         teleportPx: 200,
         moving: true
     });
-    assert.ok(late.x > 40, `should extrapolate past the last snap (x=${late.x})`);
-    assert.ok(late.x < 90, `should not run away (x=${late.x})`);
+    assert.equal(late.x, 80);
+    assert.equal(late.y, 0);
+
+    const nextMid = Party.puppetLerpXY({
+        fromX: 40,
+        fromY: 0,
+        tx: 80,
+        ty: 0,
+        snapAt: 1200,
+        snapDtMs: 200,
+        now: 1300,
+        teleportPx: 200,
+        moving: true
+    });
+    assert.equal(nextMid.x, 60);
+    assert.equal(nextMid.x - 40, mid.x);
+
+    const stopped = Party.puppetLerpXY({
+        fromX: 0,
+        fromY: 0,
+        tx: 46,
+        ty: 0,
+        snapAt: 1000,
+        snapDtMs: 200,
+        now: 1400,
+        teleportPx: 200,
+        moving: false
+    });
+    assert.equal(stopped.x, 46);
+    assert.equal(stopped.snapped, false);
 
     const snap = Party.puppetLerpXY({
         fromX: 0,
@@ -153,12 +194,120 @@ test("puppet lerp keeps walking across late snapshots at high tick speed", () =>
     assert.ok(Party.puppetSnapGapMs(1000, 1800) > 100);
     assert.ok(Party.puppetSnapGapMs(1000, 1800) <= 1250);
 
-    const next = Party.puppetContinueTarget(late.x, late.y, 40, 0, 46, 0, true);
-    assert.ok(next.x + 1e-6 >= late.x, `late pose pulled backward to ${next.x} from ${late.x}`);
-    const turned = Party.puppetContinueTarget(50, 0, 40, 0, 30, 0, true);
-    assert.ok(turned.x < 50, "a real turn still aims back at the server pose");
-    const stopped = Party.puppetContinueTarget(late.x, late.y, 40, 0, 46, 0, false);
-    assert.equal(stopped.x, 46);
+    const now = 5000;
+    const gap = 200;
+    const ahead = Party.puppetSegment({
+        prevX: 40,
+        prevY: 0,
+        nextX: 80,
+        nextY: 0,
+        displayedX: 50,
+        displayedY: 0,
+        now,
+        gap,
+        moving: true,
+        teleportPx: 200
+    });
+    const atNow = Party.puppetLerpXY({
+        fromX: ahead.fromX,
+        fromY: ahead.fromY,
+        tx: ahead.tx,
+        ty: ahead.ty,
+        snapAt: ahead.snapAt,
+        snapDtMs: ahead.snapDt,
+        now,
+        teleportPx: 200,
+        moving: true
+    });
+    assert.ok(Math.abs(atNow.x - 50) < 1e-6, `pulled back to ${atNow.x}`);
+    const later = Party.puppetLerpXY({
+        fromX: ahead.fromX,
+        fromY: ahead.fromY,
+        tx: ahead.tx,
+        ty: ahead.ty,
+        snapAt: ahead.snapAt,
+        snapDtMs: ahead.snapDt,
+        now: now + 100,
+        teleportPx: 200,
+        moving: true
+    });
+    assert.ok(Math.abs(later.x - 70) < 1e-6, `speed changed to ${later.x}`);
+    assert.equal(ahead.snapDist, 40);
+
+    const behind = Party.puppetSegment({
+        prevX: 0,
+        prevY: 0,
+        nextX: 40,
+        nextY: 0,
+        displayedX: -10,
+        displayedY: 0,
+        now,
+        gap,
+        moving: true,
+        teleportPx: 200
+    });
+    const behindNow = Party.puppetLerpXY({
+        fromX: behind.fromX,
+        fromY: behind.fromY,
+        tx: behind.tx,
+        ty: behind.ty,
+        snapAt: behind.snapAt,
+        snapDtMs: behind.snapDt,
+        now,
+        teleportPx: 200,
+        moving: true
+    });
+    assert.ok(Math.abs(behindNow.x + 10) < 1e-6);
+
+    const first = Party.puppetSegment({
+        nextX: 12,
+        nextY: 4,
+        now,
+        gap,
+        moving: true
+    });
+    assert.equal(first.fromX, 12);
+    assert.equal(first.tx, 12);
+
+    const stop = Party.puppetSegment({
+        prevX: 40,
+        prevY: 0,
+        nextX: 46,
+        nextY: 0,
+        displayedX: 50,
+        displayedY: 0,
+        now,
+        gap,
+        moving: false,
+        teleportPx: 200
+    });
+    const stoppedAt = Party.puppetLerpXY({
+        fromX: stop.fromX,
+        fromY: stop.fromY,
+        tx: stop.tx,
+        ty: stop.ty,
+        snapAt: stop.snapAt,
+        snapDtMs: stop.snapDt,
+        now: now + gap,
+        teleportPx: 200,
+        moving: false
+    });
+    assert.equal(stoppedAt.x, 46);
+
+    const far = Party.puppetSegment({
+        prevX: 0,
+        prevY: 0,
+        nextX: 400,
+        nextY: 0,
+        displayedX: 20,
+        displayedY: 0,
+        now,
+        gap,
+        moving: true,
+        teleportPx: 80
+    });
+    assert.equal(far.tx, 400);
+    assert.equal(far.fromX, 400);
 });
 
 test("eatTakeQty takes only enough discrete food to reach AUTO_EAT_UNTIL", () => {
