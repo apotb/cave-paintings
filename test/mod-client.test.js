@@ -54,6 +54,9 @@ function loadSceneClasses() {
         SettlingStone: class SettlingStone {
             constructor() { this.via = "settlement"; }
         },
+        Hearth: class Hearth {
+            constructor() { this.via = "hearth"; }
+        },
         ClayFigurine: class ClayFigurine {
             constructor() { this.via = "figurine"; }
         },
@@ -196,6 +199,7 @@ describe("phase 5 client mods", { concurrency: false }, () => {
             [{ id: "example.mod.marker", slots: [null] }, { storage: { slots: 4 } }, false, "storage"],
             [{ id: "workbench" }, { craftStation: true }, false, "craft"],
             [{ id: "settling_stone" }, { settlement: true }, false, "settlement"],
+            [{ id: "hearth" }, { settlement: true, campfire: true }, false, "hearth"],
             [{ id: "clay_figurine" }, { figurine: true }, false, "figurine"],
             [{ id: "berry_bush" }, { lootable: true }, true, "lootable"]
         ];

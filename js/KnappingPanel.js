@@ -241,7 +241,7 @@ class KnappingPanel {
     }
 
     /**
-     * Called when the player clicks a rock (or settling stone) while holding
+     * Called when the player clicks a rock while holding
      * a blank or finished tool.
      * @returns {boolean}
      */
@@ -250,7 +250,7 @@ class KnappingPanel {
         const rockId = rock?.meta?.id;
         const isAnvil = typeof Place !== "undefined" && Place.countsAsThing
             ? Place.countsAsThing(rockId, "rock")
-            : rockId === "rock" || rockId === "settling_stone";
+            : rockId === "rock";
         if (!rock || !isAnvil) return false;
         const pointer = this.scene.input?.activePointer;
         if (this.scene.pointerOverWorldUi?.(pointer)) return false;

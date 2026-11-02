@@ -105,7 +105,9 @@ test("missing item icons do not claim a world texture key", () => {
     Content.queueTextures(scene);
     const url = (key) => scene._queued.filter((q) => q.key === key).map((q) => q.url);
     assert.deepEqual(url("leaves"), ["assets/things/leaves.png"]);
-    assert.deepEqual(url("settling_stone"), ["assets/things/settling_stone.png"]);
+    assert.deepEqual(url("hearth_1"), ["assets/things/hearth/hearth_1.png"]);
+    assert.deepEqual(url("hearth_2"), ["assets/things/hearth/hearth_2.png"]);
+    assert.equal(url("hearth").some((u) => u.includes("assets/items/")), false);
     assert.deepEqual(url("drying_rack_hanging"), ["assets/things/drying_rack_hanging.png"]);
     assert.deepEqual(url("flint"), ["assets/items/flint.png"]);
     assert.equal(url("pebble").some((u) => u.includes("assets/items/")), false);

@@ -15,7 +15,7 @@ test("start unlocked techs are on a new settlement", () => {
     assert.equal(Research.hasTech(s, "settlements"), false);
     assert.equal(!!Research.techById("hearth").startUnlocked, true);
     assert.equal(!!Research.techById("settlements").startUnlocked, false);
-    assert.equal(Research.recipeUnlocked("settling_stone", s), true);
+    assert.equal(Research.recipeUnlocked("hearth", s), true);
     assert.equal(Research.hasTech(s, "hafting"), false);
     assert.ok(Number(Research.techById("hafting").cost) > 0);
     assert.equal(!!Research.techById("hafting").startUnlocked, false);
@@ -1189,7 +1189,7 @@ test("retuned tech costs, names, and eras", () => {
     assert.equal(Research.techById("blades").cost, 3);
     assert.equal(Research.techById("hearth").name, "Hearth");
     assert.equal(Research.techById("hearth").cost, 0);
-    assert.ok(Research.techById("hearth").unlocks.items.includes("settling_stone"));
+    assert.ok(Research.techById("hearth").unlocks.items.includes("hearth"));
     assert.equal(Research.techById("settlements").era, "Neolithic");
     assert.equal(Research.techById("settlements").cost, 6);
     assert.deepEqual(Research.techById("settlements").prereqs, ["hut", "storage", "hearth"]);

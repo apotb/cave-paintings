@@ -431,7 +431,7 @@
     }
 
     function stationKind(id) {
-        if (id === "campfire" || id === "unlit_campfire") return "campfire";
+        if (id === "campfire" || id === "unlit_campfire" || id === "hearth") return "campfire";
         if (id === "skinworking_bench") return "craft";
         if (id === "grindstone") return "grind";
         if (id === "drying_rack") return "rack";
@@ -2556,6 +2556,7 @@
         if (typeof fire?.isLit === "function") return !!fire.isLit();
         const id = _fireEntry(fire)?.id;
         if (id === "unlit_campfire") return false;
+        if (id === "hearth") return !!_fireEntry(fire)?.lit;
         if (id === "campfire") return true;
         return false;
     }

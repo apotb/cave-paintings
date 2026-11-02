@@ -10,7 +10,7 @@ class LeanTo {}
 class Storage {}
 class Campfire {}
 class CraftStation {}
-class SettlingStone {}
+class Hearth {}
 class PaintingCircle {}
 
 function loadHoverScene() {
@@ -25,7 +25,8 @@ function loadHoverScene() {
         Storage,
         Campfire,
         CraftStation,
-        SettlingStone,
+        Hearth,
+        SettlingStone: Hearth,
         PaintingCircle
     };
     vm.createContext(sandbox);
@@ -110,7 +111,7 @@ test("settler body wins hover over hut, pit, and other stations", () => {
         hit({ name: "Drying Rack", dryingRack: true, storage: { slots: 1 } }, Storage.prototype),
         hit({ name: "Campfire", campfire: true }, Campfire.prototype),
         hit({ name: "Skinworking Bench", craftStation: true }, CraftStation.prototype),
-        hit({ name: "Settling Stone", settlement: true }, SettlingStone.prototype),
+        hit({ name: "Hearth", settlement: true, campfire: true }, Hearth.prototype),
         hit({ name: "Painting Circle", paintingCircle: true }, PaintingCircle.prototype)
     ];
     for (const building of buildings) {

@@ -346,7 +346,7 @@
                 } else if (!(frac > 0) || frac >= 1) {
                     frac = 0;
                     const id = t.entry?.id;
-                    const isFire = id === "campfire" || id === "unlit_campfire";
+                    const isFire = id === "campfire" || id === "unlit_campfire" || id === "hearth";
                     const panel = this.campfirePanel;
                     const uiOpen = !!(panel?.visible && panel.campfire === t);
                     if (isFire && !uiOpen && typeof Fire !== "undefined" && Fire.cookWorldBarFrac) {
@@ -388,7 +388,7 @@
         g.clear().setVisible(true);
         g.setScale(1 / zoom);
         const id = thing?.entry?.id || thing?.meta?.id || "";
-        const isFire = id === "campfire" || id === "unlit_campfire";
+        const isFire = id === "campfire" || id === "unlit_campfire" || id === "hearth";
         let spriteH;
         let inset;
         if (isFire && typeof campfireWorldBarMetrics === "function") {

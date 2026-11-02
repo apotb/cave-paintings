@@ -354,15 +354,24 @@ test("craft leaf_cord uses pocket leaves before basket leaves", () => {
     assert.equal(basket.slots[0]?.quantity, 5);
 });
 
-test("craft sharp_stick needs a nearby rock or settling stone", () => {
+test("craft sharp_stick needs a nearby rock", () => {
     const { world, pawn, Protocol } = createTestWorld();
     pawn.inventory[0] = { id: "stick", quantity: 1 };
     world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "sharp_stick" });
     assert.ok(!pawn.inventory.some((s) => s?.id === "sharp_stick"));
 
     originChunk(world).things.push({
+        uid: "hearth_not_rock",
+        id: "hearth",
+        x: pawn.x,
+        y: pawn.y
+    });
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "sharp_stick" });
+    assert.ok(!pawn.inventory.some((s) => s?.id === "sharp_stick"));
+
+    originChunk(world).things.push({
         uid: "ss_rock",
-        id: "settling_stone",
+        id: "rock",
         x: pawn.x,
         y: pawn.y
     });

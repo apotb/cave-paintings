@@ -19,6 +19,7 @@ class CampfirePanel {
         this._buildSlots();
         this._buildDestroy();
         this._buildSettle();
+        this._buildName();
         this._buildHeatLabel();
 
         this.cookBarBg = scene.add.graphics();
@@ -38,6 +39,17 @@ class CampfirePanel {
         const s = this.scene.uiScale || 1;
         const zoom = this.scene.worldZoom || 1;
         return s / zoom;
+    }
+
+    _isHearth() {
+        return this.campfire?.entry?.id === "hearth" || !!this.campfire?.meta?.noCatalyst;
+    }
+
+    _hearthSettle() {
+        const sys = this.scene.settlementSys;
+        const entry = this.campfire?.entry;
+        if (!sys || !entry) return null;
+        return sys.byStoneUid?.(entry.uid) || sys.byId?.(entry.settlementId) || null;
     }
 
     _isShellSimmer() {
@@ -275,6 +287,69 @@ class CampfirePanel {
         this.destroyBtn.setVisible(false);
     }
 
+    _buildName() {
+        const BG = 0x120e0a;
+        const BG_PRESS = 0x0a0806;
+        const OUTLINE = 0x2a2218;
+        const OUTLINE_HOVER = 0xffffff;
+        const OUTLINE_PRESS = 0xd4a84b;
+        this._nameRect = this.scene.add.rectangle(0, 0, 78, 28, BG, 1)
+            .setStrokeStyle(2, OUTLINE)
+            .setInteractive({ useHandCursor: true });
+        this._nameText = this.scene.add.text(0, 0, "Camp", {
+            fontFamily: PIXEL_UI_FONT,
+            fontSize: "16px",
+            color: "#d4c4a8"
+        }).setOrigin(0.5);
+        this._nameBtn = this.scene.add.container(0, 0, [this._nameRect, this._nameText]);
+        this._nameHovering = false;
+        this._namePressing = false;
+        this._nameBw = 78;
+        this._nameBh = 28;
+        const paint = () => {
+            const strokeW = typeof pixelUiWorldStroke === "function"
+                ? pixelUiWorldStroke(this.scene)
+                : 2 / (this.scene.worldZoom || 1);
+            if (this._namePressing) {
+                this._nameRect.setFillStyle(BG_PRESS, 1);
+                this._nameRect.setStrokeStyle(strokeW, OUTLINE_PRESS);
+            } else if (this._nameHovering) {
+                this._nameRect.setFillStyle(BG, 1);
+                this._nameRect.setStrokeStyle(strokeW, OUTLINE_HOVER);
+            } else {
+                this._nameRect.setFillStyle(BG, 1);
+                this._nameRect.setStrokeStyle(strokeW, OUTLINE);
+            }
+        };
+        this._paintName = paint;
+        this._nameRect.on("pointerover", () => {
+            this._nameHovering = true;
+            paint();
+        });
+        this._nameRect.on("pointerout", () => {
+            this._nameHovering = false;
+            this._namePressing = false;
+            paint();
+        });
+        this._nameRect.on("pointerdown", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            if (pointer.rightButtonDown()) return;
+            this._namePressing = true;
+            paint();
+        });
+        this._nameRect.on("pointerup", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            const was = this._namePressing;
+            this._namePressing = false;
+            paint();
+            if (!was || !this._nameHovering || !this._isHearth()) return;
+            const settle = this._hearthSettle();
+            if (settle) this.scene.settlementSys?.openPanel?.(settle);
+        });
+        this.container.add(this._nameBtn);
+        this._nameBtn.setVisible(false);
+    }
+
     _buildSettle() {
         const sys = this.scene.settlementSys;
         if (!sys) return;
@@ -302,12 +377,59 @@ class CampfirePanel {
     }
 
     _syncSettle() {
+        if (this._isHearth()) {
+            this._settleUi?.btn.setVisible(false);
+            this._billUi?.btn.setVisible(false);
+            this._fuelUi?.btn.setVisible(false);
+            this._layoutNameButton();
+            this._placeActionRow();
+            this._placeBillFuelRow();
+            return;
+        }
+        this._nameBtn?.setVisible(false);
         this.scene.settlementSys?.syncStationButton(this._settleUi, this.campfire);
         const added = this.scene.settlementSys?.isAdded(this.campfire);
         this._billUi?.btn.setVisible(!!added);
         this._fuelUi?.btn.setVisible(!!added);
         this._placeActionRow();
         this._placeBillFuelRow();
+    }
+
+    _layoutNameButton() {
+        if (!this._nameBtn || !this.campfire) return;
+        const show = this._isHearth() && !!this._hearthSettle();
+        this._nameBtn.setVisible(show);
+        if (!show) {
+            this._nameRect?.disableInteractive?.();
+            return;
+        }
+        const name = this._hearthSettle()?.name || "Camp";
+        this._nameText.setText(name);
+        const s = this.scene.uiScale || 1;
+        const zoom = this.scene.worldZoom || 1;
+        if (typeof applyPixelUiWorldFont === "function") applyPixelUiWorldFont(this._nameText, 16, this.scene);
+        else {
+            this._nameText.setResolution(zoom * (window.devicePixelRatio || 1));
+            this._nameText.setFontSize(`${pixelUiFontSize(16, s)}px`);
+            this._nameText.setScale(1 / zoom);
+        }
+        const ws = this._worldUiScale();
+        const bw = Math.max(78, name.length * 8 + 16) * ws;
+        const bh = 28 * ws;
+        this._nameBw = bw;
+        this._nameBh = bh;
+        this._nameRect.setSize(bw, bh);
+        if (typeof ensurePointerInteractive === "function") ensurePointerInteractive(this._nameRect);
+        else this._nameRect.setInteractive({ useHandCursor: true });
+        if (this._nameRect.input?.hitArea?.setTo) {
+            this._nameRect.input.hitArea.setTo(-bw / 2, -bh / 2, bw, bh);
+        }
+        const fireH = this.campfire.displayHeight || 16;
+        const y = typeof worldUiAboveY === "function"
+            ? worldUiAboveY(this.scene, fireH, bh)
+            : -(fireH + 2 + bh / 2);
+        this._nameBtn.setPosition(0, y);
+        this._paintName?.();
     }
 
     _stackFor(key) {
@@ -426,7 +548,8 @@ class CampfirePanel {
 
         for (const view of this.slotViews) {
             let showSlot = true;
-            if (view.key === 'cook') showSlot = cookOpen;
+            if (view.key === 'catalyst' && this._isHearth()) showSlot = false;
+            else if (view.key === 'cook') showSlot = cookOpen;
             else if (view.key.startsWith('simmer:')) showSlot = simmerOpen;
 
             view.slot.setVisible(showSlot);
@@ -474,9 +597,10 @@ class CampfirePanel {
             drawSlotConditionBar(view.bar, view.slot, showSlot ? frac : null);
         }
 
-        const canDestroy = !this.campfire.isLit?.();
+        const hearth = this._isHearth();
+        const canDestroy = !hearth && !this.campfire.isLit?.();
         this._destroyEnabled = canDestroy;
-        this.destroyBtn?.setVisible(true);
+        this.destroyBtn?.setVisible(!hearth);
         this._syncDestroyHitArea(true);
         this._syncDestroyHover();
         this._placeActionRow();
@@ -1527,6 +1651,7 @@ class CampfirePanel {
         const hit = (rect, vis) => !!(vis && rect?.getBounds
             && Phaser.Geom.Rectangle.Contains(rect.getBounds(), pt.x, pt.y));
         if (this.destroyBtn?.visible && this.pointerOnDestroy(pointer)) return true;
+        if (hit(this._nameRect, this._nameBtn?.visible)) return true;
         if (hit(this._settleUi?.rect, this._settleUi?.btn?.visible)) return true;
         if (hit(this._billUi?.rect, this._billUi?.btn?.visible)) return true;
         if (hit(this._fuelUi?.rect, this._fuelUi?.btn?.visible)) return true;

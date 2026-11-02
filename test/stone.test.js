@@ -229,7 +229,7 @@ test("grindstone preview uses the first pebble, and other recipes stay plain", (
     assert.equal(Stone.craftPreviewStack(circle, [[]]), null);
 
     const settling = {
-        id: "settling_stone",
+        id: "hearth",
         ingredients: [{ id: "pebble", qty: 8 }]
     };
     assert.equal(Stone.craftPreviewStack(settling, [[

@@ -741,19 +741,54 @@ class SettlementSystem {
             return null;
         }
         const chunk = scene.getChunkAtWorld(x, y - 1);
-        if (!chunk || !chunk.isLoaded) return null;
-        const entry = {
-            id: "settling_stone",
-            x,
-            y,
-            tx,
-            ty,
-            rot: typeof Place !== "undefined" ? Place.normalizeRot(rot) : (rot || 0)
+        if (!chunk || !chunk.isLoaded || !Array.isArray(chunk.meta?.things)) return null;
+        const ts = scene.tileSize || 16;
+        const fires = [];
+        for (const t of chunk.meta.things) {
+            if (!t || t.gone) continue;
+            if (t.id !== "campfire" && t.id !== "unlit_campfire") continue;
+            const def = scene.getThing?.(t.id);
+            if (typeof Place !== "undefined" && Place.entryOnTile && !Place.entryOnTile(t, tx, ty, ts, def)) continue;
+            fires.push(t);
+        }
+        if (fires.length !== 1) return null;
+        const entry = fires[0];
+        const player = scene.player;
+        const held = player?.getHeldItem?.();
+        const consumed = held?.id === "hearth";
+        if (consumed) player.loseItem(held, 1);
+        const returned = [];
+        const take = (stack) => {
+            if (stack?.id && stack.quantity > 0) returned.push(stack);
         };
+        take(entry.cook);
+        take(entry.catalyst);
+        entry.cook = null;
+        entry.catalyst = null;
+        if (Array.isArray(entry.simmer)) {
+            for (let i = 0; i < entry.simmer.length; i++) {
+                take(entry.simmer[i]);
+                entry.simmer[i] = null;
+            }
+        }
+        const wasLit = entry.id === "campfire";
+        entry.id = "hearth";
+        entry.lit = wasLit;
+        entry.tx = tx;
+        entry.ty = ty;
+        entry.rot = typeof Place !== "undefined" ? Place.normalizeRot(rot) : (rot || 0);
         if (typeof Place !== "undefined") Place.ensureSettlementEntry(entry);
-        chunk.meta.things.push(entry);
-        const spr = new SettlingStone(scene, entry);
+        const old = (chunk.things?.getChildren?.() || []).find((s) => s?.entry === entry);
+        old?.destroy?.();
+        const spr = new Hearth(scene, entry);
         chunk.things.add(spr);
+        for (const stack of returned) {
+            const meta = scene.getItem?.(stack.id);
+            const left = player?.gainItem?.(meta, stack.quantity || 1, stack.spoilLeft) ?? (stack.quantity || 1);
+            if (left > 0 && meta && typeof DroppedItem !== "undefined") {
+                DroppedItem.spawn(scene, entry.x, entry.y, meta, left);
+            }
+        }
         const settle = S.createSettlement({
             name,
             ownerId: this.ownerId(),
@@ -770,7 +805,8 @@ class SettlementSystem {
         scene.combatLog?.push(`${settle.name} has been founded`, {
             color: (typeof CombatLog !== "undefined" && CombatLog.COLOR_SETTLER) || "#7ec8ff"
         });
-        return { settle, spr };
+        scene.markLightDirty?.();
+        return { settle, spr, consumed };
     }
 
     promptNameThenPlace(tx, ty, rot) {
@@ -791,7 +827,7 @@ class SettlementSystem {
                 return;
             }
             const placed = this.tryPlace(tx, ty, rot, name);
-            if (placed && info?.held) scene.player?.loseItem?.(info.held, 1);
+            if (placed && info?.held && !placed.consumed) scene.player?.loseItem?.(info.held, 1);
             if (placed && !(info?.held?.quantity > 0)) scene.resetPlaceRot?.();
             if (placed) this.openPanel(placed.settle);
         }, { placeholder: "Camp" });
@@ -2337,7 +2373,8 @@ class SettlementSystem {
         const rect = scene.add.rectangle(0, 0, size, size, BG, 1)
             .setStrokeStyle(2, OUTLINE)
             .setInteractive({ useHandCursor: true });
-        const tex = scene.textures.exists("settling_stone") ? "settling_stone" : "__MISSING";
+        if (typeof ensureHearthIcon === "function") ensureHearthIcon(scene);
+        const tex = scene.textures.exists("hearth") ? "hearth" : "__MISSING";
         const icon = scene.add.image(0, 0, tex).setOrigin(0.5);
         const btn = scene.add.container(0, 0, [rect, icon]);
         const ui = {

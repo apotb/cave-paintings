@@ -337,6 +337,8 @@ const CharacterStore = (() => {
 
     function normalizeCharacterSpoil(character) {
         if (!character) return character;
+        // SAVE PATCHES — delete this call with shared/patches when old saves are dropped.
+        if (typeof Patches !== "undefined") Patches.applyCharacter?.(character);
         const inv = character.inventory;
         if (Array.isArray(inv)) {
             for (const s of inv) stripWorldSpoil(s);

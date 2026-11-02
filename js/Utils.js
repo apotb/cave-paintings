@@ -1308,7 +1308,30 @@ function applyItemIconScale(image, scale) {
     return next;
 }
 
+function ensureHearthIcon(scene) {
+    if (!scene?.textures) return null;
+    if (scene.textures.exists("hearth")) return "hearth";
+    if (typeof document === "undefined") return null;
+    if (!scene.textures.exists("hearth_1") || !scene.textures.exists("hearth_2")) return null;
+    const below = stoneSourceImage(scene, "hearth_1");
+    const above = stoneSourceImage(scene, "hearth_2");
+    if (!below?.width || !above?.width) return null;
+    const canvasTex = scene.textures.createCanvas("hearth", 16, 16);
+    if (!canvasTex?.getContext) return null;
+    const ctx = canvasTex.getContext();
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, 16, 16);
+    ctx.drawImage(below, 0, 0);
+    ctx.drawImage(above, 0, 0);
+    canvasTex.refresh();
+    if (typeof WorldAtlas !== "undefined") WorldAtlas.adopt(scene, "hearth");
+    return "hearth";
+}
+
 function stackIconKey(meta, stack, scene) {
+    if ((meta?.id === "hearth" || meta?.key === "hearth") && typeof ensureHearthIcon === "function") {
+        ensureHearthIcon(scene);
+    }
     if (typeof Place !== "undefined" && Place.itemIconKey && scene?.getThing) {
         const key = Place.itemIconKey(
             meta,

@@ -320,7 +320,7 @@ test("every item lands in exactly one leaf", () => {
     assert.equal(SF.leafCategory(getItem("wicker_basket"), null), "buildings");
     assert.equal(SF.leafCategory(getItem("drying_rack"), null), "buildings");
     assert.equal(SF.leafCategory(getItem("skinworking_bench"), null), "buildings");
-    assert.equal(SF.leafCategory(getItem("settling_stone"), null), "buildings");
+    assert.equal(SF.leafCategory(getItem("hearth"), null), "buildings");
     assert.equal(SF.leafCategory(getItem("tally_stick"), null), "buildings");
     assert.equal(SF.leafCategory(getItem("leaf_cord"), null), "medicine");
     assert.equal(SF.leafCategory(getItem("poultice"), null), "medicine");

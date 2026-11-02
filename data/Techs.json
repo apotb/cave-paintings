@@ -227,7 +227,7 @@
         "cost": 0,
         "startUnlocked": true,
         "prereqs": ["fire"],
-        "unlocks": { "items": ["settling_stone"], "jobs": [], "text": [] },
+        "unlocks": { "items": ["hearth"], "jobs": [], "text": [] },
         "children": []
     },
     {

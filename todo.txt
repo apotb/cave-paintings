@@ -8,8 +8,6 @@ More rock types -- obsidian, quartz, basalt, etc
 
 Mode 3 blades -- prepared-core / long flakes (at least twice as long as wide). Further down than hand-axes.
 
-Replace Settling Stone with Hearth: Log x4, Dried hide x1, Pebble x8, Leaf cord x4, Stick frame x1. Update existing Settling Stones to a Campfire with a Hearth and migrate all the data, but make sure we have patches like this are written in a way that it'll be easy to find and remove from the final versions of the game to prevent unnecessary bloat.
-
 Better party management Kenshi-esque -- choose which severity of injuries to tend, make certain party members bodyguards that will only attack enemies near you, etc
 
 Bows
@@ -17,8 +15,6 @@ Bows
 Burials / ritual -- early spiritualism
 
 Body/biome temperature
-
-Diet -- fruits, vegetables, grains, protein, dairy
 
 Raids
 
@@ -32,7 +28,7 @@ Icons in tooltips
 
 Personalities and socializing
 
-Wealth: actual money in-game, but won't be unlockable till much later via Currency tech, and you then will need Accounting tech to see your net worth.
+Wealth: actual money system in-game, but won't be unlockable till much later via Currency tech, and you then will need Accounting tech to see your net worth.
 
 ---
 

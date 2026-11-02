@@ -1378,22 +1378,25 @@
         }
     },
     {
-        "id": "settling_stone",
-        "name": "Settling Stone",
-        "key": "settling_stone",
+        "id": "hearth",
+        "name": "Hearth",
+        "key": "hearth",
+        "generatedIcon": true,
         "maxStack": 1,
         "place": {
-            "thing": "settling_stone"
+            "thing": "hearth"
         },
         "tooltip": [
-            "Found your own settlement",
+            "Place on a campfire to found a settlement",
             "Manage people, work, and resources"
         ],
         "recipe": {
+            "log": 4,
             "pebble": 8,
-            "leaf_cord": 8,
+            "leaf_cord": 4,
+            "stick_frame": 1,
             "ANY_HIDE": {
-                "qty": 2,
+                "qty": 1,
                 "hideStage": "dried"
             },
             "CRAFT_SECONDS": 8

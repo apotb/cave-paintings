@@ -143,6 +143,20 @@
     function thingImageLoads(t) {
         if (t?.figurine) return [];
         if (!t?.key) return [];
+        if (t.id === "hearth") {
+            return [
+                { key: "hearth_1", path: "assets/things/hearth/hearth_1.png" },
+                { key: "hearth_2", path: "assets/things/hearth/hearth_2.png" },
+                {
+                    key: "campfire",
+                    path: "assets/things/campfire.png",
+                    spritesheet: true,
+                    frameWidth: 16,
+                    frameHeight: 16
+                },
+                { key: "unlit_campfire", path: "assets/things/unlit_campfire.png" }
+            ];
+        }
         if (t.floor && t.wall) {
             return [
                 { key: t.floor, path: `assets/things/${t.key}/${partFile(t.key, t.floor)}.png` },
@@ -264,14 +278,12 @@
 
     function isSettlementThing(thingDef, entry) {
         if (thingDef?.settlement) return true;
-        return entry?.id === "settling_stone" || !!entry?.settlementId;
+        return entry?.id === "hearth" || !!entry?.settlementId;
     }
 
-    /** Nearby-requirement match: a settling stone counts as a rock. */
     function countsAsThing(haveId, needId) {
         if (!needId || !haveId) return false;
-        if (haveId === needId) return true;
-        return needId === "rock" && haveId === "settling_stone";
+        return haveId === needId;
     }
 
     function ensureSettlementEntry(entry) {
@@ -1566,15 +1578,24 @@
         const ts = opts.tileSize || 16;
         if (!Number.isFinite(tx) || !Number.isFinite(ty)) return false;
         const getThing = opts.getThing;
+        const hearthPlace = opts.placeDef?.id === "hearth";
+        let campfires = 0;
+        let blocked = false;
         const lists = [opts.things, opts.lootables];
         for (const list of lists) {
             if (!Array.isArray(list)) continue;
             for (const e of list) {
                 const def = typeof getThing === "function" ? getThing(e?.id) : null;
-                if (entryOnTile(e, tx, ty, ts, def)) return false;
+                if (!entryOnTile(e, tx, ty, ts, def)) continue;
+                if (hearthPlace && (e?.id === "campfire" || e?.id === "unlit_campfire")) {
+                    campfires += 1;
+                    continue;
+                }
+                blocked = true;
             }
         }
-        return true;
+        if (hearthPlace) return !blocked && campfires === 1;
+        return !blocked;
     }
 
     function canPlaceOnTiles(tiles, occForTile) {

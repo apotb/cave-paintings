@@ -531,8 +531,11 @@
                 const i = list.findIndex((t) => t?.uid === settle.stoneUid);
                 if (i >= 0) {
                     const entry = list[i];
-                    list.splice(i, 1);
-                    this._emitStorageRemoved(c, entry);
+                    const lit = entry.id === "hearth" ? !!entry.lit : entry.id === "campfire";
+                    entry.id = lit ? "campfire" : "unlit_campfire";
+                    delete entry.lit;
+                    delete entry.settlementId;
+                    this._emitCampfire(c, entry);
                     break;
                 }
             }

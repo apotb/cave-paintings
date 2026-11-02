@@ -3797,10 +3797,26 @@ function fillGrass(world) {
     }
 }
 
+function plantFoundingFire(world, pawn) {
+    const { tx, ty } = world._tileOf(pawn.x, pawn.y);
+    const { x, y } = world._tileCenter(tx, ty);
+    originChunk(world).things.push({
+        uid: "found_fire",
+        id: "campfire",
+        x, y, tx, ty,
+        fuel: [null, null],
+        cook: null,
+        catalyst: null,
+        simmer: [null, null, null, null],
+        burnRemaining: 0
+    });
+}
+
 test("dedicated founding and destroying a settlement announces in world chat", () => {
     const { world, pawn, Protocol } = createTestWorld();
     fillGrass(world);
-    pawn.inventory[0] = { id: "settling_stone", quantity: 1 };
+    plantFoundingFire(world, pawn);
+    pawn.inventory[0] = { id: "hearth", quantity: 1 };
     pawn.hotbarIndex = 0;
     const { tx, ty } = world._tileOf(pawn.x, pawn.y);
     world.handleAction(pawn.id, {
@@ -3830,7 +3846,8 @@ test("dedicated founding and destroying a settlement announces in world chat", (
 test("dedicated rename announces old and new names in settler blue", () => {
     const { world, pawn, Protocol } = createTestWorld();
     fillGrass(world);
-    pawn.inventory[0] = { id: "settling_stone", quantity: 1 };
+    plantFoundingFire(world, pawn);
+    pawn.inventory[0] = { id: "hearth", quantity: 1 };
     pawn.hotbarIndex = 0;
     const { tx, ty } = world._tileOf(pawn.x, pawn.y);
     world.handleAction(pawn.id, {

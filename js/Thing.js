@@ -29,6 +29,7 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
     }
 
     static textureKeyFor(scene, meta, rot) {
+        if (meta?.id === "hearth" && scene?.textures?.exists?.("unlit_campfire")) return "unlit_campfire";
         if (!meta?.key) return "";
         const parts = Math.floor(Number(meta.anim?.parts) || 0);
         if (parts >= 2) return `${meta.key}_1`;
@@ -859,6 +860,11 @@ class Campfire extends Thing {
     }
 
     _syncKind() {
+        if (this.entry?.id === "hearth") {
+            this.applyVisual();
+            this.applySmokeVisual?.();
+            return;
+        }
         const id = this.entry?.id;
         if (!id || this.meta?.id === id) return;
         this.setKind(id);
@@ -1130,6 +1136,107 @@ class Campfire extends Thing {
         );
         this.clearSimmer();
         this.setCatalyst(meal);
+    }
+}
+
+class Hearth extends Campfire {
+    constructor(scene, entry) {
+        if (entry && entry.lit == null) entry.lit = false;
+        super(scene, entry);
+        this.on("destroy", () => this._destroyHearthLayers());
+    }
+
+    isLit() {
+        return !!this.entry?.lit;
+    }
+
+    setKind(id) {
+        if (this.entry?.id !== "hearth") {
+            super.setKind(id);
+            return;
+        }
+        if (id === "campfire") this.entry.lit = true;
+        else if (id === "unlit_campfire") this.entry.lit = false;
+        const scene = this.scene;
+        const wasHover = scene._hoverTarget === this || scene._tooltipTarget === this;
+        this.applyVisual();
+        this.applySmokeVisual();
+        if (!this.isLit()) this.entry.burnRemaining = 0;
+        if (!this.input?.enabled) this.setInteractive({ cursor: "pointer" });
+        scene.markLightDirty?.();
+        if (wasHover) {
+            scene._hoverTarget = null;
+            const pointer = scene.input?.activePointer;
+            if (pointer && !scene.player?.blocksTooltips?.()) {
+                scene.showTooltip(() => this.tooltipText(), pointer.x, pointer.y, this);
+                scene._hoverTarget = this;
+            }
+        } else if (scene.tooltip?.visible && scene._tooltipTarget === this) {
+            scene.refreshTooltip();
+        }
+        scene.campfirePanel?.refresh();
+    }
+
+    applyVisual() {
+        if (!this.entry) return;
+        this._syncSortDepth();
+        const lit = !!this.entry.lit;
+        if (lit && this.scene.textures?.exists?.("campfire")) {
+            if (this.texture?.key !== "campfire") this.setTexture("campfire");
+            const key = this._ensureCampfireAnim();
+            if (key) {
+                this.addToUpdateList?.();
+                if (!this._animIsLive(key)) this.play(key);
+            }
+        } else {
+            if (this.anims?.isPlaying) this.stop();
+            if (this.scene.textures?.exists?.("unlit_campfire")) this.setTexture("unlit_campfire");
+        }
+        this._syncHearthLayers();
+        if (this.body) this._positionBody();
+        this._syncInteractMark();
+    }
+
+    _ensureCampfireAnim() {
+        const key = "campfire-anim";
+        if (!this.scene.anims) return null;
+        if (!this.scene.anims.exists(key)) {
+            const camp = this.scene.getThing?.("campfire");
+            const a = camp?.anim || {};
+            this.scene.anims.create({
+                key,
+                frames: this.scene.anims.generateFrameNumbers("campfire"),
+                frameRate: a.frameRate ?? 4,
+                repeat: a.repeat ?? -1
+            });
+        }
+        return this.scene.anims.exists(key) ? key : null;
+    }
+
+    _syncHearthLayers() {
+        const depth = Number(this.depth) || Number(this.y) || 0;
+        this._syncHearthLayer("_hearthBelow", "hearth_1", depth - 0.2);
+        this._syncHearthLayer("_hearthAbove", "hearth_2", depth + 0.2);
+    }
+
+    _syncHearthLayer(field, key, depth) {
+        if (!this.scene.textures?.exists?.(key)) return;
+        let spr = this[field];
+        if (!spr?.active) {
+            spr = this.scene.add.image(this.x, this.y, key).setOrigin(0.5, 1);
+            this.scene.mainLayer?.add(spr);
+            this[field] = spr;
+        }
+        spr.setPosition(this.x, this.y);
+        spr.setDepth(depth);
+        spr.setVisible(true);
+    }
+
+    _destroyHearthLayers() {
+        this._hearthBelow?.destroy?.();
+        this._hearthAbove?.destroy?.();
+        this._hearthBelow = null;
+        this._hearthAbove = null;
     }
 }
 

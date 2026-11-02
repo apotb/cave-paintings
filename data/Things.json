@@ -359,11 +359,16 @@
         "rotations": [0, 90, 180, 270]
     },
     {
-        "id": "settling_stone",
-        "name": "Settling Stone",
-        "key": "settling_stone",
+        "id": "hearth",
+        "name": "Hearth",
+        "key": "hearth",
         "hitboxSize": 5,
-        "settlement": true
+        "settlement": true,
+        "campfire": true,
+        "noCatalyst": true,
+        "interactOffset": [0, 1],
+        "lightLevel": 12,
+        "lightKind": "flame"
     },
     {
         "id": "painting_circle",

@@ -29,6 +29,24 @@
     const IDLE_SIP_MUL = 4;
     const LIT_ID = "campfire";
     const UNLIT_ID = "unlit_campfire";
+    const HEARTH_ID = "hearth";
+
+    function isHearthEntry(entry) {
+        return entry?.id === HEARTH_ID;
+    }
+
+    /** Visual flame. Campfires use the thing id. A hearth keeps its id and uses entry.lit. */
+    function isLitEntry(entry) {
+        if (!entry) return false;
+        if (isHearthEntry(entry)) return !!entry.lit;
+        return entry.id === LIT_ID;
+    }
+
+    function setEntryLit(entry, lit) {
+        if (!entry) return;
+        if (isHearthEntry(entry)) entry.lit = !!lit;
+        else entry.id = lit ? LIT_ID : UNLIT_ID;
+    }
     /** Night-veil punch radii. Caps at the 600°C ("hot") reach so roaring
      *  800° fuel does not light a much larger area. */
     const LIGHT_RADIUS = { cold: 0, embers: 3, warm: 6, hot: 9, roaring: 9 };
@@ -132,7 +150,7 @@
     }
 
     function isBurning(entry) {
-        return !!(entry && entry.id === LIT_ID && (entry.burnRemaining || 0) > 0);
+        return !!(entry && isLitEntry(entry) && (entry.burnRemaining || 0) > 0);
     }
 
     function smolderExpired(entry, worldMinute) {
@@ -342,7 +360,7 @@
         if (!entry) return entry;
         ensureSlots(entry);
         if (entry.pitTemp == null) {
-            if (entry.id === LIT_ID && ((entry.burnRemaining || 0) > 0 || peekFuel(entry, getItem))) {
+            if (isLitEntry(entry) && ((entry.burnRemaining || 0) > 0 || peekFuel(entry, getItem))) {
                 const burning = peekFuel(entry, getItem);
                 const t = burning?.temp || DEFAULT_FUEL_TEMP;
                 entry.pitTemp = t;
@@ -356,7 +374,7 @@
         }
         if (entry.cookTemp == null) entry.cookTemp = AMBIENT_TEMP;
         if (entry.maxTemp == null) entry.maxTemp = AMBIENT_TEMP;
-        if (entry.canIgniteFuel == null) entry.canIgniteFuel = entry.id === LIT_ID;
+        if (entry.canIgniteFuel == null) entry.canIgniteFuel = isLitEntry(entry);
         seedStackTempsFromEntry(entry);
         if (entry.catalyst && !catalystSoaksPitHeat(entry, getItem)) {
             applyStackTemp(entry.catalyst, AMBIENT_TEMP);
@@ -399,7 +417,7 @@
         if (!(found.stack.quantity > 0)) entry.fuel[found.i] = null;
         entry.burnRemaining = found.kj;
         entry.maxTemp = found.temp;
-        entry.id = LIT_ID;
+        setEntryLit(entry, true);
         entry.canIgniteFuel = true;
         delete entry.smolderAt;
         return true;
@@ -415,7 +433,7 @@
     function lightPit(entry, getItem) {
         migrateEntry(entry, getItem);
         if (isBurning(entry)) {
-            entry.id = LIT_ID;
+            setEntryLit(entry, true);
             entry.canIgniteFuel = true;
             return true;
         }
@@ -444,7 +462,7 @@
 
     function beginSmolder(entry, worldMinute) {
         entry.burnRemaining = 0;
-        entry.id = UNLIT_ID;
+        setEntryLit(entry, false);
         entry.canIgniteFuel = true;
         if (entry.smolderAt == null && worldMinute != null) {
             entry.smolderAt = Math.round(Number(worldMinute));
@@ -454,7 +472,8 @@
     function tickPit(entry, getItem, worldMinute) {
         migrateEntry(entry, getItem);
         const idBefore = entry.id;
-        const wasLit = idBefore === LIT_ID;
+        const litBefore = !!entry.lit;
+        const wasLit = isLitEntry(entry);
         const remainBefore = entry.burnRemaining || 0;
         const fuelBefore = (entry.fuel || []).map((s) => (s?.id ? `${s.id}:${s.quantity || 0}` : "")).join("|");
         const tempBefore = entry.pitTemp;
@@ -496,14 +515,17 @@
 
         const fuelAfter = (entry.fuel || []).map((s) => (s?.id ? `${s.id}:${s.quantity || 0}` : "")).join("|");
         const radiusAfter = lightRadiusForEntry(entry);
+        const litChanged = isHearthEntry(entry)
+            ? (!!entry.lit !== litBefore)
+            : (entry.id !== idBefore);
         return {
-            changed: entry.id !== idBefore
+            changed: litChanged
                 || fuelAfter !== fuelBefore
                 || entry.pitTemp !== tempBefore
                 || (entry.burnRemaining || 0) !== remainBefore
                 || !!entry.canIgniteFuel !== igniteBefore,
-            litChanged: entry.id !== idBefore,
-            lightChanged: entry.id !== idBefore
+            litChanged,
+            lightChanged: litChanged
                 || Math.round(radiusBefore * 100) !== Math.round(radiusAfter * 100)
         };
     }
@@ -739,6 +761,10 @@
         IDLE_SIP_MUL,
         LIT_ID,
         UNLIT_ID,
+        HEARTH_ID,
+        isHearthEntry,
+        isLitEntry,
+        setEntryLit,
         LIGHT_RADIUS,
         LIGHT_STOPS,
         UNLIT_LIGHT_MUL,

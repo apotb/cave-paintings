@@ -117,8 +117,11 @@
                 maxTemp: src.maxTemp,
                 canIgniteFuel: !!src.canIgniteFuel,
                 smolderAt: src.smolderAt,
-                catalystReserved: !!src.catalystReserved
+                catalystReserved: !!src.catalystReserved,
+                lit: !!src.lit,
+                settlementId: src.settlementId || null
             };
+            if (src.id !== "hearth") delete entry.lit;
             if ((src.simmerBarMinutes || 0) > 0) entry.simmerBarMinutes = src.simmerBarMinutes;
             this._netApplyFuelFilter(entry, src);
             chunk.meta.things.push(entry);
@@ -127,6 +130,12 @@
                 ? Math.round(Fire.lightRadiusForEntry(entry) * 100)
                 : null;
             if (src.id) entry.id = src.id;
+            if ("lit" in src) entry.lit = !!src.lit;
+            if (entry.id !== "hearth") delete entry.lit;
+            if ("settlementId" in src) {
+                if (src.settlementId) entry.settlementId = src.settlementId;
+                else delete entry.settlementId;
+            }
             if (src.cookProgress != null) entry.cookProgress = src.cookProgress;
             if (src.burnRemaining != null) entry.burnRemaining = src.burnRemaining;
             if (src.roastBarMinutes != null) entry.roastBarMinutes = src.roastBarMinutes;
@@ -156,6 +165,12 @@
         } else {
             entry.uid = src.uid || opts.uid || entry.uid;
             if (src.id) entry.id = src.id;
+            if ("lit" in src) entry.lit = !!src.lit;
+            if (entry.id !== "hearth") delete entry.lit;
+            if ("settlementId" in src) {
+                if (src.settlementId) entry.settlementId = src.settlementId;
+                else delete entry.settlementId;
+            }
             entry.x = x;
             entry.y = y;
             if (Number.isFinite(incomingRev)) entry.rev = incomingRev;
@@ -215,10 +230,17 @@
     _netSyncCampfireSprite(chunk, entry, wantId, x, y) {
         if (!entry) return;
         const id = wantId || entry.id;
-        const live = this._netFindCampfireSprite(entry, x, y);
+        let live = this._netFindCampfireSprite(entry, x, y);
+        const wantHearth = id === "hearth";
+        const liveHearth = typeof Hearth !== "undefined" && live instanceof Hearth;
+        if (live && wantHearth !== liveHearth) {
+            if (this.campfirePanel?.campfire === live) this.campfirePanel.close();
+            live.destroy();
+            live = null;
+        }
         if (live) {
             if (live.entry !== entry) live.entry = entry;
-            if (id && typeof live.setKind === "function" && live.meta?.id !== id) {
+            if (!wantHearth && id && typeof live.setKind === "function" && live.meta?.id !== id) {
                 live.setKind(id);
             } else {
                 live.applyVisual?.();
@@ -227,7 +249,12 @@
             this._netDedupeCampfireSprites(entry, x, y, live);
             return;
         }
-        if (chunk?.isLoaded) chunk.things.add(new Campfire(this, entry));
+        if (chunk?.isLoaded) {
+            const spr = wantHearth && typeof Hearth !== "undefined"
+                ? new Hearth(this, entry)
+                : new Campfire(this, entry);
+            chunk.things.add(spr);
+        }
     },
 
     _netDedupeCampfireSprites(entry, x, y, keep) {
@@ -329,7 +356,7 @@
                 || this.getThing?.(t.id)?.sleep
                 || this.getThing?.(t.id)?.settlement
                 || this.getThing?.(t.id)?.figurine
-                || t.id === "settling_stone"
+                || t.id === "hearth"
                 || t.id === "clay_figurine"
                 || Array.isArray(t.occupants);
             if (!store) return false;
@@ -397,11 +424,11 @@
             const def = this.getThing(src.id);
             const isStation = !!(src.craftStation || def?.craftStation);
             const isSleep = !!(src.sleep || def?.sleep || Array.isArray(src.occupants));
-            const isSettle = !!(src.settlement || def?.settlement || src.id === "settling_stone");
+            const isSettle = !!(src.settlement || def?.settlement || src.id === "hearth");
             const isFig = !!(src.figurine || def?.figurine || src.id === "clay_figurine");
             entry = {
                 uid: src.uid || opts.uid || `${isSleep ? "sl" : isStation ? "cs" : isSettle ? "ss" : isFig ? "fg" : "st"}_${Math.round(x)}_${Math.round(y)}`,
-                id: src.id || (isSleep ? "lean_to" : isStation ? "skinworking_bench" : isSettle ? "settling_stone" : isFig ? "clay_figurine" : "wicker_basket"),
+                id: src.id || (isSleep ? "lean_to" : isStation ? "skinworking_bench" : isSettle ? "hearth" : isFig ? "clay_figurine" : "wicker_basket"),
                 x,
                 y,
                 rot: typeof Place !== "undefined" ? Place.normalizeRot(src.rot) : (src.rot || 0),
@@ -528,7 +555,7 @@
         const def = this.getThing(entry.id);
         const isStation = !!(def?.craftStation);
         const isSleep = !!(def?.sleep || Array.isArray(entry.occupants));
-        const isSettle = !!(def?.settlement || entry.id === "settling_stone");
+        const isSettle = !!(def?.settlement || entry.id === "hearth");
         const isFig = !!(def?.figurine || entry.id === "clay_figurine");
         let live = isSleep
             ? this.findLeanToByUid(entry.uid)
@@ -544,7 +571,8 @@
                 const matchType = isSleep
                     ? (t instanceof LeanTo)
                     : isStation ? (t instanceof CraftStation)
-                    : isSettle ? (typeof SettlingStone !== "undefined" && t instanceof SettlingStone)
+                    : isSettle ? ((typeof Hearth !== "undefined" && t instanceof Hearth)
+                        || (typeof SettlingStone !== "undefined" && t instanceof SettlingStone))
                     : isFig ? (typeof ClayFigurine !== "undefined" && t instanceof ClayFigurine)
                     : (t instanceof Storage || t instanceof PaintingCircle);
                 if (!matchType) continue;
@@ -559,6 +587,7 @@
                 if (t instanceof CraftStation || t instanceof Storage || t instanceof LeanTo
                     || t instanceof PaintingCircle
                     || (typeof ClayFigurine !== "undefined" && t instanceof ClayFigurine)
+                    || (typeof Hearth !== "undefined" && t instanceof Hearth)
                     || (typeof SettlingStone !== "undefined" && t instanceof SettlingStone)) continue;
                 const sameUid = !!(entry.uid && t.entry?.uid === entry.uid);
                 const samePos = Number.isFinite(x) && Number.isFinite(y)
@@ -589,7 +618,9 @@
             const spr = isSleep
                 ? ((sleepDef?.floor && typeof Hut !== "undefined") ? new Hut(this, entry) : new LeanTo(this, entry))
                 : isStation ? new CraftStation(this, entry)
-                : isSettle ? new SettlingStone(this, entry)
+                : isSettle ? (entry.id === "hearth" && typeof Hearth !== "undefined"
+                    ? new Hearth(this, entry)
+                    : new SettlingStone(this, entry))
                 : isFig ? new ClayFigurine(this, entry)
                 : Storage.create(this, entry);
             chunk.things.add(spr);

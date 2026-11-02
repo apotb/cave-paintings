@@ -57,7 +57,7 @@ function makeScene(extra = {}) {
     return { scene, created };
 }
 
-test("offscreen owned settling stones get a settler-blue edge arrow", () => {
+test("offscreen owned hearths get a settler-blue edge arrow", () => {
     const SettlementSystem = loadSystem();
     const { scene, created } = makeScene();
     const sys = new SettlementSystem(scene);

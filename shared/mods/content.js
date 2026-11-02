@@ -711,6 +711,7 @@
      * Rotatable placeables take their icon from the 0° frame instead.
      */
     function itemUsesThingArt(it, things, thingKeys, Place) {
+        if (it?.generatedIcon) return true;
         if (!it?.key || it._textureUrl) return false;
         if (thingKeys.has(it.key)) return true;
         const thingId = Place?.placeThingId?.(it);

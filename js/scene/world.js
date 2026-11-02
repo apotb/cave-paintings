@@ -1252,6 +1252,8 @@
         let thing;
         if (lootable) {
             thing = new LootableThing(this, entry, chunk);
+        } else if (entry.id === "hearth") {
+            thing = new Hearth(this, entry);
         } else if (entry.id === "campfire" || entry.id === "unlit_campfire") {
             thing = new Campfire(this, entry);
         } else if (this.getThing(entry.id)?.sleep || Array.isArray(entry.occupants)) {
@@ -1262,7 +1264,6 @@
         } else if (this.getThing(entry.id)?.craftStation) {
             thing = new CraftStation(this, entry);
         } else if (this.getThing(entry.id)?.settlement
-            || entry.id === "settling_stone"
             || (typeof Place !== "undefined" && Place.isSettlementThing(this.getThing(entry.id), entry))) {
             thing = new SettlingStone(this, entry);
         } else if ((typeof Research !== "undefined" && Research.isPaintingCircle?.(this.getThing(entry.id), entry))
@@ -1644,7 +1645,11 @@
             ? ensurePaintingCircleTexture(this, info.held?.stone)
             : null;
         const ghost = this._ensurePlaceGhost();
-        if (info.thingDef?.figurine) {
+        const hearthIcon = info.thingId === "hearth" && typeof ensureHearthIcon === "function"
+            ? ensureHearthIcon(this)
+            : null;
+        if (hearthIcon && this.textures.exists(hearthIcon)) ghost.setTexture(hearthIcon);
+        else if (info.thingDef?.figurine) {
             const placeKey = (typeof ClayForming !== "undefined")
                 ? (ClayForming.ensurePlaceIcon(this, info.held, rot) || info.held.formPlaceIcon)
                 : info.held.formPlaceIcon;
@@ -2212,12 +2217,12 @@
     tryRotateStation(thing, opts = {}) {
         if (!thing?.entry) return false;
         const id = thing.meta?.id || thing.entry.id;
-        if (id !== "campfire" && id !== "unlit_campfire"
+        if (id !== "campfire" && id !== "unlit_campfire" && id !== "hearth"
             && id !== "drying_rack" && id !== "skinworking_bench") return false;
         if (thing.inRange && !thing.inRange()) return false;
         const ccw = !!opts.ccw;
         if (this.simAuth()) {
-            const fire = id === "campfire" || id === "unlit_campfire";
+            const fire = id === "campfire" || id === "unlit_campfire" || id === "hearth";
             this._netSendMove?.(true);
             this.net.sendAction({
                 type: fire ? NetProtocol.Actions.CAMPFIRE : NetProtocol.Actions.STORAGE,
@@ -2251,7 +2256,7 @@
     },
 
     tryDestroyCampfire(campfire) {
-        if (!campfire || campfire.isLit?.()) return false;
+        if (!campfire || campfire.entry?.id === "hearth" || campfire.isLit?.()) return false;
         if (!campfire.inRange?.()) return false;
         const entry = campfire.entry;
         if (this.simAuth()) {

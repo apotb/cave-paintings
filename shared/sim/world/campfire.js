@@ -203,7 +203,7 @@
 
     _isCampfireEntry(t) {
         if (!t) return false;
-        if (t.id === "campfire" || t.id === "unlit_campfire") return true;
+        if (t.id === "campfire" || t.id === "unlit_campfire" || t.id === "hearth") return true;
         return Array.isArray(t.fuel);
     },
 
@@ -248,7 +248,9 @@
             canIgniteFuel: !!entry.canIgniteFuel,
             smolderAt: entry.smolderAt,
             fuelFilter: FuelFilter ? FuelFilter.persist(entry.fuelFilter) : (entry.fuelFilter || null),
-            catalystReserved: !!entry.catalystReserved
+            catalystReserved: !!entry.catalystReserved,
+            lit: entry.id === "hearth" ? !!entry.lit : undefined,
+            settlementId: entry.settlementId || null
         };
     },
 
@@ -633,7 +635,7 @@
             if (!Array.isArray(c.things)) continue;
             for (const t of c.things) {
                 if (!this._isCampfireEntry(t)) continue;
-                if (t.id === "campfire") continue;
+                if (t.id === "campfire" || (t.id === "hearth" && t.lit)) continue;
                 if (!this._campfireHasFuel(t)) continue;
                 const dx = t.x - p.x;
                 const dy = t.y - p.y;
@@ -992,6 +994,7 @@
 
     _destroyCampfire(chunk, entry) {
         if (!chunk || !entry) return;
+        if (entry.id === "hearth") return;
         if (entry.id === "campfire") return;
         const x = Number(entry.x) || 0;
         const y = Number(entry.y) || 0;

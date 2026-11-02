@@ -295,6 +295,13 @@
             return;
         }
 
+        let hearthSource = null;
+        if (thingId === "hearth") {
+            hearthSource = this._campfireEntryOnTile(tx, ty);
+            if (!hearthSource) return;
+            if (!Settlement.canPlace(this.settlements, x, y, TS)) return;
+        }
+
         held.quantity = Math.max(0, Math.floor(Number(held.quantity) || 1) - 1);
         if (!(held.quantity > 0)) p.inventory[invIndex] = null;
         this._dirtyPawnOwner(p);
@@ -338,6 +345,31 @@
         if (thingDef.settlement || Place.isSettlementThing(thingDef)) {
             const name = Settlement.clampName(action.name);
             if (!Settlement.canPlace(this.settlements, x, y, TS)) return;
+            if (thingId === "hearth" && hearthSource?.entry) {
+                const entry = hearthSource.entry;
+                const wasLit = entry.id === "campfire";
+                this._unlinkStationUid(entry.uid);
+                this._ejectHearthCookStacks(p, entry);
+                entry.id = "hearth";
+                entry.lit = wasLit;
+                entry.tx = tx;
+                entry.ty = ty;
+                entry.rot = rot;
+                Place.ensureSettlementEntry(entry);
+                const settle = Settlement.createSettlement({
+                    name,
+                    ownerId: session.id,
+                    ownerName: session.name,
+                    x, y, tx, ty
+                });
+                settle.stoneUid = entry.uid;
+                entry.settlementId = settle.id;
+                this.settlements.push(settle);
+                this._emitCampfire(hearthSource.chunk, entry);
+                this._youDirty.add(session.id);
+                this._announceWorld(`${settle.name} has been founded`);
+                return;
+            }
             const entry = { id: thingId, x, y, tx, ty, rot };
             Place.ensureSettlementEntry(entry);
             chunk.things.push(entry);
@@ -405,6 +437,52 @@
         this._emitStorage(chunk, entry);
     },
 
+    _campfireEntryOnTile(tx, ty) {
+        const { x, y } = this._tileCenter(tx, ty);
+        const { cx, cy } = worldToChunk(x, y - 1);
+        const chunk = this.chunks.get(chunkKey(cx, cy));
+        if (!chunk || !Array.isArray(chunk.things)) return null;
+        const fires = [];
+        for (const t of chunk.things) {
+            if (!t || t.gone) continue;
+            if (t.id !== "campfire" && t.id !== "unlit_campfire") continue;
+            const def = thingDefs().get(t.id);
+            if (!Place.entryOnTile(t, tx, ty, TS, def)) continue;
+            fires.push(t);
+        }
+        if (fires.length !== 1) return null;
+        return { chunk, entry: fires[0] };
+    },
+
+    _ejectHearthCookStacks(p, entry) {
+        if (!entry) return;
+        const stacks = [];
+        const take = (stack) => {
+            if (stack?.id && stack.quantity > 0) stacks.push(stack);
+        };
+        take(entry.cook);
+        take(entry.catalyst);
+        entry.cook = null;
+        entry.catalyst = null;
+        if (Array.isArray(entry.simmer)) {
+            for (let i = 0; i < entry.simmer.length; i++) {
+                take(entry.simmer[i]);
+                entry.simmer[i] = null;
+            }
+        }
+        const x = Number(entry.x) || 0;
+        const y = Number(entry.y) || 0;
+        for (const stack of stacks) {
+            const extras = this._stackExtrasFrom?.(stack) || null;
+            const left = this._give(p, stack.id, stack.quantity || 1, extras);
+            if (!(left > 0)) continue;
+            const drop = { id: stack.id, quantity: left };
+            if (extras) Object.assign(drop, extras);
+            this._pushDrop(x, y, drop);
+        }
+        this._dirtyPawnOwner(p);
+    },
+
     _placeOccForTile(tx, ty) {
         const { x, y } = this._tileCenter(tx, ty);
         const { cx, cy } = worldToChunk(x, y - 1);
@@ -444,14 +522,14 @@
     _rotateInteractSpot(chunk, entry, action = {}) {
         if (!chunk || !entry) return false;
         const id = entry.id;
-        if (id !== "campfire" && id !== "unlit_campfire"
+        if (id !== "campfire" && id !== "unlit_campfire" && id !== "hearth"
             && id !== "drying_rack" && id !== "skinworking_bench") return false;
         const def = thingDefs().get(id);
         const ccw = !!(action.ccw || action.dir === "ccw");
         const next = Place.nextSpotRot(entry, TS, def, (tx, ty) => this._spotTileFree(entry, tx, ty), ccw);
         if (next == null) return false;
         entry.rot = next;
-        if (id === "campfire" || id === "unlit_campfire") this._emitCampfire(chunk, entry);
+        if (id === "campfire" || id === "unlit_campfire" || id === "hearth") this._emitCampfire(chunk, entry);
         else this._emitStorage(chunk, entry);
         return true;
     },
@@ -1806,6 +1884,7 @@
         const slotKey = String(action.slot || "");
         const parsed = this._parseCampfireSlot(slotKey);
         if (!parsed) return;
+        if (entry?.id === "hearth" && parsed.kind !== "fuel") return;
         const invIndex = Math.floor(Number(action.inv));
         const bag = this._normBag(action.bag);
         const held = this._pawnBag(p, bag)?.[invIndex];
@@ -1922,6 +2001,7 @@
         const fromP = this._parseCampfireSlot(fromKey);
         const toP = this._parseCampfireSlot(toKey);
         if (!fromP || !toP) return;
+        if (entry?.id === "hearth" && (fromP.kind !== "fuel" || toP.kind !== "fuel")) return;
         if (fromP.kind === "catalyst" && this._campfireCatalystLocked(entry)) return;
         if (toP.kind === "catalyst" && this._campfireCatalystLocked(entry)) return;
         const a = this._campfireGetSlot(entry, fromKey);

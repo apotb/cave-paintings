@@ -871,6 +871,14 @@ function stationsOf(world, settle, kind) {
         if (kind && k !== kind) continue;
         out.push(found.entry);
     }
+    if (settle?.stoneUid && (!kind || kind === "campfire")) {
+        const stone = world._findThingByUid?.(settle.stoneUid);
+        const stoneId = stone?.entry?.id;
+        if (stone?.entry && Settlement.stationKind(stoneId) === "campfire"
+            && !out.some((e) => e === stone.entry || e?.uid === stone.entry.uid)) {
+            out.push(stone.entry);
+        }
+    }
     q.stations[key] = out;
     return out;
 }

@@ -506,7 +506,8 @@ function settlerPatients(world, rec, settle, claims) {
 function fireNeedsLight(fire) {
     if (!fire) return false;
     if (Fire.isBurning(fire)) return false;
-    if (fire.id === "campfire" && ((Number(fire.burnRemaining) > 0) || (Number(fire.pitTemp) > 0))) {
+    if ((fire.id === "campfire" || (fire.id === "hearth" && fire.lit))
+        && ((Number(fire.burnRemaining) > 0) || (Number(fire.pitTemp) > 0))) {
         return false;
     }
     return true;

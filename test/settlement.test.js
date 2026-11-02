@@ -82,12 +82,12 @@ test("planStorageDeposits splits leftovers across several partial stacks", () =>
     ]);
 });
 
-test("settling stone counts as a rock for nearby requirements", () => {
+test("a hearth does not count as a rock", () => {
     assert.equal(Place.countsAsThing("rock", "rock"), true);
-    assert.equal(Place.countsAsThing("settling_stone", "rock"), true);
-    assert.equal(Place.countsAsThing("rock", "settling_stone"), false);
+    assert.equal(Place.countsAsThing("hearth", "rock"), false);
+    assert.equal(Place.countsAsThing("rock", "hearth"), false);
     assert.equal(Place.countsAsThing("wicker_basket", "rock"), false);
-    assert.equal(Place.countsAsThing("settling_stone", "skinworking_bench"), false);
+    assert.equal(Place.countsAsThing("hearth", "skinworking_bench"), false);
 });
 
 test("settlement circles cannot overlap", () => {
