@@ -396,7 +396,9 @@
         }
         if (op === "setFuelFilter" && settle && settle.ownerId === p.id) {
             const uid = String(action.uid || "");
-            if (!uid || !(settle.stationUids || []).includes(uid)) return;
+            const linked = (settle.stationUids || []).includes(uid);
+            const stone = !!uid && String(settle.stoneUid || "") === uid;
+            if (!uid || (!linked && !stone)) return;
             const found = this._findThingByUid(uid);
             if (!found) return;
             if (Settlement.stationKind(found.entry?.id) !== "campfire") return;

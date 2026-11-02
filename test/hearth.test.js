@@ -2,6 +2,8 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { SimWorld } = require("../shared/sim/SimWorld");
 const Patches = require("../shared/patches");
+const Place = require("../shared/place");
+const DataStore = require("../shared/DataStore");
 const { createTestWorld, originChunk } = require("./helpers/simWorld");
 
 function fillGrass(world) {
@@ -209,4 +211,82 @@ test("settling stone saves load as hearths and item stacks", () => {
         inventory: [{ id: "settling_stone", quantity: 1 }, null, null, null, null]
     });
     assert.equal(pawn.inventory[0].id, "hearth");
+});
+
+function foundOnFire(world, pawn, Protocol, rot) {
+    fillGrass(world);
+    const { tx, ty } = world._tileOf(pawn.x, pawn.y);
+    const { x, y } = world._tileCenter(tx, ty);
+    const fire = {
+        uid: "pit",
+        id: "campfire",
+        x, y, tx, ty,
+        rot: 0,
+        fuel: [null, null],
+        cook: null,
+        catalyst: null,
+        simmer: [null, null, null, null]
+    };
+    originChunk(world).things.push(fire);
+    pawn.inventory[0] = { id: "hearth", quantity: 1 };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "found",
+        tx, ty, rot,
+        name: "Ash Camp"
+    });
+    return fire;
+}
+
+test("a hearth can be founded facing a different way than the campfire", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const fire = foundOnFire(world, pawn, Protocol, 90);
+    assert.equal(fire.id, "hearth");
+    assert.equal(fire.rot, 90);
+    const def = DataStore.getThing("hearth");
+    assert.equal(Place.canRotate(def), true);
+    assert.deepEqual(Place.interactTileOf(fire, 16, def), {
+        tx: Math.floor(fire.x / 16) - 1,
+        ty: Math.floor((fire.y - 1) / 16)
+    });
+    assert.ok(!Place.thingImageLoads(def).some((l) => /hearth_90|_90/.test(String(l.key))));
+});
+
+test("rotating a hearth turns its stand onto the next free tile", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const fire = foundOnFire(world, pawn, Protocol, 0);
+    assert.equal(fire.rot, 0);
+    world.drainEvents();
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.CAMPFIRE,
+        op: "rotate",
+        uid: fire.uid,
+        x: fire.x,
+        y: fire.y
+    });
+    assert.equal(fire.rot, 90);
+    const def = DataStore.getThing("hearth");
+    assert.deepEqual(Place.interactTileOf(fire, 16, def), {
+        tx: Math.floor(fire.x / 16) - 1,
+        ty: Math.floor((fire.y - 1) / 16)
+    });
+    const ev = world.drainEvents().find((e) => e.kind === "campfire" && e.entry);
+    assert.equal(ev.entry.rot, 90);
+});
+
+test("setFuelFilter persists on the hearth", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const fire = foundOnFire(world, pawn, Protocol, 0);
+    const settle = world.settlements[0];
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "setFuelFilter",
+        settlementId: settle.id,
+        uid: fire.uid,
+        filter: { alwaysOn: false, preferLogs: false, offItems: ["leaf"] }
+    });
+    assert.equal(fire.fuelFilter?.alwaysOn, false);
+    assert.equal(fire.fuelFilter?.preferLogs, false);
+    assert.ok(fire.fuelFilter?.offItems?.includes("leaf"));
 });

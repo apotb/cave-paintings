@@ -367,6 +367,7 @@
         "campfire": true,
         "noCatalyst": true,
         "interactOffset": [0, 1],
+        "rotations": [0, 90, 180, 270],
         "lightLevel": 12,
         "lightKind": "flame"
     },

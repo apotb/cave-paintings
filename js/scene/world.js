@@ -1558,7 +1558,10 @@
                     ty: t.ty,
                     tileSize: ts,
                     getThing,
-                    placeDef: def
+                    placeDef: def,
+                    anchor: t.tx === tx && t.ty === ty,
+                    anchorTx: tx,
+                    anchorTy: ty
                 })) return false;
             } else if (!this._tileKeyAt(t.tx, t.ty)) {
                 return false;

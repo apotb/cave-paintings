@@ -266,7 +266,10 @@
                 ty: t.ty,
                 tileSize: TS,
                 getThing,
-                placeDef: thingDef
+                placeDef: thingDef,
+                anchor: t.tx === tx && t.ty === ty,
+                anchorTx: tx,
+                anchorTy: ty
             })) return;
         }
         if ((thingDef.settlement || Place.isSettlementThing(thingDef))

@@ -1578,7 +1578,11 @@
         const ts = opts.tileSize || 16;
         if (!Number.isFinite(tx) || !Number.isFinite(ty)) return false;
         const getThing = opts.getThing;
+        // A new hearth must sit on a campfire. That rule is the anchor tile only.
+        // The stand tile is just empty ground; the fire being replaced already
+        // claims its own stand, and that must not block a different facing.
         const hearthPlace = opts.placeDef?.id === "hearth";
+        const hearthAnchor = hearthPlace && opts.anchor === true;
         let campfires = 0;
         let blocked = false;
         const lists = [opts.things, opts.lootables];
@@ -1587,14 +1591,20 @@
             for (const e of list) {
                 const def = typeof getThing === "function" ? getThing(e?.id) : null;
                 if (!entryOnTile(e, tx, ty, ts, def)) continue;
-                if (hearthPlace && (e?.id === "campfire" || e?.id === "unlit_campfire")) {
+                if (hearthAnchor && (e?.id === "campfire" || e?.id === "unlit_campfire")) {
                     campfires += 1;
                     continue;
+                }
+                if (hearthPlace && !hearthAnchor) {
+                    const origin = originTileOf(e, ts);
+                    const source = origin.tx === opts.anchorTx && origin.ty === opts.anchorTy;
+                    const fire = e?.id === "campfire" || e?.id === "unlit_campfire" || e?.id === "hearth";
+                    if (source && fire) continue;
                 }
                 blocked = true;
             }
         }
-        if (hearthPlace) return !blocked && campfires === 1;
+        if (hearthAnchor) return !blocked && campfires === 1;
         return !blocked;
     }
 

@@ -1608,6 +1608,14 @@ class SettlementSystem {
         return (target.stationUids || []).includes(uid);
     }
 
+    /** Added campfires, plus the hearth that is the settlement itself. */
+    isFuelLinked(thing, settle) {
+        if (this.isAdded(thing, settle)) return true;
+        const target = settle || this.here(this.scene.player);
+        const uid = thing?.entry?.uid;
+        return !!(target && uid && thing.entry.id === "hearth" && target.stoneUid === uid);
+    }
+
     openFromStone(stone) {
         const settle = this.byStoneUid(stone?.entry?.uid);
         if (!settle) return;
@@ -1912,8 +1920,10 @@ class SettlementSystem {
 
     openFuelFilter(thing) {
         if (!thing?.entry?.uid) return false;
-        const settle = this.here(this.scene.player);
-        if (!this.canManage(settle) || !this.isAdded(thing)) return false;
+        const settle = thing.entry.id === "hearth"
+            ? (this.byStoneUid(thing.entry.uid) || this.byId(thing.entry.settlementId))
+            : this.here(this.scene.player);
+        if (!this.canManage(settle) || !this.isFuelLinked(thing, settle)) return false;
         this.scene.billsPanel?.close();
         this.scene.storageFilterPanel?.close();
         this.scene.pigmentFilterPanel?.close();
@@ -2709,6 +2719,7 @@ class SettlementSystem {
         if (opts.addOn && opts.addBtn) parts.push({ btn: opts.addBtn, w: addW });
         if (opts.actionOn && opts.actionBtn) parts.push({ btn: opts.actionBtn, w: actionW });
         parts.push({ btn: ui.btn, w: side });
+        if (opts.trailOn && opts.trailBtn) parts.push({ btn: opts.trailBtn, w: Number(opts.trailW) || actionW });
         const total = parts.reduce((sum, p) => sum + p.w, 0) + gap * (parts.length - 1);
         let cursor = x - total / 2;
         ui.setSize?.(side);
@@ -2830,7 +2841,7 @@ class SettlementSystem {
             const open = fuelF.settle;
             const thing = fuelF.thing;
             if (!open || !this.byId(open.id) || !this._inRangePawn(this.scene.player, open)
-                || !this.isAdded(thing, open)) {
+                || !this.isFuelLinked(thing, open)) {
                 fuelF.close();
             }
         }
