@@ -227,6 +227,32 @@ const WorldStore = (() => {
         return rows.some((r) => r.id !== exceptId && nameKey(r.name) === key);
     }
 
+    /**
+     * First free "New World", then "New World 2", "New World 3", and so on.
+     * Comparison matches nameTaken: trimmed, case-insensitive, 32 characters.
+     * @param {Array<string|{name?: string}>} rows
+     * @param {string} [base]
+     */
+    function nextDefaultName(rows, base = "New World") {
+        const taken = new Set();
+        for (const row of rows || []) {
+            const raw = typeof row === "string" ? row : row && row.name;
+            if (raw == null || raw === "") continue;
+            taken.add(nameKey(raw));
+        }
+        const root = String(base || "New World").trim() || "New World";
+        if (!taken.has(nameKey(root))) return normalizeName(root);
+        for (let n = 2; n < 100000; n++) {
+            const candidate = `${root} ${n}`;
+            if (!taken.has(nameKey(candidate))) return normalizeName(candidate);
+        }
+        return normalizeName(root);
+    }
+
+    async function suggestName(base = "New World") {
+        return nextDefaultName(await list(), base);
+    }
+
     async function put(world, opts = {}) {
         if (!world?.id) throw new Error("World needs id");
         const row = clone(world);
@@ -395,6 +421,8 @@ const WorldStore = (() => {
         download,
         pickFile,
         defaultWorld,
+        nextDefaultName,
+        suggestName,
         randomSeed,
         seedIsPlayable,
         findPlayableSeed,

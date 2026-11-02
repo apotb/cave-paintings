@@ -2,6 +2,16 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const WorldStore = require("../js/net/WorldStore");
 
+test("default world name increments when New World is taken", () => {
+    assert.equal(WorldStore.nextDefaultName([]), "New World");
+    assert.equal(WorldStore.nextDefaultName(["New World"]), "New World 2");
+    assert.equal(WorldStore.nextDefaultName(["New World", "New World 2"]), "New World 3");
+    assert.equal(WorldStore.nextDefaultName([{ name: "new world" }, { name: "NEW WORLD 2" }]), "New World 3");
+    assert.equal(WorldStore.nextDefaultName(["New World", "New World 3"]), "New World 2");
+    assert.equal(WorldStore.nextDefaultName(["New World 2"]), "New World");
+    assert.equal(WorldStore.nextDefaultName(["  New World  "]), "New World 2");
+});
+
 test("fresh worlds are never played", () => {
     const w = WorldStore.defaultWorld("Camp");
     assert.equal(w.lastPlayedAt, 0);

@@ -4002,9 +4002,19 @@ class SceneMenu extends Phaser.Scene {
         return root;
     }
 
-    _showCreateWorld({ drafts = null, relayout = false } = {}) {
+    async _showCreateWorld({ drafts = null, relayout = false } = {}) {
         this._clear();
         this._phase = "createWorld";
+        const gen = (this._createWorldGen = (this._createWorldGen || 0) + 1);
+        let worldName = drafts?.worldName;
+        if (worldName == null) {
+            try {
+                worldName = await WorldStore.suggestName();
+            } catch (_) {
+                worldName = "New World";
+            }
+            if (gen !== this._createWorldGen || !this.sys?.isActive?.() || this._phase !== "createWorld") return;
+        }
         const w = this.scale.width;
         const h = this.scale.height;
         this._title("Create");
@@ -4041,7 +4051,6 @@ class SceneMenu extends Phaser.Scene {
 
         this._drawSpawnPreview(seed, previewX, previewY);
 
-        const worldName = drafts?.worldName != null ? drafts.worldName : "New World";
         this.worldNameInput = this._domInput(formLeft, nameY, formW, "", worldName);
         this.worldNameInput.maxLength = 32;
         this._clearStatusOnInput(this.worldNameInput);
