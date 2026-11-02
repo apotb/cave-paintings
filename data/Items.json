@@ -1392,7 +1392,6 @@
         ],
         "recipe": {
             "log": 4,
-            "pebble": 8,
             "leaf_cord": 4,
             "stick_frame": 1,
             "ANY_HIDE": {

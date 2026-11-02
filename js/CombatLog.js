@@ -249,7 +249,7 @@ class CombatLog {
         const parts = String(raw).trim().split(/\s+/);
         const cmd = (parts[0] || "").toLowerCase();
         const helpSyntax = {
-            debug: "/debug blood/chunks/combat_log/fps/location [show/hide]",
+            debug: "/debug blood/chunks/combat_log/complaint_score/fps/location [show/hide]",
             give: "/give <item> [qty] [stuff]",
             heal: "/heal",
             help: "/help [command]",
@@ -571,7 +571,7 @@ class CombatLog {
             return;
         }
         if (cmd === "/debug") {
-            const usage = "Usage: /debug blood/chunks/combat_log/fps/location [show/hide]";
+            const usage = "Usage: /debug blood/chunks/combat_log/complaint_score/fps/location [show/hide]";
             const topic = (parts[1] || "").toLowerCase();
             const action = (parts[2] || "").toLowerCase();
             if (topic === "fps") {
@@ -644,6 +644,25 @@ class CombatLog {
                 this.combatMessages = on;
                 this._feedDirty = true;
                 this.push(on ? "Debug: combat_log shown" : "Debug: combat_log hidden");
+                return;
+            }
+            if (topic === "complaint_score" || topic === "complaint-score" || topic === "complaintscore") {
+                if (action && action !== "show" && action !== "hide") {
+                    this.pushError(usage);
+                    return;
+                }
+                const on = action === "show"
+                    ? true
+                    : action === "hide"
+                        ? false
+                        : !this.scene._complaintScoreDebug;
+                this.scene._complaintScoreDebug = on;
+                this.push(on ? "Debug: complaint_score shown" : "Debug: complaint_score hidden");
+                const panel = this.scene.settlementPanel;
+                if (panel?.visible && panel.tab === "manage") {
+                    panel._contentSigVal = null;
+                    panel.refresh();
+                }
                 return;
             }
             this.pushError(usage);

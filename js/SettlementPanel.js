@@ -511,7 +511,14 @@ class SettlementPanel {
             const items = sys?.localStockItems?.(this.settle) || [];
             return `stock:${id}:${items.join(",")}:${layout}`;
         }
-        if (tab === "manage") return `manage:${id}:${layout}`;
+        if (tab === "manage") {
+            const here = sys?.settlersOf?.(this.settle.id) || [];
+            const mood = (typeof Thoughts !== "undefined")
+                ? here.map((p) => Thoughts.sig(p)).join(";")
+                : "";
+            const debug = this.scene._complaintScoreDebug ? 1 : 0;
+            return `manage:${id}:${mood}:${debug}:${layout}`;
+        }
         if (tab === "research") {
             const R = typeof Research !== "undefined" ? Research : null;
             const holder = this.scene._playerResearchHolder?.() || this.settle;
@@ -1344,13 +1351,79 @@ class SettlementPanel {
         const innerW = Math.max(80, Math.round(this._viewW - barW - 4 * sc));
         const gap = Math.round(8 * sc);
         let y = gap;
-        y = this._manageWideBtn(sc, y, innerW, "Schedule", () => {
+        y = this._fillHappiness(sc, y, innerW);
+        y = this._manageWideBtn(sc, y + gap, innerW, "Schedule", () => {
             this.scene.schedulePanel?.open(this.settle);
         });
         y = this._manageWideBtn(sc, y + gap, innerW, "All Settlement Resources", () => {
             this.scene.resourceSummaryPanel?.open(this.settle);
         });
         return y + gap;
+    }
+
+    _happinessTip() {
+        if (typeof Thoughts === "undefined" || !Thoughts.settlementTip) return "";
+        const here = this.scene.settlementSys?.settlersOf?.(this.settle?.id) || [];
+        return Thoughts.settlementTip(here, !!this.scene._complaintScoreDebug);
+    }
+
+    _fillHappiness(sc, y, innerW) {
+        const here = this.scene.settlementSys?.settlersOf?.(this.settle?.id) || [];
+        const board = (typeof Thoughts !== "undefined" && Thoughts.summary)
+            ? Thoughts.summary(here)
+            : { count: 0, pct: null, stage: null };
+        const top = y;
+        const head = this._label("Average happiness", 0, y, 12);
+        let rowH = head.height || Math.round(14 * sc);
+        if (board.count) {
+            const colors = { g: "#e6c15a", o: "#f0a040", p: "#8ed06a", n: "#e15d5d" };
+            const mark = Thoughts.stageMark?.(board.stage) || "g";
+            const pct = this._label(`${board.pct}% (${board.stage})`, 0, y, 12);
+            pct.setColor(colors[mark] || "#d4c4a8");
+            const gap = Math.round(8 * sc);
+            if (head.width + gap + pct.width <= innerW) {
+                pct.setPosition(innerW - pct.width, y);
+                rowH = Math.max(head.height, pct.height);
+            } else {
+                pct.setPosition(0, y + head.height);
+                rowH = head.height + pct.height;
+            }
+        }
+        y += rowH + Math.round(4 * sc);
+        const barH = Math.max(8, Math.round(10 * sc));
+        const gfx = this.scene.add.graphics();
+        gfx.fillStyle(0x000000, 0.6);
+        gfx.fillRect(-1, -1, innerW + 2, barH + 2);
+        gfx.fillStyle(0x222222, 0.85);
+        gfx.fillRect(0, 0, innerW, barH);
+        if (board.count && board.pct > 0) {
+            gfx.fillStyle(0xc9960a, 1);
+            gfx.fillRect(0, 0, Math.max(0, Math.floor(innerW * board.pct / 100)), barH);
+        }
+        const marks = (typeof Thoughts !== "undefined" && Thoughts.MARKS) || [0.05, 0.25, 0.35, 0.65, 0.9];
+        const tickW = Math.max(1, Math.round(sc));
+        gfx.fillStyle(0x444444, 1);
+        for (let i = 0; i < marks.length; i++) {
+            const tx = Math.round(innerW * marks[i]) - Math.floor(tickW / 2);
+            gfx.fillRect(tx, 0, tickW, barH);
+        }
+        gfx.setPosition(0, y);
+        this.body.add(gfx);
+        const hitH = (y - top) + barH;
+        const hit = this.scene.add.zone(0, top, innerW, hitH).setOrigin(0, 0);
+        hit.setInteractive({ cursor: "default" });
+        this._clipInput(hit);
+        hit.on("pointerover", (pointer) => {
+            if (!this._pointerInBody(pointer)) return;
+            this.scene.showTooltip?.(() => this._happinessTip(), pointer.x, pointer.y, hit);
+        });
+        hit.on("pointerout", (pointer) => {
+            if (this._refreshing) return;
+            if (this._pointerStillOn(hit, pointer)) return;
+            if (this.scene._tooltipTarget === hit) this.scene.hideTooltip?.();
+        });
+        this.body.add(hit);
+        return y + barH;
     }
 
     _manageWideBtn(sc, y, innerW, label, onClick) {

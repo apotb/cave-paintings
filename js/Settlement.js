@@ -2792,6 +2792,9 @@ class SettlementSystem {
                 } else if (panel.tab === "research" && !tree?.visible && this._stockUiAcc > 600) {
                     this._stockUiAcc = 0;
                     panel.refresh();
+                } else if (panel.tab === "manage" && this._stockUiAcc > 600) {
+                    this._stockUiAcc = 0;
+                    panel.refresh();
                 } else if (this.scene.schedulePanel?.visible && this._stockUiAcc > 600) {
                     this._stockUiAcc = 0;
                     this.scene.schedulePanel.refresh();

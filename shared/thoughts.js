@@ -29,7 +29,11 @@
         tip: {
             title: "Mood",
             feeling: "How this person is feeling right now.",
-            warning: "Keep settlers happy or they might abandon you."
+            warning: "Keep them happy, lest they grow resentful.",
+            average: "Average happiness",
+            settlers: "The average happiness of all your settlers.",
+            none: "No settlers.",
+            complaints: "Top complaints"
         },
         someoneDied: "Someone died",
         namedDeath: "{name} died",
@@ -79,6 +83,10 @@
 
     /** A lost part stays on the mind for this many days, then fades. */
     const PART_DAYS = 15;
+    /** Copies of one stacked thought a single settler keeps. */
+    const STACK_MAX = 5;
+    /** Each extra copy, and each extra settler, is worth this much of the last. */
+    const STACK_RATIO = 0.75;
 
     function lostDef(id, offset) {
         const line = thoughtLine("lost_part");
@@ -88,7 +96,7 @@
             quote: line.quote,
             offset,
             duration: PART_DAYS * DAY,
-            stackLimit: 32
+            stackLimit: STACK_MAX
         };
     }
 
@@ -129,19 +137,19 @@
         witnessed_death: def("witnessed_death", {
             offset: -6,
             duration: 2 * DAY,
-            stackLimit: 3,
+            stackLimit: STACK_MAX,
             nullifiedBy: ["man_eater", "murderous", "psychopath"]
         }),
         saw_corpse: def("saw_corpse", {
             offset: -4,
             duration: DAY,
-            stackLimit: 5,
+            stackLimit: STACK_MAX,
             nullifiedBy: ["man_eater", "murderous", "psychopath"]
         }),
         lost_someone: def("lost_someone", {
             offset: -5,
             duration: 3 * DAY,
-            stackLimit: 5,
+            stackLimit: STACK_MAX,
             nullifiedBy: ["murderous", "psychopath"]
         }),
         killed: def("killed", {
@@ -600,6 +608,119 @@
         return rows;
     }
 
+    function moodletTotal(p, n) {
+        const base = Number(p) || 0;
+        const count = Math.max(0, Math.floor(Number(n) || 0));
+        if (!count || !base) return 0;
+        return base * (1 - Math.pow(STACK_RATIO, count)) / (1 - STACK_RATIO);
+    }
+
+    /** A fraction counts as a whole point in the direction of the thought. */
+    function shownOffset(n) {
+        if (!Number.isFinite(n) || n === 0) return 0;
+        const nearest = Math.round(n);
+        if (Math.abs(n - nearest) < 1e-9) return nearest;
+        return n > 0 ? Math.ceil(n) : Math.floor(n);
+    }
+
+    function formatTotal(n) {
+        if (!Number.isFinite(n)) return "0";
+        return String(Math.round(n * 10000) / 10000);
+    }
+
+    /** Same base uses the closed series. Mixed offsets diminish from the strongest. */
+    function stackedEffect(offsets) {
+        const rows = [];
+        for (let i = 0; i < offsets.length; i++) {
+            const n = Number(offsets[i]) || 0;
+            if (n) rows.push(n);
+        }
+        if (!rows.length) return { p: 0, n: 0, t: 0 };
+        let same = true;
+        for (let i = 1; i < rows.length; i++) {
+            if (rows[i] !== rows[0]) { same = false; break; }
+        }
+        if (same) return { p: rows[0], n: rows.length, t: moodletTotal(rows[0], rows.length) };
+        rows.sort((a, b) => Math.abs(b) - Math.abs(a) || a - b);
+        let t = 0;
+        for (let i = 0; i < rows.length; i++) t += rows[i] * Math.pow(STACK_RATIO, i);
+        return { p: rows[0], n: rows.length, t };
+    }
+
+    function summary(pawns) {
+        const people = Array.isArray(pawns) ? pawns.filter(Boolean) : [];
+        let sum = 0;
+        const byLabel = new Map();
+        for (let i = 0; i < people.length; i++) {
+            const pawn = people[i];
+            sum += moodOf(pawn);
+            const lines = pawn.thoughts?.lines || [];
+            const seen = new Set();
+            for (let j = 0; j < lines.length; j++) {
+                const row = lines[j];
+                const offset = Number(row.offset) || 0;
+                if (offset >= 0) continue;
+                const label = row.label || "";
+                if (!label || seen.has(label)) continue;
+                seen.add(label);
+                let bucket = byLabel.get(label);
+                if (!bucket) {
+                    bucket = { label, offsets: [] };
+                    byLabel.set(label, bucket);
+                }
+                bucket.offsets.push(offset);
+            }
+        }
+        const complaints = [];
+        for (const bucket of byLabel.values()) {
+            const scored = stackedEffect(bucket.offsets);
+            complaints.push({
+                label: bucket.label,
+                p: scored.p,
+                n: scored.n,
+                t: scored.t
+            });
+        }
+        complaints.sort((a, b) => a.t - b.t || String(a.label).localeCompare(String(b.label)));
+        const mood = people.length ? sum / people.length : null;
+        let pct = null;
+        let word = null;
+        if (mood != null) {
+            pct = Math.max(0, Math.min(100, Math.round(mood * 100)));
+            word = stage(pct / 100);
+        }
+        return {
+            count: people.length,
+            mood,
+            pct,
+            stage: word,
+            complaints: complaints.slice(0, 4)
+        };
+    }
+
+    function settlementTip(pawns, debug) {
+        const board = summary(pawns);
+        if (!board.count) return [TEXT.tip.none, TEXT.tip.warning].join("\n");
+        const mark = stageMark(board.stage);
+        const lines = [
+            `${TEXT.tip.average}: {${mark}}${board.pct}% (${TEXT.stage[board.stage]}){/${mark}}`,
+            TEXT.tip.settlers,
+            TEXT.tip.warning
+        ];
+        if (board.complaints.length) {
+            lines.push("");
+            lines.push(`{g}${TEXT.tip.complaints}{/g}`);
+            for (let i = 0; i < board.complaints.length; i++) {
+                const row = board.complaints[i];
+                const body = debug
+                    ? `${row.label}  P=${row.p} N=${row.n} T=${formatTotal(row.t)}`
+                    : row.label;
+                lines.push(`{n}${body}{/n}`);
+            }
+        }
+        return lines.join("\n");
+    }
+
     function groupLines(rows) {
         const groups = [];
         for (let i = 0; i < rows.length; i++) {
@@ -612,23 +733,23 @@
             if (!found) {
                 found = {
                     key,
-                    offset: 0,
+                    base: Number(row.offset) || 0,
                     label: row.label,
                     quote: row.quote,
                     count: 0
                 };
                 groups.push(found);
             }
-            found.offset += row.offset;
             found.count += 1;
         }
-        groups.sort((a, b) => b.offset - a.offset || String(a.label).localeCompare(String(b.label)));
-        return groups.map((g) => ({
-            offset: g.offset,
+        const lines = groups.map((g) => ({
+            offset: shownOffset(moodletTotal(g.base, g.count)),
             label: g.label,
             quote: g.quote,
             count: g.count
         }));
+        lines.sort((a, b) => b.offset - a.offset || String(a.label).localeCompare(String(b.label)));
+        return lines;
     }
 
     function sumLines(lines) {
@@ -806,6 +927,11 @@
         tooltip,
         sig,
         allowsWork,
-        hasTrait
+        hasTrait,
+        moodletTotal,
+        shownOffset,
+        summary,
+        settlementTip,
+        stageMark
     };
 });

@@ -124,7 +124,7 @@ test("murderous people like a kill and sour after four and eight dry days", () =
     Thoughts.noteKill(killer, now);
     Thoughts.refresh(killer, now);
     assert.equal(killer.thoughts.lines[0].offset, 8);
-    assert.equal(killer.thoughts.lines[0].label, "Killed");
+    assert.equal(killer.thoughts.lines[0].label, "Killed someone");
     assert.equal(Thoughts.witness(killer, now), false);
     assert.equal(Thoughts.loseSomeone(killer, "Bo", now), false);
 
@@ -190,7 +190,7 @@ test("an infection makes them sick, and hunger or bad food does not", () => {
     });
     Thoughts.refresh(infected, 0);
     assert.deepEqual(offsets(infected), ["-8:Sick"]);
-    assert.equal(infected.thoughts.lines[0].quote, "I feel ill.");
+    assert.equal(infected.thoughts.lines[0].quote, "I'm under the weather. I hope I get well soon.");
 
     const hungry = pawn({
         id: "bo",
@@ -207,25 +207,25 @@ test("the tooltip sorts bonuses first and grays the quotes", () => {
     const text = Thoughts.tooltip(p);
     assert.match(text, /^Mood: \{g\}49% \(content\)\{\/g\}/);
     assert.match(text, /How this person is feeling right now\./);
-    assert.match(text, /Keep settlers happy or they might abandon you\./);
+    assert.match(text, /Keep them happy, lest they grow resentful\./);
     const hutAt = text.indexOf("{p}+1{/p} Slept in a hut");
     const peckAt = text.indexOf("{n}-2{/n} Peckish");
     assert.ok(hutAt >= 0 && peckAt > hutAt);
     assert.match(text, /\{m\}"I slept with walls around me\."\{\/m\}/);
-    assert.match(text, /\{m\}"I could eat\."\{\/m\}/);
+    assert.match(text, /\{m\}"I could go for some food\."\{\/m\}/);
 
     const stacked = pawn({ id: "stack" });
     Thoughts.witness(stacked, 0);
     Thoughts.witness(stacked, 1);
     Thoughts.witness(stacked, 2);
-    Thoughts.witness(stacked, 3);
-    Thoughts.refresh(stacked, 3);
-    assert.match(Thoughts.tooltip(stacked), /\{n\}-18\{\/n\} Witnessed a death x3/);
+    Thoughts.refresh(stacked, 2);
+    assert.match(Thoughts.tooltip(stacked), /\{n\}-14\{\/n\} Witnessed a death x3/);
 });
 
 test("strain fills by band, sulk and strike reset it, and miserable leaves even during a sulk", () => {
     const now = 1000;
     const stressed = pawn();
+    Thoughts.noteSleep(stressed, "ground", now);
     Thoughts.witness(stressed, now);
     Thoughts.witness(stressed, now);
     Thoughts.witness(stressed, now);
@@ -241,7 +241,7 @@ test("strain fills by band, sulk and strike reset it, and miserable leaves even 
     assert.deepEqual(sulk.logs, ["sulk"]);
     assert.equal(stressed._moodJob, "sulk");
     assert.equal(stressed.thoughts.strain, 0);
-    assert.equal(stressed.thoughts.lines.some((row) => row.label === "Let it out"), true);
+    assert.equal(stressed.thoughts.lines.some((row) => row.label === "Catharsis"), true);
     const held = stressed.thoughts.strain;
     Thoughts.tick(stressed, now + 2, { eligible: true });
     assert.equal(stressed.thoughts.strain, held);
@@ -261,7 +261,7 @@ test("strain fills by band, sulk and strike reset it, and miserable leaves even 
 
     const gone = pawn({ id: "gone" });
     Thoughts.noteMeal(gone, "human", now);
-    for (let i = 0; i < 3; i++) Thoughts.witness(gone, now);
+    for (let i = 0; i < 5; i++) Thoughts.witness(gone, now);
     for (let i = 0; i < 5; i++) Thoughts.seeCorpse(gone, `g${i}`, now);
     Thoughts.apply(gone, { ...Thoughts.toJSON(gone), strain: 0.999, episode: { kind: "sulk", until: now + 50 } });
     Thoughts.refresh(gone, now);
@@ -399,7 +399,7 @@ test("darkness is a penalty, and a night owl is glad of it", () => {
     assert.equal(p.thoughts.lines[0].quote, "I can't see a thing.");
     Thoughts.tick(p, 1, { dark: "joy", eligible: false });
     assert.deepEqual(offsets(p), ["3:Darkness"]);
-    assert.equal(p.thoughts.lines[0].quote, "The dark is quiet.");
+    assert.equal(p.thoughts.lines[0].quote, "The darkness surrounds me like a blanket. It comforts me.");
     Thoughts.tick(p, 2, { dark: null, eligible: false });
     assert.deepEqual(offsets(p), []);
 });
@@ -418,7 +418,7 @@ test("a destroyed part is remembered for a long time, and the pieces under it ar
     Thoughts.refresh(p, 0);
     Thoughts.refresh(p, 1);
     assert.deepEqual(offsets(p).sort(), ["-12:Left Arm is gone", "-3:Left Thumb is gone"]);
-    assert.equal(p.thoughts.lines[0].quote, "A piece of me is missing.");
+    assert.equal(p.thoughts.lines[0].quote, "A part of my body, gone forever...");
 
     const span = Thoughts.DEFS.lost_major.duration;
     Thoughts.refresh(p, span);
@@ -479,7 +479,7 @@ test("a miserable settler abandons, and a sulk refuses ordinary work", () => {
     world._ensureSettlerCreature(rec);
     const now = world.worldMinuteIndex();
     Thoughts.noteMeal(rec, "human", now);
-    for (let i = 0; i < 3; i++) Thoughts.witness(rec, now);
+    for (let i = 0; i < 5; i++) Thoughts.witness(rec, now);
     for (let i = 0; i < 5; i++) Thoughts.seeCorpse(rec, `body${i}`, now);
     rec.thoughts.strain = 0.999;
     world._tickHumanNeeds(rec);
@@ -514,4 +514,111 @@ test("a miserable settler abandons, and a sulk refuses ordinary work", () => {
     assert.equal(Thoughts.allowsWork(worker, "eat"), true);
     worker.kc = 400;
     assert.equal(Thoughts.allowsWork(worker, "doctor"), false);
+});
+
+test("stacked thoughts use a diminishing series and cap at 5", () => {
+    assert.equal(Thoughts.moodletTotal(100, 1), 100);
+    assert.equal(Thoughts.moodletTotal(100, 2), 175);
+    assert.equal(Thoughts.moodletTotal(100, 3), 231.25);
+    assert.equal(Thoughts.moodletTotal(100, 4), 273.4375);
+    assert.equal(Thoughts.moodletTotal(-7, 2), -12.25);
+    assert.equal(Thoughts.shownOffset(-13.875), -14);
+    assert.equal(Thoughts.shownOffset(13.875), 14);
+    assert.equal(Thoughts.shownOffset(-10.5), -11);
+    assert.equal(Thoughts.shownOffset(10.5), 11);
+    assert.equal(Thoughts.shownOffset(-14), -14);
+
+    const p = pawn({ id: "stack" });
+    for (let i = 0; i < 3; i++) Thoughts.witness(p, i);
+    Thoughts.refresh(p, 3);
+    assert.equal(p.thoughts.lines[0].offset, -14);
+    assert.equal(p.thoughts.lines[0].count, 3);
+    assert.equal(Math.round(p.needs.mood * 100), 36);
+    for (let i = 3; i < 6; i++) Thoughts.witness(p, i);
+    Thoughts.refresh(p, 6);
+    assert.equal(p.thoughts.lines[0].count, 5);
+    assert.equal(p.thoughts.lines[0].offset, -19);
+});
+
+test("settlement complaints rank the strongest penalties and hide the score", () => {
+    const empty = Thoughts.summary([]);
+    assert.equal(empty.count, 0);
+    assert.equal(empty.mood, null);
+    assert.equal(empty.complaints.length, 0);
+    assert.equal(
+        Thoughts.settlementTip([]),
+        "No settlers.\nKeep them happy, lest they grow resentful."
+    );
+
+    const mean = Thoughts.summary([
+        { needs: { mood: 0.5 }, thoughts: { lines: [] } },
+        { needs: { mood: 0.36 }, thoughts: { lines: [] } }
+    ]);
+    assert.equal(mean.pct, 43);
+    assert.equal(mean.stage, "content");
+
+    const one = {
+        needs: { mood: 0.4 },
+        thoughts: {
+            lines: [
+                { offset: 3, label: "Ate a cooked meal", count: 1 },
+                { offset: -12, label: "Saw a corpse", count: 3 }
+            ]
+        }
+    };
+    const solo = Thoughts.summary([one]);
+    assert.equal(solo.complaints.length, 1);
+    assert.equal(solo.complaints[0].label, "Saw a corpse");
+    assert.equal(solo.complaints[0].n, 1);
+    assert.equal(solo.complaints[0].p, -12);
+    assert.equal(solo.complaints[0].t, -12);
+
+    const crowd = [];
+    for (let i = 0; i < 6; i++) {
+        crowd.push({
+            needs: { mood: 0.4 },
+            thoughts: { lines: [{ offset: -7, label: "Ate raw meat", count: 1 }] }
+        });
+    }
+    const six = Thoughts.summary(crowd);
+    assert.equal(six.complaints[0].n, 6);
+    assert.equal(six.complaints[0].t, Thoughts.moodletTotal(-7, 6));
+    assert.ok(six.complaints[0].t < Thoughts.moodletTotal(-7, 5));
+
+    const mixed = Thoughts.summary([
+        { needs: { mood: 0.4 }, thoughts: { lines: [{ offset: -10, label: "In pain", count: 1 }] } },
+        { needs: { mood: 0.6 }, thoughts: { lines: [{ offset: -5, label: "In pain", count: 1 }] } }
+    ]);
+    assert.equal(mixed.complaints[0].p, -10);
+    assert.equal(mixed.complaints[0].n, 2);
+    assert.equal(mixed.complaints[0].t, -13.75);
+
+    const many = Thoughts.summary([{
+        needs: { mood: 0.2 },
+        thoughts: {
+            lines: [
+                { offset: -2, label: "Peckish" },
+                { offset: -4, label: "Zebra" },
+                { offset: -4, label: "Aardvark" },
+                { offset: -6, label: "Hungry" },
+                { offset: -7, label: "Ate raw meat" },
+                { offset: -15, label: "Ate human flesh" }
+            ]
+        }
+    }]);
+    assert.deepEqual(many.complaints.map((row) => row.label), [
+        "Ate human flesh",
+        "Ate raw meat",
+        "Hungry",
+        "Aardvark"
+    ]);
+
+    const tip = Thoughts.settlementTip(crowd, false);
+    assert.match(tip, /Average happiness: \{g\}40% \(content\)\{\/g\}/);
+    assert.match(tip, /The average happiness of all your settlers\./);
+    assert.match(tip, /\{g\}Top complaints\{\/g\}/);
+    assert.match(tip, /\{n\}Ate raw meat\{\/n\}/);
+    assert.equal(tip.includes("P="), false);
+    const debug = Thoughts.settlementTip(crowd, true);
+    assert.match(debug, /\{n\}Ate raw meat  P=-7 N=6 T=/);
 });
