@@ -72,6 +72,7 @@
             wants_kill_long: ["Wants to kill", "Someone is going to die soon."],
             darkness: ["Darkness", "I can't see a thing."],
             darkness_joy: ["Darkness", "The darkness surrounds me like a blanket. It comforts me."],
+            hearth_extinguished: ["Hearth extinguished", "The hearth is not burning. The flame's presence was comforting."],
             lost_part: ["{part} is gone", "A part of my body, gone forever..."],
             began: ["Initial optimism", "This is the beginning of something wonderful."],
             joined: ["Joined the tribe", "I've been accepted into {name}'s tribe"]
@@ -170,6 +171,7 @@
         }),
         darkness: def("darkness", { offset: -4 }),
         darkness_joy: def("darkness_joy", { offset: 3 }),
+        hearth_extinguished: def("hearth_extinguished", { offset: -1 }),
         lost_small: lostDef("lost_small", -3),
         lost_mid: lostDef("lost_mid", -8),
         lost_major: lostDef("lost_major", -12),
@@ -256,6 +258,7 @@
             seen: [],
             lost: [],
             dark: null,
+            hearthOut: false,
             lastKill: null,
             appeared: null,
             strain: 0,
@@ -302,6 +305,7 @@
         }
         state.lost = lostKept;
         state.dark = state.dark === "dark" || state.dark === "joy" ? state.dark : null;
+        state.hearthOut = !!state.hearthOut;
         const lastKill = state.lastKill == null ? null : Number(state.lastKill);
         state.lastKill = lastKill != null && Number.isFinite(lastKill) ? lastKill : null;
         const appeared = state.appeared == null ? null : Number(state.appeared);
@@ -337,6 +341,7 @@
             seen: src.seen.slice(),
             lost: src.lost.slice(),
             dark: src.dark,
+            hearthOut: src.hearthOut,
             lastKill: src.lastKill,
             appeared: src.appeared,
             strain: src.strain,
@@ -603,6 +608,7 @@
         const moodDark = ensure(pawn).dark;
         if (moodDark === "joy") push("darkness_joy", DEFS.darkness_joy.offset);
         else if (moodDark === "dark") push("darkness", DEFS.darkness.offset);
+        if (ensure(pawn).hearthOut) push("hearth_extinguished", DEFS.hearth_extinguished.offset);
 
         if (hasTrait(pawn, "murderous")) {
             const state = ensure(pawn);
@@ -860,6 +866,9 @@
         const primed = ensure(pawn);
         if (primed && Object.prototype.hasOwnProperty.call(opts, "dark")) {
             primed.dark = opts.dark === "joy" || opts.dark === "dark" ? opts.dark : null;
+        }
+        if (primed && Object.prototype.hasOwnProperty.call(opts, "hearthOut")) {
+            primed.hearthOut = !!opts.hearthOut;
         }
         const state = refresh(pawn, now);
         const logs = [];

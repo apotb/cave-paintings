@@ -314,6 +314,16 @@
         return Thoughts.hasTrait(pawn, "night_owl") ? "joy" : "dark";
     },
 
+    /** A settler's own hearth, and only while its flame is out. */
+    _hearthOut(pawn) {
+        const home = pawn?.homeSettlementId;
+        if (!home) return false;
+        const settle = (this.settlements || []).find((s) => s && s.id === home);
+        const entry = this._findThingByUid?.(settle?.stoneUid)?.entry;
+        if (!Fire?.isHearthEntry?.(entry)) return false;
+        return !Fire.isLitEntry(entry);
+    },
+
     _tickPawnThoughts(pawn) {
         if (!Thoughts || !pawn || pawn.dead) return;
         const now = this.worldMinuteIndex();
@@ -329,7 +339,8 @@
             eligible: this._strainEligible(pawn),
             asleep,
             downed,
-            dark: this._moodDark(pawn)
+            dark: this._moodDark(pawn),
+            hearthOut: this._hearthOut(pawn)
         });
         this._applyThoughtResult(pawn, result);
     },

@@ -520,6 +520,19 @@ test("darkness is a penalty, and a night owl is glad of it", () => {
     assert.deepEqual(offsets(p), []);
 });
 
+test("an unlit hearth is a small penalty until the fire is lit again", () => {
+    const p = pawn();
+    Thoughts.tick(p, 0, { hearthOut: true, eligible: false });
+    assert.deepEqual(offsets(p), ["-1:Hearth extinguished"]);
+    assert.equal(p.thoughts.lines[0].quote, "The hearth fire has gone out.");
+    const copy = pawn({ id: "hearth-copy" });
+    Thoughts.apply(copy, Thoughts.toJSON(p));
+    Thoughts.refresh(copy, 0);
+    assert.deepEqual(offsets(copy), ["-1:Hearth extinguished"]);
+    Thoughts.tick(p, 1, { hearthOut: false, eligible: false });
+    assert.deepEqual(offsets(p), []);
+});
+
 test("a destroyed part is remembered for a long time, and the pieces under it are not", () => {
     const arm = { name: "Left Arm", baseId: "Arm", dead: true, cut: false, def: {}, isDead() { return this.dead; }, isCutOff() { return this.cut; } };
     const hand = { name: "Left Hand", baseId: "Hand", dead: false, cut: true, def: {}, isDead() { return this.dead; }, isCutOff() { return this.cut; } };
@@ -574,6 +587,74 @@ test("night is dark, a fire lifts it, and a blind person does not notice", () =>
     });
     world._tickHumanNeeds(leader);
     assert.equal(leader.thoughts.lines.some((row) => row.label === "Darkness"), false);
+});
+
+test("settlers mind an unlit hearth, and a lit one leaves the thought off", () => {
+    const { world, pawn: leader, Protocol } = createTestWorld();
+    for (const c of world.chunks.values()) {
+        c.tiles = Array.from({ length: 8 * 8 }, () => "grass");
+    }
+    const { tx, ty } = world._tileOf(leader.x, leader.y);
+    const { x, y } = world._tileCenter(tx, ty);
+    const fire = {
+        uid: "cold-hearth",
+        id: "unlit_campfire",
+        x, y, tx, ty,
+        fuel: [null, null],
+        cook: null,
+        catalyst: null,
+        simmer: [null, null, null, null],
+        burnRemaining: 0
+    };
+    originChunk(world).things.push(fire);
+    leader.inventory[0] = { id: "hearth", quantity: 1 };
+    leader.hotbarIndex = 0;
+    world.handleAction(leader.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "found",
+        tx, ty, rot: 0,
+        name: "Cold Camp"
+    });
+    const settle = world.settlements[0];
+    assert.equal(fire.id, "hearth");
+    assert.equal(fire.lit, false);
+
+    const settler = world._settlerFromSnap({
+        id: "ember",
+        name: "Ember",
+        x, y,
+        ownerId: leader.id,
+        homeSettlementId: settle.id,
+        kc: 1600,
+        inventory: [null, null, null, null, null]
+    });
+    world.settlers.push(settler);
+    world._tickHumanNeeds(settler);
+    world._tickHumanNeeds(leader);
+    assert.deepEqual(
+        settler.thoughts.lines.filter((row) => row.label === "Hearth extinguished").map((row) => row.offset),
+        [-1]
+    );
+    assert.equal(leader.thoughts.lines.some((row) => row.label === "Hearth extinguished"), false);
+
+    fire.lit = true;
+    world._tickHumanNeeds(settler);
+    assert.equal(settler.thoughts.lines.some((row) => row.label === "Hearth extinguished"), false);
+
+    const visitor = world._settlerFromSnap({
+        id: "guest",
+        name: "Guest",
+        x, y,
+        ownerId: leader.id,
+        kc: 1600,
+        inventory: [null, null, null, null, null]
+    });
+    world.settlers.push(visitor);
+    fire.lit = false;
+    world._tickHumanNeeds(visitor);
+    world._tickHumanNeeds(settler);
+    assert.equal(visitor.thoughts.lines.some((row) => row.label === "Hearth extinguished"), false);
+    assert.equal(settler.thoughts.lines.some((row) => row.label === "Hearth extinguished"), true);
 });
 
 test("a miserable settler abandons, and a sulk refuses ordinary work", () => {
