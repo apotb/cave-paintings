@@ -168,16 +168,6 @@
         return storyDefs(bio, cat).concat(traitDefs(bio, cat));
     }
 
-    /** Backstory skill offsets. Trait grants are written into the skill when the bio is created. */
-    function offsetOf(bio, skillId, cat) {
-        let n = 0;
-        for (const row of storyDefs(bio, cat)) {
-            const v = row.skills && row.skills[skillId];
-            if (Number.isFinite(Number(v))) n += Number(v);
-        }
-        return n;
-    }
-
     function incapable(bio, skillId, cat) {
         if (!bio || !SKILL_IDS.includes(skillId)) return false;
         for (const row of activeDefs(bio, cat)) {
@@ -188,8 +178,7 @@
 
     function effectiveLevel(bio, skillId, cat) {
         if (incapable(bio, skillId, cat)) return null;
-        const trained = Math.floor(Number(bio?.skills?.[skillId]?.level) || 0);
-        return clamp(trained + offsetOf(bio, skillId, cat), 0, 20);
+        return clamp(Math.floor(Number(bio?.skills?.[skillId]?.level) || 0), 0, 20);
     }
 
     function learningFactor(bio, cat) {
@@ -306,29 +295,8 @@
         return `{${kind}}${text}{/${kind}}`;
     }
 
-    /** Titles of backstories that change this skill, in bio order. */
-    function skillOffsetLines(bio, skillId, cat) {
-        const lines = [];
-        for (const row of storyDefs(bio, cat)) {
-            const v = row.skills && row.skills[skillId];
-            if (!Number.isFinite(Number(v)) || Number(v) === 0) continue;
-            lines.push(`- ${row.title || "Unknown"}: ${formatSigned(v)}`);
-        }
-        return lines;
-    }
-
-    /** Skill hover: name, blurb, level split into learned plus offsets, progress, and learning. */
-    function skillTip(bio, skillId, cat, opts) {
-        const finish = (lines) => {
-            if (opts?.passionSources) {
-                const sources = passionSourceLines(bio, skillId, cat);
-                if (sources.length) {
-                    lines.push("");
-                    lines.push(...sources);
-                }
-            }
-            return lines.join("\n");
-        };
+    /** Skill hover: name, blurb, stored level, progress, and learning. */
+    function skillTip(bio, skillId, cat) {
         const label = labelOf(skillId);
         const blurb = SKILL_BLURBS[skillId] || "";
         const lines = [markTip("g", label)];
@@ -342,24 +310,19 @@
             if (cause) lines.push(cause);
             lines.push("");
             lines.push(progressTip(trained, row.xp));
-            return finish(lines);
+            return lines.join("\n");
         }
         const shown = effectiveLevel(bio, skillId, cat);
         lines.push(`Skill level: ${markTip("g", `${shown} - ${levelTitle(shown)}`)}`);
-        const offsets = skillOffsetLines(bio, skillId, cat);
-        if (offsets.length) {
-            lines.push(markTip("m", `- Learned level: ${trained}`));
-            for (const line of offsets) lines.push(markTip("m", line));
-        }
         lines.push("");
         lines.push(progressTip(trained, row.xp));
         lines.push("");
-        const interest = passionMult(passionOf(bio, skillId, cat));
+        const interest = passionMult(passionOf(bio, skillId));
         const base = learningFactor(bio, cat);
         lines.push(`Learning speed: ${markTip("g", pctText(interest * base))}`);
         lines.push(markTip("m", `- Base value: ${pctText(base)}`));
         lines.push(markTip("m", `- Passion: x${pctText(interest)}`));
-        return finish(lines);
+        return lines.join("\n");
     }
 
     function blankLike(text) {
@@ -992,41 +955,43 @@
         return false;
     }
 
-    /** Rolled passion, plus each current backstory. Trait passions are already in the base. The result stays between none and two. */
-    function passionOf(bio, skillId, cat) {
-        let passion = 0;
-        for (const source of passionParts(bio, skillId, cat)) passion += source.count;
-        return clamp(passion, 0, 2);
+    /** Stored passion. Story and trait passions are already written in. Stays between none and two. */
+    function passionOf(bio, skillId) {
+        return clamp(Math.floor(Number(bio?.skills?.[skillId]?.passion) || 0), 0, 2);
     }
 
-    function passionParts(bio, skillId, cat) {
-        const parts = [];
-        const base = Math.floor(Number(bio?.skills?.[skillId]?.passion) || 0);
-        if (base > 0) parts.push({ label: "Base", count: base });
-        for (const row of storyDefs(bio, cat)) {
-            const count = passionCount(row, skillId);
-            if (!count) continue;
-            parts.push({ label: row.title || "Unknown", count });
+    /** Skill levels and passions on one or more trait or backstory rows, summed before the clamp. */
+    function grantTotals(rows) {
+        const levels = Object.create(null);
+        const passions = Object.create(null);
+        for (const row of rows || []) {
+            if (!row) continue;
+            for (const id of SKILL_IDS) {
+                const levelsN = Number(row.skills && row.skills[id]);
+                if (Number.isFinite(levelsN) && levelsN !== 0) levels[id] = (levels[id] || 0) + levelsN;
+                const passion = passionCount(row, id);
+                if (passion) passions[id] = (passions[id] || 0) + passion;
+            }
         }
-        return parts;
+        return { levels, passions };
     }
 
     /**
-     * Add or remove one trait's skill levels and passions on the stored skill.
+     * Add or remove skill levels and passions on the stored skill.
      * sign 1 writes them in, sign -1 takes them back out. The stored level can still reach 20.
      */
-    function shiftTraitGrants(bio, row, sign) {
-        if (!bio || !row) return bio;
+    function applyGrantTotals(bio, totals, sign) {
+        if (!bio || !totals) return bio;
         const dir = sign < 0 ? -1 : 1;
         if (!bio.skills || typeof bio.skills !== "object") bio.skills = emptySkills();
         for (const id of SKILL_IDS) {
             if (!bio.skills[id]) bio.skills[id] = { level: 0, xp: 0, passion: 0 };
             const skill = bio.skills[id];
-            const levels = Number(row.skills && row.skills[id]);
-            if (Number.isFinite(levels) && levels !== 0) {
+            const levels = totals.levels[id];
+            if (levels) {
                 skill.level = clamp(Math.floor((Number(skill.level) || 0) + dir * levels), 0, 20);
             }
-            const passion = passionCount(row, id);
+            const passion = totals.passions[id];
             if (passion) {
                 skill.passion = clamp(Math.floor((Number(skill.passion) || 0) + dir * passion), 0, 2);
             }
@@ -1034,8 +999,17 @@
         return bio;
     }
 
-    function passionSourceLines(bio, skillId, cat) {
-        return passionParts(bio, skillId, cat).map((part) => `${passionMarks(part.count)} ${part.label}`);
+    function shiftTraitGrants(bio, row, sign) {
+        if (!bio || !row) return bio;
+        return applyGrantTotals(bio, grantTotals([row]), sign);
+    }
+
+    /** Write childhood and adulthood skill levels and passions into the stored skills, once. */
+    function applyStoryGrants(bio, cat) {
+        if (!bio) return bio;
+        applyGrantTotals(bio, grantTotals(storyDefs(bio, cat)), 1);
+        bio.storyGrants = true;
+        return bio;
     }
 
     function generate(rng, cat) {
@@ -1097,6 +1071,7 @@
             const trait = defOf(c.traits, id);
             if (trait) shiftTraitGrants(bio, trait, 1);
         }
+        applyStoryGrants(bio, c);
         return bio;
     }
 
@@ -1118,7 +1093,7 @@
         };
     }
 
-    function normalize(bio) {
+    function normalize(bio, cat) {
         const src = bio && typeof bio === "object" ? bio : {};
         const skills = emptySkills();
         for (const id of SKILL_IDS) {
@@ -1140,7 +1115,7 @@
                 if (Number.isFinite(Number(srcGross[id]))) gross[id] = Number(srcGross[id]);
             }
         }
-        return {
+        const out = {
             gender: src.gender === "male" ? "male" : "female",
             age: clamp(Math.floor(Number(src.age) || 16), 14, 70),
             childhood: typeof src.childhood === "string" ? src.childhood : null,
@@ -1150,12 +1125,15 @@
             xpDay: {
                 day: Math.floor(Number(src.xpDay?.day) || 0),
                 gross
-            }
+            },
+            storyGrants: src.storyGrants === true
         };
+        if (!out.storyGrants) applyStoryGrants(out, cat);
+        return out;
     }
 
     function ensure(bio, id, cat) {
-        if (bio && bio.skills && bio.gender) return normalize(bio);
+        if (bio && bio.skills && bio.gender) return normalize(bio, cat);
         return generate(rngFromId(id || "pawn"), cat);
     }
 
@@ -1565,7 +1543,6 @@
         passionOf,
         xpToNext,
         levelProgress,
-        offsetOf,
         incapable,
         effectiveLevel,
         learningFactor,

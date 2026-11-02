@@ -2960,6 +2960,15 @@ class SceneMenu extends Phaser.Scene {
     _setCreateBackstory(key, id) {
         const bio = this._createBio;
         if (!bio || (key !== "childhood" && key !== "adulthood") || !id) return;
+        const S = typeof Skills !== "undefined" ? Skills : null;
+        if (S && id !== bio[key]) {
+            const books = S.catalogs().backstories || [];
+            const oldRow = bio[key] ? books.find((row) => row.id === bio[key]) : null;
+            const newRow = books.find((row) => row.id === id);
+            if (oldRow) S.shiftTraitGrants(bio, oldRow, -1);
+            if (newRow) S.shiftTraitGrants(bio, newRow, 1);
+            bio.storyGrants = true;
+        }
         bio[key] = id;
         this._closeCreateTraitMenu();
         this._rebuildCreateCharacter();
@@ -3329,7 +3338,7 @@ class SceneMenu extends Phaser.Scene {
                 xp: off ? 0 : Math.max(0, Number(row.xp) || 0),
                 trained: Math.max(0, Math.floor(Number(row.level) || 0)),
                 shown: off ? 0 : level,
-                tip: S.skillTip(bio, id, null, { passionSources: true })
+                tip: S.skillTip(bio, id)
             });
         }
 

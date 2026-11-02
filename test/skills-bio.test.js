@@ -30,11 +30,10 @@ test("a new bio rolls gender, age, both backstories, traits, and skills", () => 
     assert.ok(bio.adulthood);
     assert.ok(bio.traits.length >= 1 && bio.traits.length <= 3);
     for (const id of Skills.SKILL_IDS) {
-        assert.ok(bio.skills[id].level >= 0 && bio.skills[id].level <= 14);
+        assert.ok(bio.skills[id].level >= 0 && bio.skills[id].level <= 20);
         assert.ok(bio.skills[id].passion >= 0 && bio.skills[id].passion <= 2);
     }
-    const passionate = Skills.SKILL_IDS.filter((id) => bio.skills[id].passion > 0);
-    assert.ok(passionate.length <= 4);
+    assert.equal(bio.storyGrants, true);
 });
 
 test("a trait menu blocks conflicts", () => {
@@ -51,7 +50,7 @@ test("a trait menu blocks conflicts", () => {
     assert.equal(Skills.traitConflicts(brawler, ["fast_learner"], traits), false);
 });
 
-test("a backstory passion shows while that story is selected", () => {
+test("a backstory's passion is written in with the story", () => {
     const stories = DataStore._store.backstoriesList;
     const story = stories.find((row) => row.slot === "child" && row.passions && Object.keys(row.passions).length);
     assert.ok(story);
@@ -60,48 +59,49 @@ test("a backstory passion shows while that story is selected", () => {
     const bio = Skills.normalize({
         gender: "female",
         age: 20,
-        childhood: story.id,
+        childhood: null,
         adulthood: null,
         traits: [],
+        storyGrants: true,
         skills: { [skillId]: { level: 3, xp: 0, passion: 0 }, melee: { level: 1, xp: 0, passion: 2 } }
     });
+    Skills.shiftTraitGrants(bio, story, 1);
+    bio.childhood = story.id;
     assert.equal(Skills.passionOf(bio, skillId), granted);
-    const storyMelee = story.passions.melee == null ? 0 : Math.max(0, Math.floor(Number(story.passions.melee)));
-    assert.equal(Skills.passionOf(bio, "melee"), Math.min(2, 2 + storyMelee));
+    assert.equal(bio.skills[skillId].level, Math.max(0, Math.min(20, 3 + (Number(story.skills?.[skillId]) || 0))));
+    Skills.shiftTraitGrants(bio, story, -1);
     bio.childhood = null;
     assert.equal(Skills.passionOf(bio, skillId), 0);
     assert.equal(Skills.passionOf(bio, "melee"), 2);
+    assert.equal(bio.skills[skillId].level, 3);
 });
 
-test("passions add up to two stars, and the creator tip lists each source", () => {
-    const cat = {
-        backstories: [{ id: "thinker", slot: "adult", title: "Philosopher", passions: { intellectual: 2 } }],
-        traits: [{ id: "teller", title: "Storyteller", passions: { intellectual: 1 } }]
-    };
+test("stored passions cap at two", () => {
+    const story = { id: "thinker", slot: "adult", title: "Philosopher", passions: { intellectual: 2 } };
+    const trait = { id: "teller", title: "Storyteller", passions: { intellectual: 1 } };
+    const cat = { backstories: [story], traits: [trait] };
     const bio = Skills.normalize({
         gender: "female",
         age: 30,
         childhood: null,
-        adulthood: "thinker",
-        traits: ["teller"],
+        adulthood: null,
+        traits: [],
+        storyGrants: true,
         skills: { intellectual: { level: 0, xp: 0, passion: 0 } }
-    });
-    assert.equal(Skills.passionOf(bio, "intellectual", cat), 2);
-    cat.backstories[0].passions.intellectual = 1;
-    assert.equal(Skills.passionOf(bio, "intellectual", cat), 1);
-    bio.skills.intellectual.passion = 1;
-    cat.traits = [];
-    assert.equal(Skills.passionOf(bio, "intellectual", cat), 2);
-    const quiet = Skills.tipLayers(Skills.skillTip(bio, "intellectual", cat)).plain;
-    assert.equal(/\* (Base|Philosopher)/.test(quiet), false);
-    cat.traits = [{ id: "teller", title: "Storyteller", passions: { intellectual: 1 } }];
-    bio.skills.intellectual.passion = 1;
-    cat.backstories[0].passions.intellectual = 2;
-    const shown = Skills.tipLayers(Skills.skillTip(bio, "intellectual", cat, { passionSources: true }));
-    assert.match(shown.plain, /\* Base\n\* \* Philosopher$/);
-    assert.equal(/Storyteller/.test(shown.plain), false);
-    assert.equal((shown.stars.match(/\*/g) || []).length, 3);
-    assert.equal((shown.down.match(/\*/g) || []).length, 0);
+    }, cat);
+    Skills.shiftTraitGrants(bio, story, 1);
+    bio.adulthood = story.id;
+    assert.equal(bio.skills.intellectual.passion, 2);
+    assert.equal(Skills.passionOf(bio, "intellectual"), 2);
+    story.passions.intellectual = 1;
+    assert.equal(Skills.passionOf(bio, "intellectual"), 2);
+    Skills.shiftTraitGrants(bio, story, -1);
+    Skills.shiftTraitGrants(bio, story, 1);
+    Skills.shiftTraitGrants(bio, trait, 1);
+    assert.equal(bio.skills.intellectual.passion, 2);
+    const tip = Skills.tipLayers(Skills.skillTip(bio, "intellectual", cat)).plain;
+    assert.equal(/Philosopher|Storyteller/.test(tip), false);
+    assert.equal((tip.match(/\*/g) || []).length, 0);
 });
 
 test("a trait's skills and passions are written in at creation", () => {
@@ -283,13 +283,14 @@ test("an incapable skill names the backstory or trait that caused it", () => {
     assert.equal(Skills.incapableTip(bio, "melee"), "");
 });
 
-test("a skill tip splits the shown level from what was learned", () => {
+test("a skill tip shows the stored level", () => {
     const bio = Skills.normalize({
         gender: "female",
         age: 30,
         childhood: null,
         adulthood: "herbalist",
         traits: ["fast_learner"],
+        storyGrants: true,
         skills: {
             medical: { level: 5, xp: 5750, passion: 1 },
             melee: { level: 10, xp: 10, passion: 0 },
@@ -298,8 +299,9 @@ test("a skill tip splits the shown level from what was learned", () => {
     });
     const medical = Skills.tipLayers(Skills.skillTip(bio, "medical")).plain;
     assert.match(medical, new RegExp(`^Medical\\n${Skills.SKILL_BLURBS.medical}`));
-    assert.match(medical, new RegExp(`Skill level: 7 - ${Skills.levelTitle(7)}`));
-    assert.match(medical, /- Learned level: 5\n- Herbalist: \+2/);
+    assert.match(medical, new RegExp(`Skill level: 5 - ${Skills.levelTitle(5)}`));
+    assert.equal(medical.includes("Learned level"), false);
+    assert.equal(medical.includes("Herbalist"), false);
     assert.match(medical, /Progress to next learned level: 5750 \/\n6000/);
     assert.match(medical, /Learning speed: 150%/);
     assert.match(medical, /- Base value: 150%/);
@@ -321,7 +323,10 @@ test("a skill tip splits the shown level from what was learned", () => {
         childhood: null,
         adulthood: "veteran",
         traits: ["brawler"],
-        skills: Skills.emptySkills()
+        storyGrants: true,
+        skills: {
+            shooting: { level: 4, xp: 0, passion: 1 }
+        }
     });
     const off = Skills.tipLayers(Skills.skillTip(blocked, "medical")).plain;
     assert.match(off, /Incapable/);
@@ -330,11 +335,12 @@ test("a skill tip splits the shown level from what was learned", () => {
     const shot = Skills.tipLayers(Skills.skillTip(blocked, "shooting")).plain;
     assert.equal(/Incapable/.test(shot), false);
     assert.match(shot, /Skill level: 4 - Apprentice/);
-    assert.match(shot, /- Learned level: 0\n- Veteran: \+4/);
+    assert.equal(shot.includes("Learned level"), false);
+    assert.equal(shot.includes("Veteran"), false);
     assert.equal(/Brawler/.test(shot), false);
     assert.match(shot, /Learning speed: 100%/);
     assert.match(shot, /- Passion: x100%/);
-    assert.match(shot, /Progress to next learned level: 0 \/ 1000/);
+    assert.match(shot, /Progress to next learned level: 0 \/ 5000/);
     const html = Skills.tipHtml(Skills.skillTip(bio, "medical"));
     assert.match(html, /color:#e6c15a/);
     assert.match(html, /color:#a0a0a0/);
@@ -355,26 +361,44 @@ test("the same id rolls the same bio", () => {
     assert.equal(a.adulthood, b.adulthood);
 });
 
-test("backstory offsets stay live", () => {
+test("backstory skills and passions are written in once", () => {
+    const book = DataStore._store.backstoriesList.find((row) => row.id === "hearth_tender");
+    const forager = DataStore._store.backstoriesList.find((row) => row.id === "forager");
     const bio = Skills.normalize({
         gender: "female",
         age: 30,
         childhood: "hearth_tender",
         adulthood: "forager",
         traits: [],
-        skills: { cooking: { level: 4, xp: 0, passion: 0 }, plants: { level: 4, xp: 0, passion: 0 } }
+        skills: { cooking: { level: 4, xp: 12, passion: 0 }, plants: { level: 4, xp: 0, passion: 0 } }
     });
-    const book = DataStore._store.backstoriesList.find((row) => row.id === "hearth_tender");
-    const forager = DataStore._store.backstoriesList.find((row) => row.id === "forager");
-    assert.equal(Skills.effectiveLevel(bio, "cooking"), 4 + book.skills.cooking);
-    assert.equal(Skills.effectiveLevel(bio, "plants"), 4 + book.skills.plants + forager.skills.plants);
+    assert.equal(bio.storyGrants, true);
+    assert.equal(bio.skills.cooking.level, Math.max(0, Math.min(20, 4 + book.skills.cooking)));
+    assert.equal(bio.skills.cooking.xp, 12);
+    assert.equal(bio.skills.cooking.passion, Math.max(0, Math.min(2, Number(book.passions.cooking) || 0)));
+    assert.equal(bio.skills.plants.level, Math.max(0, Math.min(20, 4 + book.skills.plants + forager.skills.plants)));
+    assert.equal(bio.skills.plants.passion, Math.max(0, Math.min(2, Number(forager.passions.plants) || 0)));
+    assert.equal(Skills.effectiveLevel(bio, "cooking"), bio.skills.cooking.level);
+    assert.equal(Skills.effectiveLevel(bio, "plants"), bio.skills.plants.level);
+    const cooked = bio.skills.cooking.level;
     const prev = book.skills.cooking;
     book.skills.cooking = prev + 2;
     try {
-        assert.equal(Skills.effectiveLevel(bio, "cooking"), 4 + prev + 2);
+        assert.equal(Skills.effectiveLevel(bio, "cooking"), cooked);
+        const again = Skills.normalize(bio);
+        assert.equal(again.skills.cooking.level, cooked);
+        assert.equal(again.skills.plants.level, bio.skills.plants.level);
     } finally {
         book.skills.cooking = prev;
     }
+    const low = Skills.normalize({
+        gender: "female",
+        age: 30,
+        childhood: "hearth_tender",
+        adulthood: "forager",
+        skills: { plants: { level: 1, xp: 0, passion: 0 } }
+    });
+    assert.equal(low.skills.plants.level, Math.max(0, Math.min(20, 1 + book.skills.plants + forager.skills.plants)));
 });
 
 test("a disabled skill keeps its level and does no work", () => {
