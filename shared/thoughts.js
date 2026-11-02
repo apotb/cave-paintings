@@ -10,7 +10,8 @@
     }
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
     const DAY = 24 * 60;
-    const AUTO_EAT = 1000;
+    /** Below this, and still above Hungry, they are peckish. Meals start at 1000 kcal. */
+    const PECKISH = 600;
 
     /**
      * Every line the mood tooltip can show. Edit the wording here.
@@ -558,7 +559,7 @@
         const quarter = stomach * 0.25;
         if (kc <= 0) push("starving", -12);
         else if (kc < quarter) push("hungry", -6);
-        else if (kc < AUTO_EAT) push("peckish", -2);
+        else if (kc < PECKISH) push("peckish", -2);
 
         const mal = hediff(pawn, "malnutrition");
         const sev = Number(mal?.severity) || 0;
@@ -948,7 +949,7 @@
         DAY,
         DARK_BELOW,
         MARKS,
-        AUTO_EAT,
+        PECKISH,
         DEFS,
         SULK_MIN,
         STRIKE_MIN,

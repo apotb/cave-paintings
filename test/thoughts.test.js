@@ -201,7 +201,7 @@ test("an infection makes them sick, and hunger or bad food does not", () => {
 });
 
 test("the tooltip sorts bonuses first and grays the quotes", () => {
-    const p = pawn({ kc: 900 });
+    const p = pawn({ kc: 500 });
     Thoughts.noteSleep(p, "hut", 0);
     Thoughts.refresh(p, 0);
     const text = Thoughts.tooltip(p);
