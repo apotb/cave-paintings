@@ -600,7 +600,7 @@ function statPawn(skill, level, traits = [], extra = {}) {
     };
 }
 
-test("trait percents add, pairs conflict, and the mood traits do not roll", () => {
+test("trait percents add, pairs conflict, and pyromaniac does not roll", () => {
     const traits = DataStore._store.traitsList;
     const byId = (id) => traits.find((row) => row.id === id);
     assert.equal(Skills.traitConflicts(byId("wimp"), ["tough"], traits), true);
@@ -620,7 +620,7 @@ test("trait percents add, pairs conflict, and the mood traits do not roll", () =
     const cooked = Skills.normalize({ skills: { cooking: { level: 2, xp: 0, passion: 0 } } });
     Skills.shiftTraitGrants(cooked, foodie, 1);
     assert.equal(cooked.skills.cooking.level, 6);
-    const banned = new Set(["pyromaniac", "man_eater", "austere", "murderous"]);
+    const banned = new Set(["pyromaniac"]);
     let sawOwl = false;
     for (let i = 0; i < 400; i++) {
         const bio = Skills.generate(Math.random);
@@ -629,6 +629,10 @@ test("trait percents add, pairs conflict, and the mood traits do not roll", () =
     }
     assert.equal(sawOwl, true);
     for (const id of banned) assert.equal(byId(id).commonality, 0);
+    assert.equal(byId("austere").commonality, 1);
+    assert.equal(byId("man_eater").commonality, 0.3);
+    assert.equal(byId("murderous").commonality, 0.3);
+    assert.equal(byId("psychopath").commonality, 0.4);
 });
 
 test("a healthy pawn matches the skill curves, and a weak hand is slower", () => {

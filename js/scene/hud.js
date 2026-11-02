@@ -584,6 +584,8 @@
         const goldLines = String(spans.gold || "").split("\n");
         const mutedLines = String(spans.muted || "").split("\n");
         const orangeLines = String(spans.orange || "").split("\n");
+        const plusLines = String(spans.plus || "").split("\n");
+        const negLines = String(spans.neg || "").split("\n");
         const centerLines = String(spans.center || "").split("\n");
         const starLines = String(spans.stars || "").split("\n");
         const downLines = String(spans.down || "").split("\n");
@@ -620,6 +622,12 @@
             for (const [start, end] of runsOf(orangeLines[row], line)) {
                 for (let i = start; i < end && i < line.length; i++) kind[i] = "o";
             }
+            for (const [start, end] of runsOf(plusLines[row], line)) {
+                for (let i = start; i < end && i < line.length; i++) kind[i] = "p";
+            }
+            for (const [start, end] of runsOf(negLines[row], line)) {
+                for (let i = start; i < end && i < line.length; i++) kind[i] = "n";
+            }
             for (const [start, end] of runsOf(starLines[row], line)) {
                 for (let i = start; i < end && i < line.length; i++) kind[i] = "s";
             }
@@ -654,7 +662,11 @@
                         x += starW;
                     }
                 } else if (body.trim()) {
-                    const color = k === "g" ? "#e6c15a" : (k === "o" ? "#f0a040" : (k === "m" ? "#a0a0a0" : "#ffffff"));
+                    const color = k === "g" ? "#e6c15a"
+                        : (k === "o" ? "#f0a040"
+                            : (k === "p" ? "#8ed06a"
+                                : (k === "n" ? "#e15d5d"
+                                    : (k === "m" ? "#a0a0a0" : "#ffffff"))));
                     const t = this.add.text(0, 0, body, {
                         fontFamily: style.fontFamily,
                         fontSize: style.fontSize,

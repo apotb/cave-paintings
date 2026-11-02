@@ -396,16 +396,18 @@
         return `<svg class="${cls}" viewBox="0 0 15 14" width="0.9375em" height="0.875em" aria-hidden="true" style="display:inline-block;vertical-align:middle;shape-rendering:crispEdges" fill="${color}">${rects.join("")}</svg>`;
     }
 
-    /** Split {m}, {g}, {o}, {c}, {s}, and {d} marks into aligned copies. `{s}` is a gold star, `{d}` a lost one. */
+    /** Split {m}, {g}, {o}, {p}, {n}, {c}, {s}, and {d} marks into aligned copies. `{p}` is a bonus, `{n}` a penalty, `{s}` a gold star, `{d}` a lost one. */
     function tipLayers(text) {
         const src = String(text || "");
-        if (!/\{[mgcosd]\}/.test(src)) return null;
-        const re = /\{(m|g|c|o|s|d)\}([\s\S]*?)\{\/\1\}/g;
+        if (!/\{[mgcosdpn]\}/.test(src)) return null;
+        const re = /\{(m|g|c|o|s|d|p|n)\}([\s\S]*?)\{\/\1\}/g;
         let plain = "";
         let gold = "";
         let muted = "";
         let center = "";
         let orange = "";
+        let plus = "";
+        let neg = "";
         let stars = "";
         let down = "";
         let last = 0;
@@ -417,6 +419,8 @@
             muted += gap;
             center += gap;
             orange += gap;
+            plus += gap;
+            neg += gap;
             stars += gap;
             down += gap;
         };
@@ -429,12 +433,14 @@
             muted += match[1] === "m" ? body : gap;
             center += match[1] === "c" ? body : gap;
             orange += match[1] === "o" ? body : gap;
+            plus += match[1] === "p" ? body : gap;
+            neg += match[1] === "n" ? body : gap;
             stars += match[1] === "s" ? body : gap;
             down += match[1] === "d" ? body : gap;
             last = match.index + match[0].length;
         }
         pushGap(src.slice(last));
-        return { plain, gold, muted, center, orange, stars, down };
+        return { plain, gold, muted, center, orange, plus, neg, stars, down };
     }
 
     function escapeTip(text) {
@@ -447,9 +453,9 @@
     /** HTML for the menu hover, with the description gray and the values gold. */
     function tipHtml(text) {
         const src = String(text || "");
-        if (!/\{[mgcosd]\}/.test(src)) return null;
-        const re = /\{(m|g|c|o|s|d)\}([\s\S]*?)\{\/\1\}/g;
-        const colors = { g: "#e6c15a", m: "#a0a0a0", o: "#f0a040" };
+        if (!/\{[mgcosdpn]\}/.test(src)) return null;
+        const re = /\{(m|g|c|o|s|d|p|n)\}([\s\S]*?)\{\/\1\}/g;
+        const colors = { g: "#e6c15a", m: "#a0a0a0", o: "#f0a040", p: "#8ed06a", n: "#e15d5d" };
         let html = "";
         let last = 0;
         let match;

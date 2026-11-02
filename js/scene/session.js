@@ -119,6 +119,7 @@
             resting: !!pl._resting,
             groundSleep: !!pl._groundSleep,
             needs: (typeof Needs !== "undefined") ? Needs.toJSON(pl) : (pl.needs || null),
+            thoughts: (typeof Thoughts !== "undefined") ? Thoughts.toJSON(pl) : (pl.thoughts || null),
             techs: pl.techs && typeof pl.techs === "object" ? { ...pl.techs } : (this.character?.techs || {}),
             techGrantRev: pl.techGrantRev ?? this.character?.techGrantRev ?? 0,
             quarantine: Array.isArray(pl.quarantine)
@@ -202,6 +203,7 @@
                 resting: !!m.resting,
                 groundSleep: !!m.groundSleep,
                 needs: m.needs && typeof m.needs === "object" ? { ...m.needs } : null,
+                thoughts: m.thoughts && typeof m.thoughts === "object" ? JSON.parse(JSON.stringify(m.thoughts)) : null,
                 jobs: (m.jobs && typeof m.jobs === "object" && !Array.isArray(m.jobs))
                     ? { ...m.jobs }
                     : null,
@@ -394,6 +396,7 @@
             if (typeof Needs !== "undefined") Needs.apply(youPawn, you.needs);
             else youPawn.needs = { ...you.needs };
         }
+        if (you.thoughts && typeof Thoughts !== "undefined") Thoughts.apply(youPawn, you.thoughts);
         if (typeof you.groundSleep === "boolean") youPawn._groundSleep = !!you.groundSleep;
         if (you.techs && typeof you.techs === "object" && !Array.isArray(you.techs)) {
             youPawn.techs = you.techs;
@@ -471,6 +474,7 @@
                         if (typeof Needs !== "undefined") Needs.apply(pawn, row.needs);
                         else pawn.needs = { ...row.needs };
                     }
+                    if (row.thoughts && typeof Thoughts !== "undefined") Thoughts.apply(pawn, row.thoughts);
                     if (typeof row.groundSleep === "boolean") pawn._groundSleep = !!row.groundSleep;
                 }
             }

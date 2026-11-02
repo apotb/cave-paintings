@@ -460,6 +460,7 @@
             p.prone = true;
         }
         if (saved.needs && typeof saved.needs === "object") p.needs = { ...saved.needs };
+        if (saved.thoughts) this._applyThoughts?.(p, saved.thoughts);
     },
 
     /**
@@ -493,6 +494,7 @@
                 resting: !!p._resting,
                 groundSleep: !!p._groundSleep,
                 needs: p.needs ? { ...p.needs } : null,
+                thoughts: this._thoughtsJSON?.(p) || null,
                 lastSleep: p.lastSleep || null
             };
             for (const m of p.party || []) {
@@ -504,6 +506,7 @@
                     resting: !!m._resting,
                     groundSleep: !!m._groundSleep,
                     needs: m.needs ? { ...m.needs } : null,
+                    thoughts: this._thoughtsJSON?.(m) || null,
                     lastSleep: m.lastSleep || null
                 };
             }
@@ -536,6 +539,7 @@
             resting: !!p._resting,
             groundSleep: !!p._groundSleep,
             needs: p.needs ? { ...p.needs } : null,
+            thoughts: this._thoughtsJSON?.(p) || null,
             lastSleep: p.lastSleep || null
         };
         for (const m of p.party || []) {
@@ -547,6 +551,7 @@
                 resting: !!m._resting,
                 groundSleep: !!m._groundSleep,
                 needs: m.needs ? { ...m.needs } : null,
+                thoughts: this._thoughtsJSON?.(m) || null,
                 lastSleep: m.lastSleep || null
             };
         }
@@ -610,6 +615,7 @@
         if (character.lastSleep) p.lastSleep = character.lastSleep;
         if (typeof character.resting === "boolean") p._joinRestHint = !!character.resting;
         if (character.needs && typeof character.needs === "object") p.needs = { ...character.needs };
+        if (character.thoughts) this._applyThoughts?.(p, character.thoughts);
         if (typeof character.groundSleep === "boolean") p._groundSleep = !!character.groundSleep;
         if (character.techs && typeof character.techs === "object" && !Array.isArray(character.techs)) {
             p.techs = { ...character.techs };
@@ -824,6 +830,7 @@
             bio: m.bio || null
         };
         this._ensureBio(rec);
+        if (m.thoughts) this._applyThoughts?.(rec, m.thoughts);
         if (m.jobs && typeof m.jobs === "object" && !Array.isArray(m.jobs)) {
             Settlement.rememberJobs(rec, m.jobs);
         }
@@ -1047,6 +1054,7 @@
             bio: snap.bio || null
         };
         this._ensureBio(rec);
+        if (snap.thoughts) this._applyThoughts?.(rec, snap.thoughts);
         if (snap.jobs && typeof snap.jobs === "object" && !Array.isArray(snap.jobs)) {
             Settlement.rememberJobs(rec, snap.jobs);
         }
@@ -1127,6 +1135,7 @@
             resting: !!(s._resting || s.resting),
             groundSleep: !!s._groundSleep,
             needs: s.needs && typeof s.needs === "object" ? { ...s.needs } : null,
+            thoughts: this._thoughtsJSON?.(s) || null,
             jobs: (s.jobs && typeof s.jobs === "object" && !Array.isArray(s.jobs))
                 ? Settlement.normalizeJobs(s.jobs)
                 : null,
@@ -1419,6 +1428,7 @@
             resting: !!s._resting,
             groundSleep: !!s._groundSleep,
             needs: s.needs && typeof s.needs === "object" ? { ...s.needs } : null,
+            thoughts: this._thoughtsJSON?.(s) || null,
             injured: !!(typeof Sleep !== "undefined" && Sleep.injuredForAutofill
                 ? Sleep.injuredForAutofill(c?.anatomy || s.anatomy)
                 : false),

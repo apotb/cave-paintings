@@ -409,6 +409,7 @@
                 if (typeof Needs !== "undefined") Needs.apply(pawn, row.needs);
                 else pawn.needs = { ...row.needs };
             }
+            if (row.thoughts && typeof Thoughts !== "undefined") Thoughts.apply(pawn, row.thoughts);
             if (typeof row.groundSleep === "boolean") pawn._groundSleep = !!row.groundSleep;
             pawn.ownerId = row.ownerId || pawn.ownerId;
             pawn.homeSettlementId = row.homeSettlementId || null;
@@ -624,6 +625,7 @@
                     groundSleep: w.groundSleep
                 });
                 if (w.needs && typeof Needs !== "undefined") Needs.apply(pawn, w.needs);
+                if (w.thoughts && typeof Thoughts !== "undefined") Thoughts.apply(pawn, w.thoughts);
                 if (typeof w.groundSleep === "boolean") pawn._groundSleep = !!w.groundSleep;
                 pawn._netFromX = w.x;
                 pawn._netFromY = w.y;
@@ -673,6 +675,7 @@
                     if (typeof Needs !== "undefined") Needs.apply(pawn, w.needs);
                     else pawn.needs = { ...w.needs };
                 }
+                if (w.thoughts && typeof Thoughts !== "undefined") Thoughts.apply(pawn, w.thoughts);
                 if (typeof w.groundSleep === "boolean") pawn._groundSleep = !!w.groundSleep;
                 if (Array.isArray(w.inventory)) {
                     const clone = (s) => {

@@ -885,7 +885,7 @@
             const pendingId = pending?.id && !this._corpseIdGone(pending.id) ? pending.id : null;
             const px = Number(pending?.x);
             const py = Number(pending?.y);
-            this._pushCorpse({
+            const entry = this._pushCorpse({
                 id: pendingId || corpse.id,
                 x: Number.isFinite(px) ? px : corpse.x,
                 y: Number.isFinite(py) ? py : corpse.y,
@@ -901,6 +901,19 @@
                 skinned: !!corpse.skinned,
                 sourceUid: uid
             });
+            const human = entry && (
+                entry.bodyPlan === "human" || entry.key === "human" || entry.mobId === "human"
+            );
+            if (human) {
+                this._noteHumanDeath?.({
+                    id: uid,
+                    name: entry.name,
+                    x: entry.x,
+                    y: entry.y
+                }, killer, entry, { grief: false });
+            } else {
+                this._noteKill?.(killer);
+            }
         }
     },
 

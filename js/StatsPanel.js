@@ -614,18 +614,30 @@ class StatsPanel {
         if (typeof Needs !== "undefined") {
             for (const def of Needs.DEFS) parts.push(Math.round(Needs.level(this.pawn?.needs, def.id) * 1000));
         }
+        if (typeof Thoughts !== "undefined") parts.push(Thoughts.sig(this.pawn));
         return parts.join(",");
     }
 
     /** One 8×8 row of needs.png. Cropping the sheet and then scaling it squashes every icon into a dash. */
     _needIconFrame(def) {
         const tex = this.scene.textures.get("needs");
-        const name = `need:${def.id}`;
+        const name = `need:${def.id}:${def.icon}`;
         if (!tex.has(name)) {
             const crop = Needs.iconCrop(def.icon);
             tex.add(name, 0, crop.x, crop.y, crop.w, crop.h);
         }
         return name;
+    }
+
+    /** Stage edges on the mood bar: 5, 25, 35, 65, and 90. */
+    _drawMoodMarks(gfx, barX, y, barW, barH, scale) {
+        const marks = (typeof Thoughts !== "undefined" && Thoughts.MARKS) || [0.05, 0.25, 0.35, 0.65, 0.9];
+        const tickW = Math.max(1, Math.round(scale || 1));
+        gfx.fillStyle(0x444444, 1);
+        for (let i = 0; i < marks.length; i++) {
+            const tx = barX + Math.round(barW * marks[i]) - Math.floor(tickW / 2);
+            gfx.fillRect(tx, y, tickW, barH);
+        }
     }
 
     _makeNeedRows(container) {
@@ -974,13 +986,17 @@ class StatsPanel {
                     this.bioBars.fillStyle(row.def.color, 1);
                     this.bioBars.fillRect(barX, y, fillW, needIcon);
                 }
+                if (row.def.id === "mood") this._drawMoodMarks(this.bioBars, barX, y, barW, needIcon, s);
                 const hitW = needIcon + iconGap + barW;
                 let hit = row.hit?.active ? row.hit : null;
                 if (!hit) {
                     hit = this.scene.add.rectangle(0, 0, hitW, needIcon, 0x000000, 0.001).setOrigin(0, 0);
                     this.bioTexts.add(hit);
                     row.hit = hit;
-                    this._bioTip(hit, () => needApi.tooltip(this.pawn?.needs, row.def.id));
+                    this._bioTip(hit, () => {
+                        if (row.def.id === "mood" && typeof Thoughts !== "undefined") return Thoughts.tooltip(this.pawn);
+                        return needApi.tooltip(this.pawn?.needs, row.def.id);
+                    });
                 }
                 hit.setPosition(x, y);
                 hit.setSize(hitW, needIcon);

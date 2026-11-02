@@ -17,15 +17,24 @@
     const WAKE_AT = 0.28;
     const ICON_W = 8;
     const ICON_H = 8;
-    /** needs.png is 8×41: four 8px icons with a 3px gap. */
+    /** needs.png is 8×52: five 8px icons with a 3px gap. */
     const ICON_PITCH = 11;
 
     const DEFS = [
         {
+            id: "mood",
+            label: "Mood",
+            icon: 0,
+            color: 0xc9960a,
+            simulated: false,
+            description: "How this person is feeling right now.",
+            improve: "Keep settlers happy or they might abandon you."
+        },
+        {
             id: "rest",
             label: "Rest",
-            icon: 0,
-            color: 0x4e898f,
+            icon: 1,
+            color: 0x3d7ea6,
             simulated: true,
             description: "How much this person has slept recently. It falls while they are awake.",
             improve: "Sleep in a better bed to recover faster."
@@ -33,8 +42,8 @@
         {
             id: "recreation",
             label: "Recreation",
-            icon: 1,
-            color: 0xffa800,
+            icon: 2,
+            color: 0xffe14a,
             simulated: false,
             description: "How much this person has fulfilled their desire for recreation recently.",
             improve: "Increase recreation variety to reduce boredom and fill need faster."
@@ -42,8 +51,8 @@
         {
             id: "beauty",
             label: "Beauty",
-            icon: 2,
-            color: 0xaf3b5b,
+            icon: 3,
+            color: 0xff7eb3,
             simulated: false,
             description: "How pleasant this person finds their surroundings.",
             improve: "Art, nature, and clean floors will raise beauty."
@@ -51,8 +60,8 @@
         {
             id: "comfort",
             label: "Comfort",
-            icon: 3,
-            color: 0xffc900,
+            icon: 4,
+            color: 0xffe14a,
             simulated: false,
             description: "How comfortable the furniture this person has used is recently is.",
             improve: "Better furniture and improved quality will increase comfort."
@@ -65,27 +74,28 @@
         return Math.min(1, Math.max(0, n));
     }
 
+    function fallbackFor(id) {
+        return id === "mood" ? 0.5 : 1;
+    }
+
     function fresh() {
-        return { rest: 1, recreation: 1, beauty: 1, comfort: 1 };
+        return { mood: 0.5, rest: 1, recreation: 1, beauty: 1, comfort: 1 };
     }
 
     function ensure(pawn) {
         if (!pawn) return null;
         if (!pawn.needs || typeof pawn.needs !== "object") pawn.needs = fresh();
         const next = pawn.needs;
-        for (const def of DEFS) next[def.id] = clamp01(next[def.id], 1);
+        for (const def of DEFS) next[def.id] = clamp01(next[def.id], fallbackFor(def.id));
         return next;
     }
 
     function apply(pawn, raw) {
         if (!pawn) return null;
         if (raw && typeof raw === "object") {
-            pawn.needs = {
-                rest: raw.rest,
-                recreation: raw.recreation,
-                beauty: raw.beauty,
-                comfort: raw.comfort
-            };
+            const next = {};
+            for (const def of DEFS) next[def.id] = raw[def.id];
+            pawn.needs = next;
         }
         return ensure(pawn);
     }
@@ -93,12 +103,12 @@
     function toJSON(pawn) {
         const src = pawn?.needs;
         const out = fresh();
-        for (const def of DEFS) out[def.id] = clamp01(src?.[def.id], 1);
+        for (const def of DEFS) out[def.id] = clamp01(src?.[def.id], fallbackFor(def.id));
         return out;
     }
 
     function level(needs, id) {
-        return clamp01(needs?.[id], 1);
+        return clamp01(needs?.[id], fallbackFor(id));
     }
 
     function iconCrop(index) {

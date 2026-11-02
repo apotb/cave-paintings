@@ -269,12 +269,10 @@
         const id = action?.pawnId;
         if (!p || !id || id === p.id) return;
         let rec = null;
-        let partyIndex = -1;
         const party = p.party || [];
         for (let i = 0; i < party.length; i++) {
             if (party[i] && party[i].id === id && !party[i].dead) {
                 rec = party[i];
-                partyIndex = i;
                 break;
             }
         }
@@ -282,6 +280,17 @@
             rec = (this.settlers || []).find((s) => s && s.id === id && s.ownerId === p.id && !s.dead) || null;
         }
         if (!rec) return;
+        const name = rec.name || "Someone";
+        this._banishOwned(p, rec, `${name} has been banished`);
+    },
+
+    /** Drop their gear and send them off as a locked wanderer. */
+    _banishOwned(p, rec, logText) {
+        if (!p || !rec || rec.dead || rec.id === p.id) return;
+        const id = rec.id;
+        const party = p.party || [];
+        let partyIndex = party.indexOf(rec);
+        if (partyIndex < 0) partyIndex = party.findIndex((m) => m && m.id === id);
         if (p.controlId === id) this._setControlId(p, p.id, { allowDead: true });
         this._cancelChannels(rec);
         const creature = rec.creature || this.creatures.get(rec.id);
@@ -328,7 +337,7 @@
         });
         this.pushEvent({
             kind: "combat_log",
-            text: `${name} has been banished`,
+            text: logText || `${name} has been banished`,
             feed: true,
             to: p.id
         });
@@ -493,6 +502,7 @@
     _pawnTendActivity(pawn) {
         if (!pawn || pawn.dead) return null;
         if (this._pawnVomiting?.(pawn)) return "Vomiting";
+        if (pawn._moodJob === "strike") return "On strike";
         const selfId = pawn.id;
         const named = (id, name) => {
             if (!id || id === selfId) return null;
@@ -508,6 +518,7 @@
         if (seek) {
             return named(seek.id, seek.name || seek.pawnName) || "Tending";
         }
+        if (pawn._moodJob === "sulk") return "Sulk";
         return null;
     },
 
@@ -773,6 +784,7 @@
             prone: prone || !!w._groundSleep,
             groundSleep: !!w._groundSleep,
             needs: w.needs && typeof w.needs === "object" ? { ...w.needs } : null,
+            thoughts: this._thoughtsJSON?.(w) || null,
             body: w.body || c?.anatomy?.toJSON?.() || null,
             attacking: prone ? false : attacking,
             attackAngle: attacking && !prone ? (c?.attackAngle ?? w.attackAngle ?? null) : null,
@@ -823,6 +835,7 @@
             _avoidSide: 1
         };
         this._ensureBio?.(rec);
+        if (snap.thoughts) this._applyThoughts?.(rec, snap.thoughts);
         return rec;
     },
 
@@ -2244,7 +2257,7 @@
             || (typeof feetToBodyCenter === "function"
                 ? feetToBodyCenter(w.x, w.y, creature?.width, creature?.height)
                 : { x: w.x + 8, y: w.y - 8 });
-        this._pushCorpse({
+        const corpse = this._pushCorpse({
             x: c.x,
             y: c.y,
             key: "human",
@@ -2259,6 +2272,7 @@
             playerCorpse: false,
             sourceUid: w.id
         });
+        this._noteHumanDeath?.(w, killer, corpse, { grief: false });
         this.wanderers.delete(w.id);
         this.creatures.delete(w.id);
         if (creature) {

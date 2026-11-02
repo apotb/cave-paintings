@@ -758,12 +758,14 @@
         const room = Math.max(0, (Number(p.stomach) || 0) - (Number(p.kc) || 0));
         const isMeal = ch.isMeal || this._isPartialFood(held);
 
+        let moodKind = null;
         if (isMeal) {
             const consumed = Math.min(total, room);
             if (!(consumed > 0)) {
                 this._dirtyPawnOwner(p);
                 return;
             }
+            moodKind = "cooked";
             p.kc += consumed;
             p.saturation += consumed * this._satietyRatio(food, true);
             this._tryFoodPoison(p, food);
@@ -777,12 +779,15 @@
                 if (!(held.quantity > 0)) inv[idx] = null;
             }
         } else {
+            if (held.id === "raw_human_flesh") moodKind = "human";
+            else if (held.id === "raw_venison" || held.id === "raw_pork" || held.id === "raw_fish") moodKind = "raw";
             p.kc += Math.min(total, room);
             p.saturation += total * this._satietyRatio(food, false);
             this._tryFoodPoison(p, food);
             held.quantity = (held.quantity || 1) - 1;
             if (!(held.quantity > 0)) inv[idx] = null;
         }
+        if (moodKind) this._noteMeal?.(p, moodKind);
         this._dirtyPawnOwner(p);
     },
 
@@ -1124,7 +1129,7 @@
             const corpseId = typeof action?.corpseId === "string" && action.corpseId
                 ? action.corpseId.slice(0, 48)
                 : undefined;
-            this._pushCorpse({
+            const corpse = this._pushCorpse({
                 id: corpseId,
                 x: Number.isFinite(ax) ? ax : c.x,
                 y: Number.isFinite(ay) ? ay : c.y,
@@ -1139,6 +1144,7 @@
                 mobId: "human",
                 playerCorpse: true
             });
+            this._noteHumanDeath?.(p, killer, corpse);
         }
         // Empty gear so YOU cannot restore dumped loot after death.
         p.inventory = emptyInv(5);
@@ -1203,7 +1209,7 @@
         }
         const c = creature?.bodyCenter?.()
             || feetToBodyCenter(mem.x, mem.y, creature?.width, mem.height);
-        this._pushCorpse({
+        const corpse = this._pushCorpse({
             x: c.x,
             y: c.y,
             key: "human",
@@ -1217,6 +1223,7 @@
             mobId: "human",
             playerCorpse: true
         });
+        this._noteHumanDeath?.(mem, killer, corpse);
         mem.inventory = emptyInv(5);
         mem.overflow = [];
         mem.equipment = { head: null, torso: null, legs: null, feet: null, back: null, waist: [] };
@@ -1577,6 +1584,10 @@
             const cc = row.creature;
             if (!cc) continue;
             this._bindPartyAI(cc);
+            if (rec._moodJob === "strike" && !rec._carryPawnId) {
+                cc.ai.rescueSeek = null;
+                continue;
+            }
             if (combat || rec.dead || this._pawnVomiting(rec) || cc.isAttacking?.()
                 || cc.isIncapacitated?.() || cc.isImmobile?.()) {
                 if (rec._carryPawnId && combat) this._dropCarry(rec);
@@ -1686,6 +1697,11 @@
             const rec = row.rec;
             const cc = row.creature;
             if (!cc) continue;
+            if (rec._moodJob === "strike") {
+                if (cc.ai) cc.ai.tendSeek = null;
+                if (rec.tendChannel) this._clearTendChannel?.(rec, { cancelled: true });
+                continue;
+            }
             if (cc.ai?.rescueSeek || rec._carryPawnId) {
                 cc.ai.tendSeek = null;
                 continue;
@@ -1770,6 +1786,10 @@
             const rec = row.rec;
             const cc = row.creature;
             if (!cc) continue;
+            if (rec._moodJob === "strike" && Number(rec.kc) > 0) {
+                if (cc.ai) cc.ai.eatSeek = null;
+                continue;
+            }
             if (rec.fishChannel) {
                 if (cc.ai) cc.ai.eatSeek = null;
                 continue;
@@ -2130,6 +2150,7 @@
                 }
             }
             if (cc.isBodyDead()) {
+                this._noteHumanDeath?.(rec, cc._lastHitBy || null, null);
                 rec.dead = true;
                 this.settlers = this.settlers.filter((s) => s !== rec);
             }

@@ -3638,6 +3638,7 @@ class PartySystem {
             resting: !!p._resting,
             groundSleep: !!p._groundSleep,
             needs: (typeof Needs !== "undefined") ? Needs.toJSON(p) : (p.needs || null),
+            thoughts: (typeof Thoughts !== "undefined") ? Thoughts.toJSON(p) : (p.thoughts || null),
             jobs: (p.jobs && typeof p.jobs === "object") ? { ...p.jobs } : null,
             schedule: typeof p.schedule === "string" && p.schedule ? p.schedule : null,
             favorite: !!p.favorite,
@@ -3697,6 +3698,7 @@ class PartySystem {
                         if (typeof Needs !== "undefined") Needs.apply(existing, m.needs);
                         else existing.needs = { ...m.needs };
                     }
+                    if (m.thoughts && typeof Thoughts !== "undefined") Thoughts.apply(existing, m.thoughts);
                     if (typeof m.groundSleep === "boolean") existing._groundSleep = !!m.groundSleep;
                     if (dedicated) {
                         existing._netEating = !!m.eatChannel;

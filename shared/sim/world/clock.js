@@ -12,7 +12,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function (ctx) {
     "use strict";
     const {
-        Protocol, Look, rng, Spoil, Durability, Apparel, Chop, Place, Sleep, Hunger, Needs, Path, Hide, Carry, Fire, Party, Settlement, StorageFilter, FuelFilter, CavemanNames, CorpseDecay, GameMath, DataStore, BodyHealing, Hediffs, BodyCombat, BodyMod, Capacities, HeadlessAI, SimCreatureMod, WorldGen, SettlerWork, mulberry32, hash2D, uuid, Body, createAI, PartyAI, WandererStrollAI, NeutralAnimalAI, createPlayerCreature, createMobCreature, feetToBodyCenter, CS, TS, CHUNK_PX, SPEED, SPRINT, MELEE_RANGE, INTEREST, SIM_CHUNKS, DROP_LIFE_MS, HARVEST_RANGE_TILES, BLOCKED, _research, _contentApi, _actionsApi, _kindsApi, _forming, _dig, _defGeneration, thingDefs, mobDefs, itemDefs, chunkKey, worldToChunk, emptyInv, dedupeCorpses
+        Protocol, Look, rng, Spoil, Durability, Apparel, Chop, Place, Sleep, Hunger, Needs, Thoughts, Path, Hide, Carry, Fire, Party, Settlement, StorageFilter, FuelFilter, CavemanNames, CorpseDecay, GameMath, DataStore, BodyHealing, Hediffs, BodyCombat, BodyMod, Capacities, HeadlessAI, SimCreatureMod, WorldGen, SettlerWork, mulberry32, hash2D, uuid, Body, createAI, PartyAI, WandererStrollAI, NeutralAnimalAI, createPlayerCreature, createMobCreature, feetToBodyCenter, CS, TS, CHUNK_PX, SPEED, SPRINT, MELEE_RANGE, INTEREST, SIM_CHUNKS, DROP_LIFE_MS, HARVEST_RANGE_TILES, BLOCKED, _research, _contentApi, _actionsApi, _kindsApi, _forming, _dig, _defGeneration, thingDefs, mobDefs, itemDefs, chunkKey, worldToChunk, emptyInv, dedupeCorpses
     } = ctx;
     return {
 
@@ -97,8 +97,227 @@
             pawn.prone = false;
             if (c) c._prone = false;
         }
+        if (opts.stand) this._noteSleep(pawn, "outdoors");
         this._dirtyPawnOwner?.(pawn);
         this._applyRestClock?.();
+    },
+
+    _thoughtsJSON(pawn) {
+        if (!Thoughts || !pawn) return null;
+        return Thoughts.toJSON(pawn);
+    },
+
+    _applyThoughts(pawn, raw) {
+        if (!Thoughts || !pawn || !raw || typeof raw !== "object") return null;
+        return Thoughts.apply(pawn, raw);
+    },
+
+    _noteSleep(pawn, place) {
+        if (!Thoughts || !pawn || pawn.dead) return;
+        Thoughts.noteSleep(pawn, place, this.worldMinuteIndex());
+        Thoughts.refresh(pawn, this.worldMinuteIndex());
+        this._dirtyPawnOwner?.(pawn);
+    },
+
+    _noteMeal(pawn, kind) {
+        if (!Thoughts || !pawn || pawn.dead || !kind) return;
+        Thoughts.noteMeal(pawn, kind, this.worldMinuteIndex());
+        Thoughts.refresh(pawn, this.worldMinuteIndex());
+        this._dirtyPawnOwner?.(pawn);
+    },
+
+    _thoughtPawn(thing) {
+        if (!thing) return null;
+        const id = thing.id;
+        if (id) {
+            const owned = this._findOwnedPawn?.(id);
+            if (owned) return owned;
+            if (this.wanderers?.has?.(id)) return this.wanderers.get(id);
+        }
+        if (thing.thoughts || thing.bio || thing.role || thing.party) return thing;
+        return null;
+    },
+
+    _eachLivingHuman(fn) {
+        for (const p of this.players.values()) {
+            if (p && !p.dead) fn(p);
+            for (const m of p?.party || []) {
+                if (m && !m.dead) fn(m);
+            }
+        }
+        for (const s of this.settlers || []) {
+            if (s && !s.dead) fn(s);
+        }
+        for (const w of this.wanderers.values()) {
+            if (w && !w.dead) fn(w);
+        }
+    },
+
+    _isHumanCorpse(entry) {
+        if (!entry || entry.stage === "carcass") return false;
+        return entry.bodyPlan === "human" || entry.key === "human" || entry.mobId === "human";
+    },
+
+    _scanCorpsesFor(pawn, now) {
+        if (!Thoughts || !pawn || pawn.dead) return;
+        const reach = 6 * TS;
+        const reach2 = reach * reach;
+        const chunks = this._chunksNear?.(pawn.x, pawn.y, 1, { load: false }) || [];
+        for (const chunk of chunks) {
+            for (const entry of chunk.corpses || []) {
+                if (!this._isHumanCorpse(entry)) continue;
+                const dx = (Number(entry.x) || 0) - (Number(pawn.x) || 0);
+                const dy = (Number(entry.y) || 0) - (Number(pawn.y) || 0);
+                if (dx * dx + dy * dy > reach2) continue;
+                if (Thoughts.seeCorpse(pawn, entry.id, now)) this._dirtyPawnOwner?.(pawn);
+            }
+        }
+    },
+
+    /**
+     * A human died. Nearby people remember it. The dead person's party and camp do too.
+     * Witnesses are marked so the same body does not also count as seeing a corpse.
+     */
+    _noteHumanDeath(victim, killer, corpse, opts = {}) {
+        if (!Thoughts || !victim || victim._thoughtDeathNoted) return;
+        victim._thoughtDeathNoted = true;
+        const now = this.worldMinuteIndex();
+        const x = Number.isFinite(Number(corpse?.x)) ? Number(corpse.x) : (Number(victim.x) || 0);
+        const y = Number.isFinite(Number(corpse?.y)) ? Number(corpse.y) : (Number(victim.y) || 0);
+        const killerPawn = this._thoughtPawn(killer);
+        if (killerPawn && killerPawn.id !== victim.id) {
+            Thoughts.noteKill(killerPawn, now);
+            Thoughts.refresh(killerPawn, now);
+            this._dirtyPawnOwner?.(killerPawn);
+        }
+        const reach2 = (16 * TS) * (16 * TS);
+        const corpseId = corpse?.id || null;
+        this._eachLivingHuman((pawn) => {
+            if (!pawn || pawn.id === victim.id) return;
+            const dx = (Number(pawn.x) || 0) - x;
+            const dy = (Number(pawn.y) || 0) - y;
+            if (dx * dx + dy * dy > reach2) return;
+            Thoughts.witness(pawn, now);
+            if (corpseId) Thoughts.markSeen(pawn, corpseId);
+            Thoughts.refresh(pawn, now);
+            this._dirtyPawnOwner?.(pawn);
+        });
+        if (opts.grief === false) return;
+        const ownerId = this.players.has(victim.id)
+            ? victim.id
+            : (victim.ownerId && this.players.has(victim.ownerId) ? victim.ownerId : null);
+        if (!ownerId) return;
+        const who = victim.name || "Someone";
+        this._eachLivingHuman((pawn) => {
+            if (!pawn || pawn.id === victim.id) return;
+            if (this.wanderers.has(pawn.id)) return;
+            if (pawn.id !== ownerId && pawn.ownerId !== ownerId) return;
+            Thoughts.loseSomeone(pawn, who, now);
+            Thoughts.refresh(pawn, now);
+            this._dirtyPawnOwner?.(pawn);
+        });
+    },
+
+    _noteKill(killer) {
+        if (!Thoughts) return;
+        const pawn = this._thoughtPawn(killer);
+        if (!pawn || pawn.dead) return;
+        const now = this.worldMinuteIndex();
+        Thoughts.noteKill(pawn, now);
+        Thoughts.refresh(pawn, now);
+        this._dirtyPawnOwner?.(pawn);
+    },
+
+    _strainEligible(pawn) {
+        if (!pawn || pawn.dead) return false;
+        if (this.players.has(pawn.id)) return false;
+        if (this.wanderers.has(pawn.id) || pawn.role === "wanderer") return false;
+        if (!pawn.ownerId) return false;
+        return pawn.role === "settler" || pawn.role === "companion" || pawn.role == null;
+    },
+
+    _queueAbandon(pawn) {
+        if (!pawn || pawn._abandonQueued) return;
+        pawn._abandonQueued = true;
+        if (!this._abandonQueue) this._abandonQueue = [];
+        this._abandonQueue.push(pawn);
+    },
+
+    _flushAbandonQueue() {
+        const list = this._abandonQueue || [];
+        this._abandonQueue = [];
+        for (const pawn of list) {
+            pawn._abandonQueued = false;
+            this._abandonFromMood(pawn);
+        }
+    },
+
+    _abandonFromMood(pawn) {
+        if (!pawn || pawn.dead) return;
+        const owner = this._sessionOfPawn?.(pawn);
+        if (!owner || owner.id === pawn.id) return;
+        const name = pawn.name || "Someone";
+        this._banishOwned?.(owner, pawn, `${name} has abandoned you.`);
+    },
+
+    _applyThoughtResult(pawn, result) {
+        if (!pawn || !result) return;
+        const name = pawn.name || "Someone";
+        const owner = this._sessionOfPawn?.(pawn);
+        const to = owner?.id || pawn.ownerId || null;
+        for (const code of result.logs || []) {
+            let text = null;
+            if (code === "sulk") text = `${name} sits down and refuses to work.`;
+            else if (code === "strike") text = `${name} is on strike.`;
+            else if (code === "thinking") text = `${name} is thinking of leaving.`;
+            if (!text) continue;
+            this.pushEvent?.({ kind: "combat_log", text, feed: true, to });
+        }
+        const creature = pawn.creature || this.creatures?.get?.(pawn.id);
+        if (creature) creature._moodJob = pawn._moodJob || null;
+        if (result.started) SettlerWork.releaseWork?.(this, pawn);
+        if (result.started === "strike") {
+            if (creature?.ai) {
+                creature.ai.tendSeek = null;
+                creature.ai.rescueSeek = null;
+                if (Number(pawn.kc) > 0) creature.ai.eatSeek = null;
+            }
+            if (pawn.tendChannel) this._clearTendChannel?.(pawn, { cancelled: true });
+        }
+        if (result.abandon) this._queueAbandon(pawn);
+    },
+
+    _moodDark(pawn) {
+        if (!Thoughts || !pawn) return null;
+        const caps = pawn.capacities || pawn.creature?.capacities || this.creatures?.get?.(pawn.id)?.capacities;
+        const sight = typeof caps?.sight === "function" ? caps.sight() : null;
+        if (sight === 0) return null;
+        const skills = this._skillsApi?.();
+        if (!skills?.workOpts || !skills.tileBrightness) return null;
+        const opts = skills.workOpts(this, pawn);
+        if (opts.minutes == null) return null;
+        if (!(skills.tileBrightness(opts) < Thoughts.DARK_BELOW)) return null;
+        return Thoughts.hasTrait(pawn, "night_owl") ? "joy" : "dark";
+    },
+
+    _tickPawnThoughts(pawn) {
+        if (!Thoughts || !pawn || pawn.dead) return;
+        const now = this.worldMinuteIndex();
+        const creature = pawn.creature || this.creatures?.get?.(pawn.id);
+        if (creature) {
+            if (!pawn.creature) pawn.creature = creature;
+            creature.needs = pawn.needs;
+        }
+        this._scanCorpsesFor(pawn, now);
+        const downed = !!(creature?.isImmobile?.() || creature?.isIncapacitated?.());
+        const asleep = !!(pawn._resting || pawn._groundSleep);
+        const result = Thoughts.tick(pawn, now, {
+            eligible: this._strainEligible(pawn),
+            asleep,
+            downed,
+            dark: this._moodDark(pawn)
+        });
+        this._applyThoughtResult(pawn, result);
     },
 
     /** One game minute of Rest for a human. Recreation, beauty, and comfort stay put. */
@@ -129,6 +348,7 @@
         } else if (result.hitZero && !pawn._resting && !pawn._groundSleep) {
             this._beginGroundSleep(pawn);
         }
+        this._tickPawnThoughts(pawn);
     },
 
     _decayBios() {
@@ -213,6 +433,7 @@
                     BodyHealing.minuteTick(cc, cc.ctx);
                     if (cc.isBodyDead()) {
                         rec.body = cc.anatomy?.toJSON?.() || rec.body;
+                        this._noteHumanDeath(rec, cc._lastHitBy || null, null);
                         rec.dead = true;
                         this._dirtyPawnOwner?.(rec);
                     } else if (cc.anatomy?._dirty) {
@@ -244,6 +465,7 @@
             }
             w.prone = this._creatureIsProne(wc);
         }
+        this._flushAbandonQueue();
         this._reapDeadCompanions();
         for (const mob of [...this.mobs.values()]) {
             if (!mob) continue;
@@ -1397,6 +1619,7 @@
             resting: !!p._resting,
             groundSleep: !!p._groundSleep,
             needs: Needs.toJSON(p),
+            thoughts: this._thoughtsJSON(p),
             restRot: p.lastSleep?.rot,
             lastSleep: p.lastSleep || null,
             look: p.look || Look.normalizeLook(null),
@@ -1438,6 +1661,7 @@
                     resting: !!m._resting,
                     groundSleep: !!m._groundSleep,
                     needs: Needs.toJSON(m),
+                    thoughts: this._thoughtsJSON(m),
                     restRot: m.lastSleep?.rot,
                     lastSleep: m.lastSleep || null,
                     eatChannel: this._eatChannelSnap(m.eatChannel),

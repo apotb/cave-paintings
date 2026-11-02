@@ -281,6 +281,20 @@ function hideReturnWalk(world, rec, mob, settle) {
     return back;
 }
 
+function moodRules() {
+    if (typeof Thoughts !== "undefined" && typeof Thoughts.allowsWork === "function") return Thoughts;
+    if (typeof shellRequire === "function") {
+        try { return shellRequire("../thoughts"); } catch (_) { return null; }
+    }
+    return null;
+}
+
+function moodAllows(rec, kind) {
+    const api = moodRules();
+    if (!api) return true;
+    return api.allowsWork(rec, kind);
+}
+
 function tick(world, mob, delta) {
     beginSettleQueries(world);
     const rec = findRec(world, mob);
@@ -298,7 +312,9 @@ function tick(world, mob, delta) {
     const settle = findSettle(world, rec);
     if (rec.role === "companion" || rec.role === "player") {
         endWorkHold(rec);
-        setSettlerAct(rec, mob, "Idle");
+        if (rec._moodJob === "sulk") setSettlerAct(rec, mob, "Sulk");
+        else if (rec._moodJob === "strike") setSettlerAct(rec, mob, "On strike");
+        else setSettlerAct(rec, mob, "Idle");
         return null;
     }
     if (!settle) {
@@ -322,7 +338,7 @@ function tick(world, mob, delta) {
             ? Settlement.channelJob(rec._workChannel)
             : rec._workChannel.kind;
         const jobOff = !workJobOn(settle, rec, chJob);
-        if (jobOff || !channelStillValid(world, rec, rec._workChannel)) {
+        if (!moodAllows(rec, chJob) || jobOff || !channelStillValid(world, rec, rec._workChannel)) {
             clearWorkChannel(world, rec, rec._workChannel, jobOff ? "job" : "invalid");
         } else {
             setSettlerAct(rec, mob, workChannelLabel(world, rec));
@@ -454,14 +470,16 @@ function tick(world, mob, delta) {
         && !isWorkHold(rec)
     ) {
         const careNow = Settlement.jobEnabled(liveJobs, "doctor", rec) && (scan.critical || []).length;
-        const eat = careNow ? null : doEat(world, rec, settle, keepOpts);
+        const eat = careNow || !moodAllows(rec, "eat") ? null : doEat(world, rec, settle, keepOpts);
         if (eat) {
             rec._researchPoll = 0;
             endWorkHold(rec);
             setSettlerAct(rec, mob, eatAct(world, rec, eat));
             return eat;
         }
-        if (rec._settlerAct !== "Idle") setSettlerAct(rec, mob, "Idle");
+        if (rec._moodJob === "sulk") setSettlerAct(rec, mob, "Sulk");
+        else if (rec._moodJob === "strike") setSettlerAct(rec, mob, "On strike");
+        else if (rec._settlerAct !== "Idle") setSettlerAct(rec, mob, "Idle");
         return null;
     }
     const reuseHold = isWorkHold(rec)
@@ -500,7 +518,7 @@ function tick(world, mob, delta) {
 
         const hold = isWorkHold(rec) || delivering;
         const careNow = Settlement.jobEnabled(liveJobs, "doctor", rec) && (scan.critical || []).length;
-        if (!hold && !careNow) {
+        if (!hold && !careNow && moodAllows(rec, "eat")) {
             const eat = doEat(world, rec, settle, keepOpts);
             if (eat) {
                 rec._researchPoll = 0;
@@ -579,7 +597,7 @@ function tick(world, mob, delta) {
         }
         if (pollNeeds) rec._researchPoll = 0;
 
-        if (pollNeeds && plan.type === "research") {
+        if (pollNeeds && plan.type === "research" && moodAllows(rec, "eat")) {
             const eat = doEat(world, rec, settle, keepOpts);
             if (eat) {
                 endWorkHold(rec);
@@ -601,11 +619,25 @@ function tick(world, mob, delta) {
         rec._settlerPlan = delivering ? "stash" : plan.type;
     }
 
+    const moodKind = delivering ? "haul" : plan.type;
+    if (!moodAllows(rec, moodKind)) {
+        if (rec._workChannel) clearWorkChannel(world, rec, rec._workChannel, "job");
+        endWorkHold(rec);
+        claims?.release(rec.id);
+        rec._haulDestUid = null;
+        rec._haulMergeOnly = false;
+        rec._settlerPlan = "idle";
+        setSettlerAct(rec, mob, rec._moodJob === "strike" ? "On strike" : "Sulk");
+        return null;
+    }
+
     const ctx = actCtx(world, rec, {
         stashStack: firstStashable(rec, keepOpts),
         haulWhat: rec._haulWhat
     });
     let label = Settlement.actLabel(plan, ctx);
+    if (plan.type === "idle" && rec._moodJob === "sulk") label = "Sulk";
+    else if (plan.type === "idle" && rec._moodJob === "strike") label = "On strike";
     if (delivering) label = Settlement.actLabel({ type: "stash" }, ctx);
     if (plan.type !== "chop" && plan.type !== "dig" && plan.type !== "fish") clearChopApproach(rec, rec.creature || mob);
     if (plan.type !== "research") clearPaintBar(rec);

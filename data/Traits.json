@@ -104,19 +104,25 @@
     {
         "id": "man_eater",
         "title": "Man-eater",
-        "desc": "Later, human corpses and flesh do not sour the mood.",
-        "commonality": 0
+        "desc": "Human flesh is a favorite meal of <name>'s. After trying it once, they just couldn't get enough of it.",
+        "commonality": 0.3
     },
     {
         "id": "austere",
         "title": "Austere",
-        "desc": "Later, living conditions do not move the mood.",
-        "commonality": 0
+        "desc": "<name> loves to sleep under the stars. As long as they have a soft bed, they're fine with resting just about anywhere.",
+        "commonality": 1
     },
     {
         "id": "murderous",
         "title": "Murderous",
-        "desc": "Later, a kill lifts the mood, and too long without one ends in a break.",
-        "commonality": 0
+        "desc": "Ending someone's life gives <name> a rush of adrenaline. They are dependent on the euphoric high of violence, and will get antsy after a few days without spilling blood.",
+        "commonality": 0.3
+    },
+    {
+        "id": "psychopath",
+        "title": "Psychopath",
+        "desc": "<name> has no concept of morality or empathy. Other people are nothing more than pawns to be used and discarded.",
+        "commonality": 0.4
     }
 ]

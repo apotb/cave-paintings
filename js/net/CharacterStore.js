@@ -402,6 +402,9 @@ const CharacterStore = (() => {
             needs: character.needs && typeof character.needs === "object"
                 ? { ...character.needs }
                 : null,
+            thoughts: character.thoughts && typeof character.thoughts === "object"
+                ? clone(character.thoughts)
+                : null,
             techs: cloneTechs(character.techs),
             techGrantRev: Math.max(0, Math.floor(Number(character.techGrantRev) || 0)),
             quarantine: cloneOverflow(character.quarantine)
@@ -453,6 +456,9 @@ const CharacterStore = (() => {
         if (typeof you.groundSleep === "boolean") next.groundSleep = !!you.groundSleep;
         if (you.needs && typeof you.needs === "object") {
             next.needs = { ...you.needs };
+        }
+        if (you.thoughts && typeof you.thoughts === "object") {
+            next.thoughts = clone(you.thoughts);
         }
         if (you.techs && typeof you.techs === "object" && !Array.isArray(you.techs)) {
             next.techs = cloneTechs(you.techs);
@@ -506,6 +512,7 @@ const CharacterStore = (() => {
             resting: !!raw.resting,
             groundSleep: !!raw.groundSleep,
             needs: raw.needs && typeof raw.needs === "object" ? { ...raw.needs } : null,
+            thoughts: raw.thoughts && typeof raw.thoughts === "object" ? clone(raw.thoughts) : null,
             techs: cloneTechs(raw.techs),
             techGrantRev: Math.max(0, Math.floor(Number(raw.techGrantRev) || 0)),
             quarantine: Array.isArray(raw.quarantine) ? clone(raw.quarantine) : []

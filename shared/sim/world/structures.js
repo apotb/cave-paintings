@@ -723,6 +723,11 @@
     _wakePawn(session, pawn, opts = {}) {
         if (!pawn) return;
         const last = pawn.lastSleep;
+        if (pawn._resting || pawn.resting) {
+            const bed = last?.uid ? this._findSleepByUid(last.uid, pawn) : null;
+            const def = bed?.entry ? this._sleepDef(bed.entry) : null;
+            this._noteSleep?.(pawn, def?.id === "hut" ? "hut" : "outdoors");
+        }
         this._vacatePawn(pawn);
         pawn._resting = false;
         pawn.resting = false;
