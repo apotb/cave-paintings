@@ -392,6 +392,47 @@ test("waking, eating, a nearby death, and a corpse write thoughts onto the pawn"
     assert.equal(copy.thoughts.lines.some((row) => row.label === "Slept outdoors"), true);
 });
 
+test("a human carcass still counts as seeing a corpse, and an animal carcass does not", () => {
+    const { world, pawn: leader } = createTestWorld();
+    const chunk = originChunk(world);
+    chunk.corpses.push(
+        {
+            id: "human-carcass",
+            x: leader.x,
+            y: leader.y,
+            key: "human",
+            bodyPlan: "human",
+            mobId: "human",
+            stage: "carcass",
+            name: "Ada"
+        },
+        {
+            id: "deer-carcass",
+            x: leader.x + 8,
+            y: leader.y,
+            key: "deer",
+            bodyPlan: "deer",
+            mobId: "deer",
+            stage: "carcass",
+            name: "Deer"
+        }
+    );
+    const bones = world._settlerFromSnap({
+        id: "settler-bones",
+        name: "Bones",
+        x: leader.x,
+        y: leader.y,
+        ownerId: "someone-else",
+        kc: 1600,
+        inventory: [null, null, null, null, null]
+    });
+    world.settlers.push(bones);
+    world._tickHumanNeeds(bones);
+    assert.equal(bones.thoughts.lines.filter((row) => row.label === "Saw a corpse").length, 1);
+    world._tickHumanNeeds(bones);
+    assert.equal(bones.thoughts.lines.filter((row) => row.label === "Saw a corpse").length, 1);
+});
+
 test("darkness is a penalty, and a night owl is glad of it", () => {
     const p = pawn();
     Thoughts.tick(p, 0, { dark: "dark", eligible: false });

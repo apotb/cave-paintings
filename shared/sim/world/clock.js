@@ -168,7 +168,7 @@
     },
 
     _isHumanCorpse(entry) {
-        if (!entry || entry.stage === "carcass") return false;
+        if (!entry) return false;
         return entry.bodyPlan === "human" || entry.key === "human" || entry.mobId === "human";
     },
 
