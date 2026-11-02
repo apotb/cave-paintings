@@ -713,9 +713,13 @@ function invQty(rec, pred) {
 
 /** Hotbar plus backpack. Rock crafts spend both, same as a player craft. */
 function carriedCraftQty(rec, id) {
-    let n = invQty(rec, (s) => s.id === id);
+    return carriedMatchQty(rec, (s) => s.id === id);
+}
+
+function carriedMatchQty(rec, pred) {
+    let n = invQty(rec, pred);
     for (const s of rec.overflow || []) {
-        if (s?.id === id) n += Math.max(1, Number(s.quantity) || 1);
+        if (s && pred(s)) n += Math.max(1, Number(s.quantity) || 1);
     }
     return n;
 }
@@ -845,14 +849,16 @@ function doRock(world, rec, settle, job) {
         stopRock(rec, job, true);
         return halt();
     }
+    const ingOk = (ing) => (s) => Settlement.craftBillMatches?.(s, ing, getItem, bill);
     for (const ing of recipe.ingredients || []) {
         const need = Math.max(1, Math.floor(Number(ing.qty) || 1));
-        const have = carriedCraftQty(rec, ing.id);
+        const pred = ingOk(ing);
+        const have = carriedMatchQty(rec, pred);
         if (have >= need) continue;
         // Pockets are already counted. Searching them here would hide a basket
         // behind a short backpack stack and cancel the bill.
         const found = findNearestStored(
-            world, rec, settle, (s) => s.id === ing.id, { storageOnly: true }
+            world, rec, settle, pred, { storageOnly: true }
         );
         if (!found) {
             stopRock(rec, job, true);
@@ -883,7 +889,7 @@ function doRock(world, rec, settle, job) {
     if (walked) return walked;
     for (const ing of recipe.ingredients || []) {
         const need = Math.max(1, Math.floor(Number(ing.qty) || 1));
-        if (carriedCraftQty(rec, ing.id) < need) {
+        if (carriedMatchQty(rec, ingOk(ing)) < need) {
             stopRock(rec, job, true);
             return halt();
         }

@@ -36,6 +36,7 @@
         if (this._isCraftStationEntry(t)) return false;
         const def = thingDefs().get(t.id);
         if (_research()?.isPaintingCircle?.(def, t)) return false;
+        if (Settlement.isCraftingSpot?.(def, t)) return false;
         if (Place.isFigurineThing(def, t)) return false;
         if (Array.isArray(t.slots)) return true;
         return !!def?.storage;
@@ -52,7 +53,8 @@
         return this._isStorageEntry(t) || this._isCraftStationEntry(t) || this._isSleepEntry(t)
             || Place.isSettlementThing(def, t)
             || Place.isFigurineThing(def, t)
-            || !!_research()?.isPaintingCircle?.(def, t);
+            || !!_research()?.isPaintingCircle?.(def, t)
+            || !!Settlement.isCraftingSpot?.(def, t);
     },
 
     _storagePublic(entry, chunk = null) {
@@ -127,6 +129,20 @@
                 tallyStick: !!entry.tallyStick,
                 paintFilter: R.persistPaintFilter ? R.persistPaintFilter(entry.paintFilter) : (entry.paintFilter || null),
                 stone: entry.stone || null
+            };
+        }
+        if (Settlement.isCraftingSpot?.(def, entry)) {
+            return {
+                uid: entry.uid,
+                id: entry.id,
+                x: entry.x,
+                y: entry.y,
+                cx: chunk?.cx,
+                cy: chunk?.cy,
+                rev: Number(entry.rev) || 0,
+                rot: Place.normalizeRot(entry.rot),
+                craftingSpot: true,
+                craftEnabled: entry.craftEnabled !== false
             };
         }
         if (Place.isFigurineThing(def, entry)) {
@@ -237,13 +253,21 @@
     _tryPlace(session, action = {}) {
         const p = this._actionPawn(session, action);
         if (!p || p.dead || p._resting) return;
+        const freeSpot = String(action.thingId || "") === "crafting_spot";
         const invIndex = Math.floor(Number(p.hotbarIndex) || 0);
-        const held = p.inventory?.[invIndex];
-        if (!held?.id || !(held.quantity > 0)) return;
-        const itemDef = itemDefs().get(held.id);
-        const thingId = Place.heldPlaceThingId(itemDef, held);
-        if (!thingId) return;
-        const thingDef = thingDefs().get(thingId);
+        const held = freeSpot ? null : p.inventory?.[invIndex];
+        let thingId = null;
+        let thingDef = null;
+        if (freeSpot) {
+            thingId = "crafting_spot";
+            thingDef = thingDefs().get(thingId);
+        } else {
+            if (!held?.id || !(held.quantity > 0)) return;
+            const itemDef = itemDefs().get(held.id);
+            thingId = Place.heldPlaceThingId(itemDef, held);
+            if (!thingId) return;
+            thingDef = thingDefs().get(thingId);
+        }
         if (!thingDef) return;
         const tx = Math.floor(Number(action.tx));
         const ty = Math.floor(Number(action.ty));
@@ -282,7 +306,7 @@
             return;
         }
         const Research = _research();
-        if (Research?.isPaintingCircle?.(thingDef)) {
+        if (Research?.isPaintingCircle?.(thingDef) || Settlement.isCraftingSpot?.(thingDef)) {
             const hit = Settlement.atPoint(this._ownedSettlements(session.id), x, y, TS, session.id);
             if (!hit) {
                 this.pushEvent({
@@ -292,6 +316,27 @@
                 });
                 return;
             }
+        }
+        if (Settlement.isCraftingSpot?.(thingDef)) {
+            const hit = Settlement.atPoint(this._ownedSettlements(session.id), x, y, TS, session.id);
+            if (!hit) return;
+            const { cx, cy } = worldToChunk(x, y - 1);
+            const chunk = this._ensureChunk(cx, cy);
+            if (!Array.isArray(chunk.things)) chunk.things = [];
+            this._watchChunkThings(chunk);
+            const entry = {
+                id: thingId,
+                x,
+                y,
+                rot,
+                uid: uuid(),
+                craftEnabled: true
+            };
+            chunk.things.push(entry);
+            Settlement.linkStation(hit, entry.uid);
+            this._emitStorage(chunk, entry);
+            this._youDirty.add(session.id);
+            return;
         }
         const figExtras = Place.isFigurineThing(thingDef) ? this._stackExtrasFrom(held) : null;
         if (Place.isFigurineThing(thingDef) && (!figExtras?.formVoxels || !Place.canPlaceFigurine(held))) {
@@ -1613,6 +1658,11 @@
             this._tryPickupPaintingCircle(p, chunk, entry);
             return;
         }
+        if (Settlement.isCraftingSpot?.(def, entry)) {
+            if (op !== "pickup") return;
+            this._tryRemoveCraftingSpot(p, chunk, entry);
+            return;
+        }
         if (Place.isFigurineThing(def, entry)) {
             if (op !== "pickup") return;
             this._tryPickupFigurine(p, chunk, entry);
@@ -1678,6 +1728,15 @@
             if (s && Settlement.inRange(s, entry.x, entry.y, TS)) out.push(s);
         }
         return out;
+    },
+
+    _tryRemoveCraftingSpot(p, chunk, entry) {
+        if (!p || !chunk || !entry) return;
+        this._unlinkStationUid(entry.uid);
+        const i = chunk.things.indexOf(entry);
+        if (i >= 0) chunk.things.splice(i, 1);
+        this._emitStorageRemoved(chunk, entry);
+        this._youDirty.add(p.id);
     },
 
     _tryPickupPaintingCircle(p, chunk, entry) {

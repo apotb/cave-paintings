@@ -206,6 +206,7 @@
         put(out, "footprint", pickList(thing, "footprint"));
         put(out, "settlement", take(thing, "settlement"));
         put(out, "paintingCircle", take(thing, "paintingCircle"));
+        put(out, "craftingSpot", take(thing, "craftingSpot"));
         put(out, "figurine", take(thing, "figurine"));
         put(out, "spawns", copySpawns(thing));
         return out;

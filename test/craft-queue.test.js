@@ -156,6 +156,94 @@ test("queued crafts reserve ingredients", () => {
     }), 3);
 });
 
+function uiObj() {
+    const handlers = {};
+    const obj = {
+        setOrigin() { return obj; },
+        setScale() { return obj; },
+        setInteractive() { return obj; },
+        setVisible() { return obj; },
+        setColor() { return obj; },
+        setStroke() { return obj; },
+        setFontSize() { return obj; },
+        setStrokeStyle() { return obj; },
+        on(ev, fn) {
+            (handlers[ev] = handlers[ev] || []).push(fn);
+            return obj;
+        },
+        emit(ev, arg) {
+            for (const fn of handlers[ev] || []) fn(arg);
+        }
+    };
+    return obj;
+}
+
+test("crafting spot leads the menu only inside your settlement and places instead of granting", () => {
+    sandbox.pixelUiFontSize = () => 16;
+    sandbox.PIXEL_UI_FONT = "font";
+    sandbox.crispUiText = (t) => t;
+    sandbox.Phaser = { Math: { Clamp: (v, a, b) => Math.min(b, Math.max(a, v)) } };
+    const items = [
+        { id: "leaf_cord", name: "Leaf Cord", key: "leaf_cord", recipe: { leaf: 5 } },
+        { id: "crafting_spot", name: "Crafting Spot", key: "crafting_spot", recipe: {} }
+    ];
+    function scene(here) {
+        const calls = [];
+        const ctx = {
+            items: () => items,
+            _isRecipeMetaKey: craft._isRecipeMetaKey,
+            textures: {
+                exists: () => false,
+                get: () => ({ getSourceImage: () => ({ width: 32, height: 32 }) })
+            },
+            getThing() { return null; },
+            settlementSys: { here: () => here },
+            player: {},
+            craftContainer: { list: [], removeAll() { this.list = []; }, add() {} },
+            nearbyCraftStationIds: () => [],
+            uiScale: 1,
+            _craftPage: 0,
+            add: {
+                image: () => uiObj(),
+                text: () => uiObj(),
+                rectangle: () => uiObj()
+            },
+            tweens: { killTweensOf() {}, addCounter() { return { stop() {} }; } },
+            showTooltip() {},
+            positionCraftMenu() {},
+            _layoutCraftTakeButton() {},
+            _layoutCraftSettle() {},
+            _layoutCraftQueue() {},
+            _detachCraftQueueLayer() {},
+            _attachCraftQueueLayer() {},
+            closeCraftMenu() { calls.push("close"); },
+            beginCraftingSpotPlace() { calls.push("place"); },
+            doCraft() { calls.push("craft"); return true; },
+            gainItem() { calls.push("gain"); },
+            canCraft() { return true; },
+            _craftRecipeIconKey() { return "slot"; },
+            _restoreCraftTooltip() {}
+        };
+        ctx.getKnownRecipes = craft.getKnownRecipes;
+        ctx.refreshCraftMenu = craft.refreshCraftMenu;
+        ctx._craftMenuLayoutSig = craft._craftMenuLayoutSig;
+        ctx._addCraftPager = craft._addCraftPager;
+        ctx._addCraftNavArrow = craft._addCraftNavArrow;
+        ctx._craftHoverRecipeId = craft._craftHoverRecipeId;
+        return { ctx, calls };
+    }
+
+    const away = scene(null);
+    assert.equal(craft.getKnownRecipes.call(away.ctx).some((r) => r.id === "crafting_spot"), false);
+
+    const home = scene({});
+    craft.refreshCraftMenu.call(home.ctx);
+    assert.equal(home.ctx._data[0].recipe.id, "crafting_spot");
+    assert.equal(home.ctx._data[1].recipe.id, "leaf_cord");
+    home.ctx._data[0].slot.emit("pointerdown", { shiftKey: true, ctrlKey: true });
+    assert.deepEqual(home.calls, ["close", "place"]);
+});
+
 test("the sweep is a clockwise trail from the top", () => {
     const poly = (p) => craft._craftSweepPoly(0, 0, 100, 100, p);
     assert.equal(poly(0).length, 0);

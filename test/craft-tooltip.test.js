@@ -106,6 +106,18 @@ test("recipe tooltip puts icons on ingredient, rock, and cycling tool rows", () 
     assert.equal(tip.lines[4].icons.length, 2);
 });
 
+test("a recipe with nothing required omits the ingredient rule", () => {
+    const craft = loadCraft();
+    const scene = sceneFor(craft);
+    const tip = scene._craftRecipeTooltip({
+        id: "crafting_spot",
+        quantity: 1,
+        ingredients: []
+    });
+    assert.equal(tip.text, "Made thing");
+    assert.equal(tip.lines.length, 0);
+});
+
 test("hide and station rows use deer hide and the bench sprite", () => {
     const craft = loadCraft();
     const scene = sceneFor(craft);

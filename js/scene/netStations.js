@@ -356,7 +356,9 @@
                 || this.getThing?.(t.id)?.sleep
                 || this.getThing?.(t.id)?.settlement
                 || this.getThing?.(t.id)?.figurine
+                || this.getThing?.(t.id)?.craftingSpot
                 || t.id === "hearth"
+                || t.id === "crafting_spot"
                 || t.id === "clay_figurine"
                 || Array.isArray(t.occupants);
             if (!store) return false;
@@ -426,8 +428,9 @@
             const isSleep = !!(src.sleep || def?.sleep || Array.isArray(src.occupants));
             const isSettle = !!(src.settlement || def?.settlement || src.id === "hearth");
             const isFig = !!(src.figurine || def?.figurine || src.id === "clay_figurine");
+            const isSpot = !!(src.craftingSpot || def?.craftingSpot || src.id === "crafting_spot");
             entry = {
-                uid: src.uid || opts.uid || `${isSleep ? "sl" : isStation ? "cs" : isSettle ? "ss" : isFig ? "fg" : "st"}_${Math.round(x)}_${Math.round(y)}`,
+                uid: src.uid || opts.uid || `${isSleep ? "sl" : isStation ? "cs" : isSettle ? "ss" : isFig ? "fg" : isSpot ? "csp" : "st"}_${Math.round(x)}_${Math.round(y)}`,
                 id: src.id || (isSleep ? "lean_to" : isStation ? "skinworking_bench" : isSettle ? "hearth" : isFig ? "clay_figurine" : "wicker_basket"),
                 x,
                 y,
@@ -446,6 +449,8 @@
                 if (src.settlementId) entry.settlementId = src.settlementId;
             } else if (typeof Research !== "undefined" && Research.isPaintingCircle?.(def, src)) {
                 if (typeof Research.ensureEntry === "function") Research.ensureEntry(entry, def);
+            } else if (def?.craftingSpot || src.craftingSpot || src.id === "crafting_spot") {
+                entry.craftEnabled = src.craftEnabled !== false;
             } else if (def?.figurine || src.figurine || src.id === "clay_figurine") {
                 if (typeof Place !== "undefined") Place.ensureFigurineEntry(entry);
                 this._netApplyFigurineFields(entry, src);
@@ -483,6 +488,9 @@
             this._netApplyStorageFilter(entry, src);
             this._netApplyFigurineFields(entry, src);
         }
+        if (entry.id === "crafting_spot" || this.getThing(entry.id)?.craftingSpot) {
+            if (src.craftEnabled != null) entry.craftEnabled = src.craftEnabled !== false;
+        }
         if (typeof Research !== "undefined" && Research.isPaintingCircle?.(this.getThing(entry.id), entry)) {
             if (src.painted != null) entry.painted = src.painted;
             if (src.paintProgress != null) entry.paintProgress = src.paintProgress;
@@ -512,6 +520,9 @@
         }
         if (this.paintingCirclePanel?.visible && this.paintingCirclePanel.circle?.entry === entry) {
             this.paintingCirclePanel.layout();
+        }
+        if (this.craftingSpotPanel?.visible && this.craftingSpotPanel.spot?.entry === entry) {
+            this.craftingSpotPanel.layout();
         }
         this._reconcileSleepOccupants?.(entry);
     },
@@ -557,6 +568,7 @@
         const isSleep = !!(def?.sleep || Array.isArray(entry.occupants));
         const isSettle = !!(def?.settlement || entry.id === "hearth");
         const isFig = !!(def?.figurine || entry.id === "clay_figurine");
+        const isSpot = !!(def?.craftingSpot || entry.id === "crafting_spot");
         let live = isSleep
             ? this.findLeanToByUid(entry.uid)
             : isStation
@@ -574,6 +586,7 @@
                     : isSettle ? ((typeof Hearth !== "undefined" && t instanceof Hearth)
                         || (typeof SettlingStone !== "undefined" && t instanceof SettlingStone))
                     : isFig ? (typeof ClayFigurine !== "undefined" && t instanceof ClayFigurine)
+                    : isSpot ? (typeof CraftingSpot !== "undefined" && t instanceof CraftingSpot)
                     : (t instanceof Storage || t instanceof PaintingCircle);
                 if (!matchType) continue;
                 if (t.entry === entry) { live = t; break; }
@@ -586,6 +599,7 @@
                 if (!t?.active) continue;
                 if (t instanceof CraftStation || t instanceof Storage || t instanceof LeanTo
                     || t instanceof PaintingCircle
+                    || (typeof CraftingSpot !== "undefined" && t instanceof CraftingSpot)
                     || (typeof ClayFigurine !== "undefined" && t instanceof ClayFigurine)
                     || (typeof Hearth !== "undefined" && t instanceof Hearth)
                     || (typeof SettlingStone !== "undefined" && t instanceof SettlingStone)) continue;
@@ -622,6 +636,7 @@
                     ? new Hearth(this, entry)
                     : new SettlingStone(this, entry))
                 : isFig ? new ClayFigurine(this, entry)
+                : isSpot ? new CraftingSpot(this, entry)
                 : Storage.create(this, entry);
             chunk.things.add(spr);
         }
@@ -661,6 +676,7 @@
             || (chunk?.things?.getChildren?.() || []).find((t) =>
                 (t instanceof Storage || t instanceof CraftStation || t instanceof LeanTo
                     || t instanceof PaintingCircle
+                    || (typeof CraftingSpot !== "undefined" && t instanceof CraftingSpot)
                     || (typeof ClayFigurine !== "undefined" && t instanceof ClayFigurine)) && (
                     t.entry === entry
                     || (Number.isFinite(x) && Math.abs(t.x - x) < 1.5 && Math.abs(t.y - y) < 1.5)
@@ -676,6 +692,7 @@
         if (live) {
             if (this.storagePanel?.storage === live) this.storagePanel.close();
             if (this.paintingCirclePanel?.circle === live) this.paintingCirclePanel.close();
+            if (this.craftingSpotPanel?.spot === live) this.craftingSpotPanel.close();
             if (this.pigmentFilterPanel?.thing === live) this.pigmentFilterPanel.close();
             if (this._isSameCraftStation(live)) this.closeCraftStationMenu();
             if (this.leanToPanel?.leanTo === live) this.leanToPanel.close();

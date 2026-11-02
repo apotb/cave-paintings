@@ -669,6 +669,7 @@
         if (this.storagePanel?.visible) this.storagePanel.close();
         if (this.leanToPanel?.visible) this.leanToPanel.close();
         if (this.paintingCirclePanel?.visible) this.paintingCirclePanel.close();
+        if (this.craftingSpotPanel?.visible) this.craftingSpotPanel.close();
         if (this.settlementSys?.isNaming?.()) this.settlementSys._hideNamePrompt();
         if (typeof CraftTemplateUi !== "undefined") CraftTemplateUi.closeAll();
         if (this.schedulePanel?.visible) this.schedulePanel.close({ restore: false });
@@ -701,7 +702,8 @@
             this.storageFilterPanel?.visible ||
             this.fuelFilterPanel?.visible ||
             this.pigmentFilterPanel?.visible ||
-            this.paintingCirclePanel?.visible
+            this.paintingCirclePanel?.visible ||
+            this.craftingSpotPanel?.visible
         );
     },
 
@@ -1535,6 +1537,10 @@
             this.closeOpenMenus();
             return;
         }
+        if (this._pendingPlace) {
+            this.clearPendingPlace?.();
+            return;
+        }
         this._openPauseMenu();
     },
 
@@ -1699,6 +1705,7 @@
         if (this.campfirePanel?.visible) this.campfirePanel.close();
         if (this.leanToPanel?.visible) this.leanToPanel.close();
         if (this.paintingCirclePanel?.visible) this.paintingCirclePanel.close();
+        if (this.craftingSpotPanel?.visible) this.craftingSpotPanel.close();
         if (this.billsPanel?.visible && this.billsPanel.thing !== thing) this.billsPanel.close();
         if (this.storageFilterPanel?.visible) this.storageFilterPanel.close();
         if (this.fuelFilterPanel?.visible) this.fuelFilterPanel.close();

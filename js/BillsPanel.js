@@ -315,6 +315,7 @@ class BillsPanel {
     }
 
     _ingredientIcon(ing) {
+        if (ing?.toolClass) return this._toolClassIcon(ing);
         const stone = ing?.id;
         if (stone && stone !== "flint"
             && typeof Stone !== "undefined" && Stone.normalizeStone?.(stone)
@@ -326,8 +327,22 @@ class BillsPanel {
             || (ing?.key && this.scene.textures.exists(ing.key) ? ing.key : null);
     }
 
+    /** Spear tip and other shaped tools, cut from the shaded pebble or flint. */
+    _toolClassIcon(ing) {
+        if (typeof Knapping === "undefined" || !Knapping.carveShapeIcon) return null;
+        const stuff = ing.stuff || ing.id || "andesite";
+        const data = Knapping.carveShapeIcon(this.scene, ing.toolClass, stuff, 2);
+        if (!data) return null;
+        return Knapping.ensureToolTexture(this.scene, { knapIconData: data, toolClass: ing.toolClass });
+    }
+
     _itemIconKey(itemId) {
         if (!itemId) return null;
+        // A bill has no rock yet. The icon uses andesite gray; the name stays Stone Spear.
+        if (itemId === "stone_spear" && typeof ensureSpearTexture === "function") {
+            const key = ensureSpearTexture(this.scene, "andesite", "andesite");
+            if (key && this.scene.textures.exists(key)) return key;
+        }
         const def = this.scene.getItem?.(itemId) || { id: itemId, key: itemId };
         if (typeof Place !== "undefined" && Place.itemIconKey) {
             const key = Place.itemIconKey(
@@ -616,6 +631,19 @@ class BillsPanel {
     _billItemTip(ing) {
         const scene = this.scene;
         if (!ing?.id || typeof scene.formatItemTooltip !== "function") return ing?.name || "";
+        if (ing.toolClass) {
+            const flint = ing.stuff === "flint" || ing.id === "flint";
+            const stack = {
+                id: ing.itemId || "stone_tool",
+                quantity: 1,
+                toolClass: ing.toolClass,
+                knapMaterial: flint ? "flint" : "pebble"
+            };
+            if (!flint) stack.stone = ing.stuff || ing.id;
+            const tool = scene.getItem?.(stack.id);
+            if (!tool) return ing.name || "";
+            return scene.formatItemTooltip(tool, 1, null, stack);
+        }
         const stone = (typeof Stone !== "undefined" && Stone.normalizeStone)
             ? Stone.normalizeStone(ing.id)
             : null;
@@ -1113,14 +1141,15 @@ class BillsPanel {
         const gap = Math.round(3 * sc);
         const iconS = Math.round(14 * sc);
         const statusX = inset + innerW - Math.round(12 * sc);
-        const allIds = inputs.map((i) => i.id);
         for (const ing of inputs) {
-            const on = allOn || allowed.includes(ing.id);
+            const on = allOn
+                || allowed.includes(ing.id)
+                || !!(ing.stuff && ing.itemId && allowed.includes(ing.itemId));
             const itemState = on ? "on" : "off";
             const itemColors = this._rowColors(itemState);
             const itemMid = y + rowH / 2;
             this._row(inset, y, innerW, rowH, itemState, () => {
-                this._toggleIngredient(bill, ing.id, allIds);
+                this._toggleIngredient(bill, ing, inputs);
             }, () => this._billItemTip(ing));
             const ic = this._ingredientIcon(ing);
             if (ic) {
@@ -1141,10 +1170,25 @@ class BillsPanel {
         return y + Math.round(8 * sc);
     }
 
-    _toggleIngredient(bill, itemId, allIds) {
-        const current = Array.isArray(bill.allowedIds) && bill.allowedIds.length
+    _toggleIngredient(bill, ing, inputs) {
+        const allIds = inputs.map((i) => i.id);
+        const itemId = ing.id;
+        let current = Array.isArray(bill.allowedIds) && bill.allowedIds.length
             ? bill.allowedIds.slice()
             : allIds.slice();
+        const legacyIds = new Set(
+            inputs.filter((row) => row.stuff && row.itemId).map((row) => row.itemId)
+        );
+        if ([...legacyIds].some((id) => current.includes(id))) {
+            for (const row of inputs) {
+                if (row.stuff && legacyIds.has(row.itemId) && current.includes(row.itemId)
+                    && !current.includes(row.id)) {
+                    current.push(row.id);
+                }
+            }
+            current = current.filter((id) => !legacyIds.has(id));
+        }
+        current = current.filter((id) => allIds.includes(id));
         const i = current.indexOf(itemId);
         if (i >= 0) {
             if (current.length <= 1) return;

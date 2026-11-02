@@ -416,6 +416,15 @@
             this._emitStorage(found.chunk, found.entry);
             return;
         }
+        if (op === "setCraftEnabled" && settle && settle.ownerId === p.id) {
+            const uid = String(action.uid || "");
+            const found = uid ? this._findThingByUid(uid) : null;
+            if (!found || !Settlement.isCraftingSpot?.(this._thingDef(found.entry?.id), found.entry)) return;
+            if (!Settlement.inRange(settle, found.entry.x, found.entry.y, TS)) return;
+            found.entry.craftEnabled = action.enabled !== false;
+            this._emitStorage(found.chunk, found.entry);
+            return;
+        }
         if (op === "setPaintEnabled" && settle && settle.ownerId === p.id) {
             const uid = String(action.uid || "");
             const found = uid ? this._findThingByUid(uid) : null;

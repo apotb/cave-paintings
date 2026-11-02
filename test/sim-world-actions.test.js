@@ -4677,6 +4677,52 @@ function fillGrass(world) {
     }
 }
 
+test("crafting spot is free, settlement-only, and remove keeps nothing", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    fillGrass(world);
+    const before = JSON.stringify(pawn.inventory);
+    world.drainEvents();
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.PLACE,
+        tx: 2,
+        ty: 1,
+        thingId: "crafting_spot"
+    });
+    const logs = world.drainEvents().filter((e) => e.kind === "combat_log");
+    assert.ok(logs.some((e) => /Must be placed in your settlement/.test(e.text || "")));
+    assert.equal(JSON.stringify(pawn.inventory), before);
+    assert.equal((originChunk(world).things || []).some((t) => t.id === "crafting_spot"), false);
+
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.PLACE,
+        tx: 2,
+        ty: 1,
+        thingId: "crafting_spot"
+    });
+    assert.equal(JSON.stringify(pawn.inventory), before);
+    const spot = (originChunk(world).things || []).find((t) => t.id === "crafting_spot");
+    assert.ok(spot);
+    assert.equal(spot.craftEnabled, true);
+    assert.equal(spot.slots, undefined);
+    assert.ok(settle.stationUids.includes(spot.uid));
+    assert.equal(world.isBlocked(spot.x, spot.y), false);
+    Settlement.addBill(settle, spot.uid, { recipeId: "leaf_cord", mode: "count", n: 1, paused: false });
+    assert.equal(Settlement.billsOf(settle, spot.uid).length, 1);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.STORAGE,
+        op: "pickup",
+        uid: spot.uid,
+        x: spot.x,
+        y: spot.y
+    });
+    assert.equal(JSON.stringify(pawn.inventory), before);
+    assert.equal((originChunk(world).things || []).some((t) => t.id === "crafting_spot"), false);
+    assert.equal(settle.stationUids.includes(spot.uid), false);
+    assert.equal(Settlement.billsOf(settle, spot.uid).length, 0);
+});
+
 test("cannot place painting circle outside owned settlement", () => {
     const { world, pawn, Protocol } = createTestWorld();
     fillGrass(world);

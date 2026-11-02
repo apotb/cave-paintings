@@ -138,9 +138,11 @@ function faceToward(rec, x, y) {
 }
 
 function paintStandOf(target) {
-    if (!Research?.isPaintingCircle || !Research.standWorldPos) return null;
+    if (!Research?.standWorldPos) return null;
     const entry = target?.entry || target;
-    if (!Research.isPaintingCircle(null, entry)) return null;
+    const circle = Research.isPaintingCircle?.(null, entry);
+    const spot = Settlement?.isCraftingSpot?.(null, entry);
+    if (!circle && !spot) return null;
     return Research.standWorldPos(entry) || Research.standWorldPos(target);
 }
 

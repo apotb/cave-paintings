@@ -379,6 +379,13 @@
         "paintingCircle": true
     },
     {
+        "id": "crafting_spot",
+        "name": "Crafting Spot",
+        "key": "crafting_spot",
+        "hitboxSize": 0,
+        "craftingSpot": true
+    },
+    {
         "id": "clay_patch",
         "name": "Clay Deposit",
         "key": "clay_patch",

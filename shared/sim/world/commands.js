@@ -1144,6 +1144,7 @@
 
     _stackMatchesCraft(s, match) {
         if (!s || !match) return false;
+        if (typeof match.allow === "function" && !match.allow(s)) return false;
         if (match.hideStage) {
             return Hide.stackIsHideStage(s, match.hideStage, (id) => itemDefs().get(id));
         }
@@ -1156,10 +1157,13 @@
         const hideStage = match?.hideStage || null;
         const id = match?.id;
         const wantClass = match?.toolClass || null;
+        const allow = typeof match?.allow === "function" ? match.allow : null;
         if ((!hideStage && !id) || !Array.isArray(slots)) return 0;
         let sum = 0;
         for (const s of slots) {
-            if (!this._stackMatchesCraft(s, hideStage ? { hideStage } : { id, toolClass: wantClass })) continue;
+            const probe = hideStage ? { hideStage } : { id, toolClass: wantClass };
+            if (allow) probe.allow = allow;
+            if (!this._stackMatchesCraft(s, probe)) continue;
             sum += Math.max(0, Math.floor(Number(s.quantity) || 0));
         }
         return sum;
@@ -1176,6 +1180,7 @@
         const hideStage = match?.hideStage || null;
         const id = match?.id;
         const wantClass = match?.toolClass || null;
+        const allow = typeof match?.allow === "function" ? match.allow : null;
         if ((!hideStage && !id) || !(remaining > 0) || !Array.isArray(slots)) {
             return { lost: 0, knapQuality: null, knapMaterial: null, stone: null };
         }
@@ -1186,7 +1191,9 @@
         const takeFrom = (requireClass) => {
             for (let i = 0; i < slots.length && remaining > 0; i++) {
                 const s = slots[i];
-                if (!this._stackMatchesCraft(s, hideStage ? { hideStage } : { id })) continue;
+                const probe = hideStage ? { hideStage } : { id };
+                if (allow) probe.allow = allow;
+                if (!this._stackMatchesCraft(s, probe)) continue;
                 if (requireClass && s.toolClass !== requireClass) continue;
                 if (!requireClass && wantClass && s.toolClass === wantClass) continue;
                 if (knapQuality == null && s.knapQuality) knapQuality = s.knapQuality;
@@ -1296,7 +1303,7 @@
         let made = 0;
         let storageDirty = false;
         for (let i = 0; i < want; i++) {
-            const result = this._craftOne(p, recipe, store);
+            const result = this._craftOne(p, recipe, store, action.bill || null);
             if (!result.crafted) break;
             made++;
             if (result.storageDirty) storageDirty = true;
@@ -1402,10 +1409,17 @@
     },
 
     /** One craft. Caller emits storage and dirties the owner after a batch. */
-    _craftOne(p, recipe, store) {
+    _craftOne(p, recipe, store, bill) {
         const extra = store?.entry?.slots || null;
+        const scoped = (ing) => {
+            if (!bill || !ing?.toolClass || typeof Settlement?.billAllowsCraftInput !== "function") return ing;
+            return {
+                ...ing,
+                allow: (s) => Settlement.billAllowsCraftInput(bill, s, ing)
+            };
+        };
         for (const ing of recipe.ingredients) {
-            if (this._countMatchingItems(p, ing, extra) < ing.qty) return { crafted: false };
+            if (this._countMatchingItems(p, scoped(ing), extra) < ing.qty) return { crafted: false };
         }
         if (recipe.requireThing && !this._hasNearbyThing(p, recipe.requireThing)) {
             return { crafted: false };
@@ -1429,7 +1443,7 @@
             : null;
         let storageDirty = false;
         for (const ing of recipe.ingredients) {
-            const lost = this._loseMatchingItems(p, ing, extra);
+            const lost = this._loseMatchingItems(p, scoped(ing), extra);
             if (ing.toolClass === "spear_tip") {
                 if (lost.knapQuality) tipQuality = lost.knapQuality;
                 if (lost.knapMaterial) tipMaterial = lost.knapMaterial;

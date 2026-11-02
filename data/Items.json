@@ -1402,6 +1402,19 @@
         }
     },
     {
+        "id": "crafting_spot",
+        "name": "Crafting Spot",
+        "key": "crafting_spot",
+        "maxStack": 99,
+        "place": {
+            "thing": "crafting_spot"
+        },
+        "tooltip": [
+            "Place within your settlement to automate crafting"
+        ],
+        "recipe": {}
+    },
+    {
         "id": "painting_circle",
         "name": "Painting Circle",
         "key": "painting_circle",

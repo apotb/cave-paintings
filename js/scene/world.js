@@ -662,6 +662,7 @@
         if (this.fuelFilterPanel?.containsPointer?.(pointer)) return true;
         if (this.pigmentFilterPanel?.containsPointer?.(pointer)) return true;
         if (this.paintingCirclePanel?.containsPointer?.(pointer)) return true;
+        if (this.craftingSpotPanel?.containsPointer?.(pointer)) return true;
         if (this.settlementSys?.hudContains?.(pointer)) return true;
         if (this.pointerOnCraftTake?.(pointer)) return true;
         if (this.pointerOnCraftSettle?.(pointer)) return true;
@@ -1266,6 +1267,8 @@
         } else if (this.getThing(entry.id)?.settlement
             || (typeof Place !== "undefined" && Place.isSettlementThing(this.getThing(entry.id), entry))) {
             thing = new SettlingStone(this, entry);
+        } else if (this.getThing(entry.id)?.craftingSpot || entry.id === "crafting_spot") {
+            thing = new CraftingSpot(this, entry);
         } else if ((typeof Research !== "undefined" && Research.isPaintingCircle?.(this.getThing(entry.id), entry))
             || Array.isArray(entry.slots) || this.getThing(entry.id)?.storage) {
             thing = Storage.create(this, entry);
@@ -1466,6 +1469,18 @@
     },
 
     _heldPlaceableDef() {
+        const pendingId = this._pendingPlace?.thingId;
+        if (pendingId) {
+            const thingDef = this.getThing(pendingId);
+            if (!thingDef) return null;
+            return {
+                held: null,
+                itemDef: this.getItem(pendingId),
+                thingId: pendingId,
+                thingDef,
+                pending: true
+            };
+        }
         const held = this.player?.getHeldItem?.();
         if (!held || !(held.quantity > 0)) return null;
         const itemDef = this.getItem(held.id);
@@ -1579,6 +1594,12 @@
                 return false;
             }
         }
+        if (typeof Settlement !== "undefined" && Settlement.isCraftingSpot?.(def)) {
+            const { x, y } = this.tileCenter(tx, ty);
+            if (!Settlement.atPoint?.(this.settlementSys?.owned?.() || [], x, y, ts, this.settlementSys?.ownerId?.())) {
+                return false;
+            }
+        }
         return true;
     },
 
@@ -1607,7 +1628,27 @@
         this._placeGhostValid = false;
     },
 
+    beginCraftingSpotPlace() {
+        if (!this.settlementSys?.here?.(this.player)) return false;
+        this._pendingPlace = { thingId: "crafting_spot" };
+        this.resetPlaceRot();
+        return true;
+    },
+
+    clearPendingPlace() {
+        this._pendingPlace = null;
+    },
+
+    _eatPendingPlaceCancel() {
+        const pointer = this.input?.activePointer;
+        const down = !!(pointer && pointer.rightButtonDown?.());
+        const edge = down && !this._pendingPlaceRight;
+        this._pendingPlaceRight = down;
+        if (edge && this._pendingPlace) this.clearPendingPlace();
+    },
+
     updatePlaceGhost() {
+        this._eatPendingPlaceCancel();
         const info = this._heldPlaceableDef();
         if (!info) {
             this.resetPlaceRot();
@@ -1849,6 +1890,28 @@
             return true;
         }
 
+        if (info.pending) {
+            if (this.simAuth()) {
+                this._netSendMove?.(true);
+                this.net.sendAction({
+                    type: NetProtocol.Actions.PLACE,
+                    tx: tile.tx,
+                    ty: tile.ty,
+                    rot,
+                    thingId: info.thingId,
+                    pawnId: this.player?.pawnId
+                });
+                this.clearPendingPlace();
+                this.resetPlaceRot();
+                return true;
+            }
+            const placed = this.placeCraftingSpot(tile.tx, tile.ty, rot);
+            if (!placed) return false;
+            this.clearPendingPlace();
+            this.resetPlaceRot();
+            return true;
+        }
+
         if (this.simAuth()) {
             this._netSendMove?.(true);
             this.net.sendAction({
@@ -1874,6 +1937,70 @@
         if (!placed) return false;
         this.player.loseItem(info.held, 1);
         if (!(info.held.quantity > 0)) this.resetPlaceRot();
+        return true;
+    },
+
+    placeCraftingSpot(tx, ty, rot = 0) {
+        if (!this.canPlaceAt(tx, ty)) return null;
+        const { x, y } = this.tileCenter(tx, ty);
+        const chunk = this.getChunkAtWorld(x, y - 1);
+        if (!chunk || !chunk.isLoaded) return null;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        const hit = S?.atPoint?.(
+            this.settlementSys?.owned?.() || [],
+            x, y,
+            this.tileSize || 16,
+            this.settlementSys?.ownerId?.()
+        );
+        if (!hit) return null;
+        const entry = {
+            id: "crafting_spot",
+            x,
+            y,
+            rot: typeof Place !== "undefined" ? Place.normalizeRot(rot) : rot,
+            uid: S.uid(),
+            craftEnabled: true
+        };
+        if (!Array.isArray(chunk.meta.things)) chunk.meta.things = [];
+        chunk.meta.things.push(entry);
+        const spr = new CraftingSpot(this, entry);
+        chunk.things.add(spr);
+        S.linkStation(hit, entry.uid);
+        this.settlementSys?.bumpWorkCache?.();
+        return spr;
+    },
+
+    _removeCraftingSpotThing(spot) {
+        if (!spot) return;
+        const entry = spot.entry;
+        const chunk = this.getChunkAtWorld(spot.x, spot.y - 1);
+        if (chunk?.meta?.things && entry) {
+            const i = chunk.meta.things.indexOf(entry);
+            if (i >= 0) chunk.meta.things.splice(i, 1);
+        }
+        if (this.craftingSpotPanel?.spot === spot) this.craftingSpotPanel.close();
+        if (this.billsPanel?.thing === spot) this.billsPanel.close();
+        this.settlementSys?.unlinkStation?.(entry?.uid);
+        this.settlementSys?.bumpWorkCache?.();
+        spot.destroy();
+    },
+
+    tryRemoveCraftingSpot(spot) {
+        if (!spot?.entry || !spot.inRange?.()) return false;
+        if (!this.settlementSys?.canManageSpot?.(spot)) return false;
+        if (this.simAuth()) {
+            this._netSendMove?.(true);
+            this.net.sendAction({
+                type: NetProtocol.Actions.STORAGE,
+                op: "pickup",
+                uid: spot.entry.uid,
+                x: spot.x,
+                y: spot.y
+            });
+            this.craftingSpotPanel?.close();
+            return true;
+        }
+        this._removeCraftingSpotThing(spot);
         return true;
     },
 

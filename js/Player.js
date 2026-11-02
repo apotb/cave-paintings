@@ -2604,6 +2604,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     }
 
     useHeldItem() {
+        // A placement ghost, including a free crafting spot, is not a hotbar item.
+        if (this.scene._heldPlaceableDef?.()) {
+            this.scene.tryPlaceHeld?.();
+            return "use";
+        }
         const item = this.getHeldItem();
         if (item) return this.useItem(item);
         return null;
@@ -2614,6 +2619,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this.isAttacking() || this._tendChannel || this._skinChannel || this._fleshChannel || this._brainChannel || this._craftChannel || this._eatChannel || this._netWorkChannel?.kind === "fish" || this._bodyDead) return;
         if (this.isVomiting() || this.isIncapacitated()) return;
         const item = this.getHeldItem();
+        if (this.scene._heldPlaceableDef?.()) {
+            this.scene.tryPlaceHeld?.();
+            this._blockSpaceAutofire = true;
+            return;
+        }
         if (!item) {
             this.startMeleeAttack(null);
             return;
@@ -2626,11 +2636,6 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         // Firestarter weapons: Space near piles/unlit fire lights; otherwise attack
         if (meta?.use === "light_fire" && this.scene.canUseFirestarter?.()) {
             this.scene.tryUseFirestarter();
-            this._blockSpaceAutofire = true;
-            return;
-        }
-        if (this.scene._heldPlaceableDef?.()) {
-            this.scene.tryPlaceHeld?.();
             this._blockSpaceAutofire = true;
             return;
         }

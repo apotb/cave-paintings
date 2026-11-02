@@ -318,6 +318,7 @@ class SceneMain extends SceneBase {
         this.fuelFilterPanel = new FuelFilterPanel(this);
         this.pigmentFilterPanel = new PigmentFilterPanel(this);
         this.paintingCirclePanel = new PaintingCirclePanel(this);
+        this.craftingSpotPanel = new CraftingSpotPanel(this);
         this.applyUiScale();
         if (this._worldBooting) this._showGeneratingOverlay();
 
@@ -620,6 +621,7 @@ class SceneMain extends SceneBase {
         this.storagePanel?.update();
         this.leanToPanel?.update();
         this.paintingCirclePanel?.update();
+        this.craftingSpotPanel?.update();
         // Follow a downed body onto its corpse before bio/health refresh, or
         // those tabs treat the death as the panel vanishing and close.
         this.corpsePanel?.update();

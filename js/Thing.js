@@ -2350,3 +2350,54 @@ class PaintingCircle extends Thing {
         return lines.join("\n");
     }
 }
+
+class CraftingSpot extends Thing {
+    constructor(scene, entry) {
+        super(scene, entry.x, entry.y, entry.id, entry);
+        this.entry = entry;
+        this.setDepth(0.5);
+        this.setInteractive({ cursor: "pointer" });
+        this.on("pointerover", (pointer) => {
+            if (this.scene.craftingSpotPanel?.visible && this.scene.craftingSpotPanel.spot === this
+                && this.scene.pointerOverWorldUi?.(pointer)) return;
+            this.scene.showTooltip(
+                () => this.tooltipText(),
+                pointer.x,
+                pointer.y,
+                this
+            );
+        });
+        this.on("pointerout", () => {
+            if (this.scene._hoverTarget === this) this.scene._hoverTarget = null;
+            if (this.scene._tooltipTarget === this) this.scene.hideTooltip();
+        });
+        this.on("pointerdown", (pointer) => {
+            if (pointer.rightButtonDown()) return;
+            if (this.scene.partySys?.settlerOwnsPointer?.(pointer)) return;
+            if (this.scene.pointerOverWorldUi?.(pointer)) return;
+            if (this.scene.restBlocksWorldUi?.()) return;
+            if (!this.inRange()) return;
+            if (!this.scene.settlementSys?.canManageSpot?.(this)) return;
+            this.scene.craftingSpotPanel?.toggle(this);
+        });
+        this.on("destroy", () => {
+            if (this.scene.craftingSpotPanel?.spot === this) this.scene.craftingSpotPanel.close();
+            if (this.scene.billsPanel?.thing === this) this.scene.billsPanel.close();
+        });
+    }
+
+    inRange(pawn) {
+        const p = pawn || this.scene.player;
+        if (!p) return false;
+        const dx = this.x - p.x;
+        const dy = this.y - p.y;
+        const r = this.scene.tileSize * (p.interactionRange || 4);
+        return dx * dx + dy * dy <= r * r;
+    }
+
+    tooltipText() {
+        const on = this.entry?.craftEnabled !== false;
+        const name = this.meta?.name || "Crafting Spot";
+        return on ? name : `${name}\nDisabled`;
+    }
+}

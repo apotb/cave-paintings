@@ -105,6 +105,7 @@
                     cur === this.storagePanel?.container ||
                     cur === this.campfirePanel?.container ||
                     cur === this.paintingCirclePanel?.container ||
+                    cur === this.craftingSpotPanel?.container ||
                     cur === this.painBarZone ||
                     cur === this.kcBarZone ||
                     cur === this.weightBarZone ||
@@ -185,7 +186,7 @@
             const meta = obj.meta;
             if (
                 meta?.storage || meta?.sleep || meta?.craftStation || meta?.settlement
-                || meta?.paintingCircle || meta?.floor || meta?.dryingRack || meta?.campfire
+                || meta?.paintingCircle || meta?.craftingSpot || meta?.floor || meta?.dryingRack || meta?.campfire
             ) return true;
             if (typeof LeanTo !== "undefined" && obj instanceof LeanTo) return true;
             if (typeof Storage !== "undefined" && obj instanceof Storage) return true;
@@ -193,6 +194,7 @@
             if (typeof CraftStation !== "undefined" && obj instanceof CraftStation) return true;
             if (typeof SettlingStone !== "undefined" && obj instanceof SettlingStone) return true;
             if (typeof PaintingCircle !== "undefined" && obj instanceof PaintingCircle) return true;
+            if (typeof CraftingSpot !== "undefined" && obj instanceof CraftingSpot) return true;
             return false;
         };
 
@@ -494,6 +496,22 @@
                     return leanP.destroyRect;
                 }
                 return leanP.actionRect;
+            }
+
+            const spotP = this.craftingSpotPanel;
+            if (spotP?.visible && spotP.containsPointer?.(pointer)) {
+                for (let i = hits.length - 1; i >= 0; i--) {
+                    const obj = hits[i];
+                    if (!obj?.active || !obj.input?.enabled) continue;
+                    if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
+                    if (this._isUnderCraftingSpotPanel(obj)) return obj;
+                }
+                if (this._pointerOnWorldBtn?.(spotP._enableUi, pointer)) return spotP._enableUi.rect;
+                if (this._pointerOnWorldBtn?.(spotP._billsUi, pointer)) return spotP._billsUi.rect;
+                if (this._pointerOnWorldBtn?.(spotP._removeUi, pointer)) return spotP._removeUi.rect;
+                const keepSpot = this._tooltipTarget || this._hoverTarget;
+                if (keepSpot?.active && this._isUnderCraftingSpotPanel(keepSpot)) return keepSpot;
+                return null;
             }
 
             const paintP = this.paintingCirclePanel;
@@ -847,6 +865,23 @@
             return false;
         };
 
+        this._isUnderCraftingSpotPanel = (obj) => {
+            const panel = this.craftingSpotPanel;
+            if (!panel) return false;
+            let cur = obj;
+            while (cur) {
+                if (cur === panel.container) return true;
+                if (cur === panel._enableUi?.btn || cur === panel._enableUi?.rect ||
+                    cur === panel._enableUi?.glyph) return true;
+                if (cur === panel._billsUi?.btn || cur === panel._billsUi?.rect ||
+                    cur === panel._billsUi?.text) return true;
+                if (cur === panel._removeUi?.btn || cur === panel._removeUi?.rect ||
+                    cur === panel._removeUi?.text) return true;
+                cur = cur.parentContainer;
+            }
+            return false;
+        };
+
         this._isUnderPaintingCirclePanel = (obj) => {
             const panel = this.paintingCirclePanel;
             if (!panel) return false;
@@ -927,7 +962,8 @@
 
         this._cursorFor = (obj) => {
             if (this._isUnderStoragePanel?.(obj) || this._isUnderCampfirePanel?.(obj)
-                || this._isUnderPaintingCirclePanel?.(obj)) {
+                || this._isUnderPaintingCirclePanel?.(obj)
+                || this._isUnderCraftingSpotPanel?.(obj)) {
                 return "pointer";
             }
             if (!obj?.input) return 'default';

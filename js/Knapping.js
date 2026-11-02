@@ -281,21 +281,22 @@ const Knapping = {
      * Cut a class shape out of the pebble or flint sprite the player knaps.
      * Returns the same packed RGBA a finished knap stores.
      */
-    carveShapeIcon(scene, toolClass, stoneId) {
+    carveShapeIcon(scene, toolClass, stoneId, variant) {
         const shapes = (typeof KnapShapes !== "undefined") ? KnapShapes : null;
         const grid = shapes?.grid?.(toolClass);
         if (!grid || !scene?.textures) return null;
         const flint = stoneId === "flint";
         const id = flint ? "flint" : (stoneId || "andesite");
         if (!this._shapeIconCache) this._shapeIconCache = Object.create(null);
-        const cacheKey = toolClass + ":" + id;
+        const shade = variant === 2 ? 2 : 1;
+        const cacheKey = toolClass + ":" + id + ":" + shade;
         if (this._shapeIconCache[cacheKey]) return this._shapeIconCache[cacheKey];
         let textureKey = null;
         if (flint) {
             if (!scene.textures.exists("flint")) return null;
             textureKey = "flint";
         } else if (typeof ensureStoneTexture === "function") {
-            textureKey = ensureStoneTexture(scene, "pebble", 1, id);
+            textureKey = ensureStoneTexture(scene, "pebble", shade, id);
         }
         if (!textureKey || !scene.textures.exists(textureKey)) return null;
         const blank = this.blankFromTexture(scene, textureKey);

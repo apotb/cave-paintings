@@ -1131,8 +1131,7 @@ function craftKeepPreds(bill, recipe) {
                 return hideAllowed(bill, s);
             });
         } else if (ing.id && ing.id !== "ANY_HIDE" && ing.id !== "ANY_LEATHER") {
-            const id = ing.id;
-            preds.push((s) => s?.id === id);
+            preds.push((s) => Settlement.craftBillMatches?.(s, ing, getItem, bill));
         }
     }
     const toolClass = recipe?.requireTool?.toolClass;
@@ -1204,9 +1203,10 @@ function rockBillReady(world, rec, settle, bill) {
     const recipe = recId ? world._parseRecipe(recId) : null;
     if (!recipe) return false;
     for (const ing of recipe.ingredients || []) {
-        let n = countSettle(world, rec, settle, (s) => s.id === ing.id);
+        const pred = (s) => Settlement.craftBillMatches?.(s, ing, getItem, bill);
+        let n = countSettle(world, rec, settle, pred);
         for (const s of rec.overflow || []) {
-            if (s?.id === ing.id) n += Math.max(1, Number(s.quantity) || 1);
+            if (s && pred(s)) n += Math.max(1, Number(s.quantity) || 1);
         }
         if (n < (ing.qty || 1)) return false;
     }
@@ -1364,7 +1364,7 @@ function finishWorkChannel(world, rec, ch) {
     }
     if (ch.kind === "craft" || ch.kind === "rock") {
         const owner = world.players.get(rec.ownerId) || rec;
-        world._tryCraft(owner, { id: ch.recipeId, pawnId: rec.id });
+        world._tryCraft(owner, { id: ch.recipeId, pawnId: rec.id, bill: ch.bill || null });
         return;
     }
     if (ch.kind === "knap") {

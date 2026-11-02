@@ -771,6 +771,72 @@ test("owner-only station add including abandoned-camp ids", () => {
     assert.equal(Settlement.atPoint(list, 10, 10, 16, "b"), null);
 });
 
+test("crafting spot bills are hand recipes that no other station makes", () => {
+    const s = Settlement.createSettlement({ ownerId: "p" });
+    const ids = Settlement.billRecipesFor("spot", s).map((r) => r.id);
+    assert.ok(ids.includes("leaf_cord"));
+    assert.ok(ids.includes("stick_frame"));
+    assert.ok(ids.includes("wicker_basket"));
+    assert.equal(ids.includes("crafting_spot"), false);
+    assert.equal(ids.includes("cracked_coconut"), false);
+    assert.equal(ids.includes("pitch"), false);
+    assert.equal(ids.includes("hide_pouch"), false);
+    assert.equal(ids.includes("hut"), false);
+    assert.equal(Settlement.billStationKindOf("leaf_cord"), "spot");
+    assert.equal(Settlement.billStationKindOf("cracked_coconut"), "rock");
+    assert.equal(Settlement.stationKind("crafting_spot"), "spot");
+    assert.equal(Settlement.isAddableId("crafting_spot"), false);
+    const tip = { id: "stone_tool", toolClass: "spear_tip", quantity: 1 };
+    const knife = { id: "stone_tool", toolClass: "knife", quantity: 1 };
+    const ing = { id: "stone_tool", qty: 1, toolClass: "spear_tip" };
+    assert.equal(Settlement.craftIngredientMatches(tip, ing, (id) => DataStore.getItem(id)), true);
+    assert.equal(Settlement.craftIngredientMatches(knife, ing, (id) => DataStore.getItem(id)), false);
+    assert.equal(Settlement.craftIngredientMatches(
+        { id: "leaf", quantity: 5 },
+        { id: "leaf", qty: 5 },
+        (id) => DataStore.getItem(id)
+    ), true);
+    const settle = Settlement.createSettlement({ ownerId: "p" });
+    assert.equal(Settlement.linkStation(settle, "spot-1"), true);
+    assert.deepEqual(settle.stationUids, ["spot-1"]);
+    Settlement.unlinkStation([settle], "spot-1");
+    assert.deepEqual(settle.stationUids, []);
+    assert.equal(settle.bills["spot-1"], undefined);
+});
+
+test("a stone spear bill picks each spear tip stone", () => {
+    const inputs = Settlement.billInputsFor({ kind: "make", outputId: "stone_spear" });
+    const tips = inputs.filter((row) => row.toolClass === "spear_tip");
+    assert.ok(tips.length > 1);
+    assert.equal(tips.some((row) => row.name === "Stone Tool"), false);
+    assert.equal(tips.find((row) => row.id === "andesite")?.name, "Andesite Spear Tip");
+    assert.equal(tips.find((row) => row.id === "flint")?.name, "Flint Spear Tip");
+    assert.ok(inputs.some((row) => row.id === "wooden_spear"));
+    const andesite = {
+        id: "stone_tool",
+        toolClass: "spear_tip",
+        knapMaterial: "pebble",
+        stone: "andesite",
+        quantity: 1
+    };
+    const flint = { id: "stone_tool", toolClass: "spear_tip", knapMaterial: "flint", quantity: 1 };
+    const ing = { id: "stone_tool", qty: 1, toolClass: "spear_tip" };
+    const getItem = (id) => DataStore.getItem(id);
+    const bill = { allowedIds: ["andesite", "wooden_spear", "leaf_cord", "pitch"] };
+    assert.equal(Settlement.billAllowsCraftInput(bill, andesite, ing), true);
+    assert.equal(Settlement.billAllowsCraftInput(bill, flint, ing), false);
+    assert.equal(Settlement.craftBillMatches(andesite, ing, getItem, bill), true);
+    assert.equal(Settlement.craftBillMatches(flint, ing, getItem, bill), false);
+    assert.equal(Settlement.craftBillMatches(
+        { id: "wooden_spear", quantity: 1 },
+        { id: "wooden_spear", qty: 1 },
+        getItem,
+        bill
+    ), true);
+    const legacy = { allowedIds: ["stone_tool", "wooden_spear"] };
+    assert.equal(Settlement.billAllowsCraftInput(legacy, flint, ing), true);
+});
+
 test("traveling party ignored by settler job assignment; leader cannot drop", () => {
     const settle = Settlement.createSettlement({ x: 0, y: 0 });
     Settlement.setJob(settle, "settler-1", "haul", 1);

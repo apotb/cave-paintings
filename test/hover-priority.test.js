@@ -12,6 +12,7 @@ class Campfire {}
 class CraftStation {}
 class Hearth {}
 class PaintingCircle {}
+class CraftingSpot {}
 
 function loadHoverScene() {
     const sandbox = {
@@ -27,7 +28,8 @@ function loadHoverScene() {
         CraftStation,
         Hearth,
         SettlingStone: Hearth,
-        PaintingCircle
+        PaintingCircle,
+        CraftingSpot
     };
     vm.createContext(sandbox);
     vm.runInContext(fs.readFileSync(path.join(ROOT, "js", "Utils.js"), "utf8"), sandbox);
@@ -112,7 +114,8 @@ test("settler body wins hover over hut, pit, and other stations", () => {
         hit({ name: "Campfire", campfire: true }, Campfire.prototype),
         hit({ name: "Skinworking Bench", craftStation: true }, CraftStation.prototype),
         hit({ name: "Hearth", settlement: true, campfire: true }, Hearth.prototype),
-        hit({ name: "Painting Circle", paintingCircle: true }, PaintingCircle.prototype)
+        hit({ name: "Painting Circle", paintingCircle: true }, PaintingCircle.prototype),
+        hit({ name: "Crafting Spot", craftingSpot: true }, CraftingSpot.prototype)
     ];
     for (const building of buildings) {
         scene._hits = [building];

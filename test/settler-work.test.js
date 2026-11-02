@@ -7860,3 +7860,59 @@ test("settlers stop attacking a downed hostile and resume if it gets up", () => 
     JSON.stringify(world.toSaveData());
 });
 
+function addCraftSpot(world, settle, x, y, uid, enabled = true) {
+    const chunk = originChunk(world);
+    const entry = { uid, id: "crafting_spot", x, y, rot: 0, craftEnabled: enabled };
+    chunk.things.push(entry);
+    Settlement.linkStation(settle, uid);
+    return entry;
+}
+
+test("a settler stands on a crafting spot to make leaf cord", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "leaf", quantity: 5 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = craftOnly();
+    const spot = addCraftSpot(world, settle, rec.x, rec.y, "spot-work");
+    Settlement.addBill(settle, spot.uid, {
+        recipeId: "leaf_cord",
+        mode: "count",
+        n: 1,
+        paused: false
+    });
+    let started = false;
+    for (let i = 0; i < 80; i++) {
+        world.tick(50);
+        if (rec._workChannel?.kind === "rock" && rec._workChannel?.recipeId === "leaf_cord") {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true);
+    const stand = Research.standWorldPos(spot);
+    assert.ok(
+        Math.hypot(rec.x - stand.x, rec.y - stand.y) <= 3,
+        `should stand on the ring, at ${rec.x},${rec.y} want ${stand.x},${stand.y}`
+    );
+});
+
+test("a disabled crafting spot is skipped", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "leaf", quantity: 5 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = craftOnly();
+    const spot = addCraftSpot(world, settle, rec.x, rec.y, "spot-off", false);
+    Settlement.addBill(settle, spot.uid, {
+        recipeId: "leaf_cord",
+        mode: "count",
+        n: 1,
+        paused: false
+    });
+    for (let i = 0; i < 40; i++) world.tick(50);
+    assert.notEqual(rec._workChannel?.recipeId, "leaf_cord");
+    assert.equal(rec.inventory[0]?.id, "leaf");
+    assert.equal(rec.inventory[0]?.quantity, 5);
+});
+

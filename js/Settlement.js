@@ -2200,6 +2200,32 @@ class SettlementSystem {
         return true;
     }
 
+    canManageSpot(thing) {
+        const settle = this.here(this.scene.player);
+        if (!this.canManage(settle) || !thing?.entry) return false;
+        const S = typeof Settlement !== "undefined" ? Settlement : null;
+        if (!S?.isCraftingSpot?.(thing.meta || this.scene.getThing?.(thing.entry.id), thing.entry)) {
+            return false;
+        }
+        return this._inRangePawn(this.scene.player, settle)
+            && S.inRange(settle, thing.x, thing.y, this.scene.tileSize || 16);
+    }
+
+    toggleCraftEnabled(thing) {
+        if (!this.canManageSpot(thing) || !thing?.entry) return false;
+        const next = thing.entry.craftEnabled === false;
+        thing.entry.craftEnabled = next;
+        const settle = this.here(this.scene.player);
+        this.sendNet("setCraftEnabled", {
+            settlementId: settle?.id,
+            uid: thing.entry.uid,
+            enabled: next
+        });
+        thing.applyVisual?.();
+        this.bumpWorkCache();
+        return true;
+    }
+
     /** Square world button. ↻, or ↺ while Shift is held. */
     makeRotateButton(onClick) {
         const scene = this.scene;

@@ -356,7 +356,8 @@
         const stationId = this._craftStationThing?.meta?.id || "";
         const nearby = stationId ? "" : (this.nearbyCraftStationIds() || []).join(",");
         const page = this._craftPage || 0;
-        return `${stationId}|${nearby}|${page}|${s}`;
+        const here = this.settlementSys?.here?.(this.player) ? "1" : "0";
+        return `${stationId}|${nearby}|${page}|${s}|${here}`;
     },
 
     _craftHoverRecipeId() {
@@ -414,6 +415,13 @@
             this._craftNearbySig = nearbyIds.join(",");
             recipes = this.getKnownRecipes(null);
             for (const id of nearbyIds) recipes = recipes.concat(this.getKnownRecipes(id));
+            const spot = [];
+            const rest = [];
+            for (const recipe of recipes) {
+                if (recipe?.id === "crafting_spot") spot.push(recipe);
+                else rest.push(recipe);
+            }
+            recipes = spot.concat(rest);
         }
         const cols = 3;
         const maxRows = 4;
@@ -498,6 +506,15 @@
 
             // Craft. Ctrl makes 10 output items; Shift makes as many as ingredients allow.
             slot.on('pointerdown', (pointer) => {
+                if (recipe.id === "crafting_spot") {
+                    if (!this.canCraft(recipe) || !this.settlementSys?.here?.(this.player)) {
+                        shakeSlot();
+                        return;
+                    }
+                    this.closeCraftMenu?.();
+                    this.beginCraftingSpotPlace?.();
+                    return;
+                }
                 if (!this.canCraft(recipe)) {
                     shakeSlot();
                     return;
@@ -1002,6 +1019,7 @@
             if (stationId) {
                 if (req !== stationId) return false;
             } else if (req) return false;
+            if (m.id === "crafting_spot" && !this.settlementSys?.here?.(this.player)) return false;
             if (typeof Research !== "undefined" && Research.recipeUnlocked) {
                 const holder = this._playerResearchHolder?.() || null;
                 if (!Research.recipeUnlocked(m.id, holder)) return false;
@@ -1091,7 +1109,7 @@
             if (icons.length > 1) row.icons = icons;
             lines.push(row);
         }
-        return { text: `${head}\n—`, lines };
+        return { text: lines.length ? `${head}\n—` : head, lines };
     },
 
     /** Item, deer hide, andesite stone, or andesite knap picture for one ingredient row. */

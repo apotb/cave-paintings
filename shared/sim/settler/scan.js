@@ -1132,6 +1132,20 @@ function rockWork(world, rec, settle, claims) {
             break;
         }
     }
+    for (const spot of stationsOf(world, settle, "spot")) {
+        if (Settlement.craftSpotEnabled && !Settlement.craftSpotEnabled(spot)) continue;
+        for (const bill of Settlement.billsOf(settle, spot.uid)) {
+            if (!Settlement.billIsActive(bill, have, settle)) continue;
+            if (!rockBillReady(world, rec, settle, bill)) continue;
+            jobs.push({
+                kind: "make",
+                station: spot,
+                bill,
+                entry: spot
+            });
+            break;
+        }
+    }
     for (const fire of stationsOf(world, settle, "campfire")) {
         if (fire.id !== "campfire") continue;
         for (const bill of Settlement.billsOf(settle, fire.uid)) {
@@ -1186,13 +1200,7 @@ function jobCargoPreds(world, cookJob, rockJob) {
         : null;
     for (const ing of recipe?.ingredients || []) {
         if (!ing) continue;
-        if (ing.hideStage) {
-            const stage = ing.hideStage;
-            preds.push((s) => Settlement.hideStageOf(getItem(s?.id), s?.id) === stage);
-        } else if (ing.id && ing.id !== "ANY_HIDE" && ing.id !== "ANY_LEATHER") {
-            const id = ing.id;
-            preds.push((s) => s?.id === id);
-        }
+        preds.push((s) => Settlement.craftBillMatches?.(s, ing, getItem, rb));
     }
     const toolClass = recipe?.requireTool?.toolClass;
     if (toolClass) {

@@ -216,7 +216,8 @@
         campfire: "campfire",
         rack: "drying_rack",
         craft: "skinworking_bench",
-        grind: "grindstone"
+        grind: "grindstone",
+        spot: "crafting_spot"
     };
     const ADDABLE = {
         campfire: true,
@@ -431,6 +432,16 @@
         return !!ADDABLE[String(id || "")];
     }
 
+    function isCraftingSpot(thingDef, entry) {
+        if (thingDef?.craftingSpot) return true;
+        const id = entry?.id || thingDef?.id;
+        return id === "crafting_spot";
+    }
+
+    function craftSpotEnabled(entry) {
+        return entry?.craftEnabled !== false;
+    }
+
     function stationKind(id) {
         if (id === "campfire" || id === "unlit_campfire" || id === "hearth") return "campfire";
         if (id === "skinworking_bench") return "craft";
@@ -438,7 +449,16 @@
         if (id === "drying_rack") return "rack";
         if (id === "wicker_basket" || id === "storage_pit") return "storage";
         if (id === "rock") return "rock";
+        if (isCraftingSpot(null, { id })) return "spot";
         return null;
+    }
+
+    /** Join a settlement without the Add-button allow list. */
+    function linkStation(settle, uid) {
+        if (!settle || !uid) return false;
+        if (!Array.isArray(settle.stationUids)) settle.stationUids = [];
+        if (!settle.stationUids.some((u) => String(u) === String(uid))) settle.stationUids.push(uid);
+        return true;
     }
 
     function ensureSettlement(raw, opts = {}) {
@@ -626,8 +646,43 @@
             - countDropStock(drops, itemId));
     }
 
-    function billRecipesFor(stationKind, settle) {
-        const list = (BILL_RECIPES[stationKind] || []).slice();
+    function allItemDefs() {
+        try {
+            const ds = (typeof DataStore !== "undefined" && DataStore._store) ? DataStore : null;
+            const live = ds || (typeof require === "function" ? require("./DataStore") : null);
+            const list = live?._store?.itemsList;
+            return Array.isArray(list) ? list : [];
+        } catch (_) {
+            return [];
+        }
+    }
+
+    let _spotBillCache = null;
+
+    /** Hand recipes: no nearby thing and no station. The spot itself is not a bill. */
+    function spotBillRecipes() {
+        const items = allItemDefs();
+        if (_spotBillCache && _spotBillCache.items === items) return _spotBillCache.list;
+        const list = [];
+        for (const it of items) {
+            if (!it?.id || !it.recipe || typeof it.recipe !== "object") continue;
+            if (it.id === "crafting_spot") continue;
+            if (it.recipe.REQUIRE_THING || it.recipe.REQUIRE_STATION) continue;
+            list.push({
+                id: it.id,
+                name: it.name || it.id,
+                kind: "make",
+                outputId: it.id
+            });
+        }
+        _spotBillCache = { items, list };
+        return list;
+    }
+
+    function billRecipesFor(kind, settle) {
+        const list = kind === "spot"
+            ? spotBillRecipes().slice()
+            : (BILL_RECIPES[kind] || []).slice();
         if (arguments.length < 2) return list;
         return list.filter((r) => billRecipeUnlocked(r, settle));
     }
@@ -643,14 +698,67 @@
             const hit = (list || []).find((r) => r && r.id === recipeId);
             if (hit) return hit;
         }
-        return null;
+        return spotBillRecipes().find((r) => r && r.id === recipeId) || null;
     }
 
     function billStationKindOf(recipeId) {
         for (const [kind, list] of Object.entries(BILL_RECIPES)) {
             if ((list || []).some((r) => r && r.id === recipeId)) return kind;
         }
+        if (spotBillRecipes().some((r) => r && r.id === recipeId)) return "spot";
         return null;
+    }
+
+    function carryMod() {
+        if (typeof Carry !== "undefined" && Carry.stackToolClass) return Carry;
+        try {
+            if (typeof require === "function") return require("./carry");
+        } catch (_) { /* optional */ }
+        return null;
+    }
+
+    /** Id, tool class, and hide stage. A spear tip is not any stone tool. */
+    function craftIngredientMatches(stack, ing, getItem) {
+        if (!stack?.id || !ing) return false;
+        const def = typeof getItem === "function" ? getItem(stack.id) : null;
+        if (ing.hideStage) {
+            if (hideStageOf(def, stack.id) !== ing.hideStage) return false;
+            if (ing.id === "ANY_HIDE" || ing.id === "ANY_LEATHER") return true;
+        }
+        if (ing.toolClass) {
+            const cls = carryMod()?.stackToolClass?.(stack, def);
+            if (cls !== ing.toolClass) return false;
+        }
+        if (ing.id && ing.id !== "ANY_HIDE" && ing.id !== "ANY_LEATHER" && stack.id !== ing.id) return false;
+        return true;
+    }
+
+    /** Flint, or the pebble's stone. Andesite when a pebble tip has no stone yet. */
+    function stuffKeyOf(stack) {
+        if (!stack) return null;
+        if (stack.knapMaterial === "flint" || stack.id === "flint") return "flint";
+        const api = stoneApi();
+        return api?.normalizeStone?.(stack.stone) || api?.stoneOf?.(stack) || "andesite";
+    }
+
+    /**
+     * A make bill's allowed list names each spear-tip stone, plus the other
+     * ingredient ids. An older list that still says stone_tool accepts every tip.
+     */
+    function billAllowsCraftInput(bill, stack, ing) {
+        const allowed = bill?.allowedIds;
+        if (!Array.isArray(allowed) || !allowed.length) return true;
+        if (ing?.toolClass) {
+            const key = stuffKeyOf(stack);
+            if (key && allowed.includes(key)) return true;
+            const itemId = ing.id || stack?.id;
+            return !!(itemId && allowed.includes(itemId));
+        }
+        return billAllowsInput(bill, stack?.id);
+    }
+
+    function craftBillMatches(stack, ing, getItem, bill) {
+        return craftIngredientMatches(stack, ing, getItem) && billAllowsCraftInput(bill, stack, ing);
     }
 
     function billStationThingId(kind) {
@@ -816,12 +924,47 @@
                 ? Math.max(1, Math.floor(Number(v.qty) || 1))
                 : Math.max(0, Math.floor(Number(v) || 0));
             if (!(qty > 0)) continue;
+            const toolClass = v && typeof v === "object" && v.toolClass ? String(v.toolClass) : null;
+            if (toolClass) {
+                const ids = knapShapesApi()?.inputIds?.(toolClass) || [];
+                const stone = stoneApi();
+                if (ids.length) {
+                    for (const stuff of ids) {
+                        const flint = stuff === "flint";
+                        const named = {
+                            id: k,
+                            toolClass,
+                            knapMaterial: flint ? "flint" : "pebble"
+                        };
+                        if (!flint) named.stone = stuff;
+                        out.push({
+                            id: stuff,
+                            itemId: k,
+                            name: stone?.displayName?.(named) || stuff,
+                            key: flint ? "flint" : "pebble",
+                            qty,
+                            toolClass,
+                            stuff,
+                            hideStage: null
+                        });
+                    }
+                    continue;
+                }
+            }
             const meta = itemDefById(k, items);
+            let name = meta?.name || k;
+            if (!meta && k === "ANY_LEATHER") name = "Leather";
+            else if (!meta && k === "ANY_HIDE") {
+                const stage = v && typeof v === "object" && v.hideStage ? String(v.hideStage) : "";
+                name = stage ? `${stage} hide` : "Hide";
+            }
             out.push({
                 id: k,
-                name: meta?.name || k,
+                name,
                 key: meta?.key || k,
-                qty
+                qty,
+                toolClass,
+                hideStage: v && typeof v === "object" && v.hideStage ? String(v.hideStage) : null
             });
         }
         return out;
@@ -926,7 +1069,8 @@
                 out.push({
                     id: k,
                     qty: Math.max(1, Math.floor(Number(v.qty) || 1)),
-                    hideStage: v.hideStage ? String(v.hideStage) : null
+                    hideStage: v.hideStage ? String(v.hideStage) : null,
+                    toolClass: v.toolClass ? String(v.toolClass) : null
                 });
             } else {
                 const qty = Math.max(1, Math.floor(Number(v) || 0));
@@ -3338,6 +3482,13 @@
         billRecipeUnlocked,
         billRecipeById,
         billStationKindOf,
+        isCraftingSpot,
+        craftSpotEnabled,
+        linkStation,
+        spotBillRecipes,
+        craftIngredientMatches,
+        billAllowsCraftInput,
+        craftBillMatches,
         billStationThingId,
         cookInputsForMethod,
         billInputsFor,
