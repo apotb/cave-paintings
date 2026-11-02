@@ -1317,15 +1317,20 @@
         }
     },
 
+    /** Rest clock: every living traveler is down. Death is not sleep. */
     _everyoneLying() {
         const sessions = [...this.players.values()].filter((p) => p.connected);
         if (!sessions.length) return false;
+        let living = 0;
         for (const p of sessions) {
+            const leader = p.creature || this.creatures?.get?.(p.id);
+            if (p.dead || leader?.isBodyDead?.()) return false;
             for (const pawn of this._livingPartyOf(p)) {
+                living += 1;
                 if (!pawn._resting && !pawn._groundSleep) return false;
             }
         }
-        return true;
+        return living > 0;
     },
 
     _applyRestClock(dtMs = 0) {

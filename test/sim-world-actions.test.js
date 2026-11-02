@@ -1644,6 +1644,41 @@ test("a taken bunk interrupts the rest walk and tries another spot", () => {
     assert.equal(snap.players[0].restWalk.slot, 1);
 });
 
+test("a dead player does not start the 12x rest clock", () => {
+    const { world, pawn } = createTestWorld();
+    pawn._resting = true;
+    world._applyRestClock(3000);
+    assert.equal(world.tickSpeed, 12);
+
+    world._kill(pawn, null);
+    assert.equal(pawn.dead, true);
+    assert.equal(world.tickSpeed, 1);
+    world._applyRestClock(5000);
+    assert.equal(world.tickSpeed, 1);
+
+    const buddy = makeCompanion("buddy", { _resting: true });
+    pawn.party = [buddy];
+    world._applyRestClock(5000);
+    assert.equal(world.tickSpeed, 1);
+});
+
+test("a dead companion does not block the rest clock", () => {
+    const { world, pawn } = createTestWorld();
+    const buddy = makeCompanion("buddy", { dead: true, _resting: true });
+    pawn.party = [buddy];
+    pawn._resting = true;
+    world._applyRestClock(3000);
+    assert.equal(world.tickSpeed, 12);
+});
+
+test("a body-dead player is not treated as asleep", () => {
+    const { world, pawn } = createTestWorld();
+    pawn._resting = true;
+    pawn.creature._dead = true;
+    world._applyRestClock(5000);
+    assert.equal(world.tickSpeed, 1);
+});
+
 test("a full shelter stops the rest walk where you are", () => {
     const { world, pawn } = createTestWorld();
     const chunk = originChunk(world);
