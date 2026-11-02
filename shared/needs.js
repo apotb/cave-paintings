@@ -87,6 +87,7 @@
         if (!pawn.needs || typeof pawn.needs !== "object") pawn.needs = fresh();
         const next = pawn.needs;
         for (const def of DEFS) next[def.id] = clamp01(next[def.id], fallbackFor(def.id));
+        if (next.moodTarget != null) next.moodTarget = clamp01(next.moodTarget, 0.5);
         return next;
     }
 
@@ -95,6 +96,7 @@
         if (raw && typeof raw === "object") {
             const next = {};
             for (const def of DEFS) next[def.id] = raw[def.id];
+            if (raw.moodTarget != null) next.moodTarget = raw.moodTarget;
             pawn.needs = next;
         }
         return ensure(pawn);
@@ -104,6 +106,7 @@
         const src = pawn?.needs;
         const out = fresh();
         for (const def of DEFS) out[def.id] = clamp01(src?.[def.id], fallbackFor(def.id));
+        if (src && src.moodTarget != null) out.moodTarget = clamp01(src.moodTarget, 0.5);
         return out;
     }
 

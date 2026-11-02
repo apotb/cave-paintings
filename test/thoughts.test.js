@@ -44,7 +44,52 @@ test("mood is 50 plus the thought sum, and the stage words match the bands", () 
     Thoughts.noteSleep(p, "hut", 0);
     Thoughts.noteMeal(p, "cooked", 0);
     Thoughts.refresh(p, 0);
-    assert.equal(Math.round(p.needs.mood * 100), 54);
+    assert.equal(Math.round(Thoughts.targetOf(p) * 100), 54);
+    assert.equal(Math.round(p.needs.mood * 100), 50);
+    assert.equal(Thoughts.tooltip(p).split("\n")[1], "Target: 54%");
+});
+
+test("mood rises at 12 per hour and falls at 8, and sleep or a collapse holds it still", () => {
+    const rising = pawn();
+    Thoughts.refresh(rising, 0);
+    Thoughts.noteSleep(rising, "hut", 0);
+    Thoughts.noteMeal(rising, "cooked", 0);
+    Thoughts.refresh(rising, 0);
+    assert.equal(Math.round(rising.needs.mood * 100), 50);
+    // Four points at +12 per hour is 20 minutes.
+    Thoughts.tick(rising, 20, { eligible: false });
+    assert.equal(Math.round(rising.needs.mood * 100), 54);
+    Thoughts.tick(rising, 80, { eligible: false });
+    assert.equal(Math.round(rising.needs.mood * 100), 54);
+
+    const falling = pawn({ id: "low" });
+    Thoughts.refresh(falling, 0);
+    falling.needs.mood = 0.8;
+    for (let i = 0; i < 3; i++) Thoughts.witness(falling, 0);
+    Thoughts.refresh(falling, 0);
+    assert.equal(Math.round(Thoughts.targetOf(falling) * 100), 36);
+    Thoughts.tick(falling, 60, { eligible: false, asleep: true });
+    assert.equal(falling.needs.mood, 0.8);
+    Thoughts.tick(falling, 60, { eligible: false, downed: true });
+    assert.equal(falling.needs.mood, 0.8);
+    Thoughts.tick(falling, 120, { eligible: false });
+    const fell = 0.8 - Thoughts.FALL_PER_HOUR / 100;
+    assert.ok(Math.abs(falling.needs.mood - fell) < 1e-9);
+
+    const saved = pawn({ id: "saved" });
+    Thoughts.refresh(saved, 10);
+    saved.needs.mood = 0.62;
+    Thoughts.noteMeal(saved, "cooked", 10);
+    Thoughts.refresh(saved, 10);
+    const copy = pawn({
+        id: "saved-copy",
+        needs: { mood: saved.needs.mood, moodTarget: saved.needs.moodTarget, rest: 1 }
+    });
+    Thoughts.apply(copy, Thoughts.toJSON(saved));
+    Thoughts.tick(copy, 10, { eligible: false });
+    assert.equal(copy.needs.mood, 0.62);
+    Thoughts.tick(copy, 70, { eligible: false });
+    assert.ok(Math.abs(copy.needs.mood - (0.62 - Thoughts.FALL_PER_HOUR / 100)) < 1e-9);
 });
 
 test("a hut is a small bonus and a lean-to or the ground is outdoors", () => {

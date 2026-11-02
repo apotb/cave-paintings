@@ -1,5 +1,6 @@
 /**
- * Mood is the sum of thoughts, not a draining need.
+ * Thoughts set a mood target. The bar eases toward it, the way RimWorld does,
+ * so a new thought does not yank the bar across the screen.
  * Memories expire. Conditions are rebuilt whenever the list is refreshed.
  */
 (function (root, factory) {
@@ -30,6 +31,7 @@
         },
         tip: {
             title: "Mood",
+            target: "Target",
             feeling: "How this person is feeling right now.",
             warning: "Keep them happy, lest they grow resentful.",
             average: "Average happiness",
@@ -221,6 +223,14 @@
     const COOLDOWN_MIN = 6 * 60;
     const DRAIN_MIN = 6 * 60;
     const FILL = { stressed: 2 * DAY, unhappy: 12 * 60, miserable: 3 * 60 };
+    /**
+     * RimWorld moves the mood bar toward its target at +12 per in-game hour
+     * when rising and −8 per hour when falling. An hour here is 60 minutes.
+     */
+    const RISE_PER_HOUR = 12;
+    const FALL_PER_HOUR = 8;
+    const RISE_PER_MIN = (RISE_PER_HOUR / 100) / 60;
+    const FALL_PER_MIN = (FALL_PER_HOUR / 100) / 60;
 
     function clamp01(value, fallback) {
         const n = Number(value);
@@ -307,6 +317,8 @@
         }
         state.warned = !!state.warned;
         if (!Array.isArray(state.lines)) state.lines = [];
+        const moodAt = state.moodAt == null ? null : Number(state.moodAt);
+        state.moodAt = moodAt != null && Number.isFinite(moodAt) ? moodAt : null;
         if (state.episode) pawn._moodJob = state.episode.kind;
         return state;
     }
@@ -331,6 +343,7 @@
             cooldownUntil: src.cooldownUntil,
             episode: src.episode ? { kind: src.episode.kind, until: src.episode.until } : null,
             warned: src.warned,
+            moodAt: src.moodAt,
             lines: Array.isArray(src.lines) ? src.lines.map((row) => ({
                 offset: row.offset,
                 label: row.label,
@@ -815,8 +828,13 @@
         const rows = groupedMemories(pawn, state).concat(situational(pawn, t));
         state.lines = groupLines(rows);
         if (!pawn.needs || typeof pawn.needs !== "object") pawn.needs = {};
-        const mood = clamp01(0.5 + sumLines(state.lines) / 100, 0.5);
-        pawn.needs.mood = mood;
+        const target = clamp01(0.5 + sumLines(state.lines) / 100, 0.5);
+        pawn.needs.moodTarget = target;
+        // A new pawn starts on the target. After that the bar only eases toward it.
+        if (state.moodAt == null) {
+            pawn.needs.mood = target;
+            state.moodAt = t;
+        }
         if (state.episode && state.episode.until > t) pawn._moodJob = state.episode.kind;
         else pawn._moodJob = null;
         return state;
@@ -834,6 +852,7 @@
         if (!state) return { logs, abandon, started };
         const t = Number(now) || 0;
         if (state.episode && state.episode.until <= t) state.episode = null;
+        driftMood(pawn, state, t, opts);
         const paused = !!(opts.asleep || opts.downed || !opts.eligible);
         const band = stage(pawn.needs.mood);
         if (!paused) {
@@ -888,6 +907,36 @@
         return clamp01(pawn?.needs?.mood, 0.5);
     }
 
+    /** Instant thought total, on the same 0–1 scale as the bar. */
+    function targetOf(pawn) {
+        if (pawn?.thoughts && Array.isArray(pawn.thoughts.lines)) {
+            return clamp01(0.5 + sumLines(pawn.thoughts.lines) / 100, 0.5);
+        }
+        if (pawn?.needs && pawn.needs.moodTarget != null) return clamp01(pawn.needs.moodTarget, 0.5);
+        return moodOf(pawn);
+    }
+
+    /**
+     * Move the bar toward the target. Asleep or downed pawns hold still, and
+     * the missed time is not applied when they wake.
+     */
+    function driftMood(pawn, state, t, opts) {
+        if (!pawn?.needs) return;
+        const target = clamp01(pawn.needs.moodTarget, 0.5);
+        const prev = state.moodAt;
+        if (prev == null || !Number.isFinite(prev)) {
+            pawn.needs.mood = target;
+            state.moodAt = t;
+            return;
+        }
+        const dt = t - prev;
+        state.moodAt = t;
+        if (!(dt > 0) || opts.asleep || opts.downed) return;
+        const current = clamp01(pawn.needs.mood, target);
+        if (current < target) pawn.needs.mood = Math.min(target, current + RISE_PER_MIN * dt);
+        else if (current > target) pawn.needs.mood = Math.max(target, current - FALL_PER_MIN * dt);
+    }
+
     /** Header tint for the mood percent. Bonuses and penalties use their own marks. */
     function stageMark(word) {
         if (word === "happy" || word === "elated") return "p";
@@ -906,6 +955,8 @@
             TEXT.tip.feeling,
             TEXT.tip.warning
         ];
+        const targetPct = Math.round(targetOf(pawn) * 100);
+        if (targetPct !== pct) lines.splice(1, 0, `${TEXT.tip.target}: ${targetPct}%`);
         const rows = pawn?.thoughts?.lines || [];
         if (rows.length) lines.push("");
         for (let i = 0; i < rows.length; i++) {
@@ -955,6 +1006,8 @@
         STRIKE_MIN,
         COOLDOWN_MIN,
         FILL,
+        RISE_PER_HOUR,
+        FALL_PER_HOUR,
         ensure,
         toJSON,
         apply,
@@ -972,6 +1025,7 @@
         refresh,
         tick,
         moodOf,
+        targetOf,
         tooltip,
         sig,
         allowsWork,

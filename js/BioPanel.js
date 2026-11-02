@@ -358,6 +358,21 @@ class BioPanel {
         }
     }
 
+    /** White triangle under the bar: the mood target the fill is moving toward. */
+    _drawMoodTarget(gfx, barX, y, barW, barH, scale, target) {
+        const n = Number(target);
+        if (!Number.isFinite(n)) return;
+        const h = Math.max(2, Math.round(2 * (scale || 1)));
+        const half = Math.max(2, Math.round(2 * (scale || 1)));
+        const tx = Math.min(
+            barX + barW - half,
+            Math.max(barX + half, barX + Math.round(barW * Math.min(1, Math.max(0, n))))
+        );
+        const apex = y + barH;
+        gfx.fillStyle(0xffffff, 1);
+        gfx.fillTriangle(tx, apex, tx - half, apex + h, tx + half, apex + h);
+    }
+
     _makeNeedRows() {
         const rows = [];
         const api = typeof Needs !== "undefined" ? Needs : null;
@@ -660,7 +675,11 @@ class BioPanel {
                     this.bars.fillStyle(row.def.color, 1);
                     this.bars.fillRect(barX, y, fillW, needIcon);
                 }
-                if (row.def.id === "mood") this._drawMoodMarks(this.bars, barX, y, barW, needIcon, s);
+                if (row.def.id === "mood") {
+                    this._drawMoodMarks(this.bars, barX, y, barW, needIcon, s);
+                    const target = typeof Thoughts !== "undefined" ? Thoughts.targetOf(pawn) : null;
+                    this._drawMoodTarget(this.bars, barX, y, barW, needIcon, s, target);
+                }
                 const hitW = needIcon + iconGap + barW;
                 let hit = row.hit?.active ? row.hit : null;
                 if (!hit) {
