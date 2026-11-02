@@ -1,7 +1,7 @@
 /**
  * Title menu — Singleplayer / Multiplayer with client-owned characters (IndexedDB).
  */
-const TITLE_CAVE_STAMPS = ["deer", "hand", "hide", "spear", "stick"];
+const TITLE_CAVE_STAMPS = ["deer", "hand", "hide", "spear", "stick", "boar", "fish", "sun", "tree"];
 const GITHUB_REPO = "apotb/cave-paintings";
 const GITHUB_RELEASES_LATEST = `https://github.com/${GITHUB_REPO}/releases/latest`;
 const UPDATE_LINK_COLOR = "#ff8c00";
