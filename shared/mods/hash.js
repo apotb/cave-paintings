@@ -190,13 +190,15 @@
         put(out, "name", take(thing, "name"));
         put(out, "hitboxSize", take(thing, "hitboxSize"));
         put(out, "hitbox", pickList(thing, "hitbox"));
-        put(out, "lootable", pick(thing.lootable, ["item", "yield", "transform", "regrowMinutes"]));
+        put(out, "lootable", pick(thing.lootable, ["item", "yield", "transform", "regrowMinutes", "seconds"]));
+        if (out.lootable && Array.isArray(thing.lootable?.tool)) out.lootable.tool = list(thing.lootable.tool);
         put(out, "choppable", pick(thing.choppable, ["stump"]));
         put(out, "diggable", pick(thing.diggable, ["item", "yield"]));
         put(out, "campfire", take(thing, "campfire"));
         put(out, "lit", take(thing, "lit"));
         put(out, "lightLevel", take(thing, "lightLevel"));
         put(out, "lightKind", take(thing, "lightKind"));
+        put(out, "placeTiles", pickList(thing, "placeTiles"));
         put(out, "storage", pick(thing.storage, ["slots", "accept", "maxPerSlot"]));
         put(out, "dryingRack", take(thing, "dryingRack"));
         put(out, "craftStation", take(thing, "craftStation"));

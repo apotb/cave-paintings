@@ -145,11 +145,10 @@
         "id": "nets",
         "name": "Nets",
         "era": "Mesolithic",
-        "wip": true,
         "quote": "As if manual fishing wasn't lazy enough",
         "cost": 4,
         "prereqs": ["fishing", "basic_furniture"],
-        "unlocks": { "items": [], "jobs": [], "text": ["Fishing Net"] },
+        "unlocks": { "items": ["fishing_net"], "jobs": [], "text": [] },
         "children": []
     },
     {

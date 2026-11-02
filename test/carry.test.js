@@ -96,6 +96,11 @@ test("humanMoveSpeed halves walk when eating even if _tending is false", () => {
     const fishing = Carry.humanMoveSpeed(pawn, { wantSprint: true, tileSize: 16 });
     assert.equal(fishing.sprinting, false);
     assert.ok(Math.abs(fishing.speed - walk.speed * 0.5) < 0.01);
+    pawn.fishChannel = null;
+    pawn._reedChannel = { remaining: 1000, max: 4000 };
+    const cutting = Carry.humanMoveSpeed(pawn, { wantSprint: true, tileSize: 16 });
+    assert.equal(cutting.sprinting, false);
+    assert.ok(Math.abs(cutting.speed - walk.speed * 0.5) < 0.01);
 });
 
 test("resolveCraftedWeights hide-stage averaging", () => {

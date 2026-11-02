@@ -1296,12 +1296,12 @@ test("unfinished techs are WIP and cannot be researched", () => {
         "gathering", "cordage", "camping", "basic_furniture", "herbalism", "digging", "storage",
         "fire", "hearth", "cooking", "smoking", "clay_forming", "hut",
         "knapping", "hafting", "hand_axe", "cleaver", "blades", "tanning", "skinworking", "leatherworking",
-        "culture", "painting", "counting", "grinding", "fishing"
+        "culture", "painting", "counting", "grinding", "fishing", "nets"
     ];
     const wip = [
         "traps", "pit_traps", "spike_traps",
         "pit_kiln", "earth_oven", "dogs", "feasts", "burin",
-        "throwing", "bows", "nets",
+        "throwing", "bows",
         "ornament", "rituals", "idolatry", "music", "burial", "afterlife", "ancestors", "shrine",
         "settlements", "agriculture", "tree_sowing", "husbandry", "herding",
         "pottery", "mathematics", "writing"

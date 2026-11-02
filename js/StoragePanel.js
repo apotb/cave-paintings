@@ -95,8 +95,27 @@ class StoragePanel {
         if (!stack) return false;
         const meta = this.scene.getItem(stack.id);
         const def = this.storage?.meta;
-        if (typeof Hide !== "undefined") return Hide.slotAccepts(def, meta);
+        if (typeof Hide !== "undefined" && !Hide.slotAccepts(def, meta)) return false;
+        if (def?.id === "fishing_net") {
+            const slot = this.storage?.entry?.slots?.[0];
+            if (slot?.id) return false;
+            return this._netCanBait();
+        }
         return true;
+    }
+
+    /** A grub goes in only while this water can still be fished. */
+    _netCanBait() {
+        const entry = this.storage?.entry;
+        const WG = typeof WorldGen !== "undefined" ? WorldGen : null;
+        const FishApi = typeof Fish !== "undefined" ? Fish : null;
+        if (!entry || !WG?.tileKeyAt || !FishApi?.measure || !FishApi.fishable) return false;
+        const ts = this.scene.tileSize || 16;
+        const tx = Math.floor(entry.x / ts);
+        const ty = Math.floor((entry.y - 1) / ts);
+        const measured = FishApi.measure(tx, ty, (x, y) => WG.tileKeyAt(x, y) === "water");
+        const fisheries = this.scene.sim?.fisheries || null;
+        return !!FishApi.fishable(measured, fisheries);
     }
 
     _slotMax() {

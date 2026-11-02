@@ -456,6 +456,7 @@
                 this._netApplyFigurineFields(entry, src);
             } else {
                 entry.slots = Array.isArray(src.slots) ? src.slots : [null, null, null, null, null, null];
+                if (src.netReadyAt !== undefined) entry.netReadyAt = src.netReadyAt;
                 if (src.digProgress != null) entry.digProgress = src.digProgress;
                 if (src.digTaken != null) entry.digTaken = src.digTaken;
                 if (src.digAccrued != null) entry.digAccrued = src.digAccrued;
@@ -477,6 +478,7 @@
                 entry.rot = typeof Place !== "undefined" ? Place.normalizeRot(src.rot) : src.rot;
             }
             if (Array.isArray(src.slots)) entry.slots = src.slots;
+            if (src.netReadyAt !== undefined) entry.netReadyAt = src.netReadyAt;
             if (src.digProgress != null) entry.digProgress = src.digProgress;
             if (src.digTaken != null) entry.digTaken = src.digTaken;
             if (src.digAccrued != null) entry.digAccrued = src.digAccrued;

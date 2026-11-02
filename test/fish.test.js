@@ -5,7 +5,7 @@ const Settlement = require("../shared/settlement");
 const Research = require("../shared/research");
 const Place = require("../shared/place");
 const WorldGen = require("../shared/sim/WorldGen");
-const { createTestWorld, chunkKey } = require("./helpers/simWorld");
+const { createTestWorld, chunkKey, originChunk } = require("./helpers/simWorld");
 const { loadDefs, restoreRng, DataStore } = require("./helpers/load");
 
 loadDefs();
@@ -361,7 +361,7 @@ test("job order is Chop, then Fish, then Tail", () => {
     assert.ok(jobs.indexOf("fish") < jobs.indexOf("leather"));
     assert.equal(Settlement.jobLabel("fish"), "Fish");
     assert.equal(Settlement.JOB_NAMES.fish, "Fishing");
-    assert.match(Settlement.jobTooltip("fish"), /^Fishing\n- Fishing$/);
+    assert.match(Settlement.jobTooltip("fish"), /^Fishing\n- Taking haul from net\n- Placing bait in net\n- Fishing$/);
     assert.equal(Fish.CAST_MS, 30000);
 });
 
@@ -1128,4 +1128,244 @@ test("rejoining does not haul a fisher's rod back to storage", () => {
     assert.ok(rec2.fishChannel, "they cast again once the owner is back");
     assert.equal(rodStored(), false);
     assert.equal(rodIn(rec2), true);
+});
+
+const CS = 8;
+
+function fillTiles(world, key) {
+    const n = CS * CS;
+    for (const c of world.chunks.values()) c.tiles = Array(n).fill(key);
+}
+
+function setTile(world, tx, ty, key) {
+    const cx = Math.floor(tx / CS);
+    const cy = Math.floor(ty / CS);
+    const c = world.chunks.get(chunkKey(cx, cy));
+    c.tiles[(tx - cx * CS) + (ty - cy * CS) * CS] = key;
+}
+
+function reedQty(pawn, chunk) {
+    const piles = (chunk?.drops || []).reduce((n, d) => n + (d?.id === "reed" ? (d.quantity || 1) : 0), 0);
+    const bags = [...(pawn.inventory || []), ...(pawn.overflow || [])];
+    return piles + bags.reduce((n, s) => n + (s?.id === "reed" ? (s.quantity || 1) : 0), 0);
+}
+
+test("the net is a stick frame woven with six reeds", () => {
+    const item = DataStore.getItem("fishing_net");
+    const thing = DataStore.getThing("fishing_net");
+    assert.equal(item.recipe.stick_frame, 1);
+    assert.equal(item.recipe.reed, 6);
+    assert.equal(item.recipe.CRAFT_SECONDS, 4);
+    assert.equal(item.place.thing, "fishing_net");
+    assert.deepEqual(thing.placeTiles, ["water"]);
+    assert.equal(thing.storage.slots, 1);
+    assert.equal(thing.storage.accept, "grub");
+    assert.equal(DataStore.getThing("reeds").lootable.yield, 3);
+    assert.equal(DataStore.getThing("reeds").lootable.seconds, 4);
+    assert.deepEqual(DataStore.getThing("reeds").lootable.tool, ["knife", "cleaver"]);
+    assert.equal(DataStore.getItem("reed").weight, 0.1);
+    assert.equal(Research.techById("nets").wip, undefined);
+    assert.deepEqual(Research.techById("nets").unlocks.items, ["fishing_net"]);
+});
+
+test("a net places only on open water and a reed patch blocks that tile", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    fillTiles(world, "grass");
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    pawn.inventory[0] = { id: "fishing_net", quantity: 1 };
+    pawn.hotbarIndex = 0;
+    world.handleAction(pawn.id, { type: Protocol.Actions.PLACE, tx: 3, ty: 1 });
+    assert.equal(pawn.inventory[0].id, "fishing_net");
+    assert.equal(originChunk(world).things.some((t) => t.id === "fishing_net"), false);
+
+    setTile(world, 3, 1, "water");
+    originChunk(world).lootableThings.push({
+        uid: "reeds-block",
+        id: "reeds",
+        x: 3 * 16 + 8,
+        y: 1 * 16 + 16
+    });
+    world.handleAction(pawn.id, { type: Protocol.Actions.PLACE, tx: 3, ty: 1 });
+    assert.equal(pawn.inventory[0].id, "fishing_net");
+
+    originChunk(world).lootableThings.pop();
+    world.handleAction(pawn.id, { type: Protocol.Actions.PLACE, tx: 3, ty: 1 });
+    const net = originChunk(world).things.find((t) => t.id === "fishing_net");
+    assert.ok(net);
+    assert.equal(pawn.inventory[0], null);
+    assert.ok(settle.stationUids.includes(net.uid));
+    assert.equal(Place.canPlaceOnTile({
+        tileKey: "water",
+        placeDef: DataStore.getThing("wicker_basket"),
+        tx: 0,
+        ty: 0,
+        tileSize: 16,
+        things: [],
+        lootables: []
+    }), false);
+});
+
+test("a cast onto a net tile does not start", () => {
+    const shore = shoreNearOrigin();
+    assert.ok(shore);
+    const { world, pawn, Protocol } = createTestWorld();
+    world.seed = 1;
+    WorldGen.applySeed(1);
+    Research.unlock(pawn, "fishing");
+    pawn.x = (shore.tx + 0.5) * 16;
+    pawn.y = (shore.ty + 0.5) * 16;
+    pawn.inventory[0] = { id: "flimsy_rod", quantity: 1, durability: 40 };
+    pawn.inventory[1] = { id: "grub", quantity: 2 };
+    pawn.hotbarIndex = 0;
+    pawn.facing = shore.wx > shore.tx ? "right" : shore.wx < shore.tx ? "left" : shore.wy > shore.ty ? "down" : "up";
+    const cx = Math.floor(shore.wx / CS);
+    const cy = Math.floor(shore.wy / CS);
+    const chunk = world._ensureChunk(cx, cy);
+    const net = {
+        uid: "net-block",
+        id: "fishing_net",
+        x: shore.wx * 16 + 8,
+        y: shore.wy * 16 + 16,
+        slots: [null]
+    };
+    chunk.things.push(net);
+    world.handleAction(pawn.id, { type: Protocol.Actions.FISH, pawnId: pawn.id });
+    assert.equal(pawn.fishChannel, undefined);
+    const i = chunk.things.indexOf(net);
+    if (i >= 0) chunk.things.splice(i, 1);
+    world.handleAction(pawn.id, { type: Protocol.Actions.FISH, pawnId: pawn.id });
+    assert.ok(pawn.fishChannel);
+});
+
+function poolTiles() {
+    const tiles = [];
+    for (let x = 0; x < 80; x++) tiles.push([x, 0]);
+    return tiles;
+}
+
+function stubPool(world) {
+    const orig = WorldGen.tileKeyAt;
+    const set = new Set(poolTiles().map(([x, y]) => `${x},${y}`));
+    WorldGen.tileKeyAt = (x, y) => (set.has(`${x},${y}`) ? "water" : "grass");
+    world._fishCache = new Map();
+    return () => {
+        WorldGen.tileKeyAt = orig;
+        world._fishCache = new Map();
+    };
+}
+
+function plantNet(world, uid, tx, ty) {
+    const chunk = originChunk(world);
+    const entry = {
+        uid,
+        id: "fishing_net",
+        x: tx * 16 + 8,
+        y: ty * 16 + 16,
+        slots: [null]
+    };
+    Place.ensureStorageEntry(entry, DataStore.getThing("fishing_net"));
+    entry.uid = uid;
+    chunk.things.push(entry);
+    return entry;
+}
+
+test("a grub waits a whole number of hours, then the haul spends the pool", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const restore = stubPool(world);
+    try {
+        const net = plantNet(world, "net-a", 1, 0);
+        pawn.x = net.x;
+        pawn.y = net.y + 16;
+        pawn.inventory[0] = { id: "grub", quantity: 4, spoilLeft: 120 * 60 };
+        pawn.hotbarIndex = 0;
+        world.handleAction(pawn.id, {
+            type: Protocol.Actions.STORAGE,
+            op: "inv_to_slot",
+            uid: net.uid,
+            slot: 0,
+            inv: 0,
+            amount: 1
+        });
+        assert.equal(net.slots[0].id, "grub");
+        assert.equal(net.slots[0].quantity, 1);
+        const hours = (net.netReadyAt - world.worldMinuteIndex()) / 60;
+        assert.equal(hours, Math.round(hours));
+        assert.ok(hours >= 12 && hours <= 48);
+        const measured = Fish.measure(1, 0, (x, y) => WorldGen.tileKeyAt(x, y) === "water");
+        const before = measured.max;
+        world.fisheries = Object.create(null);
+        world.fisheries[measured.anchor] = { pop: before, max: before };
+        world.gameMinutes += net.netReadyAt - world.worldMinuteIndex();
+        world._tickFishingNets();
+        assert.equal(net.slots[0].id, "raw_fish");
+        assert.equal(net.slots[0].quantity, Fish.yieldForPop(before));
+        assert.equal(world.fisheries[measured.anchor].pop, before - net.slots[0].quantity);
+        assert.equal(net.netReadyAt, null);
+    } finally {
+        restore();
+    }
+});
+
+test("an empty pool eats the grub and a rotten grub catches nothing", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const restore = stubPool(world);
+    try {
+        const net = plantNet(world, "net-empty", 2, 0);
+        const other = plantNet(world, "net-b", 4, 0);
+        pawn.x = net.x;
+        pawn.y = net.y;
+        const measured = Fish.measure(2, 0, (x, y) => WorldGen.tileKeyAt(x, y) === "water");
+        world.fisheries = Object.create(null);
+        world.fisheries[measured.anchor] = { pop: 1, max: measured.max };
+        net.slots[0] = { id: "grub", quantity: 1, spoilAt: world.worldMinuteIndex() + 5000 };
+        other.slots[0] = { id: "grub", quantity: 1, spoilAt: world.worldMinuteIndex() + 5000 };
+        net.netReadyAt = world.worldMinuteIndex();
+        other.netReadyAt = world.worldMinuteIndex();
+        world._tickFishingNets();
+        const winner = [net, other].find((entry) => entry.slots[0]?.id === "raw_fish");
+        const loser = [net, other].find((entry) => entry !== winner);
+        assert.equal(winner.uid, "net-b");
+        assert.equal(winner.slots[0].quantity, 1);
+        assert.equal(loser.slots[0], null);
+        assert.equal(world.fisheries[measured.anchor].pop, 0);
+
+        const rotten = plantNet(world, "net-rot", 6, 0);
+        rotten.slots[0] = { id: "grub", quantity: 1, spoilAt: world.worldMinuteIndex() - 1 };
+        rotten.netReadyAt = world.worldMinuteIndex() - 1;
+        const pop = world.fisheries[measured.anchor].pop;
+        world._tickWorldSpoil();
+        world._tickFishingNets();
+        assert.equal(rotten.slots[0], null);
+        assert.equal(world.fisheries[measured.anchor].pop, pop);
+    } finally {
+        restore();
+    }
+});
+
+test("a puddle refuses bait and taking the grub back clears the deadline", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const orig = WorldGen.tileKeyAt;
+    WorldGen.tileKeyAt = (x, y) => (y === 0 && x >= 0 && x < 10 ? "water" : "grass");
+    world._fishCache = new Map();
+    try {
+        const net = plantNet(world, "net-puddle", 1, 0);
+        pawn.x = net.x;
+        pawn.y = net.y;
+        pawn.inventory[0] = { id: "grub", quantity: 2, spoilLeft: 1000 };
+        world.handleAction(pawn.id, {
+            type: Protocol.Actions.STORAGE,
+            op: "inv_to_slot",
+            uid: net.uid,
+            slot: 0,
+            inv: 0,
+            amount: 1
+        });
+        assert.equal(net.slots[0] || null, null);
+        assert.equal(net.netReadyAt ?? null, null);
+        assert.equal(pawn.inventory[0].quantity, 2);
+    } finally {
+        WorldGen.tileKeyAt = orig;
+        world._fishCache = new Map();
+    }
 });

@@ -163,7 +163,7 @@
             };
         }
         Place.ensureStorageEntry(entry, def);
-        return {
+        const pub = {
             uid: entry.uid,
             id: entry.id,
             x: entry.x,
@@ -180,6 +180,8 @@
             digSettled: entry.digSettled != null ? entry.digSettled : null,
             fillId: entry.fillId || null
         };
+        if (entry.id === "fishing_net") pub.netReadyAt = entry.netReadyAt != null ? entry.netReadyAt : null;
+        return pub;
     },
 
     /** Shrink saved containers to their def and drop stacks that no longer fit. */
@@ -482,7 +484,16 @@
         }
         _research()?.ensureEntry?.(entry, thingDef);
         chunk.things.push(entry);
+        if (thingId === "fishing_net") this._linkPlacedNet(session, entry);
         this._emitStorage(chunk, entry);
+    },
+
+    /** A net placed inside a camp the placer owns starts linked to the nearest one. */
+    _linkPlacedNet(session, entry) {
+        if (!entry?.uid || !session) return;
+        const hit = Settlement.atPoint(this._ownedSettlements(session.id), entry.x, entry.y, TS, session.id);
+        if (!hit) return;
+        if (Settlement.linkStation(hit, entry.uid) && hit.ownerId) this._youDirty.add(hit.ownerId);
     },
 
     _campfireEntryOnTile(tx, ty) {
@@ -1637,6 +1648,21 @@
         const idx = Place.parseSlotIndex(key, entry.slots.length);
         if (idx < 0) return;
         entry.slots[idx] = stack || null;
+        if (entry.id === "fishing_net") this._syncNetTimer(entry);
+    },
+
+    /** A grub in the slot waits 12 to 48 whole hours. Anything else clears the deadline. */
+    _syncNetTimer(entry) {
+        if (!entry || entry.id !== "fishing_net") return;
+        const slot = entry.slots?.[0];
+        if (slot?.id === "grub") {
+            if (entry.netReadyAt == null) {
+                const hours = 12 + Math.floor(this.rng() * 37);
+                entry.netReadyAt = this.worldMinuteIndex() + hours * 60;
+            }
+            return;
+        }
+        entry.netReadyAt = null;
     },
 
     _tryStorage(session, action = {}) {
@@ -1700,6 +1726,15 @@
             return;
         }
         if (op === "pickup") {
+            if (entry.id === "fishing_net") {
+                const slot = entry.slots?.[0];
+                if (slot?.id && (slot.quantity || 0) > 0) {
+                    const drop = this._cloneStackForWorld(slot);
+                    if (drop) this._pushDrop(p.x, p.y, drop);
+                    entry.slots[0] = null;
+                    entry.netReadyAt = null;
+                }
+            }
             if (!Place.isStorageEmpty(entry)) return;
             const itemId = Place.itemIdForThing(entry.id, itemDefs());
             const leftover = this._give(p, itemId, 1);
@@ -1830,6 +1865,10 @@
         const thingDef = thingDefs().get(entry.id);
         const meta = itemDefs().get(held.id);
         if (!Hide.slotAccepts(thingDef, meta)) return;
+        if (thingDef?.id === "fishing_net") {
+            if (held.id !== "grub" || dest) return;
+            if (!this._netWaterFishable(entry)) return;
+        }
         let amount = Math.max(1, Math.floor(Number(action.amount) || held.quantity || 1));
         const slotMax = Hide.slotMax(thingDef);
         if (slotMax > 0) amount = Math.min(amount, slotMax);

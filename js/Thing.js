@@ -633,13 +633,18 @@ class LootableThing extends Thing {
             if (!this.meta.lootable) return;
             this.scene.showTooltip(
                 () => {
-                    const itemMeta = this.scene.getItem(this.meta.lootable.item);
+                    const loot = this.meta.lootable;
+                    const itemMeta = this.scene.getItem(loot.item);
                     const stack = {
                         id: itemMeta?.id,
-                        quantity: this.meta.lootable.yield ?? 1,
+                        quantity: loot.yield ?? 1,
                         ...(this.entry?.stone ? { stone: this.entry.stone } : {})
                     };
-                    return this.scene.formatItemTooltip(itemMeta, stack.quantity, null, stack);
+                    let tip = this.scene.formatItemTooltip(itemMeta, stack.quantity, null, stack) || "";
+                    if (Array.isArray(loot.tool) && loot.tool.includes("knife")) {
+                        tip = tip ? `${tip}\nRequires Knife to harvest` : "Requires Knife to harvest";
+                    }
+                    return tip;
                 },
                 pointer.x,
                 pointer.y,
@@ -670,11 +675,16 @@ class LootableThing extends Thing {
 
     canPickup() {
         if (!this.meta?.lootable || this.entry?.gone) return false;
-        const dx = this.x - this.scene.player.x;
-        const dy = this.y - this.scene.player.y;
-        const d2 = dx * dx + dy * dy;
-        const r = this.scene.tileSize * this.scene.player.interactionRange;
-        return d2 <= r * r;
+        return this.inRange(this.scene.player);
+    }
+
+    inRange(pawn) {
+        const p = pawn || this.scene.player;
+        if (!p) return false;
+        const dx = this.x - p.x;
+        const dy = this.y - p.y;
+        const r = this.scene.tileSize * (p.interactionRange || 4);
+        return dx * dx + dy * dy <= r * r;
     }
 
     _removeEntry() {
@@ -695,6 +705,11 @@ class LootableThing extends Thing {
         // Dedicated MP: server owns lootables + inventory (YOU).
         if (this.scene.simAuth()) {
             if (pawn !== this.scene.player) return;
+            const tools = loot.tool;
+            if (Array.isArray(tools) && tools.length) {
+                pawn.beginReedCut?.(this);
+                return;
+            }
             this.scene._netSendMove?.(true);
             this.scene.net.sendAction({
                 type: NetProtocol.Actions.HARVEST,
@@ -1477,6 +1492,9 @@ class Storage extends Thing {
 
     static create(scene, entry) {
         const def = scene.getThing(entry?.id);
+        if (entry?.id === "fishing_net" || def?.id === "fishing_net") {
+            return new Net(scene, entry);
+        }
         if (typeof Hide !== "undefined" && Hide.isDryingRack(def, entry)) {
             return new DryingRack(scene, entry);
         }
@@ -1484,6 +1502,69 @@ class Storage extends Thing {
             return new PaintingCircle(scene, entry);
         }
         return new Storage(scene, entry);
+    }
+}
+
+class Net extends Storage {
+    constructor(scene, entry) {
+        super(scene, entry);
+        this.on("destroy", () => this._destroyCatch());
+    }
+
+    preUpdate(time, delta) {
+        super.preUpdate(time, delta);
+        this._placeCatch();
+    }
+
+    setSlot(index, stack) {
+        super.setSlot(index, stack);
+        this.applyVisual();
+    }
+
+    applyVisual() {
+        const stack = this.entry?.slots?.[0];
+        const id = stack?.id;
+        const show = id === "grub" || id === "raw_fish";
+        const key = show ? (this.scene.getItem?.(id)?.key || id) : null;
+        if (!key || !this.scene.textures?.exists?.(key)) {
+            this._destroyCatch();
+            return;
+        }
+        if (!this._catchSpr) {
+            this._catchSpr = this.scene.add.image(this.x, this.y, key);
+            this._catchSpr.setOrigin(0.5, 0.5);
+            this.scene.mainLayer?.add(this._catchSpr);
+        } else if (this._catchSpr.texture?.key !== key) {
+            this._catchSpr.setTexture(key);
+        }
+        const h = this.displayHeight || this.height || 16;
+        this._catchSpr.setScale(Math.min(0.55, (h * 0.45) / Math.max(1, this._catchSpr.height || 16)));
+        this._placeCatch();
+    }
+
+    _placeCatch() {
+        if (!this._catchSpr) return;
+        const h = this.displayHeight || this.height || 16;
+        this._catchSpr.setPosition(this.x, this.y - h * 0.46);
+        this._catchSpr.setDepth((Number(this.depth) || this.y) + 0.01);
+        this._catchSpr.setVisible(this.visible !== false);
+    }
+
+    _destroyCatch() {
+        this._catchSpr?.destroy();
+        this._catchSpr = null;
+    }
+
+    tooltipText() {
+        const base = super.tooltipText();
+        const slot = this.entry?.slots?.[0];
+        if (slot?.id !== "grub" || this.entry?.netReadyAt == null) return base;
+        const now = this.scene.worldMinuteIndex?.() ?? 0;
+        const left = Math.max(0, Number(this.entry.netReadyAt) - now);
+        const hours = Math.ceil(left / 60);
+        const line = hours <= 0 ? "Ready" : `${hours} hour${hours === 1 ? "" : "s"} left`;
+        if (base && typeof base === "object") return { ...base, text: `${base.text}\n${line}` };
+        return `${base}\n${line}`;
     }
 }
 

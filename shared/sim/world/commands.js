@@ -2375,6 +2375,84 @@
         return !!(holder && R.hasTech(holder, "fishing"));
     },
 
+    _netTile(entry) {
+        return {
+            tx: Math.floor(Number(entry?.x) / TS),
+            ty: Math.floor((Number(entry?.y) - 1) / TS)
+        };
+    },
+
+    _netOnTile(tx, ty) {
+        const { x, y } = this._tileCenter(tx, ty);
+        const { cx, cy } = worldToChunk(x, y - 1);
+        const chunk = this.chunks.get(chunkKey(cx, cy));
+        if (!chunk) return false;
+        for (const t of chunk.things || []) {
+            if (!t || t.gone || t.id !== "fishing_net") continue;
+            const tile = this._netTile(t);
+            if (tile.tx === (tx | 0) && tile.ty === (ty | 0)) return true;
+        }
+        return false;
+    },
+
+    _netWaterFishable(entry) {
+        const F = fishApi();
+        if (!F || !entry) return false;
+        const tile = this._netTile(entry);
+        return !!F.fishable(this._fishMeasure(tile.tx, tile.ty), this.fisheries);
+    },
+
+    /**
+     * Due nets resolve in uid order. The first beginCast spends the pool,
+     * so a later net on the same water can lose its grub.
+     */
+    _tickFishingNets(chunks) {
+        const F = fishApi();
+        if (!F) return;
+        if (!this.fisheries || typeof this.fisheries !== "object" || Array.isArray(this.fisheries)) {
+            this.fisheries = Object.create(null);
+        }
+        const now = this.worldMinuteIndex();
+        const due = [];
+        const src = chunks || this.chunks.values();
+        for (const chunk of src) {
+            for (const t of chunk?.things || []) {
+                if (!t || t.gone || t.id !== "fishing_net" || t.netReadyAt == null) continue;
+                const slot = t.slots?.[0];
+                if (slot?.id !== "grub") {
+                    if (slot?.id === "rot") t.slots[0] = null;
+                    t.netReadyAt = null;
+                    this._emitStorage(chunk, t);
+                    continue;
+                }
+                if (t.netReadyAt <= now) due.push({ chunk, entry: t });
+            }
+        }
+        due.sort((a, b) => String(a.entry.uid).localeCompare(String(b.entry.uid)));
+        for (const row of due) this._resolveFishingNet(row.chunk, row.entry, now);
+    },
+
+    _resolveFishingNet(chunk, entry, now) {
+        const F = fishApi();
+        const slot = entry?.slots?.[0];
+        if (!F || slot?.id !== "grub") {
+            if (entry) entry.netReadyAt = null;
+            return;
+        }
+        const tile = this._netTile(entry);
+        const cast = F.beginCast(this.fisheries, this._fishMeasure(tile.tx, tile.ty));
+        entry.slots[0] = null;
+        entry.netReadyAt = null;
+        if (cast?.ok) {
+            const qty = Math.max(1, Math.floor(Number(cast.haul) || 1));
+            const fish = { id: F.FISH_ID || "raw_fish", quantity: qty };
+            const at = Spoil.defaultSpoilAt(itemDefs().get(fish.id), now);
+            if (at != null) fish.spoilAt = at;
+            entry.slots[0] = fish;
+        }
+        this._emitStorage(chunk, entry);
+    },
+
     _fishMeasure(tx, ty) {
         const F = fishApi();
         if (!F || !WorldGen?.tileKeyAt) return null;
@@ -2417,6 +2495,7 @@
         if (!spot) return;
         const tx = spot.tx;
         const ty = spot.ty;
+        if (this._netOnTile(tx, ty)) return;
         if (this._bobberOn(tx, ty, pawn.id)) return;
         const measured = this._fishMeasure(tx, ty);
         if (!this.fisheries || typeof this.fisheries !== "object" || Array.isArray(this.fisheries)) {

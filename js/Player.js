@@ -33,6 +33,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._skinChannel = null;
         /** Scraper fleshing channel on a drying rack (same bar as tend/skin). */
         this._fleshChannel = null;
+        this._reedChannel = null;
         /** Brain-tan channel on a drying rack (same bar as flesh). */
         this._brainChannel = null;
         /** Station craft channel (awl at a skinworking bench). */
@@ -611,6 +612,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             this._tendChannel = null;
             this._skinChannel = null;
             this._fleshChannel = null;
+            this._reedChannel = null;
             this._brainChannel = null;
             this._craftChannel = null;
         } else {
@@ -867,6 +869,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._tendChannel = null;
         this._skinChannel = null;
         this._fleshChannel = null;
+        this._reedChannel = null;
         this._brainChannel = null;
         this._craftChannel = null;
         this._eatChannel = null;
@@ -1737,7 +1740,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this.isIncapacitated() || this.isImmobile()) return false;
         if (this._prone || this._downed || this._netProne) return false;
         if (this._eatChannel) this._cancelEat();
-        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._brainChannel || this._craftChannel) return false;
+        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._reedChannel || this._brainChannel || this._craftChannel) return false;
 
         this.capacities = new Capacities(this.anatomy);
         if (!this.capacities.canManipulate()) return false;
@@ -2616,7 +2619,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     /** Hold Space to keep attacking (weapon or unarmed). */
     tryWeaponAutofire() {
-        if (this.isAttacking() || this._tendChannel || this._skinChannel || this._fleshChannel || this._brainChannel || this._craftChannel || this._eatChannel || this._netWorkChannel?.kind === "fish" || this._bodyDead) return;
+        if (this.isAttacking() || this._tendChannel || this._skinChannel || this._fleshChannel || this._reedChannel || this._brainChannel || this._craftChannel || this._eatChannel || this._netWorkChannel?.kind === "fish" || this._bodyDead) return;
         if (this.isVomiting() || this.isIncapacitated()) return;
         const item = this.getHeldItem();
         if (this.scene._heldPlaceableDef?.()) {
@@ -2939,6 +2942,74 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
         this._fleshChannel = null;
         this._hideChannelBar();
+    }
+
+    beginReedCut(plant) {
+        if (this._reedChannel) return true;
+        if (this._eatChannel) this._cancelEat();
+        if (this._tendChannel || this._skinChannel || this._fleshChannel || this._brainChannel || this._craftChannel || this._bodyDead || this.isAttacking()) {
+            return false;
+        }
+        if (this.isVomiting()) return false;
+        const loot = plant?.meta?.lootable;
+        const tools = loot?.tool;
+        if (!plant?.entry || !Array.isArray(tools) || !tools.length) return false;
+        if (!plant.inRange?.(this)) return false;
+        const cls = this.heldToolClass();
+        if (!tools.includes(cls)) return false;
+        const seconds = Math.max(0.1, Number(loot.seconds) || 4);
+        const max = seconds * 1000;
+        this._reedChannel = {
+            remaining: max,
+            max,
+            slot: this._heldSlotIndex(),
+            plant,
+            tool: cls
+        };
+        this._showChannelBar(0);
+        return true;
+    }
+
+    _cancelReed() {
+        if (!this._reedChannel) return;
+        this._reedChannel = null;
+        this._hideChannelBar();
+    }
+
+    _tickReed(delta) {
+        const ch = this._reedChannel;
+        if (!ch) return;
+        const plant = ch.plant;
+        const held = this.getHeldItem();
+        const slot = this._heldSlotIndex();
+        if (
+            slot !== ch.slot
+            || !held
+            || this.heldToolClass() !== ch.tool
+            || !plant?.active
+            || plant.entry?.id !== plant.meta?.id
+            || !plant.inRange?.(this)
+            || this.isAttacking()
+        ) {
+            this._cancelReed();
+            return;
+        }
+        ch.remaining -= delta;
+        const prog = 1 - ch.remaining / ch.max;
+        this._showChannelBar(Phaser.Math.Clamp(prog, 0, 1));
+        if (ch.remaining > 0) return;
+        this._reedChannel = null;
+        this._hideChannelBar();
+        if (!this.scene.simAuth()) return;
+        this.scene._netSendMove?.(true);
+        this.scene.net.sendAction({
+            type: NetProtocol.Actions.HARVEST,
+            uid: plant.entry?.uid || null,
+            id: plant.meta?.id || plant.entry?.id || null,
+            x: plant.x,
+            y: plant.y,
+            pawnId: this.pawnId
+        });
     }
 
     /**
@@ -3823,6 +3894,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (this._tendChannel) this._tickTend(dt);
             if (this._skinChannel) this._tickSkin(dt);
             if (this._fleshChannel) this._tickFlesh(dt);
+            if (this._reedChannel) this._tickReed(dt);
             if (this._brainChannel) this._tickBrain(dt);
             if (this._craftChannel) this._tickCraft(dt);
             if (this._eatChannel) this._tickEat(dt);
@@ -3836,6 +3908,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this._tendChannel) this._tickTend(dt);
         if (this._skinChannel) this._tickSkin(dt);
         if (this._fleshChannel) this._tickFlesh(dt);
+        if (this._reedChannel) this._tickReed(dt);
         if (this._brainChannel) this._tickBrain(dt);
         if (this._craftChannel) this._tickCraft(dt);
         if (this._eatChannel) this._tickEat(dt);
@@ -4069,7 +4142,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const attacking = this.isAttacking();
         const fishing = this._netWorkChannel?.kind === "fish";
         const tending = !!this._tendChannel || !!this._eatChannel || !!this._skinChannel
-            || !!this._fleshChannel || !!this._brainChannel || !!this._craftChannel
+            || !!this._fleshChannel || !!this._reedChannel || !!this._brainChannel || !!this._craftChannel
             || fishing;
         const livingLegs = this.anatomy.livingLegs();
         const moved = typeof Carry !== "undefined" && Carry.humanMoveSpeed

@@ -415,6 +415,38 @@
         }
     },
     {
+        "id": "reeds",
+        "name": "Cattails",
+        "key": "reeds",
+        "hitboxSize": 0,
+        "lootable": {
+            "item": "reed",
+            "yield": 3,
+            "transform": "reeds_cut",
+            "regrowMinutes": 14400,
+            "tool": ["knife", "cleaver"],
+            "seconds": 4
+        }
+    },
+    {
+        "id": "reeds_cut",
+        "name": "Cut Cattails",
+        "key": "reeds_cut",
+        "hitboxSize": 0
+    },
+    {
+        "id": "fishing_net",
+        "name": "Fishing Net",
+        "key": "net",
+        "hitboxSize": 0,
+        "placeTiles": ["water"],
+        "storage": {
+            "slots": 1,
+            "accept": "grub",
+            "maxPerSlot": 1
+        }
+    },
+    {
         "id": "clay_figurine",
         "name": "Clay Figurine",
         "key": "clay",

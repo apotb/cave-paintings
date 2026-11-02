@@ -1,8 +1,9 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { createTestWorld, originChunk, chunkKey } = require("./helpers/simWorld");
-const { loadDefs, restoreRng } = require("./helpers/load");
+const { loadDefs, restoreRng, DataStore } = require("./helpers/load");
 const Settlement = require("../shared/settlement");
+const WorldGen = require("../shared/sim/WorldGen");
 const Research = require("../shared/research");
 const Place = require("../shared/place");
 const Hide = require("../shared/hide");
@@ -7914,5 +7915,192 @@ test("a disabled crafting spot is skipped", () => {
     assert.notEqual(rec._workChannel?.recipeId, "leaf_cord");
     assert.equal(rec.inventory[0]?.id, "leaf");
     assert.equal(rec.inventory[0]?.quantity, 5);
+});
+
+function onlyJob(settle, rec, job) {
+    const jobs = Settlement.defaultJobs();
+    for (const id of Settlement.JOBS) jobs[id] = 0;
+    jobs[job] = 3;
+    settle.jobs[rec.id] = jobs;
+}
+
+function knife(toolClass = "knife") {
+    return { id: "stone_tool", toolClass, quantity: 1, durability: 30 };
+}
+
+test("cutting reeds takes four seconds with a knife or a cleaver", () => {
+    const { world, pawn } = createTestWorld();
+    const { rec, settle } = parkSettler(world, pawn, { inventory: [knife(), null, null, null, null] });
+    onlyJob(settle, rec, "gather");
+    const chunk = originChunk(world);
+    const reeds = { uid: "reeds1", id: "reeds", x: rec.x, y: rec.y };
+    chunk.lootableThings.push(reeds);
+    const now = world.worldMinuteIndex();
+    workOnce(world, rec);
+    assert.equal(reeds.id, "reeds");
+    assert.equal(rec._workChannel.kind, "cut");
+    assert.equal(rec._workChannel.max, 4000);
+    world.tick(3999);
+    assert.equal(rec._settlerAct, "Cutting cattails");
+    assert.equal(reeds.id, "reeds");
+    world.tick(50);
+    assert.equal(reeds.id, "reeds_cut");
+    assert.equal(reeds.regrowId, "reeds");
+    const wait = reeds.regrowAt - now;
+    assert.ok(wait >= 14400 * 0.85 && wait <= 14400 * 1.15);
+    const got = [...rec.inventory, ...rec.overflow, ...(chunk.drops || [])]
+        .reduce((n, s) => n + (s?.id === "reed" ? (s.quantity || 1) : 0), 0);
+    assert.equal(got, 3);
+    assert.equal(rec.inventory[0].durability, 29);
+
+    const bare = { uid: "reeds-bare", id: "reeds", x: pawn.x, y: pawn.y };
+    chunk.lootableThings.push(bare);
+    pawn.inventory[0] = { id: "stick", quantity: 1 };
+    pawn.hotbarIndex = 0;
+    world._tryHarvest(pawn, { uid: bare.uid });
+    assert.equal(bare.id, "reeds");
+    pawn.inventory[0] = knife("cleaver");
+    world._tryHarvest(pawn, { uid: bare.uid });
+    assert.equal(bare.id, "reeds_cut");
+    assert.equal(reedCount(pawn, chunk), 3);
+
+    world.gameMinutes += 20000;
+    world._tickLootableRegrows();
+    assert.equal(reeds.id, "reeds");
+    assert.equal(reeds.regrowAt, undefined);
+});
+
+function reedCount(pawn, chunk) {
+    return [...(pawn.inventory || []), ...(pawn.overflow || []), ...(chunk.drops || [])]
+        .reduce((n, s) => n + (s?.id === "reed" ? (s.quantity || 1) : 0), 0);
+}
+
+test("walking off or putting the knife away cancels a reed cut", () => {
+    const { world, pawn } = createTestWorld();
+    const { rec, settle } = parkSettler(world, pawn, { inventory: [knife(), null, null, null, null] });
+    onlyJob(settle, rec, "gather");
+    const chunk = originChunk(world);
+    const reeds = { uid: "reeds-cancel", id: "reeds", x: rec.x, y: rec.y };
+    chunk.lootableThings.push(reeds);
+    workOnce(world, rec);
+    assert.equal(rec._workChannel.kind, "cut");
+    rec.x += 80;
+    world._tickSettlerWork(world._ensureSettlerCreature(rec), 50);
+    assert.equal(rec._workChannel, null);
+    assert.equal(reeds.id, "reeds");
+
+    rec.x -= 80;
+    rec._settlerScan = null;
+    workOnce(world, rec);
+    assert.equal(rec._workChannel.kind, "cut");
+    rec.inventory[rec.hotbarIndex] = null;
+    world._tickSettlerWork(world._ensureSettlerCreature(rec), 50);
+    assert.equal(rec._workChannel, null);
+    assert.equal(reeds.id, "reeds");
+});
+
+test("a gatherer without a knife or cleaver does not start cutting reeds", () => {
+    const { world, pawn } = createTestWorld();
+    const { rec, settle } = parkSettler(world, pawn);
+    onlyJob(settle, rec, "gather");
+    const reeds = { uid: "reeds-none", id: "reeds", x: rec.x, y: rec.y };
+    originChunk(world).lootableThings.push(reeds);
+    workOnce(world, rec);
+    assert.equal(rec._workChannel ?? null, null);
+    assert.equal(reeds.id, "reeds");
+});
+
+test("reed stock shows for a patch, a cut patch, or a ground pile, and old saves keep 12", () => {
+    const reeds = DataStore.getThing("reeds");
+    const cut = DataStore.getThing("reeds_cut");
+    assert.ok(Settlement.stockItemsFromThing(reeds).includes("reed"));
+    assert.ok(Settlement.stockItemsFromThing(cut).includes("reed"));
+    assert.equal(Settlement.filterStockItems(new Set()).includes("reed"), false);
+    assert.equal(Settlement.filterStockItems(new Set(["reed"])).includes("reed"), true);
+    const saved = Settlement.normalizeStock({ stick: 4 });
+    assert.equal(saved.reed, 12);
+    const settle = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p" });
+    assert.equal(Settlement.inRange(settle, 0, 0, 16), true);
+    assert.equal(Settlement.inRange(settle, 16 * 40, 0, 16), false);
+});
+
+function paintGrass(world) {
+    for (const c of world.chunks.values()) c.tiles = Array(64).fill("grass");
+}
+
+function paintTile(world, tx, ty, key) {
+    const cx = Math.floor(tx / 8);
+    const cy = Math.floor(ty / 8);
+    const c = world.chunks.get(chunkKey(cx, cy));
+    c.tiles[(tx - cx * 8) + (ty - cy * 8) * 8] = key;
+}
+
+function standNet(world, settle, tx, ty, uid) {
+    paintTile(world, tx, ty, "water");
+    const entry = {
+        uid,
+        id: "fishing_net",
+        x: tx * 16 + 8,
+        y: ty * 16 + 16,
+        slots: [null]
+    };
+    Place.ensureStorageEntry(entry, world._thingDef("fishing_net"));
+    entry.uid = uid;
+    originChunk(world).things.push(entry);
+    settle.stationUids = settle.stationUids || [];
+    settle.stationUids.push(uid);
+    return entry;
+}
+
+test("fishers haul a catch into storage even over the target, and bait only while under it", () => {
+    const { world, pawn } = createTestWorld();
+    paintGrass(world);
+    const { rec, settle } = parkSettler(world, pawn, {
+        inventory: [{ id: "grub", quantity: 3, spoilLeft: 5000 }, null, null, null, null]
+    });
+    onlyJob(settle, rec, "fish");
+    rec.inventory[0] = null;
+    rec.x = 2 * 16 + 8;
+    rec.y = 1 * 16 + 16;
+    settle.x = rec.x;
+    settle.y = rec.y;
+    const basket = addBasket(world, settle, rec.x, rec.y, "fish-basket");
+    basket.slots[0] = { id: "raw_fish", quantity: 12 };
+    const full = standNet(world, settle, 3, 1, "net-full");
+    full.slots[0] = { id: "raw_fish", quantity: 3, spoilAt: world.worldMinuteIndex() + 400 };
+    const empty = standNet(world, settle, 2, 2, "net-empty");
+    workOnce(world, rec);
+    assert.equal(rec._settlerAct, "Taking haul from net");
+    assert.equal(full.slots[0], null);
+    assert.equal(empty.slots[0], null);
+    for (let i = 0; i < 6; i++) workOnce(world, rec);
+    const fishQty = (slots) => (slots || []).reduce((n, s) => n + (s?.id === "raw_fish" ? (s.quantity || 1) : 0), 0);
+    const dropped = (originChunk(world).drops || []).reduce((n, d) => n + (d?.id === "raw_fish" ? (d.quantity || 1) : 0), 0);
+    assert.equal(fishQty(basket.slots) + fishQty(rec.inventory) + dropped, 15);
+    assert.equal(empty.slots[0], null);
+
+    basket.slots = (basket.slots || []).map((s) => (s?.id === "raw_fish" ? null : s));
+    rec.inventory = (rec.inventory || []).map((s) => (s?.id === "raw_fish" ? null : s));
+    originChunk(world).drops = (originChunk(world).drops || []).filter((d) => d?.id !== "raw_fish");
+    settle.stationUids = settle.stationUids.filter((id) => id !== full.uid);
+    rec.inventory[0] = { id: "grub", quantity: 1, spoilLeft: 5000 };
+    const orig = WorldGen.tileKeyAt;
+    WorldGen.tileKeyAt = (x, y) => (y === 2 && x >= 2 && x < 82 ? "water" : "grass");
+    world._fishCache = new Map();
+    try {
+        rec._settlerScan = null;
+        let baited = false;
+        for (let i = 0; i < 6 && !baited; i++) {
+            workOnce(world, rec);
+            baited = empty.slots[0]?.id === "grub";
+        }
+        assert.equal(empty.slots[0].id, "grub");
+        const hours = (empty.netReadyAt - world.worldMinuteIndex()) / 60;
+        assert.ok(hours >= 12 && hours <= 48);
+        assert.equal(Settlement.stockTarget(settle, "raw_fish"), 12);
+    } finally {
+        WorldGen.tileKeyAt = orig;
+        world._fishCache = new Map();
+    }
 });
 

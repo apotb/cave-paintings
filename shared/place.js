@@ -1571,7 +1571,13 @@
 
     function canPlaceOnTile(opts) {
         const tileKey = opts?.tileKey;
-        if (!tileKey || BLOCKED[tileKey]) return false;
+        if (!tileKey) return false;
+        // Water and ice stay blocked unless this thing names that tile.
+        // A fishing net is the only thing whose placeTiles include water.
+        if (BLOCKED[tileKey]) {
+            const tiles = opts.placeDef?.placeTiles;
+            if (!Array.isArray(tiles) || tiles.indexOf(tileKey) < 0) return false;
+        }
         if (opts.placeDef && !tileAllowsThing(opts.placeDef, tileKey)) return false;
         const tx = opts.tx;
         const ty = opts.ty;

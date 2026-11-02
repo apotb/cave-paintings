@@ -755,7 +755,8 @@
             }
             if (itemUsesThingArt(it, things, thingKeys, Place)) continue;
             // The snow tile already owns the "snow" texture key.
-            const file = it.key === "snow_pile" ? "snow" : it.key;
+            // reed.png is the world stalks. The bundle icon is assets/items/reeds.png.
+            const file = it.key === "snow_pile" ? "snow" : it.key === "reed" ? "reeds" : it.key;
             queueImage(scene, key, `assets/items/${file}.png`);
         }
         for (const spec of thingSpecs) {

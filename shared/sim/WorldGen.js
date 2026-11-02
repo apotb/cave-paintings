@@ -79,6 +79,8 @@
     /** Sand below this is beach. The same tile key above it is inland desert. */
     const BEACH_ELEV = -0.19;
     const CLAY_THRESH = 0.58;
+    /** Low end of the same clay noise. A passing water tile is a reed patch. */
+    const REED_THRESH = 0.42;
     const CLAY_FREQ = 6;
     /** Chebyshev tiles. Shores sit inside this; dry desert sand does not. */
     const CLAY_WATER_REACH = 4;
@@ -168,6 +170,24 @@
         return false;
     }
 
+    /** Water that shares a side with land. Ice counts as water, so it is not a bank. */
+    function reedOnBank(tx, ty) {
+        return !isWaterAt(tx + TS, ty)
+            || !isWaterAt(tx - TS, ty)
+            || !isWaterAt(tx, ty + TS)
+            || !isWaterAt(tx, ty - TS);
+    }
+
+    /** True when this water pixel should grow a reed patch. Callers skip ice. */
+    function reedPatchAt(tx, ty) {
+        if (!(clayRichness(tx, ty) < REED_THRESH)) return false;
+        return reedOnBank(tx, ty);
+    }
+
+    function waterLoot(tx, ty) {
+        return reedPatchAt(tx, ty) ? ["reeds"] : [];
+    }
+
     function generateTileKey(tx, ty, rand) {
         const inv = 1 / NOISE_SCALE;
         const nx = tx * inv;
@@ -187,9 +207,10 @@
             return { key, things: things || [], loot: loot || [] };
         }
 
-        if (river < 0.005) return { key: "water", things: [], loot: [] };
+        if (river < 0.005) return { key: "water", things: [], loot: waterLoot(tx, ty) };
         if (elevation < -0.2) {
-            return { key: temperature < -0.4 ? "ice" : "water", things: [], loot: [] };
+            if (temperature < -0.4) return { key: "ice", things: [], loot: [] };
+            return { key: "water", things: [], loot: waterLoot(tx, ty) };
         }
         if (river < 0.0065 && elevation < 0.14) {
             const loot = [];
@@ -738,7 +759,9 @@
         CLAY_HOST,
         BEACH_ELEV,
         CLAY_THRESH,
+        REED_THRESH,
         CLAY_WATER_REACH,
+        reedPatchAt,
         pickWorldSeed,
         applySeed,
         generateChunk,

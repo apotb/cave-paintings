@@ -250,6 +250,7 @@
             || pawn?._tendChannel
             || pawn?._skinChannel
             || pawn?._fleshChannel
+            || pawn?._reedChannel
             || pawn?._brainChannel
             || pawn?._craftChannel
             || pawn?.eatChannel

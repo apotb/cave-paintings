@@ -136,7 +136,11 @@ function gatherThing(world, rec, settle, claims) {
         const held = list.find((t) => thingKey(t.entry) === mine);
         if (held) {
             const itemId = held.def.lootable.item || held.def.id;
-            if (Settlement.gatherShouldWork(haveOf(itemId), Settlement.stockTarget(settle, itemId))
+            const heldTools = held.def.lootable.tool;
+            const heldTool = !Array.isArray(heldTools) || !heldTools.length || findStack(world, rec, settle, (s) => {
+                return heldTools.includes(Carry.stackToolClass(s, getItem(s.id)));
+            });
+            if (heldTool && Settlement.gatherShouldWork(haveOf(itemId), Settlement.stockTarget(settle, itemId))
                 && canCarry(rec, { id: itemId, quantity: held.def.lootable.yield || 1 })) {
                 return held.entry;
             }
@@ -150,6 +154,13 @@ function gatherThing(world, rec, settle, claims) {
         const itemId = t.def.lootable.item || t.def.id;
         if (!Settlement.gatherShouldWork(haveOf(itemId), Settlement.stockTarget(settle, itemId))) continue;
         if (!canCarry(rec, { id: itemId, quantity: t.def.lootable.yield || 1 })) continue;
+        const cutTools = t.def.lootable.tool;
+        if (Array.isArray(cutTools) && cutTools.length) {
+            const hasTool = findStack(world, rec, settle, (s) => {
+                return cutTools.includes(Carry.stackToolClass(s, getItem(s.id)));
+            });
+            if (!hasTool) continue;
+        }
         const d = Math.hypot(rec.x - t.entry.x, rec.y - t.entry.y);
         if (d < bestD) {
             bestD = d;
@@ -261,6 +272,7 @@ function fishSpot(world, rec, settle, claims) {
             const wy = (ty + 0.5) * ts;
             if (!inRange(settle, wx, wy, ts)) continue;
             if (WorldGen.tileKeyAt(tx, ty) !== "water") continue;
+            if (world._netOnTile?.(tx, ty)) continue;
             waters.push({ tx, ty, d: Math.hypot(wx - rec.x, wy - rec.y) });
         }
     }
@@ -299,6 +311,109 @@ function fishSpot(world, rec, settle, claims) {
         if (stand) return stand;
     }
     return null;
+}
+
+function campNets(world, settle) {
+    const out = [];
+    for (const uid of settle?.stationUids || []) {
+        const entry = world._findThingByUid?.(uid)?.entry;
+        if (!entry || entry.gone || entry.id !== "fishing_net") continue;
+        out.push(entry);
+    }
+    return out;
+}
+
+function netFishQty(world, settle) {
+    let n = 0;
+    for (const entry of campNets(world, settle)) {
+        const slot = entry.slots?.[0];
+        if (slot?.id !== "raw_fish") continue;
+        n += Math.max(1, Math.floor(Number(slot.quantity) || 1));
+    }
+    return n;
+}
+
+/** Adjacent land inside the camp. A net with no such shore is left for the player. */
+function netShore(world, rec, settle, entry) {
+    const ts = TS || 16;
+    const waterTx = Math.floor(Number(entry.x) / ts);
+    const waterTy = Math.floor((Number(entry.y) - 1) / ts);
+    let stand = null;
+    let standD = Infinity;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const stx = waterTx + dx;
+        const sty = waterTy + dy;
+        const ground = world._tileKeyAt?.(stx, sty);
+        if (!ground || ground === "water" || ground === "ice") continue;
+        const sx = stx * ts + ts / 2;
+        const sy = sty * ts + ts;
+        if (!inRange(settle, sx, sy, ts)) continue;
+        const d = Math.hypot(sx - rec.x, sy - rec.y);
+        if (d < standD) {
+            standD = d;
+            stand = { x: sx, y: sy, standTx: stx, standTy: sty, waterTx, waterTy };
+        }
+    }
+    return stand;
+}
+
+function netJobTarget(entry, stand, kind) {
+    return {
+        net: kind,
+        uid: entry.uid,
+        x: stand.x,
+        y: stand.y,
+        standTx: stand.standTx,
+        standTy: stand.standTy,
+        waterTx: stand.waterTx,
+        waterTy: stand.waterTy
+    };
+}
+
+/**
+ * Haul ignores the stock target. Bait runs only while stored fish plus fish
+ * already sitting in linked nets is under the target. Waiting grubs do not count.
+ */
+function netJobs(world, rec, settle, claims) {
+    const Fish = fishMod();
+    if (!Fish) return { haul: null, bait: null };
+    const nets = campNets(world, settle);
+    let haul = null;
+    let haulD = Infinity;
+    for (const entry of nets) {
+        const slot = entry.slots?.[0];
+        if (slot?.id !== "raw_fish") continue;
+        if (claimedByOther(claims, `fish:${entry.uid}`, rec.id)) continue;
+        const stand = netShore(world, rec, settle, entry);
+        if (!stand) continue;
+        const d = Math.hypot(stand.x - rec.x, stand.y - rec.y);
+        if (d < haulD) {
+            haulD = d;
+            haul = netJobTarget(entry, stand, "haul");
+        }
+    }
+    let bait = null;
+    const target = Settlement.stockTarget(settle, Fish.FISH_ID);
+    const have = countItem(world, settle, Fish.FISH_ID) + netFishQty(world, settle);
+    const wants = Settlement.gatherShouldWork(have, target);
+    const grub = wants && findStack(world, rec, settle, (s) => s.id === Fish.GRUB_ID);
+    if (grub) {
+        let baitD = Infinity;
+        for (const entry of nets) {
+            const slot = entry.slots?.[0];
+            if (slot?.id) continue;
+            if (claimedByOther(claims, `fish:${entry.uid}`, rec.id)) continue;
+            if (!world._netWaterFishable?.(entry)) continue;
+            const stand = netShore(world, rec, settle, entry);
+            if (!stand) continue;
+            const d = Math.hypot(stand.x - rec.x, stand.y - rec.y);
+            if (d < baitD) {
+                baitD = d;
+                bait = netJobTarget(entry, stand, "bait");
+            }
+        }
+    }
+    return { haul, bait };
 }
 
 /**
@@ -1260,6 +1375,7 @@ function scanWork(world, rec, settle, claims) {
     const c = rec.creature || world.creatures.get(rec.id);
     const injured = Sleep.injuredForAutofill ? Sleep.injuredForAutofill(c?.anatomy) : false;
     const downed = pawnDowned(world, rec);
+    const nets = jobOn(enabled, "fish") ? netJobs(world, rec, settle, claims) : { haul: null, bait: null };
     const stash = stashScan(world, rec, settle, keepOpts);
     const cookJob = jobOn(enabled, "cook") ? cookBill(world, rec, settle, claims) : null;
     const hideWork = jobOn(enabled, "leather") ? leatherWork(world, rec, settle, claims) : null;
@@ -1282,6 +1398,8 @@ function scanWork(world, rec, settle, claims) {
         digThing: jobOn(enabled, "gather") ? digThing(world, rec, settle, claims) : null,
         chopTree: jobOn(enabled, "chop") ? chopTree(world, rec, settle, claims) : null,
         fishSpot: jobOn(enabled, "fish") ? fishSpot(world, rec, settle, claims) : null,
+        netHaul: nets.haul,
+        netBait: nets.bait,
         researchCircle: circle,
         patients,
         critical: care.critical,

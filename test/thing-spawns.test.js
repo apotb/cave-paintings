@@ -297,3 +297,47 @@ test("visible piles block placement, and /set on a tree unlinks its hidden piles
     assert.equal(chunk.things.some((entry) => entry.uid === "tree1"), false);
     assert.equal(chunk.lootableThings.some((entry) => entry.uid === "hidden"), false);
 });
+
+test("reed patches sit on shore water where the clay noise is low", () => {
+    const CS = WorldGen.CS;
+    const TS = WorldGen.TS;
+    const CHUNK = WorldGen.CHUNK_PX;
+    let patches = 0;
+    for (let cy = -8; cy <= 8; cy++) {
+        for (let cx = -8; cx <= 8; cx++) {
+            const chunk = WorldGen.generateChunk(cx, cy, 1);
+            for (let i = 0; i < chunk.tiles.length; i++) {
+                const lx = i % CS;
+                const ly = (i / CS) | 0;
+                const px = cx * CHUNK + lx * TS;
+                const py = cy * CHUNK + ly * TS;
+                const tile = chunk.tiles[i];
+                const onTile = (chunk.lootableThings || []).filter((entry) => {
+                    if (entry?.id !== "reeds") return false;
+                    return Math.floor(entry.x / TS) === cx * CS + lx
+                        && Math.floor((entry.y - 1) / TS) === cy * CS + ly;
+                });
+                const origin = px === 0 && py === 0;
+                const expect = tile === "water" && !origin && WorldGen.reedPatchAt(px, py);
+                assert.equal(onTile.length, expect ? 1 : 0, `${px},${py} ${tile}`);
+                if (!onTile.length) continue;
+                patches += 1;
+                assert.equal(tile, "water");
+                assert.ok(WorldGen.clayRichness(px, py) < WorldGen.REED_THRESH);
+                let land = false;
+                for (let dy = -WorldGen.CLAY_WATER_REACH; dy <= WorldGen.CLAY_WATER_REACH && !land; dy++) {
+                    for (let dx = -WorldGen.CLAY_WATER_REACH; dx <= WorldGen.CLAY_WATER_REACH; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        const key = WorldGen.tileKeyAt(cx * CS + lx + dx, cy * CS + ly + dy);
+                        if (key !== "water" && key !== "ice") {
+                            land = true;
+                            break;
+                        }
+                    }
+                }
+                assert.equal(land, true, `reed at ${px},${py} is not within 4 tiles of land`);
+            }
+        }
+    }
+    assert.ok(patches > 0, "the shore should grow at least one reed patch");
+});

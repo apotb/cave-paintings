@@ -518,6 +518,8 @@
         this._tickCampfires(simChunks);
         this._tickDryingRacks(simChunks);
         this._tickWorldSpoil(simChunks);
+        // After spoil, so a grub that rots on the deadline does not catch.
+        this._tickFishingNets(simChunks);
         this._tickCorpseDecay(simChunks);
         if (Apparel.isDayBoundary(this.worldMinuteIndex())) {
             for (const p of this.players.values()) {

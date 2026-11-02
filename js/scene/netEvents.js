@@ -302,11 +302,12 @@
                 if (hook) this.hideChannelBar?.();
                 else if (fishLive && typeof pawn._netWorkChannel?.progress === "number") {
                     this.showChannelBar?.(pawn._netWorkChannel.progress);
-                } else if (
+                }                 else if (
                     !pawn._eatChannel
                     && !pawn._tendChannel
                     && !pawn._skinChannel
                     && !pawn._fleshChannel
+                    && !pawn._reedChannel
                     && !pawn._brainChannel
                     && !pawn._craftChannel
                 ) {
@@ -345,6 +346,7 @@
                 && !pawn._tendChannel
                 && !pawn._skinChannel
                 && !pawn._fleshChannel
+                && !pawn._reedChannel
                 && !pawn._brainChannel
                 && !pawn._craftChannel
             ) {

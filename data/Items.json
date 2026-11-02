@@ -1242,6 +1242,28 @@
         }
     },
     {
+        "id": "reed",
+        "name": "Cattail",
+        "key": "reed",
+        "maxStack": 99,
+        "weight": 0.1
+    },
+    {
+        "id": "fishing_net",
+        "name": "Fishing Net",
+        "key": "net",
+        "maxStack": 99,
+        "weight": 1,
+        "place": {
+            "thing": "fishing_net"
+        },
+        "recipe": {
+            "stick_frame": 1,
+            "reed": 6,
+            "CRAFT_SECONDS": 4
+        }
+    },
+    {
         "id": "wicker_basket",
         "name": "Wicker Basket",
         "key": "wicker_basket",

@@ -34,6 +34,7 @@
     const takeToPawn = (...args) => ctx.takeToPawn(...args);
     const takeQty = (...args) => ctx.takeQty(...args);
     const getItem = (...args) => ctx.getItem(...args);
+    const findSettle = (...args) => ctx.findSettle(...args);
     const pickBasket = (...args) => ctx.pickBasket(...args);
     const stashScan = (...args) => ctx.stashScan(...args);
     const storageNear = (...args) => ctx.storageNear(...args);
@@ -55,7 +56,6 @@
     const findNearestStored = (...args) => ctx.findNearestStored(...args);
     const rackHang = (...args) => ctx.rackHang(...args);
     const patientNeedsTend = (...args) => ctx.patientNeedsTend(...args);
-    const findSettle = (...args) => ctx.findSettle(...args);
     const dropKey = (...args) => ctx.dropKey(...args);
     const goToDrop = (...args) => ctx.goToDrop(...args);
     const leaveHaulDrop = (...args) => ctx.leaveHaulDrop(...args);
@@ -1080,6 +1080,7 @@ function craftBillTitle(ch) {
 function workChannelLabel(world, rec) {
     const ch = rec?._workChannel;
     if (!ch) return "Idle";
+    if (ch.kind === "cut") return "Cutting cattails";
     if (ch.kind === "tend") {
         const patient = findChannelPatient(world, rec, ch.patientId);
         if (patient && patient.id !== rec.id) {
@@ -1315,6 +1316,14 @@ function channelStillValid(world, rec, ch) {
         if (!Hide.isDehairedHide(meta)) return false;
         return Hide.isBrainItem(held ? getItem(held.id) : null);
     }
+    if (ch.kind === "cut") {
+        const entry = world._findThingByUid(ch.uid)?.entry;
+        const def = entry ? world._thingDef?.(entry.id) : null;
+        const tools = def?.lootable?.tool;
+        if (!entry || entry.gone || !Array.isArray(tools) || !tools.length) return false;
+        if (Math.hypot(rec.x - entry.x, rec.y - entry.y) > 4 * TS) return false;
+        return tools.includes(Carry.stackToolClass(held, held ? getItem(held.id) : null));
+    }
     if (ch.kind === "craft") {
         const bench = world._findThingByUid(ch.uid)?.entry;
         if (!bench || !near(rec.x, rec.y, bench.x, bench.y)) return false;
@@ -1354,6 +1363,10 @@ function finishWorkChannel(world, rec, ch) {
     endWorkHold(rec);
     rec._settlerScan = null;
     rec._settlerScanMs = SCAN_MS;
+    if (ch.kind === "cut") {
+        world._tryHarvest(rec, { uid: ch.uid });
+        return;
+    }
     if (ch.kind === "flesh") {
         world._tryRackFlesh(rec, { uid: ch.uid, pawnId: rec.id });
         return;
@@ -1426,11 +1439,81 @@ function tickChannel(world, rec, dtMs) {
     if (ch.remaining <= 0) finishWorkChannel(world, rec, ch);
 }
 
+function cutTool(stack, tools) {
+    if (!stack || !Array.isArray(tools)) return false;
+    return tools.includes(Carry.stackToolClass(stack, getItem(stack.id)));
+}
+
+/** Land within harvest range of a water plant. Four tiles matches a hand harvest. */
+function cutStand(world, rec, entry, settle) {
+    const ts = TS || 16;
+    const tx = Math.floor(Number(entry.x) / ts);
+    const ty = Math.floor((Number(entry.y) - 1) / ts);
+    let best = null;
+    let bestD = Infinity;
+    for (let dy = -4; dy <= 4; dy++) {
+        for (let dx = -4; dx <= 4; dx++) {
+            const sx = (tx + dx) * ts + ts / 2;
+            const sy = (ty + dy) * ts + ts;
+            if (Math.hypot(sx - entry.x, sy - entry.y) > 4 * ts + 0.5) continue;
+            const ground = world._tileKeyAt?.(tx + dx, ty + dy);
+            if (!ground || ground === "water" || ground === "ice") continue;
+            if (settle && !ctx.inRange?.(settle, sx, sy, ts)) continue;
+            const d = Math.hypot(sx - rec.x, sy - rec.y);
+            if (d < bestD) {
+                bestD = d;
+                best = { x: sx, y: sy };
+            }
+        }
+    }
+    return best;
+}
+
+function doCutGather(world, rec, target, def) {
+    const tools = def.lootable.tool;
+    const settle = findSettle(world, rec);
+    const held = rec.inventory?.[rec.hotbarIndex];
+    if (!cutTool(held, tools)) {
+        const found = findStack(world, rec, settle, (s) => cutTool(s, tools));
+        if (!found) {
+            endWorkHold(rec);
+            rec._settlerScan = null;
+            return halt();
+        }
+        if (found.at !== rec) return fetchStack(world, rec, settle, found) || halt();
+        if (!equipHand(rec, found)) return halt();
+    }
+    const reach = 4 * (TS || 16);
+    if (Math.hypot(rec.x - target.x, rec.y - target.y) > reach) {
+        const stand = cutStand(world, rec, target, settle);
+        if (!stand) {
+            endWorkHold(rec);
+            rec._settlerScan = null;
+            return halt();
+        }
+        return walkTo(stand.x, stand.y, { openRadius: 0 });
+    }
+    const seconds = Math.max(0.1, Number(def.lootable.seconds) || 4);
+    const max = seconds * 1000;
+    rec._workChannel = {
+        kind: "cut",
+        job: "gather",
+        remaining: max,
+        max,
+        slot: rec.hotbarIndex,
+        uid: target.uid
+    };
+    return halt();
+}
+
 function doGather(world, rec, target) {
     if (!target) {
         endWorkHold(rec);
         return halt();
     }
+    const def = world._thingDef?.(target.id);
+    const tools = def?.lootable?.tool;
+    if (Array.isArray(tools) && tools.length) return doCutGather(world, rec, target, def);
     const walked = goOrWalk(world, rec, target);
     if (walked) return walked;
     world._tryHarvest(rec, { uid: target.uid });

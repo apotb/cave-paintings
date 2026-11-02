@@ -569,6 +569,8 @@ function tick(world, mob, delta) {
             digThing: scan.digThing,
             chopTree: scan.chopTree,
             fishSpot: scan.fishSpot,
+            netHaul: scan.netHaul,
+            netBait: scan.netBait,
             researchCircle: scan.researchCircle,
             stashBasket: stash.basket,
             hasStash: stash.has,

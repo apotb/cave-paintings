@@ -141,6 +141,7 @@
 
     function slotAccepts(thingDef, itemDef) {
         const accept = thingDef?.storage?.accept;
+        if (accept === "grub") return itemDef?.id === "grub";
         if (accept === "hide") return isHide(itemDef);
         if (accept === "pigment") {
             let R = typeof Research !== "undefined" ? Research : null;

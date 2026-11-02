@@ -110,7 +110,7 @@
             "Stoke fires"
         ],
         chop: ["Chop trees"],
-        fish: ["Fishing"],
+        fish: ["Taking haul from net", "Placing bait in net", "Fishing"],
         leather: [
             "Work at Drying Rack",
             "Soak hides in water",
@@ -134,11 +134,11 @@
     };
     const STOCK_ITEMS = [
         "stick", "leaf", "log", "blueberry", "apple", "coconut",
-        "pebble", "flint", "cactus_flower", "clay", "grub", "raw_fish"
+        "pebble", "flint", "cactus_flower", "clay", "grub", "raw_fish", "reed"
     ];
-    const STOCK_DEFAULTS = { stick: 30, leaf: 20, log: 12, clay: 25, grub: 12, raw_fish: 12 };
+    const STOCK_DEFAULTS = { stick: 30, leaf: 20, log: 12, clay: 25, grub: 12, raw_fish: 12, reed: 12 };
     /** New stock rows keep their default when an older save never stored them. */
-    const STOCK_KEEP_DEFAULT = { grub: true, raw_fish: true };
+    const STOCK_KEEP_DEFAULT = { grub: true, raw_fish: true, reed: true };
     /** Harvested forms that still mean the fruit/flower will return. */
     const STOCK_REGROW_ALWAYS = {
         cactus: "cactus_flower",
@@ -146,7 +146,8 @@
         blueberry_bush: "blueberry",
         apple_tree: "apple",
         coconut_tree: "coconut",
-        palm_tree: "coconut"
+        palm_tree: "coconut",
+        reeds_cut: "reed"
     };
     const STOCK_REGROW_IF_PLANTED = {
         bush: "blueberry",
@@ -225,6 +226,7 @@
         skinworking_bench: true,
         grindstone: true,
         drying_rack: true,
+        fishing_net: true,
         wicker_basket: true,
         storage_pit: true,
         rock: true
@@ -447,6 +449,7 @@
         if (id === "skinworking_bench") return "craft";
         if (id === "grindstone") return "grind";
         if (id === "drying_rack") return "rack";
+        if (id === "fishing_net") return "net";
         if (id === "wicker_basket" || id === "storage_pit") return "storage";
         if (id === "rock") return "rock";
         if (isCraftingSpot(null, { id })) return "spot";
@@ -2909,11 +2912,15 @@
     }
 
     function fishPlan(state) {
+        if (state?.netHaul) return { type: "fish", target: state.netHaul };
+        if (state?.netBait) return { type: "fish", target: state.netBait };
         if (state?.fishSpot) return { type: "fish", target: state.fishSpot };
         return null;
     }
 
-    function fishActLabel() {
+    function fishActLabel(plan) {
+        if (plan?.target?.net === "haul") return "Taking haul from net";
+        if (plan?.target?.net === "bait") return "Placing bait in net";
         return "Fishing";
     }
 

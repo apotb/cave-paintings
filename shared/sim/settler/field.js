@@ -562,6 +562,68 @@ function plantFeet(rec, c, pose) {
     c.setDesiredVel?.(0, 0);
 }
 
+function doNetHaul(world, rec, spot) {
+    const found = world._findThingByUid?.(spot.uid);
+    const entry = found?.entry;
+    const slot = entry?.slots?.[0];
+    if (!entry || entry.id !== "fishing_net" || slot?.id !== "raw_fish") {
+        endWorkHold(rec);
+        rec._settlerScan = null;
+        return halt();
+    }
+    const walked = goOrWalk(world, rec, spot);
+    if (walked) return walked;
+    const qty = Math.max(1, Math.floor(Number(slot.quantity) || 1));
+    const left = world._give(rec, slot.id, qty, world._stackExtrasFrom?.(slot) || null);
+    const taken = qty - (Number(left) || 0);
+    if (!(taken > 0)) return halt();
+    if (left > 0) slot.quantity = left;
+    else entry.slots[0] = null;
+    entry.netReadyAt = null;
+    if (found.chunk) world._emitStorage?.(found.chunk, entry);
+    world._dirtyPawnOwner?.(rec);
+    endWorkHold(rec);
+    rec._settlerScan = null;
+    return halt();
+}
+
+function doNetBait(world, rec, settle, spot) {
+    const found = world._findThingByUid?.(spot.uid);
+    const entry = found?.entry;
+    if (!entry || entry.id !== "fishing_net" || entry.slots?.[0]?.id) {
+        endWorkHold(rec);
+        rec._settlerScan = null;
+        return halt();
+    }
+    const grub = findStack(world, rec, settle, (s) => s.id === "grub");
+    if (!grub) {
+        endWorkHold(rec);
+        rec._settlerScan = null;
+        return halt();
+    }
+    if (grub.at !== rec) return fetchStack(world, rec, settle, grub) || halt();
+    const walked = goOrWalk(world, rec, spot);
+    if (walked) return walked;
+    if (!world._netWaterFishable?.(entry)) {
+        endWorkHold(rec);
+        rec._settlerScan = null;
+        return halt();
+    }
+    const piece = takeOne(grub);
+    if (!piece) return halt();
+    const now = world.worldMinuteIndex?.() || 0;
+    const stack = { id: "grub", quantity: 1 };
+    if (piece.spoilLeft != null) stack.spoilAt = now + Number(piece.spoilLeft);
+    else if (piece.spoilAt != null) stack.spoilAt = piece.spoilAt;
+    world._applyStackExtras?.(stack, world._stackExtrasFrom?.(piece));
+    world._storageSetSlot?.(entry, "0", stack);
+    if (found.chunk) world._emitStorage?.(found.chunk, entry);
+    world._dirtyPawnOwner?.(rec);
+    endWorkHold(rec);
+    rec._settlerScan = null;
+    return halt();
+}
+
 function doFish(world, rec, settle, spot) {
     if (!spot) {
         endWorkHold(rec);
@@ -579,6 +641,8 @@ function doFish(world, rec, settle, spot) {
         }
         return halt(face ? { facing: face } : null);
     }
+    if (spot.net === "haul") return doNetHaul(world, rec, spot);
+    if (spot.net === "bait") return doNetBait(world, rec, settle, spot);
     if (world._bobberOn?.(spot.waterTx, spot.waterTy, rec.id)) {
         rec._settlerScan = null;
         endWorkHold(rec);

@@ -1003,6 +1003,20 @@
         return FishApi.bobberTaken(tx, ty, channels, exceptId);
     },
 
+    _fishingNetAt(tx, ty) {
+        const ts = this.tileSize || 16;
+        const chunks = this.chunks;
+        if (!chunks || typeof chunks.values !== "function") return false;
+        for (const chunk of chunks.values()) {
+            const things = chunk?.meta?.things || chunk?.things || [];
+            for (const t of things) {
+                if (!t || t.id !== "fishing_net") continue;
+                if (Math.floor(t.x / ts) === tx && Math.floor((t.y - 1) / ts) === ty) return true;
+            }
+        }
+        return false;
+    },
+
     /**
      * Press Space with the rod while facing water. The server runs the cast.
      * @returns {boolean} true when this press was a cast attempt
@@ -1032,6 +1046,7 @@
             (x, y) => WG.tileKeyAt(x, y)
         );
         if (!spot) return false;
+        if (this._fishingNetAt(spot.tx, spot.ty)) return false;
         if (this._fishTileTaken(spot.tx, spot.ty, player)) return false;
         this._netSendMove?.(true);
         this.net?.sendAction?.({

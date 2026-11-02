@@ -79,11 +79,17 @@
         const harvestedId = best.id;
         const skills = this._skillsApi?.();
         if (skills && p.bio && skills.incapable(p.bio, "plants")) return;
+        const cutTools = Array.isArray(loot.tool) ? loot.tool : null;
+        if (cutTools && cutTools.length) {
+            const held = this._held(p);
+            const cls = Carry.stackToolClass(held, itemDefs().get(held?.id));
+            if (!cutTools.includes(cls)) return;
+        }
         const baseQty = Math.max(1, Math.floor(Number(loot.yield) || 1));
         const plantLv = skills && p.bio ? skills.effectiveLevel(p.bio, "plants") : null;
-        const qty = (skills && plantLv != null)
-            ? skills.yieldCount(baseQty, skills.plantHarvestYield(p, skills.workOpts?.(this, p)), () => this.rng())
-            : baseQty;
+        const qty = (harvestedId === "reeds" || !(skills && plantLv != null))
+            ? baseQty
+            : skills.yieldCount(baseQty, skills.plantHarvestYield(p, skills.workOpts?.(this, p)), () => this.rng());
         if (skills && p.bio && plantLv != null) {
             skills.award(p.bio, "plants", skills.XP_HARVEST, { day: this.gameDay });
         }
@@ -97,6 +103,7 @@
             if (stone) drop.stone = stone;
             this._pushDrop(best.x, best.y, drop);
         }
+        if (cutTools && cutTools.length) this._wearHeld(p, 1);
 
         const transform = loot.transform || null;
         const regrowMinutes = Number(loot.regrowMinutes) || 0;
