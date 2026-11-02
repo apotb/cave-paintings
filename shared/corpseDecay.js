@@ -62,8 +62,9 @@
     }
 
     /**
-     * Butcher loot for a fresh corpse. Cleaver adds 2 meat. Brain is omitted
-     * when `brainDestroyed` is set.
+     * Butcher loot for a fresh corpse. Cleaver adds 2 meat. Hide, brain,
+     * bone, and sinew stay on the knife table. Brain is omitted when
+     * `brainDestroyed` is set. Humans have no hide and no sinew.
      * @returns {{ id: string, min: number, max: number }[]}
      */
     function skinLootTable(mobId, opts) {
@@ -75,14 +76,16 @@
                 meatDrop("raw_venison", 2, 4, toolClass),
                 { id: "deer_hide", min: 1, max: 1 },
                 { id: "brain", min: 1, max: 1 },
-                { id: "bone", min: 2, max: 4 }
+                { id: "bone", min: 2, max: 4 },
+                { id: "sinew", min: 1, max: 1 }
             ];
         } else if (id === "boar") {
             loot = [
                 meatDrop("raw_pork", 3, 5, toolClass),
                 { id: "boar_hide", min: 1, max: 1 },
                 { id: "brain", min: 1, max: 1 },
-                { id: "bone", min: 2, max: 4 }
+                { id: "bone", min: 2, max: 4 },
+                { id: "sinew", min: 1, max: 1 }
             ];
         } else if (id === "human") {
             loot = [

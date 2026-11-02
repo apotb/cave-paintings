@@ -215,6 +215,8 @@ test("stat lines gray, and spoil time turns light red at 6h", () => {
     assert.equal(scene._tooltipStatColor("Weight: 0.2 kg"), "muted");
     assert.equal(scene._tooltipStatColor("Fuel: 40 kj"), "muted");
     assert.equal(scene._tooltipStatColor("DPS: 1.5 melee"), "muted");
+    assert.equal(scene._tooltipStatColor("Damage: 12"), "muted");
+    assert.equal(scene._tooltipStatColor("Damage: 16.2"), "muted");
     assert.equal(scene._tooltipStatColor("Dig: +4%"), "muted");
     assert.equal(scene._tooltipStatColor("Chop: +12%"), "muted");
     assert.equal(scene._tooltipStatColor("Food: 40 kcal"), "muted");

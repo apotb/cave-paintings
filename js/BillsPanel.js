@@ -338,6 +338,14 @@ class BillsPanel {
 
     _itemIconKey(itemId) {
         if (!itemId) return null;
+        // A bill has no blade yet. The tip is diorite; the name stays Stone Arrow.
+        if (itemId === "arrow" && typeof ensureArrowTexture === "function") {
+            const stone = (typeof Stone !== "undefined" && Stone.iconStone)
+                ? Stone.iconStone("arrow")
+                : "diorite";
+            const key = ensureArrowTexture(this.scene, stone);
+            if (key && this.scene.textures.exists(key)) return key;
+        }
         // A bill has no rock yet. The icon uses andesite gray; the name stays Stone Spear.
         if (itemId === "stone_spear" && typeof ensureSpearTexture === "function") {
             const key = ensureSpearTexture(this.scene, "andesite", "andesite");
@@ -363,7 +371,10 @@ class BillsPanel {
         if (kind === "knap") {
             const cls = rec?.toolClass || billOrRec?.toolClass;
             if (!cls || typeof Knapping === "undefined" || !Knapping.carveShapeIcon) return null;
-            const data = Knapping.carveShapeIcon(this.scene, cls, "andesite");
+            const stone = (typeof Stone !== "undefined" && Stone.iconStone)
+                ? Stone.iconStone(cls)
+                : "andesite";
+            const data = Knapping.carveShapeIcon(this.scene, cls, stone);
             if (!data) return null;
             return Knapping.ensureToolTexture(this.scene, { knapIconData: data, toolClass: cls });
         }

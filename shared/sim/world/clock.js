@@ -242,6 +242,16 @@
         this._dirtyPawnOwner?.(pawn);
     },
 
+    _noteRangedUse(creature) {
+        if (!Thoughts) return;
+        const pawn = this._thoughtPawn(creature);
+        if (!pawn || pawn.dead) return;
+        const now = this.worldMinuteIndex();
+        if (!Thoughts.noteRanged(pawn, now)) return;
+        Thoughts.refresh(pawn, now);
+        this._dirtyPawnOwner?.(pawn);
+    },
+
     _strainEligible(pawn) {
         if (!pawn || pawn.dead) return false;
         if (this.players.has(pawn.id)) return false;
@@ -1010,6 +1020,7 @@
                     c.drops.splice(i, 1);
                     continue;
                 }
+                if (Number.isFinite(Number(d.lodged))) continue;
                 let life = Number(d.lifeMs);
                 if (!Number.isFinite(life)) life = DROP_LIFE_MS;
                 const onWater = this._dropIsOnWater(d);

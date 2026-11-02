@@ -355,11 +355,20 @@
         "id": "bows",
         "name": "Bows",
         "era": "Mesolithic",
-        "wip": true,
         "quote": "Stay out of danger",
         "cost": 5,
         "prereqs": ["hafting", "blades"],
-        "unlocks": { "items": [], "jobs": [], "text": ["Bow", "Arrow"] },
+        "unlocks": { "items": ["longbow", "arrow"], "jobs": [], "text": [] },
+        "children": ["shortbows"]
+    },
+    {
+        "id": "shortbows",
+        "name": "Shortbows",
+        "era": "Mesolithic",
+        "quote": "Rapid-fire!",
+        "cost": 5,
+        "prereqs": ["bows"],
+        "unlocks": { "items": ["shortbow"], "jobs": [], "text": [] },
         "children": []
     },
     {

@@ -184,6 +184,29 @@ test("murderous people like a kill and sour after four and eight dry days", () =
     assert.equal(dry.thoughts.lines[0].offset, -12);
 });
 
+test("a brawler who uses a ranged weapon resents it for a day", () => {
+    const now = 3 * Thoughts.DAY;
+    const brawler = pawn({ traits: ["brawler"] });
+    assert.equal(Thoughts.noteRanged(brawler, now), true);
+    Thoughts.refresh(brawler, now);
+    const line = brawler.thoughts.lines[0];
+    assert.equal(line.offset, -10);
+    assert.equal(line.label, "Used ranged weapon");
+    assert.equal(line.quote, "I despise ranged weaponry.");
+    assert.equal(line.expires, now + Thoughts.DAY);
+
+    Thoughts.noteRanged(brawler, now + 10);
+    Thoughts.refresh(brawler, now + 10);
+    const again = brawler.thoughts.lines.filter((row) => row.label === "Used ranged weapon");
+    assert.equal(again.length, 1);
+    assert.equal(again[0].expires, now + 10 + Thoughts.DAY);
+
+    const plain = pawn({ id: "plain" });
+    assert.equal(Thoughts.noteRanged(plain, now), false);
+    Thoughts.refresh(plain, now);
+    assert.equal(plain.thoughts.lines.some((row) => row.label === "Used ranged weapon"), false);
+});
+
 test("austere still ranks a hut above a lean-to", () => {
     const origin = { x: 0, y: 0 };
     const picked = Sleep.pickSleepSlot([

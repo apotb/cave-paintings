@@ -106,6 +106,14 @@ test("pebble stacks of different stones do not merge, and a blank is andesite", 
         { id: "pebble", quantity: 1, stone: "andesite" }
     ), true);
     assert.equal(SF.stacksMatch({ id: "stick", quantity: 1 }, { id: "stick", quantity: 1 }), true);
+    assert.equal(Stone.iconStone("arrow"), "diorite");
+    assert.equal(Stone.iconStone("blade"), "diorite");
+    assert.equal(Stone.iconStone("hand_axe"), "diorite");
+    assert.equal(Stone.iconStone("cleaver"), "diorite");
+    assert.equal(Stone.iconStone("knife"), "andesite");
+    assert.equal(Stone.iconStone("spear_tip"), "andesite");
+    assert.equal(Stone.displayName({ id: "arrow" }), null);
+    assert.equal(Stone.stoneOf({ id: "arrow" }), "andesite");
     assert.equal(Stone.displayName({ id: "pebble" }), "Andesite Pebble");
     assert.equal(Stone.displayName({ id: "pebble", stone: "granite" }), "Granite Pebble");
     assert.equal(Stone.displayName({ id: "grindstone" }), "Andesite Grindstone");

@@ -1879,7 +1879,7 @@
             if (piece) this._storageSetSlot(entry, slotKey, this._hangIfRack(entry, piece));
             return;
         }
-        if (dest.id === held.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(held) && this._canMergeStone(dest, held)) {
+        if (this._stacksCombine(dest, held)) {
             let space = Math.max(0, maxStack - (dest.quantity || 1));
             if (slotMax > 0) space = Math.min(space, Math.max(0, slotMax - (dest.quantity || 1)));
             const take = Math.min(space, amount, held.quantity || 1);
@@ -1958,7 +1958,7 @@
             this._storageSetSlot(entry, fromKey, null);
             return;
         }
-        if (a.id === b.id && !this._stackIsSpecial(a) && !this._stackIsSpecial(b) && this._canMergeStone(a, b)) {
+        if (this._stacksCombine(a, b)) {
             const meta = itemDefs().get(a.id);
             const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
             const space = Math.max(0, maxStack - (b.quantity || 1));

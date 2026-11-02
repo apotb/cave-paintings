@@ -648,6 +648,10 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
 const DROP_LIFE_MS = 15 * 60 * 1000;
 
 function dropIconKey(scene, item, entry) {
+    if (entry?.id === "arrow" && typeof ensureArrowTexture === "function") {
+        const key = ensureArrowTexture(scene, entry.knapMaterial, entry.stone);
+        if (key && scene.textures?.exists?.(key)) return key;
+    }
     if (typeof Place !== "undefined" && Place.itemIconKey && scene?.getThing) {
         const key = Place.itemIconKey(
             item,
@@ -732,11 +736,13 @@ class DroppedItem extends Mob {
             && !soakStamp?.toolClass
             && soakStamp?.knapDamage == null
             && !soakStamp?.knapQuality
-            && soakStamp?.durability == null;
+            && soakStamp?.durability == null
+            && !Number.isFinite(Number(soakStamp?.lodged));
 
         if (canMerge && !noMerge) {
             const nearby = scene.droppedItems.getChildren()
                 .filter(drop => drop.active && drop.item?.id === item.id
+                    && !Number.isFinite(Number(drop.entry?.lodged))
                     && !drop.customName && !drop.food && !drop.ingredients
                     && !drop.toolClass                     && drop.knapDamage == null
                     && !drop.knapQuality
@@ -842,6 +848,7 @@ class DroppedItem extends Mob {
         if (typeof Stone !== "undefined" && Stone.normalizeStone?.(stackExtras?.stone)) {
             entry.stone = Stone.normalizeStone(stackExtras.stone);
         }
+        if (Number.isFinite(Number(stackExtras?.lodged))) entry.lodged = Number(stackExtras.lodged);
         return entry;
     }
 
@@ -909,6 +916,10 @@ class DroppedItem extends Mob {
             const spearKey = ensureSpearTexture(scene, entry.knapMaterial, entry.stone);
             if (spearKey && scene.textures.exists(spearKey)) this.setTexture(spearKey);
         }
+        if (entry.id === "arrow" && typeof ensureArrowTexture === "function") {
+            const arrowKey = ensureArrowTexture(scene, entry.knapMaterial, entry.stone);
+            if (arrowKey && scene.textures.exists(arrowKey)) this.setTexture(arrowKey);
+        }
 
         // Knapped silhouette on the ground drop
         if (this.toolClass && typeof Knapping !== "undefined" && Knapping.ensureShapeTexture) {
@@ -967,6 +978,7 @@ class DroppedItem extends Mob {
         }
 
         this.setInteractive({ cursor: "pointer" });
+        if (typeof poseLodgedArrow === "function") poseLodgedArrow(this);
         this.on("pointerdown", (pointer) => {
             const took = this.tryPickup();
             if (!took && this.active) this.tooltip(pointer);
@@ -1078,8 +1090,9 @@ class DroppedItem extends Mob {
         const speed = Number(this.scene.tickSpeed);
         const scale = Number.isFinite(speed) ? Math.max(0, speed) : 1;
         const onWater = this.scene._dropIsOnWater?.(this);
-        const pauseDespawn = typeof Hide !== "undefined"
-            && Hide.pausesDropDespawn(this.entry || this, this.item, onWater);
+        const pauseDespawn = Number.isFinite(Number(this.entry?.lodged))
+            || (typeof Hide !== "undefined"
+            && Hide.pausesDropDespawn(this.entry || this, this.item, onWater));
         if (!pauseDespawn) {
             this.lifeMs -= delta * scale;
             if (this.lifeMs <= 0) {

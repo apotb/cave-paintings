@@ -29,6 +29,11 @@
         if (!Number.isInteger(from) || !Number.isInteger(to)) return;
         if (fromBag === toBag && from === to) return;
         if (from < 0 || to < 0 || from >= fromInv.length || to >= toInv.length) return;
+        if (this._bowHandLocked?.(p)) {
+            const held = p.hotbarIndex | 0;
+            const touchesHeld = (bag, idx) => bag === "hotbar" && idx === held;
+            if (touchesHeld(fromBag, from) || touchesHeld(toBag, to)) return;
+        }
         const a = fromInv[from];
         if (!a?.id) return;
         const b = toInv[to];
@@ -36,7 +41,7 @@
         let want = Math.floor(Number(action.amount));
         if (!Number.isFinite(want) || want < 1) want = qty;
         want = Math.min(want, qty);
-        if (b && a.id === b.id && !this._stackIsSpecial(a) && !this._stackIsSpecial(b) && this._canMergeStone(a, b)) {
+        if (b && this._stacksCombine(a, b)) {
             const meta = itemDefs().get(a.id);
             const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
             const space = Math.max(0, maxStack - (b.quantity || 1));
@@ -74,7 +79,7 @@
         } else {
             return;
         }
-        if (toBag === "hotbar") {
+        if (toBag === "hotbar" && !this._bowHandLocked?.(p)) {
             p.hotbarIndex = to;
             if (p.creature) p.creature.hotbarIndex = to;
         }
@@ -321,6 +326,7 @@
         if (!Array.isArray(inv) || from >= inv.length) return;
         const stack = inv[from];
         if (!stack?.id) return;
+        if (fromBag === "hotbar" && from === (p.hotbarIndex | 0) && this._bowHandLocked?.(p)) return;
         const want = this._equipSlotName(stack.id);
         if (!want || want !== parsed.body) return;
         if (parsed.waist) {
@@ -361,6 +367,7 @@
         if (!equipped?.id) return;
         if (!parsed.waist && !this._canChangeBodySlot(p, parsed.key, null)) return;
         const toBag = this._normBag(action.toBag);
+        if (toBag === "hotbar" && to === (p.hotbarIndex | 0) && this._bowHandLocked?.(p)) return;
         if (toBag === "overflow" && parsed.key === "back") return;
         const inv = this._pawnBag(p, toBag);
         if (!Array.isArray(inv)) return;
@@ -445,7 +452,7 @@
         let remaining = Math.max(1, Math.floor(Number(drop.quantity) || 1));
         const meta = itemDefs().get(drop.id);
         const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
-        const incomingSpecial = this._stackIsSpecial(drop);
+        const incomingSpecial = drop.id === "arrow" ? false : this._stackIsSpecial(drop);
         const maxDist2 = TS * TS;
         let last = null;
         const noMerge = !!(opts && opts.noMerge);
@@ -466,7 +473,10 @@
                 if (!Array.isArray(c.drops)) continue;
                 for (const pile of c.drops) {
                     if (!pile || pile.id !== drop.id) continue;
-                    if (this._stackIsSpecial(pile)) continue;
+                    if (Number.isFinite(Number(pile.lodged))) continue;
+                    if (drop.id === "arrow") {
+                        if (!this._stacksCombine(pile, drop)) continue;
+                    } else if (this._stackIsSpecial(pile)) continue;
                     if ((drop.id === "pebble" || drop.id === "grindstone" || drop.id === "painting_circle") && !this._samePebbleStone(pile, drop)) continue;
                     if (Hide.soakMergeBlocked(pile, drop)) continue;
                     const qty = Math.max(1, Math.floor(Number(pile.quantity) || 1));
@@ -515,6 +525,10 @@
             };
             usedUid = true;
             this._applyStackExtras(entry, this._stackExtrasFrom(drop));
+            if (Number.isFinite(Number(drop.lodged))) {
+                entry.lodged = Number(drop.lodged);
+                delete entry.lifeMs;
+            }
             if (drop.spoilAt != null) entry.spoilAt = drop.spoilAt;
             this._stampDropSoak(entry);
             this._stampHaulHold(entry, opts);

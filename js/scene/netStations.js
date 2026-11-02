@@ -833,6 +833,15 @@
         const cy = -(entry.spr?.height || 16) * 0.5;
         const useWeapon = !art.unarmed && entry.weapon?.visible;
 
+        if (useWeapon && art.bow) {
+            const pull = Math.max(0, Math.min(1, Number(progress) || 0));
+            const dist = 8 - 5 * pull;
+            entry.weapon.setOrigin(0.12, 0.5).setRotation(ang);
+            entry.weapon.setPosition(cx + Math.cos(ang) * dist, cy + Math.sin(ang) * dist);
+            entry.weapon.setDepth(1);
+            return;
+        }
+
         if (useWeapon) {
             const range = Number(art.range) || 12;
             const thrust = typeof meleeThrustCurve === "function"

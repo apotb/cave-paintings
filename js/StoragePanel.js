@@ -856,7 +856,10 @@ class StoragePanel {
             this._setStack(key, piece);
             stack.quantity -= moved;
             if (stack.quantity <= 0) inv[hotbarIndex] = null;
-        } else if (dest.id === stack.id && !special && !(typeof isSpecialStack === "function" && isSpecialStack(dest))
+        } else if (dest.id === stack.id
+            && (stack.id === "arrow"
+                ? (typeof Ranged !== "undefined" && Ranged.sameArrow(dest, stack))
+                : (!special && !(typeof isSpecialStack === "function" && isSpecialStack(dest))))
             && (typeof stackStonesMatch !== "function" || stackStonesMatch(dest, stack))) {
             const maxStack = Math.max(1, meta?.maxStack || 1);
             let space = Math.max(0, maxStack - dest.quantity);
@@ -1006,7 +1009,9 @@ class StoragePanel {
             inv[toHotbar] = this._toInvStack(stack);
             this._setStack(fromKey, null);
         } else if (dest.id === stack.id && !stack.customName && !dest.customName
-            && !(typeof isSpecialStack === "function" && (isSpecialStack(stack) || isSpecialStack(dest)))
+            && (stack.id === "arrow"
+                ? (typeof Ranged !== "undefined" && Ranged.sameArrow(dest, stack))
+                : !(typeof isSpecialStack === "function" && (isSpecialStack(stack) || isSpecialStack(dest))))
             && (typeof stackStonesMatch !== "function" || stackStonesMatch(dest, stack))) {
             const meta = this.scene.getItem(dest.id);
             const maxStack = Math.max(1, meta?.maxStack || 1);
@@ -1049,7 +1054,9 @@ class StoragePanel {
             this._setStack(toKey, a);
             this._setStack(fromKey, null);
         } else if (a.id === b.id && !a.customName && !b.customName
-            && !(typeof isSpecialStack === "function" && (isSpecialStack(a) || isSpecialStack(b)))
+            && (a.id === "arrow"
+                ? (typeof Ranged !== "undefined" && Ranged.sameArrow(a, b))
+                : !(typeof isSpecialStack === "function" && (isSpecialStack(a) || isSpecialStack(b))))
             && (typeof stackStonesMatch !== "function" || stackStonesMatch(a, b))) {
             const meta = this.scene.getItem(a.id);
             const maxStack = Math.max(1, meta?.maxStack || 1);

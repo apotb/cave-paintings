@@ -258,18 +258,21 @@
             || pawn?.fishChannel
             || pawn?._netWorkChannel?.kind === "fish");
         const attacking = !!(opts.attacking ?? pawn?.isAttacking?.());
+        const drawing = !!(opts.drawing || pawn?._bowChannel || pawn?._bowDraw);
         const kc = Number(opts.kc ?? pawn?.kc) || 0;
         const canSprint = legs >= 2
             && !prone
             && !vomiting
             && !tending
+            && !drawing
             && !enc.cannotSprint
             && kc > 0;
-        const sprinting = !!opts.wantSprint && canSprint && !attacking && !tending && !vomiting;
+        const sprinting = !!opts.wantSprint && canSprint && !attacking && !tending && !drawing && !vomiting;
         let moveMul = pawn?.capacities?.moving?.();
         if (!(Number(moveMul) > 0)) moveMul = 1;
         moveMul = Math.max(0.05, Math.min(1.5, moveMul));
         if (tending) moveMul *= 0.5;
+        if (drawing) moveMul *= 0.5;
         if (attacking && opts.attackSlow !== false) moveMul *= 0.5;
         const tile = Number(opts.tileSize) > 0 ? Number(opts.tileSize) : 16;
         const walk = Number(opts.walkTiles) > 0 ? Number(opts.walkTiles) : 3.5;

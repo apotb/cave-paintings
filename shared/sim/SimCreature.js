@@ -669,6 +669,7 @@ class SimCreature {
      * @param {SimCreature[]} targets
      */
     tickMelee(dtMs, targets = []) {
+        if (this._bowDraw) return;
         if (!this.isAttacking()) return;
         const progress = this._attackProgress();
         this._meleeHitCheck(progress, targets);

@@ -4,6 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 const Stone = require("../shared/stone");
+const Ranged = require("../shared/ranged");
 
 const src = fs.readFileSync(path.join(__dirname, "../js/scene/craft.js"), "utf8");
 const sandbox = {};
@@ -108,6 +109,49 @@ test("a placed bed names its rest effectiveness", () => {
         null
     );
     assert.ok(lean.split("\n").includes("Rest effectiveness: 95%"));
+});
+
+test("a bow tooltip names the shot instead of a weapon type", () => {
+    sandbox.Stone = Stone;
+    sandbox.Ranged = Ranged;
+    const shortbow = {
+        id: "shortbow",
+        name: "Shortbow",
+        weight: 1.2,
+        weapon: { type: "ranged", range: 224 },
+        tooltip: ["Let loose at once"]
+    };
+    const plain = craft.formatItemTooltip.call({}, shortbow, 1, null, { id: "shortbow" });
+    const plainLines = plain.split("\n");
+    assert.ok(plainLines.includes("Damage: 12"));
+    assert.equal(plainLines.some((line) => line.startsWith("Type:")), false);
+    assert.ok(plainLines.includes("Let loose at once"));
+    const fine = craft.formatItemTooltip.call(
+        {},
+        shortbow,
+        1,
+        null,
+        { id: "shortbow", knapQuality: "fine" }
+    );
+    assert.ok(fine.split("\n").includes("Damage: 16.2"));
+    const longbow = {
+        id: "longbow",
+        name: "Longbow",
+        weight: 1.2,
+        weapon: { type: "ranged", range: 320 },
+        tooltip: ["Charge a shot then let loose"]
+    };
+    const rough = craft.formatItemTooltip.call(
+        {},
+        longbow,
+        1,
+        null,
+        { id: "longbow", knapQuality: "rough" }
+    );
+    const roughLines = rough.split("\n");
+    assert.equal(roughLines[0], "Longbow (rough)");
+    assert.ok(roughLines.includes("Damage: 17.1"));
+    assert.equal(roughLines.some((line) => line.startsWith("Type:")), false);
 });
 
 test("spear tip quality sits after the name", () => {

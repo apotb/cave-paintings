@@ -16,6 +16,7 @@ class Hotbar {
     setActiveIndex(index, opts = {}) {
         const notifyNet = opts.notifyNet !== false;
         if (!Number.isInteger(index) || index < 0 || index >= this.size) return;
+        if (notifyNet && this.scene.player?.bowHandLocked?.() && index !== this.activeIndex) return;
         if (index !== this.activeIndex) this.scene.resetPlaceRot?.();
         if (this.slots[this.activeIndex]) this.slots[this.activeIndex].setTexture("slot");
         if (this.slots[index]) this.slots[index].setTexture("active_slot");
@@ -86,6 +87,11 @@ class Hotbar {
         const a = fromInv[from.index] ?? null;
         const b = toInv[to.index] ?? null;
         if (!a) return false;
+        if (player?.bowHandLocked?.()) {
+            const held = player._heldSlotIndex?.() ?? this.activeIndex;
+            const touchesHeld = (ref) => ref.bag === "hotbar" && ref.index === held;
+            if (touchesHeld(from) || touchesHeld(to)) return false;
+        }
 
         const qty = Math.max(1, Math.floor(Number(a.quantity) || 1));
         const parsedAmount = Math.floor(Number(amount));
@@ -100,7 +106,8 @@ class Hotbar {
             ? isSpecialStack(b)
             : !!(b && (b.customName || b.food || b.ingredients || b.toolClass));
         const stonesMatch = typeof stackStonesMatch !== "function" || stackStonesMatch(a, b);
-        if (b && a.id === b.id && !aSpecial && !bSpecial && stonesMatch) {
+        const arrowOk = a.id !== "arrow" || (b && typeof Ranged !== "undefined" && Ranged.sameArrow(a, b));
+        if (b && a.id === b.id && arrowOk && !aSpecial && !bSpecial && stonesMatch) {
             const meta = this.scene.getItem(a.id);
             const maxStack = Math.max(1, meta?.maxStack || 1);
             const space = Math.max(0, maxStack - b.quantity);
@@ -224,10 +231,12 @@ class Hotbar {
             ? isSpecialStack(stack)
             : !!(stack.customName || stack.food || stack.ingredients || stack.toolClass);
 
-        if (!special) {
+        const arrowStack = stack.id === "arrow";
+        if (!special || arrowStack) {
             for (let i = 0; i < toCap; i++) {
                 const dest = toInv[i];
                 if (!dest || dest.id !== stack.id) continue;
+                if (arrowStack && (typeof Ranged === "undefined" || !Ranged.sameArrow(dest, stack))) continue;
                 if (typeof stackStonesMatch === "function" && !stackStonesMatch(dest, stack)) continue;
                 const destSpecial = typeof isSpecialStack === "function"
                     ? isSpecialStack(dest)

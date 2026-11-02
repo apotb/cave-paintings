@@ -895,6 +895,231 @@
         return (p.party || []).find((m) => m.id === creature.id) || null;
     },
 
+    _tryShoot(p, action) {
+        const actor = this._actionPawn(p, action || {});
+        if (!actor || actor.dead) return;
+        let creature = actor === p
+            ? (this._syncPlayerCreature(p) || this._ensurePlayerCreature(p))
+            : this._ensureCompanionCreature(p, actor);
+        if (!creature || creature.isBodyDead()) return;
+        if (action?.cancel) {
+            this.cancelBowDraw(creature);
+            return;
+        }
+        const x = Number(action?.x);
+        const y = Number(action?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        this.beginBowDraw(creature, x, y);
+    },
+
+    /** Post-shot recovery. The held slot cannot change until this hits zero. */
+    _bowHandLocked(pawn) {
+        if (!pawn) return false;
+        const cd = pawn.creature?._bowCd ?? pawn._bowCd;
+        return (cd | 0) > 0;
+    },
+
+    beginBowDraw(creature, ax, ay) {
+        const R = this._rangedApi?.();
+        if (!R || !creature || creature.isBodyDead?.()) return false;
+        if ((creature._bowCd | 0) > 0 && !creature._bowDraw) return false;
+        const skills = this._skillsApi?.();
+        if (skills?.incapable?.(creature.bio, "shooting")) return false;
+        const getItem = (id) => itemDefs().get(id);
+        const bow = R.holdingBow(creature, getItem);
+        if (!bow) return false;
+        if (!R.firstArrow(creature.inventory, creature.overflow)) return false;
+        if (creature._bowDraw) {
+            creature._bowDraw.ax = ax;
+            creature._bowDraw.ay = ay;
+            return true;
+        }
+        const max = R.aimMs(bow);
+        const from = creature.bodyCenter?.() || { x: creature.x, y: creature.y };
+        const ang = Math.atan2(ay - from.y, ax - from.x);
+        creature.attackAngle = Number.isFinite(ang) ? ang : 0;
+        creature.facing = this._facingFromAngle(creature.attackAngle);
+        // A shortbow spends the arrow on the next tick. A longbow holds first.
+        if (!(max > 0)) {
+            creature._bowDraw = { left: 0, max: 0, ax, ay };
+            return true;
+        }
+        creature._bowDraw = { left: max, max, ax, ay };
+        creature.attackMax = max;
+        creature.attackTimer = max;
+        creature.attackArt = {
+            bow: true,
+            unarmed: false,
+            key: bow.id,
+            itemId: bow.id,
+            max,
+            range: 8
+        };
+        const session = this._sessionOfPawn(creature);
+        this.pushEvent({
+            kind: "attack",
+            playerId: session?.id || null,
+            pawnId: creature.id,
+            x: creature.x,
+            y: creature.y,
+            angle: creature.attackAngle,
+            facing: creature.facing,
+            art: creature.attackArt
+        });
+        return true;
+    },
+
+    cancelBowDraw(creature) {
+        if (!creature?._bowDraw) return;
+        creature._bowDraw = null;
+        creature.attackTimer = 0;
+        creature.attackMax = 0;
+        creature.attackArt = null;
+        const session = this._sessionOfPawn(creature);
+        this.pushEvent({
+            kind: "bow_cancel",
+            playerId: session?.id || null,
+            pawnId: creature.id
+        });
+    },
+
+    _tickBow(creature, dtMs, bodies) {
+        if (!creature) return;
+        if ((creature._bowCd | 0) > 0) {
+            creature._bowCd = Math.max(0, (creature._bowCd | 0) - dtMs);
+        }
+        const draw = creature._bowDraw;
+        if (!draw) return;
+        draw.left -= dtMs;
+        const from = creature.bodyCenter?.() || { x: creature.x, y: creature.y };
+        const ang = Math.atan2(draw.ay - from.y, draw.ax - from.x);
+        creature.attackAngle = Number.isFinite(ang) ? ang : creature.attackAngle;
+        creature.attackTimer = Math.max(0, draw.left);
+        creature.attackMax = draw.max;
+        creature.facing = this._facingFromAngle(creature.attackAngle);
+        if (draw.left > 0) return;
+        this._releaseBow(creature, bodies);
+    },
+
+    _releaseBow(creature, bodies) {
+        const R = this._rangedApi?.();
+        const draw = creature?._bowDraw;
+        creature._bowDraw = null;
+        creature.attackTimer = 0;
+        creature.attackMax = 0;
+        creature.attackArt = null;
+        if (!R || !draw) return;
+        const getItem = (id) => itemDefs().get(id);
+        const bow = R.holdingBow(creature, getItem);
+        const found = R.firstArrow(creature.inventory, creature.overflow);
+        const arrow = R.spendArrow(found);
+        if (!bow || !arrow) return;
+        this._noteRangedUse?.(creature);
+        this._wearHeld(creature, 1);
+        creature._bowCd = R.COOLDOWN_MS;
+        const from = creature.bodyCenter?.() || { x: creature.x, y: creature.y };
+        const skills = this._skillsApi?.();
+        const shot = R.release({
+            from,
+            aimX: draw.ax,
+            aimY: draw.ay,
+            shooter: creature,
+            bodies: bodies || [],
+            tile: TS,
+            rangeTiles: R.rangeTiles(bow),
+            rng: () => this.rng(),
+            accuracyAt: (tiles) => (skills ? skills.shootingAccuracyAt(creature, tiles) : 0.5),
+            blocked: (x, y) => this.isBlocked(x, y, { load: false }),
+            spare: (body) => R.spareAlly(creature, body, TS),
+            world: this
+        });
+        const session = this._sessionOfPawn(creature);
+        const flight = Math.hypot(shot.to.x - from.x, shot.to.y - from.y);
+        const ms = R.flightMs(flight);
+        this.pushEvent({
+            kind: "arrow",
+            playerId: session?.id || null,
+            pawnId: creature.id,
+            x: from.x,
+            y: from.y,
+            tx: shot.to.x,
+            ty: shot.to.y,
+            ms,
+            knapMaterial: arrow.knapMaterial,
+            stone: arrow.stone,
+            stick: !shot.target
+        });
+        const day = this.gameDay;
+        const trying = R.aimedNear(bodies, shot.aim.x, shot.aim.y, creature, TS);
+        const attack = shot.target ? {
+            damage: R.shotDamage(bow, arrow),
+            type: "sharp",
+            verb: "shot",
+            weaponName: (typeof Stone !== "undefined" && Stone.displayName?.(bow)) || bow.id,
+            sourcePart: { name: "arrow" },
+            def: { variance: 0.1 },
+            name: "Arrow"
+        } : null;
+        const target = shot.target || null;
+        const land = () => {
+            let landed = false;
+            if (target && attack && !target.isBodyDead?.() && !target.dead) {
+                const result = BodyCombat.applyHit(creature, target, attack, {
+                    ranged: true,
+                    friendlyOk: true
+                });
+                landed = !!(result && !result.missed && result.damage > 0);
+                target.anatomy?.flushPendingFatal?.();
+                this._dirtyPawnOwner(target);
+            }
+            if (trying && skills && creature?.bio) {
+                skills.award(creature.bio, "shooting", landed ? skills.XP_HIT : R.MISS_XP, { day });
+            }
+            if (!target) {
+                const lodged = Math.atan2(shot.to.y - from.y, shot.to.x - from.x);
+                this._pushDrop(shot.to.x, shot.to.y, {
+                    id: "arrow",
+                    quantity: 1,
+                    knapMaterial: arrow.knapMaterial,
+                    knapQuality: arrow.knapQuality,
+                    stone: arrow.stone,
+                    lodged
+                }, { noMerge: true });
+            }
+            this._dirtyPawnOwner(creature);
+        };
+        if (!(ms > 0)) land();
+        else {
+            if (!this._arrowImpacts) this._arrowImpacts = [];
+            this._arrowImpacts.push({ left: ms, job: land });
+        }
+    },
+
+    /** Hits land when the arrow's flight time runs out, not when the string lets go. */
+    _tickArrowImpacts(dtMs) {
+        const list = this._arrowImpacts;
+        if (!list?.length) return;
+        const dt = Math.max(0, Number(dtMs) || 0);
+        for (let i = 0; i < list.length;) {
+            list[i].left -= dt;
+            if (list[i].left > 0) {
+                i++;
+                continue;
+            }
+            const job = list[i].job;
+            list.splice(i, 1);
+            job();
+        }
+    },
+
+    _rangedApi() {
+        if (typeof Ranged !== "undefined" && Ranged.release) return Ranged;
+        try {
+            if (typeof require === "function") return require("../../ranged");
+        } catch (_) { /* browser */ }
+        return null;
+    },
+
     _tryAttack(p, angle, pawnId = null) {
         const actor = this._actionPawn(p, { pawnId });
         if (!actor || actor.dead || actor._resting || actor._groundSleep) return;
@@ -905,6 +1130,8 @@
             ? (this._syncPlayerCreature(p) || this._ensurePlayerCreature(p))
             : this._ensureCompanionCreature(p, actor);
         if (!creature || creature.isBodyDead()) return;
+        const heldBow = this._rangedApi()?.holdingBow(creature, (id) => itemDefs().get(id));
+        if (heldBow) return;
         let ang = Number(angle);
         if (!Number.isFinite(ang)) ang = 0;
         // Client autofire often arrives a few ms before the server swing ends (RTT).
@@ -1268,6 +1495,7 @@
 
     /** @param {number} dtMs */
     tick(dtMs) {
+        this._tickArrowImpacts(dtMs);
         this._simTickLive = true;
         this._aiStuckDt = Number(dtMs) > 0 ? dtMs : 16;
         this._queryGen = (this._queryGen || 0) + 1;
@@ -2209,6 +2437,7 @@
             p.prone = !p.dead && !!creature._prone;
             if (p.prone) creature.facing = "right";
             creature.tickMelee(dtMs, meleeTargets);
+            this._tickBow(creature, dtMs, meleeTargets);
             p.attackTimer = creature.attackTimer;
             p.attackMax = creature.attackMax;
             p.attackAngle = creature.attackAngle;
@@ -2229,8 +2458,10 @@
                 if (!cc || m.dead || cc.isBodyDead()) continue;
                 cc.x = m.x;
                 cc.y = m.y;
+                cc.overflow = m.overflow;
                 cc.refreshCapacities?.();
                 cc.tickMelee(dtMs, meleeTargets);
+                this._tickBow(cc, dtMs, meleeTargets);
                 m.attackTimer = cc.attackTimer;
                 m.attackMax = cc.attackMax;
                 m.attackAngle = cc.attackAngle;
@@ -2260,6 +2491,7 @@
             }
             wc.refreshCapacities?.();
             wc.tickMelee(mobDtMs, meleeTargets);
+            this._tickBow(wc, mobDtMs, meleeTargets);
             w.prone = this._creatureIsProne(wc);
             if (w.prone) {
                 wc.vx = 0;
@@ -2288,10 +2520,13 @@
             sc.x = rec.x;
             sc.y = rec.y;
             sc.inventory = rec.inventory;
+            sc.overflow = rec.overflow;
             sc.hotbarIndex = rec.hotbarIndex ?? 0;
             sc._wadeWater = !!rec._wadeWater;
             sc.refreshCapacities?.();
-            sc.tickMelee(this._settlerDtMs(dtMs), meleeTargets);
+            const settlerDt = this._settlerDtMs(dtMs);
+            sc.tickMelee(settlerDt, meleeTargets);
+            this._tickBow(sc, settlerDt, meleeTargets);
             rec.prone = this._creatureIsProne(sc);
             if (rec.prone) {
                 sc.facing = "right";

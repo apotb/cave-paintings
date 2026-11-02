@@ -2149,6 +2149,31 @@
         return !!(opts.hasFuel || opts.hasGroundRecipe);
     }
 
+    function isCarriedBow(id) {
+        return id === "shortbow" || id === "longbow";
+    }
+
+    /** A bow with an arrow still on the pawn stays out of the baskets. */
+    function holdsLoadedBow(inventory, overflow) {
+        let bow = false;
+        let arrow = false;
+        const scan = (slots) => {
+            for (const s of slots || []) {
+                if (!s) continue;
+                if (isCarriedBow(s.id)) bow = true;
+                if (s.id === "arrow" && (Number(s.quantity) || 0) > 0) arrow = true;
+            }
+        };
+        scan(inventory);
+        scan(overflow);
+        return bow && arrow;
+    }
+
+    function stowSkip(stack, inventory, overflow) {
+        if (!stack?.id || !holdsLoadedBow(inventory, overflow)) return false;
+        return isCarriedBow(stack.id) || stack.id === "arrow";
+    }
+
     /** Melee damage for "keep the best weapon" while stashing. Matches Party.meleeDamageOf. */
     function stoneApi() {
         if (typeof Stone !== "undefined" && Stone.toolDamage) return Stone;
@@ -2204,6 +2229,12 @@
             }
         }
         if (bestD > 0 && bestI >= 0) keep.add(bestI);
+        if (holdsLoadedBow(inv, opts.overflow)) {
+            for (let i = 0; i < inv.length; i++) {
+                const id = inv[i]?.id;
+                if (isCarriedBow(id) || id === "arrow") keep.add(i);
+            }
+        }
         if (opts.keepBandage) {
             let bestI = -1;
             let bestS = -1;
@@ -2253,12 +2284,13 @@
     }
 
     function hasStashable(inventory, overflow, getItem, canStore, opts = {}) {
-        const keep = keepIndices(inventory, getItem, opts);
+        const keep = keepIndices(inventory, getItem, { ...opts, overflow });
         const store = typeof canStore === "function" ? canStore : () => true;
         const check = (slots, skipKeep) => {
             for (let i = 0; i < (slots || []).length; i++) {
                 if (skipKeep && keep.has(i)) continue;
                 const s = slots[i];
+                if (stowSkip(s, inventory, overflow)) continue;
                 if (s && store(s)) return true;
             }
             return false;
@@ -3592,6 +3624,8 @@
         isFirestarter,
         cookCanLight,
         weaponDamage,
+        holdsLoadedBow,
+        stowSkip,
         keepIndices,
         hasStashable,
         hasStashableFood,

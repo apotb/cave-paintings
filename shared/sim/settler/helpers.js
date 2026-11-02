@@ -1746,10 +1746,12 @@ function keepGearOpts(keepBandageOrOpts) {
 function stashScan(world, rec, settle, keepBandageOrOpts) {
     const canStore = (s) => !!pickBasket(world, rec, settle, s);
     const opts = keepGearOpts(keepBandageOrOpts);
+    opts.overflow = rec.overflow;
     if (!Settlement.hasStashable(rec.inventory, rec.overflow, getItem, canStore, opts)) {
         return { basket: null, has: false, urgent: false, hasFood: false };
     }
     const keep = Settlement.keepIndices(rec.inventory, getItem, opts);
+    // opts.overflow is set above so a loaded bow stays with its arrows.
     let basket = null;
     const tryPick = (s) => {
         if (!s || basket) return;
@@ -1757,9 +1759,13 @@ function stashScan(world, rec, settle, keepBandageOrOpts) {
     };
     for (let i = 0; i < (rec.inventory || []).length; i++) {
         if (keep.has(i)) continue;
+        if (Settlement.stowSkip?.(rec.inventory[i], rec.inventory, rec.overflow)) continue;
         tryPick(rec.inventory[i]);
     }
-    for (const s of rec.overflow || []) tryPick(s);
+    for (const s of rec.overflow || []) {
+        if (Settlement.stowSkip?.(s, rec.inventory, rec.overflow)) continue;
+        tryPick(s);
+    }
     return {
         basket,
         has: !!basket,
@@ -1769,13 +1775,16 @@ function stashScan(world, rec, settle, keepBandageOrOpts) {
 }
 
 function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
-    const keep = Settlement.keepIndices(rec.inventory, getItem, keepGearOpts(keepBandageOrOpts));
+    const gearOpts = keepGearOpts(keepBandageOrOpts);
+    gearOpts.overflow = rec.overflow;
+    const keep = Settlement.keepIndices(rec.inventory, getItem, gearOpts);
     const dump = (slots, skipKeep) => {
         if (!slots) return;
         for (let i = 0; i < slots.length; i++) {
             if (skipKeep && keep.has(i)) continue;
             const s = slots[i];
             if (!s) continue;
+            if (Settlement.stowSkip?.(s, rec.inventory, rec.overflow)) continue;
             if (
                 dest
                 && storageNear(rec, dest)

@@ -173,6 +173,7 @@
         const amount = Math.max(1, Math.floor(Number(action.amount) || 1));
         const held = this._held(p);
         if (!held?.id) return;
+        if (this._bowHandLocked?.(p)) return;
 
         const qty = Math.min(amount, held.quantity || 1);
         if (qty <= 0) return;
@@ -855,7 +856,7 @@
                     this._enforceCarryCap(p);
                     return true;
                 }
-                if (dest.id === worldStack.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(worldStack) && this._canMergeStone(dest, worldStack)) {
+                if (this._stacksCombine(dest, worldStack)) {
                     const meta = itemDefs().get(dest.id);
                     const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
                     const space = Math.max(0, maxStack - (dest.quantity || 1));
@@ -921,7 +922,7 @@
             this._enforceCarryCap(p);
             return 0;
         }
-        if (dest.id === worldStack.id && !this._stackIsSpecial(dest) && !this._stackIsSpecial(worldStack) && this._canMergeStone(dest, worldStack)) {
+        if (this._stacksCombine(dest, worldStack)) {
             const meta = itemDefs().get(dest.id);
             const maxStack = Math.max(1, Math.floor(Number(meta?.maxStack) || 99));
             const space = Math.max(0, maxStack - (dest.quantity || 1));

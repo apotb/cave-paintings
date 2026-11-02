@@ -8,6 +8,7 @@ const BodyHealing = require("../shared/body/Healing");
 const BodyCombat = require("../shared/body/Combat");
 const Party = require("../shared/party");
 const Settlement = require("../shared/settlement");
+const Ranged = require("../shared/ranged");
 
 loadDefs();
 
@@ -1328,6 +1329,320 @@ test("/give stone_spear keeps the stone", () => {
     assert.ok(flintChats.some((e) => e.text === "Gave 1× Flint Spear (rough)"));
     assert.ok(flintChats.some((e) => e.text === 'Unknown stone "flint".'));
     assert.equal(pawn.inventory.some((s) => s && s.id === "grindstone" && s.stone === "flint"), false);
+});
+
+test("/give arrow defaults to a rough diorite point", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give arrow" });
+    const stack = pawn.inventory.find((s) => s && s.id === "arrow");
+    assert.ok(stack);
+    assert.equal(stack.stone, "diorite");
+    assert.equal(stack.knapMaterial, "pebble");
+    assert.equal(stack.knapQuality, "rough");
+    const chats = world.drainEvents().filter((e) => e.kind === "chat");
+    assert.ok(chats.some((e) => e.text === "Gave 1× Diorite Arrow (rough)"));
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give stone_spear" });
+    const spear = pawn.inventory.find((s) => s && s.id === "stone_spear");
+    assert.equal(spear.stone, "andesite");
+});
+
+function woundCount(body) {
+    let n = 0;
+    for (const part of Object.values(body?.parts?.() || {})) {
+        n += (part.injuries || []).length;
+        if (part.dead) n++;
+    }
+    return n;
+}
+
+test("an arrow wounds when the flight ends, not when it leaves the bow", () => {
+    const { world, pawn } = createTestWorld();
+    world.tickSpeed = 0;
+    pawn.inventory[0] = { id: "shortbow", quantity: 1 };
+    pawn.inventory[1] = { id: "arrow", quantity: 1, knapMaterial: "pebble", stone: "diorite", knapQuality: "rough" };
+    pawn.hotbarIndex = 0;
+    const creature = world._ensurePlayerCreature(pawn);
+    const bio = world._ensureBio(pawn);
+    bio.skills.shooting = { level: 20, xp: 0, passion: 0 };
+    creature.bio = bio;
+    const entry = world._spawnMobAt("deer", pawn.x + 64, pawn.y);
+    const deer = world.mobs.get(entry.uid);
+    const pinX = deer.x;
+    const pinY = deer.y;
+    const aim = deer.bodyCenter();
+    world.rng = () => 0.01;
+    assert.equal(world.beginBowDraw(creature, aim.x, aim.y), true);
+    deer.x = pinX;
+    deer.y = pinY;
+    deer.vx = 0;
+    deer.vy = 0;
+    world.tick(16);
+    const arrows = world.drainEvents().filter((e) => e.kind === "arrow");
+    assert.equal(arrows.length, 1);
+    assert.equal(woundCount(deer.anatomy), 0);
+    world.tick(Math.max(1, arrows[0].ms - 16));
+    deer.x = pinX;
+    deer.y = pinY;
+    assert.equal(woundCount(deer.anatomy), 0);
+    world.tick(32);
+    assert.ok(woundCount(deer.anatomy) > 0);
+    assert.ok(bio.skills.shooting.xp > 0);
+});
+
+test("a brawler who looses a bow gains the ranged-weapon thought", () => {
+    const { world, pawn } = createTestWorld();
+    world.tickSpeed = 0;
+    pawn.inventory[0] = { id: "shortbow", quantity: 1 };
+    pawn.inventory[1] = { id: "arrow", quantity: 2, knapMaterial: "pebble", stone: "diorite", knapQuality: "rough" };
+    pawn.hotbarIndex = 0;
+    const bio = world._ensureBio(pawn);
+    bio.traits = ["brawler"];
+    const creature = world._ensurePlayerCreature(pawn);
+    creature.bio = bio;
+    const aim = creature.bodyCenter();
+    assert.equal(world.beginBowDraw(creature, aim.x + 80, aim.y), true);
+    world.tick(16);
+    const line = (pawn.thoughts?.lines || []).find((row) => row.label === "Used ranged weapon");
+    assert.ok(line);
+    assert.equal(line.offset, -10);
+    assert.equal(line.quote, "I despise ranged weaponry.");
+    const now = world.worldMinuteIndex();
+    assert.ok(Math.abs(line.expires - (now + 24 * 60)) < 2, line.expires - now);
+
+    creature._bowCd = 0;
+    assert.equal(world.beginBowDraw(creature, aim.x + 80, aim.y), true);
+    world.tick(16);
+    const lines = pawn.thoughts.lines.filter((row) => row.label === "Used ranged weapon");
+    assert.equal(lines.length, 1);
+});
+
+function arrowDrops(world) {
+    const out = [];
+    for (const chunk of world.chunks.values()) {
+        for (const drop of chunk.drops || []) {
+            if (drop?.id === "arrow") out.push(drop);
+        }
+    }
+    return out;
+}
+
+test("a missed arrow stays lodged where the flight stops", () => {
+    const { world, pawn } = createTestWorld();
+    world.tickSpeed = 0;
+    pawn.inventory[0] = { id: "shortbow", quantity: 1 };
+    pawn.inventory[1] = {
+        id: "arrow",
+        quantity: 1,
+        knapMaterial: "pebble",
+        stone: "diorite",
+        knapQuality: "rough"
+    };
+    pawn.hotbarIndex = 0;
+    const creature = world._ensurePlayerCreature(pawn);
+    const aim = creature.bodyCenter();
+    world.rng = () => 0.99;
+    assert.equal(world.beginBowDraw(creature, aim.x + 80, aim.y), true);
+    world.tick(16);
+    const flight = world.drainEvents().find((e) => e.kind === "arrow");
+    assert.equal(flight.stick, true);
+    assert.equal(arrowDrops(world).length, 0);
+    world.tick(flight.ms + 32);
+    const drops = arrowDrops(world);
+    assert.equal(drops.length, 1);
+    const drop = drops[0];
+    assert.equal(drop.quantity, 1);
+    assert.equal(drop.stone, "diorite");
+    assert.equal(drop.knapQuality, "rough");
+    assert.equal(drop.x, flight.tx);
+    assert.equal(drop.y, flight.ty);
+    assert.ok(Number.isFinite(drop.lodged));
+    assert.equal(drop.lifeMs, undefined);
+    const pub = world._publicDrop(drop, { cx: 0, cy: 0 });
+    assert.equal(pub.lodged, drop.lodged);
+    let home = null;
+    for (const chunk of world.chunks.values()) {
+        if ((chunk.drops || []).includes(drop)) home = chunk;
+    }
+    home.drops.push({ id: "stick", quantity: 1, x: drop.x, y: drop.y, lifeMs: 1, uid: "temp-stick" });
+    world._tickDropDespawn(60 * 60 * 1000);
+    assert.equal(arrowDrops(world).length, 1);
+    assert.equal(home.drops.some((d) => d && d.id === "stick"), false);
+
+    pawn.x = drop.x;
+    pawn.y = drop.y;
+    world._tryPickup(pawn, { dropId: drop.uid });
+    const back = pawn.inventory.find((s) => s && s.id === "arrow");
+    assert.equal(back.quantity, 1);
+    assert.equal(back.stone, "diorite");
+    assert.equal(back.knapQuality, "rough");
+    assert.equal(back.lodged, undefined);
+    assert.equal(arrowDrops(world).length, 0);
+});
+
+test("an arrow that hits a body is not left in the ground", () => {
+    const { world, pawn } = createTestWorld();
+    world.tickSpeed = 0;
+    pawn.inventory[0] = { id: "shortbow", quantity: 1 };
+    pawn.inventory[1] = { id: "arrow", quantity: 1, knapMaterial: "pebble", stone: "diorite", knapQuality: "rough" };
+    pawn.hotbarIndex = 0;
+    const creature = world._ensurePlayerCreature(pawn);
+    const bio = world._ensureBio(pawn);
+    bio.skills.shooting = { level: 20, xp: 0, passion: 0 };
+    creature.bio = bio;
+    const entry = world._spawnMobAt("deer", pawn.x + 64, pawn.y);
+    const deer = world.mobs.get(entry.uid);
+    const aim = deer.bodyCenter();
+    world.rng = () => 0.01;
+    assert.equal(world.beginBowDraw(creature, aim.x, aim.y), true);
+    world.tick(16);
+    const flight = world.drainEvents().find((e) => e.kind === "arrow");
+    assert.equal(flight.stick, false);
+    world.tick(flight.ms + 32);
+    assert.equal(arrowDrops(world).length, 0);
+    assert.ok(woundCount(deer.anatomy) > 0);
+});
+
+test("an arrow fired into empty ground grants no shooting xp", () => {
+    const { world, pawn } = createTestWorld();
+    world.tickSpeed = 0;
+    pawn.inventory[0] = { id: "shortbow", quantity: 1 };
+    pawn.inventory[1] = { id: "arrow", quantity: 1, knapMaterial: "pebble", stone: "diorite", knapQuality: "rough" };
+    pawn.hotbarIndex = 0;
+    const creature = world._ensurePlayerCreature(pawn);
+    const bio = world._ensureBio(pawn);
+    bio.skills.shooting = { level: 4, xp: 0, passion: 0 };
+    creature.bio = bio;
+    world.rng = () => 0.99;
+    const aim = creature.bodyCenter();
+    assert.equal(world.beginBowDraw(creature, aim.x + 200, aim.y), true);
+    world.tick(16);
+    const arrows = world.drainEvents().filter((e) => e.kind === "arrow");
+    assert.equal(arrows.length, 1);
+    world.tick(arrows[0].ms + 32);
+    assert.equal(bio.skills.shooting.xp, 0);
+});
+
+test("a bow cooldown keeps the held slot until the bar would empty", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    world.tickSpeed = 0;
+    pawn.inventory[0] = { id: "shortbow", quantity: 1 };
+    pawn.inventory[1] = { id: "arrow", quantity: 4, knapMaterial: "pebble", stone: "diorite", knapQuality: "rough" };
+    pawn.inventory[2] = { id: "stick", quantity: 1 };
+    pawn.hotbarIndex = 0;
+    const creature = world._ensurePlayerCreature(pawn);
+    const aim = creature.bodyCenter();
+    assert.equal(world.beginBowDraw(creature, aim.x + 200, aim.y), true);
+    world.tick(16);
+    assert.equal(creature._bowCd, Ranged.COOLDOWN_MS);
+    world.handleAction(pawn.id, { type: Protocol.Actions.HOTBAR, index: 2 });
+    assert.equal(pawn.hotbarIndex, 0);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.INV_SWAP,
+        from: 0,
+        to: 2,
+        fromBag: "hotbar",
+        toBag: "hotbar"
+    });
+    assert.equal(pawn.inventory[0].id, "shortbow");
+    assert.equal(pawn.hotbarIndex, 0);
+    world.tick(creature._bowCd - 1);
+    assert.ok(creature._bowCd > 0);
+    world.handleAction(pawn.id, { type: Protocol.Actions.HOTBAR, index: 2 });
+    assert.equal(pawn.hotbarIndex, 0);
+    world.tick(creature._bowCd);
+    assert.equal(creature._bowCd, 0);
+    world.handleAction(pawn.id, { type: Protocol.Actions.HOTBAR, index: 2 });
+    assert.equal(pawn.hotbarIndex, 2);
+});
+
+test("a shortbow looses on the next tick and a longbow holds the draw", () => {
+    const short = createTestWorld();
+    short.world.tickSpeed = 0;
+    short.pawn.inventory[0] = { id: "shortbow", quantity: 1 };
+    short.pawn.inventory[1] = { id: "arrow", quantity: 1, knapMaterial: "pebble", stone: "diorite", knapQuality: "rough" };
+    short.pawn.hotbarIndex = 0;
+    const quick = short.world._ensurePlayerCreature(short.pawn);
+    const near = quick.bodyCenter();
+    assert.equal(short.world.beginBowDraw(quick, near.x + 80, near.y), true);
+    assert.equal(quick._bowDraw.left, 0);
+    short.world.tick(16);
+    assert.equal(short.world.drainEvents().filter((e) => e.kind === "arrow").length, 1);
+    assert.equal(quick._bowDraw, null);
+    assert.equal(quick._bowCd, Ranged.COOLDOWN_MS);
+
+    const held = createTestWorld();
+    held.world.tickSpeed = 0;
+    held.pawn.inventory[0] = { id: "longbow", quantity: 1 };
+    held.pawn.inventory[1] = { id: "arrow", quantity: 1, knapMaterial: "pebble", stone: "diorite", knapQuality: "rough" };
+    held.pawn.hotbarIndex = 0;
+    const slow = held.world._ensurePlayerCreature(held.pawn);
+    const far = slow.bodyCenter();
+    assert.equal(held.world.beginBowDraw(slow, far.x + 400, far.y), true);
+    assert.equal(slow._bowDraw.left, Ranged.AIM_MS);
+    held.world.tick(Ranged.AIM_MS - 16);
+    assert.equal(held.world.drainEvents().filter((e) => e.kind === "arrow").length, 0);
+    held.world.tick(16);
+    const arrows = held.world.drainEvents().filter((e) => e.kind === "arrow");
+    assert.equal(arrows.length, 1);
+    assert.ok(arrows[0].tx - arrows[0].x <= Ranged.LONG_RANGE_TILES * 16 + 1);
+});
+
+test("backpack arrows are spent after the hotbar, left to right", () => {
+    const { world, pawn } = createTestWorld();
+    world.tickSpeed = 0;
+    const hotbarArrow = { id: "arrow", quantity: 1, knapMaterial: "pebble", stone: "andesite", knapQuality: "rough" };
+    const packLeft = { id: "arrow", quantity: 2, knapMaterial: "pebble", stone: "diorite", knapQuality: "rough" };
+    const packRight = { id: "arrow", quantity: 1, knapMaterial: "flint", stone: "flint", knapQuality: "fine" };
+    pawn.inventory[0] = { id: "shortbow", quantity: 1 };
+    pawn.inventory[1] = null;
+    pawn.inventory[2] = hotbarArrow;
+    pawn.overflow = [null, packLeft, packRight];
+    pawn.hotbarIndex = 0;
+    const creature = world._ensurePlayerCreature(pawn);
+    const aim = creature.bodyCenter();
+    assert.equal(world.beginBowDraw(creature, aim.x + 80, aim.y), true);
+    world.tick(16);
+    assert.equal(world.drainEvents().filter((e) => e.kind === "arrow").length, 1);
+    assert.equal(pawn.inventory[2], null);
+    assert.equal(packLeft.quantity, 2);
+    assert.equal(packRight.quantity, 1);
+
+    creature._bowCd = 0;
+    pawn.inventory[2] = null;
+    assert.equal(world.beginBowDraw(creature, aim.x + 80, aim.y), true);
+    world.tick(16);
+    assert.equal(packLeft.quantity, 1);
+    assert.equal(packRight.quantity, 1);
+
+    creature._bowCd = 0;
+    pawn.overflow[1] = null;
+    assert.equal(world.beginBowDraw(creature, aim.x + 80, aim.y), true);
+    world.tick(16);
+    assert.equal(pawn.overflow[2], null);
+});
+
+test("walking while a bow is drawn does not cancel the shot", () => {
+    const { world, pawn } = createTestWorld();
+    world.tickSpeed = 0;
+    pawn.inventory[0] = { id: "longbow", quantity: 1 };
+    pawn.inventory[1] = { id: "arrow", quantity: 1, knapMaterial: "pebble", stone: "diorite", knapQuality: "rough" };
+    pawn.hotbarIndex = 0;
+    const creature = world._ensurePlayerCreature(pawn);
+    const aim = creature.bodyCenter();
+    assert.equal(world.beginBowDraw(creature, aim.x + 80, aim.y), true);
+    creature.x += 48;
+    pawn.x = creature.x;
+    world.tick(50);
+    assert.equal(world.drainEvents().filter((e) => e.kind === "arrow").length, 0);
+    let draw = Ranged.AIM_MS - 50;
+    while (draw > 0) {
+        const step = Math.min(50, draw);
+        world.tick(step);
+        draw -= step;
+    }
+    const ev = world.drainEvents();
+    assert.equal(ev.filter((e) => e.kind === "arrow").length, 1);
+    assert.equal(ev.filter((e) => e.kind === "bow_cancel").length, 0);
 });
 
 test("/heal restores body and announces", () => {

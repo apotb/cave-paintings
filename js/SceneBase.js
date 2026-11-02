@@ -91,6 +91,11 @@ class SceneBase extends Phaser.Scene {
             "clay",
             "lean_to",
             "hut",
+            "shortbow",
+            "longbow",
+            "sinew",
+            "arrow_body",
+            "arrow_tip",
             "painting_circle",
             "tally_stick"
         ];
@@ -99,6 +104,14 @@ class SceneBase extends Phaser.Scene {
             if (this.textures?.exists?.(item) || this.__cpQueuedTextures.has(item)) continue;
             this.__cpQueuedTextures.add(item);
             this.load.image(item, `assets/items/${item}.png`);
+        }
+        for (const [key, path] of [
+            ["proj_arrow_body", "assets/projectile/arrow/arrow_body.png"],
+            ["proj_arrow_tip", "assets/projectile/arrow/arrow_tip.png"]
+        ]) {
+            if (this.textures?.exists?.(key) || this.__cpQueuedTextures.has(key)) continue;
+            this.__cpQueuedTextures.add(key);
+            this.load.image(key, path);
         }
         // Second Play → Leave → Play: textures/json already live in the game caches.
         // Queue any resolved item/thing textures the warm cache does not have yet.

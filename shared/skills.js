@@ -1277,7 +1277,7 @@
             meleeDps: "Damage per second of the attacks this pawn can use, weighted by how often each is picked.",
             meleeHit: "Chance a melee blow lands before the target tries to dodge.",
             meleeDodge: "Chance to avoid a melee blow that would otherwise land.",
-            shooting: "Chance to hit a target at each distance, before cover and the target's size.",
+            shooting: "Chance to hit a target at each distance, before cover, the target's size, and the light on the target.",
             incomingDamage: "Amount of damage taken after armor calculations.",
             painThreshold: "Pain threshold before collapsing from pain shock.",
             moveSpeed: "Default walk speed when not sprinting, performing an action, or encumbered.",

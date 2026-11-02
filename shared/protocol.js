@@ -51,6 +51,8 @@
         DROP: "drop",
         SPAWN_DROP: "spawn_drop",
         ATTACK: "attack",
+        /** Draw and loose a bow. Aim is a world point. cancel drops the draw. */
+        SHOOT: "shoot",
         HOTBAR: "hotbar",
         /** Swap / merge two inventory slots (hotbar and/or overflow). Optional fromBag/toBag. */
         INV_SWAP: "inv_swap",

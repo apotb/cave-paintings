@@ -35,6 +35,7 @@ function loadCraft() {
             return meta?.rotations ? `${meta.key}_0` : (meta?.key || "");
         }
     };
+    sandbox.ensureArrowTexture = (_scene, material, stone) => `arrow_${material}_${stone || material}`;
     sandbox.Knapping = {
         carveShapeIcon(_scene, toolClass, stoneId) {
             return `${toolClass}:${stoneId}`;
@@ -135,6 +136,41 @@ test("hide and station rows use deer hide and the bench sprite", () => {
     assert.equal(tip.lines[2].icon, "knap_awl_awl:andesite");
     assert.equal(tip.lines[2].icons, undefined);
     assert.equal(tip.lines[2].label, "Requires held Awl");
+});
+
+test("an arrow recipe keeps Stone Arrow and a diorite picture", () => {
+    const craft = loadCraft();
+    const scene = sceneFor(craft);
+    scene.textures = { exists: () => true };
+    scene.getItem = (id) => ({
+        id,
+        name: id === "arrow" ? "Stone Arrow" : (id === "stone_tool" ? "Stone Tool" : id),
+        key: id,
+        weight: id === "arrow" ? 0.08 : 0
+    });
+    let seen = "unset";
+    scene.formatItemTooltip = function (item, _qty, _spoil, stack) {
+        seen = stack;
+        return item.name;
+    };
+    scene._craftPreviewStack = () => ({
+        id: "arrow",
+        knapMaterial: "pebble",
+        stone: "diorite",
+        knapQuality: "rough"
+    });
+    const tip = scene._craftRecipeTooltip({
+        id: "arrow",
+        quantity: 4,
+        ingredients: [{ id: "stone_tool", qty: 1, toolClass: "blade" }]
+    });
+    assert.equal(seen, null);
+    assert.equal(tip.text.startsWith("Stone Arrow"), true);
+    assert.equal(tip.lines[0].icon, "knap_blade_blade:diorite");
+    assert.equal(tip.lines[0].label, "Stone Blade");
+    assert.equal(scene._craftRecipeIconKey({ id: "arrow" }), "arrow_pebble_diorite");
+    scene._craftPreviewStack = () => null;
+    assert.equal(scene._craftRecipeIconKey({ id: "arrow" }), "arrow_diorite_diorite");
 });
 
 test("a spear tip ingredient uses the andesite knap picture", () => {

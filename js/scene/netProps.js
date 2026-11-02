@@ -129,6 +129,7 @@
         assign("soakDoneAt", d.soakDoneAt);
         assign("temp", d.temp);
         assign("stone", d.stone);
+        assign("lodged", d.lodged);
         if (d.ingredients) {
             entry.ingredients = Array.isArray(d.ingredients)
                 ? d.ingredients.slice()
@@ -180,6 +181,11 @@
             const key = ensurePaintingCircleTexture(spr.scene, e.stone);
             if (key && spr.scene.textures?.exists?.(key)) spr.setTexture(key);
         }
+        if (spr.item?.id === "arrow" && typeof ensureArrowTexture === "function") {
+            const key = ensureArrowTexture(spr.scene, e.knapMaterial, e.stone);
+            if (key && spr.scene.textures?.exists?.(key)) spr.setTexture(key);
+        }
+        if (typeof poseLodgedArrow === "function") poseLodgedArrow(spr);
     },
 
     /**

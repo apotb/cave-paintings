@@ -821,6 +821,7 @@ test("tree layout is left-to-right with prereq edges", () => {
     assert.ok(layout.edges.some((e) => e.from === "smoking" && e.to === "leatherworking"));
     assert.ok(layout.edges.some((e) => e.from === "hafting" && e.to === "bows"));
     assert.ok(layout.edges.some((e) => e.from === "blades" && e.to === "bows"));
+    assert.ok(layout.edges.some((e) => e.from === "bows" && e.to === "shortbows"));
     assert.ok(layout.edges.some((e) => e.from === "dogs" && e.to === "husbandry"));
     assert.ok(layout.edges.some((e) => e.from === "settlements" && e.to === "herding"));
     assert.equal(layout.edges.some((e) => e.from === "hut" && e.to === "herding"), false);
@@ -1239,7 +1240,26 @@ test("retuned tech costs, names, and eras", () => {
     assert.equal(Research.techById("writing").cost, 12);
     assert.deepEqual(Research.techById("writing").prereqs, ["mathematics", "pottery"]);
     assert.equal(Research.techById("bows").cost, 5);
+    assert.equal(Research.techById("bows").wip, undefined);
     assert.deepEqual(Research.techById("bows").prereqs, ["hafting", "blades"]);
+    assert.deepEqual(Research.techById("bows").unlocks.items, ["longbow", "arrow"]);
+    assert.equal((Research.techById("bows").unlocks.text || []).includes("Longbow"), false);
+    assert.equal((Research.techById("bows").unlocks.text || []).includes("Arrow"), false);
+    assert.deepEqual(Research.techById("bows").children, ["shortbows"]);
+    assert.equal(Research.techById("shortbows").name, "Shortbows");
+    assert.equal(Research.techById("shortbows").cost, 5);
+    assert.equal(Research.techById("shortbows").era, "Mesolithic");
+    assert.equal(Research.techById("shortbows").wip, undefined);
+    assert.deepEqual(Research.techById("shortbows").prereqs, ["bows"]);
+    assert.deepEqual(Research.techById("shortbows").unlocks.items, ["shortbow"]);
+    assert.equal((Research.techById("shortbows").unlocks.text || []).length, 0);
+    const longbow = DataStore.getItem("longbow");
+    assert.equal(longbow.recipe.log, 1);
+    assert.equal(longbow.recipe.sinew, 4);
+    assert.equal(longbow.recipe.CRAFT_SECONDS, 24);
+    assert.equal(longbow.weapon.range, 320);
+    assert.equal(longbow.tooltip[0], "Charge a shot then let loose");
+    assert.equal(DataStore.getItem("shortbow").tooltip[0], "Let loose at once");
     assert.equal(Research.techById("fishing").cost, 4);
     assert.deepEqual(Research.techById("fishing").prereqs, ["hafting", "digging"]);
     assert.equal(Research.techById("nets").cost, 4);
@@ -1281,11 +1301,11 @@ test("new settlements are Paleolithic and fog later ages", () => {
     const rows = Research.ageBreakdown(s);
     assert.deepEqual(rows.map((r) => r.era), ["Paleolithic", "Mesolithic"]);
     assert.equal(Research.eraIcon("Paleolithic"), "campfire");
-    assert.equal(Research.eraIcon("Mesolithic"), "null");
+    assert.equal(Research.eraIcon("Mesolithic"), "shortbow");
     assert.equal(Research.eraIcon("Neolithic"), "null");
     assert.equal(Research.eraIcon("Chalcolithic"), "null");
     assert.equal(rows[0].icon, "campfire");
-    assert.equal(rows[1].icon, "null");
+    assert.equal(rows[1].icon, "shortbow");
     assert.match(Research.ageTip(s), /^Paleolithic\s+\d+\/\d+\s+\d+%$/m);
     assert.match(Research.ageTip(s), /^Mesolithic\s+\d+\/\d+\s+\d+%$/m);
     assert.equal(Research.ageTip(s).includes("Neolithic"), false);
@@ -1296,12 +1316,12 @@ test("unfinished techs are WIP and cannot be researched", () => {
         "gathering", "cordage", "camping", "basic_furniture", "herbalism", "digging", "storage",
         "fire", "hearth", "cooking", "smoking", "clay_forming", "hut",
         "knapping", "hafting", "hand_axe", "cleaver", "blades", "tanning", "skinworking", "leatherworking",
-        "culture", "painting", "counting", "grinding", "fishing", "nets"
+        "culture", "painting", "counting", "grinding", "fishing", "nets", "bows", "shortbows"
     ];
     const wip = [
         "traps", "pit_traps", "spike_traps",
         "pit_kiln", "earth_oven", "dogs", "feasts", "burin",
-        "throwing", "bows",
+        "throwing",
         "ornament", "rituals", "idolatry", "music", "burial", "afterlife", "ancestors", "shrine",
         "settlements", "agriculture", "tree_sowing", "husbandry", "herding",
         "pottery", "mathematics", "writing"
@@ -1330,7 +1350,7 @@ test("unfinished techs are WIP and cannot be researched", () => {
 test("age advances at ceil 50% of an era or 100% of the previous", () => {
     const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
     const meso = Research.techsInEra("Mesolithic");
-    assert.equal(meso.length, 7);
+    assert.equal(meso.length, 8);
     const need = Math.ceil(meso.length * 0.5);
     assert.equal(need, 4);
     for (let i = 0; i < need - 1; i++) Research.unlock(s, meso[i].id);

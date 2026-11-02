@@ -30,6 +30,12 @@ test("a cleaver adds 2 meat and leaves hide, brain, and bone", () => {
     assert.deepEqual(knife[0], { id: "raw_venison", min: 2, max: 4 });
     assert.deepEqual(cleaver[0], { id: "raw_venison", min: 4, max: 6 });
     assert.deepEqual(knife.slice(1), cleaver.slice(1));
+    assert.deepEqual(knife.find((d) => d.id === "sinew"), { id: "sinew", min: 1, max: 1 });
+    assert.deepEqual(
+        CorpseDecay.skinLootTable("boar", { toolClass: "knife" }).find((d) => d.id === "sinew"),
+        { id: "sinew", min: 1, max: 1 }
+    );
+    assert.equal(CorpseDecay.skinLootTable("human", { toolClass: "knife" }).some((d) => d.id === "sinew"), false);
     assert.deepEqual(CorpseDecay.skinLootTable("boar", { toolClass: "cleaver" })[0], {
         id: "raw_pork", min: 5, max: 7
     });

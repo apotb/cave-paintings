@@ -990,6 +990,7 @@
         _clearCombat() {
             this.assistTarget = null;
             this._meleeHold = false;
+            this.mob?.ctx?.sim?.cancelBowDraw?.(this.mob);
         }
 
         _tickFollow(follow, delta) {
@@ -1145,13 +1146,16 @@
                 return;
             }
 
-            this._pickBestWeapon(world);
             const mc = mob.bodyCenter?.() || { x: mob.x, y: mob.y };
             const pc = target.bodyCenter?.() || { x: target.x, y: target.y };
             const toX = pc.x - mc.x;
             const toY = pc.y - mc.y;
             const distT = Math.hypot(toX, toY) || 1;
             this._face(toX, toY);
+            const bowEdge = this._distToHurtbox(mc.x, mc.y, target);
+            const bowPlan = this._tickBowFight(world, target, mc, pc, bowEdge, delta);
+            if (bowPlan === "done") return;
+            if (bowPlan !== "spear") this._pickBestWeapon(world);
 
             this._atkCacheMs -= delta;
             if (!this._atkCache || this._atkCacheMs <= 0) {
@@ -1266,6 +1270,56 @@
                 });
             }
             return this._distToHurtbox(mc.x, mc.y, target) <= reach;
+        }
+
+        _rangedApi() {
+            if (typeof Ranged !== "undefined" && Ranged.holdingBow) return Ranged;
+            try {
+                if (typeof require === "function") return require("../ranged");
+            } catch (_) { /* browser */ }
+            return null;
+        }
+
+        /**
+         * A loaded bow holds outside spear reach and looses. Inside that reach
+         * a carried spear is the weapon. No bow returns false so melee runs.
+         */
+        _tickBowFight(world, target, mc, pc, edgeDist, delta) {
+            const R = this._rangedApi();
+            const mob = this.mob;
+            if (!R || !mob) return false;
+            const getItem = world?.getItem;
+            const bow = R.bowCarry(mob, getItem);
+            const arrow = R.hasArrow(mob.inventory, mob.overflow);
+            if (!bow || !arrow) {
+                mob.ctx?.sim?.cancelBowDraw?.(mob);
+                return false;
+            }
+            const spear = R.spearCarry(mob);
+            const spearReach = spear ? R.spearReach(spear.stack, getItem) : 0;
+            if (spear && edgeDist <= spearReach) {
+                mob.ctx?.sim?.cancelBowDraw?.(mob);
+                R.equipCarry(mob, spear);
+                return "spear";
+            }
+            const maxPx = R.rangeTiles(bow.stack) * TILE;
+            if (edgeDist > maxPx) {
+                mob.ctx?.sim?.cancelBowDraw?.(mob);
+                const dist = Math.hypot(pc.x - mc.x, pc.y - mc.y) || 1;
+                const hold = Math.max(TILE, maxPx - TILE);
+                const sx = pc.x - ((pc.x - mc.x) / dist) * hold;
+                const sy = pc.y - ((pc.y - mc.y) / dist) * hold;
+                this._walkCombatToward(sx, sy, edgeDist > maxPx + TILE * 3, world, delta);
+                return "done";
+            }
+            R.equipCarry(mob, bow);
+            mob.setDesiredVel?.(0, 0);
+            const sim = mob.ctx?.sim;
+            if (sim?.beginBowDraw && !mob.isIncapacitated?.()) {
+                const c = target.bodyCenter?.() || { x: target.x, y: target.y };
+                sim.beginBowDraw(mob, c.x, c.y);
+            }
+            return "done";
         }
 
         _pickBestWeapon(world) {

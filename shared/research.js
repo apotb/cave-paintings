@@ -29,7 +29,7 @@
     const WIP_COPY = "WIP";
     const ERA_ICONS = {
         paleolithic: "campfire",
-        mesolithic: "null",
+        mesolithic: "shortbow",
         neolithic: "null",
         chalcolithic: "null"
     };

@@ -8,8 +8,6 @@ More rock types -- obsidian, quartz, basalt, etc
 
 Better party management Kenshi-esque -- choose which severity of injuries to tend, make certain party members bodyguards that will only attack enemies near you, etc
 
-Bows
-
 Burials / ritual -- early spiritualism
 
 Body/biome temperature
@@ -35,8 +33,6 @@ Traps -- cord snares. An animal that walks over one is caught or downed. A trap 
 Spike Traps -- the hafted, pointy version of snares.
 
 Pit Traps -- the dug version. Same idea, bigger install.
-
-Nets -- the gear for the fishing job.
 
 Tree Sowing -- plant trees. A job action.
 

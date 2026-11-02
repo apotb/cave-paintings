@@ -1344,6 +1344,45 @@ function stackIconKey(meta, stack, scene) {
 }
 
 /**
+ * Texture a carried stack shows in a slot and while it is being dragged.
+ * Stuffed stones, spears, and arrows use the tinted composite. Knapped
+ * tools and formed clay keep their own picture.
+ */
+function carriedStackIconKey(scene, stack, meta) {
+    const textures = scene?.textures;
+    let key = stackIconKey(meta, stack, scene);
+    if (!stack || !textures) return key;
+    const use = (next) => {
+        if (next && textures.exists(next)) key = next;
+    };
+    if (stack.id === "stone_spear" || stack.id === "flint_spear") {
+        use(ensureSpearTexture(scene, stack.knapMaterial, stack.stone));
+    }
+    if (stack.id === "arrow") {
+        use(ensureArrowTexture(scene, stack.knapMaterial, stack.stone));
+    }
+    if (stack.id === "pebble") {
+        use(ensureStoneTexture(scene, "pebble", 1, stack.stone));
+    }
+    if (stack.id === "grindstone") {
+        use(ensureStoneTexture(scene, "grindstone", 1, stack.stone));
+    }
+    if (stack.id === "painting_circle") {
+        use(ensurePaintingCircleTexture(scene, stack.stone));
+    }
+    if (stack.toolClass && typeof Knapping !== "undefined" && Knapping.ensureShapeTexture) {
+        use(Knapping.ensureShapeTexture(scene, stack));
+    } else if (stack.formVoxels && typeof ClayForming !== "undefined") {
+        use(ClayForming.ensureFormTexture(scene, stack));
+    } else if (stack.formIcon && textures.exists(stack.formIcon)) {
+        key = stack.formIcon;
+    } else if (stack.knapIcon && textures.exists(stack.knapIcon)) {
+        key = stack.knapIcon;
+    }
+    return key;
+}
+
+/**
  * Draw stack icon; meals use shell + tinted fill overlay.
  * @param {Phaser.GameObjects.Image} base
  * @param {Phaser.GameObjects.Image|null} overlay
@@ -1365,38 +1404,7 @@ function syncStackIcon(base, overlay, stack, meta, getItem, textures, scale) {
         applyItemIconScale(overlay, scale);
         return;
     }
-    // Stone spear: wooden shaft plus a tip tinted to the rock.
-    let key = stackIconKey(meta, stack, base.scene);
-    if (stack.id === "stone_spear" || stack.id === "flint_spear") {
-        const spearKey = ensureSpearTexture(base.scene, stack.knapMaterial, stack.stone);
-        if (spearKey && textures.exists(spearKey)) key = spearKey;
-    }
-    if (stack.id === "pebble") {
-        const stoneKey = ensureStoneTexture(base.scene, "pebble", 1, stack.stone);
-        if (stoneKey && textures.exists(stoneKey)) key = stoneKey;
-    }
-    if (stack.id === "grindstone") {
-        const stoneKey = ensureStoneTexture(base.scene, "grindstone", 1, stack.stone);
-        if (stoneKey && textures.exists(stoneKey)) key = stoneKey;
-    }
-    if (stack.id === "painting_circle") {
-        const stoneKey = ensurePaintingCircleTexture(base.scene, stack.stone);
-        if (stoneKey && textures.exists(stoneKey)) key = stoneKey;
-    }
-    // Knapped tools: class shape cut from the pebble/flint sprite, or a stored picture
-    if (stack.toolClass && typeof Knapping !== "undefined" && Knapping.ensureShapeTexture) {
-        const scene = base.scene;
-        const knapKey = Knapping.ensureShapeTexture(scene, stack);
-        if (knapKey && textures.exists(knapKey)) key = knapKey;
-    } else if (stack.formVoxels && typeof ClayForming !== "undefined") {
-        const scene = base.scene;
-        const formKey = ClayForming.ensureFormTexture(scene, stack);
-        if (formKey && textures.exists(formKey)) key = formKey;
-    } else if (stack.formIcon && textures.exists(stack.formIcon)) {
-        key = stack.formIcon;
-    } else if (stack.knapIcon && textures.exists(stack.knapIcon)) {
-        key = stack.knapIcon;
-    }
+    const key = carriedStackIconKey(base.scene, stack, meta);
     if (textures.exists(key)) {
         base.setTexture(key).clearTint().setVisible(true);
         applyItemIconScale(base, scale);
@@ -1586,6 +1594,199 @@ function ensureSpearTexture(scene, material, stone) {
     return key;
 }
 
+/** arrow_body plus arrow_tip recolored to the blade's stone. */
+function ensureArrowTexture(scene, material, stone) {
+    if (!scene?.textures) return null;
+    const plain = material === "white";
+    const mat = plain ? "white" : spearTintId(material, stone);
+    const key = `arrow_tip_${mat}`;
+    if (scene.textures.exists(key)) return key;
+    if (!scene.textures.exists("arrow_body") || !scene.textures.exists("arrow_tip")) {
+        return scene.textures.exists("arrow_body") ? "arrow_body" : null;
+    }
+    const color = plain
+        ? null
+        : ((typeof Stone !== "undefined" && Stone.props)
+            ? Stone.props(mat, (id) => scene.getItem?.(id)).tipColor
+            : (mat === "flint" ? "#333333" : "#717171"));
+    const bodyTex = scene.textures.get("arrow_body");
+    const tipTex = scene.textures.get("arrow_tip");
+    const body = bodyTex?.getSourceImage?.() || bodyTex?.source?.[0]?.image;
+    const tip = tipTex?.getSourceImage?.() || tipTex?.source?.[0]?.image;
+    if (!body?.width || !tip?.width) return "arrow_body";
+    const w = body.width;
+    const h = body.height;
+    const canvasTex = scene.textures.createCanvas(key, w, h);
+    if (!canvasTex?.getContext) return "arrow_body";
+    const ctx = canvasTex.getContext();
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(body, 0, 0, w, h);
+    if (plain) {
+        ctx.drawImage(tip, 0, 0, w, h);
+    } else {
+        const tmp = document.createElement("canvas");
+        tmp.width = tip.width;
+        tmp.height = tip.height;
+        const tctx = tmp.getContext("2d");
+        tctx.drawImage(tip, 0, 0);
+        tctx.globalCompositeOperation = "source-in";
+        tctx.fillStyle = color;
+        tctx.fillRect(0, 0, tmp.width, tmp.height);
+        ctx.drawImage(tmp, 0, 0, w, h);
+    }
+    canvasTex.refresh();
+    if (typeof WorldAtlas !== "undefined") WorldAtlas.adopt(scene, key);
+    return key;
+}
+
+/** Flying arrow: projectile shaft plus a tip tinted to the stone. Points right at rotation 0. */
+function ensureArrowFlightTexture(scene, material, stone) {
+    if (!scene?.textures) return null;
+    const plain = material === "white";
+    const mat = plain ? "white" : spearTintId(material, stone);
+    const key = `proj_arrow_${mat}`;
+    if (scene.textures.exists(key)) return key;
+    const body = stoneSourceImage(scene, "proj_arrow_body");
+    const tip = stoneSourceImage(scene, "proj_arrow_tip");
+    if (!body?.width || !tip?.width) return null;
+    const color = plain
+        ? null
+        : ((typeof Stone !== "undefined" && Stone.props)
+            ? Stone.props(mat, (id) => scene.getItem?.(id)).tipColor
+            : (mat === "flint" ? "#333333" : "#717171"));
+    const w = body.width;
+    const h = body.height;
+    const canvasTex = scene.textures.createCanvas(key, w, h);
+    if (!canvasTex?.getContext) return null;
+    const ctx = canvasTex.getContext();
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(body, 0, 0, w, h);
+    if (plain) {
+        ctx.drawImage(tip, 0, 0, w, h);
+    } else {
+        const tmp = document.createElement("canvas");
+        tmp.width = tip.width;
+        tmp.height = tip.height;
+        const tctx = tmp.getContext("2d");
+        tctx.imageSmoothingEnabled = false;
+        tctx.drawImage(tip, 0, 0);
+        tctx.globalCompositeOperation = "source-in";
+        tctx.fillStyle = color;
+        tctx.fillRect(0, 0, tmp.width, tmp.height);
+        ctx.drawImage(tmp, 0, 0, w, h);
+    }
+    canvasTex.refresh();
+    // Leave the flight on its own canvas. The shared world sheet is a
+    // power-of-two texture with wrapped edges, and a 7px arrow parked on it
+    // shows up a second time.
+    return key;
+}
+
+function spawnArrowFlight(scene, ev) {
+    if (!scene?.add || !ev) return;
+    const x = Number(ev.x) || 0;
+    const y = Number(ev.y) || 0;
+    const tx = Number(ev.tx);
+    const ty = Number(ev.ty);
+    if (!Number.isFinite(tx) || !Number.isFinite(ty)) return;
+    const key = ensureArrowFlightTexture(scene, ev.knapMaterial, ev.stone);
+    if (!key || !scene.textures?.exists?.(key)) return;
+    // add:false so the image never joins the scene display list. That list is
+    // also drawn by the screen-space camera, which paints world x/y in the
+    // corner. The world layer is under the night veil.
+    const img = scene.make?.image
+        ? scene.make.image({ x, y, key, add: false })
+        : scene.add.image(x, y, key);
+    img.setOrigin(1, 0.5);
+    if (scene._uiCam) img.cameraFilter |= scene._uiCam.id;
+    img.setDepth((y | 0) + 2);
+    if (scene.mainLayer) scene.mainLayer.add(img);
+    else if (!img.displayList) scene.add.existing(img);
+    const ang = Math.atan2(ty - y, tx - x);
+    img.setRotation(ang);
+    img._arrowStick = !!ev.stick;
+    const dist = Math.hypot(tx - x, ty - y);
+    const told = Number(ev.ms);
+    const duration = Number.isFinite(told)
+        ? told
+        : ((typeof Ranged !== "undefined" && Ranged.flightMs)
+            ? Ranged.flightMs(dist)
+            : Math.max(70, Math.min(280, dist * 6)));
+    if (scene.tweens?.add) {
+        scene.tweens.add({
+            targets: img,
+            x: tx,
+            y: ty,
+            duration,
+            onUpdate: () => {
+                if (img.active) img.setDepth((img.y | 0) + 2);
+            },
+            onComplete: () => finishArrowFlight(scene, img)
+        });
+    } else {
+        img.setPosition(tx, ty);
+        finishArrowFlight(scene, img);
+    }
+}
+
+function finishArrowFlight(scene, img) {
+    if (!img) return;
+    if (img._arrowStick && img.active && !lodgedArrowAt(scene, img.x, img.y)) {
+        if (!scene._stuckArrowFlights) scene._stuckArrowFlights = [];
+        scene._stuckArrowFlights.push(img);
+        return;
+    }
+    img.destroy();
+}
+
+function lodgedArrowAt(scene, x, y) {
+    const kids = scene?.droppedItems?.getChildren?.() || [];
+    for (const drop of kids) {
+        if (!drop?.active) continue;
+        if (!Number.isFinite(Number(drop.entry?.lodged))) continue;
+        if (Math.hypot(drop.x - x, drop.y - y) <= 4) return drop;
+    }
+    return null;
+}
+
+function retireStuckArrowFlights(scene, x, y) {
+    const list = scene?._stuckArrowFlights;
+    if (!list?.length) return;
+    for (let i = list.length - 1; i >= 0; i--) {
+        const img = list[i];
+        if (!img?.active || Math.hypot(img.x - x, img.y - y) <= 4) {
+            if (img?.active) img.destroy();
+            list.splice(i, 1);
+        }
+    }
+}
+
+/** A missed arrow stays as the projectile, tip at the landing point. */
+function poseLodgedArrow(sprite) {
+    const entry = sprite?.entry;
+    const rot = Number(entry?.lodged);
+    if (!sprite || entry?.id !== "arrow" || !Number.isFinite(rot)) return false;
+    const scene = sprite.scene;
+    const key = ensureArrowFlightTexture(scene, entry.knapMaterial, entry.stone);
+    if (!key || !scene?.textures?.exists?.(key)) return false;
+    sprite.setTexture(key);
+    sprite.setOrigin(1, 0.5);
+    sprite.setRotation(rot);
+    sprite.setScale(1);
+    if (scene._uiCam) sprite.cameraFilter |= scene._uiCam.id;
+    sprite.setDepth((sprite.y | 0) + 2);
+    if (scene.mainLayer) scene.mainLayer.add(sprite);
+    if (typeof Phaser !== "undefined" && Phaser.Geom?.Rectangle) {
+        sprite.setInteractive(
+            new Phaser.Geom.Rectangle(-16, -8, 20, 16),
+            Phaser.Geom.Rectangle.Contains
+        );
+    }
+    retireStuckArrowFlights(scene, sprite.x, sprite.y);
+    return true;
+}
+
 /** Full painting-circle icon (all 6 overlays) tinted with title-art red. */
 function ensurePaintingsUiIcon(scene) {
     if (!scene?.textures) return null;
@@ -1744,6 +1945,9 @@ function stuffedStackIconKey(scene, stack) {
     if ((id === "stone_spear" || id === "flint_spear") && typeof ensureSpearTexture === "function") {
         return ensureSpearTexture(scene, stack.knapMaterial, stack.stone);
     }
+    if (id === "arrow" && typeof ensureArrowTexture === "function") {
+        return ensureArrowTexture(scene, stack.knapMaterial, stack.stone);
+    }
     return null;
 }
 
@@ -1788,18 +1992,7 @@ function createStackDragIcon(scene, x, y, stack, meta, scale) {
         scene.uiLayer.add(cont);
         return cont;
     }
-    let key = stackIconKey(meta, stack, scene);
-    if (stack?.toolClass && typeof Knapping !== "undefined" && Knapping.ensureShapeTexture) {
-        const knapKey = Knapping.ensureShapeTexture(scene, stack);
-        if (knapKey) key = knapKey;
-    } else if (stack?.formVoxels && typeof ClayForming !== "undefined") {
-        const formKey = ClayForming.ensureFormTexture(scene, stack);
-        if (formKey) key = formKey;
-    } else if (stack?.formIcon && scene.textures.exists(stack.formIcon)) {
-        key = stack.formIcon;
-    } else if (stack?.knapIcon && scene.textures.exists(stack.knapIcon)) {
-        key = stack.knapIcon;
-    }
+    let key = carriedStackIconKey(scene, stack, meta);
     if (!scene.textures.exists(key)) {
         key = scene.textures.exists("null") ? "null" : "";
     }

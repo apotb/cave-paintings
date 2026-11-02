@@ -19,6 +19,9 @@
     const SOURCE_PRIMARY = [0x71, 0x71, 0x71];
     const SOURCE_SECONDARY = [0x4d, 0x4d, 0x4d];
     const DEFAULT_STONE = "andesite";
+    /** Picture used when a recipe needs a hard rock and no rock has been chosen yet. */
+    const HARD_STONE = "diorite";
+    const HARD_ICON = { arrow: true, blade: true, hand_axe: true, cleaver: true };
     /** Preferred stone owns this much of the noise range. The rest is smaller patches. */
     const WIDE_BAND = 0.62;
     const TYPES = {
@@ -30,7 +33,7 @@
     };
     const TYPE_ORDER = ["limestone", "sandstone", "andesite", "diorite", "granite"];
     /** Stuffable ids that can be flint. Pebbles, grindstones, painting circles, and rocks stay world stones. */
-    const FLINT_STUFF = { stone_spear: true };
+    const FLINT_STUFF = { stone_spear: true, arrow: true };
     const CLASS_DAMAGE = {
         knife: 7,
         blade: 8,
@@ -102,6 +105,11 @@
         return id === "flint" || id === "flint_tool" || id === "flint_spear";
     }
 
+    /** Andesite for ordinary icons. Diorite for blades, arrows, and the other hard-rock shapes. */
+    function iconStone(id) {
+        return HARD_ICON[id] ? HARD_STONE : DEFAULT_STONE;
+    }
+
     function normalizeStone(id) {
         if (TYPES[id]) return id;
         if (id === "pebble") return DEFAULT_STONE;
@@ -137,7 +145,7 @@
     /** Items that keep a stone (or flint, for a spear). Pebbles are the raw stuff. */
     function isStuffableItem(id) {
         return id === "pebble" || id === "grindstone" || id === "painting_circle"
-            || id === "stone_spear" || id === "flint_spear";
+            || id === "stone_spear" || id === "flint_spear" || id === "arrow";
     }
 
     /** Stacks split by stone. A blank field is andesite. Spears do not. */
@@ -192,7 +200,7 @@
         if (!craftTakesStuff(id)) return null;
         const src = firstStuffStack(recipe, bags);
         if (!src) return null;
-        if (id === "stone_spear" || id === "flint_spear") {
+        if (id === "stone_spear" || id === "flint_spear" || id === "arrow") {
             const mat = src.knapMaterial;
             if (mat !== "flint" && mat !== "pebble") return null;
             const stack = { id, knapMaterial: mat };
@@ -211,7 +219,8 @@
         if (named) return named;
         const id = stack.id;
         if (id === "pebble" || id === "grindstone" || id === "painting_circle"
-            || id === "stone_tool" || id === "stone_spear" || stack.knapMaterial === "pebble") {
+            || id === "stone_tool" || id === "stone_spear" || id === "arrow"
+            || stack.knapMaterial === "pebble") {
             return DEFAULT_STONE;
         }
         return null;
@@ -520,6 +529,7 @@
     /** Raw knapping stones only. Finished tools and grindstones keep stone stats out of the tooltip. */
     function statLinesFor(stack, itemDef) {
         if (stack?.toolClass || stack?.id === "stone_spear" || stack?.id === "flint_spear"
+            || stack?.id === "arrow" || stack?.id === "shortbow" || stack?.id === "longbow"
             || stack?.id === "grindstone" || stack?.id === "painting_circle") return [];
         if (stack?.id === "pebble" || normalizeStone(stack?.stone)) return linesFromProps(propsOf(stack));
         return statLines(itemDef);
@@ -535,6 +545,19 @@
         }
         if (stack.id === "painting_circle") {
             return `${propsOf(stack, getItem).name} Painting Circle`;
+        }
+        if (stack.id === "shortbow" || stack.id === "longbow") {
+            const label = stack.id === "longbow" ? "Longbow" : "Shortbow";
+            return withQuality(label, stack.knapQuality);
+        }
+        if (stack.id === "arrow") {
+            const m = stack.knapMaterial;
+            // No rock yet: the card stays "Stone Arrow". Diorite is only the picture.
+            if (m !== "flint" && m !== "pebble" && !normalizeStone(stack.stone)) return null;
+            const matName = isFlintStack(stack)
+                ? props("flint", getItem).name
+                : propsOf(stack, getItem).name;
+            return withQuality(`${matName} Arrow`, stack.knapQuality);
         }
         if (stack.id === "stone_spear" || stack.id === "flint_spear") {
             const m = stack.knapMaterial;
@@ -608,6 +631,8 @@
     return {
         DEFAULTS,
         TYPES,
+        HARD_STONE,
+        iconStone,
         WIDE_BAND,
         CLASS_DAMAGE,
         HAND_AXE_HARDNESS,

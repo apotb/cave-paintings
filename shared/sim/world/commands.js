@@ -31,6 +31,14 @@
         return null;
     }
 
+    function rangedApi() {
+        if (typeof Ranged !== "undefined" && Ranged.sameArrow) return Ranged;
+        try {
+            if (typeof require === "function") return require("../../ranged");
+        } catch (_) { /* browser build uses the Ranged global */ }
+        return null;
+    }
+
     /**
      * Optional tail of /give <item> [qty] [stuff]. Stuff depends on the item.
      * @returns {{ extras?: object, error?: string }}
@@ -38,7 +46,7 @@
     function isStuffableItem(id) {
         const api = stoneApi();
         if (typeof api?.isStuffableItem === "function") return api.isStuffableItem(id);
-        return id === "pebble" || id === "grindstone" || id === "painting_circle" || id === "stone_spear";
+        return id === "pebble" || id === "grindstone" || id === "painting_circle" || id === "stone_spear" || id === "arrow";
     }
 
     function giveStuff(meta, stuff) {
@@ -47,9 +55,12 @@
         const stuffable = isStuffableItem(id);
         if (!raw) {
             if (!stuffable) return { extras: {} };
-            const stone = stoneApi()?.stoneOf?.({ id }) || "andesite";
+            const api0 = stoneApi();
+            const stone = id === "arrow"
+                ? (api0?.iconStone?.(id) || "diorite")
+                : (api0?.stoneOf?.({ id }) || "andesite");
             const extras = { stone };
-            if (id === "stone_spear") {
+            if (id === "stone_spear" || id === "arrow") {
                 extras.knapMaterial = "pebble";
                 extras.knapQuality = "rough";
             }
@@ -65,7 +76,7 @@
             return { extras: { knapMaterial: "flint", knapQuality: "rough" } };
         }
         const extras = { stone: picked };
-        if (id === "stone_spear") {
+        if (id === "stone_spear" || id === "arrow") {
             extras.knapMaterial = "pebble";
             extras.knapQuality = "rough";
         }
@@ -314,6 +325,10 @@
             const pawn = this._actionPawn(p, action);
             const i = Number(action.index);
             if (pawn && Number.isInteger(i) && i >= 0 && i < (pawn.inventory?.length || 0)) {
+                if (this._bowHandLocked?.(pawn) && i !== (pawn.hotbarIndex | 0)) {
+                    this._youDirty.add(p.id);
+                    return;
+                }
                 if (pawn.eatChannel && pawn.eatChannel.itemIndex !== i) {
                     pawn.eatChannel = null;
                     this.pushEvent({
@@ -475,6 +490,10 @@
             this._tryAttack(p, Number(action.angle) || 0, action.pawnId);
             return;
         }
+        if (type === Protocol.Actions.SHOOT) {
+            this._tryShoot(p, action);
+            return;
+        }
         if (type === Protocol.Actions.COMMAND) {
             this._runCommand(p, String(action.text || ""), action);
             return;
@@ -550,7 +569,7 @@
                 this._pushDrop(pawn.x, pawn.y, drop);
             }
             const stones = stoneApi();
-            const named = stones?.displayName && (meta.id === "pebble" || meta.id === "stone_spear")
+            const named = stones?.displayName && (meta.id === "pebble" || meta.id === "stone_spear" || meta.id === "arrow")
                 ? stones.displayName({ id: meta.id, ...(applied.extras || {}) })
                 : null;
             const label = named || meta.name || meta.id;
@@ -945,7 +964,7 @@
         if (fitNow() <= 0 && unitW > 0) return remaining;
         for (let i = 0; i < p.inventory.length && remaining > 0; i++) {
             const s = p.inventory[i];
-            if (!s || s.id !== itemId || this._stackIsSpecial(s) || incomingUnique) continue;
+            if (!s || s.id !== itemId || !this._canTopUp(s, extraFields, itemId, incomingUnique)) continue;
             if (itemId === "pebble" || itemId === "grindstone" || itemId === "painting_circle") {
                 if (!this._samePebbleStone(s, extraFields)) continue;
             }
@@ -980,7 +999,7 @@
         const over = p.overflow || [];
         for (let i = 0; i < over.length && remaining > 0; i++) {
             const s = over[i];
-            if (!s || s.id !== itemId || this._stackIsSpecial(s) || incomingUnique) continue;
+            if (!s || s.id !== itemId || !this._canTopUp(s, extraFields, itemId, incomingUnique)) continue;
             if (itemId === "pebble" || itemId === "grindstone" || itemId === "painting_circle") {
                 if (!this._samePebbleStone(s, extraFields)) continue;
             }
@@ -1444,7 +1463,7 @@
         let storageDirty = false;
         for (const ing of recipe.ingredients) {
             const lost = this._loseMatchingItems(p, scoped(ing), extra);
-            if (ing.toolClass === "spear_tip") {
+            if (ing.toolClass === "spear_tip" || ing.toolClass === "blade") {
                 if (lost.knapQuality) tipQuality = lost.knapQuality;
                 if (lost.knapMaterial) tipMaterial = lost.knapMaterial;
                 if (tipStone == null && lost.stone) tipStone = lost.stone;
@@ -1455,10 +1474,20 @@
         this._consumeCraftTool(p, recipe);
 
         const extras = {};
-        if (recipe.id === "stone_spear" || recipe.id === "flint_spear") {
+        if (recipe.id === "stone_spear" || recipe.id === "flint_spear" || recipe.id === "arrow") {
             extras.knapMaterial = tipMaterial || "pebble";
             if (tipQuality) extras.knapQuality = tipQuality;
             if (tipStone) extras.stone = tipStone;
+        }
+        if (recipe.id === "shortbow" || recipe.id === "longbow") {
+            const skills = this._skillsApi?.();
+            const lv = skills?.pawnLevel?.(p, "crafting");
+            const offset = skills?.traitStat?.(p.bio, "craftingQuality") || 0;
+            let grade = null;
+            if (skills && lv != null && typeof skills.knapQuality === "function") {
+                grade = skills.knapQuality(lv, this.rng, offset);
+            }
+            extras.knapQuality = grade || "crude";
         }
         if (recipe.id === "grindstone" || recipe.id === "painting_circle") {
             extras.stone = pebbleStone || "andesite";
@@ -1955,6 +1984,29 @@
         return this._samePebbleStone(a, b);
     },
 
+    /**
+     * Arrows stack when the stone and the blade grade match, even though
+     * those fields mark a stack as special.
+     */
+    _canTopUp(stack, extraFields, itemId, incomingUnique) {
+        if (itemId === "arrow") {
+            const R = rangedApi();
+            if (!R?.sameArrow) return false;
+            return R.sameArrow(stack, { id: "arrow", ...(extraFields || {}) });
+        }
+        return !this._stackIsSpecial(stack) && !incomingUnique;
+    },
+
+    _stacksCombine(a, b) {
+        if (!a?.id || !b?.id || a.id !== b.id) return false;
+        if (a.id === "arrow") {
+            const R = rangedApi();
+            return !!(R && R.sameArrow(a, b));
+        }
+        if (this._stackIsSpecial(a) || this._stackIsSpecial(b)) return false;
+        return this._canMergeStone(a, b);
+    },
+
     _stackIsSpecial(s) {
         return !!(s && (
             s.customName || s.food || s.ingredients?.length || s.toolClass
@@ -2093,6 +2145,7 @@
             cx: c?.cx,
             cy: c?.cy
         };
+        if (Number.isFinite(Number(d.lodged))) out.lodged = Number(d.lodged);
         const extras = this._stackExtrasFrom(d);
         if (extras) {
             // World drops use spoilAt; don't also ship spoilLeft

@@ -1111,7 +1111,7 @@ class ResearchTreePanel {
         this._detailHits = [];
     }
 
-    /** Andesite class shape, the same picture a knapping bill uses. */
+    /** Default class shape. Hard rocks use diorite, the same picture a knapping bill uses. */
     _knapUnlockIconKey(label) {
         const R = typeof Research !== "undefined" ? Research : null;
         const text = typeof label === "object" ? label?.label : label;
@@ -1120,7 +1120,10 @@ class ResearchTreePanel {
         if (typeof Knapping === "undefined" || !Knapping.carveShapeIcon || !Knapping.ensureToolTexture) {
             return null;
         }
-        const data = Knapping.carveShapeIcon(this.scene, row.toolClass, "andesite");
+        const stone = (typeof Stone !== "undefined" && Stone.iconStone)
+            ? Stone.iconStone(row.toolClass)
+            : "andesite";
+        const data = Knapping.carveShapeIcon(this.scene, row.toolClass, stone);
         if (!data) return null;
         const key = Knapping.ensureToolTexture(this.scene, {
             knapIconData: data,
@@ -1131,6 +1134,14 @@ class ResearchTreePanel {
 
     _itemIconKey(itemId) {
         if (!itemId) return null;
+        // Research has no blade. The tip is diorite; the name stays Stone Arrow.
+        if (itemId === "arrow" && typeof ensureArrowTexture === "function") {
+            const stone = (typeof Stone !== "undefined" && Stone.iconStone)
+                ? Stone.iconStone("arrow")
+                : "diorite";
+            const key = ensureArrowTexture(this.scene, stone);
+            if (key && this.scene.textures.exists(key)) return key;
+        }
         // Research has no rock. The icon uses andesite gray; the name stays Stone Spear.
         if (itemId === "stone_spear" && typeof ensureSpearTexture === "function") {
             const key = ensureSpearTexture(this.scene, "andesite");

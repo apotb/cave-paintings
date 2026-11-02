@@ -554,6 +554,17 @@
         ]
     },
     {
+        "id": "sinew",
+        "name": "Sinew",
+        "key": "sinew",
+        "maxStack": 99,
+        "weight": 0.2,
+        "food": {
+            "kc": 0,
+            "spoil": 72
+        }
+    },
+    {
         "id": "leaf",
         "name": "Leaves",
         "key": "leaves",
@@ -876,6 +887,72 @@
                 "toolClass": ["knife", "scraper"],
                 "wear": 5
             }
+        }
+    },
+    {
+        "id": "shortbow",
+        "name": "Shortbow",
+        "key": "shortbow",
+        "storageCategory": "tools",
+        "maxStack": 1,
+        "durability": 80,
+        "weight": 1.2,
+        "weapon": {
+            "type": "ranged",
+            "range": 224
+        },
+        "recipe": {
+            "log": 1,
+            "sinew": 2,
+            "CRAFT_SECONDS": 16,
+            "REQUIRE_TOOL": {
+                "toolClass": ["knife", "scraper"],
+                "wear": 5
+            }
+        }
+    },
+    {
+        "id": "longbow",
+        "name": "Longbow",
+        "key": "longbow",
+        "storageCategory": "tools",
+        "maxStack": 1,
+        "durability": 80,
+        "weight": 1.2,
+        "weapon": {
+            "type": "ranged",
+            "range": 320
+        },
+        "tooltip": [
+            "Charge a shot then let loose"
+        ],
+        "recipe": {
+            "log": 1,
+            "sinew": 4,
+            "CRAFT_SECONDS": 24,
+            "REQUIRE_TOOL": {
+                "toolClass": ["knife", "scraper"],
+                "wear": 5
+            }
+        }
+    },
+    {
+        "id": "arrow",
+        "name": "Stone Arrow",
+        "key": "arrow_body",
+        "maxStack": 99,
+        "weight": 0.08,
+        "ammo": true,
+        "recipe": {
+            "stick": 4,
+            "reed": 8,
+            "leaf_cord": 4,
+            "stone_tool": {
+                "qty": 1,
+                "toolClass": "blade"
+            },
+            "QUANTITY": 4,
+            "CRAFT_SECONDS": 8
         }
     },
     {

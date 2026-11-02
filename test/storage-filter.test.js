@@ -150,7 +150,7 @@ test("knapped stack uses toolClass key not unique silhouette", () => {
     const ids = (tools.items || []).map((it) => it.id);
     assert.deepEqual(ids, [
         "tool:awl", "tool:blade", "bone", "tool:chopper", "tool:cleaver", "digging_stick",
-        "flimsy_rod", "tool:hand_axe", "tool:knife", "tool:scraper"
+        "flimsy_rod", "tool:hand_axe", "tool:knife", "longbow", "tool:scraper", "shortbow"
     ]);
     assert.equal(ids.includes("stone_tool"), false);
     assert.equal(ids.includes("flint_tool"), false);

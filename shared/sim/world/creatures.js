@@ -583,11 +583,16 @@
         } else {
             creature.name = p.name || creature.name;
             creature.inventory = p.inventory;
+            creature.overflow = p.overflow;
             creature.equipment = p.equipment;
             creature.hotbarIndex = p.hotbarIndex ?? 0;
             // Do not loadJSON(p.body) here — that would wipe live combat injuries.
         }
         p.creature = creature;
+        creature.inventory = p.inventory;
+        creature.overflow = p.overflow;
+        creature.equipment = p.equipment;
+        creature.hotbarIndex = p.hotbarIndex ?? 0;
         creature.bio = p.bio || null;
         creature.x = p.x;
         creature.y = p.y;
@@ -605,6 +610,7 @@
         creature.y = p.y;
         creature.facing = p.facing || creature.facing;
         creature.inventory = p.inventory;
+        creature.overflow = p.overflow;
         creature.equipment = p.equipment;
         creature.hotbarIndex = p.hotbarIndex ?? 0;
         creature.ownerId = p.id;

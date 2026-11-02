@@ -386,7 +386,7 @@
 
         applyHit(attacker, target, attack, opts = null) {
             if (!target?.anatomy || !attack) return null;
-            if (attacker && attacker !== target && Party?.sameFaction?.(attacker, target)) {
+            if (!opts?.friendlyOk && attacker && attacker !== target && Party?.sameFaction?.(attacker, target)) {
                 return null;
             }
             // Destroyed core is fatal, but isCutOff skips it so later rolls still
@@ -401,26 +401,29 @@
                 ? Skills
                 : (() => { try { return require("../skills"); } catch (_) { return null; } })();
             const day = attacker?.ctx?.sim?.gameDay ?? target?.ctx?.sim?.gameDay;
-            if (skills && attacker?.bio && skills.incapable(attacker.bio, "melee")) return null;
-            if (skills && attacker?.bio) {
-                const lv = skills.effectiveLevel(attacker.bio, "melee");
-                if (lv == null) return null;
-                if (math.random() >= skills.meleeHitChance(attacker)) {
-                    logMiss(attacker, target, attack);
-                    return { missed: true, dodged: false, damage: 0, part: null };
+            if (!opts?.ranged) {
+                if (skills && attacker?.bio && skills.incapable(attacker.bio, "melee")) return null;
+                if (skills && attacker?.bio) {
+                    const lv = skills.effectiveLevel(attacker.bio, "melee");
+                    if (lv == null) return null;
+                    if (math.random() >= skills.meleeHitChance(attacker)) {
+                        logMiss(attacker, target, attack);
+                        return { missed: true, dodged: false, damage: 0, part: null };
+                    }
+                }
+                if (skills && target?.bio && !skills.incapable(target.bio, "melee")) {
+                    const lv = skills.effectiveLevel(target.bio, "melee");
+                    if (lv != null && math.random() < skills.meleeDodgeChance(target)) {
+                        skills.award(target.bio, "melee", skills.XP_HIT, { day });
+                        logMiss(attacker, target, attack);
+                        return { missed: true, dodged: true, damage: 0, part: null };
+                    }
+                }
+                if (skills && attacker?.bio && !skills.incapable(attacker.bio, "melee")) {
+                    skills.award(attacker.bio, "melee", skills.XP_HIT, { day });
                 }
             }
-            if (skills && target?.bio && !skills.incapable(target.bio, "melee")) {
-                const lv = skills.effectiveLevel(target.bio, "melee");
-                if (lv != null && math.random() < skills.meleeDodgeChance(target)) {
-                    skills.award(target.bio, "melee", skills.XP_HIT, { day });
-                    logMiss(attacker, target, attack);
-                    return { missed: true, dodged: true, damage: 0, part: null };
-                }
-            }
-            if (skills && attacker?.bio && !skills.incapable(attacker.bio, "melee")) {
-                skills.award(attacker.bio, "melee", skills.XP_HIT, { day });
-            }
+            target.ctx?.sim?.cancelBowDraw?.(target);
             const defs = injuryDefs(host);
             let victimPart = target.anatomy.rollLimb();
             if (!victimPart || victimPart.isDead()) {

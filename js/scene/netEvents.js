@@ -91,6 +91,18 @@
             this.partySys?.clearPvpAggro?.(ev.playerId);
             this._netRemoveRemotesForOwner(ev.playerId);
         }
+        if (ev.kind === "arrow") {
+            if (typeof spawnArrowFlight === "function") spawnArrowFlight(this, ev);
+        }
+        if (ev.kind === "bow_cancel") {
+            const id = ev.pawnId;
+            const pawn = (this.player?.pawnId === id && this.player)
+                || (this.party || []).find((p) => p && p.pawnId === id)
+                || (this.settlers || []).find((p) => p && p.pawnId === id)
+                || null;
+            pawn?._cancelBowDraw?.({ silent: true });
+            if (pawn?.attackWeapon?.bow) pawn._endAttack?.();
+        }
         if (ev.kind === "attack") {
             const selfId = this._netPlayerId || this.net?.playerId;
             if (ev.playerId && ev.playerId !== selfId) {
@@ -302,7 +314,7 @@
                 if (hook) this.hideChannelBar?.();
                 else if (fishLive && typeof pawn._netWorkChannel?.progress === "number") {
                     this.showChannelBar?.(pawn._netWorkChannel.progress);
-                }                 else if (
+                } else if (
                     !pawn._eatChannel
                     && !pawn._tendChannel
                     && !pawn._skinChannel
@@ -310,6 +322,8 @@
                     && !pawn._reedChannel
                     && !pawn._brainChannel
                     && !pawn._craftChannel
+                    && !pawn._bowChannel
+                    && !pawn.bowHandLocked?.()
                 ) {
                     this.hideChannelBar?.();
                 }
@@ -349,9 +363,11 @@
                 && !pawn._reedChannel
                 && !pawn._brainChannel
                 && !pawn._craftChannel
+                && !pawn._bowChannel
+                && !pawn.bowHandLocked?.()
             ) {
-                // Hunger YOU has no eat channel. A fish cast is only the net
-                // channel, so hiding here blanked the bar on every hunger tick.
+                // Hunger YOU has no eat channel. A fish cast, a bow draw, or the
+                // post-shot drain owns the bar, so hiding here blanked it.
                 const fish = pawn._netWorkChannel;
                 if (fish?.kind === "fish" && typeof fish.progress === "number") {
                     this.showChannelBar?.(fish.progress);

@@ -529,15 +529,18 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const paintProg = typeof this._paintChannel?.progress === "number"
             ? Phaser.Math.Clamp(this._paintChannel.progress, 0, 1)
             : null;
+        const bowFrac = typeof this._bowBar === "number" ? this._bowBar : null;
         if (this.isControlled()) {
             this._hideOwnChannelBar();
             return;
         }
-        if (netProg == null && !ch && paintProg == null) {
+        if (netProg == null && !ch && paintProg == null && bowFrac == null) {
             this._hideOwnChannelBar();
             return;
         }
-        const frac = netProg != null
+        const frac = bowFrac != null
+            ? Phaser.Math.Clamp(bowFrac, 0, 1)
+            : netProg != null
             ? Phaser.Math.Clamp(netProg, 0, 1)
             : ch
                 ? Phaser.Math.Clamp(1 - ch.remaining / ch.max, 0, 1)
@@ -770,6 +773,18 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const qty = Math.max(1, Math.floor(Number(stack.quantity) || 1));
         if ((this.countLootSpace?.(stack, qty) ?? 0) < qty) return false;
 
+        if (stack.id === "arrow") {
+            const meta = this.scene.getItem(stack.id);
+            if (!meta) return false;
+            const now = this.scene.worldMinuteIndex?.() ?? null;
+            const left = spoilLeftForCharacter(stack, now);
+            const remaining = this.gainItem(meta, qty, left, {
+                knapQuality: stack.knapQuality,
+                knapMaterial: stack.knapMaterial,
+                stone: stack.stone
+            });
+            return remaining === 0;
+        }
         const special = typeof isSpecialStack === "function"
             ? isSpecialStack(stack)
             : !!(stack.customName || stack.food || stack.ingredients || stack.toolClass);
@@ -837,6 +852,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.capacities = new Capacities(this.anatomy);
         this._refreshDownedState();
         this.scene.healthPanel?.refresh?.();
+        if (_result?.damage > 0) this._cancelBowDraw?.();
         if (!(_result?.damage > 0)) return;
         if (this._restWalk) {
             this._restWalk = null;
@@ -1382,6 +1398,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      */
     equipFromHotbar(hotbarIndex, slotKey, bag = 'hotbar') {
         const fromBag = bag === 'overflow' ? 'overflow' : 'hotbar';
+        if (fromBag === "hotbar" && this.bowHandLocked() && hotbarIndex === this._heldSlotIndex()) {
+            return { ok: false, reason: "bow_cd" };
+        }
         const inv = this.bagArray(fromBag);
         const stack = inv[hotbarIndex];
         if (!stack) return { ok: false, reason: 'empty' };
@@ -1464,6 +1483,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
 
         const toBag = bag === 'overflow' ? 'overflow' : 'hotbar';
+        if (toBag === "hotbar" && this.bowHandLocked() && hotbarIndex === this._heldSlotIndex()) {
+            return { ok: false, reason: "bow_cd" };
+        }
         if (toBag === 'overflow' && slotKey === 'back') {
             return { ok: false, reason: 'wrong_slot' };
         }
@@ -1696,9 +1718,37 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return !!(holder && R.hasTech(holder, "digging"));
     }
 
+    /** A drawn longbow eases back toward the body as the charge fills. */
+    _placeBowSprite(angle, progress) {
+        const spr = this.weaponSprite;
+        if (!spr) return;
+        this.syncFxRoot?.();
+        const pull = Math.max(0, Math.min(1, Number(progress) || 0));
+        const ang = Number.isFinite(angle) ? angle : 0;
+        // Grip sits on a whole texel. A fractional origin plus the ease-back
+        // crawl made the 1px string pop on and off under nearest filtering.
+        spr.setOrigin(0.125, 0.5).setRotation(ang).setVisible(true);
+        const c = this.bodyCenterLocal?.() || { x: 8, y: -8 };
+        const dist = 8 - 5 * pull;
+        spr.setPosition(
+            Math.round(c.x + Math.cos(ang) * dist),
+            Math.round(c.y + Math.sin(ang) * dist)
+        );
+        spr.setDepth(1);
+    }
+
     /** Rebuild held-weapon meta from a server attack-art payload. */
     _weaponMetaFromNetArt(art) {
         if (!art || art.unarmed || !(art.key || art.itemId)) return null;
+        if (art.bow) {
+            const key = art.key || art.itemId;
+            if (!key || !this.scene?.textures?.exists?.(key)) return null;
+            return {
+                key,
+                id: art.itemId || key,
+                weapon: { type: "bow", bow: true, range: 8 }
+            };
+        }
         const scene = this.scene;
         let key = art.key || art.itemId;
         if ((art.itemId === "stone_spear" || art.itemId === "flint_spear")
@@ -1778,8 +1828,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
         // Offhand fist / pure unarmed: short reach — never inherit spear range/art.
         // Server puppets may have a stale local pick; trust attack-art when present.
-        const artWeapon = !!(art && !art.unarmed && held?.weapon?.type === "melee");
-        const useWeaponArt = !!(held?.key && held?.weapon?.type === "melee" && (artWeapon || !attack.unarmed));
+        const bowArt = !!held?.weapon?.bow;
+        const artWeapon = !!(art && !art.unarmed && (held?.weapon?.type === "melee" || bowArt));
+        const useWeaponArt = !!(held?.key && (held?.weapon?.type === "melee" || bowArt) && (artWeapon || !attack.unarmed));
         this.attackWeapon = useWeaponArt
             ? held.weapon
             : { type: "melee", range: attack.range || 4, hitStart: 0.25, hitEnd: 0.75 };
@@ -1861,9 +1912,14 @@ class Player extends Phaser.Physics.Arcade.Sprite {
     _tickAttack(dt, checkHits = true) {
         if (!this.isAttacking()) return;
         const progress = this._attackProgress();
+        const bowPose = !!this.attackWeapon?.bow;
         if (this.weaponSprite?.visible) this._updateWeaponSprite(progress);
         if (this.unarmedSprite?.visible) this._updateUnarmedSprite(progress);
-        if (checkHits) this._meleeHitCheck(progress);
+        if (checkHits && !bowPose) this._meleeHitCheck(progress);
+        if (bowPose) {
+            this._bowBar = progress;
+            if (!this.isControlled?.()) this.syncPawnChannelBar?.();
+        }
         this.attackTimer -= dt;
         if (this.attackTimer <= 0) {
             if (this._netAttacking && !this.isControlled?.()) this._netSwingDone = true;
@@ -1889,6 +1945,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
     _updateWeaponSprite(progress) {
         if (!this.weaponSprite || !this.attackWeapon) return;
+        if (this.attackWeapon.bow) {
+            this._placeBowSprite(this.attackAngle, progress);
+            return;
+        }
         this.syncFxRoot();
         const range = Number(this.attackWeapon.range) || 12;
         const thrust = this._spearThrust(progress);
@@ -2256,6 +2316,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this._knapGripCell = null;
         if (this.weaponSprite) this.weaponSprite.setVisible(false);
         if (this.unarmedSprite) this.unarmedSprite.setVisible(false);
+        if (this._bowBar != null) {
+            this._bowBar = null;
+            if (!this.isControlled?.()) this._hideOwnChannelBar?.();
+        }
         if (this.isControlled?.()) {
             this.tooltipBlockUntil = (this.scene.time?.now ?? 0) + 250;
         }
@@ -2357,10 +2421,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         let space = 0;
         const countBag = (arr, cap) => {
-            if (!special) {
+            if (!special || item.id === "arrow") {
                 for (const slot of arr || []) {
                     if (!slot || slot.id !== item.id || slot.quantity >= maxStack) continue;
-                    if (slot.customName || slot.food || slot.ingredients || slot.toolClass) continue;
+                    if (item.id === "arrow") {
+                        if (typeof Ranged === "undefined" || !Ranged.sameArrow(slot, stack)) continue;
+                    } else if (slot.customName || slot.food || slot.ingredients || slot.toolClass) continue;
                     space += maxStack - slot.quantity;
                 }
             }
@@ -2423,13 +2489,20 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             : !!(extras?.customName || extras?.food || extras?.ingredients
                 || extras?.toolClass || extras?.formClass || extras?.formVoxels);
         for (const slot of arr) {
-            if (incomingUnique) break;
-            if (!slot || slot.id !== item.id || slot.quantity >= maxStack) continue;
-            if (slot.customName || slot.food || slot.ingredients || slot.toolClass
-                || slot.formClass || slot.formVoxels) continue;
-            if ((item.id === "pebble" || item.id === "grindstone" || item.id === "painting_circle")
-                && typeof Stone !== "undefined" && Stone.stoneKey
-                && Stone.stoneKey(slot) !== Stone.stoneKey(extras)) continue;
+            if (item.id === "arrow") {
+                if (!slot || slot.id !== "arrow" || slot.quantity >= maxStack) continue;
+                if (typeof Ranged === "undefined" || !Ranged.sameArrow(slot, { id: "arrow", ...(extras || {}) })) {
+                    continue;
+                }
+            } else {
+                if (incomingUnique) break;
+                if (!slot || slot.id !== item.id || slot.quantity >= maxStack) continue;
+                if (slot.customName || slot.food || slot.ingredients || slot.toolClass
+                    || slot.formClass || slot.formVoxels) continue;
+                if ((item.id === "pebble" || item.id === "grindstone" || item.id === "painting_circle")
+                    && typeof Stone !== "undefined" && Stone.stoneKey
+                    && Stone.stoneKey(slot) !== Stone.stoneKey(extras)) continue;
+            }
             const space = maxStack - slot.quantity;
             const toAdd = Math.min(space, remaining, fitNow());
             if (!(toAdd > 0)) break;
@@ -2575,6 +2648,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return sum;
     }
 
+    /** True while the bow's post-shot bar is still draining. The held slot stays put. */
+    bowHandLocked() {
+        return (this._bowCd | 0) > 0;
+    }
+
     getHeldItem() {
         const idx = this._heldSlotIndex();
         return this.inventory[idx] || null;
@@ -2617,6 +2695,252 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         return null;
     }
 
+    _bowAimPoint() {
+        const pointer = this.scene?.input?.activePointer;
+        const cam = this.scene?.cameras?.main;
+        const c = this.bodyCenter?.() || { x: this.x, y: this.y };
+        if (!pointer || !cam?.getWorldPoint || typeof Ranged === "undefined") {
+            return { x: c.x, y: c.y };
+        }
+        const world = cam.getWorldPoint(pointer.x, pointer.y);
+        const tiles = typeof Ranged.rangeTiles === "function"
+            ? Ranged.rangeTiles(this.getHeldItem?.())
+            : Ranged.RANGE_TILES;
+        return Ranged.clampAim(
+            c.x, c.y, world.x, world.y,
+            tiles, this.scene.tileSize || 16
+        );
+    }
+
+    _sendBowAim(aim, cancel) {
+        if (!this.scene?.simAuth?.() || !this.scene.net?.connected) return;
+        this.scene.net.sendAction({
+            type: NetProtocol.Actions.SHOOT,
+            x: aim?.x,
+            y: aim?.y,
+            pawnId: this.pawnId,
+            cancel: !!cancel
+        });
+    }
+
+    /** Space looses. A longbow charges first. A hit drops a charge and keeps the arrow. */
+    startBowDraw() {
+        if (this._bowChannel || this._bodyDead || this.isAttacking()) return false;
+        if ((this._bowCd | 0) > 0) return false;
+        if (this._resting || this.isVomiting() || this.isIncapacitated() || this.isImmobile()) return false;
+        if (this._prone || this._downed || this._netProne) return false;
+        if (this._eatChannel || this._tendChannel || this._skinChannel || this._fleshChannel
+            || this._reedChannel || this._brainChannel || this._craftChannel) return false;
+        const held = this.getHeldItem();
+        const meta = held ? this.scene.getItem(held.id) : null;
+        if (meta?.weapon?.type !== "ranged" || typeof Ranged === "undefined" || !Ranged.isBowStack(held)) return false;
+        if (typeof Skills !== "undefined" && Skills.incapable(this.bio, "shooting")) return false;
+        if (!Ranged.firstArrow(this.inventory, this.overflow)) return false;
+        const aim = this._bowAimPoint();
+        const max = Ranged.aimMs(held);
+        if (!(max > 0)) {
+            const c = this.bodyCenter?.() || { x: this.x, y: this.y };
+            const ang = Math.atan2(aim.y - c.y, aim.x - c.x);
+            if (Number.isFinite(ang)) {
+                this.attackAngle = ang;
+                this.facing = this.facingFromAngle(ang);
+            }
+            this._sendBowAim(aim, false);
+            this._bowCdMax = Ranged.COOLDOWN_MS;
+            this._bowCd = this._bowCdMax;
+            this._bowCdShown = true;
+            this._showChannelBar(1);
+            if (!this.scene?.simAuth?.()) this._looseBowLocal(aim);
+            return true;
+        }
+        this._bowChannel = { remaining: max, max, aim, sentAt: 0 };
+        this._sendBowAim(aim, false);
+        this._showBowInHand(0, aim);
+        this._showChannelBar(0);
+        return true;
+    }
+
+    _showBowInHand(progress, aim) {
+        const c = this.bodyCenter?.() || { x: this.x, y: this.y };
+        const ang = Math.atan2((aim?.y ?? c.y) - c.y, (aim?.x ?? c.x) - c.x);
+        const key = this.getHeldItem()?.id;
+        if (key !== "shortbow" && key !== "longbow") return;
+        if (!this.scene?.textures?.exists?.(key)) return;
+        if (!this.weaponSprite) {
+            this.weaponSprite = this.scene.add.image(0, 0, key).setVisible(false);
+        } else if (this.weaponSprite.texture?.key !== key) {
+            this.weaponSprite.setTexture(key);
+        }
+        this._attachAttackSprite(this.weaponSprite);
+        this.attackWeapon = { bow: true, type: "bow", range: 8 };
+        this.attackAngle = ang;
+        this._placeBowSprite(ang, progress);
+    }
+
+    _cancelBowDraw(opts = {}) {
+        const had = !!this._bowChannel;
+        this._bowChannel = null;
+        if (this.attackWeapon?.bow && !this.isAttacking?.()) {
+            this.attackWeapon = null;
+            this.weaponSprite?.setVisible(false);
+        }
+        if (this.isControlled?.() && !this.bowHandLocked()) this._hideChannelBar?.();
+        if (had && !opts.silent) this._sendBowAim(null, true);
+    }
+
+    _tickBowCooldownBar() {
+        if (this._bowChannel || !this.isControlled?.()) return;
+        if (this.bowHandLocked()) {
+            this._bowCdShown = true;
+            const max = this._bowCdMax || (typeof Ranged !== "undefined" && Ranged.COOLDOWN_MS) || 1400;
+            this._showChannelBar(Math.max(0, Math.min(1, this._bowCd / max)));
+            return;
+        }
+        if (this._bowCdShown) {
+            this._bowCdShown = false;
+            this._hideChannelBar();
+        }
+    }
+
+    _tickBowChannel(dt) {
+        if (this.bowHandLocked()) this._bowCd = Math.max(0, this._bowCd - dt);
+        const ch = this._bowChannel;
+        if (!ch) {
+            this._tickBowCooldownBar();
+            return;
+        }
+        const held = this.getHeldItem();
+        if (!held || typeof Ranged === "undefined" || !Ranged.isBowStack(held) || !(Ranged.aimMs(held) > 0)) {
+            this._cancelBowDraw();
+            return;
+        }
+        ch.remaining -= dt;
+        const aim = this._bowAimPoint();
+        ch.aim = aim;
+        const prog = 1 - ch.remaining / ch.max;
+        this._showBowInHand(Math.max(0, Math.min(1, prog)), aim);
+        this._showChannelBar(Math.max(0, Math.min(1, prog)));
+        const now = this.scene?.time?.now ?? 0;
+        if (now - (ch.sentAt || 0) > 80) {
+            ch.sentAt = now;
+            this._sendBowAim(aim, false);
+        }
+        if (ch.remaining > 0) return;
+        this._bowChannel = null;
+        this._bowCdMax = (typeof Ranged !== "undefined" && Ranged.COOLDOWN_MS) || 1400;
+        this._bowCd = this._bowCdMax;
+        this._bowCdShown = true;
+        if (this.attackWeapon?.bow && !this.isAttacking?.()) {
+            this.attackWeapon = null;
+            this.weaponSprite?.setVisible(false);
+        }
+        this._showChannelBar(1);
+        if (!this.scene?.simAuth?.()) this._looseBowLocal(aim);
+    }
+
+    _looseBowLocal(aim) {
+        if (typeof Ranged === "undefined" || typeof BodyCombat === "undefined") return;
+        const bow = this.getHeldItem();
+        if (!bow || !Ranged.isBowStack(bow)) return;
+        const found = Ranged.firstArrow(this.inventory, this.overflow);
+        const arrow = Ranged.spendArrow(found);
+        if (!arrow) return;
+        this.wearHeld(1);
+        if (typeof Thoughts !== "undefined" && this.scene) {
+            const now = (Number(this.scene.gameDay) || 1) * 1440 + (Number(this.scene.gameMinutes) || 0);
+            if (Thoughts.noteRanged(this, now)) Thoughts.refresh(this, now);
+        }
+        const from = this.bodyCenter?.() || { x: this.x, y: this.y };
+        const bodies = [];
+        const push = (list) => {
+            for (const b of list || []) if (b && b !== this) bodies.push(b);
+        };
+        push(this.scene.party);
+        push(this.scene.settlers);
+        if (this.scene.player && this.scene.player !== this) bodies.push(this.scene.player);
+        const mobs = this.scene.mobs?.getChildren?.() || this.scene.mobs;
+        push(mobs);
+        const tile = this.scene.tileSize || 16;
+        const shot = Ranged.release({
+            from,
+            aimX: aim?.x,
+            aimY: aim?.y,
+            shooter: this,
+            bodies,
+            tile,
+            rangeTiles: Ranged.rangeTiles(bow),
+            rng: Math.random,
+            accuracyAt: (tiles) => (typeof Skills !== "undefined"
+                ? Skills.shootingAccuracyAt(this, tiles)
+                : 0.5),
+            blocked: (x, y) => {
+                if (typeof this.scene.isWorldBlocked === "function") return this.scene.isWorldBlocked(x, y);
+                return false;
+            },
+            spare: (body) => Ranged.spareAlly(this, body, tile),
+            world: this.scene
+        });
+        const flight = Math.hypot(shot.to.x - from.x, shot.to.y - from.y);
+        const ms = Ranged.flightMs(flight);
+        if (typeof spawnArrowFlight === "function") {
+            spawnArrowFlight(this.scene, {
+                x: from.x,
+                y: from.y,
+                tx: shot.to.x,
+                ty: shot.to.y,
+                ms,
+                knapMaterial: arrow.knapMaterial,
+                stone: arrow.stone,
+                stick: !shot.target
+            });
+        }
+        const skills = typeof Skills !== "undefined" ? Skills : null;
+        const day = this.scene.gameDay;
+        const trying = Ranged.aimedNear(bodies, shot.aim?.x, shot.aim?.y, this, tile);
+        const land = () => {
+            let landed = false;
+            if (shot.target?.anatomy) {
+                const attack = {
+                    damage: Ranged.shotDamage(bow, arrow),
+                    type: "sharp",
+                    verb: "shot",
+                    weaponName: (typeof Stone !== "undefined" && Stone.displayName?.(bow)) || bow.id,
+                    sourcePart: { name: "arrow" },
+                    def: { variance: 0.1 },
+                    name: "Arrow"
+                };
+                const result = BodyCombat.applyHit(this, shot.target, attack, { ranged: true, friendlyOk: true });
+                landed = !!(result && !result.missed && result.damage > 0);
+            }
+            if (trying && skills) {
+                skills.award(this.bio, "shooting", landed ? skills.XP_HIT : Ranged.MISS_XP, { day });
+            }
+            if (!shot.target && typeof DroppedItem !== "undefined") {
+                const item = this.scene.getItem?.("arrow");
+                if (item) {
+                    DroppedItem.spawn(
+                        this.scene,
+                        shot.to.x,
+                        shot.to.y,
+                        item,
+                        1,
+                        undefined,
+                        {
+                            knapMaterial: arrow.knapMaterial,
+                            knapQuality: arrow.knapQuality,
+                            stone: arrow.stone,
+                            lodged: Math.atan2(shot.to.y - from.y, shot.to.x - from.x)
+                        },
+                        true
+                    );
+                }
+            }
+        };
+        if (ms > 0 && this.scene?.time?.delayedCall) this.scene.time.delayedCall(ms, land);
+        else land();
+        if (this.scene.hotbar) this.scene.hotbar.dirty = true;
+    }
+
     /** Hold Space to keep attacking (weapon or unarmed). */
     tryWeaponAutofire() {
         if (this.isAttacking() || this._tendChannel || this._skinChannel || this._fleshChannel || this._reedChannel || this._brainChannel || this._craftChannel || this._eatChannel || this._netWorkChannel?.kind === "fish" || this._bodyDead) return;
@@ -2644,6 +2968,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
         if (item.id === "clay" || item.id === "clay_figurine") {
             this._blockSpaceAutofire = true;
+            return;
+        }
+        if (meta?.weapon?.type === "ranged") {
+            if (this._bowChannel || (this._bowCd | 0) > 0) return;
+            this.startBowDraw();
             return;
         }
         const weaponMeta = this.getHeldWeaponMeta();
@@ -3609,7 +3938,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             return "attack";
         }
         if (meta?.weapon?.type === "ranged") {
-            return null;
+            this.startBowDraw();
+            return "attack";
         }
         if (meta.use === "light_fire") {
             this.scene.tryUseFirestarter();
@@ -3898,6 +4228,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (this._brainChannel) this._tickBrain(dt);
             if (this._craftChannel) this._tickCraft(dt);
             if (this._eatChannel) this._tickEat(dt);
+            this._tickBowChannel(dt);
             this._tickChopBar();
             this._tickVomit(dt);
             this.syncSortDepth();
@@ -3912,6 +4243,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this._brainChannel) this._tickBrain(dt);
         if (this._craftChannel) this._tickCraft(dt);
         if (this._eatChannel) this._tickEat(dt);
+        this._tickBowChannel(dt);
         this._tickChopBar();
         this._tickVomit(dt);
 
@@ -4140,6 +4472,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             ?? this.scene.terrainSpeedMult?.(this.x, this.y - 1)
             ?? 1;
         const attacking = this.isAttacking();
+        const drawing = !!this._bowChannel;
         const fishing = this._netWorkChannel?.kind === "fish";
         const tending = !!this._tendChannel || !!this._eatChannel || !!this._skinChannel
             || !!this._fleshChannel || !!this._reedChannel || !!this._brainChannel || !!this._craftChannel
@@ -4167,6 +4500,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             && !prone
             && !vomiting
             && !tending
+            && !drawing
             && !encumbrance.cannotSprint
             && this.kc > 0;
 
@@ -4174,6 +4508,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             ? moved.sprinting
             : !attacking
             && !tending
+            && !drawing
             && !vomiting
             && moving
             && this.keys?.SHIFT?.isDown
@@ -4181,6 +4516,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         let moveMul = this.capacities.moving();
         if (tending) moveMul *= 0.5;
+        if (drawing) moveMul *= 0.5;
         if (attacking) moveMul *= 0.5;
 
         const speed = moved
@@ -4210,7 +4546,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
 
         if (!prone && !vomiting) {
-            if (attacking) {
+            if (attacking || drawing) {
                 this.facing = this.facingFromAngle(this.attackAngle);
             } else if (fishing) {
                 const face = this._fishBobberFacing();
@@ -4234,7 +4570,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         if (Phaser.Input.Keyboard.JustDown(this.keys.Q)) {
             const heldItem = this.getHeldItem();
-            if (heldItem) {
+            if (heldItem && !this.bowHandLocked()) {
                 let amount = 1;
                 if (this.keys.SHIFT.isDown) amount = heldItem.quantity;
                 else if (this.keys.CTRL.isDown) amount = 10;

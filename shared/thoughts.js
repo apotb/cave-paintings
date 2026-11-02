@@ -52,6 +52,7 @@
             saw_corpse: ["Saw a corpse", "The leftovers of a person..."],
             lost_someone: ["Lost an ally", "One of our own has died."],
             killed: ["Killed someone", "The adrenaline... IT'S SO GOOD!!"],
+            used_ranged: ["Used ranged weapon", "I despise ranged weaponry."],
             let_it_out: ["Catharsis", "I had to get those feelings out."],
             starving: ["Starving", "I'm so hungry, I feel like I could pass out."],
             hungry: ["Hungry", "My stomach is growling."],
@@ -162,6 +163,11 @@
         killed: def("killed", {
             offset: 8,
             duration: 2 * DAY,
+            refresh: true
+        }),
+        used_ranged: def("used_ranged", {
+            offset: -10,
+            duration: DAY,
             refresh: true
         }),
         let_it_out: def("let_it_out", {
@@ -492,6 +498,12 @@
         state.lastKill = Number(now) || 0;
         if (state.appeared == null) state.appeared = state.lastKill;
         addMemory(pawn, "killed", now);
+    }
+
+    /** A brawler who looses a ranged weapon. Other people do not mind. */
+    function noteRanged(pawn, now) {
+        if (!pawn || !hasTrait(pawn, "brawler")) return false;
+        return addMemory(pawn, "used_ranged", now);
     }
 
     function witness(pawn, now) {
@@ -1078,6 +1090,7 @@
         noteBegan,
         noteJoined,
         noteKill,
+        noteRanged,
         witness,
         seeCorpse,
         markSeen,

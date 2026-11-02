@@ -137,10 +137,13 @@
             weapon = weaponMetaForDps.weapon;
         }
         if (weapon) {
+            const bowStack = { ...(stack || {}), id: stack?.id || item.id };
             const avg = typeof BodyCombat !== "undefined"
                 ? BodyCombat.meleeWeaponAverageDps?.(weapon)
                 : null;
-            if (avg && avg.dps > 0) {
+            if (typeof Ranged !== "undefined" && Ranged.isBowStack?.(bowStack)) {
+                lines.push(`Damage: ${Ranged.shotDamage(bowStack, null)}`);
+            } else if (avg && avg.dps > 0) {
                 const dps = avg.dps.toFixed(1);
                 const dtype = avg.type || weapon.type || "melee";
                 lines.push(`DPS: ${dps} ${dtype}`);
@@ -775,6 +778,20 @@
     _craftRecipeIconKey(recipe) {
         const id = recipe?.id;
         const preview = this._craftPreviewStack(recipe);
+        if (id === "arrow" && typeof ensureArrowTexture === "function") {
+            const mat = preview?.knapMaterial;
+            const hasRock = mat === "flint" || mat === "pebble";
+            // No blade yet: diorite tip only. The name stays Stone Arrow.
+            const plain = (typeof Stone !== "undefined" && Stone.iconStone)
+                ? Stone.iconStone("arrow")
+                : "diorite";
+            const key = ensureArrowTexture(
+                this,
+                hasRock ? mat : plain,
+                hasRock ? preview?.stone : plain
+            );
+            if (key && this.textures.exists(key)) return key;
+        }
         if ((id === "stone_spear" || id === "flint_spear") && typeof ensureSpearTexture === "function") {
             const mat = preview?.knapMaterial;
             const hasRock = mat === "flint" || mat === "pebble";
@@ -829,7 +846,7 @@
      * No match leaves the recipe icon as an andesite-colored tip named Stone Spear.
      */
     _craftPredictedTip(recipe, pawn) {
-        if (recipe?.id !== "stone_spear" && recipe?.id !== "flint_spear") return null;
+        if (recipe?.id !== "stone_spear" && recipe?.id !== "flint_spear" && recipe?.id !== "arrow") return null;
         if (typeof Stone === "undefined" || !Stone.firstStuffStack) return null;
         return Stone.firstStuffStack(recipe, this._craftStuffBags(pawn));
     },
@@ -1076,7 +1093,10 @@
      * and a held tool. Several held tools list every picture; the tip cycles them.
      */
     _craftRecipeTooltip(recipe) {
-        const stack = this._craftPreviewStack(recipe);
+        // An arrow's picture may be diorite, or the blade you would spend.
+        // The words stay Stone Arrow and the item's own numbers, the same
+        // way an unfilled Stone Spear does not turn into that rock.
+        const stack = recipe?.id === "arrow" ? null : this._craftPreviewStack(recipe);
         const head = this.formatItemTooltip(this.getItem(recipe.id), recipe.quantity, null, stack);
         const lines = [];
         for (const ingredient of recipe.ingredients || []) {
@@ -1193,10 +1213,13 @@
         return null;
     },
 
-    /** Andesite knap picture for one tool class. */
+    /** Default knap picture for one tool class. Hard shapes use diorite. */
     _craftToolClassIcon(toolClass) {
         if (!toolClass || typeof Knapping === "undefined" || !Knapping.carveShapeIcon) return null;
-        const data = Knapping.carveShapeIcon(this, toolClass, "andesite");
+        const stone = (typeof Stone !== "undefined" && Stone.iconStone)
+            ? Stone.iconStone(toolClass)
+            : "andesite";
+        const data = Knapping.carveShapeIcon(this, toolClass, stone);
         if (!data || !Knapping.ensureToolTexture) return null;
         const key = Knapping.ensureToolTexture(this, { knapIconData: data, toolClass });
         if (key && this.textures?.exists?.(key)) return key;
@@ -1225,6 +1248,7 @@
             return `Any ${label} Hide`;
         }
         if (ingredient.toolClass === "spear_tip") return "Spear Tip";
+        if (ingredient.toolClass === "blade") return "Stone Blade";
         return this.getItem(ingredient.id)?.name || ingredient.id;
     },
 
@@ -1811,7 +1835,7 @@
             if (!recipe || !slot.visible) return;
             this.showTooltip(() => {
                 const item = this.getItem(recipe.id);
-                const stack = this._craftPreviewStack(recipe);
+                const stack = recipe.id === "arrow" ? null : this._craftPreviewStack(recipe);
                 return this.formatItemTooltip(item, recipe.quantity || 1, null, stack);
             }, p.x, p.y, slot);
         });
@@ -2060,14 +2084,20 @@
 
         this._consumeCraftTool(recipe, who);
 
-        if (recipe.id === "stone_spear" || recipe.id === "flint_spear") {
+        if (recipe.id === "stone_spear" || recipe.id === "flint_spear" || recipe.id === "arrow") {
             const stack = makeItemStack(item, recipe.quantity || 1, undefined, this.worldMinuteIndex());
-            stack.knapMaterial = tipMaterial || "pebble";
-            if (tipQuality) stack.knapQuality = tipQuality;
+            stack.knapMaterial = tipMaterial || tip?.knapMaterial || "pebble";
+            if (tipQuality || tip?.knapQuality) stack.knapQuality = tipQuality || tip.knapQuality;
             if (tip?.stone) stack.stone = tip.stone;
             const extras = { knapMaterial: stack.knapMaterial };
-            if (tipQuality) extras.knapQuality = tipQuality;
+            if (stack.knapQuality) extras.knapQuality = stack.knapQuality;
             if (stack.stone) extras.stone = stack.stone;
+            if (recipe.id === "arrow" && typeof who.gainItem === "function") {
+                const left = who.gainItem(item, stack.quantity, undefined, extras);
+                if (!(left > 0)) return;
+                DroppedItem.spawn(this, who.x, who.y, item, left, undefined, extras);
+                return;
+            }
             if (typeof who.gainStack === "function" && who.gainStack(stack)) {
                 return;
             }
@@ -2075,6 +2105,21 @@
                 this, who.x, who.y, item, recipe.quantity || 1,
                 undefined, extras
             );
+            return;
+        }
+
+        if (recipe.id === "shortbow" || recipe.id === "longbow") {
+            let grade = "crude";
+            if (typeof Skills !== "undefined" && Skills.knapQuality) {
+                const lv = Skills.pawnLevel?.(who, "crafting")
+                    ?? Skills.effectiveLevel?.(who?.bio, "crafting");
+                const offset = Skills.traitStat?.(who?.bio, "craftingQuality") || 0;
+                if (lv != null) grade = Skills.knapQuality(lv, Math.random, offset) || "crude";
+            }
+            const stack = makeItemStack(item, 1, undefined, this.worldMinuteIndex());
+            stack.knapQuality = grade;
+            if (typeof who.gainStack === "function" && who.gainStack(stack)) return;
+            DroppedItem.spawn(this, who.x, who.y, item, 1, undefined, { knapQuality: grade });
             return;
         }
 

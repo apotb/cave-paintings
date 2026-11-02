@@ -75,13 +75,15 @@ class SceneNet extends Phaser.Scene {
             "deer_hide_soaked", "deer_hide_dehaired", "deer_hide_brained", "deer_leather",
             "boar_hide", "boar_hide_fleshed", "boar_hide_dry",
             "boar_hide_soaked", "boar_hide_dehaired", "boar_hide_brained", "boar_leather",
-            "brain", "bone", "stick", "log", "digging_stick", "clay", "lean_to", "hut", "painting_circle", "tally_stick",
+            "brain", "bone", "sinew", "stick", "log", "digging_stick", "shortbow", "longbow", "arrow_body", "arrow_tip", "clay", "lean_to", "hut", "painting_circle", "tally_stick",
             "pitch",
             "hide_pouch", "hide_bundle", "hide_tunic", "hide_loincloth",
             "leather_pouch", "leather_pack", "leather_tunic", "leather_kilt"
         ]) {
             this.load.image(item, `assets/items/${item}.png`);
         }
+        this.load.image("proj_arrow_body", "assets/projectile/arrow/arrow_body.png");
+        this.load.image("proj_arrow_tip", "assets/projectile/arrow/arrow_tip.png");
     }
 
     create() {

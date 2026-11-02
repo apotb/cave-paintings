@@ -313,13 +313,16 @@ function canTakeEatPiece(rec, stack) {
 }
 
 function carriedDumpCandidates(rec, keepOpts) {
-    const keep = Settlement.keepIndices(rec.inventory, getItem, keepGearOpts(keepOpts));
+    const gearOpts = keepGearOpts(keepOpts);
+    gearOpts.overflow = rec.overflow;
+    const keep = Settlement.keepIndices(rec.inventory, getItem, gearOpts);
     const out = [];
     const push = (slots, keptAt) => {
         for (let i = 0; i < (slots || []).length; i++) {
             const stack = slots[i];
             if (!stack?.id) continue;
-            out.push({ slots, index: i, stack, kept: !!keptAt(i) });
+            const kept = !!keptAt(i) || !!Settlement.stowSkip?.(stack, rec.inventory, rec.overflow);
+            out.push({ slots, index: i, stack, kept });
         }
     };
     push(rec.inventory, (i) => keep.has(i));
