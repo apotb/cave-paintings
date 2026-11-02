@@ -339,6 +339,11 @@ test("a skill tip splits the shown level from what was learned", () => {
     assert.match(html, /color:#e6c15a/);
     assert.match(html, /color:#a0a0a0/);
     assert.equal(Skills.tipLayers("plain text"), null);
+    const clock = Skills.tipLayers('{m}"Walls."{/m} {b}(3d 23h){/b}');
+    assert.equal(clock.plain.includes("(3d 23h)"), true);
+    assert.equal(clock.blue.includes("(3d 23h)"), true);
+    assert.equal(clock.muted.includes("(3d 23h)"), false);
+    assert.match(Skills.tipHtml('{b}(2h){/b}'), /color:#7ec8ff[^>]*>\(2h\)</);
 });
 
 test("the same id rolls the same bio", () => {

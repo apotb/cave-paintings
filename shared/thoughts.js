@@ -344,12 +344,17 @@
             episode: src.episode ? { kind: src.episode.kind, until: src.episode.until } : null,
             warned: src.warned,
             moodAt: src.moodAt,
-            lines: Array.isArray(src.lines) ? src.lines.map((row) => ({
-                offset: row.offset,
-                label: row.label,
-                quote: row.quote,
-                count: row.count
-            })) : []
+            lines: Array.isArray(src.lines) ? src.lines.map((row) => {
+                const line = {
+                    offset: row.offset,
+                    label: row.label,
+                    quote: row.quote,
+                    count: row.count
+                };
+                const expires = Math.floor(Number(row.expires));
+                if (Number.isFinite(expires)) line.expires = expires;
+                return line;
+            }) : []
         };
     }
 
@@ -661,7 +666,8 @@
                 id: mem.id,
                 label: mem.label || def.label,
                 quote: filledQuote(def, mem),
-                offset: def.offset
+                offset: def.offset,
+                expires: mem.expires
             });
         }
         return rows;
@@ -795,18 +801,27 @@
                     base: Number(row.offset) || 0,
                     label: row.label,
                     quote: row.quote,
-                    count: 0
+                    count: 0,
+                    expires: null
                 };
                 groups.push(found);
             }
             found.count += 1;
+            const exp = Number(row.expires);
+            if (Number.isFinite(exp)) {
+                found.expires = found.expires == null ? exp : Math.min(found.expires, exp);
+            }
         }
-        const lines = groups.map((g) => ({
-            offset: shownOffset(moodletTotal(g.base, g.count)),
-            label: g.label,
-            quote: g.quote,
-            count: g.count
-        }));
+        const lines = groups.map((g) => {
+            const line = {
+                offset: shownOffset(moodletTotal(g.base, g.count)),
+                label: g.label,
+                quote: g.quote,
+                count: g.count
+            };
+            if (g.expires != null) line.expires = g.expires;
+            return line;
+        });
         lines.sort((a, b) => b.offset - a.offset || String(a.label).localeCompare(String(b.label)));
         return lines;
     }
@@ -837,6 +852,7 @@
         }
         if (state.episode && state.episode.until > t) pawn._moodJob = state.episode.kind;
         else pawn._moodJob = null;
+        state.viewAt = t;
         return state;
     }
 
@@ -945,6 +961,35 @@
         return "g";
     }
 
+    /** Hours left, matching spoil tips: "3d 23h", "2h", or "<1h". */
+    function formatRemain(minutes) {
+        const h = Math.max(0, Math.floor((Number(minutes) || 0) / 60));
+        if (h === 0) return "<1h";
+        const d = Math.floor(h / 24);
+        const remH = h % 24;
+        if (d > 0) return remH ? `${d}d ${remH}h` : `${d}d`;
+        return `${h}h`;
+    }
+
+    /** Last time the list was rebuilt, or the mood clock after a load. */
+    function clockOf(pawn) {
+        const state = pawn?.thoughts;
+        const view = Number(state?.viewAt);
+        if (Number.isFinite(view)) return view;
+        const at = Number(state?.moodAt);
+        return Number.isFinite(at) ? at : null;
+    }
+
+    /** Blue clock for a memory. A stack shows the next copy to fade. Conditions have none. */
+    function remainMark(pawn, expires) {
+        const exp = Number(expires);
+        const now = clockOf(pawn);
+        if (!Number.isFinite(exp) || now == null) return "";
+        const left = exp - now;
+        if (!(left > 0)) return "";
+        return ` {b}(${formatRemain(left)}){/b}`;
+    }
+
     function tooltip(pawn) {
         const mood = moodOf(pawn);
         const pct = Math.round(mood * 100);
@@ -965,7 +1010,8 @@
             const num = n > 0 ? `+${n}` : String(n);
             const stack = row.count > 1 ? ` x${row.count}` : "";
             const offset = n > 0 ? `{p}${num}{/p}` : (n < 0 ? `{n}${num}{/n}` : num);
-            lines.push(`${offset} ${row.label}${stack}`);
+            const clock = remainMark(pawn, row.expires);
+            lines.push(`${offset} ${row.label}${stack}${clock}`);
             if (row.quote) lines.push(`{m}"${row.quote}"{/m}`);
         }
         return lines.join("\n");
@@ -973,10 +1019,15 @@
 
     function sig(pawn) {
         const rows = pawn?.thoughts?.lines || [];
+        const now = clockOf(pawn);
         const parts = [Math.round(moodOf(pawn) * 1000)];
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
             parts.push(row.offset, row.count, row.label);
+            const exp = Number(row.expires);
+            if (Number.isFinite(exp) && Number.isFinite(now)) {
+                parts.push(Math.floor(Math.max(0, exp - now) / 60));
+            }
         }
         const job = pawn?._moodJob || "";
         parts.push(job);

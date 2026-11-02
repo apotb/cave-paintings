@@ -256,6 +256,8 @@ test("the tooltip sorts bonuses first and grays the quotes", () => {
     const hutAt = text.indexOf("{p}+1{/p} Slept in a hut");
     const peckAt = text.indexOf("{n}-2{/n} Peckish");
     assert.ok(hutAt >= 0 && peckAt > hutAt);
+    assert.match(text, /\{p\}\+1\{\/p\} Slept in a hut \{b\}\(1d\)\{\/b\}/);
+    assert.match(text, /\{n\}-2\{\/n\} Peckish(?! \{b\})/);
     assert.match(text, /\{m\}"I slept with walls around me\."\{\/m\}/);
     assert.match(text, /\{m\}"I could go for some food\."\{\/m\}/);
 
@@ -264,7 +266,35 @@ test("the tooltip sorts bonuses first and grays the quotes", () => {
     Thoughts.witness(stacked, 1);
     Thoughts.witness(stacked, 2);
     Thoughts.refresh(stacked, 2);
-    assert.match(Thoughts.tooltip(stacked), /\{n\}-14\{\/n\} Witnessed a death x3/);
+    assert.match(Thoughts.tooltip(stacked), /\{n\}-14\{\/n\} Witnessed a death x3 \{b\}\(1d 23h\)\{\/b\}/);
+});
+
+test("memory time sits on the thought name, and a stack shows the next copy to fade", () => {
+    const fresh = pawn();
+    Thoughts.noteBegan(fresh, 0);
+    Thoughts.refresh(fresh, 10 * Thoughts.DAY - (3 * 24 + 23) * 60);
+    assert.match(
+        Thoughts.tooltip(fresh),
+        /\{p\}\+10\{\/p\} Initial optimism \{b\}\(3d 23h\)\{\/b\}/
+    );
+
+    const short = pawn({ id: "short" });
+    Thoughts.noteSleep(short, "hut", 0);
+    Thoughts.refresh(short, Thoughts.DAY - 2 * 60);
+    assert.match(Thoughts.tooltip(short), /\{b\}\(2h\)\{\/b\}/);
+    Thoughts.refresh(short, Thoughts.DAY - 30);
+    assert.match(Thoughts.tooltip(short), /\{b\}\(<1h\)\{\/b\}/);
+
+    const stack = pawn({ id: "fade" });
+    Thoughts.witness(stack, 0);
+    Thoughts.witness(stack, 100);
+    Thoughts.refresh(stack, 2 * Thoughts.DAY - 120);
+    assert.match(Thoughts.tooltip(stack), /Witnessed a death x2/);
+    assert.match(Thoughts.tooltip(stack), /\{b\}\(2h\)\{\/b\}/);
+
+    const copy = pawn({ id: "kept" });
+    Thoughts.apply(copy, Thoughts.toJSON(short));
+    assert.equal(copy.thoughts.lines[0].expires, Thoughts.DAY);
 });
 
 test("strain fills by band, sulk and strike reset it, and miserable leaves even during a sulk", () => {
