@@ -1,5 +1,5 @@
 /**
- * Persistent corpse: gray, face-right, rotated -90° CCW. Loot lives in chunk.meta.corpses.
+ * Persistent corpse: gray, face-right, laid on its side. Loot lives in chunk.meta.corpses.
  */
 class Corpse extends Phaser.GameObjects.Sprite {
     static TINT_CORPSE = 0x888888;
@@ -169,7 +169,6 @@ class Corpse extends Phaser.GameObjects.Sprite {
         scene.add.existing(this);
         scene.mainLayer.add(this);
         this.setOrigin(0.5, 0.5);
-        this.setRotation(-Math.PI / 2);
         this.applyStageAppearance();
         // Match living prone puppets: they y-sort from feet, while corpse x/y is body center.
         const feetY = (Number(entry.y) || 0) + (Number(this.height) || 16) * 0.5;
@@ -270,18 +269,22 @@ class Corpse extends Phaser.GameObjects.Sprite {
     }
 
     applyStageAppearance() {
-        const frame = this.frame?.name;
-        if (!this._colorTexKey) this._colorTexKey = this.texture?.key;
+        if (!this._colorTexKey || this._colorTexKey === this._lieTexKey) {
+            this._colorTexKey = this._lieSrcKey || this.texture?.key;
+        }
+        const frame = 7;
         if (this.isCarcass()) {
             this.clearTint();
             const grayKey = Corpse.grayscaleTextureKey(this.scene, this._colorTexKey);
-            if (grayKey && this.texture?.key !== grayKey) this.setTexture(grayKey, frame);
+            if (grayKey && this._lieSrcKey !== grayKey) this.setTexture(grayKey, frame);
+        } else if (this._colorTexKey && this._lieSrcKey !== this._colorTexKey) {
+            this.setTexture(this._colorTexKey, frame);
+            this.setTint(Corpse.TINT_CORPSE);
         } else {
-            if (this._colorTexKey && this.texture?.key !== this._colorTexKey) {
-                this.setTexture(this._colorTexKey, frame);
-            }
             this.setTint(Corpse.TINT_CORPSE);
         }
+        if (typeof syncLyingDraw === "function") syncLyingDraw(this, -Math.PI / 2, 1);
+        else this.setRotation(-Math.PI / 2);
         this._setCorpseHitArea();
     }
 

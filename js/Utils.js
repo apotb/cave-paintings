@@ -2442,6 +2442,7 @@ function ensureStandingFeetOrigin(sprite) {
     if (sprite._prone || sprite._downed || sprite.isIncapacitated?.() || sprite.isImmobile?.()) {
         return;
     }
+    if (sprite._lieTexKey || sprite._lieSrcKey) clearLyingDraw(sprite);
     const w = Number(sprite.width) || 16;
     const h = Number(sprite.height) || 16;
     if (sprite.originX === 0.5 && sprite.originY === 0.5) {
@@ -2457,8 +2458,188 @@ function ensureStandingFeetOrigin(sprite) {
 }
 
 /**
+ * Quarter turns clockwise. Phaser's positive angle is clockwise on screen.
+ * -90° (the downed pose) is quarter 3.
+ */
+function lieQuarterTurns(ang) {
+    const q = Math.round((Number(ang) || 0) / (Math.PI / 2));
+    return ((q % 4) + 4) % 4;
+}
+
+/**
+ * Scale so a 16px frame covers an even number of screen pixels.
+ * An odd or fractional size leaves the rotated body sampling between texels,
+ * and nearest filtering shimmers as the camera scrolls.
+ */
+function pixelLieScale(scale, zoom) {
+    const z = Number(zoom) > 0 ? Number(zoom) : 1;
+    const s = Number(scale) > 0 ? Number(scale) : 1;
+    const screen = 16 * s * z;
+    const even = Math.max(2, Math.round(screen / 2) * 2);
+    return even / (16 * z);
+}
+
+/** Clockwise quarter-turns of a square RGBA buffer. Quarter 0 returns `src`. */
+function rotatePixelsCW(src, n, quarters) {
+    const size = n | 0;
+    const q = ((quarters % 4) + 4) % 4;
+    if (!src || size < 1 || q === 0) return src;
+    const out = new Uint8ClampedArray(src.length);
+    for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+            let dx;
+            let dy;
+            if (q === 1) {
+                dx = size - 1 - y;
+                dy = x;
+            } else if (q === 2) {
+                dx = size - 1 - x;
+                dy = size - 1 - y;
+            } else {
+                dx = y;
+                dy = size - 1 - x;
+            }
+            const si = (y * size + x) * 4;
+            const di = (dy * size + dx) * 4;
+            out[di] = src[si];
+            out[di + 1] = src[si + 1];
+            out[di + 2] = src[si + 2];
+            out[di + 3] = src[si + 3];
+        }
+    }
+    return out;
+}
+
+function lyingFrameOf(tex, prefer) {
+    if (!tex?.has) return null;
+    const names = [];
+    if (prefer != null && prefer !== "") names.push(prefer, String(prefer));
+    names.push(7, "7", "__BASE", 0);
+    for (let i = 0; i < names.length; i++) {
+        if (tex.has(names[i])) return tex.get(names[i]);
+    }
+    return null;
+}
+
+/**
+ * One frame, already turned, with no sheet neighbors to bleed into.
+ * GPU rotation of frame 7 samples the walk frames beside it whenever the
+ * camera scrolls, which is the lying-body shimmer.
+ */
+function ensureLyingTexture(scene, srcKey, quarter, frameName) {
+    const q = ((quarter % 4) + 4) % 4;
+    if (!scene?.textures || !srcKey || q === 0) return null;
+    const tex = scene.textures.get(srcKey);
+    const frame = lyingFrameOf(tex, frameName);
+    if (!frame) return null;
+    const frameId = frame.name != null ? frame.name : "base";
+    const outKey = `${srcKey}__lieq${q}__${frameId}`;
+    if (scene.textures.exists(outKey)) return outKey;
+    if (typeof document === "undefined") return null;
+    const source = tex.source?.[frame.sourceIndex ?? 0] || tex.source?.[0];
+    const img = source?.image || tex.getSourceImage?.();
+    if (!img) return null;
+    const n = Math.max(frame.cutWidth || frame.width || 16, frame.cutHeight || frame.height || 16);
+    let created = null;
+    try {
+        const canvas = document.createElement("canvas");
+        canvas.width = n;
+        canvas.height = n;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) return null;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(
+            img,
+            frame.cutX || 0,
+            frame.cutY || 0,
+            frame.cutWidth || frame.width || n,
+            frame.cutHeight || frame.height || n,
+            0,
+            0,
+            n,
+            n
+        );
+        const image = ctx.getImageData(0, 0, n, n);
+        const turned = rotatePixelsCW(image.data, n, q);
+        image.data.set(turned);
+        ctx.putImageData(image, 0, 0);
+        created = scene.textures.addCanvas(outKey, canvas);
+    } catch (_) {
+        return null;
+    }
+    if (!created) return null;
+    try {
+        created.setFilter(Phaser.Textures.FilterMode.NEAREST);
+    } catch (_) {}
+    return outKey;
+}
+
+function rememberLyingSource(sprite) {
+    if (!sprite) return null;
+    const key = sprite.texture?.key;
+    if (!key) return sprite._lieSrcKey || null;
+    if (sprite._lieTexKey && key === sprite._lieTexKey) return sprite._lieSrcKey || null;
+    sprite._lieSrcKey = key;
+    const tex = sprite.texture;
+    const hasRight = !!(tex?.has?.(7) || tex?.has?.("7"));
+    sprite._lieSrcFrame = hasRight ? 7 : sprite.frame?.name;
+    return key;
+}
+
+/**
+ * Draw a lying body axis-aligned. `ang` is the old Phaser rotation.
+ * Scale is quantized onto even screen pixels at the world zoom.
+ */
+function syncLyingDraw(sprite, ang, scale) {
+    if (!sprite) return;
+    const scene = sprite.scene;
+    const source = rememberLyingSource(sprite);
+    const q = lieQuarterTurns(ang);
+    const z = scene?.worldZoom || scene?.cameras?.main?.zoom || 3;
+    const vis = pixelLieScale(scale, z);
+    if (sprite.anims?.isPlaying) sprite.anims.stop();
+    if (q === 0) {
+        if (source && sprite.texture?.key !== source) sprite.setTexture(source, 7);
+        else if (sprite.texture?.frameTotal > 7 && Number(sprite.frame?.name) !== 7) sprite.setFrame(7);
+        sprite._lieTexKey = null;
+    } else {
+        const lieKey = ensureLyingTexture(scene, source, q, sprite._lieSrcFrame);
+        if (lieKey) {
+            if (sprite.texture?.key !== lieKey) sprite.setTexture(lieKey);
+            sprite._lieTexKey = lieKey;
+        } else if (sprite.rotation !== ang) {
+            sprite.setRotation(ang);
+        }
+    }
+    if (sprite._lieTexKey || q === 0) {
+        if (sprite.rotation) sprite.setRotation(0);
+    }
+    if (sprite.originX !== 0.5 || sprite.originY !== 0.5) sprite.setOrigin(0.5, 0.5);
+    if (sprite.scaleX !== vis || sprite.scaleY !== vis) sprite.setScale(vis);
+}
+
+/** Restore the standing sheet after a baked lying pose. */
+function clearLyingDraw(sprite) {
+    if (!sprite) return;
+    const src = sprite._lieSrcKey;
+    const showingBake = !!(sprite._lieTexKey && sprite.texture?.key === sprite._lieTexKey);
+    sprite._lieSrcKey = null;
+    sprite._lieTexKey = null;
+    if (sprite.anims?.isPlaying) sprite.anims.stop();
+    if (showingBake && src) {
+        const tex = sprite.scene?.textures?.get?.(src);
+        const frame = (tex?.has?.(7) || tex?.has?.("7")) ? 7 : ((tex?.has?.(1) || tex?.has?.("1")) ? 1 : null);
+        if (frame == null) sprite.setTexture(src);
+        else sprite.setTexture(src, frame);
+    }
+    if (sprite.rotation) sprite.setRotation(0);
+    if (sprite.scaleX !== 1 || sprite.scaleY !== 1) sprite.setScale(1);
+}
+
+/**
  * Lay down like a corpse (right-facing, -90°) without gray tint.
  * Toggles origin between standing (0,1) and prone (0.5, 0.5), preserving world position.
+ * The turn is baked into its own texture so the quad stays axis-aligned.
  * @param {Phaser.GameObjects.Sprite} sprite
  * @param {boolean} prone
  */
@@ -2468,9 +2649,6 @@ function setCreatureProne(sprite, prone) {
     if (sprite._resting && !want) return;
     if (!!sprite._prone === want) {
         if (want) {
-            sprite.anims?.stop?.();
-            if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
-            sprite.setRotation(-Math.PI / 2);
             sprite.clearTint?.();
             // A prone flag without the centered origin leaves the body on the
             // feet. The inventory then sits low and left of a corpse.
@@ -2482,8 +2660,9 @@ function setCreatureProne(sprite, prone) {
                 sprite._physY = sprite.y;
                 syncPawnPhysicsPose(sprite);
             }
-        } else if (sprite.scaleX !== 1 || sprite.scaleY !== 1) {
-            sprite.setScale(1);
+            syncLyingDraw(sprite, -Math.PI / 2, 1);
+        } else if (sprite._lieTexKey || sprite._lieSrcKey || sprite.scaleX !== 1 || sprite.scaleY !== 1) {
+            clearLyingDraw(sprite);
         }
         return;
     }
@@ -2500,17 +2679,15 @@ function setCreatureProne(sprite, prone) {
             sprite.y -= h * 0.5;
             sprite.setOrigin(0.5, 0.5);
         }
-        sprite.setRotation(-Math.PI / 2);
-        sprite.anims?.stop?.();
-        if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
         sprite.clearTint?.();
+        syncLyingDraw(sprite, -Math.PI / 2, 1);
         sprite._prone = true;
         if (sprite.body) {
             sprite.body.moves = false;
             sprite.setVelocity?.(0, 0);
         }
     } else {
-        sprite.setRotation(0);
+        clearLyingDraw(sprite);
         if (sprite.originX === 0.5 && sprite.originY === 0.5) {
             sprite.x -= w * 0.5;
             sprite.y += h * 0.5;
@@ -2540,21 +2717,23 @@ function setCreatureRest(sprite, resting, rot, thingDef) {
     }
     const ang = typeof Sleep !== "undefined" ? Sleep.restRotation(rot, def) : -Math.PI / 2;
     const scale = want && typeof Sleep !== "undefined" ? Sleep.SCALE : 1;
-    const w = sprite.width || 16;
-    const h = sprite.height || 16;
+    // Fixed 16×16. A walk frame's live width, or the shrunk bunk scale,
+    // would drop the body off the bed slot.
+    const w = 16;
+    const h = 16;
 
     if (!want) {
         if (!sprite._resting) {
-            if (sprite.scaleX !== 1 || sprite.scaleY !== 1) sprite.setScale(1);
+            if (sprite._lieTexKey || sprite._lieSrcKey) clearLyingDraw(sprite);
+            else if (sprite.scaleX !== 1 || sprite.scaleY !== 1) sprite.setScale(1);
             return;
         }
-        sprite.setScale(1);
         sprite._resting = false;
         if (sprite.body && !sprite._downed && !sprite.isIncapacitated?.() && !sprite.isImmobile?.()) {
             sprite.body.moves = true;
         }
         if (sprite._downed || sprite.isIncapacitated?.() || sprite.isImmobile?.()) {
-            sprite.setRotation(-Math.PI / 2);
+            syncLyingDraw(sprite, -Math.PI / 2, 1);
             sprite._prone = true;
             syncCreatureInputHit(sprite);
             return;
@@ -2570,16 +2749,9 @@ function setCreatureRest(sprite, resting, rot, thingDef) {
         && sprite.originY === 0.5
     );
     if (posed) {
-        if (sprite.rotation !== ang) sprite.setRotation(ang);
-        if (sprite.scaleX !== scale || sprite.scaleY !== scale) sprite.setScale(scale);
-        // The bed turn assumes the right-facing frame. A standing clip (switching
-        // control plays idle in whatever direction they last walked) leaves the
-        // body rotated and the head pointing the other way. setFrame every tick
-        // drops the pointer-over list, so only correct a frame that is wrong.
-        if (sprite.anims?.isPlaying) sprite.anims.stop();
-        if (sprite.texture?.frameTotal > 7 && Number(sprite.frame?.name) !== 7) {
-            sprite.setFrame(7);
-        }
+        // Baked turn, not a GPU rotation. setFrame every tick drops the
+        // pointer-over list and hides HUD tooltips while someone is in a bunk.
+        syncLyingDraw(sprite, ang, scale);
         if (sprite.body) {
             sprite.body.moves = false;
             sprite.setVelocity?.(0, 0);
@@ -2593,11 +2765,8 @@ function setCreatureRest(sprite, resting, rot, thingDef) {
         sprite.y -= h * 0.5;
         sprite.setOrigin(0.5, 0.5);
     }
-    sprite.anims?.stop?.();
-    if (sprite.texture?.frameTotal > 7) sprite.setFrame(7);
-    sprite.setRotation(ang);
-    sprite.setScale(scale);
     sprite.clearTint?.();
+    syncLyingDraw(sprite, ang, scale);
     sprite._prone = true;
     sprite._resting = true;
     if (sprite.body) {
@@ -3658,38 +3827,29 @@ function setPuppetProne(sprite, prone, opts = {}) {
         ? Sleep.restRotation(opts.restRot, opts.restDef)
         : -Math.PI / 2;
     const scale = rest && typeof Sleep !== "undefined" ? Sleep.SCALE : 1;
-    if (want && sprite.texture?.frameTotal > 7) {
-        sprite.anims?.stop?.();
-        sprite.setFrame(7);
-    }
-    const fw = Number(sprite.frame?.width) || Number(sprite.width) || 16;
-    const fh = Number(sprite.frame?.height) || Number(sprite.height) || 16;
+    const fw = 16;
+    const fh = 16;
     // Feet-anchored puppets (mobs): shift to geometric body center while prone
     const localX = opts.feetAnchored ? fw * 0.5 : 0;
     const localY = opts.feetAnchored ? -fh * 0.5 : 0;
     if (!!sprite._prone === want && !!sprite._resting === rest) {
         if (want) {
-            sprite.anims?.stop?.();
-            sprite.setRotation(ang);
-            sprite.setScale(scale);
             sprite.clearTint?.();
             sprite.setOrigin(0.5, 0.5);
             sprite.setPosition(localX, localY);
+            syncLyingDraw(sprite, ang, scale);
         }
         return;
     }
     if (want) {
         sprite.setOrigin(0.5, 0.5);
         sprite.setPosition(localX, localY);
-        sprite.setRotation(ang);
-        sprite.setScale(scale);
-        sprite.anims?.stop?.();
         sprite.clearTint?.();
+        syncLyingDraw(sprite, ang, scale);
         sprite._prone = true;
         sprite._resting = rest;
     } else {
-        sprite.setRotation(0);
-        sprite.setScale(1);
+        clearLyingDraw(sprite);
         sprite.setOrigin(0, 1);
         sprite.setPosition(0, 0);
         sprite._prone = false;

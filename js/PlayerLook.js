@@ -228,6 +228,11 @@ const PlayerLook = (() => {
     function apply(sprite, look, opts = {}) {
         if (!sprite?.scene) return null;
         const key = ensure(sprite.scene, look, opts);
+        if (sprite._lieTexKey && sprite.texture?.key === sprite._lieTexKey) {
+            sprite._lieSrcKey = key;
+            sprite.look = data() ? data().normalizeLook(look) : look;
+            return key;
+        }
         const frame = sprite.frame?.name;
         if (sprite.texture?.key !== key) {
             const n = Number(frame);
@@ -239,6 +244,7 @@ const PlayerLook = (() => {
 
     function play(sprite, facing, moving) {
         if (!sprite) return;
+        if (sprite._lieTexKey && sprite.texture?.key === sprite._lieTexKey) return;
         const tex = sprite.texture?.key;
         if (!tex) return;
         const dir = facing || "down";
