@@ -14,7 +14,12 @@
     const FULL_SLEEP_HOURS = 10.5;
     const GAIN_PER_DAY = 24 / FULL_SLEEP_HOURS;
     const GROUND_EFFECTIVENESS = 0.8;
+    /** Exhausted at or below this, tired above it, drowsy from the next mark, rested at the wake line. */
+    const EXHAUSTED_AT = 0.01;
+    const DROWSY_AT = 0.14;
     const WAKE_AT = 0.28;
+    /** Stage edges on the rest bar: exhausted, tired, and the wake line. */
+    const REST_MARKS = [EXHAUSTED_AT, DROWSY_AT, WAKE_AT];
     const ICON_W = 8;
     const ICON_H = 8;
     /** needs.png is 8×52: five 8px icons with a 3px gap. */
@@ -120,14 +125,14 @@
     }
 
     /**
-     * Rested ≥ 28%, Drowsy ≥ 14%, Tired > 1%, Exhausted ≤ 1%.
+     * Rested at the wake line, drowsy from the middle mark, tired above exhausted.
      * Immunity multipliers match RimWorld's rest need.
      */
     function band(rest) {
         const r = clamp01(rest, 1);
-        if (r >= 0.28) return { id: "rested", label: "Rested", immunity: 1 };
-        if (r >= 0.14) return { id: "drowsy", label: "Drowsy", immunity: 0.96 };
-        if (r > 0.01) return { id: "tired", label: "Tired", immunity: 0.92 };
+        if (r >= WAKE_AT) return { id: "rested", label: "Rested", immunity: 1 };
+        if (r >= DROWSY_AT) return { id: "drowsy", label: "Drowsy", immunity: 0.96 };
+        if (r > EXHAUSTED_AT) return { id: "tired", label: "Tired", immunity: 0.92 };
         return { id: "exhausted", label: "Exhausted", immunity: 0.8 };
     }
 
@@ -174,9 +179,9 @@
     /** Fraction of the meter lost per game day while awake, before sleep fall rate. */
     function fallPerDay(rest) {
         const r = clamp01(rest, 0);
-        if (r >= 0.28) return 0.95;
-        if (r >= 0.14) return 0.66;
-        if (r > 0.01) return 0.28;
+        if (r >= WAKE_AT) return 0.95;
+        if (r >= DROWSY_AT) return 0.66;
+        if (r > EXHAUSTED_AT) return 0.28;
         if (r > 0) return 0.57;
         return 0;
     }
@@ -235,7 +240,10 @@
         FULL_SLEEP_HOURS,
         GAIN_PER_DAY,
         GROUND_EFFECTIVENESS,
+        EXHAUSTED_AT,
+        DROWSY_AT,
         WAKE_AT,
+        REST_MARKS,
         ICON_W,
         ICON_H,
         ICON_PITCH,

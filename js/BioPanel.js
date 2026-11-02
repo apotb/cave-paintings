@@ -358,6 +358,17 @@ class BioPanel {
         }
     }
 
+    /** Stage edges on the rest bar: exhausted, tired, and the wake line. */
+    _drawRestMarks(gfx, barX, y, barW, barH, scale) {
+        const marks = (typeof Needs !== "undefined" && Needs.REST_MARKS) || [0.01, 0.14, 0.28];
+        const tickW = Math.max(1, Math.round(scale || 1));
+        gfx.fillStyle(0x444444, 1);
+        for (let i = 0; i < marks.length; i++) {
+            const tx = barX + Math.round(barW * marks[i]) - Math.floor(tickW / 2);
+            gfx.fillRect(tx, y, tickW, barH);
+        }
+    }
+
     /** White triangle under the bar: the mood target the fill is moving toward. */
     _drawMoodTarget(gfx, barX, y, barW, barH, scale, target) {
         const n = Number(target);
@@ -679,6 +690,8 @@ class BioPanel {
                     this._drawMoodMarks(this.bars, barX, y, barW, needIcon, s);
                     const target = typeof Thoughts !== "undefined" ? Thoughts.targetOf(pawn) : null;
                     this._drawMoodTarget(this.bars, barX, y, barW, needIcon, s, target);
+                } else if (row.def.id === "rest") {
+                    this._drawRestMarks(this.bars, barX, y, barW, needIcon, s);
                 }
                 const hitW = needIcon + iconGap + barW;
                 let hit = row.hit?.active ? row.hit : null;
