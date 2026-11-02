@@ -2547,14 +2547,8 @@ class PartySystem {
                         if (w.anims) {
                             const ts = this.scene.tileSize || 16;
                             const snapDtSec = Math.max(0.001, (w._netSnapDt || (1000 / 15)) / 1000);
-                            let tilesPerSec = moving ? snapDist / snapDtSec / ts : 0;
-                            if (moving && tilesPerSec < 0.05) {
-                                const tick = typeof Party !== "undefined" && Party.mobTimeScale
-                                    ? Party.mobTimeScale(this.scene.tickSpeed)
-                                    : 1;
-                                const stroll = w.hostile ? 1 : ((typeof Party !== "undefined" && Party.WANDER_WALK_MULT) || 0.28);
-                                tilesPerSec = (w.speed || 3.5) * stroll * tick;
-                            }
+                            const travel = Math.hypot(tx - fromX, ty - fromY);
+                            const tilesPerSec = moving ? travel / snapDtSec / ts : 0;
                             w.anims.timeScale = moving && typeof Party !== "undefined" && Party.walkAnimTimeScale
                                 ? Party.walkAnimTimeScale(tilesPerSec)
                                 : moving
@@ -4004,7 +3998,8 @@ class PartySystem {
             const teleport = P?.puppetTeleportPx?.({
                 tickSpeed: this.scene?.tickSpeed,
                 tileSize: this.scene?.tileSize,
-                snapDtMs: gap
+                snapDtMs: gap,
+                speedTiles: P?.WALK_ANIM_TILES_PER_SEC || 3.5
             }) || 72;
             const seg = P?.puppetSegment?.({
                 prevX: pawn._netTx,

@@ -4147,9 +4147,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 this.y = fromY + (ty - fromY) * u;
             }
         }
-        // Walk/idle from the snapshot's server-to-server travel (constant for
-        // the whole 15 Hz interval). Per-frame pixel delta flickers because
-        // render snapping moves 1px some frames and 0 the next.
+        // Walk/idle from this pose segment, held for the whole interval.
+        // Per-frame pixel delta flickers because render snapping moves 1px
+        // some frames and 0 the next.
         const snapDist = Number.isFinite(this._netSnapDist) ? this._netSnapDist : err;
         // Trust an explicit idle from the sim. A 1px origin correction after
         // switching control used to keep the walk clip looping in place.
@@ -4185,7 +4185,9 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this.anims) {
             const ts = this.scene.tileSize || 16;
             const snapDtSec = Math.max(0.001, (this._netSnapDt || (1000 / 15)) / 1000);
-            const tilesPerSec = moving ? snapDist / snapDtSec / ts : 0;
+            // The lerp walks `err` over the segment clock. The server step is
+            // shorter when a turn or a late pose stretched that clock.
+            const tilesPerSec = moving ? err / snapDtSec / ts : 0;
             this.anims.timeScale = moving && typeof Party !== "undefined" && Party.walkAnimTimeScale
                 ? Party.walkAnimTimeScale(tilesPerSec)
                 : moving

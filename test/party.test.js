@@ -308,6 +308,49 @@ test("puppet lerp keeps speed past the segment and does not rewind", () => {
     });
     assert.equal(far.tx, 400);
     assert.equal(far.fromX, 400);
+    assert.equal(far.snapDist, 0);
+
+    const travel = (seg) => Math.hypot(seg.tx - seg.fromX, seg.ty - seg.fromY);
+    assert.ok(Math.abs(behind.snapDist - travel(behind)) < 1e-6);
+    const behindSpeed = behind.snapDist / (behind.snapDt / 1000);
+    assert.ok(Math.abs(behindSpeed - (40 / 0.2)) < 1e-6, `behind clip ${behindSpeed}`);
+
+    const off = Party.puppetSegment({
+        prevX: 0,
+        prevY: 0,
+        nextX: 40,
+        nextY: 0,
+        displayedX: 10,
+        displayedY: 20,
+        now,
+        gap,
+        moving: true,
+        teleportPx: 200
+    });
+    assert.ok(Math.abs(off.snapDist - travel(off)) < 1e-6);
+    const offSpeed = off.snapDist / (off.snapDt / 1000);
+    assert.ok(Math.abs(offSpeed - (40 / 0.2)) < 1e-6, `turn clip ${offSpeed}`);
+});
+
+test("walk clip rate follows travel and does not full-speed a stop", () => {
+    assert.equal(Party.walkAnimTimeScale(3.5), 1);
+    assert.equal(Party.walkAnimTimeScale(7), 2);
+    assert.equal(Party.walkAnimTimeScale(0), 0.15);
+    assert.equal(Party.walkAnimTimeScale(0.1), 0.15);
+});
+
+test("a sprinting human step is inside the puppet teleport window", () => {
+    const tick = 20;
+    const gap = 200;
+    const ts = 16;
+    const dist = 3.5 * 1.5 * tick * ts * (gap / 1000);
+    const teleport = Party.puppetTeleportPx({
+        tickSpeed: tick,
+        snapDtMs: gap,
+        tileSize: ts,
+        speedTiles: Party.WALK_ANIM_TILES_PER_SEC
+    });
+    assert.ok(dist < teleport, `sprint step ${dist} vs window ${teleport}`);
 });
 
 test("eatTakeQty takes only enough discrete food to reach AUTO_EAT_UNTIL", () => {

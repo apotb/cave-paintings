@@ -156,6 +156,8 @@
      * the step, the clock is backdated so the pose at `now` stays there
      * instead of jumping to `prev`. A point still behind the step stretches
      * the gap so the speed stays the server step over the real packet gap.
+     * `snapDist` is the length of that walked segment, so distance/time matches
+     * the sprite. It is longer than the server step when the pose was off the line.
      * The returned `snapAt` is the presentation clock. Callers must keep the
      * packet arrival time separately — the next gap is measured from that,
      * and a backdated clock would shrink it.
@@ -173,29 +175,34 @@
         const dispY = Number(opts.displayedY);
         const hasPrev = Number.isFinite(prevX) && Number.isFinite(prevY);
         const hasDisp = Number.isFinite(dispX) && Number.isFinite(dispY);
-        const ends = (x, y, dist) => ({
+        const ends = (x, y) => ({
             fromX: x,
             fromY: y,
             tx: x,
             ty: y,
             snapAt: now,
             snapDt: gap,
-            snapDist: Number.isFinite(dist) ? dist : 0
+            snapDist: 0
         });
-        const seg = (fromX, fromY, tx, ty, snapAt, snapDt, dist) => ({
-            fromX, fromY, tx, ty, snapAt, snapDt, snapDist: dist
+        // snapDist is how far the sprite walks over snapDt. A catch-up
+        // segment is longer than the server step and its clock is stretched
+        // to keep that speed; storing the server step made the walk clip
+        // play at step/stretched-time instead of the speed on screen.
+        const seg = (fromX, fromY, tx, ty, snapAt, snapDt) => ({
+            fromX, fromY, tx, ty, snapAt, snapDt,
+            snapDist: Math.hypot(tx - fromX, ty - fromY)
         });
         if (!Number.isFinite(nextX) || !Number.isFinite(nextY)) {
-            return ends(hasPrev ? prevX : 0, hasPrev ? prevY : 0, 0);
+            return ends(hasPrev ? prevX : 0, hasPrev ? prevY : 0);
         }
-        if (!hasPrev) return ends(nextX, nextY, 0);
+        if (!hasPrev) return ends(nextX, nextY);
         const dist = Math.hypot(nextX - prevX, nextY - prevY);
-        if (!(dist > 0.5) || dist > teleport) return ends(nextX, nextY, dist);
+        if (!(dist > 0.5) || dist > teleport) return ends(nextX, nextY);
         if (!moving) {
-            if (!hasDisp) return seg(prevX, prevY, nextX, nextY, now, gap, dist);
-            return seg(dispX, dispY, nextX, nextY, now, gap, dist);
+            if (!hasDisp) return seg(prevX, prevY, nextX, nextY, now, gap);
+            return seg(dispX, dispY, nextX, nextY, now, gap);
         }
-        if (!hasDisp) return seg(prevX, prevY, nextX, nextY, now, gap, dist);
+        if (!hasDisp) return seg(prevX, prevY, nextX, nextY, now, gap);
         const nx = (nextX - prevX) / dist;
         const ny = (nextY - prevY) / dist;
         const along = (dispX - prevX) * nx + (dispY - prevY) * ny;
@@ -204,16 +211,16 @@
         if (perp > 1.5) {
             const cover = Math.hypot(nextX - dispX, nextY - dispY);
             const snapDt = speed > 1 ? (cover / speed) * 1000 : gap;
-            return seg(dispX, dispY, nextX, nextY, now, snapDt, dist);
+            return seg(dispX, dispY, nextX, nextY, now, snapDt);
         }
         if (along < 0) {
             const cover = dist - along;
             const snapDt = speed > 1 ? (cover / speed) * 1000 : gap;
-            return seg(prevX + nx * along, prevY + ny * along, nextX, nextY, now, snapDt, dist);
+            return seg(prevX + nx * along, prevY + ny * along, nextX, nextY, now, snapDt);
         }
         const maxAlong = dist + speed * 0.9;
         const clamped = Math.min(along, maxAlong);
-        return seg(prevX, prevY, nextX, nextY, now - (clamped / dist) * gap, gap, dist);
+        return seg(prevX, prevY, nextX, nextY, now - (clamped / dist) * gap, gap);
     }
     /**
      * Latch follower sprint so they don't flicker on a distance ring around
@@ -264,13 +271,13 @@
         return `Following ${name}`;
     }
 
-    /** Map travel speed onto the human walk clip. */
+    /** Map travel speed onto the human walk clip. A stop stays on the slow floor. */
     function walkAnimTimeScale(tilesPerSec, refTilesPerSec) {
         const ref = Number(refTilesPerSec) > 0 ? Number(refTilesPerSec) : WALK_ANIM_TILES_PER_SEC;
         const t = Number(tilesPerSec);
-        if (!Number.isFinite(t) || t <= 0) return 1;
+        if (!Number.isFinite(t)) return 1;
         const scale = t / ref;
-        if (scale < 0.15) return 0.15;
+        if (!(scale > 0.15)) return 0.15;
         if (scale > 8) return 8;
         return scale;
     }

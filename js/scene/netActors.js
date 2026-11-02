@@ -428,7 +428,11 @@
                 const teleport = P?.puppetTeleportPx?.({
                     tickSpeed: this.tickSpeed,
                     tileSize: this.tileSize,
-                    snapDtMs: gap
+                    snapDtMs: gap,
+                    // Human walk, not the wanderer stroll. A sprinting settler
+                    // step is longer than that window and was snapped, so the
+                    // body hopped while the walk clip kept a smooth rate.
+                    speedTiles: P?.WALK_ANIM_TILES_PER_SEC || 3.5
                 }) || 72;
                 const seg = P?.puppetSegment?.({
                     prevX: pawn._netTx,
