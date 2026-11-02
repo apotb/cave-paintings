@@ -64,7 +64,7 @@ class StoragePanel {
         if (!this.storage?.isEmpty?.()) return false;
         const cost = this._pitFillCost();
         if (!(cost > 0)) return true;
-        const fillId = this.storage.entry?.fillId === "snow" ? "snow" : "dirt";
+        const fillId = Place.pitFillItem(this.storage.entry);
         return (this.scene.player?.getNumItems?.(fillId) || 0) >= cost;
     }
 
@@ -73,9 +73,9 @@ class StoragePanel {
         if (!this._isStoragePit()) return "";
         const cost = this._pitFillCost();
         if (!(cost > 0)) return "";
-        const fillId = this.storage?.entry?.fillId === "snow" ? "snow" : "dirt";
+        const fillId = Place.pitFillItem(this.storage?.entry);
         const meta = this.scene.getItem?.(fillId);
-        const name = meta?.name || (fillId === "snow" ? "Snow" : "Dirt");
+        const name = meta?.name || fillId;
         const have = (this.scene.player?.getNumItems?.(fillId) || 0) >= cost;
         return {
             text: "",

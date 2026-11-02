@@ -559,6 +559,7 @@
         "key": "sinew",
         "maxStack": 99,
         "weight": 0.2,
+        "storageCategory": "materials",
         "food": {
             "kc": 0,
             "spoil": 72
@@ -1583,6 +1584,14 @@
         "key": "snow_pile",
         "maxStack": 99,
         "weight": 0.2,
+        "storageCategory": "junk"
+    },
+    {
+        "id": "sand",
+        "name": "Sand",
+        "key": "sand_pile",
+        "maxStack": 99,
+        "weight": 0.8,
         "storageCategory": "junk"
     },
     {

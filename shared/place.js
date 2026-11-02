@@ -1549,11 +1549,19 @@
         return `${name} (Blueprint)\nRequires digging to complete`;
     }
 
-    /** Grass and grass hills yield dirt. Snow and snow hills yield snow. */
+    /** Grass yields dirt, sand yields sand, snow yields snow. Hills match the flat tile. */
     function pitFillForTile(tileKey) {
         if (tileKey === "snow" || tileKey === "snow_hill") return "snow";
+        if (tileKey === "sand" || tileKey === "sand_hill") return "sand";
         if (tileKey === "grass" || tileKey === "grass_hill") return "dirt";
         return null;
+    }
+
+    /** Item spent to fill the hole, and yielded while digging it. */
+    function pitFillItem(entry) {
+        const id = entry?.fillId;
+        if (id === "dirt" || id === "sand" || id === "snow") return id;
+        return "dirt";
     }
 
     function tileAllowsThing(thingDef, tileKey) {
@@ -1931,6 +1939,7 @@
         pitFinished,
         pitBlueprintTooltip,
         pitFillForTile,
+        pitFillItem,
         tileAllowsThing,
         pitSlowsSpoil,
         canPlaceOnTile,

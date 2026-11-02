@@ -316,6 +316,7 @@ test("every item lands in exactly one leaf", () => {
     assert.equal(SF.isPreparedFood({ id: "raw_venison" }, getItem("raw_venison")), false);
     assert.equal(SF.leafCategory(getItem("rot"), null), "junk");
     assert.equal(SF.leafCategory(getItem("brain"), null), "materials");
+    assert.equal(SF.leafCategory(getItem("sinew"), null), "materials");
     assert.equal(SF.leafCategory(getItem("lean_to"), null), "buildings");
     assert.equal(SF.leafCategory(getItem("wicker_basket"), null), "buildings");
     assert.equal(SF.leafCategory(getItem("drying_rack"), null), "buildings");
@@ -344,7 +345,7 @@ test("every item lands in exactly one leaf", () => {
     assert.equal(SF.findNode(t, "materials/clay"), null);
     assert.equal(SF.findNode(t, "materials/fuel"), null);
     const materialIds = (SF.findNode(t, "materials").items || []).map((it) => it.id);
-    assert.deepEqual(materialIds, ["brain", "clay"]);
+    assert.deepEqual(materialIds, ["brain", "clay", "sinew"]);
     let clayFilt = SF.toggleCategory(SF.emptyFilter(), t, "materials");
     assert.equal(SF.allows(clayFilt, { id: "clay" }, getItem), false);
     clayFilt = SF.toggleCategory(SF.emptyFilter(), t, "materials/stone");

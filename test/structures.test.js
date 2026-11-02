@@ -254,7 +254,7 @@ test("abandoned camp storage pit", () => {
     const seed = WorldGen.pickWorldSeed(20260814);
     WorldGen.applySeed(seed);
     const type = Structures.typeById(Structures.getConfig(), "abandoned_camp");
-    const pitGround = new Set(["grass", "grass_hill", "snow", "snow_hill"]);
+    const pitGround = new Set(["grass", "grass_hill", "sand", "sand_hill", "snow", "snow_hill"]);
     const lootQty = { rot: [1, 3], coconut: [1, 2], apple: [1, 3] };
 
     const camps = [];
@@ -321,7 +321,7 @@ test("abandoned camp storage pit", () => {
             assert.equal(Place.pitFinished(pit), true);
             const s = inst.spawned.find((p) => p.piece.id === "storage_pit");
             const ground = WorldGen.tileKeyAt(s.tx, s.ty);
-            assert.equal(pit.fillId, ground === "snow" || ground === "snow_hill" ? "snow" : "dirt");
+            assert.equal(pit.fillId, Place.pitFillForTile(ground) || "dirt");
             for (const stack of pit.slots) {
                 if (!stack) {
                     emptySlots += 1;

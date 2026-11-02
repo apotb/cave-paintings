@@ -825,7 +825,7 @@
         thing._syncDigHole?.();
         const pit = entry.id === "storage_pit" || def?.id === "storage_pit";
         const itemId = def.diggable?.item
-            || (pit ? (entry.fillId === "snow" ? "snow" : "dirt") : null);
+            || (pit ? Place.pitFillItem(entry) : null);
         if (itemId && result.give > 0) {
             const meta = this.getItem(itemId);
             if (meta) {

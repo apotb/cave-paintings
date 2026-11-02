@@ -1897,7 +1897,7 @@
         }
         const pit = Place.isStoragePit(bestDef, best);
         const itemId = bestDef?.diggable?.item
-            || (pit ? (best.fillId === "snow" ? "snow" : "dirt") : null);
+            || (pit ? Place.pitFillItem(best) : null);
         if (itemId && result.give > 0) {
             const pawn = this._digPawn(creature);
             let left = result.give;

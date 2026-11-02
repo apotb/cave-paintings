@@ -2191,7 +2191,7 @@
         if (typeof Place !== "undefined" && Place.isStoragePit(storage.meta, entry)) {
             const cost = Math.max(0, Math.floor(Number(entry.digTaken) || 0));
             if (cost > 0) {
-                const fillId = entry.fillId === "snow" ? "snow" : "dirt";
+                const fillId = Place.pitFillItem(entry);
                 if ((this.player?.getNumItems?.(fillId) || 0) < cost) {
                     this.combatLog?.push(`Need ${cost} ${fillId}`);
                     return false;

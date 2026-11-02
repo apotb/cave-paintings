@@ -1812,7 +1812,7 @@
         if (!Place.isStorageEmpty(entry)) return;
         const cost = Math.max(0, Math.floor(Number(entry.digTaken) || 0));
         if (cost > 0) {
-            const fillId = entry.fillId === "snow" ? "snow" : "dirt";
+            const fillId = Place.pitFillItem(entry);
             if (!this._takePawnItem(p, fillId, cost)) {
                 this.pushEvent({
                     kind: "combat_log",

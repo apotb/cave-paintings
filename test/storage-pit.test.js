@@ -139,7 +139,7 @@ function workOnce(world, rec) {
     return world._tickSettlerWork(mob, 300);
 }
 
-test("storage pit, dirt, and snow are real items and Storage is researchable", () => {
+test("storage pit, dirt, sand, and snow are real items and Storage is researchable", () => {
     const pit = DataStore.getItem("storage_pit");
     const thing = DataStore.getThing("storage_pit");
     assert.deepEqual(pit.tooltip, [
@@ -164,6 +164,10 @@ test("storage pit, dirt, and snow are real items and Storage is researchable", (
     assert.equal(DataStore.getItem("snow").weight, 0.2);
     assert.equal(DataStore.getItem("dirt").storageCategory, "junk");
     assert.equal(DataStore.getItem("snow").storageCategory, "junk");
+    assert.equal(DataStore.getItem("sand").key, "sand_pile");
+    assert.equal(DataStore.getItem("sand").maxStack, 99);
+    assert.equal(DataStore.getItem("sand").weight, 0.8);
+    assert.equal(DataStore.getItem("sand").storageCategory, "junk");
     assert.equal(Research.techIsWip("storage"), false);
     assert.deepEqual(Research.techById("storage").prereqs, ["digging", "basic_furniture"]);
     assert.deepEqual(Research.techById("storage").unlocks.items, ["storage_pit"]);
@@ -180,11 +184,12 @@ test("storage pit, dirt, and snow are real items and Storage is researchable", (
     assert.equal(Place.pitBlueprintTooltip(thing, { id: "storage_pit", digProgress: 1 }), null);
 });
 
-test("storage pit places only on grass and snow, and remembers the fill", () => {
+test("storage pit places on grass, sand, and snow, and remembers the fill", () => {
     const { world, pawn } = createTestWorld();
     fillTiles(world, "grass");
     const cases = [
-        { tx: 2, ty: 1, tile: "sand", ok: false },
+        { tx: 2, ty: 1, tile: "sand", ok: true, fill: "sand" },
+        { tx: 3, ty: 3, tile: "sand_hill", ok: true, fill: "sand" },
         { tx: 3, ty: 2, tile: "gravel", ok: false },
         { tx: 1, ty: 2, tile: "rock", ok: false },
         { tx: 2, ty: 2, tile: "grass", ok: true, fill: "dirt" },
@@ -202,7 +207,7 @@ test("storage pit places only on grass and snow, and remembers the fill", () => 
         else assert.equal(after, before, c.tile);
     }
     const placed = pits(world);
-    assert.equal(placed.length, 4);
+    assert.equal(placed.length, 6);
     for (const c of cases.filter((c) => c.ok)) {
         const { x, y } = world._tileCenter(c.tx, c.ty);
         const pit = placed.find((t) => t.x === x && t.y === y);
@@ -214,8 +219,8 @@ test("storage pit places only on grass and snow, and remembers the fill", () => 
     }
 });
 
-test("a grass pit takes 25 thrusts and a snow pit takes 10, both yielding 25", () => {
-    for (const fillId of ["dirt", "snow"]) {
+test("a grass or sand pit takes 25 thrusts and a snow pit takes 10, each yielding 25", () => {
+    for (const fillId of ["dirt", "sand", "snow"]) {
         const { world, pawn } = createTestWorld();
         const { pit, hits, chunk } = digOut(world, pawn, fillId);
         const expectHits = fillId === "snow" ? 10 : 25;
@@ -224,7 +229,10 @@ test("a grass pit takes 25 thrusts and a snow pit takes 10, both yielding 25", (
         assert.equal(chunk.things.includes(pit), true, fillId);
         assert.equal(pit.digProgress, 1, fillId);
         assert.equal(qty(pawn.inventory, fillId) + qty(pawn.overflow, fillId), 25, fillId);
-        assert.equal(qtyWorld(pawn, chunk, fillId === "dirt" ? "snow" : "dirt"), 0, fillId);
+        for (const other of ["dirt", "sand", "snow"]) {
+            if (other === fillId) continue;
+            assert.equal(qtyWorld(pawn, chunk, other), 0, fillId);
+        }
         assert.equal(pawn.inventory[0].id, "digging_stick");
         assert.equal(pawn.inventory[0].durability, 50 - expectHits, fillId);
     }
@@ -355,6 +363,25 @@ test("a snow pit will not fill with dirt", () => {
     storageAct(world, pawn, pit, "pickup");
     assert.equal(originChunk(world).things.includes(pit), false);
     assert.equal(qty(pawn.inventory, "snow"), 0);
+    assert.equal(qty(pawn.inventory, "dirt"), 25);
+    assert.ok(qty(pawn.inventory, "storage_pit") + qty(pawn.overflow, "storage_pit") >= 1);
+});
+
+test("a sand pit will not fill with dirt", () => {
+    const { world, pawn } = createTestWorld();
+    const pit = insertPit(world, pawn.x, pawn.y, {
+        digProgress: 1, digTaken: 25, fillId: "sand", uid: "sand-pit"
+    });
+    pawn.inventory[0] = { id: "dirt", quantity: 25 };
+    world.drainEvents();
+    storageAct(world, pawn, pit, "pickup");
+    assert.equal(originChunk(world).things.includes(pit), true);
+    assert.equal(qty(pawn.inventory, "dirt"), 25);
+    assert.ok(world.drainEvents().some((e) => e.kind === "combat_log" && e.text === "Need 25 sand"));
+    pawn.inventory[1] = { id: "sand", quantity: 25 };
+    storageAct(world, pawn, pit, "pickup");
+    assert.equal(originChunk(world).things.includes(pit), false);
+    assert.equal(qty(pawn.inventory, "sand"), 0);
     assert.equal(qty(pawn.inventory, "dirt"), 25);
     assert.ok(qty(pawn.inventory, "storage_pit") + qty(pawn.overflow, "storage_pit") >= 1);
 });

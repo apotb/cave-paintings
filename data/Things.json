@@ -267,7 +267,7 @@
         "name": "Storage Pit",
         "key": "storage_pit",
         "hitboxSize": 0,
-        "placeTiles": ["grass", "grass_hill", "snow", "snow_hill"],
+        "placeTiles": ["grass", "grass_hill", "sand", "sand_hill", "snow", "snow_hill"],
         "diggable": {
             "health": 1,
             "yield": 25
