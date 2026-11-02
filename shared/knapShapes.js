@@ -100,6 +100,24 @@ const SHAPES = {
         "................",
         "................",
     ],
+    blade: [
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+        "...##########...",
+        "...##########...",
+        "...##########...",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+        "................",
+    ],
     hand_axe: [
         "................",
         "................",
@@ -139,7 +157,7 @@ const SHAPES = {
 };
 
     const PEBBLE_STONES = ["limestone", "sandstone", "andesite", "diorite", "granite"];
-    const GATED = { hand_axe: true, cleaver: true };
+    const GATED = { hand_axe: true, cleaver: true, blade: true };
 
     function stoneApi() {
         if (typeof Stone !== "undefined" && Stone.props) return Stone;

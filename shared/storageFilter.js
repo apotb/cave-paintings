@@ -18,6 +18,7 @@
     };
     const TOOL_CLASSES = [
         { id: "tool:awl", name: "Awl", cls: "awl" },
+        { id: "tool:blade", name: "Blade", cls: "blade" },
         { id: "tool:chopper", name: "Chopper", cls: "chopper" },
         { id: "tool:cleaver", name: "Cleaver", cls: "cleaver" },
         { id: "tool:hand_axe", name: "Hand-axe", cls: "hand_axe" },

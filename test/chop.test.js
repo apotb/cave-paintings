@@ -21,6 +21,7 @@ test("chopFraction by class, quality, and hardness", () => {
     assert.ok(Math.abs(flint - 0.042) < 1e-9);
     assert.ok(Math.abs(axe - 0.14) < 1e-9);
     assert.equal(Chop.chopFraction({ toolClass: "knife" }), 0);
+    assert.equal(Chop.chopFraction({ toolClass: "blade", knapQuality: "rough", knapMaterial: "flint" }), 0);
     assert.equal(Chop.chopFraction({ toolClass: "cleaver", knapQuality: "rough", knapMaterial: "flint" }), 0);
     assert.equal(Chop.isChopper({ toolClass: "cleaver", knapQuality: "rough", knapMaterial: "flint" }), false);
     assert.equal(Chop.isChopper({ toolClass: "chopper", knapQuality: "rough" }), true);

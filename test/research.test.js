@@ -207,6 +207,11 @@ test("action unlocks are not missing-item placeholders", () => {
     assert.equal(Research.isActionUnlock("Pit Kiln"), false);
     assert.equal(Research.isActionUnlock("Clay Pot"), false);
     assert.equal(Research.isActionUnlock("Fence"), false);
+    assert.equal(Research.knappingTechniqueByLabel("Knife knapping").toolClass, "knife");
+    assert.equal(Research.knappingTechniqueByLabel("Hand-axe knapping").toolClass, "hand_axe");
+    assert.equal(Research.knappingTechniqueByLabel("Blade knapping").toolClass, "blade");
+    assert.equal(Research.knappingTechniqueByLabel("Spear tip knapping").toolClass, "spear_tip");
+    assert.equal(Research.knappingTechniqueByLabel("Burin knapping"), null);
     assert.equal(Research.unlockTextIcon("Knife knapping"), "rock");
     assert.equal(Research.unlockTextIcon("Hand-axe knapping"), "rock");
     assert.equal(Research.unlockTextIcon("Microlith knapping"), "rock");
@@ -340,15 +345,28 @@ test("knapping help lists only unlocked techniques", () => {
         )
     );
     assert.equal(
+        Research.knappingHelpLines(s).includes(
+            "Blade — long parallel flake, at least twice as long as wide"
+        ),
+        false
+    );
+    Research.unlock(s, "blades");
+    assert.ok(
+        Research.knappingHelpLines(s).includes(
+            "Blade — long parallel flake, at least twice as long as wide"
+        )
+    );
+    assert.equal(
         Research.knappingHelpLines(s).some((line) => /cleaver/i.test(line)),
         false
     );
     Research.unlock(s, "cleaver");
-    assert.ok(
-        Research.knappingHelpLines(s).includes(
-            "Cleaver — flat-ended block"
-        )
-    );
+    const withBoth = Research.knappingHelpLines(s);
+    const cleaverAt = withBoth.indexOf("Cleaver — flat-ended block");
+    const bladeAt = withBoth.indexOf("Blade — long parallel flake, at least twice as long as wide");
+    assert.ok(cleaverAt >= 0);
+    assert.ok(bladeAt > cleaverAt);
+    assert.equal(withBoth[withBoth.length - 1], "Flake — unclear leftover chip");
 });
 
 test("painting circle has no walk collision", () => {
@@ -802,8 +820,7 @@ test("tree layout is left-to-right with prereq edges", () => {
     assert.ok(layout.edges.some((e) => e.from === "skinworking" && e.to === "leatherworking"));
     assert.ok(layout.edges.some((e) => e.from === "smoking" && e.to === "leatherworking"));
     assert.ok(layout.edges.some((e) => e.from === "hafting" && e.to === "bows"));
-    assert.ok(layout.edges.some((e) => e.from === "microliths" && e.to === "bows"));
-    assert.equal(layout.edges.some((e) => e.from === "blades" && e.to === "bows"), false);
+    assert.ok(layout.edges.some((e) => e.from === "blades" && e.to === "bows"));
     assert.ok(layout.edges.some((e) => e.from === "dogs" && e.to === "husbandry"));
     assert.ok(layout.edges.some((e) => e.from === "settlements" && e.to === "herding"));
     assert.equal(layout.edges.some((e) => e.from === "hut" && e.to === "herding"), false);
@@ -827,7 +844,7 @@ test("tree layout is left-to-right with prereq edges", () => {
     assert.equal(layout.byId.writing.shape, "trap");
     assert.equal(layout.byId.fishing.shape, "rect");
     assert.deepEqual(Research.techById("hafting").children, ["throwing", "fishing"]);
-    assert.ok(Research.techById("microliths").children.includes("bows"));
+    assert.deepEqual(Research.techById("blades").children, ["burin", "bows"]);
     const ids = new Set(layout.nodes.map((n) => n.id));
     for (const t of Research.techs()) assert.ok(ids.has(t.id), t.id);
 
@@ -991,7 +1008,15 @@ test("tree layout is left-to-right with prereq edges", () => {
             break;
         }
     }
-    assert.equal(trapFirstX.size, 1, "Traps children should share one outgoing bus");
+    const trapRight = big.byId.traps.x + big.byId.traps.w;
+    const trapChildLeft = Math.min(big.byId.pit_traps.x, big.byId.spike_traps.x);
+    assert.ok(trapFirstX.size >= 1);
+    for (const x of trapFirstX) {
+        assert.ok(
+            x > trapRight && x < trapChildLeft,
+            `Traps children should leave through the gutter (x=${x})`
+        );
+    }
     const camp = big.byId.camping;
     const digSkip = routed.filter((r) => (
         r.from === "digging" && ["storage", "pit_traps"].includes(r.to)
@@ -1163,13 +1188,13 @@ test("tree layout is left-to-right with prereq edges", () => {
         `tanning→skinworking should stay on tanning's row until the dest gutter (detour=${tanDetour})`
     );
 
-    const intoMicro = routed.filter((r) => r.to === "microliths");
-    assert.equal(intoMicro.length, 1);
-    const micro = big.byId.microliths;
-    const microEnd = intoMicro[0].path[intoMicro[0].path.length - 1];
+    const intoBurin = routed.filter((r) => r.to === "burin");
+    assert.equal(intoBurin.length, 1);
+    const burin = big.byId.burin;
+    const burinEnd = intoBurin[0].path[intoBurin[0].path.length - 1];
     assert.ok(
-        Math.abs(microEnd[1] - (micro.y + micro.h * 0.5)) < 1,
-        `sole prereq into microliths should attach at center (y=${microEnd[1]} mid=${micro.y + micro.h * 0.5})`
+        Math.abs(burinEnd[1] - (burin.y + burin.h * 0.5)) < 1,
+        `sole prereq into burin should attach at center (y=${burinEnd[1]} mid=${burin.y + burin.h * 0.5})`
     );
 });
 
@@ -1214,7 +1239,7 @@ test("retuned tech costs, names, and eras", () => {
     assert.equal(Research.techById("writing").cost, 12);
     assert.deepEqual(Research.techById("writing").prereqs, ["mathematics", "pottery"]);
     assert.equal(Research.techById("bows").cost, 5);
-    assert.deepEqual(Research.techById("bows").prereqs, ["hafting", "microliths"]);
+    assert.deepEqual(Research.techById("bows").prereqs, ["hafting", "blades"]);
     assert.equal(Research.techById("fishing").cost, 4);
     assert.deepEqual(Research.techById("fishing").prereqs, ["hafting", "digging"]);
     assert.equal(Research.techById("nets").cost, 4);
@@ -1270,13 +1295,13 @@ test("unfinished techs are WIP and cannot be researched", () => {
     const live = [
         "gathering", "cordage", "camping", "basic_furniture", "herbalism", "digging", "storage",
         "fire", "hearth", "cooking", "smoking", "clay_forming", "hut",
-        "knapping", "hafting", "hand_axe", "cleaver", "tanning", "skinworking", "leatherworking",
+        "knapping", "hafting", "hand_axe", "cleaver", "blades", "tanning", "skinworking", "leatherworking",
         "culture", "painting", "counting", "grinding", "fishing"
     ];
     const wip = [
         "traps", "pit_traps", "spike_traps",
         "pit_kiln", "earth_oven", "dogs", "feasts", "burin",
-        "blades", "throwing", "microliths", "bows", "nets",
+        "throwing", "bows", "nets",
         "ornament", "rituals", "idolatry", "music", "burial", "afterlife", "ancestors", "shrine",
         "settlements", "agriculture", "tree_sowing", "husbandry", "herding",
         "pottery", "mathematics", "writing"
@@ -1305,7 +1330,7 @@ test("unfinished techs are WIP and cannot be researched", () => {
 test("age advances at ceil 50% of an era or 100% of the previous", () => {
     const s = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p1" });
     const meso = Research.techsInEra("Mesolithic");
-    assert.equal(meso.length, 8);
+    assert.equal(meso.length, 7);
     const need = Math.ceil(meso.length * 0.5);
     assert.equal(need, 4);
     for (let i = 0; i < need - 1; i++) Research.unlock(s, meso[i].id);

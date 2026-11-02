@@ -359,7 +359,7 @@
         "wip": true,
         "quote": "Stay out of danger",
         "cost": 5,
-        "prereqs": ["hafting", "microliths"],
+        "prereqs": ["hafting", "blades"],
         "unlocks": { "items": [], "jobs": [], "text": ["Bow", "Arrow"] },
         "children": []
     },
@@ -409,23 +409,11 @@
         "id": "blades",
         "name": "Blades",
         "era": "Paleolithic",
-        "wip": true,
         "quote": "Knap stone into long flakes",
         "cost": 3,
         "prereqs": ["hand_axe"],
         "unlocks": { "items": [], "jobs": [], "text": ["Blade knapping"] },
-        "children": ["microliths", "burin"]
-    },
-    {
-        "id": "microliths",
-        "name": "Microliths",
-        "era": "Mesolithic",
-        "wip": true,
-        "quote": "An advanced form of hitting a rock on another rock",
-        "cost": 4,
-        "prereqs": ["blades"],
-        "unlocks": { "items": [], "jobs": [], "text": ["Microlith knapping"] },
-        "children": ["bows"]
+        "children": ["burin", "bows"]
     },
     {
         "id": "tanning",

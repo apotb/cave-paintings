@@ -147,7 +147,8 @@
         { label: "Awl knapping", toolClass: "awl", help: "Awl — small pierce spike / butt with a point" },
         { label: "Spear tip knapping", toolClass: "spear_tip", help: "Spear tip — long and thin" },
         { label: "Hand-axe knapping", toolClass: "hand_axe", help: "Hand-axe — symmetric biface, edge all around" },
-        { label: "Cleaver knapping", toolClass: "cleaver", help: "Cleaver — flat-ended block" }
+        { label: "Cleaver knapping", toolClass: "cleaver", help: "Cleaver — flat-ended block" },
+        { label: "Blade knapping", toolClass: "blade", help: "Blade — long parallel flake, at least twice as long as wide" }
     ];
 
     function knappingTechniqueByLabel(label) {
@@ -2417,6 +2418,7 @@
         unlockTextIcon,
         unlockTextLabel,
         unlockTextEntries,
+        knappingTechniqueByLabel,
         knappingTechniques,
         knappingHelpLines,
         knappingHelpRows,

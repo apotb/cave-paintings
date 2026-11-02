@@ -43,6 +43,7 @@ test("a cleaver adds 2 meat and leaves hide, brain, and bone", () => {
     assert.equal(noBrain.some((d) => d.id === "brain"), false);
     assert.deepEqual(noBrain[0], { id: "raw_venison", min: 4, max: 6 });
     assert.equal(CorpseDecay.isSkinTool("knife"), true);
+    assert.equal(CorpseDecay.isSkinTool("blade"), false);
     assert.equal(CorpseDecay.isSkinTool("cleaver"), true);
     assert.equal(CorpseDecay.isSkinTool("hand_axe"), false);
 });

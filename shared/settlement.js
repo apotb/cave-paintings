@@ -208,6 +208,7 @@
             { id: "knap_awl", name: "Knap awl", kind: "knap", toolClass: "awl" },
             { id: "knap_spear_tip", name: "Knap spear tip", kind: "knap", toolClass: "spear_tip" },
             { id: "knap_hand_axe", name: "Knap hand-axe", kind: "knap", toolClass: "hand_axe" },
+            { id: "knap_blade", name: "Knap blade", kind: "knap", toolClass: "blade" },
             { id: "knap_cleaver", name: "Knap cleaver", kind: "knap", toolClass: "cleaver" }
         ]
     };
@@ -876,7 +877,7 @@
         if (!key || !bill) return false;
         const rec = billRecipeById(bill.recipeId) || bill;
         const cls = bill.toolClass || rec?.toolClass;
-        if ((cls === "hand_axe" || cls === "cleaver") && stoneApi()?.handAxeGate?.(key)) return false;
+        if ((cls === "hand_axe" || cls === "cleaver" || cls === "blade") && stoneApi()?.handAxeGate?.(key)) return false;
         return billAllowsInput(bill, key);
     }
 
@@ -3087,6 +3088,7 @@
         cleaver: "Cleavers",
         digger: "Shovels",
         flimsy_rod: "Fishing Rods",
+        blade: "Blades",
         hand_axe: "Hand-axes",
         knife: "Knives",
         scraper: "Scrapers"

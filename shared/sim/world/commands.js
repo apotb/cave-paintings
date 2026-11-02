@@ -2098,7 +2098,7 @@
         if (!raw || typeof raw !== "object") return null;
         const id = String(raw.id || "");
         if (id !== "stone_tool" && id !== "flint_tool") return null;
-        const classes = new Set(["knife", "scraper", "chopper", "awl", "spear_tip", "blank", "hand_axe", "cleaver"]);
+        const classes = new Set(["knife", "blade", "scraper", "chopper", "awl", "spear_tip", "blank", "hand_axe", "cleaver"]);
         const toolClass = classes.has(raw.toolClass) ? raw.toolClass : "blank";
         const out = { id: "stone_tool", quantity: 1, toolClass };
         if (typeof raw.customName === "string" && raw.customName.trim()) {

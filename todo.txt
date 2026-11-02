@@ -6,8 +6,6 @@ Assign tab for settlement -- manage weapons, apparel, medical policy
 
 More rock types -- obsidian, quartz, basalt, etc
 
-Mode 3 blades -- prepared-core / long flakes (at least twice as long as wide). Further down than hand-axes.
-
 Better party management Kenshi-esque -- choose which severity of injuries to tend, make certain party members bodyguards that will only attack enemies near you, etc
 
 Bows
@@ -59,8 +57,6 @@ Throwing -- atlatl and darts. The Paleolithic ranged option: slower than a bow, 
 Dogs -- tame wolves (add wolves). They follow the party, chase game, and can alarm the camp. Taming costs food and time.
 
 Burin -- chisel flake for carving bone and wood. Used for idols, flutes, and tallies. Trees stay on the hand-axe.
-
-Microliths -- tiny blades for arrowheads. Bows is the weapon; this is the ammunition.
 
 Settlements -- unlocks one Manage tab for the Schedule and Assign notes (hour-by-hour schedule, default weapons, default apparel). Handing someone a spear and setting Hunt vs Gather stay available before this.
 

@@ -33,6 +33,7 @@
     const FLINT_STUFF = { stone_spear: true };
     const CLASS_DAMAGE = {
         knife: 7,
+        blade: 8,
         scraper: 4,
         chopper: 9,
         awl: 3,
@@ -43,6 +44,7 @@
     };
     const CLASS_NAME = {
         knife: "Knife",
+        blade: "Blade",
         scraper: "Scraper",
         chopper: "Chopper",
         awl: "Awl",
@@ -55,6 +57,7 @@
     const QUALITY_MULT = { crude: 0.65, rough: 0.95, fine: 1.35 };
     const KNAP_CLASSES = {
         knife: true,
+        blade: true,
         scraper: true,
         chopper: true,
         awl: true,
@@ -455,6 +458,10 @@
             { stat: "toughness", min: HAND_AXE_TOUGHNESS, label: "Toughness" }
         ],
         cleaver: [
+            { stat: "hardness", min: HAND_AXE_HARDNESS, label: "Hardness" },
+            { stat: "toughness", min: HAND_AXE_TOUGHNESS, label: "Toughness" }
+        ],
+        blade: [
             { stat: "hardness", min: HAND_AXE_HARDNESS, label: "Hardness" },
             { stat: "toughness", min: HAND_AXE_TOUGHNESS, label: "Toughness" }
         ]

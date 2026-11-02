@@ -1111,6 +1111,24 @@ class ResearchTreePanel {
         this._detailHits = [];
     }
 
+    /** Andesite class shape, the same picture a knapping bill uses. */
+    _knapUnlockIconKey(label) {
+        const R = typeof Research !== "undefined" ? Research : null;
+        const text = typeof label === "object" ? label?.label : label;
+        const row = R?.knappingTechniqueByLabel?.(text);
+        if (!row?.toolClass) return null;
+        if (typeof Knapping === "undefined" || !Knapping.carveShapeIcon || !Knapping.ensureToolTexture) {
+            return null;
+        }
+        const data = Knapping.carveShapeIcon(this.scene, row.toolClass, "andesite");
+        if (!data) return null;
+        const key = Knapping.ensureToolTexture(this.scene, {
+            knapIconData: data,
+            toolClass: row.toolClass
+        });
+        return key && this.scene.textures.exists(key) ? key : null;
+    }
+
     _itemIconKey(itemId) {
         if (!itemId) return null;
         // Research has no rock. The icon uses andesite gray; the name stays Stone Spear.
@@ -1118,7 +1136,7 @@ class ResearchTreePanel {
             const key = ensureSpearTexture(this.scene, "andesite");
             if (key && this.scene.textures.exists(key)) return key;
         }
-        // Knapping techniques use the rock. The default stone is andesite.
+        // Knapping text with no shape yet, such as Burin, still uses the rock. Andesite.
         if (itemId === "rock" && typeof ensureStoneTexture === "function") {
             const key = ensureStoneTexture(this.scene, "rock", 1, "andesite");
             if (key && this.scene.textures.exists(key)) return key;
@@ -1165,7 +1183,10 @@ class ResearchTreePanel {
             if (key && key !== "null" && this.scene.textures.exists(key)) return key;
         }
         for (const t of tech?.unlocks?.text || []) {
-            const thingId = R?.unlockTextIcon?.(typeof t === "object" ? t.label : t);
+            const label = typeof t === "object" ? t.label : t;
+            const knapKey = this._knapUnlockIconKey(label);
+            if (knapKey) return knapKey;
+            const thingId = R?.unlockTextIcon?.(label);
             if (!thingId) continue;
             const key = this._itemIconKey(thingId);
             if (key && key !== "null" && this.scene.textures.exists(key)) return key;
@@ -1293,12 +1314,14 @@ class ResearchTreePanel {
                 continue;
             }
             const label = row.label;
-            const thingId = R?.unlockTextIcon?.(label);
+            const knapKey = this._knapUnlockIconKey(label);
+            const thingId = knapKey ? null : R?.unlockTextIcon?.(label);
             rows.push({
                 label,
-                icon: thingId
-                    ? (this._itemIconKey(thingId) || missing)
-                    : (this._isUnlockWithoutIcon(label) ? null : missing),
+                icon: knapKey
+                    || (thingId
+                        ? (this._itemIconKey(thingId) || missing)
+                        : (this._isUnlockWithoutIcon(label) ? null : missing)),
                 dim: !!row.locked,
                 strike: !!row.locked
             });

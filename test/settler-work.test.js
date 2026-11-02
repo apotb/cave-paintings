@@ -7477,6 +7477,20 @@ test("rock bills list crafts before knapping, and hand-axe stone is gated", () =
         { recipeId: "knap_hand_axe", toolClass: "hand_axe", kind: "knap" },
         { id: "flint", quantity: 1 }
     ), true);
+    assert.equal(names.includes("Knap blade"), false);
+    Research.unlock(s, "blades");
+    const withBlade = Settlement.billRecipesFor("rock", s);
+    const blade = withBlade.find((r) => r.toolClass === "blade");
+    assert.equal(blade?.name, "Knap blade");
+    assert.deepEqual(Settlement.billInputsFor(blade, []).map((i) => i.id), ["flint", "diorite"]);
+    assert.equal(Settlement.blankMatchesBill(
+        { recipeId: "knap_blade", toolClass: "blade", kind: "knap" },
+        { id: "pebble", stone: "andesite", quantity: 1 }
+    ), false);
+    assert.equal(Settlement.blankMatchesBill(
+        { recipeId: "knap_blade", toolClass: "blade", kind: "knap" },
+        { id: "flint", quantity: 1 }
+    ), true);
 });
 
 test("dedicated settler cracks a coconut at a rock", () => {

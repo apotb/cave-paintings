@@ -694,6 +694,21 @@ const Knapping = {
     },
 
     /**
+     * Long parallel flake: at least twice as long as wide, both long edges,
+     * neither end brought to a point. Wider than the 2-cell spear shaft.
+     */
+    _isBlade(mass, elong, taper, edge, thickness, fork, minSide) {
+        return elong >= 2
+            && minSide >= 3
+            && taper < 0.22
+            && edge >= 8
+            && thickness < 1.7
+            && fork <= 0.15
+            && mass >= 18
+            && mass <= 48;
+    },
+
+    /**
      * Flat-ended block that fits in a real blank. A flint's solid middle is
      * about 7×6, a pebble's about 9×4. A 10×10 does not fit in either sprite.
      * A 2-cell spear shaft stays a spear (minSide under 4, or longer than 2.6).
@@ -955,7 +970,8 @@ const Knapping = {
         }
 
         // Order matters. Awl before spear/knife so butt+spike isn't stolen.
-        // Spear = long fairly even shaft; knife = tapered blade with body.
+        // Blade = long parallel flake. Spear = long pointed shaft.
+        // Knife = shorter tapered blade with body.
         // A cleaver the stone can't support is not a class: keep checking, and
         // mention it only when nothing else matches.
         let toolClass = "blank";
@@ -979,6 +995,21 @@ const Knapping = {
             toolClass = "awl";
         } else if (cleaverShape && !cleaverGate) {
             toolClass = "cleaver";
+        } else if (this._isBlade(mass, elong, taper, edge, thickness, fork, minSide)) {
+            // A locked blade is a flake, and the preview does not mention it.
+            // A parallel flake must not fall through into a spear tip.
+            if (!allow("blade")) {
+                toolClass = "blank";
+            } else {
+                const gate = this._handAxeGate(material);
+                if (gate) {
+                    toolClass = "blank";
+                    reject = gate;
+                    rejectClass = "blade";
+                } else {
+                    toolClass = "blade";
+                }
+            }
         } else if (
             allow("spear_tip")
             && elong >= 2.15
@@ -1081,6 +1112,7 @@ const Knapping = {
             : (material === "flint" ? "Flint" : "Pebble");
         const classNames = {
             knife: "Knife",
+            blade: "Blade",
             scraper: "Scraper",
             chopper: "Chopper",
             awl: "Awl",
@@ -1126,6 +1158,7 @@ const Knapping = {
         }
         const base = {
             knife: 7,
+            blade: 8,
             scraper: 4,
             chopper: 9,
             awl: 3,
@@ -1139,11 +1172,14 @@ const Knapping = {
     },
 
     previewLine(toolClass, quality, reject, rejectClass) {
-        const gateName = rejectClass === "cleaver" ? "cleaver" : "hand-axe";
+        const gateName = rejectClass === "cleaver" ? "cleaver"
+            : rejectClass === "blade" ? "blade"
+            : "hand-axe";
         if (reject === "soft") return `Too soft for a ${gateName}`;
         if (reject === "brittle") return `Too brittle for a ${gateName}`;
         switch (toolClass) {
             case "knife": return `Looks like a ${quality} knife…`;
+            case "blade": return `Looks like a ${quality} blade…`;
             case "scraper": return `Looks like a ${quality} scraper…`;
             case "chopper": return `Looks like a ${quality} chopper…`;
             case "hand_axe": return `Looks like a ${quality} hand-axe…`;
@@ -1213,7 +1249,7 @@ const Knapping = {
         if (!stack || !baseMeta) return null;
         const cls = stack.toolClass;
         const dmg = this._combatDamage(stack);
-        if (!["knife", "scraper", "chopper", "awl", "hand_axe", "cleaver"].includes(cls) || !(dmg > 0)) {
+        if (!["knife", "blade", "scraper", "chopper", "awl", "hand_axe", "cleaver"].includes(cls) || !(dmg > 0)) {
             return null;
         }
         const r = (n) => Math.round(n * 10) / 10;
@@ -1232,6 +1268,29 @@ const Knapping = {
                 },
                 {
                     id: "knap_knife_stab",
+                    name: "Stab",
+                    damage: r(dmg * 0.85),
+                    type: "sharp",
+                    verb: "stabbed",
+                    cooldown: 1.7,
+                    weightMultiplier: 0.65,
+                    source: "hand"
+                }
+            ];
+        } else if (cls === "blade") {
+            attacks = [
+                {
+                    id: "knap_blade_slash",
+                    name: "Slash",
+                    damage: dmg,
+                    type: "sharp",
+                    verb: "cut",
+                    cooldown: 2.0,
+                    weightMultiplier: 1,
+                    source: "hand"
+                },
+                {
+                    id: "knap_blade_stab",
                     name: "Stab",
                     damage: r(dmg * 0.85),
                     type: "sharp",

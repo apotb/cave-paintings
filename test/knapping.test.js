@@ -32,6 +32,60 @@ function bar(len, dir) {
     return gridFrom(cells);
 }
 
+test("a flint parallel flake is a blade and slashes harder than a knife", () => {
+    const KnapShapes = require("../shared/knapShapes");
+    const r = Knapping.classify(KnapShapes.grid("blade"), "flint");
+    assert.equal(r.toolClass, "blade", JSON.stringify({
+        toolClass: r.toolClass,
+        mass: r.mass,
+        elong: r.elong,
+        taper: r.taper,
+        edge: r.edge,
+        thickness: r.thickness,
+        preview: r.preview
+    }));
+    assert.ok(r.elong >= 2);
+    assert.equal(r.reject, null);
+    assert.match(r.preview, /blade/);
+    assert.match(r.name, /Flint Blade/);
+    const dmg = Math.round(8 * 1.4 * 0.95 * 10) / 10;
+    const meta = Knapping.weaponMetaFromStack(
+        { id: "stone_tool", name: "tool" },
+        { toolClass: "blade", knapQuality: "rough", knapMaterial: "flint" }
+    );
+    assert.equal(meta.weapon.attacks[0].id, "knap_blade_slash");
+    assert.equal(meta.weapon.attacks[0].damage, dmg);
+    assert.equal(meta.weapon.attacks[1].id, "knap_blade_stab");
+    assert.equal(meta.weapon.attacks[1].damage, Math.round(dmg * 0.85 * 10) / 10);
+    assert.equal(meta.weapon.attacks[1].cooldown, 1.7);
+    assert.equal(Stone.toolDamage({
+        toolClass: "blade",
+        knapQuality: "rough",
+        knapMaterial: "flint"
+    }), dmg);
+    assert.deepEqual(Stone.requirementStatus("blade", "flint").map((row) => row.met), [true, true]);
+    assert.deepEqual(Stone.requirementStatus("blade", "diorite").map((row) => row.met), [true, true]);
+});
+
+test("a soft parallel flake is a flake too soft for a blade", () => {
+    const KnapShapes = require("../shared/knapShapes");
+    const grid = KnapShapes.grid("blade");
+    const soft = Knapping.classify(grid, "pebble");
+    assert.equal(soft.toolClass, "blank");
+    assert.equal(soft.reject, "soft");
+    assert.equal(soft.preview, "Too soft for a blade");
+    const brittle = Knapping.classify(grid, "granite");
+    assert.equal(brittle.toolClass, "blank");
+    assert.equal(brittle.preview, "Too brittle for a blade");
+    const locked = Knapping.classify(grid, "flint", {
+        knife: true, scraper: true, chopper: true, awl: true,
+        spear_tip: true, hand_axe: true, cleaver: true, blade: false
+    });
+    assert.equal(locked.toolClass, "blank");
+    assert.equal(locked.reject, null);
+    assert.equal(/blade/i.test(locked.preview), false);
+});
+
 test("upright thin bar is a spear tip", () => {
     const r = Knapping.classify(bar(12, 0));
     assert.equal(r.toolClass, "spear_tip");
@@ -439,10 +493,10 @@ test("settler silhouettes classify as that exact class", () => {
     const KnapShapes = require("../shared/knapShapes");
     const unlocked = {
         knife: true, scraper: true, chopper: true, awl: true,
-        spear_tip: true, hand_axe: true, cleaver: true
+        spear_tip: true, hand_axe: true, cleaver: true, blade: true
     };
     for (const cls of Object.keys(KnapShapes.SHAPES)) {
-        const material = cls === "hand_axe" || cls === "cleaver" ? "flint" : "pebble";
+        const material = cls === "hand_axe" || cls === "cleaver" || cls === "blade" ? "flint" : "pebble";
         const got = Knapping.classify(KnapShapes.grid(cls), material, unlocked);
         assert.equal(got.toolClass, cls, cls);
         assert.equal(got.reject, null, cls);

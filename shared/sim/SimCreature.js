@@ -98,7 +98,7 @@ function knapWeaponMetaFromStack(baseMeta, stack) {
     const cls = stack.toolClass;
     const StoneApi = stoneApi();
     const dmg = StoneApi?.toolDamage?.(stack) ?? (Number(stack.knapDamage) || 0);
-    if (!["knife", "scraper", "chopper", "awl", "hand_axe", "cleaver"].includes(cls) || !(dmg > 0)) {
+    if (!["knife", "blade", "scraper", "chopper", "awl", "hand_axe", "cleaver"].includes(cls) || !(dmg > 0)) {
         return null;
     }
     const r = (n) => Math.round(n * 10) / 10;
@@ -107,6 +107,11 @@ function knapWeaponMetaFromStack(baseMeta, stack) {
         attacks = [
             { id: "knap_knife_slash", name: "Slash", damage: dmg, type: "sharp", verb: "cut", cooldown: 2.0, weightMultiplier: 1, source: "hand" },
             { id: "knap_knife_stab", name: "Stab", damage: r(dmg * 0.85), type: "sharp", verb: "stabbed", cooldown: 1.7, weightMultiplier: 0.65, source: "hand" }
+        ];
+    } else if (cls === "blade") {
+        attacks = [
+            { id: "knap_blade_slash", name: "Slash", damage: dmg, type: "sharp", verb: "cut", cooldown: 2.0, weightMultiplier: 1, source: "hand" },
+            { id: "knap_blade_stab", name: "Stab", damage: r(dmg * 0.85), type: "sharp", verb: "stabbed", cooldown: 1.7, weightMultiplier: 0.65, source: "hand" }
         ];
     } else if (cls === "scraper") {
         attacks = [
