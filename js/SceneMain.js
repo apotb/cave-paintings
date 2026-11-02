@@ -84,7 +84,7 @@ class SceneMain extends SceneBase {
         this.keys = null;
         this.key1 = this.key2 = this.key3 = this.key4 = this.key5 = null;
         this.key6 = this.key7 = this.key8 = this.key9 = this.key0 = null;
-        this.keyC = this.keyE = this.keyH = this.keyB = this.keyT = this.keyR = this.keyEsc = null;
+        this.keyC = this.keyE = this.keyH = this.keyB = this.keyG = this.keyT = this.keyR = this.keyEsc = null;
         this.tooltip = null;
         this.tooltipText = null;
         this.tooltipPreview = null;
@@ -336,6 +336,7 @@ class SceneMain extends SceneBase {
         this.keyE = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
         this.keyH = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.H);
         this.keyB = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.B);
+        this.keyG = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.G);
         this.keyT = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.T);
         this.keyR = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.R);
         this.keyEsc = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
@@ -561,6 +562,7 @@ class SceneMain extends SceneBase {
             if (Phaser.Input.Keyboard.JustDown(this.keyE)) this.toggleEquipmentMenu();
             if (Phaser.Input.Keyboard.JustDown(this.keyH)) this.toggleHealthMenu();
             if (Phaser.Input.Keyboard.JustDown(this.keyB)) this.toggleBioMenu();
+            if (Phaser.Input.Keyboard.JustDown(this.keyG)) this.settlementSys?.togglePanel?.();
             this._handlePlaceRotate();
             // Chat open is handled by CombatLog's window keydown listener (avoids
             // JustDown(T) dying after keyboard.enabled toggles miss the T keyup).

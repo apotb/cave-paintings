@@ -146,6 +146,7 @@
             "C — Crafting",
             "E — Equipment",
             "H — Health",
+            "G — Settlement",
             "T — Chat",
             ". / , — Next / previous party member",
             "Ctrl+1–6 — Select party member"
