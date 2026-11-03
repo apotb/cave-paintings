@@ -166,6 +166,7 @@
         put(out, "maxStack", take(item, "maxStack"));
         put(out, "weight", take(item, "weight"));
         put(out, "durability", take(item, "durability"));
+        put(out, "quality", take(item, "quality"));
         put(out, "use", take(item, "use"));
         put(out, "pigment", take(item, "pigment"));
         put(out, "fillColor", take(item, "fillColor"));

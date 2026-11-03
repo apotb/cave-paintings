@@ -296,6 +296,18 @@ test("a pebble pile can sit on the tile next to a rock and share its stone", () 
     assert.ok(pile, "a rock has a neighboring pebble pile of the same stone");
 });
 
+test("any item with quality gets a grade from /give", () => {
+    const sling = { id: "sling", name: "Sling", quality: true };
+    assert.deepEqual(Stone.giveExtras(sling, ""), { extras: { knapQuality: "rough" } });
+    assert.deepEqual(Stone.giveExtras(sling, "fine"), { extras: { knapQuality: "fine" } });
+    assert.equal(Stone.giveExtras(sling, "granite").error, 'Unknown quality "granite".');
+    assert.equal(
+        Stone.displayName({ id: "sling", knapQuality: "fine" }, () => sling),
+        "Sling (fine)"
+    );
+    assert.equal(Stone.giveExtras({ id: "stick", name: "Stick" }, "fine").error, "Stick takes no extra.");
+});
+
 test("queueTextures does not request the old pebble item icon", () => {
     const scene = {
         load: {

@@ -526,10 +526,70 @@
         ];
     }
 
+    /** A crafted grade. Blank is not a grade. */
+    function qualityGrade(raw) {
+        const q = tokenId(raw);
+        return QUALITY_NAME[q] ? q : null;
+    }
+
+    function giveStoneDefault(id) {
+        if (id === "arrow") return iconStone(id) || HARD_STONE;
+        return stoneOf({ id }) || DEFAULT_STONE;
+    }
+
+    function withTipGrade(id, extras) {
+        if (id !== "stone_spear" && id !== "arrow") return extras;
+        extras.knapMaterial = "pebble";
+        if (!extras.knapQuality) extras.knapQuality = "rough";
+        return extras;
+    }
+
+    /**
+     * Optional tail of /give <item> [qty] [stuff].
+     * An item with quality takes a grade. A blank tail is rough.
+     * A stuffable item takes a stone.
+     * @returns {{ extras?: object, error?: string }}
+     */
+    function giveExtras(meta, stuff) {
+        const raw = String(stuff || "").trim();
+        const id = meta?.id;
+        const own = !!meta?.quality;
+        const stuffable = isStuffableItem(id);
+        if (!raw) {
+            if (!stuffable && !own) return { extras: {} };
+            const extras = {};
+            if (stuffable) {
+                extras.stone = giveStoneDefault(id);
+                withTipGrade(id, extras);
+            }
+            if (own && !extras.knapQuality) extras.knapQuality = "rough";
+            return { extras };
+        }
+        const grade = qualityGrade(raw);
+        if (own && grade && !stuffable) return { extras: { knapQuality: grade } };
+        if (!stuffable) {
+            return {
+                error: own
+                    ? `Unknown quality "${stuff}".`
+                    : `${meta?.name || id || "Item"} takes no extra.`
+            };
+        }
+        const picked = stuffId(id, raw);
+        if (!picked) return { error: `Unknown stone "${stuff}".` };
+        if (picked === "flint") {
+            return { extras: { knapMaterial: "flint", knapQuality: "rough" } };
+        }
+        const extras = { stone: picked };
+        withTipGrade(id, extras);
+        if (own && !extras.knapQuality) extras.knapQuality = "rough";
+        return { extras };
+    }
+
     /** Raw knapping stones only. Finished tools and grindstones keep stone stats out of the tooltip. */
     function statLinesFor(stack, itemDef) {
-        if (stack?.toolClass || stack?.id === "stone_spear" || stack?.id === "flint_spear"
-            || stack?.id === "arrow" || stack?.id === "shortbow" || stack?.id === "longbow"
+        if (stack?.toolClass || itemDef?.quality || liveItem(stack?.id)?.quality
+            || stack?.id === "stone_spear" || stack?.id === "flint_spear"
+            || stack?.id === "arrow"
             || stack?.id === "grindstone" || stack?.id === "painting_circle") return [];
         if (stack?.id === "pebble" || normalizeStone(stack?.stone)) return linesFromProps(propsOf(stack));
         return statLines(itemDef);
@@ -546,9 +606,9 @@
         if (stack.id === "painting_circle") {
             return `${propsOf(stack, getItem).name} Painting Circle`;
         }
-        if (stack.id === "shortbow" || stack.id === "longbow") {
-            const label = stack.id === "longbow" ? "Longbow" : "Shortbow";
-            return withQuality(label, stack.knapQuality);
+        const meta = (typeof getItem === "function" ? getItem(stack.id) : null) || liveItem(stack.id);
+        if (meta?.quality) {
+            return withQuality(meta.name || stack.id, stack.knapQuality);
         }
         if (stack.id === "arrow") {
             const m = stack.knapMaterial;
@@ -641,6 +701,7 @@
         normalizeStone,
         fromToken,
         stuffId,
+        giveExtras,
         isStuffableItem,
         splitsByStone,
         craftTakesStuff,

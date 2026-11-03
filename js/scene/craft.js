@@ -2108,7 +2108,7 @@
             return;
         }
 
-        if (recipe.id === "shortbow" || recipe.id === "longbow") {
+        if (item?.quality) {
             let grade = "crude";
             if (typeof Skills !== "undefined" && Skills.knapQuality) {
                 const lv = Skills.pawnLevel?.(who, "crafting")

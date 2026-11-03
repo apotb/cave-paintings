@@ -54,7 +54,7 @@ test("a longbow hits harder than a shortbow of the same grade", () => {
 });
 
 test("bow quality does not change how many draws it has", () => {
-    const def = { durability: 80 };
+    const def = { durability: 80, quality: true, weapon: { type: "ranged" } };
     assert.equal(Durability.maxDurability({ id: "shortbow", knapQuality: "fine" }, def), 80);
     assert.equal(Durability.maxDurability({ id: "shortbow", knapQuality: "crude" }, def), 80);
     assert.equal(Durability.maxDurability({ id: "longbow", knapQuality: "fine" }, def), 80);
@@ -221,6 +221,11 @@ test("arrow names carry the stone and the blade grade", () => {
         Stone.displayName({ id: "arrow", knapMaterial: "flint", knapQuality: "fine" }),
         "Flint Arrow (fine)"
     );
-    assert.equal(Stone.displayName({ id: "shortbow", knapQuality: "crude" }), "Shortbow (crude)");
-    assert.equal(Stone.displayName({ id: "longbow", knapQuality: "fine" }), "Longbow (fine)");
+    const bow = (id) => ({
+        id,
+        name: id === "longbow" ? "Longbow" : "Shortbow",
+        quality: true
+    });
+    assert.equal(Stone.displayName({ id: "shortbow", knapQuality: "crude" }, bow), "Shortbow (crude)");
+    assert.equal(Stone.displayName({ id: "longbow", knapQuality: "fine" }, bow), "Longbow (fine)");
 });

@@ -26,9 +26,9 @@
 
     function maxDurability(stack, itemDef) {
         if (NO_DURABILITY_CLASS[stack?.toolClass]) return 0;
-        // A bow's grade changes the shot, not how many times it can be drawn.
-        if (stack?.id === "shortbow" || stack?.id === "longbow") {
-            const bow = Number(itemDef?.durability);
+        // A ranged grade changes the shot, not how many times it can be drawn.
+        if (itemDef?.quality && itemDef.weapon?.type === "ranged") {
+            const bow = Number(itemDef.durability);
             return bow > 0 ? bow : 0;
         }
         const fromRock = stoneApi()?.durabilityBase?.(stack);

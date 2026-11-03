@@ -897,6 +897,7 @@
         "storageCategory": "tools",
         "maxStack": 1,
         "durability": 80,
+        "quality": true,
         "weight": 1.2,
         "weapon": {
             "type": "ranged",
@@ -922,6 +923,7 @@
         "storageCategory": "tools",
         "maxStack": 1,
         "durability": 80,
+        "quality": true,
         "weight": 1.2,
         "weapon": {
             "type": "ranged",

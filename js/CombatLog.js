@@ -184,39 +184,8 @@ class CombatLog {
      * @returns {{ extras?: object, error?: string }}
      */
     _giveStuff(meta, stuff) {
-        const raw = String(stuff || "").trim();
-        const id = meta?.id;
-        const stuffable = (typeof Stone !== "undefined" && Stone.isStuffableItem)
-            ? Stone.isStuffableItem(id)
-            : (id === "pebble" || id === "grindstone" || id === "painting_circle" || id === "stone_spear");
-        if (!raw) {
-            if (!stuffable) return { extras: {} };
-            const stone = (typeof Stone !== "undefined" && Stone.stoneOf)
-                ? (Stone.stoneOf({ id }) || "andesite")
-                : "andesite";
-            const extras = { stone };
-            if (id === "stone_spear") {
-                extras.knapMaterial = "pebble";
-                extras.knapQuality = "rough";
-            }
-            return { extras };
-        }
-        if (!stuffable) {
-            return { error: `${meta?.name || id || "Item"} takes no extra.` };
-        }
-        const picked = (typeof Stone !== "undefined" && Stone.stuffId)
-            ? Stone.stuffId(id, raw)
-            : ((typeof Stone !== "undefined" && Stone.fromToken) ? Stone.fromToken(raw) : null);
-        if (!picked) return { error: `Unknown stone "${stuff}".` };
-        if (picked === "flint") {
-            return { extras: { knapMaterial: "flint", knapQuality: "rough" } };
-        }
-        const extras = { stone: picked };
-        if (id === "stone_spear") {
-            extras.knapMaterial = "pebble";
-            extras.knapQuality = "rough";
-        }
-        return { extras };
+        if (typeof Stone !== "undefined" && Stone.giveExtras) return Stone.giveExtras(meta, stuff);
+        return { extras: {} };
     }
 
     /**
@@ -559,8 +528,11 @@ class CombatLog {
                 DroppedItem.spawn(this.scene, player.x, player.y, meta, remaining, undefined, extras);
             }
             const named = (typeof Stone !== "undefined" && Stone.displayName
-                && (meta.id === "pebble" || meta.id === "stone_spear"))
-                ? Stone.displayName({ id: meta.id, ...(applied.extras || {}) })
+                && (meta.quality || meta.id === "pebble" || meta.id === "stone_spear" || meta.id === "arrow"))
+                ? Stone.displayName(
+                    { id: meta.id, ...(applied.extras || {}) },
+                    (id) => this.scene.getItem?.(id)
+                )
                 : null;
             const label = named || meta.name || meta.id;
             if (remaining > 0) {

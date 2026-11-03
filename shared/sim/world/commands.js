@@ -43,44 +43,10 @@
      * Optional tail of /give <item> [qty] [stuff]. Stuff depends on the item.
      * @returns {{ extras?: object, error?: string }}
      */
-    function isStuffableItem(id) {
-        const api = stoneApi();
-        if (typeof api?.isStuffableItem === "function") return api.isStuffableItem(id);
-        return id === "pebble" || id === "grindstone" || id === "painting_circle" || id === "stone_spear" || id === "arrow";
-    }
-
     function giveStuff(meta, stuff) {
-        const raw = String(stuff || "").trim();
-        const id = meta?.id;
-        const stuffable = isStuffableItem(id);
-        if (!raw) {
-            if (!stuffable) return { extras: {} };
-            const api0 = stoneApi();
-            const stone = id === "arrow"
-                ? (api0?.iconStone?.(id) || "diorite")
-                : (api0?.stoneOf?.({ id }) || "andesite");
-            const extras = { stone };
-            if (id === "stone_spear" || id === "arrow") {
-                extras.knapMaterial = "pebble";
-                extras.knapQuality = "rough";
-            }
-            return { extras };
-        }
-        if (!stuffable) {
-            return { error: `${meta?.name || id || "Item"} takes no extra.` };
-        }
         const api = stoneApi();
-        const picked = typeof api?.stuffId === "function" ? api.stuffId(id, raw) : api?.fromToken?.(raw);
-        if (!picked) return { error: `Unknown stone "${stuff}".` };
-        if (picked === "flint") {
-            return { extras: { knapMaterial: "flint", knapQuality: "rough" } };
-        }
-        const extras = { stone: picked };
-        if (id === "stone_spear" || id === "arrow") {
-            extras.knapMaterial = "pebble";
-            extras.knapQuality = "rough";
-        }
-        return { extras };
+        if (typeof api?.giveExtras === "function") return api.giveExtras(meta, stuff);
+        return { extras: {} };
     }
 
     /**
@@ -569,8 +535,13 @@
                 this._pushDrop(pawn.x, pawn.y, drop);
             }
             const stones = stoneApi();
-            const named = stones?.displayName && (meta.id === "pebble" || meta.id === "stone_spear" || meta.id === "arrow")
-                ? stones.displayName({ id: meta.id, ...(applied.extras || {}) })
+            const named = stones?.displayName && (
+                meta.quality || meta.id === "pebble" || meta.id === "stone_spear" || meta.id === "arrow"
+            )
+                ? stones.displayName(
+                    { id: meta.id, ...(applied.extras || {}) },
+                    (id) => itemDefs().get(id)
+                )
                 : null;
             const label = named || meta.name || meta.id;
             const out = left > 0
@@ -1481,7 +1452,7 @@
             if (tipQuality) extras.knapQuality = tipQuality;
             if (tipStone) extras.stone = tipStone;
         }
-        if (recipe.id === "shortbow" || recipe.id === "longbow") {
+        if (itemDefs().get(recipe.id)?.quality) {
             const skills = this._skillsApi?.();
             const lv = skills?.pawnLevel?.(p, "crafting");
             const offset = skills?.traitStat?.(p.bio, "craftingQuality") || 0;
