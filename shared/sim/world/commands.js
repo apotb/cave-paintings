@@ -825,6 +825,9 @@
                 chunk.things.push(entry);
             }
         }
+        // Chunk load is what normally stamps rock uids. Without one, Add to
+        // settlement cannot find the rock until the next relog.
+        if (entry?.id === "rock") this._ensureRockUids(chunk);
         this.pushEvent({
             kind: "thing_set",
             tx, ty,

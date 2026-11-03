@@ -1253,7 +1253,11 @@
         }
         const custom = typeof ModKinds !== "undefined" ? ModKinds.applyInitEntry(def, x, y) : null;
         if (custom) return custom;
-        return { lootable: false, entry: { id: def.id, x, y } };
+        const entry = { id: def.id, x, y };
+        if (def.id === "rock") {
+            entry.uid = `rk_${Math.round(Number(x) || 0)}_${Math.round(Number(y) || 0)}`;
+        }
+        return { lootable: false, entry };
     },
 
     _spawnThingSprite(chunk, entry, lootable) {

@@ -1418,6 +1418,24 @@ test("/give pebble keeps the stone, and /set stamps it on rocks and piles", () =
     assert.ok(setCircle.some((e) => e.text === "Set Andesite Painting Circle"));
 });
 
+test("/set rock can be added to a settlement before a relog", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    const settle = Settlement.createSettlement({ x: pawn.x, y: pawn.y, ownerId: pawn.id });
+    world.settlements.push(settle);
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/set rock" });
+    const rock = (originChunk(world).things || []).find((t) => t && t.id === "rock");
+    assert.ok(rock?.uid);
+    const placed = world.drainEvents().find((e) => e.kind === "thing_set" && e.entry?.id === "rock");
+    assert.equal(placed?.entry?.uid, rock.uid);
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.SETTLEMENT,
+        op: "addStation",
+        uid: rock.uid,
+        settlementId: settle.id
+    });
+    assert.ok((settle.stationUids || []).includes(rock.uid));
+});
+
 test("/give stone_spear keeps the stone", () => {
     const { world, pawn, Protocol } = createTestWorld();
     world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give stone_spear 1 granite" });
