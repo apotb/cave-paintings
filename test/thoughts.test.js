@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const Thoughts = require("../shared/thoughts");
 const Needs = require("../shared/needs");
 const Sleep = require("../shared/sleep");
-const { createTestWorld, originChunk } = require("./helpers/simWorld");
+const { createTestWorld, originChunk, chunkKey } = require("./helpers/simWorld");
 const Settlement = require("../shared/settlement");
 
 function pawn(extra = {}) {
@@ -461,10 +461,13 @@ test("waking, eating, a nearby death, and a corpse write thoughts onto the pawn"
     leader.party = [buddy];
     world._killCompanion(leader, buddy, null);
     assert.ok(leader.thoughts.lines.some((row) => row.label === "Witnessed a death"));
+    assert.ok(leader.thoughts.lines.some((row) => row.label === "Saw a corpse"));
     assert.equal(settler.thoughts.lines.some((row) => row.label === "Witnessed a death"), false);
     assert.equal(settler.thoughts.lines.some((row) => row.label === "Bo died"), false);
+    assert.equal(settler.thoughts.lines.some((row) => row.label === "Saw a corpse"), false);
     assert.ok(leader.thoughts.lines.some((row) => row.label === "Bo died"));
     assert.equal(far.thoughts.lines.some((row) => row.label === "Witnessed a death"), false);
+    assert.equal(far.thoughts.lines.some((row) => row.label === "Saw a corpse"), false);
     assert.ok(far.thoughts.lines.some((row) => row.label === "Bo died"));
 
     const body = chunk.corpses.find((row) => row && row.name === "Bo");
@@ -529,6 +532,106 @@ test("a human carcass still counts as seeing a corpse, and an animal carcass doe
     assert.equal(bones.thoughts.lines.filter((row) => row.label === "Saw a corpse").length, 1);
     world._tickHumanNeeds(bones);
     assert.equal(bones.thoughts.lines.filter((row) => row.label === "Saw a corpse").length, 1);
+
+    chunk.corpses.push({
+        id: "faced-carcass",
+        x: leader.x,
+        y: leader.y + 8,
+        key: "custom",
+        bodyPlan: null,
+        mobId: null,
+        look: { head: "a" },
+        stage: "carcass",
+        name: "Ren"
+    });
+    world._tickHumanNeeds(bones);
+    const faced = bones.thoughts.lines.find((row) => row.label === "Saw a corpse");
+    assert.equal(faced.count, 2);
+});
+
+test("a human body keeps the thought while it is in sight, then again after they come back", () => {
+    const { world } = createTestWorld();
+    const chunk = originChunk(world);
+    const x = 32;
+    const y = 32;
+    chunk.corpses.push({
+        id: "body-ada",
+        x,
+        y,
+        key: "human",
+        bodyPlan: "human",
+        mobId: "human",
+        stage: "corpse",
+        name: "Ada"
+    });
+    const near = world.chunks.get(chunkKey(1, 0));
+    near.corpses.push({
+        id: "body-ten",
+        x: x + 10 * 16,
+        y,
+        key: "human",
+        bodyPlan: "human",
+        mobId: "human",
+        name: "Ten"
+    });
+    world.chunks.set(chunkKey(3, 0), {
+        cx: 3,
+        cy: 0,
+        corpses: [{
+            id: "body-far",
+            x: x + 24 * 16,
+            y,
+            key: "human",
+            bodyPlan: "human",
+            mobId: "human",
+            name: "Far"
+        }]
+    });
+    const looker = world._settlerFromSnap({
+        id: "settler-stay",
+        name: "Stay",
+        x,
+        y,
+        ownerId: "someone-else",
+        kc: 1600,
+        inventory: [null, null, null, null, null]
+    });
+    world.settlers.push(looker);
+    world._tickHumanNeeds(looker);
+    const line = looker.thoughts.lines.find((row) => row.label === "Saw a corpse");
+    assert.equal(line.count, 2);
+    const first = looker.thoughts.memories.find((row) => row.source === "body-ada");
+    assert.ok(first);
+    const started = first.expires;
+
+    world.gameMinutes += 60;
+    world._tickHumanNeeds(looker);
+    const again = looker.thoughts.memories.filter((row) => row.id === "saw_corpse");
+    assert.equal(again.length, 2);
+    assert.ok(again.find((row) => row.source === "body-ada").expires > started);
+    assert.equal(looker.thoughts.lines.find((row) => row.label === "Saw a corpse").count, 2);
+
+    const copy = pawn({ id: "stay-copy" });
+    Thoughts.apply(copy, Thoughts.toJSON(looker));
+    Thoughts.seeCorpse(copy, "body-ada", world.worldMinuteIndex());
+    assert.equal(copy.thoughts.memories.filter((row) => row.id === "saw_corpse" && row.source === "body-ada").length, 1);
+
+    world.gameMinutes += Thoughts.DAY;
+    world._tickHumanNeeds(looker);
+    assert.equal(looker.thoughts.lines.find((row) => row.label === "Saw a corpse").count, 2);
+
+    looker.x = x - 24 * 16;
+    looker.y = y;
+    const exp = looker.thoughts.memories.find((row) => row.source === "body-ada").expires;
+    world.gameDay += 3;
+    world._tickHumanNeeds(looker);
+    assert.ok(world.worldMinuteIndex() > exp);
+    assert.equal(looker.thoughts.lines.some((row) => row.label === "Saw a corpse"), false);
+
+    looker.x = x;
+    looker.y = y;
+    world._tickHumanNeeds(looker);
+    assert.equal(looker.thoughts.lines.find((row) => row.label === "Saw a corpse").count, 2);
 });
 
 test("darkness is a penalty, and a night owl is glad of it", () => {

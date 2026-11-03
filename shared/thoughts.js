@@ -295,6 +295,7 @@
             };
             if (typeof row.part === "string" && row.part) keptRow.part = row.part.slice(0, 48);
             if (typeof row.name === "string" && row.name) keptRow.name = row.name.slice(0, 24);
+            if (typeof row.source === "string" && row.source) keptRow.source = row.source.slice(0, 64);
             kept.push(keptRow);
         }
         state.memories = kept;
@@ -342,7 +343,8 @@
                 label: row.label,
                 expires: row.expires,
                 part: row.part || null,
-                name: row.name || null
+                name: row.name || null,
+                source: row.source || null
             })),
             seen: src.seen.slice(),
             lost: src.lost.slice(),
@@ -512,13 +514,48 @@
         return addMemory(pawn, "witnessed_death", now);
     }
 
+    /**
+     * One memory per body. Seeing it again pushes the timer out, so the
+     * thought stays while the body is still there and lingers after they leave.
+     * A different body is another copy, up to the stack cap.
+     */
     function seeCorpse(pawn, corpseId, now) {
         if (!pawn || !corpseId) return false;
+        const def = DEFS.saw_corpse;
+        if (!def || nullified(pawn, def)) return false;
         const state = ensure(pawn);
-        if (state.seen.includes(String(corpseId))) return false;
-        const ok = addMemory(pawn, "saw_corpse", now);
-        rememberSeen(state, corpseId);
-        return ok;
+        const source = String(corpseId).slice(0, 64);
+        if (!source) return false;
+        const expires = (Number(now) || 0) + def.duration;
+        let existing = null;
+        let untagged = null;
+        for (let i = 0; i < state.memories.length; i++) {
+            const row = state.memories[i];
+            if (row.id !== "saw_corpse") continue;
+            if (row.source === source) { existing = row; break; }
+            if (!row.source && !untagged) untagged = row;
+        }
+        if (!existing && untagged) {
+            untagged.source = source;
+            existing = untagged;
+        }
+        if (existing) {
+            existing.expires = expires;
+            return false;
+        }
+        const same = state.memories.filter((row) => row.id === "saw_corpse");
+        const limit = def.stackLimit || 1;
+        if (same.length >= limit) {
+            let oldest = same[0];
+            for (let i = 1; i < same.length; i++) {
+                if (same[i].expires < oldest.expires) oldest = same[i];
+            }
+            state.memories = state.memories.filter((row) => row !== oldest);
+        }
+        const row = memoryRow("saw_corpse", def.label, expires);
+        row.source = source;
+        state.memories.push(row);
+        return true;
     }
 
     function markSeen(pawn, id) {

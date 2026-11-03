@@ -169,14 +169,21 @@
 
     _isHumanCorpse(entry) {
         if (!entry) return false;
-        return entry.bodyPlan === "human" || entry.key === "human" || entry.mobId === "human";
+        if (entry.playerCorpse) return true;
+        if (entry.bodyPlan === "human" || entry.key === "human" || entry.mobId === "human") return true;
+        // A face means a person. Animals are not saved with one.
+        return !!(entry.look && typeof entry.look === "object");
     },
 
     _scanCorpsesFor(pawn, now) {
         if (!Thoughts || !pawn || pawn.dead) return;
-        const reach = 6 * TS;
+        const caps = pawn.capacities || pawn.creature?.capacities || this.creatures?.get?.(pawn.id)?.capacities;
+        if (typeof caps?.sight === "function" && caps.sight() === 0) return;
+        // Same reach as noticing the death. A body in camp keeps bothering them.
+        const reach = 16 * TS;
         const reach2 = reach * reach;
-        const chunks = this._chunksNear?.(pawn.x, pawn.y, 1, { load: false }) || [];
+        const rad = Math.max(1, Math.ceil(reach / CHUNK_PX));
+        const chunks = this._chunksNear?.(pawn.x, pawn.y, rad, { load: false }) || [];
         for (const chunk of chunks) {
             for (const entry of chunk.corpses || []) {
                 if (!this._isHumanCorpse(entry)) continue;
@@ -189,8 +196,8 @@
     },
 
     /**
-     * A human died. Nearby people remember it. The dead person's party and camp do too.
-     * Witnesses are marked so the same body does not also count as seeing a corpse.
+     * A human died. Nearby people remember the death. The dead person's party and camp grieve.
+     * The body is a separate thought, refreshed for as long as someone can still see it.
      */
     _noteHumanDeath(victim, killer, corpse, opts = {}) {
         if (!Thoughts || !victim || victim._thoughtDeathNoted) return;
@@ -212,7 +219,7 @@
             const dy = (Number(pawn.y) || 0) - y;
             if (dx * dx + dy * dy > reach2) return;
             Thoughts.witness(pawn, now);
-            if (corpseId) Thoughts.markSeen(pawn, corpseId);
+            if (corpseId) Thoughts.seeCorpse(pawn, corpseId, now);
             Thoughts.refresh(pawn, now);
             this._dirtyPawnOwner?.(pawn);
         });
