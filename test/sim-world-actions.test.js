@@ -313,6 +313,65 @@ function wearHideBundle(pawn, stacks) {
     for (let i = 0; i < stacks.length; i++) pawn.overflow[i] = stacks[i];
 }
 
+function dropQty(drops, id) {
+    let n = 0;
+    for (const d of drops || []) {
+        if (d && d.id === id) n += Math.max(1, Math.floor(Number(d.quantity) || 1));
+    }
+    return n;
+}
+
+test("taking off a pack drops each carried stack once", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    wearHideBundle(pawn, [
+        { id: "stick", quantity: 3 },
+        { id: "leaf", quantity: 4 }
+    ]);
+    const chunk = originChunk(world);
+    chunk.drops.length = 0;
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.UNEQUIP,
+        slot: "back",
+        to: 0,
+        toBag: "hotbar"
+    });
+    assert.equal(pawn.equipment.back, null);
+    assert.equal(pawn.inventory[0]?.id, "hide_bundle");
+    assert.equal(pawn.overflow.filter((s) => s && s.id).length, 0);
+    assert.equal(dropQty(chunk.drops, "stick"), 3);
+    assert.equal(dropQty(chunk.drops, "leaf"), 4);
+    assert.equal(chunk.drops.filter((d) => d && d.id === "stick").length, 1);
+    assert.equal(chunk.drops.filter((d) => d && d.id === "leaf").length, 1);
+});
+
+test("taking off a pouch drops the extra hotbar stack once", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.equipment.waist = [{ id: "leaf_pouch", quantity: 1 }];
+    pawn.inventory = [
+        null,
+        { id: "stick", quantity: 1 },
+        { id: "stick", quantity: 1 },
+        { id: "stick", quantity: 1 },
+        { id: "stick", quantity: 1 },
+        { id: "leaf", quantity: 7 }
+    ];
+    const chunk = originChunk(world);
+    chunk.drops.length = 0;
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.UNEQUIP,
+        slot: "waist:0",
+        to: 0,
+        toBag: "hotbar"
+    });
+    assert.equal(pawn.equipment.waist[0] || null, null);
+    assert.equal(pawn.inventory[0]?.id, "leaf_pouch");
+    assert.equal(pawn.inventory.length, 5);
+    assert.equal(pawn.inventory.filter((s) => s && s.id === "leaf").length, 0);
+    assert.equal(dropQty(chunk.drops, "leaf"), 7);
+    assert.equal(chunk.drops.filter((d) => d && d.id === "leaf").length, 1);
+    assert.equal(dropQty(chunk.drops, "stick"), 0);
+});
+
 test("craft leaf_cord spends leaves from the backpack", () => {
     const { world, pawn, Protocol } = createTestWorld();
     wearHideBundle(pawn, [{ id: "leaf", quantity: 5 }]);

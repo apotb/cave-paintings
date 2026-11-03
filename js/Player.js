@@ -1061,19 +1061,27 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         while (this.equipment.waist.length < cap) this.equipment.waist.push(null);
         if (this.equipment.waist.length > cap) {
             for (let i = cap; i < this.equipment.waist.length; i++) {
-                const stack = this.equipment.waist[i];
-                if (!stack) continue;
-                const meta = this.scene.getItem(stack.id);
-                if (!meta) continue;
-                const extras = mealStackExtras(stack);
-                const now = this.scene.worldMinuteIndex?.() ?? null;
-                DroppedItem.spawn(
-                    this.scene, this.x, this.y,
-                    meta, stack.quantity, spoilAtForWorld(stack, now), extras
-                );
+                this._spillShrunkStack(this.equipment.waist[i]);
             }
             this.equipment.waist.length = cap;
         }
+    }
+
+    /**
+     * Ground a stack that no longer fits. The sim spills the same stack when it
+     * applies the gear change, so a local spawn would leave a second pile.
+     */
+    _spillShrunkStack(stack) {
+        if (!stack?.id) return;
+        if (this.scene?.simAuth?.()) return;
+        const meta = this.scene.getItem(stack.id);
+        if (!meta) return;
+        const extras = mealStackExtras(stack);
+        const now = this.scene.worldMinuteIndex?.() ?? null;
+        DroppedItem.spawn(
+            this.scene, this.x, this.y,
+            meta, stack.quantity, spoilAtForWorld(stack, now), extras
+        );
     }
 
     afterApparelWear() {
@@ -1194,16 +1202,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         if (this.inventory.length > size) {
             for (let i = size; i < this.inventory.length; i++) {
-                const stack = this.inventory[i];
-                if (!stack) continue;
-                const meta = this.scene.getItem(stack.id);
-                if (!meta) continue;
-                const extras = mealStackExtras(stack);
-                const now = this.scene.worldMinuteIndex?.() ?? null;
-                DroppedItem.spawn(
-                    this.scene, this.x, this.y,
-                    meta, stack.quantity, spoilAtForWorld(stack, now), extras
-                );
+                this._spillShrunkStack(this.inventory[i]);
             }
             this.inventory.length = size;
         }
@@ -1224,16 +1223,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         if (this.overflow.length > size) {
             for (let i = size; i < this.overflow.length; i++) {
-                const stack = this.overflow[i];
-                if (!stack) continue;
-                const meta = this.scene.getItem(stack.id);
-                if (!meta) continue;
-                const extras = mealStackExtras(stack);
-                const now = this.scene.worldMinuteIndex?.() ?? null;
-                DroppedItem.spawn(
-                    this.scene, this.x, this.y,
-                    meta, stack.quantity, spoilAtForWorld(stack, now), extras
-                );
+                this._spillShrunkStack(this.overflow[i]);
             }
             this.overflow.length = size;
         }
