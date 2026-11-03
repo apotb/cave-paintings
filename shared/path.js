@@ -475,6 +475,11 @@
         while (path.length) {
             const dist = hypot(from.x - path[0].x, from.y - path[0].y);
             if (!(dist < WAYPOINT_PX)) break;
+            // The last stand is the work spot. Dropping it inside the 10px
+            // window leaves a bee-line, and the job then assigns the pose.
+            // That hop is the last few steps, and it crosses whatever is
+            // between the feet and the spot. Walk onto the stand instead.
+            if (path.length === 1 && dist > 0.75) break;
             // The gap stand sits on the rack. Dropping it from most of the
             // 10px window turns the settler at the next waypoint while they
             // are still in front of the row, and the wall slide paces them
@@ -548,8 +553,9 @@
         const lookPx = input.lookPx || LOOK_PX;
 
         let dest = { x: input.to.x, y: input.to.y };
+        const arrive = Number(input.arrivePx) > 0 ? Number(input.arrivePx) : ARRIVE_PX;
         const dist0 = hypot(dest.x - from.x, dest.y - from.y);
-        if (!(dist0 > ARRIVE_PX)) {
+        if (!(dist0 > arrive)) {
             return {
                 nx: 0,
                 ny: 0,
@@ -602,7 +608,10 @@
                 && !stuck
                 && hypot(pathGoal.x - rawDest.x, pathGoal.y - rawDest.y) <= standSlack
                 && !blocked(pathGoal.x, pathGoal.y);
-            if (stickyGoal) dest = { x: pathGoal.x, y: pathGoal.y };
+            // An exact stand (the interact tile) used to stay stuck on a
+            // nearby park point. The job then assigned the last steps,
+            // which hopped the sprite and could cross the station.
+            if (stickyGoal && !(wantExact && !destBlocked)) dest = { x: pathGoal.x, y: pathGoal.y };
             else if (destBlocked || (destTight && !wantExact)) {
                 dest = bestStand(from, rawDest, blocked, {
                     cellSize: cell,
@@ -669,13 +678,13 @@
         }
         const dx = gx - from.x;
         const dy = gy - from.y;
-        const len = hypot(dx, dy) || 1;
+        const len = hypot(dx, dy);
         // Arrival is the point we are actually walking to. A blocked or tight
         // goal — a haul pile against a drying rack, the rack itself — is
         // replaced by a stand. Measuring only the original point leaves a full
         // speed step across that stand, then back, for as long as the job lasts.
         const lastLeg = !path || path.length <= 1;
-        if (lastLeg && len <= ARRIVE_PX) {
+        if (lastLeg && !(len > arrive)) {
             return {
                 nx: 0,
                 ny: 0,
@@ -688,9 +697,10 @@
                 arrived: true
             };
         }
+        const norm = len || 1;
         return {
-            nx: dx / len,
-            ny: dy / len,
+            nx: dx / norm,
+            ny: dy / norm,
             path,
             pathGoal: pathGoal || dest,
             side,
@@ -947,6 +957,24 @@
      */
     const MOVE_STEP_PX = 3;
     const MOVE_MAX_SLICES = 40;
+    /** How close a halt counts as landed. Wider than this, keep walking. */
+    const LAND_PX = 0.75;
+
+    /**
+     * True when the body crosses a solid between two clear poses.
+     * Endpoints are the caller's job. Skipped for a sub-step so a 1×
+     * frame does not pay an extra probe.
+     */
+    function segmentHits(x0, y0, x1, y1, blocked) {
+        const dist = hypot(x1 - x0, y1 - y0);
+        if (!(dist > 1.25)) return false;
+        const steps = Math.ceil(dist / 1.5);
+        for (let i = 1; i < steps; i++) {
+            const t = i / steps;
+            if (blocked(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)) return true;
+        }
+        return false;
+    }
 
     function stepMove(x, y, dx, dy, blocked, halt) {
         const step = hypot(dx, dy);
@@ -962,7 +990,7 @@
             const wx = hx - x;
             const wy = hy - y;
             const dist = hypot(wx, wy);
-            if (dist <= ARRIVE_PX) {
+            if (dist <= LAND_PX) {
                 return { x, y, arrived: true };
             }
             if (step > dist) {
@@ -983,8 +1011,22 @@
             if (!blocked(nx, py + sy)) ny = py + sy;
             return { x: nx, y: ny };
         };
+        const slide = (px, py, sx, sy) => {
+            const at = split(px, py, sx, sy);
+            if ((at.x === px && at.y === py) || !segmentHits(px, py, at.x, at.y, blocked)) {
+                return at;
+            }
+            const xAt = split(px, py, sx, 0);
+            const yAt = split(px, py, 0, sy);
+            const xOk = (xAt.x !== px || xAt.y !== py) && !segmentHits(px, py, xAt.x, xAt.y, blocked);
+            const yOk = (yAt.x !== px || yAt.y !== py) && !segmentHits(px, py, yAt.x, yAt.y, blocked);
+            if (xOk && yOk) return Math.abs(sx) >= Math.abs(sy) ? xAt : yAt;
+            if (xOk) return xAt;
+            if (yOk) return yAt;
+            return { x: px, y: py };
+        };
         if (travel <= MOVE_STEP_PX) {
-            const at = split(x, y, mx, my);
+            const at = slide(x, y, mx, my);
             const reached = hypot(at.x - (x + mx), at.y - (y + my)) < 0.05;
             return { x: at.x, y: at.y, arrived: reached && arrivedAt(at.x, at.y) };
         }
@@ -995,12 +1037,14 @@
         let cx = x;
         let cy = y;
         for (let i = 0; i < slices; i++) {
-            const at = split(cx, cy, sx, sy);
+            const at = slide(cx, cy, sx, sy);
             if (at.x === cx && at.y === cy) {
                 return { x: cx, y: cy, arrived: false };
             }
+            const full = hypot(at.x - (cx + sx), at.y - (cy + sy)) < 0.05;
             cx = at.x;
             cy = at.y;
+            if (!full) return { x: cx, y: cy, arrived: false };
         }
         return { x: cx, y: cy, arrived: arrivedAt(cx, cy) };
     }

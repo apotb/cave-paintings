@@ -1098,6 +1098,13 @@ test("campfires and a bench stay solid beside a drying rack", () => {
     }
 });
 
+test("stepMove does not jump a solid between the ends of a short step", () => {
+    const blocked = (x) => x > 1.2 && x < 2.2;
+    const step = Path.stepMove(0, 0, 3, 0, blocked, null);
+    assert.ok(step.x <= 1.2, `jumped to ${step.x}`);
+    assert.equal(step.arrived, false);
+});
+
 test("stepMove keeps a short step on one axis split", () => {
     let probes = 0;
     const blocked = (x) => {

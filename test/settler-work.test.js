@@ -2876,10 +2876,10 @@ test("simmer loads after stopping short of an open campfire spot", () => {
     c.x = rec.x;
     c.y = rec.y;
     Settlement.addBill(settle, fire.uid, { recipeId: "simmer", mode: "forever", paused: false });
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 40; i++) {
         if (fire.catalyst?.id === "cracked_coconut"
             && (fire.simmer || []).filter((s) => s?.id === "raw_fish").length >= 4) break;
-        workOnce(world, rec);
+        world.tick(50);
     }
     assert.equal(fire.catalyst?.id, "cracked_coconut");
     assert.equal((fire.simmer || []).filter((s) => s && s.id === "raw_fish").length, 4);
@@ -3636,7 +3636,7 @@ test("dedicated settler crafts at a bench over craftSeconds", () => {
     assert.equal(rec._workChannel, null);
 });
 
-test("tailor sews after stopping short of the bench spot", () => {
+test("tailor walks onto the bench spot before sewing", () => {
     const { world, pawn } = createTestWorld();
     fillGrass(world);
     const { settle, rec } = parkSettler(world, pawn, {
@@ -3660,9 +3660,9 @@ test("tailor sews after stopping short of the bench spot", () => {
     c.x = rec.x;
     c.y = rec.y;
     Settlement.addBill(settle, bench.uid, { recipeId: "leather_tunic", mode: "forever", paused: false });
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 40; i++) {
         if (rec._workChannel?.kind === "craft") break;
-        workOnce(world, rec);
+        world.tick(50);
     }
     assert.equal(rec._workChannel?.kind, "craft", `should start sewing (act=${rec._settlerAct})`);
     assert.equal(rec._workChannel?.recipeId, "leather_tunic");
@@ -5038,6 +5038,60 @@ test("cook does not stoke from beside the fire when the stand is occupied", () =
     assert.ok(stoking < 8, `stood on Stoking fire for ${stoking} ticks`);
 });
 
+test("settler walks around a campfire instead of hopping through it", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 1600;
+    cookOnlyJobs(settle, rec);
+    const fire = addStation(world, settle, "campfire", rec.x + 48, rec.y, "fire-hop");
+    fire.id = "campfire";
+    fire.fuel = [null, null];
+    fire.burnRemaining = 10;
+    fire.pitTemp = 600;
+    fire.maxTemp = 600;
+    const pose = Place.interactStandPose(fire, 16, world._thingDef(fire.id), world._ensureSettlerCreature(rec));
+    rec.x = fire.x;
+    rec.y = fire.y - 28;
+    const mob = world._ensureSettlerCreature(rec);
+    mob.x = rec.x;
+    mob.y = rec.y;
+    const basket = addBasket(world, settle, rec.x - 48, rec.y, "fuel-hop");
+    basket.slots[0] = { id: "log", quantity: 8 };
+    const fireRect = Place.collisionWorldRect(fire, world._thingDef(fire.id), 16);
+    let maxJump = 0;
+    let crossed = false;
+    let last = { x: rec.x, y: rec.y };
+    let fueledAt = null;
+    const getItem = (id) => world._itemDef(id);
+    const before = Fire.burnMinutes(fire, getItem);
+    for (let i = 0; i < 240; i++) {
+        world.tick(50);
+        const jump = Math.hypot(rec.x - last.x, rec.y - last.y);
+        if (jump > maxJump) maxJump = jump;
+        const body = world._creatureBodyAt(mob, rec.x, rec.y);
+        if (body && fireRect
+            && body.left < fireRect.right && body.right > fireRect.left
+            && body.top < fireRect.bottom && body.bottom > fireRect.top) {
+            crossed = true;
+        }
+        if (!fueledAt && Fire.burnMinutes(fire, getItem) > before + 0.01) {
+            fueledAt = { x: rec.x, y: rec.y };
+        }
+        last = { x: rec.x, y: rec.y };
+        if (fueledAt) break;
+    }
+    assert.ok(maxJump < 6, `hopped ${maxJump.toFixed(1)}px in one tick`);
+    assert.equal(crossed, false, "walked through the campfire");
+    assert.ok(
+        fueledAt,
+        `never reached the stand (at ${rec.x.toFixed(1)},${rec.y.toFixed(1)} want ${pose.x},${pose.y})`
+    );
+    assert.ok(
+        Math.hypot(fueledAt.x - pose.x, fueledAt.y - pose.y) <= 1,
+        `stoked off the spot at ${fueledAt.x},${fueledAt.y} want ${pose.x},${pose.y}`
+    );
+});
+
 test("cook walks onto the interact spot before stoking", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn);
@@ -5687,8 +5741,13 @@ test("settler stashes into a basket ahead without staying inside it", () => {
     const basket = addBasket(world, settle, 80, 80);
     let overlappedMs = 0;
     let stashed = false;
+    let maxJump = 0;
+    let prev = { x: rec.x, y: rec.y };
     for (let i = 0; i < 400; i++) {
         world.tick(16);
+        const jump = Math.hypot(rec.x - prev.x, rec.y - prev.y);
+        if (jump > maxJump) maxJump = jump;
+        prev = { x: rec.x, y: rec.y };
         const cc = world._ensureSettlerCreature(rec);
         if (world._partyPoseBlocked(cc, rec.x, rec.y, 0)) overlappedMs += 16;
         if ((basket.slots || []).some((s) => s && s.id === "stick" && s.quantity >= 4)) {
@@ -5707,6 +5766,11 @@ test("settler stashes into a basket ahead without staying inside it", () => {
         world._partyPoseBlocked(cc, rec.x, rec.y, 0),
         false,
         "should finish standing outside the basket"
+    );
+    assert.ok(maxJump < 4, `hopped ${maxJump.toFixed(1)}px on the way to the basket`);
+    assert.ok(
+        Math.hypot(rec.x - basket.x, rec.y - basket.y) < 24,
+        `stopped ${Math.hypot(rec.x - basket.x, rec.y - basket.y).toFixed(1)}px short of the basket`
     );
 });
 

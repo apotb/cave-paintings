@@ -208,7 +208,12 @@ class PartyAI {
         let overlap = this._overlappingThing(pawn);
         if (this._nudgeIfDue(pawn, overlap)) overlap = this._overlappingThing(pawn);
         const from = { x: pawn.x, y: pawn.y };
-        const blocked = (x, y) => this._poseBlocked(pawn, x, y, settler ? 2 : 1);
+        let exactGoal = false;
+        const blocked = (x, y) => {
+            let usePad = settler ? 2 : 1;
+            if (exactGoal && Math.hypot(x - tx, y - ty) <= 1.5) usePad = 0;
+            return this._poseBlocked(pawn, x, y, usePad);
+        };
         const nav = typeof Path !== "undefined" ? Path : null;
         if (!nav?.steerToward) return;
         const cell = ts || 16;
@@ -236,7 +241,32 @@ class PartyAI {
         const allowReplan = !this._planAt || now - this._planAt >= 400;
         const stuckDt = this._stuckClockDt(pawn, delta);
         const slack = this._rackSlack(pawn, pawn.x, pawn.y, (maxRange + 2) * cell);
+        exactGoal = openRadius === 0;
+        if (exactGoal && this._pathGoalX != null
+            && Math.hypot(tx - this._pathGoalX, ty - this._pathGoalY) > 1.5) {
+            let clear = true;
+            const span = Math.hypot(tx - pawn.x, ty - pawn.y);
+            const steps = Math.max(1, Math.ceil(span / 4));
+            for (let i = 1; i <= steps; i++) {
+                const t = i / steps;
+                if (this._poseBlocked(
+                    pawn,
+                    pawn.x + (tx - pawn.x) * t,
+                    pawn.y + (ty - pawn.y) * t,
+                    0
+                )) {
+                    clear = false;
+                    break;
+                }
+            }
+            if (clear) {
+                this._path = null;
+                this._pathGoalX = null;
+                this._pathGoalY = null;
+            }
+        }
         const steered = nav.steerToward({
+            arrivePx: exactGoal ? 0.75 : undefined,
             from,
             to,
             blocked,

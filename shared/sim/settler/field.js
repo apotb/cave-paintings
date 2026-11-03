@@ -33,6 +33,8 @@
     const clearPaintBar = (...args) => ctx.clearPaintBar(...args);
     const fetchStack = (...args) => ctx.fetchStack(...args);
     const goOrWalk = (...args) => ctx.goOrWalk(...args);
+    const seated = (...args) => ctx.seated(...args);
+    const stepClear = (...args) => ctx.stepClear(...args);
     const takeOne = (...args) => ctx.takeOne(...args);
     const emitEntry = (...args) => ctx.emitEntry(...args);
     const facePaint = (...args) => ctx.facePaint(...args);
@@ -322,21 +324,11 @@ function doResearch(world, rec, settle, circle, delta) {
         stopResearch(rec, null, false);
         return halt();
     }
-    if (Math.hypot((Number(rec.x) || 0) - stand.x, (Number(rec.y) || 0) - stand.y) > 3) {
+    const painter = rec.creature || world._ensureSettlerCreature?.(rec);
+    if (!seated(world, rec, painter, stand)) {
         clearPaintBar(rec);
         const walked = goOrWalk(world, rec, entry) || walkTo(stand.x, stand.y, { openRadius: 0 });
         return walkResearch(world, rec, entry, walked, delta);
-    }
-    // Arrival stops a couple of pixels short. Plant the sprite on the circle.
-    rec.x = stand.x;
-    rec.y = stand.y;
-    const painter = rec.creature || world._ensureSettlerCreature?.(rec);
-    if (painter) {
-        painter.x = stand.x;
-        painter.y = stand.y;
-        painter.vx = 0;
-        painter.vy = 0;
-        painter.setDesiredVel?.(0, 0);
     }
     const now = world.gameMinutes;
     if (rec._paintTickMin == null) rec._paintTickMin = now;
@@ -633,7 +625,7 @@ function doFish(world, rec, settle, spot) {
         const ch = rec.fishChannel;
         const pose = fishStandFeet(ch.standTx, ch.standTy);
         const held = rec.creature || world._ensureSettlerCreature?.(rec);
-        plantFeet(rec, held, pose);
+        if (seated(world, rec, held, pose)) plantFeet(rec, held, pose);
         const face = ch.facing || null;
         if (face) {
             rec.facing = face;
@@ -676,9 +668,7 @@ function doFish(world, rec, settle, spot) {
         c.ownerId = rec.ownerId;
     }
     const pose = fishStandFeet(spot.standTx, spot.standTy);
-    // Pathing stops short of a pose on the tile corner. Close enough to
-    // snap; leaving them there puts the sprite beside the tile center.
-    if (Math.hypot(rec.x - pose.x, rec.y - pose.y) > 8) {
+    if (!seated(world, rec, c, pose)) {
         return walkTo(pose.x, pose.y, { openRadius: 0 });
     }
     const fdx = (spot.waterTx | 0) - (spot.standTx | 0);

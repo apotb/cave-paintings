@@ -1361,8 +1361,14 @@
             const from = { x: mob.x, y: mob.y };
             const pad = bodyNav ? 2 : 1;
             const bunkNav = bodyNav || mob.role === "wanderer";
+            // Set once openRadius is known. The marked stand is often clear
+            // for the body and blocked for the path pad, which parked them
+            // short and the job teleported the rest.
+            let exactGoal = false;
             const blocked = (x, y) => {
-                if (bunkNav && world?.poseBlocked) return world.poseBlocked(mob, x, y, pad);
+                let usePad = pad;
+                if (exactGoal && Math.hypot(x - tx, y - ty) <= 1.5) usePad = 0;
+                if (bunkNav && world?.poseBlocked) return world.poseBlocked(mob, x, y, usePad);
                 if (world?.isBlocked) return world.isBlocked(x, y);
                 return this._agentBlocked(x, y, world);
             };
@@ -1441,7 +1447,34 @@
             const slack = (door || rack)
                 ? (px, py) => (door && door(px, py)) || (rack && rack(px, py))
                 : null;
+            exactGoal = openRadius === 0;
+            if (exactGoal && this._pathGoalX != null
+                && Math.hypot(tx - this._pathGoalX, ty - this._pathGoalY) > 1.5) {
+                // Drop a nearby park point only when the stand is in the
+                // open. A blocked line still needs the path around it.
+                let clear = true;
+                const span = Math.hypot(tx - mob.x, ty - mob.y);
+                const steps = Math.max(1, Math.ceil(span / 4));
+                for (let i = 1; i <= steps; i++) {
+                    const t = i / steps;
+                    if (world?.poseBlocked?.(
+                        mob,
+                        mob.x + (tx - mob.x) * t,
+                        mob.y + (ty - mob.y) * t,
+                        0
+                    )) {
+                        clear = false;
+                        break;
+                    }
+                }
+                if (clear) {
+                    this._path = null;
+                    this._pathGoalX = null;
+                    this._pathGoalY = null;
+                }
+            }
             const steered = Path.steerToward({
+                arrivePx: exactGoal ? 0.75 : undefined,
                 from,
                 to,
                 blocked,
@@ -1463,6 +1496,12 @@
             });
             notePathPlan(world, steered);
             this._path = steered.path;
+            // A clear line drops the path. Without a halt the next step
+            // sails past the stand and they pace across it. stepMove
+            // still refuses a slice that would cross a solid.
+            if (exactGoal && !steered.arrived && (!this._path || !this._path.length)) {
+                this._path = [{ x: tx, y: ty }];
+            }
             this._pathGoalX = steered.pathGoal ? steered.pathGoal.x : null;
             this._pathGoalY = steered.pathGoal ? steered.pathGoal.y : null;
             if (steered.replanned) this._planAt = now;

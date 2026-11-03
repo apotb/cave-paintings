@@ -649,71 +649,33 @@ function interiorRest(world, rec, c, target) {
     return { entry, def, out, inn: inn || fallback };
 }
 
-function poseBlockedAt(world, c, x, y) {
-    // Pathing plans with a 2px body pad. A point that is clear at pad 0 still
-    // gets replaced by a nearby stand, so arrival has to use the same pad.
-    return !!(c && typeof world?._partyPoseBlocked === "function"
-        && world._partyPoseBlocked(c, x, y, 2, { load: false }));
-}
-
-/** Ideal body-centered pose, or the nearest open feet along the tile bottom. */
-function resolveStand(world, c, ideal, tile) {
-    if (!ideal || !c || !tile) return ideal;
-    const sx = Number(c.x) || 0;
-    const sy = Number(c.y) || 0;
-    const open = (x, y) => {
-        if (poseBlockedAt(world, c, x, y)) return false;
-        const dist = Math.hypot(x - sx, y - sy);
-        if (!(dist > 4)) return true;
-        const steps = Math.ceil(dist / 4);
-        for (let i = 1; i < steps; i++) {
-            const t = i / steps;
-            if (poseBlockedAt(world, c, sx + (x - sx) * t, sy + (y - sy) * t)) return false;
-        }
-        return true;
-    };
-    if (open(ideal.x, ideal.y)) return ideal;
-    const y = tile.ty * TS + TS;
-    let best = null;
-    let bestD = Infinity;
-    for (let i = 0; i <= 8; i++) {
-        const x = tile.tx * TS + (TS * i) / 8;
-        if (!open(x, y)) continue;
-        const d = Math.abs(x - ideal.x);
-        if (d < bestD) {
-            bestD = d;
-            best = { x, y };
-        }
-    }
-    return best || ideal;
-}
-
-function plantAtStand(rec, c, stand, target) {
-    faceToward(rec, target.x, (Number(target.y) || 0) - 8);
-    rec.x = stand.x;
-    rec.y = stand.y;
-    if (c) {
-        c.x = stand.x;
-        c.y = stand.y;
-        c.vx = 0;
-        c.vy = 0;
-        c.setDesiredVel?.(0, 0);
-    }
-}
-
-/** The last few pixels to an open pose, clear of solids. */
+/** The step from the feet to a pose does not cross a solid. */
 function stepClear(world, c, x0, y0, x1, y1) {
     if (!c || typeof world?._partyPoseBlocked !== "function") return true;
     const dx = x1 - x0;
     const dy = y1 - y0;
     const dist = Math.hypot(dx, dy);
-    if (!(dist > 2)) return true;
-    const steps = Math.max(1, Math.ceil(dist / 3));
+    if (!(dist > 0.05)) return true;
+    const steps = Math.max(1, Math.ceil(dist));
     for (let i = 1; i <= steps; i++) {
         const t = i / steps;
         if (world._partyPoseBlocked(c, x0 + dx * t, y0 + dy * t, 0, { load: false })) return false;
     }
     return true;
+}
+
+/**
+ * Already on the marked pose. Farther than a pixel is still a walk —
+ * assigning it is the hop through the station.
+ */
+const SEAT_PX = 1;
+
+function seated(world, rec, c, stand) {
+    if (!stand) return false;
+    const px = Number(rec?.x) || 0;
+    const py = Number(rec?.y) || 0;
+    if (Math.hypot(px - stand.x, py - stand.y) > SEAT_PX) return false;
+    return stepClear(world, c, px, py, stand.x, stand.y);
 }
 
 function goOrWalk(world, rec, target) {
@@ -737,7 +699,17 @@ function goOrWalk(world, rec, target) {
         // Cross the doorway on the open line. A path to the bedside cuts
         // the corner and walks through the wall.
         const mouth = interior.out;
-        if (!inside && mouth && Math.hypot(px - mouth.x, py - mouth.y) > 8) {
+        const mouthDist = mouth ? Math.hypot(px - mouth.x, py - mouth.y) : Infinity;
+        const doorUid = interior.entry?.uid || "";
+        if (rec._doorUid !== doorUid) {
+            rec._doorUid = doorUid;
+            rec._doorIn = false;
+        }
+        // Within 8px of the door, commit to the inside pose. Walking
+        // toward it leaves that radius, and flipping back to the mouth
+        // paces them on the threshold.
+        if (!inside && mouthDist <= 8) rec._doorIn = true;
+        if (!inside && mouth && !rec._doorIn) {
             return walkTo(mouth.x, mouth.y, { openRadius: 0 });
         }
         if (interior.inn) return walkTo(interior.inn.x, interior.inn.y, { openRadius: 0 });
@@ -746,20 +718,8 @@ function goOrWalk(world, rec, target) {
     const def = world?._thingDef?.(target.id);
     const paintStand = paintStandOf(target);
     if (paintStand) {
-        const slack = 3;
-        const px = Number(rec.x) || 0;
-        const py = Number(rec.y) || 0;
-        if (Math.hypot(px - paintStand.x, py - paintStand.y) <= slack) {
+        if (seated(world, rec, c, paintStand)) {
             facePaint(rec, target);
-            rec.x = paintStand.x;
-            rec.y = paintStand.y;
-            if (c) {
-                c.x = paintStand.x;
-                c.y = paintStand.y;
-                c.vx = 0;
-                c.vy = 0;
-                c.setDesiredVel?.(0, 0);
-            }
             return null;
         }
         return walkTo(paintStand.x, paintStand.y, { openRadius: 0 });
@@ -767,42 +727,26 @@ function goOrWalk(world, rec, target) {
     const ideal = typeof Place !== "undefined" && Place.interactStandPose
         ? Place.interactStandPose(target, TS, def, c)
         : null;
-    const tile = ideal && typeof Place.interactTileOf === "function"
-        ? Place.interactTileOf(target, TS, def)
-        : null;
-    const stand = resolveStand(world, c, ideal, tile);
-    if (stand) {
-        const slack = 4;
-        const px = Number(rec.x) || 0;
-        const py = Number(rec.y) || 0;
-        const dist = Math.hypot(px - stand.x, py - stand.y);
-        const poseBlocked = (pad) => !!(c && typeof world?._partyPoseBlocked === "function"
-            && world._partyPoseBlocked(c, stand.x, stand.y, pad, { load: false }));
-        const uid = target.uid || target.id || "";
-        if (rec._poseUid !== uid) {
-            rec._poseUid = uid;
-            rec._poseStill = 0;
-            rec._poseBest = dist;
-        }
-        if (dist < (Number(rec._poseBest) || dist) - 0.35) {
-            rec._poseBest = dist;
-            rec._poseStill = 0;
-        } else if (dist <= 14) rec._poseStill = (rec._poseStill || 0) + 1;
-        else rec._poseStill = 0;
-        // Pathing parks short of an open pose and calls that arrival.
-        // The body fits on the tile (pad 0). A straight step can still clip
-        // the fire, and then they stand on the lip and never use it.
-        const parked = !!rec._closeOpenPose && dist <= 14 && (rec._poseStill || 0) >= 4;
-        // The body has to be in the center of the interact tile. Being
-        // somewhere in reach is not using the station.
-        if (!poseBlocked(0) && (dist <= slack || parked)) {
-            rec._poseStill = 0;
-            plantAtStand(rec, c, stand, target);
+    if (ideal) {
+        const poseBlocked = !!(c && typeof world?._partyPoseBlocked === "function"
+            && world._partyPoseBlocked(c, ideal.x, ideal.y, 0, { load: false }));
+        // The body has to be on the marked pose. A nearby sidestep is not
+        // the spot, and jumping onto it clips the station.
+        if (!poseBlocked && seated(world, rec, c, ideal)) {
+            faceToward(rec, target.x, (Number(target.y) || 0) - 8);
             return null;
         }
-        // A basket on the marked tile makes that pose solid, so they stop
-        // short and never arrive. Stand beside it instead.
-        if (!poseBlocked(2)) return walkTo(stand.x, stand.y, { openRadius: 0 });
+        // A basket on the marked tile makes that pose solid. Stand beside
+        // it instead of walking into the sprite. A pose the body can
+        // occupy but the path pad cannot — the rack's south tile with a
+        // campfire on it — is the same once they are already in reach.
+        // Squeezing onto it bounces off the fire.
+        if (!poseBlocked) {
+            const fat = !!(c && typeof world?._partyPoseBlocked === "function"
+                && world._partyPoseBlocked(c, ideal.x, ideal.y, 2, { load: false }));
+            const dist = Math.hypot((Number(rec.x) || 0) - ideal.x, (Number(rec.y) || 0) - ideal.y);
+            if (!(fat && dist <= 48)) return walkTo(ideal.x, ideal.y, { openRadius: 0 });
+        }
     }
     // Baskets and stations stay solid. Work from interact range when the
     // line is clear. If the thing itself is in the way, stand beside it
@@ -815,6 +759,28 @@ function goOrWalk(world, rec, target) {
     if (overlapping && near(rec.x, rec.y, tx, ty)) {
         faceToward(rec, tx, ty - 8);
         return null;
+    }
+    // Storage has no marked tile. Finishing from interact range left the
+    // last steps unwalked, and closing them was the hop into the basket.
+    // Walk onto the open stand beside it. A rock or a person is still used
+    // from reach.
+    const storage = !!(def && def.storage && !ideal);
+    if (storage) {
+        const pose = stationStandFeet(world, rec, c, target);
+        const stand = { x: pose.feetX, y: pose.feetY };
+        if (!overlapping && seated(world, rec, c, stand)) {
+            faceToward(rec, tx, ty - 8);
+            return null;
+        }
+        if (!overlapping && stepClear(world, c, rec.x, rec.y, stand.x, stand.y)) {
+            return walkTo(stand.x, stand.y, { openRadius: 0 });
+        }
+        if (!overlapping && near(rec.x, rec.y, tx, ty)
+            && !blockedToward(world, rec, c, tx, ty, target.uid)) {
+            faceToward(rec, tx, ty - 8);
+            return null;
+        }
+        return walkTo(stand.x, stand.y, { openRadius: 0 });
     }
     if (!overlapping && near(rec.x, rec.y, tx, ty)
         && !blockedToward(world, rec, c, tx, ty, target.uid)) {
@@ -888,10 +854,9 @@ function approachStation(world, rec, target) {
 }
 
 /**
- * Load a campfire from its marked tile. Pathing parks a few pixels short of
- * an open spot and then stands there, so simmer never puts the shell on.
- * An open pose gets that last step. A blocked pose still uses the old
- * arrival, or a basket on the tile would make the job give up.
+ * Load a campfire from its marked tile. An open pose is walked onto.
+ * A blocked pose still counts once they have stood in reach, or a basket
+ * on the tile would make the job give up.
  */
 /** Ticks spent not moving while trying to use this station. */
 function spotStill(rec, target) {
@@ -917,22 +882,8 @@ function useInteractSpot(world, rec, target) {
     const spotBlocked = !!(pose && c && typeof world?._partyPoseBlocked === "function"
         && world._partyPoseBlocked(c, pose.x, pose.y, 0, { load: false }));
     if (pose && !spotBlocked) {
-        rec._closeOpenPose = true;
         const walked = goOrWalk(world, rec, target);
-        rec._closeOpenPose = false;
-        if (!walked) {
-            if (onInteractSpot(world, rec, target)) return null;
-            plantAtStand(rec, c, pose, target);
-            if (onInteractSpot(world, rec, target)) return null;
-        }
-        // Pathing reported a walk, then the feet stopped. An open tile gets
-        // the snap. Otherwise load from here — standing on "Simmering" with
-        // the shell in hand never fills the pot.
-        if (walked && spotStill(rec, target) >= 8 && near(rec.x, rec.y, target.x, target.y)) {
-            plantAtStand(rec, c, pose, target);
-            if (onInteractSpot(world, rec, target)) return null;
-            return null;
-        }
+        if (!walked && onInteractSpot(world, rec, target)) return null;
         if (walked) return walked;
     }
     const walked = goOrWalk(world, rec, target);
@@ -1743,9 +1694,7 @@ function doStokeFire(world, rec, settle, fire) {
         const c = rec.creature || world?._ensureSettlerCreature?.(rec);
         const spotBlocked = !!(pose && c && world._partyPoseBlocked?.(c, pose.x, pose.y, 0, { load: false }));
         if (!pose || spotBlocked) return dropStoke(rec, fire);
-        rec._closeOpenPose = true;
         const walked = goOrWalk(world, rec, fire);
-        rec._closeOpenPose = false;
         if (walked) return walked;
         if (!onInteractSpot(world, rec, fire)) return dropStoke(rec, fire);
     }
@@ -1891,4 +1840,6 @@ function doLightFire(world, rec, settle, fire) {
     ctx.stokeUntilKeep = stokeUntilKeep;
     ctx.doStokeFire = doStokeFire;
     ctx.doLightFire = doLightFire;
+    ctx.seated = seated;
+    ctx.stepClear = stepClear;
 });
