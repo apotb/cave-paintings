@@ -1571,13 +1571,95 @@
         const list = jobs || this._craftQueue || [];
         const groups = [];
         for (let i = 0; i < list.length; i++) {
-            const recipe = list[i]?.recipe;
-            if (!recipe) continue;
+            const job = list[i];
+            if (!job?.recipe || job.void) continue;
             const prev = groups[groups.length - 1];
-            if (prev && this._craftQueueSame(prev.recipe, recipe)) prev.count += 1;
-            else groups.push({ recipe, count: 1 });
+            if (prev && this._craftQueueSame(prev.recipe, job.recipe)) {
+                prev.count += 1;
+                prev.indexes.push(i);
+            } else {
+                groups.push({ recipe: job.recipe, count: 1, start: i, indexes: [i] });
+            }
         }
         return groups;
+    },
+
+    /**
+     * How many crafts a queue-slot click removes.
+     * Left is one, right is five, ctrl is ten, shift is the whole stack.
+     */
+    _craftQueueClickCount(pointer, have) {
+        const total = Math.max(0, Math.floor(Number(have) || 0));
+        if (!(total > 0)) return 0;
+        const ev = pointer?.event;
+        const keys = this.player?.keys;
+        const shift = !!(ev?.shiftKey || keys?.SHIFT?.isDown);
+        const ctrl = !!(ev?.ctrlKey || ev?.metaKey || keys?.CTRL?.isDown);
+        const right = !!(pointer?.rightButtonDown?.() || pointer?.button === 2);
+        let n = 1;
+        if (shift) n = total;
+        else if (ctrl) n = 10;
+        else if (right) n = 5;
+        return Math.min(total, n);
+    },
+
+    /**
+     * Take crafts off the end of one queue stack and give the ingredients back.
+     * The craft already running stays until that stack is cleared.
+     */
+    _unqueueCraftGroup(groupIndex, count) {
+        const q = this._craftQueue || [];
+        const group = this._craftQueueGroups(q)[groupIndex];
+        if (!group || !(count > 0)) return 0;
+        const n = Math.min(group.count, Math.floor(count));
+        if (!(n > 0)) return 0;
+        const idxs = group.indexes.slice(-n);
+        const player = this.player;
+        const live = !!(this._craftQueueLive && player?._craftChannel?.fromQueue);
+        const cancelLive = live && idxs.includes(0);
+        if (cancelLive) {
+            this._craftQueueLive = false;
+            player._craftChannel = null;
+            player._hideChannelBar?.();
+        }
+        const ranges = [];
+        for (let k = idxs.length - 1; k >= 0; k--) {
+            const i = idxs[k];
+            const job = q[i];
+            if (!job || job.void) continue;
+            if (!job.taken) {
+                job.void = true;
+                continue;
+            }
+            let server = 0;
+            for (let j = 0; j < i; j++) {
+                if (q[j]?.taken && !q[j].void) server++;
+            }
+            if (!this.simAuth?.()) this._refundCraftJob?.(player, job);
+            q.splice(i, 1);
+            const prev = ranges[ranges.length - 1];
+            if (prev && server + prev.count === prev.index) {
+                prev.index = server;
+                prev.count += 1;
+            } else {
+                ranges.push({ index: server, count: 1 });
+            }
+        }
+        if (this.simAuth?.()) {
+            for (let i = 0; i < ranges.length; i++) {
+                this._sendCraftAction({
+                    op: "refund",
+                    index: ranges[i].index,
+                    count: ranges[i].count
+                });
+            }
+        }
+        if (cancelLive || !player?._craftChannel) this._pumpCraftQueue?.();
+        this._layoutCraftQueue?.();
+        this.refreshCraftMenu?.();
+        this.refreshTooltip?.();
+        if (this.hotbar) this.hotbar.dirty = true;
+        return n;
     },
 
     _craftQueueSlotPos(i) {
@@ -1853,8 +1935,12 @@
         slot.on("pointerout", () => {
             if (this._tooltipTarget === slot) this.hideTooltip();
         });
-        slot.on("pointerdown", (_pointer, _x, _y, event) => {
+        slot.on("pointerdown", (pointer, _x, _y, event) => {
             event?.stopPropagation?.();
+            if (!view.slot.visible || view.index == null) return;
+            const n = this._craftQueueClickCount(pointer, view.count);
+            if (!(n > 0)) return;
+            this._unqueueCraftGroup(view.index, n);
         });
         layer.add(slot);
         layer.add(icon);
@@ -1873,7 +1959,10 @@
 
     _craftQueueSigNow() {
         const d = this._craftMenuData || {};
-        const ids = (this._craftQueue || []).map((j) => j.recipe?.id || "").join(",");
+        const ids = (this._craftQueue || [])
+            .filter((j) => j && !j.void)
+            .map((j) => j.recipe?.id || "")
+            .join(",");
         return [
             this.craftMenuVisible ? 1 : 0,
             ids,
@@ -1904,6 +1993,7 @@
             const on = !!(show && group);
             view.recipe = group?.recipe || null;
             view.count = group?.count || 0;
+            view.index = on ? i : null;
             view.slot.setVisible(on);
             view.icon.setVisible(on);
             if (!on) {
@@ -1932,7 +2022,7 @@
                 Math.round(view.slot.x + view.slot.displayWidth - inset),
                 Math.round(view.slot.y + view.slot.displayHeight - inset)
             );
-            if (!view.slot.input) view.slot.setInteractive({ cursor: "default" });
+            if (!view.slot.input) view.slot.setInteractive({ useHandCursor: true });
             else view.slot.input.enabled = true;
         }
         if (this._craftQueueSweep) layer.bringToTop(this._craftQueueSweep);
@@ -2183,7 +2273,11 @@
         const asked = asks.shift();
         let got = Math.max(0, Math.floor(Number(accepted) || 0));
         const q = this._craftQueue || [];
+        let takenBefore = 0;
+        for (let i = 0; i < q.length; i++) if (q[i]?.taken) takenBefore++;
         let seen = 0;
+        let acceptedIndex = 0;
+        const voidOffsets = [];
         const next = [];
         for (let i = 0; i < q.length; i++) {
             const job = q[i];
@@ -2192,13 +2286,40 @@
                 continue;
             }
             seen++;
-            if (got > 0) {
-                job.taken = true;
-                got--;
-                next.push(job);
+            if (!(got > 0)) continue;
+            got--;
+            if (job.void) {
+                voidOffsets.push(acceptedIndex);
+                acceptedIndex++;
+                continue;
             }
+            job.taken = true;
+            acceptedIndex++;
+            next.push(job);
         }
         this._craftQueue = next;
+        if (voidOffsets.length && this.simAuth?.()) {
+            const indexes = voidOffsets.map((off) => takenBefore + off);
+            indexes.sort((a, b) => b - a);
+            const ranges = [];
+            for (let i = 0; i < indexes.length; i++) {
+                const server = indexes[i];
+                const prev = ranges[ranges.length - 1];
+                if (prev && server + prev.count === prev.index) {
+                    prev.index = server;
+                    prev.count += 1;
+                } else {
+                    ranges.push({ index: server, count: 1 });
+                }
+            }
+            for (let i = 0; i < ranges.length; i++) {
+                this._sendCraftAction({
+                    op: "refund",
+                    index: ranges[i].index,
+                    count: ranges[i].count
+                });
+            }
+        }
         this._pumpCraftQueue?.();
         this._layoutCraftQueue?.();
         this.refreshCraftMenu?.();

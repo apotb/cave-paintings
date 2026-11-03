@@ -194,6 +194,38 @@ test("craft reserve spends ingredients and finish grants without spending again"
     assert.equal(world.youPayload(pawn.id).craftHolds.length, 0);
 });
 
+test("craft refund index returns that hold and leaves the older one", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "leaf", quantity: 5 };
+    pawn.inventory[1] = { id: "stick", quantity: 1 };
+    originChunk(world).things.push({
+        uid: "ss_rock",
+        id: "rock",
+        x: pawn.x,
+        y: pawn.y
+    });
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, op: "reserve", id: "leaf_cord" });
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, op: "reserve", id: "sharp_stick" });
+    assert.equal(pawn.craftHolds.length, 2);
+    assert.equal(pawn.craftHolds[0].id, "leaf_cord");
+    assert.equal(pawn.craftHolds[1].id, "sharp_stick");
+    assert.equal(pawn.inventory.some((s) => s?.id === "stick"), false);
+
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.CRAFT,
+        op: "refund",
+        index: 1,
+        count: 1
+    });
+    assert.equal(pawn.craftHolds.length, 1);
+    assert.equal(pawn.craftHolds[0].id, "leaf_cord");
+    assert.equal(pawn.inventory.find((s) => s?.id === "stick")?.quantity, 1);
+
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, op: "finish", id: "leaf_cord" });
+    assert.equal(pawn.inventory.find((s) => s?.id === "leaf_cord")?.quantity, 1);
+    assert.equal(pawn.craftHolds.length, 0);
+});
+
 test("craft finish without a hold does not grant", () => {
     const { world, pawn, Protocol } = createTestWorld();
     pawn.inventory[0] = { id: "leaf", quantity: 5 };

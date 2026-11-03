@@ -297,6 +297,124 @@ test("crafting spot leads the menu only inside your settlement and places instea
     assert.deepEqual(home.calls, ["close", "place"]);
 });
 
+test("a queue click takes one, five, ten, or the whole stack", () => {
+    const count = (pointer, have, keys) => craft._craftQueueClickCount.call({
+        player: { keys: keys || {} }
+    }, pointer, have);
+    const left = { event: {}, rightButtonDown() { return false; } };
+    assert.equal(count(left, 8), 1);
+    assert.equal(count({ event: {}, button: 2 }, 8), 5);
+    assert.equal(count({ event: {}, rightButtonDown() { return true; } }, 3), 3);
+    assert.equal(count({ event: { ctrlKey: true }, button: 2 }, 12), 10);
+    assert.equal(count({ event: { metaKey: true } }, 4), 4);
+    assert.equal(count({ event: { shiftKey: true, ctrlKey: true }, button: 2 }, 12), 12);
+    assert.equal(count(left, 6, { SHIFT: { isDown: true } }), 6);
+    assert.equal(count(left, 20, { CTRL: { isDown: true } }), 10);
+});
+
+test("clicking a queue stack refunds from the end and leaves the one crafting", () => {
+    const refunded = [];
+    const ctx = {
+        _craftQueue: [
+            { recipe: { id: "cord" }, taken: true },
+            { recipe: { id: "cord" }, taken: true },
+            { recipe: { id: "cord" }, taken: true },
+            { recipe: { id: "cord" }, taken: true },
+            { recipe: { id: "spear" }, taken: true }
+        ],
+        _craftQueueLive: true,
+        player: { _craftChannel: { fromQueue: true } },
+        simAuth() { return false; },
+        _refundCraftJob(_who, job) { refunded.push(job.recipe.id); },
+        _pumpCraftQueue() { this.pumped = true; },
+        _layoutCraftQueue() {},
+        refreshCraftMenu() {},
+        refreshTooltip() {},
+        hotbar: {}
+    };
+    ctx._craftQueueSame = craft._craftQueueSame;
+    ctx._craftQueueGroups = craft._craftQueueGroups;
+    assert.equal(craft._unqueueCraftGroup.call(ctx, 0, 1), 1);
+    assert.deepEqual(ctx._craftQueue.map((j) => j.recipe.id), ["cord", "cord", "cord", "spear"]);
+    assert.deepEqual(refunded, ["cord"]);
+    assert.ok(ctx.player._craftChannel);
+    assert.equal(ctx.pumped, undefined);
+
+    craft._unqueueCraftGroup.call(ctx, 1, 5);
+    assert.deepEqual(ctx._craftQueue.map((j) => j.recipe.id), ["cord", "cord", "cord"]);
+    assert.deepEqual(refunded, ["cord", "spear"]);
+    assert.ok(ctx.player._craftChannel);
+
+    craft._unqueueCraftGroup.call(ctx, 0, 99);
+    assert.equal(ctx._craftQueue.length, 0);
+    assert.equal(ctx.player._craftChannel, null);
+    assert.equal(ctx._craftQueueLive, false);
+    assert.equal(ctx.pumped, true);
+    assert.deepEqual(refunded, ["cord", "spear", "cord", "cord", "cord"]);
+});
+
+test("a queue click refunds that stack on the server, not the oldest hold", () => {
+    const sent = [];
+    const ctx = {
+        _craftQueue: [
+            { recipe: { id: "cord" }, taken: true },
+            { recipe: { id: "spear" }, taken: true },
+            { recipe: { id: "spear" }, taken: true }
+        ],
+        _craftQueueLive: true,
+        player: { _craftChannel: { fromQueue: true } },
+        simAuth() { return true; },
+        _sendCraftAction(action) { sent.push(action); },
+        _pumpCraftQueue() {},
+        _layoutCraftQueue() {},
+        refreshCraftMenu() {},
+        refreshTooltip() {},
+        hotbar: {}
+    };
+    ctx._craftQueueSame = craft._craftQueueSame;
+    ctx._craftQueueGroups = craft._craftQueueGroups;
+    craft._unqueueCraftGroup.call(ctx, 1, 2);
+    assert.equal(ctx._craftQueue.map((j) => j.recipe.id).join(","), "cord");
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].op, "refund");
+    assert.equal(sent[0].index, 1);
+    assert.equal(sent[0].count, 2);
+    assert.ok(ctx.player._craftChannel);
+});
+
+test("a click during a reserve hides the craft and returns it when the server accepts", () => {
+    const sent = [];
+    const ctx = {
+        _craftQueue: [
+            { recipe: { id: "cord" }, taken: true },
+            { recipe: { id: "cord" }, taken: false },
+            { recipe: { id: "cord" }, taken: false }
+        ],
+        _craftReserveAsks: [2],
+        simAuth() { return true; },
+        _sendCraftAction(action) { sent.push(action); },
+        _pumpCraftQueue() {},
+        _layoutCraftQueue() {},
+        refreshCraftMenu() {},
+        refreshTooltip() {}
+    };
+    ctx._craftQueueSame = craft._craftQueueSame;
+    ctx._craftQueueGroups = craft._craftQueueGroups;
+    craft._unqueueCraftGroup.call(ctx, 0, 1);
+    assert.equal(ctx._craftQueue[2].void, true);
+    assert.equal(craft._craftQueueGroups.call(ctx)[0].count, 2);
+    assert.deepEqual(sent, []);
+
+    craft._onCraftReserve.call(ctx, 2);
+    assert.equal(ctx._craftQueue.length, 2);
+    assert.equal(ctx._craftQueue[0].taken, true);
+    assert.equal(ctx._craftQueue[1].taken, true);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].op, "refund");
+    assert.equal(sent[0].index, 2);
+    assert.equal(sent[0].count, 1);
+});
+
 test("the sweep is a clockwise trail from the top", () => {
     const poly = (p) => craft._craftSweepPoly(0, 0, 100, 100, p);
     assert.equal(poly(0).length, 0);

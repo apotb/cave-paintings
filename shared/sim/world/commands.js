@@ -1271,7 +1271,9 @@
         if (op === "refund") {
             let n = Math.floor(Number(action.count));
             if (!Number.isFinite(n) || n < 1) n = null;
-            this._refundCraftHolds(p, n);
+            let index = Math.floor(Number(action.index));
+            if (!Number.isFinite(index) || index < 0) index = null;
+            this._refundCraftHolds(p, n, index);
             return;
         }
         const id = String(action.id || "").slice(0, 64);
@@ -1538,21 +1540,25 @@
         }
     },
 
-    /** Return queued ingredients. count omitted refunds every hold. */
-    _refundCraftHolds(p, count) {
+    /**
+     * Return queued ingredients.
+     * count omitted refunds everything from index onward.
+     * index omitted starts at the oldest hold.
+     */
+    _refundCraftHolds(p, count, index) {
         const holds = p?.craftHolds;
         if (!Array.isArray(holds) || !holds.length) return 0;
-        let n = count == null ? holds.length : Math.floor(Number(count));
+        let start = Math.floor(Number(index));
+        if (!Number.isFinite(start) || start < 0) start = 0;
+        if (start >= holds.length) return 0;
+        let n = count == null ? (holds.length - start) : Math.floor(Number(count));
         if (!Number.isFinite(n) || n < 1) return 0;
-        let done = 0;
-        while (n > 0 && holds.length) {
-            this._refundCraftHold(p, holds.shift());
-            n--;
-            done++;
-        }
+        n = Math.min(n, holds.length - start);
+        const removed = holds.splice(start, n);
+        for (let i = 0; i < removed.length; i++) this._refundCraftHold(p, removed[i]);
         if (!holds.length) p.craftHolds = [];
-        if (done) this._dirtyPawnOwner(p);
-        return done;
+        if (removed.length) this._dirtyPawnOwner(p);
+        return removed.length;
     },
 
     _reserveCraft(session, p, recipe, action) {
