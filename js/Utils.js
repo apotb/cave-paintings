@@ -2616,6 +2616,23 @@ function rotatePixelsCW(src, n, quarters) {
     return out;
 }
 
+/**
+ * Cut of `frame` inside the original image.
+ * Packed frames live on the shared sheet; `_cpLocalX` is where they
+ * sat before that move. Unpacked frames are already local.
+ */
+function frameLocalCut(frame) {
+    if (!frame) return { x: 0, y: 0, w: 16, h: 16 };
+    const x = frame._cpLocalX != null ? frame._cpLocalX : (frame.cutX || 0);
+    const y = frame._cpLocalY != null ? frame._cpLocalY : (frame.cutY || 0);
+    return {
+        x,
+        y,
+        w: frame.cutWidth || frame.width || 16,
+        h: frame.cutHeight || frame.height || 16
+    };
+}
+
 function lyingFrameOf(tex, prefer) {
     if (!tex?.has) return null;
     const names = [];
@@ -2642,8 +2659,14 @@ function ensureLyingTexture(scene, srcKey, quarter, frameName) {
     const outKey = `${srcKey}__lieq${q}__${frameId}`;
     if (scene.textures.exists(outKey)) return outKey;
     if (typeof document === "undefined") return null;
-    const source = tex.source?.[frame.sourceIndex ?? 0] || tex.source?.[0];
-    const img = source?.image || tex.getSourceImage?.();
+    // Packed frames point at the shared sheet. The texture's own source is
+    // still the original image, whose coordinates no longer match cutX/cutY,
+    // so cropping that image bakes a blank body (invisible, and no hover).
+    const source = frame.source
+        || tex.source?.[frame.sourceIndex ?? 0]
+        || tex.source?.[0];
+    let img = source?.image;
+    if (!img || img.width === 0) img = tex.getSourceImage?.() || img;
     if (!img) return null;
     const n = Math.max(frame.cutWidth || frame.width || 16, frame.cutHeight || frame.height || 16);
     let created = null;
@@ -3995,14 +4018,17 @@ function placeUnarmedThrustSprite(sprite, cx, cy, angle, range, progress, depthY
 }
 
 /**
- * North edge of a lying body, slightly behind that scanline so a standing
- * creature whose feet overlap the body always draws on top.
+ * Near (south) edge of a lying body, one step in front of that line.
+ * Sorting at the far edge hid deer under any tree or rock whose base sat
+ * south of the head — the body vanished as soon as it fell.
+ * `centered` means `worldY` is the body center (corpses). Feet-anchored
+ * puppets pass the container's feet Y with centered false.
  */
 function lyingSortDepth(worldY, height, centered) {
     const h = Number(height) > 0 ? Number(height) : 16;
     const y = Number(worldY) || 0;
-    const top = centered ? y - h * 0.5 : y - h;
-    return top - 0.5;
+    const south = centered ? y + h * 0.5 : y;
+    return (south | 0) + 1;
 }
 
 /**
@@ -4026,7 +4052,8 @@ function sleepSortDepth(sprite, leanTo, slot) {
 }
 
 /**
- * Standing: feet Y. Lying / sleeping: under any overlapping walker.
+ * Standing: feet Y. Lying: the near edge, so the body stays in front of
+ * scenery behind it. Sleepers stay on the lean-to floor.
  * `opts.y` / `opts.centered` override the sprite when depth lives on a
  * feet-anchored container (net puppets).
  */

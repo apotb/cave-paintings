@@ -255,7 +255,17 @@
         if (!chunk) return spr;
         spr.x = c.x;
         spr.y = c.y;
-        spr.setDepth((Number(c.y) || 0) + 1);
+        if (typeof applyCreatureSortDepth === "function") {
+            applyCreatureSortDepth(spr, {
+                y: Number(c.y) || 0,
+                prone: true,
+                centered: true,
+                height: Number(spr.height) || 16
+            });
+        } else {
+            const feetY = (Number(c.y) || 0) + (Number(spr.height) || 16) * 0.5;
+            spr.setDepth((feetY | 0) + 1);
+        }
         if (typeof spr._setCorpseHitArea === "function") spr._setCorpseHitArea();
         else if (spr.input) spr.input.enabled = true;
         // Re-attach to the live chunk group after unload detached netSync corpses
@@ -722,9 +732,9 @@
     },
 
     /**
-     * Lying puppets sort under standing bodies. Sleepers sit just above the
-     * lean-to floor (not at the structure's south feet). Net roots are
-     * feet-anchored except while resting (body-center).
+     * Lying puppets sort at their near edge so a tree or rock behind them
+     * does not cover the body. Sleepers sit just above the lean-to floor.
+     * Net roots are feet-anchored except while resting (body-center).
      */
     _setRemoteSortDepth(entry) {
         if (!entry?.root) return;

@@ -37,7 +37,10 @@ class Corpse extends Phaser.GameObjects.Sprite {
             const f = srcTex.get(name);
             if (!f || f.name === "__BASE") continue;
             if (gray.has(name) || gray.has(String(name))) continue;
-            gray.add(name, 0, f.cutX, f.cutY, f.cutWidth, f.cutHeight);
+            const cut = typeof frameLocalCut === "function"
+                ? frameLocalCut(f)
+                : { x: f.cutX, y: f.cutY, w: f.cutWidth, h: f.cutHeight };
+            gray.add(name, 0, cut.x, cut.y, cut.w, cut.h);
         }
         return grayKey;
     }
@@ -170,9 +173,18 @@ class Corpse extends Phaser.GameObjects.Sprite {
         scene.mainLayer.add(this);
         this.setOrigin(0.5, 0.5);
         this.applyStageAppearance();
-        // Match living prone puppets: they y-sort from feet, while corpse x/y is body center.
-        const feetY = (Number(entry.y) || 0) + (Number(this.height) || 16) * 0.5;
-        this.setDepth((feetY | 0) + 1);
+        // Corpse x/y is the body center. Sort at the near edge, same as a downed mob.
+        if (typeof applyCreatureSortDepth === "function") {
+            applyCreatureSortDepth(this, {
+                y: Number(entry.y) || 0,
+                prone: true,
+                centered: true,
+                height: Number(this.height) || 16
+            });
+        } else {
+            const feetY = (Number(entry.y) || 0) + (Number(this.height) || 16) * 0.5;
+            this.setDepth((feetY | 0) + 1);
+        }
 
         if (!chunk.corpses?.children) {
             chunk.ensureSpriteGroups?.();

@@ -12,7 +12,9 @@ vm.runInContext(
     + "this.rotatePixelsCW = rotatePixelsCW;\n"
     + "this.syncLyingDraw = syncLyingDraw;\n"
     + "this.setCreatureProne = setCreatureProne;\n"
-    + "this.setCreatureRest = setCreatureRest;\n",
+    + "this.setCreatureRest = setCreatureRest;\n"
+    + "this.lyingSortDepth = lyingSortDepth;\n"
+    + "this.frameLocalCut = frameLocalCut;\n",
     context
 );
 
@@ -22,6 +24,15 @@ test("downed pose is a clockwise quarter-turn of the right-facing frame", () => 
     assert.equal(context.lieQuarterTurns(Math.PI), 2);
     assert.equal(context.lieQuarterTurns(0), 0);
     assert.equal(context.lieQuarterTurns(Math.PI * 2), 0);
+});
+
+test("a downed body sorts at its near edge, in front of a prop on that line", () => {
+    // Feet-anchored puppet: y is the south edge. A rock at that y sorts behind.
+    assert.equal(context.lyingSortDepth(-16, 16, false), -15);
+    assert.ok(context.lyingSortDepth(-16, 16, false) > -16);
+    // Corpse y is the body center. South edge is 8px lower.
+    assert.equal(context.lyingSortDepth(-20, 16, true), -11);
+    assert.equal(context.lyingSortDepth(8, 16, false), 9);
 });
 
 test("lying scale covers an even number of screen pixels", () => {
@@ -175,5 +186,84 @@ test("a bunk pose quantizes scale and does not rotate the quad when the turn is 
     } finally {
         delete context.document;
         delete context.Sleep;
+    }
+});
+
+test("a packed frame keeps its cut inside the original image", () => {
+    const packed = context.frameLocalCut({
+        _cpLocalX: 16,
+        _cpLocalY: 32,
+        cutX: 17,
+        cutY: 133,
+        cutWidth: 16,
+        cutHeight: 16
+    });
+    assert.equal(packed.x, 16);
+    assert.equal(packed.y, 32);
+    assert.equal(packed.w, 16);
+    assert.equal(packed.h, 16);
+    const plain = context.frameLocalCut({
+        cutX: 16,
+        cutY: 32,
+        width: 16,
+        height: 16
+    });
+    assert.equal(plain.x, 16);
+    assert.equal(plain.y, 32);
+});
+
+test("lying bake crops the sheet the frame points at", () => {
+    const drawn = [];
+    const atlas = { width: 1024, height: 1024 };
+    const sheet = { width: 48, height: 64 };
+    const frame = {
+        name: "7",
+        cutX: 17,
+        cutY: 133,
+        cutWidth: 16,
+        cutHeight: 16,
+        sourceIndex: 0,
+        source: { image: atlas }
+    };
+    const sprite = fakeSprite();
+    sprite.scene.textures = {
+        exists() { return false; },
+        get() {
+            return {
+                has(name) { return name === 7 || name === "7"; },
+                get() { return frame; },
+                source: [{ image: sheet }],
+                getSourceImage() { return sheet; }
+            };
+        },
+        addCanvas() { return { setFilter() {} }; }
+    };
+    context.document = {
+        createElement() {
+            return {
+                width: 0,
+                height: 0,
+                getContext() {
+                    return {
+                        imageSmoothingEnabled: true,
+                        drawImage(...args) { drawn.push(args); },
+                        getImageData() {
+                            return { data: new Uint8ClampedArray(16 * 16 * 4) };
+                        },
+                        putImageData() {}
+                    };
+                }
+            };
+        }
+    };
+    try {
+        context.syncLyingDraw(sprite, -Math.PI / 2, 1);
+        assert.equal(drawn.length, 1);
+        assert.equal(drawn[0][0], atlas);
+        assert.equal(drawn[0][1], 17);
+        assert.equal(drawn[0][2], 133);
+        assert.equal(sprite.texture.key, "human__lieq3__7");
+    } finally {
+        delete context.document;
     }
 });

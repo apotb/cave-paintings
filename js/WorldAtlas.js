@@ -92,9 +92,15 @@ const WorldAtlas = (() => {
         for (const name in frames) {
             const frame = frames[name];
             if (!frame || frame._cpAtlas) continue;
+            // Keep the cut inside the original image. Grayscale sheets and
+            // other CPU copies must not reuse the packed sheet coordinates.
+            if (frame._cpLocalX == null) {
+                frame._cpLocalX = frame.cutX || 0;
+                frame._cpLocalY = frame.cutY || 0;
+            }
             frame.source = atlasSource;
-            frame.cutX = (frame.cutX || 0) + ox;
-            frame.cutY = (frame.cutY || 0) + oy;
+            frame.cutX = frame._cpLocalX + ox;
+            frame.cutY = frame._cpLocalY + oy;
             const cut = frame.data?.cut;
             if (cut) {
                 cut.x += ox;
