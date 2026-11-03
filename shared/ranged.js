@@ -1,7 +1,8 @@
 /**
  * Bow shots. A shortbow looses at once. A longbow charges, hits harder, and
  * reaches farther. The aim is a point, the roll is shooting skill at that
- * distance, then the light on that point. Pitch black keeps a fifth of the
+ * distance, then the light on that point. A body on the ground is an execution
+ * within three tiles and half as likely past four. Pitch black keeps a fifth of the
  * chance and full light keeps all of it. The arrow still flies. A solid stops
  * it. A miss scatters
  * and can hit someone else, except an ally within five tiles of the shooter.
@@ -305,6 +306,28 @@
     }
 
     /**
+     * A body on the ground. Within three tiles the shot is an execution (×7.5).
+     * Past four tiles it is half as likely. The tile in between is unchanged.
+     */
+    const EXECUTION_TILES = 3;
+    const LYING_FAR_TILES = 4;
+    const EXECUTION_FACTOR = 7.5;
+    const LYING_FACTOR = 0.5;
+
+    function isLying(body) {
+        const party = partyApi();
+        return !!party?.isLying?.(body);
+    }
+
+    function postureFactor(tiles, lying) {
+        if (!lying) return 1;
+        const d = Number(tiles);
+        if (!(d > EXECUTION_TILES)) return EXECUTION_FACTOR;
+        if (d > LYING_FAR_TILES) return LYING_FACTOR;
+        return 1;
+    }
+
+    /**
      * RimWorld's lighting line. Glow 0 keeps 20% of the hit chance. Glow 1 keeps
      * all of it. The glow is the light on the aim, not on the shooter.
      */
@@ -353,9 +376,12 @@
         else if (skills && opts?.shooter) accuracy = skills.shootingAccuracyAt(opts.shooter, tiles) || 0;
         accuracy = Math.max(0, Math.min(1, accuracy));
         const glow = glowAtAim(opts, aim);
-        if (glow != null) accuracy = Math.max(0, Math.min(1, accuracy * lightFactor(glow)));
-        const hitRoll = rng() < accuracy;
+        if (glow != null) accuracy *= lightFactor(glow);
         const aimed = bodyUnder(opts?.bodies, aim.x, aim.y, opts?.shooter);
+        const posture = postureFactor(tiles, isLying(aimed));
+        if (posture !== 1) accuracy *= posture;
+        accuracy = Math.max(0, Math.min(1, accuracy));
+        const hitRoll = rng() < accuracy;
         const flight = clipSegment(from.x, from.y, aim.x, aim.y, opts?.blocked);
         const reaches = !flight.stopped
             || Math.hypot(flight.x - aim.x, flight.y - aim.y) <= 2;
@@ -408,7 +434,12 @@
         BASE_DAMAGE,
         LONG_DAMAGE,
         MISS_XP,
+        EXECUTION_TILES,
+        LYING_FAR_TILES,
+        EXECUTION_FACTOR,
+        LYING_FACTOR,
         flightMs,
+        postureFactor,
         lightFactor,
         sameArrow,
         arrowKey,

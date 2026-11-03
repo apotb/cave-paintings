@@ -411,7 +411,8 @@
                         return { missed: true, dodged: false, damage: 0, part: null };
                     }
                 }
-                if (skills && target?.bio && !skills.incapable(target.bio, "melee")) {
+                // Downed, pain-shocked, or asleep. They cannot step aside.
+                if (skills && target?.bio && !skills.incapable(target.bio, "melee") && !Party?.isLying?.(target)) {
                     const lv = skills.effectiveLevel(target.bio, "melee");
                     if (lv != null && math.random() < skills.meleeDodgeChance(target)) {
                         skills.award(target.bio, "melee", skills.XP_HIT, { day });

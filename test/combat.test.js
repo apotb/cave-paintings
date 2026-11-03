@@ -83,6 +83,54 @@ test("boar tusk verbs carry white attack color; bite and headbutt do not", () =>
     for (const a of others) assert.equal(a.color, undefined);
 });
 
+test("a downed or sleeping target cannot dodge", () => {
+    function foe(id) {
+        const p = player(id);
+        p.bio = {
+            adulthood: null,
+            childhood: null,
+            traits: [],
+            skills: { melee: { level: 20, xp: 0, passion: 0 } },
+            xpDay: { day: 0, gross: {} }
+        };
+        const math = {
+            random: () => 0,
+            between: (a) => a,
+            clamp: (n, lo, hi) => Math.max(lo, Math.min(hi, n)),
+            floatBetween: (a) => a
+        };
+        p.math = math;
+        if (p.anatomy?.ctx) p.anatomy.ctx.math = math;
+        return p;
+    }
+    const atk = player("atk-down");
+    const attack = BodyCombat.pickAttack(atk);
+    assert.ok(attack);
+    attack.def = { ...(attack.def || {}), variance: 0 };
+
+    const standing = foe("up");
+    const dodged = BodyCombat.applyHit(atk, standing, attack);
+    assert.equal(dodged?.dodged, true);
+
+    const downed = foe("down");
+    downed._prone = true;
+    const landed = BodyCombat.applyHit(atk, downed, attack);
+    assert.equal(landed?.missed, undefined);
+    assert.ok(landed?.damage > 0);
+
+    const asleep = foe("sleep");
+    asleep._resting = true;
+    const onBed = BodyCombat.applyHit(atk, asleep, attack);
+    assert.ok(onBed?.damage > 0);
+    assert.equal(onBed?.dodged, undefined);
+
+    const pain = foe("pain");
+    pain.isIncapacitated = () => true;
+    const shocked = BodyCombat.applyHit(atk, pain, attack);
+    assert.ok(shocked?.damage > 0);
+    assert.equal(shocked?.dodged, undefined);
+});
+
 test("a tough victim takes half the damage that gets past armor", () => {
     function deer(id) {
         const def = DataStore.getMob("deer");

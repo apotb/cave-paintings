@@ -161,6 +161,70 @@ test("a deliberate aim still selects an ally standing inside the safe pocket", (
     assert.equal(Ranged.spareAlly({ x: 0, y: 0, faction: "player" }, ally, 16), true);
 });
 
+test("a body on the ground is an execution up close and half as likely past four tiles", () => {
+    assert.equal(Ranged.postureFactor(3, true), Ranged.EXECUTION_FACTOR);
+    assert.equal(Ranged.postureFactor(3.5, true), 1);
+    assert.equal(Ranged.postureFactor(4, true), 1);
+    assert.equal(Ranged.postureFactor(8, true), Ranged.LYING_FACTOR);
+    assert.equal(Ranged.postureFactor(1, false), 1);
+
+    const downed = { id: "foe", x: 32, y: 0, hitboxSize: 8, _prone: true };
+    const close = Ranged.release({
+        from: { x: 0, y: 0 },
+        aimX: 32,
+        aimY: 0,
+        bodies: [downed],
+        tile: 16,
+        rng: () => 0.5,
+        accuracyAt: () => 0.2
+    });
+    assert.equal(close.tiles, 2);
+    assert.equal(close.accuracy, 1);
+    assert.equal(close.hitRoll, true);
+    assert.equal(close.target, downed);
+
+    const sleeper = { id: "sleep", x: 32, y: 0, hitboxSize: 8, _resting: true };
+    const nap = Ranged.release({
+        from: { x: 0, y: 0 },
+        aimX: 32,
+        aimY: 0,
+        bodies: [sleeper],
+        tile: 16,
+        rng: () => 0.9,
+        accuracyAt: () => 0.2
+    });
+    assert.equal(nap.accuracy, 1);
+    assert.equal(nap.hitRoll, true);
+
+    const farBody = { id: "far", x: 80, y: 0, hitboxSize: 8, _downed: true };
+    const far = Ranged.release({
+        from: { x: 0, y: 0 },
+        aimX: 80,
+        aimY: 0,
+        bodies: [farBody],
+        tile: 16,
+        rng: () => 0.6,
+        accuracyAt: () => 1
+    });
+    assert.equal(far.tiles, 5);
+    assert.equal(far.accuracy, 0.5);
+    assert.equal(far.hitRoll, false);
+
+    const standing = { id: "up", x: 80, y: 0, hitboxSize: 8 };
+    const up = Ranged.release({
+        from: { x: 0, y: 0 },
+        aimX: 80,
+        aimY: 0,
+        bodies: [standing],
+        tile: 16,
+        rng: () => 0.6,
+        accuracyAt: () => 1
+    });
+    assert.equal(up.accuracy, 1);
+    assert.equal(up.hitRoll, true);
+    assert.equal(up.target, standing);
+});
+
 test("pitch black keeps a fifth of the hit chance and daylight keeps all of it", () => {
     const shot = (brightness, roll) => Ranged.release({
         from: { x: 0, y: 0 },

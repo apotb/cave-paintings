@@ -481,6 +481,13 @@ test("settlers and party members spare downed foes", () => {
     assert.equal(Party.isDowned(boar), true);
     assert.equal(Party.isDowned(sleeper), false);
     assert.equal(Party.isDowned({ dead: true, _prone: true }), false);
+    assert.equal(Party.isLying(boar), true);
+    assert.equal(Party.isLying(sleeper), true);
+    assert.equal(Party.isLying({ _groundSleep: true }), true);
+    assert.equal(Party.isLying({ isIncapacitated() { return true; } }), true);
+    assert.equal(Party.isLying({ creature: { _prone: true } }), true);
+    assert.equal(Party.isLying({ dead: true, _prone: true }), false);
+    assert.equal(Party.isLying({}), false);
     assert.equal(Party.sparesDowned(settler, boar), true);
     assert.equal(Party.sparesDowned(friend, boar), true);
     assert.equal(Party.sparesDowned(you, boar), false);

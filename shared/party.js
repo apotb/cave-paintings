@@ -1275,13 +1275,38 @@
         return entity.role === "settler" || !!entity.homeSettlementId;
     }
 
+    function isDeadBody(entity) {
+        return !!(entity?.isBodyDead?.() || entity?._bodyDead || entity?._dead || entity?.dead);
+    }
+
+    /** On the ground or in a bed. Not standing, so a shot and a dodge both change. */
+    function lyingPose(entity) {
+        if (!entity) return false;
+        if (entity._resting || entity.resting || entity._groundSleep) return true;
+        if (entity._downed || entity._netProne) return true;
+        if (entity.isIncapacitated?.() || entity.isImmobile?.()) return true;
+        if (entity._prone || entity.prone) return true;
+        return false;
+    }
+
+    /**
+     * Alive and not standing. Downed, pain-shocked, or asleep.
+     * A corpse is not a target.
+     */
+    function isLying(entity) {
+        if (!entity || isDeadBody(entity)) return false;
+        if (lyingPose(entity)) return true;
+        const c = entity.creature;
+        if (!c || c === entity || isDeadBody(c)) return false;
+        return lyingPose(c);
+    }
+
     /**
      * Incapacitated but alive. Sleeping is not downed: they chose the bed.
      * Pain shock, unconsciousness, and a broken ability to move all count.
      */
     function isDowned(entity) {
-        if (!entity) return false;
-        if (entity.isBodyDead?.() || entity._bodyDead || entity._dead || entity.dead) return false;
+        if (!entity || isDeadBody(entity)) return false;
         if (entity._resting || entity.resting) return false;
         if (entity._downed || entity._netProne) return true;
         if (entity.isIncapacitated?.() || entity.isImmobile?.()) return true;
@@ -1435,6 +1460,7 @@
         publicPawn,
         traversesWater,
         walkThrough,
+        isLying,
         isDowned,
         sparesDowned,
         carriedLootSources,
