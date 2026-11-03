@@ -298,14 +298,21 @@ test("a pebble pile can sit on the tile next to a rock and share its stone", () 
 
 test("any item with quality gets a grade from /give", () => {
     const sling = { id: "sling", name: "Sling", quality: true };
-    assert.deepEqual(Stone.giveExtras(sling, ""), { extras: { knapQuality: "rough" } });
-    assert.deepEqual(Stone.giveExtras(sling, "fine"), { extras: { knapQuality: "fine" } });
-    assert.equal(Stone.giveExtras(sling, "granite").error, 'Unknown quality "granite".');
+    assert.deepEqual(Stone.parseGive(sling, []), { qty: 1, stuff: "", quality: "", extras: { knapQuality: "rough" } });
+    assert.deepEqual(Stone.parseGive(sling, ["fine"]), {
+        qty: 1, stuff: "", quality: "fine", extras: { knapQuality: "fine" }
+    });
+    assert.deepEqual(Stone.parseGive(sling, ["2", "crude"]), {
+        qty: 2, stuff: "", quality: "crude", extras: { knapQuality: "crude" }
+    });
+    assert.equal(Stone.parseGive(sling, ["granite"]).error, "Sling takes no stone.");
     assert.equal(
         Stone.displayName({ id: "sling", knapQuality: "fine" }, () => sling),
         "Sling (fine)"
     );
-    assert.equal(Stone.giveExtras({ id: "stick", name: "Stick" }, "fine").error, "Stick takes no extra.");
+    assert.equal(Stone.parseGive({ id: "stick", name: "Stick" }, ["fine"]).error, "Stick takes no quality.");
+    assert.equal(Stone.parseGive({ id: "stick", name: "Stick" }, ["granite"]).error, "Stick takes no extra.");
+    assert.ok(Stone.GIVE_SYNTAX.includes("[quality]"));
 });
 
 test("queueTextures does not request the old pebble item icon", () => {

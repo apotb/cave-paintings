@@ -1345,10 +1345,26 @@ test("/give shortbow and longbow default to rough, and a grade overrides it", ()
     assert.equal(long.knapQuality, "fine");
     const fineChats = world.drainEvents().filter((e) => e.kind === "chat");
     assert.ok(fineChats.some((e) => e.text === "Gave 1× Longbow (fine)"));
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give shortbow fine" });
+    const again = pawn.inventory.filter((s) => s && s.id === "shortbow");
+    assert.equal(again.length, 2);
+    assert.ok(again.some((s) => s.knapQuality === "fine"));
     world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give shortbow 1 granite" });
     const bad = world.drainEvents().filter((e) => e.kind === "chat");
-    assert.ok(bad.some((e) => e.text === 'Unknown quality "granite".'));
-    assert.equal(pawn.inventory.filter((s) => s && s.id === "shortbow").length, 1);
+    assert.ok(bad.some((e) => e.text === "Shortbow takes no stone."));
+    assert.equal(pawn.inventory.filter((s) => s && s.id === "shortbow").length, 2);
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give" });
+    const usage = world.drainEvents().filter((e) => e.kind === "chat");
+    assert.ok(usage.some((e) => e.text.includes("[quality]")));
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give stone_spear 1 granite fine" });
+    const spear = pawn.inventory.find((s) => s && s.id === "stone_spear" && s.stone === "granite");
+    assert.ok(spear);
+    assert.equal(spear.knapQuality, "fine");
+    assert.equal(spear.knapMaterial, "pebble");
+    world.handleAction(pawn.id, { type: Protocol.Actions.CHAT, text: "/give stone_spear 1 crude diorite" });
+    const other = pawn.inventory.find((s) => s && s.id === "stone_spear" && s.stone === "diorite");
+    assert.ok(other);
+    assert.equal(other.knapQuality, "crude");
 });
 
 test("/give arrow defaults to a rough diorite point", () => {

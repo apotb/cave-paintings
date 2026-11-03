@@ -179,13 +179,9 @@ class CombatLog {
         this._layoutDirty = false;
     }
 
-    /**
-     * Optional tail of /give <item> [qty] [stuff]. Stuff depends on the item.
-     * @returns {{ extras?: object, error?: string }}
-     */
-    _giveStuff(meta, stuff) {
-        if (typeof Stone !== "undefined" && Stone.giveExtras) return Stone.giveExtras(meta, stuff);
-        return { extras: {} };
+    _parseGive(meta, tokens) {
+        if (typeof Stone !== "undefined" && Stone.parseGive) return Stone.parseGive(meta, tokens);
+        return { qty: 1, extras: {} };
     }
 
     /**
@@ -219,7 +215,8 @@ class CombatLog {
         const cmd = (parts[0] || "").toLowerCase();
         const helpSyntax = {
             debug: "/debug blood/chunks/combat_log/complaint_score/fps/location [show/hide]",
-            give: "/give <item> [qty] [stuff]",
+            give: (typeof Stone !== "undefined" && Stone.GIVE_SYNTAX)
+                || "/give <item> [qty] [stuff] [quality]",
             heal: "/heal",
             help: "/help [command]",
             kms: "/kms",
@@ -475,7 +472,8 @@ class CombatLog {
             return;
         }
         if (cmd === "/give") {
-            const usage = "Usage: /give <item> [qty] [stuff]";
+            const usage = (typeof Stone !== "undefined" && Stone.GIVE_USAGE)
+                || "Usage: /give <item> [qty] [stuff] [quality]";
             const idArg = (parts[1] || "").toLowerCase();
             if (!idArg) {
                 this.pushError(usage);
@@ -491,22 +489,13 @@ class CombatLog {
                 this.pushError(`Unknown item "${parts[1]}".`);
                 return;
             }
-            let qty = 1;
-            if (parts[2] != null && parts[2] !== "") {
-                qty = Number(parts[2]);
-                if (!Number.isFinite(qty) || qty < 1 || !Number.isInteger(qty)) {
-                    this.pushError(usage);
-                    return;
-                }
-                qty = Math.min(9999, qty);
-            }
-            const stuff = parts.slice(3).join(" ");
-            const applied = this._giveStuff(meta, stuff);
-            if (applied.error) {
-                this.pushError(applied.error);
+            const parsed = this._parseGive(meta, parts.slice(2));
+            if (parsed.error) {
+                this.pushError(parsed.error);
                 return;
             }
-            const stone = applied.extras?.stone || null;
+            const qty = parsed.qty;
+            const applied = { extras: parsed.extras };
             const player = this.scene.player;
             if (!player) {
                 this.push("No player to give to.");
@@ -515,10 +504,10 @@ class CombatLog {
             // Dedicated MP: server owns inventory (YOU). Local give alone is stomped.
             if (this.scene.simAuth()) {
                 this.scene._netSendMove?.(true);
-                const tail = stuff ? ` ${stone || stuff}` : "";
+                const tail = [parsed.stuff, parsed.quality].filter(Boolean).join(" ");
                 this.scene.net.sendAction({
                     type: NetProtocol.Actions.CHAT,
-                    text: `/give ${meta.id} ${qty}${tail}`
+                    text: tail ? `/give ${meta.id} ${qty} ${tail}` : `/give ${meta.id} ${qty}`
                 });
                 return;
             }

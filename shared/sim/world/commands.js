@@ -39,14 +39,8 @@
         return null;
     }
 
-    /**
-     * Optional tail of /give <item> [qty] [stuff]. Stuff depends on the item.
-     * @returns {{ extras?: object, error?: string }}
-     */
-    function giveStuff(meta, stuff) {
-        const api = stoneApi();
-        if (typeof api?.giveExtras === "function") return api.giveExtras(meta, stuff);
-        return { extras: {} };
+    function giveUsage() {
+        return stoneApi()?.GIVE_USAGE || "Usage: /give <item> [qty] [stuff] [quality]";
     }
 
     /**
@@ -496,7 +490,7 @@
             return;
         }
         if (cmd === "/give") {
-            const usage = "Usage: /give <item> [qty] [stuff]";
+            const usage = giveUsage();
             const rawId = String(parts[1] || "").toLowerCase().replace(/-/g, "_");
             if (!rawId) {
                 this.announceCmd(usage, { to: p.id });
@@ -511,20 +505,13 @@
                 this.announceCmd(`Unknown item "${parts[1]}".`, { to: p.id });
                 return;
             }
-            let qty = 1;
-            if (parts[2] != null && parts[2] !== "") {
-                qty = Number(parts[2]);
-                if (!Number.isFinite(qty) || qty < 1 || !Number.isInteger(qty)) {
-                    this.announceCmd(usage, { to: p.id });
-                    return;
-                }
-                qty = Math.min(9999, Math.floor(qty));
-            }
-            const applied = giveStuff(meta, parts.slice(3).join(" "));
-            if (applied.error) {
-                this.announceCmd(applied.error, { to: p.id });
+            const parsed = stoneApi()?.parseGive?.(meta, parts.slice(2));
+            if (!parsed || parsed.error) {
+                this.announceCmd(parsed?.error || usage, { to: p.id });
                 return;
             }
+            const qty = parsed.qty;
+            const applied = { extras: parsed.extras };
             const spoilLeft = Spoil.defaultSpoilLeft(meta);
             const extras = { ...(applied.extras || {}) };
             if (spoilLeft != null) extras.spoilLeft = spoilLeft;

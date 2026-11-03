@@ -544,45 +544,95 @@
         return extras;
     }
 
+    const GIVE_SYNTAX = "/give <item> [qty] [stuff] [quality]";
+    const GIVE_USAGE = `Usage: ${GIVE_SYNTAX}`;
+
+    function takesGiveQuality(meta) {
+        if (meta?.quality) return true;
+        const id = meta?.id;
+        return id === "stone_spear" || id === "flint_spear" || id === "arrow";
+    }
+
     /**
-     * Optional tail of /give <item> [qty] [stuff].
-     * An item with quality takes a grade. A blank tail is rough.
-     * A stuffable item takes a stone.
+     * Stone and grade are separate /give arguments. Either may be omitted.
+     * A blank grade on an item that has one is rough.
      * @returns {{ extras?: object, error?: string }}
      */
-    function giveExtras(meta, stuff) {
-        const raw = String(stuff || "").trim();
+    function giveExtras(meta, stuff, quality) {
+        const rawStuff = String(stuff || "").trim();
+        const rawQuality = String(quality || "").trim();
         const id = meta?.id;
+        const name = meta?.name || id || "Item";
         const own = !!meta?.quality;
         const stuffable = isStuffableItem(id);
-        if (!raw) {
-            if (!stuffable && !own) return { extras: {} };
-            const extras = {};
+        const takesQuality = takesGiveQuality(meta);
+        let grade = null;
+        if (rawQuality) {
+            grade = qualityGrade(rawQuality);
+            if (!grade) return { error: `Unknown quality "${quality}".` };
+            if (!takesQuality) return { error: `${name} takes no quality.` };
+        }
+        if (rawStuff && !stuffable) {
+            return { error: takesQuality ? `${name} takes no stone.` : `${name} takes no extra.` };
+        }
+        if (!rawStuff && !grade && !stuffable && !own) return { extras: {} };
+
+        const extras = {};
+        if (!rawStuff) {
             if (stuffable) {
                 extras.stone = giveStoneDefault(id);
                 withTipGrade(id, extras);
             }
-            if (own && !extras.knapQuality) extras.knapQuality = "rough";
-            return { extras };
+        } else {
+            const picked = stuffId(id, rawStuff);
+            if (!picked) return { error: `Unknown stone "${rawStuff}".` };
+            if (picked === "flint") {
+                extras.knapMaterial = "flint";
+                extras.knapQuality = "rough";
+            } else {
+                extras.stone = picked;
+                withTipGrade(id, extras);
+            }
         }
-        const grade = qualityGrade(raw);
-        if (own && grade && !stuffable) return { extras: { knapQuality: grade } };
-        if (!stuffable) {
-            return {
-                error: own
-                    ? `Unknown quality "${stuff}".`
-                    : `${meta?.name || id || "Item"} takes no extra.`
-            };
-        }
-        const picked = stuffId(id, raw);
-        if (!picked) return { error: `Unknown stone "${stuff}".` };
-        if (picked === "flint") {
-            return { extras: { knapMaterial: "flint", knapQuality: "rough" } };
-        }
-        const extras = { stone: picked };
-        withTipGrade(id, extras);
-        if (own && !extras.knapQuality) extras.knapQuality = "rough";
+        if (grade) extras.knapQuality = grade;
+        else if (own && !extras.knapQuality) extras.knapQuality = "rough";
         return { extras };
+    }
+
+    /**
+     * Tokens after the item id. A leading integer is the quantity.
+     * A grade word is quality. Any other word is stuff. Either order works.
+     * @returns {{ qty?: number, stuff?: string, quality?: string, extras?: object, error?: string }}
+     */
+    function parseGive(meta, tokens) {
+        const list = [];
+        for (const token of tokens || []) {
+            const text = String(token || "").trim();
+            if (text) list.push(text);
+        }
+        let qty = 1;
+        let index = 0;
+        if (list.length && /^\d/.test(list[0])) {
+            const n = Number(list[0]);
+            if (!Number.isFinite(n) || n < 1 || !Number.isInteger(n)) return { error: GIVE_USAGE };
+            qty = Math.min(9999, Math.floor(n));
+            index = 1;
+        }
+        let stuff = "";
+        let quality = "";
+        for (; index < list.length; index++) {
+            const token = list[index];
+            if (qualityGrade(token)) {
+                if (quality) return { error: GIVE_USAGE };
+                quality = qualityGrade(token);
+                continue;
+            }
+            if (stuff) return { error: GIVE_USAGE };
+            stuff = token;
+        }
+        const applied = giveExtras(meta, stuff, quality);
+        if (applied.error) return { error: applied.error };
+        return { qty, stuff, quality, extras: applied.extras || {} };
     }
 
     /** Raw knapping stones only. Finished tools and grindstones keep stone stats out of the tooltip. */
@@ -701,7 +751,10 @@
         normalizeStone,
         fromToken,
         stuffId,
+        GIVE_SYNTAX,
+        GIVE_USAGE,
         giveExtras,
+        parseGive,
         isStuffableItem,
         splitsByStone,
         craftTakesStuff,
