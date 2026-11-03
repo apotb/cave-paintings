@@ -968,6 +968,7 @@
             if (itemId === "pebble" || itemId === "grindstone" || itemId === "painting_circle") {
                 if (!this._samePebbleStone(s, extraFields)) continue;
             }
+            if (!Place.basketDyesMatch({ id: itemId, dye: s.dye }, { id: itemId, dye: extraFields?.dye })) continue;
             const space = Math.max(0, maxStack - (s.quantity || 1));
             if (space <= 0) continue;
             const add = Math.min(space, remaining, fitNow());
@@ -1003,6 +1004,7 @@
             if (itemId === "pebble" || itemId === "grindstone" || itemId === "painting_circle") {
                 if (!this._samePebbleStone(s, extraFields)) continue;
             }
+            if (!Place.basketDyesMatch({ id: itemId, dye: s.dye }, { id: itemId, dye: extraFields?.dye })) continue;
             const space = Math.max(0, maxStack - (s.quantity || 1));
             if (space <= 0) continue;
             const add = Math.min(space, remaining, fitNow());
@@ -2004,6 +2006,7 @@
             return !!(R && R.sameArrow(a, b));
         }
         if (this._stackIsSpecial(a) || this._stackIsSpecial(b)) return false;
+        if (!Place.basketDyesMatch(a, b)) return false;
         return this._canMergeStone(a, b);
     },
 
@@ -2084,6 +2087,8 @@
         if (src.temp != null && Number(src.temp) > Fire.AMBIENT_TEMP) {
             out.temp = Number(src.temp);
         }
+        const dye = Place.normalizeBasketDye(src.dye);
+        if (dye) out.dye = dye;
         return Object.keys(out).length ? out : null;
     },
 
@@ -2125,6 +2130,8 @@
         if (extras.soakProgress != null) slot.soakProgress = extras.soakProgress;
         if (extras.soakDoneAt != null) slot.soakDoneAt = extras.soakDoneAt;
         if (extras.temp != null) Fire.applyStackTemp(slot, extras.temp);
+        const dye = Place.normalizeBasketDye(extras.dye);
+        if (dye) slot.dye = dye;
         return slot;
     },
 

@@ -792,6 +792,7 @@ function bagHasRoom(slots, stack) {
         if ((stack.id === "pebble" || stack.id === "grindstone" || stack.id === "painting_circle") && typeof Stone !== "undefined" && Stone.stoneKey) {
             return Stone.stoneKey(s) === Stone.stoneKey(stack);
         }
+        if (typeof Place !== "undefined" && Place.basketDyesMatch && !Place.basketDyesMatch(s, stack)) return false;
         return true;
     });
 }

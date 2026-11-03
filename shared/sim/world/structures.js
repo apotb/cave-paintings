@@ -181,6 +181,9 @@
             fillId: entry.fillId || null
         };
         if (entry.id === "fishing_net") pub.netReadyAt = entry.netReadyAt != null ? entry.netReadyAt : null;
+        if (entry.id === "wicker_basket" || entry.id === "storage_pit") {
+            pub.dye = Place.normalizeBasketDye(entry.dye);
+        }
         return pub;
     },
 
@@ -478,6 +481,10 @@
             slots: Place.emptySlots(thingDef.storage?.slots || 1)
         };
         Place.ensureStorageEntry(entry, thingDef);
+        if (thingId === "wicker_basket" || thingId === "storage_pit") {
+            const dye = Place.normalizeBasketDye(held?.dye);
+            if (dye) entry.dye = dye;
+        }
         if (Place.isStoragePit(thingDef, entry)) {
             entry.digProgress = 0;
             entry.fillId = Place.pitFillForTile(this._tileKeyAt(tx, ty)) || "dirt";
@@ -1674,6 +1681,14 @@
         const def = thingDefs().get(entry.id);
         const op = String(action.op || "");
         if (op === "attend" || op === "leave") return;
+        if (op === "dye") {
+            if (entry.id !== "wicker_basket" && entry.id !== "storage_pit") return;
+            const dye = Place.normalizeBasketDye(action.dye);
+            if (dye) entry.dye = dye;
+            else delete entry.dye;
+            this._emitStorage(chunk, entry);
+            return;
+        }
         if (op === "rotate") {
             this._rotateInteractSpot(chunk, entry, action);
             return;
@@ -1737,9 +1752,14 @@
             }
             if (!Place.isStorageEmpty(entry)) return;
             const itemId = Place.itemIdForThing(entry.id, itemDefs());
-            const leftover = this._give(p, itemId, 1);
+            const dye = Place.normalizeBasketDye(entry.dye);
+            const leftover = this._give(p, itemId, 1, dye ? { dye } : null);
             if (leftover > 0) {
-                this._pushDrop(p.x, p.y, { id: itemId, quantity: leftover });
+                this._pushDrop(p.x, p.y, {
+                    id: itemId,
+                    quantity: leftover,
+                    ...(dye ? { dye } : {})
+                });
             }
             this._unlinkStationUid(entry.uid);
             const i = chunk.things.indexOf(entry);
@@ -1823,9 +1843,11 @@
             }
         }
         const itemId = Place.itemIdForThing(entry.id, itemDefs()) || "storage_pit";
-        const leftover = this._give(p, itemId, 1);
+        const dye = Place.normalizeBasketDye(entry.dye);
+        const extras = dye ? { dye } : null;
+        const leftover = this._give(p, itemId, 1, extras);
         if (leftover > 0) {
-            this._pushDrop(p.x, p.y, { id: itemId, quantity: leftover });
+            this._pushDrop(p.x, p.y, { id: itemId, quantity: leftover, ...(extras || {}) });
         }
         this._unlinkStationUid(entry.uid);
         const i = chunk.things.indexOf(entry);

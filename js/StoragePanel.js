@@ -17,6 +17,7 @@ class StoragePanel {
         this._buildSlots();
         this._buildTake();
         this._buildSettle();
+        this._buildDye();
 
         this.dryBarBg = scene.add.graphics();
         this.dryBarFill = scene.add.graphics();
@@ -357,6 +358,321 @@ class StoragePanel {
         this._rotateUi.btn.setVisible(false);
     }
 
+    _canColor() {
+        const id = this.storage?.entry?.id || this.storage?.meta?.id;
+        return id === "wicker_basket" || id === "storage_pit";
+    }
+
+    _buildDye() {
+        const scene = this.scene;
+        const BG_STROKE = 0x2a2218;
+        const OUTLINE_HOVER = 0xffffff;
+        const OUTLINE_PRESS = 0xd4a84b;
+        const size = 28;
+        const rect = scene.add.rectangle(0, 0, size, size, 0x6c552e, 1)
+            .setStrokeStyle(2, BG_STROKE)
+            .setInteractive({ useHandCursor: true });
+        const btn = scene.add.container(0, 0, [rect]);
+        const ui = {
+            btn,
+            rect,
+            _hovering: false,
+            _pressing: false,
+            _side: size
+        };
+        const strokeW = () => (typeof pixelUiWorldStroke === "function"
+            ? pixelUiWorldStroke(scene)
+            : 2 / (scene.worldZoom || 1));
+        const currentHex = () => {
+            if (typeof Place !== "undefined" && Place.basketDyeColor) {
+                return Place.basketDyeColor(this.storage?.entry?.dye);
+            }
+            return "6c552e";
+        };
+        const paint = () => {
+            if (!rect?.active || !rect.geom) return;
+            const sw = strokeW();
+            rect.setFillStyle(parseInt(currentHex(), 16), 1);
+            if (ui._pressing || this._dyeOpen) rect.setStrokeStyle(sw, OUTLINE_PRESS);
+            else if (ui._hovering) rect.setStrokeStyle(sw, OUTLINE_HOVER);
+            else rect.setStrokeStyle(sw, BG_STROKE);
+        };
+        ui.paint = paint;
+        ui.setSize = (side) => {
+            if (!rect?.active || !rect.geom) return;
+            const n = Math.max(8, Number(side) || size);
+            ui._side = n;
+            rect.setSize(n, n);
+            if (rect.input) {
+                if (rect.input.hitArea?.setTo) rect.input.hitArea.setTo(0, 0, n, n);
+                else if (rect.input.hitArea?.setSize) rect.input.hitArea.setSize(n, n);
+            } else {
+                rect.setInteractive({ useHandCursor: true });
+            }
+            paint();
+        };
+        rect.on("pointerover", (pointer) => {
+            ui._hovering = true;
+            paint();
+            scene.showTooltip?.(() => "Color", pointer.x, pointer.y, rect);
+        });
+        rect.on("pointerout", (pointer) => {
+            if (pointer) {
+                const cam = scene.cameras?.main;
+                const pt = cam ? cam.getWorldPoint(pointer.x, pointer.y) : { x: pointer.x, y: pointer.y };
+                const b = rect.getBounds?.();
+                if (b && Phaser.Geom.Rectangle.Contains(b, pt.x, pt.y)) return;
+            }
+            ui._hovering = false;
+            ui._pressing = false;
+            paint();
+            if (scene._tooltipTarget === rect) scene.hideTooltip?.();
+        });
+        rect.on("pointerdown", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            if (pointer.rightButtonDown()) return;
+            ui._pressing = true;
+            paint();
+        });
+        rect.on("pointerup", (pointer, _lx, _ly, event) => {
+            event?.stopPropagation?.();
+            const was = ui._pressing && ui._hovering;
+            ui._pressing = false;
+            paint();
+            if (was) this._setDyeOpen(!this._dyeOpen);
+        });
+        this._dyeUi = ui;
+        this.container.add(btn);
+        btn.setVisible(false);
+        paint();
+
+        const menu = scene.add.container(0, 0).setVisible(false);
+        const bg = scene.add.rectangle(0, 0, size, size, 0x120e0a, 1)
+            .setStrokeStyle(2, BG_STROKE);
+        menu.add(bg);
+        const dyes = (typeof Place !== "undefined" && Place.BASKET_DYES) || [];
+        const swatches = [];
+        for (let i = 0; i < dyes.length; i++) {
+            const dye = dyes[i];
+            const sw = scene.add.rectangle(0, 0, size, size, 0x241910, 1)
+                .setStrokeStyle(2, BG_STROKE)
+                .setInteractive({ useHandCursor: true });
+            const icon = scene.add.image(0, 0, "slot")
+                .setOrigin(0.5, 0.5)
+                .setVisible(false);
+            const row = { dye, rect: sw, icon, _hovering: false, _pressing: false };
+            sw.on("pointerover", (pointer) => {
+                row._hovering = true;
+                this._paintDyeSwatches();
+                scene.showTooltip?.(() => dye.name, pointer.x, pointer.y, sw);
+            });
+            sw.on("pointerout", (pointer) => {
+                if (pointer) {
+                    const cam = scene.cameras?.main;
+                    const pt = cam ? cam.getWorldPoint(pointer.x, pointer.y) : { x: pointer.x, y: pointer.y };
+                    const b = sw.getBounds?.();
+                    if (b && Phaser.Geom.Rectangle.Contains(b, pt.x, pt.y)) return;
+                }
+                row._hovering = false;
+                row._pressing = false;
+                this._paintDyeSwatches();
+                if (scene._tooltipTarget === sw) scene.hideTooltip?.();
+            });
+            sw.on("pointerdown", (pointer, _lx, _ly, event) => {
+                event?.stopPropagation?.();
+                if (pointer.rightButtonDown()) return;
+                row._pressing = true;
+                this._paintDyeSwatches();
+            });
+            sw.on("pointerup", (pointer, _lx, _ly, event) => {
+                event?.stopPropagation?.();
+                const was = row._pressing && row._hovering;
+                row._pressing = false;
+                this._paintDyeSwatches();
+                if (was) this._chooseDye(dye.color);
+            });
+            menu.add(sw);
+            menu.add(icon);
+            swatches.push(row);
+        }
+        this._dyeMenu = menu;
+        this._dyeMenuBg = bg;
+        this._dyeSwatches = swatches;
+        this._dyeOpen = false;
+        this.container.add(menu);
+        for (const row of swatches) row.rect.disableInteractive();
+    }
+
+    _setDyeOpen(on) {
+        const open = !!on && this._canColor() && !!this.visible;
+        this._dyeOpen = open;
+        this._dyeMenu?.setVisible(open);
+        for (const row of this._dyeSwatches || []) {
+            if (open) {
+                if (typeof ensurePointerInteractive === "function") ensurePointerInteractive(row.rect);
+                else row.rect?.setInteractive?.({ useHandCursor: true });
+            } else {
+                row.rect?.disableInteractive?.();
+                row._hovering = false;
+                row._pressing = false;
+                if (this.scene._tooltipTarget === row.rect) this.scene.hideTooltip?.();
+            }
+        }
+        if (open) this.container.bringToTop(this._dyeMenu);
+        this._paintDyeSwatches();
+        this._dyeUi?.paint?.();
+    }
+
+    _chooseDye(color) {
+        const entry = this.storage?.entry;
+        if (!entry || !this._canColor()) return;
+        const dye = (typeof Place !== "undefined" && Place.normalizeBasketDye)
+            ? Place.normalizeBasketDye(color)
+            : null;
+        if (dye) entry.dye = dye;
+        else delete entry.dye;
+        this.storage.applyVisual?.();
+        this._syncDyeButton();
+        this._notifyStorage("dye", { dye: dye || null });
+        if (this.scene.hotbar) this.scene.hotbar.dirty = true;
+    }
+
+    _syncDyeButton() {
+        const show = this._canColor() && !!this.visible;
+        this._dyeUi?.btn?.setVisible(show);
+        if (!show) {
+            this._dyeUi?.rect?.disableInteractive?.();
+            if (this._dyeOpen) this._setDyeOpen(false);
+            return;
+        }
+        if (typeof ensurePointerInteractive === "function") ensurePointerInteractive(this._dyeUi.rect);
+        else this._dyeUi?.rect?.setInteractive?.({ useHandCursor: true });
+        this._dyeUi?.paint?.();
+        this._paintDyeSwatches();
+    }
+
+    _paintDyeSwatches() {
+        const scene = this.scene;
+        const sw = typeof pixelUiWorldStroke === "function"
+            ? pixelUiWorldStroke(scene)
+            : 2 / (scene.worldZoom || 1);
+        const current = (typeof Place !== "undefined" && Place.normalizeBasketDye)
+            ? Place.normalizeBasketDye(this.storage?.entry?.dye)
+            : null;
+        if (this._dyeMenuBg?.active) {
+            this._dyeMenuBg.setStrokeStyle(sw, 0x2a2218);
+        }
+        for (const row of this._dyeSwatches || []) {
+            const rect = row.rect;
+            if (!rect?.active) continue;
+            const picked = (typeof Place !== "undefined" && Place.normalizeBasketDye)
+                ? Place.normalizeBasketDye(row.dye.color) === current
+                : false;
+            const key = this._dyePreviewKey(row.dye.color);
+            const icon = row.icon;
+            if (icon?.active && key && scene.textures?.exists?.(key)) {
+                if (icon.texture?.key !== key) icon.setTexture(key);
+                this._fitDyeIcon(row);
+                icon.setVisible(true);
+                rect.setFillStyle(0x241910, 1);
+            } else {
+                icon?.setVisible(false);
+                rect.setFillStyle(parseInt(row.dye.color, 16), 1);
+            }
+            if (row._pressing || picked) rect.setStrokeStyle(sw, 0xd4a84b);
+            else if (row._hovering) rect.setStrokeStyle(sw, 0xffffff);
+            else rect.setStrokeStyle(sw, 0xc4b49a);
+        }
+    }
+
+    _dyePreviewKey(color) {
+        const scene = this.scene;
+        const id = this.storage?.entry?.id || this.storage?.meta?.id;
+        if (!scene?.textures || !id) return null;
+        if (id === "storage_pit" && typeof ensureStoragePitTexture === "function") {
+            return ensureStoragePitTexture(scene, color);
+        }
+        if (id === "wicker_basket" && typeof ensureBasketDyeTexture === "function") {
+            const meta = this.storage.meta;
+            let base = (typeof Place !== "undefined" && Place.facingTextureKey)
+                ? Place.facingTextureKey(meta, this.storage.entry?.rot)
+                : (meta?.key || "wicker_basket");
+            if (!scene.textures.exists(base)) {
+                const plain = meta?.key || "wicker_basket";
+                if (scene.textures.exists(plain)) base = plain;
+            }
+            return ensureBasketDyeTexture(scene, base, color);
+        }
+        return null;
+    }
+
+    _fitDyeIcon(row) {
+        const icon = row?.icon;
+        if (!icon?.active) return;
+        const n = row._side || row.rect?.width || 28;
+        const stroke = (typeof pixelUiWorldStroke === "function")
+            ? pixelUiWorldStroke(this.scene)
+            : 1;
+        const inset = Math.max(stroke, n * 0.08);
+        const box = Math.max(4, n - inset * 2);
+        icon.setDisplaySize(box, box);
+    }
+
+    _layoutDyeMenu(side) {
+        const swatches = this._dyeSwatches || [];
+        if (!this._dyeMenu || !swatches.length) return;
+        const n = Math.max(8, Number(side) || 28);
+        const cols = 3;
+        const rows = Math.ceil(swatches.length / cols);
+        const gap = Math.max(2, n * 0.22);
+        const pad = Math.max(3, n * 0.2);
+        const menuW = pad * 2 + cols * n + (cols - 1) * gap;
+        const menuH = pad * 2 + rows * n + (rows - 1) * gap;
+        this._dyeMenuBg?.setSize(menuW, menuH);
+        for (let i = 0; i < swatches.length; i++) {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            const x = -menuW / 2 + pad + n / 2 + col * (n + gap);
+            const y = -menuH / 2 + pad + n / 2 + row * (n + gap);
+            const rect = swatches[i].rect;
+            swatches[i]._side = n;
+            rect.setSize(n, n).setPosition(x, y);
+            swatches[i].icon?.setPosition(x, y);
+            this._fitDyeIcon(swatches[i]);
+            if (rect.input?.hitArea?.setTo) rect.input.hitArea.setTo(0, 0, n, n);
+            else if (rect.input?.hitArea?.setSize) rect.input.hitArea.setSize(n, n);
+        }
+        this._dyeMenuSize = { w: menuW, h: menuH };
+        this._paintDyeSwatches();
+    }
+
+    _placeDyeMenu() {
+        const dye = this._dyeUi?.btn;
+        const size = this._dyeMenuSize;
+        if (!dye || !size || !this._dyeMenu) return;
+        const gap = this._actionRow?.gap || 8;
+        const side = this._dyeUi?._side || 28;
+        // Hang the menu down from the dye button so it stays clear of Take.
+        this._dyeMenu.setPosition(
+            dye.x - side / 2 - gap - size.w / 2,
+            dye.y + (size.h - side) / 2
+        );
+    }
+
+    _pointerOnDye(pointer) {
+        if (!this.visible || !pointer) return false;
+        const pt = this.scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
+        const hit = (rect, vis) => !!(vis && rect?.getBounds
+            && Phaser.Geom.Rectangle.Contains(rect.getBounds(), pt.x, pt.y));
+        if (hit(this._dyeUi?.rect, this._dyeUi?.btn?.visible)) return true;
+        if (!this._dyeMenu?.visible) return false;
+        if (hit(this._dyeMenuBg, true)) return true;
+        for (const row of this._dyeSwatches || []) {
+            if (hit(row.rect, true)) return true;
+        }
+        return false;
+    }
+
     _syncSettle() {
         this.scene.settlementSys?.syncStationButton(this._settleUi, this.storage);
         const added = this.scene.settlementSys?.isAdded(this.storage);
@@ -433,6 +749,7 @@ class StoragePanel {
         if (storage?.entry && typeof Place !== "undefined") {
             Place.ensureStorageEntry(storage.entry, storage.meta);
         }
+        this._setDyeOpen(false);
         this.visible = true;
         this.container.setVisible(true);
         this.container.setPosition(storage.x, storage.y);
@@ -449,6 +766,7 @@ class StoragePanel {
 
     close() {
         const prev = this.storage;
+        this._setDyeOpen(false);
         this._notifyStorage("leave");
         this.visible = false;
         this.storage = null;
@@ -509,6 +827,7 @@ class StoragePanel {
         }
 
         this._syncTakeButton();
+        this._syncDyeButton();
         this.refreshDryBar();
     }
 
@@ -621,6 +940,8 @@ class StoragePanel {
         const gap = 8 * ws;
         this._actionRow = { y: actionY, bw, bh, gap };
         this._settleUi?.setSize(bh);
+        this._dyeUi?.setSize(bh);
+        this._layoutDyeMenu(bh);
         this._syncSettle();
         if (this._billUi) {
             this._billUi.rect.setSize(bw, bh);
@@ -647,9 +968,22 @@ class StoragePanel {
             addOn, actionOn, visible: this.visible && this._isDryingRack(),
             addBtn: this._settleUi?.btn, actionBtn: this.takeBtn
         });
-        if (this._billUi) {
+        const colorable = this._canColor();
+        const billOn = !!this._billUi?.btn?.visible;
+        const dyeOn = colorable && !!this.visible;
+        this.scene.settlementSys?.placeAddActionRow(this._dyeUi, this._billUi?.btn, {
+            y: row.y + row.bh + row.gap,
+            gap: row.gap,
+            addW: row.bh,
+            actionW: row.bw,
+            addOn: dyeOn,
+            actionOn: billOn
+        });
+        if (!colorable && this._billUi?.btn) {
             this._billUi.btn.setPosition(0, row.y + row.bh + row.gap);
         }
+        this._syncDyeButton();
+        this._placeDyeMenu();
     }
 
     _syncTakeHitArea(enable) {
@@ -711,6 +1045,7 @@ class StoragePanel {
         if (hit(this._settleUi?.rect, this._settleUi?.btn?.visible)) return true;
         if (hit(this._billUi?.rect, this._billUi?.btn?.visible)) return true;
         if (hit(this._rotateUi?.rect, this._rotateUi?.btn?.visible)) return true;
+        if (this._pointerOnDye(pointer)) return true;
         return false;
     }
 
@@ -804,7 +1139,8 @@ class StoragePanel {
         const extras = {
             dryProgress: stack?.dryProgress,
             soakProgress: stack?.soakProgress,
-            stone: stack?.stone
+            stone: stack?.stone,
+            dye: stack?.dye
         };
         if (stack?.durability != null) extras.durability = stack.durability;
         const knap = typeof knapStackExtras === "function" ? knapStackExtras(stack) : null;
@@ -860,7 +1196,8 @@ class StoragePanel {
             && (stack.id === "arrow"
                 ? (typeof Ranged !== "undefined" && Ranged.sameArrow(dest, stack))
                 : (!special && !(typeof isSpecialStack === "function" && isSpecialStack(dest))))
-            && (typeof stackStonesMatch !== "function" || stackStonesMatch(dest, stack))) {
+            && (typeof stackStonesMatch !== "function" || stackStonesMatch(dest, stack))
+            && (typeof stackDyesMatch !== "function" || stackDyesMatch(dest, stack))) {
             const maxStack = Math.max(1, meta?.maxStack || 1);
             let space = Math.max(0, maxStack - dest.quantity);
             if (slotMax > 0) space = Math.min(space, Math.max(0, slotMax - dest.quantity));
@@ -1012,7 +1349,8 @@ class StoragePanel {
             && (stack.id === "arrow"
                 ? (typeof Ranged !== "undefined" && Ranged.sameArrow(dest, stack))
                 : !(typeof isSpecialStack === "function" && (isSpecialStack(stack) || isSpecialStack(dest))))
-            && (typeof stackStonesMatch !== "function" || stackStonesMatch(dest, stack))) {
+            && (typeof stackStonesMatch !== "function" || stackStonesMatch(dest, stack))
+            && (typeof stackDyesMatch !== "function" || stackDyesMatch(dest, stack))) {
             const meta = this.scene.getItem(dest.id);
             const maxStack = Math.max(1, meta?.maxStack || 1);
             const space = maxStack - dest.quantity;
@@ -1057,7 +1395,8 @@ class StoragePanel {
             && (a.id === "arrow"
                 ? (typeof Ranged !== "undefined" && Ranged.sameArrow(a, b))
                 : !(typeof isSpecialStack === "function" && (isSpecialStack(a) || isSpecialStack(b))))
-            && (typeof stackStonesMatch !== "function" || stackStonesMatch(a, b))) {
+            && (typeof stackStonesMatch !== "function" || stackStonesMatch(a, b))
+            && (typeof stackDyesMatch !== "function" || stackDyesMatch(a, b))) {
             const meta = this.scene.getItem(a.id);
             const maxStack = Math.max(1, meta?.maxStack || 1);
             const space = Math.max(0, maxStack - b.quantity);

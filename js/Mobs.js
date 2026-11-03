@@ -652,6 +652,17 @@ function dropIconKey(scene, item, entry) {
         const key = ensureArrowTexture(scene, entry.knapMaterial, entry.stone);
         if (key && scene.textures?.exists?.(key)) return key;
     }
+    if (entry?.id === "storage_pit" && typeof ensureStoragePitTexture === "function") {
+        const pit = ensureStoragePitTexture(scene, entry.dye);
+        if (pit && scene.textures?.exists?.(pit)) return pit;
+    }
+    if (entry?.id === "wicker_basket" && typeof ensureBasketDyeTexture === "function") {
+        const base = (typeof Place !== "undefined" && Place.itemIconKey && scene?.getThing)
+            ? Place.itemIconKey(item, (id) => scene.getThing(id), (k) => scene.textures?.exists?.(k))
+            : (item?.key || entry.id);
+        const dyed = ensureBasketDyeTexture(scene, base, entry.dye);
+        if (dyed && scene.textures?.exists?.(dyed)) return dyed;
+    }
     if (typeof Place !== "undefined" && Place.itemIconKey && scene?.getThing) {
         const key = Place.itemIconKey(
             item,
@@ -711,7 +722,8 @@ class DroppedItem extends Mob {
                 soakProgress: stackExtras?.soakProgress,
                 soakDoneAt: stackExtras?.soakDoneAt,
                 temp: stackExtras?.temp,
-                stone: stackExtras?.stone
+                stone: stackExtras?.stone,
+                dye: stackExtras?.dye
             });
             return null;
         }
@@ -750,6 +762,7 @@ class DroppedItem extends Mob {
                     && (item.id !== "pebble" && item.id !== "grindstone" && item.id !== "painting_circle" || (typeof Stone !== "undefined" && Stone.stoneKey
                         ? Stone.stoneKey(drop) === Stone.stoneKey(soakStamp)
                         : (drop.stone || "andesite") === (soakStamp.stone || "andesite")))
+                    && (typeof Place === "undefined" || !Place.basketDyesMatch || Place.basketDyesMatch(drop, soakStamp))
                     && !(typeof Hide !== "undefined" && Hide.soakMergeBlocked(drop, soakStamp))
                     && drop.quantity < maxStack)
                 .map(drop => ({
@@ -848,6 +861,9 @@ class DroppedItem extends Mob {
         if (typeof Stone !== "undefined" && Stone.normalizeStone?.(stackExtras?.stone)) {
             entry.stone = Stone.normalizeStone(stackExtras.stone);
         }
+        if (typeof Place !== "undefined" && Place.normalizeBasketDye?.(stackExtras?.dye)) {
+            entry.dye = Place.normalizeBasketDye(stackExtras.dye);
+        }
         if (Number.isFinite(Number(stackExtras?.lodged))) entry.lodged = Number(stackExtras.lodged);
         return entry;
     }
@@ -900,6 +916,7 @@ class DroppedItem extends Mob {
         if (entry.soakDoneAt != null) this.soakDoneAt = entry.soakDoneAt;
         if (entry.temp != null) this.temp = entry.temp;
         if (entry.stone) this.stone = entry.stone;
+        if (entry.dye) this.dye = entry.dye;
 
         if ((entry.id === "pebble" || entry.id === "grindstone") && typeof ensureStoneTexture === "function") {
             const kind = entry.id === "grindstone" ? "grindstone" : "pebble";
@@ -1041,6 +1058,8 @@ class DroppedItem extends Mob {
         else delete this.entry.temp;
         if (this.stone) this.entry.stone = this.stone;
         else delete this.entry.stone;
+        if (this.dye) this.entry.dye = this.dye;
+        else delete this.entry.dye;
     }
 
     _removeEntry() {
@@ -1178,7 +1197,8 @@ class DroppedItem extends Mob {
                 ...(this.soakProgress != null ? { soakProgress: this.soakProgress } : {}),
                 ...(this.soakDoneAt != null ? { soakDoneAt: this.soakDoneAt } : {}),
                 ...(this.temp != null ? { temp: this.temp } : {}),
-                ...(this.stone ? { stone: this.stone } : {})
+                ...(this.stone ? { stone: this.stone } : {}),
+                ...(this.dye ? { dye: this.dye } : {})
             };
             if (typeof Hide !== "undefined") Hide.pickupSoak(stack, now);
             const want = Math.max(1, Number(this.quantity) || 1);
@@ -1221,7 +1241,8 @@ class DroppedItem extends Mob {
                 return pickup.soakProgress;
             })(),
             temp: this.temp,
-            stone: this.stone
+            stone: this.stone,
+            dye: this.dye
         });
         if (leftover === take) return false;
         this.scene.hotbar.dirty = true;
@@ -1257,6 +1278,7 @@ class DroppedItem extends Mob {
             temp: this.temp ?? this.entry?.temp,
             id: this.item?.id,
             stone: this.stone,
+            dye: this.dye,
             spoilAt: this.spoilAt,
             spoilLeft: this.spoilLeft
         };

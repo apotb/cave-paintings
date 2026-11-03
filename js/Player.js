@@ -781,7 +781,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             const remaining = this.gainItem(meta, qty, left, {
                 knapQuality: stack.knapQuality,
                 knapMaterial: stack.knapMaterial,
-                stone: stack.stone
+                stone: stack.stone,
+                dye: stack.dye
             });
             return remaining === 0;
         }
@@ -797,7 +798,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const remaining = this.gainItem(meta, stack.quantity, left, {
             dryProgress: stack.dryProgress,
             soakProgress: stack.soakProgress,
-            stone: stack.stone
+            stone: stack.stone,
+            dye: stack.dye
         });
         return remaining === 0;
     }
@@ -931,7 +933,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const remaining = this.gainItem(meta, stack.quantity, left, {
             dryProgress: stack.dryProgress,
             soakProgress: stack.soakProgress,
-            stone: stack.stone
+            stone: stack.stone,
+            dye: stack.dye
         });
         if (remaining === stack.quantity) return false;
         if (remaining > 0) {
@@ -2427,6 +2430,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                     if (item.id === "arrow") {
                         if (typeof Ranged === "undefined" || !Ranged.sameArrow(slot, stack)) continue;
                     } else if (slot.customName || slot.food || slot.ingredients || slot.toolClass) continue;
+                    if (typeof stackDyesMatch === "function" && !stackDyesMatch(slot, stack)) continue;
                     space += maxStack - slot.quantity;
                 }
             }
@@ -2502,6 +2506,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 if ((item.id === "pebble" || item.id === "grindstone" || item.id === "painting_circle")
                     && typeof Stone !== "undefined" && Stone.stoneKey
                     && Stone.stoneKey(slot) !== Stone.stoneKey(extras)) continue;
+                if (typeof stackDyesMatch === "function"
+                    && !stackDyesMatch(slot, { id: item.id, dye: extras?.dye })) continue;
             }
             const space = maxStack - slot.quantity;
             const toAdd = Math.min(space, remaining, fitNow());

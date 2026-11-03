@@ -172,8 +172,10 @@ test("storage pit, dirt, sand, and snow are real items and Storage is researchab
     assert.deepEqual(Research.techById("storage").prereqs, ["digging", "basic_furniture"]);
     assert.deepEqual(Research.techById("storage").unlocks.items, ["storage_pit"]);
     const loads = Place.thingImageLoads(thing).map((s) => s.key);
-    assert.ok(loads.includes("storage_pit"));
+    assert.ok(loads.includes("storage_pit_knot"));
+    assert.ok(loads.includes("storage_pit_lid"));
     assert.ok(loads.includes("hole"));
+    assert.equal(loads.includes("storage_pit"), false);
     const holder = Settlement.createSettlement({ x: 0, y: 0, ownerId: "p" });
     Research.unlockChain(holder, "storage");
     assert.equal(Research.recipeUnlocked("storage_pit", holder), true);

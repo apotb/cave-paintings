@@ -1694,9 +1694,16 @@
         const hangKey = (typeof Hide !== "undefined" && Hide.isDryingRack(info.thingDef))
             ? Hide.hangingTextureKey(info.thingDef)
             : null;
-        const rotTex = typeof Place !== "undefined"
+        let rotTex = typeof Place !== "undefined"
             ? Place.facingTextureKey(info.thingDef, rot)
             : info.thingDef.key;
+        if (info.thingId === "wicker_basket" && typeof ensureBasketDyeTexture === "function") {
+            const dyed = ensureBasketDyeTexture(this, rotTex, info.held?.dye);
+            if (dyed && this.textures.exists(dyed)) rotTex = dyed;
+        }
+        const pitGhostKey = (info.thingId === "storage_pit" && typeof ensureStoragePitTexture === "function")
+            ? ensureStoragePitTexture(this, info.held?.dye)
+            : null;
         const stoneGhostKey = (info.thingId === "grindstone" && typeof ensureStoneTexture === "function")
             ? ensureStoneTexture(this, "grindstone", 1, info.held?.stone)
             : null;
@@ -1722,7 +1729,8 @@
                 : info.thingDef.floor;
             if (this.textures.exists(floorTex)) ghost.setTexture(floorTex);
             else if (this.textures.exists(info.thingDef.floor)) ghost.setTexture(info.thingDef.floor);
-        } else if (stoneGhostKey && this.textures.exists(stoneGhostKey)) ghost.setTexture(stoneGhostKey);
+        } else if (pitGhostKey && this.textures.exists(pitGhostKey)) ghost.setTexture(pitGhostKey);
+        else if (stoneGhostKey && this.textures.exists(stoneGhostKey)) ghost.setTexture(stoneGhostKey);
         else if (paintGhostKey && this.textures.exists(paintGhostKey)) ghost.setTexture(paintGhostKey);
         else if (info.thingId === "grindstone" && this.textures.exists("grindstone_1")) ghost.setTexture("grindstone_1");
         else if (hangKey && this.textures.exists(hangKey)) ghost.setTexture(hangKey);
@@ -2047,6 +2055,10 @@
                 entry.digProgress = 0;
                 entry.fillId = Place.pitFillForTile(this._tileKeyAt(tx, ty)) || "dirt";
             }
+            if ((thingId === "wicker_basket" || thingId === "storage_pit") && typeof Place !== "undefined") {
+                const dye = Place.normalizeBasketDye(this._heldPlaceableDef()?.held?.dye);
+                if (dye) entry.dye = dye;
+            }
         }
         if (typeof Research !== "undefined") Research.ensureEntry(entry, def);
         chunk.meta.things.push(entry);
@@ -2205,11 +2217,18 @@
         const stone = (typeof Stone !== "undefined" && Stone.normalizeStone)
             ? Stone.normalizeStone(entry?.stone)
             : null;
-        const extras = stone ? { stone } : null;
+        const dye = (typeof Place !== "undefined" && Place.normalizeBasketDye)
+            ? Place.normalizeBasketDye(entry?.dye)
+            : null;
+        const extras = {
+            ...(stone ? { stone } : {}),
+            ...(dye ? { dye } : {})
+        };
+        const placeExtras = Object.keys(extras).length ? extras : null;
         if (meta) {
-            const left = this.player.gainItem(meta, 1, undefined, extras);
+            const left = this.player.gainItem(meta, 1, undefined, placeExtras);
             if (left > 0) {
-                DroppedItem.spawn(this, storage.x, storage.y, meta, left, undefined, extras);
+                DroppedItem.spawn(this, storage.x, storage.y, meta, left, undefined, placeExtras);
             }
         }
         this.hotbar.dirty = true;

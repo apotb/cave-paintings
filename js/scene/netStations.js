@@ -465,6 +465,7 @@
                 if (typeof Place !== "undefined") {
                     Place.ensureStorageEntry(entry, this.getThing(entry.id));
                 }
+                this._netApplyBasketDye(entry, src);
                 this._netApplyStorageFilter(entry, src);
             }
             chunk.meta.things.push(entry);
@@ -484,6 +485,7 @@
             if (src.digAccrued != null) entry.digAccrued = src.digAccrued;
             if (src.digSettled != null) entry.digSettled = src.digSettled;
             if (src.fillId) entry.fillId = src.fillId;
+            this._netApplyBasketDye(entry, src);
             if (src.stone) entry.stone = src.stone;
             if (Array.isArray(src.occupants)) entry.occupants = src.occupants;
             if (src.medical != null) entry.medical = !!src.medical;
@@ -537,6 +539,18 @@
         }
         const extras = typeof mealStackExtras === "function" ? mealStackExtras(src) : null;
         if (extras) Object.assign(entry, extras);
+    },
+
+    _netApplyBasketDye(entry, src) {
+        if (!entry || !src) return;
+        const id = entry.id || src.id;
+        if (id !== "wicker_basket" && id !== "storage_pit") return;
+        if (!Object.prototype.hasOwnProperty.call(src, "dye")) return;
+        const dye = (typeof Place !== "undefined" && Place.normalizeBasketDye)
+            ? Place.normalizeBasketDye(src.dye)
+            : null;
+        if (dye) entry.dye = dye;
+        else delete entry.dye;
     },
 
     _netApplyStorageFilter(entry, src) {

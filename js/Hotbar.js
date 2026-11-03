@@ -106,8 +106,9 @@ class Hotbar {
             ? isSpecialStack(b)
             : !!(b && (b.customName || b.food || b.ingredients || b.toolClass));
         const stonesMatch = typeof stackStonesMatch !== "function" || stackStonesMatch(a, b);
+        const dyesMatch = typeof stackDyesMatch !== "function" || stackDyesMatch(a, b);
         const arrowOk = a.id !== "arrow" || (b && typeof Ranged !== "undefined" && Ranged.sameArrow(a, b));
-        if (b && a.id === b.id && arrowOk && !aSpecial && !bSpecial && stonesMatch) {
+        if (b && a.id === b.id && arrowOk && !aSpecial && !bSpecial && stonesMatch && dyesMatch) {
             const meta = this.scene.getItem(a.id);
             const maxStack = Math.max(1, meta?.maxStack || 1);
             const space = Math.max(0, maxStack - b.quantity);
@@ -238,6 +239,7 @@ class Hotbar {
                 if (!dest || dest.id !== stack.id) continue;
                 if (arrowStack && (typeof Ranged === "undefined" || !Ranged.sameArrow(dest, stack))) continue;
                 if (typeof stackStonesMatch === "function" && !stackStonesMatch(dest, stack)) continue;
+                if (typeof stackDyesMatch === "function" && !stackDyesMatch(dest, stack)) continue;
                 const destSpecial = typeof isSpecialStack === "function"
                     ? isSpecialStack(dest)
                     : !!(dest.customName || dest.food || dest.ingredients || dest.toolClass);

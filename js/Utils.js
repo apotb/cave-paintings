@@ -934,6 +934,19 @@ function stackStonesMatch(a, b) {
     return (a?.stone || "andesite") === (b?.stone || "andesite");
 }
 
+/** Baskets and pits stack only with the same dye. Other items always match. */
+function stackDyesMatch(a, b) {
+    if (typeof Place !== "undefined" && Place.basketDyesMatch) return Place.basketDyesMatch(a, b);
+    const dyeable = (id) => id === "wicker_basket" || id === "storage_pit";
+    if (!dyeable(a?.id) && !dyeable(b?.id)) return true;
+    if (a?.id !== b?.id) return false;
+    const dye = (stack) => {
+        const hex = String(stack?.dye || "").replace(/^#/, "").toLowerCase();
+        return /^[0-9a-f]{6}$/.test(hex) && hex !== "6c552e" ? hex : null;
+    };
+    return dye(a) === dye(b);
+}
+
 function quickMoveAmount(quantity, pointer = null, scene = null) {
     const q = Math.max(0, Math.floor(Number(quantity) || 0));
     if (q <= 0) return 0;
@@ -1308,6 +1321,89 @@ function applyItemIconScale(image, scale) {
     return next;
 }
 
+/** Wicker weave recolored so #6c552e becomes the dye. No dye keeps the source. */
+function ensureBasketDyeTexture(scene, baseKey, dye) {
+    if (!scene?.textures || !baseKey) return baseKey || null;
+    const hex = (typeof Place !== "undefined" && Place.normalizeBasketDye)
+        ? Place.normalizeBasketDye(dye)
+        : null;
+    if (!hex) return baseKey;
+    if (!scene.textures.exists(baseKey)) return baseKey;
+    const key = `${baseKey}__dye_${hex}`;
+    if (scene.textures.exists(key)) return key;
+    const img = stoneSourceImage(scene, baseKey);
+    if (!img?.width || typeof Place === "undefined" || !Place.recolorBasketImageData) return baseKey;
+    const canvasTex = scene.textures.createCanvas(key, img.width, img.height);
+    if (!canvasTex?.getContext) return baseKey;
+    const ctx = canvasTex.getContext();
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, img.width, img.height);
+    ctx.drawImage(img, 0, 0);
+    let data;
+    try {
+        data = ctx.getImageData(0, 0, img.width, img.height);
+    } catch (_) {
+        scene.textures.remove(key);
+        return baseKey;
+    }
+    Place.recolorBasketImageData(data.data, hex);
+    ctx.putImageData(data, 0, 0);
+    canvasTex.refresh();
+    if (typeof WorldAtlas !== "undefined") WorldAtlas.adopt(scene, key);
+    return key;
+}
+
+/**
+ * Knot stays put. The lid is the wicker brown, recolored when the pit has a dye.
+ * No dye is the plain composite, keyed storage_pit.
+ */
+function ensureStoragePitTexture(scene, dye) {
+    if (!scene?.textures) return null;
+    const hex = (typeof Place !== "undefined" && Place.normalizeBasketDye)
+        ? Place.normalizeBasketDye(dye)
+        : null;
+    const key = hex ? `storage_pit__dye_${hex}` : "storage_pit";
+    if (scene.textures.exists(key)) return key;
+    const knot = stoneSourceImage(scene, "storage_pit_knot");
+    const lid = stoneSourceImage(scene, "storage_pit_lid");
+    if (!knot?.width || !lid?.width || typeof document === "undefined") {
+        return scene.textures.exists("storage_pit") ? "storage_pit" : null;
+    }
+    const canvasTex = scene.textures.createCanvas(key, knot.width, knot.height);
+    if (!canvasTex?.getContext) return scene.textures.exists("storage_pit") ? "storage_pit" : null;
+    const ctx = canvasTex.getContext();
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, knot.width, knot.height);
+    ctx.drawImage(knot, 0, 0);
+    const ox = Math.round((knot.width - lid.width) / 2);
+    const oy = Math.round((knot.height - lid.height) / 2);
+    if (!hex || typeof Place === "undefined" || !Place.recolorBasketImageData) {
+        ctx.drawImage(lid, ox, oy);
+    } else {
+        const tmp = document.createElement("canvas");
+        tmp.width = lid.width;
+        tmp.height = lid.height;
+        const tctx = tmp.getContext("2d", { willReadFrequently: true });
+        if (!tctx) {
+            ctx.drawImage(lid, ox, oy);
+        } else {
+            tctx.imageSmoothingEnabled = false;
+            tctx.drawImage(lid, 0, 0);
+            try {
+                const data = tctx.getImageData(0, 0, tmp.width, tmp.height);
+                Place.recolorBasketImageData(data.data, hex);
+                tctx.putImageData(data, 0, 0);
+                ctx.drawImage(tmp, ox, oy);
+            } catch (_) {
+                ctx.drawImage(lid, ox, oy);
+            }
+        }
+    }
+    canvasTex.refresh();
+    if (typeof WorldAtlas !== "undefined") WorldAtlas.adopt(scene, key);
+    return key;
+}
+
 function ensureHearthIcon(scene) {
     if (!scene?.textures) return null;
     if (scene.textures.exists("hearth")) return "hearth";
@@ -1369,6 +1465,12 @@ function carriedStackIconKey(scene, stack, meta) {
     }
     if (stack.id === "painting_circle") {
         use(ensurePaintingCircleTexture(scene, stack.stone));
+    }
+    if (stack.id === "wicker_basket") {
+        use(ensureBasketDyeTexture(scene, key, stack.dye));
+    }
+    if (stack.id === "storage_pit") {
+        use(ensureStoragePitTexture(scene, stack.dye));
     }
     if (stack.toolClass && typeof Knapping !== "undefined" && Knapping.ensureShapeTexture) {
         use(Knapping.ensureShapeTexture(scene, stack));
@@ -2164,6 +2266,7 @@ function mealStackExtras(stack) {
         || stack.formVoxels
         || (Number(stack.beauty) > 0)
         || stone
+        || (typeof Place !== "undefined" && Place.normalizeBasketDye?.(stack.dye))
     );
     if (!hasExtras) return null;
     const form = formStackExtras(stack);
@@ -2180,6 +2283,9 @@ function mealStackExtras(stack) {
         soakDoneAt: stack.soakDoneAt,
         ...(stack.temp != null && Number(stack.temp) > 20 ? { temp: stack.temp } : {}),
         ...(stone ? { stone } : {}),
+        ...((typeof Place !== "undefined" && Place.normalizeBasketDye?.(stack.dye))
+            ? { dye: Place.normalizeBasketDye(stack.dye) }
+            : {}),
         ...(knap || {}),
         ...(form || {})
     };

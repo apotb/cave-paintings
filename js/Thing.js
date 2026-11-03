@@ -125,15 +125,26 @@ class Thing extends Phaser.Physics.Arcade.Sprite {
             return;
         }
         if (typeof Place !== "undefined" && Array.isArray(this.meta.rotations) && this.meta.rotations.length) {
-            const tex = Place.facingTextureKey(this.meta, this.entry?.rot);
+            let tex = Place.facingTextureKey(this.meta, this.entry?.rot);
+            if (this.meta?.id === "wicker_basket" && typeof ensureBasketDyeTexture === "function") {
+                tex = ensureBasketDyeTexture(this.scene, tex, this.entry?.dye) || tex;
+            }
             if (this.scene.textures.exists(tex)) {
-                this.setTexture(tex);
+                if (this.texture?.key !== tex) this.setTexture(tex);
+                if (this.meta?.id === "wicker_basket") this.clearTint();
                 if (this.body) this._positionBody();
                 this._syncInteractMark();
                 return;
             }
         }
         if (this._applyStoneVisual()) {
+            if (this.body) this._positionBody();
+            this._syncInteractMark();
+            this._syncDigHole();
+            return;
+        }
+        if (this.meta?.id === "storage_pit" || this.entry?.id === "storage_pit") {
+            this.syncPitLook?.();
             if (this.body) this._positionBody();
             this._syncInteractMark();
             this._syncDigHole();
@@ -1482,12 +1493,17 @@ class Storage extends Thing {
         const showHole = finished && this._pitPanelOpen;
         this.clearTint();
         if (showHole && this._usePitTexture("hole")) return;
-        const key = this.meta?.key || "storage_pit";
+        const natural = (typeof ensureStoragePitTexture === "function")
+            ? (ensureStoragePitTexture(this.scene, null) || this.meta?.key || "storage_pit")
+            : (this.meta?.key || "storage_pit");
         if (!finished) {
-            const blue = ensureStoragePitBlueprint(this.scene, key);
+            const blue = ensureStoragePitBlueprint(this.scene, natural);
             if (blue && this._usePitTexture(blue)) return;
         }
-        this._usePitTexture(key);
+        const closed = (typeof ensureStoragePitTexture === "function")
+            ? (ensureStoragePitTexture(this.scene, this.entry?.dye) || natural)
+            : natural;
+        this._usePitTexture(closed);
     }
 
     static create(scene, entry) {

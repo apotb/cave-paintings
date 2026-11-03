@@ -157,6 +157,13 @@
                 { key: "unlit_campfire", path: "assets/things/unlit_campfire.png" }
             ];
         }
+        if (t.id === "storage_pit") {
+            return [
+                { key: "storage_pit_knot", path: "assets/things/storage_pit/storage_pit_knot.png" },
+                { key: "storage_pit_lid", path: "assets/things/storage_pit/storage_pit_lid.png" },
+                { key: "hole", path: "assets/things/hole.png" }
+            ];
+        }
         if (t.floor && t.wall) {
             return [
                 { key: t.floor, path: `assets/things/${t.key}/${partFile(t.key, t.floor)}.png` },
@@ -1704,6 +1711,92 @@
         return ejected;
     }
 
+    /** Untinted wicker. Stored dye is null for this brown. */
+    const BASKET_NATURAL = "6c552e";
+    const BASKET_DYE_BASE = [0x6c, 0x55, 0x2e];
+    const BASKET_DYES = [
+        { id: "natural", name: "Natural", color: BASKET_NATURAL },
+        { id: "red", name: "Red", color: "c44536" },
+        { id: "orange", name: "Orange", color: "d87a2a" },
+        { id: "yellow", name: "Yellow", color: "d6b23a" },
+        { id: "green", name: "Green", color: "3f8f46" },
+        { id: "blue", name: "Blue", color: "3a6fbf" },
+        { id: "purple", name: "Purple", color: "7a45a8" },
+        { id: "white", name: "White", color: "e4d7c0" },
+        { id: "black", name: "Black", color: "2a221c" }
+    ];
+
+    /** Known dye hex, or null for natural / anything else. */
+    function normalizeBasketDye(value) {
+        if (value == null || value === "" || value === "natural") return null;
+        let hex = String(value).trim().toLowerCase();
+        if (hex.startsWith("#")) hex = hex.slice(1);
+        if (hex.startsWith("0x")) hex = hex.slice(2);
+        if (!/^[0-9a-f]{6}$/.test(hex) || hex === BASKET_NATURAL) return null;
+        for (let i = 0; i < BASKET_DYES.length; i++) {
+            if (BASKET_DYES[i].id !== "natural" && BASKET_DYES[i].color === hex) return hex;
+        }
+        return null;
+    }
+
+    /** Swatch color. Natural when the basket has no dye. */
+    function basketDyeColor(value) {
+        return normalizeBasketDye(value) || BASKET_NATURAL;
+    }
+
+    function basketDyeRgb(value) {
+        const hex = basketDyeColor(value);
+        return [
+            parseInt(hex.slice(0, 2), 16),
+            parseInt(hex.slice(2, 4), 16),
+            parseInt(hex.slice(4, 6), 16)
+        ];
+    }
+
+    /**
+     * Scale a weave pixel off the natural brown so shading stays put.
+     * A pixel at #6c552e becomes the dye. No dye leaves the pixel alone.
+     */
+    function recolorBasketPixel(r, g, b, a, dye) {
+        const alpha = a | 0;
+        if (!alpha || !normalizeBasketDye(dye)) return [r | 0, g | 0, b | 0, alpha];
+        const t = basketDyeRgb(dye);
+        const scale = (channel, base, target) => {
+            const n = Math.round((channel | 0) * target / (base || 1));
+            return n < 0 ? 0 : (n > 255 ? 255 : n);
+        };
+        return [
+            scale(r, BASKET_DYE_BASE[0], t[0]),
+            scale(g, BASKET_DYE_BASE[1], t[1]),
+            scale(b, BASKET_DYE_BASE[2], t[2]),
+            alpha
+        ];
+    }
+
+    function recolorBasketImageData(data, dye) {
+        if (!data || !normalizeBasketDye(dye)) return data;
+        for (let i = 0; i < data.length; i += 4) {
+            const px = recolorBasketPixel(data[i], data[i + 1], data[i + 2], data[i + 3], dye);
+            data[i] = px[0];
+            data[i + 1] = px[1];
+            data[i + 2] = px[2];
+        }
+        return data;
+    }
+
+    function dyeableStorageId(id) {
+        return id === "wicker_basket" || id === "storage_pit";
+    }
+
+    /** Baskets and pits stack only with the same dye. Other items always match. */
+    function basketDyesMatch(a, b) {
+        const idA = a?.id || a?.item?.id || "";
+        const idB = b?.id || b?.item?.id || "";
+        if (!dyeableStorageId(idA) && !dyeableStorageId(idB)) return true;
+        if (idA !== idB) return false;
+        return normalizeBasketDye(a?.dye) === normalizeBasketDye(b?.dye);
+    }
+
     function ensureStorageEntry(entry, thingDef) {
         if (!entry) return entry;
         const n = Math.max(1, storageSlotCount(thingDef, entry) || Math.floor(Number(thingDef?.storage?.slots) || 6));
@@ -1879,6 +1972,7 @@
                 const dest = slots[i];
                 if (!dest || dest.id !== stack.id) continue;
                 if (!depositStonesMatch(dest, stack)) continue;
+                if (!basketDyesMatch(dest, stack)) continue;
                 if (destSpecial?.(dest, i)) continue;
                 const have = Math.max(0, Math.floor(Number(dest.quantity) || 0));
                 const space = Math.max(0, cap - have);
@@ -1996,6 +2090,14 @@
         storageTooltipStacks,
         storageTooltipRows,
         ensureStorageEntry,
+        BASKET_DYES,
+        BASKET_NATURAL,
+        normalizeBasketDye,
+        basketDyeColor,
+        basketDyeRgb,
+        recolorBasketPixel,
+        recolorBasketImageData,
+        basketDyesMatch,
         slotOccupied,
         isStorageEmpty,
         isStorageThing,
