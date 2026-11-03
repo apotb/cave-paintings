@@ -6,8 +6,8 @@ const vm = require("vm");
 
 const ROOT = path.resolve(__dirname, "..");
 
-function loadEquipmentPanel() {
-    const sandbox = { console, createIngredientBadges: () => [] };
+function loadEquipmentPanel(extra = {}) {
+    const sandbox = { console, createIngredientBadges: () => [], ...extra };
     vm.createContext(sandbox);
     const source = fs.readFileSync(path.join(ROOT, "js", "EquipmentPanel.js"), "utf8")
         + "\nthis.EquipmentPanel = EquipmentPanel;\n";
@@ -70,7 +70,10 @@ test("right-click unequip refreshes the hover tip to the empty slot name", () =>
             scene._tooltipTarget = null;
             scene.tooltip.visible = false;
         },
-        add: { image: () => fakeImage() },
+        add: {
+            image: () => fakeImage(),
+            graphics: () => ({ clear() {}, setPosition() { return this; } })
+        },
         hotbar: { dirty: false },
         uiScale: 1,
         input: { activePointer: { x: 4, y: 4, rightButtonDown: () => true } }
@@ -93,4 +96,49 @@ test("right-click unequip refreshes the hover tip to the empty slot name", () =>
     assert.equal(gear.head, null);
     assert.equal(scene.tooltip.visible, true);
     assert.equal(scene.tooltip.text, "Head");
+});
+
+test("worn armor forwards its durability fraction to the slot bar", () => {
+    const drawn = [];
+    const EquipmentPanel = loadEquipmentPanel({
+        Durability: {
+            slotBarFraction(stack) {
+                if (stack?.durability == null) return null;
+                return stack.durability / 60;
+            }
+        },
+        drawSlotConditionBar(_gfx, slot, frac) {
+            drawn.push({ key: slot.equipKey, frac });
+        },
+        syncStackIcon() {},
+        syncIngredientBadges() {}
+    });
+    const gear = {
+        torso: { id: "leaf_wrap", quantity: 1, durability: 30 },
+        head: { id: "leaf_wrap", quantity: 1 }
+    };
+    const scene = {
+        player: {
+            getWaistCapacity: () => 0,
+            getEquipmentStack(key) { return gear[key] || null; }
+        },
+        getItem(id) { return { id, name: id, durability: 60 }; },
+        add: {
+            image: () => fakeImage(),
+            graphics: () => ({ clear() {}, setPosition() { return this; } })
+        },
+        uiScale: 1
+    };
+    const panel = Object.create(EquipmentPanel.prototype);
+    panel.scene = scene;
+    panel.slotViews = [];
+    panel.slotsLayer = { add() {}, removeAll() {} };
+    for (const key of ["head", "torso", "back", "legs", "feet"]) panel._addSlotView(key);
+
+    panel._updateIcons();
+
+    const byKey = Object.fromEntries(drawn.map((row) => [row.key, row.frac]));
+    assert.equal(byKey.torso, 0.5);
+    assert.equal(byKey.head, null);
+    assert.equal(byKey.feet, null);
 });

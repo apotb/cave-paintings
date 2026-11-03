@@ -2,7 +2,7 @@ class EquipmentPanel {
     constructor(scene) {
         this.scene = scene;
         this.visible = false;
-        this.slotViews = []; // { key, slot, icon }
+        this.slotViews = []; // { key, slot, icon, fill, bar, badges }
         this._dragging = false;
         this._dragFromKey = null;
         this._dragIcon = null;
@@ -171,6 +171,7 @@ class EquipmentPanel {
                 id => this.scene.getItem(id),
                 this.scene.textures
             );
+            this._syncConditionBar(view);
         }
 
         for (const view of this.slotViews) {
@@ -195,6 +196,7 @@ class EquipmentPanel {
                 id => this.scene.getItem(id),
                 this.scene.textures
             );
+            this._syncConditionBar(view);
         }
 
         for (const view of this.slotViews) {
@@ -222,7 +224,19 @@ class EquipmentPanel {
                 id => this.scene.getItem(id),
                 this.scene.textures
             );
+            this._syncConditionBar(view);
         }
+    }
+
+    /** Same bottom strip the inventory slots use. Hidden at full durability. */
+    _syncConditionBar(view) {
+        if (!view?.bar) return;
+        const stack = this.scene.player.getEquipmentStack(view.key);
+        const meta = stack ? this.scene.getItem(stack.id) : null;
+        const frac = (typeof Durability !== "undefined" && stack)
+            ? Durability.slotBarFraction(stack, meta)
+            : null;
+        drawSlotConditionBar(view.bar, view.slot, frac);
     }
 
     _slotKeys() {
@@ -338,10 +352,12 @@ class EquipmentPanel {
         this.slotsLayer.add(slot);
         this.slotsLayer.add(icon);
         this.slotsLayer.add(fill);
+        const bar = this.scene.add.graphics();
+        this.slotsLayer.add(bar);
         const badges = createIngredientBadges(this.scene, (img) => {
             this.slotsLayer.add(img);
         });
-        this.slotViews.push({ key, slot, icon, fill, badges });
+        this.slotViews.push({ key, slot, icon, fill, bar, badges });
     }
 
     _updateIcons() {
@@ -356,6 +372,7 @@ class EquipmentPanel {
             const bottomY = view.slot.y + slotW - 4 * s;
             syncIngredientBadges(view.badges, rightX, bottomY, s, stack,
                 id => this.scene.getItem(id), this.scene.textures);
+            this._syncConditionBar(view);
         }
     }
 
@@ -382,6 +399,7 @@ class EquipmentPanel {
         view.slot.setPosition(homeX, homeY);
         view.icon.setPosition(iconHomeX, iconHomeY);
         view.fill?.setPosition(iconHomeX, iconHomeY);
+        view.bar?.setPosition(0, 0);
 
         view._shakeTween = this.scene.tweens.addCounter({
             from: 0,
@@ -392,11 +410,13 @@ class EquipmentPanel {
                 view.slot.x = homeX + offset;
                 view.icon.x = iconHomeX + offset;
                 if (view.fill) view.fill.x = iconHomeX + offset;
+                if (view.bar) view.bar.x = offset;
             },
             onComplete: () => {
                 view.slot.setPosition(homeX, homeY);
                 view.icon.setPosition(iconHomeX, iconHomeY);
                 view.fill?.setPosition(iconHomeX, iconHomeY);
+                view.bar?.setPosition(0, 0);
                 view._shakeTween = null;
             }
         });
