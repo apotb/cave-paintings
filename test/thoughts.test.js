@@ -547,7 +547,7 @@ test("an unlit hearth is a small penalty until the fire is lit again", () => {
     const p = pawn();
     Thoughts.tick(p, 0, { hearthOut: true, eligible: false });
     assert.deepEqual(offsets(p), ["-1:Hearth extinguished"]);
-    assert.equal(p.thoughts.lines[0].quote, "The hearth fire has gone out.");
+    assert.equal(p.thoughts.lines[0].quote, "The hearth is not burning. The flame's presence was comforting.");
     const copy = pawn({ id: "hearth-copy" });
     Thoughts.apply(copy, Thoughts.toJSON(p));
     Thoughts.refresh(copy, 0);

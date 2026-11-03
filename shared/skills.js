@@ -668,7 +668,10 @@
         const y = Number(pawn.y) || 0;
         const fires = [];
         const FireApi = fireApi();
-        const chunks = typeof host._chunksNear === "function" ? host._chunksNear(x, y, 3) : [];
+        // Already-loaded chunks only. A mood or work check must not stream terrain.
+        const chunks = typeof host._chunksNear === "function"
+            ? host._chunksNear(x, y, 3, { load: false })
+            : [];
         for (const chunk of chunks || []) {
             for (const thing of chunk?.things || []) {
                 if (typeof host._isCampfireEntry === "function" && !host._isCampfireEntry(thing)) continue;

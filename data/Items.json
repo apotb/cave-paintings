@@ -902,6 +902,9 @@
             "type": "ranged",
             "range": 224
         },
+        "tooltip": [
+            "Let loose at once"
+        ],
         "recipe": {
             "log": 1,
             "sinew": 2,
