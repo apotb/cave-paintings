@@ -646,6 +646,95 @@ test("darkness is a penalty, and a night owl is glad of it", () => {
     assert.deepEqual(offsets(p), []);
 });
 
+test("passion for the work in hand is a bonus only while that work lasts", () => {
+    const liked = pawn();
+    Thoughts.tick(liked, 0, { workPassion: 1, eligible: false });
+    assert.deepEqual(offsets(liked), ["8:Doing something I like"]);
+    assert.equal(liked.thoughts.lines[0].quote, "I'm happy with my job.");
+    Thoughts.tick(liked, 1, { workPassion: 0, eligible: false });
+    assert.deepEqual(offsets(liked), []);
+
+    const loved = pawn({ id: "loved" });
+    Thoughts.tick(loved, 0, { workPassion: 2, eligible: false });
+    assert.deepEqual(offsets(loved), ["14:Doing something I love"]);
+    assert.equal(loved.thoughts.lines[0].quote, "My job is my passion!");
+    assert.equal(loved.thoughts.lines.some((row) => row.label === "Doing something I like"), false);
+    const copy = pawn({ id: "loved-copy" });
+    Thoughts.apply(copy, Thoughts.toJSON(loved));
+    Thoughts.refresh(copy, 0);
+    assert.equal(copy.thoughts.lines.some((row) => row.label === "Doing something I love"), false);
+});
+
+test("a settler likes the job they are doing, and only that job", () => {
+    const { world, pawn: leader } = createTestWorld();
+    const bio = {
+        skills: {
+            cooking: { level: 4, xp: 0, passion: 2 },
+            plants: { level: 2, xp: 0, passion: 1 },
+            animals: { level: 2, xp: 0, passion: 1 },
+            crafting: { level: 2, xp: 0, passion: 0 },
+            medical: { level: 2, xp: 0, passion: 1 }
+        }
+    };
+    leader.bio = JSON.parse(JSON.stringify(bio));
+    leader._workHold = true;
+    leader._busyJob = { type: "cook", target: {} };
+    world._tickHumanNeeds(leader);
+    assert.deepEqual(
+        leader.thoughts.lines.filter((row) => row.offset > 0).map((row) => `${row.offset}:${row.label}`),
+        ["14:Doing something I love"]
+    );
+
+    leader._busyJob = { type: "haul", target: {} };
+    world._tickHumanNeeds(leader);
+    assert.equal(leader.thoughts.lines.some((row) => row.label === "Doing something I love"), false);
+    assert.equal(leader.thoughts.lines.some((row) => row.label === "Doing something I like"), false);
+
+    leader._busyJob = { type: "chop", target: {} };
+    world._tickHumanNeeds(leader);
+    const liked = leader.thoughts.lines.find((row) => row.label === "Doing something I like");
+    assert.equal(liked.offset, 8);
+    assert.equal(liked.quote, "I'm happy with my job.");
+
+    leader._resting = true;
+    world._tickHumanNeeds(leader);
+    assert.equal(leader.thoughts.lines.some((row) => row.label === "Doing something I like"), false);
+    leader._resting = false;
+
+    leader._moodJob = "strike";
+    world._tickHumanNeeds(leader);
+    assert.equal(leader.thoughts.lines.some((row) => row.label === "Doing something I like"), false);
+    leader._moodJob = null;
+    leader._workHold = false;
+    leader._busyJob = null;
+
+    leader.fishChannel = { waterTx: 1, waterTy: 1 };
+    world._tickHumanNeeds(leader);
+    assert.ok(leader.thoughts.lines.some((row) => row.label === "Doing something I like" && row.offset === 8));
+    leader.fishChannel = null;
+
+    leader._manualSkill = "crafting";
+    world._tickHumanNeeds(leader);
+    assert.equal(leader.thoughts.lines.some((row) => row.label.startsWith("Doing something")), false);
+    world.setMove(leader.id, { skill: "plants" });
+    world._tickHumanNeeds(leader);
+    assert.ok(leader.thoughts.lines.some((row) => row.label === "Doing something I like"));
+    world.setMove(leader.id, { skill: "melee" });
+    world._tickHumanNeeds(leader);
+    assert.equal(leader.thoughts.lines.some((row) => row.label.startsWith("Doing something")), false);
+
+    leader.bio = JSON.parse(JSON.stringify(bio));
+    leader._moodJob = "sulk";
+    leader._workHold = true;
+    leader._busyJob = { type: "cook", target: {} };
+    world._tickHumanNeeds(leader);
+    assert.equal(leader.thoughts.lines.some((row) => row.label.startsWith("Doing something")), false);
+    leader._moodJob = "sulk";
+    leader._busyJob = { type: "doctor", target: {} };
+    world._tickHumanNeeds(leader);
+    assert.ok(leader.thoughts.lines.some((row) => row.label === "Doing something I like" && row.offset === 8));
+});
+
 test("an unlit hearth is a small penalty until the fire is lit again", () => {
     const p = pawn();
     Thoughts.tick(p, 0, { hearthOut: true, eligible: false });

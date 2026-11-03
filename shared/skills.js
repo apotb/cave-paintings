@@ -1524,6 +1524,14 @@
         return JOB_SKILL[jobId] || null;
     }
 
+    /** Cooking, plants, animals, crafting, medical, and intellectual. Combat is not a job. */
+    function isWorkSkill(skillId) {
+        for (const id in JOB_SKILL) {
+            if (JOB_SKILL[id] === skillId) return true;
+        }
+        return false;
+    }
+
     function pawnLevel(pawn, skillId, cat) {
         if (!pawn?.bio) return null;
         return effectiveLevel(pawn.bio, skillId, cat);
@@ -1601,6 +1609,7 @@
         yieldCount,
         knapQuality,
         jobSkill,
+        isWorkSkill,
         pawnLevel,
         emptySkills
     };

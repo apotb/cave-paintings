@@ -575,6 +575,19 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         this.scene._drawBar?.(g, -Math.floor(w / 2), -h, w, h, frac, 0x000000, 0x222222, color, 2);
     }
 
+    /**
+     * Skill of a hand channel the server does not time itself.
+     * Fishing, knapping, and forming are already on the sim.
+     */
+    manualWorkSkill() {
+        if (this._bodyDead || this._resting || this._groundSleep || this._eatChannel) return null;
+        if (this._tendChannel) return "medical";
+        if (this._skinChannel || this._fleshChannel || this._brainChannel || this._craftChannel) return "crafting";
+        if (this._reedChannel || this._chopBar) return "plants";
+        if (this._paintChannel && typeof this._paintChannel.progress === "number") return "intellectual";
+        return null;
+    },
+
     isBodyDead() {
         return this._bodyDead;
     }

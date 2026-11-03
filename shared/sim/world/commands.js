@@ -66,7 +66,14 @@
 
     return {
 
-    setMove(playerId, { x = 0, y = 0, sprint = false, facing = null, px = null, py = null, viewChunks = null, pawnId = null, partyPoses = null } = {}) {
+    _rememberManualSkill(pawn, raw) {
+        if (!pawn) return;
+        const id = typeof raw === "string" ? raw : "";
+        const skills = this._skillsApi?.();
+        pawn._manualSkill = id && skills?.isWorkSkill?.(id) ? id : null;
+    },
+
+    setMove(playerId, { x = 0, y = 0, sprint = false, facing = null, px = null, py = null, viewChunks = null, pawnId = null, partyPoses = null, skill = null } = {}) {
         const p = this.players.get(playerId);
         if (!p) return;
         this._setControlId(p, pawnId);
@@ -157,6 +164,14 @@
             cc.facing = control.facing || cc.facing;
         }
         if (control.fishChannel) this._lockFishFacing(control);
+        this._rememberManualSkill(control, skill);
+        if (Array.isArray(partyPoses)) {
+            for (const pose of partyPoses) {
+                if (!pose?.id) continue;
+                const mem = (p.party || []).find((m) => m && m.id === pose.id);
+                if (mem && mem !== control) this._rememberManualSkill(mem, pose.skill);
+            }
+        }
         // Uncontrolled party poses are server-authored (PartyAI). Ignore client
         // copies so other players see the same hitboxes the sim uses — except a
         // tend lock so they finish bandaging before follow pulls them.

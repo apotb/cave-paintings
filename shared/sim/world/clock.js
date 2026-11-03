@@ -331,6 +331,55 @@
         return Thoughts.hasTrait(pawn, "night_owl") ? "joy" : "dark";
     },
 
+    /**
+     * Plan or channel type for the job they are in right now.
+     * Walking to it still counts. The thought ends when the job does.
+     */
+    _workType(pawn) {
+        if (pawn._workChannel) {
+            const named = Settlement.channelJob?.(pawn._workChannel) || pawn._workChannel.kind;
+            if (named) return named;
+        }
+        if (pawn.fishChannel) return "fish";
+        if (pawn.tendChannel) return "doctor";
+        if (pawn._paintChannel) return "research";
+        if (pawn._knapSession) return "craft";
+        if (pawn._formSession) return "craft";
+        if (pawn._workHold && pawn._busyJob?.type) return pawn._busyJob.type;
+        return null;
+    },
+
+    /** Skill that job uses, or null for hauling and anything else without one. */
+    _workSkill(pawn) {
+        const skills = this._skillsApi?.();
+        if (!skills?.jobSkill) return null;
+        const type = this._workType(pawn);
+        if (!type) return null;
+        const column = Settlement.jobForWork?.(type) || type;
+        return skills.jobSkill(column) || skills.jobSkill(type) || null;
+    },
+
+    /**
+     * 1 or 2 while they are doing work they have that many passion stars in.
+     * A client may name the skill of a hand channel the sim does not time itself.
+     */
+    _workPassion(pawn) {
+        if (!pawn || pawn.dead || pawn._resting || pawn._groundSleep || pawn.eatChannel) return 0;
+        if (this._isVomiting?.(pawn)) return 0;
+        if (pawn._moodJob === "strike") return 0;
+        const skills = this._skillsApi?.();
+        if (!skills?.passionOf || !pawn.bio) return 0;
+        let skill = this._workSkill(pawn);
+        if (!skill && pawn._moodJob !== "sulk") {
+            const manual = pawn._manualSkill;
+            if (typeof manual === "string" && skills.isWorkSkill?.(manual)) skill = manual;
+        }
+        if (pawn._moodJob === "sulk" && skill !== "medical") return 0;
+        if (!skill || skills.incapable?.(pawn.bio, skill)) return 0;
+        const n = skills.passionOf(pawn.bio, skill);
+        return n === 1 || n === 2 ? n : 0;
+    },
+
     /** A settler's own hearth, and only while its flame is out. */
     _hearthOut(pawn) {
         const home = pawn?.homeSettlementId;
@@ -357,7 +406,8 @@
             asleep,
             downed,
             dark: this._moodDark(pawn),
-            hearthOut: this._hearthOut(pawn)
+            hearthOut: this._hearthOut(pawn),
+            workPassion: this._workPassion(pawn)
         });
         this._applyThoughtResult(pawn, result);
     },

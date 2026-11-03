@@ -964,6 +964,7 @@
             px: pose.x,
             py: pose.y,
             pawnId: p.pawnId || this._netPlayerId,
+            skill: p.manualWorkSkill?.() || null,
             partyPoses: (this.party || [])
                 .filter((m) => m && m !== p && !m.isBodyDead?.())
                 .map((m) => ({
@@ -975,7 +976,8 @@
                     attacking: !!m.isAttacking?.(),
                     attackAngle: m.attackAngle ?? null,
                     tending: !!(m._tendChannel && !m._tendChannel.corpse)
-                        || !!this.partySys?._isTendLocked?.(m)
+                        || !!this.partySys?._isTendLocked?.(m),
+                    skill: m.manualWorkSkill?.() || null
                 })),
             viewChunks: this.genDistance || this.cullDistance || this.renderDistance || 6
         });

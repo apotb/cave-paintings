@@ -75,6 +75,8 @@
             darkness_joy: ["Darkness", "The darkness surrounds me like a blanket. It comforts me."],
             hearth_extinguished: ["Hearth extinguished", "The hearth is not burning. The flame's presence was comforting."],
             lost_part: ["{part} is gone", "A part of my body, gone forever..."],
+            like_work: ["Doing something I like", "I'm happy with my job."],
+            love_work: ["Doing something I love", "My job is my passion!"],
             began: ["Initial optimism", "This is the beginning of something wonderful."],
             joined: ["Joined the tribe", "I've been accepted into {name}'s tribe"]
         }
@@ -178,6 +180,8 @@
         darkness: def("darkness", { offset: -4 }),
         darkness_joy: def("darkness_joy", { offset: 3 }),
         hearth_extinguished: def("hearth_extinguished", { offset: -1 }),
+        like_work: def("like_work", { offset: 8 }),
+        love_work: def("love_work", { offset: 14 }),
         lost_small: lostDef("lost_small", -3),
         lost_mid: lostDef("lost_mid", -8),
         lost_major: lostDef("lost_major", -12),
@@ -265,6 +269,7 @@
             lost: [],
             dark: null,
             hearthOut: false,
+            workPassion: 0,
             lastKill: null,
             appeared: null,
             strain: 0,
@@ -313,6 +318,8 @@
         state.lost = lostKept;
         state.dark = state.dark === "dark" || state.dark === "joy" ? state.dark : null;
         state.hearthOut = !!state.hearthOut;
+        const passion = Math.floor(Number(state.workPassion) || 0);
+        state.workPassion = passion === 1 || passion === 2 ? passion : 0;
         const lastKill = state.lastKill == null ? null : Number(state.lastKill);
         state.lastKill = lastKill != null && Number.isFinite(lastKill) ? lastKill : null;
         const appeared = state.appeared == null ? null : Number(state.appeared);
@@ -659,6 +666,11 @@
         else if (moodDark === "dark") push("darkness", DEFS.darkness.offset);
         if (ensure(pawn).hearthOut) push("hearth_extinguished", DEFS.hearth_extinguished.offset);
 
+        // Present only while this refresh still says they are doing the work.
+        const workPassion = ensure(pawn).workPassion;
+        if (workPassion === 2) push("love_work", DEFS.love_work.offset);
+        else if (workPassion === 1) push("like_work", DEFS.like_work.offset);
+
         if (hasTrait(pawn, "murderous")) {
             const state = ensure(pawn);
             const t = Number(now) || 0;
@@ -918,6 +930,10 @@
         }
         if (primed && Object.prototype.hasOwnProperty.call(opts, "hearthOut")) {
             primed.hearthOut = !!opts.hearthOut;
+        }
+        if (primed && Object.prototype.hasOwnProperty.call(opts, "workPassion")) {
+            const n = Math.floor(Number(opts.workPassion) || 0);
+            primed.workPassion = n === 1 || n === 2 ? n : 0;
         }
         const state = refresh(pawn, now);
         const logs = [];
