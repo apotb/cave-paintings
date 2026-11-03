@@ -169,6 +169,39 @@ test("craft leaf_cord spends leaves", () => {
     assert.ok(!pawn.inventory.some((s) => s && s.id === "leaf" && s.quantity >= 5));
 });
 
+test("craft reserve spends ingredients and finish grants without spending again", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "leaf", quantity: 12 };
+    world.handleAction(pawn.id, {
+        type: Protocol.Actions.CRAFT,
+        op: "reserve",
+        id: "leaf_cord",
+        count: 3
+    });
+    assert.equal(pawn.inventory.find((s) => s?.id === "leaf")?.quantity, 2);
+    assert.equal(pawn.inventory.some((s) => s?.id === "leaf_cord"), false);
+    assert.equal(pawn.craftHolds.length, 2);
+    assert.equal(world.youPayload(pawn.id).craftHolds.length, 2);
+
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, op: "finish", id: "leaf_cord" });
+    assert.equal(pawn.inventory.find((s) => s?.id === "leaf_cord")?.quantity, 1);
+    assert.equal(pawn.inventory.find((s) => s?.id === "leaf")?.quantity, 2);
+    assert.equal(pawn.craftHolds.length, 1);
+
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, op: "refund" });
+    assert.equal(pawn.craftHolds.length, 0);
+    assert.equal(pawn.inventory.find((s) => s?.id === "leaf")?.quantity, 7);
+    assert.equal(world.youPayload(pawn.id).craftHolds.length, 0);
+});
+
+test("craft finish without a hold does not grant", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "leaf", quantity: 5 };
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, op: "finish", id: "leaf_cord" });
+    assert.equal(pawn.inventory[0]?.quantity, 5);
+    assert.equal(pawn.inventory.some((s) => s?.id === "leaf_cord"), false);
+});
+
 test("craft count makes several leaf cords and stops when leaves run out", () => {
     const { world, pawn, Protocol } = createTestWorld();
     pawn.inventory[0] = { id: "leaf", quantity: 12 };

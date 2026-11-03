@@ -1424,7 +1424,7 @@
     },
 
     /** Spend matching stacks. writeSlot is for containers that mirror the slot. */
-    _loseCraftSlots(slots, match, qty, who, writeSlot) {
+    _loseCraftSlots(slots, match, qty, who, writeSlot, into) {
         if (!Array.isArray(slots) || !(qty > 0) || !who?._stackMatchesCraft) return 0;
         let remaining = Math.max(0, Math.floor(Number(qty) || 0));
         const hideStage = match?.hideStage || null;
@@ -1443,6 +1443,7 @@
                 const have = Math.max(0, Math.floor(Number(s.quantity) || 0));
                 const take = Math.min(have, remaining);
                 if (!(take > 0)) continue;
+                if (into && who._pieceForCraftRefund) into.push(who._pieceForCraftRefund(s, take));
                 s.quantity = have - take;
                 remaining -= take;
                 if (!(s.quantity > 0)) put(i, null);
@@ -1455,16 +1456,16 @@
         return Math.max(0, Math.floor(Number(qty) || 0) - remaining);
     },
 
-    _loseStorageCraft(store, match, qty, who) {
+    _loseStorageCraft(store, match, qty, who, into) {
         if (!store) return 0;
         return this._loseCraftSlots(store.entry?.slots, match, qty, who, (i, stack) => {
             store.setSlot(i, stack);
-        });
+        }, into);
     },
 
-    canCraft(recipe, pawn) {
+    canCraft(recipe, pawn, opts) {
         const who = pawn || this.player;
-        if (!recipe.ingredients.every(
+        if (!opts?.skipIngredients && !recipe.ingredients.every(
             (ingredient) => this._craftIngredientHave(ingredient, who) >= ingredient.qty
         )) {
             return false;
@@ -1640,6 +1641,8 @@
     _craftQueuedNeed(ingredient) {
         let n = 0;
         for (const job of this._craftQueue || []) {
+            // Taken jobs already left the bags, so they are not still reserved.
+            if (job?.taken) continue;
             for (const ing of job.recipe?.ingredients || []) {
                 if (!this._craftIngredientsMatch(ing, ingredient)) continue;
                 n += Math.max(1, Math.floor(Number(ing.qty) || 1));
@@ -1714,10 +1717,24 @@
         if (!this._craftQueue) this._craftQueue = [];
         n = Math.min(n, this._craftQueueAfford(recipe), this._craftQueueRoom(recipe));
         if (n < 1) return 0;
-        for (let i = 0; i < n; i++) this._craftQueue.push({ recipe });
+        const before = this._craftQueue.length;
+        if (this.simAuth?.()) {
+            const asks = this._craftReserveAsks || (this._craftReserveAsks = []);
+            for (let i = 0; i < n; i++) this._craftQueue.push({ recipe, taken: false });
+            asks.push(n);
+            this._sendCraftAction({ op: "reserve", id: recipe.id, count: n });
+        } else if (this._payCraftLocal) {
+            for (let i = 0; i < n; i++) {
+                const paid = this._payCraftLocal(recipe);
+                if (!paid) break;
+                this._craftQueue.push({ recipe, taken: true, paid });
+            }
+        } else {
+            for (let i = 0; i < n; i++) this._craftQueue.push({ recipe, taken: true });
+        }
         this._pumpCraftQueue();
         this._layoutCraftQueue();
-        return n;
+        return Math.max(0, this._craftQueue.length - before);
     },
 
     _pumpCraftQueue() {
@@ -1731,18 +1748,20 @@
         let guard = q.length;
         while (q.length && guard-- > 0) {
             const job = q[0];
+            // The server has not taken these ingredients yet.
+            if (!job?.taken) return;
             const recipe = job?.recipe;
-            if (!recipe || !this.canCraft(recipe, player)) {
-                q.shift();
+            if (!recipe || !this.canCraft(recipe, player, { skipIngredients: true })) {
+                this._dropCraftQueueHead();
                 continue;
             }
             const station = this._stationForCraft(recipe);
             const needPlace = !!(recipe.requireStation || recipe.requireThing);
             if (needPlace && !station) {
-                q.shift();
+                this._dropCraftQueueHead();
                 continue;
             }
-            const ok = player.beginCraft?.(recipe, station, 1) === true;
+            const ok = player.beginCraft?.(recipe, station, 1, { skipIngredients: true }) === true;
             if (player._craftChannel) {
                 if (ok) {
                     player._craftChannel.fromQueue = true;
@@ -1750,7 +1769,7 @@
                 }
                 return;
             }
-            q.shift();
+            this._dropCraftQueueHead();
         }
         this._craftQueueLive = false;
     },
@@ -1763,27 +1782,19 @@
     },
 
     _onCraftQueueCancelled() {
-        this._craftQueue = [];
-        this._craftQueueLive = false;
-        this._layoutCraftQueue();
+        this._refundOpenCraftQueue();
     },
 
     _updateCraftQueue() {
         const player = this.player;
         if (player?._bodyDead) {
-            if (this._craftQueue?.length || this._craftQueueLive) {
-                this._craftQueue = [];
-                this._craftQueueLive = false;
-                this._layoutCraftQueue();
-            }
+            if (this._craftQueue?.length || this._craftQueueLive) this._refundOpenCraftQueue();
             this._drawCraftQueueSweep();
             return;
         }
         const ch = player?._craftChannel;
         if (this._craftQueueLive && (!ch || !ch.fromQueue)) {
-            this._craftQueue = [];
-            this._craftQueueLive = false;
-            this._layoutCraftQueue();
+            this._refundOpenCraftQueue();
         } else if (!ch && this._craftQueue?.length && !this._craftPlayerBusy(player)) {
             this._pumpCraftQueue();
             this._layoutCraftQueue();
@@ -2045,50 +2056,204 @@
         }
     },
 
-    _finishCraft(recipe, pawn, count = 1) {
-        const who = pawn || this.player;
-        if (!this.canCraft(recipe, who)) return;
-        // Dedicated MP: server consumes ingredients + grants/drops; YOU/snapshots update UI.
-        // Do not mutate locally — that fought deferred YOU sync and spawned ghost ground piles.
-        if (this.simAuth()) {
-            this._netSendMove?.(true);
-            const store = this._openCraftStorage(who);
-            let n = Math.floor(Number(count));
-            if (!Number.isFinite(n) || n < 1) n = 1;
-            n = Math.min(999, n);
-            this.net.sendAction({
-                type: NetProtocol.Actions.CRAFT,
-                id: recipe.id,
-                count: n,
-                pawnId: who?.pawnId,
-                storageUid: store?.entry?.uid || null
-            });
-            return;
-        }
-        const item = this.getItem(recipe.id);
-        const store = this._openCraftStorage(who);
+    _sendCraftAction(fields) {
+        if (!this.simAuth?.() || typeof NetProtocol === "undefined" || !this.net?.sendAction) return;
+        this._netSendMove?.(true);
+        const who = this.player;
+        const store = this._openCraftStorage?.(who);
+        this.net.sendAction({
+            type: NetProtocol.Actions.CRAFT,
+            pawnId: who?.pawnId,
+            storageUid: store?.entry?.uid || null,
+            ...fields
+        });
+    },
+
+    /** Tip and pebble captured before the ingredients leave the bags. */
+    _craftPayPreview(recipe, who) {
         const tip = this._craftPredictedTip(recipe, who);
-        const tipQuality = tip?.knapQuality || null;
-        const tipMaterial = tip?.knapMaterial || null;
-        for (const ing of recipe.ingredients) {
+        let pebbleStone = null;
+        if (recipe?.id === "grindstone" || recipe?.id === "painting_circle") {
+            const pebble = this._craftPredictedPebble(recipe, who);
+            pebbleStone = (typeof Stone !== "undefined" && Stone.normalizeStone)
+                ? (Stone.normalizeStone(pebble?.stone) || "andesite")
+                : (pebble?.stone || "andesite");
+        }
+        return {
+            id: recipe?.id,
+            tipQuality: tip?.knapQuality || null,
+            tipMaterial: tip?.knapMaterial || null,
+            tipStone: tip?.stone || null,
+            pebbleStone
+        };
+    },
+
+    _takeCraftIngredients(recipe, who, into) {
+        const store = this._openCraftStorage(who);
+        for (const ing of recipe?.ingredients || []) {
             const need = Math.max(0, Number(ing.qty) || 1);
-            const fromInv = who.loseMatchingItems(ing) || 0;
+            const fromInv = who.loseMatchingItems(ing, into) || 0;
             let left = Math.max(0, need - fromInv);
             if (left > 0) {
-                const fromPack = this._loseCraftSlots(who.overflow, ing, left, who);
+                const fromPack = this._loseCraftSlots(who.overflow, ing, left, who, null, into);
                 if (fromPack > 0 && this.hotbar) this.hotbar.dirty = true;
                 left = Math.max(0, left - fromPack);
             }
-            if (left > 0) this._loseStorageCraft(store, ing, left, who);
+            if (left > 0) this._loseStorageCraft(store, ing, left, who, into);
         }
+    },
 
+    /** Spend one craft's ingredients and remember enough to refund or finish it. */
+    _payCraftLocal(recipe, pawn) {
+        const who = pawn || this.player;
+        if (!who || !this.canCraft(recipe, who)) return null;
+        const preview = this._craftPayPreview(recipe, who);
+        const refund = [];
+        this._takeCraftIngredients(recipe, who, refund);
+        return { ...preview, refund };
+    },
+
+    _refundCraftPiece(who, piece) {
+        if (!who || !piece?.id) return;
+        const qty = Math.max(1, Math.floor(Number(piece.quantity) || 1));
+        const extras = piece.extras && typeof piece.extras === "object" ? piece.extras : null;
+        const stack = { id: piece.id, quantity: qty, ...(extras || {}) };
+        const special = !!(
+            stack.toolClass || stack.knapIconData || stack.knapQuality
+            || stack.customName || stack.food || stack.formClass
+        );
+        if (special && who.gainStack?.(stack)) return;
+        const item = this.getItem?.(stack.id);
+        if (!item || typeof who.gainItem !== "function") return;
+        const left = who.gainItem(item, qty, stack.spoilLeft, extras);
+        if (left > 0 && typeof DroppedItem !== "undefined") {
+            DroppedItem.spawn(this, who.x, who.y, item, left, undefined, extras || undefined);
+        }
+    },
+
+    _refundCraftJob(who, job) {
+        for (const piece of job?.paid?.refund || []) this._refundCraftPiece(who, piece);
+    },
+
+    /** Give back every queued craft's ingredients and clear the queue. */
+    _refundOpenCraftQueue() {
+        const jobs = this._craftQueue ? this._craftQueue.slice() : [];
+        const ch = this.player?._craftChannel;
+        if (ch?.fromQueue) {
+            this.player._craftChannel = null;
+            this.player._hideChannelBar?.();
+        }
+        this._craftQueue = [];
+        this._craftQueueLive = false;
+        this._craftReserveAsks = [];
+        if (this.simAuth?.()) {
+            if (jobs.length) this._sendCraftAction({ op: "refund" });
+        } else if (this.player) {
+            for (const job of jobs) this._refundCraftJob(this.player, job);
+        }
+        if (this.hotbar) this.hotbar.dirty = true;
+        this._layoutCraftQueue?.();
+        this.refreshCraftMenu?.();
+        this.refreshTooltip?.();
+    },
+
+    /** The craft at the head cannot start. Return its ingredients. */
+    _dropCraftQueueHead() {
+        const q = this._craftQueue;
+        if (!q?.length) return;
+        const job = q[0];
+        if (this.simAuth?.()) {
+            if (!job?.taken) return;
+            q.shift();
+            this._sendCraftAction({ op: "refund", count: 1 });
+        } else {
+            q.shift();
+            this._refundCraftJob(this.player, job);
+        }
+        if (this.hotbar) this.hotbar.dirty = true;
+        this._layoutCraftQueue?.();
+        this.refreshCraftMenu?.();
+        this.refreshTooltip?.();
+    },
+
+    /** Server accepted some of the reserves just sent. Drop the rest. */
+    _onCraftReserve(accepted) {
+        const asks = this._craftReserveAsks;
+        if (!asks?.length) return;
+        const asked = asks.shift();
+        let got = Math.max(0, Math.floor(Number(accepted) || 0));
+        const q = this._craftQueue || [];
+        let seen = 0;
+        const next = [];
+        for (let i = 0; i < q.length; i++) {
+            const job = q[i];
+            if (job.taken || seen >= asked) {
+                next.push(job);
+                continue;
+            }
+            seen++;
+            if (got > 0) {
+                job.taken = true;
+                got--;
+                next.push(job);
+            }
+        }
+        this._craftQueue = next;
+        this._pumpCraftQueue?.();
+        this._layoutCraftQueue?.();
+        this.refreshCraftMenu?.();
+        this.refreshTooltip?.();
+    },
+
+    _craftHoldsForSave() {
+        if (Array.isArray(this._lastYou?.craftHolds)) {
+            try { return JSON.parse(JSON.stringify(this._lastYou.craftHolds)); }
+            catch (_) { return []; }
+        }
+        const out = [];
+        for (const job of this._craftQueue || []) {
+            if (!job?.paid) continue;
+            try { out.push(JSON.parse(JSON.stringify(job.paid))); }
+            catch (_) {}
+        }
+        return out;
+    },
+
+    _finishCraft(recipe, pawn, count = 1, opts = null) {
+        const who = pawn || this.player;
+        const fromQueue = !!opts?.fromQueue;
+        // A queued craft spent its ingredients when it was added.
+        if (!fromQueue && !this.canCraft(recipe, who)) return;
+        // Dedicated MP: server consumes ingredients + grants/drops; YOU/snapshots update UI.
+        // Do not mutate locally — that fought deferred YOU sync and spawned ghost ground piles.
+        if (this.simAuth()) {
+            let n = fromQueue ? 1 : Math.floor(Number(count));
+            if (!Number.isFinite(n) || n < 1) n = 1;
+            n = Math.min(999, n);
+            const fields = { id: recipe.id, count: n };
+            if (fromQueue) fields.op = "finish";
+            this._sendCraftAction(fields);
+            return;
+        }
+        const preview = fromQueue
+            ? (this._craftQueue?.[0]?.paid || null)
+            : this._craftPayPreview(recipe, who);
+        if (!fromQueue) this._takeCraftIngredients(recipe, who, null);
         this._consumeCraftTool(recipe, who);
+        this._grantCraftedItem(recipe, who, preview);
+    },
+
+    _grantCraftedItem(recipe, who, preview) {
+        const item = this.getItem(recipe.id);
+        const tipQuality = preview?.tipQuality || null;
+        const tipMaterial = preview?.tipMaterial || null;
+        const tipStone = preview?.tipStone || null;
 
         if (recipe.id === "stone_spear" || recipe.id === "flint_spear" || recipe.id === "arrow") {
             const stack = makeItemStack(item, recipe.quantity || 1, undefined, this.worldMinuteIndex());
-            stack.knapMaterial = tipMaterial || tip?.knapMaterial || "pebble";
-            if (tipQuality || tip?.knapQuality) stack.knapQuality = tipQuality || tip.knapQuality;
-            if (tip?.stone) stack.stone = tip.stone;
+            stack.knapMaterial = tipMaterial || "pebble";
+            if (tipQuality) stack.knapQuality = tipQuality;
+            if (tipStone) stack.stone = tipStone;
             const extras = { knapMaterial: stack.knapMaterial };
             if (stack.knapQuality) extras.knapQuality = stack.knapQuality;
             if (stack.stone) extras.stone = stack.stone;
@@ -2124,10 +2289,7 @@
         }
 
         if (recipe.id === "grindstone" || recipe.id === "painting_circle") {
-            const pebble = this._craftPredictedPebble(recipe, who);
-            const stone = (typeof Stone !== "undefined" && Stone.normalizeStone)
-                ? (Stone.normalizeStone(pebble?.stone) || "andesite")
-                : (pebble?.stone || "andesite");
+            const stone = preview?.pebbleStone || "andesite";
             const stack = makeItemStack(item, recipe.quantity || 1, undefined, this.worldMinuteIndex());
             stack.stone = stone;
             const extras = { stone };

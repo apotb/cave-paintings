@@ -1314,6 +1314,8 @@
     _kill(p, killer, action = {}) {
         if (!p) return;
         const alreadyDead = !!p.dead;
+        // Queued crafts already spent their ingredients. Put them back so the corpse keeps them.
+        if (!alreadyDead) this._refundCraftHolds?.(p);
         p.dead = true;
         p.hp = 0;
         p._knapSession = null;

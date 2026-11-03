@@ -1653,6 +1653,7 @@
             stomach: p.stomach,
             inventory: p.inventory,
             overflow: p.overflow,
+            craftHolds: this._publicCraftHolds?.(p) || [],
             equipment: p.equipment,
             quarantine: Array.isArray(p.quarantine) ? p.quarantine.slice() : [],
             hotbarIndex: p.hotbarIndex,

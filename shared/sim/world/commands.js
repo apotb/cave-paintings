@@ -1154,7 +1154,7 @@
             + this._countMatchingInSlots(extraSlots, match);
     },
 
-    _loseMatchingFromSlots(slots, match) {
+    _loseMatchingFromSlots(slots, match, into) {
         let remaining = Math.max(0, Math.floor(Number(match?.qty) || 1));
         const hideStage = match?.hideStage || null;
         const id = match?.id;
@@ -1181,6 +1181,14 @@
                 const have = Math.max(0, Math.floor(Number(s.quantity) || 0));
                 const take = Math.min(have, remaining);
                 if (!(take > 0)) continue;
+                if (into) {
+                    const extras = this._stackExtrasFrom(s);
+                    into.push({
+                        id: s.id,
+                        quantity: take,
+                        extras: extras || null
+                    });
+                }
                 s.quantity = have - take;
                 remaining -= take;
                 lost += take;
@@ -1193,7 +1201,7 @@
         return { lost, knapQuality, knapMaterial, stone };
     },
 
-    _loseMatchingItems(p, match, extraSlots) {
+    _loseMatchingItems(p, match, extraSlots, into) {
         const qty = Math.max(0, Math.floor(Number(match?.qty) || 1));
         // Hotbar, then backpack, then an open container.
         const sources = [p?.inventory, p?.overflow, extraSlots];
@@ -1206,7 +1214,7 @@
         for (let i = 0; i < sources.length && left > 0; i++) {
             const slots = sources[i];
             if (!Array.isArray(slots)) continue;
-            const part = this._loseMatchingFromSlots(slots, { ...match, qty: left });
+            const part = this._loseMatchingFromSlots(slots, { ...match, qty: left }, into);
             lost += part.lost;
             left = Math.max(0, left - part.lost);
             if (knapQuality == null) knapQuality = part.knapQuality;
@@ -1259,6 +1267,13 @@
     _tryCraft(session, action = {}) {
         const p = this._actionPawn(session, action);
         if (!p || p.dead) return;
+        const op = String(action.op || "");
+        if (op === "refund") {
+            let n = Math.floor(Number(action.count));
+            if (!Number.isFinite(n) || n < 1) n = null;
+            this._refundCraftHolds(p, n);
+            return;
+        }
         const id = String(action.id || "").slice(0, 64);
         const recipe = this._parseRecipe(id);
         if (!recipe) return;
@@ -1273,6 +1288,15 @@
         let want = Math.floor(Number(action.count));
         if (!Number.isFinite(want) || want < 1) want = 1;
         want = Math.min(999, want);
+
+        if (op === "reserve") {
+            this._reserveCraft(session, p, recipe, action);
+            return;
+        }
+        if (op === "finish") {
+            this._finishReservedCraft(p, recipe, skills, tailoring);
+            return;
+        }
 
         const store = this._craftStorageFromAction(p, action);
         // Ctrl/shift craft one output at a time, so the result lands in the next
@@ -1387,8 +1411,23 @@
         if (placed && (placed.quantity || 0) > 0) slots[target.index] = placed;
     },
 
-    /** One craft. Caller emits storage and dirties the owner after a batch. */
-    _craftOne(p, recipe, store, bill) {
+    _craftPlaceReady(p, recipe) {
+        if (!p || !recipe) return false;
+        if (recipe.requireThing && !this._hasNearbyThing(p, recipe.requireThing)) return false;
+        if (recipe.requireStation && !this._hasNearbyThing(p, recipe.requireStation)) return false;
+        if (Carry.recipeToolClasses?.(recipe.requireTool)?.length) {
+            const held = this._held(p);
+            const def = held ? itemDefs().get(held.id) : null;
+            if (!Carry.heldMatchesRecipeTool(held, def, recipe.requireTool)) return false;
+        }
+        return true;
+    },
+
+    /**
+     * Spend one recipe's ingredients. The hold is what a queued craft gives back
+     * on cancel, and what it turns into when the work finishes.
+     */
+    _payCraft(p, recipe, store, bill) {
         const extra = store?.entry?.slots || null;
         const scoped = (ing) => {
             if (!bill || !ing?.toolClass || typeof Settlement?.billAllowsCraftInput !== "function") return ing;
@@ -1398,21 +1437,9 @@
             };
         };
         for (const ing of recipe.ingredients) {
-            if (this._countMatchingItems(p, scoped(ing), extra) < ing.qty) return { crafted: false };
+            if (this._countMatchingItems(p, scoped(ing), extra) < ing.qty) return null;
         }
-        if (recipe.requireThing && !this._hasNearbyThing(p, recipe.requireThing)) {
-            return { crafted: false };
-        }
-        if (recipe.requireStation && !this._hasNearbyThing(p, recipe.requireStation)) {
-            return { crafted: false };
-        }
-        if (Carry.recipeToolClasses?.(recipe.requireTool)?.length) {
-            const held = this._held(p);
-            const def = held ? itemDefs().get(held.id) : null;
-            if (!Carry.heldMatchesRecipeTool(held, def, recipe.requireTool)) {
-                return { crafted: false };
-            }
-        }
+        if (!this._craftPlaceReady(p, recipe)) return null;
 
         let tipQuality = null;
         let tipMaterial = null;
@@ -1420,9 +1447,10 @@
         const pebbleStone = (recipe.id === "grindstone" || recipe.id === "painting_circle")
             ? this._firstCraftPebbleStone(p, extra)
             : null;
+        const refund = [];
         let storageDirty = false;
         for (const ing of recipe.ingredients) {
-            const lost = this._loseMatchingItems(p, scoped(ing), extra);
+            const lost = this._loseMatchingItems(p, scoped(ing), extra, refund);
             if (ing.toolClass === "spear_tip" || ing.toolClass === "blade") {
                 if (lost.knapQuality) tipQuality = lost.knapQuality;
                 if (lost.knapMaterial) tipMaterial = lost.knapMaterial;
@@ -1430,14 +1458,27 @@
             }
             if (lost.fromStorage) storageDirty = true;
         }
+        return {
+            storageDirty,
+            hold: {
+                id: recipe.id,
+                refund,
+                tipQuality,
+                tipMaterial,
+                tipStone,
+                pebbleStone
+            }
+        };
+    },
 
+    /** Wear the tool and grant the output. Ingredients are already spent. */
+    _grantPaidCraft(p, recipe, hold) {
         this._consumeCraftTool(p, recipe);
-
         const extras = {};
         if (recipe.id === "stone_spear" || recipe.id === "flint_spear" || recipe.id === "arrow") {
-            extras.knapMaterial = tipMaterial || "pebble";
-            if (tipQuality) extras.knapQuality = tipQuality;
-            if (tipStone) extras.stone = tipStone;
+            extras.knapMaterial = hold?.tipMaterial || "pebble";
+            if (hold?.tipQuality) extras.knapQuality = hold.tipQuality;
+            if (hold?.tipStone) extras.stone = hold.tipStone;
         }
         if (itemDefs().get(recipe.id)?.quality) {
             const skills = this._skillsApi?.();
@@ -1450,7 +1491,7 @@
             extras.knapQuality = grade || "crude";
         }
         if (recipe.id === "grindstone" || recipe.id === "painting_circle") {
-            extras.stone = pebbleStone || "andesite";
+            extras.stone = hold?.pebbleStone || "andesite";
         }
         const left = this._give(p, recipe.id, recipe.quantity, extras);
         if (left > 0) {
@@ -1462,7 +1503,104 @@
                 ...(extras.stone ? { stone: extras.stone } : {})
             });
         }
-        return { crafted: true, storageDirty };
+    },
+
+    /** One craft. Caller emits storage and dirties the owner after a batch. */
+    _craftOne(p, recipe, store, bill) {
+        const paid = this._payCraft(p, recipe, store, bill);
+        if (!paid) return { crafted: false };
+        this._grantPaidCraft(p, recipe, paid.hold);
+        return { crafted: true, storageDirty: paid.storageDirty };
+    },
+
+    _refundCraftHold(p, hold) {
+        if (!p || !hold) return;
+        for (const piece of hold.refund || []) {
+            const qty = Math.max(1, Math.floor(Number(piece?.quantity) || 1));
+            const id = piece?.id ? String(piece.id) : "";
+            if (!id) continue;
+            const extras = piece.extras || null;
+            const left = this._give(p, id, qty, extras);
+            if (left > 0) {
+                const drop = this._cloneStackForWorld({ id, quantity: left, ...(extras || {}) });
+                if (drop) this._pushDrop(p.x, p.y, drop);
+            }
+        }
+    },
+
+    _publicCraftHolds(p) {
+        const list = p?.craftHolds;
+        if (!Array.isArray(list) || !list.length) return [];
+        try {
+            return JSON.parse(JSON.stringify(list));
+        } catch (_) {
+            return [];
+        }
+    },
+
+    /** Return queued ingredients. count omitted refunds every hold. */
+    _refundCraftHolds(p, count) {
+        const holds = p?.craftHolds;
+        if (!Array.isArray(holds) || !holds.length) return 0;
+        let n = count == null ? holds.length : Math.floor(Number(count));
+        if (!Number.isFinite(n) || n < 1) return 0;
+        let done = 0;
+        while (n > 0 && holds.length) {
+            this._refundCraftHold(p, holds.shift());
+            n--;
+            done++;
+        }
+        if (!holds.length) p.craftHolds = [];
+        if (done) this._dirtyPawnOwner(p);
+        return done;
+    },
+
+    _reserveCraft(session, p, recipe, action) {
+        let want = Math.floor(Number(action.count));
+        if (!Number.isFinite(want) || want < 1) want = 1;
+        want = Math.min(999, want);
+        if (!p.craftHolds) p.craftHolds = [];
+        want = Math.min(want, Math.max(0, 999 - p.craftHolds.length));
+        const store = this._craftStorageFromAction(p, action);
+        let made = 0;
+        let storageDirty = false;
+        for (let i = 0; i < want; i++) {
+            const paid = this._payCraft(p, recipe, store, action.bill || null);
+            if (!paid) break;
+            p.craftHolds.push(paid.hold);
+            made++;
+            if (paid.storageDirty) storageDirty = true;
+        }
+        if (storageDirty && store) this._emitStorage(store.chunk, store.entry);
+        if (made > 0) this._dirtyPawnOwner(p);
+        this.pushEvent({
+            kind: "craft_reserve",
+            accepted: made,
+            to: session.id
+        });
+    },
+
+    _finishReservedCraft(p, recipe, skills, tailoring) {
+        const holds = p?.craftHolds;
+        if (!Array.isArray(holds) || !holds.length) return;
+        const idx = holds.findIndex((h) => h && h.id === recipe.id);
+        if (idx < 0) return;
+        const hold = holds[idx];
+        if (!this._craftPlaceReady(p, recipe)) {
+            holds.splice(idx, 1);
+            if (!holds.length) p.craftHolds = [];
+            this._refundCraftHold(p, hold);
+            this._dirtyPawnOwner(p);
+            return;
+        }
+        holds.splice(idx, 1);
+        if (!holds.length) p.craftHolds = [];
+        this._grantPaidCraft(p, recipe, hold);
+        this._dirtyPawnOwner(p);
+        if (tailoring && skills && p.bio && !skills.incapable(p.bio, "crafting")) {
+            const minutes = Math.max(1 / 60, (Number(recipe.craftSeconds) || 0) / 60);
+            skills.award(p.bio, "crafting", skills.XP_MINUTE * minutes, { day: this.gameDay });
+        }
     },
 
     _held(p) {

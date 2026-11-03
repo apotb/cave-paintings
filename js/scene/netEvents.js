@@ -8,6 +8,9 @@
 
     _netApplyEvent(ev) {
         if (!ev || !this.isNet) return;
+        if (ev.kind === "craft_reserve") {
+            this._onCraftReserve?.(ev.accepted);
+        }
         if (ev.kind === "world_regen" && ev.seed != null) {
             this._netOnWorldRegen(ev.seed);
             if (typeof ModKinds !== "undefined") ModKinds.dispatchEvent(this, ev);

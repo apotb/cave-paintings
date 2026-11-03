@@ -409,7 +409,8 @@ const CharacterStore = (() => {
                 : null,
             techs: cloneTechs(character.techs),
             techGrantRev: Math.max(0, Math.floor(Number(character.techGrantRev) || 0)),
-            quarantine: cloneOverflow(character.quarantine)
+            quarantine: cloneOverflow(character.quarantine),
+            craftHolds: Array.isArray(character.craftHolds) ? clone(character.craftHolds) : []
         };
         normalizeCharacterSpoil(snap);
         return snap;
@@ -468,6 +469,7 @@ const CharacterStore = (() => {
         if (you.techGrantRev != null) {
             next.techGrantRev = Math.max(0, Math.floor(Number(you.techGrantRev) || 0));
         }
+        if (Array.isArray(you.craftHolds)) next.craftHolds = clone(you.craftHolds);
         next.updatedAt = Date.now();
         next.lastPlayedAt = next.updatedAt;
         normalizeCharacterSpoil(next);
@@ -517,7 +519,8 @@ const CharacterStore = (() => {
             thoughts: raw.thoughts && typeof raw.thoughts === "object" ? clone(raw.thoughts) : null,
             techs: cloneTechs(raw.techs),
             techGrantRev: Math.max(0, Math.floor(Number(raw.techGrantRev) || 0)),
-            quarantine: Array.isArray(raw.quarantine) ? clone(raw.quarantine) : []
+            quarantine: Array.isArray(raw.quarantine) ? clone(raw.quarantine) : [],
+            craftHolds: Array.isArray(raw.craftHolds) ? clone(raw.craftHolds) : []
         });
         if (Array.isArray(raw.lastMods)) c.lastMods = copyLastMods(raw.lastMods);
         // Keep the exported id so world logout poses (keyed by character id) still apply.

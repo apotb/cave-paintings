@@ -223,7 +223,8 @@
                 ? raw.overflow.map((s) => this._cloneSaveStack(s))
                 : (raw.overflow || []),
             equipment: cloneEq(eq),
-            party: cloneParty(raw.party)
+            party: cloneParty(raw.party),
+            craftHolds: this._craftHoldsForSave?.() || []
         };
     },
 

@@ -135,6 +135,59 @@ test("a run of the same item only spends one queue box", () => {
     assert.equal(craft._enqueueCrafts.call(ctx, { id: "spear" }, 1), 0);
 });
 
+test("a taken queue job is already spent", () => {
+    const ctx = {
+        _craftQueue: [
+            { taken: true, recipe: { ingredients: [{ id: "stick", qty: 2 }] } },
+            { recipe: { ingredients: [{ id: "stick", qty: 1 }] } }
+        ],
+        _craftIngredientsMatch: craft._craftIngredientsMatch
+    };
+    assert.equal(craft._craftQueuedNeed.call(ctx, { id: "stick" }), 1);
+});
+
+test("queueing spends ingredients and cancelling gives them back", () => {
+    const inv = [{ id: "leaf", quantity: 10 }];
+    const ctx = {
+        player: {
+            inventory: inv,
+            loseMatchingItems(match, into) {
+                const take = Math.min(inv[0].quantity, match.qty);
+                inv[0].quantity -= take;
+                if (into && take > 0) into.push({ id: "leaf", quantity: take });
+                return take;
+            },
+            gainItem(_item, qty) {
+                inv[0].quantity += qty;
+                return 0;
+            }
+        },
+        canCraft() { return true; },
+        _craftPayPreview() {
+            return { id: "cord", tipQuality: null, tipMaterial: null, tipStone: null, pebbleStone: null };
+        },
+        _openCraftStorage() { return null; },
+        _loseCraftSlots() { return 0; },
+        getItem(id) { return { id }; },
+        hotbar: { dirty: false },
+        _layoutCraftQueue() {},
+        simAuth() { return false; }
+    };
+    ctx._takeCraftIngredients = craft._takeCraftIngredients;
+    ctx._refundCraftPiece = craft._refundCraftPiece;
+    ctx._refundCraftJob = craft._refundCraftJob;
+    const paid = craft._payCraftLocal.call(ctx, {
+        id: "cord",
+        ingredients: [{ id: "leaf", qty: 5 }]
+    });
+    assert.equal(inv[0].quantity, 5);
+    assert.equal(paid.refund[0].quantity, 5);
+    ctx._craftQueue = [{ recipe: { id: "cord" }, taken: true, paid }];
+    craft._refundOpenCraftQueue.call(ctx);
+    assert.equal(inv[0].quantity, 10);
+    assert.equal(ctx._craftQueue.length, 0);
+});
+
 test("queued crafts reserve ingredients", () => {
     const ctx = {
         _craftQueue: [

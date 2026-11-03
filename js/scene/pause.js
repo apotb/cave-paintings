@@ -324,6 +324,8 @@
     },
 
     onPlayerDied(killer, opts = {}) {
+        // Queued crafts already took their ingredients. Put them back before the corpse is built.
+        this._refundOpenCraftQueue?.();
         const leader = this.leader || this.player;
         this.partySys.leaderDead = true;
         this.partySys.clearPvpAggro?.();

@@ -2599,7 +2599,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      * Remove stacks matching id (and optional toolClass / hideStage). Prefer exact toolClass matches.
      * @param {{ id?: string, qty?: number, toolClass?: string|null, hideStage?: string|null }} match
      */
-    loseMatchingItems(match) {
+    loseMatchingItems(match, into) {
         let remaining = Math.max(0, Number(match?.qty) || 1);
         const wantClass = match?.toolClass || null;
         const hideStage = match?.hideStage || null;
@@ -2614,6 +2614,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
                 if (requireClass && s.toolClass !== requireClass) continue;
                 if (!requireClass && wantClass && s.toolClass === wantClass) continue;
                 const take = Math.min(s.quantity, remaining);
+                if (into && take > 0) into.push(this._pieceForCraftRefund(s, take));
                 s.quantity -= take;
                 remaining -= take;
                 numLost += take;
@@ -2631,6 +2632,20 @@ class Player extends Phaser.Physics.Arcade.Sprite {
 
         if (numLost > 0) this.scene.hotbar.dirty = true;
         return numLost;
+    }
+
+    /** Snapshot of a stack portion, so a cancelled craft can give that portion back. */
+    _pieceForCraftRefund(stack, take) {
+        const piece = { id: stack.id, quantity: take };
+        const extras = {};
+        for (const k of Object.keys(stack)) {
+            if (k === "id" || k === "quantity" || k === "uid" || k === "x" || k === "y" || k === "lifeMs") continue;
+            extras[k] = stack[k];
+        }
+        if (stack.food && typeof stack.food === "object") extras.food = { ...stack.food };
+        if (Array.isArray(stack.ingredients)) extras.ingredients = stack.ingredients.slice();
+        if (Object.keys(extras).length) piece.extras = extras;
+        return piece;
     }
 
     getNumItems(id) {
@@ -3453,7 +3468,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      * (skinworking bench, campfire pitch, a rock) must stay in range; handheld
      * recipes (tally stick) only need the tool.
      */
-    beginCraft(recipe, station, repeatLeft = 1) {
+    beginCraft(recipe, station, repeatLeft = 1, opts = null) {
         if (this._eatChannel) this._cancelEat();
         if (this._tendChannel || this._skinChannel || this._fleshChannel || this._brainChannel || this._craftChannel || this._bodyDead || this.isAttacking()) {
             return false;
@@ -3464,7 +3479,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this.isIncapacitated()) return false;
         const needPlace = !!(recipe?.requireStation || recipe?.requireThing || station);
         if (needPlace && !this._craftAnchorInRange(station)) return false;
-        if (!this.scene.canCraft?.(recipe, this)) return false;
+        if (!this.scene.canCraft?.(recipe, this, opts?.skipIngredients ? { skipIngredients: true } : null)) return false;
         const item = this.getHeldItem();
         const rt = recipe.requireTool;
         if (typeof Carry !== "undefined" && Carry.heldMatchesRecipeTool) {
@@ -3544,7 +3559,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const fromQueue = !!this._craftChannel.fromQueue;
         const repeatLeft = Math.max(1, Math.floor(Number(this._craftChannel.repeat) || 1));
         this._craftChannel = null;
-        this.scene._finishCraft?.(recipe, this);
+        this.scene._finishCraft?.(recipe, this, 1, fromQueue ? { fromQueue: true } : null);
         this.scene.hotbar && (this.scene.hotbar.dirty = true);
         if (fromQueue) {
             this.scene._onCraftQueueStep?.();

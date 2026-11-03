@@ -645,6 +645,10 @@
         this._pullUnknownGear(p);
         this._syncPlayerInvSize(p);
         this._restoreQuarantine(p);
+        if (Array.isArray(character.craftHolds) && character.craftHolds.length) {
+            p.craftHolds = character.craftHolds;
+            this._refundCraftHolds?.(p);
+        }
         this._enforceCarryCap(p);
         for (const m of p.party || []) {
             this._keepKnownTechs(m);
