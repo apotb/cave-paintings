@@ -1982,6 +1982,66 @@ test("settlers keep the best weapon (and a bandage while tending) when stashing"
     ), false);
 });
 
+test("an assigned bow stays out of storage so arrows can be fetched", () => {
+    const Policies = require("../shared/policies");
+    const getItem = (id) => {
+        if (id === "club") return { id: "club", weapon: { type: "melee", melee: { damage: 40 } } };
+        return DataStore.getItem(id);
+    };
+    const libs = Policies.defaultPolicies();
+    const ranged = Policies.policyById(libs.weapon, "ranged");
+    const melee = Policies.policyById(libs.weapon, "melee");
+    const both = { id: "both", offCategories: [], offItems: [], onItems: [] };
+    const rangedOpts = { weaponAssign: { arrowCount: 20, policy: ranged } };
+    const bow = [{ id: "longbow", quantity: 1 }, { id: "stick", quantity: 2 }];
+    const keep = Settlement.keepIndices(bow, getItem, rangedOpts);
+    assert.equal(keep.has(0), true);
+    assert.equal(keep.has(1), false);
+    assert.equal(Settlement.hasStashable(bow, [], getItem, () => true, rangedOpts), true);
+    assert.equal(Settlement.hasStashable(
+        [{ id: "longbow", quantity: 1 }],
+        [],
+        getItem,
+        () => true,
+        rangedOpts
+    ), false);
+    assert.equal(Settlement.hasStashable(
+        [null],
+        [{ id: "longbow", quantity: 1 }],
+        getItem,
+        () => true,
+        rangedOpts
+    ), false);
+    assert.equal(Settlement.keepIndices(
+        [{ id: "longbow", quantity: 1 }, { id: "arrow", quantity: 4 }],
+        getItem,
+        rangedOpts
+    ).has(1), true);
+    assert.equal(Settlement.keepIndices([{ id: "longbow", quantity: 1 }], getItem).has(0), false);
+    assert.equal(Settlement.keepIndices(
+        [{ id: "longbow", quantity: 1 }],
+        getItem,
+        { weaponAssign: { arrowCount: 20, policy: melee } }
+    ).has(0), false);
+    assert.equal(Settlement.keepIndices(
+        [{ id: "longbow", quantity: 1 }],
+        getItem,
+        { weaponAssign: { arrowCount: 0, policy: ranged } }
+    ).has(0), false);
+    const spare = Settlement.keepIndices([
+        { id: "shortbow", quantity: 1 },
+        { id: "longbow", quantity: 1 }
+    ], getItem, rangedOpts);
+    assert.equal(spare.has(0), false);
+    assert.equal(spare.has(1), true);
+    const outmatched = Settlement.keepIndices([
+        { id: "longbow", quantity: 1 },
+        { id: "club", quantity: 1 }
+    ], getItem, { weaponAssign: { arrowCount: 20, policy: both } });
+    assert.equal(outmatched.has(0), false);
+    assert.equal(outmatched.has(1), true);
+});
+
 test("planWork puts carried goods away before other work, idle, and sleep", () => {
     const jobs = Settlement.defaultJobs();
     const basket = { x: 8, y: 8, slots: [] };

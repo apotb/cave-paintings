@@ -1362,18 +1362,24 @@ function scanWork(world, rec, settle, claims) {
     const carryPreds = rec._carryRoom?.keepPreds;
     if (Array.isArray(carryPreds)) keepPreds.push(...carryPreds);
     let keepMedicine = null;
+    let weaponAssign = null;
     let policyApi = (typeof Policies !== "undefined") ? Policies : null;
     if (!policyApi) {
         try { policyApi = require("../../policies"); } catch (_) { policyApi = null; }
     }
-    if (policyApi?.medicineMatches && Settlement.assignFor) {
+    if (policyApi && Settlement.assignFor) {
         const assign = Settlement.assignFor(settle, rec);
-        if (assign && assign.medicineCount > 0) {
+        if (policyApi.medicineMatches && assign && assign.medicineCount > 0) {
             const type = assign.medicineType;
             keepMedicine = {
                 count: assign.medicineCount,
                 matches: (s) => policyApi.medicineMatches(type, s?.id)
             };
+        }
+        if (policyApi.policyById && assign && Number(assign.arrowCount) > 0) {
+            const libs = policyApi.normalizePolicies(settle?.policies);
+            const policy = policyApi.policyById(libs.weapon, assign.weaponPolicyId) || libs.weapon[0] || null;
+            if (policy) weaponAssign = { arrowCount: assign.arrowCount, policy };
         }
     }
     const keepOpts = keepGearOpts({
@@ -1381,7 +1387,8 @@ function scanWork(world, rec, settle, claims) {
         keepPigment: keepPigment || keepTally,
         isPigment,
         keepPreds,
-        keepMedicine
+        keepMedicine,
+        weaponAssign
     });
     const assignment = Settlement.assignmentAt(
         Settlement.scheduleFor(settle, rec.id),
@@ -1425,6 +1432,7 @@ function scanWork(world, rec, settle, claims) {
         isPigment,
         keepPreds: keepPreds.length ? keepPreds : null,
         keepMedicine,
+        weaponAssign,
         jobKeepPreds: jobKeepPreds.length ? jobKeepPreds : null,
         carryRoom: !!rec._carryRoom,
         bed: (night || injured) ? freeBed(world, rec, settle, claims, { medical: !!injured }) : null,

@@ -2245,9 +2245,52 @@
         return bow && arrow;
     }
 
-    function stowSkip(stack, inventory, overflow) {
-        if (!stack?.id || !holdsLoadedBow(inventory, overflow)) return false;
-        return isCarriedBow(stack.id) || stack.id === "arrow";
+    function weaponAssignSpec(opts) {
+        const spec = opts?.weaponAssign;
+        if (!spec?.policy) return null;
+        const n = Math.floor(Number(spec.arrowCount) || 0);
+        if (!(n > 0)) return null;
+        return spec;
+    }
+
+    /**
+     * The bow this pawn is supposed to be holding. Arrows in the baskets make
+     * the gear step pick one up, and an unloaded bow used to look like cargo,
+     * so haul put it straight back and the two jobs chased each other.
+     */
+    function assignedBow(inventory, overflow, getItem, opts) {
+        const spec = weaponAssignSpec(opts);
+        const P = policiesMod();
+        if (!spec || !P?.isBow || !P.isWeapon || !P.gearAllowed || !P.weaponScore) return null;
+        let best = null;
+        let bestScore = -1;
+        const consider = (stack, index, bag) => {
+            if (!stack?.id || !P.isWeapon(stack, getItem)) return;
+            const ranged = !!P.isBow(stack, getItem);
+            const cat = ranged ? "ranged" : "melee";
+            if (!P.gearAllowed(spec.policy, stack.id, cat)) return;
+            const score = Number(P.weaponScore(stack, getItem)) || 0;
+            if (!(score > bestScore)) return;
+            bestScore = score;
+            best = { stack, index, bag };
+        };
+        const inv = Array.isArray(inventory) ? inventory : [];
+        for (let i = 0; i < inv.length; i++) consider(inv[i], i, "inv");
+        const over = Array.isArray(overflow) ? overflow : [];
+        for (let i = 0; i < over.length; i++) consider(over[i], i, "over");
+        if (!best || !P.isBow(best.stack, getItem)) return null;
+        return best;
+    }
+
+    function stowSkip(stack, inventory, overflow, opts) {
+        if (!stack?.id) return false;
+        if (holdsLoadedBow(inventory, overflow) && (isCarriedBow(stack.id) || stack.id === "arrow")) {
+            return true;
+        }
+        const bow = assignedBow(inventory, overflow, opts?.getItem, opts);
+        if (!bow) return false;
+        if (stack === bow.stack) return true;
+        return stack.id === "arrow" && (Number(stack.quantity) || 0) > 0;
     }
 
     /** Melee damage for "keep the best weapon" while stashing. Matches Party.meleeDamageOf. */
@@ -2287,10 +2330,12 @@
     }
 
     /**
-     * Inventory indices settlers should keep on them: best melee, optionally
-     * one bandage while a doctor job has patients, one pigment while a
-     * painting circle still needs it, and any keepPreds (a fishing rod and
-     * bait while that job still has work). Worn equipment is not inventory.
+     * Inventory indices settlers should keep on them: best melee, the bow their
+     * weapon assign is holding (so they can fetch arrows without haul putting
+     * the bow back), a loaded bow and its arrows, optionally one bandage while
+     * a doctor job has patients, one pigment while a painting circle still
+     * needs it, and any keepPreds (a fishing rod and bait while that job still
+     * has work). Worn equipment is not inventory.
      */
     function keepIndices(inventory, getItem, opts = {}) {
         const keep = new Set();
@@ -2309,6 +2354,13 @@
             for (let i = 0; i < inv.length; i++) {
                 const id = inv[i]?.id;
                 if (isCarriedBow(id) || id === "arrow") keep.add(i);
+            }
+        }
+        const carriedBow = assignedBow(inv, opts.overflow, getItem, opts);
+        if (carriedBow?.bag === "inv") keep.add(carriedBow.index);
+        if (carriedBow) {
+            for (let i = 0; i < inv.length; i++) {
+                if (inv[i]?.id === "arrow" && (Number(inv[i].quantity) || 0) > 0) keep.add(i);
             }
         }
         if (opts.keepBandage) {
@@ -2412,7 +2464,7 @@
                 if (skipKeep && keep.has(i)) continue;
                 if (!skipKeep && overKeep.has(i)) continue;
                 const s = slots[i];
-                if (stowSkip(s, inventory, overflow)) continue;
+                if (stowSkip(s, inventory, overflow, { ...opts, getItem })) continue;
                 if (s && store(s)) return true;
             }
             return false;

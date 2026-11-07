@@ -1455,7 +1455,8 @@ function foundAvail(world, rec, settle, found) {
 
 function policiesApi() {
     if (typeof Policies !== "undefined") return Policies;
-    try { return require("../../policies"); } catch (_) { return null; }
+    // require here is settlerWork's, so the path is from shared/sim.
+    try { return require("../policies"); } catch (_) { return null; }
 }
 
 function medicineKey(found) {
@@ -1813,14 +1814,16 @@ function keepGearOpts(keepBandageOrOpts) {
                 ? keepBandageOrOpts.isPigment
                 : null,
             keepPreds: preds && preds.length ? preds : null,
-            keepMedicine: keepBandageOrOpts.keepMedicine || null
+            keepMedicine: keepBandageOrOpts.keepMedicine || null,
+            weaponAssign: keepBandageOrOpts.weaponAssign || null
         };
     }
     return {
         keepBandage: !!keepBandageOrOpts,
         keepPigment: false,
         isPigment: null,
-        keepPreds: null
+        keepPreds: null,
+        weaponAssign: null
     };
 }
 
@@ -1833,6 +1836,7 @@ function stashScan(world, rec, settle, keepBandageOrOpts) {
     }
     const keep = Settlement.keepIndices(rec.inventory, getItem, opts);
     const overKeep = Settlement.overflowMedicineKeep?.(rec.inventory, rec.overflow, opts) || new Set();
+    const skipOpts = { ...opts, getItem };
     // opts.overflow is set above so a loaded bow stays with its arrows.
     let basket = null;
     const tryPick = (s) => {
@@ -1841,13 +1845,13 @@ function stashScan(world, rec, settle, keepBandageOrOpts) {
     };
     for (let i = 0; i < (rec.inventory || []).length; i++) {
         if (keep.has(i)) continue;
-        if (Settlement.stowSkip?.(rec.inventory[i], rec.inventory, rec.overflow)) continue;
+        if (Settlement.stowSkip?.(rec.inventory[i], rec.inventory, rec.overflow, skipOpts)) continue;
         tryPick(rec.inventory[i]);
     }
     for (let i = 0; i < (rec.overflow || []).length; i++) {
         if (overKeep.has(i)) continue;
         const s = rec.overflow[i];
-        if (Settlement.stowSkip?.(s, rec.inventory, rec.overflow)) continue;
+        if (Settlement.stowSkip?.(s, rec.inventory, rec.overflow, skipOpts)) continue;
         tryPick(s);
     }
     return {
@@ -1863,6 +1867,7 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     gearOpts.overflow = rec.overflow;
     const keep = Settlement.keepIndices(rec.inventory, getItem, gearOpts);
     const overKeep = Settlement.overflowMedicineKeep?.(rec.inventory, rec.overflow, gearOpts) || new Set();
+    const skipOpts = { ...gearOpts, getItem };
     const dump = (slots, skipKeep, spared) => {
         if (!slots) return;
         for (let i = 0; i < slots.length; i++) {
@@ -1870,7 +1875,7 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
             if (spared?.has(i)) continue;
             const s = slots[i];
             if (!s) continue;
-            if (Settlement.stowSkip?.(s, rec.inventory, rec.overflow)) continue;
+            if (Settlement.stowSkip?.(s, rec.inventory, rec.overflow, skipOpts)) continue;
             if (
                 dest
                 && storageNear(rec, dest)

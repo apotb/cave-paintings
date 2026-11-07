@@ -997,14 +997,15 @@ function firstStashable(rec, keepBandageOrOpts) {
     const gearOpts = keepGearOpts(keepBandageOrOpts);
     gearOpts.overflow = rec.overflow;
     const keep = Settlement.keepIndices(rec.inventory, getItem, gearOpts);
+    const skipOpts = { ...gearOpts, getItem };
     for (let i = 0; i < (rec.inventory || []).length; i++) {
         if (keep.has(i)) continue;
         const s = rec.inventory[i];
-        if (Settlement.stowSkip?.(s, rec.inventory, rec.overflow)) continue;
+        if (Settlement.stowSkip?.(s, rec.inventory, rec.overflow, skipOpts)) continue;
         if (s?.id) return s;
     }
     for (const s of rec.overflow || []) {
-        if (Settlement.stowSkip?.(s, rec.inventory, rec.overflow)) continue;
+        if (Settlement.stowSkip?.(s, rec.inventory, rec.overflow, skipOpts)) continue;
         if (s?.id) return s;
     }
     return null;

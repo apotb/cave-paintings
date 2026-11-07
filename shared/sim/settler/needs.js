@@ -324,12 +324,13 @@ function carriedDumpCandidates(rec, keepOpts) {
     const gearOpts = keepGearOpts(keepOpts);
     gearOpts.overflow = rec.overflow;
     const keep = Settlement.keepIndices(rec.inventory, getItem, gearOpts);
+    const skipOpts = { ...gearOpts, getItem };
     const out = [];
     const push = (slots, keptAt) => {
         for (let i = 0; i < (slots || []).length; i++) {
             const stack = slots[i];
             if (!stack?.id) continue;
-            const kept = !!keptAt(i) || !!Settlement.stowSkip?.(stack, rec.inventory, rec.overflow);
+            const kept = !!keptAt(i) || !!Settlement.stowSkip?.(stack, rec.inventory, rec.overflow, skipOpts);
             out.push({ slots, index: i, stack, kept });
         }
     };

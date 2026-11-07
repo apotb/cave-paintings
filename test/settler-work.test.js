@@ -129,6 +129,34 @@ function workOnce(world, rec) {
     return world._tickSettlerWork(mob, 300);
 }
 
+test("a ranged settler holds the bow and takes arrows instead of putting it back", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 2000;
+    const jobs = Settlement.defaultJobs();
+    for (const name of Object.keys(jobs)) jobs[name] = name === "haul" ? 3 : 0;
+    settle.jobs[rec.id] = jobs;
+    Settlement.setAssign(settle, rec.id, { weaponPolicyId: "ranged", arrowCount: 8 });
+    const basket = addBasket(world, settle, rec.x, rec.y, "bowbasket");
+    basket.slots[0] = { id: "longbow", quantity: 1 };
+    basket.slots[1] = { id: "arrow", quantity: 8, knapQuality: "rough" };
+    const carriesBow = () => (rec.inventory || []).concat(rec.overflow || [])
+        .some((s) => s && s.id === "longbow");
+    const arrowQty = () => (rec.inventory || []).concat(rec.overflow || [])
+        .reduce((n, s) => n + (s?.id === "arrow" ? (Number(s.quantity) || 1) : 0), 0);
+    for (let i = 0; i < 8; i++) workOnce(world, rec);
+    assert.equal(carriesBow(), true, `bow should stay in hand (${rec._settlerAct})`);
+    assert.ok(arrowQty() > 0, `arrows should be carried (${rec._settlerAct})`);
+    for (let i = 0; i < 6; i++) {
+        workOnce(world, rec);
+        assert.equal(carriesBow(), true, `bow went back to storage on tick ${i} (${rec._settlerAct})`);
+        assert.equal(
+            (basket.slots || []).some((s) => s && s.id === "longbow"),
+            false
+        );
+    }
+});
+
 test("public settler snapshot includes Idle so world hover can show it", () => {
     const { world, pawn } = createTestWorld();
     const { rec } = parkSettler(world, pawn);
@@ -2992,10 +3020,18 @@ test("dedicated settler hauls forbidden items into a matching basket", () => {
     workOnce(world, rec);
     const sticksInApparel = (apparel.slots || []).some((s) => s && s.id === "stick");
     const sticksInWood = (wood.slots || []).some((s) => s && s.id === "stick");
+    const wornWrap = Object.values(rec.equipment || {}).some((s) => {
+        if (!s) return false;
+        if (Array.isArray(s)) return s.some((w) => w && w.id === "leaf_wrap");
+        return s.id === "leaf_wrap";
+    });
     const wrapKept = (apparel.slots || []).some((s) => s && s.id === "leaf_wrap")
-        || rec.inventory.some((s) => s && s.id === "leaf_wrap");
+        || rec.inventory.some((s) => s && s.id === "leaf_wrap")
+        || wornWrap;
+    const wrapInWood = (wood.slots || []).some((s) => s && s.id === "leaf_wrap");
     assert.equal(sticksInApparel, false, "sticks should leave the apparel basket");
     assert.ok(sticksInWood || rec.inventory.some((s) => s && s.id === "stick"), "sticks should be hauled toward wood storage");
+    assert.equal(wrapInWood, false, "clothing should not be hauled into the wood basket");
     assert.ok(wrapKept, "clothing should stay allowed in the apparel basket");
 });
 

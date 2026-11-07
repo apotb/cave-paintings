@@ -448,7 +448,8 @@ function tick(world, mob, delta) {
         keepPigment: !!scan.keepPigment,
         isPigment: scan.isPigment || null,
         keepPreds: scan.keepPreds || null,
-        keepMedicine: scan.keepMedicine || null
+        keepMedicine: scan.keepMedicine || null,
+        weaponAssign: scan.weaponAssign || null
     });
     const jobMatsOpts = () => {
         const extra = scan.jobKeepPreds;
@@ -458,7 +459,8 @@ function tick(world, mob, delta) {
             keepPigment: !!keepOpts.keepPigment,
             isPigment: keepOpts.isPigment || null,
             keepPreds: [...(keepOpts.keepPreds || []), ...extra],
-            keepMedicine: keepOpts.keepMedicine || null
+            keepMedicine: keepOpts.keepMedicine || null,
+            weaponAssign: keepOpts.weaponAssign || null
         });
     };
     // Last search found nothing to do. Replanning every idle person every
