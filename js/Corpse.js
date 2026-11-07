@@ -168,12 +168,15 @@ class Corpse extends Phaser.GameObjects.Sprite {
         this.chunk = chunk;
         this._hostScene = scene;
         this._colorTexKey = key;
+        this._corpse = true;
 
         scene.add.existing(this);
         scene.mainLayer.add(this);
         this.setOrigin(0.5, 0.5);
         this.applyStageAppearance();
-        // Corpse x/y is the body center. Sort at the near edge, same as a downed mob.
+        // Corpse x/y is the body center. Near-edge sort keeps the body in front
+        // of scenery behind it; an overlapping player or settler pulls it under
+        // their feet.
         if (typeof applyCreatureSortDepth === "function") {
             applyCreatureSortDepth(this, {
                 y: Number(entry.y) || 0,

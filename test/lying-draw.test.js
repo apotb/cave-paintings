@@ -14,6 +14,8 @@ vm.runInContext(
     + "this.setCreatureProne = setCreatureProne;\n"
     + "this.setCreatureRest = setCreatureRest;\n"
     + "this.lyingSortDepth = lyingSortDepth;\n"
+    + "this.corpseSortDepth = corpseSortDepth;\n"
+    + "this.creatureSortDepth = creatureSortDepth;\n"
     + "this.frameLocalCut = frameLocalCut;\n",
     context
 );
@@ -33,6 +35,51 @@ test("a downed body sorts at its near edge, in front of a prop on that line", ()
     // Corpse y is the body center. South edge is 8px lower.
     assert.equal(context.lyingSortDepth(-20, 16, true), -11);
     assert.equal(context.lyingSortDepth(8, 16, false), 9);
+});
+
+test("a corpse stays at its near edge until a person overlaps it", () => {
+    const body = { x: 0, y: 0, w: 16, h: 16, centered: true };
+    assert.equal(context.corpseSortDepth(body, []), context.lyingSortDepth(0, 16, true));
+    // Beside the body: still in front of a prop on the south edge.
+    assert.equal(context.corpseSortDepth(body, [
+        { x: 40, y: 0, w: 16, h: 16, centerX: false }
+    ]), 9);
+    // Standing on the body: just behind their feet, so they draw on top.
+    const onTop = context.corpseSortDepth(body, [
+        { x: -4, y: 0, w: 16, h: 16, centerX: false }
+    ]);
+    assert.equal(onTop, -0.5);
+    assert.ok(onTop < 0);
+    // Already south of the near edge: leave the prop sort alone.
+    assert.equal(context.corpseSortDepth(body, [
+        { x: -4, y: 20, w: 16, h: 16, centerX: false }
+    ]), 9);
+});
+
+test("creature sort treats a corpse as ground under an overlapping settler", () => {
+    const settler = {
+        active: true,
+        x: -4,
+        y: 0,
+        width: 16,
+        height: 16,
+        originX: 0,
+        originY: 1
+    };
+    const corpse = {
+        _corpse: true,
+        x: 0,
+        y: 0,
+        width: 16,
+        height: 16,
+        originX: 0.5,
+        originY: 0.5,
+        scene: { player: null, party: [], settlers: [settler] }
+    };
+    assert.equal(
+        context.creatureSortDepth(corpse, { prone: true, centered: true, y: 0, height: 16 }),
+        -0.5
+    );
 });
 
 test("lying scale covers an even number of screen pixels", () => {

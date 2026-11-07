@@ -4035,6 +4035,119 @@ function lyingSortDepth(worldY, height, centered) {
 }
 
 /**
+ * Corpse Y-sort. Alone, the body keeps the near edge so a tree or rock
+ * behind it does not cover the sprite. A standing player or settler whose
+ * sprite overlaps the body pulls that depth just behind their feet — the
+ * near edge otherwise paints the corpse over everyone north of it.
+ * `standers` are { x, y, w, h, centerX }. `y` is feet. `centerX` means `x`
+ * is the sprite center; otherwise `x` is the left edge (origin 0, 1).
+ */
+function corpseSortDepth(body, standers) {
+    const h = Number(body?.h) > 0 ? Number(body.h) : 16;
+    const w = Number(body?.w) > 0 ? Number(body.w) : h;
+    const y = Number(body?.y) || 0;
+    const x = Number(body?.x) || 0;
+    const centered = body?.centered !== false;
+    let depth = lyingSortDepth(y, h, centered);
+    const top = centered ? y - h * 0.5 : y - h;
+    const bottom = top + h;
+    const left = centered ? x - w * 0.5 : x;
+    const right = left + w;
+    if (!standers || !standers.length) return depth;
+    for (let i = 0; i < standers.length; i++) {
+        const s = standers[i];
+        if (!s) continue;
+        const feet = Number(s.y);
+        const sx = Number(s.x);
+        if (!Number.isFinite(feet) || !Number.isFinite(sx)) continue;
+        const sh = Number(s.h) > 0 ? Number(s.h) : 16;
+        const sw = Number(s.w) > 0 ? Number(s.w) : 16;
+        const sLeft = s.centerX ? sx - sw * 0.5 : sx;
+        const sRight = sLeft + sw;
+        const sTop = feet - sh;
+        if (sRight <= left || sLeft >= right) continue;
+        if (feet <= top || sTop >= bottom) continue;
+        const under = (feet | 0) - 0.5;
+        if (under < depth) depth = under;
+    }
+    return depth;
+}
+
+/** Standing players and settlers. Downed and sleeping bodies stay out. */
+function corpseStanders(scene) {
+    const out = [];
+    if (!scene) return out;
+    const seen = new Set();
+    const add = (x, y, spr, skip) => {
+        if (!spr || seen.has(spr) || spr.active === false) return;
+        if (skip) return;
+        seen.add(spr);
+        const px = Number(x);
+        const py = Number(y);
+        if (!Number.isFinite(px) || !Number.isFinite(py)) return;
+        out.push({
+            x: px,
+            y: py,
+            w: Number(spr.displayWidth) || Number(spr.width) || 16,
+            h: Number(spr.displayHeight) || Number(spr.height) || 16,
+            centerX: Number(spr.originX) === 0.5
+        });
+    };
+    const addPawn = (pawn) => {
+        if (!pawn) return;
+        add(pawn.x, pawn.y, pawn, !!(
+            pawn._prone || pawn._netProne || pawn._downed || pawn._resting || pawn._bodyDead
+        ));
+    };
+    addPawn(scene.player);
+    const lists = [scene.party, scene.settlers, scene.partySys?.wanderers];
+    for (let i = 0; i < lists.length; i++) {
+        const list = lists[i];
+        if (!list) continue;
+        for (let j = 0; j < list.length; j++) addPawn(list[j]);
+    }
+    if (scene.remotePlayers?.values) {
+        for (const entry of scene.remotePlayers.values()) {
+            if (!entry?.spr || entry.prone || entry.resting || entry.dead) continue;
+            const spr = entry.spr;
+            add(
+                (Number(entry.x) || 0) + (Number(spr.x) || 0),
+                (Number(entry.y) || 0) + (Number(spr.y) || 0),
+                spr,
+                false
+            );
+        }
+    }
+    if (scene.netMobs?.values) {
+        for (const entry of scene.netMobs.values()) {
+            if (!entry?.spr || entry.kind !== "human" || entry.prone || entry.resting) continue;
+            const spr = entry.spr;
+            add(
+                (Number(entry.x) || 0) + (Number(spr.x) || 0),
+                (Number(entry.y) || 0) + (Number(spr.y) || 0),
+                spr,
+                false
+            );
+        }
+    }
+    return out;
+}
+
+function bumpCorpseDepthsNear(scene, x, y) {
+    const list = scene?.corpses?.getChildren?.();
+    if (!list || !list.length) return;
+    const reach = 48;
+    for (let i = 0; i < list.length; i++) {
+        const c = list[i];
+        if (!c?.active || !c._corpse || !c.setDepth) continue;
+        if (Math.abs((Number(c.x) || 0) - x) > reach) continue;
+        if (Math.abs((Number(c.y) || 0) - y) > reach) continue;
+        const d = creatureSortDepth(c, { corpse: true, centered: true, x: c.x, y: c.y });
+        if (c.depth !== d) c.setDepth(d);
+    }
+}
+
+/**
  * Y-sort a sleeper just above the leaf floor and under the stick frame.
  * Using lean.y (the south feet) used to paint sleepers over every standing
  * mob north of that edge.
@@ -4062,6 +4175,23 @@ function sleepSortDepth(sprite, leanTo, slot) {
  */
 function creatureSortDepth(sprite, opts = {}) {
     if (!sprite && opts.y == null) return 0;
+    if (opts.corpse || sprite?._corpse) {
+        const h = Number(opts.height)
+            || Number(sprite?.displayHeight)
+            || Number(sprite?.height)
+            || 16;
+        const w = Number(opts.width)
+            || Number(sprite?.displayWidth)
+            || Number(sprite?.width)
+            || h;
+        const y = Number(opts.y != null ? opts.y : sprite?.y) || 0;
+        const x = Number(opts.x != null ? opts.x : sprite?.x) || 0;
+        const centered = opts.centered != null ? !!opts.centered : true;
+        return corpseSortDepth(
+            { x, y, w, h, centered },
+            opts.standers || corpseStanders(sprite?.scene)
+        );
+    }
     if (opts.resting || sprite?._resting) {
         const lean = opts.leanTo
             || sprite?.scene?.findLeanToByUid?.(sprite.lastSleep?.uid);
@@ -4085,6 +4215,12 @@ function applyCreatureSortDepth(target, opts) {
     if (!target?.setDepth) return;
     const d = creatureSortDepth(opts?.sprite || target, opts);
     if (target.depth !== d) target.setDepth(d);
+    if (opts?.corpse || target?._corpse) return;
+    const scene = target.scene || opts?.sprite?.scene;
+    const x = Number(opts?.x != null ? opts.x : target.x);
+    const y = Number(opts?.y != null ? opts.y : target.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    bumpCorpseDepthsNear(scene, x, y);
 }
 
 /** Short segment around the fist for hit tests. */
