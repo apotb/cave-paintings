@@ -139,13 +139,37 @@ test("a sleeping settler does not cover the shelter tip", () => {
     assert.equal(scene._pickHoverTarget({ x: 8, y: 8 }), hut);
 });
 
-test("trees and loose hits still beat a settler standing on them", () => {
+test("settler body keeps the tip over a tree or rock they stand on", () => {
     const scene = loadHoverScene();
     const person = settler();
     scene.settlers = [person];
     const tree = hit({ name: "Tree", choppable: { stump: "tree_stump" } });
-    scene._hits = [tree];
-    assert.equal(scene._pickHoverTarget({ x: 8, y: 8 }), tree);
+    const rock = hit({ name: "Rock", id: "rock" });
+    for (const under of [tree, rock]) {
+        scene._hits = [under];
+        assert.equal(scene._pickHoverTarget({ x: 8, y: 8 }), person, under.meta.name);
+    }
+});
+
+test("a cleared settler tip comes back without leaving the body", () => {
+    const scene = loadHoverScene();
+    const person = settler();
+    person.emit = (event) => { person._last = event; };
+    scene.settlers = [person];
+    scene._hits = [hit({ name: "Tree", choppable: { stump: "tree_stump" } })];
+    scene._hoverTarget = person;
+    scene._tooltipTarget = null;
+    scene.tooltip.visible = false;
+    scene._worldBooting = false;
+    scene._gamePaused = false;
+    scene._hoverAcc = 1000;
+    scene._hoverCamCell = "x";
+    scene.game = { loop: { delta: 16 } };
+    scene.cameras.main.worldView = { x: 0, y: 0 };
+    scene.input.activePointer = { x: 8, y: 8 };
+    scene.input.setDefaultCursor = () => {};
+    scene.syncPointerHover();
+    assert.equal(person._last, "pointerover");
 });
 
 test("a building pointerover cannot replace a settler tip", () => {

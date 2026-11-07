@@ -452,7 +452,12 @@
         const hover = this._hoverTarget;
         const touch = (obj) => {
             if (!obj?.active || !obj.input || obj === hover) return;
-            const on = obj.x >= left && obj.x <= right && obj.y >= top && obj.y <= bottom;
+            // Parked settlers, sleepers, and the pawn you control stay
+            // click-through. Turning them back on for one camera step made
+            // the next frame's hit-area change pointerout the tip.
+            const allow = typeof creatureAcceptsPointer !== "function"
+                || creatureAcceptsPointer(obj);
+            const on = allow && obj.x >= left && obj.x <= right && obj.y >= top && obj.y <= bottom;
             if (obj.input.enabled !== on) obj.input.enabled = on;
         };
         const chunks = this._loadedChunks || [];

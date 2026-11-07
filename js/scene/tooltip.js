@@ -628,14 +628,15 @@
             }
 
             // Standing companions beat trees under the cursor so chop/gather
-            // animations don't flicker the tip. A settler's body wins over the
-            // station they stand on; that click opens their bio. Trees and
-            // other loose hits still take the click.
+            // animations don't flicker the tip. A settler's body does too.
+            // Parked settlers stay click-through, so the tree or rock under
+            // them still receives the click.
             const keepPawn = this._hoverTarget || this._tooltipTarget;
             if (this._isHoverPawn(keepPawn) && this._pointerOnCreature(pointer, keepPawn)) {
                 return keepPawn;
             }
             if (switchAlly && switchAlly.role !== "settler") return switchAlly;
+            if (settlerAt) return settlerAt;
 
             for (let i = hits.length - 1; i >= 0; i--) {
                 const obj = hits[i];
@@ -643,7 +644,6 @@
                 if (obj === this.tooltip || obj.parentContainer === this.tooltip) continue;
                 if (this._skipOwnRestLeanTo?.(obj, pointer)) continue;
                 if (obj.role === "settler" && obj.homeSettlementId) continue;
-                if (settlerAt && this._buildingHover(obj)) continue;
                 // Dead party sprites stay click-through for loot; downed allies
                 // must still hover so the name / "Downed" tip can show.
                 if (
@@ -652,7 +652,6 @@
                 ) continue;
                 return obj;
             }
-            if (settlerAt) return settlerAt;
             return null;
         };
 
@@ -1083,17 +1082,14 @@
                 }
             }
 
-            // A tree/bush/fire can sit on top in the display list while the cursor is
-            // still in the pawn's click box. Keep the pawn so the tip doesn't strobe.
-            // Same for a settler already hovered, when the next hit is the building
-            // they are standing on.
+            // A tree, rock, or station can sit on top in the display list while the
+            // cursor is still on the body. Keep that pawn so the tip doesn't drop.
             if (
                 !blockWorld
                 && (this._isHoverPawn(this._hoverTarget) || this._hoverTarget?.role === "settler")
                 && (!top || (!this._isUiTooltipTarget(top) && top !== this._hoverTarget))
                 && !this.pointerOverWorldUi?.(pointer)
                 && this._pointerOnCreature(pointer, this._hoverTarget)
-                && (this._isHoverPawn(this._hoverTarget) || !top || this._buildingHover(top))
             ) {
                 top = this._hoverTarget;
             }
@@ -1141,18 +1137,26 @@
 
                 if (top && typeof top.emit === "function") top.emit("pointerover", pointer);
                 else this.hideWorldTooltip();
-            } else if (top && this.tooltip?.visible && this.tooltip.scene) {
-                this.positionTooltip(pointer.x, pointer.y);
-                if (this._tooltipFollowsPointer(top)) this.refreshTooltip();
-            } else if (
-                top
-                && top.input?.enabled
-                && this._objectShown?.(top)
-                && !this.tooltip?.visible
-            ) {
-                // Rest pinning used to drop Phaser's over-state without a mouse
-                // move; pointerover never fired again until you left and re-entered.
-                if (typeof top.emit === "function") top.emit("pointerover", pointer);
+            } else if (top && this._objectShown?.(top)) {
+                const tipOn = !!(this.tooltip?.visible && this.tooltip.scene);
+                const ownsTip = tipOn && this._tooltipTarget === top;
+                if (ownsTip) {
+                    this.positionTooltip(pointer.x, pointer.y);
+                    if (this._tooltipFollowsPointer(top)) this.refreshTooltip();
+                } else if (
+                    typeof top.emit === "function"
+                    && (
+                        top.input?.enabled
+                        || top.role === "settler"
+                        || this._isHoverPawn(top)
+                    )
+                ) {
+                    // Rest pinning and click-through settlers drop Phaser's over
+                    // state without a mouse move. input.enabled stays false on a
+                    // parked settler, so the tip used to stay gone until the
+                    // pointer left and came back.
+                    top.emit("pointerover", pointer);
+                }
             }
 
             this.input.setDefaultCursor(top ? this._cursorFor(top) : "default");

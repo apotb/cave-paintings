@@ -2513,15 +2513,18 @@ function creaturePointerHit(sprite, worldX, worldY) {
  * Hover tips prefer a settler while the cursor is on their body.
  * Traveling companions stay clickable so you can switch to them.
  */
-function syncCreatureInputHit(sprite) {
-    if (!sprite) return;
+function creatureAcceptsPointer(sprite) {
+    if (!sprite) return false;
     const self = sprite.scene?.player === sprite;
     const parkedSettler = sprite.role === "settler" && !!sprite.homeSettlementId;
-    if (sprite._resting || self || parkedSettler) {
-        if (sprite.input) sprite.input.enabled = false;
-        return;
-    }
-    if (sprite.input) sprite.input.enabled = true;
+    if (sprite._resting || self || parkedSettler) return false;
+    return true;
+}
+
+function syncCreatureInputHit(sprite) {
+    if (!sprite?.input) return;
+    const on = creatureAcceptsPointer(sprite);
+    if (sprite.input.enabled !== on) sprite.input.enabled = on;
 }
 
 /**
