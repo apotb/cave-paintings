@@ -307,8 +307,16 @@ class SettlementPanel {
         const bg = btn?._bg;
         if (!bg) return;
         bg.setSize(w, h);
-        if (bg.input?.hitArea?.setSize) bg.input.hitArea.setSize(w, h);
-        else if (bg.input?.hitArea?.setTo) bg.input.hitArea.setTo(0, 0, w, h);
+        const area = bg.input?.hitArea;
+        if (!area) return;
+        // Hit tests already add the rectangle's origin, so the area stays at 0,0.
+        if (area.setTo) area.setTo(0, 0, w, h);
+        else {
+            area.x = 0;
+            area.y = 0;
+            area.width = w;
+            area.height = h;
+        }
     }
 
     _syncTabs() {
@@ -1352,6 +1360,9 @@ class SettlementPanel {
         const gap = Math.round(8 * sc);
         let y = gap;
         y = this._fillHappiness(sc, y, innerW);
+        y = this._manageWideBtn(sc, y + gap, innerW, "Assign", () => {
+            this.scene.assignPanel?.open(this.settle);
+        });
         y = this._manageWideBtn(sc, y + gap, innerW, "Schedule", () => {
             this.scene.schedulePanel?.open(this.settle);
         });
@@ -1607,9 +1618,17 @@ class SettlementPanel {
     }
 
     hoverObjAt(pointer) {
-        if (!pointer || !this.visible || !this._pointerInBody(pointer)) return null;
+        if (!pointer || !this.visible) return null;
+        const underBody = (obj) => {
+            let cur = obj;
+            while (cur) {
+                if (cur === this.body) return true;
+                cur = cur.parentContainer;
+            }
+            return false;
+        };
         const visit = (obj) => {
-            if (!obj?.active) return null;
+            if (!obj?.active || obj === this.bg) return null;
             const kids = obj.list;
             if (Array.isArray(kids)) {
                 for (let i = kids.length - 1; i >= 0; i--) {
@@ -1617,13 +1636,13 @@ class SettlementPanel {
                     if (hit) return hit;
                 }
             }
-            if (obj.input?.enabled) {
-                const b = obj.getBounds?.();
-                if (b && Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y)) return obj;
-            }
-            return null;
+            if (!obj.input?.enabled) return null;
+            if (underBody(obj) && !this._pointerInBody(pointer)) return null;
+            const b = obj.getBounds?.();
+            if (!b || !Phaser.Geom.Rectangle.Contains(b, pointer.x, pointer.y)) return null;
+            return obj;
         };
-        return visit(this.body);
+        return visit(this.root);
     }
 
     containsPointer(pointer) {

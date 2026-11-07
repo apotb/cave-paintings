@@ -508,6 +508,9 @@ class PartySystem {
         if (typeof opts.schedule === "string" && opts.schedule && typeof Settlement !== "undefined" && Settlement.rememberSchedule) {
             Settlement.rememberSchedule(pawn, opts.schedule);
         }
+        if (opts.assign && typeof opts.assign === "object" && typeof Settlement !== "undefined" && Settlement.rememberAssign) {
+            Settlement.rememberAssign(pawn, opts.assign);
+        }
         pawn.favorite = !!opts.favorite;
         pawn.recomputeEquipmentEffects?.();
         pawn.capacities = new Capacities(pawn.anatomy);
@@ -3637,6 +3640,7 @@ class PartySystem {
             thoughts: (typeof Thoughts !== "undefined") ? Thoughts.toJSON(p) : (p.thoughts || null),
             jobs: (p.jobs && typeof p.jobs === "object") ? { ...p.jobs } : null,
             schedule: typeof p.schedule === "string" && p.schedule ? p.schedule : null,
+            assign: p.assign && typeof p.assign === "object" ? { ...p.assign } : null,
             favorite: !!p.favorite,
             bio: p.bio || null
         };
@@ -3748,6 +3752,9 @@ class PartySystem {
                     }
                     if (typeof m.schedule === "string" && m.schedule && typeof Settlement !== "undefined" && Settlement.rememberSchedule) {
                         Settlement.rememberSchedule(existing, m.schedule);
+                    }
+                    if (m.assign && typeof m.assign === "object" && typeof Settlement !== "undefined" && Settlement.rememberAssign) {
+                        Settlement.rememberAssign(existing, m.assign);
                     }
                     if (typeof m.favorite === "boolean") existing.favorite = m.favorite;
                     if (m.bio) existing.bio = m.bio;

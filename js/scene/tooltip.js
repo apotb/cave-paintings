@@ -96,6 +96,8 @@
                     cur === this.partyPanel?.root ||
                     cur === this.settlementPanel?.root ||
                     cur === this.schedulePanel?.root ||
+                    cur === this.assignPanel?.root ||
+                    cur === this.policyPanel?.root ||
                     cur === this.resourceSummaryPanel?.root ||
                     cur === this.researchTreePanel?.root ||
                     cur === this.billsPanel?.root ||
@@ -341,6 +343,18 @@
 
             // Centered overlays sit above the left settlement panel (depth 15150 > 15100).
             // Check them first or the overlapping left strip fights the cursor and eats clicks.
+            const assignP = this.assignPanel;
+            if (assignP?.visible && assignP.containsPointer?.(pointer)) {
+                const row = assignP.hoverObjAt?.(pointer);
+                if (row) return row;
+                return assignP.frame || assignP.dim;
+            }
+            const policyP = this.policyPanel;
+            if (policyP?.visible && policyP.containsPointer?.(pointer)) {
+                const row = policyP.hoverObjAt?.(pointer);
+                if (row) return row;
+                return policyP.frame || policyP.dim;
+            }
             const scheduleP = this.schedulePanel;
             if (scheduleP?.visible && scheduleP.containsPointer?.(pointer)) {
                 const row = scheduleP.hoverObjAt?.(pointer);

@@ -943,6 +943,8 @@
             && !this.researchTreePanel?.visible
             && !this.resourceSummaryPanel?.visible
             && !this.schedulePanel?.visible
+            && !this.assignPanel?.visible
+            && !this.policyPanel?.visible
             && !downed
             && !p.isVomiting?.()
         ) {

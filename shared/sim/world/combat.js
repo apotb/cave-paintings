@@ -200,6 +200,7 @@
         }
         const settle = (this.settlements || []).find((s) => s && s.id === mob.homeSettlementId);
         if (!settle) return null;
+        if (this._assignBlocksCombat(mob)) return null;
         const raider = this._settlementRaider(settle, mob);
         if (raider) return raider;
         const duel = this._duelMap?.get(Party.pawnIdOf(mob) || mob.id);
@@ -270,6 +271,35 @@
             if (d >= bestD) continue;
             bestD = d;
             best = ent;
+        }
+        return best;
+    },
+
+    /** Nearest hostile within `tiles`, including outside the camp circle. */
+    _nearestThreat(settler, tiles) {
+        if (!settler) return null;
+        const limit = Math.max(0, Number(tiles) || 0) * TS;
+        let best = null;
+        let bestD = limit;
+        const push = (ent) => {
+            if (!ent || ent === settler || ent.isBodyDead?.() || ent._dead || ent.dead) return;
+            if (Party.isDowned?.(ent)) return;
+            if (Party.sameFaction?.(settler, ent)) return;
+            const owner = Party.ownerIdOf(ent);
+            if (owner && this.players.has(owner)) return;
+            if (!(Party.wildIsHostile?.(ent)
+                || ent.hostile
+                || ent.ai?.hostile
+                || (Number(ent.ai?.panicMs) || 0) > 0)) return;
+            const d = Math.hypot((ent.x || 0) - (settler.x || 0), (ent.y || 0) - (settler.y || 0));
+            if (d >= bestD) return;
+            bestD = d;
+            best = ent;
+        };
+        for (const mob of this.mobs.values()) push(mob);
+        for (const w of this.wanderers.values()) {
+            if (!w || w.dead) continue;
+            push(this._ensureWandererCreature(w) || w);
         }
         return best;
     },
@@ -433,6 +463,15 @@
         this.pushEvent({ kind: "pvp_clear", ownerId });
     },
 
+    _assignBlocksCombat(pawn) {
+        if (!pawn || !this._isCampSettler?.(pawn)) return false;
+        const settle = (this.settlements || []).find((s) => s && s.id === pawn.homeSettlementId);
+        if (!settle || !Settlement.assignFor) return false;
+        const assign = Settlement.assignFor(settle, pawn);
+        if (typeof Policies !== "undefined" && Policies.blocksCombat) return Policies.blocksCombat(assign);
+        return assign?.combat === "flee" || assign?.combat === "neutral";
+    },
+
     /**
      * Player parties only fight each other after a PvP hit.
      * Wildlife / wanderers auto-duel a nearby party unless another connected
@@ -440,6 +479,7 @@
      */
     _playerCanFight(a, b) {
         if (Party.sparesDowned?.(a, b)) return false;
+        if (this._assignBlocksCombat(a) || this._assignBlocksCombat(b)) return false;
         if (a?.role === "wanderer" && b?.role === "wanderer") return false;
         const oa = Party.ownerIdOf(a);
         const ob = Party.ownerIdOf(b);

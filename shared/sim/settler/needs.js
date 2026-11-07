@@ -281,6 +281,14 @@ function eatSeekOpts(world, rec, settle, extraBags) {
         allowReserved: Party.isStarving(rec),
         getItem,
         getFood: (s) => world._foodForEat(s),
+        allowFood(stack) {
+            let P = typeof Policies !== "undefined" ? Policies : null;
+            if (!P) {
+                try { P = require("../../policies"); } catch (_) { P = null; }
+            }
+            if (!P?.foodAllows || !Settlement.assignFor) return true;
+            return P.foodAllows(Settlement.assignFor(settle, rec), stack, getItem, settle?.policies);
+        },
         availableQty(info) {
             const entry = info?.extra?.entry || info?.extra?.host;
             const qty = Math.max(0, Math.floor(Number(info?.stack?.quantity) || 0));

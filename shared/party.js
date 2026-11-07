@@ -634,6 +634,7 @@
                         : (stack.food || null);
                     if (!(Number(food?.kc ?? 0) > 0)) continue;
                     const poison = Number(food?.foodPoisonChance ?? 0) > 0;
+                    if (typeof opts.allowFood === "function" && !opts.allowFood(stack)) continue;
                     if (poison && !allowPoison) continue;
                     if (isReservedAutoEat(stack, food) && !allowReserved) continue;
                     const spoil = Number(stack.spoilAt ?? stack.spoilLeft ?? Infinity);
@@ -680,6 +681,7 @@
                 if (!stack) continue;
                 const food = typeof getFood === "function" ? getFood(stack) : (stack.food || null);
                 if (!(Number(food?.kc ?? 0) > 0)) continue;
+                if (typeof opts.allowFood === "function" && !opts.allowFood(stack)) continue;
                 const poison = Number(food?.foodPoisonChance ?? 0) > 0;
                 if (poison && !allowPoison) continue;
                 if (isReservedAutoEat(stack, food) && !allowReserved) continue;

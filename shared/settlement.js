@@ -22,6 +22,11 @@
         try { return require("./skills"); } catch (_) { return null; }
     }
 
+    function policiesMod() {
+        if (typeof Policies !== "undefined") return Policies;
+        try { return require("./policies"); } catch (_) { return null; }
+    }
+
     function researchMod() {
         if (typeof Research !== "undefined") return Research;
         try {
@@ -484,6 +489,11 @@
             : [];
         s.schedules = s.schedules && typeof s.schedules === "object" && !Array.isArray(s.schedules)
             ? s.schedules
+            : {};
+        const policies = policiesMod();
+        s.policies = policies ? policies.normalizePolicies(s.policies) : (s.policies || {});
+        s.assigns = s.assigns && typeof s.assigns === "object" && !Array.isArray(s.assigns)
+            ? s.assigns
             : {};
         return s;
     }
@@ -1888,6 +1898,72 @@
         return carriedSchedule(pawn);
     }
 
+    function assignFor(settle, pawn) {
+        const P = policiesMod();
+        const id = pawnIdOf(pawn);
+        const stored = id && settle?.assigns ? settle.assigns[id] : null;
+        const raw = stored || pawn?.assign || null;
+        if (!P) return raw;
+        return P.resolveAssign(raw, settle?.policies);
+    }
+
+    function setAssign(settle, pawnId, raw) {
+        const P = policiesMod();
+        if (!settle || !pawnId || !P) return null;
+        if (!settle.assigns || typeof settle.assigns !== "object") settle.assigns = {};
+        settle.policies = P.normalizePolicies(settle.policies);
+        const row = P.resolveAssign(raw, settle.policies);
+        settle.assigns[String(pawnId)] = row;
+        return row;
+    }
+
+    function rememberAssign(pawn, row) {
+        const P = policiesMod();
+        if (!pawn || !P) return null;
+        pawn.assign = P.normalizeAssign(row);
+        return pawn.assign;
+    }
+
+    function bindPawnAssign(settle, pawn) {
+        if (!settle || !pawn) return null;
+        const id = pawnIdOf(pawn);
+        if (!id) return null;
+        const P = policiesMod();
+        if (!P) return null;
+        if (!settle.assigns || typeof settle.assigns !== "object") settle.assigns = {};
+        settle.policies = P.normalizePolicies(settle.policies);
+        const stored = settle.assigns[id] ? P.resolveAssign(settle.assigns[id], settle.policies) : null;
+        const carried = pawn.assign ? P.resolveAssign(pawn.assign, settle.policies) : null;
+        const row = stored || carried || P.defaultAssign();
+        settle.assigns[id] = row;
+        pawn.assign = row;
+        return row;
+    }
+
+    function unbindPawnAssign(settle, pawn) {
+        if (!pawn) return null;
+        const id = pawnIdOf(pawn);
+        const row = id && settle?.assigns ? settle.assigns[id] : null;
+        if (row) return rememberAssign(pawn, row);
+        return pawn.assign || null;
+    }
+
+    function setPolicies(settle, kind, list) {
+        const P = policiesMod();
+        if (!settle || !P) return null;
+        const cur = P.normalizePolicies(settle.policies);
+        if (kind === "weapon" || kind === "armor" || kind === "food") {
+            cur[kind] = Array.isArray(list) ? list : cur[kind];
+        }
+        settle.policies = P.normalizePolicies(cur);
+        if (settle.assigns && typeof settle.assigns === "object") {
+            for (const id of Object.keys(settle.assigns)) {
+                settle.assigns[id] = P.resolveAssign(settle.assigns[id], settle.policies);
+            }
+        }
+        return settle.policies;
+    }
+
     /**
      * Explicit assignment wins. Older callers only pass isNight, which still
      * means sleep for that whole plan.
@@ -2058,7 +2134,7 @@
         return !!(isNight || injured);
     }
 
-    /** How often a long research stand re-checks jobs, eat, and sleep. */
+    /** How often a long research stand re-checks jobs, gear, eat, and sleep. */
     const RESEARCH_NEEDS_TICKS = 10;
 
     function isBusyWork(type) {
@@ -2280,15 +2356,61 @@
                 }
             }
         }
+        const med = medicineCarrySpec(opts);
+        if (med) {
+            let left = med.count;
+            for (let i = 0; i < inv.length && left > 0; i++) {
+                const s = inv[i];
+                if (!s?.id || !med.matches(s)) continue;
+                keep.add(i);
+                left -= medicineQty(s);
+            }
+        }
+        return keep;
+    }
+
+    function medicineQty(stack) {
+        return Math.max(1, Math.floor(Number(stack?.quantity) || 1));
+    }
+
+    /** Resting medicine carry. count 0 means haul may take every dose. */
+    function medicineCarrySpec(opts) {
+        const med = opts?.keepMedicine;
+        const count = Math.floor(Number(med?.count) || 0);
+        if (!med || count <= 0 || typeof med.matches !== "function") return null;
+        return { count, matches: med.matches };
+    }
+
+    /**
+     * Overflow stacks that are still part of the resting medicine carry.
+     * Inventory doses are counted first.
+     */
+    function overflowMedicineKeep(inventory, overflow, opts) {
+        const keep = new Set();
+        const med = medicineCarrySpec(opts);
+        if (!med) return keep;
+        let left = med.count;
+        for (const s of inventory || []) {
+            if (s?.id && med.matches(s)) left -= medicineQty(s);
+        }
+        const bag = overflow || [];
+        for (let i = 0; i < bag.length && left > 0; i++) {
+            const s = bag[i];
+            if (!s?.id || !med.matches(s)) continue;
+            keep.add(i);
+            left -= medicineQty(s);
+        }
         return keep;
     }
 
     function hasStashable(inventory, overflow, getItem, canStore, opts = {}) {
         const keep = keepIndices(inventory, getItem, { ...opts, overflow });
+        const overKeep = overflowMedicineKeep(inventory, overflow, opts);
         const store = typeof canStore === "function" ? canStore : () => true;
         const check = (slots, skipKeep) => {
             for (let i = 0; i < (slots || []).length; i++) {
                 if (skipKeep && keep.has(i)) continue;
+                if (!skipKeep && overKeep.has(i)) continue;
                 const s = slots[i];
                 if (stowSkip(s, inventory, overflow)) continue;
                 if (s && store(s)) return true;
@@ -2476,6 +2598,7 @@
         const poll = !!(busy && busyJob && state.reconsiderNeeds && busyJob.type === "research");
         const criticalPlan = doctorCarePlan(row, state);
         if (criticalPlan) return criticalPlan;
+        if (state.fleeTarget) return { type: "flee", target: state.fleeTarget };
         const rescueStale = busyJob?.type === "rescue"
             && (!busyJob.target || busyJob.target.dead || busyJob.target._resting || busyJob.target.resting);
         const doctorStale = busyJob?.type === "doctor" && !doctorTargetLive(state, busyJob.target);
@@ -2587,6 +2710,7 @@
                 return { type: "craft", target: state.rockWork };
             }
             if (job === "haul") {
+                if (state.gear) return state.gear;
                 if (state.haulDrop || state.haulOutput || state.haulMerge) {
                     return { type: "haul", target: state.haulDrop || state.haulOutput || state.haulMerge };
                 }
@@ -2604,9 +2728,15 @@
                     const foodFirst = stashFoodInsteadOfResearch(state);
                     if (foodFirst) return foodFirst;
                 }
+                // Haul's own gear check never runs when Haul is off or Research
+                // is ahead of it, and the stand returns before the fallback gear
+                // check. Leave the circle for one gear step, then finish it
+                // before the hold starts again.
+                if (state.gear && (poll || !busy)) return state.gear;
                 return { type: "research", target: state.researchCircle };
             }
         }
+        if (state.gear) return state.gear;
         if (state.hasStash && state.stashBasket) {
             return { type: "stash", target: state.stashBasket };
         }
@@ -2880,6 +3010,8 @@
             const who = ctx.targetName || pawnDisplayName(plan?.target);
             return who && who !== "Someone" ? `Attacking ${who}` : "Attacking";
         }
+        if (t === "flee") return "Fleeing";
+        if (t === "gear") return "Changing gear";
         if (t === "eat") return "Getting food";
         if (t === "cook_light") return "Lighting fire";
         if (t === "cook_stoke") return "Stoking fire";
@@ -3588,6 +3720,12 @@
         bindPawnSchedule,
         unbindPawnSchedule,
         carriedSchedule,
+        assignFor,
+        setAssign,
+        rememberAssign,
+        bindPawnAssign,
+        unbindPawnAssign,
+        setPolicies,
         workAssignment,
         pawnIdOf,
         normalizeJobOrder,
@@ -3627,6 +3765,7 @@
         holdsLoadedBow,
         stowSkip,
         keepIndices,
+        overflowMedicineKeep,
         hasStashable,
         hasStashableFood,
         stashIsUrgent,

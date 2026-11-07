@@ -1153,6 +1153,7 @@
             schedule: typeof s.schedule === "string" && s.schedule
                 ? Settlement.normalizeSchedule(s.schedule)
                 : null,
+            assign: s.assign && typeof s.assign === "object" ? { ...s.assign } : null,
             fishChannel: this._persistFishChannel(s.fishChannel),
             workChannel: this._persistWorkChannel(s._workChannel),
             workHold: this._persistWorkHold(s),

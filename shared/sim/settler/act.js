@@ -1780,6 +1780,207 @@ function doLightFire(world, rec, settle, fire) {
     emitEntry(world, fire);
     return halt(face);
 }
+function takeEquip(rec, equipSlot) {
+    const eq = rec.equipment;
+    if (!eq) return null;
+    if (String(equipSlot || "").startsWith("waist:")) {
+        const i = Math.floor(Number(String(equipSlot).split(":")[1]) || 0);
+        const stack = eq.waist?.[i] || null;
+        if (eq.waist) eq.waist[i] = null;
+        return stack;
+    }
+    const stack = eq[equipSlot] || null;
+    if (equipSlot) eq[equipSlot] = null;
+    return stack;
+}
+
+function putEquip(rec, equipSlot, stack) {
+    if (!rec.equipment) {
+        rec.equipment = { head: null, torso: null, legs: null, feet: null, back: null, waist: [] };
+    }
+    if (String(equipSlot || "").startsWith("waist:")) {
+        const i = Math.floor(Number(String(equipSlot).split(":")[1]) || 0);
+        if (!Array.isArray(rec.equipment.waist)) rec.equipment.waist = [];
+        while (rec.equipment.waist.length <= i) rec.equipment.waist.push(null);
+        rec.equipment.waist[i] = stack;
+        return;
+    }
+    rec.equipment[equipSlot] = stack;
+}
+
+function splitQty(stack, qty) {
+    const have = Math.max(1, Math.floor(Number(stack?.quantity) || 1));
+    const n = Math.max(1, Math.min(have, Math.floor(Number(qty) || have)));
+    if (n >= have) return { piece: stack, rest: null };
+    stack.quantity = have - n;
+    return { piece: { ...stack, quantity: n }, rest: stack };
+}
+
+function stashPiece(world, rec, settle, piece) {
+    if (!piece) return true;
+    for (const b of basketsOf(world, settle)) {
+        if (StorageFilter?.allows && !StorageFilter.allows(b.storageFilter, piece, getItem)) continue;
+        const moving = { ...piece };
+        if (insertInEntry(world, b, moving) && !(Number(moving.quantity) > 0)) {
+            emitEntry(world, b);
+            return true;
+        }
+    }
+    if (world._pushDrop) {
+        world._pushDrop(rec.x, rec.y, piece);
+        return true;
+    }
+    return false;
+}
+
+function doGear(world, rec, settle, step) {
+    if (!step) return halt();
+    if (step.op === "slide") {
+        const inv = rec.inventory || [];
+        const a = inv[step.from] || null;
+        inv[step.from] = inv[step.to] || null;
+        inv[step.to] = a;
+        world._dirtyPawnOwner?.(rec);
+        return halt();
+    }
+    if (step.op === "swap") {
+        const inv = rec.inventory || [];
+        const a = inv[step.a] || null;
+        inv[step.a] = inv[step.b] || null;
+        inv[step.b] = a;
+        world._dirtyPawnOwner?.(rec);
+        return halt();
+    }
+    if (step.op === "moveIn") {
+        const from = step.from;
+        const piece = from?.slots ? takeQty(from, step.qty || 1) : null;
+        const inv = rec.inventory || [];
+        if (!piece) return halt();
+        const prev = inv[step.to];
+        inv[step.to] = piece;
+        if (prev && from.slots) from.slots[from.index] = prev;
+        world._dirtyPawnOwner?.(rec);
+        return halt();
+    }
+    if (step.op === "stash") {
+        let piece = null;
+        if (step.from?.place === "equip") piece = takeEquip(rec, step.from.equipSlot);
+        else if (step.from?.place === "overflow") {
+            const bag = rec.overflow || [];
+            piece = bag[step.from.index] || null;
+            if (piece && step.qty && step.qty < (Number(piece.quantity) || 1)) {
+                const split = splitQty(piece, step.qty);
+                piece = split.piece;
+            } else if (piece) bag[step.from.index] = null;
+        } else {
+            const bag = rec.inventory || [];
+            piece = bag[step.from.index] || null;
+            if (piece && step.qty && step.qty < (Number(piece.quantity) || 1)) {
+                const split = splitQty(piece, step.qty);
+                piece = split.piece;
+            } else if (piece) bag[step.from.index] = null;
+        }
+        if (!piece) return halt();
+        if (!stashPiece(world, rec, settle, piece)) {
+            if (step.from?.place === "equip") putEquip(rec, step.from.equipSlot, piece);
+            else {
+                const bag = step.from?.place === "overflow" ? rec.overflow : rec.inventory;
+                const cur = bag?.[step.from.index];
+                if (cur && cur !== piece) cur.quantity = (Number(cur.quantity) || 1) + (Number(piece.quantity) || 1);
+                else if (bag) bag[step.from.index] = piece;
+            }
+        }
+        world._dirtyPawnOwner?.(rec);
+        return halt();
+    }
+    if (step.op === "equip") {
+        const from = step.from || {};
+        const bag = from.place === "overflow" ? (rec.overflow || []) : (rec.inventory || []);
+        const stack = bag[from.index];
+        if (!stack) return halt();
+        bag[from.index] = null;
+        if (step.equipSlot) putEquip(rec, step.equipSlot, stack);
+        else if (step.invSlot != null) {
+            const inv = rec.inventory || [];
+            const prev = inv[step.invSlot];
+            inv[step.invSlot] = stack;
+            if (prev) bag[from.index] = prev;
+        }
+        world._dirtyPawnOwner?.(rec);
+        return halt();
+    }
+    if (step.op === "fetch" && step.source) {
+        const src = step.source;
+        const found = {
+            slots: src.slots,
+            index: src.index,
+            entry: src.entry || null,
+            at: src.entry || src.drop || null,
+            drop: src.drop || null,
+            kind: src.place
+        };
+        if (src.place === "drop") {
+            const walked = goToDrop(world, rec, src.drop);
+            if (walked) return walked;
+            world._tryPickup?.(rec, { dropId: src.drop.uid, quantity: step.qty || 1 });
+            world._dirtyPawnOwner?.(rec);
+            return halt();
+        }
+        const walked = walkToFound(world, rec, found);
+        if (walked) return walked;
+        const piece = takeQty(found, step.qty || 1);
+        if (!piece) return halt();
+        if (step.into === "merge" && step.merge) {
+            const bag = step.merge.place === "overflow" ? rec.overflow : rec.inventory;
+            const cur = bag?.[step.merge.index];
+            if (cur && cur.id === piece.id) {
+                cur.quantity = (Number(cur.quantity) || 1) + (Number(piece.quantity) || 1);
+            } else if (bag) {
+                const hole = (rec.inventory || []).findIndex((s) => !s);
+                if (hole >= 0) rec.inventory[hole] = piece;
+                else {
+                    restorePiece(found, piece);
+                    return halt();
+                }
+            }
+        } else if (step.into === "equip" && step.equipSlot) {
+            putEquip(rec, step.equipSlot, piece);
+        } else {
+            const inv = rec.inventory || [];
+            const at = step.slot == null ? inv.findIndex((s) => !s) : step.slot;
+            if (at < 0 || inv[at]) {
+                const hole = inv.findIndex((s) => !s);
+                if (hole < 0) {
+                    restorePiece(found, piece);
+                    return halt();
+                }
+                inv[hole] = piece;
+            } else inv[at] = piece;
+        }
+        if (src.entry) emitEntry(world, src.entry);
+        if (src.drop && world._eraseDrop && !(Number(src.drop.quantity) > 0)) {
+            /* takeQty already reduced the drop object in the chunk list */
+        }
+        world._queryGen = (world._queryGen || 0) + 1;
+        world._dirtyPawnOwner?.(rec);
+        return halt();
+    }
+    return halt();
+}
+
+function doFlee(world, rec, threat) {
+    if (!threat) return halt();
+    const dx = (Number(rec.x) || 0) - (Number(threat.x) || 0);
+    const dy = (Number(rec.y) || 0) - (Number(threat.y) || 0);
+    const dist = Math.hypot(dx, dy) || 1;
+    const step = TS * 4;
+    return walkTo(world, rec, {
+        x: (Number(rec.x) || 0) + (dx / dist) * step,
+        y: (Number(rec.y) || 0) + (dy / dist) * step
+    });
+}
+    ctx.doGear = doGear;
+    ctx.doFlee = doFlee;
     ctx.mergeNeedsRoom = mergeNeedsRoom;
     ctx.fetchTarget = fetchTarget;
     ctx.walkToFound = walkToFound;

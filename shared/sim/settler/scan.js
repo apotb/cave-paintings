@@ -1361,11 +1361,27 @@ function scanWork(world, rec, settle, claims) {
     }
     const carryPreds = rec._carryRoom?.keepPreds;
     if (Array.isArray(carryPreds)) keepPreds.push(...carryPreds);
+    let keepMedicine = null;
+    let policyApi = (typeof Policies !== "undefined") ? Policies : null;
+    if (!policyApi) {
+        try { policyApi = require("../../policies"); } catch (_) { policyApi = null; }
+    }
+    if (policyApi?.medicineMatches && Settlement.assignFor) {
+        const assign = Settlement.assignFor(settle, rec);
+        if (assign && assign.medicineCount > 0) {
+            const type = assign.medicineType;
+            keepMedicine = {
+                count: assign.medicineCount,
+                matches: (s) => policyApi.medicineMatches(type, s?.id)
+            };
+        }
+    }
     const keepOpts = keepGearOpts({
         keepBandage,
         keepPigment: keepPigment || keepTally,
         isPigment,
-        keepPreds
+        keepPreds,
+        keepMedicine
     });
     const assignment = Settlement.assignmentAt(
         Settlement.scheduleFor(settle, rec.id),
@@ -1408,6 +1424,7 @@ function scanWork(world, rec, settle, claims) {
         keepPigment: keepPigment || keepTally,
         isPigment,
         keepPreds: keepPreds.length ? keepPreds : null,
+        keepMedicine,
         jobKeepPreds: jobKeepPreds.length ? jobKeepPreds : null,
         carryRoom: !!rec._carryRoom,
         bed: (night || injured) ? freeBed(world, rec, settle, claims, { medical: !!injured }) : null,

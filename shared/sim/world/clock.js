@@ -1769,6 +1769,7 @@
                     schedule: typeof m.schedule === "string" && m.schedule
                         ? Settlement.normalizeSchedule(m.schedule)
                         : null,
+                    assign: m.assign && typeof m.assign === "object" ? { ...m.assign } : null,
                     favorite: !!m.favorite,
                     bio: m.bio || null
                 };

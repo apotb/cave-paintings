@@ -586,7 +586,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (this._reedChannel || this._chopBar) return "plants";
         if (this._paintChannel && typeof this._paintChannel.progress === "number") return "intellectual";
         return null;
-    },
+    }
 
     isBodyDead() {
         return this._bodyDead;
@@ -4240,6 +4240,8 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const researchOpen = !!this.scene.researchTreePanel?.visible
             || !!this.scene.resourceSummaryPanel?.visible
             || !!this.scene.schedulePanel?.visible
+            || !!this.scene.assignPanel?.visible
+            || !!this.scene.policyPanel?.visible
             || !!this.scene.statsPanel?.visible;
         const controlled = this.isControlled?.();
 

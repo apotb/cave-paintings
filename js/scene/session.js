@@ -208,6 +208,7 @@
                     ? { ...m.jobs }
                     : null,
                 schedule: typeof m.schedule === "string" && m.schedule ? m.schedule : null,
+                assign: m.assign && typeof m.assign === "object" ? { ...m.assign } : null,
                 bio: m.bio || null
             }));
         };

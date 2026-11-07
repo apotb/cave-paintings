@@ -674,6 +674,8 @@
         if (this.craftingSpotPanel?.visible) this.craftingSpotPanel.close();
         if (this.settlementSys?.isNaming?.()) this.settlementSys._hideNamePrompt();
         if (typeof CraftTemplateUi !== "undefined") CraftTemplateUi.closeAll();
+        if (this.policyPanel?.visible) this.policyPanel.close({ restore: false });
+        if (this.assignPanel?.visible) this.assignPanel.close({ restore: false });
         if (this.schedulePanel?.visible) this.schedulePanel.close({ restore: false });
         if (this.resourceSummaryPanel?.visible) this.resourceSummaryPanel.close({ restore: false });
         if (this.researchTreePanel?.visible) this.researchTreePanel.close({ restore: false });
@@ -700,6 +702,8 @@
             this.researchTreePanel?.visible ||
             this.resourceSummaryPanel?.visible ||
             this.schedulePanel?.visible ||
+            this.assignPanel?.visible ||
+            this.policyPanel?.visible ||
             this.billsPanel?.visible ||
             this.storageFilterPanel?.visible ||
             this.fuelFilterPanel?.visible ||
@@ -1487,6 +1491,14 @@
         }
         if (this.statsPanel?.visible) {
             this.statsPanel.handleEsc();
+            return;
+        }
+        if (this.policyPanel?.visible) {
+            this.policyPanel.handleEsc();
+            return;
+        }
+        if (this.assignPanel?.visible) {
+            this.assignPanel.handleEsc();
             return;
         }
         if (this.schedulePanel?.visible) {

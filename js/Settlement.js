@@ -62,10 +62,14 @@ class SettlementSystem {
         bind(this.scene.researchTreePanel);
         bind(this.scene.resourceSummaryPanel);
         bind(this.scene.schedulePanel);
+        bind(this.scene.assignPanel);
+        bind(this.scene.policyPanel);
         const summary = this.scene.resourceSummaryPanel;
         if (summary?.visible) summary.refresh();
         const schedule = this.scene.schedulePanel;
         if (schedule?.visible) schedule.refresh();
+        if (this.scene.assignPanel?.visible) this.scene.assignPanel.refresh();
+        if (this.scene.policyPanel?.visible) this.scene.policyPanel.refresh();
         const tree = this.scene.researchTreePanel;
         if (tree?.visible) tree.refresh();
         const panel = this.scene.settlementPanel;
@@ -133,6 +137,7 @@ class SettlementSystem {
             resting: snap.resting,
             jobs: snap.jobs,
             schedule: snap.schedule,
+            assign: snap.assign && typeof snap.assign === "object" ? { ...snap.assign } : null,
             favorite: !!snap.favorite,
             bio: snap.bio,
             ignoreCap: true
@@ -1644,6 +1649,8 @@ class SettlementSystem {
     closePanel() {
         this.scene.researchTreePanel?.close({ restore: false });
         this.scene.resourceSummaryPanel?.close({ restore: false });
+        this.scene.policyPanel?.close({ restore: false });
+        this.scene.assignPanel?.close({ restore: false });
         this.scene.schedulePanel?.close({ restore: false });
         this.scene.settlementPanel?.close();
         this._drawRange(null, false);
@@ -2832,6 +2839,9 @@ class SettlementSystem {
                 } else if (panel.tab === "manage" && this._stockUiAcc > 600) {
                     this._stockUiAcc = 0;
                     panel.refresh();
+                } else if (this.scene.assignPanel?.visible && this._stockUiAcc > 600) {
+                    this._stockUiAcc = 0;
+                    this.scene.assignPanel.refresh();
                 } else if (this.scene.schedulePanel?.visible && this._stockUiAcc > 600) {
                     this._stockUiAcc = 0;
                     this.scene.schedulePanel.refresh();

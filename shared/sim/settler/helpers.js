@@ -519,6 +519,7 @@ function planClaimKey(plan) {
     if (t === "rescue") return pawnWorkKey(plan.target, "rescue");
     if (t === "sleep") return bedKey(plan.target);
     if (t === "stash") return stashKey(plan.target);
+    if (t === "gear") return plan.step?.claimKey || plan.step?.source?.claimKey || null;
     const owned = jobsApi().forType(t);
     const claimId = plan.target?.uid || plan.target?.id;
     if (owned && claimId) return `${t}:${claimId}`;
@@ -1452,12 +1453,18 @@ function foundAvail(world, rec, settle, found) {
     return reservesOf(world, settle).available(key, qty, rec.id);
 }
 
+function policiesApi() {
+    if (typeof Policies !== "undefined") return Policies;
+    try { return require("../../policies"); } catch (_) { return null; }
+}
+
 function medicineKey(found) {
     if (!found) return null;
     if (found.kind === "drop" && found.drop) return dropKey(found.drop);
     if (found.kind === "basket" && found.entry?.uid != null) {
         return `basket:${found.entry.uid}:${found.index}`;
     }
+    if ((found.kind === "settler" || found.kind === "patient") && found.claimKey) return found.claimKey;
     return null;
 }
 
@@ -1486,12 +1493,19 @@ function sourceAvail(world, rec, settle, found, pawnId) {
 
 function listMedicineSources(world, rec, settle, patient, claims) {
     const out = [];
+    const P = policiesApi();
+    const care = P && Settlement.assignFor && patient
+        ? Settlement.assignFor(settle, patient).care
+        : "best";
     const addPawn = (pawn, kind) => {
         if (!pawn) return;
         const add = (slots, bag) => {
             for (let i = 0; i < (slots || []).length; i++) {
                 const s = slots[i];
                 if (!s?.id || !getItem(s.id)?.bandage) continue;
+                if (P && !P.medicineAllowed(care, s.id)) continue;
+                const claimKey = kind === "inv" ? null : `pawn:${pawn.id}:${bag}:${i}`;
+                if (claimKey && claimedByOther(claims, claimKey, rec.id)) continue;
                 out.push({
                     slots,
                     index: i,
@@ -1501,7 +1515,8 @@ function listMedicineSources(world, rec, settle, patient, claims) {
                     stack: s,
                     id: s.id,
                     entry: null,
-                    drop: null
+                    drop: null,
+                    claimKey
                 });
             }
         };
@@ -1510,6 +1525,13 @@ function listMedicineSources(world, rec, settle, patient, claims) {
     };
     addPawn(rec, "inv");
     if (patient && patient !== rec && patient.id !== rec.id) addPawn(patient, "patient");
+    for (const other of world.settlers || []) {
+        if (!other || other.dead || other === rec || other === patient) continue;
+        if (String(other.homeSettlementId || "") !== String(settle?.id || "")) continue;
+        if (other.id && patient?.id && String(other.id) === String(patient.id)) continue;
+        if (other.id && rec?.id && String(other.id) === String(rec.id)) continue;
+        addPawn(other, "settler");
+    }
     const baskets = (basketsOf(world, settle) || []).slice()
         .sort((a, b) => dist2(rec, a) - dist2(rec, b));
     for (const b of baskets) {
@@ -1569,6 +1591,63 @@ function assignMedicineTakes(world, rec, settle, sources, itemId, wantQty) {
     return takes;
 }
 
+function gearSources(world, rec, settle, claims) {
+    const out = [];
+    for (const b of basketsOf(world, settle)) {
+        const slots = b.slots || [];
+        for (let i = 0; i < slots.length; i++) {
+            const s = slots[i];
+            if (!s?.id) continue;
+            const claimKey = `basket:${b.uid}:${i}`;
+            const avail = reservesOf(world, settle).available(claimKey, s.quantity, rec.id);
+            const reserved = claimedByOther(claims, claimKey, rec.id) || !(avail > 0);
+            out.push({
+                stack: s,
+                place: "basket",
+                index: i,
+                self: false,
+                reserved,
+                claimKey,
+                entry: b,
+                slots
+            });
+        }
+    }
+    for (const d of dropsOf(world, settle)) {
+        if (!d?.id) continue;
+        const claimKey = dropKey(d);
+        const reserved = claimedByOther(claims, claimKey, rec.id) || haulHoldBlocks(world, d);
+        out.push({
+            stack: d,
+            place: "drop",
+            index: 0,
+            self: false,
+            reserved,
+            claimKey,
+            drop: d,
+            slots: [d]
+        });
+    }
+    return out;
+}
+
+function gearPlan(world, rec, settle) {
+    const P = policiesApi();
+    if (!P?.nextGear || !settle || !rec) return null;
+    const assign = Settlement.assignFor(settle, rec);
+    if (rec.downed || rec._resting || rec.resting || rec.isIncapacitated?.()) return null;
+    if (assign.combat === "fight" && world._nearestHostileInSettlement?.(settle, rec)) return null;
+    const sources = gearSources(world, rec, settle, claimsFor(world, settle));
+    const step = P.nextGear({
+        inventory: rec.inventory,
+        overflow: rec.overflow,
+        equipment: rec.equipment,
+        onMedicineJob: false
+    }, sources, assign, settle.policies, getItem);
+    if (!step) return null;
+    return { type: "gear", step };
+}
+
 function heldBandageCount(rec, itemId) {
     let n = 0;
     for (const s of rec.inventory || []) {
@@ -1625,7 +1704,7 @@ function fetchMedicineTake(world, rec, settle, take) {
         }
         return halt();
     }
-    const walked = take.kind === "patient"
+    const walked = (take.kind === "patient" || take.kind === "settler")
         ? goOrWalk(world, rec, take.at)
         : walkToFound(world, rec, take);
     if (walked) {
@@ -1652,7 +1731,7 @@ function fetchMedicineTake(world, rec, settle, take) {
     if (take.entry) emitEntry(world, take.entry);
     if (take.key) reservesOf(world, settle).reduce(rec.id, take.key, got);
     world._dirtyPawnOwner(rec);
-    if (take.kind === "patient" && take.at) world._dirtyPawnOwner(take.at);
+    if ((take.kind === "patient" || take.kind === "settler") && take.at) world._dirtyPawnOwner(take.at);
     return halt();
 }
 
@@ -1733,7 +1812,8 @@ function keepGearOpts(keepBandageOrOpts) {
             isPigment: typeof keepBandageOrOpts.isPigment === "function"
                 ? keepBandageOrOpts.isPigment
                 : null,
-            keepPreds: preds && preds.length ? preds : null
+            keepPreds: preds && preds.length ? preds : null,
+            keepMedicine: keepBandageOrOpts.keepMedicine || null
         };
     }
     return {
@@ -1752,6 +1832,7 @@ function stashScan(world, rec, settle, keepBandageOrOpts) {
         return { basket: null, has: false, urgent: false, hasFood: false };
     }
     const keep = Settlement.keepIndices(rec.inventory, getItem, opts);
+    const overKeep = Settlement.overflowMedicineKeep?.(rec.inventory, rec.overflow, opts) || new Set();
     // opts.overflow is set above so a loaded bow stays with its arrows.
     let basket = null;
     const tryPick = (s) => {
@@ -1763,7 +1844,9 @@ function stashScan(world, rec, settle, keepBandageOrOpts) {
         if (Settlement.stowSkip?.(rec.inventory[i], rec.inventory, rec.overflow)) continue;
         tryPick(rec.inventory[i]);
     }
-    for (const s of rec.overflow || []) {
+    for (let i = 0; i < (rec.overflow || []).length; i++) {
+        if (overKeep.has(i)) continue;
+        const s = rec.overflow[i];
         if (Settlement.stowSkip?.(s, rec.inventory, rec.overflow)) continue;
         tryPick(s);
     }
@@ -1779,10 +1862,12 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     const gearOpts = keepGearOpts(keepBandageOrOpts);
     gearOpts.overflow = rec.overflow;
     const keep = Settlement.keepIndices(rec.inventory, getItem, gearOpts);
-    const dump = (slots, skipKeep) => {
+    const overKeep = Settlement.overflowMedicineKeep?.(rec.inventory, rec.overflow, gearOpts) || new Set();
+    const dump = (slots, skipKeep, spared) => {
         if (!slots) return;
         for (let i = 0; i < slots.length; i++) {
             if (skipKeep && keep.has(i)) continue;
+            if (spared?.has(i)) continue;
             const s = slots[i];
             if (!s) continue;
             if (Settlement.stowSkip?.(s, rec.inventory, rec.overflow)) continue;
@@ -1804,8 +1889,8 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
             }
         }
     };
-    dump(rec.inventory, true);
-    dump(rec.overflow, false);
+    dump(rec.inventory, true, null);
+    dump(rec.overflow, false, overKeep);
     world._dirtyPawnOwner(rec);
 }
     ctx.getItem = getItem;
@@ -1920,6 +2005,7 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     ctx.cordBatch = cordBatch;
     ctx.sourceAvail = sourceAvail;
     ctx.listMedicineSources = listMedicineSources;
+    ctx.gearPlan = gearPlan;
     ctx.assignMedicineTakes = assignMedicineTakes;
     ctx.heldBandageCount = heldBandageCount;
     ctx.pickDoctorBandage = pickDoctorBandage;

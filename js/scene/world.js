@@ -655,6 +655,8 @@
         if (this.storagePanel?.containsPointer?.(pointer)) return true;
         if (this.settlementPanel?.containsPointer?.(pointer)) return true;
         if (this.schedulePanel?.containsPointer?.(pointer)) return true;
+        if (this.assignPanel?.containsPointer?.(pointer)) return true;
+        if (this.policyPanel?.containsPointer?.(pointer)) return true;
         if (this.resourceSummaryPanel?.containsPointer?.(pointer)) return true;
         if (this.researchTreePanel?.containsPointer?.(pointer)) return true;
         if (this.billsPanel?.containsPointer?.(pointer)) return true;

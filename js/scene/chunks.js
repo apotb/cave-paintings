@@ -342,6 +342,8 @@
             this.settlementPanel?.layout?.();
             this.researchTreePanel?.layout?.();
             this.schedulePanel?.layout?.();
+            this.assignPanel?.layout?.();
+            this.policyPanel?.layout?.();
             this.resourceSummaryPanel?.layout?.();
             this.billsPanel?.layout?.();
             this.storageFilterPanel?.layout?.();

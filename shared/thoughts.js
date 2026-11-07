@@ -1112,7 +1112,7 @@
     function allowsWork(pawn, kind) {
         const mode = pawn?._moodJob;
         if (mode !== "sulk" && mode !== "strike") return true;
-        if (kind === "sleep" || kind === "idle" || kind === "fight") return true;
+        if (kind === "sleep" || kind === "idle" || kind === "fight" || kind === "flee") return true;
         if (kind === "eat") {
             if (mode !== "strike") return true;
             return !(Number(pawn?.kc) > 0);

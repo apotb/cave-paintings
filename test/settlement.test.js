@@ -1482,6 +1482,26 @@ test("planWork resumed research polls for other jobs the same way it polls for s
         chopTree: tree,
         reconsiderNeeds: true
     }).type, "research");
+    const gear = { type: "gear", step: { op: "fetch" } };
+    jobs.chop = 0;
+    jobs.haul = 0;
+    jobs.research = 1;
+    assert.equal(Settlement.planWork({
+        ...quiet,
+        gear,
+        reconsiderNeeds: true
+    }).type, "gear");
+    assert.equal(Settlement.planWork({
+        ...quiet,
+        gear
+    }).type, "research");
+    assert.equal(Settlement.planWork({
+        kc: 2000,
+        jobs,
+        researchCircle: circle,
+        gear,
+        busy: false
+    }).type, "gear");
 });
 
 test("planWork research poll takes a higher-priority job before eat or sleep", () => {
@@ -1851,6 +1871,28 @@ test("settlers keep the best weapon (and a bandage while tending) when stashing"
     assert.equal(dumped.has(2), true);
     const bestMed = Settlement.keepIndices(mixed, getItem, { keepBandage: true });
     assert.equal(bestMed.has(1), true);
+    const carried = Settlement.keepIndices(
+        [{ id: "poultice", quantity: 2 }, { id: "poultice", quantity: 3 }, { id: "stick", quantity: 1 }],
+        getItem,
+        { keepMedicine: { count: 2, matches: (s) => s.id === "poultice" } }
+    );
+    assert.equal(carried.has(0), true);
+    assert.equal(carried.has(1), false);
+    const medKeep = { keepMedicine: { count: 2, matches: (s) => s.id === "poultice" } };
+    assert.equal(Settlement.hasStashable(
+        [{ id: "poultice", quantity: 2 }],
+        [],
+        getItem,
+        () => true,
+        medKeep
+    ), false);
+    assert.equal(Settlement.hasStashable(
+        [],
+        [{ id: "poultice", quantity: 2 }],
+        getItem,
+        () => true,
+        medKeep
+    ), false);
     assert.equal(bestMed.has(0), false);
     const withPigment = Settlement.keepIndices(
         [{ id: "blueberry", quantity: 2 }, { id: "stick", quantity: 4 }, null, null, null],

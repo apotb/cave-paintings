@@ -261,6 +261,7 @@
             mem.ownerId = p.id;
             Settlement.bindPawnJobs(dropSettle, mem);
             Settlement.bindPawnSchedule(dropSettle, mem);
+            Settlement.bindPawnAssign?.(dropSettle, mem);
             this.settlers.push(mem);
             this._syncJobOrder(dropSettle, mem.favorite ? mem.id : null);
             SettlerWork.releaseWork(this, mem);
@@ -306,6 +307,7 @@
             const from = fromId ? this.settlements.find((s) => s.id === fromId) : null;
             if (from) Settlement.unbindPawnJobs(from, rec);
             if (from) Settlement.unbindPawnSchedule(from, rec);
+            if (from) Settlement.unbindPawnAssign?.(from, rec);
             if (from) this._syncJobOrder(from);
             if (!p.party) p.party = [];
             if (!p.party.some((m) => m && String(m.id) === pid)) p.party.push(rec);
@@ -334,9 +336,11 @@
             const from = this.settlements.find((s) => s.id === rec.homeSettlementId);
             if (from) Settlement.unbindPawnJobs(from, rec);
             if (from) Settlement.unbindPawnSchedule(from, rec);
+            if (from) Settlement.unbindPawnAssign?.(from, rec);
             rec.homeSettlementId = dest.id;
             Settlement.bindPawnJobs(dest, rec);
             Settlement.bindPawnSchedule(dest, rec);
+            Settlement.bindPawnAssign?.(dest, rec);
             const d = from ? Settlement.distTiles(from.x, from.y, dest.x, dest.y, TS) : 999;
             if (Settlement.transferMode(d) === "teleport") {
                 rec.x = dest.x + 12;
@@ -458,6 +462,20 @@
             const rec = (this.settlers || []).find((s) => s && String(s.id) === pid)
                 || (p.party || []).find((m) => m && String(m.id) === pid);
             if (rec && row) Settlement.rememberSchedule(rec, row);
+            SettlerWork.bumpWork?.(this, rec);
+            this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "setPolicies" && settle && settle.ownerId === p.id) {
+            Settlement.setPolicies(settle, action.kind, action.policies);
+            this._youDirty.add(p.id);
+            return;
+        }
+        if (op === "setAssign" && settle && settle.ownerId === p.id) {
+            const pid = String(action.pawnId || "");
+            const row = Settlement.setAssign(settle, pid, action.assign);
+            const rec = (this.settlers || []).find((s) => s && String(s.id) === pid);
+            if (rec && row) Settlement.rememberAssign(rec, row);
             SettlerWork.bumpWork?.(this, rec);
             this._youDirty.add(p.id);
             return;

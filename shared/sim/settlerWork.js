@@ -110,6 +110,9 @@ const shellRequire = typeof require === "function" ? require : undefined;
     const isWorkHold = (...args) => ctx.isWorkHold(...args);
     const keepGearOpts = (...args) => ctx.keepGearOpts(...args);
     const stashScan = (...args) => ctx.stashScan(...args);
+    const gearPlan = (...args) => ctx.gearPlan(...args);
+    const doGear = (...args) => ctx.doGear(...args);
+    const doFlee = (...args) => ctx.doFlee(...args);
     const doEat = (...args) => ctx.doEat(...args);
     const eatAct = (...args) => ctx.eatAct(...args);
     const returnPreparedFood = (...args) => ctx.returnPreparedFood(...args);
@@ -444,7 +447,8 @@ function tick(world, mob, delta) {
         keepBandage: !!scan.keepBandage,
         keepPigment: !!scan.keepPigment,
         isPigment: scan.isPigment || null,
-        keepPreds: scan.keepPreds || null
+        keepPreds: scan.keepPreds || null,
+        keepMedicine: scan.keepMedicine || null
     });
     const jobMatsOpts = () => {
         const extra = scan.jobKeepPreds;
@@ -453,7 +457,8 @@ function tick(world, mob, delta) {
             keepBandage: !!keepOpts.keepBandage,
             keepPigment: !!keepOpts.keepPigment,
             isPigment: keepOpts.isPigment || null,
-            keepPreds: [...(keepOpts.keepPreds || []), ...extra]
+            keepPreds: [...(keepOpts.keepPreds || []), ...extra],
+            keepMedicine: keepOpts.keepMedicine || null
         });
     };
     // Last search found nothing to do. Replanning every idle person every
@@ -581,6 +586,10 @@ function tick(world, mob, delta) {
             mergeNeedsRoom: mergeNeedsRoom(rec, scan.haulMerge),
             busy: hold,
             busyJob: rec._busyJob || null,
+            gear: gearPlan(world, rec, settle),
+            fleeTarget: (Settlement.assignFor(settle, rec)?.combat === "flee")
+                ? (world._nearestThreat?.(rec, (typeof Policies !== "undefined" && Policies.FLEE_TILES) || 8) || null)
+                : null,
             keepResume: !!(rec._resumeWork && hold),
             reconsiderNeeds: pollNeeds,
             world,
@@ -645,6 +654,8 @@ function tick(world, mob, delta) {
     if (plan.type !== "research") clearPaintBar(rec);
     setSettlerAct(rec, mob, label);
 
+    if (plan.type === "flee" && plan.target) return doFlee(world, rec, plan.target);
+    if (plan.type === "gear" && plan.step) return doGear(world, rec, settle, plan.step);
     if (plan.type === "sleep" && plan.target) return doSleep(world, rec, plan.target);
     if (plan.type === "rescue" && plan.target) return doRescue(world, rec, settle, plan.target);
     if (plan.type === "doctor" && plan.target) return doDoctor(world, rec, settle, plan.target);
