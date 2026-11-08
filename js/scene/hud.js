@@ -950,7 +950,7 @@
     _tooltipLinesSig(lines) {
         return (lines || []).map((l) => {
             const icons = Array.isArray(l?.icons) ? l.icons.join(",") : "";
-            return `${l?.icon || ""}:${icons}:${l?.mark || ""}:${l?.plain ? 1 : 0}:${l?.label || ""}:${l?.value ?? ""}:${l?.value2 ?? ""}:${l?.hangMinus ? 1 : 0}`;
+            return `${l?.icon || ""}:${l?.frame ?? ""}:${icons}:${l?.mark || ""}:${l?.plain ? 1 : 0}:${l?.label || ""}:${l?.value ?? ""}:${l?.value2 ?? ""}:${l?.hangMinus ? 1 : 0}`;
         }).join("|");
     },
 
@@ -1275,7 +1275,15 @@
                 : [];
             const iconKey = cycle[0] || line?.icon;
             if (iconKey && this.textures.exists(iconKey)) {
-                const img = this.add.image(pad + iconS / 2, midY, iconKey).setOrigin(0.5, 0.5);
+                const asked = Number.isInteger(line?.frame) ? line.frame : null;
+                const tex = this.textures.get?.(iconKey);
+                const frame = asked != null && (!tex?.has || tex.has(asked) || tex.has(String(asked)))
+                    ? asked
+                    : null;
+                const img = (frame == null
+                    ? this.add.image(pad + iconS / 2, midY, iconKey)
+                    : this.add.image(pad + iconS / 2, midY, iconKey, frame)
+                ).setOrigin(0.5, 0.5);
                 if (typeof fitUiIcon === "function") fitUiIcon(img, iconS, iconS);
                 else img.setDisplaySize(iconS, iconS);
                 if (cycle.length > 1) {

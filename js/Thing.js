@@ -1879,43 +1879,154 @@ class LeanTo extends Thing {
             || null;
     }
 
-    occupantName(slot) {
-        const pawn = this.occupantPawn(slot);
-        if (pawn) {
-            const name = pawn.displayName?.() || pawn.pawnName;
-            if (name) return name;
-        }
-        const id = this.entry?.occupants?.[slot];
-        if (!id) return "Empty";
-        for (const rp of this.scene.remotePlayers?.values?.() || []) {
-            if (rp.id === id) return rp.displayName || "Empty";
-        }
-        return "Occupied";
-    }
-
-    tooltipText(pointer) {
+    /**
+     * Everyone in the shelter: sleepers in slot order, then anyone standing
+     * on it. One row each, portrait and name.
+     */
+    tooltipText() {
         if (!this.scene || !this.active) return "";
-        const p = pointer || this.scene.input?.activePointer;
-        const slot = p ? this.slotAtPointer(p) : 0;
-        const pawn = this.occupantPawn(slot);
-        if (pawn && pawn.role !== "wanderer") {
-            const inParty = pawn.role === "companion"
-                || pawn.role === "leader"
-                || (this.scene.party || []).includes(pawn);
-            const parked = pawn.role === "settler"
-                || !!pawn.homeSettlementId
-                || (this.scene.settlers || []).includes(pawn);
-            if (inParty || parked) {
-                const tip = this.scene.partySys?.hoverTooltip?.(pawn);
-                if (tip) return tip;
-            }
-        }
-        const who = this.occupantName(slot);
         const name = this.meta?.name || "Lean-to";
         const rest = (typeof Needs !== "undefined" && Needs.effectivenessLine)
             ? Needs.effectivenessLine(this.meta)
             : "";
-        return rest ? `${name}\n${rest}\n${who}` : `${name}\n${who}`;
+        const text = rest ? `${name}\n${rest}` : name;
+        const lines = this._peopleLines();
+        if (!lines.length) return text;
+        return { text, lines };
+    }
+
+    _peopleLines() {
+        const lines = [];
+        const seen = new Set();
+        const push = (person) => {
+            if (!this._canListPerson(person, seen)) return;
+            const label = this._personLabel(person);
+            if (!label) return;
+            const id = this._personId(person);
+            if (id) seen.add(id);
+            const line = { label };
+            const icon = this._personIcon(person);
+            if (icon) {
+                line.icon = icon.key;
+                line.frame = icon.frame;
+            }
+            lines.push(line);
+        };
+        const occ = this.entry?.occupants;
+        if (Array.isArray(occ)) {
+            for (let i = 0; i < occ.length; i++) {
+                if (!occ[i]) continue;
+                const pawn = this.occupantPawn(i) || this._pawnById(occ[i]);
+                if (pawn) push(pawn);
+            }
+        }
+        this._eachPerson((person) => {
+            if (!this._asleepHere(person) && !this._pointInside(this._insidePoint(person))) return;
+            push(person);
+        });
+        return lines;
+    }
+
+    _canListPerson(person, seen) {
+        if (!person || person.dead || person._bodyDead || person.isBodyDead?.()) return false;
+        if (person.active === false) return false;
+        const id = this._personId(person);
+        return !(id && seen.has(id));
+    }
+
+    _personId(person) {
+        return person?.pawnId || person?.id || person?.ownerId || "";
+    }
+
+    _personLabel(person) {
+        const named = typeof person.displayName === "function"
+            ? person.displayName()
+            : person.displayName;
+        const name = named || person.pawnName || "";
+        return name ? String(name) : "";
+    }
+
+    _personIcon(person) {
+        const textures = this.scene?.textures;
+        if (!textures?.exists) return null;
+        const sprite = person.spr?.texture ? person.spr : person;
+        const showingLie = sprite._lieTexKey && sprite.texture?.key === sprite._lieTexKey;
+        let key = showingLie ? sprite._lieSrcKey : sprite.texture?.key;
+        if (!key) key = person.tex;
+        const look = person.look || person.bio?.look;
+        if ((!key || !textures.exists(key)) && look && typeof PlayerLook !== "undefined") {
+            const baked = PlayerLook.ensure(this.scene, look);
+            if (baked && textures.exists(baked)) key = baked;
+        }
+        if (!key || !textures.exists(key)) key = textures.exists("human") ? "human" : "";
+        if (!key) return null;
+        const tex = textures.get?.(key);
+        const frame = (!tex?.has || tex.has(1) || tex.has("1")) ? 1 : 0;
+        return { key, frame };
+    }
+
+    _pawnById(id) {
+        if (!id) return null;
+        const match = (p) => p && (p.pawnId === id || p.id === id || p.ownerId === id);
+        const scene = this.scene;
+        return (scene?.party || []).find(match)
+            || (scene?.settlers || []).find(match)
+            || scene?.partySys?.wanderers?.find?.(match)
+            || (scene?.player && match(scene.player) ? scene.player : null)
+            || this._remoteById(id);
+    }
+
+    _remoteById(id) {
+        for (const rp of this.scene?.remotePlayers?.values?.() || []) {
+            if (rp && (rp.pawnId === id || rp.id === id || rp.ownerId === id)) return rp;
+        }
+        return null;
+    }
+
+    _eachPerson(visit) {
+        const scene = this.scene;
+        if (!scene || typeof visit !== "function") return;
+        const lists = [scene.party, scene.settlers, scene.partySys?.wanderers];
+        for (let i = 0; i < lists.length; i++) {
+            const list = lists[i];
+            if (!list) continue;
+            for (let j = 0; j < list.length; j++) visit(list[j]);
+        }
+        if (scene.player) visit(scene.player);
+        for (const rp of scene.remotePlayers?.values?.() || []) visit(rp);
+    }
+
+    _asleepHere(person) {
+        const uid = this.entry?.uid;
+        if (!uid || !person) return false;
+        if (!(person._resting || person.resting)) return false;
+        return person.lastSleep?.uid === uid;
+    }
+
+    /** Feet while standing. A sleeper's x/y is already the body center. */
+    _insidePoint(person) {
+        const x = Number(person?.x);
+        const y = Number(person?.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+        if (person._resting || person.resting || person._prone || person.prone) return { x, y };
+        const w = Number(person.width) || Number(person.spr?.width) || 16;
+        const h = Number(person.height) || Number(person.spr?.height) || 16;
+        const hs = Number(person.hitboxSize) || 8;
+        if (typeof Place !== "undefined" && Place.walkBodyAt) {
+            const box = Place.walkBodyAt(x, y, w, h, hs);
+            return {
+                x: (box.left + box.right) * 0.5,
+                y: (box.top + box.bottom) * 0.5
+            };
+        }
+        return { x: x + w * 0.5, y };
+    }
+
+    _pointInside(pt) {
+        if (!pt || typeof Place === "undefined" || !Place.footprintWorldRect) return false;
+        const rect = Place.footprintWorldRect(this.entry, this.meta, this.scene?.tileSize || 16);
+        if (!rect) return false;
+        return pt.x >= rect.left && pt.x < rect.right && pt.y >= rect.top && pt.y < rect.bottom;
     }
 }
 
