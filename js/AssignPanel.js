@@ -491,7 +491,7 @@ class AssignPanel {
         let portrait = pawn.texture?.key;
         const look = pawn.look || pawn.bio?.look;
         if ((!portrait || !scene.textures.exists(portrait)) && look && typeof PlayerLook !== "undefined") {
-            portrait = PlayerLook.ensure(scene, look);
+            portrait = PlayerLook.ensure(scene, look, { body: pawn.anatomy || pawn.body || null });
         }
         const portraitW = portrait && scene.textures.exists(portrait) ? m.portrait + Math.round(6 * m.s) : 0;
         if (portraitW) {

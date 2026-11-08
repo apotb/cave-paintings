@@ -159,7 +159,7 @@ class Corpse extends Phaser.GameObjects.Sprite {
     constructor(scene, entry, chunk) {
         const look = entry.look || null;
         const key = typeof PlayerLook !== "undefined"
-            ? PlayerLook.resolveTexture(scene, entry.key || "human", look)
+            ? PlayerLook.resolveTexture(scene, entry.key || "human", look, entry.body)
             : (entry.key && entry.key !== "player" ? entry.key : "human");
         const frame = entry.frame != null ? entry.frame : 7;
         super(scene, entry.x, entry.y, key, frame);

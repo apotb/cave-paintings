@@ -2024,7 +2024,9 @@ class LeanTo extends Thing {
         if (!key) key = person.tex;
         const look = person.look || person.bio?.look;
         if ((!key || !textures.exists(key)) && look && typeof PlayerLook !== "undefined") {
-            const baked = PlayerLook.ensure(this.scene, look);
+            const baked = PlayerLook.ensure(this.scene, look, {
+                body: person.anatomy || person.body || null
+            });
             if (baked && textures.exists(baked)) key = baked;
         }
         if (!key || !textures.exists(key)) key = textures.exists("human") ? "human" : "";

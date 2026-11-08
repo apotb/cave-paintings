@@ -456,7 +456,13 @@ class StatsPanel {
         if (direct && scene.textures?.exists(direct)) return direct;
         const look = pawn?.look || pawn?.bio?.look;
         if (look && typeof PlayerLook !== "undefined") {
-            const baked = PlayerLook.ensure(scene, look);
+            const worn = (typeof Apparel !== "undefined" && Apparel.equippedIds && pawn?.equipment)
+                ? Apparel.equippedIds(pawn.equipment)
+                : [];
+            const baked = PlayerLook.ensure(scene, look, {
+                worn,
+                body: pawn?.anatomy || pawn?.body || null
+            });
             if (baked && scene.textures?.exists(baked)) return baked;
         }
         const corpse = scene.bioPanel?._selectedCorpse?.();

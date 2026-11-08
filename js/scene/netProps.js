@@ -203,7 +203,7 @@
             : [];
         let key = c.key || "human";
         if (typeof PlayerLook !== "undefined") {
-            key = PlayerLook.resolveTexture(this, key, c.look);
+            key = PlayerLook.resolveTexture(this, key, c.look, c.body);
         } else if (!this.textures.exists(key) || key === "player") {
             if (this.textures.exists("human")) key = "human";
             else if (this.textures.exists("deer")) key = "deer";
@@ -374,11 +374,13 @@
         }
     },
 
-    _netMobTex(kind, look) {
+    _netMobTex(kind, look, body) {
         const def = this.getMob?.(kind);
         let texKey = def?.key || kind;
-        if (look && typeof PlayerLook !== "undefined") {
-            texKey = PlayerLook.resolveTexture(this, texKey, look);
+        const human = def?.bodyPlan === "human" || kind === "human" || texKey === "human";
+        if (typeof PlayerLook !== "undefined") {
+            if (look) texKey = PlayerLook.resolveTexture(this, texKey, look, human ? body : null);
+            else if (human && body) texKey = PlayerLook.resolveTexture(this, texKey, null, body);
         }
         if (this.textures.exists(texKey)) return texKey;
         if (this.textures.exists(kind)) return kind;
@@ -389,7 +391,7 @@
     _netMakeMob(m) {
         const kind = m.kind || "deer";
         const def = this.getMob?.(kind);
-        const tex = this._netMobTex(kind, m.look);
+        const tex = this._netMobTex(kind, m.look, m.body);
         const root = this.add.container(m.x, m.y);
         this.mainLayer.add(root);
         let spr;
@@ -457,6 +459,7 @@
             attackMax: 0,
             attackAngle: 0,
             look: m.look || null,
+            body: m.body || null,
             bio: m.bio || null,
             panic: !!m.panic,
             hostile: !!m.hostile,
@@ -535,12 +538,14 @@
             if (m.body) entry.body = m.body;
             if (Array.isArray(m.inventory)) entry.inventory = m.inventory;
             if (entry.prone) this.corpsePanel?.syncDownedPawn?.(entry.id);
-            if (m.look) {
-                entry.look = m.look;
-                const tex = this._netMobTex(entry.kind, m.look);
-                if (tex && tex !== entry.tex && entry.spr?.setTexture) {
-                    this._netEnsureMobAnims(tex);
-                    entry.tex = tex;
+            if (m.look) entry.look = m.look;
+            const tex = this._netMobTex(entry.kind, entry.look, entry.body);
+            if (tex && tex !== entry.tex && entry.spr?.setTexture) {
+                this._netEnsureMobAnims(tex);
+                const showingLie = entry.spr._lieTexKey && entry.spr.texture?.key === entry.spr._lieTexKey;
+                entry.tex = tex;
+                if (showingLie) entry.spr._lieSrcKey = tex;
+                else {
                     entry.spr.setTexture(tex, 1);
                     entry.animKey = null;
                 }

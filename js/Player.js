@@ -866,6 +866,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
         this.capacities = new Capacities(this.anatomy);
         this._refreshDownedState();
+        this.syncWornLook();
         this.scene.healthPanel?.refresh?.();
         if (_result?.damage > 0) this._cancelBowDraw?.();
         if (!(_result?.damage > 0)) return;
@@ -908,6 +909,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         setCreatureProne(this, false);
         this.anatomy.fullHeal();
         this.capacities = new Capacities(this.anatomy);
+        this.syncWornLook();
         this.kc = 1200;
         this.saturation = 0;
         this.teleport(x, y);
@@ -1195,10 +1197,13 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const worn = (typeof Apparel !== "undefined" && Apparel.equippedIds)
             ? Apparel.equippedIds(this.equipment)
             : [];
-        const sig = worn.join("+");
+        const missingSig = (typeof Look !== "undefined" && Look.missingSuffix)
+            ? Look.missingSuffix(Look.missingVisuals(this.anatomy))
+            : "";
+        const sig = `${worn.join("+")}|${missingSig}`;
         if (sig === (this._wornLookSig || "") && this.texture?.key && this.texture.key !== "human") return;
         const moving = !!(this.anims?.isPlaying && /-walk-/.test(this.anims.currentAnim?.key || ""));
-        const key = PlayerLook.apply(this, this.look, { worn });
+        const key = PlayerLook.apply(this, this.look, { worn, body: this.anatomy });
         if (!key || key === "human") return;
         this._wornLookSig = sig;
         PlayerLook.play(this, this.facing || "down", moving);
@@ -4278,8 +4283,10 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         // Puppets share one anatomy object for the whole visit. Rebuilding
         // Moving/Consciousness for every settler every frame is a camp hitch.
         if (controlled || this.anatomy?._dirty || !this.capacities || this.capacities.body !== this.anatomy) {
+            const bodyChanged = !!this.anatomy?._dirty;
             this.capacities = new Capacities(this.anatomy);
             if (this.anatomy) this.anatomy._dirty = false;
+            if (bodyChanged) this.syncWornLook();
         }
         this._refreshDownedState();
         if (this._bodyDead) return;

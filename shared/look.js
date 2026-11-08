@@ -183,6 +183,134 @@
         return `player-${part}`;
     }
 
+    const SHEET_FRAME = 16;
+    const SHEET_COLS = 3;
+
+    function emptyMissing() {
+        return {
+            head: false,
+            leftArm: false,
+            rightArm: false,
+            leftLeg: false,
+            rightLeg: false,
+            leftFoot: false,
+            rightFoot: false
+        };
+    }
+
+    /** @param {object|null|undefined} node */
+    function limbDead(node, name) {
+        const limbs = node && node.limbs;
+        if (!limbs || typeof limbs !== "object") return false;
+        if (Object.prototype.hasOwnProperty.call(limbs, name)) return !!limbs[name]?.dead;
+        for (const child of Object.values(limbs)) {
+            if (child && limbDead(child, name)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * True when that named part is destroyed. Accepts a Body or body JSON.
+     * Torso death does not count as the children being dead.
+     * @param {object|null|undefined} body
+     * @param {string} name
+     */
+    function partIsDead(body, name) {
+        if (!body || !name) return false;
+        if (typeof body.part === "function") {
+            const p = body.part(name);
+            if (!p) return false;
+            if (typeof p.isDead === "function") return !!p.isDead();
+            return !!p.dead;
+        }
+        const root = body.core && typeof body.core === "object" ? body.core : body;
+        return limbDead(root, name);
+    }
+
+    /**
+     * Limbs the walker should leave off the sheet.
+     * A missing leg also drops that shoe. A missing foot drops only the shoe.
+     * @param {object|null|undefined} body Body instance or saved JSON
+     */
+    function missingVisuals(body) {
+        const out = emptyMissing();
+        if (!body) return out;
+        const dead = (name) => partIsDead(body, name);
+        out.head = dead("Head") || dead("Neck");
+        out.leftArm = dead("Left Arm") || dead("Left Shoulder");
+        out.rightArm = dead("Right Arm") || dead("Right Shoulder");
+        out.leftLeg = dead("Left Leg");
+        out.rightLeg = dead("Right Leg");
+        out.leftFoot = out.leftLeg || dead("Left Foot");
+        out.rightFoot = out.rightLeg || dead("Right Foot");
+        return out;
+    }
+
+    /** Texture-key suffix. Empty when the body is visually whole. */
+    function missingSuffix(missing) {
+        const m = missing || emptyMissing();
+        let s = "";
+        if (m.head) s += "H";
+        if (m.leftArm) s += "La";
+        if (m.rightArm) s += "Ra";
+        if (m.leftLeg) s += "Ll";
+        if (m.rightLeg) s += "Rl";
+        if (m.leftFoot && !m.leftLeg) s += "Lf";
+        if (m.rightFoot && !m.rightLeg) s += "Rf";
+        return s;
+    }
+
+    /** Head and eyes are their own layers. Skip them instead of erasing a side. */
+    function hidesWholePart(part, missing) {
+        return (part === "head" || part === "eyes") && !!missing?.head;
+    }
+
+    function sideMissing(layer, missing, side) {
+        if (layer === "arms") return side === "left" ? !!missing.leftArm : !!missing.rightArm;
+        if (layer === "pants") return side === "left" ? !!missing.leftLeg : !!missing.rightLeg;
+        return side === "left" ? !!missing.leftFoot : !!missing.rightFoot;
+    }
+
+    /**
+     * Sheet rectangles to clear on arms, pants, or shoes.
+     * Front and back split at the frame midline. Facing the camera, screen-left
+     * is the character's right. Facing away, screen-left is the character's left.
+     * Side rows are not mirrored: the visible arm is the left arm when facing
+     * left and the right arm when facing right (frame 7). A single missing leg
+     * or foot stays drawn in those rows; both gone clears the blob.
+     * @param {"arms"|"pants"|"shoes"} layer
+     * @param {object|null|undefined} missing
+     * @returns {{ x: number, y: number, w: number, h: number }[]}
+     */
+    function visualEraseRects(layer, missing) {
+        const rects = [];
+        if (layer !== "arms" && layer !== "pants" && layer !== "shoes") return rects;
+        const m = missing || emptyMissing();
+        for (let row = 0; row < 4; row++) {
+            for (let col = 0; col < SHEET_COLS; col++) {
+                const x = col * SHEET_FRAME;
+                const y = row * SHEET_FRAME;
+                if (row === 1 || row === 2) {
+                    let wipe = false;
+                    if (layer === "arms") wipe = row === 1 ? !!m.leftArm : !!m.rightArm;
+                    else if (layer === "pants") wipe = !!(m.leftLeg && m.rightLeg);
+                    else wipe = !!(m.leftFoot && m.rightFoot);
+                    if (wipe) rects.push({ x, y, w: SHEET_FRAME, h: SHEET_FRAME });
+                    continue;
+                }
+                const screenLeft = row === 0 ? "right" : "left";
+                const screenRight = screenLeft === "left" ? "right" : "left";
+                if (sideMissing(layer, m, screenLeft)) {
+                    rects.push({ x, y, w: SHEET_FRAME / 2, h: SHEET_FRAME });
+                }
+                if (sideMissing(layer, m, screenRight)) {
+                    rects.push({ x: x + SHEET_FRAME / 2, y, w: SHEET_FRAME / 2, h: SHEET_FRAME });
+                }
+            }
+        }
+        return rects;
+    }
+
     return {
         PARTS,
         DRAW_ORDER,
@@ -198,6 +326,10 @@
         rgbToHsl,
         hslToRgb,
         randomLook,
-        partTextureKey
+        partTextureKey,
+        missingVisuals,
+        missingSuffix,
+        hidesWholePart,
+        visualEraseRects
     };
 });

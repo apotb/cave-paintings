@@ -2496,6 +2496,9 @@ class PartySystem {
                     now: performance.now(),
                     teleportPx: teleport,
                     moving: wantWalk,
+                    // Hits land on the server pose. Coasting past it draws the
+                    // body a stride ahead of that hurtbox.
+                    extrapolate: false,
                     heading: w.heading
                 });
                 if (pose) {
@@ -3744,6 +3747,7 @@ class PartySystem {
                             try { existing.anatomy.loadJSON(m.body); } catch (_) {}
                             existing.capacities = new Capacities(existing.anatomy);
                             existing._refreshDownedState?.();
+                            existing.syncWornLook?.();
                             existing._netBodySig = bsig;
                         }
                     }

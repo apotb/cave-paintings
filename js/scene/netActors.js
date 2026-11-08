@@ -82,14 +82,17 @@
     _netApplyPawnWorn(pawn, worn, look) {
         if (!pawn || typeof PlayerLook === "undefined") return;
         const list = Array.isArray(worn) ? worn.filter((id) => typeof id === "string" && id) : [];
-        const sig = list.join("+");
+        const missingSig = (typeof Look !== "undefined" && Look.missingSuffix)
+            ? Look.missingSuffix(Look.missingVisuals(pawn.anatomy))
+            : "";
+        const sig = `${list.join("+")}|${missingSig}`;
         const lookSame = !look || (typeof Look !== "undefined" && Look.looksEqual(pawn.look, look));
         if (sig === (pawn._wornLookSig || "") && lookSame && pawn.texture?.key && pawn.texture.key !== "human") {
             return;
         }
         if (look) pawn.look = typeof Look !== "undefined" ? Look.normalizeLook(look) : look;
         const moving = !!(pawn.anims?.isPlaying && /-walk-/.test(pawn.anims.currentAnim?.key || ""));
-        const key = PlayerLook.apply(pawn, pawn.look, { worn: list });
+        const key = PlayerLook.apply(pawn, pawn.look, { worn: list, body: pawn.anatomy });
         if (!key || key === "human") return;
         pawn._wornLookSig = sig;
         PlayerLook.play(pawn, pawn.facing || "down", moving);
@@ -738,10 +741,15 @@
                     };
                     pawn.inventory = w.inventory.map(clone);
                 }
-                if (w.prone && w.body && pawn.anatomy?.loadJSON && typeof Capacities !== "undefined") {
-                    pawn.anatomy.loadJSON(w.body);
-                    pawn.capacities = new Capacities(pawn.anatomy);
-                    pawn._refreshDownedState?.();
+                if (w.body && pawn.anatomy?.loadJSON && typeof Capacities !== "undefined") {
+                    let sig = "";
+                    try { sig = JSON.stringify(w.body); } catch (_) {}
+                    if (sig && sig !== pawn._netBodySig) {
+                        pawn.anatomy.loadJSON(w.body);
+                        pawn.capacities = new Capacities(pawn.anatomy);
+                        pawn._refreshDownedState?.();
+                        pawn._netBodySig = sig;
+                    }
                 }
                 this.corpsePanel?.syncDownedPawn?.(pawn.pawnId);
                 pawn.recruitLocked = !!w.recruitLocked;

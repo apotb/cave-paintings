@@ -498,6 +498,7 @@
             pawn.capacities = new Capacities(pawn.anatomy);
         }
         pawn._refreshDownedState?.();
+        pawn.syncWornLook?.();
         pawn._netBodySig = sig;
         const hp = this.healthPanel;
         if (hp?.visible && !hp.isInspecting?.() && hp._subjectPawn?.() === pawn) {

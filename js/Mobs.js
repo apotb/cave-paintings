@@ -19,6 +19,15 @@ class Mob extends Phaser.Physics.Arcade.Image {
     }
 }
 
+/** `human-walk-down` → `walk-down`, including after the sheet key changes. */
+function mobAnimPose(animKey, tex) {
+    if (!animKey) return null;
+    const prefix = tex ? `${tex}-` : "";
+    if (prefix && animKey.startsWith(prefix)) return animKey.slice(prefix.length);
+    const m = String(animKey).match(/(walk|idle)-(down|left|right|up)$/);
+    return m ? `${m[1]}-${m[2]}` : null;
+}
+
 /**
  * Data-driven living creature. `entry` is the object in chunk.meta.mobs (mutated for save).
  */
@@ -148,6 +157,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
         });
 
         this.createAnimations();
+        this.syncMissingLook();
         this.playAnim(`idle-${this.facing}`);
         if (typeof applyCreatureSortDepth === "function") applyCreatureSortDepth(this);
         else this.setDepth(this.y | 0);
@@ -157,12 +167,13 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
      * Walk/idle anims for this mob's texture. Keys are `{tex}-walk-down` etc.
      * so they never collide with the player's shared `walk-down` anims.
      * `def.anim.rowOrder` lists sheet rows top→bottom (default: down,left,right,up).
+     * @param {string} [tex]
      */
-    createAnimations() {
-        const tex = this.def?.key || this.texture?.key;
-        if (!tex || !this.scene?.textures?.exists(tex)) return;
+    createAnimations(tex) {
+        const key = tex || this._sheetKey || this.def?.key || this.texture?.key;
+        if (!key || !this.scene?.textures?.exists(key)) return;
         const anims = this.scene.anims;
-        if (anims.exists(`${tex}-walk-down`)) return;
+        if (anims.exists(`${key}-walk-down`)) return;
 
         const order = this.def?.anim?.rowOrder;
         const dirs = Array.isArray(order) && order.length === 4
@@ -173,15 +184,15 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
             const start = row * 3;
             const mid = start + 1;
             anims.create({
-                key: `${tex}-walk-${dir}`,
-                frames: anims.generateFrameNumbers(tex, { start, end: start + 2 }),
+                key: `${key}-walk-${dir}`,
+                frames: anims.generateFrameNumbers(key, { start, end: start + 2 }),
                 // Match player walk cadence (Player.createAnimations uses 5)
                 frameRate: 5,
                 repeat: -1
             });
             anims.create({
-                key: `${tex}-idle-${dir}`,
-                frames: [{ key: tex, frame: mid }],
+                key: `${key}-idle-${dir}`,
+                frames: [{ key: key, frame: mid }],
                 frameRate: 10
             });
         }
@@ -189,10 +200,44 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
 
     playAnim(key) {
         if (!key) return;
-        const tex = this.def?.key || this.texture?.key;
+        const tex = this._sheetKey || this.def?.key || this.texture?.key;
         const full = tex ? `${tex}-${key}` : key;
         if (!this.scene?.anims?.exists(full)) return;
         this.play(full, true);
+    }
+
+    /**
+     * Wildlife humans are one fused sheet. Punch missing limbs out of a copy
+     * and point the walk clips at it. Layered looks stay on PlayerLook.
+     */
+    syncMissingLook() {
+        const human = this.def?.bodyPlan === "human" || this.def?.id === "human" || this.def?.key === "human";
+        if (!human || typeof Look === "undefined" || typeof PlayerLook === "undefined") {
+            if (!this._sheetKey) this._sheetKey = this.def?.key || this.texture?.key || "";
+            return;
+        }
+        const base = this.def?.key || "human";
+        const missing = Look.missingVisuals(this.anatomy);
+        const suffix = Look.missingSuffix(missing);
+        const key = PlayerLook.ensureFusedMask(this.scene, base, missing);
+        if (!key || (suffix && key === base)) return;
+        if (!this._sheetKey && key === base) {
+            this._sheetKey = key;
+            return;
+        }
+        if (key === this._sheetKey) return;
+        const prev = this._sheetKey || base;
+        this._sheetKey = key;
+        this.createAnimations(key);
+        const showingLie = this._lieTexKey && this.texture?.key === this._lieTexKey;
+        if (showingLie) {
+            this._lieSrcKey = key;
+            return;
+        }
+        const pose = mobAnimPose(this.anims?.currentAnim?.key, prev);
+        const frame = Number(this.frame?.name);
+        this.setTexture(key, Number.isFinite(frame) ? frame : 1);
+        if (pose) this.playAnim(pose);
     }
 
     isBodyDead() {
@@ -232,6 +277,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
 
     onBodyDamaged(source, _result) {
         this.capacities = new Capacities(this.anatomy);
+        this.syncMissingLook();
         // anatomy.markDirty() already set; LivingMob.update syncs body JSON once/frame
         if (this._dead) return;
         // Same as player: capacity collapse (e.g. brain useless after head loss) kills now
@@ -570,6 +616,7 @@ class LivingMob extends Phaser.Physics.Arcade.Sprite {
     update(_time, delta) {
         if (!this.active || this._dead) return;
         this.capacities = new Capacities(this.anatomy);
+        if (this.anatomy?._dirty) this.syncMissingLook();
         if (this.capacities.isDeadFromCapacities()) {
             this.onBodyFatal();
             return;
