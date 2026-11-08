@@ -1,5 +1,8 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("fs");
+const path = require("path");
+const zlib = require("zlib");
 const Place = require("../shared/place");
 const things = require("../data/Things.json");
 
@@ -353,6 +356,158 @@ test("lean-to collision matches the wooden frame", () => {
     assert.equal(contains(occupy, midX, top0 + 2), true);
     assert.equal(occupy.right - occupy.left, 32);
     assert.equal(occupy.bottom - occupy.top, 16);
+});
+
+function readIndexedPng(file) {
+    const data = fs.readFileSync(file);
+    let pos = 8;
+    let width = 0;
+    let height = 0;
+    let bitDepth = 0;
+    let colorType = 0;
+    let idat = Buffer.alloc(0);
+    let plte = null;
+    let trns = null;
+    while (pos + 8 <= data.length) {
+        const ln = data.readUInt32BE(pos);
+        const typ = data.slice(pos + 4, pos + 8).toString("ascii");
+        const chunk = data.slice(pos + 8, pos + 8 + ln);
+        pos += 12 + ln;
+        if (typ === "IHDR") {
+            width = chunk.readUInt32BE(0);
+            height = chunk.readUInt32BE(4);
+            bitDepth = chunk[8];
+            colorType = chunk[9];
+        } else if (typ === "PLTE") plte = chunk;
+        else if (typ === "tRNS") trns = chunk;
+        else if (typ === "IDAT") idat = Buffer.concat([idat, chunk]);
+        else if (typ === "IEND") break;
+    }
+    assert.equal(colorType, 3, path.basename(file));
+    const raw = zlib.inflateSync(idat);
+    const stride = Math.ceil(width * bitDepth / 8);
+    const rows = [];
+    let i = 0;
+    let prev = Buffer.alloc(stride);
+    const bpp = Math.max(1, Math.ceil(bitDepth / 8));
+    for (let y = 0; y < height; y++) {
+        const filt = raw[i++];
+        const row = Buffer.from(raw.subarray(i, i + stride));
+        i += stride;
+        if (filt === 1) {
+            for (let x = 0; x < stride; x++) row[x] = (row[x] + (x >= bpp ? row[x - bpp] : 0)) & 255;
+        } else if (filt === 2) {
+            for (let x = 0; x < stride; x++) row[x] = (row[x] + prev[x]) & 255;
+        } else if (filt === 3) {
+            for (let x = 0; x < stride; x++) {
+                const left = x >= bpp ? row[x - bpp] : 0;
+                row[x] = (row[x] + ((left + prev[x]) >> 1)) & 255;
+            }
+        } else if (filt === 4) {
+            for (let x = 0; x < stride; x++) {
+                const a = x >= bpp ? row[x - bpp] : 0;
+                const b = prev[x];
+                const c = x >= bpp ? prev[x - bpp] : 0;
+                const p = a + b - c;
+                const pa = Math.abs(p - a);
+                const pb = Math.abs(p - b);
+                const pc = Math.abs(p - c);
+                const pr = pa <= pb && pa <= pc ? a : (pb <= pc ? b : c);
+                row[x] = (row[x] + pr) & 255;
+            }
+        } else {
+            assert.equal(filt, 0);
+        }
+        prev = row;
+        rows.push(row);
+    }
+    const indexAt = (row, x) => {
+        if (bitDepth === 8) return row[x];
+        if (bitDepth === 4) {
+            const b = row[x >> 1];
+            return (x & 1) === 0 ? (b >> 4) : (b & 15);
+        }
+        if (bitDepth === 2) {
+            const b = row[x >> 2];
+            return (b >> (6 - 2 * (x & 3))) & 3;
+        }
+        const b = row[x >> 3];
+        return (b >> (7 - (x & 7))) & 1;
+    };
+    const solid = (x, y) => {
+        if (x < 0 || y < 0 || x >= width || y >= height) return false;
+        const idx = indexAt(rows[y], x);
+        const a = trns && idx < trns.length ? trns[idx] : 255;
+        return a >= 128;
+    };
+    assert.ok(plte);
+    return { w: width, h: height, solid };
+}
+
+test("vertical lean-to walls sort per row so the bottom end does not cover you", () => {
+    assert.equal(Place.leanToWallRowSort(90), true);
+    assert.equal(Place.leanToWallRowSort(270), true);
+    assert.equal(Place.leanToWallRowSort(0), false);
+    assert.equal(Place.leanToWallRowSort(180), false);
+
+    const anchorY = 64;
+    for (const rot of [90, 270]) {
+        const grid = readIndexedPng(path.join(
+            __dirname, `../assets/things/lean_to/wall_${rot}.png`
+        ));
+        const strips = Place.opaqueRowStrips(grid.w, grid.h, grid.solid);
+        assert.ok(strips.length > 20, `rot ${rot} is sliced into scanlines`);
+        const seen = new Set();
+        let south = strips[0];
+        for (const s of strips) {
+            assert.equal(seen.has(s.y), false, `rot ${rot} row ${s.y} once`);
+            seen.add(s.y);
+            assert.equal(s.h, 1);
+            assert.equal(s.dy, -(grid.h - 1 - s.y) - 0.5);
+            assert.ok(grid.solid(s.x, s.y));
+            assert.ok(grid.solid(s.x + s.w - 1, s.y));
+            if (s.dy > south.dy) south = s;
+        }
+        for (let y = 0; y < grid.h; y++) {
+            let any = false;
+            for (let x = 0; x < grid.w; x++) if (grid.solid(x, y)) any = true;
+            assert.equal(seen.has(y), any, `rot ${rot} row ${y} coverage`);
+        }
+
+        // Standing in the bottom end. Feet at the sprite anchor, which is
+        // south of every wall pixel. The old single depth (anchor + 2) paints
+        // the whole wall over this pawn.
+        const feet = anchorY;
+        const pawn = feet | 0;
+        assert.ok(pawn < anchorY + 2, "old frame depth still wins");
+        for (const s of strips) {
+            const rowY = anchorY - (grid.h - 1 - s.y);
+            assert.ok(rowY <= feet, `rot ${rot} row ${s.y} is north of the south tip`);
+            assert.ok(
+                pawn > anchorY + s.dy,
+                `rot ${rot} row ${s.y} should be behind a pawn at the bottom`
+            );
+        }
+
+        // Halfway down the open side: rows north of the feet stay behind the
+        // body, rows south of the feet stay in front.
+        const mid = anchorY - 16;
+        const midPawn = mid | 0;
+        let behind = 0;
+        let ahead = 0;
+        for (const s of strips) {
+            const rowY = anchorY - (grid.h - 1 - s.y);
+            if (rowY <= mid) {
+                assert.ok(midPawn > anchorY + s.dy, `rot ${rot} row ${s.y} behind`);
+                behind += 1;
+            } else {
+                assert.ok(midPawn < anchorY + s.dy, `rot ${rot} row ${s.y} in front`);
+                ahead += 1;
+            }
+        }
+        assert.ok(behind > 8 && ahead > 8, `rot ${rot} splits around the pawn`);
+        assert.ok(anchorY + south.dy < anchorY + 2, "south cap is north of the old depth");
+    }
 });
 
 test("itemIconKey uses null when the item has no texture", () => {

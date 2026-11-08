@@ -1710,6 +1710,31 @@ class CraftStation extends Thing {
     }
 }
 
+const _leanFrameStrips = new Map();
+
+/**
+ * Row crops for a vertical lean-to wall. Null for a facade (rot 0 / 180),
+ * which stays one sprite sorted at the feet. Cached per texture; do not mutate.
+ */
+function leanToFrameStrips(scene, texKey, rot) {
+    if (typeof Place === "undefined" || !Place.leanToWallRowSort?.(rot)) return null;
+    if (!texKey || !scene?.textures?.exists?.(texKey)) return null;
+    const hit = _leanFrameStrips.get(texKey);
+    if (hit) return hit;
+    const img = typeof stoneSourceImage === "function" ? stoneSourceImage(scene, texKey) : null;
+    const imageData = img && typeof stoneImageData === "function" ? stoneImageData(img) : null;
+    if (!imageData?.data) return null;
+    const width = imageData.width;
+    const height = imageData.height;
+    const data = imageData.data;
+    const strips = Place.opaqueRowStrips(width, height, (x, y) => {
+        return data[(y * width + x) * 4 + 3] >= 128;
+    });
+    if (!strips.length) return null;
+    _leanFrameStrips.set(texKey, strips);
+    return strips;
+}
+
 class LeanTo extends Thing {
     constructor(scene, entry) {
         const def = scene.getThing(entry.id);
@@ -1793,6 +1818,19 @@ class LeanTo extends Thing {
             this._destroyFrame();
             return;
         }
+        const strips = (typeof leanToFrameStrips === "function")
+            ? leanToFrameStrips(this.scene, tex, this.entry?.rot)
+            : null;
+        if (strips) {
+            if (this._frameSpr) {
+                this._frameSpr.destroy();
+                this._frameSpr = null;
+            }
+            this._syncFrameRows(tex, strips);
+            this._frameKey = tex;
+            return;
+        }
+        this._destroyFrameRows();
         if (!this._frameSpr || this._frameKey !== tex) {
             this._destroyFrame();
             this._frameSpr = this.scene.add.image(this.x, this.y, tex);
@@ -1805,11 +1843,45 @@ class LeanTo extends Thing {
         this._frameSpr.setVisible(true);
     }
 
+    _syncFrameRows(tex, strips) {
+        if (!this._frameSprs) this._frameSprs = [];
+        const y = Number(this.y) || 0;
+        while (this._frameSprs.length > strips.length) {
+            this._frameSprs.pop().destroy();
+        }
+        for (let i = 0; i < strips.length; i++) {
+            const p = strips[i];
+            let spr = this._frameSprs[i];
+            if (!spr || !spr.active || spr._frameTex !== tex) {
+                spr?.destroy?.();
+                spr = this.scene.add.image(this.x, this.y, tex);
+                spr.setOrigin(0.5, 1);
+                this.scene.mainLayer?.add(spr);
+                spr._frameTex = tex;
+                this._frameSprs[i] = spr;
+            }
+            spr.setTexture(tex);
+            spr.setOrigin(0.5, 1);
+            spr.setCrop(p.x, p.y, p.w, p.h);
+            spr.setPosition(this.x, this.y);
+            spr.setDepth(y + p.dy);
+            spr.setVisible(true);
+        }
+    }
+
+    _destroyFrameRows() {
+        const strips = this._frameSprs;
+        this._frameSprs = null;
+        if (!strips) return;
+        for (let i = 0; i < strips.length; i++) strips[i]?.destroy?.();
+    }
+
     _destroyFrame() {
         if (this._frameSpr) {
             this._frameSpr.destroy();
             this._frameSpr = null;
         }
+        this._destroyFrameRows();
         this._frameKey = null;
     }
 

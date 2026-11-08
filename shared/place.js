@@ -851,6 +851,48 @@
     }
 
     /**
+     * Vertical lean-to (rot 90 / 270). The wall art runs north–south, so
+     * screen Y is depth. One depth at the south tip paints that whole wall
+     * over a pawn who walked down the open side into the bottom end.
+     * Horizontal facings stay a single sprite at the feet: that art is a
+     * facade, and the roof has to cover anyone tucked under the north lip.
+     */
+    function leanToWallRowSort(rot) {
+        const r = normalizeRot(rot);
+        return r === 90 || r === 270;
+    }
+
+    /**
+     * One strip per opaque scanline. `dy` is added to the sprite anchor
+     * (bottom-center). Just behind that row, so a pawn standing on the
+     * scanline draws in front of it. Do not mutate the result.
+     */
+    function opaqueRowStrips(width, height, solid) {
+        const w = Math.max(0, Math.floor(Number(width) || 0));
+        const h = Math.max(0, Math.floor(Number(height) || 0));
+        if (!w || !h || typeof solid !== "function") return [];
+        const strips = [];
+        for (let y = 0; y < h; y++) {
+            let x0 = -1;
+            let x1 = -1;
+            for (let x = 0; x < w; x++) {
+                if (!solid(x, y)) continue;
+                if (x0 < 0) x0 = x;
+                x1 = x + 1;
+            }
+            if (x0 < 0) continue;
+            strips.push({
+                x: x0,
+                y,
+                w: x1 - x0,
+                h: 1,
+                dy: -(h - 1 - y) - 0.5
+            });
+        }
+        return strips;
+    }
+
+    /**
      * Near-wall slices of a round hut. Each strip sorts at its own south
      * edge. One depth at the sprite bottom paints the bottom corners over
      * a pawn whose feet are still north of that edge.
@@ -2078,6 +2120,8 @@
         wallDiskHits,
         clampRingCenter,
         wallMaskSolid,
+        leanToWallRowSort,
+        opaqueRowStrips,
         frontWallStrips,
         doorClearsPixel,
         meshAlphaBoxes,

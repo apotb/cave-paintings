@@ -1645,6 +1645,7 @@
         if (this._placeGhostInteract) this._placeGhostInteract.setVisible(false);
         if (this._hutGhostBack) this._hutGhostBack.setVisible(false);
         this._hideHutGhostFronts();
+        this._hideLeanGhostStrips();
         this._placeGhostTile = null;
         this._placeGhostValid = false;
     },
@@ -1775,7 +1776,10 @@
         const frameTex = !hutGhost && (typeof Place !== "undefined" && info.thingDef?.sleep)
             ? Place.rotationWallTextureKey(info.thingDef.key, rot)
             : null;
-        if (frameTex && this.textures.exists(frameTex)) {
+        if (frameTex && this.textures.exists(frameTex) && this._syncLeanGhostStrips(frameTex, gx, gy, rot, valid)) {
+            if (this._placeGhostFrame) this._placeGhostFrame.setVisible(false);
+        } else if (frameTex && this.textures.exists(frameTex)) {
+            this._hideLeanGhostStrips();
             let frame = this._placeGhostFrame;
             if (!frame || !frame.active) {
                 frame = this.add.image(gx, gy, frameTex).setOrigin(0.5, 1);
@@ -1789,8 +1793,9 @@
             frame.setAlpha(0.5);
             frame.setTint(valid ? 0xffffff : 0xff5555);
             frame.setVisible(true);
-        } else if (this._placeGhostFrame) {
-            this._placeGhostFrame.setVisible(false);
+        } else {
+            this._hideLeanGhostStrips();
+            if (this._placeGhostFrame) this._placeGhostFrame.setVisible(false);
         }
         this._syncPlaceGhostInteract(info.thingDef, tx, ty, rot, valid);
         this._placeGhostTile = { tx, ty };
@@ -1811,6 +1816,34 @@
         spr.setTint(tint);
         spr.setVisible(true);
         return spr;
+    },
+
+    _hideLeanGhostStrips() {
+        const list = this._leanGhostStrips;
+        if (!list) return;
+        for (let i = 0; i < list.length; i++) list[i]?.setVisible(false);
+    },
+
+    _syncLeanGhostStrips(tex, x, y, rot, valid) {
+        const strips = (typeof leanToFrameStrips === "function")
+            ? leanToFrameStrips(this, tex, rot)
+            : null;
+        if (!strips) {
+            this._hideLeanGhostStrips();
+            return false;
+        }
+        if (!this._leanGhostStrips) this._leanGhostStrips = [];
+        const tint = valid ? 0xffffff : 0xff5555;
+        while (this._leanGhostStrips.length > strips.length) {
+            this._leanGhostStrips.pop().destroy();
+        }
+        for (let i = 0; i < strips.length; i++) {
+            const p = strips[i];
+            this._leanGhostStrips[i] = this._hutGhostPiece(
+                this._leanGhostStrips[i], tex, x, y, p.x, p.y, p.w, p.h, y + p.dy, tint
+            );
+        }
+        return true;
     },
 
     _hideHutGhostFronts() {
