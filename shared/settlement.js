@@ -2621,14 +2621,16 @@
     }
 
     /**
-     * Hunger, sleep, and a recreation hour. A research poll checks these
-     * after higher-priority work, including a painting restored after rejoin.
+     * Hunger, sleep, a wound that still needs a bunk, and a recreation hour.
+     * A research poll checks these after higher-priority work, including a
+     * painting restored after rejoin. Someone already downed cannot walk
+     * there; a doctor carries them.
      */
     function researchNeedsBreak(state, night, injured, onBreak, autoEat) {
         if ((Number(state.kc) || 0) < autoEat && state.canEat !== false) {
             return { type: "eat" };
         }
-        if (settlerShouldSleep(night, injured)) {
+        if (!state.downed && settlerShouldSleep(night, injured)) {
             if (state.bed) return { type: "sleep", target: state.bed };
             return { type: "idle" };
         }

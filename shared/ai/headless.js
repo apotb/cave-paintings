@@ -746,7 +746,13 @@
                 else mob.setDesiredVel?.(0, 0);
                 return;
             }
-            if (mob.isIncapacitated?.() || mob.isImmobile?.() || mob.isVomiting?.()) {
+            if (mob.isVomiting?.()) {
+                this._clearCombat();
+                mob.setDesiredVel?.(0, 0);
+                return;
+            }
+            const downed = !!(mob.isIncapacitated?.() || mob.isImmobile?.());
+            if (downed && !settler) {
                 this._clearCombat();
                 mob.setDesiredVel?.(0, 0);
                 return;
@@ -778,6 +784,25 @@
                 return;
             }
             if (settler) {
+                if (downed) {
+                    this._clearCombat();
+                    if (mob._resting) {
+                        world?.tickSettler?.(mob, delta);
+                    } else {
+                        // A rest walk they cannot finish makes the doctor wait
+                        // instead of carrying them. A carry already has its bunk.
+                        const pawn = world?._findOwnedPawn?.(mob.id);
+                        const carried = !!(mob._carriedBy || pawn?._carriedBy);
+                        if (!carried) {
+                            if (pawn) pawn._restWalk = null;
+                            mob._restWalk = null;
+                            mob._settlerAct = "Idle";
+                        }
+                        world?.releaseSettlerWork?.(mob);
+                    }
+                    mob.setDesiredVel?.(0, 0);
+                    return;
+                }
                 const home = world?.getSettlement?.(mob);
                 const next = world?.getAssistTarget?.(mob) || null;
                 if (next && this._settlerDefendOk(next, home) && !Party?.sparesDowned?.(mob, next)) {

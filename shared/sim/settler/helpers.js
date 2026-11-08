@@ -225,6 +225,13 @@ function isWorkHold(rec) {
     return !!(rec && rec._workHold && rec._busyJob);
 }
 
+/** A bunk is where a doctor will tend them. Cuts, infections, and open stumps. */
+function needsLieDown(anatomy) {
+    if (!anatomy) return false;
+    if (Sleep.injuredForAutofill?.(anatomy)) return true;
+    return !!BodyHealing?.pickTendTarget?.(anatomy);
+}
+
 function settlerWantsBed(world, rec, mob) {
     const settle = findSettle(world, rec);
     const assignment = Settlement.assignmentAt(
@@ -233,8 +240,7 @@ function settlerWantsBed(world, rec, mob) {
     );
     const night = assignment === "sleep";
     const c = rec.creature || world.creatures.get(rec.id) || mob;
-    const injured = Sleep.injuredForAutofill ? Sleep.injuredForAutofill(c?.anatomy) : false;
-    return Settlement.settlerShouldSleep(night, injured);
+    return Settlement.settlerShouldSleep(night, needsLieDown(c?.anatomy));
 }
 
 /**
@@ -305,6 +311,13 @@ function shouldDumpBeforeSleep(world, rec, mob) {
 
 function maybeLeaveBed(world, rec, mob) {
     if (!rec._resting && !rec.resting && !rec._restWalk) return null;
+    const c = rec.creature || world.creatures.get(rec.id) || mob;
+    if (c?.isIncapacitated?.() || c?.isImmobile?.() || rec.prone) {
+        if (rec._resting || rec.resting) {
+            setSleepAct(world, rec, mob, true);
+            return halt();
+        }
+    }
     if (settlerWantsBed(world, rec, mob)) {
         if (shouldDumpBeforeSleep(world, rec, mob)) return leaveBed(world, rec, mob);
         if (rec._resting || rec.resting) {
@@ -1922,6 +1935,7 @@ function depositKeepGear(world, rec, settle, keepBandageOrOpts, dest = null) {
     ctx.clearPaintBar = clearPaintBar;
     ctx.setPaintBar = setPaintBar;
     ctx.isWorkHold = isWorkHold;
+    ctx.needsLieDown = needsLieDown;
     ctx.settlerWantsBed = settlerWantsBed;
     ctx.releaseStaleNightScan = releaseStaleNightScan;
     ctx.leaveBed = leaveBed;

@@ -139,6 +139,9 @@ const shellRequire = typeof require === "function" ? require : undefined;
     const doFish = (...args) => ctx.doFish(...args);
     const doChop = (...args) => ctx.doChop(...args);
     const doResearch = (...args) => ctx.doResearch(...args);
+    const freeBed = (...args) => ctx.freeBed(...args);
+    const needsLieDown = (...args) => ctx.needsLieDown(...args);
+    const pawnDowned = (...args) => ctx.pawnDowned(...args);
     const doMerge = (...args) => ctx.doMerge(...args);
     const doHaul = (...args) => ctx.doHaul(...args);
     const haulTargetMissing = (...args) => ctx.haulTargetMissing(...args);
@@ -443,6 +446,17 @@ function tick(world, mob, delta) {
     // Sleep and other jobs share this poll. Both wait until a search has
     // run, so a rejoin does not walk off the circle on an empty scan.
     const pollNeeds = pollDue && !!rec._settlerScan;
+    // The job search can be a few moments old, or it can miss an open stump
+    // that is not stored as an injury. The poll reads the body itself.
+    if (pollNeeds && !pawnDowned(world, rec)) {
+        const anatomy = (rec.creature || mob)?.anatomy;
+        if (needsLieDown(anatomy)) {
+            rec._settlerScan.injured = true;
+            if (!rec._settlerScan.bed) {
+                rec._settlerScan.bed = freeBed(world, rec, settle, claims, { medical: true });
+            }
+        }
+    }
     const scan = rec._settlerScan || {};
     const keepOpts = keepGearOpts({
         keepBandage: !!scan.keepBandage,

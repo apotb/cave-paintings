@@ -67,6 +67,7 @@
     const leatherJobKey = (...args) => ctx.leatherJobKey(...args);
     const jobOn = (...args) => ctx.jobOn(...args);
     const researchCircle = (...args) => ctx.researchCircle(...args);
+    const needsLieDown = (...args) => ctx.needsLieDown(...args);
     const pigmentPred = (...args) => ctx.pigmentPred(...args);
     const keepGearOpts = (...args) => ctx.keepGearOpts(...args);
     const stashScan = (...args) => ctx.stashScan(...args);
@@ -1573,7 +1574,7 @@ function scanWork(world, rec, settle, claims) {
     );
     const night = assignment === "sleep";
     const c = rec.creature || world.creatures.get(rec.id);
-    const injured = Sleep.injuredForAutofill ? Sleep.injuredForAutofill(c?.anatomy) : false;
+    const injured = needsLieDown(c?.anatomy);
     const downed = pawnDowned(world, rec);
     const nets = jobOn(enabled, "fish") ? netJobs(world, rec, settle, claims) : { haul: null, bait: null };
     rec._fishNetBusy = !!(nets.haul || nets.bait);

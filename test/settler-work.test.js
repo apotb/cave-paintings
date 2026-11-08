@@ -6207,6 +6207,82 @@ test("researcher leaves a painting to sleep instead of finishing it", () => {
     assert.equal(entry.paintStarted, true);
 });
 
+test("researcher leaves a painting to be tended once a wound needs a bed", () => {
+    const Research = require("../shared/research");
+    const BodyHealing = require("../shared/body/Healing");
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        kc: 1600,
+        inventory: [{ id: "blueberry", quantity: 2 }, null, null, null, null]
+    });
+    settle.jobs[rec.id] = {
+        doctor: 0, cook: 0, chop: 0, leather: 0, gather: 0, haul: 0, research: 3
+    };
+    const chunk = originChunk(world);
+    const def = world._thingDef("painting_circle");
+    const entry = {
+        uid: "pc-tend",
+        id: "painting_circle",
+        x: rec.x,
+        y: rec.y
+    };
+    Research.ensureEntry(entry, def);
+    chunk.things.push(entry);
+    let started = false;
+    for (let i = 0; i < 160; i++) {
+        world.tick(50);
+        if (entry.paintStarted) {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true, "should start painting");
+    const bed = { uid: "lt-tend", id: "lean_to", x: rec.x + 64, y: rec.y, rot: 0 };
+    Place.ensureSleepEntry(bed, world._thingDef("lean_to"));
+    chunk.things.push(bed);
+    const mob = world._ensureSettlerCreature(rec);
+    const part = mob.anatomy.part("Left Arm") || mob.anatomy.core;
+    part.injure({
+        id: "cut",
+        severity: (Number(part.mhp) || 10) + 5,
+        painPerSeverity: 0,
+        bleeding: false,
+        bleedRate: 0,
+        tended: false,
+        permanent: false
+    });
+    mob.capacities = null;
+    mob.refreshCapacities?.();
+    assert.equal(part.isDead(), true, "the blow should open a stump");
+    assert.equal(Sleep.injuredForAutofill(mob.anatomy), false);
+    assert.ok(BodyHealing.pickTendTarget(mob.anatomy), "the stump still needs tending");
+    assert.equal(mob.isIncapacitated(), false);
+    rec.kc = 1600;
+    rec._researchPoll = 0;
+    rec._settlerScan = {
+        injured: false,
+        bed: null,
+        downed: false,
+        night: false,
+        assignment: "work",
+        researchCircle: entry
+    };
+    rec._settlerScanMs = 0;
+    world._tickSettlerWork(mob, 16);
+    assert.equal(rec._busyJob?.type, "research", "should keep painting until the needs poll");
+    assert.equal(!!rec._restWalk, false);
+    rec._researchPoll = Settlement.RESEARCH_NEEDS_TICKS - 1;
+    world._simTickLive = true;
+    world._queryGen = world._queryGen || 1;
+    world._scanGen = world._queryGen;
+    world._scanLeft = 0;
+    world._tickSettlerWork(mob, 16);
+    world._simTickLive = false;
+    assert.ok(rec._restWalk || rec._resting, "should go to a bed to be tended after a needs poll");
+    assert.notEqual(rec._busyJob?.type, "research");
+    assert.equal(entry.paintStarted, true);
+});
+
 test("researcher leaves a painting to eat instead of finishing it", () => {
     const Research = require("../shared/research");
     const { world, pawn } = createTestWorld();
