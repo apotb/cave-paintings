@@ -2,6 +2,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { Body } = require("../shared/body/Body");
 const BodyHealing = require("../shared/body/Healing");
+const Capacities = require("../shared/body/Capacities");
 const Hediffs = require("../shared/body/Hediff");
 const GameMath = require("../shared/gameMath");
 const { loadDefs, DataStore, bodyCtx } = require("./helpers/load");
@@ -175,6 +176,64 @@ test("resting in a hut heals faster than a lean-to", () => {
         return part.injuries[0].severity;
     })();
     assert.ok(lean < standing);
+});
+
+function painOf(owner) {
+    return new Capacities(owner.anatomy).pain();
+}
+
+test("a lost arm stops hurting after the stump closes", () => {
+    const owner = makeOwner();
+    const arm = owner.anatomy.part("Left Arm");
+    arm.injure({
+        id: "cut",
+        severity: 40,
+        bleeding: true,
+        bleedRate: 0.06,
+        painPerSeverity: 0.0125,
+        tended: false
+    });
+    arm.destroy();
+    const bleed = owner.anatomy.destroyedBleed.find((d) => d.partName === "Left Arm");
+    BodyHealing.applyTend(owner.anatomy, { destroyed: bleed }, 0.8);
+    assert.equal(BodyHealing.bleedRateTotal(owner.anatomy), 0);
+    const start = painOf(owner);
+    assert.ok(start >= 0.18, `fresh loss should hurt, got ${start}`);
+
+    const host = { worldMinuteIndex: () => 0, math: GameMath };
+    BodyHealing.healGameMinute(owner, host);
+    const next = painOf(owner);
+    assert.ok(next < start, `pain should fall after a heal tick (${start} -> ${next})`);
+    assert.ok(next > 0, "one tick should not clear a fresh amputation");
+
+    let guard = 0;
+    while (painOf(owner) > 0.001 && guard < 800) {
+        BodyHealing.healGameMinute(owner, host);
+        guard++;
+    }
+    assert.ok(guard < 800, "stump pain should finish healing");
+    assert.equal(painOf(owner), 0);
+    const saved = owner.anatomy.toJSON();
+    const cloneOwner = { kind: "player" };
+    const clone = new Body(bodyCtx(), "human", cloneOwner);
+    clone.loadJSON(saved);
+    cloneOwner.anatomy = clone;
+    assert.equal(painOf(cloneOwner), 0, "healed stump pain should stay gone after save");
+});
+
+test("an untended stump stops bleeding once the wound closes", () => {
+    const owner = makeOwner();
+    const arm = owner.anatomy.part("Left Arm");
+    arm.destroy();
+    assert.ok(BodyHealing.bleedRateTotal(owner.anatomy) > 0);
+    const host = { worldMinuteIndex: () => 0, math: GameMath };
+    let guard = 0;
+    while (painOf(owner) > 0.001 && guard < 800) {
+        BodyHealing.healGameMinute(owner, host);
+        guard++;
+    }
+    assert.equal(painOf(owner), 0);
+    assert.equal(BodyHealing.bleedRateTotal(owner.anatomy), 0);
 });
 
 test("minuteTick with food poisoning does not throw", () => {

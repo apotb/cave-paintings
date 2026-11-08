@@ -113,7 +113,10 @@
             let pain = 0;
             for (const part of Object.values(this.body.parts())) {
                 if (part.isDead()) {
-                    pain += Number(part.amputationPain) || 0.18;
+                    // 0 means the stump has closed. A missing limb does not
+                    // keep hurting after that.
+                    const amp = Number(part.amputationPain);
+                    if (amp > 0) pain += amp;
                     continue;
                 }
                 for (const inj of part.injuries) {

@@ -226,7 +226,10 @@
                 woundPain +=
                     (Number(inj.severity) || 0) * (Number.isFinite(pps) ? pps : 0.0125);
             }
-            this.amputationPain = Math.max(0.18, woundPain);
+            // Fresh loss. Healing closes this the way a cut closes; 0 means
+            // the stump no longer hurts. Cap at 1 so a huge hit cannot leave
+            // days of pain past what the bar can show.
+            this.amputationPain = Math.min(1, Math.max(0.18, woundPain));
             this.injuries = [];
             this.body.markDirty?.();
             this.body._onPartDestroyed?.(this);

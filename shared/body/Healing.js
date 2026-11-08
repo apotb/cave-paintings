@@ -166,6 +166,15 @@
             return false;
         },
 
+        /** Pain still owed by a destroyed part. 0 once the stump has closed. */
+        hasAmputationPain(body) {
+            if (!body || typeof body.parts !== "function") return false;
+            for (const part of Object.values(body.parts() || {})) {
+                if (part?.isDead?.() && (Number(part.amputationPain) || 0) > 0) return true;
+            }
+            return false;
+        },
+
         fullyHealedMessage(owner) {
             const name = Hediffs && typeof Hediffs._logName === "function"
                 ? Hediffs._logName(owner)
@@ -322,7 +331,12 @@
 
             const wounds = [];
             for (const part of Object.values(body.parts())) {
-                if (part.isDead()) continue;
+                if (part.isDead()) {
+                    if ((Number(part.amputationPain) || 0) > 0) {
+                        wounds.push({ part, amputation: true });
+                    }
+                    continue;
+                }
                 for (const inj of part.injuries) {
                     if (!inj.permanent) wounds.push({ part, inj });
                 }
@@ -331,10 +345,40 @@
 
             const pick = math.pick(wounds);
             const { part, inj } = pick;
+            if (pick.amputation) {
+                this._healAmputation(owner, body, part, math);
+            } else {
+                const healRate = this._woundHealRate(owner, body, inj.tended, inj.tendQuality, math);
+                inj.severity = Math.max(0, (Number(inj.severity) || 0) - healRate * 0.01);
+
+                if (inj.scarPending && inj.severity <= (inj.scarSeverity || 0)) {
+                    inj.permanent = true;
+                    inj.severity = inj.scarSeverity || 1;
+                    inj.bleeding = false;
+                    inj.scarPending = false;
+                    inj.name = (inj.name || "Injury") + " scar";
+                } else if (inj.severity <= 0.05 && !inj.scarPending) {
+                    const idx = part.injuries.indexOf(inj);
+                    if (idx >= 0) part.injuries.splice(idx, 1);
+                } else if (inj.severity <= 0 && inj.scarPending) {
+                    inj.permanent = true;
+                    inj.severity = inj.scarSeverity || 1;
+                    inj.bleeding = false;
+                    inj.scarPending = false;
+                    inj.name = (inj.name || "Injury") + " scar";
+                }
+            }
+
+            body.markDirty?.();
+            return !this.hasHealableInjuries(body) && !this.hasAmputationPain(body);
+        },
+
+        /** Same step a cut uses: base rate, plus tend quality and rest. */
+        _woundHealRate(owner, body, tended, tendQuality, math) {
             const base = Number(body.plan?.healRate) || this.BASE_HEAL_RATE;
             let healRate = base;
-            if (inj.tended) {
-                const q = math.clamp(Number(inj.tendQuality) || 0, 0, 1);
+            if (tended) {
+                const q = math.clamp(Number(tendQuality) || 0, 0, 1);
                 healRate += 4 + q * 8;
             }
             if (owner._resting) {
@@ -342,27 +386,39 @@
                 const lean = (typeof Sleep !== "undefined" && Number(Sleep.HEAL_BONUS)) || 8;
                 healRate += (Number.isFinite(extra) && extra > 0) ? extra : lean;
             }
-            inj.severity = Math.max(0, (Number(inj.severity) || 0) - healRate * 0.01);
+            return healRate;
+        },
 
-            if (inj.scarPending && inj.severity <= (inj.scarSeverity || 0)) {
-                inj.permanent = true;
-                inj.severity = inj.scarSeverity || 1;
-                inj.bleeding = false;
-                inj.scarPending = false;
-                inj.name = (inj.name || "Injury") + " scar";
-            } else if (inj.severity <= 0.05 && !inj.scarPending) {
-                const idx = part.injuries.indexOf(inj);
-                if (idx >= 0) part.injuries.splice(idx, 1);
-            } else if (inj.severity <= 0 && inj.scarPending) {
-                inj.permanent = true;
-                inj.severity = inj.scarSeverity || 1;
-                inj.bleeding = false;
-                inj.scarPending = false;
-                inj.name = (inj.name || "Injury") + " scar";
+        _stumpRecord(body, part) {
+            const name = part?.name;
+            if (!name) return null;
+            return (body.destroyedBleed || []).find((d) => d && d.partName === name) || null;
+        },
+
+        /**
+         * A missing part's pain is the open wound. It closes on the same
+         * clock as a cut (severity = pain / 0.0125). At 0 the bleed entry
+         * is closed too, so an untended stump does not bleed forever after
+         * the wound has scarred over.
+         */
+        _healAmputation(owner, body, part, math) {
+            const pps = 0.0125;
+            let severity = Math.min(1, Number(part.amputationPain) || 0) / pps;
+            const stump = this._stumpRecord(body, part);
+            const healRate = this._woundHealRate(
+                owner,
+                body,
+                !!stump?.tended,
+                stump?.tendQuality,
+                math
+            );
+            severity = Math.max(0, severity - healRate * 0.01);
+            if (severity <= 0.05) {
+                part.amputationPain = 0;
+                if (stump) stump.tended = true;
+            } else {
+                part.amputationPain = severity * pps;
             }
-
-            body.markDirty?.();
-            return !this.hasHealableInjuries(body);
         },
 
         isTendTargetValid(body, target) {
@@ -704,6 +760,7 @@
             }
             if (target.destroyed) {
                 target.destroyed.tended = true;
+                target.destroyed.tendQuality = quality;
                 body?.markDirty?.();
                 return true;
             }
