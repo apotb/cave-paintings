@@ -95,6 +95,7 @@ const shellRequire = typeof require === "function" ? require : undefined;
     const reservesOf = (...args) => ctx.reservesOf(...args);
     const eatReserveBroken = (...args) => ctx.eatReserveBroken(...args);
     const releaseFoodReserve = (...args) => ctx.releaseFoodReserve(...args);
+    const releaseFishRod = (...args) => ctx.releaseFishRod(...args);
     const halt = (...args) => ctx.halt(...args);
     const clearChopApproach = (...args) => ctx.clearChopApproach(...args);
     const chopTargetLive = (...args) => ctx.chopTargetLive(...args);
@@ -620,6 +621,7 @@ function tick(world, mob, delta) {
         }
 
         if (plan.type !== "doctor") reservesOf(world, settle).release(rec.id);
+        else releaseFishRod(world, rec, settle);
 
         if (rec._resumeWork && plan.type !== rec._busyJob?.type) rec._resumeWork = false;
         if (!delivering && plan.type === "leather") {
@@ -634,6 +636,7 @@ function tick(world, mob, delta) {
 
     const moodKind = delivering ? "haul" : plan.type;
     if (!moodAllows(rec, moodKind)) {
+        releaseFishRod(world, rec, settle);
         if (rec._workChannel) clearWorkChannel(world, rec, rec._workChannel, "job");
         endWorkHold(rec);
         claims?.release(rec.id);

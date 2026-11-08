@@ -1475,3 +1475,115 @@ test("a puddle refuses bait and taking the grub back clears the deadline", () =>
         world._fishCache = new Map();
     }
 });
+
+function hasRod(rec) {
+    return [...(rec.inventory || []), ...(rec.overflow || [])].some((s) => s && s.id === "flimsy_rod");
+}
+
+function chasedRod(rec) {
+    return hasRod(rec)
+        || rec._busyJob?.type === "fish"
+        || rec._settlerPlan === "fish"
+        || rec._settlerAct === "Fishing";
+}
+
+/**
+ * One rod in a basket. `nearPri` / `farPri` are Fish priorities (1 is first).
+ * The near settler stands on the basket. The far settler is the one pushed
+ * first, so a first-come grab would hand them the head start.
+ */
+function rodContest(nearPri, farPri) {
+    const shore = shoreNearOrigin();
+    assert.ok(shore);
+    const { world, pawn } = createTestWorld();
+    world.seed = 1;
+    WorldGen.applySeed(1);
+    Research.unlock(pawn, "fishing");
+    const x = (shore.tx + 0.5) * 16;
+    const y = (shore.ty + 0.5) * 16;
+    pawn.x = x;
+    pawn.y = y;
+    const settle = Settlement.createSettlement({ x, y, ownerId: pawn.id });
+    const awayX = shore.tx - shore.wx;
+    const awayY = shore.ty - shore.wy;
+    const basket = {
+        uid: "rod-basket",
+        id: "wicker_basket",
+        x: x + awayX * 80,
+        y: y + awayY * 80
+    };
+    Place.ensureStorageEntry(basket, world._thingDef("wicker_basket"));
+    basket.uid = "rod-basket";
+    basket.slots[0] = { id: "flimsy_rod", quantity: 1, durability: 40 };
+    basket.slots[1] = { id: "grub", quantity: 8 };
+    const chunk = world._ensureChunk(
+        Math.floor(basket.x / 128),
+        Math.floor(basket.y / 128)
+    );
+    chunk.things.push(basket);
+    settle.stationUids = (settle.stationUids || []).concat(["rod-basket"]);
+    world.settlements.push(settle);
+
+    const jobsFor = (pri) => {
+        const jobs = Settlement.defaultJobs();
+        for (const id of Settlement.JOBS) jobs[id] = 0;
+        jobs.fish = pri;
+        return jobs;
+    };
+    const make = (id, name, px, py) => {
+        const rec = world._settlerFromSnap({
+            id,
+            name,
+            x: px,
+            y: py,
+            ownerId: pawn.id,
+            homeSettlementId: settle.id,
+            kc: 1600,
+            inventory: [null, null, null, null, null]
+        });
+        world.settlers.push(rec);
+        world._ensureSettlerCreature(rec);
+        return rec;
+    };
+    const far = make("fisher-far", "Far", x, y);
+    const near = make("fisher-near", "Near", basket.x, basket.y + 12);
+    settle.jobs = {
+        [far.id]: jobsFor(farPri),
+        [near.id]: jobsFor(nearPri)
+    };
+    const nearD = Math.hypot(near.x - basket.x, near.y - basket.y);
+    const farD = Math.hypot(far.x - basket.x, far.y - basket.y);
+    assert.ok(nearD < 38, "the near fisher can reach the basket without a walk");
+    assert.ok(farD > nearD + 32, "the far fisher is actually farther from the rod");
+    return { world, settle, basket, near, far };
+}
+
+test("a stored rod is reserved for the higher-priority fisher, not whoever is closest", () => {
+    const { world, settle, basket, near, far } = rodContest(4, 1);
+    let nearChased = false;
+    let farReserved = false;
+    for (let i = 0; i < 40; i++) {
+        world.tick(200);
+        if (chasedRod(near)) nearChased = true;
+        const held = Settlement.medicineReservesFor(world, settle.id).held(far.id, "fishrod");
+        if (held.length) farReserved = true;
+    }
+    assert.equal(nearChased, false, "the fisher standing on the basket does not run for it");
+    assert.equal(hasRod(near), false);
+    assert.ok(farReserved || hasRod(far), "the priority 1 fisher claims the rod");
+    assert.equal(hasRod(far), true, "they pick the rod up instead of leaving it");
+    assert.equal(basket.slots[0], null);
+});
+
+test("the same fish priority reserves the rod for the closer fisher", () => {
+    const { world, basket, near, far } = rodContest(3, 3);
+    let farChased = false;
+    for (let i = 0; i < 20; i++) {
+        world.tick(200);
+        if (chasedRod(far)) farChased = true;
+    }
+    assert.equal(farChased, false, "the farther fisher never starts toward the rod");
+    assert.equal(hasRod(near), true);
+    assert.equal(hasRod(far), false);
+    assert.equal(basket.slots[0], null);
+});

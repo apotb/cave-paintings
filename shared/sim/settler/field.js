@@ -50,6 +50,9 @@
     const paintingCirclesOf = (...args) => ctx.paintingCirclesOf(...args);
     const dropKey = (...args) => ctx.dropKey(...args);
     const walkTo = (...args) => ctx.walkTo(...args);
+    const fishingRodFor = (...args) => ctx.fishingRodFor(...args);
+    const releaseFishRod = (...args) => ctx.releaseFishRod(...args);
+    const holdFishRod = (...args) => ctx.holdFishRod(...args);
     const depositWantsDig = (...args) => ctx.depositWantsDig(...args);
 
 
@@ -618,10 +621,12 @@ function doNetBait(world, rec, settle, spot) {
 
 function doFish(world, rec, settle, spot) {
     if (!spot) {
+        releaseFishRod(world, rec, settle);
         endWorkHold(rec);
         return halt();
     }
     if (rec.fishChannel) {
+        releaseFishRod(world, rec, settle);
         const ch = rec.fishChannel;
         const pose = fishStandFeet(ch.standTx, ch.standTy);
         const held = rec.creature || world._ensureSettlerCreature?.(rec);
@@ -633,9 +638,16 @@ function doFish(world, rec, settle, spot) {
         }
         return halt(face ? { facing: face } : null);
     }
-    if (spot.net === "haul") return doNetHaul(world, rec, spot);
-    if (spot.net === "bait") return doNetBait(world, rec, settle, spot);
+    if (spot.net === "haul") {
+        releaseFishRod(world, rec, settle);
+        return doNetHaul(world, rec, spot);
+    }
+    if (spot.net === "bait") {
+        releaseFishRod(world, rec, settle);
+        return doNetBait(world, rec, settle, spot);
+    }
     if (world._bobberOn?.(spot.waterTx, spot.waterTy, rec.id)) {
+        releaseFishRod(world, rec, settle);
         rec._settlerScan = null;
         endWorkHold(rec);
         return halt();
@@ -643,12 +655,28 @@ function doFish(world, rec, settle, spot) {
     const rodId = "flimsy_rod";
     const grubId = "grub";
     const BAIT_CARRY = 3;
-    const rod = findStack(world, rec, settle, (s) => s.id === rodId);
-    if (!rod) {
+    const rod = fishingRodFor(world, rec, settle);
+    const stack = rod?.slots?.[rod.index];
+    if (!rod || !stack || stack.id !== rodId) {
+        releaseFishRod(world, rec, settle);
         endWorkHold(rec);
+        rec._settlerScan = null;
         return halt();
     }
-    if (rod.at !== rec) return fetchStack(world, rec, settle, rod) || halt();
+    if (rod.at !== rec) {
+        holdFishRod(world, rec, settle, rod);
+        const step = fetchStack(world, rec, settle, rod);
+        if (step?.walkTo) return step;
+        releaseFishRod(world, rec, settle);
+        const got = (rec.inventory || []).some((s) => s && s.id === rodId)
+            || (rec.overflow || []).some((s) => s && s.id === rodId);
+        if (!got) {
+            endWorkHold(rec);
+            rec._settlerScan = null;
+        }
+        return step || halt();
+    }
+    releaseFishRod(world, rec, settle);
     const baitPred = (s) => s.id === grubId;
     if (!(heldPredQty(rec, baitPred) > 0)) {
         const stored = findStored(world, rec, settle, baitPred);

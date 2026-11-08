@@ -71,6 +71,7 @@
     const keepGearOpts = (...args) => ctx.keepGearOpts(...args);
     const stashScan = (...args) => ctx.stashScan(...args);
     const canGivePawn = (...args) => ctx.canGivePawn(...args);
+    const medicineKey = (...args) => ctx.medicineKey(...args);
     const simmerWillFill = (...args) => ctx.simmerWillFill(...args);
 
 
@@ -248,16 +249,192 @@ function fishStandHeld(world, stx, sty, pawnId) {
     return false;
 }
 
+const FISH_ROD_KIND = "fishrod";
+
+function releaseFishRod(world, rec, settle) {
+    if (!rec?.id || !settle) return;
+    reservesOf(world, settle).releaseKind(rec.id, FISH_ROD_KIND);
+}
+
+function holdFishRod(world, rec, settle, found) {
+    const key = medicineKey(found);
+    if (!rec?.id || !settle || !key) {
+        releaseFishRod(world, rec, settle);
+        return;
+    }
+    reservesOf(world, settle).setKind(rec.id, FISH_ROD_KIND, [{ key, qty: 1 }]);
+}
+
+function heldFishingRod(rec) {
+    const id = fishMod()?.ROD_ID;
+    if (!id || !rec) return null;
+    const inv = rec.inventory || [];
+    const ii = inv.findIndex((s) => s && s.id === id);
+    if (ii >= 0) return { slots: inv, index: ii, at: rec, kind: "inv", bag: "hotbar" };
+    const overflow = rec.overflow || [];
+    const oi = overflow.findIndex((s) => s && s.id === id);
+    if (oi >= 0) return { slots: overflow, index: oi, at: rec, kind: "overflow", bag: "overflow" };
+    return null;
+}
+
+function storedFishingRods(world, settle) {
+    const id = fishMod()?.ROD_ID;
+    if (!id) return [];
+    const out = [];
+    for (const b of basketsOf(world, settle)) {
+        const slots = b.slots || [];
+        for (let i = 0; i < slots.length; i++) {
+            const s = slots[i];
+            if (!s || s.id !== id || !((Number(s.quantity) || 0) > 0)) continue;
+            out.push({ slots, index: i, at: b, kind: "basket", entry: b });
+        }
+    }
+    return out;
+}
+
+function fishPriority(settle, rec) {
+    const jobs = Settlement.jobsFor(settle, rec?.id);
+    const p = Math.floor(Number(jobs?.fish) || 0);
+    return p >= 1 && p <= 4 ? p : 0;
+}
+
+function fishScheduleBlocks(world, rec, settle) {
+    const assignment = Settlement.assignmentAt(
+        Settlement.scheduleFor(settle, rec.id),
+        world.gameMinutes
+    );
+    const injured = !!rec._settlerScan?.injured;
+    if (Settlement.settlerShouldSleep(assignment === "sleep", injured)) return true;
+    return assignment === "recreation" && !injured;
+}
+
+function scanHasJob(job, scan) {
+    if (!scan) return false;
+    if (job === "doctor") {
+        return (scan.patients || []).length > 0
+            || (scan.critical || []).length > 0
+            || (scan.rescues || []).length > 0;
+    }
+    if (job === "cook") return !!(scan.unlitFire || scan.cookBill || scan.stokeFire);
+    if (job === "chop") return !!scan.chopTree;
+    if (job === "leather") return !!scan.leatherWork;
+    if (job === "craft") return !!scan.rockWork;
+    if (job === "gather") return !!(scan.gatherThing || scan.digThing);
+    if (job === "haul") return !!(scan.haulDrop || scan.haulOutput || scan.haulMerge);
+    if (job === "research") return !!scan.researchCircle;
+    return false;
+}
+
+/** A job ahead of Fish already has work, so this settler will not walk for a rod. */
+function earlierJobPending(rec, settle) {
+    const enabled = Settlement.enabledJobs(Settlement.jobsFor(settle, rec.id));
+    const fishAt = enabled.indexOf("fish");
+    if (fishAt < 0) return true;
+    const busyType = rec._workHold && rec._busyJob?.type ? rec._busyJob.type : "";
+    if (busyType && busyType !== "fish") {
+        const at = enabled.indexOf(busyType);
+        if (at >= 0 && at < fishAt) return true;
+    }
+    const scan = rec._settlerScan;
+    if (!scan) return false;
+    for (let i = 0; i < fishAt; i++) {
+        if (scanHasJob(enabled[i], scan)) return true;
+    }
+    return false;
+}
+
+function campWantsFish(world, rec, settle) {
+    const Fish = fishMod();
+    if (!Fish) return false;
+    if (!Research?.hasTech?.(researchHolder(world, rec, settle), "fishing")) return false;
+    return Settlement.gatherShouldWork(
+        countItem(world, settle, Fish.FISH_ID),
+        Settlement.stockTarget(settle, Fish.FISH_ID)
+    );
+}
+
+/** This settler would leave for a stored rod if one were reserved for them. */
+function wantsStoredRod(world, rec, settle) {
+    if (!rec || rec.dead || rec._resting || rec.resting) return false;
+    if (rec._moodJob === "sulk" || rec._moodJob === "strike") return false;
+    if (rec.eatChannel || rec._workChannel || rec._fishNetBusy) return false;
+    if (rec._settlerScan?.downed) return false;
+    if (!fishPriority(settle, rec)) return false;
+    if (!Settlement.jobEnabled(Settlement.jobsFor(settle, rec.id), "fish", rec)) return false;
+    if (fishScheduleBlocks(world, rec, settle)) return false;
+    if (earlierJobPending(rec, settle)) return false;
+    if ((Number(rec.kc) || 0) < (ctx.AUTO_EAT || 1000)) return false;
+    const Fish = fishMod();
+    if (!Fish || !campWantsFish(world, rec, settle)) return false;
+    if (!findStack(world, rec, settle, (s) => s.id === Fish.GRUB_ID)) return false;
+    return canGivePawn(rec, { id: Fish.ROD_ID, quantity: 1 });
+}
+
+function rodDist(rec, found) {
+    const at = found?.entry || found?.at;
+    return Math.hypot(
+        (Number(rec?.x) || 0) - (Number(at?.x) || 0),
+        (Number(rec?.y) || 0) - (Number(at?.y) || 0)
+    );
+}
+
+/**
+ * Stored rods are claimed before anyone walks. Priority 1 beats 4. The same
+ * priority goes to whoever is closer to a rod, and that settler takes the
+ * rod nearest them. A rod already in hand is not in this pile.
+ */
+function assignStoredRods(world, settle) {
+    const rods = storedFishingRods(world, settle);
+    const map = new Map();
+    if (!rods.length) return map;
+    const claimants = [];
+    for (const s of settlersOf(world, settle)) {
+        if (heldFishingRod(s)) continue;
+        if (!wantsStoredRod(world, s, settle)) continue;
+        let dist = Infinity;
+        for (const rod of rods) {
+            const d = rodDist(s, rod);
+            if (d < dist) dist = d;
+        }
+        claimants.push({ rec: s, pri: fishPriority(settle, s), dist });
+    }
+    claimants.sort((a, b) => {
+        if (a.pri !== b.pri) return a.pri - b.pri;
+        if (a.dist !== b.dist) return a.dist - b.dist;
+        return String(a.rec.id).localeCompare(String(b.rec.id));
+    });
+    const left = rods.slice();
+    for (const c of claimants) {
+        if (!left.length) break;
+        let bi = 0;
+        let bd = Infinity;
+        for (let i = 0; i < left.length; i++) {
+            const d = rodDist(c.rec, left[i]);
+            if (d < bd) {
+                bd = d;
+                bi = i;
+            }
+        }
+        map.set(c.rec.id, left[bi]);
+        left.splice(bi, 1);
+    }
+    return map;
+}
+
+/** Rod in hand, or the stored rod this settler is allowed to fetch. */
+function fishingRodFor(world, rec, settle) {
+    const held = heldFishingRod(rec);
+    if (held) return held;
+    if (!rec || !settle) return null;
+    return assignStoredRods(world, settle).get(rec.id) || null;
+}
+
 function fishSpot(world, rec, settle, claims) {
     const Fish = fishMod();
     const WorldGen = worldGenMod();
     if (!Fish || !WorldGen?.tileKeyAt || !world?._fishMeasure) return null;
-    if (!Research?.hasTech?.(researchHolder(world, rec, settle), "fishing")) return null;
-    if (!Settlement.gatherShouldWork(
-        countItem(world, settle, Fish.FISH_ID),
-        Settlement.stockTarget(settle, Fish.FISH_ID)
-    )) return null;
-    if (!findStack(world, rec, settle, (s) => s.id === Fish.ROD_ID)) return null;
+    if (!campWantsFish(world, rec, settle)) return null;
+    if (!fishingRodFor(world, rec, settle)) return null;
     if (!findStack(world, rec, settle, (s) => s.id === Fish.GRUB_ID)) return null;
     const ts = TS || 16;
     const r = Number(settle.radiusTiles) > 0 ? Number(settle.radiusTiles) : (Settlement.RADIUS_TILES || 32);
@@ -1399,6 +1576,7 @@ function scanWork(world, rec, settle, claims) {
     const injured = Sleep.injuredForAutofill ? Sleep.injuredForAutofill(c?.anatomy) : false;
     const downed = pawnDowned(world, rec);
     const nets = jobOn(enabled, "fish") ? netJobs(world, rec, settle, claims) : { haul: null, bait: null };
+    rec._fishNetBusy = !!(nets.haul || nets.bait);
     const stash = stashScan(world, rec, settle, keepOpts);
     const cookJob = jobOn(enabled, "cook") ? cookBill(world, rec, settle, claims) : null;
     const hideWork = jobOn(enabled, "leather") ? leatherWork(world, rec, settle, claims) : null;
@@ -1494,4 +1672,7 @@ function scanWork(world, rec, settle, claims) {
     ctx.rackBillJob = rackBillJob;
     ctx.leatherWork = leatherWork;
     ctx.scanWork = scanWork;
+    ctx.releaseFishRod = releaseFishRod;
+    ctx.holdFishRod = holdFishRod;
+    ctx.fishingRodFor = fishingRodFor;
 });
