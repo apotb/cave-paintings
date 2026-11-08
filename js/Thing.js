@@ -1952,8 +1952,8 @@ class LeanTo extends Thing {
     }
 
     /**
-     * Everyone in the shelter: sleepers in slot order, then anyone standing
-     * on it. One row each, portrait and name.
+     * People sleeping here, bunk order first. Someone only standing in the
+     * shelter is not listed. One row each, portrait and name.
      */
     tooltipText() {
         if (!this.scene || !this.active) return "";
@@ -1971,7 +1971,7 @@ class LeanTo extends Thing {
         const lines = [];
         const seen = new Set();
         const push = (person) => {
-            if (!this._canListPerson(person, seen)) return;
+            if (!this._sleepingHere(person) || !this._canListPerson(person, seen)) return;
             const label = this._personLabel(person);
             if (!label) return;
             const id = this._personId(person);
@@ -1992,10 +1992,7 @@ class LeanTo extends Thing {
                 if (pawn) push(pawn);
             }
         }
-        this._eachPerson((person) => {
-            if (!this._asleepHere(person) && !this._pointInside(this._insidePoint(person))) return;
-            push(person);
-        });
+        this._eachPerson((person) => push(person));
         return lines;
     }
 
@@ -2068,37 +2065,16 @@ class LeanTo extends Thing {
         for (const rp of scene.remotePlayers?.values?.() || []) visit(rp);
     }
 
-    _asleepHere(person) {
+    /** Lying in this shelter. Standing inside, or a remembered bunk, does not count. */
+    _sleepingHere(person) {
+        if (!person || !(person._resting || person.resting)) return false;
         const uid = this.entry?.uid;
-        if (!uid || !person) return false;
-        if (!(person._resting || person.resting)) return false;
-        return person.lastSleep?.uid === uid;
-    }
-
-    /** Feet while standing. A sleeper's x/y is already the body center. */
-    _insidePoint(person) {
-        const x = Number(person?.x);
-        const y = Number(person?.y);
-        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-        if (person._resting || person.resting || person._prone || person.prone) return { x, y };
-        const w = Number(person.width) || Number(person.spr?.width) || 16;
-        const h = Number(person.height) || Number(person.spr?.height) || 16;
-        const hs = Number(person.hitboxSize) || 8;
-        if (typeof Place !== "undefined" && Place.walkBodyAt) {
-            const box = Place.walkBodyAt(x, y, w, h, hs);
-            return {
-                x: (box.left + box.right) * 0.5,
-                y: (box.top + box.bottom) * 0.5
-            };
-        }
-        return { x: x + w * 0.5, y };
-    }
-
-    _pointInside(pt) {
-        if (!pt || typeof Place === "undefined" || !Place.footprintWorldRect) return false;
-        const rect = Place.footprintWorldRect(this.entry, this.meta, this.scene?.tileSize || 16);
-        if (!rect) return false;
-        return pt.x >= rect.left && pt.x < rect.right && pt.y >= rect.top && pt.y < rect.bottom;
+        if (!uid) return false;
+        const slept = person.lastSleep?.uid;
+        if (slept) return slept === uid;
+        const id = this._personId(person);
+        const occ = this.entry?.occupants;
+        return !!(id && Array.isArray(occ) && occ.includes(id));
     }
 }
 

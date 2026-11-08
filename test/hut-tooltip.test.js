@@ -77,16 +77,25 @@ test("an empty hut names the shelter and does not say Empty", () => {
     assert.equal(String(tip).includes("Empty"), false);
 });
 
-test("a hut lists everyone inside, portrait then name, sleepers first", () => {
+test("a hut lists people sleeping in it, portrait then name, not anyone standing there", () => {
     const ada = pawn("ada", "Ada", 80, 80, {
         _lieTexKey: "ada-lie",
         _lieSrcKey: "ada-look",
-        texture: { key: "ada-lie" }
+        texture: { key: "ada-lie" },
+        _resting: true,
+        lastSleep: { uid: "hut-1", slot: 0 }
     });
-    const bo = pawn("bo", "Bo", 90, 90);
+    const bo = pawn("bo", "Bo", 90, 90, {
+        _resting: true,
+        lastSleep: { uid: "hut-1", slot: 2 }
+    });
     const cal = pawn("cal", "Cal", 8, 16);
     const dee = pawn("dee", "Dee", 80, 16);
-    const gone = pawn("dead", "Gone", 8, 16, { isBodyDead: () => true });
+    const gone = pawn("dead", "Gone", 8, 16, {
+        isBodyDead: () => true,
+        _resting: true,
+        lastSleep: { uid: "hut-1", slot: 3 }
+    });
     const nap = pawn("nap", "Nap", 100, 100, {
         _resting: true,
         lastSleep: { uid: "hut-1", slot: 2 }
@@ -95,6 +104,9 @@ test("a hut lists everyone inside, portrait then name, sleepers first", () => {
         _resting: true,
         lastSleep: { uid: "hut-2", slot: 0 }
     });
+    const woke = pawn("woke", "Woke", 8, 16, {
+        lastSleep: { uid: "hut-1", slot: 1 }
+    });
     const ren = {
         id: "ren",
         x: 8,
@@ -102,11 +114,13 @@ test("a hut lists everyone inside, portrait then name, sleepers first", () => {
         width: 16,
         height: 16,
         displayName: "Ren",
+        resting: true,
+        lastSleep: { uid: "hut-1", slot: 1 },
         spr: { texture: { key: "ren-look" } }
     };
     const { hut } = makeHut({
-        occupants: ["ada", null, "bo", "dead"],
-        party: [ada, bo, cal, dee, gone, nap, other],
+        occupants: ["ada", "woke", "bo", "dead"],
+        party: [ada, bo, cal, dee, gone, nap, other, woke],
         remotes: [ren]
     });
     const tip = hut.tooltipText();
@@ -116,15 +130,17 @@ test("a hut lists everyone inside, portrait then name, sleepers first", () => {
         frame: line.frame
     }));
     assert.equal(tip.text, "Hut\nRest effectiveness: 100%");
-    assert.deepEqual(lines.map((line) => line.label), ["Ada", "Bo", "Cal", "Nap", "Ren"]);
+    assert.deepEqual(lines.map((line) => line.label), ["Ada", "Bo", "Nap", "Ren"]);
     assert.deepEqual(lines.map((line) => line.icon), [
-        "ada-look", "bo-look", "cal-look", "nap-look", "ren-look"
+        "ada-look", "bo-look", "nap-look", "ren-look"
     ]);
-    assert.deepEqual(lines.map((line) => line.frame), [1, 1, 1, 1, 1]);
+    assert.deepEqual(lines.map((line) => line.frame), [1, 1, 1, 1]);
     assert.equal(JSON.stringify(tip).includes("Empty"), false);
+    assert.equal(JSON.stringify(tip).includes("Cal"), false);
     assert.equal(JSON.stringify(tip).includes("Dee"), false);
     assert.equal(JSON.stringify(tip).includes("Gone"), false);
     assert.equal(JSON.stringify(tip).includes("Other"), false);
+    assert.equal(JSON.stringify(tip).includes("Woke"), false);
 });
 
 function makeLean(people) {
@@ -164,9 +180,15 @@ test("an empty lean-to names the shelter and does not say Empty", () => {
     assert.equal(String(tip).includes("Empty"), false);
 });
 
-test("a lean-to lists everyone on it, portrait then name", () => {
-    const ada = pawn("ada", "Ada", 80, 80);
-    const bo = pawn("bo", "Bo", 90, 90);
+test("a lean-to lists people sleeping on it, portrait then name, not anyone standing there", () => {
+    const ada = pawn("ada", "Ada", 80, 80, {
+        _resting: true,
+        lastSleep: { uid: "lean-1", slot: 0 }
+    });
+    const bo = pawn("bo", "Bo", 90, 90, {
+        _resting: true,
+        lastSleep: { uid: "lean-1", slot: 1 }
+    });
     const cal = pawn("cal", "Cal", 8, 14);
     const dee = pawn("dee", "Dee", 8, 40);
     const lean = makeLean({
@@ -180,10 +202,11 @@ test("a lean-to lists everyone on it, portrait then name", () => {
         frame: line.frame
     }));
     assert.equal(tip.text, "Lean-to\nRest effectiveness: 95%");
-    assert.deepEqual(lines.map((line) => line.label), ["Ada", "Bo", "Cal"]);
-    assert.deepEqual(lines.map((line) => line.icon), ["ada-look", "bo-look", "cal-look"]);
-    assert.deepEqual(lines.map((line) => line.frame), [1, 1, 1]);
+    assert.deepEqual(lines.map((line) => line.label), ["Ada", "Bo"]);
+    assert.deepEqual(lines.map((line) => line.icon), ["ada-look", "bo-look"]);
+    assert.deepEqual(lines.map((line) => line.frame), [1, 1]);
     assert.equal(JSON.stringify(tip).includes("Empty"), false);
+    assert.equal(JSON.stringify(tip).includes("Cal"), false);
     assert.equal(JSON.stringify(tip).includes("Dee"), false);
 });
 
