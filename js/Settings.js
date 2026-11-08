@@ -297,13 +297,35 @@ const Settings = {
             dragging = true;
             setFromPointer(pointer);
         });
+        const endDrag = () => { dragging = false; };
+        // Pause Options lays a full-screen target under this slider and
+        // stopPropagation()s pointerup. Phaser then drops the scene pointerup,
+        // so a release past either end of the track never cleared `dragging`
+        // and the handle followed the cursor again on the next move.
+        const released = (pointer) => !pointer?.isDown || pointer.buttons === 0;
         const onMove = (pointer) => {
-            if (dragging) setFromPointer(pointer);
+            if (!dragging) return;
+            if (released(pointer)) {
+                endDrag();
+                return;
+            }
+            setFromPointer(pointer);
         };
-        const onUp = () => { dragging = false; };
+        const onWindowMove = (event) => {
+            if (dragging && event?.buttons === 0) endDrag();
+        };
         scene.input?.on?.("pointermove", onMove);
-        scene.input?.on?.("pointerup", onUp);
-        scene.input?.on?.("pointerupoutside", onUp);
+        scene.input?.on?.("pointerup", endDrag);
+        scene.input?.on?.("pointerupoutside", endDrag);
+        const view = typeof window !== "undefined" ? window : null;
+        if (view) {
+            view.addEventListener("mouseup", endDrag, true);
+            view.addEventListener("pointerup", endDrag, true);
+            view.addEventListener("pointercancel", endDrag, true);
+            view.addEventListener("blur", endDrag, true);
+            view.addEventListener("mousemove", onWindowMove, true);
+            view.addEventListener("pointermove", onWindowMove, true);
+        }
         paint();
 
         const nodes = [g, hit, handle, pct];
@@ -323,8 +345,16 @@ const Settings = {
             destroy() {
                 dragging = false;
                 try { scene.input?.off?.("pointermove", onMove); } catch (_) {}
-                try { scene.input?.off?.("pointerup", onUp); } catch (_) {}
-                try { scene.input?.off?.("pointerupoutside", onUp); } catch (_) {}
+                try { scene.input?.off?.("pointerup", endDrag); } catch (_) {}
+                try { scene.input?.off?.("pointerupoutside", endDrag); } catch (_) {}
+                if (view) {
+                    view.removeEventListener("mouseup", endDrag, true);
+                    view.removeEventListener("pointerup", endDrag, true);
+                    view.removeEventListener("pointercancel", endDrag, true);
+                    view.removeEventListener("blur", endDrag, true);
+                    view.removeEventListener("mousemove", onWindowMove, true);
+                    view.removeEventListener("pointermove", onWindowMove, true);
+                }
                 for (const n of nodes) {
                     try { n.destroy?.(); } catch (_) {}
                 }
