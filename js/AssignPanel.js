@@ -86,13 +86,13 @@ class AssignPanel {
     }
 
     containsPointer(pointer) {
-        if (!this.visible || !pointer || !this.frame) return false;
+        if (!this.visible || this.root?.visible === false || !pointer || !this.frame) return false;
         const b = this.frame.getBounds();
         return pointer.x >= b.x && pointer.x <= b.right && pointer.y >= b.y && pointer.y <= b.bottom;
     }
 
     hoverObjAt(pointer) {
-        if (!pointer || !this.visible) return null;
+        if (!pointer || !this.visible || this.root?.visible === false) return null;
         const visit = (obj) => {
             if (!obj?.active || obj === this.dim || obj === this.frame) return null;
             const kids = obj.list;
@@ -363,6 +363,14 @@ class AssignPanel {
     }
 
     _itemTex(id) {
+        // No blade yet. The tip is diorite, the same default as a blade knap.
+        if (id === "arrow" && typeof ensureArrowTexture === "function") {
+            const stone = (typeof Stone !== "undefined" && Stone.iconStone)
+                ? Stone.iconStone("arrow")
+                : "diorite";
+            const key = this._tex(ensureArrowTexture(this.scene, stone));
+            if (key) return key;
+        }
         return this._stackTex({ id });
     }
 
@@ -419,7 +427,7 @@ class AssignPanel {
     }
 
     refresh() {
-        if (!this.visible) return;
+        if (!this.visible || this.root?.visible === false) return;
         // A gear change in the same frame as a slider release used to rebuild
         // the rows and drop the popup. Leave it up until it is closed on purpose.
         if (this._sliderTrack) return;

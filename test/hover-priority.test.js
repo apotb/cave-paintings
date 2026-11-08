@@ -172,6 +172,31 @@ test("a cleared settler tip comes back without leaving the body", () => {
     assert.equal(person._last, "pointerover");
 });
 
+test("a hidden assign screen does not keep the pointer from the policy screen", () => {
+    const scene = loadHoverScene();
+    const assignRow = hit({ name: "assign" });
+    const policyRow = hit({ name: "policy" });
+    scene.assignPanel = {
+        visible: true,
+        root: { visible: false },
+        containsPointer: () => true,
+        hoverObjAt: () => assignRow,
+        frame: assignRow,
+        dim: assignRow
+    };
+    scene.policyPanel = {
+        visible: true,
+        root: { visible: true },
+        containsPointer: () => true,
+        hoverObjAt: () => policyRow,
+        frame: policyRow,
+        dim: policyRow
+    };
+    assert.equal(scene._pickHoverTarget({ x: 8, y: 8 }), policyRow);
+    scene.policyPanel.containsPointer = () => false;
+    assert.equal(scene._pickHoverTarget({ x: 8, y: 8 }), null);
+});
+
 test("a building pointerover cannot replace a settler tip", () => {
     const scene = loadHoverScene();
     const person = settler();

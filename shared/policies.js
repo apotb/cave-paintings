@@ -61,6 +61,28 @@
         return String(name || "").trim().slice(0, 24);
     }
 
+    function nameKey(name) {
+        return clampName(name).toLowerCase();
+    }
+
+    function policyNameTaken(list, name, exceptId) {
+        const key = nameKey(name);
+        if (!key) return false;
+        return (list || []).some((p) => p && p.id !== exceptId && nameKey(p.name) === key);
+    }
+
+    function uniquePolicyName(list, desired) {
+        const base = clampName(desired) || "Policy";
+        if (!policyNameTaken(list, base)) return base;
+        for (let n = 2; n < 100; n++) {
+            const suffix = ` ${n}`;
+            const room = Math.max(1, 24 - suffix.length);
+            const candidate = clampName(`${base.slice(0, room).trimEnd()}${suffix}`);
+            if (!policyNameTaken(list, candidate)) return candidate;
+        }
+        return base;
+    }
+
     function uniq(list) {
         const out = [];
         const seen = new Set();
@@ -170,24 +192,46 @@
         const defaults = kind === "food"
             ? defaultFoodPolicies()
             : (kind === "weapon" ? defaultWeaponPolicies() : defaultGearPolicies());
+        const byDefault = new Map(defaults.map((d) => [d.id, d]));
         const list = Array.isArray(raw) ? raw : [];
         const out = [];
         const seen = new Set();
-        for (const def of defaults) {
-            const hit = list.find((p) => p && p.id === def.id) || def;
-            const row = normalizePolicy({ ...def, ...hit, id: def.id, builtin: true }, kind);
-            out.push(row);
-            seen.add(row.id);
-        }
         for (const p of list) {
-            if (!p || seen.has(p.id) || p.id === "anything") continue;
-            if (kind === "food" && defaults.some((d) => d.id === p.id)) continue;
+            if (!p || !p.id || seen.has(String(p.id))) continue;
+            const id = String(p.id);
+            const def = byDefault.get(id);
+            if (def) {
+                const row = normalizePolicy({ ...def, ...p, id: def.id, builtin: true }, kind);
+                out.push(row);
+                seen.add(row.id);
+                continue;
+            }
+            if (id === "anything") continue;
             const row = normalizePolicy({ ...p, builtin: false }, kind);
             if (seen.has(row.id)) continue;
             seen.add(row.id);
             out.push(row);
         }
+        for (const def of defaults) {
+            if (seen.has(def.id)) continue;
+            const row = normalizePolicy({ ...def, id: def.id, builtin: true }, kind);
+            out.push(row);
+            seen.add(row.id);
+        }
         return out;
+    }
+
+    function movePolicy(kind, policies, id, toIndex) {
+        const libs = normalizePolicies(policies);
+        const list = (libs[kind] || []).slice();
+        const from = list.findIndex((p) => p && p.id === id);
+        if (from < 0) return libs;
+        const to = Math.max(0, Math.min(list.length - 1, toIndex | 0));
+        if (from === to) return libs;
+        const [row] = list.splice(from, 1);
+        list.splice(to, 0, row);
+        libs[kind] = list;
+        return libs;
     }
 
     function normalizePolicies(raw) {
@@ -236,12 +280,20 @@
         };
     }
 
+    function assignFromOrder(libs) {
+        const row = defaultAssign();
+        if (libs?.weapon?.[0]?.id) row.weaponPolicyId = libs.weapon[0].id;
+        if (libs?.armor?.[0]?.id) row.armorPolicyId = libs.armor[0].id;
+        if (libs?.food?.[0]?.id) row.foodPolicyId = libs.food[0].id;
+        return row;
+    }
+
     function resolveAssign(raw, policies) {
-        const row = normalizeAssign(raw);
         const libs = normalizePolicies(policies);
-        if (!policyById(libs.weapon, row.weaponPolicyId)) row.weaponPolicyId = policyById(libs.weapon, "melee") ? "melee" : (libs.weapon[0]?.id || "melee");
-        if (!policyById(libs.armor, row.armorPolicyId)) row.armorPolicyId = "anything";
-        if (!policyById(libs.food, row.foodPolicyId)) row.foodPolicyId = "anything";
+        const row = raw == null ? assignFromOrder(libs) : normalizeAssign(raw);
+        if (!policyById(libs.weapon, row.weaponPolicyId)) row.weaponPolicyId = libs.weapon[0]?.id || "melee";
+        if (!policyById(libs.armor, row.armorPolicyId)) row.armorPolicyId = libs.armor[0]?.id || "anything";
+        if (!policyById(libs.food, row.foodPolicyId)) row.foodPolicyId = libs.food[0]?.id || "anything";
         return row;
     }
 
@@ -765,7 +817,7 @@
         const row = normalizePolicy({
             ...copy,
             id: uid(),
-            name: "New policy",
+            name: uniquePolicyName(libs[kind], "New policy"),
             builtin: false
         }, kind);
         libs[kind] = libs[kind].concat(row);
@@ -778,7 +830,7 @@
         const row = normalizePolicy({
             ...src,
             id: uid(),
-            name: clampName(`Copy of ${src.name}`) || "Copy",
+            name: uniquePolicyName(libs[kind], `Copy of ${src.name}`),
             builtin: false,
             blockRawHuman: false
         }, kind);
@@ -790,7 +842,9 @@
         const libs = normalizePolicies(policies);
         const src = policyById(libs[kind], id);
         if (!src || src.builtin) return libs;
-        src.name = clampName(name) || src.name;
+        const next = clampName(name);
+        if (!next || policyNameTaken(libs[kind], next, src.id)) return libs;
+        src.name = next;
         return libs;
     }
 
@@ -839,6 +893,7 @@
         defaultAssign,
         normalizeAssign,
         resolveAssign,
+        movePolicy,
         policyById,
         gearAllowed,
         itemAllowed,
@@ -862,6 +917,7 @@
         createPolicy,
         duplicatePolicy,
         renamePolicy,
+        policyNameTaken,
         deletePolicy,
         cycleCombat,
         cycleCare,

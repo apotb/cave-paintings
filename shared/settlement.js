@@ -1934,7 +1934,7 @@
         settle.policies = P.normalizePolicies(settle.policies);
         const stored = settle.assigns[id] ? P.resolveAssign(settle.assigns[id], settle.policies) : null;
         const carried = pawn.assign ? P.resolveAssign(pawn.assign, settle.policies) : null;
-        const row = stored || carried || P.defaultAssign();
+        const row = stored || carried || P.resolveAssign(null, settle.policies);
         settle.assigns[id] = row;
         pawn.assign = row;
         return row;

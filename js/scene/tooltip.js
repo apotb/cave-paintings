@@ -343,17 +343,20 @@
 
             // Centered overlays sit above the left settlement panel (depth 15150 > 15100).
             // Check them first or the overlapping left strip fights the cursor and eats clicks.
-            const assignP = this.assignPanel;
-            if (assignP?.visible && assignP.containsPointer?.(pointer)) {
-                const row = assignP.hoverObjAt?.(pointer);
-                if (row) return row;
-                return assignP.frame || assignP.dim;
-            }
+            // A screen can stay logically open while its root is hidden (policy covers assign).
+            // That hidden screen must not keep the pointer or its tooltips paint on top.
+            const panelShown = (panel) => !!(panel?.visible && panel.root?.visible !== false);
             const policyP = this.policyPanel;
-            if (policyP?.visible && policyP.containsPointer?.(pointer)) {
+            if (panelShown(policyP) && policyP.containsPointer?.(pointer)) {
                 const row = policyP.hoverObjAt?.(pointer);
                 if (row) return row;
                 return policyP.frame || policyP.dim;
+            }
+            const assignP = this.assignPanel;
+            if (panelShown(assignP) && assignP.containsPointer?.(pointer)) {
+                const row = assignP.hoverObjAt?.(pointer);
+                if (row) return row;
+                return assignP.frame || assignP.dim;
             }
             const scheduleP = this.schedulePanel;
             if (scheduleP?.visible && scheduleP.containsPointer?.(pointer)) {

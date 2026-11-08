@@ -886,6 +886,14 @@ class SettlementSystem {
             "font-family:PrimaryFont,monospace",
             `font-size:${fontPx}px`
         ].join(";");
+        const err = document.createElement("div");
+        err.style.cssText = [
+            "color:#e15d5d",
+            "font-family:PrimaryFont,monospace",
+            `font-size:${Math.max(8, fontPx - 2)}px`,
+            `margin-top:${Math.round(6 * s)}px`,
+            "display:none"
+        ].join(";");
         const row = document.createElement("div");
         row.style.cssText = [
             "display:flex",
@@ -944,9 +952,19 @@ class SettlementSystem {
         const finish = (ok) => {
             if (!this._nameOverlay) return;
             const raw = (input.value || "").trim();
+            if (ok && typeof opts.validate === "function") {
+                const msg = opts.validate(raw || placeholder);
+                if (msg) {
+                    err.textContent = String(msg);
+                    err.style.display = "block";
+                    input.focus();
+                    return;
+                }
+            }
             this._hideNamePrompt();
             if (ok) onOk?.(raw || placeholder);
         };
+        input.addEventListener("input", () => { err.style.display = "none"; });
         row.appendChild(mk("Cancel", () => finish(false)));
         row.appendChild(mk(String(opts.confirm || "Found"), () => finish(true)));
         // Stop bubble so Phaser (window, non-capture) never sees WASD / C / E / etc.
@@ -991,6 +1009,7 @@ class SettlementSystem {
         window.addEventListener("keyup", this._onNameKey, true);
         box.appendChild(label);
         box.appendChild(input);
+        box.appendChild(err);
         box.appendChild(row);
         wrap.appendChild(box);
         document.body.appendChild(wrap);

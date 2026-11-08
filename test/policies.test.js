@@ -80,6 +80,47 @@ test("built-in policies cannot be renamed or deleted", () => {
     assert.equal(gone.removed, true);
 });
 
+test("dragging a policy keeps that order, and the top one is the default for a new settler", () => {
+    const camp = Settlement.ensureSettlement({ ownerId: "p" });
+    const made = Policies.createPolicy("weapon", camp.policies);
+    camp.policies = made.policies;
+    const moved = Policies.movePolicy("weapon", camp.policies, made.id, 0);
+    Settlement.setPolicies(camp, "weapon", moved.weapon);
+    assert.deepEqual(camp.policies.weapon.map((p) => p.id), [made.id, "melee", "ranged"]);
+    const pawn = { id: "new" };
+    Settlement.bindPawnAssign(camp, pawn);
+    assert.equal(pawn.assign.weaponPolicyId, made.id);
+    assert.equal(camp.assigns.new.armorPolicyId, "anything");
+    assert.equal(camp.assigns.new.foodPolicyId, "anything");
+    Settlement.setAssign(camp, "old", { weaponPolicyId: "ranged" });
+    assert.equal(camp.assigns.old.weaponPolicyId, "ranged");
+});
+
+test("policy names stay unique, and copies of a default are numbered", () => {
+    const libs = Policies.defaultPolicies();
+    const first = Policies.duplicatePolicy("weapon", libs, "melee");
+    assert.equal(Policies.policyById(first.policies.weapon, first.id).name, "Copy of Melee");
+    const second = Policies.duplicatePolicy("weapon", first.policies, "melee");
+    assert.equal(Policies.policyById(second.policies.weapon, second.id).name, "Copy of Melee 2");
+    const third = Policies.duplicatePolicy("weapon", second.policies, "melee");
+    assert.equal(Policies.policyById(third.policies.weapon, third.id).name, "Copy of Melee 3");
+
+    const made = Policies.createPolicy("armor", libs);
+    assert.equal(Policies.policyById(made.policies.armor, made.id).name, "New policy");
+    const again = Policies.createPolicy("armor", made.policies);
+    assert.equal(Policies.policyById(again.policies.armor, again.id).name, "New policy 2");
+
+    const custom = Policies.policyById(again.policies.armor, made.id);
+    const blocked = Policies.renamePolicy("armor", again.policies, custom.id, "New policy 2");
+    assert.equal(Policies.policyById(blocked.armor, custom.id).name, "New policy");
+    const renamed = Policies.renamePolicy("armor", again.policies, custom.id, "Hunters");
+    assert.equal(Policies.policyById(renamed.armor, custom.id).name, "Hunters");
+    const same = Policies.renamePolicy("armor", renamed, custom.id, "hunters");
+    assert.equal(Policies.policyById(same.armor, custom.id).name, "hunters");
+    const builtin = Policies.renamePolicy("armor", same, custom.id, "Anything");
+    assert.equal(Policies.policyById(builtin.armor, custom.id).name, "hunters");
+});
+
 test("deleting a custom policy sends users back to Anything", () => {
     const camp = Settlement.ensureSettlement({ ownerId: "p" });
     const made = Policies.createPolicy("food", camp.policies);
