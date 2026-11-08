@@ -587,6 +587,8 @@ function tick(world, mob, delta) {
             haulDrop: scan.haulDrop,
             haulOutput: scan.haulOutput,
             haulMerge: scan.haulMerge,
+            x: scan.x,
+            y: scan.y,
             gatherThing: scan.gatherThing,
             digThing: scan.digThing,
             chopTree: scan.chopTree,

@@ -3046,8 +3046,19 @@
     }
 
     function gatherPlan(state) {
-        if (state?.gatherThing) return { type: "gather", target: state.gatherThing };
-        if (state?.digThing) return { type: "dig", target: state.digThing };
+        const plant = state?.gatherThing || null;
+        const deposit = state?.digThing || null;
+        // A clay patch underfoot should not lose to cattails across the camp.
+        if (plant && deposit) {
+            const px = Number(state.x) || 0;
+            const py = Number(state.y) || 0;
+            const plantD = Math.hypot(px - plant.x, py - plant.y);
+            const digD = Math.hypot(px - deposit.x, py - deposit.y);
+            if (digD < plantD) return { type: "dig", target: deposit };
+            return { type: "gather", target: plant };
+        }
+        if (plant) return { type: "gather", target: plant };
+        if (deposit) return { type: "dig", target: deposit };
         return null;
     }
 

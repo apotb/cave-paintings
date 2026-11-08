@@ -618,6 +618,24 @@ test("gather settler digs clay with an existing stick and does not craft one", (
     chunk.things.push({ uid: "rock-dig", id: "rock", x: rec.x - 24, y: rec.y });
     const patch = { uid: "clay-g", id: "clay_patch", x: rec.x + 40, y: rec.y, digProgress: 0 };
     chunk.things.push(patch);
+    // World seed is Date.now(), so a generated cattail in camp radius sometimes
+    // steals the gather job. Keep the interest ring empty except the placed dig.
+    const keep = new Set(["rock-dig", "clay-g"]);
+    for (let cx = -6; cx <= 6; cx++) {
+        for (let cy = -6; cy <= 6; cy++) {
+            const key = chunkKey(cx, cy);
+            let c = world.chunks.get(key);
+            if (!c) {
+                c = {
+                    cx, cy, tiles: [], things: [], lootableThings: [],
+                    drops: [], mobs: [], corpses: [], bloodStains: []
+                };
+                world.chunks.set(key, c);
+            }
+            if (Array.isArray(c.things)) c.things = c.things.filter((t) => keep.has(t?.uid));
+            if (Array.isArray(c.lootableThings)) c.lootableThings.length = 0;
+        }
+    }
     let dug = false;
     for (let i = 0; i < 200; i++) {
         world.tick(50);

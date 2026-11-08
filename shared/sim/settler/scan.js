@@ -1628,6 +1628,8 @@ function scanWork(world, rec, settle, claims) {
         haulDrop: jobOn(enabled, "haul") ? haulDrop(world, rec, settle, claims) : null,
         haulOutput: jobOn(enabled, "haul") ? haulSmokeLeather(world, rec, settle, claims) : null,
         haulMerge: jobOn(enabled, "haul") ? haulMergeJob(world, rec, settle, claims) : null,
+        x: rec.x,
+        y: rec.y,
         gatherThing: jobOn(enabled, "gather") ? gatherThing(world, rec, settle, claims) : null,
         digThing: jobOn(enabled, "gather") ? digThing(world, rec, settle, claims) : null,
         chopTree: jobOn(enabled, "chop") ? chopTree(world, rec, settle, claims) : null,
