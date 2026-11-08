@@ -1538,14 +1538,8 @@ function listMedicineSources(world, rec, settle, patient, claims) {
         add(pawn.overflow, "overflow");
     };
     addPawn(rec, "inv");
+    // The patient's own pockets count. Another settler's do not.
     if (patient && patient !== rec && patient.id !== rec.id) addPawn(patient, "patient");
-    for (const other of world.settlers || []) {
-        if (!other || other.dead || other === rec || other === patient) continue;
-        if (String(other.homeSettlementId || "") !== String(settle?.id || "")) continue;
-        if (other.id && patient?.id && String(other.id) === String(patient.id)) continue;
-        if (other.id && rec?.id && String(other.id) === String(rec.id)) continue;
-        addPawn(other, "settler");
-    }
     const baskets = (basketsOf(world, settle) || []).slice()
         .sort((a, b) => dist2(rec, a) - dist2(rec, b));
     for (const b of baskets) {
@@ -1656,7 +1650,7 @@ function gearPlan(world, rec, settle) {
         inventory: rec.inventory,
         overflow: rec.overflow,
         equipment: rec.equipment,
-        onMedicineJob: false
+        onMedicineJob: !!(ctx.doctorKeepsMedicine && ctx.doctorKeepsMedicine(world, rec, settle))
     }, sources, assign, settle.policies, getItem);
     if (!step) return null;
     return { type: "gear", step };

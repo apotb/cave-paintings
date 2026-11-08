@@ -117,6 +117,7 @@ test("a bow tooltip names the shot instead of a weapon type", () => {
     const shortbow = {
         id: "shortbow",
         name: "Shortbow",
+        quality: true,
         weight: 1.2,
         weapon: { type: "ranged", range: 224 },
         tooltip: ["Let loose at once"]
@@ -137,6 +138,7 @@ test("a bow tooltip names the shot instead of a weapon type", () => {
     const longbow = {
         id: "longbow",
         name: "Longbow",
+        quality: true,
         weight: 1.2,
         weapon: { type: "ranged", range: 320 },
         tooltip: ["Charge a shot then let loose"]

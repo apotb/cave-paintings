@@ -774,6 +774,38 @@ function settlerCare(world, rec, settle, claims) {
     return { critical, rescues };
 }
 
+/**
+ * A doctor who is about to bandage someone keeps the cord in their pockets.
+ * Carry-0 would otherwise drop it on the ground while the patient is still
+ * walking to the bunk, and the tend would wait on picking it back up.
+ */
+function doctorKeepsMedicine(world, rec, settle) {
+    if (!rec || !settle) return false;
+    const jobs = Settlement.jobsFor(settle, rec.id);
+    if (!Settlement.jobEnabled(jobs, "doctor", rec)) return false;
+    const claims = claimsFor(world, settle);
+    if (settlerPatients(world, rec, settle, claims).length) return true;
+    const care = settlerCare(world, rec, settle, claims);
+    if ((care.critical || []).length || (care.rescues || []).length) return true;
+    const waiting = (p) => {
+        if (!p || p === rec || p.id === rec.id || p.dead) return false;
+        if (!inRange(settle, p.x, p.y)) return false;
+        if (!patientNeedsTend(world, p)) return false;
+        return patientWaitsForBed(world, settle, claims, p);
+    };
+    for (const s of settlersOf(world, settle)) {
+        if (waiting(s)) return true;
+    }
+    const owner = world.players.get(rec.ownerId);
+    if (owner) {
+        if (waiting(owner)) return true;
+        for (const m of owner.party || []) {
+            if (waiting(m)) return true;
+        }
+    }
+    return false;
+}
+
 function settlerPatients(world, rec, settle, claims) {
     const out = [];
     const consider = (p) => {
@@ -1633,6 +1665,7 @@ function scanWork(world, rec, settle, claims) {
     ctx.patientNeedsTend = patientNeedsTend;
     ctx.patientWaitsForBed = patientWaitsForBed;
     ctx.dropPatient = dropPatient;
+    ctx.doctorKeepsMedicine = doctorKeepsMedicine;
     ctx.settlerPatients = settlerPatients;
     ctx.settlerCare = settlerCare;
     ctx.pawnDowned = pawnDowned;

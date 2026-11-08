@@ -13,7 +13,7 @@
         }
         const lines = [];
         const liveName = (stack && typeof Stone !== "undefined" && Stone.displayName)
-            ? Stone.displayName(stack, (id) => this.getItem?.(id))
+            ? Stone.displayName(stack, (id) => this.getItem?.(id) || (item && item.id === id ? item : null))
             : null;
         const displayName = liveName || stack?.customName || item.name || item.id || "Unknown";
         let name = quantity > 1 ? `${displayName} x${quantity}` : displayName;
