@@ -153,6 +153,21 @@
         ].join("\n");
     },
 
+    /**
+     * Local dev session: unpackaged Electron, or the browser on localhost.
+     * A packaged install and any other host do not get dev cheats.
+     */
+    _isDevSession() {
+        const api = typeof window !== "undefined" ? window.cavePaintings : null;
+        if (api && typeof api.dev === "boolean") return api.dev;
+        try {
+            const host = String(location.hostname || "");
+            return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+        } catch (_) {
+            return false;
+        }
+    },
+
     createDeathOverlay() {
         this.deathOverlay = this.add.container(0, 0).setScrollFactor(0).setDepth(20000).setVisible(false);
         this.uiLayer.add(this.deathOverlay);
@@ -168,14 +183,19 @@
             fontSize: "16px",
             color: "#e8e0d0"
         }).setOrigin(0.5).setInteractive({ useHandCursor: true }));
-        this.deathRespawnHere = crispUiText(this.add.text(0, 55, "[ Respawn Here (dev) ]", {
-            fontFamily: PIXEL_UI_FONT,
-            fontSize: "16px",
-            color: "#aaa090"
-        }).setOrigin(0.5).setInteractive({ useHandCursor: true }));
-        this.deathOverlay.add([this.deathBg, this.deathTitle, this.deathRespawn, this.deathRespawnHere]);
         this.deathRespawn.on("pointerdown", () => this.respawnPlayer(false));
-        this.deathRespawnHere.on("pointerdown", () => this.respawnPlayer(true));
+        const nodes = [this.deathBg, this.deathTitle, this.deathRespawn];
+        this.deathRespawnHere = null;
+        if (this._isDevSession()) {
+            this.deathRespawnHere = crispUiText(this.add.text(0, 55, "[ Respawn Here (dev) ]", {
+                fontFamily: PIXEL_UI_FONT,
+                fontSize: "16px",
+                color: "#aaa090"
+            }).setOrigin(0.5).setInteractive({ useHandCursor: true }));
+            this.deathRespawnHere.on("pointerdown", () => this.respawnPlayer(true));
+            nodes.push(this.deathRespawnHere);
+        }
+        this.deathOverlay.add(nodes);
         this._deathPos = { x: 0, y: 0 };
         this._pendingDeathText = null;
     },
@@ -403,19 +423,24 @@
         if (!this.deathOverlay) return;
         const s = this.uiScale || 1;
         this.deathOverlay.setPosition(this.scale.width / 2, this.scale.height / 2);
+        const devHere = !!this.deathRespawnHere;
         if (typeof applyPixelUiFont === "function") {
             applyPixelUiFont(this.deathTitle, 32, s);
             applyPixelUiFont(this.deathRespawn, 16, s);
-            applyPixelUiFont(this.deathRespawnHere, 16, s);
+            if (devHere) applyPixelUiFont(this.deathRespawnHere, 16, s);
             this.deathTitle.setWordWrapWidth(Math.round(380 * s));
         } else {
             this.deathTitle.setFontSize(pixelUiFontSize(32, s));
             this.deathTitle.setWordWrapWidth(Math.round(380 * s));
             this.deathRespawn.setFontSize(pixelUiFontSize(16, s));
-            this.deathRespawnHere.setFontSize(pixelUiFontSize(16, s));
+            if (devHere) this.deathRespawnHere.setFontSize(pixelUiFontSize(16, s));
         }
         this.deathTitle.setAlign("center");
-        this.deathBg.setSize(420 * s, 220 * s);
+        // The dev line sits 35px under Respawn. Without it, take that band
+        // off the bottom and leave the title where it was.
+        const h = Math.round((devHere ? 220 : 185) * s);
+        this.deathBg.setSize(420 * s, h);
+        this.deathBg.setY(devHere ? 0 : Math.round(-17.5 * s));
     },
 
     /** Put pawns back on the continuous physics pose before the next step. */
@@ -629,6 +654,7 @@
     },
 
     respawnPlayer(here) {
+        if (here && !this._isDevSession()) here = false;
         let x = 0;
         let y = 0;
         if (here && this._deathPos) {

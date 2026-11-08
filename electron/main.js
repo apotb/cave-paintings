@@ -32,6 +32,9 @@ app.setPath("userData", path.join(app.getPath("appData"), PRODUCT));
 ipcMain.on("app:version", (event) => {
     event.returnValue = app.getVersion();
 });
+ipcMain.on("app:dev", (event) => {
+    event.returnValue = !app.isPackaged;
+});
 
 const gameRoot = path.resolve(path.join(__dirname, ".."));
 

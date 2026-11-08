@@ -1,7 +1,16 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+function isUnpackagedApp() {
+    try {
+        return !!ipcRenderer.sendSync("app:dev");
+    } catch (_) {
+        return false;
+    }
+}
+
 contextBridge.exposeInMainWorld("cavePaintings", {
     diskSaves: true,
+    dev: isUnpackagedApp(),
     list: (kind) => ipcRenderer.invoke("saves:list", kind),
     get: (kind, id) => ipcRenderer.invoke("saves:get", kind, id),
     put: (kind, record) => ipcRenderer.invoke("saves:put", kind, record),
