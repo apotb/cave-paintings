@@ -226,16 +226,37 @@
         return true;
     }
 
+    function spriteMask() {
+        if (typeof SpriteMask !== "undefined" && SpriteMask.edgeDist) return SpriteMask;
+        if (typeof module === "object" && module.exports) {
+            try { return require("./spriteMask"); } catch (_) { return null; }
+        }
+        return null;
+    }
+
+    /** On the opaque body, or inside the small center circle when there is no mask. */
+    function coversPoint(body, x, y) {
+        const mask = spriteMask();
+        if (mask?.edgeDist) {
+            const edge = mask.edgeDist(x, y, body);
+            // edgeDist is 0 on a pixel center. A corner of that pixel is ~0.2.
+            if (edge != null && edge <= 0.5) return { d: edge };
+        }
+        const c = centerOf(body);
+        const d = Math.hypot(c.x - x, c.y - y);
+        if (d <= bodyRadius(body)) return { d };
+        return null;
+    }
+
     function bodyUnder(bodies, x, y, skip) {
         let best = null;
         let bestD = Infinity;
         for (const body of bodies || []) {
             if (!alive(body) || body === skip) continue;
-            const c = centerOf(body);
-            const d = Math.hypot(c.x - x, c.y - y);
-            if (d <= bodyRadius(body) && d < bestD) {
+            const hit = coversPoint(body, x, y);
+            if (hit && hit.d < bestD) {
                 best = body;
-                bestD = d;
+                bestD = hit.d;
             }
         }
         return best;

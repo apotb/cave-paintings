@@ -137,7 +137,10 @@
                 snapped: false
             };
         }
-        if (!opts.moving) return { x: tx, y: ty, snapped: false };
+        // Hold on the latest pose. A coast past it keeps going for up to 0.9s,
+        // and the next segment preserves that lead. A side-on human is only
+        // about 7px wide, so the picture walks off the hurtbox attacks use.
+        if (!opts.moving || opts.extrapolate === false) return { x: tx, y: ty, snapped: false };
         const dx = tx - fromX;
         const dy = ty - fromY;
         const len = Math.hypot(dx, dy);
@@ -198,6 +201,24 @@
         if (!hasPrev) return ends(nextX, nextY);
         const dist = Math.hypot(nextX - prevX, nextY - prevY);
         if (!(dist > 0.5) || dist > teleport) return ends(nextX, nextY);
+        // A displayed point off this step is a coast. Restarting the step at
+        // prev pulls the picture backward, then the next correction throws it
+        // forward. Sit on the latest pose instead.
+        const maxOff = Number(opts.maxOffPx);
+        if (maxOff > 0 && hasDisp) {
+            const dx = nextX - prevX;
+            const dy = nextY - prevY;
+            const len2 = dx * dx + dy * dy;
+            let off;
+            if (len2 <= 1e-6) off = Math.hypot(dispX - nextX, dispY - nextY);
+            else {
+                let t = ((dispX - prevX) * dx + (dispY - prevY) * dy) / len2;
+                if (t < 0) t = 0;
+                else if (t > 1) t = 1;
+                off = Math.hypot(dispX - (prevX + dx * t), dispY - (prevY + dy * t));
+            }
+            if (off > maxOff) return ends(nextX, nextY);
+        }
         if (!moving) {
             if (!hasDisp) return seg(prevX, prevY, nextX, nextY, now, gap);
             return seg(dispX, dispY, nextX, nextY, now, gap);

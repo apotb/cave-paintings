@@ -616,13 +616,21 @@ class SimCreature {
 
         const c = this.bodyCenter();
         const range = Number(w.range) || Number(attack.range) || 4;
-        const seg = MeleeMath.unarmedHitSegmentAt(
-            c.x,
-            c.y,
-            this.attackAngle,
-            range,
-            progress
-        );
+        // Spears stab with the tip the player sees. The short shaft segment
+        // stops short of a side-on human, so a wanderer the picture hits takes nothing.
+        const spear = attack.unarmed === false
+            && w.type === "melee"
+            && !w.knapSilhouette
+            && !w.bow;
+        const seg = spear && MeleeMath.spearHitSegmentAt
+            ? MeleeMath.spearHitSegmentAt(c.x, c.y, this.attackAngle, range, progress)
+            : MeleeMath.unarmedHitSegmentAt(
+                c.x,
+                c.y,
+                this.attackAngle,
+                range,
+                progress
+            );
         const radius = attack.unarmed === false ? 3 : 4;
         const list = targets || [];
 

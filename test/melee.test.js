@@ -25,3 +25,28 @@ test("meleeSwingWouldHit in and out of range", () => {
     assert.equal(Melee.meleeSwingWouldHit(0, 0, 0, 4, target), false);
     assert.equal(Melee.meleeSwingWouldHit(0, 0, 0, 90, target), true);
 });
+
+test("a spear tip reaches a side-on human the shaft segment misses", () => {
+    const human = {
+        kind: "player",
+        role: "wanderer",
+        x: 28,
+        y: 8,
+        facing: "left",
+        width: 16,
+        height: 16
+    };
+    const samples = [0.25, 0.4, 0.55];
+    const shaft = samples.some((p) => {
+        const seg = Melee.unarmedHitSegmentAt(8, 0, 0, 12, p);
+        return Melee.meleeSegmentHitsTarget(seg.a, seg.b, 3, human);
+    });
+    const tip = samples.some((p) => {
+        const seg = Melee.spearHitSegmentAt(8, 0, 0, 12, p);
+        return Melee.meleeSegmentHitsTarget(seg.a, seg.b, 3, human);
+    });
+    assert.equal(shaft, false);
+    assert.equal(tip, true);
+    assert.equal(Melee.meleeSwingWouldHit(8, 0, 0, 12, human, { radius: 3, spear: true }), true);
+    assert.equal(Melee.meleeSwingWouldHit(8, 0, 0, 12, human, { radius: 3 }), false);
+});

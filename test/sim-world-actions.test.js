@@ -2975,6 +2975,38 @@ test("snapshot keeps camp drops when the leader is far from the controlled pawn"
     );
 });
 
+function bodyHp(creature) {
+    let n = 0;
+    for (const part of Object.values(creature.anatomy.parts())) n += Number(part.hp?.()) || 0;
+    return n;
+}
+
+test("a spear thrust wounds a wanderer standing where the shaft would miss", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.connected = true;
+    pawn.inventory[0] = { id: "wooden_spear", quantity: 1 };
+    pawn.hotbarIndex = 0;
+    const id = "w-spear";
+    world.wanderers.set(id, {
+        id,
+        name: "Og",
+        x: pawn.x + 28,
+        y: pawn.y,
+        facing: "left",
+        heading: { x: 0, y: 0 },
+        inventory: [null, null, null, null, null],
+        hostile: false,
+        refusedBy: []
+    });
+    world._stepWanderer = () => {};
+    world._stepHostileWanderer = () => {};
+    const before = bodyHp(world._ensureWandererCreature(world.wanderers.get(id)));
+    world.handleAction(pawn.id, { type: Protocol.Actions.ATTACK, angle: 0 });
+    for (let i = 0; i < 30; i++) world.tick(40);
+    const after = bodyHp(world.wanderers.get(id).creature);
+    assert.ok(after < before, `spear tip should wound the wanderer (${before} -> ${after})`);
+});
+
 test("a settler killing blow on a wanderer is not revived as a pincushion", () => {
     const { world, pawn } = createTestWorld();
     pawn.connected = true;

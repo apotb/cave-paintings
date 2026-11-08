@@ -161,6 +161,32 @@ test("a deliberate aim still selects an ally standing inside the safe pocket", (
     assert.equal(Ranged.spareAlly({ x: 0, y: 0, faction: "player" }, ally, 16), true);
 });
 
+test("an arrow aimed at a human's head hits the body, not the empty air above the torso circle", () => {
+    const human = {
+        id: "h",
+        kind: "player",
+        role: "wanderer",
+        x: 48,
+        y: 32,
+        facing: "left",
+        width: 16,
+        height: 16,
+        hitboxSize: 8,
+        bodyCenter() { return { x: this.x + 8, y: this.y - 8 }; }
+    };
+    const shot = Ranged.release({
+        from: { x: 0, y: 18 },
+        aimX: 56,
+        aimY: 18,
+        bodies: [human],
+        tile: 16,
+        rng: () => 0,
+        accuracyAt: () => 1
+    });
+    assert.equal(shot.aimed, human);
+    assert.equal(shot.target, human);
+});
+
 test("a body on the ground is an execution up close and half as likely past four tiles", () => {
     assert.equal(Ranged.postureFactor(3, true), Ranged.EXECUTION_FACTOR);
     assert.equal(Ranged.postureFactor(3.5, true), 1);

@@ -699,7 +699,10 @@
                     now,
                     gap,
                     moving,
-                    teleportPx: teleport
+                    teleportPx: teleport,
+                    // Side-on body is ~7px wide. Farther than this, the picture
+                    // and the pose attacks hit no longer overlap.
+                    maxOffPx: 4
                 });
                 if (seg) {
                     pawn._netSnapDist = seg.snapDist;

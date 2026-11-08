@@ -149,6 +149,79 @@ test("puppet lerp keeps speed past the segment and does not rewind", () => {
     assert.equal(late.x, 80);
     assert.equal(late.y, 0);
 
+    const held = Party.puppetLerpXY({
+        fromX: 0,
+        fromY: 0,
+        tx: 40,
+        ty: 0,
+        snapAt: 1000,
+        snapDtMs: 200,
+        now: 1400,
+        teleportPx: 200,
+        moving: true,
+        extrapolate: false
+    });
+    assert.equal(held.x, 40, "a wanderer stays on the pose the hurtbox uses");
+    assert.equal(held.y, 0);
+
+    const poseNow = 8000;
+    const poseGap = 67;
+    const offPath = Party.puppetSegment({
+        prevX: 0,
+        prevY: 0,
+        nextX: 1,
+        nextY: 0,
+        displayedX: 15,
+        displayedY: 0.5,
+        now: poseNow,
+        gap: poseGap,
+        moving: true,
+        teleportPx: 72,
+        maxOffPx: 4
+    });
+    const back = Party.puppetLerpXY({
+        fromX: offPath.fromX,
+        fromY: offPath.fromY,
+        tx: offPath.tx,
+        ty: offPath.ty,
+        snapAt: offPath.snapAt,
+        snapDtMs: offPath.snapDt,
+        now: poseNow,
+        teleportPx: 72,
+        moving: true,
+        extrapolate: false
+    });
+    assert.equal(back.x, 1, `rewound to ${back.x}`);
+    assert.equal(back.y, 0);
+    assert.equal(offPath.fromX, 1);
+    assert.equal(offPath.tx, 1);
+    const onPath = Party.puppetSegment({
+        prevX: 0,
+        prevY: 0,
+        nextX: 8,
+        nextY: 0,
+        displayedX: 3,
+        displayedY: 0,
+        now: poseNow,
+        gap: poseGap,
+        moving: true,
+        teleportPx: 72,
+        maxOffPx: 4
+    });
+    const gliding = Party.puppetLerpXY({
+        fromX: onPath.fromX,
+        fromY: onPath.fromY,
+        tx: onPath.tx,
+        ty: onPath.ty,
+        snapAt: onPath.snapAt,
+        snapDtMs: onPath.snapDt,
+        now: poseNow,
+        teleportPx: 72,
+        moving: true,
+        extrapolate: false
+    });
+    assert.ok(Math.abs(gliding.x - 3) < 0.01, `on-path pose jumped to ${gliding.x}`);
+
     const nextMid = Party.puppetLerpXY({
         fromX: 40,
         fromY: 0,

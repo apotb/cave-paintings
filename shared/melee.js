@@ -15,6 +15,7 @@
         root.unarmedHitSegment = M.unarmedHitSegment;
         root.meleeSegmentHitsTarget = M.meleeSegmentHitsTarget;
         root.unarmedHitSegmentAt = M.unarmedHitSegmentAt;
+        root.spearHitSegmentAt = M.spearHitSegmentAt;
         root.placeUnarmedThrustPoint = M.placeUnarmedThrustPoint;
         root.meleeEdgeDist = M.meleeEdgeDist;
         root.meleeSwingWouldHit = M.meleeSwingWouldHit;
@@ -63,6 +64,26 @@
         return {
             a: { x: c.x - Math.cos(angle) * 3, y: c.y - Math.sin(angle) * 3 },
             b: { x: c.x + Math.cos(angle) * 3, y: c.y + Math.sin(angle) * 3 }
+        };
+    }
+
+    /**
+     * Distal half of a spear. Matches Player._updateWeaponSprite: the mid-shaft
+     * sits at hold 6 + range * thrust, and the 16×16 tip (origin 0.2, 0.8)
+     * is 7.5√2 px further along the aim. The shaft-only segment misses a
+     * side-on human the picture is already stabbing.
+     */
+    const SPEAR_HOLD = 6;
+    const SPEAR_TIP = 7.5 * Math.SQRT2;
+
+    function spearHitSegmentAt(cx, cy, angle, range, progress) {
+        const thrust = meleeThrustCurve(progress);
+        const anchor = SPEAR_HOLD + (Number(range) || 12) * thrust;
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        return {
+            a: { x: cx + cos * anchor, y: cy + sin * anchor },
+            b: { x: cx + cos * (anchor + SPEAR_TIP), y: cy + sin * (anchor + SPEAR_TIP) }
         };
     }
 
@@ -156,7 +177,9 @@
         const samples = [peak];
         if (Number.isFinite(hitStart) && hitStart < peak) samples.unshift(hitStart);
         for (const p of samples) {
-            const seg = unarmedHitSegmentAt(ax, ay, angle, r, p);
+            const seg = opts.spear
+                ? spearHitSegmentAt(ax, ay, angle, r, p)
+                : unarmedHitSegmentAt(ax, ay, angle, r, p);
             if (meleeSegmentHitsTarget(seg.a, seg.b, radius, target)) return true;
         }
         return false;
@@ -199,6 +222,7 @@
         placeUnarmedThrustPoint,
         unarmedHitSegment,
         unarmedHitSegmentAt,
+        spearHitSegmentAt,
         meleeAttackDurationMs,
         meleeEdgeDist,
         meleeSwingWouldHit,

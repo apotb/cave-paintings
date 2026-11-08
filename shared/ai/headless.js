@@ -1290,8 +1290,14 @@
 
         _canLandMelee(mc, target, reach, angle, atk) {
             if (MeleeMath?.meleeSwingWouldHit) {
-                return MeleeMath.meleeSwingWouldHit(mc.x, mc.y, angle, reach, target, {
-                    radius: atk?.unarmed === false ? 3 : 4
+                const weapon = this.mob?.getHeldWeaponMeta?.()?.weapon;
+                const spear = atk?.unarmed === false
+                    && weapon?.type === "melee"
+                    && !weapon.knapSilhouette;
+                const range = spear ? (Number(weapon.range) || reach) : reach;
+                return MeleeMath.meleeSwingWouldHit(mc.x, mc.y, angle, range, target, {
+                    radius: atk?.unarmed === false ? 3 : 4,
+                    spear
                 });
             }
             return this._distToHurtbox(mc.x, mc.y, target) <= reach;
