@@ -417,8 +417,34 @@ class CampfirePanel {
     }
 
     toggle(campfire) {
-        if (this.visible && this.campfire === campfire) this.close();
-        else this.open(campfire);
+        if (this.visible && this.campfire === campfire) {
+            // Click-to-close is the only hearth close that also dismisses the settlement
+            // menu. Walking out of range calls close() and leaves that menu up.
+            const settle = campfire?.entry?.id === "hearth" ? this._hearthSettle() : null;
+            this.close();
+            this._closeLinkedSettlement(settle);
+            return;
+        }
+        this.open(campfire);
+        if (this.visible && this.campfire === campfire && campfire?.entry?.id === "hearth") {
+            this._openLinkedSettlement();
+        }
+    }
+
+    _openLinkedSettlement() {
+        const settle = this._hearthSettle();
+        if (!settle) return;
+        const panel = this.scene.settlementPanel;
+        if (panel?.visible && panel.settle?.id === settle.id) return;
+        this.scene.settlementSys?.openPanel?.(settle);
+    }
+
+    /** Clicking the hearth shut closes its settlement menu. Other closes do not. */
+    _closeLinkedSettlement(settle) {
+        if (!settle) return;
+        const panel = this.scene.settlementPanel;
+        if (!panel?.visible || panel.settle?.id !== settle.id) return;
+        this.scene.settlementSys?.closePanel?.();
     }
 
     close() {
