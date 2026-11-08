@@ -2798,20 +2798,15 @@
         return `${n} ${name}`;
     },
 
-    _giveFishStack(pawn, id, qty, opts = {}) {
+    _giveFishStack(pawn, id, qty) {
         const n = Math.max(1, Math.floor(Number(qty) || 1));
         const meta = itemDefs().get(id);
         const durability = Number(meta?.durability);
         const extras = Number.isFinite(durability) && durability > 0
             ? { durability: Math.floor(durability) }
             : null;
-        const settler = (this.settlers || []).some((s) => s && (s === pawn || s.id === pawn.id));
         const drop = { id, quantity: n };
         if (extras) drop.durability = extras.durability;
-        if (settler || opts.drop) {
-            this._pushDrop(pawn.x, pawn.y, drop);
-            return;
-        }
         const left = this._give(pawn, id, n, extras);
         if (left > 0) this._pushDrop(pawn.x, pawn.y, { ...drop, quantity: left });
     },

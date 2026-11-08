@@ -655,6 +655,112 @@ test("Fish waits for the tech, a rod, a grub, and room in the fish stock", () =>
     assert.equal(rec.inventory[1].quantity, before - 1);
 });
 
+test("a fisher pockets the catch and hauls it back when the line comes in", () => {
+    const shore = shoreNearOrigin();
+    assert.ok(shore);
+    const { world, pawn } = createTestWorld();
+    world.seed = 1;
+    WorldGen.applySeed(1);
+    Research.unlock(pawn, "fishing");
+    const x = (shore.tx + 0.5) * 16;
+    const y = (shore.ty + 0.5) * 16;
+    pawn.x = x;
+    pawn.y = y;
+    const settle = Settlement.createSettlement({ x, y, ownerId: pawn.id });
+    const rec = world._settlerFromSnap({
+        id: "fisher-pocket",
+        name: "Fisher",
+        x,
+        y,
+        ownerId: pawn.id,
+        homeSettlementId: settle.id,
+        kc: 1600,
+        inventory: [
+            { id: "flimsy_rod", quantity: 1, durability: 40 },
+            { id: "grub", quantity: 3 },
+            null, null, null
+        ]
+    });
+    rec.hotbarIndex = 0;
+    const jobs = Settlement.defaultJobs();
+    for (const id of Settlement.JOBS) jobs[id] = 0;
+    jobs.fish = 3;
+    settle.jobs = { [rec.id]: jobs };
+    world.settlements.push(settle);
+    world.settlers.push(rec);
+    world._ensureSettlerCreature(rec);
+
+    const inlandX = shore.tx + (shore.tx - shore.wx);
+    const inlandY = shore.ty + (shore.ty - shore.wy);
+    const basket = {
+        uid: "catch-basket",
+        id: "wicker_basket",
+        x: (inlandX + 0.5) * 16,
+        y: (inlandY + 0.5) * 16
+    };
+    Place.ensureStorageEntry(basket, world._thingDef("wicker_basket"));
+    basket.uid = "catch-basket";
+    const ck = chunkKey(Math.floor(basket.x / 128), Math.floor(basket.y / 128));
+    let chunk = world.chunks.get(ck);
+    if (!chunk) {
+        chunk = {
+            cx: Math.floor(basket.x / 128),
+            cy: Math.floor(basket.y / 128),
+            tiles: [],
+            things: [],
+            lootableThings: [],
+            drops: [],
+            mobs: [],
+            corpses: [],
+            bloodStains: [],
+            generated: true
+        };
+        world.chunks.set(ck, chunk);
+    }
+    chunk.things.push(basket);
+    settle.stationUids = [basket.uid];
+
+    const fishQty = (slots) => (slots || []).reduce(
+        (n, s) => n + (s?.id === "raw_fish" ? (s.quantity || 1) : 0),
+        0
+    );
+    const dropped = () => {
+        let n = 0;
+        for (const c of world.chunks.values()) {
+            for (const d of c.drops || []) {
+                if (d?.id === "raw_fish") n += d.quantity || 1;
+            }
+        }
+        return n;
+    };
+
+    world.rng = () => 0.5;
+    for (let i = 0; i < 40 && !rec.fishChannel; i++) world.tick(200);
+    assert.ok(rec.fishChannel, "cast starts");
+    const haul = rec.fishChannel.haul;
+    world._tickFishChannel(rec, rec.fishChannel.remaining + 1, 0);
+    assert.equal(rec.fishChannel, null);
+    const pocketed = fishQty(rec.inventory) + fishQty(rec.overflow);
+    assert.equal(pocketed, haul, "the catch goes into the fisher's inventory");
+    assert.equal(dropped(), 0, "the catch is not thrown on the ground");
+
+    const mob = world._ensureSettlerCreature(rec);
+    const step = world._tickSettlerWork(mob, 200);
+    assert.match(rec._settlerAct || "", /Hauling/);
+    if (step?.walkTo) {
+        rec.x = step.walkTo.x;
+        rec.y = step.walkTo.y;
+        mob.x = rec.x;
+        mob.y = rec.y;
+    }
+    for (let i = 0; i < 4 && fishQty(basket.slots) < haul; i++) {
+        world._tickSettlerWork(mob, 200);
+    }
+    assert.ok(fishQty(basket.slots) >= haul, "the catch is hauled into storage");
+    assert.equal(dropped(), 0);
+    assert.equal((rec.inventory || []).some((s) => s?.id === "flimsy_rod"), true);
+});
+
 test("a fisher takes at most three grubs from storage", () => {
     const shore = shoreNearOrigin();
     assert.ok(shore);
