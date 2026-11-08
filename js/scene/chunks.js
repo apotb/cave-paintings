@@ -23,10 +23,7 @@
         const n = Object.keys(this.chunks || {}).length;
         // World panels hold refs into chunk things/corpses
         if (this.corpsePanel?.visible) this.corpsePanel.close(true);
-        if (this.campfirePanel?.visible) this.campfirePanel.close();
-        if (this.storagePanel?.visible) this.storagePanel.close();
-        if (this.leanToPanel?.visible) this.leanToPanel.close();
-        if (this.paintingCirclePanel?.visible) this.paintingCirclePanel.close();
+        this.closeOtherWorldMenus?.(null);
         if (this.craftMenuVisible) this.closeCraftMenu();
         if (this.healthPanel?.isInspecting?.()) this.healthPanel.close();
 
@@ -376,6 +373,7 @@
         if (this.storagePanel?.visible) this.storagePanel.layout();
         if (this.leanToPanel?.visible) this.leanToPanel.layout();
         if (this.paintingCirclePanel?.visible) this.paintingCirclePanel.layout();
+        if (this.craftingSpotPanel?.visible) this.craftingSpotPanel.layout();
         if (this.knappingPanel) this.knappingPanel.layout();
         if (this.clayFormingPanel) this.clayFormingPanel.layout();
 

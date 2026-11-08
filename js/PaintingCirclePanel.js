@@ -6,6 +6,7 @@ class PaintingCirclePanel {
         this.scene = scene;
         this.visible = false;
         this.circle = null;
+        scene.registerWorldMenu?.(this);
         this.container = scene.add.container(0, 0).setVisible(false).setDepth(250);
         if (scene._uiCam) scene._uiCam.ignore(this.container);
         this._build();
@@ -109,11 +110,7 @@ class PaintingCirclePanel {
 
     open(circle) {
         if (this.scene.restBlocksWorldUi?.()) return;
-        if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
-        if (this.scene.campfirePanel?.visible) this.scene.campfirePanel.close();
-        if (this.scene.storagePanel?.visible) this.scene.storagePanel.close();
-        if (this.scene.leanToPanel?.visible) this.scene.leanToPanel.close();
-        this.scene.closeCraftStationMenu?.();
+        this.scene.closeOtherWorldMenus?.(this, circle);
         this.circle = circle;
         if (circle?.entry && typeof Research !== "undefined") {
             Research.ensureEntry(circle.entry, circle.meta);

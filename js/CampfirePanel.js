@@ -3,6 +3,7 @@ class CampfirePanel {
         this.scene = scene;
         this.visible = false;
         this.campfire = null;
+        scene.registerWorldMenu?.(this);
         this.slotViews = []; // { key, slot, icon, qty }
 
         this.container = scene.add.container(0, 0).setVisible(false).setDepth(250);
@@ -394,12 +395,8 @@ class CampfirePanel {
 
     open(campfire) {
         if (this.scene.restBlocksWorldUi?.()) return;
-        // Only one world UI at a time; side menus (equip/craft/health) can stay open
-        if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
-        if (this.scene.storagePanel?.visible) this.scene.storagePanel.close();
-        if (this.scene.leanToPanel?.visible) this.scene.leanToPanel.close();
-        if (this.scene.paintingCirclePanel?.visible) this.scene.paintingCirclePanel.close();
-        this.scene.closeCraftStationMenu?.();
+        // One world popup at a time. Side menus (equip, craft, health) stay open.
+        this.scene.closeOtherWorldMenus?.(this, campfire);
 
         if (this.campfire && this.campfire !== campfire) this._notifyCampfire("leave");
         const prev = this.campfire;

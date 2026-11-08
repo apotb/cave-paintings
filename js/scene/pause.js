@@ -688,16 +688,11 @@
     closeOpenMenus() {
         this.hideChannelBar?.();
         if (this.craftMenuVisible) this.closeCraftMenu();
+        this.closeOtherWorldMenus?.(null);
         if (this.statsPanel?.visible) this.statsPanel.close();
         if (this.bioPanel?.visible) this.bioPanel.close();
         if (this.equipmentPanel?.visible) this.equipmentPanel.close();
         if (this.healthPanel?.visible) this.healthPanel.close();
-        if (this.corpsePanel?.visible) this.corpsePanel.close();
-        if (this.campfirePanel?.visible) this.campfirePanel.close();
-        if (this.storagePanel?.visible) this.storagePanel.close();
-        if (this.leanToPanel?.visible) this.leanToPanel.close();
-        if (this.paintingCirclePanel?.visible) this.paintingCirclePanel.close();
-        if (this.craftingSpotPanel?.visible) this.craftingSpotPanel.close();
         if (this.settlementSys?.isNaming?.()) this.settlementSys._hideNamePrompt();
         if (typeof CraftTemplateUi !== "undefined") CraftTemplateUi.closeAll();
         if (this.policyPanel?.visible) this.policyPanel.close({ restore: false });
@@ -714,16 +709,14 @@
     },
 
     _anyGameplayMenuOpen() {
+        const worldOpen = (this._worldMenus || []).some((p) => p?.visible) || !!this._rockStationThing;
         return !!(
+            worldOpen ||
             this.craftMenuVisible ||
             this.bioPanel?.visible ||
             this.statsPanel?.visible ||
             this.equipmentPanel?.visible ||
             this.healthPanel?.visible ||
-            this.corpsePanel?.visible ||
-            this.campfirePanel?.visible ||
-            this.storagePanel?.visible ||
-            this.leanToPanel?.visible ||
             this.settlementPanel?.visible ||
             this.researchTreePanel?.visible ||
             this.resourceSummaryPanel?.visible ||
@@ -733,9 +726,7 @@
             this.billsPanel?.visible ||
             this.storageFilterPanel?.visible ||
             this.fuelFilterPanel?.visible ||
-            this.pigmentFilterPanel?.visible ||
-            this.paintingCirclePanel?.visible ||
-            this.craftingSpotPanel?.visible
+            this.pigmentFilterPanel?.visible
         );
     },
 
@@ -1740,12 +1731,7 @@
         if (this.equipmentPanel?.visible) this.equipmentPanel.close();
         if (this.healthPanel?.visible) this.healthPanel.close();
         if (this.settlementPanel?.visible) this.settlementSys?.closePanel?.();
-        if (this.corpsePanel?.visible) this.corpsePanel.close();
-        if (this.storagePanel?.visible) this.storagePanel.close();
-        if (this.campfirePanel?.visible) this.campfirePanel.close();
-        if (this.leanToPanel?.visible) this.leanToPanel.close();
-        if (this.paintingCirclePanel?.visible) this.paintingCirclePanel.close();
-        if (this.craftingSpotPanel?.visible) this.craftingSpotPanel.close();
+        this.closeOtherWorldMenus?.("craftStation", thing);
         if (this.billsPanel?.visible && this.billsPanel.thing !== thing) this.billsPanel.close();
         if (this.storageFilterPanel?.visible) this.storageFilterPanel.close();
         if (this.fuelFilterPanel?.visible) this.fuelFilterPanel.close();

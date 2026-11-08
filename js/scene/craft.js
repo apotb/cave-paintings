@@ -2464,7 +2464,7 @@
 
     _openRockStation(thing) {
         if (!thing) return;
-        if (this._craftStationThing) this.closeCraftStationMenu?.();
+        this.closeOtherWorldMenus?.("rock", thing);
         if (this.billsPanel?.visible && this.billsPanel.thing !== thing) this.billsPanel.close();
         this._rockStationThing = thing;
         this._layoutRockStation();

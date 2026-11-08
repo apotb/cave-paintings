@@ -634,13 +634,56 @@
     },
 
     _closeWorldUisForRest() {
-        this.campfirePanel?.close?.();
-        this.storagePanel?.close?.();
-        this.paintingCirclePanel?.close?.();
-        this.corpsePanel?.close?.();
-        this.closeCraftStationMenu();
+        this.closeOtherWorldMenus?.(null);
         this.knappingPanel?.close?.();
         this.clayFormingPanel?.close?.();
+    },
+
+    /**
+     * World popups (storage, sleep, hearth, corpse, painting, crafting spot,
+     * station chrome) are mutually exclusive. A panel joins by calling
+     * registerWorldMenu; opening one closes the rest. `keep` is the panel
+     * about to open, or "craftStation" / "rock". `nextThing` is the world
+     * object that menu belongs to, so its bills and filters stay up.
+     */
+    registerWorldMenu(panel) {
+        if (!panel || typeof panel.close !== "function") return;
+        if (!this._worldMenus) this._worldMenus = [];
+        if (this._worldMenus.indexOf(panel) < 0) this._worldMenus.push(panel);
+    },
+
+    closeOtherWorldMenus(keep, nextThing) {
+        if (this._closingWorldMenus) return;
+        if (keep && typeof keep.close === "function") this.registerWorldMenu(keep);
+        this._closingWorldMenus = true;
+        try {
+            for (const panel of this._worldMenus || []) {
+                if (panel === keep || !panel.visible) continue;
+                panel.close();
+            }
+            if (keep !== "craftStation" && (this._craftFromStation || this._craftStationThing)) {
+                this.closeCraftStationMenu?.();
+            }
+            if (keep !== "rock" && this._rockStationThing) {
+                this._closeRockStation?.();
+            }
+            if (keep != null) this._closeForeignSideMenus(nextThing || null);
+        } finally {
+            this._closingWorldMenus = false;
+        }
+    },
+
+    /** Bills and filters ride along with one world thing. Drop the others. */
+    _closeForeignSideMenus(keepThing) {
+        const drop = (panel) => {
+            if (!panel?.visible) return;
+            if (keepThing && panel.thing === keepThing) return;
+            panel.close();
+        };
+        drop(this.billsPanel);
+        drop(this.storageFilterPanel);
+        drop(this.fuelFilterPanel);
+        drop(this.pigmentFilterPanel);
     },
 
     /**

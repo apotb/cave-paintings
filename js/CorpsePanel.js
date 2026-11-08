@@ -10,6 +10,7 @@ class CorpsePanel {
         this.scene = scene;
         this.visible = false;
         this.corpse = null;
+        scene.registerWorldMenu?.(this);
         /** @type {(Object|null)[]} session loot including null holes */
         this.session = [];
         this.slotViews = [];
@@ -243,12 +244,9 @@ class CorpsePanel {
         if (!corpse?.entry) return;
         if (this.scene.restBlocksWorldUi?.()) return;
         if (corpse.inRange && !corpse.inRange()) return;
-        // Close other world/craft UIs; equipment can stay open for right-click equip-from-loot
-        if (this.scene.campfirePanel?.visible) this.scene.campfirePanel.close();
-        if (this.scene.storagePanel?.visible) this.scene.storagePanel.close();
-        if (this.scene.leanToPanel?.visible) this.scene.leanToPanel.close();
+        // Other world popups close. Equipment stays open so loot can be worn.
+        this.scene.closeOtherWorldMenus?.(this, corpse);
         if (this.scene.craftMenuVisible) this.scene.closeCraftMenu();
-        this.scene._closeRockStation?.();
         if (this.scene.settlementPanel?.visible) this.scene.settlementSys?.closePanel?.();
 
         this._deathHoldUntil = 0;

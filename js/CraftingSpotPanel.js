@@ -6,6 +6,7 @@ class CraftingSpotPanel {
         this.scene = scene;
         this.visible = false;
         this.spot = null;
+        scene.registerWorldMenu?.(this);
         this.container = scene.add.container(0, 0).setVisible(false).setDepth(250);
         if (scene._uiCam) scene._uiCam.ignore(this.container);
         this._build();
@@ -62,12 +63,7 @@ class CraftingSpotPanel {
 
     open(spot) {
         if (this.scene.restBlocksWorldUi?.()) return;
-        if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
-        if (this.scene.campfirePanel?.visible) this.scene.campfirePanel.close();
-        if (this.scene.storagePanel?.visible) this.scene.storagePanel.close();
-        if (this.scene.leanToPanel?.visible) this.scene.leanToPanel.close();
-        if (this.scene.paintingCirclePanel?.visible) this.scene.paintingCirclePanel.close();
-        this.scene.closeCraftStationMenu?.();
+        this.scene.closeOtherWorldMenus?.(this, spot);
         this.spot = spot;
         this.visible = true;
         this.container.setVisible(true);

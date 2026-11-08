@@ -3,6 +3,7 @@ class StoragePanel {
         this.scene = scene;
         this.visible = false;
         this.storage = null;
+        scene.registerWorldMenu?.(this);
         this.slotViews = [];
 
         this.container = scene.add.container(0, 0).setVisible(false).setDepth(250);
@@ -729,11 +730,7 @@ class StoragePanel {
 
     open(storage) {
         if (this.scene.restBlocksWorldUi?.()) return;
-        if (this.scene.corpsePanel?.visible) this.scene.corpsePanel.close();
-        if (this.scene.campfirePanel?.visible) this.scene.campfirePanel.close();
-        if (this.scene.leanToPanel?.visible) this.scene.leanToPanel.close();
-        if (this.scene.paintingCirclePanel?.visible) this.scene.paintingCirclePanel.close();
-        this.scene.closeCraftStationMenu?.();
+        this.scene.closeOtherWorldMenus?.(this, storage);
 
         if (this.storage && this.storage !== storage) {
             this.storage.syncPitLid?.(false);
