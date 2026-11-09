@@ -130,6 +130,7 @@ class SceneMain extends SceneBase {
 
     create() {
         hookPixelTextureClamp(this);
+        if (typeof solidifyStoneTemplates === "function") solidifyStoneTemplates(this);
         if (typeof WorldAtlas !== "undefined") WorldAtlas.pack(this);
         this._bindFullscreenWatch();
         // pauseAll is global. Save-and-quit used to leave every Animation paused,

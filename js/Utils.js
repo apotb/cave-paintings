@@ -1557,7 +1557,60 @@ function stoneImageData(img) {
 }
 
 /**
+ * pebble_1 / rock_1 / grindstone_1 ship as white masks. Paint each one as
+ * the default stone once, shade marks included, and store that under the
+ * same key. Stock, tooltips, and the hotbar then draw the item key.
+ * A carried stack with its own stone still goes through ensureStoneTexture.
+ */
+const STONE_TEMPLATE_KEYS = [
+    ["pebble_1", "pebble_2"],
+    ["rock_1", "rock_2"],
+    ["grindstone_1", "grindstone_2"]
+];
+
+function solidifyStoneTemplates(scene) {
+    if (!scene?.textures || typeof document === "undefined") return;
+    if (typeof Stone === "undefined" || !Stone.solidifyTemplate) return;
+    for (let i = 0; i < STONE_TEMPLATE_KEYS.length; i++) {
+        const key = STONE_TEMPLATE_KEYS[i][0];
+        const shadeKey = STONE_TEMPLATE_KEYS[i][1];
+        if (!scene.textures.exists(key)) continue;
+        const tex = scene.textures.get(key);
+        if (tex?._cpSolidTemplate) continue;
+        const img = tex?.getSourceImage?.() || tex?.source?.[0]?.image;
+        if (!img?.width) continue;
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) continue;
+        ctx.imageSmoothingEnabled = false;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+        let image;
+        try {
+            image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        } catch (_) {
+            continue;
+        }
+        const marks = scene.textures.exists(shadeKey)
+            ? stoneImageData(stoneSourceImage(scene, shadeKey))
+            : null;
+        Stone.solidifyTemplate(image.data, canvas.width, canvas.height, marks?.data);
+        ctx.putImageData(image, 0, 0);
+        scene.textures.remove(key);
+        const created = scene.textures.addCanvas(key, canvas);
+        if (!created) continue;
+        created._cpSolidTemplate = true;
+        try { created.setFilter(Phaser.Textures.FilterMode.NEAREST); } catch (_) {}
+        if (typeof clampTextureWrap === "function") clampTextureWrap(created);
+    }
+}
+
+/**
  * Palette-swapped rock, pebble, or grindstone sprite. Inventory uses variant 1.
+ * A missing stone is andesite. The item keys themselves are already that
+ * andesite picture after solidifyStoneTemplates.
  * @param {"rock"|"pebble"|"grindstone"} kind
  * @param {1|2} variant
  */

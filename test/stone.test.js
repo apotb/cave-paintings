@@ -46,6 +46,30 @@ test("palette swap maps the two grays and leaves transparency alone", () => {
     assert.deepEqual(Array.from(same), [0x71, 0x71, 0x71, 255]);
 });
 
+test("the white mask paints as the default andesite stone", () => {
+    const w = 5;
+    const h = 5;
+    const data = new Uint8ClampedArray(w * h * 4);
+    const set = (x, y, opaque) => {
+        const o = (y * w + x) * 4;
+        data[o] = data[o + 1] = data[o + 2] = opaque ? 255 : 0;
+        data[o + 3] = opaque ? 255 : 0;
+    };
+    for (let y = 1; y <= 3; y++) {
+        for (let x = 1; x <= 3; x++) set(x, y, true);
+    }
+    set(2, 2, false);
+    const marks = new Uint8ClampedArray(w * h * 4);
+    const mo = (1 * w + 2) * 4;
+    marks[mo] = marks[mo + 1] = marks[mo + 2] = 255;
+    marks[mo + 3] = 255;
+    Stone.solidifyTemplate(data, w, h, marks);
+    assert.deepEqual(Array.from(data.slice((2 * w + 2) * 4, (2 * w + 2) * 4 + 4)), [0x4d, 0x4d, 0x4d, 255]);
+    assert.deepEqual(Array.from(data.slice((1 * w + 1) * 4, (1 * w + 1) * 4 + 4)), [0x71, 0x71, 0x71, 255]);
+    assert.deepEqual(Array.from(data.slice(mo, mo + 4)), [0x4d, 0x4d, 0x4d, 255]);
+    assert.equal(data[3], 0);
+});
+
 test("enclosed transparent pixels become the secondary color", () => {
     const w = 3;
     const h = 3;

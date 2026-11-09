@@ -87,6 +87,7 @@ class SceneNet extends Phaser.Scene {
     }
 
     create() {
+        if (typeof solidifyStoneTemplates === "function") solidifyStoneTemplates(this);
         if (typeof WorldAtlas !== "undefined") WorldAtlas.pack(this);
         this.tileSize = NetProtocol.TILE_SIZE;
         this.chunkSize = NetProtocol.CHUNK_SIZE;

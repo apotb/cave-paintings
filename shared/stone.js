@@ -318,6 +318,18 @@
     }
 
     /**
+     * The files are white masks. Paint them as the default stone (andesite)
+     * so a menu can draw pebble_1 / rock_1 / grindstone_1 directly.
+     * `marks` is the shade layer (pebble_2 and the rest), or null.
+     */
+    function solidifyTemplate(data, width, height, marks) {
+        recolorImageData(data, DEFAULT_STONE);
+        fillEnclosedTransparent(data, width, height, DEFAULT_STONE);
+        if (marks) stampSecondary(data, marks, DEFAULT_STONE);
+        return data;
+    }
+
+    /**
      * Black in these 1-bit sprites is transparent, including the dark pixels
      * inside the silhouette. Fill those enclosed gaps with the secondary color.
      * Transparency that touches the sprite edge stays clear.
@@ -766,6 +778,7 @@
         props,
         propsOf,
         recolorImageData,
+        solidifyTemplate,
         fillEnclosedTransparent,
         stampSecondary,
         pickStone,
