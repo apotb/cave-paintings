@@ -2253,6 +2253,22 @@
         return spec;
     }
 
+    function gearAssignSpec(opts) {
+        const spec = opts?.weaponAssign;
+        if (!spec?.policy) return null;
+        return spec;
+    }
+
+    function arrowsCarried(inventory, overflow) {
+        const scan = (slots) => {
+            for (const s of slots || []) {
+                if (s?.id === "arrow" && (Number(s.quantity) || 0) > 0) return true;
+            }
+            return false;
+        };
+        return scan(inventory) || scan(overflow);
+    }
+
     /**
      * The bow this pawn is supposed to be holding. Arrows in the baskets make
      * the gear step pick one up, and an unloaded bow used to look like cargo,
@@ -2282,15 +2298,49 @@
         return best;
     }
 
+    /**
+     * The weapon gear will put in hand. A tool can outscore that on raw
+     * damage and used to be the only stack haul would keep, so the spear
+     * went back into the basket and gear picked it up again.
+     */
+    function assignedGearWeapon(inventory, overflow, getItem, opts) {
+        const spec = gearAssignSpec(opts);
+        const P = policiesMod();
+        if (!spec || !P?.isWeapon || !P.isBow || !P.gearAllowed || !P.weaponScore) return null;
+        const arrowCount = Math.floor(Number(spec.arrowCount) || 0);
+        const bowsOk = arrowsCarried(inventory, overflow) || arrowCount > 0;
+        let best = null;
+        let bestScore = -1;
+        const consider = (stack, index, bag) => {
+            if (!stack?.id || !P.isWeapon(stack, getItem)) return;
+            const ranged = !!P.isBow(stack, getItem);
+            if (ranged && !bowsOk) return;
+            const cat = ranged ? "ranged" : "melee";
+            if (!P.gearAllowed(spec.policy, stack.id, cat)) return;
+            const score = Number(P.weaponScore(stack, getItem)) || 0;
+            if (!(score > bestScore)) return;
+            bestScore = score;
+            best = { stack, index, bag };
+        };
+        const inv = Array.isArray(inventory) ? inventory : [];
+        for (let i = 0; i < inv.length; i++) consider(inv[i], i, "inv");
+        const over = Array.isArray(overflow) ? overflow : [];
+        for (let i = 0; i < over.length; i++) consider(over[i], i, "over");
+        return best;
+    }
+
     function stowSkip(stack, inventory, overflow, opts) {
         if (!stack?.id) return false;
         if (holdsLoadedBow(inventory, overflow) && (isCarriedBow(stack.id) || stack.id === "arrow")) {
             return true;
         }
         const bow = assignedBow(inventory, overflow, opts?.getItem, opts);
-        if (!bow) return false;
-        if (stack === bow.stack) return true;
-        return stack.id === "arrow" && (Number(stack.quantity) || 0) > 0;
+        if (bow) {
+            if (stack === bow.stack) return true;
+            if (stack.id === "arrow" && (Number(stack.quantity) || 0) > 0) return true;
+        }
+        const weapon = assignedGearWeapon(inventory, overflow, opts?.getItem, opts);
+        return !!(weapon && stack === weapon.stack);
     }
 
     /** Melee damage for "keep the best weapon" while stashing. Matches Party.meleeDamageOf. */
@@ -2330,12 +2380,14 @@
     }
 
     /**
-     * Inventory indices settlers should keep on them: best melee, the bow their
-     * weapon assign is holding (so they can fetch arrows without haul putting
-     * the bow back), a loaded bow and its arrows, optionally one bandage while
-     * a doctor job has patients, one pigment while a painting circle still
-     * needs it, and any keepPreds (a fishing rod and bait while that job still
-     * has work). Worn equipment is not inventory.
+     * Inventory indices settlers should keep on them: best melee, the weapon
+     * gear will put in hand (so haul does not store a spear for gear to pick
+     * straight back up), the bow their weapon assign is holding (so they can
+     * fetch arrows without haul putting the bow back), a loaded bow and its
+     * arrows, optionally one bandage while a doctor job has patients, one
+     * pigment while a painting circle still needs it, and any keepPreds (a
+     * fishing rod and bait while that job still has work). Worn equipment is
+     * not inventory.
      */
     function keepIndices(inventory, getItem, opts = {}) {
         const keep = new Set();
@@ -2350,6 +2402,8 @@
             }
         }
         if (bestD > 0 && bestI >= 0) keep.add(bestI);
+        const gearWeapon = assignedGearWeapon(inv, opts.overflow, getItem, opts);
+        if (gearWeapon?.bag === "inv") keep.add(gearWeapon.index);
         if (holdsLoadedBow(inv, opts.overflow)) {
             for (let i = 0; i < inv.length; i++) {
                 const id = inv[i]?.id;

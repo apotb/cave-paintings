@@ -2042,6 +2042,44 @@ test("an assigned bow stays out of storage so arrows can be fetched", () => {
     assert.equal(outmatched.has(1), true);
 });
 
+test("a carried spear stays out of storage when a tool outscores it", () => {
+    const Policies = require("../shared/policies");
+    const getItem = DataStore.getItem;
+    const melee = Policies.policyById(Policies.defaultPolicies().weapon, "melee");
+    const opts = { weaponAssign: { arrowCount: 0, policy: melee } };
+    const axe = { id: "stone_tool", toolClass: "hand_axe", quantity: 1 };
+    const spear = { id: "wooden_spear", quantity: 1 };
+    assert.ok(Settlement.weaponDamage(axe, getItem) > Settlement.weaponDamage(spear, getItem));
+    const inv = [axe, spear];
+    const bare = Settlement.keepIndices(inv, getItem);
+    assert.equal(bare.has(0), true);
+    assert.equal(bare.has(1), false);
+    const keep = Settlement.keepIndices(inv, getItem, opts);
+    assert.equal(keep.has(0), true);
+    assert.equal(keep.has(1), true);
+    assert.equal(Settlement.hasStashable(inv, [], getItem, () => true, opts), false);
+    assert.equal(Settlement.hasStashable(
+        [axe],
+        [spear],
+        getItem,
+        () => true,
+        opts
+    ), false);
+    const banned = {
+        id: "no_spear",
+        offCategories: ["ranged"],
+        offItems: ["wooden_spear"],
+        onItems: []
+    };
+    assert.equal(Settlement.hasStashable(
+        inv,
+        [],
+        getItem,
+        () => true,
+        { weaponAssign: { arrowCount: 0, policy: banned } }
+    ), true);
+});
+
 test("planWork puts carried goods away before other work, idle, and sleep", () => {
     const jobs = Settlement.defaultJobs();
     const basket = { x: 8, y: 8, slots: [] };

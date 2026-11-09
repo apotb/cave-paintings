@@ -1586,10 +1586,15 @@ function scanWork(world, rec, settle, claims) {
                 matches: (s) => policyApi.medicineMatches(type, s?.id)
             };
         }
-        if (policyApi.policyById && assign && Number(assign.arrowCount) > 0) {
+        if (policyApi.policyById && assign) {
             const libs = policyApi.normalizePolicies(settle?.policies);
             const policy = policyApi.policyById(libs.weapon, assign.weaponPolicyId) || libs.weapon[0] || null;
-            if (policy) weaponAssign = { arrowCount: assign.arrowCount, policy };
+            if (policy) {
+                weaponAssign = {
+                    arrowCount: Math.max(0, Math.floor(Number(assign.arrowCount) || 0)),
+                    policy
+                };
+            }
         }
     }
     const keepOpts = keepGearOpts({
