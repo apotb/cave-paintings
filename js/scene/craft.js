@@ -507,7 +507,7 @@
                 });
             };
 
-            // Craft. Ctrl makes 10 output items; Shift makes as many as ingredients allow.
+            // Craft. Right-click makes 5 output items; Ctrl makes 10; Shift makes as many as ingredients allow.
             slot.on('pointerdown', (pointer) => {
                 if (recipe.id === "crafting_spot") {
                     if (!this.canCraft(recipe) || !this.settlementSys?.here?.(this.player)) {
@@ -1484,6 +1484,7 @@
 
     /**
      * How many times to run a recipe for this click.
+     * Right-click produces 5 output items (rounded up to a whole craft).
      * Ctrl produces 10 output items (rounded up to a whole craft).
      * Shift produces as many as ingredients and the held tool allow.
      * A plain click crafts once.
@@ -1493,10 +1494,12 @@
         const keys = this.player?.keys;
         const shift = !!(ev?.shiftKey || keys?.SHIFT?.isDown);
         const ctrl = !!(ev?.ctrlKey || ev?.metaKey || keys?.CTRL?.isDown);
+        const right = !!(pointer?.rightButtonDown?.() || pointer?.button === 2 || ev?.button === 2);
         const out = Math.max(1, Math.floor(Number(recipe?.quantity) || 1));
         let n = 1;
         if (shift) n = 999;
         else if (ctrl) n = Math.ceil(10 / out);
+        else if (right) n = Math.ceil(5 / out);
         // Timed crafts channel one by one, so the queue has to be finite up front.
         // Offline play also has to stop itself; the sim path lets the server stop.
         const timed = (Number(recipe?.craftSeconds) || 0) > 0;

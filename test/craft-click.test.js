@@ -30,6 +30,25 @@ test("ctrl-click crafts enough times to make 10 items", () => {
     assert.equal(count({ quantity: 3 }, { event: { metaKey: true } }), 4);
 });
 
+test("right-click crafts enough times to make 5 items", () => {
+    assert.equal(count({ quantity: 1 }, { event: {}, button: 2 }), 5);
+    assert.equal(count({ quantity: 1 }, { event: {}, rightButtonDown() { return true; } }), 5);
+    assert.equal(count({ quantity: 1 }, { event: { button: 2 } }), 5);
+    assert.equal(count({ quantity: 2 }, { event: {}, button: 2 }), 3);
+    assert.equal(count({ quantity: 4 }, { button: 2 }), 2);
+    assert.equal(count({ quantity: 6 }, { button: 2 }), 1);
+    assert.equal(count(
+        { quantity: 1, craftSeconds: 8 },
+        { button: 2 },
+        { max: 3 }
+    ), 3);
+});
+
+test("ctrl and shift beat a right-click", () => {
+    assert.equal(count({ quantity: 1 }, { event: { ctrlKey: true }, button: 2 }), 10);
+    assert.equal(count({ quantity: 1 }, { event: { shiftKey: true }, button: 2 }), 999);
+});
+
 test("shift-click asks for as many crafts as ingredients allow", () => {
     assert.equal(count({ quantity: 1 }, { event: { shiftKey: true } }), 999);
     assert.equal(count(
