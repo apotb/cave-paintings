@@ -415,6 +415,162 @@ test("a click during a reserve hides the craft and returns it when the server ac
     assert.equal(sent[0].count, 1);
 });
 
+test("a queued grindstone keeps the stone it was paid with", () => {
+    sandbox.ensureStoneTexture = (_scene, kind, _variant, stone) => `${kind}_${stone}`;
+    const ctx = {
+        textures: { exists: () => true },
+        _craftPreviewStack() {
+            return { id: "grindstone", stone: "andesite" };
+        }
+    };
+    assert.equal(
+        craft._craftRecipeIconKey.call(ctx, { id: "grindstone" }),
+        "grindstone_andesite"
+    );
+    assert.equal(
+        craft._craftRecipeIconKey.call(ctx, { id: "grindstone" }, { id: "grindstone", stone: "granite" }),
+        "grindstone_granite"
+    );
+    const groups = craft._craftQueueGroups.call({
+        _craftQueueSame: craft._craftQueueSame,
+        _craftFaceKey: craft._craftFaceKey
+    }, [
+        { recipe: { id: "grindstone" }, paid: { pebbleStone: "granite" } },
+        { recipe: { id: "grindstone" }, paid: { pebbleStone: "granite" } },
+        { recipe: { id: "grindstone" }, paid: { pebbleStone: "diorite" } }
+    ]);
+    assert.equal(groups.length, 2);
+    assert.equal(groups[0].count, 2);
+    assert.equal(groups[0].face.pebbleStone, "granite");
+    assert.equal(groups[1].count, 1);
+    assert.equal(groups[1].face.pebbleStone, "diorite");
+    assert.equal(craft._craftQueueStack(groups[0].recipe, groups[0].face).stone, "granite");
+    assert.equal(craft._craftQueueStack(groups[1].recipe, groups[1].face).stone, "diorite");
+    const spear = craft._craftQueueStack({ id: "stone_spear" }, {
+        tipMaterial: "pebble",
+        tipStone: "diorite",
+        tipQuality: "rough"
+    });
+    assert.equal(spear.knapMaterial, "pebble");
+    assert.equal(spear.stone, "diorite");
+    assert.equal(spear.knapQuality, "rough");
+});
+
+test("queue tooltip names the paid stone, not the pebble still in the bag", () => {
+    sandbox.crispUiText = (text) => text;
+    sandbox.pixelUiFontSize = (n) => n;
+    sandbox.PIXEL_UI_FONT = "font";
+    const seen = [];
+    const view = craft._makeCraftQueueView.call({
+        add: {
+            image: () => uiObj(),
+            text: () => uiObj()
+        },
+        getItem: (id) => ({ id, name: "Grindstone" }),
+        formatItemTooltip(_item, _qty, _spoil, stack) {
+            seen.push(stack);
+            return "tip";
+        },
+        showTooltip(fn) { fn(); },
+        hideTooltip() {},
+        _craftPreviewStack() {
+            return { id: "grindstone", stone: "andesite" };
+        }
+    }, { add() {} });
+    view.recipe = { id: "grindstone", quantity: 1 };
+    view.stack = { id: "grindstone", stone: "granite" };
+    view.slot.visible = true;
+    view.slot.emit("pointerover", { x: 0, y: 0 });
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].stone, "granite");
+});
+
+test("a second stone needs its own queue box", () => {
+    const waiting = [
+        { pebbleStone: "granite", refund: [] },
+        { pebbleStone: "diorite", refund: [] }
+    ];
+    let pays = 0;
+    const ctx = {
+        _craftQueue: [],
+        _craftMenuData: { slotW: 64, slotH: 64, pad: 4, gridW: 200, gridH: 36 },
+        craftContainer: { y: 0 },
+        _craftQueueAfford() { return 99; },
+        _pumpCraftQueue() {},
+        _layoutCraftQueue() {},
+        _craftPayPreview() {
+            return { pebbleStone: waiting[0]?.pebbleStone || null };
+        },
+        _payCraftLocal() {
+            pays += 1;
+            return waiting.shift() || null;
+        }
+    };
+    ctx._craftQueueGeom = craft._craftQueueGeom;
+    ctx._craftQueueLimit = craft._craftQueueLimit;
+    ctx._craftQueueSame = craft._craftQueueSame;
+    ctx._craftQueueGroups = craft._craftQueueGroups;
+    ctx._craftQueueRoom = craft._craftQueueRoom;
+    ctx._craftFaceKey = craft._craftFaceKey;
+    ctx._craftQueueJobFits = craft._craftQueueJobFits;
+    assert.equal(craft._enqueueCrafts.call(ctx, { id: "grindstone" }, 2), 1);
+    assert.equal(pays, 1);
+    assert.equal(ctx._craftQueue.length, 1);
+    assert.equal(ctx._craftQueue[0].paid.pebbleStone, "granite");
+    assert.equal(waiting[0].pebbleStone, "diorite");
+});
+
+test("two grindstones of one stone still share a box", () => {
+    const waiting = [
+        { pebbleStone: "granite", refund: [] },
+        { pebbleStone: "granite", refund: [] }
+    ];
+    const ctx = {
+        _craftQueue: [],
+        _craftMenuData: { slotW: 64, slotH: 64, pad: 4, gridW: 200, gridH: 36 },
+        craftContainer: { y: 0 },
+        _craftQueueAfford() { return 99; },
+        _pumpCraftQueue() {},
+        _layoutCraftQueue() {},
+        _craftPayPreview() {
+            return { pebbleStone: waiting[0]?.pebbleStone || null };
+        },
+        _payCraftLocal() { return waiting.shift() || null; }
+    };
+    ctx._craftQueueGeom = craft._craftQueueGeom;
+    ctx._craftQueueLimit = craft._craftQueueLimit;
+    ctx._craftQueueSame = craft._craftQueueSame;
+    ctx._craftQueueGroups = craft._craftQueueGroups;
+    ctx._craftQueueRoom = craft._craftQueueRoom;
+    ctx._craftFaceKey = craft._craftFaceKey;
+    ctx._craftQueueJobFits = craft._craftQueueJobFits;
+    assert.equal(craft._enqueueCrafts.call(ctx, { id: "grindstone" }, 2), 2);
+    assert.equal(ctx._craftQueue.length, 2);
+    const groups = craft._craftQueueGroups.call(ctx);
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].face.pebbleStone, "granite");
+});
+
+test("a reserved grindstone remembers each stone before the pebbles are spent", () => {
+    const Stone = require("../shared/stone");
+    sandbox.Stone = Stone;
+    const recipe = { id: "grindstone", ingredients: [{ id: "pebble", qty: 3 }] };
+    const ctx = {
+        _craftFaceFromStack: craft._craftFaceFromStack,
+        _craftStuffBags() {
+            return [[
+                { id: "pebble", quantity: 3, stone: "granite" },
+                { id: "pebble", quantity: 3, stone: "diorite" }
+            ], [], []];
+        },
+        _craftPendingRecipes() { return []; }
+    };
+    const faces = craft._forecastCraftFaces.call(ctx, recipe, 2);
+    assert.equal(faces.length, 2);
+    assert.equal(faces[0].pebbleStone, "granite");
+    assert.equal(faces[1].pebbleStone, "diorite");
+});
+
 test("the sweep is a clockwise trail from the top", () => {
     const poly = (p) => craft._craftSweepPoly(0, 0, 100, 100, p);
     assert.equal(poly(0).length, 0);

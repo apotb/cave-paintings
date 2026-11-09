@@ -775,9 +775,11 @@
         });
     },
 
-    _craftRecipeIconKey(recipe) {
+    _craftRecipeIconKey(recipe, stack) {
         const id = recipe?.id;
-        const preview = this._craftPreviewStack(recipe);
+        // A queued craft passes the stuff it already paid for. The recipe grid
+        // omits that and follows whatever pile is still in the bags.
+        const preview = arguments.length > 1 ? stack : this._craftPreviewStack(recipe);
         if (id === "arrow" && typeof ensureArrowTexture === "function") {
             const mat = preview?.knapMaterial;
             const hasRock = mat === "flint" || mat === "pebble";
@@ -1572,7 +1574,7 @@
     /**
      * Half-size column to the right of the recipe grid.
      * The first run sits at the top of the columns and crafts first.
-     * Later runs appear under it. Back-to-back crafts of the same item share one box.
+     * Later runs appear under it. Back-to-back crafts of the same item and stuff share one box.
      */
     _craftQueueGeom() {
         const d = this._craftMenuData;
@@ -1590,19 +1592,121 @@
         return !!(a && b && a.id === b.id);
     },
 
-    /** Consecutive crafts of one item, in queue order. */
+    /** Stone or tip already chosen for this craft. Empty when the item has no stuff. */
+    _craftFaceKey(entry) {
+        const id = entry?.recipe?.id || "";
+        const face = entry?.paid || entry?.face || null;
+        if (!id || !face) return "";
+        if (id === "grindstone" || id === "painting_circle") {
+            return "stone:" + (face.pebbleStone || "andesite");
+        }
+        if (id === "stone_spear" || id === "flint_spear" || id === "arrow") {
+            return [
+                "tip",
+                face.tipMaterial || "",
+                face.tipStone || "",
+                face.tipQuality || ""
+            ].join(":");
+        }
+        return "";
+    },
+
+    /** Picture and name for one queued craft. Null keeps the plain item. */
+    _craftQueueStack(recipe, face) {
+        if (!recipe || !face) return null;
+        const id = recipe.id;
+        if (id === "grindstone" || id === "painting_circle") {
+            return { id, stone: face.pebbleStone || "andesite" };
+        }
+        if (id === "stone_spear" || id === "flint_spear" || id === "arrow") {
+            const mat = face.tipMaterial;
+            const stone = face.tipStone || null;
+            if (mat !== "flint" && mat !== "pebble" && !stone) return null;
+            const stack = { id };
+            if (mat) stack.knapMaterial = mat;
+            if (stone) stack.stone = stone;
+            if (face.tipQuality) stack.knapQuality = face.tipQuality;
+            return stack;
+        }
+        return null;
+    },
+
+    _craftFaceFromStack(recipe, stack) {
+        const id = recipe?.id;
+        const face = {
+            tipQuality: null,
+            tipMaterial: null,
+            tipStone: null,
+            pebbleStone: null
+        };
+        if (id === "grindstone" || id === "painting_circle") {
+            face.pebbleStone = stack?.stone || "andesite";
+            return face;
+        }
+        if (id === "stone_spear" || id === "flint_spear" || id === "arrow") {
+            face.tipMaterial = stack?.knapMaterial || null;
+            face.tipStone = stack?.stone || null;
+            face.tipQuality = stack?.knapQuality || null;
+        }
+        return face;
+    },
+
+    /**
+     * Stuff each new craft will copy, in queue order, before those ingredients
+     * leave the bags. The server spends in this same order.
+     */
+    _forecastCraftFaces(recipe, count) {
+        const n = Math.max(0, Math.floor(Number(count) || 0));
+        const faces = [];
+        if (!(n > 0)) return faces;
+        const StoneApi = typeof Stone !== "undefined" ? Stone : null;
+        if (!StoneApi?.craftPreviewStack || !StoneApi?.bagsAfterQueue) {
+            for (let i = 0; i < n; i++) faces.push(this._craftFaceFromStack(recipe, null));
+            return faces;
+        }
+        let bags = StoneApi.bagsAfterQueue(this._craftStuffBags?.() || [], this._craftPendingRecipes?.() || []);
+        for (let i = 0; i < n; i++) {
+            faces.push(this._craftFaceFromStack(recipe, StoneApi.craftPreviewStack(recipe, bags)));
+            bags = StoneApi.bagsAfterQueue(bags, [recipe]);
+        }
+        return faces;
+    },
+
+    /** True when this craft can join the tail box, or the column has a free box. */
+    _craftQueueJobFits(job) {
+        const groups = this._craftQueueGroups();
+        const limit = this._craftQueueLimit();
+        const tail = groups[groups.length - 1];
+        if (tail && this._craftQueueSame(tail.recipe, job?.recipe)) {
+            const tailKey = typeof this._craftFaceKey === "function" ? this._craftFaceKey(tail) : "";
+            const jobKey = typeof this._craftFaceKey === "function" ? this._craftFaceKey(job) : "";
+            if (tailKey === jobKey) return true;
+        }
+        return groups.length < limit;
+    },
+
+    /** Consecutive crafts of one item and one stuff, in queue order. */
     _craftQueueGroups(jobs) {
         const list = jobs || this._craftQueue || [];
         const groups = [];
+        const faceKey = typeof this._craftFaceKey === "function"
+            ? (entry) => this._craftFaceKey(entry)
+            : () => "";
         for (let i = 0; i < list.length; i++) {
             const job = list[i];
             if (!job?.recipe || job.void) continue;
             const prev = groups[groups.length - 1];
-            if (prev && this._craftQueueSame(prev.recipe, job.recipe)) {
+            if (prev && this._craftQueueSame(prev.recipe, job.recipe) && faceKey(prev) === faceKey(job)) {
                 prev.count += 1;
                 prev.indexes.push(i);
             } else {
-                groups.push({ recipe: job.recipe, count: 1, start: i, indexes: [i] });
+                groups.push({
+                    recipe: job.recipe,
+                    count: 1,
+                    start: i,
+                    indexes: [i],
+                    face: job.paid || job.face || null
+                });
             }
         }
         return groups;
@@ -1835,12 +1939,24 @@
         if (n < 1) return 0;
         const before = this._craftQueue.length;
         if (this.simAuth?.()) {
+            const faces = this._forecastCraftFaces?.(recipe, n) || [];
             const asks = this._craftReserveAsks || (this._craftReserveAsks = []);
-            for (let i = 0; i < n; i++) this._craftQueue.push({ recipe, taken: false });
-            asks.push(n);
-            this._sendCraftAction({ op: "reserve", id: recipe.id, count: n });
+            let added = 0;
+            const limit = faces.length || n;
+            for (let i = 0; i < limit; i++) {
+                const job = { recipe, taken: false, face: faces[i] || null };
+                if (this._craftQueueJobFits && !this._craftQueueJobFits(job)) break;
+                this._craftQueue.push(job);
+                added++;
+            }
+            if (added > 0) {
+                asks.push(added);
+                this._sendCraftAction({ op: "reserve", id: recipe.id, count: added });
+            }
         } else if (this._payCraftLocal) {
             for (let i = 0; i < n; i++) {
+                const face = this._craftPayPreview?.(recipe) || null;
+                if (this._craftQueueJobFits && !this._craftQueueJobFits({ recipe, face })) break;
                 const paid = this._payCraftLocal(recipe);
                 if (!paid) break;
                 this._craftQueue.push({ recipe, taken: true, paid });
@@ -1962,8 +2078,8 @@
             if (!recipe || !slot.visible) return;
             this.showTooltip(() => {
                 const item = this.getItem(recipe.id);
-                const stack = recipe.id === "arrow" ? null : this._craftPreviewStack(recipe);
-                return this.formatItemTooltip(item, recipe.quantity || 1, null, stack);
+                // The pile still in the bag is the next craft. This box already chose its stuff.
+                return this.formatItemTooltip(item, recipe.quantity || 1, null, view.stack || null);
             }, p.x, p.y, slot);
         });
         slot.on("pointerout", () => {
@@ -1986,7 +2102,7 @@
         const icon = view?.icon;
         const recipe = view?.recipe;
         if (!icon?.active || !recipe) return;
-        const key = this._craftRecipeIconKey(recipe);
+        const key = this._craftRecipeIconKey(recipe, view.stack || null);
         if (!key || !this.textures?.exists?.(key) || icon.texture?.key === key) return;
         icon.setTexture(key);
     },
@@ -1995,7 +2111,7 @@
         const d = this._craftMenuData || {};
         const ids = (this._craftQueue || [])
             .filter((j) => j && !j.void)
-            .map((j) => j.recipe?.id || "")
+            .map((j) => `${j.recipe?.id || ""}:${this._craftFaceKey?.(j) || ""}`)
             .join(",");
         return [
             this.craftMenuVisible ? 1 : 0,
@@ -2026,6 +2142,8 @@
             const group = groups[i];
             const on = !!(show && group);
             view.recipe = group?.recipe || null;
+            view.face = group?.face || null;
+            view.stack = (on && group) ? this._craftQueueStack(group.recipe, group.face) : null;
             view.count = group?.count || 0;
             view.index = on ? i : null;
             view.slot.setVisible(on);
