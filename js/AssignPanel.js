@@ -405,6 +405,7 @@ class AssignPanel {
                 .concat(worn.waist || [])
                 .map((s) => s?.id || "")
                 .join(",");
+            const pose = this._portraitPose(pawn);
             bits.push([
                 id,
                 pawn.displayName?.() || pawn.name || "",
@@ -417,7 +418,10 @@ class AssignPanel {
                 assign.care,
                 assign.medicineCount,
                 assign.medicineType,
-                assign.arrowCount
+                assign.arrowCount,
+                pose?.key || "",
+                pose?.frame ?? "",
+                pose?.rotation || 0
             ].join(":"));
         }
         const names = ["weapon", "armor", "food"].map((kind) => (
@@ -475,6 +479,70 @@ class AssignPanel {
         this.body.setPosition(this._bodyX, this._bodyY - this._scroll);
     }
 
+    /**
+     * Standing sheet, facing down, including while asleep.
+     * Only someone who cannot walk is turned: right-facing frame, 90° counter-clockwise.
+     */
+    _portraitPose(pawn) {
+        const key = this._standingTexKey(pawn);
+        if (!key) return null;
+        if (!this._portraitLaying(pawn)) {
+            return { key, frame: this._sheetFrame(key, 1, 0), rotation: 0 };
+        }
+        if (typeof ensureLyingTexture === "function") {
+            const baked = ensureLyingTexture(this.scene, key, 3, 7);
+            if (baked && this.scene.textures.exists(baked)) {
+                return { key: baked, frame: null, rotation: 0 };
+            }
+        }
+        return { key, frame: this._sheetFrame(key, 7, 1), rotation: -Math.PI / 2 };
+    }
+
+    /**
+     * Incapable of Moving: the Moving capacity at or below 15%.
+     * Sleep, pain shock, and the bed's prone flag do not count.
+     */
+    _portraitLaying(pawn) {
+        if (!pawn || pawn.dead || pawn.isBodyDead?.()) return false;
+        const cap = pawn.capacities;
+        if (typeof cap?.isImmobile === "function") return !!cap.isImmobile();
+        if (typeof cap?.moving === "function") {
+            const moving = Number(cap.moving());
+            return Number.isFinite(moving) && moving <= 0.15;
+        }
+        return !!pawn.isImmobile?.();
+    }
+
+    _standingTexKey(pawn) {
+        const scene = this.scene;
+        if (!pawn || !scene?.textures?.exists) return null;
+        let key = pawn.texture?.key || "";
+        const bakedLie = typeof key === "string" && key.includes("__lieq");
+        if ((pawn._lieTexKey && key === pawn._lieTexKey) || bakedLie) {
+            const src = pawn._lieSrcKey;
+            if (src && scene.textures.exists(src)) key = src;
+            else if (bakedLie) {
+                const cut = key.indexOf("__lieq");
+                const stripped = cut > 0 ? key.slice(0, cut) : "";
+                if (stripped && scene.textures.exists(stripped)) key = stripped;
+            }
+        }
+        const look = pawn.look || pawn.bio?.look;
+        if ((!key || !scene.textures.exists(key)) && look && typeof PlayerLook !== "undefined") {
+            key = PlayerLook.ensure(scene, look, { body: pawn.anatomy || pawn.body || null });
+        }
+        if (!key || !scene.textures.exists(key)) return null;
+        return key;
+    }
+
+    _sheetFrame(key, prefer, fallback) {
+        const tex = this.scene.textures.get?.(key);
+        if (!tex?.has) return prefer;
+        if (tex.has(prefer) || tex.has(String(prefer))) return prefer;
+        if (tex.has(fallback) || tex.has(String(fallback))) return fallback;
+        return 0;
+    }
+
     _row(pawn, assign, y, m, P) {
         const scene = this.scene;
         const mid = y + m.rowH / 2;
@@ -488,15 +556,16 @@ class AssignPanel {
         this.body.add(this._iconButton(cols.care.x, btnY, m.box, m.box, this._careSpec(assign.care), () => {
             this._openCareMenu(pawn, assign, cols.care.x, btnY + m.box);
         }));
-        let portrait = pawn.texture?.key;
-        const look = pawn.look || pawn.bio?.look;
-        if ((!portrait || !scene.textures.exists(portrait)) && look && typeof PlayerLook !== "undefined") {
-            portrait = PlayerLook.ensure(scene, look, { body: pawn.anatomy || pawn.body || null });
-        }
-        const portraitW = portrait && scene.textures.exists(portrait) ? m.portrait + Math.round(6 * m.s) : 0;
-        if (portraitW) {
-            this.body.add(scene.add.image(cols.name.x, mid, portrait, 1)
-                .setDisplaySize(m.portrait, m.portrait).setOrigin(0, 0.5));
+        const pose = this._portraitPose(pawn);
+        const portraitW = pose ? m.portrait + Math.round(6 * m.s) : 0;
+        if (pose) {
+            const img = (pose.frame == null
+                ? scene.add.image(cols.name.x + m.portrait / 2, mid, pose.key)
+                : scene.add.image(cols.name.x + m.portrait / 2, mid, pose.key, pose.frame)
+            ).setDisplaySize(m.portrait, m.portrait).setOrigin(0.5, 0.5);
+            if (pose.rotation) img.setRotation(pose.rotation);
+            try { scene.textures.get(pose.key).setFilter(Phaser.Textures.FilterMode.NEAREST); } catch (_) { /* already set */ }
+            this.body.add(img);
         }
         const name = scene.add.text(cols.name.x + portraitW, mid, String(pawn.displayName?.() || pawn.name || "?"), {
             fontFamily: PIXEL_UI_FONT, color: "#d4c4a8"
