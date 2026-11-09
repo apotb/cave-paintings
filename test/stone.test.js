@@ -226,19 +226,26 @@ test("craft preview follows the first stuff stack and clears when it is gone", (
     assert.equal(fromBasket.stone, "limestone");
 });
 
-test("grindstone preview uses the first pebble, and other recipes stay plain", () => {
+test("grindstone preview uses the first pebble that can fill the craft", () => {
     const grind = { id: "grindstone", ingredients: [{ id: "pebble", qty: 3 }] };
     const bags = [[
         { id: "leaf", quantity: 4 },
         { id: "pebble", quantity: 1, stone: "granite" },
         { id: "pebble", quantity: 5, stone: "limestone" }
     ]];
-    const granite = Stone.craftPreviewStack(grind, bags);
-    assert.equal(granite.stone, "granite");
-    assert.equal(Stone.displayName(granite), "Granite Grindstone");
+    const lime = Stone.craftPreviewStack(grind, bags);
+    assert.equal(lime.stone, "limestone");
+    assert.equal(Stone.displayName(lime), "Limestone Grindstone");
+
+    bags[0][1] = { id: "pebble", quantity: 3, stone: "diorite" };
+    assert.equal(Stone.craftPreviewStack(grind, bags).stone, "diorite");
 
     bags[0][1] = { id: "pebble", quantity: 1, stone: "diorite" };
+    assert.equal(Stone.craftPreviewStack(grind, bags).stone, "limestone");
+
+    bags[0][2] = { id: "pebble", quantity: 1, stone: "limestone" };
     assert.equal(Stone.craftPreviewStack(grind, bags).stone, "diorite");
+    bags[0][2] = { id: "pebble", quantity: 5, stone: "limestone" };
 
     bags[0][1] = null;
     bags[0][2] = null;
@@ -267,6 +274,68 @@ test("grindstone preview uses the first pebble, and other recipes stay plain", (
     assert.equal(Stone.craftPreviewStack(settling, [[
         { id: "pebble", quantity: 8, stone: "granite" }
     ]]), null);
+});
+
+test("a stuffed craft fails unless one material can fill every stuff ingredient", () => {
+    const grind = { id: "grindstone", ingredients: [{ id: "pebble", qty: 3 }] };
+    const mixed = [[
+        { id: "pebble", quantity: 2, stone: "granite" },
+        { id: "pebble", quantity: 2, stone: "limestone" }
+    ]];
+    assert.equal(Stone.craftMaterial(grind, mixed), null);
+    assert.equal(Stone.craftRepeatCount(grind, mixed), 0);
+    assert.equal(Stone.ingredientHave(grind, mixed, grind.ingredients[0]), 2);
+
+    const lime = [[
+        { id: "pebble", quantity: 1, stone: "granite" },
+        { id: "pebble", quantity: 5, stone: "limestone" }
+    ]];
+    assert.equal(Stone.craftMaterial(grind, lime), "limestone");
+    assert.equal(Stone.craftRepeatCount(grind, lime), 1);
+    assert.equal(Stone.ingredientHave(grind, lime, grind.ingredients[0]), 5);
+
+    const both = [[
+        { id: "pebble", quantity: 4, stone: "granite" },
+        { id: "pebble", quantity: 4, stone: "limestone" }
+    ]];
+    assert.equal(Stone.craftMaterial(grind, both), "granite");
+    assert.equal(Stone.craftRepeatCount(grind, both), 2);
+    const after = Stone.bagsAfterQueue(both, [grind]);
+    assert.equal(Stone.craftMaterial(grind, after), "limestone");
+    assert.equal(Stone.craftRepeatCount(grind, after), 1);
+
+    const same = [[
+        { id: "pebble", quantity: 2 },
+        { id: "pebble", quantity: 1, stone: "andesite" }
+    ]];
+    assert.equal(Stone.craftMaterial(grind, same), "andesite");
+    const split = [[
+        { id: "pebble", quantity: 2 },
+        { id: "pebble", quantity: 1, stone: "granite" }
+    ]];
+    assert.equal(Stone.craftMaterial(grind, split), null);
+
+    const paired = {
+        id: "grindstone",
+        ingredients: [
+            { id: "pebble", qty: 2 },
+            { id: "grindstone", qty: 1 }
+        ]
+    };
+    assert.equal(Stone.craftMaterial(paired, [[
+        { id: "pebble", quantity: 4, stone: "granite" },
+        { id: "grindstone", quantity: 1, stone: "limestone" }
+    ]]), null);
+    assert.equal(Stone.craftMaterial(paired, [[
+        { id: "pebble", quantity: 4, stone: "granite" },
+        { id: "grindstone", quantity: 1, stone: "granite" }
+    ]]), "granite");
+    assert.equal(Stone.craftRepeatCount(paired, [[
+        { id: "pebble", quantity: 4, stone: "granite" },
+        { id: "grindstone", quantity: 1, stone: "granite" },
+        { id: "pebble", quantity: 2, stone: "limestone" },
+        { id: "grindstone", quantity: 1, stone: "limestone" }
+    ]]), 2);
 });
 
 test("new ground stamps stone without an extra decor roll", () => {

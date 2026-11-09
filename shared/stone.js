@@ -172,21 +172,228 @@
         return true;
     }
 
+    /** Flint, or the stone a pebble tool is made from. A blank pebble is andesite. */
+    function stuffKeyOf(stack) {
+        if (!stack) return null;
+        if (isFlintStack(stack)) return "flint";
+        return stoneOf(stack) || null;
+    }
+
+    function countIngredient(bags, ing, key, accept) {
+        let n = 0;
+        for (const bag of bags || []) {
+            if (!Array.isArray(bag)) continue;
+            for (const stack of bag) {
+                if (!stackMatchesIngredient(stack, ing)) continue;
+                if (accept && !accept(stack, ing)) continue;
+                if (key && stuffKeyOf(stack) !== key) continue;
+                n += Math.max(0, Math.floor(Number(stack.quantity) || 0));
+            }
+        }
+        return n;
+    }
+
+    /** Stuff keys in the order the bags would be searched. */
+    function stuffKeys(recipe, bags, accept) {
+        const ings = (recipe?.ingredients || []).filter(ingredientSuppliesStuff);
+        const keys = [];
+        const seen = new Set();
+        for (const bag of bags || []) {
+            if (!Array.isArray(bag)) continue;
+            for (const stack of bag) {
+                if (!stack || !(Number(stack.quantity) > 0)) continue;
+                for (const ing of ings) {
+                    if (!stackMatchesIngredient(stack, ing)) continue;
+                    if (accept && !accept(stack, ing)) continue;
+                    const key = stuffKeyOf(stack);
+                    if (!key || seen.has(key)) continue;
+                    seen.add(key);
+                    keys.push(key);
+                    break;
+                }
+            }
+        }
+        return keys;
+    }
+
+    function stuffIngredientQty(ing) {
+        return Math.max(1, Math.floor(Number(ing?.qty) || 1));
+    }
+
+    /**
+     * Material one stuffed craft will copy.
+     * "" when the recipe does not copy stuff.
+     * Null when no single material can fill every stuff ingredient.
+     * The first material in bag order that can fill the craft wins.
+     * @param {function} [accept] (stack, ing) => boolean
+     */
+    function craftMaterial(recipe, bags, accept) {
+        if (!craftTakesStuff(recipe?.id)) return "";
+        const ings = (recipe.ingredients || []).filter(ingredientSuppliesStuff);
+        if (!ings.length) return "";
+        for (const key of stuffKeys(recipe, bags, accept)) {
+            let ok = true;
+            for (const ing of ings) {
+                if (countIngredient(bags, ing, key, accept) < stuffIngredientQty(ing)) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) return key;
+        }
+        return null;
+    }
+
+    function bestStuffCount(bags, ing, accept) {
+        const totals = new Map();
+        for (const bag of bags || []) {
+            if (!Array.isArray(bag)) continue;
+            for (const stack of bag) {
+                if (!stackMatchesIngredient(stack, ing)) continue;
+                if (accept && !accept(stack, ing)) continue;
+                const key = stuffKeyOf(stack);
+                if (!key) continue;
+                totals.set(key, (totals.get(key) || 0) + Math.max(0, Math.floor(Number(stack.quantity) || 0)));
+            }
+        }
+        let best = 0;
+        for (const n of totals.values()) if (n > best) best = n;
+        return best;
+    }
+
+    /** How many of this ingredient the next pure craft can see. A short mix shows the biggest pile. */
+    function ingredientHave(recipe, bags, ing, accept) {
+        if (!ing) return 0;
+        if (!craftTakesStuff(recipe?.id) || !ingredientSuppliesStuff(ing)) {
+            return countIngredient(bags, ing, null, accept);
+        }
+        const key = craftMaterial(recipe, bags, accept);
+        if (key) return countIngredient(bags, ing, key, accept);
+        return bestStuffCount(bags, ing, accept);
+    }
+
+    /**
+     * How many times a stuffed recipe can run without mixing materials.
+     * Null when the recipe does not copy stuff.
+     */
+    function craftRepeatCount(recipe, bags, accept) {
+        if (!recipe) return 0;
+        if (!craftTakesStuff(recipe.id)) return null;
+        let n = Infinity;
+        let anyStuff = false;
+        for (const ing of recipe.ingredients || []) {
+            if (ingredientSuppliesStuff(ing)) {
+                anyStuff = true;
+                continue;
+            }
+            n = Math.min(n, Math.floor(countIngredient(bags, ing, null, accept) / stuffIngredientQty(ing)));
+        }
+        let stuffN = 0;
+        for (const key of stuffKeys(recipe, bags, accept)) {
+            let m = Infinity;
+            for (const ing of recipe.ingredients || []) {
+                if (!ingredientSuppliesStuff(ing)) continue;
+                m = Math.min(m, Math.floor(countIngredient(bags, ing, key, accept) / stuffIngredientQty(ing)));
+            }
+            if (m !== Infinity && m > 0) stuffN += m;
+        }
+        if (!anyStuff) return n === Infinity ? 0 : Math.max(0, n);
+        if (n === Infinity) return stuffN;
+        return Math.max(0, Math.min(n, stuffN));
+    }
+
+    function cloneBags(bags) {
+        const out = [];
+        for (const bag of bags || []) {
+            if (!Array.isArray(bag)) {
+                out.push(bag);
+                continue;
+            }
+            out.push(bag.map((stack) => (stack ? { ...stack } : null)));
+        }
+        return out;
+    }
+
+    /** Spend one pure craft in a bag copy. False when that craft cannot be paid. */
+    function consumeCraft(bags, recipe, accept) {
+        const takes = craftTakesStuff(recipe?.id);
+        const key = takes ? craftMaterial(recipe, bags, accept) : "";
+        if (takes && key == null) return false;
+        for (const ing of recipe?.ingredients || []) {
+            const restrict = !!(key && ingredientSuppliesStuff(ing));
+            if (countIngredient(bags, ing, restrict ? key : null, accept) < stuffIngredientQty(ing)) return false;
+        }
+        for (const ing of recipe?.ingredients || []) {
+            let left = stuffIngredientQty(ing);
+            const restrict = !!(key && ingredientSuppliesStuff(ing));
+            for (const bag of bags || []) {
+                if (!Array.isArray(bag)) continue;
+                for (const stack of bag) {
+                    if (!(left > 0)) break;
+                    if (!stackMatchesIngredient(stack, ing)) continue;
+                    if (accept && !accept(stack, ing)) continue;
+                    if (restrict && stuffKeyOf(stack) !== key) continue;
+                    const have = Math.max(0, Math.floor(Number(stack.quantity) || 0));
+                    const take = Math.min(have, left);
+                    stack.quantity = have - take;
+                    left -= take;
+                }
+            }
+            if (left > 0) return false;
+        }
+        return true;
+    }
+
+    /** Bags after queued crafts have been paid, in queue order, without mixing materials. */
+    function bagsAfterQueue(bags, queued, accept) {
+        const copy = cloneBags(bags);
+        for (const recipe of queued || []) {
+            if (!consumeCraft(copy, recipe, accept)) break;
+        }
+        return copy;
+    }
+
+    /**
+     * What a settler still has to haul for one pure stuffed craft.
+     * Null when the recipe does not copy stuff.
+     * ready when the carried bags already hold one material.
+     * blocked when no material in `all` can fill the craft.
+     */
+    function stuffFetch(recipe, carried, all, accept) {
+        if (!craftTakesStuff(recipe?.id)) return null;
+        if (craftMaterial(recipe, carried, accept) != null) return { ready: true };
+        const key = craftMaterial(recipe, all, accept);
+        if (key == null) return { blocked: true };
+        for (const ing of recipe.ingredients || []) {
+            if (!ingredientSuppliesStuff(ing)) continue;
+            const qty = stuffIngredientQty(ing);
+            const have = countIngredient(carried, ing, key, accept);
+            if (have >= qty) continue;
+            return { ing, key, need: qty - have };
+        }
+        return { ready: true };
+    }
+
     /**
      * Stack a stuffed craft copies from. Bags are hotbar, then pack, then an open basket.
-     * The leftmost stack of the first stuff ingredient wins. No such stack means no stuff yet.
+     * The material is the first one that can fill the craft. A short pile does not
+     * borrow from another stone. No such stack means no stuff yet.
      */
-    function firstStuffStack(recipe, bags) {
+    function firstStuffStack(recipe, bags, accept) {
         if (!craftTakesStuff(recipe?.id)) return null;
+        const key = craftMaterial(recipe, bags, accept);
         for (const ing of recipe.ingredients || []) {
             if (!ingredientSuppliesStuff(ing)) continue;
             for (const bag of bags || []) {
                 if (!Array.isArray(bag)) continue;
                 for (const stack of bag) {
-                    if (stackMatchesIngredient(stack, ing)) return stack;
+                    if (!stackMatchesIngredient(stack, ing)) continue;
+                    if (accept && !accept(stack, ing)) continue;
+                    if (key && stuffKeyOf(stack) !== key) continue;
+                    return stack;
                 }
             }
-            return null;
+            if (!key) return null;
         }
         return null;
     }
@@ -770,6 +977,13 @@
         isStuffableItem,
         splitsByStone,
         craftTakesStuff,
+        ingredientSuppliesStuff,
+        stuffKeyOf,
+        craftMaterial,
+        craftRepeatCount,
+        ingredientHave,
+        bagsAfterQueue,
+        stuffFetch,
         firstStuffStack,
         craftPreviewStack,
         stoneOf,

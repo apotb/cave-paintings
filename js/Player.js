@@ -2600,6 +2600,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         }
         if (!stack.id || stack.id !== match.id) return false;
         if (match.toolClass && stack.toolClass !== match.toolClass) return false;
+        if (match.stuffKey) {
+            const key = (typeof Stone !== "undefined" && Stone.stuffKeyOf)
+                ? Stone.stuffKeyOf(stack)
+                : null;
+            if (key !== match.stuffKey) return false;
+        }
         return true;
     }
 
@@ -2618,7 +2624,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         const takeFrom = (requireClass) => {
             for (let i = 0; i < this.inventory.length && remaining > 0; i++) {
                 const s = this.inventory[i];
-                if (!this._stackMatchesCraft(s, hideStage ? { hideStage } : { id })) continue;
+                if (!this._stackMatchesCraft(s, hideStage ? { hideStage } : { id, stuffKey: match?.stuffKey || null })) continue;
                 if (requireClass && s.toolClass !== requireClass) continue;
                 if (!requireClass && wantClass && s.toolClass === wantClass) continue;
                 const take = Math.min(s.quantity, remaining);
@@ -2671,7 +2677,11 @@ class Player extends Phaser.Physics.Arcade.Sprite {
         if (!hideStage && !id) return 0;
         let sum = 0;
         for (const stack of this.inventory) {
-            if (!this._stackMatchesCraft(stack, hideStage ? { hideStage } : { id, toolClass: wantClass })) continue;
+            if (!this._stackMatchesCraft(stack, hideStage ? { hideStage } : {
+                id,
+                toolClass: wantClass,
+                stuffKey: match?.stuffKey || null
+            })) continue;
             sum += stack.quantity;
         }
         return sum;

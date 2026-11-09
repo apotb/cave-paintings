@@ -345,11 +345,40 @@ function returnSurplusHides(world, rec, settle) {
     return null;
 }
 
+/**
+ * Parked on the way to food. Path arrival wants the exact stand pixel, so a
+ * body that has stopped in reach can take the food, and one that has stopped
+ * out of reach has to drop the trip.
+ */
+function eatWalkStalled(rec, target) {
+    const uid = target?.uid || target?.id || "";
+    const px = Number(rec.x) || 0;
+    const py = Number(rec.y) || 0;
+    if (rec._eatStillUid !== uid) {
+        rec._eatStillUid = uid;
+        rec._eatStill = 0;
+    }
+    const moved = Math.hypot(px - (rec._eatStillPx ?? px), py - (rec._eatStillPy ?? py));
+    rec._eatStillPx = px;
+    rec._eatStillPy = py;
+    if (moved > 0.35) rec._eatStill = 0;
+    else rec._eatStill = (rec._eatStill || 0) + 1;
+    return (rec._eatStill || 0) >= 24;
+}
+
 function fetchEatStack(world, rec, settle, found) {
     if (!found) return halt();
     if (found.at === rec) return null;
     const walked = walkToFound(world, rec, found);
-    if (walked) return walked;
+    if (walked) {
+        const target = fetchTarget(found, rec);
+        if (!eatWalkStalled(rec, target)) return walked;
+        const close = !!(target && near(rec.x, rec.y, Number(target.x) || 0, Number(target.y) || 0));
+        if (!close) {
+            rec._eatStill = 0;
+            return { eatGiveUp: true };
+        }
+    }
     const stack = found.slots[found.index];
     if (!stack) return halt();
     const food = world._foodForEat(stack);
@@ -1159,7 +1188,23 @@ function rockBillReady(world, rec, settle, bill) {
     }
     const recipe = recId ? world._parseRecipe(recId) : null;
     if (!recipe) return false;
+    let stoneCraft = (typeof Stone !== "undefined" && Stone.stuffFetch) ? Stone : null;
+    if (!stoneCraft) {
+        try {
+            if (typeof require === "function") stoneCraft = require("../../stone");
+        } catch (_) { stoneCraft = null; }
+    }
+    const accept = (s, ing) => {
+        if (typeof Settlement.craftBillMatches !== "function") return true;
+        return !!Settlement.craftBillMatches(s, ing, getItem, bill);
+    };
+    const carried = [rec?.inventory, rec?.overflow];
+    const all = carried.slice();
+    for (const b of basketsOf(world, settle)) all.push(b?.slots);
+    const plan = stoneCraft?.stuffFetch?.(recipe, carried, all, accept) || null;
+    if (plan?.blocked) return false;
     for (const ing of recipe.ingredients || []) {
+        if (plan && stoneCraft?.ingredientSuppliesStuff?.(ing)) continue;
         const pred = (s) => Settlement.craftBillMatches?.(s, ing, getItem, bill);
         let n = countSettle(world, rec, settle, pred);
         for (const s of rec.overflow || []) {

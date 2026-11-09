@@ -1099,8 +1099,13 @@
         const stack = recipe?.id === "arrow" ? null : this._craftPreviewStack(recipe);
         const head = this.formatItemTooltip(this.getItem(recipe.id), recipe.quantity, null, stack);
         const lines = [];
+        const viewBags = (typeof Stone !== "undefined" && Stone.bagsAfterQueue)
+            ? Stone.bagsAfterQueue(this._craftStuffBags(), this._craftPendingRecipes())
+            : null;
         for (const ingredient of recipe.ingredients || []) {
-            const have = Math.max(0, this._craftIngredientHave(ingredient) - this._craftQueuedNeed(ingredient));
+            const have = viewBags && Stone.ingredientHave
+                ? Math.max(0, Stone.ingredientHave(recipe, viewBags, ingredient))
+                : Math.max(0, this._craftIngredientHave(ingredient) - this._craftQueuedNeed(ingredient));
             lines.push({
                 icon: this._craftIngredientIcon(ingredient),
                 label: this._craftIngredientLabel(ingredient),
@@ -1408,7 +1413,11 @@
         if (!hideStage && !id) return 0;
         let sum = 0;
         for (const s of slots) {
-            if (!who._stackMatchesCraft(s, hideStage ? { hideStage } : { id, toolClass: wantClass })) continue;
+            if (!who._stackMatchesCraft(s, hideStage ? { hideStage } : {
+                id,
+                toolClass: wantClass,
+                stuffKey: match?.stuffKey || null
+            })) continue;
             sum += Math.max(0, Math.floor(Number(s.quantity) || 0));
         }
         return sum;
@@ -1437,7 +1446,7 @@
         const takeFrom = (requireClass) => {
             for (let i = 0; i < slots.length && remaining > 0; i++) {
                 const s = slots[i];
-                if (!who._stackMatchesCraft(s, hideStage ? { hideStage } : { id })) continue;
+                if (!who._stackMatchesCraft(s, hideStage ? { hideStage } : { id, stuffKey: match?.stuffKey || null })) continue;
                 if (requireClass && s.toolClass !== requireClass) continue;
                 if (!requireClass && wantClass && s.toolClass === wantClass) continue;
                 const have = Math.max(0, Math.floor(Number(s.quantity) || 0));
@@ -1465,10 +1474,17 @@
 
     canCraft(recipe, pawn, opts) {
         const who = pawn || this.player;
-        if (!opts?.skipIngredients && !recipe.ingredients.every(
-            (ingredient) => this._craftIngredientHave(ingredient, who) >= ingredient.qty
-        )) {
-            return false;
+        if (!opts?.skipIngredients) {
+            const bags = this._craftStuffBags(who);
+            if (typeof Stone !== "undefined" && Stone.craftTakesStuff?.(recipe?.id)
+                && Stone.craftMaterial(recipe, bags) == null) {
+                return false;
+            }
+            if (!recipe.ingredients.every(
+                (ingredient) => this._craftIngredientHave(ingredient, who) >= ingredient.qty
+            )) {
+                return false;
+            }
         }
         if (recipe.requireThing && !this.hasNearbyThing(recipe.requireThing, who)) {
             return false;
@@ -1511,11 +1527,16 @@
     _maxCraftRepeats(recipe, pawn) {
         const who = pawn || this.player;
         if (!recipe || !this.canCraft(recipe, who)) return 0;
-        let n = 999;
-        for (const ing of recipe.ingredients || []) {
-            const qty = Math.max(1, Math.floor(Number(ing.qty) || 1));
-            const have = this._craftIngredientHave(ing, who);
-            n = Math.min(n, Math.floor(have / qty));
+        const pure = (typeof Stone !== "undefined" && Stone.craftRepeatCount)
+            ? Stone.craftRepeatCount(recipe, this._craftStuffBags(who))
+            : null;
+        let n = pure != null ? pure : 999;
+        if (pure == null) {
+            for (const ing of recipe.ingredients || []) {
+                const qty = Math.max(1, Math.floor(Number(ing.qty) || 1));
+                const have = this._craftIngredientHave(ing, who);
+                n = Math.min(n, Math.floor(have / qty));
+            }
         }
         const tool = this._craftToolRepeats(recipe, who);
         if (tool != null) n = Math.min(n, tool);
@@ -1766,6 +1787,16 @@
         if (recipe.requireThing && !this.hasNearbyThing(recipe.requireThing, who)) return 0;
         if (recipe.requireStation && !this._findNearbyCraftStation(recipe.requireStation, who)) return 0;
         if (recipe.requireTool && !this._heldMatchesCraftTool(recipe.requireTool, who)) return 0;
+        const pendingBags = (typeof Stone !== "undefined" && Stone.bagsAfterQueue && Stone.craftRepeatCount)
+            ? Stone.bagsAfterQueue(this._craftStuffBags(who), this._craftPendingRecipes())
+            : null;
+        const pure = pendingBags ? Stone.craftRepeatCount(recipe, pendingBags) : null;
+        if (pure != null) {
+            let n = pure;
+            const tool = this._craftToolRepeats(recipe, who);
+            if (tool != null) n = Math.min(n, tool - this._craftQueuedToolUses(recipe));
+            return Math.max(0, Math.floor(n));
+        }
         let n = 999;
         for (const ing of recipe.ingredients || []) {
             const qty = Math.max(1, Math.floor(Number(ing.qty) || 1));
@@ -2181,18 +2212,35 @@
         };
     },
 
+    _craftPendingRecipes() {
+        const out = [];
+        for (const job of this._craftQueue || []) {
+            if (!job || job.taken || job.void || !job.recipe) continue;
+            out.push(job.recipe);
+        }
+        return out;
+    },
+
     _takeCraftIngredients(recipe, who, into) {
         const store = this._openCraftStorage(who);
+        const takes = typeof Stone !== "undefined" && Stone.craftTakesStuff?.(recipe?.id);
+        const material = takes && Stone.craftMaterial
+            ? Stone.craftMaterial(recipe, this._craftStuffBags(who))
+            : "";
+        if (takes && material == null) return;
         for (const ing of recipe?.ingredients || []) {
-            const need = Math.max(0, Number(ing.qty) || 1);
-            const fromInv = who.loseMatchingItems(ing, into) || 0;
+            const match = (material && Stone.ingredientSuppliesStuff?.(ing))
+                ? { ...ing, stuffKey: material }
+                : ing;
+            const need = Math.max(0, Number(match.qty) || 1);
+            const fromInv = who.loseMatchingItems(match, into) || 0;
             let left = Math.max(0, need - fromInv);
             if (left > 0) {
-                const fromPack = this._loseCraftSlots(who.overflow, ing, left, who, null, into);
+                const fromPack = this._loseCraftSlots(who.overflow, match, left, who, null, into);
                 if (fromPack > 0 && this.hotbar) this.hotbar.dirty = true;
                 left = Math.max(0, left - fromPack);
             }
-            if (left > 0) this._loseStorageCraft(store, ing, left, who, into);
+            if (left > 0) this._loseStorageCraft(store, match, left, who, into);
         }
     },
 

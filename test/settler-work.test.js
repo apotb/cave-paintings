@@ -7929,6 +7929,43 @@ test("digging stick waits for the nearest knife or scraper", () => {
     assert.equal(rec.inventory.some((s) => s && s.id === "log"), false);
 });
 
+test("a painting circle bill does not mix pebble stones", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [
+            { id: "pebble", stone: "granite", quantity: 6 },
+            { id: "pebble", stone: "limestone", quantity: 6 },
+            { id: "leaf_cord", quantity: 6 },
+            null,
+            null
+        ]
+    });
+    settle.jobs[rec.id] = craftOnly();
+    const spot = addCraftSpot(world, settle, rec.x, rec.y, "spot-paint");
+    Settlement.addBill(settle, spot.uid, {
+        recipeId: "painting_circle", mode: "count", n: 1, paused: false
+    });
+    for (let i = 0; i < 80; i++) world.tick(50);
+    assert.equal(rec._workChannel ?? null, null);
+    assert.equal(rec.inventory[0]?.quantity, 6);
+    assert.equal(rec.inventory[1]?.quantity, 6);
+
+    rec.inventory[0] = { id: "pebble", stone: "granite", quantity: 12 };
+    rec.inventory[1] = { id: "leaf_cord", quantity: 6 };
+    rec._settlerSkip = null;
+    endHold(rec);
+    let started = false;
+    for (let i = 0; i < 80; i++) {
+        world.tick(50);
+        if (rec._workChannel?.recipeId === "painting_circle") {
+            started = true;
+            break;
+        }
+    }
+    assert.equal(started, true);
+    assert.equal(rec.inventory.find((s) => s?.id === "pebble" && s.stone === "limestone") ?? null, null);
+});
+
 test("player rock crafts use the recipe times", () => {
     const { world } = createTestWorld();
     assert.equal(world._parseRecipe("cracked_coconut").craftSeconds, 1);

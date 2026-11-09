@@ -1147,6 +1147,10 @@
         }
         if (!s.id || s.id !== match.id) return false;
         if (match.toolClass && s.toolClass !== match.toolClass) return false;
+        if (match.stuffKey) {
+            const key = stoneApi()?.stuffKeyOf?.(s);
+            if (key !== match.stuffKey) return false;
+        }
         return true;
     },
 
@@ -1160,6 +1164,7 @@
         for (const s of slots) {
             const probe = hideStage ? { hideStage } : { id, toolClass: wantClass };
             if (allow) probe.allow = allow;
+            if (match?.stuffKey) probe.stuffKey = match.stuffKey;
             if (!this._stackMatchesCraft(s, probe)) continue;
             sum += Math.max(0, Math.floor(Number(s.quantity) || 0));
         }
@@ -1190,6 +1195,7 @@
                 const s = slots[i];
                 const probe = hideStage ? { hideStage } : { id };
                 if (allow) probe.allow = allow;
+                if (match?.stuffKey) probe.stuffKey = match.stuffKey;
                 if (!this._stackMatchesCraft(s, probe)) continue;
                 if (requireClass && s.toolClass !== requireClass) continue;
                 if (!requireClass && wantClass && s.toolClass === wantClass) continue;
@@ -1241,19 +1247,6 @@
             if (i === 2 && part.lost > 0) fromStorage = true;
         }
         return { lost, knapQuality, knapMaterial, stone, fromStorage };
-    },
-
-    /** Stone of the first pebble a grindstone craft would consume. Missing stone is andesite. */
-    _firstCraftPebbleStone(p, extraSlots) {
-        const bags = [p?.inventory, p?.overflow, extraSlots];
-        for (const bag of bags) {
-            if (!Array.isArray(bag)) continue;
-            for (const s of bag) {
-                if (!s || s.id !== "pebble" || !(Number(s.quantity) > 0)) continue;
-                return stoneApi()?.normalizeStone?.(s.stone) || "andesite";
-            }
-        }
-        return "andesite";
     },
 
     _craftStorageFromAction(p, action = {}) {
@@ -1449,12 +1442,29 @@
      */
     _payCraft(p, recipe, store, bill) {
         const extra = store?.entry?.slots || null;
+        const bags = [p?.inventory, p?.overflow, extra];
+        const Stone = stoneApi();
+        const takes = !!(Stone?.craftTakesStuff?.(recipe.id));
+        const accept = (stack, ing) => {
+            if (!bill || !ing?.toolClass || typeof Settlement?.billAllowsCraftInput !== "function") return true;
+            return !!Settlement.billAllowsCraftInput(bill, stack, ing);
+        };
+        const material = takes && Stone?.craftMaterial
+            ? Stone.craftMaterial(recipe, bags, accept)
+            : "";
+        if (takes && material == null) return null;
         const scoped = (ing) => {
-            if (!bill || !ing?.toolClass || typeof Settlement?.billAllowsCraftInput !== "function") return ing;
-            return {
-                ...ing,
-                allow: (s) => Settlement.billAllowsCraftInput(bill, s, ing)
-            };
+            let next = ing;
+            if (bill && ing?.toolClass && typeof Settlement?.billAllowsCraftInput === "function") {
+                next = {
+                    ...ing,
+                    allow: (s) => Settlement.billAllowsCraftInput(bill, s, ing)
+                };
+            }
+            if (material && Stone?.ingredientSuppliesStuff?.(ing)) {
+                next = { ...next, stuffKey: material };
+            }
+            return next;
         };
         for (const ing of recipe.ingredients) {
             if (this._countMatchingItems(p, scoped(ing), extra) < ing.qty) return null;
@@ -1465,7 +1475,7 @@
         let tipMaterial = null;
         let tipStone = null;
         const pebbleStone = (recipe.id === "grindstone" || recipe.id === "painting_circle")
-            ? this._firstCraftPebbleStone(p, extra)
+            ? (Stone?.normalizeStone?.(material) || material || "andesite")
             : null;
         const refund = [];
         let storageDirty = false;

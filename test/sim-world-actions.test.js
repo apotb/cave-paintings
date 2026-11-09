@@ -505,7 +505,7 @@ test("craft sharp_stick needs a nearby rock", () => {
     assert.ok(!pawn.inventory.some((s) => s?.id === "stick"));
 });
 
-test("craft grindstone takes the first pebble's stone and defaults to andesite", () => {
+test("craft grindstone uses one stone and refuses a mix", () => {
     const Research = require("../shared/research");
     const { world, pawn, Protocol } = createTestWorld();
     pawn.inventory[0] = { id: "pebble", quantity: 1, stone: "granite" };
@@ -518,19 +518,59 @@ test("craft grindstone takes the first pebble's stone and defaults to andesite",
     world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "grindstone" });
     const made = pawn.inventory.find((s) => s?.id === "grindstone");
     assert.ok(made);
-    assert.equal(made.stone, "granite");
-    assert.equal(pawn.inventory.some((s) => s?.id === "pebble" && s.stone === "granite"), false);
+    assert.equal(made.stone, "limestone");
+    assert.equal(pawn.inventory.find((s) => s?.id === "pebble" && s.stone === "granite")?.quantity, 1);
     const lime = pawn.inventory.find((s) => s?.id === "pebble" && s.stone === "limestone");
-    assert.equal(lime.quantity, 3);
+    assert.equal(lime.quantity, 2);
 
-    pawn.inventory[0] = { id: "pebble", quantity: 3 };
+    pawn.inventory[0] = { id: "pebble", quantity: 2, stone: "granite" };
+    pawn.inventory[1] = { id: "pebble", quantity: 2, stone: "limestone" };
     world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "grindstone" });
-    const plain = pawn.inventory.find((s) => s?.id === "grindstone" && s.stone === "andesite");
-    assert.ok(plain);
+    assert.equal(pawn.inventory.filter((s) => s?.id === "grindstone").length, 1);
+    assert.equal(pawn.inventory.find((s) => s?.stone === "granite" && s.id === "pebble")?.quantity, 2);
+    assert.equal(pawn.inventory.find((s) => s?.stone === "limestone" && s.id === "pebble")?.quantity, 2);
+
+    pawn.inventory[0] = { id: "pebble", quantity: 3, stone: "granite" };
+    pawn.inventory[1] = { id: "pebble", quantity: 1, stone: "limestone" };
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "grindstone" });
+    const granite = pawn.inventory.find((s) => s?.id === "grindstone" && s.stone === "granite");
+    assert.ok(granite);
+    assert.equal(pawn.inventory.find((s) => s?.id === "pebble" && s.stone === "limestone")?.quantity, 1);
+    assert.equal(pawn.inventory.some((s) => s?.id === "pebble" && s.stone === "granite"), false);
+
+    pawn.inventory[0] = { id: "pebble", quantity: 2 };
+    pawn.inventory[1] = { id: "pebble", quantity: 1, stone: "andesite" };
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "grindstone" });
+    assert.ok(pawn.inventory.some((s) => s?.id === "grindstone" && s.stone === "andesite"));
+
+    pawn.inventory[0] = { id: "pebble", quantity: 2 };
+    pawn.inventory[1] = { id: "pebble", quantity: 1, stone: "granite" };
+    const before = pawn.inventory.filter((s) => s?.id === "grindstone").length;
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "grindstone" });
+    assert.equal(pawn.inventory.filter((s) => s?.id === "grindstone").length, before);
+    assert.equal(pawn.inventory.find((s) => s?.id === "pebble" && !s.stone)?.quantity, 2);
+
+    pawn.inventory = pawn.inventory.map(() => null);
+    pawn.inventory[0] = { id: "pebble", quantity: 4, stone: "granite" };
+    pawn.inventory[1] = { id: "pebble", quantity: 4, stone: "limestone" };
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "grindstone", count: 3 });
+    const batch = pawn.inventory.filter((s) => s?.id === "grindstone");
+    assert.equal(batch.reduce((n, s) => n + (s.quantity || 1), 0), 2);
+    assert.deepEqual(batch.map((s) => s.stone).sort(), ["granite", "limestone"]);
+    assert.equal(pawn.inventory.find((s) => s?.id === "pebble" && s.stone === "granite")?.quantity, 1);
+    assert.equal(pawn.inventory.find((s) => s?.id === "pebble" && s.stone === "limestone")?.quantity, 1);
 });
 
 test("craft painting circle takes the first pebble's stone and defaults to andesite", () => {
     const { world, pawn, Protocol } = createTestWorld();
+    pawn.inventory[0] = { id: "pebble", quantity: 6, stone: "granite" };
+    pawn.inventory[1] = { id: "pebble", quantity: 6, stone: "limestone" };
+    pawn.inventory[2] = { id: "leaf_cord", quantity: 12 };
+    world.handleAction(pawn.id, { type: Protocol.Actions.CRAFT, id: "painting_circle" });
+    assert.equal(pawn.inventory.some((s) => s?.id === "painting_circle"), false);
+    assert.equal(pawn.inventory.find((s) => s?.stone === "granite")?.quantity, 6);
+    assert.equal(pawn.inventory.find((s) => s?.stone === "limestone")?.quantity, 6);
+
     pawn.inventory[0] = { id: "pebble", quantity: 12, stone: "granite" };
     pawn.inventory[1] = { id: "pebble", quantity: 12, stone: "limestone" };
     pawn.inventory[2] = { id: "leaf_cord", quantity: 12 };

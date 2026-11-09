@@ -19,6 +19,7 @@
     const SCAN_MS = ctx.SCAN_MS;
     const halt = (...args) => ctx.halt(...args);
     const getItem = (...args) => ctx.getItem(...args);
+    const basketsOf = (...args) => ctx.basketsOf(...args);
     const goOrWalk = (...args) => ctx.goOrWalk(...args);
     const approachStation = (...args) => ctx.approachStation(...args);
     const useInteractSpot = (...args) => ctx.useInteractSpot(...args);
@@ -803,6 +804,19 @@ function canReceiveTool(world, rec, settle) {
     });
 }
 
+function stuffPlan(world, rec, settle, recipe, bill) {
+    const StoneApi = stoneMod();
+    if (!StoneApi?.stuffFetch || !recipe) return null;
+    const accept = (s, ing) => {
+        if (typeof Settlement?.craftBillMatches !== "function") return true;
+        return !!Settlement.craftBillMatches(s, ing, getItem, bill);
+    };
+    const carried = [rec?.inventory, rec?.overflow];
+    const all = carried.slice();
+    for (const b of basketsOf(world, settle) || []) all.push(b?.slots);
+    return StoneApi.stuffFetch(recipe, carried, all, accept);
+}
+
 function doRock(world, rec, settle, job) {
     const rock = job?.station;
     const bill = job?.bill;
@@ -850,7 +864,28 @@ function doRock(world, rec, settle, job) {
         return halt();
     }
     const ingOk = (ing) => (s) => Settlement.craftBillMatches?.(s, ing, getItem, bill);
+    const plan = stuffPlan(world, rec, settle, recipe, bill);
+    if (plan?.blocked) {
+        stopRock(rec, job, true);
+        return halt();
+    }
     for (const ing of recipe.ingredients || []) {
+        if (plan && stoneMod()?.ingredientSuppliesStuff?.(ing)) {
+            if (plan.ready || ing.id !== plan.ing?.id
+                || (ing.toolClass || null) !== (plan.ing?.toolClass || null)
+                || (ing.hideStage || null) !== (plan.ing?.hideStage || null)) {
+                continue;
+            }
+            const pred = (s) => ingOk(ing)(s) && stoneMod()?.stuffKeyOf?.(s) === plan.key;
+            const found = findNearestStored(
+                world, rec, settle, pred, { storageOnly: true }
+            );
+            if (!found) {
+                stopRock(rec, job, true);
+                return halt();
+            }
+            return fetchCookQty(world, rec, settle, found, plan.need) || halt();
+        }
         const need = Math.max(1, Math.floor(Number(ing.qty) || 1));
         const pred = ingOk(ing);
         const have = carriedMatchQty(rec, pred);
@@ -888,11 +923,16 @@ function doRock(world, rec, settle, job) {
     const walked = useInteractSpot(world, rec, rock);
     if (walked) return walked;
     for (const ing of recipe.ingredients || []) {
+        if (plan && stoneMod()?.ingredientSuppliesStuff?.(ing)) continue;
         const need = Math.max(1, Math.floor(Number(ing.qty) || 1));
         if (carriedMatchQty(rec, ingOk(ing)) < need) {
             stopRock(rec, job, true);
             return halt();
         }
+    }
+    if (plan && stoneMod()?.craftMaterial?.(recipe, [rec.inventory, rec.overflow], (s, ing) => ingOk(ing)(s)) == null) {
+        stopRock(rec, job, true);
+        return halt();
     }
     if (recipe.requireThing && !world._hasNearbyThing(rec, recipe.requireThing)) {
         stopRock(rec, job, true);
