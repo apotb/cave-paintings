@@ -21,7 +21,7 @@
     const SNAG_CHANCE = 0.02;
     const RARE_CHANCE = 0.01;
     const SNAG_COOLDOWN_MINUTES = 5 * 1440;
-    const OPEN_HAUL = 3;
+    const OPEN_HAUL = 1;
     const REGEN_PER_DAY = 0.025;
     const DAY_MINUTES = 1440;
     const TILE = 16;
@@ -46,22 +46,11 @@
     }
 
     /**
-     * Fish this cast brings up. Half of the shore curve, so 25→1, 100→2, and 300→3.
-     * Never below 1 when the water has a fish, never more than the population.
+     * One fish per cast when the water still has one.
      */
     function yieldForPop(pop) {
         const p = Number(pop);
-        if (!(p >= 1)) return 0;
-        let raw;
-        if (p <= 25) raw = 1;
-        else if (p >= 300) raw = 6;
-        else if (p <= 100) raw = 1 + (p - 25) * (2 / 75);
-        else raw = 3 + (p - 100) * (3 / 200);
-        let n = Math.round(Math.round(raw) / 2);
-        if (n < 1) n = 1;
-        const cap = Math.floor(p);
-        if (n > cap) n = cap;
-        return n >= 1 ? n : 0;
+        return p >= 1 ? 1 : 0;
     }
 
     /**

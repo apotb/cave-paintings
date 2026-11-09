@@ -263,9 +263,9 @@ test("closed-pool debuff and the yield curve", () => {
     assert.equal(Fish.maxForCount(399), Math.round(400 * (399 - 75) / 325));
     assert.equal(Fish.maxForCount(400), null);
     assert.equal(Fish.yieldForPop(25), 1);
-    assert.equal(Fish.yieldForPop(100), 2);
-    assert.equal(Fish.yieldForPop(200), 3);
-    assert.equal(Fish.yieldForPop(300), 3);
+    assert.equal(Fish.yieldForPop(100), 1);
+    assert.equal(Fish.yieldForPop(200), 1);
+    assert.equal(Fish.yieldForPop(300), 1);
     assert.equal(Fish.yieldForPop(0.4), 0);
 });
 
@@ -299,14 +299,14 @@ test("a pool under 400 shares one id from both shores", () => {
     assert.equal(Fish.maxForCount(200), Math.round(400 * (200 - 75) / 325));
 });
 
-test("open water is not saved and a cast there grants 3", () => {
+test("open water is not saved and a cast there grants 1", () => {
     const fisheries = {};
     const measured = Fish.measure(0, 0, waterSet(line(400)));
     assert.equal(measured.open, true);
     const cast = Fish.beginCast(fisheries, measured);
     assert.equal(cast.ok, true);
     assert.equal(cast.open, true);
-    assert.equal(cast.haul, 3);
+    assert.equal(cast.haul, 1);
     assert.deepEqual(fisheries, {});
 });
 
