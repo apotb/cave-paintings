@@ -4012,6 +4012,8 @@ class PartySystem {
                 snapDtMs: gap,
                 speedTiles: P?.WALK_ANIM_TILES_PER_SEC || 3.5
             }) || 72;
+            const prevSpan = Number(pawn._netSnapDt);
+            const prevRun = Number(pawn._netSnapDist);
             const seg = P?.puppetSegment?.({
                 prevX: pawn._netTx,
                 prevY: pawn._netTy,
@@ -4022,7 +4024,10 @@ class PartySystem {
                 now,
                 gap,
                 moving,
-                teleportPx: teleport
+                teleportPx: teleport,
+                speedPx: prevSpan > 0 && Number.isFinite(prevRun)
+                    ? prevRun / (prevSpan / 1000)
+                    : 0
             });
             if (seg) {
                 pawn._netSnapDist = seg.snapDist;

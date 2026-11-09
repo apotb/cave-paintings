@@ -492,6 +492,11 @@
                         speedTiles: 3.5
                     })
                     : 72;
+                const prevSpan = Number(entry.snapDt);
+                const prevRun = Math.hypot(
+                    (Number(entry.tx) || 0) - (Number(entry.fromX) || 0),
+                    (Number(entry.ty) || 0) - (Number(entry.fromY) || 0)
+                );
                 const seg = (typeof Party !== "undefined" && Party.puppetSegment)
                     ? Party.puppetSegment({
                         prevX: entry.tx,
@@ -503,7 +508,8 @@
                         now,
                         gap,
                         moving,
-                        teleportPx: teleport
+                        teleportPx: teleport,
+                        speedPx: prevSpan > 0 ? prevRun / (prevSpan / 1000) : 0
                     })
                     : null;
                 if (seg) {

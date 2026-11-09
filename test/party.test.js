@@ -405,6 +405,89 @@ test("puppet lerp keeps speed past the segment and does not rewind", () => {
     assert.ok(Math.abs(offSpeed - (40 / 0.2)) < 1e-6, `turn clip ${offSpeed}`);
 });
 
+test("a stopped pose walks a short tail instead of blinking it", () => {
+    const now = 8000;
+    const speed = 56;
+    const tail = Party.puppetSegment({
+        prevX: 100,
+        prevY: 0,
+        nextX: 100,
+        nextY: 0,
+        displayedX: 88,
+        displayedY: 0,
+        now,
+        gap: 67,
+        moving: false,
+        teleportPx: 200,
+        speedPx: speed
+    });
+    const pose = (t) => Party.puppetLerpXY({
+        fromX: tail.fromX,
+        fromY: tail.fromY,
+        tx: tail.tx,
+        ty: tail.ty,
+        snapAt: tail.snapAt,
+        snapDtMs: tail.snapDt,
+        now: t,
+        teleportPx: 200,
+        moving: false
+    });
+    const atPacket = pose(now);
+    assert.ok(Math.abs(atPacket.x - 88) < 0.5, `tail jumped to ${atPacket.x}`);
+    const oneFrame = pose(now + 16);
+    assert.ok(oneFrame.x < 90, `one frame ate the tail (${oneFrame.x})`);
+    const walkMs = (12 / speed) * 1000;
+    const early = pose(now + walkMs * 0.5);
+    assert.ok(early.x < 96, `arrived early at ${early.x}`);
+    const done = pose(now + walkMs);
+    assert.ok(Math.abs(done.x - 100) < 0.5, `tail late at ${done.x}`);
+
+    const missed = Party.puppetSegment({
+        prevX: 100,
+        prevY: 0,
+        nextX: 100,
+        nextY: 0,
+        displayedX: 52,
+        displayedY: 0,
+        now,
+        gap: 67,
+        moving: false,
+        teleportPx: 200,
+        speedPx: speed
+    });
+    assert.equal(missed.fromX, 100);
+    assert.equal(missed.tx, 100);
+    assert.equal(missed.snapDist, 0);
+
+    const step = Party.puppetSegment({
+        prevX: 40,
+        prevY: 0,
+        nextX: 46,
+        nextY: 0,
+        displayedX: 34,
+        displayedY: 0,
+        now,
+        gap: 200,
+        moving: false,
+        teleportPx: 200
+    });
+    const stepSpeed = 6 / 0.2;
+    const coverMs = (12 / stepSpeed) * 1000;
+    assert.ok(step.snapDt >= coverMs - 1, `stop dash ${step.snapDt}ms`);
+    const stepNow = Party.puppetLerpXY({
+        fromX: step.fromX,
+        fromY: step.fromY,
+        tx: step.tx,
+        ty: step.ty,
+        snapAt: step.snapAt,
+        snapDtMs: step.snapDt,
+        now,
+        teleportPx: 200,
+        moving: false
+    });
+    assert.ok(Math.abs(stepNow.x - 34) < 0.5, `stop step jumped to ${stepNow.x}`);
+});
+
 test("walk clip rate follows travel and does not full-speed a stop", () => {
     assert.equal(Party.walkAnimTimeScale(3.5), 1);
     assert.equal(Party.walkAnimTimeScale(7), 2);

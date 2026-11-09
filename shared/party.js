@@ -164,6 +164,10 @@
      * The returned `snapAt` is the presentation clock. Callers must keep the
      * packet arrival time separately — the next gap is measured from that,
      * and a backdated clock would shrink it.
+     * `speedPx` is the segment already on screen. A stop whose server pose
+     * barely moved used to call `ends()`, and the picture jumped the last
+     * tile. That short tail is walked at that speed. A longer gap is a
+     * missed correction, and gliding it plays a cast from the wrong spot.
      */
     function puppetSegment(opts = {}) {
         const nextX = Number(opts.nextX);
@@ -200,7 +204,18 @@
         }
         if (!hasPrev) return ends(nextX, nextY);
         const dist = Math.hypot(nextX - prevX, nextY - prevY);
-        if (!(dist > 0.5) || dist > teleport) return ends(nextX, nextY);
+        if (dist > teleport) return ends(nextX, nextY);
+        // One tile of leftover walk. Farther than that is the picture sitting
+        // on an old pose while the cast or the job has already started.
+        const TAIL_WALK_PX = 16;
+        if (!(dist > 0.5)) {
+            if (moving || !hasDisp) return ends(nextX, nextY);
+            const tail = Math.hypot(nextX - dispX, nextY - dispY);
+            if (!(tail > 1) || tail > TAIL_WALK_PX) return ends(nextX, nextY);
+            const speed = Number(opts.speedPx);
+            const snapDt = speed > 1 ? (tail / speed) * 1000 : gap;
+            return seg(dispX, dispY, nextX, nextY, now, snapDt);
+        }
         // A displayed point off this step is a coast. Restarting the step at
         // prev pulls the picture backward, then the next correction throws it
         // forward. Sit on the latest pose instead.
@@ -221,7 +236,18 @@
         }
         if (!moving) {
             if (!hasDisp) return seg(prevX, prevY, nextX, nextY, now, gap);
-            return seg(dispX, dispY, nextX, nextY, now, gap);
+            const along = ((dispX - prevX) * (nextX - prevX) + (dispY - prevY) * (nextY - prevY))
+                / (dist * dist);
+            // Past the stop: come back inside this packet. A point still
+            // short of it by about a tile keeps the step's speed. A longer
+            // gap closes in this packet so the body is on the pose the job uses.
+            if (along >= 1) return seg(dispX, dispY, nextX, nextY, now, gap);
+            const tail = Math.hypot(nextX - dispX, nextY - dispY);
+            if (tail > TAIL_WALK_PX) return ends(nextX, nextY);
+            if (!(tail > 1)) return seg(dispX, dispY, nextX, nextY, now, gap);
+            const stepSpeed = dist / (gap / 1000);
+            const walkDt = stepSpeed > 1 ? (tail / stepSpeed) * 1000 : gap;
+            return seg(dispX, dispY, nextX, nextY, now, Math.max(gap, walkDt));
         }
         if (!hasDisp) return seg(prevX, prevY, nextX, nextY, now, gap);
         const nx = (nextX - prevX) / dist;
