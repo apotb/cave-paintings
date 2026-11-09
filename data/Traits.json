@@ -124,5 +124,12 @@
         "title": "Psychopath",
         "desc": "<name> has no concept of morality or empathy. Other people are nothing more than pawns to be used and discarded.",
         "commonality": 0.4
+    },
+    {
+        "id": "quick_sleeper",
+        "title": "Quick sleeper",
+        "desc": "<name> doesn't need to sleep very long. They can get by on just a few hours of sleep.",
+        "commonality": 1,
+        "factors": { "restRateMultiplier": 1.5 }
     }
 ]

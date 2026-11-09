@@ -889,6 +889,8 @@ test("a miserable settler abandons, and a sulk refuses ordinary work", () => {
     });
     world.settlers.push(rec);
     world._ensureSettlerCreature(rec);
+    // The id roll must not nullify death, corpse, or human-flesh thoughts.
+    rec.bio.traits = ["foodie", "austere"];
     const now = world.worldMinuteIndex();
     Thoughts.noteMeal(rec, "human", now);
     for (let i = 0; i < 5; i++) Thoughts.witness(rec, now);

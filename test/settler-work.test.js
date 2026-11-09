@@ -39,6 +39,11 @@ function parkSettler(world, pawn, opts = {}) {
     world.settlements.push(settle);
     world.settlers.push(rec);
     world._ensureSettlerCreature(rec);
+    // settler1's id roll picked precise and storyteller once Quick sleeper joined the pool.
+    if (rec.id === "settler1" && rec.bio) {
+        rec.bio.traits = (rec.bio.traits || []).filter((id) => id !== "precise" && id !== "storyteller" && id !== "lazy");
+        if (!rec.bio.traits.includes("sloppy")) rec.bio.traits.push("sloppy");
+    }
     return { settle, rec };
 }
 

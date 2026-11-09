@@ -781,3 +781,34 @@ test("pain, darkness, and melee dps follow the stat factors", () => {
     assert.equal(tend.lines.find((line) => line.label === "Medical skill").value, "8");
     assert.equal(tend.lines.find((line) => line.label === "Skill factor").value, "88%");
 });
+
+test("quick sleeper multiplies the rest rate by 150%", () => {
+    const row = DataStore._store.traitsList.find((trait) => trait.id === "quick_sleeper");
+    assert.deepEqual(Skills.effectLines(row), ["Rest rate multiplier ×150%"]);
+    const healthy = statPawn("melee", 0, ["quick_sleeper"]);
+    const plain = statPawn("melee", 0);
+    assert.equal(Skills.restRateMultiplier(healthy), 1.5);
+    assert.equal(Skills.restRateMultiplier(plain), 1);
+    const weakCaps = {
+        bloodPumping: () => 0,
+        digestion: () => 1,
+        breathing: () => 1,
+        manipulation: () => 1,
+        sight: () => 1,
+        moving: () => 1
+    };
+    const weak = statPawn("melee", 0, ["quick_sleeper"], { capacities: weakCaps });
+    const weakPlain = statPawn("melee", 0, [], { capacities: weakCaps });
+    assert.ok(Math.abs(Skills.restRateMultiplier(weakPlain) - 0.7) < 1e-9);
+    assert.ok(Math.abs(Skills.restRateMultiplier(weak) - 1.05) < 1e-9);
+    const report = Skills.describeStat(healthy, "restRate");
+    assert.equal(report.valueText, "150%");
+    assert.equal(report.final, 1.5);
+    assert.equal(report.lines.find((line) => line.label === "Body").value, "100%");
+    assert.equal(report.lines.find((line) => line.label === "Quick sleeper").value, "×150%");
+    assert.match(report.sentence, /sleeping/);
+    const plainReport = Skills.describeStat(plain, "restRate");
+    assert.equal(plainReport.valueText, "100%");
+    assert.equal(plainReport.lines.some((line) => line.label === "Quick sleeper"), false);
+    assert.ok(Skills.STAT_ROWS.some((stat) => stat.id === "restRate" && stat.label === "Rest rate multiplier"));
+});

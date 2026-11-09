@@ -256,7 +256,8 @@
         }
         const factorLabels = {
             painThreshold: "Pain threshold",
-            incomingDamage: "Damage taken"
+            incomingDamage: "Damage taken",
+            restRateMultiplier: "Rest rate multiplier"
         };
         for (const key of Object.keys(factorLabels)) {
             const v = row.factors && row.factors[key];
@@ -852,6 +853,27 @@
         return f;
     }
 
+    function needsApi() {
+        if (typeof Needs !== "undefined") return Needs;
+        try { return require("./needs"); } catch (_) { return null; }
+    }
+
+    /** Capacity rest rate, then Quick sleeper and any later factors. */
+    function capacityRestRate(pawn, opts) {
+        const NeedsApi = needsApi();
+        const caps = {
+            bloodPumping: isPawn(pawn) ? capValue(pawn, "bloodPumping", opts) : 1,
+            digestion: isPawn(pawn) ? capValue(pawn, "digestion", opts) : 1,
+            breathing: isPawn(pawn) ? capValue(pawn, "breathing", opts) : 1
+        };
+        return NeedsApi?.restRateMultiplier ? NeedsApi.restRateMultiplier(caps) : 1;
+    }
+
+    function restRateMultiplier(pawn, opts) {
+        const factor = isPawn(pawn) ? traitFactor(pawn.bio, "restRateMultiplier", opts?.cat) : 1;
+        return Math.max(0, capacityRestRate(pawn, opts) * factor);
+    }
+
     function jobRate(pawn, id, opts) {
         switch (id) {
             case "cook": return cookSpeed(pawn, opts);
@@ -1273,7 +1295,8 @@
             plant: "How fast plants cutting and harvesting is completed.",
             plantYield: "Multiplier on how much a plant's harvest yields.",
             fish: "How fast a bite comes when fishing.",
-            research: "How fast research tasks are completed."
+            research: "How fast research tasks are completed.",
+            restRate: "How quickly rest recovers while sleeping."
         };
         return text[id] || "";
     }
@@ -1333,6 +1356,13 @@
             const factor = isPawn(pawn) ? traitFactor(pawn.bio, "painThreshold") : 1;
             if (factor !== 1) push("Wimp", `×${Math.round(factor * 100)}%`);
             final = isPawn(pawn) ? painThreshold(pawn) : base;
+            valueText = pct(final);
+        } else if (id === "restRate") {
+            const body = capacityRestRate(pawn, o);
+            push("Body", pct(body));
+            const factor = isPawn(pawn) ? traitFactor(pawn.bio, "restRateMultiplier", o.cat) : 1;
+            if (factor !== 1) push("Quick sleeper", `×${Math.round(factor * 100)}%`);
+            final = Math.max(0, body * factor);
             valueText = pct(final);
         } else if (id === "moveSpeed") {
             const parts = moveParts(isPawn(pawn) ? pawn : {});
@@ -1505,6 +1535,7 @@
         { group: "Combat", id: "shooting", label: "Shooting accuracy" },
         { group: "Combat", id: "incomingDamage", label: "Damage taken" },
         { group: "Body", id: "painThreshold", label: "Pain threshold" },
+        { group: "Body", id: "restRate", label: "Rest rate multiplier" },
         { group: "Body", id: "moveSpeed", label: "Move speed" },
         { group: "Hunger", id: "calories", label: "Calories" },
         { group: "Work", id: "learning", label: "Learning rate" },
@@ -1593,6 +1624,7 @@
         painThreshold,
         incomingDamageFactor,
         calorieFactor,
+        restRateMultiplier,
         shatterChance,
         knapCenter,
         knapGrade,

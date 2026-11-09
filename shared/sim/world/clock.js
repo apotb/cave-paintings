@@ -425,14 +425,21 @@
         }
         const caps = creature?.capacities;
         const asleep = !!(pawn._resting || pawn._groundSleep);
+        const skills = this._skillsApi?.();
         const result = Needs.tickRest(pawn, {
             asleep,
             effectiveness: asleep ? this._restEffectivenessFor(pawn) : 1,
-            restRateMultiplier: Needs.restRateMultiplier({
-                bloodPumping: caps?.bloodPumping?.(),
-                digestion: caps?.digestion?.(),
-                breathing: caps?.breathing?.()
-            }),
+            restRateMultiplier: skills?.restRateMultiplier
+                ? skills.restRateMultiplier({
+                    bio: pawn.bio || creature?.bio,
+                    capacities: caps,
+                    id: pawn.id
+                })
+                : Needs.restRateMultiplier({
+                    bloodPumping: caps?.bloodPumping?.(),
+                    digestion: caps?.digestion?.(),
+                    breathing: caps?.breathing?.()
+                }),
             sleepFallRate: Needs.sleepFallRate(pawn)
         });
         if (pawn._groundSleep && !pawn._resting && pawn.needs.rest >= Needs.WAKE_AT) {
