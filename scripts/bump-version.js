@@ -8,8 +8,9 @@
  * A major or minor bump drops a 4th number (0.4.3.2 --minor → 0.4.4).
  *
  * Usage: npm run bump --patch|--minor|--major
- * Does not commit or tag.
+ * Stages those three files and commits them as "Bump vX.Y.Z". Does not tag.
  */
+const { spawnSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
@@ -101,6 +102,19 @@ function main() {
     fs.writeFileSync(lockPath, replaceVersionFields(fs.readFileSync(lockPath, "utf8"), from, next, 2));
     fs.writeFileSync(verPath, `${JSON.stringify({ version: next }, null, 2)}\n`);
     console.log(`${from} → ${next}`);
+    commitBump(next);
+}
+
+function git(args) {
+    const result = spawnSync("git", args, { cwd: ROOT, stdio: "inherit" });
+    if (result.error) fail(`git ${args[0]}: ${result.error.message}`);
+    if (result.status !== 0) process.exit(result.status || 1);
+}
+
+function commitBump(next) {
+    const files = ["package.json", "package-lock.json", "version.json"];
+    git(["add", "--", ...files]);
+    git(["commit", "-m", `Bump v${next}`, "--", ...files]);
 }
 
 if (require.main === module) main();
