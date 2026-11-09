@@ -1,3 +1,11 @@
+Fix item slot swapping and dupe glitches
+
+Pyromaniac trait
+
+Cooking skill: increases cooking speed and reduces food poisoning chance. Will require cooking to have the cook stay by the fire instead of walking away after letting it start, as well as making food poisoning have a chance to be applied to cooked food at certain low levels, like Rimworld.
+
+Social skil: affects recruitment chance
+
 Fix UI size 1 issues (e.g. tech tree, settlement menu)
 
 Agriculture -- will unlock a tutorial tip that you can open to learn about soil and farming mechanics
