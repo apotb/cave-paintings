@@ -72,15 +72,13 @@ function sceneFor(craft) {
     }, craft);
     scene.formatItemTooltip = () => "Made thing";
     scene._craftPreviewStack = () => null;
-    scene._craftIngredientHave = () => 4;
-    scene._craftQueuedNeed = () => 1;
     return scene;
 }
 
 test("recipe tooltip puts icons on ingredient, rock, and cycling tool rows", () => {
     const craft = loadCraft();
     const scene = sceneFor(craft);
-    const tip = scene._craftRecipeTooltip({
+    const recipe = {
         id: "digging_stick",
         quantity: 1,
         ingredients: [
@@ -90,7 +88,19 @@ test("recipe tooltip puts icons on ingredient, rock, and cycling tool rows", () 
         ],
         requireThing: "rock",
         requireTool: { toolClass: ["knife", "scraper"], wear: 5 }
-    });
+    };
+    // Four of each ingredient, one craft already queued. The tip counts bags
+    // after that craft is paid, so stick and pebble read 3/1.
+    scene.player = {
+        inventory: [
+            { id: "stick", quantity: 4 },
+            { id: "pebble", quantity: 4, stone: "andesite" },
+            { id: "andesite", quantity: 4 }
+        ],
+        overflow: []
+    };
+    scene._craftQueue = [{ recipe, taken: false }];
+    const tip = scene._craftRecipeTooltip(recipe);
     assert.equal(tip.text, "Made thing\n—");
     assert.equal(tip.lines[0].icon, "stick");
     assert.equal(tip.lines[0].label, "stick");
