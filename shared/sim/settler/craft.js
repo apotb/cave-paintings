@@ -127,6 +127,37 @@ function leaveSmokingHide(world, rec, settle, fire) {
     return halt();
 }
 
+function noteCookLoader(world, rec, fire) {
+    world._ensureBio?.(rec);
+    const skills = world._skillsApi?.();
+    if (!Fire?.noteCookLoader || !skills || !rec?.bio || !fire) return;
+    const score = skills.cookScore(rec, skills.workOpts?.(world, rec));
+    Fire.noteCookLoader(fire, rec.id, score);
+}
+
+/** Stand at a fire that is cooking. Returns "incapable" when this pawn cannot cook. */
+function noteCookWork(world, rec, fire) {
+    world._ensureBio?.(rec);
+    const skills = world._skillsApi?.();
+    if (!skills || !rec?.bio || !fire) return "";
+    if (skills.incapable(rec.bio, "cooking")) {
+        endWorkHold(rec);
+        return "incapable";
+    }
+    const opts = skills.workOpts?.(world, rec);
+    const score = skills.cookScore(rec, opts);
+    fire._skillCook = skills.jobRate(rec, "cook", opts);
+    if (rec._cookXpMin == null) rec._cookXpMin = world.gameMinutes;
+    let elapsed = world.gameMinutes - rec._cookXpMin;
+    if (elapsed < 0) elapsed += 24 * 60;
+    if (elapsed > 0 && elapsed < 30) {
+        skills.award(rec.bio, "cooking", skills.XP_MINUTE * elapsed, { day: world.gameDay });
+        Fire.addCookTend?.(fire, rec.id, elapsed, score);
+        rec._cookXpMin = world.gameMinutes;
+    }
+    return "";
+}
+
 function doCook(world, rec, settle, job) {
     const fire = job?.fire || job?.entry;
     const bill = job?.bill;
@@ -160,17 +191,19 @@ function doCook(world, rec, settle, job) {
             endWorkHold(rec);
             return halt();
         }
-        // The shell is on and nothing else will go in. The fire finishes the
-        // meal on its own. Holding this job parks them on "Simmering" with
-        // the next shell and fish still in their hands.
+        // The pot is loaded. Stay and tend it. Don't fetch the next shell yet.
         const shellOn = Settlement.isCookTool(getItem, fire.catalyst, method);
         let filled = 0;
         for (const s of fire.simmer || []) {
             if (s && Settlement.cookInputReady(getItem, s, bill)) filled += 1;
         }
         if (shellOn && filled >= minSlots && willFill <= filled && !fireNeedsLight(fire)) {
-            endWorkHold(rec);
-            return halt();
+            const walked = approachStation(world, rec, fire);
+            if (walked) return walked;
+            stokeUntilKeep(world, rec, settle, fire);
+            if (noteCookWork(world, rec, fire) === "incapable") return halt();
+            const facing = faceFire(rec, fire);
+            return halt(facing ? { facing } : null);
         }
         if (fire.id !== "campfire" || !(Number(fire.burnRemaining) > 0)) {
             return doLightFire(world, rec, settle, fire);
@@ -257,6 +290,7 @@ function doCook(world, rec, settle, job) {
             if (placed) {
                 emitEntry(world, fire);
                 world._dirtyPawnOwner(rec);
+                noteCookLoader(world, rec, fire);
             }
         } else if (empty > 0 && heldIng <= 0 && !findStored(world, rec, settle, ingPred)) {
             if (!(fire.simmer || []).some((s) => s) && !needTool) endWorkHold(rec);
@@ -390,6 +424,7 @@ function doCook(world, rec, settle, job) {
         if (walked) return walked;
         fire.cook = takeCookPiece(found);
         Fire.onCookChanged?.(fire, null);
+        noteCookLoader(world, rec, fire);
         markCatalystReserved(fire);
         emitEntry(world, fire);
         world._dirtyPawnOwner(rec);
@@ -403,22 +438,7 @@ function doCook(world, rec, settle, job) {
     if (walked) return walked;
     stokeUntilKeep(world, rec, settle, fire);
     if (method !== "smoke_hide") {
-        const skills = world._skillsApi?.();
-        const cookLv = skills && rec.bio ? skills.effectiveLevel(rec.bio, "cooking") : null;
-        if (skills && rec.bio && skills.incapable(rec.bio, "cooking")) {
-            endWorkHold(rec);
-            return halt();
-        }
-        if (cookLv != null) {
-            fire._skillCook = skills.jobRate(rec, "cook", skills.workOpts?.(world, rec));
-            if (rec._cookXpMin == null) rec._cookXpMin = world.gameMinutes;
-            let elapsed = world.gameMinutes - rec._cookXpMin;
-            if (elapsed < 0) elapsed += 24 * 60;
-            if (elapsed > 0 && elapsed < 30) {
-                skills.award(rec.bio, "cooking", skills.XP_MINUTE * elapsed, { day: world.gameDay });
-                rec._cookXpMin = world.gameMinutes;
-            }
-        }
+        if (noteCookWork(world, rec, fire) === "incapable") return halt();
     }
     const facing = faceFire(rec, fire);
     return halt(facing ? { facing } : null);

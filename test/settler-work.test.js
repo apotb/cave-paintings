@@ -13,6 +13,7 @@ const Fire = require("../shared/fire");
 const FuelFilter = require("../shared/fuelFilter");
 const Protocol = require("../shared/protocol");
 const Party = require("../shared/party");
+const Skills = require("../shared/skills");
 
 loadDefs();
 test.after(() => restoreRng());
@@ -2940,7 +2941,7 @@ test("simmer loads after stopping short of an open campfire spot", () => {
     );
 });
 
-test("dedicated settler does not stand on a pot that is already simmering", () => {
+test("dedicated settler tends a pot that is already simmering", () => {
     const { world, pawn } = createTestWorld();
     const { settle, rec } = parkSettler(world, pawn, {
         inventory: [
@@ -2966,9 +2967,38 @@ test("dedicated settler does not stand on a pot that is already simmering", () =
     for (let i = 0; i < 6; i++) workOnce(world, rec);
     assert.equal(fire.catalyst?.id, "cracked_coconut");
     assert.equal((fire.simmer || []).filter(Boolean).length, 4);
-    assert.notEqual(rec._settlerAct, "Simmering");
-    assert.notEqual(rec._settlerAct, "Simmering a meal");
+    assert.equal(rec._settlerAct, "Simmering a meal");
     assert.equal(rec.inventory.some((s) => s?.id === "cracked_coconut"), true);
+    assert.ok(fire._skillCook > 0, "tending should speed the simmer");
+});
+
+test("a roast nobody tended uses the loader, and a longer tend overrides them", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, { kc: 1600 });
+    const fire = addLitFire(world, settle, rec, "fire-poison");
+    fire.pitTemp = 800;
+    fire.cook = { id: "apple", quantity: 1, temp: 800 };
+    fire.cookProgress = 1000;
+    fire._skillCook = 1;
+    fire.cookLoader = { id: "gone", score: 0 };
+    world._tickCampfireCook(fire);
+    assert.equal(fire.cook.id, "roasted_apple");
+    assert.ok(Math.abs(fire.cook.cookPoison - 0.25) < 1e-9, `loader poison ${fire.cook.cookPoison}`);
+    assert.equal(fire.cookLoader, undefined);
+
+    const again = addLitFire(world, settle, rec, "fire-poison-tend");
+    again.pitTemp = 800;
+    again.cook = { id: "apple", quantity: 1, temp: 800 };
+    again.cookProgress = 1000;
+    again._skillCook = 1;
+    again.cookLoader = { id: "gone", score: 0 };
+    again.cookTend = { master: { minutes: 4, score: 20 } };
+    world._tickCampfireCook(again);
+    assert.equal(again.cook.id, "roasted_apple");
+    assert.ok(
+        Math.abs(again.cook.cookPoison - Skills.cookPoisonChance(20)) < 1e-12,
+        `tend poison ${again.cook.cookPoison}`
+    );
 });
 
 test("dedicated settler leaves a one-ingredient pot alone", () => {

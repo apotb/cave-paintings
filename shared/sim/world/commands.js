@@ -2137,6 +2137,7 @@
         }
         if (this._stackIsSpecial(a) || this._stackIsSpecial(b)) return false;
         if (!Place.basketDyesMatch(a, b)) return false;
+        if ((Number(a.cookPoison) || 0) !== (Number(b.cookPoison) || 0)) return false;
         return this._canMergeStone(a, b);
     },
 
@@ -2214,6 +2215,10 @@
             const n = Math.round(Number(src.soakDoneAt));
             if (Number.isFinite(n)) out.soakDoneAt = n;
         }
+        if (src.cookPoison != null) {
+            const n = Number(src.cookPoison);
+            if (Number.isFinite(n) && n > 0) out.cookPoison = n;
+        }
         if (src.temp != null && Number(src.temp) > Fire.AMBIENT_TEMP) {
             out.temp = Number(src.temp);
         }
@@ -2259,6 +2264,10 @@
         if (extras.dryProgress != null) slot.dryProgress = extras.dryProgress;
         if (extras.soakProgress != null) slot.soakProgress = extras.soakProgress;
         if (extras.soakDoneAt != null) slot.soakDoneAt = extras.soakDoneAt;
+        if (extras.cookPoison != null) {
+            const n = Number(extras.cookPoison);
+            if (Number.isFinite(n) && n > 0) slot.cookPoison = n;
+        }
         if (extras.temp != null) Fire.applyStackTemp(slot, extras.temp);
         const dye = Place.normalizeBasketDye(extras.dye);
         if (dye) slot.dye = dye;

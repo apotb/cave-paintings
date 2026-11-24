@@ -546,3 +546,14 @@ test("pickBasket prefers existing stacks at the same priority", () => {
     };
     assert.equal(SF.pickBasket([farStack, critEmpty], stack, getItem, 0, 0), critEmpty);
 });
+
+test("stacks with different cook poison chances do not merge", () => {
+    const plain = { id: "roasted_apple", quantity: 1 };
+    const risky = { id: "roasted_apple", quantity: 1, cookPoison: 0.25 };
+    const same = { id: "roasted_apple", quantity: 2, cookPoison: 0.25 };
+    const other = { id: "roasted_apple", quantity: 1, cookPoison: 0.06 };
+    assert.equal(SF.stacksMatch(plain, { id: "roasted_apple", quantity: 3 }), true);
+    assert.equal(SF.stacksMatch(plain, risky), false);
+    assert.equal(SF.stacksMatch(risky, same), true);
+    assert.equal(SF.stacksMatch(risky, other), false);
+});

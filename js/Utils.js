@@ -2289,6 +2289,7 @@ function cloneItemStack(stack) {
     if (stack.dryProgress != null) out.dryProgress = stack.dryProgress;
     if (stack.soakProgress != null) out.soakProgress = stack.soakProgress;
     if (stack.soakDoneAt != null) out.soakDoneAt = stack.soakDoneAt;
+    if (stack.cookPoison != null && Number(stack.cookPoison) > 0) out.cookPoison = Number(stack.cookPoison);
     if (typeof Fire !== "undefined") Fire.copyStackTemp(stack, out);
     const extras = mealStackExtras(stack);
     if (extras) Object.assign(out, extras);
@@ -2313,6 +2314,7 @@ function mealStackExtras(stack) {
         || stack.dryProgress != null
         || stack.soakProgress != null
         || stack.soakDoneAt != null
+        || (Number(stack.cookPoison) > 0)
         || (stack.temp != null && Number(stack.temp) > 20)
         || knap
         || stack.formClass
@@ -2334,6 +2336,7 @@ function mealStackExtras(stack) {
         dryProgress: stack.dryProgress,
         soakProgress: stack.soakProgress,
         soakDoneAt: stack.soakDoneAt,
+        ...(Number(stack.cookPoison) > 0 ? { cookPoison: Number(stack.cookPoison) } : {}),
         ...(stack.temp != null && Number(stack.temp) > 20 ? { temp: stack.temp } : {}),
         ...(stone ? { stone } : {}),
         ...((typeof Place !== "undefined" && Place.normalizeBasketDye?.(stack.dye))

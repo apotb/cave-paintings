@@ -933,14 +933,27 @@ class PartySystem {
         const meta = held ? scene.getItem(held.id) : null;
         const food = held?.food || meta?.food;
         const holdingFood = !!(food && Number(food.kc ?? 0) > 0);
-        const chance = P ? P.recruitChance(holdingFood) : holdingFood ? 0.75 : 0.5;
+        const skills = typeof Skills !== "undefined" ? Skills : null;
+        const socialLv = skills && me.bio ? skills.pawnLevel(me, "social") : null;
+        const social = socialLv == null ? 0 : socialLv;
+        const chance = P
+            ? P.recruitChance(holdingFood, social)
+            : Math.min(0.95, 0.35 + 0.02 * social + (holdingFood ? 0.2 : 0));
+        const awardSocial = (accepted) => {
+            if (!skills || !me.bio) return;
+            const base = accepted ? skills.XP_RECRUIT : skills.XP_RECRUIT_FAIL;
+            const day = scene.gameDay;
+            skills.award(me.bio, "social", base, day != null ? { day } : undefined);
+        };
         if (holdingFood) this._consumeRecruitFood(me);
         if (Math.random() >= chance) {
             wanderer.refusedBy.add(myId);
+            awardSocial(false);
             scene.combatLog?.push(`${wanderer.displayName()} is not interested`);
             wanderer.syncNameLabel?.();
             return false;
         }
+        awardSocial(true);
         if (camp) this.acceptSettlerRecruit(wanderer, camp);
         else this.acceptRecruit(wanderer);
         return true;

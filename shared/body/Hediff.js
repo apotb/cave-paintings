@@ -342,7 +342,10 @@
          * @returns {{ message: string, worse: boolean }|null}
          */
         tryFoodPoison(body, food, meta = null, rng = null, who = null) {
-            const chance = Number(food?.foodPoisonChance ?? meta?.food?.foodPoisonChance ?? 0);
+            const chance = Math.max(
+                Number(food?.foodPoisonChance ?? meta?.food?.foodPoisonChance ?? 0),
+                Number(food?.cookPoison ?? meta?.cookPoison ?? 0)
+            );
             if (!(chance > 0) || !body?.addHediff) return null;
             const roll = typeof rng === "function" ? rng() : Math.random();
             if (roll >= chance) return null;

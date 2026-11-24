@@ -626,11 +626,12 @@
 
     function tickCook(entry, getItem, opts = {}) {
         migrateEntry(entry, getItem);
+        const skillMul = takeSkillCook(entry);
         const method = catalystMethod(entry, getItem);
         const simmerActive = method === "shell_simmer"
             || hasSimmerContents(entry)
             || ((entry.cookProgress || 0) > 0 && (entry.simmerBarMinutes || 0) > 0);
-        if (simmerActive) return tickShellSimmer(entry, getItem, opts);
+        if (simmerActive) return tickShellSimmer(entry, getItem, opts, skillMul);
 
         const cook = entry.cook;
         if (!cook?.id) {
@@ -646,9 +647,7 @@
         }
 
         const foodTemp = heatCookSlot(entry, recipe.temp);
-        const skill = Number(entry._skillCook);
-        if (entry._skillCook != null) delete entry._skillCook;
-        const rate = cookRate(foodTemp, recipe.temp) * (Number.isFinite(skill) && skill > 0 ? skill : 1);
+        const rate = cookRate(foodTemp, recipe.temp) * skillMul;
         entry.roastBarMinutes = recipe.minutes;
         const done = applyCookProgress(entry, recipe.minutes, rate);
         if (rate <= 0 && (entry.cookProgress || 0) <= 0) {
@@ -676,7 +675,7 @@
         return { changed: true, converted: true, rate, method };
     }
 
-    function tickShellSimmer(entry, getItem, opts) {
+    function tickShellSimmer(entry, getItem, opts, skillMul = 1) {
         const can = simmerCanAdvance(entry, getItem);
         const minTemp = simmerTempOf(entry, getItem);
         const foodTemp = heatSimmerSlots(entry, can ? minTemp : 0);
@@ -696,7 +695,7 @@
         const filled = simmerFilledCount(entry);
         const need = filled * SIMMER_MINUTES_PER_SLOT;
         entry.simmerBarMinutes = need;
-        const rate = cookRate(foodTemp, minTemp);
+        const rate = cookRate(foodTemp, minTemp) * (Number(skillMul) > 0 ? Number(skillMul) : 1);
         const done = applyCookProgress(entry, need, rate);
         if (!done) {
             return { changed: true, converted: false, rate, method: "shell_simmer" };
@@ -740,11 +739,80 @@
         return clamp(progressAmt / minutes, 0, 1);
     }
 
+    function takeSkillCook(entry) {
+        const skill = Number(entry?._skillCook);
+        if (entry && entry._skillCook != null) delete entry._skillCook;
+        return Number.isFinite(skill) && skill > 0 ? skill : 1;
+    }
+
+    function noteCookLoader(entry, pawnId, score) {
+        if (!entry || pawnId == null || pawnId === "") return;
+        const n = Number(score);
+        entry.cookLoader = {
+            id: String(pawnId),
+            score: Number.isFinite(n) ? n : 0
+        };
+    }
+
+    function addCookTend(entry, pawnId, minutes, score) {
+        if (!entry || pawnId == null || pawnId === "") return;
+        const add = Number(minutes);
+        if (!(add > 0)) return;
+        if (!entry.cookTend || typeof entry.cookTend !== "object" || Array.isArray(entry.cookTend)) {
+            entry.cookTend = {};
+        }
+        const id = String(pawnId);
+        const prev = entry.cookTend[id];
+        const n = Number(score);
+        entry.cookTend[id] = {
+            minutes: (Number(prev?.minutes) || 0) + add,
+            score: Number.isFinite(n) ? n : (Number(prev?.score) || 0)
+        };
+    }
+
+    /**
+     * Who the finished meal belongs to. The cook who stood the longest wins.
+     * Otherwise the pawn who put the food on, even if they walked away.
+     * @returns {{ id: string, score: number, tended: boolean }|null}
+     */
+    function cookCreditScore(entry) {
+        let bestId = null;
+        let bestMin = 0;
+        let bestScore = 0;
+        const tend = entry?.cookTend;
+        if (tend && typeof tend === "object") {
+            for (const id of Object.keys(tend)) {
+                const mins = Number(tend[id]?.minutes) || 0;
+                if (mins > bestMin) {
+                    bestMin = mins;
+                    bestId = id;
+                    bestScore = Number(tend[id]?.score) || 0;
+                }
+            }
+        }
+        if (bestId) return { id: bestId, score: bestScore, tended: true };
+        if (entry?.cookLoader && entry.cookLoader.id != null && entry.cookLoader.id !== "") {
+            return {
+                id: String(entry.cookLoader.id),
+                score: Number(entry.cookLoader.score) || 0,
+                tended: false
+            };
+        }
+        return null;
+    }
+
+    function clearCookCredit(entry) {
+        if (!entry) return;
+        delete entry.cookTend;
+        delete entry.cookLoader;
+    }
+
     function onCookChanged(entry, prevId) {
         if (!entry) return;
         if (!entry.cook || entry.cook.id !== prevId) {
             entry.cookProgress = 0;
             delete entry.roastBarMinutes;
+            clearCookCredit(entry);
         }
         entry.cookTemp = stackTemp(entry.cook);
     }
@@ -811,6 +879,10 @@
         tickPit,
         tickCook,
         onCookChanged,
-        makeResultStack
+        makeResultStack,
+        noteCookLoader,
+        addCookTend,
+        cookCreditScore,
+        clearCookCredit
     };
 });

@@ -486,3 +486,27 @@ test("unlit campfires use a 0.1x light radius", () => {
     );
     assert.equal(Fire.UNLIT_LIGHT_MUL, 0.1);
 });
+
+test("a tended simmer minute cooks faster than an unattended one", () => {
+    function simmer() {
+        return pit({
+            id: "campfire",
+            pitTemp: 800,
+            burnRemaining: 40,
+            catalyst: { id: "cracked_coconut", quantity: 1 },
+            simmer: [
+                { id: "apple", quantity: 1, temp: 800 },
+                { id: "apple", quantity: 1, temp: 800 },
+                null,
+                null
+            ]
+        });
+    }
+    const plain = simmer();
+    const tended = simmer();
+    tended._skillCook = 1.6;
+    Fire.tickCook(plain, getItem, { worldMinute: 1 });
+    Fire.tickCook(tended, getItem, { worldMinute: 1 });
+    assert.ok(tended.cookProgress > plain.cookProgress, `${tended.cookProgress} vs ${plain.cookProgress}`);
+    assert.equal(tended._skillCook, undefined);
+});

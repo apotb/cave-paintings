@@ -2070,6 +2070,7 @@
             const incoming = this._splitInvToWorld(p, invIndex, 1, bag);
             if (!incoming) return;
             this._campfireSetSlot(entry, slotKey, incoming);
+            this._noteCookLoader(entry, p);
             if (dest) this._returnWorldToInv(p, dest, invIndex, bag);
             return;
         }
@@ -2080,7 +2081,10 @@
             if (!this._isSimmerIngredient(held.id)) return;
             if (dest) return;
             const incoming = this._splitInvToWorld(p, invIndex, 1, bag);
-            if (incoming) this._campfireSetSlot(entry, slotKey, incoming);
+            if (incoming) {
+                this._campfireSetSlot(entry, slotKey, incoming);
+                this._noteCookLoader(entry, p);
+            }
         }
     },
 

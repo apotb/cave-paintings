@@ -170,6 +170,15 @@
         return p;
     },
 
+    _awardRecruitXp(pawn, accepted) {
+        const skills = this._skillsApi?.();
+        if (!skills || !pawn) return;
+        this._ensureBio?.(pawn);
+        if (!pawn.bio) return;
+        const base = accepted ? skills.XP_RECRUIT : skills.XP_RECRUIT_FAIL;
+        skills.award(pawn.bio, "social", base, { day: this.gameDay });
+    },
+
     _pawnVomiting(pawn) {
         if (this._isVomiting(pawn)) return true;
         const c = pawn?.creature || this.creatures.get(pawn?.id);
@@ -200,10 +209,15 @@
         const meta = held ? itemDefs().get(held.id) : null;
         const food = held?.food || meta?.food;
         const holdingFood = !!(food && Number(food.kc ?? 0) > 0);
-        const chance = Party.recruitChance(holdingFood);
+        const skills = this._skillsApi?.();
+        this._ensureBio?.(control);
+        const socialLv = skills?.pawnLevel?.(control, "social");
+        const social = socialLv == null ? 0 : socialLv;
+        const chance = Party.recruitChance(holdingFood, social);
         if (holdingFood) this._consumeOfferedFood(control);
         if (this.rng() >= chance) {
             w.refusedBy = [...refused, p.id];
+            this._awardRecruitXp(control, false);
             this.pushEvent({
                 kind: "recruit",
                 wandererId: wid,
@@ -249,6 +263,7 @@
             }
         }
         this._noteJoined?.(rec, p.name);
+        this._awardRecruitXp(control, true);
         this.wanderers.delete(wid);
         this._youDirty.add(p.id);
         this.pushEvent({
@@ -739,7 +754,7 @@
             if (!(consumed > 0)) return;
             patient.kc += consumed;
             patient.saturation += consumed * this._satietyRatio(food, true);
-            this._tryFoodPoison(patient, food);
+            this._tryFoodPoison(patient, food, held);
             if (consumed < total) {
                 if (!held.food) held.food = { ...food };
                 if (held.food.kcFull == null) held.food.kcFull = Math.round(total);
@@ -752,7 +767,7 @@
         } else {
             patient.kc += Math.min(total, room);
             patient.saturation += total * this._satietyRatio(food, false);
-            this._tryFoodPoison(patient, food);
+            this._tryFoodPoison(patient, food, held);
             held.quantity = (held.quantity || 1) - 1;
             if (!(held.quantity > 0)) this._pawnBag(feeder, bag)[slot] = null;
         }

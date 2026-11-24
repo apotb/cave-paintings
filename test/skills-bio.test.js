@@ -705,6 +705,45 @@ test("a healthy pawn matches the skill curves, and a weak hand is slower", () =>
     assert.ok(Skills.meleeHitChance(weak) < Skills.meleeHitChance(full));
 });
 
+test("cooking speed only helps, and poison and recruitment are their own stats", () => {
+    assert.equal(Skills.cookSpeed(0), 1);
+    assert.equal(Skills.cookSpeed(10), 1.3);
+    assert.equal(Skills.cookSpeed(20), 1.6);
+    assert.equal(Skills.cookPoisonChance(0), 0.25);
+    assert.equal(Skills.cookPoisonChance(2), 0.06);
+    assert.equal(Skills.cookPoisonChance(4), 0.015);
+    assert.equal(Skills.cookPoisonChance(6), 0.004);
+    assert.equal(Skills.cookPoisonChance(8), 0.0015);
+    assert.equal(Skills.cookPoisonChance(10), 0.001);
+    assert.equal(Skills.cookPoisonChance(20), 0.0001);
+    assert.equal(Skills.cookPoisonChance(-4), 0.25);
+    const full = statPawn("cooking", 8);
+    const weak = statPawn("cooking", 8, [], { capacities: capsOf(0.5, 1, 1) });
+    assert.ok(Skills.cookPoisonChance(weak) > Skills.cookPoisonChance(full));
+    const poison = Skills.describeStat(statPawn("cooking", 0), "foodPoison");
+    assert.equal(poison.valueText, "25%");
+    assert.equal(poison.lines.find((line) => line.label === "Cooking skill").value, "0");
+    assert.equal(poison.lines.find((line) => line.label === "Chance").value, "25%");
+    assert.match(poison.sentence, /poison/);
+    const recruit = Skills.describeStat(statPawn("social", 0), "recruit");
+    assert.equal(recruit.valueText, "35%");
+    assert.equal(recruit.lines.find((line) => line.label === "Empty hands").value, "35%");
+    assert.equal(recruit.lines.find((line) => line.label === "Offering food").value, "55%");
+    const high = Skills.describeStat(statPawn("social", 20), "recruit");
+    assert.equal(high.valueText, "75%");
+    assert.equal(high.lines.find((line) => line.label === "Offering food").value, "95%");
+    assert.ok(Skills.STAT_ROWS.some((stat) => stat.id === "foodPoison" && stat.label === "Food poisoning chance"));
+    assert.ok(Skills.STAT_ROWS.some((stat) => stat.id === "recruit" && stat.label === "Recruitment chance"));
+    const shut = Skills.normalize({
+        gender: "female",
+        adulthood: "philosopher",
+        skills: { social: { level: 12, xp: 0, passion: 1 } }
+    });
+    assert.equal(Skills.pawnLevel({ bio: shut }, "social"), null);
+    const floor = Skills.describeStat({ bio: shut, capacities: capsOf() }, "recruit");
+    assert.equal(floor.valueText, "35%");
+});
+
 test("labor and work speed scale a craft, and knap grades follow the center", () => {
     const plain = statPawn("crafting", 10);
     const tuned = statPawn("crafting", 10, ["precise", "hard_worker"]);
@@ -772,7 +811,7 @@ test("pain, darkness, and melee dps follow the stat factors", () => {
     const cook = Skills.describeStat(statPawn("cooking", 8), "cook");
     assert.match(cook.sentence, /cook/i);
     assert.equal(cook.lines.find((line) => line.label === "Cooking skill").value, "8");
-    assert.equal(cook.lines.find((line) => line.label === "Skill factor").value, "88%");
+    assert.equal(cook.lines.find((line) => line.label === "Skill factor").value, "124%");
     assert.ok(cook.lines.findIndex((line) => line.label === "Skill factor")
         < cook.lines.findIndex((line) => line.label === "Work speed"));
     assert.ok(cook.lines.some((line) => line.label === "Work speed"));

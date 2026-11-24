@@ -770,7 +770,8 @@ class DroppedItem extends Mob {
                 soakDoneAt: stackExtras?.soakDoneAt,
                 temp: stackExtras?.temp,
                 stone: stackExtras?.stone,
-                dye: stackExtras?.dye
+                dye: stackExtras?.dye,
+                cookPoison: stackExtras?.cookPoison
             });
             return null;
         }
@@ -810,6 +811,7 @@ class DroppedItem extends Mob {
                         ? Stone.stoneKey(drop) === Stone.stoneKey(soakStamp)
                         : (drop.stone || "andesite") === (soakStamp.stone || "andesite")))
                     && (typeof Place === "undefined" || !Place.basketDyesMatch || Place.basketDyesMatch(drop, soakStamp))
+                    && (Number(drop.cookPoison) || 0) === (Number(soakStamp?.cookPoison) || 0)
                     && !(typeof Hide !== "undefined" && Hide.soakMergeBlocked(drop, soakStamp))
                     && drop.quantity < maxStack)
                 .map(drop => ({

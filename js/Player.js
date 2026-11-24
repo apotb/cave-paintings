@@ -2366,9 +2366,12 @@ class Player extends Phaser.Physics.Arcade.Sprite {
      * @param {Object} food stack or item food block
      * @param {Object} [meta] item def
      */
-    _tryFoodPoison(food, meta = null) {
+    _tryFoodPoison(food, meta = null, stack = null) {
+        const overlay = stack?.cookPoison != null
+            ? { ...(meta || {}), cookPoison: Number(stack.cookPoison) || 0 }
+            : meta;
         const result = typeof Hediffs !== "undefined"
-            ? Hediffs.tryFoodPoison?.(this.anatomy, food, meta, null, this)
+            ? Hediffs.tryFoodPoison?.(this.anatomy, food, overlay, null, this)
             : null;
         if (!result) return;
         this.capacities = new Capacities(this.anatomy);
@@ -3921,7 +3924,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             if (!(consumed > 0)) return;
             who.kc += consumed;
             who.saturation += consumed * this._satietyRatio(food, meta, true);
-            who._tryFoodPoison?.(food, meta);
+            who._tryFoodPoison?.(food, meta, item);
             if (consumed >= total) {
                 sourcePawn.loseItem(item);
             } else {
@@ -3934,7 +3937,7 @@ class Player extends Phaser.Physics.Arcade.Sprite {
             // Full satiety even if stomach was already full (overflow discarded)
             who.kc += Math.min(total, room);
             who.saturation += total * this._satietyRatio(food, meta, false);
-            who._tryFoodPoison?.(food, meta);
+            who._tryFoodPoison?.(food, meta, item);
             sourcePawn.loseItem(item);
         }
         this.scene.hotbar.dirty = true;

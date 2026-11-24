@@ -9,6 +9,7 @@ const BodyCombat = require("../shared/body/Combat");
 const Party = require("../shared/party");
 const Settlement = require("../shared/settlement");
 const Ranged = require("../shared/ranged");
+const Skills = require("../shared/skills");
 
 loadDefs();
 
@@ -2625,6 +2626,26 @@ test("a full party recruits into the camp when both stand inside it", () => {
     assert.equal(ev?.accepted, true);
     assert.equal(ev?.settled, true);
     assert.equal(ev?.settlementId, settle.id);
+});
+
+test("a refusal teaches less social than a successful recruit", () => {
+    const { world, pawn, Protocol } = createTestWorld();
+    pawn.bio = Skills.ensure({
+        gender: "female",
+        skills: { social: { level: 0, xp: 0, passion: 1 } }
+    }, pawn.id);
+    pawn.x = 0;
+    pawn.y = 0;
+    world.rng = () => 0.5;
+    putWanderer(world, "w-social-fail", 16, 0);
+    world.handleAction(pawn.id, { type: Protocol.Actions.RECRUIT, wandererId: "w-social-fail" });
+    assert.equal(world.wanderers.has("w-social-fail"), true);
+    assert.equal(pawn.bio.skills.social.xp, Skills.XP_RECRUIT_FAIL);
+    world.rng = () => 0;
+    putWanderer(world, "w-social-ok", 16, 0);
+    world.handleAction(pawn.id, { type: Protocol.Actions.RECRUIT, wandererId: "w-social-ok" });
+    assert.equal(world.wanderers.has("w-social-ok"), false);
+    assert.equal(pawn.bio.skills.social.xp, Skills.XP_RECRUIT_FAIL + Skills.XP_RECRUIT);
 });
 
 test("a band of wanderers cannot be recruited, even inside camp", () => {

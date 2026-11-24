@@ -1089,14 +1089,15 @@ function cookHasWork(world, rec, settle, fire, bill, opts = {}) {
         const willFill = simmerWillFill(world, rec, settle, fire, bill);
         if (!(hasTool && willFill >= minSlots)) return false;
         if (fireNeedsLight(fire) && !fireCanFuel(world, rec, settle, fire)) return false;
-        // Already simmering, and this settler cannot add another ingredient.
-        // Leave it. Come back when the meal is ready or the fire goes out.
+        // The pot is already simmering. Stay and tend it until the meal is ready.
         const shellOn = Settlement.isCookTool(getItem, cat, method);
         let filled = 0;
         for (const s of fire?.simmer || []) {
             if (s && Settlement.cookInputReady(getItem, s, bill)) filled += 1;
         }
-        if (shellOn && filled >= minSlots && willFill <= filled && !fireNeedsLight(fire)) return false;
+        if (shellOn && filled >= minSlots && willFill <= filled && !fireNeedsLight(fire)) {
+            return pitCanCook(world, rec, settle, fire);
+        }
         return true;
     }
     if (fire.cook && Settlement.cookFitsBill(getItem, fire.cook, bill)) {

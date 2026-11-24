@@ -808,7 +808,7 @@
             moodKind = "cooked";
             p.kc += consumed;
             p.saturation += consumed * this._satietyRatio(food, true);
-            this._tryFoodPoison(p, food);
+            this._tryFoodPoison(p, food, held);
             if (consumed < total) {
                 if (!held.food) held.food = { ...food };
                 if (held.food.kcFull == null) held.food.kcFull = Math.round(total);
@@ -823,7 +823,7 @@
             else if (held.id === "raw_venison" || held.id === "raw_pork" || held.id === "raw_fish") moodKind = "raw";
             p.kc += Math.min(total, room);
             p.saturation += total * this._satietyRatio(food, false);
-            this._tryFoodPoison(p, food);
+            this._tryFoodPoison(p, food, held);
             held.quantity = (held.quantity || 1) - 1;
             if (!(held.quantity > 0)) inv[idx] = null;
         }
@@ -892,7 +892,7 @@
         if (session) this._youDirty.add(session.id);
     },
 
-    _tryFoodPoison(p, food) {
+    _tryFoodPoison(p, food, stack = null) {
         let creature = p.creature || this.creatures.get(p.id);
         if (!creature) {
             const session = this._sessionOfPawn(p);
@@ -906,7 +906,7 @@
         const result = Hediffs.tryFoodPoison(
             creature.anatomy,
             food,
-            null,
+            stack?.cookPoison != null ? { cookPoison: Number(stack.cookPoison) || 0 } : null,
             () => this.rng(),
             {
                 isControlled: () => you,

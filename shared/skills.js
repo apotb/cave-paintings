@@ -27,12 +27,12 @@
     const SKILL_BLURBS = {
         shooting: "Accuracy with ranged weapons",
         melee: "Chance to land or dodge a blow",
-        cooking: "Quality and speed of meals",
+        cooking: "Cooking speed",
         plants: "Gathering speed and efficiency",
         animals: "Catching speed and efficiency",
         crafting: "Crafting speed and quality",
         medical: "Tending speed and quality",
-        social: "Diplomacy and negotiation",
+        social: "Chance a wanderer will join",
         intellectual: "Painting, writing, and research speed"
     };
     const LEVEL_TITLES = [
@@ -58,6 +58,8 @@
     const XP_CATCH = 80;
     const XP_TEND = 150;
     const XP_HARVEST = 40;
+    const XP_RECRUIT = 200;
+    const XP_RECRUIT_FAIL = 40;
     const DAY_CAP = 4000;
     const JOB_SKILL = {
         doctor: "medical",
@@ -535,7 +537,12 @@
         [5, 0.95], [10, 0.85], [15, 0.72], [20, 0.58],
         [25, 0.45], [30, 0.34], [35, 0.25], [40, 0.18]
     ];
-    const COOK_CURVE = [[-20, 0.01], [0, 0.4], [20, 1.6]];
+    const COOK_CURVE = [[-20, 0.4], [0, 1], [10, 1.3], [20, 1.6]];
+    // Chance a finished meal poisons the eater. Clamped outside the ends.
+    const POISON_CURVE = [
+        [0, 0.25], [2, 0.06], [4, 0.015], [6, 0.004],
+        [8, 0.0015], [10, 0.001], [20, 0.0001]
+    ];
     const TEND_QUALITY_CURVE = [[0, 0], [1, 1], [2, 1.5], [4, 2]];
     const AGE_WORK = [[4, 0.2], [12, 0.8], [18, 1]];
     const GLOW_WORK = [[0, 0.8], [0.3, 1]];
@@ -769,6 +776,13 @@
         return floorSpeed(curveAt(COOK_CURVE, cookScore(levelOrPawn, opts)) * globalWorkSpeed(levelOrPawn, opts));
     }
 
+    function cookPoisonChance(levelOrPawn, opts) {
+        const score = isPawn(levelOrPawn)
+            ? cookScore(levelOrPawn, opts)
+            : Number(levelOrPawn) || 0;
+        return curveAt(POISON_CURVE, score);
+    }
+
     function tendQualityRaw(levelOrPawn, opts) {
         if (!isPawn(levelOrPawn)) return linear(levelOrPawn, 0.2, 0.1);
         const skill = linear(skillLevel(levelOrPawn, "medical", opts), 0.2, 0.1);
@@ -892,6 +906,22 @@
     function pct(n) {
         const v = Math.round(Number(n) * 1000) / 10;
         return `${v}%`;
+    }
+
+    /** Two decimal places, so a 0.01% poison chance does not display as 0%. */
+    function finePct(n) {
+        const v = Math.round(Number(n) * 10000) / 100;
+        return `${v}%`;
+    }
+
+    function partyRecruit(holdingFood, level) {
+        let PartyApi = typeof Party !== "undefined" ? Party : null;
+        if (!PartyApi) {
+            try { PartyApi = require("./party"); } catch (_) { PartyApi = null; }
+        }
+        if (PartyApi?.recruitChance) return PartyApi.recruitChance(holdingFood, level);
+        const lv = clamp(Math.floor(Number(level) || 0), 0, 20);
+        return Math.min(0.95, 0.35 + 0.02 * lv + (holdingFood ? 0.2 : 0));
     }
 
     function carryApi() {
@@ -1290,6 +1320,8 @@
             laborSpeed: "Multplier on labor work, such as crafting, tailoring, and smithing.",
             craftingQuality: "Shifts the calculation of quality to favor a better outcome.",
             cook: "How fast cooking jobs are completed.",
+            foodPoison: "Chance for a cooked meal to poison whoever eats it.",
+            recruit: "Chance for a wanderer to join when asked.",
             tend: "How fast tending is completed.",
             tendQuality: "Quality multiplier of a tend after the medicine's own roll.",
             plant: "How fast plants cutting and harvesting is completed.",
@@ -1430,6 +1462,26 @@
             push("Work speed", `×${pct(isPawn(pawn) ? globalWorkSpeed(pawn, o) : 1)}`);
             final = cookSpeed(pawn, o);
             valueText = pct(final);
+        } else if (id === "foodPoison") {
+            const level = isPawn(pawn) ? skillLevel(pawn, "cooking", o) : (Number(pawn) || 0);
+            push("Cooking skill", String(level));
+            if (isPawn(pawn)) {
+                push("Manipulation", formatSigned(Math.round(capOffset(capValue(pawn, "manipulation", o), 16, 1.5) * 10) / 10));
+                push("Sight", formatSigned(Math.round(capOffset(capValue(pawn, "sight", o), 4, 1.5) * 10) / 10));
+            }
+            const score = isPawn(pawn) ? cookScore(pawn, o) : (Number(pawn) || 0);
+            final = cookPoisonChance(score);
+            valueText = finePct(final);
+            push("Chance", valueText);
+        } else if (id === "recruit") {
+            const level = isPawn(pawn) ? skillLevel(pawn, "social", o) : clamp(Math.floor(Number(pawn) || 0), 0, 20);
+            push("Social skill", String(level));
+            const empty = partyRecruit(false, level);
+            const fed = partyRecruit(true, level);
+            push("Empty hands", pct(empty));
+            push("Offering food", pct(fed));
+            final = empty;
+            valueText = pct(empty);
         } else if (id === "tend") {
             if (isPawn(pawn)) {
                 const level = skillLevel(pawn, "medical", o);
@@ -1543,6 +1595,8 @@
         { group: "Work", id: "laborSpeed", label: "General labor speed" },
         { group: "Work", id: "craftingQuality", label: "Crafting quality" },
         { group: "Work", id: "cook", label: "Cooking speed" },
+        { group: "Work", id: "foodPoison", label: "Food poisoning chance" },
+        { group: "Work", id: "recruit", label: "Recruitment chance" },
         { group: "Work", id: "tend", label: "Medical tend speed" },
         { group: "Work", id: "tendQuality", label: "Medical tend quality" },
         { group: "Work", id: "plant", label: "Plant work speed" },
@@ -1577,6 +1631,8 @@
         XP_CATCH,
         XP_TEND,
         XP_HARVEST,
+        XP_RECRUIT,
+        XP_RECRUIT_FAIL,
         DAY_CAP,
         JOB_SKILL,
         catalogs,
@@ -1605,6 +1661,8 @@
         plantWorkSpeed,
         plantHarvestYield,
         cookSpeed,
+        cookPoisonChance,
+        cookScore,
         tendQualityFactor,
         tendSpeed,
         fishSpeed,

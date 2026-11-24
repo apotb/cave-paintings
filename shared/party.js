@@ -41,8 +41,13 @@
     /** Close enough to the flank stand to plant and swing. */
     const DUEL_STAND_ARRIVE_PX = 8;
 
-    const RECRUIT_EMPTY = 0.5;
-    const RECRUIT_FOOD = 0.75;
+    const RECRUIT_BASE = 0.35;
+    const RECRUIT_PER_LEVEL = 0.02;
+    const RECRUIT_FOOD_BONUS = 0.2;
+    const RECRUIT_CAP = 0.95;
+    /** Level-0 chances. Higher Social adds RECRUIT_PER_LEVEL, and food adds the bonus. */
+    const RECRUIT_EMPTY = RECRUIT_BASE;
+    const RECRUIT_FOOD = RECRUIT_BASE + RECRUIT_FOOD_BONUS;
 
     const COOLDOWN_ROOM = [240, 480];
     /** Full-party packs of 2–6: twice as long as the previous full-party wait. */
@@ -968,8 +973,10 @@
         return inv.slice(0, 5);
     }
 
-    function recruitChance(holdingFood) {
-        return holdingFood ? RECRUIT_FOOD : RECRUIT_EMPTY;
+    function recruitChance(holdingFood, socialLevel) {
+        const lv = Math.max(0, Math.min(20, Math.floor(Number(socialLevel) || 0)));
+        const chance = RECRUIT_BASE + RECRUIT_PER_LEVEL * lv + (holdingFood ? RECRUIT_FOOD_BONUS : 0);
+        return Math.min(RECRUIT_CAP, chance);
     }
 
     function directorCooldown(partyCount, rng) {

@@ -522,14 +522,20 @@
         return true;
     }
 
+    function cookPoisonKey(stack) {
+        const n = Number(stack?.cookPoison);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+    }
+
     function stacksMatch(a, b) {
         if (!(a && b && a.id && a.id === b.id && isMergeableStack(a) && isMergeableStack(b))) return false;
         const stoneApi = (typeof Stone !== "undefined" && Stone.sameStone)
             ? Stone
             : (() => { try { return require("./stone"); } catch (_) { return null; } })();
         if ((a.id === "pebble" || a.id === "grindstone" || a.id === "painting_circle") && stoneApi?.sameStone) {
-            return stoneApi.sameStone(a, b);
+            return stoneApi.sameStone(a, b) && cookPoisonKey(a) === cookPoisonKey(b);
         }
+        if (cookPoisonKey(a) !== cookPoisonKey(b)) return false;
         return true;
     }
 

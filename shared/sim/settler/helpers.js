@@ -1190,7 +1190,8 @@ function dropAsStack(drop) {
         spoilAt: drop.spoilAt,
         dryProgress: drop.dryProgress,
         soakProgress: drop.soakProgress,
-        soakDoneAt: drop.soakDoneAt
+        soakDoneAt: drop.soakDoneAt,
+        cookPoison: drop.cookPoison
     };
 }
 

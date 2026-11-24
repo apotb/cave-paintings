@@ -392,8 +392,105 @@
         return stack;
     },
 
+    _noteCookLoader(entry, pawn) {
+        if (!entry || !pawn) return;
+        const skills = this._skillsApi?.();
+        let score = 0;
+        if (skills) {
+            this._ensureBio?.(pawn);
+            if (pawn.bio) score = skills.cookScore(pawn, skills.workOpts?.(this, pawn));
+        }
+        Fire.noteCookLoader(entry, pawn.id, score);
+    },
+
+    _cookScoreOf(pawn) {
+        const skills = this._skillsApi?.();
+        if (!skills || !pawn) return 0;
+        this._ensureBio?.(pawn);
+        if (!pawn.bio) return 0;
+        return skills.cookScore(pawn, skills.workOpts?.(this, pawn));
+    },
+
+    _pawnById(id) {
+        if (!id) return null;
+        if (this.players?.has?.(id)) return this.players.get(id);
+        for (const pl of this.players?.values?.() || []) {
+            const mate = (pl.party || []).find((m) => m && m.id === id);
+            if (mate) return mate;
+        }
+        return (this.settlers || []).find((s) => s && s.id === id) || null;
+    },
+
+    /** Nearest living player or companion who can cook, within interact range. */
+    _nearestTendingCook(entry) {
+        const skills = this._skillsApi?.();
+        let best = null;
+        let bestD = Infinity;
+        const consider = (pawn) => {
+            if (!pawn || pawn.dead) return;
+            const body = pawn.creature || this.creatures?.get?.(pawn.id);
+            if (body?.isBodyDead?.()) return;
+            if (skills && pawn.bio && skills.incapable(pawn.bio, "cooking")) return;
+            if (!Party.inInteractRange(pawn, entry, TS)) return;
+            const d = Math.hypot((Number(pawn.x) || 0) - entry.x, (Number(pawn.y) || 0) - entry.y);
+            if (d < bestD) {
+                bestD = d;
+                best = pawn;
+            }
+        };
+        for (const pl of this.players?.values?.() || []) {
+            if (!pl || pl.dead) continue;
+            consider(pl);
+            for (const mate of pl.party || []) consider(mate);
+        }
+        return best;
+    },
+
+    _foodIsCooking(entry, getItem) {
+        const method = Fire.catalystMethod(entry, getItem);
+        if (!method || method === "smoke_hide") return false;
+        if (method === "shell_simmer") return Fire.simmerCanAdvance(entry, getItem);
+        return !!(entry.cook?.id && Fire.roastRecipe(getItem, entry.cook.id, method));
+    },
+
+    /** A player standing at an untended fire speeds that minute and counts as tending. */
+    _creditNearbyCook(entry) {
+        if (entry._skillCook != null) return;
+        const getItem = (id) => itemDefs().get(id);
+        if (!this._foodIsCooking(entry, getItem)) return;
+        const pawn = this._nearestTendingCook(entry);
+        if (!pawn) return;
+        const skills = this._skillsApi?.();
+        if (!skills) return;
+        this._ensureBio?.(pawn);
+        if (!pawn.bio || skills.incapable(pawn.bio, "cooking")) return;
+        const opts = skills.workOpts?.(this, pawn);
+        entry._skillCook = skills.cookSpeed(pawn, opts);
+        Fire.addCookTend(entry, pawn.id, 1, skills.cookScore(pawn, opts));
+    },
+
+    _stampCookPoison(entry, method) {
+        const stack = method === "shell_simmer" ? entry?.catalyst : entry?.cook;
+        const credit = Fire.cookCreditScore(entry);
+        Fire.clearCookCredit(entry);
+        if (!stack?.id || method === "smoke_hide") return;
+        const meta = itemDefs().get(stack.id);
+        const kc = Number(stack.food?.kc ?? meta?.food?.kc ?? 0);
+        if (!(kc > 0)) return;
+        const skills = this._skillsApi?.();
+        let score = 0;
+        if (credit?.tended) {
+            const pawn = this._pawnById(credit.id);
+            score = pawn ? this._cookScoreOf(pawn) : credit.score;
+        } else if (credit) {
+            score = credit.score;
+        }
+        stack.cookPoison = skills ? skills.cookPoisonChance(score) : 0.25;
+    },
+
     _tickCampfireCook(entry) {
         const getItem = (id) => itemDefs().get(id);
+        this._creditNearbyCook(entry);
         const cook = Fire.tickCook(entry, getItem, {
             worldMinute: this.worldMinuteIndex(),
             makeResult: (meta, qty, at) => Spoil.makeWorldItemStack(meta, qty, undefined, at),
@@ -403,6 +500,7 @@
                 e.catalyst = meal;
             }
         });
+        if (cook.converted) this._stampCookPoison(entry, cook.method);
         if (cook.rate > 0 && cook.method === "stick_roast") {
             this._wearRoastCatalyst(entry, cook.rate);
             return true;

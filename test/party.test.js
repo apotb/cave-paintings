@@ -658,3 +658,27 @@ test("settlers and party members spare downed foes", () => {
     assert.equal(src[1].bag, "hotbar");
     assert.equal(src[1].stack.id, "stick");
 });
+
+test("recruit chance rises with social and food still adds 20 points", () => {
+    assert.equal(Party.recruitChance(false, 0), 0.35);
+    assert.equal(Party.recruitChance(true, 0), 0.55);
+    assert.equal(Party.recruitChance(false, 20), 0.75);
+    assert.equal(Party.recruitChance(true, 20), 0.95);
+    assert.equal(Party.recruitChance(true, 99), 0.95);
+    assert.equal(Party.recruitChance(false), 0.35);
+});
+
+test("pickAutoEat still takes cooked food with a hidden poison chance and skips raw meat", () => {
+    const eater = {
+        id: "s",
+        x: 0,
+        y: 0,
+        inventory: [
+            { id: "roasted_apple", quantity: 1, food: { kc: 150 }, cookPoison: 0.25 },
+            { id: "raw_venison", quantity: 1, food: { kc: 200, foodPoisonChance: 0.33 } }
+        ],
+        overflow: []
+    };
+    const pick = Party.pickAutoEat(eater, [eater], { getFood: (s) => s.food });
+    assert.equal(pick?.stack?.id, "roasted_apple");
+});

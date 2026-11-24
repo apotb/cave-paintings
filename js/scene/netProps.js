@@ -127,6 +127,7 @@
         assign("dryProgress", d.dryProgress);
         assign("soakProgress", d.soakProgress);
         assign("soakDoneAt", d.soakDoneAt);
+        assign("cookPoison", d.cookPoison);
         assign("temp", d.temp);
         assign("stone", d.stone);
         assign("lodged", d.lodged);
