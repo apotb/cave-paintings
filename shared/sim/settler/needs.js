@@ -33,6 +33,7 @@
     const pickDoctorBandage = (...args) => ctx.pickDoctorBandage(...args);
     const medicineKey = (...args) => ctx.medicineKey(...args);
     const isSkipped = (...args) => ctx.isSkipped(...args);
+    const skipJob = (...args) => ctx.skipJob(...args);
     const heldBandageCount = (...args) => ctx.heldBandageCount(...args);
     const reservesOf = (...args) => ctx.reservesOf(...args);
     const releaseFoodReserve = (...args) => ctx.releaseFoodReserve(...args);
@@ -293,6 +294,7 @@ function eatSeekOpts(world, rec, settle, extraBags) {
             const entry = info?.extra?.entry || info?.extra?.host;
             const qty = Math.max(0, Math.floor(Number(info?.stack?.quantity) || 0));
             if (entry?.uid == null || info?.slot == null) return qty;
+            if (isSkipped(rec, `eat:${entry.uid}`)) return 0;
             return reservesOf(world, settle).available(
                 `basket:${entry.uid}:${info.slot}`,
                 qty,
@@ -464,38 +466,47 @@ function doEat(world, rec, settle, keepOpts) {
         releaseFoodReserve(world, rec, settle);
         return null;
     }
-    let found = pickEatStack(world, rec, settle);
-    if (!found) {
-        rec._eatSitting = null;
-        releaseFoodReserve(world, rec, settle);
-        if (heldPrepared(rec).length) rec._returnFood = true;
-        return null;
-    }
-    if (found.at !== rec) {
+    let found = null;
+    for (let attempt = 0; attempt < 4; attempt++) {
+        found = pickEatStack(world, rec, settle);
+        if (!found) {
+            rec._eatSitting = null;
+            releaseFoodReserve(world, rec, settle);
+            if (heldPrepared(rec).length) rec._returnFood = true;
+            return null;
+        }
+        if (found.at === rec) {
+            releaseFoodReserve(world, rec, settle);
+            break;
+        }
         const stack = found.slots?.[found.index];
         const claimed = stack && claimEatFound(world, rec, settle, found);
         if (!claimed) {
             const held = eatFromHand(world, rec, settle);
             if (!held || held.at !== rec) return null;
             found = held;
-        } else {
-            const fetched = canTakeEatPiece(rec, stack)
-                ? fetchEatStack(world, rec, settle, found)
-                : { eatBlocked: true };
-            if (fetched?.eatBlocked) {
-                const room = makeRoomForEat(world, rec, settle, keepOpts);
-                if (room) return room;
-                releaseFoodReserve(world, rec, settle);
-                const held = eatFromHand(world, rec, settle);
-                if (!held || held.at !== rec) return null;
-                found = held;
-            } else {
-                return fetched || halt();
-            }
+            break;
         }
-    } else {
-        releaseFoodReserve(world, rec, settle);
+        const fetched = canTakeEatPiece(rec, stack)
+            ? fetchEatStack(world, rec, settle, found)
+            : { eatBlocked: true };
+        if (fetched?.eatGiveUp) {
+            if (found.entry?.uid != null) skipJob(rec, `eat:${found.entry.uid}`);
+            releaseFoodReserve(world, rec, settle);
+            continue;
+        }
+        if (fetched?.eatBlocked) {
+            const room = makeRoomForEat(world, rec, settle, keepOpts);
+            if (room) return room;
+            releaseFoodReserve(world, rec, settle);
+            const held = eatFromHand(world, rec, settle);
+            if (!held || held.at !== rec) return null;
+            found = held;
+            break;
+        }
+        return fetched || halt();
     }
+    if (!found || found.at !== rec) return null;
     const bag = found.bag === "overflow" ? "overflow" : "hotbar";
     const stack = found.slots[found.index];
     if (!stack) return null;

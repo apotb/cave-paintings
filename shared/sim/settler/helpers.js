@@ -1608,7 +1608,9 @@ function gearSources(world, rec, settle, claims) {
             if (!s?.id) continue;
             const claimKey = `basket:${b.uid}:${i}`;
             const avail = reservesOf(world, settle).available(claimKey, s.quantity, rec.id);
-            const reserved = claimedByOther(claims, claimKey, rec.id) || !(avail > 0);
+            const reserved = isSkipped(rec, `gear:${b.uid}`)
+                || claimedByOther(claims, claimKey, rec.id)
+                || !(avail > 0);
             out.push({
                 stack: s,
                 place: "basket",

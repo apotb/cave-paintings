@@ -7617,6 +7617,96 @@ test("taking a reserved meal makes the settler look for other work", () => {
     assert.equal(Settlement.medicineReservesFor(world, settle.id).held(rec.id, "food").length, 0);
 });
 
+test("a settler in reach of a basket takes the food instead of standing on Getting food", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn);
+    rec.kc = 200;
+    rec.stomach = 1600;
+    settle.jobs[rec.id] = noJobs();
+    const basket = addBasket(world, settle, rec.x + 32, rec.y, "close-berries");
+    basket.slots[0] = { id: "blueberry", quantity: 4 };
+    workOnce(world, rec);
+    assert.equal(rec._settlerAct, "Getting food");
+    assert.equal(rec.eatChannel ?? null, null);
+    let ate = false;
+    for (let i = 0; i < 40; i++) {
+        workOnce(world, rec);
+        if (rec.eatChannel?.itemId === "blueberry") {
+            ate = true;
+            break;
+        }
+    }
+    assert.equal(ate, true, `should eat from reach (act=${rec._settlerAct})`);
+    assert.notEqual(rec._settlerAct, "Getting food");
+});
+
+test("a settler who cannot reach a meal eats food in hand and drops the claim", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "blueberry", quantity: 4 }, null, null, null, null]
+    });
+    rec.kc = 200;
+    rec.stomach = 1600;
+    settle.jobs[rec.id] = noJobs();
+    const basket = addBasket(world, settle, rec.x + 180, rec.y, "far-meal");
+    basket.slots[0] = coconutMeal(900);
+    workOnce(world, rec);
+    assert.equal(rec._settlerAct, "Getting food");
+    assert.equal(rec.eatChannel?.itemId, undefined);
+    let ate = false;
+    for (let i = 0; i < 40; i++) {
+        workOnce(world, rec);
+        if (rec.eatChannel?.itemId === "blueberry") {
+            ate = true;
+            break;
+        }
+    }
+    assert.equal(ate, true, `should eat carried food (act=${rec._settlerAct})`);
+    assert.equal(basket.slots[0]?.id, "coconut_meal");
+    assert.equal(Settlement.medicineReservesFor(world, settle.id).held(rec.id, "food").length, 0);
+    const other = addHomeSettler(world, pawn, settle, {
+        id: "hungry-after",
+        x: rec.x,
+        y: rec.y,
+        kc: 200,
+        jobs: noJobs()
+    });
+    other.stomach = 1600;
+    workOnce(world, other);
+    assert.equal(other._settlerAct, "Getting food");
+    assert.equal(
+        Settlement.medicineReservesFor(world, settle.id).held(other.id, "food")[0]?.qty,
+        1
+    );
+});
+
+test("a settler pacing short of a meal gives it up and eats food in hand", () => {
+    const { world, pawn } = createTestWorld();
+    const { settle, rec } = parkSettler(world, pawn, {
+        inventory: [{ id: "blueberry", quantity: 4 }, null, null, null, null]
+    });
+    rec.kc = 200;
+    rec.stomach = 1600;
+    settle.jobs[rec.id] = noJobs();
+    const basket = addBasket(world, settle, rec.x + 180, rec.y, "paced-meal");
+    basket.slots[0] = coconutMeal(900);
+    const base = rec.x;
+    let ate = false;
+    for (let i = 0; i < 80; i++) {
+        rec.x = base + (i % 2) * 3;
+        const c = world._ensureSettlerCreature(rec);
+        c.x = rec.x;
+        workOnce(world, rec);
+        if (rec.eatChannel?.itemId === "blueberry") {
+            ate = true;
+            break;
+        }
+    }
+    assert.equal(ate, true, `should eat carried food after pacing (act=${rec._settlerAct})`);
+    assert.equal(basket.slots[0]?.id, "coconut_meal");
+    assert.equal(Settlement.medicineReservesFor(world, settle.id).held(rec.id, "food").length, 0);
+});
+
 function craftOnly() {
     return {
         doctor: 0, cook: 0, chop: 0, leather: 0, craft: 1, gather: 0, haul: 0, research: 0

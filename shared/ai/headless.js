@@ -1396,8 +1396,13 @@
             // for the body and blocked for the path pad, which parked them
             // short and the job teleported the rest.
             let exactGoal = false;
+            let pathPad = pad;
+            if (bodyNav && this._thinGoalX != null
+                && Math.hypot(tx - this._thinGoalX, ty - this._thinGoalY) < 48) {
+                pathPad = 1;
+            }
             const blocked = (x, y) => {
-                let usePad = pad;
+                let usePad = pathPad;
                 if (exactGoal && Math.hypot(x - tx, y - ty) <= 1.5) usePad = 0;
                 if (bunkNav && world?.poseBlocked) return world.poseBlocked(mob, x, y, usePad);
                 if (world?.isBlocked) return world.isBlocked(x, y);
@@ -1481,18 +1486,17 @@
             exactGoal = openRadius === 0;
             if (exactGoal && this._pathGoalX != null
                 && Math.hypot(tx - this._pathGoalX, ty - this._pathGoalY) > 1.5) {
-                // Drop a nearby park point only when the stand is in the
-                // open. A blocked line still needs the path around it.
+                // The body path uses a fatter pad than a point sample. A 5px
+                // stump sits in that gap: the point line looks open, the path
+                // around the stump is dropped, and the settler slides on it.
                 let clear = true;
                 const span = Math.hypot(tx - mob.x, ty - mob.y);
-                const steps = Math.max(1, Math.ceil(span / 4));
-                for (let i = 1; i <= steps; i++) {
+                const steps = Math.max(1, Math.ceil(span / 3));
+                for (let i = 1; i < steps; i++) {
                     const t = i / steps;
-                    if (world?.poseBlocked?.(
-                        mob,
+                    if (blocked(
                         mob.x + (tx - mob.x) * t,
-                        mob.y + (ty - mob.y) * t,
-                        0
+                        mob.y + (ty - mob.y) * t
                     )) {
                         clear = false;
                         break;
@@ -1504,7 +1508,7 @@
                     this._pathGoalY = null;
                 }
             }
-            const steered = Path.steerToward({
+            let steered = Path.steerToward({
                 arrivePx: exactGoal ? 0.75 : undefined,
                 from,
                 to,
@@ -1525,13 +1529,74 @@
                 openRadius,
                 allowReplan
             });
+            // Pad 2 seals the gap between two stumps. The body still fits at
+            // pad 1, and that search finds the way around.
+            if (bodyNav && pathPad > 1 && !steered.arrived && allowReplan
+                && (!steered.path || steered.path.length < 2)) {
+                let sealed = false;
+                const span = Math.hypot(tx - mob.x, ty - mob.y);
+                if (span > 4) {
+                    const steps = Math.max(2, Math.ceil(span / 3));
+                    for (let i = 1; i < steps; i++) {
+                        const t = i / steps;
+                        if (blocked(mob.x + (tx - mob.x) * t, mob.y + (ty - mob.y) * t)) {
+                            sealed = true;
+                            break;
+                        }
+                    }
+                }
+                if (sealed) {
+                    pathPad = 1;
+                    const thin = Path.steerToward({
+                        arrivePx: exactGoal ? 0.75 : undefined,
+                        from,
+                        to,
+                        blocked,
+                        slack,
+                        cellSize: TILE,
+                        side: this._avoidSide,
+                        path: null,
+                        pathGoal: null,
+                        stuckMs: 0,
+                        lastFrom: null,
+                        lastWpDist: null,
+                        maxRange: Math.max(maxRange, 12),
+                        dt: stuckDt,
+                        stuckDt,
+                        overlapping: !!overlap,
+                        lookPx: farLook ? TILE * 2 : undefined,
+                        openRadius,
+                        allowReplan: true
+                    });
+                    if (thin.path && thin.path.length) {
+                        steered = thin;
+                        this._thinGoalX = tx;
+                        this._thinGoalY = ty;
+                    }
+                }
+            }
             notePathPlan(world, steered);
             this._path = steered.path;
             // A clear line drops the path. Without a halt the next step
             // sails past the stand and they pace across it. stepMove
             // still refuses a slice that would cross a solid.
             if (exactGoal && !steered.arrived && (!this._path || !this._path.length)) {
-                this._path = [{ x: tx, y: ty }];
+                let straight = true;
+                const span = Math.hypot(tx - mob.x, ty - mob.y);
+                if (span > 4) {
+                    const steps = Math.max(2, Math.ceil(span / 3));
+                    for (let i = 1; i < steps; i++) {
+                        const t = i / steps;
+                        if (blocked(
+                            mob.x + (tx - mob.x) * t,
+                            mob.y + (ty - mob.y) * t
+                        )) {
+                            straight = false;
+                            break;
+                        }
+                    }
+                }
+                if (straight) this._path = [{ x: tx, y: ty }];
             }
             this._pathGoalX = steered.pathGoal ? steered.pathGoal.x : null;
             this._pathGoalY = steered.pathGoal ? steered.pathGoal.y : null;
@@ -1566,6 +1631,8 @@
                 }
             }
             if (steered.arrived) {
+                this._thinGoalX = null;
+                this._thinGoalY = null;
                 mob.setDesiredVel?.(0, 0);
                 mob.isSprinting = false;
                 this._heldSlide = null;

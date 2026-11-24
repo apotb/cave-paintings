@@ -346,24 +346,60 @@ function returnSurplusHides(world, rec, settle) {
 }
 
 /**
- * Parked on the way to food. Path arrival wants the exact stand pixel, so a
- * body that has stopped in reach can take the food, and one that has stopped
- * out of reach has to drop the trip.
+ * Parked, or pacing without getting closer. The stand pixel can sit on the
+ * far side of a wall while the body bounces in place.
  */
-function eatWalkStalled(rec, target) {
+function trackApproach(rec, target, slot) {
     const uid = target?.uid || target?.id || "";
     const px = Number(rec.x) || 0;
     const py = Number(rec.y) || 0;
-    if (rec._eatStillUid !== uid) {
-        rec._eatStillUid = uid;
-        rec._eatStill = 0;
+    let tag = rec[slot];
+    if (!tag || tag.uid !== uid) {
+        tag = { uid, still: 0, prog: 0, best: Infinity, px, py, ox: px, oy: py, net: 0 };
+        rec[slot] = tag;
     }
-    const moved = Math.hypot(px - (rec._eatStillPx ?? px), py - (rec._eatStillPy ?? py));
-    rec._eatStillPx = px;
-    rec._eatStillPy = py;
-    if (moved > 0.35) rec._eatStill = 0;
-    else rec._eatStill = (rec._eatStill || 0) + 1;
-    return (rec._eatStill || 0) >= 24;
+    const moved = Math.hypot(px - tag.px, py - tag.py);
+    tag.px = px;
+    tag.py = py;
+    if (moved > 0.35) tag.still = 0;
+    else tag.still += 1;
+    const net = Math.hypot(px - tag.ox, py - tag.oy);
+    if (net > tag.net + 16) {
+        tag.net = net;
+        tag.prog = 0;
+    }
+    const d = Math.hypot(px - (Number(target?.x) || 0), py - (Number(target?.y) || 0));
+    if (d < tag.best - 0.75) {
+        tag.best = d;
+        tag.prog = 0;
+    } else tag.prog += 1;
+    return tag.still >= 24 || (net < 24 && tag.prog >= 40);
+}
+
+function approachPoint(rec, target) {
+    const ai = rec?.creature?.ai;
+    const uid = target?.uid || target?.id || "";
+    if (ai && Number.isFinite(ai._walkCmdX) && Number.isFinite(ai._walkCmdY)) {
+        return { uid, x: ai._walkCmdX, y: ai._walkCmdY };
+    }
+    return target;
+}
+
+function clearApproach(rec, slot) {
+    const tag = rec[slot];
+    if (!tag) return;
+    tag.still = 0;
+    tag.prog = 0;
+    tag.best = Infinity;
+}
+
+function eatLineClear(world, rec, target) {
+    if (!target) return false;
+    const tx = Number(target.x) || 0;
+    const ty = Number(target.y) || 0;
+    if (!near(rec.x, rec.y, tx, ty)) return false;
+    const c = rec.creature || world?.creatures?.get?.(rec.id);
+    return !blockedToward(world, rec, c, tx, ty, target.uid);
 }
 
 function fetchEatStack(world, rec, settle, found) {
@@ -372,10 +408,13 @@ function fetchEatStack(world, rec, settle, found) {
     const walked = walkToFound(world, rec, found);
     if (walked) {
         const target = fetchTarget(found, rec);
-        if (!eatWalkStalled(rec, target)) return walked;
-        const close = !!(target && near(rec.x, rec.y, Number(target.x) || 0, Number(target.y) || 0));
-        if (!close) {
-            rec._eatStill = 0;
+        // In reach, with nothing solid between them and the pile: take it.
+        // Waiting on the marked stand is what left them pacing a wall.
+        const clear = eatLineClear(world, rec, target);
+        if (!clear) {
+            const stalled = trackApproach(rec, approachPoint(rec, target), "_eatApproach");
+            if (!stalled) return walked;
+            clearApproach(rec, "_eatApproach");
             return { eatGiveUp: true };
         }
     }
@@ -552,11 +591,35 @@ function stationStandFeet(world, rec, c, target) {
         }
         return true;
     };
-    if (free(preferX, preferY)) return pack(preferX, preferY);
     const tx = Number(target.x) || 0;
     const ty = Number(target.y) || 0;
+    // Two stumps in the straight gap make the nearest ring point a slide.
+    // Stand on a side the body can walk to without crossing them.
+    const openSide = (aimX, aimY) => {
+        if (!free(aimX, aimY)) return false;
+        const feet = pack(aimX, aimY);
+        if (!near(feet.feetX, feet.feetY, tx, ty)) return false;
+        return !blockedToward(world, rec, c, feet.feetX, feet.feetY, target.uid);
+    };
+    if (openSide(preferX, preferY)) return pack(preferX, preferY);
     let best = null;
     let bestD = Infinity;
+    for (const r of [dist, dist + 8, dist + 16]) {
+        for (let i = 0; i < 16; i++) {
+            const a = (i / 16) * Math.PI * 2;
+            const aimX = tx + Math.cos(a) * r;
+            const aimY = ty + Math.sin(a) * r;
+            if (!openSide(aimX, aimY)) continue;
+            const d = Math.hypot(body.x - aimX, body.y - aimY);
+            if (d < bestD) {
+                bestD = d;
+                best = { aimX, aimY };
+            }
+        }
+        if (best) return pack(best.aimX, best.aimY);
+    }
+    best = null;
+    bestD = Infinity;
     for (const r of [dist, dist + 8]) {
         for (let i = 0; i < 16; i++) {
             const a = (i / 16) * Math.PI * 2;
@@ -1973,7 +2036,18 @@ function doGear(world, rec, settle, step) {
             return halt();
         }
         const walked = walkToFound(world, rec, found);
-        if (walked) return walked;
+        if (walked) {
+            const target = fetchTarget(found, rec);
+            const clear = eatLineClear(world, rec, target);
+            if (!clear) {
+                const stalled = trackApproach(rec, approachPoint(rec, target), "_gearApproach");
+                if (!stalled) return walked;
+                clearApproach(rec, "_gearApproach");
+                const key = src.entry?.uid != null ? `gear:${src.entry.uid}` : (src.claimKey || null);
+                skipJob(rec, key);
+                return halt();
+            }
+        }
         const piece = takeQty(found, step.qty || 1);
         if (!piece) return halt();
         if (step.into === "merge" && step.merge) {
