@@ -91,6 +91,14 @@ class SceneMain extends SceneBase {
         this.tooltipText = null;
         this.tooltipPreview = null;
         this.painBar = this.kcBar = this.weightBar = this.barIcons = null;
+        this.painFxLayer = this.painVignette = this.painSting = null;
+        this._painFxStrength = 0;
+        this._painFxBand = -1;
+        this._painFxPhase = 0;
+        this._painSting = 0;
+        this._painWasShocked = null;
+        this._painFxPawn = null;
+        this._painFxSteps = 8;
         this.channelBar = this.treeChopBar = null;
         this.craft = this.healthBtn = this.equipmentBtn = this.help = null;
         this.craftContainer = null;
@@ -288,6 +296,7 @@ class SceneMain extends SceneBase {
             }
         }
         this.createLightVeil();
+        this.createPainFx();
         this.createBars();
         this.hotbar = new Hotbar(this);
         this.createTooltip();
@@ -622,6 +631,7 @@ class SceneMain extends SceneBase {
             this.drawBars();
             this.refreshTooltip();
         }
+        this.updatePainFx?.(time, delta);
         if (this.hotbar.dirty) {
             this.hotbar.update();
             this.refreshTooltip();

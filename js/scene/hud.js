@@ -54,6 +54,209 @@
         this.drawBars();
     },
 
+    /**
+     * Screen-space pain vignette. Drawn on its own layer under the HUD so
+     * stencil-masked panels cannot wash it out, and ignored by the zoomed
+     * world camera so it is not painted twice.
+     */
+    createPainFx() {
+        const key = "__pain_vignette";
+        if (!this.textures.exists(key)) this.textures.createCanvas(key, 256, 256);
+        const tex = this.textures.get(key);
+        const linear = (typeof Phaser !== "undefined" && Phaser.Textures)
+            ? Phaser.Textures.FilterMode.LINEAR
+            : 1;
+        try { tex?.setFilter?.(linear); } catch (_) {}
+
+        // Just under uiLayer (depth 2). The world camera must not see it.
+        this.painFxLayer = this.add.layer().setDepth(1.5);
+        if (this.cameras?.main) {
+            this.cameras.main.ignore(this.painFxLayer);
+            this.painFxLayer.cameraFilter |= this.cameras.main.id;
+        }
+
+        this.painVignette = this.add.image(0, 0, key)
+            .setOrigin(0, 0)
+            .setScrollFactor(0)
+            .setVisible(false);
+        this.painSting = this.add.rectangle(0, 0, 4, 4, 0x6e1410, 1)
+            .setOrigin(0, 0)
+            .setScrollFactor(0)
+            .setVisible(false);
+        this.painFxLayer.add(this.painVignette);
+        this.painFxLayer.add(this.painSting);
+        if (this.cameras?.main) {
+            this.painVignette.cameraFilter |= this.cameras.main.id;
+            this.painSting.cameraFilter |= this.cameras.main.id;
+        }
+
+        this._painFxSteps = 8;
+        this._painFxStrength = 0;
+        this._painFxBand = -1;
+        this._painFxPhase = 0;
+        this._painSting = 0;
+        this._painWasShocked = null;
+        this._painFxPawn = null;
+        this._paintPainVignette(0);
+        this.layoutPainFx();
+    },
+
+    /** Stretch the vignette and the shock wash to the window. */
+    layoutPainFx() {
+        const w = Math.max(1, this.scale?.width || 0);
+        const h = Math.max(1, this.scale?.height || 0);
+        if (!(w > 1) || !(h > 1)) return;
+        if (this.painVignette?.active) {
+            this.painVignette.setPosition(0, 0).setDisplaySize(w, h);
+        }
+        if (this.painSting?.active) {
+            this.painSting.setPosition(0, 0).setSize(w, h);
+        }
+        const steps = this._painFxSteps || 8;
+        if (this._painFxBand > 0) this._paintPainVignette(this._painFxBand / steps);
+    },
+
+    /**
+     * Elliptical falloff: a circular gradient out to the texture corner,
+     * stretched over the window, so the corners go dark before the edge
+     * midpoints. `level` is 0..1 within the visible pain range.
+     */
+    _paintPainVignette(level) {
+        const key = "__pain_vignette";
+        if (!this.textures?.exists?.(key)) return;
+        const canvasTex = this.textures.get(key);
+        const ctx = canvasTex?.context || canvasTex?.canvas?.getContext?.("2d");
+        if (!ctx) return;
+        const size = 256;
+        if (canvasTex.width !== size || canvasTex.height !== size) {
+            canvasTex.setSize(size, size);
+            this.painVignette?.setTexture?.(key);
+            const linear = (typeof Phaser !== "undefined" && Phaser.Textures)
+                ? Phaser.Textures.FilterMode.LINEAR
+                : 1;
+            try { canvasTex.setFilter?.(linear); } catch (_) {}
+        }
+        const L = Math.max(0, Math.min(1, Number(level) || 0));
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalCompositeOperation = "source-over";
+        ctx.clearRect(0, 0, size, size);
+        const cx = size / 2;
+        const cy = size / 2;
+        const outer = Math.hypot(cx, cy);
+        // Edge centers sit at ~0.71 of the corner. Keep the clear hole under
+        // that at low pain so the rim is thin, and pull it inward near shock.
+        // Most of the rim is blood red; only the outer corners go black.
+        const innerFrac = 0.58 - 0.26 * L;
+        const redA = 0.28 + 0.52 * L;
+        const edgeA = 0.45 + 0.45 * L;
+        const g = ctx.createRadialGradient(cx, cy, outer * innerFrac, cx, cy, outer);
+        g.addColorStop(0, "rgba(170, 28, 18, 0)");
+        g.addColorStop(0.2, `rgba(176, 36, 24, ${(redA * 0.55).toFixed(3)})`);
+        g.addColorStop(0.55, `rgba(154, 24, 16, ${redA.toFixed(3)})`);
+        g.addColorStop(0.84, `rgba(110, 12, 10, ${Math.min(1, redA + 0.08).toFixed(3)})`);
+        g.addColorStop(1, `rgba(18, 0, 0, ${edgeA.toFixed(3)})`);
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, size, size);
+        canvasTex.refresh();
+        const linear = (typeof Phaser !== "undefined" && Phaser.Textures)
+            ? Phaser.Textures.FilterMode.LINEAR
+            : 1;
+        try { canvasTex.setFilter?.(linear); } catch (_) {}
+    },
+
+    /** Lub-dub in 0..1. Phase advances from bpm. */
+    _painHeartbeat(bpm, delta) {
+        const hz = Math.max(0.2, (Number(bpm) || 64) / 60);
+        const dt = Math.max(0, Math.min(100, Number(delta) || 0)) / 1000;
+        this._painFxPhase = (this._painFxPhase + dt * hz) % 1;
+        const phase = this._painFxPhase;
+        // Wide humps, not spikes. A narrow peak on the red rim reads as a blink.
+        const lub = Math.exp(-((phase / 0.16) ** 2));
+        const dub = Math.exp(-((((phase - 0.32) / 0.12) ** 2))) * 0.45;
+        return Math.min(1, lub + dub);
+    },
+
+    updatePainFx(time, delta) {
+        if (this._leavingGame || !this.painVignette?.active) return;
+        const dead = !!(this.deathOverlay?.visible || this.player?._bodyDead);
+        if (dead || !this.player) {
+            this._painFxStrength = 0;
+            this._painSting = 0;
+            this._painWasShocked = false;
+            this._painFxBand = 0;
+            this._painFxPawn = null;
+            this.painVignette.setVisible(false).setAlpha(0);
+            this.painSting?.setVisible(false).setAlpha(0);
+            return;
+        }
+
+        const caps = this.player.capacities;
+        const pain = Phaser.Math.Clamp(caps?.pain?.() ?? 0, 0, 1);
+        const threshold = Math.max(
+            0.01,
+            caps?.painThreshold?.()
+                || Number(this.player.anatomy?.plan?.painShockThreshold) || 0.8
+        );
+        const ratio = pain / threshold;
+        const shocked = ratio >= 1;
+        let target = 0;
+        if (ratio >= 0.5) {
+            const u = Math.min(1, (ratio - 0.5) / 0.5);
+            const eased = u * u * (3 - 2 * u);
+            // The halfway mark is already a thin fringe. Shock is full strength.
+            target = 0.14 + 0.86 * eased;
+        }
+
+        const dt = Math.max(0, Math.min(100, Number(delta) || 16));
+        const k = 1 - Math.exp(-dt / 220);
+        this._painFxStrength += (target - this._painFxStrength) * k;
+        if (this._painFxStrength < 0.0008) this._painFxStrength = 0;
+
+        // Switching who you control is not crossing the line. Only a rising
+        // edge on the same pawn fires the sting.
+        if (this._painFxPawn !== this.player) {
+            this._painFxPawn = this.player;
+            this._painWasShocked = shocked;
+        } else if (this._painWasShocked == null) {
+            this._painWasShocked = shocked;
+        } else if (shocked && !this._painWasShocked) {
+            this._painSting = 1;
+            this._painWasShocked = true;
+        } else {
+            this._painWasShocked = shocked;
+        }
+        if (this._painSting > 0) this._painSting = Math.max(0, this._painSting - dt / 200);
+
+        const steps = this._painFxSteps || 8;
+        const band = this._painFxStrength <= 0
+            ? 0
+            : Math.min(steps, Math.ceil(this._painFxStrength * steps));
+        if (band !== this._painFxBand) {
+            this._painFxBand = band;
+            if (band > 0) this._paintPainVignette(band / steps);
+        }
+
+        if (band <= 0 && this._painSting <= 0) {
+            this.painVignette.setVisible(false).setAlpha(0);
+            this.painSting?.setVisible(false).setAlpha(0);
+            return;
+        }
+
+        const painted = band / steps;
+        const cover = painted > 0 ? Math.min(1, this._painFxStrength / painted) : 0;
+        const bpm = shocked ? 96 : 60 + 28 * this._painFxStrength;
+        const beat = this._painHeartbeat(bpm, dt);
+        const amp = shocked ? 0.07 : 0.025 + 0.03 * this._painFxStrength;
+        const pulse = (1 - amp) + amp * beat;
+        const alpha = cover * pulse;
+        this.painVignette.setVisible(alpha > 0.012).setAlpha(alpha);
+
+        const stingA = this._painSting * 0.48;
+        if (this.painSting) {
+            this.painSting.setVisible(stingA > 0.012).setAlpha(stingA);
+        }
+    },
+
     _makeBarZone(tooltipFn) {
         const zone = this.add.zone(0, 0, 1, 1).setOrigin(0, 0).setInteractive();
         zone.on("pointerover", p => this.showTooltip(tooltipFn, p.x, p.y, zone));

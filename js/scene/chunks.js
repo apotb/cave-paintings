@@ -265,6 +265,7 @@
 
         if (this._uiCam) this._uiCam.setSize(this.scale.width, this.scale.height);
 
+        this.layoutPainFx?.();
         this.drawBars();
 
         if (this.hotbar) this.hotbar.layout();
